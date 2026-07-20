@@ -86,7 +86,8 @@ private struct GameSurface: View {
     /// 3-8p joiners in the lobby, but the DM opponent has neither. Ask once, store
     /// it, then seat them; every later game reuses the stored name.
     private struct NameGate { let env: MessageEnvelope; let payload: Data; let seat: Int
-                              let survivors: [Move]; let discarded: Int }
+                              let survivors: [Move]; let discarded: Int
+                              let prevPayload: Data? }   // note 4/9/38: threaded to seatOnBoard
 
     @State private var controller: MessageTurnController?
     @State private var ambiguous: (env: MessageEnvelope, payload: Data)?
@@ -299,6 +300,20 @@ private struct GameSurface: View {
     /// Adopt `winner` as the game, rebase my staged-but-unsent moves onto it
     /// (Rule R, §7.4), refresh the preferred-chain cache, and open the board.
     private func adopt(winner: Data, env: MessageEnvelope) async {
+        // note 4/9/38: MessageGameStore still holds the chain we PREVIOUSLY
+        // cached for this game — `cache(...)` (via seatOnBoard/choose below)
+        // is what overwrites it. Grab its raw bytes now, before that happens,
+        // so the controller can later diff its own resolved seat's hand +
+        // replay-log count against it (that decode happens seat-aware, inside
+        // the controller, once `mySeat` is actually known — see
+        // MessageTurnController.begin()). Not the same chain, or nothing
+        // cached yet, both leave this nil (a fresh cache falls back to the
+        // trailing-run heuristic in MessageTableView).
+        var prevPayload: Data?
+        if let prevRow = MessageGameStore.shared.record(gameId: env.gameId),
+           let bytes = Base32.decode(prevRow.payloadBase32), bytes != winner {
+            prevPayload = bytes
+        }
         // Make the resident game the winner and set Rule R's round guard, then
         // rebase the pending ledger onto it.
         _ = try? await MessageKernel.shared.decode(payload: winner, viewer: -1)
@@ -323,10 +338,10 @@ private struct GameSurface: View {
             // opponent's first game; it never re-asks once stored.
             if !MessageGameStore.shared.hasSetNickname {
                 nameGate = NameGate(env: env, payload: winner, seat: seat,
-                                    survivors: survivors, discarded: discarded)
+                                    survivors: survivors, discarded: discarded, prevPayload: prevPayload)
             } else {
                 seatOnBoard(seat: seat, env: env, winner: winner,
-                            survivors: survivors, discarded: discarded)
+                            survivors: survivors, discarded: discarded, prevPayload: prevPayload)
             }
         case .ambiguous:
             #if DEBUG
@@ -355,11 +370,11 @@ private struct GameSurface: View {
     /// toast, and hand the winner chain to a fresh controller with the survivors
     /// pre-staged. The tail of `adopt`'s `.known` branch, shared with the name gate.
     private func seatOnBoard(seat: Int, env: MessageEnvelope, winner: Data,
-                             survivors: [Move], discarded: Int) {
+                             survivors: [Move], discarded: Int, prevPayload: Data? = nil) {
         cache(seat: seat, env: env, payload: winner)
         toast = rebaseToast(survivors: survivors, discarded: discarded)
         controller = MessageTurnController(parentPayload: winner, parent: env, mySeat: seat,
-                                           preStaged: survivors)
+                                           preStaged: survivors, prevPayload: prevPayload)
     }
 
     /// The human answered the name gate: persist the name (blank falls back to the
@@ -370,7 +385,7 @@ private struct GameSurface: View {
         MessageGameStore.shared.nickname = trimmed.isEmpty ? FStrings.t("ios.you") : trimmed
         nameGate = nil
         seatOnBoard(seat: g.seat, env: g.env, winner: g.payload,
-                    survivors: g.survivors, discarded: g.discarded)
+                    survivors: g.survivors, discarded: g.discarded, prevPayload: g.prevPayload)
     }
 
     /// Rule R (§7.4): replay each pending action onto the just-adopted chain. A
@@ -406,7 +421,14 @@ private struct GameSurface: View {
     }
 
 
-    /// §6.3 pick resolved: remember the seat, rebase, then play.
+    /// §6.3 pick resolved: remember the seat, rebase, then play. DEBUG-only
+    /// single-simulator path (never compiled into Release): deliberately skips
+    /// the open-delta-replay hint (`prevPayload` stays nil below) rather than
+    /// duplicating `adopt`'s prev-chain lookup for a testing-only picker that
+    /// runs before that lookup would even happen (`pickSeatOnAdopt` returns
+    /// out of `adopt` first) — this seat opens with the plain fallback replay
+    /// instead (notes 4/9/38's cache-miss path), which is a fine trade for a
+    /// dev aid.
     private func choose(seat: Int, from a: (env: MessageEnvelope, payload: Data)) async {
         cache(seat: seat, env: a.env, payload: a.payload)
         let (survivors, _) = await rebasePending(gameId: a.env.gameId, adoptedRound: a.env.round)

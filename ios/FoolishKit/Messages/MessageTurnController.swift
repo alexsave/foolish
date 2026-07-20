@@ -28,6 +28,26 @@ public final class MessageTurnController: ObservableObject {
     @Published public private(set) var rejectTick = 0
     /// False until `begin()` has established the base game once.
     @Published public private(set) var ready = false
+    /// True immediately after `undo()` rebuilds the base minus the last
+    /// pending action — set BEFORE `refresh()` so a `view` change caused by
+    /// undo is distinguishable from a real bout end (note 10) the instant it
+    /// happens. Reset at the start of every OTHER state-changing entry point
+    /// (`begin`, `apply`), so it only ever describes the MOST RECENT change.
+    public private(set) var lastChangeWasUndo = false
+
+    /// note 4/9/38: the log index in the just-adopted chain's replay stream
+    /// where the DELTA since the previously-cached chain begins — nil on a
+    /// genesis game, a fresh/empty cache, or when the raw hint didn't check
+    /// out (>= the base's own log count). Computed once in `begin()`.
+    public private(set) var openReplayFromLog: Int?
+    /// note 36: the real cards that ended up in MY hand purely because of
+    /// this delta (a draw, or a pickup that landed in my hand) — found by
+    /// diffing my hand in the PREVIOUSLY cached chain against my hand now.
+    /// Real identities are not recoverable from the replay stream itself for
+    /// an unfinished game (LOG_DRAW/LOG_PICKUP pairs redact anything not yet
+    /// publicly played, even from the seat that holds them — see
+    /// `residentReplay()`'s doc), so this view-diff is the only clean source.
+    public private(set) var openReplayNewHandCards: [Card] = []
 
     public let mySeat: Int
     public let names: [Int: String]
@@ -51,6 +71,12 @@ public final class MessageTurnController: ObservableObject {
     /// the moves a rebase re-applied onto a freshly-adopted chain (§7.4). Empty on
     /// a plain open or a genesis.
     private let preStaged: [Move]
+    /// note 4/9/38: the previously-cached chain for this game, if GameSurface
+    /// found one different from the chain we're adopting (nil on a fresh
+    /// cache, or a genesis). `begin()` decodes it — with THIS controller's
+    /// own resolved `mySeat`, so the hand-diff below is never seat-mismatched
+    /// — to derive `openReplayFromLog` / `openReplayNewHandCards`.
+    private let prevPayload: Data?
 
     public var gameIdString: String { String(gameId) }
 
@@ -58,8 +84,11 @@ public final class MessageTurnController: ObservableObject {
     /// payload (the view decoded it to resolve my seat); `begin()` re-adopts it
     /// anyway so the controller owns the base unambiguously. `preStaged` are Rule
     /// R survivors (§7.4) to replay on top; `store` is the pending-ledger home.
+    /// `prevPayload` is the previously-cached chain for this game (§ open-delta
+    /// replay, notes 4/9/38) — nil skips the delta computation entirely.
     public init(parentPayload: Data, parent: MessageEnvelope, mySeat: Int,
-                preStaged: [Move] = [], store: MessageGameStore = .shared) {
+                preStaged: [Move] = [], store: MessageGameStore = .shared,
+                prevPayload: Data? = nil) {
         self.base = .continuation(payload: parentPayload)
         self.gameId = UInt64(parent.gameId) ?? 0
         self.parent8 = Self.firstEight(hex: parent.digest)
@@ -70,6 +99,7 @@ public final class MessageTurnController: ObservableObject {
         self.mySeat = mySeat
         self.names = Dictionary(parent.joins.map { ($0.seat, $0.name) },
                                 uniquingKeysWith: { a, _ in a })
+        self.prevPayload = prevPayload
     }
 
     /// Start a brand-new game as seat 0 (§5.2 creation). `seed` MUST be 32 bytes
@@ -86,6 +116,7 @@ public final class MessageTurnController: ObservableObject {
         self.store = store
         self.mySeat = 0
         self.names = [0: myNickname]
+        self.prevPayload = nil
     }
 
     public var canSend: Bool { !pending.isEmpty }
@@ -108,7 +139,25 @@ public final class MessageTurnController: ObservableObject {
     /// Rule R survivors on top, then read the board. Call once from the view's
     /// `.task`.
     public func begin() async {
+        lastChangeWasUndo = false
+        // note 4/9/38: read the previous chain's log count + my hand BEFORE
+        // re-adopting the real base below — decode() IS adopt, so this only
+        // works in this order, and rebuildBase() puts the resident game back
+        // on the real base afterward, exactly like every other call site
+        // expects. Silently skipped if the cached bytes don't even decode.
+        var fromLog: Int?
+        var prevHandIds: Set<String> = []
+        if let prevPayload,
+           (try? await kernel.decode(payload: prevPayload, viewer: mySeat)) != nil {
+            fromLog = await kernel.residentReplay()?.logs.count
+            prevHandIds = Set((await kernel.residentView(viewer: mySeat)?.me?.hand ?? []).map(\.identity))
+        }
+
         await rebuildBase()
+        if let f = fromLog {
+            let total = await kernel.residentReplay()?.logs.count ?? 0
+            openReplayFromLog = (f >= 0 && f < total) ? f : nil
+        }
         pending = []
         for m in preStaged {              // §7.4 survivors, already validated by the rebase
             try? await kernel.apply(seat: mySeat, move: m)
@@ -116,6 +165,12 @@ public final class MessageTurnController: ObservableObject {
         }
         persistLedger()
         await refresh()
+        // Computed AFTER preStaged/refresh so it reflects MY actual final
+        // hand, not an intermediate one — preStaged moves are MY OWN unsent
+        // re-applications, never something to animate as "arrived."
+        if openReplayFromLog != nil {
+            openReplayNewHandCards = (view?.me?.hand ?? []).filter { !prevHandIds.contains($0.identity) }
+        }
         ready = true
     }
 
@@ -136,6 +191,7 @@ public final class MessageTurnController: ObservableObject {
     // MARK: turn actions
 
     public func apply(_ move: Move) async {
+        lastChangeWasUndo = false
         do {
             try await kernel.apply(seat: mySeat, move: move)
             pending.append(move)
@@ -158,6 +214,11 @@ public final class MessageTurnController: ObservableObject {
             pending.append(m)
         }
         persistLedger()
+        // note 10: set BEFORE refresh() — the state may legally go
+        // battles→empty here (undoing the move that opened a bout), and
+        // flyBoutEndToDiscard must not mistake that for a real bout end and
+        // replay the PREVIOUS bout's draws.
+        lastChangeWasUndo = true
         await refresh()
     }
 
