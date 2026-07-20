@@ -422,6 +422,16 @@ what it collects.** This is a store-submission requirement (the app record's
 There is **no** requirement for an in-app or in-extension privacy link for an
 app that collects nothing — that's a separate, optional convenience.
 
+**Status update (2026-07-21): the URL half of this note is now DONE.** The
+App-Store-submission branch (merged into this one) added the actual pages this
+section says the store record needs — `src/app/privacy/page.tsx` +
+`src/components/Privacy.tsx` → `foolish.cards/privacy`, and
+`src/app/support/page.tsx` + `src/components/Support.tsx` →
+`foolish.cards/support` — and `docs/IMESSAGE_APP_STORE_SUBMISSION.md` is the
+full paperwork package that consumes them (its metadata table names both URLs).
+Both pages must actually be DEPLOYED before those URLs go into App Store
+Connect. What remains open is the *product* half below, unchanged.
+
 What's already tracked in this repo, so batch 7 doesn't duplicate it:
 
 - **`docs/IMESSAGE_SHIP_BLOCKERS.md`** already carries this as Chain-A item
