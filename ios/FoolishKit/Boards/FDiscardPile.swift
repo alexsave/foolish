@@ -14,14 +14,18 @@ public struct FDiscardPile: View {
         ZStack {
             ForEach(0..<layers, id: \.self) { i in
                 FCard(card: nil, backSeed: UInt64(3 + i), size: CGSize(width: 44, height: 62))
-                    .rotationEffect(.degrees(rotation(i)))
+                    // Landscape base (matches the deck stack's leaning backs), with
+                    // the existing deterministic ±20° per-layer jitter on top.
+                    .rotationEffect(.degrees(90 + rotation(i)))
             }
             Text("\(count)")
                 .font(.system(size: 15, weight: .bold))
                 .foregroundColor(.white)
                 .shadow(color: .black.opacity(0.8), radius: 1, x: 1, y: 1)
         }
-        .frame(width: 68, height: 78)
+        // Landscape footprint (44×62 rotated ~90°) is wider than tall — swap the
+        // old portrait 68×78 buffer accordingly.
+        .frame(width: 78, height: 68)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(count) cards discarded")
         // Publish the pile's rect so a bout-end discard flight has a target — even

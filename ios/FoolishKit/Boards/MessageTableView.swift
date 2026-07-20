@@ -71,7 +71,16 @@ public struct MessageTableView: View {
                 if controller.isOver {
                     FGameOverList(rows: finishRows(view), onNewGame: onNewGame)
                 } else {
+                    // The card-motion spring is scoped to the LIVE board only (note
+                    // 18/40): it used to sit on this whole VStack, so the swap TO
+                    // this branch's FGameOverList animated implicitly too — the
+                    // WoodFill plank grew in under the spring, reading as the
+                    // background "zooming" (worse with more rows; invisible in 2p,
+                    // hence note 40). Attaching it here instead of on the root means
+                    // in-board changes (deck count, hand, seat badges) still animate,
+                    // but the board→results swap does not.
                     boardContent(view)
+                        .animation(FMotion.cardMotion(reduceMotion: reduceMotion), value: controller.view)
                 }
             } else {
                 ProgressView()
@@ -79,7 +88,6 @@ public struct MessageTableView: View {
         }
         .padding(.horizontal, 8).padding(.top, 14).padding(.bottom, 4)   // top margin so the ring isn't clipped in the compact drawer
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .animation(FMotion.cardMotion(reduceMotion: reduceMotion), value: controller.view)
         .overlay { FlyingCardsLayer(animator: animator) }
         .coordinateSpace(name: boardSpace)
         .onPreferenceChange(BattleFramesKey.self) { fr in
@@ -143,20 +151,20 @@ public struct MessageTableView: View {
                 // of the centred flow, so they never push the ring or battles.
                 FDeckWell(deckCount: deckCountOverride ?? view.deckCount, flipped: view.flipped,
                           hasFlipped: view.hasFlipped, trumpSuit: view.trumpSuit)
-                    .offset(y: -30)   // snug into the top-left corner (the well has empty space above the stack)
+                    // FDeckWell now anchors its own content top-leading with a
+                    // small symmetric inset (note 14), so no per-call-site
+                    // compensation offset is needed here anymore.
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 FDiscardPile(count: discardCountOverride ?? view.discardCount)
                     .offset(y: -16)   // snug into the top-right corner
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 
-                // First-attacker sword: it's my open (empty table, I'm first
-                // attacker). Sits just above my hand - the web PlayerRing sword,
-                // replacing the old centred "your move" pill.
-                if firstAttackerMustOpen(view) {
-                    FSword(size: 30)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                        .padding(.bottom, 86)
-                }
+                // Self role indicator: the local seat never got a role mark before
+                // (note 3) — only opponents (FSeatBadge) did. Same spot the old
+                // first-attacker-only sword used: just above my hand.
+                selfRoleIndicator(view)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .padding(.bottom, 86)
 
                 // Action buttons float bottom-right, above the hand (web absolute
                 // bottom:90/right:20). They only appear when a flag enables them.
@@ -228,10 +236,26 @@ public struct MessageTableView: View {
         return CGPoint(x: x, y: y)
     }
 
-    /// I must open this bout: the table is empty, I'm the first attacker, and I
-    /// have a legal move. Drives the first-attacker sword (web PlayerRing).
-    private func firstAttackerMustOpen(_ view: GameView) -> Bool {
-        view.battles.isEmpty && view.firstAttacker == controller.mySeat && controller.iCanAct
+    /// My own role mark — shield/check/sword — mirroring FSeatBadge's roleRow for
+    /// opponents (note 3: the local player never saw their own role before, only
+    /// the special-cased first-attacker sword). Nothing shows once I'm out (the
+    /// game-over screen replaces the whole board, so "game over" is already
+    /// handled by the caller never reaching here then).
+    private func selfRoleIndicator(_ view: GameView) -> some View {
+        let mySeat = controller.mySeat
+        let isOut = view.me?.isOut ?? false
+        let isDefender = view.defender == mySeat
+        let saidGood = view.hasSaidGood(mySeat)
+        let isAttacker = !isDefender && !isOut && !saidGood
+        return Group {
+            if !isOut {
+                HStack(spacing: FSpace.xs) {
+                    if saidGood { FCheck(size: 19) }
+                    if isDefender { FShield(size: 22) }
+                    else if isAttacker { FSword(size: 19) }
+                }
+            }
+        }
     }
 
     private func battlesArea(_ view: GameView) -> some View {
@@ -689,10 +713,17 @@ struct FGameOverList: View {
                         HStack(spacing: 12) {
                             // The last place reads "Fool" in the rank column itself
                             // (no separate pill); everyone else is "#N".
+                            // Rank contrast on brown wood (note 41): 1st stays
+                            // brass, the fool is a brighter lifted red (the old
+                            // dark red/brown read as near-black on the plank), and
+                            // every other place is bone with a dark drop shadow —
+                            // the same bone+shadow treatment the board's own text
+                            // uses on wool.
                             Text(row.isFool ? FStrings.t("ios.fool") : "#\(row.place)")
                                 .font(.headline.weight(.heavy)).monospacedDigit()
-                                .foregroundStyle(row.isFool ? Color(hex: 0x8A1810)
-                                                 : (row.place == 1 ? Color(hex: 0x5A3B00) : .black.opacity(0.55)))
+                                .foregroundStyle(row.isFool ? Color(hex: 0xD84438)
+                                                 : (row.place == 1 ? FColor.win : FColor.card))
+                                .shadow(color: .black.opacity(0.5), radius: 1, y: 1)
                                 .frame(width: 56, alignment: .leading)
                             Text(row.name + (row.isYou ? " (\(FStrings.t("ios.you")))" : ""))
                                 .font(.body.weight(.semibold))

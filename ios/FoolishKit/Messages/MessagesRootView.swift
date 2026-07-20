@@ -149,7 +149,7 @@ private struct GameSurface: View {
             VStack(spacing: 4) {
                 MessageBoardView(view: s.view, names: s.names)
                 Text(FStrings.t("ios.msg.spectating"))
-                    .font(.footnote).foregroundStyle(FColor.textDim)
+                    .font(.footnote).foregroundStyle(.black.opacity(0.55))
                     .multilineTextAlignment(.center).padding(.horizontal).padding(.bottom, 8)
             }
         } else if damaged {
@@ -457,16 +457,16 @@ private struct NewGameSetup: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            Text(FStrings.t("ios.msg.newgame")).font(.headline).foregroundStyle(FColor.textPrimary)
+            Text(FStrings.t("ios.msg.newgame")).font(.headline).foregroundStyle(FColor.ink)
             VStack(alignment: .leading, spacing: 4) {
-                Text(FStrings.t("ios.msg.yourname")).font(.footnote).foregroundStyle(FColor.textDim)
+                Text(FStrings.t("ios.msg.yourname")).font(.footnote).foregroundStyle(.black.opacity(0.55))
                 TextField(FStrings.t("ios.you"), text: $nickname).textFieldStyle(.roundedBorder)
             }
             if isDM {
-                Text(FStrings.t("players") + ": 2").font(.footnote).foregroundStyle(FColor.textDim)
+                Text(FStrings.t("players") + ": 2").font(.footnote).foregroundStyle(.black.opacity(0.55))
             } else {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(FStrings.t("players")).font(.footnote).foregroundStyle(FColor.textDim)
+                    Text(FStrings.t("players")).font(.footnote).foregroundStyle(.black.opacity(0.55))
                     Picker(FStrings.t("players"), selection: $players) {
                         ForEach(2...8, id: \.self) { Text("\($0)").tag($0) }
                     }.pickerStyle(.segmented)
@@ -507,16 +507,16 @@ private struct LobbyView: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            Text(FStrings.t("ios.lobby")).font(.headline).foregroundStyle(FColor.textPrimary)
+            Text(FStrings.t("ios.lobby")).font(.headline).foregroundStyle(FColor.ink)
             VStack(spacing: 6) {
                 ForEach(0..<env.nPlayers, id: \.self) { s in
                     HStack {
-                        Text("\(s + 1).").foregroundStyle(FColor.textDim).monospacedDigit()
+                        Text("\(s + 1).").foregroundStyle(.black.opacity(0.55)).monospacedDigit()
                         if let nm = name(s) {
                             Text(nm + (s == mySeat ? " (\(FStrings.t("ios.you")))" : ""))
-                                .foregroundStyle(FColor.textPrimary)
+                                .foregroundStyle(FColor.ink)
                         } else {
-                            Text(FStrings.t("ios.msg.seatopen")).foregroundStyle(FColor.textDim).italic()
+                            Text(FStrings.t("ios.msg.seatopen")).foregroundStyle(.black.opacity(0.55)).italic()
                         }
                         Spacer()
                     }
@@ -527,14 +527,15 @@ private struct LobbyView: View {
             if mySeat != nil {
                 Text(freeSeats > 0 ? FStrings.t("ios.msg.waitingjoin", ["n": "\(freeSeats)"])
                                    : FStrings.t("ios.msg.lobbyfull"))
-                    .font(.footnote).foregroundStyle(FColor.textDim)
+                    .font(.footnote).foregroundStyle(.black.opacity(0.55))
                 FButton(FStrings.t("ios.msg.sendinvite"), kind: .wood, action: onSend)
             } else if freeSeats > 0 {
+                // Same width as the Join button below (note 29) — both rely on the
+                // outer .padding() alone, no extra inset on the field.
                 TextField(FStrings.t("ios.you"), text: $nickname).textFieldStyle(.roundedBorder)
-                    .padding(.horizontal)
                 FButton(FStrings.t("ios.msg.joinas", ["name": displayName]), kind: .wood) { onJoin(nickname) }
             } else {
-                Text(FStrings.t("ios.msg.lobbyfull")).font(.footnote).foregroundStyle(FColor.textDim)
+                Text(FStrings.t("ios.msg.lobbyfull")).font(.footnote).foregroundStyle(.black.opacity(0.55))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -564,10 +565,13 @@ private struct NameGateView: View {
     var body: some View {
         VStack(spacing: 16) {
             Text(FStrings.t("ios.msg.nameprompt")).font(.headline)
-                .foregroundStyle(FColor.textPrimary).multilineTextAlignment(.center)
+                .foregroundStyle(FColor.ink).multilineTextAlignment(.center)
+            // No extra .padding(.horizontal) here — the field and the button below
+            // both rely solely on the VStack's outer .padding() so they render the
+            // same width (note 29; the field used to be inset twice, making it
+            // visibly narrower than the full-width Continue button).
             TextField(FStrings.t("ios.you"), text: $name).textFieldStyle(.roundedBorder)
                 .submitLabel(.done).onSubmit { onContinue(name) }
-                .padding(.horizontal)
             FButton(FStrings.t("ios.msg.continue"), kind: .wood) { onContinue(name) }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -589,7 +593,7 @@ private struct SeatPicker: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            Text(FStrings.t("ios.msg.pickseat")).font(.headline).foregroundStyle(FColor.textPrimary)
+            Text(FStrings.t("ios.msg.pickseat")).font(.headline).foregroundStyle(FColor.ink)
             ForEach(0..<nPlayers, id: \.self) { seat in
                 FButton(label(seat), kind: .secondary) { onPick(seat) }
             }
@@ -615,8 +619,8 @@ public enum MessageDebugFlags {
 private struct DamagedView: View {
     var body: some View {
         VStack(spacing: 8) {
-            Text("Foolish").font(.headline).foregroundStyle(FColor.textPrimary)
-            Text(FStrings.t("ios.msg.damaged")).font(.footnote).foregroundStyle(FColor.textDim)
+            Text("Foolish").font(.headline).foregroundStyle(FColor.ink)
+            Text(FStrings.t("ios.msg.damaged")).font(.footnote).foregroundStyle(.black.opacity(0.55))
                 .multilineTextAlignment(.center).padding(.horizontal)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

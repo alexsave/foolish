@@ -27,25 +27,39 @@ public struct FDeckWell: View {
     private var badgeTotal: Int { deckCount + ((hasFlipped && flipped != nil) ? 1 : 0) }
     private var stackLayers: Int { min(max(deckCount, 0), 6) }
 
+    /// Every state anchors to the SAME top-leading inset (note 14: equal left/top
+    /// distance from the board's edges), instead of the old centred layout that
+    /// needed a per-call-site magic offset tuned only for the stacked state.
+    private let inset: CGFloat = FSpace.s
+    /// How far the flipped trump peeks out below the stack when both are showing
+    /// (the old centred layout's `offset(y: 34)`, now relative to the shared
+    /// top-leading anchor instead of the container's centre).
+    private let peek: CGFloat = 34
+
     public var body: some View {
-        ZStack(alignment: .center) {
-            // The flipped trump hangs below the stack, upright, behind it.
+        ZStack(alignment: .topLeading) {
+            // The flipped trump: tucked under the stack (peeking out below) when
+            // the stock is still there, or — once the stock is drawn out — the
+            // sole piece of content, flush at the same inset as everything else.
             if hasFlipped, let flipped {
                 FCard(card: flipped, trump: true, size: CGSize(width: 46, height: 66))
-                    .offset(y: 34)
+                    .offset(x: inset, y: inset + (deckCount > 0 ? peek : 0))
                     .zIndex(0)
             }
 
             if deckCount > 0 {
-                deckStack.zIndex(1)
+                deckStack
+                    .offset(x: inset, y: inset)
+                    .zIndex(1)
             } else if !hasFlipped, let trumpSuit {
                 // Stock and flip both gone — show the trump suit glyph.
                 Text(trumpSuit.glyph)
                     .font(.system(size: 44))
                     .foregroundColor(FColor.suitColor(trumpSuit))
+                    .offset(x: inset, y: inset)
             }
         }
-        .frame(width: 92, height: 108)
+        .frame(width: 92, height: 108, alignment: .topLeading)
         // Publish the deck's rect so draw flights (deck→hand) have a source.
         .background(GeometryReader { g in
             Color.clear.preference(key: DeckFrameKey.self, value: g.frame(in: .named(boardSpace)))

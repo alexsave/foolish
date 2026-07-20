@@ -36,9 +36,9 @@ public struct FSeatBadge: View {
 
     // Mini back geometry (web CardsVisual: 25pt wide, spread 10pt/card, count
     // centred). Capped so a big hand doesn't fan into the neighbouring seat.
-    private let cardW: CGFloat = 24
-    private let cardH: CGFloat = 34
-    private let spread: CGFloat = 7
+    private let cardW: CGFloat = 21
+    private let cardH: CGFloat = 30
+    private let spread: CGFloat = 6
     private var visibleBacks: Int { min(max(handCount, 0), 7) }
 
     public var body: some View {
@@ -96,15 +96,15 @@ public struct FSeatBadge: View {
             if saidGood {
                 // Hand-built (not SF Symbols — unreliable under ImageRenderer bubble
                 // snapshots, same reason FShield/FSword are hand-built).
-                FCheck(size: 14)
+                FCheck(size: 17)
             }
             if isDefender {
-                FShield(size: 19)   // hand-built light-gray shield (larger)
+                FShield(size: 22)   // hand-built light-gray shield (larger)
             } else if isAttacker {
-                FSword(size: 16)    // hand-built sword
+                FSword(size: 19)    // hand-built sword
             }
         }
-        .frame(height: 19)
+        .frame(height: 22)
     }
 
     private var a11y: String {

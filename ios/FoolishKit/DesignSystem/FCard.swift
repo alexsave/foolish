@@ -78,8 +78,12 @@ public struct FCard: View {
     }
 
     // Corner index: rank (20/50 w) over suit (14/50 w), Georgia bold (web parity).
+    // Leading-aligned so the suit's left edge tracks the rank's left edge instead
+    // of centring under it — a wide rank ("10") no longer shifts the suit glyph
+    // sideways (standard card-index behavior). The bottom-right corner mirrors
+    // correctly since it rotates this whole VStack 180°.
     private func corner(_ card: Card, suit: Suit, color: Color) -> some View {
-        VStack(spacing: -size.width * 0.04) {
+        VStack(alignment: .leading, spacing: -size.width * 0.04) {
             Text(CardRank.label(card.v))
                 .font(.custom("Georgia", size: size.width * 0.40).weight(.bold))
             Text(suit.glyph)
