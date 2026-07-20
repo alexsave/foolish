@@ -50,8 +50,8 @@ final class ComponentSnapshotTests: XCTestCase {
     func testFActionBarRu() {
         FStrings.override = .ru
         defer { FStrings.override = .system }
-        assertSnapshot(of: host(FActionBar(canPickup: true, canDone: true, canTransfer: true,
-                                           onPickup: {}, onDone: {}, onTransfer: {}),
+        assertSnapshot(of: host(FActionBar(canPass: true, canPickup: true, canDone: true,
+                                           onPass: {}, onPickup: {}, onDone: {}),
                                 width: 340, height: 80),
                        as: .image, record: record)
     }
