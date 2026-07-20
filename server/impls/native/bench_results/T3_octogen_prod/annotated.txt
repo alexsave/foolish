@@ -1,0 +1,2748 @@
+--------------------------------------------------------------------------------
+Profile data file '/home/user/foolish/server/impls/native/bench_results/T3_octogen_prod/raw/callgrind.out' (creator: callgrind-3.22.0)
+--------------------------------------------------------------------------------
+I1 cache: 
+D1 cache: 
+LL cache: 
+Timerange: Basic block 0 - 2073028826
+Trigger: Program termination
+Profiled target:  ./bench_results/eval_t3_prod --strategy=octogen --opp=octogen --players=2 --games=1 --seed-start=1 (PID 28026, part 1)
+Events recorded:  Ir
+Events shown:     Ir
+Event sort order: Ir
+Thresholds:       99
+Include dirs:     
+User annotated:   
+Auto-annotation:  on
+
+--------------------------------------------------------------------------------
+Ir                      
+--------------------------------------------------------------------------------
+13,373,127,339 (100.0%)  PROGRAM TOTALS
+
+--------------------------------------------------------------------------------
+Ir                      file:function
+--------------------------------------------------------------------------------
+4,854,274,450 (36.30%)  /home/user/foolish/c/src/cordite_sim.c:sim_solve_rec'2 [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+2,656,185,916 (19.86%)  /home/user/foolish/c/src/cordite_sim.c:sim_gen_moves [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+  973,772,394 ( 7.28%)  ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+  944,458,494 ( 7.06%)  /home/user/foolish/c/src/cordite_sim.c:sim_apply_sol [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+  884,788,168 ( 6.62%)  src/leafbook.h:leafbook_key [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+  739,490,174 ( 5.53%)  /home/user/foolish/c/src/cordite_sim.c:cover_assign [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+  446,091,188 ( 3.34%)  /home/user/foolish/c/src/cordite_sim.c:sim_refill [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+  427,401,511 ( 3.20%)  /home/user/foolish/c/src/cordite_sim.c:sim_handwritten_move [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+  408,812,757 ( 3.06%)  /home/user/foolish/c/src/cordite_sim.c:cover_assign'2 [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+  319,843,675 ( 2.39%)  /home/user/foolish/c/src/cordite_sim.c:cd_sim_playout_pol [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+  282,754,335 ( 2.11%)  /home/user/foolish/c/src/cordite_sim.c:sim_apply_cover [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+  156,492,876 ( 1.17%)  /home/user/foolish/c/src/cordite_sim.c:sim_apply [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+   79,130,480 ( 0.59%)  src/leafbook.h:cd_leafbook_value
+   45,059,725 ( 0.34%)  /home/user/foolish/c/src/cordite_sim.c:sim_apply_pass [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+   43,186,869 ( 0.32%)  /home/user/foolish/c/src/octogen_strategy.c:octogen_strategy_choose [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+
+--------------------------------------------------------------------------------
+-- Auto-annotated source: /home/user/foolish/c/src/octogen_strategy.c
+--------------------------------------------------------------------------------
+Ir                 
+
+-- line 40 ----------------------------------------
+        .           #include <stdio.h>
+        .           #include <stdlib.h>
+        .           #include <string.h>
+        .           #include <stddef.h>
+        .           
+        .           // ---------- small utils ------------------------------------------------
+        .           
+        .           static inline int og_card_score(Card c, int power) {
+    1,914 ( 0.00%)      return c.value + (c.suit == power ? 1000 : 0);
+        .           }
+        .           
+        .           static bool og_set_contains(const Card *arr, int n, Card c) {
+   95,077 ( 0.00%)      for (int i = 0; i < n; i++) if (card_eq(arr[i], c)) return true;
+        .               return false;
+        .           }
+        .           
+        .           static uint32_t og_xorshift(uint32_t s) {
+4,105,728 ( 0.03%)      s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+  456,192 ( 0.00%)      return s ? s : 0xB1A570u;
+        .           }
+        .           
+        .           static uint32_t og_mix(uint32_t a, uint32_t b) {
+  145,278 ( 0.00%)      uint32_t h = a * 0x9E3779B1u ^ (b + 0x7F4A7C15u);
+  508,326 ( 0.00%)      h ^= h >> 16; h *= 0x85EBCA77u; h ^= h >> 13;
+  145,236 ( 0.00%)      return h ? h : 1;
+        .           }
+        .           
+        .           // Ablation switches (read once): OG_NO_SOLVE / OG_NO_VOIDS / OG_NO_FLIP /
+        .           // OG_NO_FLOORS / OG_NO_LEAF / OG_NO_AVOID / OG_VERIFY, plus OG_W1/OG_W2
+        .           // world-count overrides for tuning.
+        .           // Values come from the bot roster's knob spec, with env still overriding for
+        .           // research/ablation sweeps (bot_knobs.h).
+        .           static int og_flag(const char *name) {
+      136 ( 0.00%)      return bot_knob_flag(name);
+   55,764 ( 0.00%)  => /home/user/foolish/c/src/bot_knobs.c:bot_knob_flag (63x)
+        .           }
+        .           static int og_env_int(const char *name, int def) {
+       75 ( 0.00%)      return bot_knob_int(name, def);
+   22,353 ( 0.00%)  => /home/user/foolish/c/src/bot_knobs.c:bot_knob_int (25x)
+        .           }
+        .           static _Thread_local int og_flags_loaded = 0;
+        .           // Drop the latched OG_* values so the next choose re-reads them. Two callers:
+        .           // bot_roster_choose, which installs a different knob spec per named bot; and
+        .           // the infinite-oracle bridge (client replay analysis,
+        .           // docs/INFINITE_ORACLE_DESIGN.md §6.2), which re-reads OG_* between
+        .           // deliberation batches so the per-batch world budget can adapt to the measured
+        .           // device speed. Mirrors cordite_reload_flags (cordite_strategy.c). Only the
+-- line 84 ----------------------------------------
+-- line 179 ----------------------------------------
+        .           // (transposition table + O(1) clone) resolves far more per node than the
+        .           // struct solver, so it needs a much smaller node budget to do equivalent work
+        .           // in less wall-clock. Tunable via OG_BB_WIN / OG_BB_AVOID for sweeps.
+        .           static _Thread_local int og_bb_win_budget = 20000;
+        .           static _Thread_local int og_bb_avoid_budget = 15000;
+        .           
+        .           static int og_in_count(const Game *g) {
+        .               int n = 0;
+       80 ( 0.00%)      for (int i = 0; i < g->num_players; i++)
+       40 ( 0.00%)          if (g->players[i].status == PLAYER_STATUS_IN) n++;
+        .               return n;
+        .           }
+        .           
+        .           static bool og_apply(Game *g, int p_idx, const LegalMove *m) {
+        .               switch (m->type) {
+        .                   case MOVE_ATTACK: return handle_attack(g, p_idx, m->cards, m->n_cards);
+        .                   case MOVE_COVER:  return handle_cover (g, p_idx, m->cards, m->attack_cards, m->n_cards);
+        .                   case MOVE_PASS:   return handle_pass  (g, p_idx, m->cards, m->n_cards);
+-- line 196 ----------------------------------------
+-- line 232 ----------------------------------------
+        .               int  trumps_played[MAX_PLAYERS];  // of those, trumps
+        .               int  trump_leads[MAX_PLAYERS];    // trump attacks while the deck was alive
+        .               bool mc_tell[MAX_PLAYERS];        // proven void contradiction: strategic
+        .                                                 // pickup-while-holding-cover (MC/human)
+        .               bool loose[MAX_PLAYERS];          // profiled weak/random seat
+        .           } Belief;
+        .           
+        .           static bool og_void_forbidden(const Belief *B, const Game *g, int p, Card c) {
+  106,001 ( 0.00%)      for (int k = 0; k < B->void_n[p]; k++) {
+  100,698 ( 0.00%)          if (can_cover(B->voids[p][k], c, g->power_suit)) return true;
+  234,710 ( 0.00%)  => /home/user/foolish/c/src/game.c:can_cover (16,765x)
+        .               }
+        .               return false;
+        .           }
+        .           
+        .           static bool og_floor_forbidden(const Belief *B, const Game *g, int p, Card c) {
+       87 ( 0.00%)      return B->floor_v[p] > 0 && c.suit != g->power_suit && c.value < B->floor_v[p];
+        .           }
+        .           
+        .           static void og_pinned_remove(Belief *B, int p, Card c) {
+    1,270 ( 0.00%)      for (int q = 0; q < B->pinned_n[p]; q++) {
+      275 ( 0.00%)          if (card_eq(B->pinned[p][q], c)) {
+      243 ( 0.00%)              B->pinned[p][q] = B->pinned[p][B->pinned_n[p] - 1];
+       26 ( 0.00%)              B->pinned_n[p]--;
+        .                       return;
+        .                   }
+        .               }
+        .           }
+        .           
+        .           static void og_pinned_add(Belief *B, int p, Card c) {
+      525 ( 0.00%)      if (B->pinned_n[p] >= MAX_HAND_SIZE) return;
+        6 ( 0.00%)      if (og_set_contains(B->pinned[p], B->pinned_n[p], c)) return;
+      537 ( 0.00%)      B->pinned[p][B->pinned_n[p]++] = c;
+        .           }
+        .           
+        .           // A floor contradiction (p plays a non-trump card below their inferred
+        .           // floor) means p is not a lowest-first attacker: distrust their floors.
+        .           static void og_floor_check(Belief *B, const Game *g, int p, Card c) {
+      981 ( 0.00%)      if (p < 0 || B->floor_v[p] <= 0) return;
+        .               if (c.suit != g->power_suit && c.value < B->floor_v[p]) {
+        .                   B->floor_v[p] = 0;
+        .                   B->distrust_floor[p] = true;
+        .               }
+        .           }
+        .           
+        .           // Chronological scan over logs: pinned cards, flipped-trump holder, void
+        .           // constraints, rank floors and trust flags, all in one pass.
+        .           static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
+      176 ( 0.00%)      memset(B, 0, sizeof(*B));
+    2,816 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms (44x)
+        .           
+        .               // Last draw event: holds the flipped trump if the deck is exhausted, and
+        .               // marks the moment the deck died (for "deck alive at log i" tests).
+        .               int last_draw_idx = -1;
+    3,440 ( 0.00%)      for (int i = 0; i < g->num_logs; i++) {
+    6,383 ( 0.00%)          if (g->logs[i].log_type == LOG_DRAW) last_draw_idx = i;
+        .               }
+       93 ( 0.00%)      bool deck_alive_now = (g->deck_count > 0 || g->has_flipped);
+       35 ( 0.00%)      int flip_log_idx = (!deck_alive_now && !og_no_flip) ? last_draw_idx : -1;
+        .           
+      132 ( 0.00%)      int trump_viol[MAX_PLAYERS] = {0};
+       88 ( 0.00%)      int in_now = g->num_players;
+        .           
+        .               // Declined-attack tell state: per-seat bitmask of non-trump values the
+        .               // seat said GOOD over (while the defender had spare capacity). A
+        .               // handwritten-family attacker NEVER declines a legal non-trump attack, so
+        .               // later playing a non-trump card of a declined value (before gaining
+        .               // cards) proves the seat attacks strategically — an MC bot or a thinking
+        .               // human. Cleared on draw/pickup (the played card might be a new one).
+       44 ( 0.00%)      uint16_t decl_vals[MAX_PLAYERS] = {0};
+        .               int hand_n[MAX_PLAYERS];
+      528 ( 0.00%)      for (int i = 0; i < g->num_players; i++) hand_n[i] = CARDS_PER_PLAYER;
+        .               int cur_def = -1;
+        .           
+        .               // Replayed table state (per-move events only; PICKUP/DISCARD card lists
+        .               // silently truncate at MAX_LOG_PAIRS=16 and must not be trusted).
+        .               Card tbl[80];
+        .               int  tbl_n = 0;
+        .               Card unc[MAX_BATTLES * 2];  // uncovered attack cards only
+        .               int  unc_n = 0;
+        .               Card discards[160];
+        .               int  disc_n = 0;
+        .           
+   10,425 ( 0.00%)      for (int i = 0; i < g->num_logs; i++) {
+    7,014 ( 0.00%)          const GameLog *L = &g->logs[i];
+        .                   int p = L->player_idx;
+    4,676 ( 0.00%)          bool deck_alive_at = deck_alive_now || i <= last_draw_idx;
+   18,528 ( 0.00%)          switch (L->log_type) {
+        .                       case LOG_ATTACK:
+        .                       case LOG_PASS: {
+    2,295 ( 0.00%)                  bool first_attack = (L->log_type == LOG_ATTACK && tbl_n == 0);
+    7,803 ( 0.00%)                  if (p >= 0) hand_n[p] -= L->num_pairs;
+    1,836 ( 0.00%)                  if (first_attack && cur_def < 0 && p >= 0) {
+      258 ( 0.00%)                      cur_def = (p + 1) % g->num_players;   // pre-change rounds
+        .                           }
+        .                           bool any_trump = false;
+    8,011 ( 0.00%)                  for (int k = 0; k < L->num_pairs; k++) {
+    1,533 ( 0.00%)                      Card c = L->pairs[k].primary;
+    5,722 ( 0.00%)                      if (c.suit == g->power_suit) any_trump = true;
+    2,555 ( 0.00%)                      if (unc_n < (int)(sizeof(unc) / sizeof(unc[0]))) unc[unc_n++] = c;
+    2,555 ( 0.00%)                      if (tbl_n < (int)(sizeof(tbl) / sizeof(tbl[0]))) tbl[tbl_n++] = c;
+    1,022 ( 0.00%)                      if (p >= 0 && p != bot_idx) {
+      792 ( 0.00%)                          if (deck_alive_at) {
+      257 ( 0.00%)                              B->cards_played[p]++;
+      257 ( 0.00%)                              if (c.suit == g->power_suit) B->trumps_played[p]++;
+        .                                   }
+        .                                   // Playing a card a still-active void says they lacked
+        .                                   // (and that wasn't publicly picked up) proves the void
+        .                                   // wrong: the seat picked up strategically while
+        .                                   // holding cover. Handwritten-family never does that.
+      264 ( 0.00%)                          if (!og_set_contains(B->pinned[p], B->pinned_n[p], c)
+       34 ( 0.00%)                              && og_void_forbidden(B, g, p, c)) B->mc_tell[p] = true;
+    1,053 ( 0.00%)                          if (c.suit != g->power_suit
+    1,569 ( 0.00%)                              && (decl_vals[p] & (1u << c.value))) B->mc_tell[p] = true;
+        .                                   og_floor_check(B, g, p, c);
+        .                                   og_pinned_remove(B, p, c);
+        .                               }
+        .                           }
+    1,392 ( 0.00%)                  if (p >= 0 && p != bot_idx && L->log_type == LOG_ATTACK) {
+      442 ( 0.00%)                      if (any_trump && deck_alive_at) trump_viol[p]++;
+    1,530 ( 0.00%)                      if (first_attack && L->num_pairs == 1 && !any_trump
+        .                                   && in_now > 2 && !og_no_floors) {
+        .                                   B->floor_v[p] = L->pairs[0].primary.value;
+        .                               }
+        .                           }
+        .                           break;
+        .                       }
+        .                       case LOG_COVER:
+    6,180 ( 0.00%)                  if (p >= 0) hand_n[p] -= L->num_pairs;
+    4,326 ( 0.00%)                  for (int k = 0; k < L->num_pairs; k++) {
+      618 ( 0.00%)                      Card c = L->pairs[k].primary;
+    1,854 ( 0.00%)                      if (tbl_n < (int)(sizeof(tbl) / sizeof(tbl[0]))) tbl[tbl_n++] = c;
+      618 ( 0.00%)                      if (p >= 0 && p != bot_idx) {
+      462 ( 0.00%)                          if (deck_alive_at) {
+      152 ( 0.00%)                              B->cards_played[p]++;
+      999 ( 0.00%)                              if (c.suit == g->power_suit) B->trumps_played[p]++;
+        .                                   }
+      154 ( 0.00%)                          if (!og_set_contains(B->pinned[p], B->pinned_n[p], c)
+       65 ( 0.00%)                              && og_void_forbidden(B, g, p, c)) B->mc_tell[p] = true;
+    1,144 ( 0.00%)                          if (c.suit != g->power_suit
+      550 ( 0.00%)                              && (decl_vals[p] & (1u << c.value))) B->mc_tell[p] = true;
+        .                                   og_floor_check(B, g, p, c);
+        .                                   og_pinned_remove(B, p, c);
+        .                               }
+    1,545 ( 0.00%)                      if (!card_is_none(L->pairs[k].target)) {
+      945 ( 0.00%)                          for (int q = 0; q < unc_n; q++) {
+      315 ( 0.00%)                              if (card_eq(unc[q], L->pairs[k].target)) {
+    1,236 ( 0.00%)                                  unc[q] = unc[--unc_n];
+        .                                           break;
+        .                                       }
+        .                                   }
+        .                               }
+        .                           }
+        .                           break;
+        .                       case LOG_GOOD:
+    1,916 ( 0.00%)                  if (p >= 0 && p != bot_idx && in_now > 2 && cur_def >= 0
+        .                               && hand_n[cur_def] - unc_n >= 1) {
+        .                               for (int k = 0; k < tbl_n; k++) {
+        .                                   if (tbl[k].suit != g->power_suit)
+        .                                       decl_vals[p] |= (uint16_t)(1u << tbl[k].value);
+        .                               }
+        .                           }
+        .                           break;
+        .                       case LOG_DEFENDER_CHANGE:
+      369 ( 0.00%)                  cur_def = L->defender_index;
+        .                           break;
+        .                       case LOG_PICKUP:
+      835 ( 0.00%)                  if (p >= 0) { hand_n[p] += tbl_n; decl_vals[p] = 0; }
+      167 ( 0.00%)                  if (p >= 0 && p != bot_idx) {
+        .                               // Exactly one uncovered attack => defender held no cover.
+      430 ( 0.00%)                      if (unc_n == 1 && B->void_n[p] < OG_MAX_VOIDS) {
+      602 ( 0.00%)                          B->voids[p][B->void_n[p]++] = unc[0];
+        .                               }
+      860 ( 0.00%)                      for (int k = 0; k < tbl_n; k++) og_pinned_add(B, p, tbl[k]);
+      430 ( 0.00%)                      B->floor_v[p] = 0;   // hand gained cards
+        .                           }
+        .                           tbl_n = 0;
+        .                           unc_n = 0;
+        .                           break;
+        .                       case LOG_DISCARD:
+    3,841 ( 0.00%)                  for (int k = 0; k < tbl_n && disc_n < 160; k++) discards[disc_n++] = tbl[k];
+    2,756 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (167x)
+        .                           tbl_n = 0;
+        .                           unc_n = 0;
+        .                           break;
+        .                       case LOG_DRAW:
+    3,094 ( 0.00%)                  if (p >= 0) { hand_n[p] += L->num_pairs; decl_vals[p] = 0; }
+      442 ( 0.00%)                  if (p >= 0 && p != bot_idx) {
+      217 ( 0.00%)                      B->void_n[p] = 0;    // new unknown cards: constraints expire
+      217 ( 0.00%)                      B->floor_v[p] = 0;
+      440 ( 0.00%)                      if (i == flip_log_idx) {
+        .                                   // Deck just ran dry: this seat picked up the face-up
+        .                                   // trump, watched all game, so pin it. Its identity is the
+        .                                   // LAST card of this record (drawn once the deck emptied)
+        .                                   // and is the one REVEALED draw in the masked belief stream
+        .                                   // (other draws arrive {-1,-1}). Read it from the LOG, not
+        .                                   // g->flipped: the wire serializer zeroes g->flipped to
+        .                                   // {0,0} once has_flipped goes false (view.c), so the
+        .                                   // resident kernel state no longer carries the real card —
+        .                                   // pinning g->flipped there phantom-pins {0,0}.
+        .                                   if (L->num_pairs > 0) {
+       21 ( 0.00%)                              Card fc = L->pairs[L->num_pairs - 1].primary;
+        6 ( 0.00%)                              if (fc.value >= 0 && fc.suit >= 0) og_pinned_add(B, p, fc);
+        .                                   }
+        .                               }
+        .                           }
+        .                           break;
+        .                       case LOG_PLAYER_OUT:
+        .                           in_now--;
+        .                           break;
+        .                       default:
+-- line 439 ----------------------------------------
+-- line 440 ----------------------------------------
+        .                           break;
+        .                   }
+        .               }
+        .           
+        .               // Behavior-based trust: lowest-first attackers almost never lead trump
+        .               // while the deck is alive, so one strike kills floors. Voids are NOT
+        .               // gated this way — a trump lead can be forced (all-trump hand), and the
+        .               // 1-in-4 unconstrained world mixture already absorbs void violators.
+      616 ( 0.00%)      for (int p = 0; p < g->num_players; p++) {
+      176 ( 0.00%)          B->trump_leads[p] = trump_viol[p];
+      264 ( 0.00%)          if (trump_viol[p] >= 1) { B->distrust_floor[p] = true; B->floor_v[p] = 0; }
+        .               }
+        .           
+        .               // Semtex adaptivity: a proven void contradiction means the seat picks up
+        .               // strategically while holding cover — an MC bot (cordite family) or a
+        .               // thinking human. Both floor and void inference model heuristic-family
+        .               // opponents and are wrong for such seats; drop them for the rest of the
+        .               // game (no draw-expiry reset — the tell is about the PLAYER, not the hand).
+       88 ( 0.00%)      if (og_adapt) {
+      396 ( 0.00%)          for (int p = 0; p < g->num_players; p++) {
+      264 ( 0.00%)              if (!B->mc_tell[p]) continue;
+       18 ( 0.00%)              B->void_n[p] = 0;
+       18 ( 0.00%)              B->floor_v[p] = 0;
+       18 ( 0.00%)              B->distrust_void[p] = true;
+       18 ( 0.00%)              B->distrust_floor[p] = true;
+        .                   }
+        .               }
+        .           
+        .               // Semtex weak-seat profile (fulminate's lever, conservatively gated): a
+        .               // seat that burns trumps while the deck is alive at a rate no strong or
+        .               // heuristic bot exhibits is rolled out with the LOOSE model instead of
+        .               // handwritten. Evidence: deck-alive trump share ramped over [0.40, 0.60]
+        .               // (needs >= 14 observed cards), plus repeated deck-alive trump attacks.
+       88 ( 0.00%)      if (og_profile) {
+        .                   for (int p = 0; p < g->num_players; p++) {
+        .                       if (p == bot_idx) continue;
+        .                       double conf = 0.0;
+        .                       if (B->cards_played[p] >= 14) {
+        .                           double r = (double)B->trumps_played[p] / (double)B->cards_played[p];
+        .                           double ramp = (r - 0.40) / 0.20;
+        .                           if (ramp < 0) ramp = 0;
+        .                           if (ramp > 1) ramp = 1;
+-- line 481 ----------------------------------------
+-- line 487 ----------------------------------------
+        .                           B->loose[p] = true;
+        .                           B->void_n[p] = 0;    // weak seats don't obey cover-if-you-can
+        .                           B->floor_v[p] = 0;   // ...or lowest-first attacks
+        .                       }
+        .                   }
+        .               }
+        .           
+        .               // Players that left the game hold nothing.
+      484 ( 0.00%)      for (int p = 0; p < g->num_players; p++) {
+      308 ( 0.00%)          if (p == bot_idx) { B->pinned_n[p] = 0; B->void_n[p] = 0; B->floor_v[p] = 0; continue; }
+       88 ( 0.00%)          if (g->players[p].status != PLAYER_STATUS_IN) {
+        .                       B->pinned_n[p] = 0;
+        .                       B->void_n[p] = 0;
+        .                       B->floor_v[p] = 0;
+        .                   }
+      176 ( 0.00%)          if (B->pinned_n[p] > g->players[p].hand_count) {
+        .                       B->pinned_n[p] = g->players[p].hand_count;  // defensive clamp
+        .                   }
+        .               }
+        .           
+        .               // Unseen pool = full deck minus everything publicly located.
+        .               Card known[160];
+        .               int kn = 0;
+       44 ( 0.00%)      const Player *bot = &g->players[bot_idx];
+      400 ( 0.00%)      for (int j = 0; j < bot->hand_count; j++) known[kn++] = bot->hand[j];
+      658 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (44x)
+      929 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+      244 ( 0.00%)      for (int i = 0; i < g->num_battles; i++) {
+      208 ( 0.00%)          known[kn++] = g->table_battles[i].attack;
+      155 ( 0.00%)          if (!card_is_none(g->table_battles[i].defense)) known[kn++] = g->table_battles[i].defense;
+        .               }
+      244 ( 0.00%)      if (g->has_flipped) known[kn++] = g->flipped;
+      928 ( 0.00%)      for (int i = 0; i < disc_n && kn < 160; i++) known[kn++] = discards[i];
+      553 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (42x)
+      672 ( 0.00%)      for (int p = 0; p < g->num_players; p++) {
+      516 ( 0.00%)          for (int j = 0; j < B->pinned_n[p] && kn < 160; j++) {
+       60 ( 0.00%)              known[kn++] = B->pinned[p][j];
+      325 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (20x)
+        .                   }
+        .               }
+        .           
+        .               int start_v = min_value_for(g->num_players);
+       44 ( 0.00%)      B->n = 0;
+        .               for (int suit = 0; suit < 4; suit++) {
+    4,972 ( 0.00%)          for (int v = start_v; v <= ACE_VALUE; v++) {
+    2,772 ( 0.00%)              Card c = { (int8_t)suit, (int8_t)v };
+    4,224 ( 0.00%)              if (!og_set_contains(known, kn, c)) B->pool[B->n++] = c;
+        .                   }
+        .               }
+        .           
+        .               // Feasibility: if constraints leave fewer allowed pool cards than the
+        .               // player's unknown count, relax floors first, then voids.
+    1,144 ( 0.00%)      for (int p = 0; p < g->num_players; p++) {
+      436 ( 0.00%)          if (B->void_n[p] == 0 && B->floor_v[p] == 0) continue;
+        6 ( 0.00%)          int unknown = g->players[p].hand_count - B->pinned_n[p];
+        4 ( 0.00%)          if (unknown <= 0) continue;
+        .                   int allowed = 0;
+      155 ( 0.00%)          for (int i = 0; i < B->n; i++) {
+      255 ( 0.00%)              if (!og_void_forbidden(B, g, p, B->pool[i])
+        .                           && !og_floor_forbidden(B, g, p, B->pool[i])) allowed++;
+        .                   }
+        4 ( 0.00%)          if (allowed < unknown && B->floor_v[p] > 0) {
+        .                       B->floor_v[p] = 0;
+        .                       allowed = 0;
+        .                       for (int i = 0; i < B->n; i++) {
+        .                           if (!og_void_forbidden(B, g, p, B->pool[i])) allowed++;
+        .                       }
+        .                   }
+       24 ( 0.00%)          if (allowed < unknown) B->void_n[p] = 0;
+        .               }
+        .           }
+        .           
+        .           // ---------- world sampling ------------------------------------------------
+        .           
+        .           // Sample one consistent world. The world keeps only LOG_DISCARD entries of
+        .           // the real log (all any rollout policy reads), so downstream trial clones
+        .           // stay small. Constraint-violating dealt cards are repaired by swapping with
+-- line 559 ----------------------------------------
+-- line 561 ----------------------------------------
+        .           static _Thread_local int og_full_logs = 0;   // OG_FULL_LOGS=1: bp-style worlds
+        .           
+        .           static void og_sample_world(Game *g_out, const Game *g_in, int my_idx,
+        .                                       const Belief *B, uint32_t seed,
+        .                                       bool apply_voids, bool apply_floors) {
+        .               // OG_FULL_LOGS (research, bp-style worlds) needs the whole log array —
+        .               // only possible when the world slot is full-size (WORLD_LOG_CAP == 0,
+        .               // every native build); under short slots it degrades to the filter.
+  108,864 ( 0.00%)      if (og_full_logs && WORLD_LOG_CAP == 0) {
+        .                   game_clone(g_out, g_in);
+        .               } else {
+  145,152 ( 0.00%)          memcpy(g_out, g_in, offsetof(Game, logs));
+4,971,456 ( 0.04%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (36,288x)
+        .                   int nl = 0;
+9,633,600 ( 0.07%)          for (int i = 0; i < g_in->num_logs; i++) {
+3,704,832 ( 0.03%)              if (g_in->logs[i].log_type != LOG_DISCARD) continue;
+        .                       if (WORLD_LOG_CAP > 0 && nl >= WORLD_LOG_CAP) break;  // crafted states only
+1,575,936 ( 0.01%)              g_out->logs[nl++] = g_in->logs[i];
+3,939,840 ( 0.03%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (131,328x)
+        .                   }
+   36,288 ( 0.00%)          g_out->num_logs = nl;
+        .                   // Mark short slots so log_alloc applies the same discard filter to
+        .                   // rollout appends (see game.h); 0 on native keeps full capacity.
+   36,288 ( 0.00%)          g_out->log_cap  = WORLD_LOG_CAP;
+   72,576 ( 0.00%)          g_out->log_virt = (int16_t)nl;
+        .               }
+        .           
+  575,424 ( 0.00%)      for (int i = 0; i < g_in->num_players; i++) {
+  145,152 ( 0.00%)          if (i == my_idx) continue;
+  273,024 ( 0.00%)          for (int k = 0; k < B->pinned_n[i]; k++) {
+  100,224 ( 0.00%)              g_out->players[i].hand[k] = B->pinned[i][k];
+        .                   }
+        .               }
+        .           
+        .               Card hidden[80];
+   72,576 ( 0.00%)      int hn = B->n;
+  254,016 ( 0.00%)      for (int i = 0; i < hn; i++) hidden[i] = B->pool[i];
+  463,968 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (36,288x)
+        .               if (hn == 0) return;
+        .           
+        .               uint32_t s = seed ? seed : 0xCAFEu;
+1,931,040 ( 0.01%)      for (int i = hn - 1; i > 0; i--) {
+        .                   s = og_xorshift(s);
+1,368,576 ( 0.01%)          int j = (int)(s % (uint32_t)(i + 1));
+1,824,768 ( 0.01%)          Card sw = hidden[i]; hidden[i] = hidden[j]; hidden[j] = sw;
+        .               }
+        .           
+        .               // Deal: deck first, then each opponent's unknown slots.
+        .               int k = 0;
+   72,576 ( 0.00%)      int deck_n = g_in->deck_count;
+  373,248 ( 0.00%)      for (int i = 0; i < deck_n && k < hn; i++) g_out->deck[i] = hidden[k++];
+  479,520 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (33,696x)
+        .           
+        .               typedef struct { int player, slot; } SlotRef;
+        .               SlotRef slots[80];
+        .               int ns = 0;
+  681,696 ( 0.01%)      for (int i = 0; i < g_in->num_players; i++) {
+  145,152 ( 0.00%)          if (i == my_idx) continue;
+  108,864 ( 0.00%)          int need = g_in->players[i].hand_count - B->pinned_n[i];
+1,399,680 ( 0.01%)          for (int j = 0; j < need && k < hn; j++) {
+  590,976 ( 0.00%)              g_out->players[i].hand[B->pinned_n[i] + j] = hidden[k];
+  147,744 ( 0.00%)              slots[ns].player = i;
+  443,232 ( 0.00%)              slots[ns].slot = B->pinned_n[i] + j;
+        .                       ns++;
+        .                       k++;
+        .                   }
+        .               }
+        .           
+  163,296 ( 0.00%)      if (!apply_voids && !apply_floors) return;
+  468,504 ( 0.00%)      for (int si = 0; si < ns; si++) {
+  110,808 ( 0.00%)          int p = slots[si].player;
+  332,424 ( 0.00%)          bool use_v = apply_voids && B->void_n[p] > 0;
+  369,360 ( 0.00%)          bool use_f = apply_floors && B->floor_v[p] > 0;
+  445,608 ( 0.00%)          if (!use_v && !use_f) continue;
+   42,768 ( 0.00%)          Card c = g_out->players[p].hand[slots[si].slot];
+   14,256 ( 0.00%)          bool bad = (use_v && og_void_forbidden(B, g_in, p, c))
+    8,172 ( 0.00%)                  || (use_f && og_floor_forbidden(B, g_in, p, c));
+        .                   if (!bad) continue;
+   43,996 ( 0.00%)          for (int d = 0; d < deck_n; d++) {
+    9,478 ( 0.00%)              Card dc = g_out->deck[d];
+        .                       bool dc_bad = (use_v && og_void_forbidden(B, g_in, p, dc))
+    6,084 ( 0.00%)                         || (use_f && og_floor_forbidden(B, g_in, p, dc));
+        .                       if (!dc_bad) {
+    3,042 ( 0.00%)                  g_out->deck[d] = c;
+    6,084 ( 0.00%)                  g_out->players[p].hand[slots[si].slot] = dc;
+        .                           break;
+        .                       }
+        .                   }
+        .               }
+        .           }
+        .           
+        .           // ---------- exact solver (shared by root + rollout leaves) -----------------
+        .           
+-- line 649 ----------------------------------------
+-- line 661 ----------------------------------------
+        .               SolveMoves *mv;      // [OG_SOLVE_MAX_DEPTH]
+        .           } Solver;
+        .           
+        .           static _Thread_local SolveMoves *og_solver_mv = NULL;
+        .           
+        .           _Static_assert(OG_SOLVE_MAX_DEPTH <= SOLVE_SCRATCH_DEPTH,
+        .                          "shared solver scratch shallower than this family's depth");
+        .           static bool og_solver_ready(void) {
+       30 ( 0.00%)      if (!og_solver_mv) {
+        2 ( 0.00%)          og_solver_mv = solve_scratch_mv();
+        6 ( 0.00%)  => /home/user/foolish/c/src/cordite_sim.c:solve_scratch_mv (1x)
+        .               }
+        1 ( 0.00%)      return og_solver_mv != NULL;
+        .           }
+        .           
+        .           // Value in [-1000, 1000] from `me`'s perspective: positive = me escaping,
+        .           // negative = me as durak. Magnitude prefers faster wins / slower losses.
+        .           static int og_solve(Solver *S, const Game *g, int alpha, int beta, int depth) {
+        .               int loser = game_done(g);
+        .               if (loser >= 0) return (loser == S->me) ? -(1000 - depth) : (1000 - depth);
+        .               if (og_in_count(g) == 0) return 0;   // defensive: simultaneous out
+-- line 680 ----------------------------------------
+-- line 991 ----------------------------------------
+        .           // deck is empty (the unseen pool IS the opponent's hand — public deduction).
+        .           // Returns the fastest forced-win index, or -1. When no win exists, sets
+        .           // forced_loss[i] for root moves that lose under optimal play; the MC stage
+        .           // avoids them whenever at least one non-losing move exists.
+        .           static int og_try_endgame_solve(const Game *g, int bot_idx,
+        .                                           const LegalMoves *moves, const Belief *B,
+        .                                           bool *forced_loss, int *n_safe) {
+        .               *n_safe = moves->n;
+       98 ( 0.00%)      if (g->deck_count > 0 || g->has_flipped) return -1;
+       10 ( 0.00%)      if (og_in_count(g) != 2) return -1;
+       10 ( 0.00%)      if (g->players[bot_idx].status != PLAYER_STATUS_IN) return -1;
+        .           
+        .               int opp = -1;
+       70 ( 0.00%)      for (int i = 0; i < g->num_players; i++) {
+       51 ( 0.00%)          if (i != bot_idx && g->players[i].status == PLAYER_STATUS_IN) opp = i;
+        .               }
+       10 ( 0.00%)      if (opp < 0) return -1;
+        .           
+       20 ( 0.00%)      int unknown = g->players[opp].hand_count - B->pinned_n[opp];
+       25 ( 0.00%)      if (unknown < 0 || unknown != B->n) return -1;  // deduction failed; bail
+        .           
+       10 ( 0.00%)      int total = g->players[bot_idx].hand_count + g->players[opp].hand_count;
+       10 ( 0.00%)      if (total > og_solve_cards) return -1;
+        .           
+        1 ( 0.00%)      if (!og_solver_ready()) return -1;
+        .           
+        5 ( 0.00%)      Game *root = solve_scratch_root();
+       30 ( 0.00%)  => /home/user/foolish/c/src/cordite_sim.c:solve_scratch_root (5x)
+       15 ( 0.00%)      solve_clone_root(root, g);
+      750 ( 0.00%)  => /home/user/foolish/c/src/cordite_sim.c:solve_clone_root (5x)
+       48 ( 0.00%)      for (int k = 0; k < B->pinned_n[opp]; k++) {
+       10 ( 0.00%)          root->players[opp].hand[k] = B->pinned[opp][k];
+        .               }
+       42 ( 0.00%)      for (int k = 0; k < B->n; k++) {
+       20 ( 0.00%)          root->players[opp].hand[B->pinned_n[opp] + k] = B->pool[k];
+        .               }
+        .           
+        .               // Fast path: solve on the compact bitboard engine (transposition table +
+        .               // O(1) clone + bitmask move-gen). The bitboard solver returns the exact
+        .               // same value as the struct solver when resolved (validated by
+        .               // tests/solver_difftest.c), and resolves more positions within budget.
+        .               // OG_NO_BBSOLVE=1 falls back to the struct solver for A/B.
+       39 ( 0.00%)      bool bbsolve = !og_flag("OG_NO_BBSOLVE");
+        .               SimState root_sim;
+       10 ( 0.00%)      if (bbsolve) cd_sim_from_game(&root_sim, root);
+    1,414 ( 0.00%)  => /home/user/foolish/c/src/cordite_sim.c:cd_sim_from_game (5x)
+        5 ( 0.00%)      cd_sim_solve_reset();
+  163,975 ( 0.00%)  => /home/user/foolish/c/src/cordite_sim.c:cd_sim_solve_reset (5x)
+        .           
+        .               // OG_EXPLAIN: record an EXACT full-window verdict for every root move
+        .               // (win/loss/draw/unknown), for the deliberation dump. This is a pure probe
+        .               // — it runs its own budget, then resets the transposition table so the real
+        .               // pruned win-hunt below starts cold exactly as it would with the var unset.
+        .               // Nothing here executes when OG_EXPLAIN is not set.
+        .           #ifdef OG_EXPLAIN_BUILD
+        .               // The verdict probe runs a full exact solve per root move BEFORE the real
+-- line 1042 ----------------------------------------
+-- line 1063 ----------------------------------------
+        .                       og_ex_verdict[i] = (ab || eb <= 0) ? OG_EX_UNKNOWN_V : v;
+        .                   }
+        .                   cd_sim_solve_reset();                       // cold TT for the real solve
+        .                   random_strategy_set_seed(og_ex_rng_save);   // unperturbed strategy RNG
+        .               }
+        .           #endif  // OG_EXPLAIN_BUILD
+        .           
+        .               Solver S;
+        5 ( 0.00%)      S.budget  = OG_SOLVE_BUDGET;
+        .               S.aborted = false;
+       10 ( 0.00%)      S.me      = bot_idx;
+       10 ( 0.00%)      S.mv      = og_solver_mv;
+       10 ( 0.00%)      long win_budget   = bbsolve ? (long)og_bb_win_budget   : OG_SOLVE_BUDGET;
+        5 ( 0.00%)      long avoid_budget = bbsolve ? (long)og_bb_avoid_budget : OG_AVOID_BUDGET;
+        5 ( 0.00%)      long budget = win_budget;
+        .           
+        .               // Pass 1 — win hunt (blackpowder's loop): fail-soft with an accumulating
+        .               // alpha floor at 0, so losing subtrees prune immediately.
+        .               // OG_BP_SOLVE=1 reverts to blackpowder's exact semantics (alpha starts
+        .               // wide open, any abort bails the whole solve) for A/B testing.
+        .               int best_idx = -1;
+        .               int best_v = 0;       // only accept strictly winning lines
+       15 ( 0.00%)      int alpha = og_flag("OG_BP_SOLVE") ? -2000 : 0;
+        .               bool bail_on_abort = (alpha == -2000);
+        .               bool any_abort = false;
+      155 ( 0.00%)      for (int i = 0; i < moves->n; i++) {
+        .                   int v, aborted_i;
+       16 ( 0.00%)          if (bbsolve) {
+       80 ( 0.00%)              SimState child = root_sim;
+    1,040 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (16x)
+       96 ( 0.00%)              if (!cd_sim_apply_root_move(&child, bot_idx, &moves->moves[i])) continue;
+    2,488 ( 0.00%)  => /home/user/foolish/c/src/cordite_sim.c:cd_sim_apply_root_move (16x)
+      144 ( 0.00%)              v = cd_sim_solve_d(&child, bot_idx, alpha, 2000, &budget, 1, &aborted_i);
+   87,540 ( 0.00%)  => /home/user/foolish/c/src/cordite_sim.c:cd_sim_solve_d (16x)
+       32 ( 0.00%)              if (budget <= 0) return -1;   // shared budget drained: no claims
+        .                   } else {
+        .                       // Slot 0 is free here: og_solve starts the recursion at depth 1.
+        .                       Game *child = solve_scratch_child(0);
+        .                       solve_clone_prefix(child, root);
+        .                       if (!og_apply(child, bot_idx, &moves->moves[i])) continue;
+        .                       S.aborted = false;
+        .                       v = og_solve(&S, child, alpha, 2000, 1);
+        .                       aborted_i = S.aborted;
+        .                       if (S.budget <= 0) return -1;
+        .                   }
+       64 ( 0.00%)          if (aborted_i) { if (bail_on_abort) return -1; any_abort = true; continue; }
+       48 ( 0.00%)          if (v > best_v) { best_v = v; best_idx = i; }
+       32 ( 0.00%)          if (v > alpha) alpha = v;
+        .               }
+       10 ( 0.00%)      if (best_idx >= 0) return best_idx;
+        9 ( 0.00%)      if (og_no_avoid || any_abort) return -1;
+        6 ( 0.00%)      if (total > og_avoid_cards) return -1;   // extended window: win hunt only
+        .           
+        .               // Pass 2 — loss avoidance: no win exists, so classify each move with a
+        .               // null window around 0 (sign only, maximal pruning).
+        3 ( 0.00%)      S.budget = OG_AVOID_BUDGET;
+        3 ( 0.00%)      budget = avoid_budget;
+        .               int n_loss = 0, n_nonloss = 0;
+       81 ( 0.00%)      for (int i = 0; i < moves->n; i++) {
+        .                   int v, aborted_i;
+        3 ( 0.00%)          if (bbsolve) {
+       50 ( 0.00%)              SimState child = root_sim;
+      650 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (10x)
+       70 ( 0.00%)              if (!cd_sim_apply_root_move(&child, bot_idx, &moves->moves[i])) continue;
+    1,561 ( 0.00%)  => /home/user/foolish/c/src/cordite_sim.c:cd_sim_apply_root_move (10x)
+       10 ( 0.00%)              aborted_i = 0;
+       90 ( 0.00%)              v = cd_sim_solve_d(&child, bot_idx, -1, 0, &budget, 1, &aborted_i);
+   15,361 ( 0.00%)  => /home/user/foolish/c/src/cordite_sim.c:cd_sim_solve_d (10x)
+       20 ( 0.00%)              if (budget <= 0) aborted_i = 1;
+        .                   } else {
+        .                       Game *child = solve_scratch_child(0);
+        .                       solve_clone_prefix(child, root);
+        .                       if (!og_apply(child, bot_idx, &moves->moves[i])) continue;
+        .                       S.aborted = false;
+        .                       v = og_solve(&S, child, -1, 0, 1);
+        .                       aborted_i = (S.budget <= 0) || S.aborted;
+        .                   }
+       20 ( 0.00%)          if (aborted_i) continue;   // unknown
+       40 ( 0.00%)          if (v < 0) { forced_loss[i] = true; n_loss++; }
+        .                   else n_nonloss++;
+        .               }
+        .               // Only restrict when some move is PROVEN non-losing — otherwise the
+        .               // "safe" set would just be the moves the solver failed to read (adverse
+        .               // selection), while MC models the imperfect opponent better anyway.
+       27 ( 0.00%)      if (n_loss > 0 && n_nonloss > 0) {
+        .                   *n_safe = moves->n - n_loss;
+        .               } else {
+       15 ( 0.00%)          for (int i = 0; i < moves->n; i++) forced_loss[i] = false;
+       51 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms (3x)
+        .                   *n_safe = moves->n;
+        .               }
+        .               return -1;
+        .           }
+        .           
+        .           // ---------- candidate selection -------------------------------------------
+        .           
+        .           #define OG_MAX_CANDS 26
+-- line 1152 ----------------------------------------
+-- line 1154 ----------------------------------------
+        .           typedef struct {
+        .               int idx[OG_MAX_CANDS];
+        .               int n;
+        .           } Candidates;
+        .           
+        .           static void og_ranked_insert(int *idxs, double *keys, int *n, int cap,
+        .                                        int idx, double key) {
+        .               int pos = *n;
+    2,627 ( 0.00%)      while (pos > 0 && keys[pos - 1] > key) pos--;
+      232 ( 0.00%)      if (pos >= cap) return;
+    1,316 ( 0.00%)      int last = (*n < cap) ? *n : cap - 1;
+    2,432 ( 0.00%)      for (int i = last; i > pos; i--) { idxs[i] = idxs[i - 1]; keys[i] = keys[i - 1]; }
+      627 ( 0.00%)      idxs[pos] = idx; keys[pos] = key;
+      395 ( 0.00%)      if (*n < cap) (*n)++;
+        .           }
+        .           
+        .           static void og_pick_candidates(const Game *g, const LegalMoves *moves,
+       42 ( 0.00%)                                 const bool *excluded, Candidates *out) {
+        .               int power = g->power_suit;
+        .           
+        .               int atk[12];  double atk_k[12];  int n_atk = 0;
+        .               int cov[10];  double cov_k[10];  int n_cov = 0;
+        .               int pas[3];   double pas_k[3];   int n_pas = 0;
+        .               int good_idx = -1, pickup_idx = -1;
+        .           
+    2,276 ( 0.00%)      for (int i = 0; i < moves->n; i++) {
+      466 ( 0.00%)          if (excluded[i]) continue;
+      233 ( 0.00%)          const LegalMove *m = &moves->moves[i];
+    1,398 ( 0.00%)          switch (m->type) {
+        .                       case MOVE_ATTACK: {
+        .                           int sum = 0;
+    1,124 ( 0.00%)                  for (int j = 0; j < m->n_cards; j++) sum += og_card_score(m->cards[j], power);
+        .                           og_ranked_insert(atk, atk_k, &n_atk, 12, i,
+      728 ( 0.00%)                                   -(double)m->n_cards * 10000.0 + (double)sum);
+        .                           break;
+        .                       }
+        .                       case MOVE_COVER: {
+        .                           double prod = 1.0;
+    1,294 ( 0.00%)                  for (int j = 0; j < m->n_cards; j++) prod *= (double)og_card_score(m->cards[j], power);
+        .                           og_ranked_insert(cov, cov_k, &n_cov, 10, i,
+      460 ( 0.00%)                                   prod - (double)m->n_cards * 0.5);
+        .                           break;
+        .                       }
+        .                       case MOVE_PASS: {
+        .                           int sum = 0;
+       96 ( 0.00%)                  for (int j = 0; j < m->n_cards; j++) sum += og_card_score(m->cards[j], power);
+       18 ( 0.00%)                  og_ranked_insert(pas, pas_k, &n_pas, 3, i, (double)sum);
+        .                           break;
+        .                       }
+        .                       case MOVE_GOOD:   good_idx = i;   break;
+        .                       case MOVE_PICKUP: pickup_idx = i; break;
+        .                       default: break;
+        .                   }
+        .               }
+        .           
+       42 ( 0.00%)      out->n = 0;
+    1,247 ( 0.00%)      for (int i = 0; i < n_atk && out->n < OG_MAX_CANDS; i++) out->idx[out->n++] = atk[i];
+    1,033 ( 0.00%)      for (int i = 0; i < n_cov && out->n < OG_MAX_CANDS; i++) out->idx[out->n++] = cov[i];
+      195 ( 0.00%)      for (int i = 0; i < n_pas && out->n < OG_MAX_CANDS; i++) out->idx[out->n++] = pas[i];
+      114 ( 0.00%)      if (good_idx >= 0 && out->n < OG_MAX_CANDS)   out->idx[out->n++] = good_idx;
+      516 ( 0.00%)      if (pickup_idx >= 0 && out->n < OG_MAX_CANDS) out->idx[out->n++] = pickup_idx;
+       42 ( 0.00%)  }
+        .           
+        .           // ---------- main MC ---------------------------------------------------------
+        .           
+        .           // Worlds per decision (W1: all candidates, W2: surviving third, W3: final
+        .           // top-2 duel). Compact worlds + early rollout exits buy ~2-3x blackpowder's
+        .           // sampling budget at comparable wall-clock.
+        .           static void og_params(int num_players, int *W1, int *W2, int *W3) {
+        .               // ~2x the blackpowder-era budget. The compact bitboard rollout (~4x faster
+-- line 1223 ----------------------------------------
+-- line 1231 ----------------------------------------
+        .               // semtex lost the pc2 cordite mirror, a 6x-worlds oracle won 66% (noise
+        .               // control: 10%) — heads-up vs a strong opponent was variance-limited,
+        .               // not saturated (the old saturation result was measured on weaker
+        .               // fields / the TS engine, which already ran ~3x). Paired aggregate,
+        .               // three seed sets: -0.168/-0.138/-0.173 mean finish, +14..+17pp win vs
+        .               // the cordite control (vs -0.135/+13.5pp at 1x). Worlds only — wider
+        .               // candidate survival added nothing (keeps-only: -0.133). 2x/3x were NOT
+        .               // reliable stops (-0.130/-0.093); the measured knee is at ~6x.
+      126 ( 0.00%)      if (num_players <= 2)      { *W1 = 192; *W2 = 336; *W3 = 336; }
+        .               // 3+ players: 6x cordite's C budget (hunt-3 finding). The rescue tests
+        .               // showed pc4/pc6 losses were also compute-limited, but the aggregate
+        .               // mirror gain is small (opponent MC noise dominates MC-vs-MC outcomes);
+        .               // the real payoff is against HEURISTIC fields — the human proxies —
+        .               // where the same budget is worth +5..+8pp win at pc3/pc4 (paired vs the
+        .               // cordite control, seeds 950001: pc3 -0.087+-0.041 / 67.2% vs 59.5%,
+        .               // pc4 -0.135+-0.053 / 39.8% vs 34.8%, attribution clean: the default
+        .               // played 400/400 pairs identically to cordite on those deals) and
+-- line 1247 ----------------------------------------
+-- line 1249 ----------------------------------------
+        .               // production TS cordite already ships (its v2.4 budget = 6x the C one).
+        .               else if (num_players <= 4) { *W1 = 168; *W2 = 336; *W3 = 336; }
+        .               else if (num_players <= 6) { *W1 = 240; *W2 = 480; *W3 = 336; }
+        .               else                       { *W1 = 240; *W2 = 480; *W3 = 288; }
+        .               // cordite_old: the pre-change 1x budget (half the above). The only
+        .               // strength-affecting change was doubling the budget — the rollout/solver
+        .               // rewrites are exact — so this gives a faithful "cordite before the changes"
+        .               // to play head-to-head against. Research-only.
+       84 ( 0.00%)      if (og_old_budget) {
+        .                   if (num_players <= 2)      { *W1 = 16; *W2 = 28; *W3 = 28; }
+        .                   else if (num_players <= 4) { *W1 = 14; *W2 = 28; *W3 = 28; }
+        .                   else if (num_players <= 6) { *W1 = 20; *W2 = 40; *W3 = 28; }
+        .                   else                       { *W1 = 20; *W2 = 40; *W3 = 24; }
+        .               }
+      504 ( 0.00%)      if (og_oracle) { *W1 *= 6; *W2 *= 6; *W3 *= 6; }
+      126 ( 0.00%)      if (og_w1_override > 0) *W1 = og_w1_override;
+      126 ( 0.00%)      if (og_w2_override > 0) *W2 = og_w2_override;
+      126 ( 0.00%)      if (og_w3_override >= 0) *W3 = og_w3_override;
+        .           }
+        .           
+        .           // OG_VERIFY=1: oracle self-check (test-only — reads real hands to validate
+        .           // the public-info belief, never to play).
+        .           static void og_verify_belief(const Game *g, int bot_idx, const Belief *B) {
+        .               for (int p = 0; p < g->num_players; p++) {
+        .                   if (p == bot_idx) continue;
+        .                   const Player *pl = &g->players[p];
+-- line 1274 ----------------------------------------
+-- line 1520 ----------------------------------------
+        .               fflush(og_ex_out);
+        .           #endif
+        .           }
+        .           #endif  // OG_EXPLAIN_BUILD
+        .           
+        .           static int octogen_choose_impl(const Game *g, int bot_idx,
+        .                                       const LegalMoves *moves, void *ctx) {
+        .               (void)ctx;
+      305 ( 0.00%)      if (moves->n == 0) return -1;
+        .               if (moves->n == 1) {
+        .           #ifdef OG_EXPLAIN_BUILD
+        .                   if (og_explain_on()) {
+        .                       og_ex_solve_applied = 0;
+        .                       Belief lb; og_build_belief(g, bot_idx, &lb);   // for the known-state dump only
+        .                       og_ex_emit(g, bot_idx, moves, &lb, NULL, NULL, NULL, NULL, NULL, 0, 0, -1);
+        .                   }
+        .           #endif
+        .                   return 0;
+        .               }
+        .           
+       88 ( 0.00%)      if (!og_flags_loaded) {
+        .           #ifdef OG_HIDE_UNCOVERABLE
+        .                   og_hide_mask = og_env_int("OG_HIDE_MASK", 0);
+        .           #endif
+        1 ( 0.00%)          og_no_solve  = og_flag("OG_NO_SOLVE");
+        1 ( 0.00%)          og_no_voids  = og_flag("OG_NO_VOIDS");
+        1 ( 0.00%)          og_no_flip   = og_flag("OG_NO_FLIP");
+        1 ( 0.00%)          og_no_floors = og_flag("OG_NO_FLOORS");
+        .                   // Exact leaf endgames in rollouts are OFF by default: measured both
+        .                   // slower and weaker vs the real (imperfect) opponent pool — modeling
+        .                   // actual opponents beats assuming perfect play. OG_LEAF=1 re-enables.
+        4 ( 0.00%)          og_no_leaf   = !og_flag("OG_LEAF");
+        1 ( 0.00%)          og_no_avoid  = og_flag("OG_NO_AVOID");
+        1 ( 0.00%)          og_verify    = og_flag("OG_VERIFY");
+        1 ( 0.00%)          og_w1_override = og_env_int("OG_W1", 0);
+        1 ( 0.00%)          og_w2_override = og_env_int("OG_W2", 0);
+        1 ( 0.00%)          og_w3_override = og_env_int("OG_W3", -1);
+        1 ( 0.00%)          og_keep1 = og_env_int("OG_KEEP1", 0);
+        1 ( 0.00%)          og_keep2 = og_env_int("OG_KEEP2", 0);
+        1 ( 0.00%)          og_rollout_policy = og_env_int("OG_ROLLOUT", 0);
+        3 ( 0.00%)          og_trump_keep = og_env_int("OG_TRUMP_KEEP", 40) / 1000.0;
+        1 ( 0.00%)          og_bb_win_budget = og_env_int("OG_BB_WIN", 400000);
+        1 ( 0.00%)          og_solve_cards = og_env_int("OG_SOLVE_CARDS", 28);
+        1 ( 0.00%)          og_avoid_cards = og_env_int("OG_AVOID_CARDS", 24);
+        1 ( 0.00%)          og_bb_avoid_budget = og_env_int("OG_BB_AVOID", 250000);
+        2 ( 0.00%)          og_leaf_budget = og_env_int("OG_LEAF_BUDGET", 1500);
+        1 ( 0.00%)          og_leaf_max_cards = og_env_int("OG_LEAF_CARDS", 10);
+        .                   og_floor_mod = og_env_int("OG_FLOOR_MOD", 2);
+        3 ( 0.00%)          if (og_floor_mod < 1) og_floor_mod = 1;
+        1 ( 0.00%)          og_full_logs = og_flag("OG_FULL_LOGS");
+        1 ( 0.00%)          og_no_earlyexit = og_flag("OG_NO_EARLYEXIT");
+        1 ( 0.00%)          og_no_fastroll = og_flag("OG_NO_FASTROLL");
+        1 ( 0.00%)          og_bbleaf = og_env_int("OG_BBLEAF", 2);
+        1 ( 0.00%)          og_adapt = og_env_int("OG_ADAPT", 1);
+        1 ( 0.00%)          og_reply = og_env_int("OG_REPLY", 0);
+        1 ( 0.00%)          og_mcdef = og_env_int("OG_MCDEF", 0);
+        1 ( 0.00%)          og_reply_cap = og_env_int("OG_REPLY_CAP", 6);
+        1 ( 0.00%)          og_reply_stage = og_env_int("OG_REPLY_STAGE", 2);
+        .                   og_void_mod = og_env_int("OG_VOID_MOD", 4);
+        2 ( 0.00%)          if (og_void_mod < 2) og_void_mod = 2;
+        1 ( 0.00%)          og_profile = og_env_int("OG_PROFILE", 0);
+        1 ( 0.00%)          og_bbleaf_cards = og_env_int("OG_BBLEAF_CARDS", 0);
+        1 ( 0.00%)          og_bbleaf_cards2 = og_env_int("OG_BBLEAF_CARDS2", 8);
+        2 ( 0.00%)          og_bbleaf_budget = og_env_int("OG_BBLEAF_BUDGET", 3000);
+        1 ( 0.00%)          og_difftest = og_flag("OG_DIFFTEST");
+        2 ( 0.00%)          if (og_difftest) { void og_difftest_report(void); atexit(og_difftest_report); }
+        1 ( 0.00%)          og_flags_loaded = 1;
+        .               }
+        .           
+       44 ( 0.00%)      uint32_t saved_rng = game_rng_get();
+      220 ( 0.00%)  => /home/user/foolish/c/src/game.c:game_rng_get (44x)
+        .           
+        .               Belief B;
+        .               og_build_belief(g, bot_idx, &B);
+       88 ( 0.00%)      if (og_no_voids) for (int p = 0; p < MAX_PLAYERS; p++) B.void_n[p] = 0;
+      132 ( 0.00%)      if (og_verify) og_verify_belief(g, bot_idx, &B);
+        .           
+        .               // Player-count gate for the leaf lever (see og_bbleaf comment). In the
+        .               // pc-aware default mode heads-up uses the small-leaf threshold.
+      264 ( 0.00%)      og_bbleaf_on = (og_bbleaf != 0);
+      396 ( 0.00%)      og_bbleaf_cards_eff = (og_bbleaf == 2 && g->num_players == 2)
+        .                                   ? og_bbleaf_cards2 : og_bbleaf_cards;
+        .           
+        .               // Per-seat rollout policies: profiled-weak seats get the LOOSE model;
+        .               // proven-strategic seats (mc_tell) get the MC-defender model.
+      220 ( 0.00%)      og_polmap = NULL;
+        .               {
+        .                   bool any = false;
+      352 ( 0.00%)          for (int p = 0; p < g->num_players; p++) {
+       88 ( 0.00%)              og_polmap_buf[p] = CD_POL_HW;
+      176 ( 0.00%)              if (og_profile && B.loose[p]) { og_polmap_buf[p] = CD_POL_LOOSE; any = true; }
+      176 ( 0.00%)              else if (og_mcdef && B.mc_tell[p] && p != bot_idx) {
+        .                           og_polmap_buf[p] = CD_POL_MCDEF; any = true;
+        .                       }
+        .                   }
+       88 ( 0.00%)          if (any) og_polmap = og_polmap_buf;
+        .               }
+        .           
+        .               // Exact endgame: take a proven win; mark proven losses for exclusion.
+       88 ( 0.00%)      bool *forced_loss = forced_loss_scratch();
+      264 ( 0.00%)  => /home/user/foolish/c/src/cordite_sim.c:forced_loss_scratch (44x)
+      220 ( 0.00%)      memset(forced_loss, 0, (size_t)moves->n * sizeof(bool));
+      678 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms (44x)
+        .               int n_safe = moves->n;
+        .           #ifdef OG_EXPLAIN_BUILD
+        .               if (og_explain_on()) {
+        .                   og_ex_solve_applied = 0;
+        .                   for (int i = 0; i < (int)(sizeof(og_ex_verdict)/sizeof(og_ex_verdict[0])); i++)
+        .                       og_ex_verdict[i] = OG_EX_NONE_V;
+        .               }
+        .           #endif
+       88 ( 0.00%)      int solved = og_no_solve ? -1
+        .                          : og_try_endgame_solve(g, bot_idx, moves, &B, forced_loss, &n_safe);
+        .               if (solved >= 0) {
+        .           #ifdef OG_EXPLAIN_BUILD
+        .                   if (og_explain_on()) {
+        .                       Candidates EC; og_pick_candidates(g, moves, forced_loss, &EC);
+        .                       og_ex_emit(g, bot_idx, moves, &B, &EC, NULL, NULL, NULL, forced_loss,
+        .                                  solved, og_ex_solve_applied, solved);
+        .                   }
+        .           #endif
+        .                   game_rng_set(saved_rng);
+        .                   return solved;
+        .               }
+        .           
+        .               Candidates C;
+      252 ( 0.00%)      og_pick_candidates(g, moves, forced_loss, &C);
+   23,753 ( 0.00%)  => /home/user/foolish/c/src/octogen_strategy.c:og_pick_candidates (42x)
+      126 ( 0.00%)      if (C.n == 0) {
+        .                   // Everything we'd consider is a proven loss; fall back to all moves.
+        .                   memset(forced_loss, 0, (size_t)moves->n * sizeof(bool));
+        .                   og_pick_candidates(g, moves, forced_loss, &C);
+        .               }
+      168 ( 0.00%)      if (C.n == 0) {
+        .           #ifdef OG_EXPLAIN_BUILD
+        .                   if (og_explain_on())
+        .                       og_ex_emit(g, bot_idx, moves, &B, &C, NULL, NULL, NULL, forced_loss,
+        .                                  0, og_ex_solve_applied, -1);
+        .           #endif
+        .                   game_rng_set(saved_rng); return 0;
+        .               }
+        .               if (C.n == 1) {
+-- line 1657 ----------------------------------------
+-- line 1659 ----------------------------------------
+        .                   if (og_explain_on())
+        .                       og_ex_emit(g, bot_idx, moves, &B, &C, NULL, NULL, NULL, forced_loss,
+        .                                  C.idx[0], og_ex_solve_applied, -1);
+        .           #endif
+        .                   game_rng_set(saved_rng); return C.idx[0];
+        .               }
+        .           
+        .               int W1, W2, W3;
+       42 ( 0.00%)      og_params(g->num_players, &W1, &W2, &W3);
+        .           
+        .               // World-sampling seed. Depends ONLY on the SERVER-ONLY secret — the strategy
+        .               // LCG, reseeded per decision from state_fnv(g_rng_base) (see wasm_api.c) —
+        .               // and the deciding seat. It deliberately folds in NO other game state.
+        .               // Rationale: anything that seeds the RNG but is NOT recoverable from a shared
+        .               // replay makes a recorded game impossible to reproduce bit-exactly. num_logs
+        .               // (records the codec may drop), the ordered hands and the face-down deck are
+        .               // all either non-reproducible or hidden from the bot; a player could even
+        .               // perturb them (hand rearrange). Unpredictability still rests entirely on the
+        .               // secret deal seed — a source holder can't recompute it — and the W diverse
+        .               // wseeds within a decision come from (w+1) below, so MC coverage is intact.
+        .               // bot_idx only decorrelates co-seated bots in multi-bot games.
+       42 ( 0.00%)      uint32_t base = og_mix((uint32_t)bot_idx * 2654435761u, random_strategy_rng_get());
+      210 ( 0.00%)  => /home/user/foolish/c/src/game.c:random_strategy_rng_get (42x)
+        .           
+      588 ( 0.00%)      double score[OG_MAX_CANDS] = {0};
+      294 ( 0.00%)      int    nsim [OG_MAX_CANDS] = {0};
+        .               bool   alive[OG_MAX_CANDS];
+   36,582 ( 0.00%)      for (int i = 0; i < C.n; i++) alive[i] = true;
+      645 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms (42x)
+        .           
+        .               // Trump-conservation tie-break tax (added to a candidate's mean-finish score
+        .               // ONLY at selection; the raw MC scores in score[]/nsim[] are left untouched so
+        .               // the OG_EXPLAIN dump still shows true rollout values). Attacks only, deck
+        .               // alive only — leading/throwing a trump is discretionary spend; covering with
+        .               // one is forced defense and endgame trumps must be used.
+        .               double keep_pen[OG_MAX_CANDS];
+        .               {
+       90 ( 0.00%)          bool deck_alive = (g->deck_count > 0 || g->has_flipped);
+      813 ( 0.00%)          for (int i = 0; i < C.n; i++) {
+      229 ( 0.00%)              keep_pen[i] = 0.0;
+      458 ( 0.00%)              if (og_trump_keep > 0.0 && deck_alive) {
+      438 ( 0.00%)                  const LegalMove *m = &moves->moves[C.idx[i]];
+      438 ( 0.00%)                  if (m->type == MOVE_ATTACK)
+      530 ( 0.00%)                      for (int k = 0; k < m->n_cards; k++)
+      965 ( 0.00%)                          if (m->cards[k].suit == g->power_suit)
+       41 ( 0.00%)                              keep_pen[i] += og_trump_keep;
+        .                       }
+        .                   }
+        .               }
+        .           
+      126 ( 0.00%)      Game *world = world_scratch_game(), *trial = trial_scratch_game();
+      252 ( 0.00%)  => /home/user/foolish/c/src/cordite_sim.c:world_scratch_game (42x)
+      252 ( 0.00%)  => /home/user/foolish/c/src/cordite_sim.c:trial_scratch_game (42x)
+       84 ( 0.00%)      SimState *world_sim = world_scratch_sim(), *trial_sim = trial_scratch_sim();
+      252 ( 0.00%)  => /home/user/foolish/c/src/cordite_sim.c:trial_scratch_sim (42x)
+      252 ( 0.00%)  => /home/user/foolish/c/src/cordite_sim.c:world_scratch_sim (42x)
+        .           
+        .               // The fast bitboard path: convert each sampled WORLD to a compact SimState
+        .               // ONCE, then each candidate just clones the SimState, applies its move on
+        .               // bitboards, and plays out. The struct path (OG_NO_FASTROLL / OG_LEAF /
+        .               // OG_DIFFTEST) keeps the per-candidate Game clone for the leaf solver and
+        .               // the exact-equivalence difftest.
+      546 ( 0.00%)      bool fast_path = !og_no_fastroll && og_no_leaf && !og_difftest && !og_flag("OG_NO_WORLDSIM");
+        .           
+        .               // Stage 1: all candidates on W1 shared worlds.
+        .               // Stage 2: surviving third on W2 more shared worlds.
+        .               // Stage 3: top 2 duel on W3 final shared worlds.
+      378 ( 0.00%)      for (int stage = 0; stage < 3; stage++) {
+    1,050 ( 0.00%)          int w_lo = (stage == 0) ? 0 : (stage == 1) ? W1 : W1 + W2;
+      168 ( 0.00%)          int w_hi = (stage == 0) ? W1 : (stage == 1) ? W1 + W2 : W1 + W2 + W3;
+  181,692 ( 0.00%)          for (int w = w_lo; w < w_hi; w++) {
+   72,576 ( 0.00%)              uint32_t wseed = og_mix(base, (uint32_t)(w + 1) * 0x85EBCA77u);
+        .                       // Belief mixture: voids assume cover-if-you-can pickups (3 of 4
+        .                       // worlds), floors assume lowest-first attackers (every other
+        .                       // world). Per-player distrust already cleared bogus constraints.
+  437,400 ( 0.00%)              bool use_voids  = (w % og_void_mod) != og_void_mod - 1;
+  326,592 ( 0.00%)              bool use_floors = !og_no_floors && (w % og_floor_mod) == 0;
+        .                       og_sample_world(world, g, bot_idx, &B, wseed, use_voids, use_floors);
+        .                       uint32_t sim_rng = og_mix(wseed, 0x51AB1E5u);
+        .           
+   72,576 ( 0.00%)              if (fast_path) {
+   36,288 ( 0.00%)                  cd_sim_from_game(world_sim, world);     // convert world ONCE
+20,461,347 ( 0.15%)  => /home/user/foolish/c/src/cordite_sim.c:cd_sim_from_game (36,288x)
+  145,152 ( 0.00%)                  bool reply_stage = og_reply && stage >= og_reply_stage;
+  629,856 ( 0.00%)                  for (int ci = 0; ci < C.n; ci++) {
+  395,712 ( 0.00%)                      if (!alive[ci]) continue;
+  675,072 ( 0.01%)                      *trial_sim = *world_sim;            // cheap struct copy
+7,313,280 ( 0.05%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (112,512x)
+  225,024 ( 0.00%)                      game_rng_set(sim_rng);              // identical stream
+  787,584 ( 0.01%)  => /home/user/foolish/c/src/game.c:game_rng_set (112,512x)
+        .                               int fp;
+  675,072 ( 0.01%)                      if (!cd_sim_apply_root_move(trial_sim, bot_idx,
+21,038,578 ( 0.16%)  => /home/user/foolish/c/src/cordite_sim.c:cd_sim_apply_root_move (112,512x)
+  450,048 ( 0.00%)                                                  &moves->moves[C.idx[ci]])) {
+        .                                   fp = g->num_players;
+  225,024 ( 0.00%)                      } else if (reply_stage) {
+        .                                   fp = cd_sim_playout_reply(trial_sim, bot_idx, 600,
+        .                                                             og_bbleaf_on ? og_bbleaf_cards_eff : 0,
+        .                                                             og_bbleaf_budget, og_polmap,
+        .                                                             og_reply_cap);
+        .                                   if (fp == 0) fp = g->num_players;
+        .                               } else {
+  112,512 ( 0.00%)                          fp = (og_bbleaf_on || og_polmap)
+  562,560 ( 0.00%)                             ? cd_sim_playout_pol(trial_sim, bot_idx, 600,
+13,269,109,012 (99.22%)  => /home/user/foolish/c/src/cordite_sim.c:cd_sim_playout_pol (112,512x)
+  562,560 ( 0.00%)                                                  !og_no_earlyexit,
+  225,024 ( 0.00%)                                                  og_bbleaf_on ? og_bbleaf_cards_eff : 0,
+  337,536 ( 0.00%)                                                  og_bbleaf_budget, og_polmap)
+        .                                      : cd_sim_playout(trial_sim, bot_idx, 600, !og_no_earlyexit);
+        .                                   if (fp == 0) fp = g->num_players;
+        .                               }
+  450,048 ( 0.00%)                      score[ci] += (double)fp;
+  225,024 ( 0.00%)                      nsim[ci]++;
+        .                           }
+        .                           continue;
+        .                       }
+        .           
+        .                       for (int ci = 0; ci < C.n; ci++) {
+        .                           if (!alive[ci]) continue;
+        .                           og_lite_clone(trial, world);
+        .                           game_rng_set(sim_rng);   // identical stream for every move
+-- line 1768 ----------------------------------------
+-- line 1772 ----------------------------------------
+        .                               continue;
+        .                           }
+        .                           int fp = og_rollout(trial, bot_idx, 600);
+        .                           if (fp == 0) fp = g->num_players;
+        .                           score[ci] += (double)fp;
+        .                           nsim[ci]++;
+        .                       }
+        .                   }
+      252 ( 0.00%)          if (stage < 2) {
+        .                       int n_alive = 0;
+    2,104 ( 0.00%)              for (int i = 0; i < C.n; i++) if (alive[i]) n_alive++;
+        .                       int keep;
+       84 ( 0.00%)              if (stage == 0) {
+      210 ( 0.00%)                  keep = (og_keep1 > 0) ? og_keep1 : (og_oracle ? (C.n + 1) / 2 : C.n / 3);
+      252 ( 0.00%)                  if (keep < (og_oracle ? 4 : 3)) keep = og_oracle ? 4 : 3;
+        .                       } else {
+      252 ( 0.00%)                  keep = (og_keep2 > 0) ? og_keep2 : (og_oracle ? 3 : 2);
+        .                       }
+      204 ( 0.00%)              if (keep >= n_alive) continue;
+      915 ( 0.00%)              for (int dropped = n_alive - keep; dropped > 0; dropped--) {
+        .                           int worst = -1;
+        .                           double worst_v = -1e30;
+    3,117 ( 0.00%)                  for (int i = 0; i < C.n; i++) {
+    2,078 ( 0.00%)                      if (!alive[i]) continue;
+    5,896 ( 0.00%)                      double v = score[i] / (double)(nsim[i] ? nsim[i] : 1) + keep_pen[i];
+        .                               // >= : among tied scores drop the LAST candidate. The
+        .                               // candidate list is ranked cheapest-first, so this keeps
+        .                               // the cheap move on ties; dropping the first-tied instead
+        .                               // systematically burns trumps (measured ~0.1 mean finish
+        .                               // vs blackpowder tables at pc4).
+    2,211 ( 0.00%)                      if (v >= worst_v) { worst_v = v; worst = i; }
+        .                           }
+      290 ( 0.00%)                  if (worst < 0) break;
+      145 ( 0.00%)                  alive[worst] = false;
+        .                       }
+        .                   }
+        .               }
+        .           
+        .               int best = -1;
+        .               double best_v = 1e30;
+      771 ( 0.00%)      for (int i = 0; i < C.n; i++) {
+      710 ( 0.00%)          if (!alive[i] || nsim[i] == 0) continue;
+      420 ( 0.00%)          double v = score[i] / (double)nsim[i] + keep_pen[i];
+      252 ( 0.00%)          if (v < best_v) { best_v = v; best = i; }
+        .               }
+        .           
+      126 ( 0.00%)      int chosen = best >= 0 ? C.idx[best] : 0;
+        .               // Information-hiding rule (docs/OCTOGEN_HIDE_UNCOVERABLE.md). If octogen is
+        .               // about to play a COVER while it cannot cover EVERY uncovered card on the
+        .               // table (no full cover exists in the legal set), pick up immediately. A
+        .               // doomed partial cover only leaks its cover cards — returned to hand and
+        .               // logged by the pickup that is coming anyway — to the memory-keeping MC
+        .               // opponents, and covering opens throw-in windows that grow the pickup.
+        .               // Weakly dominant: never costs a card or tempo. ON for every seat in the
+        .               // shipped build; -DOG_HIDE_UNCOVERABLE instead gates it per-seat via
+        .               // OG_HIDE_MASK (and counts fires) so the A/B eval can isolate one seat.
+      336 ( 0.00%)      if (chosen >= 0 && chosen < moves->n && moves->moves[chosen].type == MOVE_COVER
+        .           #ifdef OG_HIDE_UNCOVERABLE
+        .                   && ((og_hide_mask >> bot_idx) & 1)
+        .           #endif
+        .                  ) {
+        .                   int n_uncov = 0;
+      162 ( 0.00%)          for (int i = 0; i < g->num_battles; i++)
+       34 ( 0.00%)              if (card_is_none(g->table_battles[i].defense)) n_uncov++;
+        .                   int full_cover = 0, pickup_idx = -1;
+      352 ( 0.00%)          for (int i = 0; i < moves->n; i++) {
+      524 ( 0.00%)              if (moves->moves[i].type == MOVE_COVER && moves->moves[i].n_cards == n_uncov)
+        .                           full_cover = 1;
+      140 ( 0.00%)              else if (moves->moves[i].type == MOVE_PICKUP)
+        .                           pickup_idx = i;
+        .                   }
+       90 ( 0.00%)          if (!full_cover && pickup_idx >= 0) {
+        .                       chosen = pickup_idx;
+        .           #ifdef OG_HIDE_UNCOVERABLE
+        .                       og_hide_fire_count++;
+        .           #endif
+        .                   }
+        .               }
+        .           #ifdef OG_EXPLAIN_BUILD
+        .               if (og_explain_on())
+-- line 1851 ----------------------------------------
+-- line 1862 ----------------------------------------
+        .           // octogen's public entry: octogen's brain PLUS the LEAFBOOK endgame oracle
+        .           // (c/LEAFBOOK.md, docs/L1_SPEND_PLAN.md §4). A book hit terminates a
+        .           // round-boundary ≤K-card subtree with a proven-exact value, so octogen resolves
+        .           // the same lines with fewer solver nodes — ~15% faster e2e p50 (measured in the
+        .           // wasm bot bench), strength-neutral (the book only shifts play through the
+        .           // shared node-budget channel, like a bigger TT; 4,000-game paired vs espresso:
+        .           // wash). No-op unless built -DCD_LEAFBOOK.
+        .           int octogen_strategy_choose(const Game *g, int bot_idx,
+      671 ( 0.00%)                              const LegalMoves *moves, void *ctx) {
+      122 ( 0.00%)      cd_sim_set_leafbook(1);
+      488 ( 0.00%)  => /home/user/foolish/c/src/cordite_sim.c:cd_sim_set_leafbook (61x)
+        .               int r = octogen_choose_impl(g, bot_idx, moves, ctx);
+      122 ( 0.00%)      cd_sim_set_leafbook(0);
+      488 ( 0.00%)  => /home/user/foolish/c/src/cordite_sim.c:cd_sim_set_leafbook (61x)
+      549 ( 0.00%)      return r;
+        .           }
+        .           
+        .           int octogen_oracle_strategy_choose(const Game *g, int bot_idx,
+        .                                             const LegalMoves *moves, void *ctx) {
+        .               og_oracle = 1;
+        .               int r = octogen_strategy_choose(g, bot_idx, moves, ctx);
+        .               og_oracle = 0;
+        .               return r;
+-- line 1882 ----------------------------------------
+
+2,432,364 ( 0.02%)  <counts for unidentified lines in /home/user/foolish/c/src/octogen_strategy.c>
+
+--------------------------------------------------------------------------------
+-- Auto-annotated source: /home/user/foolish/c/src/cordite_sim.c
+--------------------------------------------------------------------------------
+Ir                     
+
+-- line 18 ----------------------------------------
+            .           #include <stdlib.h>   // calloc/free for the solver transposition table
+            .           #ifdef CD_TT_STATS
+            .           #include <stdio.h>    // measurement-only (native); wasm never sets CD_TT_STATS
+            .           #endif
+            .           
+            .           // ---------- card-id helpers --------------------------------------------
+            .           
+            .           #define ID(suit, value) ((suit) * 13 + ((value) - 1))
+   17,403,945 ( 0.13%)  static inline int id_suit(int id)  { return id / 13; }
+  175,331,315 ( 1.31%)  static inline int id_value(int id) { return id % 13 + 1; }
+    9,493,835 ( 0.07%)  static inline int card_id(Card c)  { return c.suit * 13 + (c.value - 1); }
+            .           
+            .           // Precomputed masks (id space 0..51).
+            .           static uint64_t VALUE_MASK[14];   // VALUE_MASK[v] = all ids with value v (1..13)
+            .           static uint64_t SUIT_MASK[4];
+            .           static int      g_masks_ready = 0;
+            .           
+            .           static uint64_t HIGHER_MASK[52];  // same-suit ids with strictly higher value
+            .           
+            .           static void ensure_masks(void) {
+       72,586 ( 0.00%)      if (g_masks_ready) return;
+            .               for (int s = 0; s < 4; s++) {
+            .                   SUIT_MASK[s] = 0;
+            .                   for (int v = 1; v <= 13; v++) {
+            .                       int id = ID(s, v);
+            4 ( 0.00%)              SUIT_MASK[s] |= (1ull << id);
+           21 ( 0.00%)              VALUE_MASK[v] |= (1ull << id);
+            .                   }
+            .               }
+            .               for (int s = 0; s < 4; s++) {
+            .                   for (int v = 1; v <= 13; v++) {
+            .                       int id = ID(s, v);
+           48 ( 0.00%)              for (int w = v + 1; w <= 13; w++) HIGHER_MASK[id] |= (1ull << ID(s, w));
+            .                   }
+            .               }
+            1 ( 0.00%)      g_masks_ready = 1;
+            .           }
+            .           
+  585,528,187 ( 4.38%)  static inline int popcnt64(uint64_t x) { return __builtin_popcountll(x); }
+   33,601,335 ( 0.25%)  static inline int ctz64(uint64_t x)    { return __builtin_ctzll(x); }
+            .           
+            .           // score = value + (trump ? 1000 : 0); used pervasively as a tie-break key.
+            .           static inline int id_score(int id, int power) {
+      324,342 ( 0.00%)      return id_value(id) + (id_suit(id) == power ? 1000 : 0);
+            .           }
+            .           
+            .           // can_cover on ids (same rule as can_cover in game.c).
+            .           static inline int id_can_cover(int attack, int defense, int power) {
+            .               int as = id_suit(attack), ds = id_suit(defense);
+   52,210,373 ( 0.39%)      if (ds != as) return ds == power && as != power;
+    4,387,327 ( 0.03%)      return id_value(defense) > id_value(attack);
+            .           }
+            .           
+            .           // ---------- RNG (shared with the game engine) --------------------------
+            .           extern double game_random(void);
+            .           
+            .           // ---------- build from Game --------------------------------------------
+            .           
+      290,344 ( 0.00%)  void cd_sim_from_game(SimState *s, const Game *g) {
+            .               ensure_masks();
+      181,465 ( 0.00%)      memset(s, 0, sizeof(*s));
+    1,306,548 ( 0.01%)  => ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms (36,293x)
+      254,051 ( 0.00%)      s->num_players = g->num_players;
+            .               s->power_suit  = g->power_suit;
+            .               s->defender    = g->defender;
+            .               s->first_attacker = g->first_attacker;
+       72,586 ( 0.00%)      s->status      = g->status;
+       72,586 ( 0.00%)      s->num_battles = g->num_battles;
+       72,586 ( 0.00%)      s->deck_count  = g->deck_count;
+            .               s->discard_pile_length = g->discard_pile_length;
+       72,586 ( 0.00%)      s->has_flipped = g->has_flipped;
+      142,575 ( 0.00%)      s->flipped_id  = g->has_flipped ? (uint8_t)card_id(g->flipped) : 0;
+       72,586 ( 0.00%)      s->good_mask   = g->good_players_mask;
+       72,586 ( 0.00%)      s->num_eliminated = g->num_eliminated;
+            .           
+      907,325 ( 0.01%)      for (int p = 0; p < g->num_players; p++) {
+            .                   uint64_t h = 0;
+       72,586 ( 0.00%)          const Player *pl = &g->players[p];
+    3,855,438 ( 0.03%)          for (int j = 0; j < pl->hand_count; j++) h |= (1ull << card_id(pl->hand[j]));
+       72,586 ( 0.00%)          s->hand[p] = h;
+      217,758 ( 0.00%)          s->status_p[p] = pl->status;
+      290,344 ( 0.00%)          if (pl->status == PLAYER_STATUS_IN)       s->in_mask  |= (1u << p);
+            .                   else if (pl->status == PLAYER_STATUS_OUT) s->out_mask |= (1u << p);
+            .               }
+      108,879 ( 0.00%)      for (int i = 0; i < g->num_eliminated; i++) s->elim_order[i] = g->elimination_order[i];
+            .           
+      248,862 ( 0.00%)      for (int i = 0; i < g->num_battles; i++) {
+       88,138 ( 0.00%)          s->atk[i] = (uint8_t)card_id(g->table_battles[i].attack);
+      132,207 ( 0.00%)          s->table_vmask |= VALUE_MASK[id_value(s->atk[i])];
+       88,138 ( 0.00%)          if (!card_is_none(g->table_battles[i].defense)) {
+       14,689 ( 0.00%)              s->def[i] = (uint8_t)card_id(g->table_battles[i].defense);
+       44,067 ( 0.00%)              s->covered_mask |= (1ull << i);
+       73,445 ( 0.00%)              s->table_vmask |= VALUE_MASK[id_value(s->def[i])];
+            .                   }
+            .               }
+            .           
+       72,586 ( 0.00%)      s->deck_n = g->deck_count;
+    2,141,002 ( 0.02%)      for (int i = 0; i < g->deck_count; i++) s->deck[i] = (uint8_t)card_id(g->deck[i]);
+      217,758 ( 0.00%)  }
+            .           
+            .           // ---------- low-level state ops ----------------------------------------
+            .           
+            .           static inline int sim_hand_count(const SimState *s, int p) {
+   13,518,552 ( 0.10%)      return popcnt64(s->hand[p]);
+            .           }
+            .           
+            .           static inline int sim_in_count(const SimState *s) {
+            .               return __builtin_popcount(s->in_mask);
+            .           }
+            .           
+            .           static inline int sim_next_player(const SimState *s, int cur) {
+            .               // Mirrors get_next_player_index's <=1-IN guard (TS parity): with the
+            .               // rotation collapsed the caller's seat is returned unchanged.
+   54,854,654 ( 0.41%)      if (__builtin_popcount(s->in_mask) <= 1) return cur;
+            .               // First non-OUT seat cyclically after cur (the byte loop skipped only
+            .               // OUT statuses, so non-IN-non-OUT seats are eligible stops — preserved).
+   45,748,845 ( 0.34%)      uint32_t notout = ~s->out_mask & ((1u << s->num_players) - 1u);
+   41,099,239 ( 0.31%)      uint32_t hi = notout & ~((2u << cur) - 1u);
+   25,633,936 ( 0.19%)      return __builtin_ctz(hi ? hi : notout);
+            .           }
+            .           
+            .           // Returns the single IN player if exactly one remains (game over), else -1.
+            .           static int sim_done(const SimState *s) {
+  353,101,426 ( 2.64%)      if (__builtin_popcount(s->in_mask) != 1) return -1;
+   57,028,960 ( 0.43%)      if (__builtin_popcount(s->out_mask) != s->num_players - 1) return -1;
+            .               return __builtin_ctz(s->in_mask);
+            .           }
+            .           
+            .           static inline int sim_no_cards_left(const SimState *s) {
+   42,196,340 ( 0.32%)      return s->deck_n == 0 && !s->has_flipped;
+            .           }
+            .           
+            .           static inline int sim_count_uncovered(const SimState *s) {
+    2,687,322 ( 0.02%)      return s->num_battles - popcnt64(s->covered_mask);
+            .           }
+            .           
+            .           static inline int sim_all_covered(const SimState *s) {
+   99,302,552 ( 0.74%)      return s->num_battles > 0 && popcnt64(s->covered_mask) == s->num_battles;
+            .           }
+            .           
+            .           // table values bitmask: which values (by VALUE_MASK) are present on the table.
+            .           // Cached in the state (see cordite_sim.h) — this was the hottest loop in the
+            .           // wasm profile when rebuilt per query.
+            .           static inline uint64_t sim_table_value_mask(const SimState *s) {
+            .               return s->table_vmask;
+            .           }
+-- line 162 ----------------------------------------
+-- line 171 ----------------------------------------
+            .           void cd_sim_set_forced_draws(const uint8_t *ids, int n) {
+            .               if (n > (int)sizeof(sim_forced_q)) n = (int)sizeof(sim_forced_q);
+            .               for (int i = 0; i < n; i++) sim_forced_q[i] = ids[i];
+            .               sim_forced_n = n;
+            .               sim_forced_i = 0;
+            .           }
+            .           
+            .           // draw one card id, mirroring draw_card (deck array splice + flipped fallback).
+    1,226,470 ( 0.01%)  static int sim_draw(SimState *s, int *out) {
+    6,497,813 ( 0.05%)      if (sim_forced_i < sim_forced_n) {
+            .                   uint8_t want = sim_forced_q[sim_forced_i];
+            .                   if (s->deck_n == 0) {
+            .                       // The engine's draw here is RNG-free (flipped fallback); the
+            .                       // pinned id is that same flipped card when states match.
+            .                       sim_forced_i = sim_forced_n;
+            .                       if (!s->has_flipped) return 0;
+            .                       *out = s->flipped_id;
+            .                       s->has_flipped = 0;
+-- line 188 ----------------------------------------
+-- line 195 ----------------------------------------
+            .                           s->deck_count = s->deck_n;
+            .                           sim_forced_i++;
+            .                           *out = want;
+            .                           return 1;
+            .                       }
+            .                   }
+            .                   sim_forced_i = sim_forced_n;   // divergence: rest of queue is stale
+            .               }
+    2,648,184 ( 0.02%)      if (s->deck_n == 0) {
+      446,388 ( 0.00%)          if (!s->has_flipped) return 0;
+            .                   *out = s->flipped_id;
+            .                   s->has_flipped = 0;
+            .                   return 1;
+            .               }
+    6,521,899 ( 0.05%)      int idx = (int)(game_random() * s->deck_n);
+    9,156,681 ( 0.07%)  => /home/user/foolish/c/src/game.c:game_random (1,017,409x)
+    3,219,205 ( 0.02%)      if (idx < 0) idx = 0;
+    2,201,796 ( 0.02%)      if (idx >= s->deck_n) idx = s->deck_n - 1;
+    2,285,285 ( 0.02%)      *out = s->deck[idx];
+   35,987,668 ( 0.27%)      for (int i = idx + 1; i < s->deck_n; i++) s->deck[i - 1] = s->deck[i];
+    2,201,796 ( 0.02%)      s->deck_n--;
+    1,184,387 ( 0.01%)      s->deck_count = s->deck_n;
+            .               return 1;
+      981,176 ( 0.01%)  }
+            .           
+            .           static void sim_eliminate(SimState *s, int p) {
+    2,817,073 ( 0.02%)      s->status_p[p] = PLAYER_STATUS_OUT;
+   13,232,654 ( 0.10%)      s->in_mask  &= ~(1u << p);
+    2,817,073 ( 0.02%)      s->out_mask |= (1u << p);
+   14,047,500 ( 0.11%)      s->elim_order[s->num_eliminated++] = (int8_t)p;
+            .           }
+            .           
+            .           // refill_player_hands port.
+   59,221,863 ( 0.44%)  static void sim_refill(SimState *s) {
+    6,093,166 ( 0.05%)      if (sim_no_cards_left(s)) {
+   42,495,152 ( 0.32%)          for (int i = 0; i < s->num_players; i++) {
+   91,061,040 ( 0.68%)              if ((s->in_mask >> i & 1u) && sim_hand_count(s, i) == 0)
+            .                           sim_eliminate(s, i);
+            .                   }
+            .                   return;
+            .               }
+      509,471 ( 0.00%)      int defender = s->defender;
+    2,547,355 ( 0.02%)      if (sim_hand_count(s, defender) == 0) {
+      261,008 ( 0.00%)          while (sim_hand_count(s, defender) < CARDS_PER_PLAYER) {
+            .                       int c;
+      613,235 ( 0.00%)              if (!sim_draw(s, &c)) break;
+    7,209,648 ( 0.05%)  => /home/user/foolish/c/src/cordite_sim.c:sim_draw (122,647x)
+      518,230 ( 0.00%)              s->hand[defender] |= (1ull << c);
+            .                   }
+            .               }
+    1,018,942 ( 0.01%)      int p_idx = s->first_attacker;
+            .               int visited = 0;
+    4,075,768 ( 0.03%)      do {
+    5,094,515 ( 0.04%)          if (visited & (1 << p_idx)) break;
+    1,018,903 ( 0.01%)          visited |= (1 << p_idx);
+    4,244,078 ( 0.03%)          while (sim_hand_count(s, p_idx) < CARDS_PER_PLAYER) {
+            .                       int c;
+            .                       if (!sim_draw(s, &c)) break;
+    3,309,408 ( 0.02%)              s->hand[p_idx] |= (1ull << c);
+            .                   }
+    2,037,845 ( 0.02%)          if (sim_hand_count(s, p_idx) == 0 && (s->in_mask >> p_idx & 1u))
+            .                       sim_eliminate(s, p_idx);
+            .                   p_idx = sim_next_player(s, p_idx);
+    3,056,709 ( 0.02%)      } while (p_idx != s->first_attacker);
+   52,641,656 ( 0.39%)  }
+            .           
+            .           // ---------- action handlers (bitboard) ---------------------------------
+            .           // These mirror handle_attack/cover/pass/pickup/good exactly, modulo logging
+            .           // (the rollout never reads logs). Each takes an already-validated move.
+            .           
+            .           static void sim_apply_attack(SimState *s, int p_idx, const uint8_t *ids, int n) {
+   60,627,180 ( 0.45%)      for (int i = 0; i < n; i++) {
+   33,459,305 ( 0.25%)          s->hand[p_idx] &= ~(1ull << ids[i]);
+   16,631,474 ( 0.12%)          int b = s->num_battles++;
+   16,590,665 ( 0.12%)          s->atk[b] = ids[i];
+   24,969,390 ( 0.19%)          s->covered_mask &= ~(1ull << b);
+   33,236,925 ( 0.25%)          s->table_vmask |= VALUE_MASK[id_value(ids[i])];
+            .               }
+    7,691,104 ( 0.06%)      s->good_mask = 0;
+            .               // Attackers only leave when the stock is exhausted too (mirrors the
+            .               // no_cards_left guard in handle_attack); with cards still in the deck
+            .               // they sit out the bout and refill at round end.
+   17,225,184 ( 0.13%)      if (sim_hand_count(s, p_idx) == 0 && sim_no_cards_left(s)) {
+            .                   sim_eliminate(s, p_idx);
+            .               }
+            .           }
+            .           
+            .           // cover all uncovered battles with the given (cover,attack-battle) assignment.
+            .           static void sim_apply_cover(SimState *s, int p_idx,
+   26,867,860 ( 0.20%)                              const uint8_t *covers, const int *battle_idx, int n) {
+   39,201,878 ( 0.29%)      for (int i = 0; i < n; i++) {
+    5,902,530 ( 0.04%)          int b = battle_idx[i];
+   11,805,060 ( 0.09%)          s->def[b] = covers[i];
+   17,707,590 ( 0.13%)          s->covered_mask |= (1ull << b);
+   23,610,120 ( 0.18%)          s->hand[p_idx] &= ~(1ull << covers[i]);
+   23,610,120 ( 0.18%)          s->table_vmask |= VALUE_MASK[id_value(covers[i])];
+            .               }
+            .           
+   10,747,144 ( 0.08%)      if (sim_hand_count(s, p_idx) == 0) {
+    2,638,590 ( 0.02%)          s->discard_pile_length += s->num_battles * 2;
+      879,530 ( 0.01%)          s->num_battles = 0;
+    1,759,060 ( 0.01%)          s->covered_mask = 0;
+            .                   s->table_vmask = 0;
+    1,759,060 ( 0.01%)          sim_refill(s);
+   63,357,088 ( 0.47%)  => /home/user/foolish/c/src/cordite_sim.c:sim_refill (879,530x)
+    1,759,060 ( 0.01%)          s->first_attacker = s->defender;
+      879,530 ( 0.01%)          s->good_mask = 0;
+    1,759,060 ( 0.01%)          if (sim_hand_count(s, s->first_attacker) == 0) {
+            .                       int fa = s->first_attacker;
+            .                       int was_in = (s->in_mask >> fa) & 1u;
+    2,558,016 ( 0.02%)              if (was_in) sim_eliminate(s, fa);
+    1,705,344 ( 0.01%)              else { s->status_p[fa] = PLAYER_STATUS_OUT; s->out_mask |= (1u << fa); }
+      852,672 ( 0.01%)              s->first_attacker = sim_next_player(s, fa);
+            .                   }
+      879,530 ( 0.01%)          s->defender = sim_next_player(s, s->first_attacker);
+            .                   return;
+            .               }
+    4,494,042 ( 0.03%)      s->good_mask = 0;
+            .               // all_covered handled implicitly: attackers re-enabled via good_mask reset.
+   21,494,288 ( 0.16%)  }
+            .           
+      617,985 ( 0.00%)  static void sim_apply_pass(SimState *s, int p_idx, const uint8_t *ids, int n) {
+      617,985 ( 0.00%)      int next = sim_next_player(s, s->defender);
+   11,748,018 ( 0.09%)      for (int i = 0; i < n; i++) {
+    3,100,430 ( 0.02%)          s->hand[p_idx] &= ~(1ull << ids[i]);
+    1,240,172 ( 0.01%)          int b = s->num_battles++;
+    1,240,172 ( 0.01%)          s->atk[b] = ids[i];
+    1,860,258 ( 0.01%)          s->covered_mask &= ~(1ull << b);
+    2,480,344 ( 0.02%)          s->table_vmask |= VALUE_MASK[id_value(ids[i])];
+            .               }
+      617,985 ( 0.00%)      s->good_mask = 0;
+    1,237,003 ( 0.01%)      if (sim_no_cards_left(s) && sim_hand_count(s, p_idx) == 0) {
+            .                   sim_eliminate(s, p_idx);
+            .               }
+      617,985 ( 0.00%)      s->defender = next;
+      617,985 ( 0.00%)  }
+            .           
+            .           static void sim_apply_pickup(SimState *s, int p_idx) {
+   17,810,113 ( 0.13%)      for (int i = 0; i < s->num_battles; i++) {
+   17,823,606 ( 0.13%)          s->hand[p_idx] |= (1ull << s->atk[i]);
+   19,573,075 ( 0.15%)          if (s->covered_mask & (1ull << i)) s->hand[p_idx] |= (1ull << s->def[i]);
+            .               }
+    3,157,767 ( 0.02%)      s->num_battles = 0;
+    9,473,301 ( 0.07%)      s->covered_mask = 0;
+            .               s->table_vmask = 0;
+    3,157,767 ( 0.02%)      sim_refill(s);
+  129,528,720 ( 0.97%)  => /home/user/foolish/c/src/cordite_sim.c:sim_refill (2,878,416x)
+    6,315,534 ( 0.05%)      s->first_attacker = sim_next_player(s, s->defender);
+    3,157,767 ( 0.02%)      s->defender = sim_next_player(s, s->first_attacker);
+    5,770,325 ( 0.04%)      s->good_mask = 0;
+            .           }
+            .           
+            .           static void sim_round_transition(SimState *s) {
+    5,085,820 ( 0.04%)      s->discard_pile_length += s->num_battles * 2;
+    2,542,910 ( 0.02%)      s->num_battles = 0;
+    7,628,730 ( 0.06%)      s->covered_mask = 0;
+            .               s->table_vmask = 0;
+    2,542,910 ( 0.02%)      sim_refill(s);
+   99,157,770 ( 0.74%)  => /home/user/foolish/c/src/cordite_sim.c:sim_refill (2,203,506x)
+    5,085,820 ( 0.04%)      s->first_attacker = s->defender;
+    2,879,530 ( 0.02%)      s->defender = sim_next_player(s, s->first_attacker);
+    4,412,580 ( 0.03%)      s->good_mask = 0;
+            .           }
+            .           
+            .           static void sim_apply_good(SimState *s, int p_idx) {
+    9,416,136 ( 0.07%)      s->good_mask |= (1u << p_idx);
+    9,416,136 ( 0.07%)      uint32_t attackers = s->in_mask & ~(1u << s->defender);
+    3,138,712 ( 0.02%)      int all_good = attackers != 0 && (s->good_mask & attackers) == attackers;
+   15,097,758 ( 0.11%)      if (all_good && sim_all_covered(s)) sim_round_transition(s);
+            .           }
+            .           
+            .           // ---------- should_act (bitboard) --------------------------------------
+            .           
+            .           static int sim_should_act(const SimState *s, int p) {
+   77,737,690 ( 0.58%)      if (s->status != GAME_STATUS_PLAYING) return 0;
+   66,077,736 ( 0.49%)      if (!(s->in_mask >> p & 1u)) return 0;
+   61,817,214 ( 0.46%)      int first_attack = (s->num_battles == 0);
+   71,571,250 ( 0.54%)      if (first_attack) return p == s->first_attacker;
+   23,160,416 ( 0.17%)      if (p == s->defender) return !sim_all_covered(s);
+   23,362,057 ( 0.17%)      return !(s->good_mask & (1u << p));
+            .           }
+            .           
+            .           // ---------- handwritten policy, computed directly ----------------------
+            .           //
+            .           // Reproduces handwritten_strategy_choose given the LITE legal-move set. We
+            .           // compute the chosen move inline rather than enumerating moves. Each branch
+            .           // fills an out-move; the caller then applies it.
+            .           
+-- line 377 ----------------------------------------
+-- line 381 ----------------------------------------
+            .               SimMoveType type;
+            .               int n;
+            .               uint8_t cards[SIM_MAX_BATTLES];
+            .               int     battle[SIM_MAX_BATTLES];   // cover only: which battle each cover defends
+            .           } SimMove;
+            .           
+            .           // trump_attack_probability (matches handwritten).
+            .           static double sim_trump_attack_prob(const SimState *s) {
+      949,823 ( 0.01%)      if (s->deck_n > 0 || s->has_flipped) return 0.02;
+            .               int table = 0;
+      325,603 ( 0.00%)      for (int i = 0; i < s->num_battles; i++)
+      199,980 ( 0.00%)          table += 1 + ((s->covered_mask & (1ull << i)) ? 1 : 0);
+            .               int hands = 0;
+      549,703 ( 0.00%)      for (int i = 0; i < s->num_players; i++) hands += sim_hand_count(s, i);
+      199,892 ( 0.00%)      int total = s->deck_n + s->discard_pile_length + table + hands + (s->has_flipped ? 1 : 0);
+      149,919 ( 0.00%)      if (total < 1) total = 1;
+      249,865 ( 0.00%)      double ratio = (double)s->discard_pile_length / total;
+       49,973 ( 0.00%)      if (ratio < 0) ratio = 0;
+       49,973 ( 0.00%)      if (ratio > 1) ratio = 1;
+       99,946 ( 0.00%)      double p = 0.65 + 0.35 * ratio;
+       49,973 ( 0.00%)      if (p < 0.5) p = 0.5;
+       49,973 ( 0.00%)      if (p > 0.95) p = 0.95;
+            .               return p;
+            .           }
+            .           
+            .           // Among value groups present in `avail` (a hand bitmask), restricted to the
+            .           // candidate value mask `cand_vals` and an optional non-trump filter, pick the
+            .           // handwritten "max cards, lowest summed score" attack group. `cap` limits the
+            .           // number of cards taken (defender capacity for first attacks; for regular
+            .           // attacks the lite enumerator does not cap, so cap = large). Returns chosen
+-- line 410 ----------------------------------------
+-- line 429 ----------------------------------------
+            .           // arbitrary k-subsets of all table-valued cards (mixed values allowed). The
+            .           // maximum-cards move is the full set. handwritten picks it. So the regular
+            .           // attack reduces to "play every table-valued (non-trump if any non-trump
+            .           // exists) card". We honor that. For FIRST attacks, moves are same-value only,
+            .           // so the answer is the largest single-value group.
+            .           
+            .           static int sim_first_attack_group(const SimState *s, int p, int power,
+            .                                             int non_trump_only, uint8_t *out) {
+    1,719,027 ( 0.01%)      uint64_t h = s->hand[p];
+            .               if (non_trump_only) h &= ~SUIT_MASK[power];
+            .               // The lite enumerator emits same-value combos k=1..gn, but only those with
+            .               // defender_cards >= uncovered(=0) + k survive (emit_attack). So the maximum
+            .               // EMITTED size of a value group is min(group_size, defcap). handwritten's
+            .               // pick_max_cards_lowest_score then takes the largest emitted size, ties ->
+            .               // lowest summed score (= lowest value, since same-value group). So compare
+            .               // groups by their *capped* size, tie -> lowest value.
+        1,344 ( 0.00%)      int defcap = sim_hand_count(s, s->defender);
+    1,198,663 ( 0.01%)      if (defcap <= 0 || !h) return 0;
+            .               // Visit only the DISTINCT VALUES present in the hand (typically 4-6)
+            .               // instead of all 13: pop the lowest id, take its whole value group,
+            .               // clear the group. Group order is by lowest-id, not ascending value, so
+            .               // the explicit v-tie-break below carries the ordering exactly as before
+            .               // (strict > keeps any first winner; equal eff resolves to lowest v).
+            .               // hh&(hh-1) guarantees progress even on an out-of-range id.
+            .               int best_v = -1, best_eff = 0;
+            .               uint64_t hh = h;
+    2,151,774 ( 0.02%)      while (hh) {
+            .                   int v = id_value(ctz64(hh));
+    2,151,774 ( 0.02%)          uint64_t g = h & VALUE_MASK[v];
+            .                   hh = (hh & (hh - 1)) & ~g;
+            .                   int sz = popcnt64(g);
+    4,303,548 ( 0.03%)          int eff = sz < defcap ? sz : defcap;
+    7,937,759 ( 0.06%)          if (eff > best_eff || (eff == best_eff && v < best_v)) {
+            .                       best_eff = eff; best_v = v;
+            .                   }
+            .               }
+    1,150,029 ( 0.01%)      if (best_v < 0) return 0;
+            .               uint64_t g = h & VALUE_MASK[best_v];
+            .               int n = 0;
+    8,563,562 ( 0.06%)      while (g && n < best_eff) { int id = ctz64(g); out[n++] = id; g &= g - 1; }
+            .               return n;
+            .           }
+            .           
+            .           // Regular (non-first) attack: play all table-valued cards (non-trump if any),
+            .           // capped by defender capacity (defender_cards >= uncovered + k). The core
+            .           // takes the candidate mask and capacity precomputed — the policy evaluates a
+            .           // non-trump and an all-cards variant of the SAME inputs, and computing them
+            .           // once per ply was measurably cheaper in the wasm profile.
+            .           static int sim_attack_group_core(uint64_t h, int defcap, int power, uint8_t *out) {
+    4,858,959 ( 0.04%)      if (!h) return 0;
+            .               if (defcap <= 0) return 0;
+            .               // handwritten picks max n_cards (full set) then lowest summed score. The
+            .               // full set IS the max-cards move; we just take it (capped). To match
+            .               // "lowest score" among equal max-card moves, when capped we must drop the
+            .               // highest-score cards. Take lowest-score cards first.
+            .               // Collect ids, sort by score ascending, take up to defcap.
+            .               uint8_t ids[64]; int m = 0;
+            .               uint64_t hh = h;
+    3,096,870 ( 0.02%)      while (hh) { int id = ctz64(hh); ids[m++] = id; hh &= hh - 1; }
+            .               // The lite enumerator emits arbitrary subsets, and pick_max_cards_lowest
+            .               // takes max-cards; when the full set fits (defcap >= m) it's the whole set.
+    1,979,468 ( 0.01%)      if (m <= defcap) {
+            .                   for (int i = 0; i < m; i++) out[i] = ids[i];
+            .                   return m;
+            .               }
+            .               // capped: choose the defcap lowest-score cards (insertion sort, small m).
+      212,859 ( 0.00%)      for (int i = 1; i < m; i++) {
+       49,819 ( 0.00%)          uint8_t key = ids[i]; int ks = id_score(key, power);
+            .                   int j = i - 1;
+      285,191 ( 0.00%)          while (j >= 0 && id_score(ids[j], power) > ks) { ids[j + 1] = ids[j]; j--; }
+       99,638 ( 0.00%)          ids[j + 1] = key;
+            .               }
+       31,701 ( 0.00%)      for (int i = 0; i < defcap; i++) out[i] = ids[i];
+            .               return defcap;
+            .           }
+            .           
+            .           // Greedy lowest-cost full cover (matches calc_cover_moves_greedy + handwritten
+            .           // always picking the full cover). Returns 1 if a full cover exists.
+            .           static int sim_greedy_full_cover(const SimState *s, int p, int power, SimMove *out) {
+    2,827,047 ( 0.02%)      uint64_t avail = s->hand[p];
+            .               int n = 0;
+   14,755,938 ( 0.11%)      for (int i = 0; i < s->num_battles; i++) {
+    4,714,914 ( 0.04%)          if (s->covered_mask & (1ull << i)) continue;
+    1,614,786 ( 0.01%)          int atk = s->atk[i];
+            .                   // Lowest-id_score cover, O(1): candidates are same-suit-higher cards
+            .                   // (score = value) and, for a non-trump attack, any trump (score =
+            .                   // value + 1000). A same-suit candidate always outranks a trump one,
+            .                   // and within a single suit ascending id IS ascending value, so ctz
+            .                   // picks exactly the first strict-min the old per-card scan kept.
+            .                   int best = -1;
+            .                   uint64_t same = HIGHER_MASK[atk] & avail;
+    3,229,572 ( 0.02%)          if (same) best = ctz64(same);
+    1,532,098 ( 0.01%)          else if (id_suit(atk) != power) {
+            .                       uint64_t tr = SUIT_MASK[power] & avail;
+    1,443,608 ( 0.01%)              if (tr) best = ctz64(tr);
+            .                   }
+            .                   if (best < 0) return 0;
+    1,348,928 ( 0.01%)          avail &= ~(1ull << best);
+    2,697,856 ( 0.02%)          out->cards[n] = (uint8_t)best;
+    1,348,928 ( 0.01%)          out->battle[n] = i;
+    1,348,928 ( 0.01%)          n++;
+            .               }
+      676,491 ( 0.01%)      out->type = MV_COVER;
+    1,352,982 ( 0.01%)      out->n = n;
+            .               return 1;
+            .           }
+            .           
+            .           // Pass: defender, all battles uncovered, all same value, defender has matching
+            .           // cards. handwritten picks lowest summed score among pass moves; the lite
+            .           // enumerator emits k-subsets (k=1..mn) and handwritten's pass branch picks the
+            .           // single lowest-score... actually it sums; lowest sum = fewest cards = k=1
+            .           // lowest card. Wait: pass branch iterates all pass moves and picks min summed
+            .           // score. k=1 of the lowest matching card has the smallest sum. We replicate.
+            .           static int sim_pass_move(const SimState *s, int p, int power, SimMove *out) {
+            .               // require: num_battles>0, none covered, all same attack value
+            .               if (s->num_battles == 0) return 0;
+    4,767,152 ( 0.04%)      if (s->covered_mask) return 0;
+      855,815 ( 0.01%)      int v0 = id_value(s->atk[0]);
+    5,437,623 ( 0.04%)      for (int i = 1; i < s->num_battles; i++)
+    2,531,433 ( 0.02%)          if (id_value(s->atk[i]) != v0) return 0;
+    4,279,075 ( 0.03%)      uint64_t matching = s->hand[p] & VALUE_MASK[v0];
+    1,711,630 ( 0.01%)      if (!matching) return 0;
+      263,299 ( 0.00%)      int next = sim_next_player(s, s->defender);
+            .               int next_cards = sim_hand_count(s, next);
+            .               // pass move must satisfy next_cards >= k + num_battles. Lowest-sum pass =
+            .               // smallest valid k. k=1: need next_cards >= 1 + num_battles.
+            .               // handwritten picks min summed score over emitted pass moves. Among emitted
+            .               // (k=1..mn capped by capacity), k=1 lowest card has min sum. Pick lowest
+            .               // matching card if k=1 is legal; else the smallest legal k of lowest cards.
+            .               int mn = popcnt64(matching);
+            .               // find smallest k with next_cards >= k + num_battles, k in [1..mn]
+            .               int kmax = next_cards - s->num_battles;
+      526,598 ( 0.00%)      if (kmax < 1) return 0;
+            .               if (kmax > mn) kmax = mn;
+            .               // lowest summed score => take the k lowest-score matching cards with the
+            .               // smallest k that's legal. Smallest legal k is 1. But handwritten compares
+            .               // ALL emitted pass moves by sum; k=1 with the lowest card always wins
+            .               // (positive scores). So k=1, lowest-score matching card. All matching
+            .               // cards share one value, so score only splits trump vs non-trump; the
+            .               // old first-strict-min scan kept the lowest non-trump id when one
+            .               // exists, else the (single) trump — exactly ctz on those masks.
+      997,756 ( 0.01%)      uint64_t nt = matching & ~SUIT_MASK[power];
+      249,439 ( 0.00%)      int best = ctz64(nt ? nt : matching);
+            .               out->type = MV_PASS;
+            .               out->n = 1;
+            .               out->cards[0] = (uint8_t)best;
+            .               return 1;
+            .           }
+            .           
+            .           // Compute the handwritten move for actor p. Returns 1 with out filled, or 0.
+   30,438,620 ( 0.23%)  static int sim_handwritten_move(SimState *s, int p, SimMove *out) {
+    3,043,862 ( 0.02%)      int power = s->power_suit;
+    9,281,620 ( 0.07%)      int first_attack = (s->num_battles == 0);
+    6,300,250 ( 0.05%)      int is_def = (p == s->defender);
+            .           
+            .               // --- attacker role (first attack OR continuing attack) ---
+            .               int can_attack = 0;
+    4,189,880 ( 0.03%)      if (first_attack) can_attack = (p == s->first_attacker);
+    5,028,983 ( 0.04%)      else can_attack = (!is_def && !(s->good_mask & (1u << p)));
+            .           
+            .               // Regular-attack inputs, computed once for the non-trump and all-cards
+            .               // variants below (and reused by the forced fallback).
+            .               uint64_t h_tab = 0;
+            .               int defcap = 0;
+    1,279,065 ( 0.01%)      if (can_attack && !first_attack) {
+    5,116,260 ( 0.04%)          h_tab = s->hand[p] & sim_table_value_mask(s);
+    1,279,065 ( 0.01%)          defcap = sim_hand_count(s, s->defender) - sim_count_uncovered(s);
+            .               }
+            .           
+      573,009 ( 0.00%)      if (can_attack) {
+            .                   uint8_t buf[MAX_HAND_SIZE];
+            .                   int n_nt;
+            .                   if (first_attack) {
+            .                       n_nt = sim_first_attack_group(s, p, power, 1, buf);
+            .                   } else {
+    4,854,400 ( 0.04%)              n_nt = sim_attack_group_core(h_tab & ~SUIT_MASK[power], defcap, power, buf);
+            .                   }
+            .                   // Attack branch: prefer non-trump attacks.
+    1,744,662 ( 0.01%)          if (n_nt > 0) {
+    1,744,662 ( 0.01%)              out->type = MV_ATTACK; out->n = n_nt;
+    2,616,993 ( 0.02%)              for (int i = 0; i < n_nt; i++) out->cards[i] = buf[i];
+            .                       return 1;
+            .                   }
+            .                   // No non-trump attack: trump attack under probability gate.
+            .                   uint8_t tbuf[MAX_HAND_SIZE];
+            .                   int n_tr;
+            .                   if (first_attack) n_tr = sim_first_attack_group(s, p, power, 0, tbuf);
+            .                   else              n_tr = sim_attack_group_core(h_tab, defcap, power, tbuf);
+      391,090 ( 0.00%)          if (n_tr > 0) {
+      977,725 ( 0.01%)              if (game_random() < sim_trump_attack_prob(s)) {
+    1,759,905 ( 0.01%)  => /home/user/foolish/c/src/game.c:game_random (195,545x)
+       93,696 ( 0.00%)                  out->type = MV_ATTACK; out->n = n_tr;
+      281,088 ( 0.00%)                  for (int i = 0; i < n_tr; i++) out->cards[i] = tbuf[i];
+            .                           return 1;
+            .                       }
+            .                       // decline: prefer GOOD if available (attacker, not first attack &
+            .                       // not already good). For first attack, no GOOD exists -> falls to
+            .                       // forced attack fallback below.
+      443,417 ( 0.00%)              if (!first_attack) { out->type = MV_GOOD; out->n = 0; return 1; }
+            .                   }
+            .                   // Fall through to non-attack cascade (forced fallback handled below).
+            .               }
+            .           
+            .               // --- defender role: pass, then full cover, then pickup ---
+      789,546 ( 0.01%)      if (is_def && s->num_battles > 0) {
+            .                   // handwritten checks pass first (n_passes), then cover, then pickup.
+            .                   SimMove pm;
+      748,317 ( 0.01%)          if (sim_pass_move(s, p, power, &pm)) { *out = pm; return 1; }
+            .                   SimMove cm;
+      676,491 ( 0.01%)          if (sim_greedy_full_cover(s, p, power, &cm)) { *out = cm; return 1; }
+            .                   // can't fully cover -> pickup
+      531,716 ( 0.00%)          out->type = MV_PICKUP; out->n = 0;
+            .                   return 1;
+            .               }
+            .           
+            .               // --- non-attack/cover/pass: GOOD if available (attacker said-good path) ---
+            .               // handwritten picks GOOD here via game_random()*n_goods; with a single GOOD
+            .               // move the index is always 0, but the random draw IS consumed, so we mirror
+            .               // it to keep the RNG stream aligned with the struct engine.
+    3,138,129 ( 0.02%)      if (!is_def && s->num_battles > 0 && !(s->good_mask & (1u << p))) {
+      784,198 ( 0.01%)          (void)game_random();
+    7,057,782 ( 0.05%)  => /home/user/foolish/c/src/game.c:game_random (784,198x)
+    1,568,396 ( 0.01%)          out->type = MV_GOOD; out->n = 0;
+            .                   return 1;
+            .               }
+            .           
+            .               // --- forced attack fallback (only reached by attacker who declined) ---
+        2,674 ( 0.00%)      if (can_attack) {
+            .                   uint8_t buf[MAX_HAND_SIZE];
+        5,334 ( 0.00%)          if (s->deck_n > 0 || s->has_flipped) {
+            .                       int n;
+            7 ( 0.00%)              if (first_attack) n = sim_first_attack_group(s, p, power, 1, buf);
+            .                       else              n = sim_attack_group_core(h_tab & ~SUIT_MASK[power], defcap, power, buf);
+            .                       if (n > 0) {
+            .                           out->type = MV_ATTACK; out->n = n;
+            .                           for (int i = 0; i < n; i++) out->cards[i] = buf[i];
+            .                           return 1;
+            .                       }
+            .                       if (!first_attack) { out->type = MV_GOOD; out->n = 0; return 1; }
+            .                   }
+            .                   // most-cards lowest-score among all attacks (incl trump).
+            .                   int n;
+        1,330 ( 0.00%)          if (first_attack) n = sim_first_attack_group(s, p, power, 0, buf);
+            .                   else              n = sim_attack_group_core(h_tab, defcap, power, buf);
+        2,674 ( 0.00%)          if (n > 0) {
+        2,674 ( 0.00%)              out->type = MV_ATTACK; out->n = n;
+        2,674 ( 0.00%)              for (int i = 0; i < n; i++) out->cards[i] = buf[i];
+            .                       return 1;
+            .                   }
+            .               }
+            .           
+            .               return 0;
+   24,350,896 ( 0.18%)  }
+            .           
+            .           // ---------- playout ----------------------------------------------------
+            .           
+   12,175,448 ( 0.09%)  static void sim_apply(SimState *s, int p, const SimMove *m) {
+   18,263,172 ( 0.14%)      switch (m->type) {
+      920,516 ( 0.01%)          case MV_ATTACK: sim_apply_attack(s, p, m->cards, m->n); break;
+    5,411,928 ( 0.04%)          case MV_COVER:  sim_apply_cover(s, p, m->cards, m->battle, m->n); break;
+   58,438,804 ( 0.44%)  => /home/user/foolish/c/src/cordite_sim.c:sim_apply_cover (676,491x)
+    1,496,634 ( 0.01%)          case MV_PASS:   sim_apply_pass(s, p, m->cards, m->n); break;
+   17,457,127 ( 0.13%)  => /home/user/foolish/c/src/cordite_sim.c:sim_apply_pass (249,439x)
+            .                   case MV_PICKUP: sim_apply_pickup(s, p); break;
+            .                   case MV_GOOD:   sim_apply_good(s, p); break;
+            .                   default: break;
+            .               }
+    8,471,728 ( 0.06%)  }
+            .           
+            .           // ---------- apply a root LegalMove on the SimState ---------------------
+            .           // Mirrors handle_attack/cover/pass/pickup/good's validation + effect closely
+            .           // enough for the bot's own candidate move (the bot's hand is identical across
+            .           // sampled worlds; only world-dependent capacity checks can fail).
+            .           
+      900,304 ( 0.01%)  int cd_sim_apply_root_move(SimState *s, int p_idx, const LegalMove *m) {
+            .               int power = s->power_suit;
+      787,766 ( 0.01%)      switch (m->type) {
+            .                   case MOVE_ATTACK: {
+            .                       // capacity: defender_cards >= uncovered + n
+       96,404 ( 0.00%)              int uncovered = sim_count_uncovered(s);
+      241,010 ( 0.00%)              if (sim_hand_count(s, s->defender) < uncovered + m->n_cards) return 0;
+            .                       uint8_t ids[8];
+      504,199 ( 0.00%)              for (int i = 0; i < m->n_cards; i++) {
+       55,595 ( 0.00%)                  int id = card_id(m->cards[i]);
+      111,190 ( 0.00%)                  if (!(s->hand[p_idx] & (1ull << id))) return 0;
+       55,595 ( 0.00%)                  ids[i] = (uint8_t)id;
+            .                       }
+            .                       sim_apply_attack(s, p_idx, ids, m->n_cards);
+            .                       return 1;
+            .                   }
+            .                   case MOVE_PASS: {
+       13,248 ( 0.00%)              if (s->num_battles == 0) return 0;
+        8,832 ( 0.00%)              if (s->covered_mask) return 0;
+        4,416 ( 0.00%)              int next = sim_next_player(s, s->defender);
+       17,664 ( 0.00%)              if (sim_hand_count(s, next) < m->n_cards + s->num_battles) return 0;
+            .                       uint8_t ids[8];
+       37,920 ( 0.00%)              for (int i = 0; i < m->n_cards; i++) {
+        5,280 ( 0.00%)                  int id = card_id(m->cards[i]);
+       10,560 ( 0.00%)                  if (!(s->hand[p_idx] & (1ull << id))) return 0;
+        5,280 ( 0.00%)                  ids[i] = (uint8_t)id;
+            .                       }
+        4,416 ( 0.00%)              sim_apply_pass(s, p_idx, ids, m->n_cards);
+      327,168 ( 0.00%)  => /home/user/foolish/c/src/cordite_sim.c:sim_apply_pass (4,416x)
+            .                       return 1;
+            .                   }
+            .                   case MOVE_COVER: {
+            .                       uint8_t covers[8]; int battle[8];
+            .                       uint64_t used_b = 0;   // battles already assigned within this move
+      542,878 ( 0.00%)              for (int i = 0; i < m->n_cards; i++) {
+       48,685 ( 0.00%)                  int cid = card_id(m->cards[i]);
+            .                           int aid = card_id(m->attack_cards[i]);
+       97,370 ( 0.00%)                  if (!(s->hand[p_idx] & (1ull << cid))) return 0;
+            .                           // find an uncovered, not-yet-assigned battle whose attack matches
+            .                           // (handle_cover matches by value; prefer exact id first).
+            .                           int found = -1;
+      163,327 ( 0.00%)                  for (int b = 0; b < s->num_battles; b++) {
+      608,293 ( 0.00%)                      if ((s->covered_mask & (1ull << b)) || (used_b & (1ull << b))) continue;
+      227,002 ( 0.00%)                      if (s->atk[b] == aid) { found = b; break; }
+            .                           }
+            .                           if (found < 0) {
+            .                               for (int b = 0; b < s->num_battles; b++) {
+            .                                   if ((s->covered_mask & (1ull << b)) || (used_b & (1ull << b))) continue;
+            .                                   if (id_value(s->atk[b]) == id_value(aid)) { found = b; break; }
+            .                               }
+            .                           }
+            .                           if (found < 0) return 0;
+       97,370 ( 0.00%)                  if (!id_can_cover(s->atk[found], cid, power)) return 0;
+       48,685 ( 0.00%)                  used_b |= (1ull << found);
+       48,685 ( 0.00%)                  covers[i] = (uint8_t)cid;
+       48,685 ( 0.00%)                  battle[i] = found;
+            .                       }
+       42,779 ( 0.00%)              sim_apply_cover(s, p_idx, covers, battle, m->n_cards);
+    2,587,688 ( 0.02%)  => /home/user/foolish/c/src/cordite_sim.c:sim_apply_cover (42,779x)
+            .                       return 1;
+            .                   }
+            .                   case MOVE_PICKUP:
+       40,479 ( 0.00%)              if (s->num_battles == 0) return 0;
+            .                       sim_apply_pickup(s, p_idx);
+            .                       return 1;
+            .                   case MOVE_GOOD:
+            .                       sim_apply_good(s, p_idx);
+            .                       return 1;
+            .                   default: return 0;
+            .               }
+    1,012,842 ( 0.01%)  }
+            .           
+            .           // ===================================================================
+            .           // Exact 2-player deck-empty endgame solver (bitboard).
+            .           //
+            .           // Mirrors cd_solve in cordite_strategy.c node-for-node (same actor
+            .           // selection, the SAME full legal-move set, the same alpha-beta and the
+            .           // same ±(1000-depth) value encoding) but on the compact SimState, so a
+            .           // node clones with a memcpy and moves are enumerated with bit ops. A
+-- line 775 ----------------------------------------
+-- line 868 ----------------------------------------
+            .           static _Thread_local int  cd_leafbook_on = 0;
+            .           static _Thread_local long cd_leafbook_hit = 0;
+            .           #ifdef CD_LEAFBOOK
+            .           #include "leafbook.h"
+            .           #include "leafbook_data.h"
+            .           // CHD minimal-perfect-hash lookup: bucket -> displacement -> slot -> value.
+            .           // Every probed <=K round-boundary form is present (V-book absent=0), so there
+            .           // is no absent case to reject — the lookup always returns that key's value.
+    5,395,260 ( 0.04%)  static inline uint8_t cd_leafbook_value(uint64_t key) {
+            .               uint32_t b = lb_bucket(key, LEAFBOOK_M, LEAFBOOK_SEED);
+    3,596,840 ( 0.03%)      uint32_t s = lb_slot(key, leafbook_disp[b], LEAFBOOK_R, LEAFBOOK_SEED);
+    7,193,680 ( 0.05%)      return leafbook_vals[s];
+            .           }
+            .           #endif
+          976 ( 0.00%)  void cd_sim_set_leafbook(int on) { cd_leafbook_on = on ? 1 : 0; }
+            .           long cd_sim_leafbook_hits(void) { return cd_leafbook_hit; }
+            .           
+            .           #ifdef CD_TT_TAILCACHE
+            .           // C3 (docs/SOLVER_TT_WORKING_SET_PLAN.md): the census shows ~91% of distinct keys
+            .           // are near-leaf positions (<= 6 cards across both hands) whose subtrees are tiny
+            .           // and cheap to recompute. Route those to a small, always-resident side cache so
+            .           // the expensive MAIN table only has to hold the deep (>= K+1 card) working set —
+            .           // ~100-600 distinct keys/game. Value-safe: same entry semantics, different slot
+-- line 890 ----------------------------------------
+-- line 955 ----------------------------------------
+            .               cd_stat_occ = 0;
+            .               return w;
+            .           #else
+            .               return -1;
+            .           #endif
+            .           }
+            .           
+            .           static CdTTEntry *cd_tt_get(void) {
+      324,479 ( 0.00%)      if (!cd_tt) cd_tt = (CdTTEntry *)calloc(CD_TT_SIZE, sizeof(CdTTEntry));
+       32,999 ( 0.00%)  => ./malloc/./malloc/malloc.c:calloc (1x)
+          720 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+            .           #ifdef CD_TT_STATS
+            .               if (!cd_stat_atexit) { cd_stat_atexit = 1; atexit(cd_tt_stats_dump); }
+            .           #endif
+            .               return cd_tt;
+            .           }
+            .           
+            .           // 64-bit fingerprint of the value-relevant state. Two players a<b are IN.
+            .           static uint64_t sim_fingerprint(const SimState *s, int a, int b) {
+   36,814,716 ( 0.28%)      uint64_t h = s->hand[a] * 0x9E3779B97F4A7C15ull;
+   36,814,716 ( 0.28%)      h ^= (s->hand[b] + 0x7F4A7C15ull) * 0xC2B2AE3D27D4EB4Full;
+            .               uint64_t t = 0;
+   85,969,869 ( 0.64%)      for (int i = 0; i < s->num_battles; i++) {
+   11,562,274 ( 0.09%)          uint64_t cell = s->atk[i];
+   44,224,076 ( 0.33%)          if (s->covered_mask & (1ull << i)) cell |= ((uint64_t)s->def[i] << 8) | (1ull << 16);
+   34,686,822 ( 0.26%)          t = t * 1099511628211ull + (cell + 1);
+            .               }
+    8,913,301 ( 0.07%)      h ^= t * 0xFF51AFD7ED558CCDull;
+   24,543,144 ( 0.18%)      h ^= (uint64_t)s->defender << 1;
+   36,814,716 ( 0.28%)      h ^= (uint64_t)s->first_attacker << 9;
+   49,086,288 ( 0.37%)      h ^= (uint64_t)(s->good_mask & 0xff) << 17;
+   36,814,716 ( 0.28%)      h ^= (uint64_t)s->num_battles << 25;
+   36,814,716 ( 0.28%)      h ^= 0x94D049BB133111EBull;
+   36,814,716 ( 0.28%)      h ^= h >> 31;
+   24,543,144 ( 0.18%)      return h ? h : 1;
+            .           }
+            .           
+            .           #ifdef CD_TT_SUITSYM
+            .           // Suit-symmetry canonical fingerprint: the three NON-trump suits are
+            .           // interchangeable (a card's suit only matters via trump + same-suit covering),
+            .           // so a position and any permutation of its non-trump suits have the SAME game
+            .           // value. We key the TT on the canonical orbit representative = the minimum
+            .           // fingerprint over the 6 permutations of the non-trump suits. Every position in
+-- line 995 ----------------------------------------
+-- line 1127 ----------------------------------------
+            .           // Same-value k-subset enumeration over a value-group bitmask, recursively.
+            .           // Each distinct subset of the (suit-distinct) cards is a distinct move.
+            .           static void enum_subsets(uint64_t group, int cap_lo, int cap_hi,
+            .                                    SolMove *buf, int *n, int max_n, uint8_t type) {
+            .               // Enumerate all non-empty subsets of `group` whose popcount is in
+            .               // [cap_lo, cap_hi]. group has few bits (a single value group, <=4).
+            .               int ids[8], gn = 0;
+            .               uint64_t g = group;
+   39,687,000 ( 0.30%)      while (g) { ids[gn++] = ctz64(g); g &= g - 1; }
+   12,839,745 ( 0.10%)      int total = 1 << gn;
+   59,987,264 ( 0.45%)      for (int mask = 1; mask < total && *n < max_n; mask++) {
+  148,677,056 ( 1.11%)          int k = __builtin_popcount(mask);
+   18,584,632 ( 0.14%)          if (k < cap_lo || k > cap_hi) continue;
+   26,387,283 ( 0.20%)          SolMove *m = &buf[(*n)++];
+    8,795,761 ( 0.07%)          m->type = type;
+    8,795,761 ( 0.07%)          m->n = (uint8_t)k;
+            .                   int c = 0;
+  116,929,845 ( 0.87%)          for (int i = 0; i < gn; i++) if (mask & (1 << i)) m->cards[c++] = (uint8_t)ids[i];
+            .               }
+            .           }
+            .           
+            .           // First-attack moves: all same-value k-subsets across value groups, capped
+            .           // by defender capacity (defcap >= k). Mirrors calc_first_attack_moves.
+            .           static int sim_gen_first_attack(const SimState *s, int p, SolMove *buf, int max_n) {
+            .               int n = 0;
+            .               int defcap = sim_hand_count(s, s->defender);
+            .               uint64_t h = s->hand[p];
+  214,929,344 ( 1.61%)      for (int v = 1; v <= 13 && n < max_n; v++) {
+            .                   uint64_t group = h & VALUE_MASK[v];
+   87,315,046 ( 0.65%)          if (!group) continue;
+            .                   enum_subsets(group, 1, defcap, buf, &n, max_n, MV_ATTACK);
+            .               }
+            .               return n;
+            .           }
+            .           
+            .           // Regular-attack moves: all k-subsets of table-valued cards, capped by
+            .           // defcap = defender_cards - uncovered. Mirrors calc_regular_attack_moves.
+            .           static int sim_gen_regular_attack(const SimState *s, int p, SolMove *buf, int max_n) {
+            .               uint64_t tv = sim_table_value_mask(s);
+    6,345,038 ( 0.05%)      uint64_t h = s->hand[p] & tv;
+    6,345,038 ( 0.05%)      if (!h) return 0;
+    1,311,853 ( 0.01%)      int uncovered = sim_count_uncovered(s);
+            .               int defcap = sim_hand_count(s, s->defender) - uncovered;
+    2,623,706 ( 0.02%)      if (defcap <= 0) return 0;
+            .               int n = 0;
+            .               int ids[16], hn = 0;
+            .               uint64_t hh = h;
+    7,512,230 ( 0.06%)      while (hh) { ids[hn++] = ctz64(hh); hh &= hh - 1; }
+    3,935,559 ( 0.03%)      if (defcap > hn) defcap = hn;
+            .               // all non-empty subsets of size 1..defcap (mixed values allowed)
+    1,311,853 ( 0.01%)      int total = 1 << hn;
+   11,257,821 ( 0.08%)      for (int mask = 1; mask < total && n < max_n; mask++) {
+   27,629,168 ( 0.21%)          int k = __builtin_popcount(mask);
+    3,453,646 ( 0.03%)          if (k > defcap) continue;
+    4,814,085 ( 0.04%)          SolMove *m = &buf[n++];
+    1,604,695 ( 0.01%)          m->type = MV_ATTACK;
+    1,604,695 ( 0.01%)          m->n = (uint8_t)k;
+            .                   int c = 0;
+   18,635,410 ( 0.14%)          for (int i = 0; i < hn; i++) if (mask & (1 << i)) m->cards[c++] = (uint8_t)ids[i];
+            .               }
+            .               return n;
+            .           }
+            .           
+            .           // Pass moves: all same-value k-subsets of matching cards, capped by the
+            .           // next player's capacity (next_cards >= k + num_battles). Mirrors
+            .           // calc_pass_moves (all battles uncovered, all same value).
+            .           static int sim_gen_pass(const SimState *s, int p, SolMove *buf, int max_n) {
+    5,740,779 ( 0.04%)      if (s->num_battles == 0) return 0;
+   11,481,558 ( 0.09%)      if (s->covered_mask) return 0;
+    4,281,753 ( 0.03%)      int v0 = id_value(s->atk[0]);
+   11,699,913 ( 0.09%)      for (int i = 1; i < s->num_battles; i++)
+    1,574,127 ( 0.01%)          if (id_value(s->atk[i]) != v0) return 0;
+   12,845,259 ( 0.10%)      uint64_t matching = s->hand[p] & VALUE_MASK[v0];
+    8,563,506 ( 0.06%)      if (!matching) return 0;
+    1,517,709 ( 0.01%)      int next = sim_next_player(s, s->defender);
+            .               int kmax = sim_hand_count(s, next) - s->num_battles;
+    3,035,418 ( 0.02%)      if (kmax < 1) return 0;
+            .               int n = 0;
+            .               enum_subsets(matching, 1, kmax, buf, &n, max_n, MV_PASS);
+            .               return n;
+            .           }
+            .           
+            .           // Cover moves: choose a non-empty subset of uncovered battles and, for each,
+            .           // a distinct covering card. Mirrors calc_cover_moves (choose_attack_subset +
+            .           // emit_cover_combo). Returns count; battles index into the battle array.
+            .           // For the chosen battle subset, assign distinct covers per battle.
+            .           static void cover_assign(const SimState *s, int power, const int *bidx, int pn,
+            .                                    int depth, uint8_t *chosen_card, uint64_t used,
+  203,500,976 ( 1.52%)                           SolMove *buf, int *n, int max_n) {
+   29,071,568 ( 0.22%)      if (depth == pn) {
+   20,967,768 ( 0.16%)          if (*n >= max_n) return;
+   20,967,768 ( 0.16%)          SolMove *m = &buf[(*n)++];
+   13,978,512 ( 0.10%)          m->type = MV_COVER;
+    6,989,256 ( 0.05%)          m->n = (uint8_t)pn;
+   97,276,506 ( 0.73%)          for (int i = 0; i < pn; i++) { m->cards[i] = chosen_card[i]; m->battle[i] = (uint8_t)bidx[i]; }
+            .                   return;
+            .               }
+   30,186,112 ( 0.23%)      int atk = s->atk[bidx[depth]];
+   15,093,056 ( 0.11%)      uint64_t avail = s->hand[s->defender] & ~used;
+            .               uint64_t a = avail;
+   94,331,640 ( 0.71%)      while (a && *n < max_n) {
+            .                   int id = ctz64(a); a &= a - 1;
+   29,940,547 ( 0.22%)          if (!id_can_cover(atk, id, power)) continue;
+    7,693,883 ( 0.06%)          chosen_card[depth] = (uint8_t)id;
+   92,326,596 ( 0.69%)          cover_assign(s, power, bidx, pn, depth + 1, chosen_card,
+  408,812,757 ( 3.06%)  => /home/user/foolish/c/src/cordite_sim.c:cover_assign'2 (7,152,950x)
+   15,387,766 ( 0.12%)                       used | (1ull << id), buf, n, max_n);
+            .               }
+  116,286,272 ( 0.87%)  }
+            .           
+            .           static int sim_gen_cover(const SimState *s, int power, SolMove *buf, int max_n) {
+            .               int ubat[SIM_MAX_BATTLES], nub = 0;
+   27,319,846 ( 0.20%)      for (int i = 0; i < s->num_battles; i++)
+   52,676,862 ( 0.39%)          if (!(s->covered_mask & (1ull << i))) ubat[nub++] = i;
+   11,481,558 ( 0.09%)      if (nub == 0) return 0;
+   11,481,558 ( 0.09%)      int n = 0;
+            .               int bidx[SIM_MAX_BATTLES];
+            .               uint8_t chosen[SIM_MAX_BATTLES];
+            .               // choose k battles to cover, k = 1..nub, in combination order
+  121,374,924 ( 0.91%)      for (int k = 1; k <= nub && n < max_n; k++) {
+            .                   // iterate combinations of nub choose k
+            .                   int comb[SIM_MAX_BATTLES];
+   39,926,590 ( 0.30%)          for (int i = 0; i < k; i++) comb[i] = i;
+            .                   while (n < max_n) {
+   72,328,223 ( 0.54%)              for (int i = 0; i < k; i++) bidx[i] = ubat[comb[i]];
+  116,312,317 ( 0.87%)              cover_assign(s, power, bidx, k, 0, chosen, 0, buf, &n, max_n);
+1,148,302,931 ( 8.59%)  => /home/user/foolish/c/src/cordite_sim.c:cover_assign (6,841,901x)
+            .                       // next combination
+            .                       int i = k - 1;
+  107,619,105 ( 0.80%)              while (i >= 0 && comb[i] == nub - k + i) i--;
+            .                       if (i < 0) break;
+    1,109,020 ( 0.01%)              comb[i]++;
+    1,726,714 ( 0.01%)              for (int j = i + 1; j < k; j++) comb[j] = comb[j - 1] + 1;
+            .                   }
+            .               }
+            .               return n;
+            .           }
+            .           
+            .           // Apply a SolMove to a SimState (uses the same handlers as the rollout).
+   83,872,690 ( 0.63%)  static void sim_apply_sol(SimState *s, int p, const SolMove *m) {
+  100,647,228 ( 0.75%)      switch (m->type) {
+   13,348,368 ( 0.10%)          case MV_ATTACK: sim_apply_attack(s, p, m->cards, m->n); break;
+    2,548,910 ( 0.02%)          case MV_PASS:   sim_apply_pass(s, p, m->cards, m->n); break;
+   27,275,430 ( 0.20%)  => /home/user/foolish/c/src/cordite_sim.c:sim_apply_pass (364,130x)
+            .                   case MV_PICKUP: sim_apply_pickup(s, p); break;
+            .                   case MV_GOOD:   sim_apply_good(s, p); break;
+            .                   case MV_COVER: {
+            .                       int bi[8];
+   37,447,231 ( 0.28%)              for (int i = 0; i < m->n; i++) bi[i] = m->battle[i];
+    9,308,604 ( 0.07%)              sim_apply_cover(s, p, m->cards, bi, m->n);
+  285,084,931 ( 2.13%)  => /home/user/foolish/c/src/cordite_sim.c:sim_apply_cover (4,654,302x)
+            .                       break;
+            .                   }
+            .               }
+   82,052,040 ( 0.61%)  }
+            .           
+            .           #define CD_SIM_SOLVE_MAX_DEPTH 48    // match the struct solver (CD_SOLVE_MAX_DEPTH)
+            .           #define CD_SOLVE_MOVES_CAP     96    // struct's CD_SOLVE_MAX_MOVES: abort when a
+            .                                                // node has > this many legal moves, so the
+            .                                                // resolved/aborted position SET — hence
+            .                                                // play — is identical to the struct solver
+            .           #define CD_SIM_SOLVE_MAX_MOVES 160   // generation buffer (slack above the cap)
+            .           
+-- line 1285 ----------------------------------------
+-- line 1298 ----------------------------------------
+            .           #define CD_SIM_SOLVE_REC_SLOTS 100
+            .           _Static_assert(CD_SIM_SOLVE_REC_SLOTS > CD_SOLVE_MOVES_CAP,
+            .                          "recursion gen buffer needs slack above the movecap abort");
+            .           static _Thread_local SolMove  sim_rec_moves[CD_SIM_SOLVE_MAX_DEPTH][CD_SIM_SOLVE_REC_SLOTS];
+            .           static _Thread_local SimState sim_rec_child[CD_SIM_SOLVE_MAX_DEPTH];
+            .           
+            .           // Generate the full legal-move set for `actor`, mirroring
+            .           // calculate_legal_moves' branch selection.
+  122,715,690 ( 0.92%)  static int sim_gen_moves(const SimState *s, int actor, SolMove *buf, int max_n) {
+            .               int power = s->power_suit;
+   24,543,138 ( 0.18%)      int first_attack = (s->num_battles == 0);
+   21,184,867 ( 0.16%)      int is_def = (actor == s->defender);
+   25,704,653 ( 0.19%)      if (first_attack && actor == s->first_attacker) {
+            .                   return sim_gen_first_attack(s, actor, buf, max_n);
+    8,913,298 ( 0.07%)      } else if (is_def && s->num_battles > 0) {
+            .                   int n = sim_gen_cover(s, power, buf, max_n);
+   22,963,116 ( 0.17%)          if (!sim_all_covered(s) && n < max_n) {
+   22,963,116 ( 0.17%)              buf[n].type = MV_PICKUP; buf[n].n = 0; n++;
+            .                   }
+    5,740,779 ( 0.04%)          n += sim_gen_pass(s, actor, buf + n, max_n - n);
+            .                   return n;
+            .               } else if (!is_def && s->num_battles > 0) {
+   12,690,076 ( 0.09%)          if (s->good_mask & (1u << actor)) return 0;
+            .                   int n = sim_gen_regular_attack(s, actor, buf, max_n);
+   19,035,114 ( 0.14%)          if (n < max_n) { buf[n].type = MV_GOOD; buf[n].n = 0; n++; }
+            .                   return n;
+            .               }
+            .               return 0;
+   98,172,552 ( 0.73%)  }
+            .           
+            .           // ---- TT thrash trace (-DCD_TT_TRACE; compiled out otherwise) --------------
+            .           // Emits a machine-readable exploration trace for ONE selected endgame-solve
+            .           // group (CD_TRACE_GROUP=<n>, group counter bumped per cd_sim_solve_reset), and
+            .           // optionally only the root moves whose applied table matches CD_TRACE_ROOT (a
+            .           // substring; empty = all). Lines (stderr):
+            .           //   SOLVE   g=<grp> call=<i> me=<me> d0=<d> a=<al> b=<be> budget=<b> root=<tbl>
+            .           //   SOLRET  g=<grp> call=<i> v=<v> aborted=<a> nodes=<n> budgetleft=<b>
+-- line 1334 ----------------------------------------
+-- line 1380 ----------------------------------------
+            .           #else
+            .           #define TR_RET(v, why) return (v)
+            .           #endif
+            .           
+            .           // Move-ordering key: lower = tried first. For the maximizer we want quick
+            .           // wins; for both sides emptying the hand / ending the round tends to resolve
+            .           // fast. We sort attacks/covers by card count desc then score, pickup/good
+            .           // last. Ordering does not affect the value (full search), only speed.
+  151,700,958 ( 1.13%)  static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int depth) {
+            .           #ifdef CD_TT_TRACE
+            .               long _nid = 0, _pid = cd_tr_parent;
+            .               if (cd_tr_active) {
+            .                   _nid = ++cd_tr_nid; cd_tr_nodes++;
+            .                   fprintf(stderr,"ENTER %ld %ld d=%d a=%d b=%d edge=%s\n",
+            .                           _nid,_pid,depth,alpha,beta,cd_tr_edge);
+            .               }
+            .           #endif
+            .               int loser = sim_done(s);
+   13,913,490 ( 0.10%)      if (loser >= 0) TR_RET((loser == S->me) ? -(1000 - depth) : (1000 - depth), "term");
+            .               int incount = sim_in_count(s);
+            .               if (incount == 0) TR_RET(0, "draw");
+   28,145,928 ( 0.21%)      if (depth >= CD_SIM_SOLVE_MAX_DEPTH) { S->aborted = 1; TR_RET(0, "maxdepth"); }
+   70,355,295 ( 0.53%)      if (--S->budget <= 0) { S->aborted = 1; TR_RET(0, "budget"); }
+            .           
+            .               // actor: defender-priority, then first IN actor (mirrors cd_solve).
+            .               int actor = -1;
+   17,242,513 ( 0.13%)      if (sim_should_act(s, s->defender)) actor = s->defender;
+            .               else {
+   21,075,855 ( 0.16%)          for (int i = 0; i < s->num_players; i++)
+   25,156,186 ( 0.19%)              if (sim_should_act(s, i)) { actor = i; break; }
+            .               }
+   11,481,560 ( 0.09%)      if (actor < 0) TR_RET(0, "noactor");
+            .           
+            .               // Two players for the fingerprint (the only IN pair in an endgame).
+            .               int a = -1, b = -1;
+  182,909,896 ( 1.37%)      for (int i = 0; i < s->num_players; i++)
+  182,909,896 ( 1.37%)          if (s->status_p[i] == PLAYER_STATUS_IN) { if (a < 0) a = i; else b = i; }
+            .           
+            .           #ifdef CD_LEAFBOOK
+            .               // LEAFBOOK probe (before the TT): at a round boundary (empty table, nobody
+            .               // said good) with a deck-empty 2-player <=K-card position, a book hit
+            .               // terminates the whole subtree with a proven value — no search, no TT
+            .               // traffic, no budget. The book value is the attacker-to-move's result; flip
+            .               // to S->me's perspective. Value-safe by the offline V-book gate (100.000%
+            .               // over 1e6 samples). Round-boundary => actor == first_attacker (attacker).
+   94,733,334 ( 0.71%)      if (cd_leafbook_on && b >= 0 && s->num_battles == 0 && s->good_mask == 0
+    5,156,691 ( 0.04%)          && sim_no_cards_left(s)) {
+    5,156,691 ( 0.04%)          int atk = s->first_attacker, def = s->defender;
+   30,940,146 ( 0.23%)          if (atk != def && (s->in_mask >> atk & 1u) && (s->in_mask >> def & 1u)) {
+  226,894,404 ( 1.70%)              int nc = __builtin_popcountll(s->hand[atk]) + __builtin_popcountll(s->hand[def]);
+   20,626,764 ( 0.15%)              if (nc >= 2 && nc <= LEAFBOOK_DATA_K) {
+    3,596,840 ( 0.03%)                  cd_leafbook_hit++;
+   14,387,360 ( 0.11%)                  uint8_t vb = cd_leafbook_value(leafbook_key(s->hand[atk], s->hand[def], s->power_suit));
+    3,410,059 ( 0.03%)  => src/leafbook.h:leafbook_key (6,940x)
+      374,760 ( 0.00%)  => /home/user/foolish/c/src/cordite_sim.c:cd_leafbook_value (6,940x)
+    5,395,260 ( 0.04%)                  int outc = vb >> 4, dist = vb & 15;
+    9,706,143 ( 0.07%)                  int av = (outc == 2) ? (1000 - (depth + dist))
+    1,445,836 ( 0.01%)                         : (outc == 0) ? -(1000 - (depth + dist)) : 0;
+    7,193,680 ( 0.05%)                  int v = (S->me == atk) ? av : -av;   // book is attacker-perspective
+            .                           TR_RET(v, "leafbook");
+            .                       }
+            .                   }
+            .               }
+            .           #endif
+            .           
+            .               uint64_t key = 0;
+            .               CdTTEntry *e = NULL;
+   12,271,572 ( 0.09%)      CdTTEntry *tbl = S->tt; uint64_t tmask = CD_TT_MASK;   // pool this node uses (main by default)
+            .               if (b >= 0) {
+            .           #if defined(CD_TT_RANKSYM)
+            .                   key = sim_fingerprint_ranksym(s, a, b);
+            .           #elif defined(CD_TT_SUITSYM)
+            .                   key = sim_fingerprint_canon(s, a, b);
+            .           #else
+            .                   key = sim_fingerprint(s, a, b);
+            .           #endif
+-- line 1453 ----------------------------------------
+-- line 1461 ----------------------------------------
+            .           #endif
+            .           #ifdef CD_TT_2WAY
+            .                   // 2-way set associativity: each aligned slot pair is one bucket (both
+            .                   // entries share a 64-byte cache line at 16 B/entry). Probe both halves;
+            .                   // hit on either key. On a miss `e` is left pointing at the bucket's low
+            .                   // slot so the store path still fires — the real victim is re-chosen from
+            .                   // live bucket contents at the store site below.
+            .                   {
+   36,814,716 ( 0.28%)              CdTTEntry *bkt = &tbl[key & tmask & ~1ull];
+   49,086,303 ( 0.37%)              if (bkt[0].valid && bkt[0].key == CD_TT_KEYTAG(key))      e = &bkt[0];
+   36,814,707 ( 0.28%)              else if (bkt[1].valid && bkt[1].key == CD_TT_KEYTAG(key)) e = &bkt[1];
+            .                       else                                        e = &bkt[0];
+            .                   }
+            .           #else
+            .                   e = &tbl[key & tmask];
+            .           #endif
+   24,543,156 ( 0.18%)          if (e->valid && e->key == CD_TT_KEYTAG(key)) {
+            .                       // stored value is depth-relative to e->depth; re-base to this depth.
+            9 ( 0.00%)              int v = e->value;
+           18 ( 0.00%)              if (v > 0) v = v - (1000 - e->depth) + (1000 - depth);
+            .                       else if (v < 0) v = v + (1000 - e->depth) - (1000 - depth);
+            .           #ifdef CD_TT_TRACE
+            .                       if (cd_tr_active)
+            .                           fprintf(stderr,"HIT %ld key=%llx depth=%d stored_depth=%d value=%d\n",
+            .                                   _nid,(unsigned long long)key,depth,(int)e->depth,v);
+            .           #endif
+            .           #ifdef CD_TT_BOUNDS
+            .                       // EXACT -> return; a proven bound either cuts off or narrows [alpha,beta]
+-- line 1488 ----------------------------------------
+-- line 1528 ----------------------------------------
+            .                   }
+            .               }
+            .           #ifdef CD_TT_TRACE
+            .               if (cd_tr_active)
+            .                   fprintf(stderr,"KEY %ld key=%llx actor=%d max=%d\n",
+            .                           _nid,(unsigned long long)key,actor,(actor==S->me));
+            .           #endif
+            .           
+   73,629,414 ( 0.55%)      SolMove *moves = sim_rec_moves[depth];   // hoisted to depth-indexed BSS (M7a)
+   61,357,845 ( 0.46%)      int nm = sim_gen_moves(s, actor, moves, CD_SIM_SOLVE_REC_SLOTS);
+   32,054,580 ( 0.24%)  => /home/user/foolish/c/src/cordite_sim.c:sim_gen_moves (74,183x)
+   24,543,138 ( 0.18%)      if (nm == 0) TR_RET(0, "nomoves");
+            .               // Mirror the struct solver's `mv->n > CD_SOLVE_MAX_MOVES` bail: abort on
+            .               // nodes with more than the cap legal moves, so we resolve/abort the exact
+            .               // same position set as the struct solver (identical play). The buffer has
+            .               // slack above the cap so a true count above it is still detected.
+   24,543,138 ( 0.18%)      if (nm > CD_SOLVE_MOVES_CAP) { S->aborted = 1; TR_RET(0, "movecap"); }
+            .           
+            .               // Move ordering (insertion sort, nm small), runtime-selected by S->order:
+            .               //   2 = big-first (descending by card count) — aggressive cutoffs, small W,
+            .               //       but dives into deep lines that can trip the ply-48 abort.
+            .               //   3 = short-line-first (ascending) — round-enders/fewest cards first, so
+            .               //       short lines resolve before the search goes deep (fuller, bigger W).
+            .               //   0 = generation order. CD_TT_ADAPT runs 2, and on abort re-solves with 3.
+   49,086,276 ( 0.37%)      if (S->order) {
+            .                   int desc = (S->order == 2);
+            .                   for (int i = 1; i < nm; i++) {
+            .                       SolMove kv = moves[i];
+            .                       int ki = (kv.n == 0) ? -1 : kv.n;
+            .                       int j = i - 1;
+            .                       while (j >= 0) {
+            .                           int kj = (moves[j].n == 0) ? -1 : moves[j].n;
+            .                           if (desc ? (kj >= ki) : (kj <= ki)) break;
+            .                           moves[j + 1] = moves[j]; j--;
+            .                       }
+            .                       moves[j + 1] = kv;
+            .                   }
+            .               }
+            .           
+            .               int alpha0 = alpha, beta0 = beta;   // original window for exactness test
+   41,207,666 ( 0.31%)      int maximizing = (actor == S->me);
+   12,271,569 ( 0.09%)      int best = maximizing ? -2000 : 2000;
+            .               int applied = 0;
+            .               SimState *child = &sim_rec_child[depth];   // hoisted to depth-indexed BSS (M7a)
+            .           #ifdef CD_TT_TRACE
+            .               long _saved_parent = cd_tr_parent;
+            .               if (cd_tr_active) cd_tr_parent = _nid;
+            .           #endif
+   85,790,973 ( 0.64%)      for (int i = 0; i < nm; i++) {
+            .                   // Copy everything EXCEPT the deck[] tail: the solver only ever runs on
+            .                   // deck-empty endgames (entered at deck_n==0 && !has_flipped) and nothing
+            .                   // under it draws (sim_apply_sol never refills), so deck[] is dead here.
+            .                   // Skipping the 64B tail shaves ~20% off this per-node clone — the single
+            .                   // hottest memmove in the semtex/octogen/cordite MC profile. deck_n (=0)
+            .                   // sits before deck[] and is still copied, so movegen sees a valid count.
+   83,872,690 ( 0.63%)          memcpy(child, s, offsetof(SimState, deck));
+    8,936,754 ( 0.07%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (168,618x)
+   67,098,152 ( 0.50%)          sim_apply_sol(child, actor, &moves[i]);
+   10,424,240 ( 0.08%)  => /home/user/foolish/c/src/cordite_sim.c:sim_apply_sol (168,618x)
+            .                   applied = 1;
+            .           #ifdef CD_TT_TRACE
+            .                   if (cd_tr_active) cd_tr_move(cd_tr_edge, sizeof(cd_tr_edge), &moves[i]);
+            .           #endif
+  117,421,766 ( 0.88%)          int v = sim_solve_rec(S, child, alpha, beta, depth + 1);
+11,960,021,611 (89.43%)  => /home/user/foolish/c/src/cordite_sim.c:sim_solve_rec'2 (168,618x)
+   33,549,076 ( 0.25%)          if (S->aborted) {
+            .           #ifdef CD_TT_TRACE
+            .                       cd_tr_parent = _saved_parent;
+            .           #endif
+            .                       TR_RET(0, "abort");
+            .                   }
+   16,664,528 ( 0.12%)          if (maximizing) {
+   16,638,602 ( 0.12%)              if (v > best) best = v;
+   49,915,806 ( 0.37%)              if (best > alpha) alpha = best;
+            .                   } else {
+   16,690,454 ( 0.12%)              if (v < best) best = v;
+   41,726,135 ( 0.31%)              if (best < beta) beta = best;
+            .                   }
+   33,329,056 ( 0.25%)          if (alpha >= beta) break;
+            .               }
+            .           #ifdef CD_TT_TRACE
+            .               if (cd_tr_active) cd_tr_parent = _saved_parent;
+            .           #endif
+   48,646,236 ( 0.36%)      if (!applied || best == -2000 || best == 2000) TR_RET(0, "unresolved");
+            .           
+            .               // Memoize EXACT values only. A fail-soft alpha-beta result `best` is the
+            .               // true game value only when it lands strictly INSIDE the original window
+            .               // (alpha0 < best < beta0). On a fail-low (best <= alpha0) it is only an
+            .               // upper bound; on a fail-high (best >= beta0) only a lower bound — storing
+            .               // either as exact would corrupt a later lookup under a wider window. So we
+            .               // store solely the exact case; bound nodes are simply not memoized.
+            .           #ifdef CD_TT_STATS
+            .               if (e && key) {   // census: how much completed work falls outside the window
+            .                   if (best >= beta0) cd_stat_failhi++;
+            .                   else if (best <= alpha0) cd_stat_faillo++;
+            .               }
+            .           #endif
+            .           #ifndef CD_TT_BOUNDS
+   84,869,146 ( 0.63%)      if (e && key && best > alpha0 && best < beta0) {
+            .                   int store = 1;
+            .           #ifdef CD_TT_2WAY
+            .                   // Re-choose the victim from the bucket's LIVE contents (children may have
+            .                   // filled it since our probe): same-key slot, else an empty slot, else evict
+            .                   // the deeper-ply entry (bigger depth = smaller subtree = cheaper to redo).
+            .                   // Always store — refusal is the pathology that made 1-way DEPTH_PREF regress.
+            .                   {
+           15 ( 0.00%)              CdTTEntry *bkt = &tbl[key & tmask & ~1ull];
+           20 ( 0.00%)              if (bkt[0].valid && bkt[0].key == CD_TT_KEYTAG(key))      e = &bkt[0];
+           15 ( 0.00%)              else if (bkt[1].valid && bkt[1].key == CD_TT_KEYTAG(key)) e = &bkt[1];
+            .                       else if (!bkt[0].valid)                     e = &bkt[0];
+            .                       else if (!bkt[1].valid)                     e = &bkt[1];
+            .                       else e = (bkt[0].depth >= bkt[1].depth) ? &bkt[0] : &bkt[1];
+            .                   }
+            .           #endif
+            .           #ifdef CD_TT_DEPTH_PREF
+            .                   // Depth-preferred replacement: on a collision with a DIFFERENT key, keep
+            .                   // whichever entry is closer to the root (lower ply = larger subtree below
+-- line 1640 ----------------------------------------
+-- line 1663 ----------------------------------------
+            .                               fprintf(stderr,"EVICT %ld slot=%u oldkey=%llx olddepth=%d newkey=%llx newdepth=%d\n",
+            .                                       _nid,slot,(unsigned long long)e->key,(int)e->depth,
+            .                                       (unsigned long long)key,depth);
+            .                           else
+            .                               fprintf(stderr,"STORE %ld slot=%u key=%llx depth=%d\n",
+            .                                       _nid,slot,(unsigned long long)key,depth);
+            .                       }
+            .           #endif
+           10 ( 0.00%)              e->key = CD_TT_KEYTAG(key);
+           30 ( 0.00%)              e->value = (int16_t)best;
+           15 ( 0.00%)              e->depth = (uint8_t)depth;
+           20 ( 0.00%)              e->valid = 1;
+            .                   }
+            .               }
+            .           #else   /* CD_TT_BOUNDS: store EXACT and, deep enough, fail-soft LOWER/UPPER bounds */
+            .               if (e && key) {
+            .                   int bnd = (best > alpha0 && best < beta0) ? TT_EXACT
+            .                           : (best >= beta0)                 ? TT_LOWER
+            .                           :                                   TT_UPPER;   /* best <= alpha0 */
+            .                   int tc = __builtin_popcountll(s->hand[a]) + __builtin_popcountll(s->hand[b]);
+-- line 1682 ----------------------------------------
+-- line 1719 ----------------------------------------
+            .                           slot->depth = (uint8_t)depth;
+            .                           slot->valid = 1;
+            .                           slot->bound = (uint8_t)bnd;
+            .                       }
+            .                   }
+            .               }
+            .           #endif
+            .               TR_RET(best, "exact");
+  134,845,296 ( 1.01%)  }
+            .           
+            .           // Public entry: exact value of position `s` from `me`'s perspective, with the
+            .           // given window and budget. Returns the value; sets *aborted if budget/depth
+            .           // blew. Clears the TT each call (positions across calls are unrelated).
+            .           int cd_sim_solve(SimState *s, int me, int alpha, int beta, long budget, int *aborted) {
+            .               long b = budget;
+            .               return cd_sim_solve_d(s, me, alpha, beta, &b, 0, aborted);
+            .           }
+-- line 1735 ----------------------------------------
+-- line 1736 ----------------------------------------
+            .           
+            .           // As cd_sim_solve, but starting the depth counter at `depth0` so the value
+            .           // encoding (±(1000-depth)) lines up with a caller that already applied a move
+            .           // (e.g. the root win-hunt evaluates children at depth 1). `*budget` is the
+            .           // shared remaining node budget: it is decremented by the nodes this call
+            .           // expanded so a caller can drain one budget across many root moves (matching
+            .           // the struct solver's shared-budget semantics).
+            .           int cd_sim_solve_d(SimState *s, int me, int alpha, int beta, long *budget,
+          312 ( 0.00%)                     int depth0, int *aborted) {
+            .               SimSolver S;
+            .               long budget0 = *budget;
+       81,150 ( 0.00%)      S.budget = *budget;
+       81,124 ( 0.00%)      S.aborted = 0;
+       81,124 ( 0.00%)      S.me = me;
+       81,124 ( 0.00%)      S.order = 0;
+            .           #if defined(CD_TT_ADAPT) || defined(CD_TT_ORDER2)
+            .               S.order = 2;              // big-first by default
+            .           #elif defined(CD_TT_ORDER3)
+            .               S.order = 3;
+            .           #endif
+       81,150 ( 0.00%)      S.tt = cd_tt_get();
+            2 ( 0.00%)      if (!S.tt) { if (aborted) *aborted = 1; return 0; }
+            .           #ifdef CD_TT_TRACE
+            .               int _call = cd_tr_call++;
+            .               long _nodes0 = cd_tr_nodes;
+            .               char _tbl[128]; cd_tr_table(_tbl, sizeof(_tbl), s);
+            .               if (cd_tr_grp_match()) {
+            .                   if (cd_tr_rootf == (const char*)-1) cd_tr_rootf = getenv("CD_TRACE_ROOT");
+            .                   cd_tr_active = (!cd_tr_rootf || !*cd_tr_rootf || strstr(_tbl, cd_tr_rootf) != NULL);
+            .                   strcpy(cd_tr_edge, "root");
+-- line 1765 ----------------------------------------
+-- line 1770 ----------------------------------------
+            .                       { char c[8]; for(uint64_t x=s->hand[me];x;x&=x-1){int id=__builtin_ctzll(x);cd_tr_card(c,id);size_t l=strlen(_h0);if(l){_h0[l]=',';_h0[l+1]=0;}strncat(_h0,c,sizeof(_h0)-strlen(_h0)-1);} }
+            .                       if(_p1>=0){ char c[8]; for(uint64_t x=s->hand[_p1];x;x&=x-1){int id=__builtin_ctzll(x);cd_tr_card(c,id);size_t l=strlen(_h1);if(l){_h1[l]=',';_h1[l+1]=0;}strncat(_h1,c,sizeof(_h1)-strlen(_h1)-1);} }
+            .                       fprintf(stderr,"SOLVE g=%ld call=%d me=%d opp=%d power=%d def=%d fa=%d d0=%d a=%d b=%d budget=%ld root=[%s] h%d=[%s] h%d=[%s]\n",
+            .                               cd_tr_group,_call,me,_p1,s->power_suit,s->defender,s->first_attacker,
+            .                               depth0,alpha,beta,*budget,_tbl,me,_h0,_p1,_h1);
+            .                   }
+            .               } else cd_tr_active = 0;
+            .           #endif
+      486,666 ( 0.00%)      int v = sim_solve_rec(&S, s, alpha, beta, depth0);
+      101,861 ( 0.00%)  => /home/user/foolish/c/src/cordite_sim.c:sim_solve_rec (26x)
+            .           #ifdef CD_TT_ADAPT
+            .               // big-first (order 2) bailed on a deep line -> re-solve this position with the
+            .               // fuller short-line-first order (3) and a fresh budget, so we resolve it
+            .               // instead of dropping to the Monte-Carlo fallback. Aborts are rare, so the
+            .               // common path stays cheap (small W) while the knife-edge games stay correct.
+            .               if (S.aborted && S.order == 2) {
+            .                   S.budget = budget0; S.aborted = 0; S.order = 0;   // fall back to the reliable std order
+            .                   v = sim_solve_rec(&S, s, alpha, beta, depth0);
+            .               }
+            .           #endif
+           52 ( 0.00%)      *budget = S.budget;
+           78 ( 0.00%)      if (aborted) *aborted = S.aborted;
+            .           #ifdef CD_TT_TRACE
+            .               if (cd_tr_active)
+            .                   fprintf(stderr,"SOLRET g=%ld call=%d v=%d aborted=%d nodes=%ld budgetleft=%ld\n",
+            .                           cd_tr_group,_call,v,S.aborted,cd_tr_nodes-_nodes0,*budget);
+            .               // Always-on lightweight per-move summary (group discovery, all groups).
+            .               fprintf(stderr,"SUM g=%ld call=%d me=%d a=%d b=%d v=%d aborted=%d budgetleft=%ld root=[%s]\n",
+            .                       cd_tr_group,_call,me,alpha,beta,v,S.aborted,*budget,_tbl);
+            .               cd_tr_active = 0;
+            .           #endif
+            .               return v;
+          208 ( 0.00%)  }
+            .           
+           12 ( 0.00%)  void cd_sim_solve_reset(void) {
+            .           #ifdef CD_TT_STATS
+            .               // record the window that just closed (occ = distinct keys inserted since
+            .               // the previous reset), then start a fresh window.
+            .               if (cd_stat_occ > 0) {
+            .                   long b = cd_stat_occ < CD_STAT_MAXB ? cd_stat_occ : CD_STAT_MAXB - 1;
+            .                   cd_stat_hist[b]++;
+            .                   cd_stat_windows++;
+            .                   if (cd_stat_occ > cd_stat_game_max) cd_stat_game_max = cd_stat_occ;
+-- line 1811 ----------------------------------------
+-- line 1812 ----------------------------------------
+            .               }
+            .               cd_stat_occ = 0;
+            .           #endif
+            .           #ifdef CD_TT_TRACE
+            .               cd_tr_group++;
+            .               cd_tr_call = 0;
+            .               if (cd_tr_grp_match()) { cd_tr_nid = 0; cd_tr_parent = 0; }
+            .           #endif
+           43 ( 0.00%)      if (cd_tt) memset(cd_tt, 0, CD_TT_SIZE * sizeof(CdTTEntry));
+      163,925 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms (5x)
+            .           #ifdef CD_TT_TAILCACHE
+            .               memset(cd_tt_tail, 0, sizeof(cd_tt_tail));
+            .           #endif
+            2 ( 0.00%)  }
+            .           
+            .           // Single-step (test hook): advance one actor; returns the actor index or -1.
+            .           int cd_sim_one_step(SimState *s) {
+            .               for (int pi = 0; pi < s->num_players; pi++) {
+            .                   if (!sim_should_act(s, pi)) continue;
+            .                   SimMove m;
+            .                   if (!sim_handwritten_move(s, pi, &m)) continue;
+            .                   sim_apply(s, pi, &m);
+-- line 1832 ----------------------------------------
+-- line 1955 ----------------------------------------
+            .               }
+            .               return sim_handwritten_move(s, p, out);
+            .           }
+            .           
+            .           // Playout where each seat plays its own policy (pol[p] = CD_POL_*), with
+            .           // optional exact leaf endgames (leaf_cards > 0). pol == NULL means all
+            .           // handwritten, matching cd_sim_playout_leaf / cd_sim_playout exactly.
+            .           int cd_sim_playout_pol(SimState *s, int my_idx, int max_turns, int early_exit,
+    2,362,752 ( 0.02%)                         int leaf_cards, long leaf_budget, const uint8_t *pol) {
+            .               int turns = 0;
+            .               int leaf_tried = 0;
+    7,256,606 ( 0.05%)      while (sim_done(s) < 0 && turns++ < max_turns) {
+    9,365,964 ( 0.07%)          if (early_exit && s->status_p[my_idx] != PLAYER_STATUS_IN) {
+            .                       for (int i = 0; i < s->num_eliminated; i++)
+            .                           if (s->elim_order[i] == my_idx) return i + 1;
+            .                       break;
+            .                   }
+   17,436,539 ( 0.13%)          if (leaf_cards > 0 && !leaf_tried && s->deck_n == 0 && !s->has_flipped) {
+            .                       int a = -1, b = -1;
+    5,442,710 ( 0.04%)              for (int i = 0; i < s->num_players; i++) {
+    3,110,120 ( 0.02%)                  if (s->status_p[i] != PLAYER_STATUS_IN) continue;
+    4,665,180 ( 0.03%)                  if (a < 0) a = i; else if (b < 0) b = i; else { b = -2; break; }
+            .                       }
+    3,110,120 ( 0.02%)              if (a >= 0 && b >= 0) {
+            .                           int total = __builtin_popcountll(s->hand[a])
+   16,328,130 ( 0.12%)                            + __builtin_popcountll(s->hand[b]);
+    5,316,629 ( 0.04%)                  for (int i = 0; i < s->num_battles; i++)
+    2,303,326 ( 0.02%)                      total += 1 + ((s->covered_mask >> i) & 1);
+    1,555,060 ( 0.01%)                  if (total <= leaf_cards) {
+            .                               leaf_tried = 1;
+            .                               int aborted = 0;
+            .                               long budget = leaf_budget;
+            .                               int v = cd_sim_solve_d(s, a, -1, 1, &budget, 0, &aborted);
+      474,700 ( 0.00%)                      if (!aborted && v != 0) {
+      156,252 ( 0.00%)                          int loser = (v < 0) ? a : b;
+       78,126 ( 0.00%)                          int np = s->num_players;
+      156,252 ( 0.00%)                          if (my_idx == loser) return np;
+      136,630 ( 0.00%)                          if (my_idx == a || my_idx == b) return np - 1;
+            .                                   for (int i = 0; i < s->num_eliminated; i++)
+            .                                       if (s->elim_order[i] == my_idx) return i + 1;
+            .                                   return np - 1;
+            .                               }
+            .                           }
+            .                       }
+            .                   }
+            .                   int acted = 0;
+   13,998,226 ( 0.10%)          for (int pi = 0; pi < s->num_players; pi++) {
+    9,141,906 ( 0.07%)              if (!sim_should_act(s, pi)) continue;
+            .                       SimMove m;
+    3,043,862 ( 0.02%)              int got = (pol && pol[pi] == CD_POL_LOOSE)
+            .                               ? sim_loose_move(s, pi, &m)
+            .                               : (pol && pol[pi] == CD_POL_MCDEF)
+            .                               ? sim_mcdef_move(s, pi, &m)
+   12,175,448 ( 0.09%)                      : sim_handwritten_move(s, pi, &m);
+  503,765,774 ( 3.77%)  => /home/user/foolish/c/src/cordite_sim.c:sim_handwritten_move (3,043,862x)
+    9,131,586 ( 0.07%)              if (!got) continue;
+   12,175,448 ( 0.09%)              sim_apply(s, pi, &m);
+  398,682,851 ( 2.98%)  => /home/user/foolish/c/src/cordite_sim.c:sim_apply (3,043,862x)
+            .                       acted = 1;
+            .                       break;
+            .                   }
+            .                   if (!acted) break;
+            .               }
+            .               if (sim_done(s) < 0) return 0;
+       79,600 ( 0.00%)      for (int i = 0; i < s->num_eliminated; i++)
+      103,125 ( 0.00%)          if (s->elim_order[i] == my_idx) return i + 1;
+            .               return s->num_players;
+      900,096 ( 0.01%)  }
+            .           
+            .           // ---------- reply-tournament playout (octogen) ---------------------------
+            .           // The FIRST opponent decision of the playout is chosen by SEARCH instead of
+            .           // the rollout policy: enumerate the actor's full legal reply set (the
+            .           // solver's bitboard move-gen), play each candidate reply out to completion,
+            .           // and let the opponent take the reply with the best outcome FOR THEM (their
+            .           // own finish position; ties -> the cheapest-ranked reply, matching the
+            .           // cheap-first convention). Returns MY finish under that reply. This models
+-- line 2028 ----------------------------------------
+-- line 2322 ----------------------------------------
+            .           
+            .           void solve_clone_prefix(Game *dst, const Game *src) {
+            .               memcpy(dst, src, offsetof(Game, logs));
+            .               // Sinkhole: log_alloc sees a full array and drops appends into its own
+            .               // static scratch, so nothing ever writes past the prefix-sized slot.
+            .               dst->num_logs = MAX_LOGS;
+            .           }
+            .           
+            6 ( 0.00%)  SolveMoves *solve_scratch_mv(void) { return solve_ws.mv; }
+            .           
+            .           LegalMoves *rollout_moves_scratch(void) { return &solve_ws.rollout; }
+            .           
+           30 ( 0.00%)  Game *solve_scratch_root(void) { return (Game *)solve_root_scratch; }
+            .           
+           25 ( 0.00%)  void solve_clone_root(Game *dst, const Game *src) {
+           15 ( 0.00%)      memcpy(dst, src, offsetof(Game, logs));
+          685 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (5x)
+            5 ( 0.00%)      dst->num_logs = 0;   // solver never reads history; keeps lite reads in-slot
+           20 ( 0.00%)  }
+            .           
+            .           // Sampled-world scratch (see cordite_sim.h). Was one world/trial pair PER
+            .           // family — 3 identical pairs of write-only-between-decisions state. The
+            .           // difftest slow-rollout game is world-shaped too (a rollout clone of the
+            .           // trial): all three become short-log slots under WORLD_LOG_CAP.
+            .           #if WORLD_LOG_CAP > 0
+            .           #define WORLD_SLOT_BYTES (offsetof(Game, logs) + (size_t)WORLD_LOG_CAP * sizeof(GameLog))
+            .           #else
+            .           #define WORLD_SLOT_BYTES sizeof(Game)
+            .           #endif
+            .           typedef struct { _Alignas(16) unsigned char bytes[WORLD_SLOT_BYTES]; } WorldSlot;
+            .           static _Thread_local WorldSlot world_slot, trial_slot, diff_slot;
+            .           static _Thread_local SimState world_sim_s, trial_sim_s;
+            .           static _Thread_local bool forced_loss_flags[MAX_LEGAL_MOVES];
+            .           
+          252 ( 0.00%)  Game     *world_scratch_game(void)  { return (Game *)world_slot.bytes; }
+          252 ( 0.00%)  Game     *trial_scratch_game(void)  { return (Game *)trial_slot.bytes; }
+            .           Game     *rollout_scratch_diff(void){ return (Game *)diff_slot.bytes; }
+          252 ( 0.00%)  SimState *world_scratch_sim(void)   { return &world_sim_s; }
+          252 ( 0.00%)  SimState *trial_scratch_sim(void)   { return &trial_sim_s; }
+          264 ( 0.00%)  bool     *forced_loss_scratch(void) { return forced_loss_flags; }
+
+2,141,396,339 (16.01%)  <counts for unidentified lines in /home/user/foolish/c/src/cordite_sim.c>
+
+--------------------------------------------------------------------------------
+The following files chosen for auto-annotation could not be found:
+--------------------------------------------------------------------------------
+  ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S
+  src/leafbook.h
+
+--------------------------------------------------------------------------------
+Ir                     
+--------------------------------------------------------------------------------
+9,269,475,783 (69.31%)  events annotated
+

@@ -1,0 +1,20 @@
+label:      T1_server
+mode:       --launch (equivalent; run directly to control lifetime — see PROFILE_HOTPATH.md T1 for why)
+host uname: Linux x86_64
+tool:       callgrind
+cmd:        valgrind --tool=callgrind --callgrind-out-file=raw/callgrind.out -- ./foolish_server_prof 8096
+load:       foolish_hammer --host=127.0.0.1 --port=8096 --games=3 --seats=2 --conns=6 --secs=20 --mode=action
+
+note: the timed run below did NOT use profile.sh's --launch wrapper directly,
+because GNU `timeout <secs> ./foolish_server_prof` forks+execs the server as
+an untraced CHILD process (valgrind does not follow fork/exec unless
+--trace-children=yes) -- a first attempt with `--launch T1_server -- timeout
+60 ./foolish_server_prof 8096` silently profiled only `timeout`'s own dynamic
+linker startup (see PROFILE_HOTPATH.md T1 for the full story). The server
+never exits on its own, so its callgrind lifetime was instead bounded by
+starting valgrind directly (same command profile.sh's callgrind path runs)
+and sending it SIGTERM after the load window -- valgrind forwards the signal
+to the guest, the guest's accept() loop dies, and valgrind flushes the
+callgrind.out before exiting, exactly as it would on a natural process exit.
+cmd: valgrind --tool=callgrind --callgrind-out-file=raw/callgrind.out -- ./foolish_server_prof 8096
+load: foolish_hammer --host=127.0.0.1 --port=8096 --games=3 --seats=2 --conns=6 --secs=20 --mode=action

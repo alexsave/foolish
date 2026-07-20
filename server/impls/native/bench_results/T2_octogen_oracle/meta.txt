@@ -1,0 +1,11 @@
+label:      T2_octogen_oracle
+mode:       --launch
+host uname: Linux x86_64
+started:    2026-07-20T20:43:10Z
+tool:       callgrind
+cmd:        valgrind --tool=callgrind --callgrind-out-file=/home/user/foolish/server/impls/native/bench_results/T2_octogen_oracle/raw/callgrind.out -- ./bench_results/eval_t2_oracle --strategy=octogen --opp=octogen --players=2 --games=1 --seed-start=1
+finished:   2026-07-20T20:44:12Z
+
+supplementary cache-sim run (see annotated_cache_excerpt.txt, PROFILE_HOTPATH.md T2):
+cmd: valgrind --tool=callgrind --cache-sim=yes --callgrind-out-file=raw_cache/callgrind.out -- ./bench_results/eval_t2_oracle --strategy=octogen --opp=octogen --players=2 --games=1 --seed-start=1
+D1 misses: 7,139,942 (0.2%)   LLd misses: 163,977 (0.0%)
