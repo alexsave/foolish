@@ -1,2 +1,15 @@
 foolish_server
+foolish_server_prof
+foolish_hammer
 *.o
+
+# Profiling artifacts (server/impls/native/profile.sh, PROFILE_HOTPATH.md):
+# raw profiler dumps (callgrind.out*, perf.data, sample.txt) and any
+# standalone profiling binaries are local-only — commit only the digested
+# callgrind_annotate TEXT under bench_results/<label>/.
+bench_results/*/raw/
+bench_results/*/raw_cache/
+bench_results/*/annotated_cache.txt
+bench_results/eval_t2_oracle
+bench_results/eval_t3_prod
+bench_results/*.o
