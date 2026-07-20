@@ -19,16 +19,23 @@ public struct FBattleGrid: View {
     /// Card identities currently in overlay flight — rendered invisible here so the
     /// flying ghost is the only copy (web CardFace opacity:0 while animating).
     public let hidden: Set<String>
+    /// note 34: while a drag over open table space would resolve to a PASS,
+    /// the board shows this empty preview slot instead of highlighting any
+    /// existing battle (nothing on the table is about to be covered). Defaulted
+    /// false so every existing call site (MessageBoardView, TableView, the
+    /// gallery/snapshot tests) keeps compiling unchanged.
+    public let showGhostSlot: Bool
 
     public init(battles: [BattleView], trumpSuit: Suit?, coverable: Set<Int> = [],
                 onTapBattle: @escaping (Int) -> Void = { _ in }, namespace: Namespace.ID? = nil,
-                hidden: Set<String> = []) {
+                hidden: Set<String> = [], showGhostSlot: Bool = false) {
         self.battles = battles
         self.trumpSuit = trumpSuit
         self.coverable = coverable
         self.onTapBattle = onTapBattle
         self.namespace = namespace
         self.hidden = hidden
+        self.showGhostSlot = showGhostSlot
     }
 
     private let cardSize = CGSize(width: 50, height: 70)   // web card 50x70
@@ -42,18 +49,44 @@ public struct FBattleGrid: View {
         // aligns its columns, so a single battle sat at the left; chunking into
         // centered HStacks keeps the cluster centered at any count, and the VStack
         // self-sizes (no GeometryReader).
-        let rows = stride(from: 0, to: battles.count, by: perRow).map { Array($0..<min($0 + perRow, battles.count)) }
+        //
+        // note 34: the simplest correct way to fit the ghost slot into this same
+        // wrap math is to chunk over `battles.count + 1` (a virtual extra index)
+        // rather than special-casing the last row — it lands wherever the next
+        // real battle would, wrapping to a new row exactly like a real one would.
+        let total = battles.count + (showGhostSlot ? 1 : 0)
+        let rows = stride(from: 0, to: total, by: perRow).map { Array($0..<min($0 + perRow, total)) }
         VStack(spacing: 12) {
             ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                 HStack(spacing: gap) {
                     ForEach(row, id: \.self) { idx in
-                        pair(battles[idx], index: idx)
-                            .contentShape(Rectangle())
-                            .onTapGesture { onTapBattle(idx) }
+                        if idx < battles.count {
+                            pair(battles[idx], index: idx)
+                                .contentShape(Rectangle())
+                                .onTapGesture { onTapBattle(idx) }
+                        } else {
+                            ghostSlot()
+                        }
                     }
                 }
             }
         }
+    }
+
+    /// note 34: the pass-preview slot — same 62x84 footprint as a real battle
+    /// pair (so the wrap/centering math above doesn't need to treat it
+    /// specially), with a dashed win-colored 50x70 placeholder previewing
+    /// where the passed card would land. Deliberately does NOT publish a
+    /// `BattleFramesKey` entry — it must never become a drop target or shift
+    /// `BoardDrop.target`'s hit-testing — and carries no tap gesture.
+    private func ghostSlot() -> some View {
+        RoundedRectangle(cornerRadius: 7)
+            .strokeBorder(FColor.win, style: StrokeStyle(lineWidth: 2.5, dash: [6, 4]))
+            .background(RoundedRectangle(cornerRadius: 7).fill(FColor.win.opacity(0.12)))
+            .frame(width: cardSize.width, height: cardSize.height)
+            .frame(width: slot.width, height: slot.height, alignment: .bottom)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 
     private func pair(_ battle: BattleView, index: Int) -> some View {

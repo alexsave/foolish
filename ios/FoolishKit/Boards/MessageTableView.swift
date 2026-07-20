@@ -33,6 +33,11 @@ public struct MessageTableView: View {
     @State private var battleFrames: [Int: CGRect] = [:]
     @State private var handFrame: CGRect = .zero
     @State private var dragCard: Card?
+    /// notes 33/34: the drag's live point in `boardSpace`, kept (FHandFan
+    /// already delivers it on every `onDragChanged`, previously discarded)
+    /// so the verb hint and the pass ghost-slot preview can resolve the SAME
+    /// drop target `onDragEnded` will use. nil whenever no drag is active.
+    @State private var dragPoint: CGPoint?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Shared card-flight namespace: a card keeps its identity moving hand→table.
     @Namespace private var cardNS
@@ -289,13 +294,81 @@ public struct MessageTableView: View {
                 // tells the player what they can already see (owner's call).
                 Color.clear
             } else {
+                // note 34: a pass preview shows the ghost slot instead of a cover
+                // highlight — the card that would get passed isn't being covered,
+                // so nothing on the table should look like a drop target for it.
+                let passPreview = isPassPreview(view)
                 FBattleGrid(battles: view.battles, trumpSuit: view.trumpSuit,
-                            coverable: highlightBattles(view),
+                            coverable: passPreview ? [] : highlightBattles(view),
                             onTapBattle: { idx in tapBattle(idx, view) },
-                            namespace: cardNS, hidden: animator.hidden)
+                            namespace: cardNS, hidden: animator.hidden,
+                            showGhostSlot: passPreview)
             }
         }
-        .frame(maxWidth: .infinity)
+        // note 33: the verb hint floats just above the battle grid's own
+        // (self-sized) top edge — attached here, BEFORE the maxWidth/maxHeight
+        // expansion below, so it tracks the grid's actual content regardless of
+        // row count instead of a fixed board-relative offset guessed once and
+        // never re-checked against a real device.
+        .overlay(alignment: .top) { dragHint(view).offset(y: -30) }
+        .frame(maxWidth: .infinity)   // boardContent's call site adds maxHeight
+    }
+
+    /// The move a release right now would resolve to, if any — the SAME
+    /// `BoardDrop.target` + `CardPlay.resolve` math `onDragEnded` uses, shared
+    /// by the verb hint (note 33) and the pass ghost-slot preview (note 34) so
+    /// neither can disagree with what actually happens on release.
+    private func dragPreview(_ view: GameView) -> (target: PlayTarget, move: Move)? {
+        guard let card = dragCard, let point = dragPoint else { return nil }
+        let target = BoardDrop.target(at: point, battles: battleFrames, handFrame: handFrame)
+        guard target != .hand,
+              let move = CardPlay.resolve(cards: playCards(for: card, view), target: target,
+                                          isDefender: view.defender == controller.mySeat,
+                                          battles: view.battles, legal: controller.legal)
+        else { return nil }
+        return (target, move)
+    }
+
+    /// note 34: is the live drag currently previewing a PASS onto open table
+    /// space? Gates both the ghost slot and the suppression of the ordinary
+    /// per-battle cover highlight while it's showing.
+    private func isPassPreview(_ view: GameView) -> Bool {
+        guard let preview = dragPreview(view) else { return false }
+        return preview.target == .table && preview.move.type == .pass
+    }
+
+    /// note 33: what a release would do, localized — "Attack" / "Cover" /
+    /// "Pass". Nothing over the hand (that's a reorder, not a play) or for a
+    /// drop `CardPlay` can't resolve into a legal move.
+    private func dragHintText(_ view: GameView) -> String? {
+        guard let move = dragPreview(view)?.move else { return nil }
+        switch move.type {
+        case .attack: return FStrings.t("attack")
+        case .cover: return FStrings.t("cover")
+        case .pass: return FStrings.t("pass")
+        default: return nil
+        }
+    }
+
+    /// note 33: a small unobtrusive pill naming what release would do — web
+    /// DragShadow parity, but anchored to a fixed spot above the battles
+    /// rather than tracking the fingertip (simplest robust placement: no
+    /// per-frame layout math, and it can never end up under the dragging
+    /// hand or over the action bar).
+    @ViewBuilder
+    private func dragHint(_ view: GameView) -> some View {
+        if let text = dragHintText(view) {
+            Text(text)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(FColor.card)
+                .padding(.horizontal, FSpace.m)
+                .padding(.vertical, FSpace.xs)
+                .background(FColor.ink.opacity(0.85))
+                .clipShape(RoundedRectangle(cornerRadius: FRadius.chip))
+                .shadow(color: .black.opacity(0.35), radius: 6, y: 2)
+                .transition(.opacity)
+                .allowsHitTesting(false)
+        }
     }
 
     /// The cards a play would use right now: the whole selection if the dragged (or
@@ -807,10 +880,17 @@ public struct MessageTableView: View {
         }
     }
 
-    private func onDragChanged(_ card: Card) { dragCard = card }
+    /// notes 33/34: FHandFan already delivers the live boardSpace point on
+    /// every change — kept now (previously discarded at the call site) so the
+    /// verb hint / ghost-slot preview can resolve the same drop target live.
+    private func onDragChanged(_ card: Card, at point: CGPoint) {
+        dragCard = card
+        dragPoint = point
+    }
 
     private func onDragEnded(_ card: Card, at point: CGPoint, _ view: GameView) {
         dragCard = nil
+        dragPoint = nil
         let target = BoardDrop.target(at: point, battles: battleFrames, handFrame: handFrame)
         if target == .hand { return }   // dropped back in the fan — cancel
         playAt(target, playCards(for: card, view), view)
@@ -850,7 +930,7 @@ public struct MessageTableView: View {
     private func hand(_ view: GameView) -> some View {
         FHandFan(cards: view.me?.hand ?? [], trumpSuit: view.trumpSuit,
                  selection: $selection, onTap: { toggle($0) },
-                 onDragChanged: { card, _ in onDragChanged(card) },
+                 onDragChanged: { card, point in onDragChanged(card, at: point) },
                  onDragEnded: { card, point in onDragEnded(card, at: point, view) },
                  namespace: cardNS, hidden: animator.hidden)
             .padding(.horizontal, FSpace.s)
