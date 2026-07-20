@@ -178,6 +178,22 @@ public actor MessageKernel {
         guard rc == 0 else { throw MessageEnvelope.Failure.damaged(code: Int(rc)) }
     }
 
+    /// Re-deal the RESIDENT game's own LOCKED seed at a different player count —
+    /// the group lobby's Start action (docs/IMESSAGE_LOBBY_V2.md): a lobby is
+    /// created OPEN (`newGame(seed:, players: 8)`, the wire's max capacity) so
+    /// seats stay free; Start re-derives the SAME seed's deal at the ACTUAL
+    /// joined count (never a new random seed — that is the "locked at create"
+    /// guarantee). The seed itself never crosses back into Swift: the kernel
+    /// already holds it resident from whichever call last dealt or decoded it
+    /// (`newGame` or `decode`), the same "kernel keeps the seed" discipline
+    /// `residentReplayCode` already relies on. Throws FIO_ENOSEED if nothing is
+    /// resident to re-derive from (only reachable by calling this out of order —
+    /// every real lobby is created wide-seeded) or a bad player count.
+    public func reseatResidentGame(players: Int) throws {
+        let rc = fio_reseat_game(Int32(players))
+        guard rc == 0 else { throw MessageEnvelope.Failure.damaged(code: Int(rc)) }
+    }
+
     /// Apply one action by `seat` to the resident (adopted) game — the LOCAL half
     /// of a turn, before `seal`. Same packed awire frame the app and server apply
     /// through, and the kernel is the only judge of legality: an illegal move

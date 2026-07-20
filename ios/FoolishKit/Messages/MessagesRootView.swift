@@ -130,15 +130,20 @@ private struct GameSurface: View {
             LobbyView(env: lob.env, mySeat: lobbySeat(lob.env),
                       nickname: MessageGameStore.shared.nickname,
                       onSend: { Task { await onSend(lob.payload, lobbySeat(lob.env) ?? 0) } },
-                      onJoin: { name in Task { await joinLobby(lob, nickname: name) } })
+                      onJoin: { name in Task { await joinLobby(lob, nickname: name) } },
+                      onStart: { Task { await startGame(lob) } })
         } else if let g = nameGate {
             NameGateView(prefill: MessageGameStore.shared.nickname) { name in
                 Task { await nameThenSeat(name, gate: g) }
             }
         } else if showSetup {
+            // chatPlayers is threaded through unused (see NewGameSetup's own doc)
+            // — kept only so this call site, the harness, and
+            // MessagesViewController (which all compute a real participant
+            // count) keep compiling unchanged.
             NewGameSetup(nickname: MessageGameStore.shared.nickname,
-                         isDM: chatIsDM, chatPlayers: chatPlayers) { name, players in
-                Task { await start(nickname: name, players: players) }
+                         isDM: chatIsDM, chatPlayers: chatPlayers) { name in
+                Task { await start(nickname: name) }
             }
         } else if let a = ambiguous {
             SeatPicker(nPlayers: a.env.nPlayers, joins: a.env.joins) { seat in
@@ -224,23 +229,30 @@ private struct GameSurface: View {
     // MARK: creation + lobby (§5.2)
 
     /// Finish the New game setup: persist the nickname (B3), then either deal a
-    /// 2-player LIVE game straight to the board, or open an N>=3 WAITING lobby.
-    private func start(nickname: String, players: Int) async {
+    /// 2-player LIVE game straight to the board (a DM can only ever be 2p), or
+    /// open a group lobby (lobby v2, docs/IMESSAGE_LOBBY_V2.md) — unspecified
+    /// player count until someone hits Start (notes 19/25).
+    private func start(nickname: String) async {
         MessageGameStore.shared.nickname = nickname
         showSetup = false
-        if players == 2 { await startGenesis(nickname: nickname) }
-        else { await createWaiting(players: players, nickname: nickname) }
+        if chatIsDM { await startGenesis(nickname: nickname) }
+        else { await createWaiting(nickname: nickname) }
     }
 
-    /// Create an N>=3 game as seat 0 and open its lobby: fix the seed + player
-    /// count in the kernel, seal a WAITING bubble seating only me, and cache my
-    /// seat so a later open resolves it (§6.1).
-    private func createWaiting(players: Int, nickname: String) async {
+    /// Create a GROUP game as seat 0 and open its lobby (lobby v2): lock the
+    /// seed + game id in NOW — that is the whole "seed locked at create"
+    /// guarantee — and seal a WAITING bubble seating only me. The kernel is
+    /// dealt at the wire's MAX capacity (8), not a chosen count: nobody has
+    /// picked how many will play yet, so "8" is the open-lobby convention (a
+    /// WAITING envelope with n_players==8 renders as an open lobby, not 8
+    /// literal seats — see LobbyView), not a real 8-player game. Start (below)
+    /// later re-derives the SAME seed at however many actually joined.
+    private func createWaiting(nickname: String) async {
         var seed = Data(count: 32)
         for i in 0..<32 { seed[i] = UInt8.random(in: 0...UInt8.max) }
         let gameId = UInt64.random(in: 1...UInt64.max)
         do {
-            try await MessageKernel.shared.newGame(seed: seed, players: players)
+            try await MessageKernel.shared.newGame(seed: seed, players: 8)
             let joins = [MessageJoin(seat: 0, name: nickname)]
             let payload = try await MessageKernel.shared.seal(
                 phase: 0, lastActorSeat: 0, gameId: gameId,
@@ -265,9 +277,11 @@ private struct GameSurface: View {
         }
     }
 
-    /// Claim the lowest free seat (§5.2). While seats remain, reseal WAITING and
-    /// stay in the lobby; the claim that fills the LAST seat seals a LIVE handoff
-    /// ("game on") and drops into the board. Either way the human presses Send.
+    /// Claim the lowest free seat (§5.2, lobby v2). Always reseals WAITING and
+    /// stays in the lobby — joining NEVER starts the game, no matter how many
+    /// have joined or that the cap (8) is reached; Start (below) is the one,
+    /// explicit action that flips the game LIVE. The human presses Send either
+    /// way (staging never auto-sends, §11.4).
     private func joinLobby(_ lob: Lobby, nickname: String) async {
         let env = lob.env
         guard let free = (0..<env.nPlayers).first(where: { s in !env.joins.contains { $0.seat == s } }),
@@ -276,22 +290,49 @@ private struct GameSurface: View {
         let nick = trimmed.isEmpty ? FStrings.t("ios.you") : trimmed
         MessageGameStore.shared.nickname = nick   // remember it for the next game (B3)
         let joins = (env.joins + [MessageJoin(seat: free, name: nick)]).sorted { $0.seat < $1.seat }
-        let full = joins.count == env.nPlayers
         do {
-            // Re-adopt the lobby so the seed + player count are resident for the seal.
+            // Re-adopt the lobby so the LOCKED seed + open (8-seat) capacity are
+            // resident for the seal.
             _ = try await MessageKernel.shared.decode(payload: lob.payload, viewer: -1)
             let parent = MessageTurnController.firstEight(hex: env.digest)
             let payload = try await MessageKernel.shared.seal(
-                phase: full ? 2 : 0, lastActorSeat: free, gameId: gid, parent8: parent, joins: joins)
+                phase: 0, lastActorSeat: free, gameId: gid, parent8: parent, joins: joins)
             let newEnv = try await MessageEnvelope.decode(payload: payload, viewer: -1)
             cache(seat: free, env: newEnv, payload: payload)
             await onSend(payload, free)
-            if full {
-                controller = MessageTurnController(parentPayload: payload, parent: newEnv, mySeat: free)
-                lobby = nil
-            } else {
-                lobby = Lobby(env: newEnv, payload: payload)
-            }
+            lobby = Lobby(env: newEnv, payload: payload)
+        } catch {
+            damaged = true
+        }
+    }
+
+    /// Start the game at the ACTUAL joined count (§5.2, lobby v2). Any JOINED
+    /// player may do this once 2+ have joined (LobbyView gates the button on
+    /// that; nothing re-checks it here — the kernel would happily reseat and
+    /// seal a 1-player "game" too, but the design never offers the button for
+    /// it). Re-derives the resident game from the seed LOCKED at create, at
+    /// `joins.count` seats — contiguous 0..<k because seats are always claimed
+    /// lowest-free-first — then seals the LIVE handoff (turn 0, parent8 =
+    /// first8(lobby digest), the same joins) and drops the starter onto the
+    /// board: mechanically identical to what the OLD "last joiner auto-starts"
+    /// branch of `joinLobby` used to do, just triggered explicitly instead of
+    /// implicitly by seat count.
+    private func startGame(_ lob: Lobby) async {
+        let env = lob.env
+        guard let seat = lobbySeat(env), let gid = UInt64(env.gameId) else { return }
+        do {
+            // Re-adopt the lobby (the LOCKED seed becomes resident), then re-deal
+            // that SAME seed at the real player count — never a new random seed.
+            _ = try await MessageKernel.shared.decode(payload: lob.payload, viewer: -1)
+            try await MessageKernel.shared.reseatResidentGame(players: env.joins.count)
+            let parent = MessageTurnController.firstEight(hex: env.digest)
+            let payload = try await MessageKernel.shared.seal(
+                phase: 2, lastActorSeat: seat, gameId: gid, parent8: parent, joins: env.joins)
+            let newEnv = try await MessageEnvelope.decode(payload: payload, viewer: -1)
+            cache(seat: seat, env: newEnv, payload: payload)
+            await onSend(payload, seat)
+            controller = MessageTurnController(parentPayload: payload, parent: newEnv, mySeat: seat)
+            lobby = nil
         } catch {
             damaged = true
         }
@@ -456,24 +497,34 @@ private struct GameSurface: View {
     }
 }
 
-/// New game setup (§5.2): the creator names themselves (B3 — the one place a
-/// nickname is entered; compact is the keyboard area and cannot host a field,
-/// §3.5) and picks a player count. Two players start a DM game at once; three or
-/// more open a lobby others join. The wire allows 2-8.
+/// New game setup (§5.2, rewritten for lobby v2 — notes 19/25). The creator
+/// names themselves (B3 — the one place a nickname is entered; compact is the
+/// keyboard area and cannot host a field, §3.5). There is no player-count
+/// picker any more: it was off-theme (a segmented `Picker` reads as glass, not
+/// wood/wool) AND wrong, per the owner's own framing — "New game should just
+/// stage the new game, lobby style, with unspecified player count until
+/// someone hits start". So:
 ///
-/// Chat-aware (B4 feedback): a 1:1 DM can only be 2 players, so the picker is
-/// hidden and locked to 2. A group chat defaults to its own participant count
-/// but still lets the creator pick anything 2-8 (bots or a subset can fill it).
+///   - DM (always exactly 2 players): unchanged — "Start game" deals the
+///     genesis 2p game immediately, no lobby.
+///   - Group chat: "Create game" opens an OPEN lobby (LobbyView) instead —
+///     nobody has picked a count, and nobody needs to: whoever has joined when
+///     someone taps Start there IS the player count (§5.2/lobby v2).
 private struct NewGameSetup: View {
     @State private var nickname: String
-    @State private var players: Int
     let isDM: Bool
-    let onStart: (String, Int) -> Void
+    /// No longer displayed (the picker it used to size is gone). Kept only so
+    /// this struct's callers — this file's own call site, the harness, and
+    /// MessagesViewController, all of which compute a real participant count —
+    /// keep compiling unchanged (source compatibility, no Swift compiler here
+    /// to re-check call sites across targets).
+    let chatPlayers: Int
+    let onStart: (String) -> Void
 
-    init(nickname: String, isDM: Bool, chatPlayers: Int, onStart: @escaping (String, Int) -> Void) {
+    init(nickname: String, isDM: Bool, chatPlayers: Int, onStart: @escaping (String) -> Void) {
         _nickname = State(initialValue: nickname == "Me" ? "" : nickname)
-        _players = State(initialValue: isDM ? 2 : min(max(chatPlayers, 2), 8))
         self.isDM = isDM
+        self.chatPlayers = chatPlayers
         self.onStart = onStart
     }
 
@@ -486,17 +537,10 @@ private struct NewGameSetup: View {
             }
             if isDM {
                 Text(FStrings.t("players") + ": 2").font(.footnote).foregroundStyle(.black.opacity(0.55))
-            } else {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(FStrings.t("players")).font(.footnote).foregroundStyle(.black.opacity(0.55))
-                    Picker(FStrings.t("players"), selection: $players) {
-                        ForEach(2...8, id: \.self) { Text("\($0)").tag($0) }
-                    }.pickerStyle(.segmented)
-                }
             }
-            FButton(FStrings.t("start_game"), kind: .wood) {
+            FButton(isDM ? FStrings.t("start_game") : FStrings.t("ios.msg.creategame"), kind: .wood) {
                 let n = nickname.trimmingCharacters(in: .whitespaces)
-                onStart(n.isEmpty ? FStrings.t("ios.you") : n, isDM ? 2 : players)
+                onStart(n.isEmpty ? FStrings.t("ios.you") : n)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -504,14 +548,23 @@ private struct NewGameSetup: View {
     }
 }
 
-/// The WAITING lobby (§5.2/§5.3): claimed seats by nickname, open seats, and the
-/// one action that matters right now - Join if I have not claimed a seat and one
-/// is free, else Send to stage the invite/handoff for the human to send.
+/// The WAITING lobby, rewritten for lobby v2 (§5.2/§5.3, docs/IMESSAGE_LOBBY_V2.md,
+/// notes 19/20/25): an OPEN lobby, not a fixed seat count. `env.nPlayers` is
+/// always 8 here (the wire's max — see `createWaiting`'s doc) and is display
+/// convention only, never rendered as "8 seats" — the joined list IS the
+/// player count so far, and the game's real size is decided at Start, not now.
+///
+/// Three things a viewer can do: Join (name + button, if I have not claimed a
+/// seat and the 8-seat cap has room), Start (once I'm joined and 2+ have -
+/// any joined player may, §5.2), or Send invite (unchanged - stage the current
+/// WAITING chain for the human to hit Messages' own Send, e.g. to re-stage
+/// after creating, or after joining).
 private struct LobbyView: View {
     let env: MessageEnvelope
     let mySeat: Int?
     let onSend: () -> Void
     let onJoin: (String) -> Void
+    let onStart: () -> Void
 
     /// The joiner's editable name (B3): compact can't host a field, so this is the
     /// place a joiner names themselves before claiming a seat. Seeded from the
@@ -519,27 +572,29 @@ private struct LobbyView: View {
     @State private var nickname: String
 
     init(env: MessageEnvelope, mySeat: Int?, nickname: String,
-         onSend: @escaping () -> Void, onJoin: @escaping (String) -> Void) {
-        self.env = env; self.mySeat = mySeat; self.onSend = onSend; self.onJoin = onJoin
+         onSend: @escaping () -> Void, onJoin: @escaping (String) -> Void,
+         onStart: @escaping () -> Void) {
+        self.env = env; self.mySeat = mySeat; self.onSend = onSend
+        self.onJoin = onJoin; self.onStart = onStart
         _nickname = State(initialValue: nickname == "Me" ? "" : nickname)
     }
 
+    /// Free seats against the wire's 8-seat cap this WAITING envelope carries
+    /// (`env.nPlayers`) — NOT a chosen target; see the type doc.
     private var freeSeats: Int { env.nPlayers - env.joins.count }
-    private func name(_ s: Int) -> String? { env.joins.first { $0.seat == s }?.name }
 
     var body: some View {
         VStack(spacing: 12) {
             Text(FStrings.t("ios.lobby")).font(.headline).foregroundStyle(FColor.ink)
+            // Joined players only — never env.nPlayers (8) rows: an open lobby
+            // has no "open seat" placeholders, because there is no fixed seat
+            // count to fill (note 19/25's whole point).
             VStack(spacing: 6) {
-                ForEach(0..<env.nPlayers, id: \.self) { s in
+                ForEach(env.joins.sorted { $0.seat < $1.seat }, id: \.seat) { j in
                     HStack {
-                        Text("\(s + 1).").foregroundStyle(.black.opacity(0.55)).monospacedDigit()
-                        if let nm = name(s) {
-                            Text(nm + (s == mySeat ? " (\(FStrings.t("ios.you")))" : ""))
-                                .foregroundStyle(FColor.ink)
-                        } else {
-                            Text(FStrings.t("ios.msg.seatopen")).foregroundStyle(.black.opacity(0.55)).italic()
-                        }
+                        Text("\(j.seat + 1).").foregroundStyle(.black.opacity(0.55)).monospacedDigit()
+                        Text(j.name + (j.seat == mySeat ? " (\(FStrings.t("ios.you")))" : ""))
+                            .foregroundStyle(FColor.ink)
                         Spacer()
                     }
                 }
@@ -547,9 +602,11 @@ private struct LobbyView: View {
             .padding(.horizontal)
 
             if mySeat != nil {
-                Text(freeSeats > 0 ? FStrings.t("ios.msg.waitingjoin", ["n": "\(freeSeats)"])
-                                   : FStrings.t("ios.msg.lobbyfull"))
+                Text(FStrings.t("ios.msg.joined", ["n": "\(env.joins.count)"]))
                     .font(.footnote).foregroundStyle(.black.opacity(0.55))
+                if env.joins.count >= 2 {
+                    FButton(FStrings.t("ios.msg.startgame"), kind: .wood, action: onStart)
+                }
                 FButton(FStrings.t("ios.msg.sendinvite"), kind: .wood, action: onSend)
             } else if freeSeats > 0 {
                 // Same width as the Join button below (note 29) — both rely on the

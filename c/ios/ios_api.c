@@ -434,6 +434,30 @@ int fio_new_game(const uint8_t *seed, int seed_len, int n_players) {
     return FIO_EOK;
 }
 
+// Re-deal the CURRENT resident game's own LOCKED seed at a different player
+// count — the iMessage lobby's "Start" action (docs/IMESSAGE_LOBBY_V2.md): a
+// group lobby is created OPEN (fio_new_game with the wire's max capacity, 8,
+// §5.2) so seats stay free to fill; when the joined players decide to start,
+// this re-derives the SAME seed's deal at the ACTUAL joined count (seats are
+// claimed lowest-first, so it is always a contiguous 0..<n) — never a new
+// random seed, which is the "locked at create" guarantee the lobby promises.
+//
+// Just fio_new_game fed g_deal_seed back to itself: the seed already lives in
+// the resident-game statics (kept there from whichever call last dealt or
+// decoded it — fio_new_game or fio_msg_decode_packed), so it never has to
+// cross back out to Swift and back in, mirroring the same "the kernel keeps
+// the seed, the app never touches it" discipline fio_replay_encode_v6_b32
+// already relies on. Returns FIO_ENOSEED if no wide seed is resident (nothing
+// to re-derive from — a lobby is always created wide-seeded, so this is only
+// reachable by calling it out of order), or whatever fio_new_game returns for
+// a bad n_players.
+int fio_reseat_game(int n_players) {
+    if (!g_has_deal_seed) return FIO_ENOSEED;
+    uint8_t seed[FOOLISH_SEED_LEN];
+    memcpy(seed, g_deal_seed, FOOLISH_SEED_LEN);   // copy out first: fio_new_game
+    return fio_new_game(seed, FOOLISH_SEED_LEN, n_players);  // will overwrite g_deal_seed
+}
+
 int fio_set_seat_strategy(int seat, int strategy_id) {
     if (!g_has_game) return FIO_ENOGAME;
     if (seat < 0 || seat >= g_game.num_players) return FIO_EBADARG;

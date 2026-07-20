@@ -133,13 +133,24 @@ final class MessagesViewController: MSMessagesAppViewController {
                                uniquingKeysWith: { a, _ in a })
         let image = publicView.flatMap { BubbleSnapshot.render(publicView: $0, names: names) }
 
-        // §12: a FINISHED game hands off to the web replay page (the funnel) — the
-        // tap target is the replay code, not a /m/ game link. Everything else is a
-        // live turn, carrying the whole chain in /m/.
+        // §12, revised by batch 6 item B: the FINISHED bubble stays a normal /m/
+        // payload link, NOT `MessageEnvelope.replayLink`'s bare foolish.cards/<code>.
+        // That bare link is unparseable by `MessageEnvelope.payloadBytes` (it has
+        // no `/m/1<base32>` shape), so the RECEIVER of the final move tapped it
+        // into the damaged-link screen and never saw the final board or its
+        // animation (batch-3 finding). The replay funnel moves one hop out
+        // instead: the web `/m/` page (src/app/m/[payload]/page.tsx) decodes the
+        // FINISHED payload itself — it already runs the same kernel — and derives
+        // the replay code THERE, rendering its own "Watch the replay" CTA
+        // alongside the install/play ones. This bubble only needs the fool
+        // announcement — `residentReplayCode()`/`replayLink` (sdk/swift/
+        // MessageEnvelope.swift) still exist and are still exercised by
+        // MessageTurnControllerTests (the underlying kernel capability the web
+        // page's replay derivation mirrors), just no longer called from here.
         let url: URL
         let summary: String
-        if env?.phase == 3, let code = await MessageKernel.shared.residentReplayCode() {
-            url = MessageEnvelope.replayLink(code: code)
+        if env?.phase == 3 {
+            url = MessageEnvelope.link(payload: payload)
             let fool = publicView?.gameOver ?? -1
             summary = fool >= 0
                 ? FStrings.t("ios.msg.fool", ["name": names[fool] ?? "Seat \(fool + 1)"])
@@ -157,12 +168,27 @@ final class MessagesViewController: MSMessagesAppViewController {
             summary = FStrings.t("ios.msg.tap")
         }
 
+        // §11.3/note 21: ONE session per game, and a NEW game must never collapse
+        // the PREVIOUS game's final bubble. Messages collapses every older bubble
+        // in the same `MSSession` down to its summaryText, keeping only the
+        // latest interactive — which is exactly what we want WITHIN one game
+        // (so the thread doesn't fill with 60 bubbles), but is wrong across two:
+        // reusing `selectedMessage?.session` for the first bubble of a brand-new
+        // game folds the just-finished game's result card into it, so the fool
+        // announcement vanishes from the transcript the instant the next game
+        // starts. `startingNewGame` is exactly "is this the first bubble of a
+        // game that didn't exist a moment ago" — it is set on the New game tap
+        // and only cleared by didReceive/didStartSending (see the property doc
+        // above) — so passing `session: nil` there starts Messages a FRESH
+        // session/bubble; every continuation after that (startingNewGame already
+        // false) still reuses `selectedMessage?.session` to collapse within the
+        // SAME game, unchanged.
         let msg = MessageComposer.message(
             url: url,
             snapshot: image,
             caption: "Foolish",
             summary: summary,
-            session: conversation.selectedMessage?.session)   // reuse ⇒ collapse old bubble
+            session: startingNewGame ? nil : conversation.selectedMessage?.session)
 
         pendingStage = (payload, mySeat)
         conversation.insert(msg) { _ in }

@@ -55,6 +55,19 @@ extern "C" {
 // n_players must be 2..8. Returns FIO_EOK or a negative error.
 int fio_new_game(const uint8_t *seed, int seed_len, int n_players);
 
+// Re-deal the RESIDENT game's own locked deal seed at a DIFFERENT player
+// count — the iMessage lobby's "Start" action (docs/IMESSAGE_LOBBY_V2.md): a
+// group lobby is created OPEN (fio_new_game with the wire's max capacity, 8)
+// so seats stay free to fill; this re-derives the SAME seed's deal at the
+// actual joined count once the group decides to start (never a new random
+// seed — that is the "locked at create" guarantee). Requires a wide (32-byte)
+// seed to already be resident (a prior fio_new_game, or an
+// fio_msg_decode_packed of an envelope that carried one) — FIO_ENOSEED
+// otherwise. n_players must be 2..8 (FIO_EBADARG, see fio_new_game). The seed
+// itself never crosses back into Swift; this is the same "the kernel keeps
+// the seed" discipline fio_replay_encode_v6_b32 already relies on.
+int fio_reseat_game(int n_players);
+
 // Assign a strategy to a seat (offline bots). strategy_id is a FIO strategy id
 // (0..fio_strategy_count()-1, see fio_strategy_name). Seat 0 is conventionally
 // the local human but nothing enforces that. Safe to call any time before the

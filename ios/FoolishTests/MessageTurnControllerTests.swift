@@ -75,9 +75,18 @@ final class MessageTurnControllerTests: XCTestCase {
         XCTAssertEqual(c.view?.me?.handCount, beforeHand, "undo restored my hand")
     }
 
-    /// §12 funnel: a genesis game played to the end yields a REPLAY code that
-    /// decodes to a finished game, and the FINISHED bubble links to it (not /m/).
-    /// Drives to completion through MessageKernel.apply — the same path a turn uses.
+    /// §12 funnel, revised by batch 6 item B: the FINISHED bubble itself now
+    /// links to a normal `/m/` payload (MessagesViewController.stage — a bare
+    /// `replayLink` cannot be re-decoded by `payloadBytes(url:)`, so a receiver
+    /// tapping it got the damaged-link screen instead of the final board). The
+    /// replay funnel moved one hop out to the web `/m/` page, which decodes the
+    /// FINISHED payload itself and derives the code there. What this test still
+    /// proves is the underlying KERNEL capability the web page's derivation
+    /// mirrors: a genesis game played to the end yields a REPLAY code
+    /// (`residentReplayCode`) that decodes to a finished game, and
+    /// `MessageEnvelope.replayLink` still builds the funnel URL from a code —
+    /// both remain real, just no longer the bubble's own URL. Drives to
+    /// completion through MessageKernel.apply — the same path a turn uses.
     func testFinishedGameProducesAReplayFunnelLink() async throws {
         let k = MessageKernel.shared
         let seed = Data((0..<32).map { UInt8(($0 &* 5 &+ 1) | 1) })
