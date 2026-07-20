@@ -427,9 +427,21 @@ public struct MessageTableView: View {
         let boutFrames = lastBattleFrames
         let oldHandIds = Set((old.me?.hand ?? []).map(\.identity))
         let myNewCards = (new.me?.hand ?? []).filter { !oldHandIds.contains($0.identity) }
-        // The pickup taker (nil when beaten): the seat whose hand grew by the table.
-        let takerSeat: Int? = beaten ? nil
-            : new.players.first { p in p.handCount > (old.players.first { $0.seat == p.seat }?.handCount ?? 0) }?.seat
+        // The pickup taker (nil when beaten) is the seat that WAS defending — the
+        // kernel only lets the defender pick up (`handle_pickup` rejects any other
+        // seat, c/src/game.c) — read off the PRE-move view, because handle_pickup
+        // reassigns g->defender before returning, so `new.defender` is already the
+        // NEXT bout's defender.
+        //
+        // This used to be "the first seat whose hand grew", which was wrong twice
+        // over: handle_pickup calls refill_player_hands in the SAME apply, so
+        // attackers' hands grow too, and `players` is seat-ascending, so the search
+        // returned the LOWEST-seated refilled attacker whenever that seat sat below
+        // the defender. That flew the whole table to the wrong badge (the reported
+        // "pickup animates to the player on the right"), or into MY hand if the
+        // misattributed seat happened to be mine, and then suppressed that seat's
+        // real draw further down.
+        let takerSeat: Int? = beaten ? nil : old.defender
         // note 17: does the stashed pending cover belong to THIS transition?
         // Its battle rect must have been part of the table we just cleared.
         var matchedCover: PendingCover?

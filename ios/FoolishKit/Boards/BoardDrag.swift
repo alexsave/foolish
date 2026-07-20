@@ -52,11 +52,32 @@ public enum BoardDrop {
     /// Resolve a release point to a play target: a specific uncovered attack if the
     /// point lands on its slot, the hand (cancel) if it fell back into the fan, else
     /// the open table (attack / pass).
+    /// The slack each slot's rect grows by, so a release just outside a card still
+    /// covers it. It is larger than FBattleGrid's own gap (10 across, 12 down), so
+    /// neighbouring inflated rects OVERLAP by a few points — which is why the hit
+    /// below must break ties deterministically rather than take whichever it meets
+    /// first.
+    private static let slack: CGFloat = 8
+
     public static func target(at point: CGPoint, battles: [Int: CGRect],
                               handFrame: CGRect) -> PlayTarget {
-        if let hit = battles.first(where: { $0.value.insetBy(dx: -8, dy: -8).contains(point) }) {
-            return .battle(hit.key)
-        }
+        // NEAREST CENTRE WINS among the slots the point falls in. Two things make
+        // the obvious `first(where:)` wrong: the inflated rects overlap (see
+        // `slack`), and `battles` is a DICTIONARY — Swift seeds hash order randomly
+        // per process, so `first` over an overlap band picked an arbitrary battle,
+        // and not even the same one across launches. That made a release in the gap
+        // cover the wrong attack (when both were coverable), and made the drag verb
+        // hint flicker between "Cover" and "Pass" while hovering there.
+        let hit = battles
+            .filter { $0.value.insetBy(dx: -slack, dy: -slack).contains(point) }
+            .min { a, b in
+                let da = hypot(point.x - a.value.midX, point.y - a.value.midY)
+                let db = hypot(point.x - b.value.midX, point.y - b.value.midY)
+                // Distance ties (a point exactly equidistant from two centres) fall
+                // back to the lower battle index, so the result is total.
+                return da == db ? a.key < b.key : da < db
+            }
+        if let hit { return .battle(hit.key) }
         if handFrame.contains(point) { return .hand }
         return .table
     }
