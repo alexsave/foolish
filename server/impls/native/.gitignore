@@ -3,6 +3,14 @@ foolish_server_prof
 foolish_hammer
 *.o
 
+# Stage 2 (SQLite WAL write-behind persistence — DURABILITY.md): the DB file
+# + its WAL/shm sidecars are local run state, never tracked. crash_test.sh
+# always points --db at a scratch path under a tmp dir for exactly this
+# reason, but guard the default (./foolish.db, from a bare `make run`) too.
+*.db
+*.db-wal
+*.db-shm
+
 # Profiling artifacts (server/impls/native/profile.sh, PROFILE_HOTPATH.md):
 # raw profiler dumps (callgrind.out*, perf.data, sample.txt) and any
 # standalone profiling binaries are local-only — commit only the digested
