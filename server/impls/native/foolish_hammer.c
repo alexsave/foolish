@@ -114,6 +114,16 @@ static atomic_bool g_stop = false;
 // the CPU back to the round trips that actually apply a move.
 #define WS_IDLE_POLL_US 1000
 
+// Round-trip latency sampling (--mode=ws): how many samples EACH ws_worker
+// thread keeps, via reservoir sampling (classic algorithm R) so an
+// arbitrarily long/high-concurrency run reports accurate percentiles without
+// unbounded memory — a run's total round trips (lat_seen) can vastly exceed
+// this cap; the reservoir stays an unbiased random subsample of the whole
+// run. Combined across e.g. 400 connections that's up to 1.64M doubles
+// (~13 MB) for percentile computation — a load-test client concern, not a
+// server one.
+#define LAT_RESERVOIR_CAP 4096
+
 // ---------------------------------------------------------------------------
 // User / game pools. Append-only (initial fill during setup, occasional
 // growth during the load phase), capped to match the server's own
@@ -576,7 +586,35 @@ typedef struct {
     long rematches;          // /meta continue+start pairs issued on game-over
     long connects;           // successful WS handshakes (incl. reconnects)
     long connect_failures;   // failed connects/handshakes (counted, never fatal)
+    // Round-trip latency: moment this connection SENDS a move/poll frame ->
+    // moment it receives the server's pushed [ok][state] answer. Network
+    // latency is ~0 on loopback, so this is the SERVER-attributable latency
+    // floor (request parse + lock + apply/serialize + response write) and
+    // how it degrades as concurrency rises — see PROFILE_HOTPATH.md "T1c".
+    double lat_us[LAT_RESERVOIR_CAP];   // reservoir of sampled round trips, microseconds
+    long   lat_count;                   // samples currently held (<= LAT_RESERVOIR_CAP)
+    long   lat_seen;                    // total round trips timed (for the reservoir's odds)
 } WsThreadStats;
+
+// Reservoir sampling (algorithm R): after the reservoir fills, the k-th new
+// sample replaces a uniformly-random existing slot with probability
+// LAT_RESERVOIR_CAP/k, leaving every sample seen so far equally likely to
+// survive — an unbiased random subsample of the whole run's round trips.
+static void lat_record(WsThreadStats *st, unsigned int *seed, double us) {
+    st->lat_seen++;
+    if (st->lat_count < LAT_RESERVOIR_CAP) {
+        st->lat_us[st->lat_count++] = us;
+    } else {
+        long k = st->lat_seen;
+        long j = (long)((unsigned long)rand_r(seed) % (unsigned long)k);
+        if (j < LAT_RESERVOIR_CAP) st->lat_us[j] = us;
+    }
+}
+
+static int cmp_double(const void *a, const void *b) {
+    double da = *(const double *)a, db = *(const double *)b;
+    return (da > db) - (da < db);
+}
 
 typedef struct {
     Config      *cfg;
@@ -647,6 +685,19 @@ static bool ws_client_handshake(int fd, const char *host, const char *path,
 // seat's move makes it eligible). On disconnect/error, reconnect with a
 // short backoff so the run keeps producing load instead of one seat quietly
 // going idle for good.
+// Sends a frame and, on success, stamps *t_pending with "now" so the NEXT
+// successful ws_recv_message in this connection's loop can compute a
+// round-trip sample (send this frame -> receive the server's pushed answer
+// to it). *have_pending gates that: the very first receive on a fresh
+// connection answers the server's post-handshake initial push, which has no
+// preceding send in this loop, so it must not be timed as a round trip.
+static int ws_send_timed(WsConn *wc, const unsigned char *payload, int64_t len,
+                          double *t_pending, bool *have_pending) {
+    int r = ws_send_frame(wc, WS_OP_BIN, payload, len);
+    if (r >= 0) { *t_pending = now_secs(); *have_pending = true; }
+    return r;
+}
+
 static void *ws_worker(void *argp) {
     WsClientArg *a = argp;
     WsThreadStats *st = a->st;
@@ -670,10 +721,19 @@ static void *ws_worker(void *argp) {
         }
         st->connects++;
 
+        // Reset per-connection so a dropped connection's stale timestamp
+        // never leaks a bogus latency sample into the reconnected session.
+        double t_pending = 0;
+        bool have_pending = false;
+
         while (!atomic_load_explicit(&g_stop, memory_order_relaxed)) {
             int opcode;
             int mlen = ws_recv_message(&wc, msgbuf, 1 + 65536, &opcode);
             if (mlen < 1) break;   // error/close/undersized — reconnect
+            if (have_pending) {
+                lat_record(st, &seed, (now_secs() - t_pending) * 1e6);
+                have_pending = false;
+            }
             st->msgs_recv++;
             unsigned char ok = msgbuf[0];
             if (ok) st->actions_applied++;
@@ -686,13 +746,13 @@ static void *ws_worker(void *argp) {
                 do_meta(a->cfg, a->token, "start", a->gid);
                 st->rematches++;
                 usleep(2000);
-                if (ws_send_frame(&wc, WS_OP_BIN, NULL, 0) < 0) break;
+                if (ws_send_timed(&wc, NULL, 0, &t_pending, &have_pending) < 0) break;
                 st->polls_sent++;
                 continue;
             }
             if (g.status != GAME_STATUS_PLAYING || a->seat < 0 || a->seat >= g.num_players) {
                 usleep(WS_IDLE_POLL_US);
-                if (ws_send_frame(&wc, WS_OP_BIN, NULL, 0) < 0) break;
+                if (ws_send_timed(&wc, NULL, 0, &t_pending, &have_pending) < 0) break;
                 st->polls_sent++;
                 continue;
             }
@@ -700,7 +760,7 @@ static void *ws_worker(void *argp) {
             calculate_legal_moves(&g, a->seat, &moves);
             if (moves.n <= 0) {
                 usleep(WS_IDLE_POLL_US);   // not this seat's turn — poll gently instead of busy-spinning
-                if (ws_send_frame(&wc, WS_OP_BIN, NULL, 0) < 0) break;
+                if (ws_send_timed(&wc, NULL, 0, &t_pending, &have_pending) < 0) break;
                 st->polls_sent++;
                 continue;
             }
@@ -714,7 +774,7 @@ static void *ws_worker(void *argp) {
                 case MOVE_PICKUP: act.kind = AWIRE_PICKUP; break;
                 case MOVE_GOOD:   act.kind = AWIRE_GOOD;   break;
                 default:
-                    if (ws_send_frame(&wc, WS_OP_BIN, NULL, 0) < 0) goto reconnect;
+                    if (ws_send_timed(&wc, NULL, 0, &t_pending, &have_pending) < 0) goto reconnect;
                     st->polls_sent++;
                     continue;   // MOVE_WAIT or unrecognized — poll instead
             }
@@ -728,11 +788,11 @@ static void *ws_worker(void *argp) {
             unsigned char frame[128];
             int flen = awire_encode(&act, frame, sizeof frame);
             if (flen <= 0) {
-                if (ws_send_frame(&wc, WS_OP_BIN, NULL, 0) < 0) break;
+                if (ws_send_timed(&wc, NULL, 0, &t_pending, &have_pending) < 0) break;
                 st->polls_sent++;
                 continue;
             }
-            if (ws_send_frame(&wc, WS_OP_BIN, frame, flen) < 0) break;
+            if (ws_send_timed(&wc, frame, flen, &t_pending, &have_pending) < 0) break;
             st->actions_sent++;
         }
     reconnect:
@@ -794,6 +854,34 @@ static void run_ws_load(Config *cfg) {
         tot.connect_failures += stats[i].connect_failures;
     }
 
+    // ---- round-trip latency percentiles (Deliverable A) ----
+    // Merge every worker's reservoir into one array and sort it — with
+    // LAT_RESERVOIR_CAP*nthreads capped in the low millions of doubles even
+    // at hundreds of connections, a plain sort is simplest and exact for the
+    // sample actually held (percentiles over a proper random subsample, not
+    // an approximation on top of an approximation).
+    long lat_seen_total = 0;
+    for (int i = 0; i < nthreads; i++) lat_seen_total += stats[i].lat_seen;
+    long lat_cap_total = 0;
+    for (int i = 0; i < nthreads; i++) lat_cap_total += stats[i].lat_count;
+    double *all_lat = lat_cap_total > 0 ? malloc(sizeof(double) * (size_t)lat_cap_total) : NULL;
+    long n_lat = 0;
+    if (all_lat) {
+        for (int i = 0; i < nthreads; i++)
+            for (long j = 0; j < stats[i].lat_count; j++) all_lat[n_lat++] = stats[i].lat_us[j];
+        qsort(all_lat, (size_t)n_lat, sizeof(double), cmp_double);
+    }
+    double lat_mean = 0, lat_p50 = 0, lat_p90 = 0, lat_p99 = 0, lat_max = 0;
+    if (n_lat > 0) {
+        double sum = 0; for (long i = 0; i < n_lat; i++) sum += all_lat[i];
+        lat_mean = sum / (double)n_lat;
+        lat_p50 = all_lat[(size_t)((double)(n_lat - 1) * 0.50)];
+        lat_p90 = all_lat[(size_t)((double)(n_lat - 1) * 0.90)];
+        lat_p99 = all_lat[(size_t)((double)(n_lat - 1) * 0.99)];
+        lat_max = all_lat[n_lat - 1];
+    }
+    free(all_lat);
+
     printf("\n============= foolish_hammer summary (mode=ws) =============\n");
     printf("wall clock (load phase):     %.2fs\n", elapsed);
     printf("persistent WS connections:   %d (one per seat)\n", nthreads);
@@ -801,6 +889,16 @@ static void run_ws_load(Config *cfg) {
     printf("actions submitted:           %ld  applied(ok=true): %ld  (%.1f applied/s)\n",
            tot.actions_sent, tot.actions_applied, tot.actions_applied / elapsed);
     printf("poll frames sent:            %ld\n", tot.polls_sent);
+    printf("round-trip latency (send -> next push received), microseconds:\n");
+    printf("  round trips timed: %ld  (percentile sample: %ld%s)\n", lat_seen_total, n_lat,
+           lat_seen_total > n_lat ? ", reservoir-capped" : "");
+    printf("  mean=%.1f  p50=%.1f  p90=%.1f  p99=%.1f  max=%.1f\n",
+           lat_mean, lat_p50, lat_p90, lat_p99, lat_max);
+    // One grep-able line, so a wrapper sweeping concurrency (mode=ws has no
+    // --conns knob — connections = games*seats, see --games/--seats) can
+    // collect this across several runs and tabulate latency vs. concurrency.
+    printf("latency_summary_us: conns=%d count=%ld mean=%.1f p50=%.1f p90=%.1f p99=%.1f max=%.1f\n",
+           nthreads, n_lat, lat_mean, lat_p50, lat_p90, lat_p99, lat_max);
     printf("rematches (continue+start):  %ld\n", tot.rematches);
     printf("connects: %ld  connect failures: %ld\n", tot.connects, tot.connect_failures);
     printf("===============================================================\n");
