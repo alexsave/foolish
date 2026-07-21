@@ -96,7 +96,9 @@ POST /action?game_id=..  <awire bytes>  (Bearer)   applies, then runs the bots
 GET  /state?game_id=..&seat=..          -> the kernel's masked view (packed)
 GET  /status?game_id=..                 -> 0 waiting / 1 playing / 2 over
 GET  /health
+GET  /stats                             -> {bot_decisions, octogen_decisions} (Stage 4)
 GET  /ws?game_id=..&seat=.. (Bearer, Upgrade: websocket) -> RFC 6455 WebSocket
+GET  /ws?game_id=..&spectator=1 (Bearer, Upgrade: websocket) -> read-only spectator WebSocket (Stage 4)
 ```
 
 Every path above is `http://`/`ws://` by default, or `https://`/`wss://`
@@ -130,6 +132,15 @@ reference client: it decodes the pushed state, calls the kernel's own
 `calculate_legal_moves` for its seat, and submits a randomly chosen LEGAL
 move — so, unlike the HTTP load modes' mostly-illegal random frames, every
 submitted move actually lands.
+
+`/ws?game_id=..&spectator=1` (Stage 4, [`SERVER_SCALING.md`](SERVER_SCALING.md))
+is the same upgrade for a READ-ONLY watcher: a valid Bearer token is still
+required, but no seat ownership check — any authenticated user may spectate
+any existing game. It receives `VIEW_SPECTATOR` pushes (every hand AND the
+deck hidden), cached per game (not per seat, since every spectator of a game
+sees the same bytes), and any frame it sends is silently ignored — a
+spectator can never move. `foolish_hammer --spectators=N` is the reference
+client.
 
 ## Smoke test
 

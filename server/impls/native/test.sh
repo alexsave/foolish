@@ -46,3 +46,24 @@ else
     echo "── ws smoke test: FAIL (no applied moves)"
     exit 1
 fi
+
+# ── Stage 4 smoke test: spectator + server-side octogen bot ──────────────
+# Own tiny game (games=1 seats=1 server-bot=octogen spectators=1): proves
+# (a) a server-side octogen bot, added via /meta add-bot and driven entirely
+# inside bot_thread/bot_drive, actually decides + plays (octogen_decisions
+# from GET /stats > 0 — see SERVER_SCALING.md "Stage 4"), and (b) a
+# read-only spectator WS connection (/ws?game_id=..&spectator=1) receives
+# masked VIEW_SPECTATOR pushes and never gets a move accepted, even when it
+# deliberately probes with a well-framed one (spectator_worker's
+# SPEC_MOVE_PROBE_N — see foolish_hammer.c).
+echo "── stage4 smoke test (spectator + server-bot=octogen, tiny scale, port $WPORT)"
+S4_OUT=$("$DIR/foolish_hammer" --host=127.0.0.1 --port="$WPORT" --games=1 --seats=1 --server-bot=octogen --spectators=1 --secs=10 --mode=ws)
+echo "$S4_OUT" | tail -16
+OCT_DEC=$(echo "$S4_OUT" | grep 'octogen_decisions_summary:' | grep -o 'decisions=[0-9]*' | grep -o '[0-9]*$')
+SPEC_ACCEPT=$(echo "$S4_OUT" | grep 'spectator move probes sent:' | grep -o 'accepted(MUST be 0): [0-9]*' | grep -o '[0-9]*$')
+if [ -n "${OCT_DEC:-}" ] && [ "$OCT_DEC" -gt 0 ] && [ -n "${SPEC_ACCEPT:-}" ] && [ "$SPEC_ACCEPT" -eq 0 ]; then
+    echo "── stage4 smoke test: PASS (octogen decided server-side ${OCT_DEC} time(s); spectator move probes accepted=0)"
+else
+    echo "── stage4 smoke test: FAIL (octogen_decisions=${OCT_DEC:-?} spectator_move_accepted=${SPEC_ACCEPT:-?})"
+    exit 1
+fi

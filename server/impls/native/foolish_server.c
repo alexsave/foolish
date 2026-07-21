@@ -21,6 +21,7 @@
 //   POST /action {game_id,move:{...}}    (bearer)  applies + runs bots
 //   GET  /state?game_id=..&seat=..       -> the kernel's masked view JSON
 //   GET  /health
+//   GET  /stats                          -> Stage 4 bot-decision counters (JSON)
 //   GET  /ws?game_id=..&seat=..  (bearer, Upgrade: websocket)
 //                                         -> RFC 6455 WebSocket. ONE persistent
 //     connection per (authenticated, seated) client replaces the HTTP
@@ -32,6 +33,11 @@
 //     of thread-per-REQUEST amortizes pthread_create's cost (a fresh
 //     thread's zeroed stack/TLS was 85.8% of instructions under load,
 //     T1) over a client's entire session instead of paying it per move.
+//   GET  /ws?game_id=..&spectator=1  (bearer, Upgrade: websocket)
+//                                         -> Stage 4: the same WebSocket, but
+//     for a read-only watcher that owns no seat — masked with VIEW_SPECTATOR
+//     (every hand AND the deck hidden), and any frame it sends is ignored,
+//     never applied. See ws_conn_thread's own comment for the full design.
 //
 // TLS (Stage 3, TLS.md): pass `--tls --cert=PATH --key=PATH` to serve every
 // endpoint above over TLS instead — https:// for the one-shot endpoints,
@@ -70,6 +76,7 @@
 #include "awire.h"
 #include "bot_drive.h"
 #include "bot_roster.h"
+#include "strategy.h"   // STRAT_RANDOM — see h_meta's add-bot branch (Stage 4 strategy_key fix)
 #include "ws.h"
 #include "persist.h"
 #include "conn.h"   // Stage 3: TLS — see conn.h and the "STAGE 3: OpenSSL TLS" block below
@@ -94,8 +101,19 @@ typedef struct {
 // MAX_HAND_SIZE) (8*(3+64)) + 1 + MAX_PLAYERS (8) = 690 bytes. Rounded up
 // with real margin for VIEW_CACHE below (h_ws/h_state's own wire buffers use
 // a much larger 65536 "don't think about it" cap; this one is sized because
-// it's paid MAX_PLAYERS times per game, see GameSlot.view_cache).
+// it's paid MAX_PLAYERS+1 times per game, see GameSlot.view_cache). The
+// spectator viewer (VIEW_SPECTATOR, Stage 4) masks EVERY hand and the deck —
+// its output is never bigger than any per-seat view (same field counts, just
+// more of them hidden), so it fits this same cap with no change.
 #define VIEW_CACHE_CAP 1024
+
+// Stage 4 (SERVER_SCALING.md "Stage 4 — spectators"): the shared cache slot
+// for the one masked view every spectator of a game sees (VIEW_SPECTATOR —
+// all hands + the deck hidden, the SAME bytes for every spectator of this
+// game at a given version, unlike a per-seat view). One extra slot past the
+// MAX_PLAYERS per-seat ones in GameSlot.view_cache*, keyed the same way
+// (recompute iff view_cache_version[SPECTATOR_CACHE_IDX] != s->version).
+#define SPECTATOR_CACHE_IDX MAX_PLAYERS
 
 typedef struct {
     bool used;
@@ -132,9 +150,11 @@ typedef struct {
     // so the client needs no changes and always sees fresh-as-of-version
     // state on every round trip.
     uint32_t version;
-    unsigned char view_cache[MAX_PLAYERS][VIEW_CACHE_CAP];
-    int      view_cache_len[MAX_PLAYERS];
-    uint32_t view_cache_version[MAX_PLAYERS];
+    // +1: index SPECTATOR_CACHE_IDX (== MAX_PLAYERS) is the shared spectator
+    // cache slot (Stage 4) — see that macro's doc above.
+    unsigned char view_cache[MAX_PLAYERS + 1][VIEW_CACHE_CAP];
+    int      view_cache_len[MAX_PLAYERS + 1];
+    uint32_t view_cache_version[MAX_PLAYERS + 1];
 } GameSlot;
 
 static User     g_users[MAX_USERS];
@@ -386,6 +406,27 @@ static pthread_mutex_t g_kernel_lock = PTHREAD_MUTEX_INITIALIZER;
 static atomic_ulong g_seq = 0;
 
 // --------------------------------------------------------------------------
+// Stage 4 (SERVER_SCALING.md "Stage 4 — spectators + octogen stress"):
+// process-wide bot-decision counters, read by GET /stats. A "decision" here
+// is one BotDriveAction actually applied by bot_thread's bot_drive call
+// (drv.actions[0..drv.n)) — the unit bot_stress.sh measures decisions/sec
+// against, at 1 game and at N games, to quantify g_kernel_lock's ceiling on
+// bot compute (see that lock's own doc above: bot_drive is one of the calls
+// it serializes process-wide). `g_bot_decisions` counts every one of them,
+// any strategy, any game; `g_octogen_decisions` narrows to actions applied
+// by a seat whose strategy_key is octogen's STRAT_* brain id (g_octogen_strat,
+// resolved once in main() from the roster entry's OWN `.strat` field — NOT
+// bot_roster_find's roster-array index; see h_meta's add-bot branch for why
+// those two are different numbers and why only `.strat` is the kernel's
+// seat-kind convention — read-only from every thread after main() sets it,
+// so no lock is needed to read it from bot_thread). Plain atomics: relaxed
+// is enough, same reasoning as g_seq above — nothing else about these
+// counters needs ordering with any other memory access.
+static atomic_ulong g_bot_decisions = 0;
+static atomic_ulong g_octogen_decisions = 0;
+static int g_octogen_strat = -1;
+
+// --------------------------------------------------------------------------
 // STAGE 3: OpenSSL TLS (WSS/HTTPS) — DONE. Every plain-HTTP socket byte in
 // this file funnels through io_read/io_write below, now thin wrappers over
 // conn_read/conn_write (conn.c/conn.h), which dispatch to read()/write() or
@@ -550,6 +591,24 @@ static void *bot_thread(void *arg) {
         // human's /action does — the /ws state cache must not stay stale
         // just because no HTTP handler touched this slot this time.
         if (drv.n > 0 || drv.ended >= 0) { s->version++; game_mark_dirty(s); }
+        // Stage 4 instrumentation (see g_bot_decisions/g_octogen_decisions'
+        // doc above): count every action this cycle actually applied, and —
+        // since drv.actions[] names the acting seat — how many of those
+        // were an "octogen" seat specifically. Read under s->lock, which we
+        // already hold for the whole cycle, so s->game.players[] is stable.
+        if (drv.n > 0) {
+            atomic_fetch_add_explicit(&g_bot_decisions, (unsigned long)drv.n, memory_order_relaxed);
+            if (g_octogen_strat >= 0) {
+                unsigned long oct = 0;
+                for (int i = 0; i < drv.n; i++) {
+                    int aseat = drv.actions[i].seat;
+                    if (aseat >= 0 && aseat < s->game.num_players &&
+                        s->game.players[aseat].strategy_key == g_octogen_strat)
+                        oct++;
+                }
+                if (oct > 0) atomic_fetch_add_explicit(&g_octogen_decisions, oct, memory_order_relaxed);
+            }
+        }
 
         if (drv.ended >= 0) break;   // the kernel already flipped g->status to GAME_OVER
         if (drv.stop == BOT_STOP_NO_ELIGIBLE) {              // a human's move is owed
@@ -648,9 +707,10 @@ static void game_persist_load(const char *id, const unsigned char *blob, int len
     pthread_cond_init(&s->cond, NULL);
     // Same "must never equal s->version's initial value" reasoning as
     // h_create's identical line — forces the first state_put_cached call
-    // for every seat to actually recompute instead of serving a bogus
-    // zero-length cached view.
-    for (int i = 0; i < MAX_PLAYERS; i++) s->view_cache_version[i] = (uint32_t)-1;
+    // for every seat (and the shared spectator slot, index MAX_PLAYERS —
+    // Stage 4) to actually recompute instead of serving a bogus zero-length
+    // cached view.
+    for (int i = 0; i < MAX_PLAYERS + 1; i++) s->view_cache_version[i] = (uint32_t)-1;
     pthread_mutex_lock(&g_registry_lock);
     game_ht_insert(s);
     pthread_mutex_unlock(&g_registry_lock);
@@ -895,8 +955,10 @@ static void h_create(Req *r, Conn *conn) {
     // value that can NEVER equal it, or state_put_cached's very first call
     // for a seat would see version==cache_version (both zeroed) and return
     // the also-zeroed, never-computed view_cache_len (0 bytes) instead of
-    // actually serializing — a silent "client gets an empty state" bug.
-    for (int i = 0; i < MAX_PLAYERS; i++) s->view_cache_version[i] = (uint32_t)-1;
+    // actually serializing — a silent "client gets an empty state" bug. The
+    // +1 covers the shared spectator cache slot too (index MAX_PLAYERS —
+    // Stage 4, SPECTATOR_CACHE_IDX).
+    for (int i = 0; i < MAX_PLAYERS + 1; i++) s->view_cache_version[i] = (uint32_t)-1;
     gen_id(s->id, ID_LEN);
     // LOCK ORDER: registry, then this fresh slot's own lock — never the
     // reverse (see g_registry_lock's declaration). No other thread can find
@@ -954,13 +1016,33 @@ static void h_meta(Req *r, Conn *conn) {
         if (g->num_players < MAX_PLAYERS && g->status == GAME_STATUS_WAITING) {
             int i = g->num_players++;
             s->seat_ready[i] = true;
-            int strat = bot_roster_find(skey);
-            if (strat < 0) strat = bot_roster_find("random");
+            int ridx = bot_roster_find(skey);
+            if (ridx < 0) ridx = bot_roster_find("random");
+            const BotRosterEntry *entry = bot_roster_at(ridx);
             snprintf(s->seat_name[i], 24, "%%%s %d", skey, i);
             snprintf(g->players[i].name, 24, "%s", s->seat_name[i]);
             snprintf(g->players[i].player_id, 24, "bot%d", i);
             g->players[i].status = PLAYER_STATUS_READY;
-            g->players[i].strategy_key = (int8_t)strat;   // the kernel's own seat kind
+            // Stage 4 fix: the kernel's own seat-kind convention is a
+            // STRAT_* brain id (strategy.h), NOT a bot_roster.h array
+            // index — bot_drive.c's choose_move says so directly
+            // ("Seats carry a STRAT_* id by kernel-wide convention... the
+            // roster entry is resolved back from the brain" via
+            // bot_roster_find_by_strat). This used to store `ridx` (the
+            // roster INDEX bot_roster_find returns) here directly, which
+            // bot_drive.c then read back AS IF it were a STRAT_* id —
+            // silently either matching no roster entry at all (that seat's
+            // bot_drive_eligible check always fails: BOT_STOP_NO_ELIGIBLE
+            // forever, a game with a bot in it that never moves — confirmed
+            // by a standalone repro for "octogen": bot_roster_find_by_strat
+            // (its roster index, 9) resolves to -1, since no roster entry's
+            // own `.strat` happens to be 9) or, for a few names, matching a
+            // DIFFERENT roster entry's `.strat` and silently running THAT
+            // bot's brain instead (e.g. "gunpowder"'s index (6) equals
+            // "blackpowder"'s STRAT_BLACKPOWDER (6) — a gunpowder seat would
+            // have silently played blackpowder). The roster entry's OWN
+            // `.strat` field is the actual kernel brain id; use it.
+            g->players[i].strategy_key = entry ? (int8_t)entry->strat : (int8_t)STRAT_RANDOM;
         }
     } else if (!strcmp(type, "start")) {
         int me = seat_of(s, user_id);
@@ -1098,37 +1180,61 @@ static void h_status(Req *r, Conn *conn) {
     respond(conn, 200, out);
 }
 
-// Serialize seat's masked view, reusing the cached bytes from GameSlot when
+// Stage 4: a tiny JSON counters dump — no game_id, no auth, process-wide —
+// so a load tool (foolish_hammer's --mode=ws summary) or an external script
+// (bot_stress.sh) can poll it before/after a timed run and compute
+// decisions/sec from the delta. See g_bot_decisions/g_octogen_decisions'
+// doc above for exactly what each counts. Answered inline off the
+// dispatcher (see main()'s accept loop), same as /health — cheap atomic
+// loads, no lock, no reason to pay a work-queue round trip.
+static void h_stats(Req *r, Conn *conn) {
+    (void)r;
+    unsigned long bd = atomic_load_explicit(&g_bot_decisions, memory_order_relaxed);
+    unsigned long od = atomic_load_explicit(&g_octogen_decisions, memory_order_relaxed);
+    char out[128];
+    snprintf(out, sizeof out, "{\"bot_decisions\":%lu,\"octogen_decisions\":%lu}", bd, od);
+    respond(conn, 200, out);
+}
+
+// Serialize a masked view, reusing the cached bytes from GameSlot when
 // nothing has changed since they were computed (PROFILE_HOTPATH.md "T1c" —
 // see GameSlot's `version`/`view_cache*` fields above for the invariant).
-// MUST be called with s->lock held (same contract as a bare state_put call
-// here) and `seat` MUST already be known in-range (0 <= seat < num_players
-// <= MAX_PLAYERS — ws_conn_thread validates this at handshake time before
-// ever calling in; this function does not re-check, so it is not safe to
-// point at an unvalidated/attacker-controlled seat index).
-static int state_put_cached(GameSlot *s, int seat, unsigned char *out) {
-    if (s->view_cache_version[seat] != s->version) {
+// `cache_idx` selects WHICH cached slot to use/fill: 0 <= cache_idx <
+// num_players <= MAX_PLAYERS for a seated client's own cache, or
+// SPECTATOR_CACHE_IDX (Stage 4) for the one shared spectator slot every
+// spectator of this game reads. `viewer` is state_put's own viewer argument
+// (the seat number, or VIEW_SPECTATOR) — kept separate from `cache_idx`
+// because the spectator cache slot's INDEX (MAX_PLAYERS) is not a valid
+// state_put viewer value (that's VIEW_SPECTATOR, -1). MUST be called with
+// s->lock held (same contract as a bare state_put call here) and
+// `cache_idx`/`viewer` MUST already be known valid — ws_conn_thread
+// validates both at handshake time before ever calling in (a seated
+// client's own seat, or the fixed spectator pair); this function does not
+// re-check, so it is not safe to point at an unvalidated/attacker-
+// controlled index.
+static int state_put_cached(GameSlot *s, int cache_idx, int viewer, unsigned char *out) {
+    if (s->view_cache_version[cache_idx] != s->version) {
         // Serialize straight into a scratch buffer wider than
         // VIEW_CACHE_CAP first: state_put's real worst case fits well
         // inside VIEW_CACHE_CAP today (see that constant's comment), but if
         // a future kernel change ever grew a cap enough to overflow it,
-        // this falls back to "always recompute, never cache" for that seat
+        // this falls back to "always recompute, never cache" for that slot
         // instead of truncating a state update — correctness over the
         // optimization.
         unsigned char scratch[1 + 65536];
-        int n = state_put(&s->game, seat, scratch);
+        int n = state_put(&s->game, viewer, scratch);
         if (n < 0) n = 0;
         if (n <= VIEW_CACHE_CAP) {
-            memcpy(s->view_cache[seat], scratch, (size_t)n);
-            s->view_cache_len[seat] = n;
-            s->view_cache_version[seat] = s->version;
+            memcpy(s->view_cache[cache_idx], scratch, (size_t)n);
+            s->view_cache_len[cache_idx] = n;
+            s->view_cache_version[cache_idx] = s->version;
         } else {
             memcpy(out, scratch, (size_t)n);
             return n;
         }
     }
-    int n = s->view_cache_len[seat];
-    memcpy(out, s->view_cache[seat], (size_t)n);
+    int n = s->view_cache_len[cache_idx];
+    memcpy(out, s->view_cache[cache_idx], (size_t)n);
     return n;
 }
 
@@ -1166,6 +1272,24 @@ static int state_put_cached(GameSlot *s, int seat, unsigned char *out) {
 //     [ok:u8][state_put(seat) bytes], ok=1 iff a real move decoded AND the
 //     kernel accepted it (awire_apply's own validation — same as /action).
 // A human's turn wakes the bot game-loop exactly like /action did.
+//
+// Stage 4 (SERVER_SCALING.md "Stage 4 — spectators"): GET
+// /ws?game_id=..&spectator=1 (Bearer, no `seat=`) upgrades the SAME way but
+// owns no seat — `seat_of` ownership is never checked, only that the token
+// is a real user and the game exists (the seat-membership check below is
+// simply skipped, everything else about the handshake is identical). The
+// masked view it receives is VIEW_SPECTATOR (view.h — every hand AND the
+// deck hidden, not just the other seats' hands), cached in the ONE shared
+// SPECTATOR_CACHE_IDX slot (every spectator of a game sees the same bytes at
+// a given version, so they share one cache entry instead of paying MAX_
+// PLAYERS+1 distinct recomputes). A spectator MAY NOT submit moves: any
+// frame it sends — empty or not — is treated purely as "send me the current
+// state" (the `!spectator` guard below keeps a spectator's bytes from ever
+// reaching awire_decode/awire_apply/g_kernel_lock at all), so `ok` is always
+// 0 in a spectator's replies. Same per-game lock, same dedicated-thread-per-
+// connection design (B) as a seated client — a spectator is just another
+// long-lived /ws connection that happens to skip the seat check and the
+// apply branch.
 typedef struct {
     Conn conn;
     Req req;
@@ -1182,6 +1306,9 @@ static void *ws_conn_thread(void *argp) {
     if (gp) { gp += 8; int i = 0; while (gp[i] && gp[i] != '&' && i < ID_LEN) { gid[i] = gp[i]; i++; } gid[i] = 0; }
     const char *sp = strstr(r->query, "seat=");
     if (sp) seat = (int)strtol(sp + 5, NULL, 10);
+    bool spectator = false;
+    const char *spq = strstr(r->query, "spectator=");
+    if (spq) { spq += 10; spectator = (*spq == '1'); }
 
     pthread_mutex_lock(&g_registry_lock);
     User *u = user_by_token(r->token);
@@ -1191,15 +1318,32 @@ static void *ws_conn_thread(void *argp) {
         respond(conn, 401, "{\"error\":\"ws auth\"}");
         conn_close(conn); free(sa->raw_buf); free(sa); return NULL;
     }
-    char user_id[ID_LEN + 1]; snprintf(user_id, sizeof user_id, "%s", u->user_id);
     pthread_mutex_lock(&s->lock);
     pthread_mutex_unlock(&g_registry_lock);
-    bool ok = seat >= 0 && seat < s->game.num_players && seat_of(s, user_id) == seat;
+    // Spectators: a real Bearer token is still required (same user_by_token
+    // check every /ws client passes — this is "no SEAT membership", not "no
+    // auth"), but ownership of a specific seat is not — any authenticated
+    // user may watch any EXISTING game. Seated clients are exactly as
+    // before: must own the seat they asked for.
+    bool ok;
+    if (spectator) {
+        ok = true;
+    } else {
+        char user_id[ID_LEN + 1]; snprintf(user_id, sizeof user_id, "%s", u->user_id);
+        ok = seat >= 0 && seat < s->game.num_players && seat_of(s, user_id) == seat;
+    }
     pthread_mutex_unlock(&s->lock);
     if (!ok) {
         respond(conn, 401, "{\"error\":\"ws auth\"}");
         conn_close(conn); free(sa->raw_buf); free(sa); return NULL;
     }
+
+    // Cache slot + state_put viewer for the rest of this connection's life:
+    // a seated client uses its own seat for both; a spectator uses the one
+    // shared SPECTATOR_CACHE_IDX slot and VIEW_SPECTATOR as the viewer (see
+    // state_put_cached's doc for why these are two separate values).
+    int cache_idx = spectator ? SPECTATOR_CACHE_IDX : seat;
+    int viewer    = spectator ? VIEW_SPECTATOR : seat;
 
     char accept[64];
     if (!ws_accept_from_key(r->ws_key, accept, sizeof accept)) {
@@ -1220,7 +1364,7 @@ static void *ws_conn_thread(void *argp) {
     // (h_state uses the same 65536 cap).
     unsigned char msg[1 + 65536];
     pthread_mutex_lock(&s->lock);
-    int slen = s->used ? state_put_cached(s, seat, msg + 1) : 0;
+    int slen = s->used ? state_put_cached(s, cache_idx, viewer, msg + 1) : 0;
     pthread_mutex_unlock(&s->lock);
     msg[0] = 0;
     if (ws_send_frame(&wc, WS_OP_BIN, msg, slen + 1) < 0) { conn_close(&wc.conn); free(sa); return NULL; }
@@ -1233,7 +1377,16 @@ static void *ws_conn_thread(void *argp) {
         bool applied = false;
         pthread_mutex_lock(&s->lock);
         if (s->used) {
-            if (mlen > 0 && s->game.status == GAME_STATUS_PLAYING) {
+            // Spectators MAY NOT submit moves (Stage 4): `!spectator` keeps
+            // ANY frame a spectator sends — empty or a well-formed move
+            // alike — from ever reaching awire_decode/awire_apply/
+            // g_kernel_lock. It is silently treated as "send me the current
+            // state", same as a seated client's empty poll frame; `applied`
+            // stays false and the reply's ok byte is always 0. This is a
+            // deliberate ignore, not a disconnect — a spectator client that
+            // (by bug or by a hostile peer) sends a move frame just gets
+            // back the current masked view, same as always.
+            if (!spectator && mlen > 0 && s->game.status == GAME_STATUS_PLAYING) {
                 AwireAction a;
                 if (awire_decode(in, mlen, &a)) {
                     // g_kernel_lock, innermost (see h_action's identical
@@ -1250,13 +1403,16 @@ static void *ws_conn_thread(void *argp) {
                 }
             }
             // PROFILE_HOTPATH.md "T1c": on a pure poll (mlen==0 or an
-            // illegal/rejected move) this seat's view did NOT change, so
-            // state_put_cached memcpy's the bytes computed last time instead
-            // of re-running the kernel's full masked serialization — the
-            // single biggest measured cost in this loop (~21-31% of
-            // instructions under WS+legal load) was paying that on EVERY
-            // round trip, including the ~99% that were polls.
-            slen = state_put_cached(s, seat, msg + 1);
+            // illegal/rejected move, or ANY frame from a spectator) this
+            // view did NOT change, so state_put_cached memcpy's the bytes
+            // computed last time instead of re-running the kernel's full
+            // masked serialization — the single biggest measured cost in
+            // this loop (~21-31% of instructions under WS+legal load) was
+            // paying that on EVERY round trip, including the ~99% that were
+            // polls. Spectators share this exact same cache discipline, just
+            // off the one shared SPECTATOR_CACHE_IDX slot (cache_idx) instead
+            // of a per-seat one.
+            slen = state_put_cached(s, cache_idx, viewer, msg + 1);
         } else {
             slen = 0;
         }
@@ -1374,6 +1530,7 @@ static void route(Req *r, Conn *conn) {
     if (!strcmp(r->path, "/action")) { h_action(r, conn); return; }
     if (!strcmp(r->path, "/state"))  { h_state(r, conn); return; }
     if (!strcmp(r->path, "/status")) { h_status(r, conn); return; }
+    if (!strcmp(r->path, "/stats"))  { h_stats(r, conn); return; }
     respond(conn, 404, "{\"error\":\"route\"}");
 }
 
@@ -1473,6 +1630,22 @@ int main(int argc, char **argv) {
         }
     }
     srand((unsigned)(time(NULL) ^ getpid()));   // only ever called here, before any worker thread exists
+    // Stage 4: resolve "octogen"'s STRAT_* brain id ONCE, before any
+    // bot_thread can run — g_octogen_strat is read-only from every thread
+    // after this line, so no lock is needed (same posture g_tls_ctx's doc
+    // takes). Via bot_roster_at(...)->strat, NOT bot_roster_find's own
+    // return value directly — that's a roster ARRAY INDEX, a different
+    // number from the STRAT_* id seats actually carry (see h_meta's add-bot
+    // branch for the full story; this counter needs to compare against the
+    // SAME value strategy_key holds). -1 (an unknown key, or a somehow-
+    // absent roster entry) just means the per-strategy octogen counter never
+    // increments — g_bot_decisions still counts every bot's applied actions
+    // regardless.
+    {
+        int ridx = bot_roster_find("octogen");
+        const BotRosterEntry *e = ridx >= 0 ? bot_roster_at(ridx) : NULL;
+        g_octogen_strat = e ? e->strat : -1;
+    }
     // Long-lived /ws connections mean a peer can vanish (crash, network
     // reset, the load client's own `timeout` cutting it off) between our
     // read and our next write; the default SIGPIPE action is to kill the
@@ -1605,6 +1778,7 @@ int main(int argc, char **argv) {
         // round trip for them.
         if (!strcmp(r.method, "OPTIONS")) { respond(&conn, 200, "{}"); conn_close(&conn); free(buf); continue; }
         if (!strcmp(r.path, "/health"))  { respond(&conn, 200, "{\"ok\":true}"); conn_close(&conn); free(buf); continue; }
+        if (!strcmp(r.path, "/stats"))   { h_stats(&r, &conn); conn_close(&conn); free(buf); continue; }
 
         WorkItem item; item.conn = conn; item.req = r; item.raw_buf = buf;
         wq_push(classify_queue(&r), &item);

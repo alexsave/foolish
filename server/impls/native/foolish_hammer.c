@@ -19,12 +19,14 @@
 // CLI (all optional, sensible defaults):
 //   --host=127.0.0.1 --port=8099 --games=20 --seats=4 --conns=32 --secs=15
 //   --mode=action|mixed|ws
+//   --server-bot=NAME --spectators=N        (Stage 4, --mode=ws only — see below)
 //
 // Setup phase (all three modes): signs up games*seats distinct users, POSTs
 // /create for each game (creator = seat 0), joins the rest via /meta join,
 // then /meta start for every seated human so each game deals (status ->
-// PLAYING). NEVER calls /meta add-bot — every seat is a human this program
-// drives, in every mode.
+// PLAYING). NEVER calls /meta add-bot UNLESS --server-bot=NAME is given (see
+// "Stage 4" below) — every OTHER seat is a human this program drives, in
+// every mode.
 //
 // --mode=action (the default) / --mode=mixed: `conns` threads hammer the
 // server for `secs` seconds, one fresh HTTP connection per request (the
@@ -56,6 +58,35 @@
 // genuinely legal, so the server's awire_apply actually applies it — no
 // cheap-reject easy-out (PROFILE_HOTPATH.md T1's random-frame mode measured
 // ~0.15% of submitted actions as legal; this mode is ~100%).
+//
+// Stage 4 (SERVER_SCALING.md "Stage 4 — spectators + octogen stress"), both
+// --mode=ws only, both off by default (so the pure all-human baseline above
+// is unchanged unless asked for):
+//
+//   --server-bot=NAME  seats ONE server-side bot (via /meta add-bot, run
+//     entirely inside foolish_server's own bot_thread/bot_drive, never a
+//     connection this program owns) in EVERY game, alongside `seats` human
+//     WS clients — total players = seats+1, capped at MAX_PLAYERS (so
+//     --server-bot + --seats=7 is the max-stress mix: 1 bot + 7 humans).
+//     `--server-bot=octogen` is the point of this stage: octogen is the
+//     strongest, most CPU-heavy bot (deep Monte-Carlo search per decision,
+//     bot_roster.h) — running it server-side, inside bot_drive, inside the
+//     SAME g_kernel_lock every game's bot compute shares (foolish_server.c's
+//     "Locking" doc), is what makes bot compute NOT parallelize across
+//     concurrently-running games today. This program never runs the bot
+//     itself — it only sets it up and drives the human seats around it,
+//     exactly like a real client would.
+//   --spectators=N  N read-only WebSocket connections PER GAME
+//     (/ws?game_id=..&spectator=1) that receive the server's masked
+//     VIEW_SPECTATOR pushes and NEVER submit moves (spectator_worker) — real
+//     connection + poll/push load with none of the legal-move computation
+//     the human ws_worker does, since a spectator never acts.
+//
+// A --mode=ws run also polls GET /stats before and after the timed load
+// window and reports the delta as "server bot decisions" / "server octogen
+// decisions" (see foolish_server.c's g_bot_decisions/g_octogen_decisions) —
+// the number bot_stress.sh sweeps across game counts to show whether that
+// rate holds steady or falls as concurrency rises.
 //
 // Robustness: every parse step is bounds-checked against the bytes actually
 // read/received, and no response — malformed, truncated, or a flat
@@ -99,6 +130,16 @@ typedef struct {
     bool mixed;
     bool ws;    // --mode=ws: persistent WebSocket connections + legal moves only
     bool tls;   // --tls: wrap every client socket (HTTP setup AND ws frames) in TLS
+    // Stage 4 (SERVER_SCALING.md "Stage 4"): --mode=ws only.
+    //   --server-bot=NAME  a server-side bot (added via /meta add-bot,
+    //     octogen at MAX_PLAYERS-1 == 7 human --seats is the max-stress
+    //     mix) seated in EVERY game alongside `seats` human WS clients —
+    //     "" (the default) keeps every seat human, exactly as before.
+    //   --spectators=N     N read-only spectator WS connections PER GAME
+    //     (never submit moves — see spectator_worker) — 0 (the default)
+    //     keeps every earlier stage's behavior unchanged.
+    char server_bot[24];
+    int  spectators;
 } Config;
 
 static Config g_cfg;
@@ -365,14 +406,43 @@ static bool do_meta(const Config *cfg, const char *token, const char *type, cons
     return r.status == 200;
 }
 
+// Stage 4: seats ONE server-side bot (via /meta add-bot) — the owning host
+// is `token`'s user (the game's creator, seat 0), same as any lobby action.
+// Unlike do_meta, this one carries a `strategy` field.
+static bool do_meta_add_bot(const Config *cfg, const char *token, const char *gid, const char *strategy) {
+    char body[160];
+    int bn = snprintf(body, sizeof body, "{\"type\":\"add-bot\",\"game_id\":\"%s\",\"strategy\":\"%s\"}", gid, strategy);
+    unsigned char resp[RESP_CAP]; HttpResp r;
+    if (!http_do(cfg->host, cfg->port, "POST", "/meta", token, (unsigned char *)body, bn, resp, sizeof resp, &r))
+        return false;
+    return r.status == 200;
+}
+
+// Stage 4: GET /stats (foolish_server.c's h_stats) — process-wide bot-
+// decision counters, no auth. Used to sample a before/after delta around a
+// timed --mode=ws load window (run_ws_load) and by bot_stress.sh directly.
+// Best-effort: on any failure the out-params are left untouched (the caller
+// pre-zeroes them), same "never blocks delivery" posture as build_legal_frame.
+static bool get_stats(const Config *cfg, unsigned long *bot_decisions, unsigned long *octogen_decisions) {
+    unsigned char resp[RESP_CAP]; HttpResp r;
+    if (!http_do(cfg->host, cfg->port, "GET", "/stats", NULL, NULL, 0, resp, sizeof resp, &r)) return false;
+    if (r.status != 200 || !r.body || r.body_len <= 0) return false;
+    char buf[32];
+    if (json_str(r.body, r.body_len, "bot_decisions", buf, sizeof buf)) *bot_decisions = strtoul(buf, NULL, 10);
+    if (json_str(r.body, r.body_len, "octogen_decisions", buf, sizeof buf)) *octogen_decisions = strtoul(buf, NULL, 10);
+    return true;
+}
+
 // One-time setup: sign up games*seats users, create+join+start each game so
 // it deals. Sequential and simple — a few hundred local requests, trivial
-// next to the timed load phase that follows. NEVER calls /meta add-bot: the
-// whole point of this client is that every seat is a human it controls.
+// next to the timed load phase that follows. NEVER calls /meta add-bot
+// UNLESS cfg->server_bot is set (Stage 4) — otherwise every seat is a human
+// this program controls, as in every earlier stage.
 static void setup(const Config *cfg) {
     int need = cfg->games * cfg->seats;
-    printf("== setup: signing up up to %d users, dealing up to %d games x %d seats ==\n",
-           need, cfg->games, cfg->seats);
+    printf("== setup: signing up up to %d users, dealing up to %d games x %d seats%s%s ==\n",
+           need, cfg->games, cfg->seats,
+           cfg->server_bot[0] ? " + 1 server-side bot: " : "", cfg->server_bot[0] ? cfg->server_bot : "");
     for (int i = 0; i < need && g_n_users < HAMMER_MAX_USERS; i++) {
         char uname[40];
         snprintf(uname, sizeof uname, "hmr_%lx_%d_%d", (unsigned long)time(NULL), (int)getpid(), i);
@@ -388,11 +458,18 @@ static void setup(const Config *cfg) {
         char gid[16];
         if (!do_create(cfg, g_users[uptr].token, gid, sizeof gid)) { uptr += cfg->seats; continue; }
         for (int s = 1; s < cfg->seats; s++) do_meta(cfg, g_users[uptr + s].token, "join", gid);
+        // Stage 4: the bot joins AFTER every human (still in the lobby,
+        // status WAITING) and BEFORE start — server/impls/native/foolish_
+        // server.c's h_meta marks it seat_ready=true itself (bots are always
+        // ready), so it never needs its own "start" call the way each human
+        // below does.
+        if (cfg->server_bot[0] && !do_meta_add_bot(cfg, g_users[uptr].token, gid, cfg->server_bot))
+            fprintf(stderr, "  add-bot(%s) failed for game %s\n", cfg->server_bot, gid);
         for (int s = 0; s < cfg->seats; s++) do_meta(cfg, g_users[uptr + s].token, "start", gid);
 
         HGame hg; memset(&hg, 0, sizeof hg);
         snprintf(hg.id, sizeof hg.id, "%s", gid);
-        hg.n_seats = cfg->seats;
+        hg.n_seats = cfg->seats;   // HUMAN seats only — the server-side bot (if any) owns no ws_worker thread
         for (int s = 0; s < cfg->seats; s++) hg.user_idx[s] = uptr + s;
         g_games[g_n_games++] = hg;
         // Grep-able line (server/impls/native/crash_test.sh scrapes this to
@@ -846,6 +923,102 @@ static void *ws_worker(void *argp) {
     return NULL;
 }
 
+// ---------------------------------------------------------------------------
+// Stage 4 — spectator WS connections (SERVER_SCALING.md "Stage 4").
+//
+// A spectator is a read-only watcher: it connects to
+// /ws?game_id=..&spectator=1 (no `seat=`), receives the server's masked
+// VIEW_SPECTATOR pushes (every hand AND the deck hidden — c/src/view.h), and
+// NEVER submits a real move — it exists purely to add connection + poll/push
+// load, the same way an idle browser tab watching a game would. It still
+// needs *some* real Bearer token (foolish_server.c's /ws spectator path
+// checks "no seat membership", not "no auth" — see ws_conn_thread's doc), so
+// each spectator reuses the target game's own seat-0 (creator) user's
+// token — any authenticated user may spectate any existing game, so there is
+// no need to mint dedicated spectator accounts.
+// ---------------------------------------------------------------------------
+
+typedef struct {
+    long msgs_recv;          // [ok][VIEW_SPECTATOR state] replies received
+    long polls_sent;         // empty frames sent
+    long move_attempts;      // Stage 4 correctness probe (see below): well-framed move frames sent anyway
+    long move_accepted;      // of those, how many came back ok=1 — MUST stay 0 (a spectator may not move)
+    long connects;
+    long connect_failures;
+} SpecThreadStats;
+
+typedef struct {
+    Config        *cfg;
+    char           gid[16];
+    char           token[40];
+    SpecThreadStats *st;
+} SpecClientArg;
+
+// Every SPEC_MOVE_PROBE_N polls, a spectator sends a real, well-FRAMED move
+// frame (build_random_frame — the same helper --mode=action's random-frame
+// path uses) instead of an empty poll, purely to verify server-side that it
+// gets silently ignored: this is the empirical half of the "spectators MAY
+// NOT submit moves" gate (SERVER_SCALING.md), not something this program
+// needs for its own load shape. move_accepted staying 0 across a whole run
+// is the pass condition; a real spectator client would never do this.
+#define SPEC_MOVE_PROBE_N 25
+
+static void *spectator_worker(void *argp) {
+    SpecClientArg *a = argp;
+    SpecThreadStats *st = a->st;
+    unsigned int seed = (unsigned int)((uintptr_t)pthread_self() ^ (uintptr_t)time(NULL) ^ (uintptr_t)a);
+    unsigned char *msgbuf = malloc(1 + 65536);
+    if (!msgbuf) return NULL;
+
+    char path[80];
+    snprintf(path, sizeof path, "/ws?game_id=%s&spectator=1", a->gid);
+
+    long poll_n = 0;
+    while (!atomic_load_explicit(&g_stop, memory_order_relaxed)) {
+        Conn conn;
+        bool connected = connect_conn(a->cfg->host, a->cfg->port, &conn);
+        WsConn wc;
+        if (!connected || !ws_client_handshake(&conn, a->cfg->host, path, a->token, &wc)) {
+            if (connected) conn_close(&conn);
+            st->connect_failures++;
+            usleep(20 * 1000);
+            continue;
+        }
+        st->connects++;
+        bool pending_probe = false;   // was the frame we last sent a move probe (not a plain poll)?
+
+        while (!atomic_load_explicit(&g_stop, memory_order_relaxed)) {
+            int opcode;
+            int mlen = ws_recv_message(&wc, msgbuf, 1 + 65536, &opcode);
+            if (mlen < 1) break;   // error/close/undersized — reconnect
+            st->msgs_recv++;
+            if (pending_probe) {
+                if (msgbuf[0] != 0) st->move_accepted++;   // MUST stay 0 — see SPEC_MOVE_PROBE_N's doc
+                pending_probe = false;
+            }
+
+            usleep(WS_IDLE_POLL_US);   // same poll cadence a not-currently-eligible human seat uses
+            poll_n++;
+            if (poll_n % SPEC_MOVE_PROBE_N == 0) {
+                unsigned char frame[64];
+                int flen = build_random_frame(frame, sizeof frame, &seed);
+                if (flen > 0 && ws_send_frame(&wc, WS_OP_BIN, frame, flen) >= 0) {
+                    st->move_attempts++;
+                    pending_probe = true;
+                    continue;
+                }
+                // fall through to the plain poll below on any build/send failure
+            }
+            if (ws_send_frame(&wc, WS_OP_BIN, NULL, 0) < 0) break;
+            st->polls_sent++;
+        }
+        conn_close(&wc.conn);
+        if (!atomic_load_explicit(&g_stop, memory_order_relaxed)) usleep(20 * 1000);
+    }
+    free(msgbuf);
+    return NULL;
+}
+
 static void run_ws_load(Config *cfg) {
     int total_seats = 0;
     for (int gi = 0; gi < g_n_games; gi++) total_seats += g_games[gi].n_seats;
@@ -870,8 +1043,49 @@ static void run_ws_load(Config *cfg) {
         }
     }
 
-    printf("== ws load phase: %d persistent connections (one per seat; --conns ignored) for %ds ==\n",
-           total_seats, cfg->secs);
+    // Stage 4: --spectators=N spawns N read-only WS connections PER GAME
+    // alongside the human seat workers above, sharing g_stop and the same
+    // timed window — see spectator_worker's doc. total_specs==0 (the
+    // default) means every array below stays NULL/empty and this whole
+    // block is a no-op, so a plain --mode=ws run is unchanged.
+    int total_specs = cfg->spectators > 0 ? g_n_games * cfg->spectators : 0;
+    SpecClientArg  *spec_args  = total_specs > 0 ? calloc((size_t)total_specs, sizeof(SpecClientArg))  : NULL;
+    SpecThreadStats *spec_stats = total_specs > 0 ? calloc((size_t)total_specs, sizeof(SpecThreadStats)) : NULL;
+    pthread_t      *spec_tids  = total_specs > 0 ? calloc((size_t)total_specs, sizeof(pthread_t))       : NULL;
+    if (total_specs > 0 && (!spec_args || !spec_stats || !spec_tids)) {
+        fprintf(stderr, "out of memory (spectators)\n");
+        free(args); free(stats); free(tids); free(spec_args); free(spec_stats); free(spec_tids);
+        return;
+    }
+    if (total_specs > 0) {
+        int sidx = 0;
+        for (int gi = 0; gi < g_n_games; gi++) {
+            HGame *hg = &g_games[gi];
+            for (int k = 0; k < cfg->spectators; k++) {
+                SpecClientArg *sa = &spec_args[sidx];
+                sa->cfg = cfg;
+                snprintf(sa->gid, sizeof sa->gid, "%s", hg->id);
+                // Any authenticated user may spectate — reuse the game's own
+                // seat-0 (creator) token rather than minting dedicated
+                // spectator accounts (see spectator_worker's header doc).
+                snprintf(sa->token, sizeof sa->token, "%s", g_users[hg->user_idx[0]].token);
+                sa->st = &spec_stats[sidx];
+                sidx++;
+            }
+        }
+    }
+
+    // Stage 4: sample GET /stats before the load window starts so the
+    // summary below can report the DELTA (server bot decisions applied
+    // during just this run), not the server's lifetime total — see
+    // get_stats' doc.
+    unsigned long bot_dec0 = 0, oct_dec0 = 0, bot_dec1 = 0, oct_dec1 = 0;
+    get_stats(cfg, &bot_dec0, &oct_dec0);
+
+    printf("== ws load phase: %d persistent human connections (one per seat; --conns ignored)",
+           total_seats);
+    if (total_specs > 0) printf(" + %d spectator connections (%d/game)", total_specs, cfg->spectators);
+    printf(" for %ds ==\n", cfg->secs);
     double t0 = now_secs();
     int nthreads = 0;
     for (int i = 0; i < total_seats; i++) {
@@ -881,10 +1095,21 @@ static void run_ws_load(Config *cfg) {
         }
         nthreads++;
     }
+    int nspec = 0;
+    for (int i = 0; i < total_specs; i++) {
+        if (pthread_create(&spec_tids[i], NULL, spectator_worker, &spec_args[i]) != 0) {
+            fprintf(stderr, "pthread_create failed at spectator worker %d, continuing with fewer\n", i);
+            break;
+        }
+        nspec++;
+    }
     while (now_secs() - t0 < cfg->secs) usleep(50 * 1000);
     atomic_store(&g_stop, true);
     for (int i = 0; i < nthreads; i++) pthread_join(tids[i], NULL);
+    for (int i = 0; i < nspec; i++) pthread_join(spec_tids[i], NULL);
     double elapsed = now_secs() - t0;
+
+    get_stats(cfg, &bot_dec1, &oct_dec1);   // sampled AFTER the joins, so every last decision the run caused is counted
 
     WsThreadStats tot; memset(&tot, 0, sizeof tot);
     for (int i = 0; i < nthreads; i++) {
@@ -895,6 +1120,16 @@ static void run_ws_load(Config *cfg) {
         tot.rematches        += stats[i].rematches;
         tot.connects         += stats[i].connects;
         tot.connect_failures += stats[i].connect_failures;
+    }
+
+    SpecThreadStats spec_tot; memset(&spec_tot, 0, sizeof spec_tot);
+    for (int i = 0; i < nspec; i++) {
+        spec_tot.msgs_recv        += spec_stats[i].msgs_recv;
+        spec_tot.polls_sent       += spec_stats[i].polls_sent;
+        spec_tot.move_attempts    += spec_stats[i].move_attempts;
+        spec_tot.move_accepted    += spec_stats[i].move_accepted;
+        spec_tot.connects         += spec_stats[i].connects;
+        spec_tot.connect_failures += spec_stats[i].connect_failures;
     }
 
     // ---- round-trip latency percentiles (Deliverable A) ----
@@ -944,9 +1179,36 @@ static void run_ws_load(Config *cfg) {
            nthreads, n_lat, lat_mean, lat_p50, lat_p90, lat_p99, lat_max);
     printf("rematches (continue+start):  %ld\n", tot.rematches);
     printf("connects: %ld  connect failures: %ld\n", tot.connects, tot.connect_failures);
+
+    if (total_specs > 0) {
+        printf("---- spectators (Stage 4) ----\n");
+        printf("spectator connections:        %d (%d/game)\n", nspec, cfg->spectators);
+        printf("spectator pushes received:    %ld  (%.1f msgs/s)\n", spec_tot.msgs_recv, spec_tot.msgs_recv / elapsed);
+        printf("spectator poll frames sent:   %ld\n", spec_tot.polls_sent);
+        printf("spectator move probes sent:   %ld  accepted(MUST be 0): %ld\n",
+               spec_tot.move_attempts, spec_tot.move_accepted);
+        printf("spectator connects: %ld  connect failures: %ld\n", spec_tot.connects, spec_tot.connect_failures);
+    }
+
+    // Stage 4: server-side bot-decision rate for this run, from GET /stats's
+    // before/after delta (see get_stats' doc) — the number bot_stress.sh
+    // sweeps across game counts to show whether it holds steady or falls as
+    // concurrency rises (g_kernel_lock's ceiling on bot_drive, foolish_
+    // server.c's "Locking" doc).
+    double bot_dec_rate = (double)(bot_dec1 - bot_dec0) / elapsed;
+    double oct_dec_rate = (double)(oct_dec1 - oct_dec0) / elapsed;
+    printf("---- server-side bot decisions (Stage 4, from GET /stats) ----\n");
+    printf("bot decisions (any strategy): %lu  (%.2f/s)\n", bot_dec1 - bot_dec0, bot_dec_rate);
+    printf("octogen decisions:            %lu  (%.2f/s)\n", oct_dec1 - oct_dec0, oct_dec_rate);
+    // Grep-able line, same convention as latency_summary_us above — this is
+    // what bot_stress.sh scrapes across a games=1/2/4/8 sweep.
+    printf("octogen_decisions_summary: games=%d spectators=%d server_bot=%s decisions=%lu rate_per_s=%.2f\n",
+           g_n_games, cfg->spectators, cfg->server_bot[0] ? cfg->server_bot : "none",
+           oct_dec1 - oct_dec0, oct_dec_rate);
     printf("===============================================================\n");
 
     free(args); free(stats); free(tids);
+    free(spec_args); free(spec_stats); free(spec_tids);
 }
 
 // ---------------------------------------------------------------------------
@@ -968,11 +1230,25 @@ int main(int argc, char **argv) {
     // "--key=value"), so it's checked directly here.
     cfg.tls = false;
     for (int i = 1; i < argc; i++) if (!strcmp(argv[i], "--tls")) { cfg.tls = true; break; }
+    // Stage 4: --server-bot=NAME / --spectators=N — see Config's doc.
+    snprintf(cfg.server_bot, sizeof cfg.server_bot, "%s", get_arg(argc, argv, "server-bot", ""));
+    cfg.spectators = parse_int(get_arg(argc, argv, "spectators", NULL), 0);
     srand((unsigned)(time(NULL) ^ getpid()));   // seeds the WS masking-key / handshake-key rand() calls
     signal(SIGPIPE, SIG_IGN);   // persistent WS sockets: a dead peer must not kill this whole process
 
-    if (cfg.seats < 2) cfg.seats = 2;
-    if (cfg.seats > MAX_PLAYERS) cfg.seats = MAX_PLAYERS;
+    // Stage 4: with --server-bot set, `seats` counts HUMAN clients only —
+    // the bot takes one more seat server-side, so the ceiling drops by one
+    // (seats+1 <= MAX_PLAYERS) and the floor drops to 1 (1 human + 1 bot is
+    // still a legal 2-player game; the pure-human floor below stays 2
+    // because Durak itself needs 2+ players and there is no bot to make up
+    // the difference there).
+    if (cfg.server_bot[0]) {
+        if (cfg.seats < 1) cfg.seats = 1;
+        if (cfg.seats > MAX_PLAYERS - 1) cfg.seats = MAX_PLAYERS - 1;
+    } else {
+        if (cfg.seats < 2) cfg.seats = 2;
+        if (cfg.seats > MAX_PLAYERS) cfg.seats = MAX_PLAYERS;
+    }
     if (cfg.games < 1) cfg.games = 1;
     if (cfg.games > HAMMER_MAX_GAMES) cfg.games = HAMMER_MAX_GAMES;
     if (cfg.games * cfg.seats > HAMMER_MAX_USERS) {
@@ -983,6 +1259,7 @@ int main(int argc, char **argv) {
     }
     if (cfg.conns < 1) cfg.conns = 1;
     if (cfg.secs < 1) cfg.secs = 1;
+    if (cfg.spectators < 0) cfg.spectators = 0;
     g_cfg = cfg;
 
     // Stage 3: build the ONE shared client SSL_CTX before anything opens a
@@ -995,9 +1272,10 @@ int main(int argc, char **argv) {
         if (!g_tls_ctx) { fprintf(stderr, "fatal: TLS client context setup failed\n"); return 1; }
     }
 
-    printf("foolish_hammer: host=%s:%d games=%d seats=%d conns=%d secs=%d mode=%s tls=%s\n",
+    printf("foolish_hammer: host=%s:%d games=%d seats=%d conns=%d secs=%d mode=%s tls=%s server_bot=%s spectators=%d\n",
            cfg.host, cfg.port, cfg.games, cfg.seats, cfg.conns, cfg.secs,
-           cfg.ws ? "ws" : (cfg.mixed ? "mixed" : "action"), cfg.tls ? "on" : "off");
+           cfg.ws ? "ws" : (cfg.mixed ? "mixed" : "action"), cfg.tls ? "on" : "off",
+           cfg.server_bot[0] ? cfg.server_bot : "none", cfg.spectators);
 
     {
         unsigned char resp[RESP_CAP]; HttpResp r;
