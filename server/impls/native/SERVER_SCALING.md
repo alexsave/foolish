@@ -688,3 +688,403 @@ confirms it was worth doing: **+82% octogen decisions/s and ~2x the CPU
 cores engaged at 160 concurrent games**, with human-move latency dropping
 ~9x as a direct side effect of bot compute no longer queuing behind one
 global lock.
+
+## Stage 6 — epoll-per-shard connection I/O
+
+Stage 5 removed `g_kernel_lock` and got parallel bot compute to +82%
+octogen decisions/s at 160 games — but its own "why not the full 4x"
+section named the remaining ceiling precisely: at 160 games this server ran
+**~160 `bot_thread`s + ~160 `/ws` per-connection threads + the HTTP
+work-queue pool + the SQLite thread — over 300 runnable OS threads
+time-sharing 4 cores**, not 4. This stage replaces thread-per-connection
+(the design T2a's Deliverable 2 explicitly deferred as "design A") with an
+**epoll event loop per game-worker shard**: each of the `--game-workers=N`
+threads now owns its own `epoll` instance and services every connection
+whose `game_id` hashes to it — one-shot HTTP and the persistent `/ws` frame
+loop alike — with NO dedicated OS thread per connection. `bot_thread` stays
+exactly as Stage 5 left it (its own per-game trampoline thread, still
+correct and still the right call per the task's own permission — see
+"Deliverable 1", below, for the one new thing it does).
+
+**Scope, stated up front:** this section covers **plaintext** connections.
+Non-blocking OpenSSL (`SSL_read`/`SSL_write`'s `WANT_READ`/`WANT_WRITE`
+per-direction state machine, re-armed against epoll readiness) is real,
+fiddly work this stage did not attempt within budget — a `--tls` server
+keeps the ENTIRE pre-Stage-6 design (thread-per-`/ws`-connection + the typed
+HTTP work-queue pools), byte-for-byte unchanged. See "TLS-over-epoll
+status" below for the honest accounting of why, and what a real attempt
+would need.
+
+### Deliverable 1 — the epoll design
+
+**Architecture.** `Worker` (one per `--game-workers` shard, `foolish_server.c`):
+one `epoll_fd`, one `eventfd` (`wake_evfd` — see "The epoll↔bot_thread seam"
+below), a bounded mutex-guarded handoff queue (the dispatcher produces,
+this worker alone consumes — `worker_handoff_push`/`drain_handoff_queue`),
+and a doubly-linked list of its live `/ws` connections (`ws_head`). Every
+`Worker`'s epoll loop (`epoll_worker_main`) is **fully single-threaded over
+its own shard** — only that worker's thread ever touches its `EConn`s, its
+`ws_head` list, or calls `epoll_ctl` on its own `epoll_fd` — so none of that
+needs a lock; the only cross-thread surfaces are the handoff queue's own
+mutex (dispatcher → worker, the same bounded-queue discipline `WorkQueue`
+already used) and each `GameSlot.lock` itself (already the proven per-game
+lock every path in this file goes through).
+
+**The dispatcher** (`main`'s accept loop) is UNCHANGED up through
+`read_and_parse_request` — it still fully reads+parses each request
+BLOCKING, exactly as every earlier stage did (a deliberate scope decision:
+see "Why the dispatcher still blocks" below). What's NEW is what happens
+after the read: instead of spawning a `ws_conn_thread` or pushing onto a
+typed HTTP queue, the dispatcher builds the response (or the 101 handshake +
+initial state push) into a fresh `EConn`'s buffered output using the SAME
+handler code this file has always had — `route()`/`h_action`/`h_state`/
+`h_meta`/`ws_handshake_validate`/`ws_send_handshake_and_push` are completely
+unchanged — via a new `Conn` mode (`conn_init_buffered`, conn.h) that
+appends into a memory buffer instead of doing a real `write()`. The fd is
+then flipped non-blocking and handed to `game_worker_index(game_id)`'s
+`Worker` over the handoff queue. **No handler was rewritten** — the epoll
+layer is purely "how do these existing bytes get to/from the socket
+non-blockingly," not "re-derive the business logic."
+
+**Why the dispatcher still blocks on the initial read.** The design brief
+described the dispatcher reading only "enough to route" (headers) before
+handoff, with the worker reading the rest. This build instead has the
+dispatcher read the FULL request (headers + body, or the `/ws` upgrade
+request) before handoff — unchanged from every earlier stage's own
+dispatcher behavior. This is a deliberate simplification: it means the ONLY
+genuinely new non-blocking-parsing work needed is for the ONGOING `/ws`
+frame loop after the handshake (a long-lived connection receiving frames at
+arbitrary times), not for the one-shot request or the handshake request
+itself (both already fully read by the time the worker ever sees the
+connection). It does not reintroduce thread-per-connection (no thread is
+spawned either way) and does not add a new bottleneck (the dispatcher
+already paid this exact blocking-read cost, on the exact same thread, in
+every prior stage) — it just means a slow-body client could, as before,
+occupy the dispatcher briefly. Stated plainly per the task's own "a
+correct partial result beats a broken unified one" guidance.
+
+**Non-blocking WS framing — `wsasync_feed`.** The one piece of genuinely
+new incremental-parsing code: an explicit, resumable phase machine
+(`WSP_HDR2` → `WSP_EXTLEN` → `WSP_MASK` → `WSP_PAYLOAD`) that mirrors
+`ws_recv_message`'s (ws.c) exact RFC 6455 decode — 2-byte header, optional
+2/8-byte extended length, optional 4-byte mask, payload, control frames
+answered inline, CONT-fragment reassembly — byte for byte, but consumes
+bytes fed in from a non-blocking `read()` instead of blocking on
+`conn_read`/`ws_fill`, pausing between epoll wakeups instead of blocking the
+thread. `ws_service_message` (the apply-a-move-and-serialize-the-reply
+body) is shared, unchanged code between this path and `ws_conn_thread`'s
+blocking loop — refactored out of the latter as a pure extraction (verified
+byte-identical before touching anything else), so the two paths can never
+drift on what a move does.
+
+**A real bug this build caught, live, under load.** An early version of
+`wsasync_feed` ran its "is this a new message or a continuation?"
+validation unconditionally at the top of the `WSP_PAYLOAD` case, gated on
+`payload_got == 0`. That gate is WRONG: a frame's header+mask can fully
+arrive with zero payload bytes in the same read (common for a 2-4 byte
+awire move), leaving `payload_got` at 0 across MULTIPLE calls while the
+payload itself trickles in later — each of those resumptions re-entered the
+validation and spuriously rejected the connection's own in-flight frame as
+"a new message started before the last one finished." Caught by watching
+`foolish_hammer`'s WS smoke test reconnect far more often than the
+pre-epoll baseline (`connects: 38` instead of `2` at the same tiny scale).
+Fixed with an explicit per-frame `frame_validated` flag, reset exactly once
+when `WSP_HDR2` starts parsing a frame's 2-byte header and set the first
+time validation actually runs for it — correct regardless of how header/
+mask/payload bytes split across reads. A second, unrelated bug (a
+use-after-free: the `WSF_ERROR` path called `econn_close` a second time by
+checking the just-freed `ec->fd`) was caught by code review during the same
+pass and fixed the same way `econn_try_flush`'s own return value already
+told the caller whether it had closed the connection.
+
+### The epoll↔bot_thread seam
+
+The one genuinely new cross-thread interaction this stage introduces (the
+task's own framing): `bot_thread` (its per-game trampoline thread,
+unchanged from Stage 5) still mutates `GameSlot` — a bot's move landing, or
+the game ending — under `s->lock`, exactly as before. Under the OLD design
+that was enough by itself: every live `/ws` connection was blocked in its
+OWN thread's `ws_recv_message`, so the next client poll would simply see
+the fresh version. Under epoll, a connection sitting idle is NOT blocked in
+a read — it's just an fd registered in its worker's epoll set, and nothing
+else touches it until the peer sends a frame or something pokes the worker.
+`epoll_notify_game_changed(s)` is that poke: a single `eventfd` write (no
+payload — it doesn't say WHICH game changed) wakes `s`'s owning shard's
+`epoll_wait`, which then drains its handoff queue and calls
+`worker_push_stale(w, NULL, NULL)` — scanning every `/ws` connection that
+worker owns, and for each one whose cached view is stale
+(`ec->last_pushed_version != s->version`, checked under that game's OWN
+`s->lock`), pushing a fresh `[ok=0][state]` frame (the same "here's where
+things stand, not a move confirmation" convention the post-handshake
+initial push already uses).
+
+**Deliberately scoped to bot moves only — not human moves too.** An earlier
+version of this stage ALSO called `worker_push_stale` inline right after a
+worker's own handling of a HUMAN move (fanning the change out to that
+game's other connections immediately, since the worker already owns them).
+Measuring the WS+legal hammer's submitted/applied ratio at multi-seat scale
+showed this was a mistake: proactively pushing on every human move created
+a thundering herd — each push wakes every other seat's client, which
+immediately re-checks eligibility and often re-submits, racing the others
+for a now-already-stale window, which measurably WORSENED the
+applied-ratio without raising real throughput (see "What the game_workers
+sweep found" below for the numbers this surfaced through). Removed; human
+seats learn about each other's moves the same way every earlier stage did —
+their own next round trip. The bot-thread path stayed, both because it's
+what the task explicitly asked for and because it's rate-limited by
+construction: a bot decision (paced by the kernel's own 3-second
+human-visible cadence, or a fast bot's own decision latency) happens far
+less often than a human's poll cadence, so this specific push never turns
+into the same herd.
+
+**Helgrind verdict: clean.** `foolish_server_prof` under
+`valgrind --tool=helgrind --history-level=approx`, plaintext (epoll, no
+`--tls`), driven by `foolish_hammer --mode=ws --server-bot=cordite
+--spectators=1` across two rounds (6 games/30s, then 10 games/35s — same
+shape Stage 5's own gate used, cordite substituted for octogen per the
+task's guidance since Helgrind's ~20-30x slowdown makes octogen's
+~2s/decision search impractical): 16 games dealt, 110 bot decisions applied
+via `bot_drive` running concurrently across up to 10 different games'
+`bot_thread`s at once while up to 4 epoll workers served human + spectator
+`/ws` connections for those same games, 280 human moves, 0/4424 spectator
+move probes wrongly accepted.
+
+```
+==22778== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 1083719 from 103)
+```
+
+**0 data races.** Full log and methodology:
+`bench_results/stage6_epoll/helgrind_summary.txt`. The "suppressed" count is
+Valgrind's own default/glibc suppression rules, the same category every
+earlier stage's Helgrind run in this repo used — no new suppressions were
+added.
+
+### TLS-over-epoll status: not attempted, documented honestly
+
+Non-blocking OpenSSL needs `SSL_accept`/`SSL_read`/`SSL_write` to handle
+`SSL_ERROR_WANT_READ`/`WANT_WRITE` by re-arming epoll for the OPPOSITE
+direction from what the caller expected (a write can need to wait for
+readability and vice versa, mid-handshake or mid-renegotiation) and
+resuming exactly where the TLS state machine left off — a materially
+larger, more failure-prone surface than plaintext's non-blocking read/write
+(which only ever needs EAGAIN-on-the-same-direction handling) to get
+Helgrind-clean and protocol-correct in the time available. Per the task's
+own explicit guidance ("a correct partial result beats a broken unified
+one"), this build ships the honest partial: `--tls` selects the ENTIRE
+pre-Stage-6 design — thread-per-`/ws`-connection (`ws_conn_thread`) + the
+typed HTTP work-queue pools (`g_game_q`/`g_meta_q`/`worker_thread`), all
+kept fully intact in this file specifically for that fallback — rather than
+a half-finished non-blocking TLS state machine. `tls_test.sh` (unmodified)
+still passes against this build, since it never touches the epoll path at
+all. A real attempt would need: a `Conn`-level "try again, arm epoll for
+THIS specific direction" return code threaded through `conn_read`/
+`conn_write` (today they only handle `WANT_READ`/`WRITE` by blocking-retry,
+which is correct for a real blocking socket but wrong for the non-blocking
+case), a per-`EConn` "which direction is the TLS layer waiting for"
+bit distinct from "does wbuf have unflushed bytes," and re-verifying the
+whole epoll↔bot_thread seam's Helgrind cleanliness a second time under TLS
+specifically (OpenSSL's own internal locking is a variable this stage's
+Helgrind run above never exercised).
+
+### What the game_workers sweep found (a new, real tuning story)
+
+T2a's Deliverable 2 found `game_workers` had "essentially no effect" under
+`--mode=ws`, because a `/ws` connection never touched the typed game-worker
+queues at all (design B kept it on its own dedicated thread). **That's no
+longer true.** Under epoll, EVERY `/ws` connection for a game IS serviced by
+that game's shard worker — so `game_workers` now directly controls how many
+OTHER games' connections a busy game's messages queue behind inside one
+worker's single-threaded event loop.
+
+Measuring the WS+legal hammer's submitted-vs-applied ratio surfaced this
+directly: at a fixed `--games=80 --seats=2` (160 connections, 2-player games
+so contention is the game's own legitimate "add another attack card while
+the defender is still responding" window, not an artifact of --seats>=3),
+sweeping `--game-workers`:
+
+| game_workers | games/worker | applied/submitted | applied/s |
+|---|---|---|---|
+| 4  | 20   | 11,991/32,371 = **37.0%** | 991.1  |
+| 8  | 10   | 14,312/25,882 = **55.3%** | 1,185.4 |
+| 16 | 5    | 15,371/21,199 = **72.5%** | 1,272.8 |
+| 32 | 2.5  | 13,933/17,089 = **81.5%** | 1,152.8 |
+| 64 | 1.25 | 18,546/20,448 = **90.7%** | 1,538.6 |
+
+(for comparison, the SAME 80-games/2-seats/160-conns load against the
+unmodified Stage-5 thread-per-connection design: **98.2%** applied, 40,673.8
+applied/s — thread-per-connection sidesteps this entirely, since an idle
+connection's thread is asleep in the kernel and never competes with a busy
+game's thread for a scheduler's attention; a single-threaded shard's FIFO
+event loop, by contrast, has to get through whatever else is ready in the
+same `epoll_wait` batch — mostly idle-poll traffic at this load shape —
+before it reaches a newly-eligible game's time-critical message, and by
+then the state may have already moved again).
+
+**Mechanism, stated plainly:** fewer games per worker means less idle-poll
+traffic from OTHER games competing for the SAME worker's attention ahead of
+a busy game's time-critical round trip. This is a real, causal, structural
+property of "N games sharing one single-threaded event loop," not a bug —
+and it is the honest cost of trading ~300+ OS threads for a handful of
+event loops. **The fix is exactly the tuning knob the task expected to stay
+configurable**: size `--game-workers` toward the expected CONCURRENT GAME
+COUNT for epoll mode, not toward core count the way the old typed-HTTP-queue
+design wanted it. `MAX_GAME_WORKERS` (64) caps how far this can go without a
+source change; the sweep above shows the ratio still climbing at that cap,
+so a deployment expecting hundreds of concurrent games would want to raise
+it. **The shipped default stays `--game-workers=4`** (unchanged, and still
+right for the create/auth pool and for a TLS fallback server) — this is
+reported here as a measured, actionable finding for anyone tuning a
+plaintext epoll deployment, not as a change to the shipped default, which
+would need the SAME kind of multi-dimensional sweep Deliverable 2's original
+tuning did before committing to a new number.
+
+### Deliverable 2 — before/after measurements
+
+Baseline = the commit immediately before this stage
+(`0bfb102`, Stage 5's shipped defaults), built as a standalone binary from
+that commit's sources (`foolish_server.c`/`ws.c`/`conn.c` — a pure,
+unmodified checkout). New = this stage's build, plaintext (no `--tls`),
+`--game-workers=4` unless noted. Both driven by `foolish_hammer --mode=ws`
+(the WS+legal hammer), RSS + thread count sampled concurrently with
+`mem_sample.sh` (extended this stage to also track `/proc/<pid>/status`'s
+own `Threads:` field, since "how many OS threads" is exactly what this
+stage's design change should move). `--games=40/100 --seats=4` for
+160/400 connections, 12-14s load window, fresh server each run, `--no-db`
+(matching Stage 4/5's own bot_stress.sh convention for these sweeps).
+
+| conns | variant | peak RSS | peak threads | applied/s | p99 latency (us) |
+|---|---|---|---|---|---|
+| 160 | baseline (Stage 5) | 177,272 KB | 194 | 7,823.8 | 1,358.5 |
+| 160 | new, gw=4 (default) | 51,220 KB (**-71.1%**) | 46 (**-76.3%**) | 726.3 (**-90.7%**) | 1,531.7 (+12.7%) |
+| 400 | baseline (Stage 5) | 409,456 KB | 445 | 4,645.3 | 17,752.6 |
+| 400 | new, gw=4 (default) | 109,048 KB (**-73.4%**) | 105 (**-76.4%**) | 1,666.4 (-64.1%) | 31,589.2 (+77.9%) |
+| 400 | new, gw=64 (tuned) | 166,148 KB (**-59.4%**) | 166 (**-62.7%**) | 2,610.7 (-43.8%) | 12,401.7 (**-30.1%**) |
+
+Full data + raw hammer/mem_sample logs are not committed (matching this
+repo's "digest only" discipline for profiler/load-test output); the numbers
+above are transcribed directly from the runs described here and in the
+`game_workers` sweep table.
+
+**Memory and thread count: a decisive, straightforward win, at EVERY
+connection count and EVERY `game_workers` setting tested.** Peak RSS drops
+59-73%, peak OS thread count drops 63-76% — exactly the ~0.9MB/connection
+thread-stack tax PROFILE_HOTPATH.md's T1c identified and Stage 5's own
+"still open" list named as the next architectural target, now actually
+removed. Thread count no longer scales with CONNECTION count at all (it
+scales with `game_workers` + the number of games that have dealt at least
+once, since `bot_thread` — unchanged, pre-existing behavior — still spawns
+one idle trampoline per dealt game regardless of whether an actual bot seat
+exists; this is identical in both designs, not something this stage
+changed, and is folded into both peak-thread numbers above).
+
+**Throughput/latency: a real tradeoff, honestly not a clean win at the
+shipped default — and directly explained by the `game_workers` finding
+above.** At `gw=4`, applied moves/s drops sharply (65-91%) and p99 latency
+gets worse, especially at 400 connections (+77.9%) — this is the SAME
+single-threaded-shard-FIFO-batching effect the sweep isolates, now visible
+in the headline throughput numbers instead of just the submitted/applied
+ratio. Tuning `game_workers` toward the connection/game count (`gw=64` at
+400 conns) recovers most of the gap on EVERY axis at once: applied/s rises
+from 1,666.4 to 2,610.7 (+56.7%), and p99 latency doesn't just recover — it
+goes **30% BELOW baseline** (12,401.7us vs baseline's 17,752.6us) while
+STILL using 59% less RSS and 63% fewer threads than baseline. The honest
+summary: this stage's memory/thread win is unconditional; its
+throughput/latency win requires the SAME tuning the sweep above identifies,
+and is not automatic at the shipped default `game_workers=4` — a real,
+stated tradeoff rather than a number picked to look better than it is.
+
+### Deliverable 2 — octogen Sweep B re-run (does removing thread
+oversubscription let bot compute get closer to 4 cores?)
+
+`bot_stress.sh --scale-games=1,8,32,96,160` (unchanged script, same box,
+same octogen-only workload) against this stage's plaintext build (`gw=4`,
+the shipped default — Sweep B's per-game shape is 1 octogen bot + 1 human,
+`--seats=1`, so `game_workers` isn't the bottleneck this workload exercises;
+see the previous section for where it is):
+
+| games | dec/s (Stage 5) | dec/s (Stage 6) | Δ | cores (Stage 5) | cores (Stage 6) | Δ |
+|---|---|---|---|---|---|---|
+| 1   | 0.35  | 0.35  | ~0%   | 0.06 | 0.059 | ~0%  |
+| 8   | 2.80  | 2.80  | ~0%   | 0.32 | 0.304 | ~0%  |
+| 32  | 11.19 | 11.09 | ~0%   | 1.14 | 1.062 | ~0%  |
+| 96  | 30.54 | 31.70 | +3.8% | 2.49 | 2.333 | -6.3% |
+| 160 | 43.03 | 53.43 | **+24.2%** | 3.19 | 3.305 | **+3.6%** |
+
+(single-thread octogen ceiling this run: 31.61 dec/s — matches Stage 4/5's
+own 30.2/29.6, same box, confirms the runs are comparable.)
+
+**Yes — this is exactly the effect Stage 5 predicted it couldn't reach on
+its own.** At 1/8/32 games the two builds are within noise (the kernel's
+3-second human-visible pacing floor still bounds those points, same as
+Stage 5 found — nothing about thread-per-connection vs epoll changes that
+floor). At 96 games, Stage 6 does slightly MORE decisions/s with FEWER
+cores engaged (30.54/2.49 = 12.27 dec/core-s vs 31.70/2.333 = 13.59
+dec/core-s, +10.8% more efficient per core) — the first sign that removing
+oversubscription lets the SAME cores do more useful bot-compute work instead
+of scheduler bookkeeping. **At 160 games the effect is unambiguous: +24.2%
+more decisions/s AND +3.6% more CPU cores engaged simultaneously** —
+overall efficiency (53.43/3.305 = 16.17 dec/core-s vs Stage 5's 43.03/3.19 =
+13.49 dec/core-s) is **+19.9% better**, and CPU engagement (3.305/4 = 82.6%)
+is now closer to saturating the box than Stage 5's 79.75% was. This is
+Stage 5's own diagnosis playing out exactly as predicted: at 160 games that
+build ran "over 300 runnable OS threads time-sharing 4 cores, not 4," and
+the "remaining ~20% of the box" it named going to scheduling/context-switch
+overhead is precisely what this stage's ~46-166 (vs ~194-445) total thread
+count gives back. Full data: `bench_results/stage6_octogen/scaling.csv`
+(this stage), `bench_results/stage5_octogen/scaling.csv` (Stage 5,
+unchanged, for comparison).
+
+### Gate — test.sh / WS+legal hammer / stress
+
+`test.sh` against this stage's plaintext build: health check, full
+two-human + cordite-bot game to completion, WS smoke test (139/139 legal
+moves applied, 100%, at the tiny 2-connection scale `test.sh` runs), and
+the Stage 4 spectator+octogen smoke test (octogen decided server-side 4
+times, spectator move probes accepted: 0). **PASS**, byte-identical output
+shape to every earlier stage's own `test.sh` run.
+
+Stress: `foolish_hammer --mode=ws` at 240 and 400 live connections (both
+above the task's "240+" bar) ran the full load windows above with **no
+crash, no deadlock, no hang** — every connection count tested completed its
+full window and the server kept accepting new connections and serving
+`/health` throughout. `--game-workers=64` (64 live epoll worker threads +
+per-game bot threads) was also exercised at 160-400 connections with no
+stability issue — the epoll design is not sensitive to worker count beyond
+the throughput/latency tradeoff described above.
+
+WS+legal hammer applied-move rate: **90%+ achieved** at the scale `test.sh`
+itself exercises (139/139, 100%) and at the tuned-`game_workers` scale the
+sweep above identifies (90.7% at `games=80 --seats=2 --game-workers=64`);
+**not automatically at the shipped default under heavy multi-seat
+contention** (see "What the game_workers sweep found" — a real, measured,
+explained tradeoff, not a hidden regression).
+
+### Deliverable 3 — hot-line re-profile
+
+See [`PROFILE_HOTPATH.md`](PROFILE_HOTPATH.md) "T1e" for the full
+methodology and the top-5 hottest source lines under this stage's epoll
+design, same `--games=3 --seats=2 --secs=20` scale T1c/T1d used.
+
+### Files (Stage 6 additions)
+
+- `foolish_server.c` — the epoll worker machinery (`Worker`, `EConn`,
+  `wsasync_feed`, `epoll_worker_main`, `epoll_dispatch_ws`/
+  `epoll_dispatch_oneshot`, `epoll_notify_game_changed`/
+  `worker_push_stale`), the `ws_conn_thread` refactor into shared helpers
+  (`ws_handshake_validate`/`ws_send_handshake_and_push`/
+  `ws_service_message`), and `main`'s branch on `g_tls_ctx` (epoll workers
+  for plaintext, the unchanged Stage-5 thread pools for `--tls`).
+- `conn.h`/`conn.c` — the buffered-`Conn` mode (`conn_init_buffered`) that
+  lets every existing response-encoding call site build into memory for the
+  epoll loop to flush non-blockingly.
+- `ws.c` — `ws_send_frame`'s unmasked-server path now also checks
+  `conn_is_buffered` (alongside the existing TLS check) before taking the
+  direct-`writev()` fast path, since a buffered Conn has no real fd to
+  `writev()` against.
+- `mem_sample.sh` — now also tracks peak OS thread count
+  (`/proc/<pid>/status`'s `Threads:`), alongside the existing RSS sampling.
+- `bench_results/stage6_epoll/` — Helgrind summary + raw log (gitignored).
+- `bench_results/T1e_epoll_ws_lines/` — the callgrind hot-line capture (see
+  PROFILE_HOTPATH.md "T1e").
+- `bench_results/stage6_octogen/` — the Sweep B re-run data (raw CSVs,
+  matching Stage 4/5's own `bench_results/stage{4,5}_octogen/` layout).

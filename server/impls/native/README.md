@@ -58,14 +58,19 @@ use LAPACK) + `libsqlite3` (present as a system package on Linux and macOS;
 see [`DURABILITY.md`](DURABILITY.md)) + `libssl`/`libcrypto` (OpenSSL 3.x;
 see [`TLS.md`](TLS.md)). No other external packages — the HTTP/1.1 layer is
 hand-rolled (a real deployment would drop in mongoose/civetweb); auth is an
-in-memory token map (no JWT). Concurrency: a
-dispatcher (the accept loop) routes one-shot requests onto small typed
-worker pools sharded by game_id, and each game has its own lock instead of
-one process-wide mutex — see [`SERVER_SCALING.md`](SERVER_SCALING.md)
-("T2a") for the design, the Helgrind-clean verdict, and measured
-throughput/latency/memory vs. the old single-global-lock version. Pool
-sizes are runtime-configurable:
-`./foolish_server 8099 --game-workers=N --meta-workers=N --create-workers=N`.
+in-memory token map (no JWT). Concurrency: a dispatcher (the accept loop)
+hands each connection off by `game_id`, and each game has its own lock
+instead of one process-wide mutex — see [`SERVER_SCALING.md`](SERVER_SCALING.md)
+("T2a") for the original design, the Helgrind-clean verdict, and measured
+throughput/latency/memory vs. the old single-global-lock version. Plaintext
+connections (both one-shot requests and `/ws`) are serviced by an
+**epoll event loop per game-worker shard** — no thread per connection — a
+`--tls` server keeps the original thread-per-connection design instead,
+since non-blocking TLS wasn't attempted; see `SERVER_SCALING.md` "Stage 6"
+for the epoll design, the game_workers tuning it needs, and why `--tls`
+differs. Pool/shard sizes are runtime-configurable:
+`./foolish_server 8099 --game-workers=N --meta-workers=N --create-workers=N`
+(`--game-workers` sizes the epoll shard count in plaintext mode).
 
 Durability: a background thread persists every game and user to a local
 SQLite (WAL) database write-behind — the request path never blocks on disk,
@@ -121,7 +126,11 @@ connection per (authenticated, seated) client — see `ws.h`/`ws.c` for the
 handshake (SHA-1 + base64, no external deps) and frame I/O, and
 `PROFILE_HOTPATH.md`'s "T1b" section for why: thread-per-HTTP-request meant
 a fresh `pthread_create` (a zeroed 8 MiB stack) on every single move; a
-persistent connection pays that once per client SESSION instead. After the
+persistent connection pays that once per client SESSION instead. A
+plaintext connection no longer even gets its own OS thread for that
+session — since Stage 6 it's serviced by its game's epoll-worker shard
+(see `SERVER_SCALING.md` "Stage 6"); `--tls` still uses one thread per
+connection. After the
 upgrade the server immediately pushes the current masked state, then loops:
 a client's binary frame is either a real **awire** move (applied through the
 same `awire_decode`/`awire_apply` `/action` uses) or empty (just "send me
@@ -171,11 +180,16 @@ continue-to-lobby, per-game locking + work-queue thread routing (see
 path for the action+state hot loop (see above), crash-safe SQLite
 write-behind durability for every game and user (see
 [`DURABILITY.md`](DURABILITY.md)), and TLS (HTTPS + WSS, see
-[`TLS.md`](TLS.md)). Not present (deliberately): broadcasting a game's state
-to every seat's connection when ANY seat moves (`/ws` clients each poll
-their own seat instead — see `foolish_hammer.c`'s ws worker), the packed
-binary envelope the iOS client expects (this speaks plain JSON over HTTP;
-`/ws` speaks the kernel's own packed wire), cert rotation, connection
+[`TLS.md`](TLS.md)). Partially present since Stage 6 (plaintext only): when
+a SERVER-SIDE BOT's move changes a game, the epoll worker that owns that
+game's connections proactively pushes fresh state to all of them (see
+`SERVER_SCALING.md` "Stage 6" — the epoll↔bot_thread wakeup seam); a HUMAN
+move does NOT broadcast to other seats (deliberately — see that same
+section for why fanning out on every human move measurably hurt
+throughput) — every `/ws` client still polls its own seat for that case
+(see `foolish_hammer.c`'s ws worker). The packed binary envelope the iOS
+client expects (this speaks plain JSON over HTTP; `/ws` speaks the kernel's
+own packed wire), cert rotation, connection
 limits/backpressure beyond the work-queue's own bounded blocking push (see
 `SERVER_SCALING.md`), and rate limits. The point is the architecture, not
 full production readiness — see "Production readiness" below for a plain
@@ -183,21 +197,25 @@ tally of what each hardening stage did and didn't cover.
 
 ## Production readiness — what's done, what's still needed
 
-Three stages, each documented in its own file:
+Several stages, each documented in its own file (`SERVER_SCALING.md` covers
+concurrency across multiple stages — 1, 5, and 6 below):
 
 | stage | what it adds | doc |
 |---|---|---|
 | 1 | per-game locks + work-queue thread routing (replaces one process-wide lock; a dispatcher shards one-shot requests onto typed worker pools by `game_id`) | [`SERVER_SCALING.md`](SERVER_SCALING.md) |
 | 2 | SQLite WAL write-behind persistence + crash recovery (a `kill -9` loses at most one write-behind interval, not everything) | [`DURABILITY.md`](DURABILITY.md) |
 | 3 | TLS for every endpoint, including the `/ws` hot loop (HTTPS + WSS, not just the one-shot requests) | [`TLS.md`](TLS.md) |
+| 5 | parallel bot compute — kernel globals on the `bot_drive`/`awire_apply` path made thread-local so games no longer serialize bot decisions through one process-wide lock | [`SERVER_SCALING.md`](SERVER_SCALING.md) |
+| 6 | epoll-per-shard connection I/O for plaintext (replaces thread-per-`/ws`-connection — a game-worker thread now runs an epoll loop over its shard instead of one OS thread per live connection); `--tls` keeps the Stage-1/5 thread-per-connection design, since non-blocking TLS wasn't attempted this stage | [`SERVER_SCALING.md`](SERVER_SCALING.md) |
 
 Still needed for a real production deployment, not attempted here (POC
 scope, stated plainly rather than silently): cert rotation/ACME (a cert is
-loaded once at startup, not reloaded), connection-count limits or 503-style
-load shedding (the work queues apply backpressure by blocking the accept
-loop, not by rejecting — see `SERVER_SCALING.md`), rate limiting / abuse
-protection, JWT or another real auth scheme (tokens are an in-memory opaque
-map), horizontal scale-out (one process, one machine — the per-game lock
-design doesn't extend across processes), and structured observability
-(metrics/tracing beyond the stderr startup banner and the load tools'
-own stdout summaries).
+loaded once at startup, not reloaded), non-blocking TLS (a `--tls` server
+still pays thread-per-connection — see `SERVER_SCALING.md` "Stage 6"),
+connection-count limits or 503-style load shedding (the work queues apply
+backpressure by blocking the accept loop, not by rejecting — see
+`SERVER_SCALING.md`), rate limiting / abuse protection, JWT or another real
+auth scheme (tokens are an in-memory opaque map), horizontal scale-out (one
+process, one machine — the per-game lock design doesn't extend across
+processes), and structured observability (metrics/tracing beyond the
+stderr startup banner and the load tools' own stdout summaries).

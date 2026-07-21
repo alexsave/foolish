@@ -822,7 +822,124 @@ beating the pre-existing bar) stay green throughout.
 
 ---
 
-## T2 — the infinite oracle, hammered directly (no server), TT20
+## T1e — after epoll-per-shard (SERVER_SCALING.md "Stage 6"): hot lines, re-profiled
+
+Same technique as T1/T1c: `valgrind --tool=callgrind` launched directly on
+`foolish_server_prof` (never wrapped in `timeout` — see T1's note), plaintext
+(no `--tls` — this profiles the NEW epoll-per-shard design, not the `--tls`
+thread-per-connection fallback), `foolish_hammer --games=3 --seats=2
+--secs=20 --mode=ws` (the SAME scale T1c/T1d used — 6 persistent
+connections), `SIGTERM` to the valgrind process, then
+`callgrind_annotate --auto=yes --inclusive=no`. Digested output:
+`bench_results/T1e_epoll_ws_lines/annotated.txt` (raw `callgrind.out`
+gitignored, same pattern as every other `bench_results/*/raw/`).
+
+**91,243,096 instructions** collected over 101,437 total round trips (831
+awire-decode attempts, matching the run's own "actions submitted: 834"
+count within noise) — a comparable order of magnitude to T1c's own capture
+(85M Ir / 93,748 round trips) at the same hammer scale, confirming the
+workload shape is stable run to run.
+
+Top self-cost functions (Ir):
+
+| Ir | % | function |
+|---|---|---|
+| 19,005,461 | 20.83% | `foolish_server.c:wsasync_feed` (the non-blocking WS frame parser) |
+| 11,981,541 | 13.13% | `foolish_server.c:epoll_worker_main` (mostly `handle_ws_readable`, inlined into it at `-O2`) |
+| 8,826,933 | 9.67% | `ws.c:ws_send_frame` |
+| 8,809,452 | 9.65% | libc `memcpy` (`__memcpy_avx_unaligned_erms`) |
+| 6,121,830 | 6.71% | `foolish_server.c:ws_service_message` |
+| 4,610,000 | 5.05% | libc `__pthread_enable_asynccancel` |
+| 4,364,534 | 4.78% | `foolish_server.c:econn_try_flush` |
+| 4,321,785 | 4.74% | libc `__pthread_disable_asynccancel` |
+| 3,659,260 | 4.01% | libc `pthread_mutex_lock` |
+| 3,350,673 | 3.67% | `conn.c:conn_write` |
+| 2,643,049 | 2.90% | libc `pthread_mutex_unlock` |
+| 2,436,944 | 2.67% | libc `write` |
+| 2,426,760 | 2.66% | libc `read` |
+| 2,292,105 | 2.51% | libc `epoll_wait` |
+| 256,362 | 0.28% | `c/src/view.c:state_put` |
+
+`state_put` stays cheap (0.28% + a `wasm/wire.h` callee at 0.13%, ~0.4%
+combined) — T1c/T1d's per-seat view cache is untouched by this stage and
+still doing its job. There is no longer one dominant ~30% item the way
+`state_put` was pre-cache or `ws_recv_message`'s blocking read loop was in
+T1c/T1d — cost is now spread fairly evenly across the whole non-blocking
+message pipeline (parse → apply/serialize → send → flush → read), each
+step in the 7-25% range. That's the expected shape for a leaner design: no
+single "obviously wasteful" thing left standing head and shoulders above
+the rest.
+
+### Top 5 hottest source LINES (file:line, inclusive Ir — self-cost of the
+line plus everything its call actually costs, same convention T1c used for
+`state_put`'s call site)
+
+1. **`foolish_server.c:2136`** (`handle_ws_readable`) —
+   `int rc = wsasync_feed(ec, tmp + off, (int)r - off, &consumed);` →
+   **23,178,970 Ir (25.41%)**. The incremental RFC 6455 frame decode (header/
+   extended-length/mask/payload phase machine) run over every byte of every
+   client frame. **Cut it further?** Marginally: the two per-field `memcpy`
+   calls (header, mask — 2 and 4 bytes respectively) cost real instructions
+   for their call overhead relative to their tiny size; replacing them with
+   direct scalar byte reads would shave a little, but the bulk of this cost
+   is the actual, necessary work of decoding each frame — not obviously
+   wasteful the way `state_put`-per-poll was.
+2. **`foolish_server.c:2143`** (`handle_ws_readable`) —
+   `if (econn_reserve_out(ec, mtotal + 14) && ws_send_frame(&ec->wc_out,
+   WS_OP_BIN, reply, mtotal) >= 0) {` → **17,313,851 Ir (18.98%)**. **Cut it
+   further — yes, concretely.** `ws_send_frame`'s unmasked-server path
+   special-cases plaintext-over-a-real-socket with a single `writev()`
+   (header + payload, zero copies); a buffered `Conn` (every epoll reply)
+   currently falls into the SAME branch TLS uses instead — concatenate
+   header+payload into a thread-local scratch buffer, then one
+   `ws_write_full` call — because that branch's condition only excludes a
+   real plaintext socket, not a buffered one specifically. That costs two
+   extra `memcpy`s of the reply bytes (~3.3% of the whole program, visible
+   in `ws.c`'s own annotated lines 285-288) before the bytes even reach
+   `ec->wbuf`, where `conn_write` copies them a THIRD time. A
+   buffered-Conn-specific fast path (append header, then payload, directly
+   into `ec->wbuf` with no intermediate scratch copy) would remove that
+   extra pass — identified here, not implemented this stage (budget), the
+   same "analyzed, not done" posture T1c took for its own item 3.
+3. **`foolish_server.c:2141`** (`handle_ws_readable`) — `int mtotal =
+   ws_service_message(ec->slot, ec->seat, ec->spectator, ec->cache_idx,
+   ec->viewer, ec->msg_buf, ec->last_msg_len, reply, &v);` →
+   **15,726,242 Ir (17.24%)**. Applies the move (`awire_decode`/
+   `awire_apply`, together under 0.3% — the kernel work is still cheap) and
+   serves the cached per-seat view. **Cut it further?** Not without
+   redesigning the locking model: `pthread_mutex_lock`+`unlock` alone are
+   4.00%+2.89% = 6.89% of the WHOLE PROGRAM here (this function is the only
+   caller in this capture), a real but NECESSARY per-message cost of
+   `s->lock` — the same "next target, but needs a race detector to verify a
+   sharded-lock change" item T1c's own Deliverable D #3 left open, unrelated
+   to this stage.
+4. **`foolish_server.c:2147`** (`handle_ws_readable`) — `if
+   (!econn_try_flush(w, ec)) return;` → **10,346,574 Ir (11.34%)**. The
+   non-blocking flush of the reply. **Cut it further?** No — dominated by
+   the actual `write()` syscall (6.34% of the whole program on its own),
+   a fundamental kernel-transition cost for sending bytes; already minimal
+   (one `write()` attempt per reply in the common case, no redundant
+   retries).
+5. **`foolish_server.c:2126`** (`handle_ws_readable`) — `ssize_t r =
+   read(ec->fd, tmp, sizeof tmp);` → **6,264,852 Ir (6.87%)**. The
+   non-blocking read of the client's next frame. **Cut it further?** No,
+   same reasoning as #4 — the other necessary syscall half of the round
+   trip, already a single call per drained connection in the common case.
+
+(A close 6th, not in the top 5 but worth naming: `foolish_server.c:2179`'s
+`epoll_wait` call, 5,603,872 Ir / 6.14% — amortized across however many
+connections are ready in a batch, so its per-message cost is already lower
+than a per-connection syscall would be.)
+
+**The headline change from T1c/T1d:** there, one call (`state_put`, later
+cached) plus the OLD blocking `ws_recv_message` together explained roughly
+half the program (30.70% + 28.43%). Here, the top 5 lines ARE the entire
+non-blocking message pipeline this stage built, each a genuine, mostly
+necessary piece of "receive a frame, apply it, send a reply" — the
+remaining concrete opportunity (item 2's double-copy in `ws_send_frame`'s
+buffered-Conn path) is real but modest (~3.3%), not another `state_put`-size
+win waiting to be found.
+
 
 ### Build
 
