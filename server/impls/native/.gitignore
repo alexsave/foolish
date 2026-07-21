@@ -35,3 +35,4 @@ bench_results/*.o
 # artifacts above follow.
 helgrind*.log
 *.valgrind.log
+foolish_server_asm
