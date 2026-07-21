@@ -144,6 +144,22 @@ public final class MessageGameStore {
         return rec
     }
 
+    /// Rule P extended to lobby (phase-0/WAITING) bubbles (note 15,
+    /// HARNESS_NOTES_R2). A WAITING envelope is otherwise exempt from Rule P's
+    /// round/turn comparison — every lobby sits at round 0/turn 0, so that
+    /// comparison is meaningless — but a STALE WAITING invite can still be
+    /// tapped after the SAME game has since gone LIVE or FINISHED elsewhere,
+    /// and every WAITING envelope renders as an open lobby regardless of how
+    /// many actually joined (`createWaiting`'s doc in MessagesRootView.swift),
+    /// so a stale one rendered a phantom full lobby instead of the real board.
+    /// True means the cache is strictly newer and the caller should adopt IT
+    /// instead of showing the incoming (stale) lobby bubble. `cachedPhase` nil
+    /// means nothing is cached for this game yet, which never wins.
+    public static func lobbyCachePreferred(cachedPhase: Int?, incomingPhase: Int) -> Bool {
+        guard let cachedPhase else { return false }
+        return cachedPhase > incomingPhase
+    }
+
     /// Every cached game IN THIS CHAT, newest first — the drawer list source
     /// (§10 compact). Unscoped would be device-wide (the bug this type doc's
     /// chatKey paragraph describes): reopening the extension with no bubble

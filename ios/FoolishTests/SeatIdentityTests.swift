@@ -46,6 +46,46 @@ final class SeatIdentityTests: XCTestCase {
         XCTAssertEqual(r, .known(1), "out-of-range cache ignored, 2p inference used")
     }
 
+    // MARK: - §6 resolution, gated for a lobby bubble (note 14, HARNESS_NOTES_R2)
+
+    /// The exact bug note 14 describes: a cached seat that is NOT in this
+    /// bubble's own `joins` must not read as joined — an older WAITING bubble,
+    /// reopened after I've since joined elsewhere, would otherwise still hand
+    /// me Start/Send for a lobby that does not list me.
+    func testCachedSeatAbsentFromJoinsIsNotJoined() {
+        let staleJoins = [MessageJoin(seat: 0, name: "Alex")]   // seat 1 (me) not in here yet
+        let r = SeatIdentity.resolveInLobby(cachedSeat: 1, senderIsLocal: false,
+                                            nPlayers: 8, lastActorSeat: 0, joins: staleJoins)
+        XCTAssertNil(r, "a cached seat this bubble's own joins does not list must not read as joined")
+    }
+
+    /// The flip side of the same bug: once the bubble's `joins` DOES list my
+    /// cached seat (the freshest lobby bubble, post-join), I must resolve as
+    /// joined again — the gate only rejects a MISMATCH, not every lobby.
+    func testCachedSeatPresentInJoinsIsJoined() {
+        let freshJoins = [MessageJoin(seat: 0, name: "Alex"), MessageJoin(seat: 1, name: "Sveta")]
+        let r = SeatIdentity.resolveInLobby(cachedSeat: 1, senderIsLocal: false,
+                                            nPlayers: 8, lastActorSeat: 0, joins: freshJoins)
+        XCTAssertEqual(r, 1, "once this bubble's own joins list me, I resolve as joined")
+    }
+
+    /// Sender inference (S1) is gated the same way: even though I sent the
+    /// stale bubble (so plain `resolve` would say `.known(lastActorSeat)`),
+    /// that bubble's joins must still be checked.
+    func testSenderInferredSeatAbsentFromJoinsIsNotJoined() {
+        let staleJoins = [MessageJoin(seat: 0, name: "Alex")]
+        let r = SeatIdentity.resolveInLobby(cachedSeat: nil, senderIsLocal: true,
+                                            nPlayers: 8, lastActorSeat: 2, joins: staleJoins)
+        XCTAssertNil(r, "sender-inferred seat 2 is not in this stale bubble's joins")
+    }
+
+    /// `.ambiguous` still maps to nil either way (no seat to check joins against).
+    func testAmbiguousStaysNilInLobby() {
+        let r = SeatIdentity.resolveInLobby(cachedSeat: nil, senderIsLocal: false,
+                                            nPlayers: 4, lastActorSeat: 2, joins: [])
+        XCTAssertNil(r)
+    }
+
     // MARK: - the App Group store
 
     private let chatA = "chat-A"

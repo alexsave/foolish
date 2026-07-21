@@ -141,4 +141,167 @@ final class MessageLobbyTests: XCTestCase {
         }
         XCTAssertTrue(someoneCanPlay, "a live game has a first attacker with a legal move")
     }
+
+    // MARK: - note 15: Rule P extended to lobby (WAITING) bubbles
+
+    /// The pure comparison `MessagesRootView.load()` gates a stale-lobby
+    /// adoption on: a cached row strictly LATER than the incoming (always
+    /// phase-0) bubble wins; no cache, or nothing past WAITING, does not.
+    func testLobbyCachePreferredOnlyWhenCacheIsStrictlyLater() {
+        XCTAssertTrue(MessageGameStore.lobbyCachePreferred(cachedPhase: 2, incomingPhase: 0),
+                      "a cached LIVE game must win over a stale WAITING bubble")
+        XCTAssertTrue(MessageGameStore.lobbyCachePreferred(cachedPhase: 3, incomingPhase: 0),
+                      "a cached FINISHED game must win too")
+        XCTAssertFalse(MessageGameStore.lobbyCachePreferred(cachedPhase: 0, incomingPhase: 0),
+                       "two WAITING lobbies at the same phase: the incoming one is not stale")
+        XCTAssertFalse(MessageGameStore.lobbyCachePreferred(cachedPhase: nil, incomingPhase: 0),
+                       "nothing cached yet — the incoming lobby is all we know")
+    }
+
+    /// End-to-end: a viewer's device cached the game after it went LIVE
+    /// (mirrors GameSurface.cache(), called on every adopt), then taps a STALE
+    /// WAITING invite bubble for the SAME game. The phantom-8-player bug (note
+    /// 15) was: `env.phase == 0` returned the lobby unconditionally, with no
+    /// cache lookup at all. Proves the primitive the fix now consults would
+    /// correctly steer `load()` to adopt the cached LIVE chain instead.
+    func testStaleWaitingBubbleWouldBeSupersededByALaterCachedPhase() async throws {
+        let k = MessageKernel.shared
+        let gid: UInt64 = 903
+        try await k.newGame(seed: freshSeed(21), players: 8)
+        let waiting = try await k.seal(phase: 0, lastActorSeat: 0, gameId: gid,
+                                             parent8: Data(repeating: 0, count: 8),
+                                             joins: [MessageJoin(seat: 0, name: "Alex")])
+        let waitingEnv = try await MessageEnvelope.decode(payload: waiting, viewer: -1)
+        XCTAssertEqual(waitingEnv.phase, 0)
+
+        // The game went LIVE elsewhere (e.g. this device itself started it) and
+        // got cached at that later phase.
+        try await k.reseatResidentGame(players: 3)
+        let live = try await k.seal(phase: 2, lastActorSeat: 0, gameId: gid,
+                                          parent8: MessageTurnController.firstEight(hex: waitingEnv.digest),
+                                          joins: [MessageJoin(seat: 0, name: "Alex")])
+        let liveEnv = try await MessageEnvelope.decode(payload: live, viewer: -1)
+        XCTAssertEqual(liveEnv.phase, 2)
+
+        // The exact gate `load()` runs before showing the tapped (stale)
+        // WAITING bubble: is the cached phase strictly later?
+        XCTAssertTrue(MessageGameStore.lobbyCachePreferred(cachedPhase: liveEnv.phase,
+                                                            incomingPhase: waitingEnv.phase),
+                      "the cached LIVE game must supersede the stale WAITING invite")
+    }
+
+    // MARK: - note 2: "join then start" and "join and start" are the same deal
+
+    /// The two lobby-v3 Start routes — an already-joined player tapping Start
+    /// after a plain Join, vs a fresh joiner tapping "Join and start" — must
+    /// deal the IDENTICAL game: same seed, same final player count, so the
+    /// hand is fixed the instant the creator sends the first chat and cannot
+    /// be rerolled by which route got taken. Both call the same
+    /// `MessageKernel.startFromLobby` primitive (`MessagesRootView.startGame`
+    /// / `.joinAndStart`); this proves it end to end for both seats' hands.
+    func testJoinThenStartAndJoinAndStartDealIdenticalHands() async throws {
+        let k = MessageKernel.shared
+        let seed = freshSeed(33)
+
+        // The creator's WAITING lobby, seat 0 only — shared starting point for
+        // both routes below (mirrors GameSurface.createWaiting for a DM: cap 2).
+        try await k.newGame(seed: seed, players: 2)
+        let created = try await k.seal(phase: 0, lastActorSeat: 0, gameId: 904,
+                                             parent8: Data(repeating: 0, count: 8),
+                                             joins: [MessageJoin(seat: 0, name: "Alex")])
+        let createdEnv = try await MessageEnvelope.decode(payload: created, viewer: -1)
+
+        // Route 1: "join then start" — Sveta joins (reseals WAITING, mirrors
+        // joinLobby), THEN a separate Start reseats+seals LIVE (mirrors
+        // startGame), reading joins off the ALREADY-RESEALED WAITING chain.
+        let joins2 = [MessageJoin(seat: 0, name: "Alex"), MessageJoin(seat: 1, name: "Sveta")]
+        let waiting2 = try await k.seal(phase: 0, lastActorSeat: 1, gameId: 904,
+                                              parent8: MessageTurnController.firstEight(hex: createdEnv.digest),
+                                              joins: joins2)
+        let waiting2Env = try await MessageEnvelope.decode(payload: waiting2, viewer: -1)
+        let route1Live = try await k.startFromLobby(
+            lobbyPayload: waiting2, gameId: 904, actingSeat: 0,
+            parent8: MessageTurnController.firstEight(hex: waiting2Env.digest), joins: waiting2Env.joins)
+
+        // Route 2: "join and start" — Sveta reseats+seals LIVE directly off the
+        // ORIGINAL 1-join lobby chain, with a `joins` list she assembled
+        // locally (mirrors joinAndStart) — her own join never exists as its
+        // own sealed WAITING bubble.
+        let route2Live = try await k.startFromLobby(
+            lobbyPayload: created, gameId: 904, actingSeat: 1,
+            parent8: MessageTurnController.firstEight(hex: createdEnv.digest), joins: joins2)
+
+        let env1 = try await MessageEnvelope.decode(payload: route1Live, viewer: -1)
+        let env2 = try await MessageEnvelope.decode(payload: route2Live, viewer: -1)
+        XCTAssertEqual(env1.phase, 2); XCTAssertEqual(env2.phase, 2)
+        XCTAssertEqual(env1.nPlayers, 2); XCTAssertEqual(env2.nPlayers, 2)
+
+        // The actual proof: the SAME cards land in each seat's hand under both
+        // routes — re-decode each chain per seat and compare.
+        _ = try await k.decode(payload: route1Live, viewer: 0)
+        let route1Seat0 = (await k.residentView(viewer: 0))?.me?.hand?.map(\.identity).sorted()
+        _ = try await k.decode(payload: route1Live, viewer: 1)
+        let route1Seat1 = (await k.residentView(viewer: 1))?.me?.hand?.map(\.identity).sorted()
+
+        _ = try await k.decode(payload: route2Live, viewer: 0)
+        let route2Seat0 = (await k.residentView(viewer: 0))?.me?.hand?.map(\.identity).sorted()
+        _ = try await k.decode(payload: route2Live, viewer: 1)
+        let route2Seat1 = (await k.residentView(viewer: 1))?.me?.hand?.map(\.identity).sorted()
+
+        XCTAssertNotNil(route1Seat0); XCTAssertNotNil(route1Seat1)
+        XCTAssertEqual(route1Seat0, route2Seat0, "seat 0's hand must be identical between the two routes")
+        XCTAssertEqual(route1Seat1, route2Seat1, "seat 1's hand must be identical between the two routes")
+    }
+
+    /// The anti-reroll guarantee itself (note 2): the deal follows the seed
+    /// LOCKED into the lobby chain, not whatever game happens to be resident
+    /// when Start is pressed.
+    ///
+    /// This exists because the route-equivalence test above does NOT actually
+    /// pin `startFromLobby`'s re-adopt: both of its routes run back to back off
+    /// the same already-resident seed, so deleting the `decode(payload:
+    /// lobbyPayload:)` line leaves it passing (verified by mutation). That is a
+    /// test green against a broken artifact. The real hazard the re-adopt
+    /// guards is a DIFFERENT game being resident at Start — the extension is a
+    /// single kernel that every chat, lobby and board decodes through, so by
+    /// the time a human taps Start the resident game routinely belongs to
+    /// something else entirely (§7.3: decoding adopts). Without the re-adopt
+    /// that deals a hand from the wrong seed, silently.
+    ///
+    /// So: seal a lobby, POLLUTE the resident kernel with an unrelated game at
+    /// a different seed and seat count, then Start the original lobby and
+    /// require the hands to match the unpolluted control exactly.
+    func testStartFromLobbyReDerivesTheLockedSeedNotTheResidentGame() async throws {
+        let k = MessageKernel.shared
+        let joins = [MessageJoin(seat: 0, name: "Alex"), MessageJoin(seat: 1, name: "Sveta")]
+
+        // The lobby whose seed is locked, plus the control deal taken straight
+        // off it with nothing else touched in between.
+        try await k.newGame(seed: freshSeed(41), players: 2)
+        let lobby = try await k.seal(phase: 0, lastActorSeat: 0, gameId: 905,
+                                     parent8: Data(repeating: 0, count: 8),
+                                     joins: [MessageJoin(seat: 0, name: "Alex")])
+        let lobbyEnv = try await MessageEnvelope.decode(payload: lobby, viewer: -1)
+        let parent = MessageTurnController.firstEight(hex: lobbyEnv.digest)
+        let control = try await k.startFromLobby(lobbyPayload: lobby, gameId: 905,
+                                                 actingSeat: 1, parent8: parent, joins: joins)
+        _ = try await k.decode(payload: control, viewer: 0)
+        let controlSeat0 = (await k.residentView(viewer: 0))?.me?.hand?.map(\.identity).sorted()
+        XCTAssertNotNil(controlSeat0)
+
+        // A wholly unrelated game becomes resident — a different seed AND a
+        // different seat count, so a Start that reseats whatever is resident
+        // instead of re-adopting the lobby cannot coincidentally agree.
+        try await k.newGame(seed: freshSeed(77), players: 5)
+        _ = try await k.seal(phase: 0, lastActorSeat: 0, gameId: 906,
+                             parent8: Data(repeating: 0, count: 8),
+                             joins: [MessageJoin(seat: 0, name: "Someone else")])
+
+        let started = try await k.startFromLobby(lobbyPayload: lobby, gameId: 905,
+                                                 actingSeat: 1, parent8: parent, joins: joins)
+        _ = try await k.decode(payload: started, viewer: 0)
+        let startedSeat0 = (await k.residentView(viewer: 0))?.me?.hand?.map(\.identity).sorted()
+        XCTAssertEqual(startedSeat0, controlSeat0,
+                       "Start must deal from the lobby's LOCKED seed, not the resident game")
+    }
 }

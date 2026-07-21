@@ -194,6 +194,23 @@ public actor MessageKernel {
         guard rc == 0 else { throw MessageEnvelope.Failure.damaged(code: Int(rc)) }
     }
 
+    /// Reseat the LOCKED seed at `joins.count` and seal a LIVE handoff — the
+    /// one primitive lobby v3's two Start routes share (docs note 2): any
+    /// already-joined player tapping Start after a plain Join, or a fresh
+    /// joiner tapping "Join and start" in one step. Both call this with the
+    /// same `lobbyPayload` (a chain carrying the locked seed) and the same
+    /// FINAL `joins` list, so they are PROVABLY the same deal — it depends
+    /// only on the seed already resident on `lobbyPayload` and `joins.count`,
+    /// never on which UI path assembled `joins` or when it was sealed as its
+    /// own WAITING bubble (MessageLobbyTests proves both routes agree).
+    public func startFromLobby(lobbyPayload: Data, gameId: UInt64, actingSeat: Int,
+                               parent8: Data, joins: [MessageJoin]) throws -> Data {
+        _ = try decode(payload: lobbyPayload, viewer: -1)
+        try reseatResidentGame(players: joins.count)
+        return try seal(phase: 2, lastActorSeat: actingSeat, gameId: gameId,
+                        parent8: parent8, joins: joins)
+    }
+
     /// Apply one action by `seat` to the resident (adopted) game — the LOCAL half
     /// of a turn, before `seal`. Same packed awire frame the app and server apply
     /// through, and the kernel is the only judge of legality: an illegal move

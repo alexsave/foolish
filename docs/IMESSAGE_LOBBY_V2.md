@@ -1,5 +1,13 @@
 # iMessage lobby v2 — open-count groups, session-per-game, FINISHED via /m/
 
+> **SUPERSEDED by `IMESSAGE_LOBBY_V3.md`.** Round-2 testing found four defects in
+> what this document specifies: a DM could reroll its deal (v2's "genesis dealt
+> immediately" below is exactly that hole), the lobby trusted the cache over the
+> bubble being viewed, a stale WAITING invite rendered a phantom 8-seat game, and
+> the "Send invite" button offered to re-do what had just been done. v3 routes
+> every chat shape through one lobby and deletes that button. Kept for the
+> session-per-game and FINISHED-via-`/m/` halves, which v3 does not change.
+
 Batch 6 (docs/HARNESS_NOTES_TRIAGE.md notes 19, 20, 21, 25, 26). Supersedes the
 group-lobby half of §5.2/§5.3 in docs/IMESSAGE_GAME_DESIGN.md; DMs (always 2p,
 genesis dealt immediately) are unchanged.

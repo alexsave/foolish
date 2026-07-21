@@ -49,4 +49,23 @@ public enum SeatIdentity {
         }
         return .ambiguous
     }
+
+    /// `resolve`, gated for a LOBBY bubble specifically (note 14, HARNESS_NOTES_R2):
+    /// a resolved seat only counts as MINE if this bubble's own `joins` list
+    /// actually contains it. `resolve` alone answers "who does the cache/sender
+    /// signal say I am" — correct for a live board, where every chain in a game
+    /// carries every seated player forward — but wrong for a lobby: an OLDER
+    /// WAITING bubble, reopened after I've since joined, still resolves my
+    /// cached seat even though THAT bubble's own `joins` predate my join. That
+    /// granted Start/Send to someone the lobby does not list. nil covers both
+    /// `.ambiguous` and "resolved, but not actually in this bubble's joins".
+    public static func resolveInLobby(cachedSeat: Int?, senderIsLocal: Bool,
+                                      nPlayers: Int, lastActorSeat: Int,
+                                      joins: [MessageJoin]) -> Int? {
+        switch resolve(cachedSeat: cachedSeat, senderIsLocal: senderIsLocal,
+                       nPlayers: nPlayers, lastActorSeat: lastActorSeat) {
+        case .known(let s): return joins.contains { $0.seat == s } ? s : nil
+        case .ambiguous:    return nil
+        }
+    }
 }
