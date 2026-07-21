@@ -421,3 +421,83 @@ transient threads), not from the WS connections themselves.
   which OpenSSL has no equivalent for — was resolved by concatenating into a
   thread-local scratch buffer on the TLS branch only (see `ws_send_frame`'s
   own comment in `ws.c`); the plaintext `writev()` path is untouched.
+
+## Stage 4 — spectators + octogen stress (baseline for bot_drive parallelism)
+
+Heavier, more realistic load, to make the kernel bot-compute ceiling
+*visible* so Stage 5 (a kernel-side `bot_drive` thread-safety fix) has a
+measured baseline to beat.
+
+### Spectator WebSockets
+
+`GET /ws?game_id=..&spectator=1` upgrades **without** seat membership: it
+streams the `VIEW_SPECTATOR` masked view (every hand hidden), cached per
+game-version in a dedicated slot alongside the per-seat caches, and
+**silently ignores any move frame** (`awire` frames from a spectator are
+read and dropped). Pure read/push pressure with no seat. `foolish_hammer
+--spectators=N` opens N read-only spectator WS per game. Verified: 12
+spectators pulled **10,071 pushes/s** while **0 of 1,214 move probes were
+accepted** (spectators cannot move), Helgrind-clean on the shared cache slot.
+
+### A pre-existing bug this stage surfaced
+
+`/meta add-bot` stored the bot's **roster array index** in
+`players[].strategy_key`, but `bot_drive.c` reads that field as the kernel
+`STRAT_*` brain id — different number spaces. Only `random` (index 0 aliasing
+a real brain id) worked by accident; every other named bot was frozen or ran
+a *different* brain. Fixed to use the roster entry's own `.strat`. **This is
+the first time octogen actually deliberates server-side** — so every
+octogen number below is also the first real one.
+
+### The workload
+
+Each game = **1 server-side `octogen` bot** (the heaviest MC bot) + up to 7
+outside random-legal human clients + optional spectators. octogen's search
+runs inside `bot_drive`, which Stage 1 wrapped in `g_kernel_lock` (the kernel
+uses a process-wide scratch buffer, so two `bot_drive`s cannot run at once).
+So **all bot compute across all games is serialized through one lock.** The
+sweep quantifies it (`bench_results/stage4_octogen/`).
+
+**Single-thread octogen ceiling (this box, production TT):** **30.2
+decisions/s** — one bot, saturating ~1 core.
+
+**Sweep A — full-stress (1 octogen + 7 humans + 2 spectators / game):**
+
+| games | applied moves/s | octogen dec/s | CPU (of 4) | peak RSS |
+|---|---|---|---|---|
+| 1 | 14.8 | 0.28 | 0.19 | 21 MB |
+| 2 | 21.2 | 0.68 | 0.30 | 30 MB |
+| 4 | 55.2 | 1.68 | 0.65 | 49 MB |
+| 8 | 101.4 | 3.55 | 0.98 | 86 MB |
+
+At these counts octogen dec/s is far below the 30/s ceiling — the kernel's
+**3-second human-visible move pacing** (not the lock) throttles each game to
+~1 decision / few seconds; total demand hasn't reached the ceiling yet.
+
+**Sweep B — scaling (1 octogen + 1 human, no spectators), pushing aggregate
+demand past the ceiling:**
+
+| games | octogen dec/s | CPU (of 4) | mean lat | peak RSS |
+|---|---|---|---|---|
+| 1 | 0.36 | 0.06 | 160 µs | 13 MB |
+| 8 | 2.72 | 0.34 | 102 µs | 26 MB |
+| 32 | 10.53 | 1.13 | 132 µs | 69 MB |
+| 96 | 20.94 | 1.62 | 4.0 ms | 186 MB |
+| 160 | 23.60 | 1.62 | 9.0 ms | 365 MB |
+
+**The ceiling, quantified.** As games climb, octogen dec/s rises toward but
+**plateaus at ~24–30/s**, and **CPU flattens at ~1.6 of 4 cores** — the ~1
+core of serialized bot compute plus ~0.6 core of parallelizable server work
+(HTTP/WS/`state_put` across the 4 game workers). The other ~2.4 cores sit
+idle: 160 games' worth of bot demand cannot use them, because `bot_drive` is
+single-threaded through `g_kernel_lock`. Human-move latency balloons (mean
+9 ms at 160 games) as moves queue behind serialized bot cycles. Memory scales
+~2.3 MB/game at this end (thread-per-connection + per-game state + octogen
+scratch). No crash at any scale point.
+
+**Baseline for Stage 5.** If bot compute parallelized across all 4 cores,
+this box should sustain roughly **4× the single-thread ceiling (~120 dec/s)**
+and drive all 4 cores under saturating demand. Stage 5 makes the kernel's
+`bot_drive` scratch (+ `engine_last_reject`) thread-local so the
+`g_kernel_lock` can be dropped from around `bot_drive`, and re-runs Sweep B
+against these numbers.
