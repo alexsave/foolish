@@ -660,6 +660,21 @@ static void *bot_thread(void *arg) {
 // just races the parent's own unlock (harmless — see bot_thread's doc).
 static void start_bot_loop(GameSlot *s) {
     if (s->bot_running) return;
+    // No bot seats -> no bot thread. An all-human game would otherwise spawn a
+    // bot_thread that immediately blocks on `cond` forever with nothing to
+    // drive. That's normally harmless, but under fast game churn (push-only
+    // completes games in a fraction of a second, so a load run does hundreds of
+    // /meta-start rematches) the per-spawn cost dominates: creating a thread
+    // zeroes its whole static-TLS block, and THIS build's TLS is large — it
+    // embeds the 64 KiB _Thread_local scratch buffers in worker_push_stale and
+    // ws_send_frame. That TLS memset (_dl_allocate_tls) was ~18% of all
+    // instructions in the assembly profile (PROFILE_HOTPATH.md). Skipping the
+    // spawn when every seat is human removes it entirely; real games with a bot
+    // still get exactly one bot_thread for their (long) lifetime.
+    uint32_t human = game_human_mask(&s->game);
+    uint32_t all   = (s->game.num_players >= 32) ? 0xffffffffu
+                                                 : ((1u << s->game.num_players) - 1u);
+    if ((human & all) == all) return;   // every seated player is human — nothing to drive
     s->bot_running = true;
     pthread_t t;
     if (pthread_create(&t, NULL, bot_thread, s) == 0) pthread_detach(t);
