@@ -2,8 +2,9 @@
 
 Production-hardening stage 1 of 3 (concurrency) for
 `server/impls/native/foolish_server.c`. Stage 2 (SQLite WAL write-behind
-persistence + crash recovery) and stage 3 (OpenSSL TLS / WSS+HTTPS) are NOT
-done here — this file documents the seams left for them (last section).
+persistence + crash recovery) is now done too — see
+[`DURABILITY.md`](DURABILITY.md). Stage 3 (OpenSSL TLS / WSS+HTTPS) is NOT
+done here — this file documents the seam left for it (last section).
 
 Everything below changed only `server/impls/native/foolish_server.c` (plus
 this file, README.md, and a PROFILE_HOTPATH.md cross-reference). `c/src/*`
@@ -391,15 +392,17 @@ transient threads), not from the WS connections themselves.
 
 ## Seams left for stage 2 (SQLite WAL persistence) and stage 3 (OpenSSL TLS)
 
-- **Stage 2 (persistence)**: `game_mark_dirty(GameSlot *s)` — a no-op stub,
-  called under `s->lock` at every point a game's state could have changed
-  (the same events that bump `s->version` today: `/action`, `/ws` applying
-  a move, `/meta` lobby transitions and deals, and `bot_thread`'s cycles
-  that applied ≥1 action or ended the game). Stage 2 wires this to enqueue
-  `(game_id, version, a serialized snapshot or WAL record)` onto a
-  persistence thread's own write-behind queue — it must only ever enqueue,
-  never block the caller on disk I/O, the same discipline `game_mark_dirty`
-  itself already follows by being a no-op today.
+- **Stage 2 (persistence) — DONE.** `game_mark_dirty(GameSlot *s)` (the
+  no-op stub described below when this section was written) is now wired to
+  a real SQLite WAL write-behind engine (`persist.c`/`persist.h`) — see
+  [`DURABILITY.md`](DURABILITY.md) for the design, the crash-recovery test,
+  the durability guarantee/tradeoff, and the persistence-overhead
+  measurements. Left here for the record of what the seam looked like going
+  in: called under `s->lock` at every point a game's state could have
+  changed (the same events that bump `s->version`: `/action`, `/ws`
+  applying a move, `/meta` lobby transitions and deals, and `bot_thread`'s
+  cycles that applied ≥1 action or ended the game) — exactly the call sites
+  Stage 2 wired up, unchanged.
 - **Stage 3 (TLS)**: `io_read`/`io_write` (foolish_server.c) — every plain-
   HTTP socket byte funnels through these two one-line wrappers around
   `read()`/`write()`. `ws.c`'s `ws_read_full`/`ws_write_full`/`ws_fill` are

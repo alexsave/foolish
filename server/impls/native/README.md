@@ -54,15 +54,26 @@ make run        # ./foolish_server 8099
 ```
 
 Requires a C compiler + `-framework Accelerate` (macOS; some kernel strategies
-use LAPACK). No external packages — the HTTP/1.1 layer is hand-rolled (a real
-deployment would drop in mongoose/civetweb); auth is an in-memory token map
-(no JWT). Concurrency: a dispatcher (the accept loop) routes one-shot
-requests onto small typed worker pools sharded by game_id, and each game has
-its own lock instead of one process-wide mutex — see
-[`SERVER_SCALING.md`](SERVER_SCALING.md) ("T2a") for the design, the
-Helgrind-clean verdict, and measured throughput/latency/memory vs. the old
-single-global-lock version. Pool sizes are runtime-configurable:
+use LAPACK) + `libsqlite3` (present as a system package on Linux and macOS;
+see [`DURABILITY.md`](DURABILITY.md)). No other external packages — the
+HTTP/1.1 layer is hand-rolled (a real deployment would drop in
+mongoose/civetweb); auth is an in-memory token map (no JWT). Concurrency: a
+dispatcher (the accept loop) routes one-shot requests onto small typed
+worker pools sharded by game_id, and each game has its own lock instead of
+one process-wide mutex — see [`SERVER_SCALING.md`](SERVER_SCALING.md)
+("T2a") for the design, the Helgrind-clean verdict, and measured
+throughput/latency/memory vs. the old single-global-lock version. Pool
+sizes are runtime-configurable:
 `./foolish_server 8099 --game-workers=N --meta-workers=N --create-workers=N`.
+
+Durability: a background thread persists every game and user to a local
+SQLite (WAL) database write-behind — the request path never blocks on disk,
+and a crashed process (`kill -9`) recovers everything committed before the
+crash, including resuming a game that was mid-play. DB ON by default
+(`./foolish_server 8099 --db=./foolish.db`); `--no-db` opts out entirely for
+tests/benchmarks that don't want a stray file. See
+[`DURABILITY.md`](DURABILITY.md) for the write-behind design, the
+crash-recovery test, and the measured overhead of persistence being on.
 
 ## Endpoints
 
@@ -110,21 +121,27 @@ With the server running:
 
 ```sh
 bash test.sh                 # signup 2 humans, add a cordite bot, deal, attack
+bash crash_test.sh           # kill -9 a live server, restart against the same --db, verify recovery
 ```
 
-It prints each seat's masked view (you see your own hand; opponents are `null`),
-then plays the first attacker's opening card and shows the battle appear on the
-defender's view with the bot's response — all decided by the kernel.
+`test.sh` prints each seat's masked view (you see your own hand; opponents are
+`null`), then plays the first attacker's opening card and shows the battle
+appear on the defender's view with the bot's response — all decided by the
+kernel. `crash_test.sh` starts its own server + its own scratch `--db`, drives
+real gameplay, hard-kills the process, restarts it against the same DB file,
+and asserts the recovered state matches — see
+[`DURABILITY.md`](DURABILITY.md).
 
 ## Status / scope
 
 Proof-of-concept. Present: auth, lobby, deal, human + bot moves, masked views,
 continue-to-lobby, per-game locking + work-queue thread routing (see
 [`SERVER_SCALING.md`](SERVER_SCALING.md)), a persistent-connection `/ws` push
-path for the action+state hot loop (see above). Not present (deliberately):
-durability (WAL/snapshot — state is RAM-only), broadcasting a game's state to
-every seat's connection when ANY seat moves (`/ws` clients each poll their
-own seat instead — see `foolish_hammer.c`'s ws worker), the packed binary
-envelope the iOS client expects (this speaks plain JSON over HTTP; `/ws`
-speaks the kernel's own packed wire), TLS, rate limits. The point is the
-architecture, not production readiness.
+path for the action+state hot loop (see above), and crash-safe SQLite
+write-behind durability for every game and user (see
+[`DURABILITY.md`](DURABILITY.md)). Not present (deliberately): broadcasting a
+game's state to every seat's connection when ANY seat moves (`/ws` clients
+each poll their own seat instead — see `foolish_hammer.c`'s ws worker), the
+packed binary envelope the iOS client expects (this speaks plain JSON over
+HTTP; `/ws` speaks the kernel's own packed wire), TLS, rate limits. The point
+is the architecture, not production readiness.

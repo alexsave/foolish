@@ -787,11 +787,13 @@ beating the pre-existing bar) stay green throughout.
    re-validating their O(1) hash-table assumptions still hold — for
    thousand-game scale.
 4. **Durability, backpressure, TLS, connection limits, rate limits** — all
-   already flagged out of scope by the README, unaffected by this work, and
-   all real gaps for a production deployment: state is RAM-only (a crash
-   loses every in-flight game), nothing here bounds how many connections or
-   games a single process will accept, and there is no rate limiting on
-   `/auth/signup` or `/create`.
+   already flagged out of scope by the README at the time this section was
+   written, unaffected by this (T1/T1b) work, and all real gaps for a
+   production deployment: state was RAM-only (a crash lost every in-flight
+   game) — since addressed by SQLite WAL write-behind persistence, see
+   [`DURABILITY.md`](DURABILITY.md) — nothing here bounds how many
+   connections or games a single process will accept, and there is no rate
+   limiting on `/auth/signup` or `/create`.
 5. **`h_state`'s unbounded `seat` query parameter** — noticed while scoping
    the view-cache change (not introduced by it, and not touched by it): a
    caller can pass `seat=-2`, which collides with `state_put`'s internal
