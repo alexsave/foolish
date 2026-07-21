@@ -345,7 +345,10 @@ static void persist_self_test(void) {
 }
 
 // --------------------------------------------------------------------------
-// Locking (T2a — replaces the single global g_lock). Two tiers:
+// Locking (T2a introduced the two-tier scheme below, replacing the single
+// global g_lock; Stage 5, SERVER_SCALING.md "Stage 5 — parallel bot compute",
+// DROPPED the THIRD lock T2a added on top of it — read on for why that is now
+// safe). Two tiers remain:
 //
 //   g_registry_lock — small and SHORT-HELD. Guards ONLY: g_users[] (signup /
 //     token lookup) + g_token_ht, game-slot allocation (claiming a free
@@ -354,47 +357,51 @@ static void persist_self_test(void) {
 //
 //   GameSlot.lock (per game) — guards everything else about ONE game: its
 //     `Game` struct, lobby roster (seat_user/seat_name/seat_ready/owner),
-//     cond/bot_running, and the per-seat view_cache.
+//     cond/bot_running, and the per-seat view_cache. This is now the ONLY
+//     lock taken around a kernel-mutating call (awire_apply, bot_drive,
+//     game_seat_and_deal).
 //
-//   g_kernel_lock — a THIRD lock, small and narrowly scoped, held ONLY around
-//     the specific kernel calls that mutate a Game or drive bots (awire_apply,
-//     bot_drive, game_seat_and_deal — see each call site's comment). This one
-//     is NOT optional and is not a cautious extra: the kernel (c/src, read-
-//     only to us — see this file's header) keeps process-wide, non-thread-
-//     local scratch state across calls that only a single external caller was
-//     ever assumed to touch at a time. `bot_drive.c` says so directly —
-//     "`g_scratch` ... is safe: bot_drive is never re-entered" — and
-//     `game.c`'s `engine_last_reject` (the reject-reason out-param every
-//     handle_* writes) and `engine_snap_hook` (saved/restored by bot_drive's
-//     `choose_move`) are the same story. Under the OLD single global g_lock
-//     this was safe by accident (the whole server was one critical section,
-//     so no two kernel-mutating calls ever ran concurrently); per-game locks
-//     alone reintroduce exactly the concurrent-mutation-across-DIFFERENT-
-//     games case those kernel statics were never built for. Confirmed by a
-//     Helgrind run on an early per-game-lock-only build: a genuine write/
-//     write race on `engine_last_reject` between two games' threads (see
-//     SERVER_SCALING.md "T2a" for the report and the source audit that found
-//     the rest). g_kernel_lock is the honest fix, not a workaround: it does
-//     NOT serialize state reads (state_put/state_put_cached never touch
-//     these statics — confirmed by inspection, so h_state/h_status/WS polls
-//     stay fully per-game-lock-parallel), only the actual kernel writes.
+// T2a's g_kernel_lock (REMOVED, Stage 5): a third, process-wide mutex held
+// around every kernel call that mutates a Game or drives bots, because the
+// kernel (c/src, read-only to us — see this file's header) used to keep
+// process-wide, non-thread-local scratch state across those calls:
+// bot_drive.c's `g_scratch` eligibility buffer, game.c's `engine_last_reject`
+// (the reject-reason out-param every handle_* writes) and `engine_snap_hook`
+// (saved/restored by bot_drive's `choose_move`), plus two more the Stage 5
+// kernel audit found beyond that original list — game.c's log-overflow
+// scratch `GameLog` inside `log_alloc`, and cordite_sim.c's lazily-built
+// card-id lookup masks (`ensure_masks`), which every cordite/octogen decision
+// touches via `cd_sim_from_game`. Under the OLD single global g_lock this was
+// safe by accident (the whole server was one critical section, so no two
+// kernel-mutating calls ever ran concurrently); per-game locks alone
+// reintroduced exactly the concurrent-mutation-across-DIFFERENT-games case
+// those kernel statics were never built for — confirmed by a Helgrind run on
+// an early per-game-lock-only build (a genuine write/write race on
+// `engine_last_reject` between two games' threads, SERVER_SCALING.md "T2a").
+// g_kernel_lock was the honest fix at the time, but it also serialized every
+// game's bot COMPUTE process-wide — Stage 4 measured octogen decisions/s
+// plateauing at ~30/s (the single-thread ceiling) no matter how many games
+// ran concurrently. Stage 5 (c/src/*, see game.h/game.c/bot_drive.c/
+// cordite_sim.c) made every one of those kernel statics `_Thread_local`
+// instead of removing the lock outright: each thread now owns its own
+// instance, so two DIFFERENT games' kernel calls on two DIFFERENT threads no
+// longer share any mutable kernel state — only same-game concurrency needs
+// serializing, and GameSlot.lock already does that. Verified by Helgrind on
+// this build (0 kernel/server data races — see SERVER_SCALING.md "Stage 5")
+// and by the difftest suite (single-threaded, so `_Thread_local` is
+// transparent there — byte-identical play, proving the kernel change itself
+// carries no behavior difference).
 //
-// LOCK ORDER (deadlock-freedom): registry, then game, then kernel — ALWAYS,
-// and never the reverse at any step. Every handler below that needs the
-// registry takes g_registry_lock, finds the User*/GameSlot*, takes the
-// GameSlot's own lock, THEN releases g_registry_lock (never re-acquired
-// while any GameSlot.lock is held). g_kernel_lock, when needed, is taken
-// LAST — only while already holding the relevant GameSlot.lock — held for
-// just the kernel call, and released before anything else; no handler here
-// ever holds two GameSlot locks, or acquires g_registry_lock or a GameSlot
-// lock while already holding g_kernel_lock. bot_thread and the /ws dedicated
-// connection thread (ws_conn_thread) follow the same rule: each only ever
-// holds its own game's lock (plus g_kernel_lock, innermost, around its
-// kernel call) — neither touches g_registry_lock after its initial
-// (game_id -> GameSlot*) lookup.
+// LOCK ORDER (deadlock-freedom): registry, then game — ALWAYS, and never the
+// reverse. Every handler below that needs the registry takes
+// g_registry_lock, finds the User*/GameSlot*, takes the GameSlot's own lock,
+// THEN releases g_registry_lock (never re-acquired while any GameSlot.lock is
+// held). No handler here ever holds two GameSlot locks. bot_thread and the
+// /ws dedicated connection thread (ws_conn_thread) follow the same rule: each
+// only ever holds its own game's lock — neither touches g_registry_lock after
+// its initial (game_id -> GameSlot*) lookup.
 // --------------------------------------------------------------------------
 static pthread_mutex_t g_registry_lock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t g_kernel_lock = PTHREAD_MUTEX_INITIALIZER;
 // g_seq: a monotonic counter mixed into gen_id() (registry-guarded — every
 // caller holds g_registry_lock) AND read directly by h_meta's "start" branch
 // to help season the deal seed (which runs under a GameSlot lock, not the
@@ -410,9 +417,10 @@ static atomic_ulong g_seq = 0;
 // process-wide bot-decision counters, read by GET /stats. A "decision" here
 // is one BotDriveAction actually applied by bot_thread's bot_drive call
 // (drv.actions[0..drv.n)) — the unit bot_stress.sh measures decisions/sec
-// against, at 1 game and at N games, to quantify g_kernel_lock's ceiling on
-// bot compute (see that lock's own doc above: bot_drive is one of the calls
-// it serializes process-wide). `g_bot_decisions` counts every one of them,
+// against, at 1 game and at N games. Stage 4 used this to quantify
+// g_kernel_lock's ceiling on bot compute (see the "Locking" doc above);
+// Stage 5 removed that lock and re-ran the same sweep to show the ceiling
+// lifting (SERVER_SCALING.md "Stage 5"). `g_bot_decisions` counts every one of them,
 // any strategy, any game; `g_octogen_decisions` narrows to actions applied
 // by a seat whose strategy_key is octogen's STRAT_* brain id (g_octogen_strat,
 // resolved once in main() from the roster entry's OWN `.strat` field — NOT
@@ -578,15 +586,13 @@ static void *bot_thread(void *arg) {
     GameSlot *s = arg;
     pthread_mutex_lock(&s->lock);
     while (s->used && s->game.status == GAME_STATUS_PLAYING) {
-        uint32_t hmask = game_human_mask(&s->game);   // pure per-Game field read — no kernel lock needed
+        uint32_t hmask = game_human_mask(&s->game);   // pure per-Game field read
         BotDriveOut drv;
-        // g_kernel_lock, innermost (see "Locking" above): bot_drive touches
-        // bot_drive.c's process-wide `g_scratch` and, through apply_move/
-        // choose_move, engine_last_reject + engine_snap_hook — none of them
-        // safe to touch from more than one game's thread at a time.
-        pthread_mutex_lock(&g_kernel_lock);
+        // No g_kernel_lock (Stage 5, see "Locking" above): bot_drive's
+        // scratch state is now _Thread_local, so this game's bot_thread
+        // never shares it with another game's — s->lock (already held for
+        // this whole cycle) is the only serialization this needs.
         bot_drive(&s->game, hmask, BOT_DRIVE_MAX_ACTIONS, 0, 0, &drv);   // ONE cycle, then returns
-        pthread_mutex_unlock(&g_kernel_lock);
         // A bot's move (or the game ending) changes the board exactly like a
         // human's /action does — the /ws state cache must not stay stale
         // just because no HTTP handler touched this slot this time.
@@ -1052,18 +1058,15 @@ static void h_meta(Req *r, Conn *conn) {
         for (int i = 0; i < g->num_players; i++) if (!seat_is_bot(g, i) && !s->seat_ready[i]) all = false;
         if (all && g->status == GAME_STATUS_WAITING) {
             unsigned char seed[32]; for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(next_rand() ^ (i * 131 + (int)g_seq));
-            // g_kernel_lock (see "Locking" above): the deal RNG state
-            // game_set_deal_seed_bytes/game_seat_and_deal touch is actually
-            // _Thread_local (safe on its own), but they're kernel calls that
-            // can reach into game.c's apply/refill paths, so they follow the
-            // same "every kernel mutation goes through g_kernel_lock" rule as
-            // awire_apply/bot_drive — one rule to audit, not a special case.
-            pthread_mutex_lock(&g_kernel_lock);
+            // No g_kernel_lock (Stage 5, see "Locking" above): the deal RNG
+            // state game_set_deal_seed_bytes/game_seat_and_deal touch is
+            // _Thread_local, and every other kernel static reachable from
+            // game_seat_and_deal's apply/refill path is too — s->lock
+            // (already held here) is the only serialization this needs.
             game_set_deal_seed_bytes(seed, 32);
             // Seats were wired in the lobby (strategy_key per seat), so pass NULL:
             // the kernel owns marking them + the deal (+ g->status = PLAYING).
             game_seat_and_deal(g, NULL, g->num_players);
-            pthread_mutex_unlock(&g_kernel_lock);
             start_bot_loop(s);             // the game-loop paces bot play from here
         }
     } else if (!strcmp(type, "continue")) {
@@ -1113,16 +1116,16 @@ static void h_action(Req *r, Conn *conn) {
     // sends: [kind, n, cards, (attacks)]. The kernel decodes and dispatches —
     // the server enumerates no move types (awire_apply owns the switch).
     // awire_decode is stateless (no kernel globals — confirmed by inspection
-    // of awire.c), so only awire_apply needs g_kernel_lock (see "Locking"
-    // above: it's the one that reaches engine_last_reject via handle_*).
+    // of awire.c). No g_kernel_lock around awire_apply either (Stage 5, see
+    // "Locking" above): engine_last_reject and every other kernel static
+    // handle_* touches are now _Thread_local, so s->lock (held for this whole
+    // handler) is the only serialization awire_apply needs.
     AwireAction a;
     bool decoded = r->body && r->body_len > 0
                    && awire_decode((const unsigned char *)r->body, r->body_len, &a);
     bool ok = false;
     if (decoded) {
-        pthread_mutex_lock(&g_kernel_lock);
         ok = awire_apply(&s->game, seat, &a);
-        pthread_mutex_unlock(&g_kernel_lock);
     }
     // Human changed the board — wake the game-loop so bots respond (or notice
     // the game ended; awire_apply already settled g->status). If it's mid-sleep
@@ -1285,7 +1288,7 @@ static int state_put_cached(GameSlot *s, int cache_idx, int viewer, unsigned cha
 // PLAYERS+1 distinct recomputes). A spectator MAY NOT submit moves: any
 // frame it sends — empty or not — is treated purely as "send me the current
 // state" (the `!spectator` guard below keeps a spectator's bytes from ever
-// reaching awire_decode/awire_apply/g_kernel_lock at all), so `ok` is always
+// reaching awire_decode/awire_apply at all), so `ok` is always
 // 0 in a spectator's replies. Same per-game lock, same dedicated-thread-per-
 // connection design (B) as a seated client — a spectator is just another
 // long-lived /ws connection that happens to skip the seat check and the
@@ -1379,21 +1382,20 @@ static void *ws_conn_thread(void *argp) {
         if (s->used) {
             // Spectators MAY NOT submit moves (Stage 4): `!spectator` keeps
             // ANY frame a spectator sends — empty or a well-formed move
-            // alike — from ever reaching awire_decode/awire_apply/
-            // g_kernel_lock. It is silently treated as "send me the current
-            // state", same as a seated client's empty poll frame; `applied`
-            // stays false and the reply's ok byte is always 0. This is a
-            // deliberate ignore, not a disconnect — a spectator client that
-            // (by bug or by a hostile peer) sends a move frame just gets
-            // back the current masked view, same as always.
+            // alike — from ever reaching awire_decode/awire_apply. It is
+            // silently treated as "send me the current state", same as a
+            // seated client's empty poll frame; `applied` stays false and the
+            // reply's ok byte is always 0. This is a deliberate ignore, not a
+            // disconnect — a spectator client that (by bug or by a hostile
+            // peer) sends a move frame just gets back the current masked
+            // view, same as always.
             if (!spectator && mlen > 0 && s->game.status == GAME_STATUS_PLAYING) {
                 AwireAction a;
                 if (awire_decode(in, mlen, &a)) {
-                    // g_kernel_lock, innermost (see h_action's identical
-                    // pattern and the "Locking" doc above).
-                    pthread_mutex_lock(&g_kernel_lock);
+                    // No g_kernel_lock (Stage 5, see h_action's identical
+                    // pattern and the "Locking" doc above) — s->lock, held
+                    // for this whole frame, is enough now.
                     bool applied_now = awire_apply(&s->game, seat, &a);
-                    pthread_mutex_unlock(&g_kernel_lock);
                     if (applied_now) {
                         applied = true;
                         s->version++;   // this seat's move can change every seat's view
