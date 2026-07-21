@@ -428,12 +428,24 @@ private struct GameSurface: View {
         // so the controller can later diff its own resolved seat's hand +
         // replay-log count against it (that decode happens seat-aware, inside
         // the controller, once `mySeat` is actually known — see
-        // MessageTurnController.begin()). Not the same chain, or nothing
-        // cached yet, both leave this nil (a fresh cache falls back to the
-        // trailing-run heuristic in MessageTableView).
+        // MessageTurnController.begin()). Only "nothing cached yet" leaves
+        // this nil (a genuine first-ever open, which falls back to
+        // MessageTableView's trailing-run heuristic).
+        //
+        // Note 13: `bytes == winner` — a REOPEN of a chain we already fully
+        // cached — used to be excluded here too ("not the same chain" was
+        // the old condition), on the reasoning that there's nothing to diff.
+        // That's wrong: it IS a real diff, of exactly zero. Passing it
+        // through lets MessageTurnController.begin() see equal log counts on
+        // both sides and resolve to an EMPTY replay window (see its
+        // `openReplayFromLog` doc) instead of silently reporting "no info" —
+        // which used to fall through to the SAME structural heuristic a
+        // genuine cache miss uses, one with no memory of what it already
+        // showed, so a pickup/draw sequence replayed again sometimes and not
+        // others depending on whether the table happened to read empty.
         var prevPayload: Data?
         if let prevRow = MessageGameStore.shared.record(gameId: env.gameId, chatKey: chatKey),
-           let bytes = Base32.decode(prevRow.payloadBase32), bytes != winner {
+           let bytes = Base32.decode(prevRow.payloadBase32) {
             prevPayload = bytes
         }
         // Make the resident game the winner and set Rule R's round guard, then

@@ -1,0 +1,72 @@
+// note 11 (HARNESS_NOTES_R2): `conversation.insert`-ing a staged bubble makes
+// it `selectedMessage`; the auto-collapse that follows re-presents with THAT
+// selection. Without StagedBubbleRouting, that reads as a brand-new incoming
+// bubble and tears down + rebuilds the live board, which then replays the
+// move it just watched itself play (the cache commits on send, not insert).
+// Pure logic, no MSConversation/MSMessage needed.
+import XCTest
+@testable import FoolishKit
+
+final class StagedBubbleRoutingTests: XCTestCase {
+
+    private func url(_ payload: Data) -> URL { MessageEnvelope.link(payload: payload) }
+
+    /// The exact note-11 sequence: my own staged bubble becomes selected.
+    /// Must reuse `lastPayloadURL` (the URL the live board is already keyed
+    /// on) rather than route the staged bubble's own URL, which would look
+    /// like a fresh selection and rebuild the board.
+    func testOwnStagedBubbleReusesTheLastPayloadURL() {
+        let openedWith = Data([1, 2, 3, 4])
+        let justStaged = Data([9, 9, 9, 9, 9])   // my move, sealed into a new chain
+        let resolved = StagedBubbleRouting.resolvedPayloadURL(
+            selectedURL: url(justStaged), startingNewGame: false,
+            pendingStage: (payload: justStaged, mySeat: 0),
+            lastPayloadURL: url(openedWith))
+        XCTAssertEqual(resolved, url(openedWith),
+                       "must keep presenting the URL the live board is already on")
+        XCTAssertNotEqual(resolved, url(justStaged),
+                          "must NOT route the staged bubble's own URL back in as if new")
+    }
+
+    /// A genuinely different incoming bubble (an opponent's real reply, or a
+    /// human tap on some other bubble) must still route normally — the fix
+    /// must not swallow every selection while a stage is pending.
+    func testADifferentIncomingBubbleIsNotSwallowed() {
+        let staged = Data([9, 9, 9, 9, 9])
+        let opponentsReply = Data([7, 7, 7])
+        let resolved = StagedBubbleRouting.resolvedPayloadURL(
+            selectedURL: url(opponentsReply), startingNewGame: false,
+            pendingStage: (payload: staged, mySeat: 0),
+            lastPayloadURL: url(Data([1, 2, 3])))
+        XCTAssertEqual(resolved, url(opponentsReply), "a genuinely new bubble must still route")
+    }
+
+    /// No stage pending: the selection always passes through untouched,
+    /// pending or not — this is the ordinary (non-note-11) path.
+    func testNoPendingStagePassesSelectionThrough() {
+        let selected = Data([4, 4, 4])
+        let resolved = StagedBubbleRouting.resolvedPayloadURL(
+            selectedURL: url(selected), startingNewGame: false,
+            pendingStage: nil, lastPayloadURL: nil)
+        XCTAssertEqual(resolved, url(selected))
+    }
+
+    /// New game always wins, regardless of what's selected or pending — the
+    /// existing (pre-note-11) contract, unaffected by this fix.
+    func testStartingNewGameAlwaysResolvesToNil() {
+        let staged = Data([9, 9, 9])
+        let resolved = StagedBubbleRouting.resolvedPayloadURL(
+            selectedURL: url(staged), startingNewGame: true,
+            pendingStage: (payload: staged, mySeat: 0), lastPayloadURL: url(staged))
+        XCTAssertNil(resolved)
+    }
+
+    /// No selection at all (extension opened with nothing tapped): nil in,
+    /// nil out, pending or not.
+    func testNoSelectionResolvesToNil() {
+        let resolved = StagedBubbleRouting.resolvedPayloadURL(
+            selectedURL: nil, startingNewGame: false,
+            pendingStage: (payload: Data([1]), mySeat: 0), lastPayloadURL: url(Data([2])))
+        XCTAssertNil(resolved)
+    }
+}

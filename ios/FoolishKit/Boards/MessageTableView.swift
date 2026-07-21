@@ -609,9 +609,14 @@ public struct MessageTableView: View {
         }
     }
 
-    // game.h LOG_* (packed replay step types) — shared by every helper below.
-    private static let LOG_ATTACK = 1, LOG_COVER = 2, LOG_PASS = 3, LOG_PICKUP = 4
-    private static let LOG_DISCARD = 6, LOG_DRAW = 9
+    // game.h LOG_* (packed replay step types) — shared by every helper below
+    // AND by MessageTurnController (which resolves the open-delta window
+    // BEFORE this view's first paint, notes 6/12) via ReplayDelta.swift, the
+    // single source of truth for these values; aliased here so the many
+    // `Self.LOG_*` call sites below didn't all need touching.
+    private static let LOG_ATTACK = ReplayLogType.attack, LOG_COVER = ReplayLogType.cover
+    private static let LOG_PASS = ReplayLogType.pass, LOG_PICKUP = ReplayLogType.pickup
+    private static let LOG_DISCARD = ReplayLogType.discard, LOG_DRAW = ReplayLogType.draw
 
     /// The last bout's refill draws in kernel order: LOG_DRAW (type 9) records after
     /// the most recent discard/pickup, each one player's draw (seat + card count).
@@ -624,45 +629,6 @@ public struct MessageTableView: View {
         return replay.logs[start...]
             .filter { $0.type == LOG_DRAW }
             .map { (seat: $0.seat, count: max($0.pairs.count, 1)) }
-    }
-
-    /// note 4/9/38: the slice of the replay stream to animate on open. Prefers
-    /// `openReplayFromLog` (the controller's diff against the previously-cached
-    /// chain, notes 4/9); falls back — a fresh cache, or a genesis-adjacent
-    /// open with nothing to diff against — to a heuristic keyed on whether the
-    /// table is currently empty:
-    ///   - Empty (a bout just ended): from the last LOG_DISCARD/LOG_PICKUP
-    ///     onward — the SAME "since the last clearing event" window
-    ///     `lastBoutDraws` already uses for the interactive sequence, but
-    ///     INCLUDING that clearing event itself so the pickup/discard flight
-    ///     replays too (note 4).
-    ///   - Non-empty (mid-bout): the trailing run of CONSECUTIVE same-seat
-    ///     ATTACK/COVER/PASS entries. A triple cover is 3 separate LOG_COVER
-    ///     entries, one per card (game.c handle_cover logs one GameLog PER
-    ///     cover card), so the old `logs.last(where:)` only ever replayed the
-    ///     rightmost one (note 38); a pass is its own LOG_PASS type, so
-    ///     hunting for the last ATTACK found the PREVIOUS attacker's cards
-    ///     from the wrong seat (note 9).
-    private static func openReplayDelta(_ replay: DecodedReplay, from: Int?, battlesEmpty: Bool) -> [ReplayLog] {
-        if let from, from >= 0, from < replay.logs.count {
-            return Array(replay.logs[from...])
-        }
-        if battlesEmpty {
-            for i in stride(from: replay.logs.count - 1, through: 0, by: -1)
-            where replay.logs[i].type == LOG_DISCARD || replay.logs[i].type == LOG_PICKUP {
-                return Array(replay.logs[i...])
-            }
-            return []
-        }
-        let placing: Set<Int> = [LOG_ATTACK, LOG_COVER, LOG_PASS]
-        guard let lastIdx = replay.logs.indices.last(where: { placing.contains(replay.logs[$0].type) })
-        else { return [] }
-        let seat = replay.logs[lastIdx].seat
-        var start = lastIdx
-        while start > 0, placing.contains(replay.logs[start - 1].type), replay.logs[start - 1].seat == seat {
-            start -= 1
-        }
-        return Array(replay.logs[start...lastIdx])
     }
 
     /// The count effect of ONE delta-replay log entry: how many cards moved
@@ -813,27 +779,34 @@ public struct MessageTableView: View {
             return
         }
 
-        // note 36: pre-hide, SYNCHRONOUSLY (before the Task below even
-        // starts), every card this delta will fly into my hand — the
-        // controller already computed the exact set at adopt time (my hand in
-        // the previously-cached chain vs now), so this closes the gap where
-        // the hand would otherwise render the arrived card for a beat before
-        // its flight hides it.
-        let myNewCardIds = Set(controller.openReplayNewHandCards.map(\.identity))
-        if !myNewCardIds.isEmpty { animator.preHide(myNewCardIds) }
+        // notes 6/12: pre-hide EVERY card identity this open's delta will
+        // touch — my own hand's new cards (draw/pickup, note 36) AND every
+        // attack/cover/pass card the delta lands on the table — all
+        // SYNCHRONOUSLY, before this function returns to the `onChange`
+        // callback that invoked it, i.e. before `boardContent`'s first real
+        // paint. `controller` already resolved the whole delta in `begin()`
+        // (`openReplayEvents`/`openReplayTouchedCardIds`) — that's what makes
+        // this possible without an async recompute here. The OLD code could
+        // only widen ITS OWN hidden set (myNewCardIds only, never battle
+        // cards) from inside the Task below, after a 120ms sleep and an
+        // awaited kernel call — by which point SwiftUI had already painted
+        // the battle grid once with the cover already landed and rotated
+        // (`FBattleGrid.pair`'s `coverLanded` reads `!hidden.contains`): the
+        // "starts rotated, un-rotates, re-rotates" bug (note 6), and "every
+        // cover in a multi-cover shows landed at once, then animates one at a
+        // time" (note 12).
+        let touchedIds = controller.openReplayTouchedCardIds
+        if !touchedIds.isEmpty { animator.preHide(touchedIds) }
 
         Task {
             BoardAnimator.sequenceDepth += 1
             defer { BoardAnimator.sequenceDepth -= 1; animator.clearPreHidden() }
             // Let the battle slots (and everything else) render + publish
-            // their rects first.
+            // their rects first — the event list itself no longer needs this
+            // wait: it's `controller.openReplayEvents`, already resolved in
+            // `begin()`, not recomputed here.
             try? await Task.sleep(nanoseconds: 120_000_000)
-            guard let replay = await MessageKernel.shared.residentReplay() else {
-                if view.isOver { showResults = true }
-                return
-            }
-            let events = Self.openReplayDelta(replay, from: controller.openReplayFromLog,
-                                              battlesEmpty: view.battles.isEmpty)
+            let events = controller.openReplayEvents
             guard !events.isEmpty else {
                 if view.isOver { showResults = true }   // note 39c: nothing to animate
                 return

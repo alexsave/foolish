@@ -38,7 +38,14 @@ public final class MessageTurnController: ObservableObject {
     /// note 4/9/38: the log index in the just-adopted chain's replay stream
     /// where the DELTA since the previously-cached chain begins — nil on a
     /// genesis game, a fresh/empty cache, or when the raw hint didn't check
-    /// out (>= the base's own log count). Computed once in `begin()`.
+    /// out (> the base's own log count — a genuine anomaly, the cached chain
+    /// somehow has MORE logs than the one we just adopted). Note 13: `==` the
+    /// base's own log count is NOT collapsed to nil here (it used to be) —
+    /// it means "the cached chain and the adopted chain match exactly, I've
+    /// already replayed everything", a real, empty delta, which is different
+    /// from "no cached chain at all" (the nil case, which falls back to
+    /// `openReplayDelta`'s structural heuristic in ReplayDelta.swift).
+    /// Computed once in `begin()`.
     public private(set) var openReplayFromLog: Int?
     /// note 36: the real cards that ended up in MY hand purely because of
     /// this delta (a draw, or a pickup that landed in my hand) — found by
@@ -48,6 +55,31 @@ public final class MessageTurnController: ObservableObject {
     /// publicly played, even from the seat that holds them — see
     /// `residentReplay()`'s doc), so this view-diff is the only clean source.
     public private(set) var openReplayNewHandCards: [Card] = []
+    /// notes 6/12: the RESOLVED open-delta replay window — the exact log
+    /// slice `MessageTableView.replayLastMoveOnOpen` steps through —
+    /// computed HERE, synchronously as part of `begin()`, instead of lazily
+    /// inside that replay's own Task after a 120ms sleep. The timing is the
+    /// whole point: the view needs every card identity this window touches
+    /// (attacks/covers/passes landing on the table, not just cards headed
+    /// into my own hand) pre-hidden BEFORE `controller.view`'s first SwiftUI
+    /// paint, or a cover renders already-landed-and-rotated for a beat before
+    /// its flight "un-rotates" it and lands it again. Empty on a genesis game
+    /// (no replay stream to diff against — that path pre-hides straight off
+    /// `view.me.hand` instead) or when nothing changed (note 13).
+    public private(set) var openReplayEvents: [ReplayLog] = []
+    /// notes 6/12: every REAL card identity `openReplayEvents` will land on
+    /// the table this open (attacks, covers, cards transferred by a pass) —
+    /// the battle-side counterpart to `openReplayNewHandCards` (my hand).
+    /// `MessageTableView.replayLastMoveOnOpen` pre-hides the union of both,
+    /// synchronously, before the board's first paint.
+    public var openReplayTouchedCardIds: Set<String> {
+        var ids = Set(openReplayNewHandCards.map(\.identity))
+        let placing: Set<Int> = [ReplayLogType.attack, ReplayLogType.cover, ReplayLogType.pass]
+        for ev in openReplayEvents where placing.contains(ev.type) {
+            for pair in ev.pairs where !pair.primary.isHidden { ids.insert(pair.primary.identity) }
+        }
+        return ids
+    }
 
     public let mySeat: Int
     public let names: [Int: String]
@@ -156,7 +188,10 @@ public final class MessageTurnController: ObservableObject {
         await rebuildBase()
         if let f = fromLog {
             let total = await kernel.residentReplay()?.logs.count ?? 0
-            openReplayFromLog = (f >= 0 && f < total) ? f : nil
+            // note 13: `<=`, not `<` — `f == total` ("nothing new since I
+            // last cached this game") is a real, meaningful delta of zero,
+            // not the same as "no info" (see `openReplayFromLog`'s doc).
+            openReplayFromLog = (f >= 0 && f <= total) ? f : nil
         }
         pending = []
         for m in preStaged {              // §7.4 survivors, already validated by the rebase
@@ -170,6 +205,12 @@ public final class MessageTurnController: ObservableObject {
         // re-applications, never something to animate as "arrived."
         if openReplayFromLog != nil {
             openReplayNewHandCards = (view?.me?.hand ?? []).filter { !prevHandIds.contains($0.identity) }
+        }
+        // notes 6/12: resolve the delta window itself here too, not lazily —
+        // see `openReplayEvents`'s doc for why the timing matters.
+        if let replay = await kernel.residentReplay() {
+            openReplayEvents = openReplayDelta(replay, from: openReplayFromLog,
+                                               battlesEmpty: view?.battles.isEmpty ?? true)
         }
         ready = true
     }

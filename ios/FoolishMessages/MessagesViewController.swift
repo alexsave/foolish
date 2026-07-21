@@ -29,6 +29,12 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// The payload we last staged (via `insert`), awaiting the human's send/cancel
     /// (§7.6). Committed to the cache on didStartSending, dropped on cancel.
     private var pendingStage: (payload: Data, mySeat: Int)?
+    /// note 11: the `payloadURL` the last `present()` call actually used —
+    /// what `StagedBubbleRouting.resolvedPayloadURL` falls back to when the
+    /// newly-selected message turns out to be our OWN just-staged bubble
+    /// (see that type's doc), so the live GameSurface's `loadKey` doesn't
+    /// change and the board isn't torn down and rebuilt out from under itself.
+    private var lastPayloadURL: URL?
 
     // MARK: - Lifecycle (§11.1)
 
@@ -73,6 +79,17 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     private func present(_ conversation: MSConversation, style: MSMessagesAppPresentationStyle) {
         let selected = conversation.selectedMessage
+        // note 11: `conversation.insert` (in `stage`, below) makes the
+        // just-staged bubble `selectedMessage`; the auto-collapse that
+        // follows fires `willTransition` -> here with THAT bubble now
+        // selected. Route it through `StagedBubbleRouting` so a match against
+        // `pendingStage` reuses `lastPayloadURL` instead of tearing down the
+        // live board to "adopt" the move it just watched itself play — see
+        // that type's doc for the full chain.
+        let payloadURL = StagedBubbleRouting.resolvedPayloadURL(
+            selectedURL: selected?.url, startingNewGame: startingNewGame,
+            pendingStage: pendingStage, lastPayloadURL: lastPayloadURL)
+        lastPayloadURL = payloadURL
         // §6.2 S1's exact half: did THIS device send the tapped bubble? Only the
         // extension can answer — the participant UUIDs never travel in the payload.
         let senderIsLocal = selected?.senderParticipantIdentifier != nil
@@ -95,7 +112,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         let chatKey = conversation.localParticipantIdentifier.uuidString
 
         let root = MessagesRootView(
-            payloadURL: startingNewGame ? nil : selected?.url,
+            payloadURL: payloadURL,
             style: style == .compact ? .compact : .expanded,   // map onto FoolishKit's enum
             senderIsLocal: senderIsLocal,
             startNewGame: startingNewGame,
@@ -208,10 +225,22 @@ final class MessagesViewController: MSMessagesAppViewController {
         // no send control of its own — Send lives in the compose area — so once a
         // move is staged, collapse to compact instead of making them drag down. To
         // add more cards (throw-ins, a second cover) they just re-open the game;
-        // the staged chain survives the style change (GameSurface @State). Hold so
-        // the move's animation plays out (card flight; a bout-ending good adds a
-        // discard + draws), then a ~500ms rest so the result reads — not a flicker.
-        try? await Task.sleep(nanoseconds: 900_000_000)
+        // the staged chain survives the style change (GameSurface @State).
+        //
+        // note 8: this USED TO be a flat 900ms sleep, tuned for a single card's
+        // spring settle — a bout-ending "good" plays a whole discard+draw
+        // cascade (one step per drawing player) that routinely runs longer,
+        // and got guillotined mid-flight. A short lead-in first (the
+        // `BoardAnimator.sequenceDepth` increment for such a cascade happens
+        // inside a Task the SwiftUI `onChange` callback schedules, which can
+        // lag a beat behind this function starting, so checking `isSequencing`
+        // with zero lead-in would sometimes race it and see false); THEN
+        // `waitForSettle()` for however long the real sequence takes (a plain
+        // attack/cover has no sequence at all, so this returns almost at
+        // once); THEN a rest so the settled result reads, not a flicker.
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        await BoardAnimator.waitForSettle()
+        try? await Task.sleep(nanoseconds: 500_000_000)
         requestPresentationStyle(.compact)
     }
 

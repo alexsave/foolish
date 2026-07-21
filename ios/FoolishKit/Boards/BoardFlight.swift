@@ -82,11 +82,37 @@ public typealias FlightStep = [Flight]
 /// long-lived event loop).
 @MainActor
 public final class BoardAnimator: ObservableObject {
-    /// DEV (harness auto-game): non-zero while a board is mid multi-step bout-end
-    /// sequence (discard/pickup + each player's draw), so the harness waits for the
-    /// whole sequence to finish before switching players. Not used in the real ext.
+    /// Non-zero while a board is mid multi-step ANIMATED sequence: a bout-end
+    /// cascade (discard/pickup, then each drawing player's refill) or an
+    /// open-delta replay (`MessageTableView.flyBoutEndToDiscard` /
+    /// `replayLastMoveOnOpen`, both wrap their Task in `sequenceDepth += 1` /
+    /// `-= 1`). Originally HARNESS_AUTOGAME-only (it waited on this before
+    /// switching players); note 8 promoted it into the real extension's own
+    /// completion signal too — see `waitForSettle` below, which
+    /// `MessagesViewController.stage` awaits instead of guessing a fixed
+    /// sleep long enough for the longest possible sequence.
     public static var sequenceDepth = 0
     public static var isSequencing: Bool { sequenceDepth > 0 }
+
+    /// note 8: block until no animated sequence is running, instead of a
+    /// caller guessing how long one might take. A plain attack/cover (no
+    /// bout end) never touches `sequenceDepth` at all — matchedGeometry's own
+    /// spring animates it — so this returns almost immediately then; a bout
+    /// end or open-delta replay can run several steps at ~`flightTime` +
+    /// `flightGap` (≈0.55s) each, and this waits out the real total instead
+    /// of a constant tuned for the common short case (the bug an all-players-
+    /// draw sequence used to get cut off mid-flight by, note 8). `timeout`
+    /// bounds the wait: an unbalanced `sequenceDepth` increment (a bug, not a
+    /// real long sequence) must never wedge the caller forever. 8s is
+    /// comfortably above the longest sequence today (an 8-seat bout end: one
+    /// discard/pickup step + up to 7 draw steps, each ≈0.55s, is under 4.5s).
+    public static func waitForSettle(pollInterval: UInt64 = 100_000_000,
+                                     timeout: TimeInterval = 8.0) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while isSequencing, Date() < deadline {
+            try? await Task.sleep(nanoseconds: pollInterval)
+        }
+    }
 
     /// Cards currently in flight (rendered by FlyingCardsLayer). `progress` 0→1
     /// drives the position/scale tween.

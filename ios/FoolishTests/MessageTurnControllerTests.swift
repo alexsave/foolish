@@ -158,6 +158,28 @@ final class MessageTurnControllerTests: XCTestCase {
         XCTAssertEqual(e1.joins.first { $0.seat == 1 }?.name, "Bob", "the joiner named themselves")
     }
 
+    /// note 13 (HARNESS_NOTES_R2): reopening an ALREADY-fully-cached chain
+    /// (`prevPayload` byte-equal to the chain being adopted — GameSurface.adopt
+    /// now passes this through instead of excluding it, see its doc) must
+    /// resolve to an EMPTY open-delta replay window, not fall through to
+    /// MessageTableView's structural heuristic (which has no memory of what it
+    /// already showed and is why the pickup animation used to play "sometimes,
+    /// not always"). ReplayDeltaTests covers the pure `openReplayDelta` half of
+    /// this fix in isolation; this proves the real end-to-end wiring through
+    /// `begin()` off a native-kernel-sealed fixture.
+    func testReopeningAnAlreadyCachedChainResolvesToAnEmptyReplayWindow() async throws {
+        let parentBytes = bytes(fixtureHex)
+        let parent = try await MessageEnvelope.decode(payload: parentBytes, viewer: 0)
+
+        let c = MessageTurnController(parentPayload: parentBytes, parent: parent, mySeat: 0,
+                                      prevPayload: parentBytes)
+        await c.begin()
+        XCTAssertNotNil(c.openReplayFromLog,
+                        "an equal-length cache hit must NOT collapse to nil (note 13)")
+        XCTAssertTrue(c.openReplayEvents.isEmpty, "already fully seen -> nothing left to replay")
+        XCTAssertTrue(c.openReplayTouchedCardIds.isEmpty)
+    }
+
     /// parent8 is the first 8 bytes of the parent digest, zero-padded — the exact
     /// tag the next chain points back with (§7.4).
     func testParent8IsFirstEightDigestBytes() {
