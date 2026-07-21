@@ -1090,3 +1090,9 @@ second in a shared server process.
 - Raw `callgrind.out*` dumps and the two standalone `eval_t2_oracle` /
   `eval_t3_prod` binaries are gitignored (`.gitignore`) — reproduce them
   with the build/run commands above.
+
+This file is CPU hot-path profiling only (callgrind/gprof, single-threaded
+cost attribution). For the server's CONCURRENCY work — per-game locks
+replacing the single global mutex, work-queue thread routing, the Helgrind
+race-freedom gate, and before/after throughput/latency/memory at rising
+connection counts — see [`SERVER_SCALING.md`](SERVER_SCALING.md) ("T2a").

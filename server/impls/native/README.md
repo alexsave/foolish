@@ -56,8 +56,13 @@ make run        # ./foolish_server 8099
 Requires a C compiler + `-framework Accelerate` (macOS; some kernel strategies
 use LAPACK). No external packages — the HTTP/1.1 layer is hand-rolled (a real
 deployment would drop in mongoose/civetweb); auth is an in-memory token map
-(no JWT). Concurrency is thread-per-connection under one global lock
-(single-writer per store op) — enough for a POC.
+(no JWT). Concurrency: a dispatcher (the accept loop) routes one-shot
+requests onto small typed worker pools sharded by game_id, and each game has
+its own lock instead of one process-wide mutex — see
+[`SERVER_SCALING.md`](SERVER_SCALING.md) ("T2a") for the design, the
+Helgrind-clean verdict, and measured throughput/latency/memory vs. the old
+single-global-lock version. Pool sizes are runtime-configurable:
+`./foolish_server 8099 --game-workers=N --meta-workers=N --create-workers=N`.
 
 ## Endpoints
 
@@ -114,8 +119,9 @@ defender's view with the bot's response — all decided by the kernel.
 ## Status / scope
 
 Proof-of-concept. Present: auth, lobby, deal, human + bot moves, masked views,
-continue-to-lobby, basic concurrency, a persistent-connection `/ws` push path
-for the action+state hot loop (see above). Not present (deliberately):
+continue-to-lobby, per-game locking + work-queue thread routing (see
+[`SERVER_SCALING.md`](SERVER_SCALING.md)), a persistent-connection `/ws` push
+path for the action+state hot loop (see above). Not present (deliberately):
 durability (WAL/snapshot — state is RAM-only), broadcasting a game's state to
 every seat's connection when ANY seat moves (`/ws` clients each poll their
 own seat instead — see `foolish_hammer.c`'s ws worker), the packed binary
