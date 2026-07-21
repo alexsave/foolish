@@ -1821,6 +1821,7 @@ typedef struct EConn {
     int wbuf_cap, wlen, woff;
     bool want_epollout;      // whether EPOLLOUT is currently armed in epoll_ctl for this fd
     bool close_after_flush;  // ECONN_ONE_SHOT: close once wbuf fully drains (every one-shot response ends the connection, same as the old `Connection: close`)
+    bool closed;             // econn_close ran: fd shut + unlinked, but free() DEFERRED to end of this epoll batch (see econn_close / econn_drain_dead). Guards against a stale same-batch event re-closing it.
 
     // ECONN_WS fields (unused for ECONN_ONE_SHOT):
     GameSlot *slot;
@@ -1854,6 +1855,7 @@ typedef struct Worker {
     pthread_mutex_t handoff_mtx;
     EConn *handoff_head, *handoff_tail;   // dispatcher-produced, this worker alone consumes (drain_handoff_queue)
     EConn *ws_head;                       // this worker's live /ws connections — single-threaded, no lock (see "Threading" above)
+    EConn *dead_head;                     // econn_close'd this batch, freed by econn_drain_dead at the end of the epoll loop iteration — see econn_close
 } Worker;
 
 static Worker g_workers[MAX_GAME_WORKERS];
@@ -2083,15 +2085,43 @@ static void econn_set_epollout(Worker *w, EConn *ec, bool want) {
     epoll_ctl(w->epfd, EPOLL_CTL_MOD, ec->fd, &ev);
 }
 
+// Shuts a connection's fd and unlinks it, but DEFERS free() to the end of the
+// current epoll batch (econn_drain_dead). Reason: one connection's handler can
+// close another (worker_push_stale fanning a move out to a peer that then hits
+// a write error), and that peer may already have its OWN event queued later in
+// the SAME epoll_wait() batch — freeing it immediately turns that stale event
+// into a use-after-free / double-free (memcheck-confirmed; the crash that
+// aborted the server at a few hundred connections). Instead we mark it closed,
+// unlink it from ws_head, and park it on w->dead_head; the event loop skips any
+// event whose ec is already `closed`, and frees the parked set once the whole
+// batch is drained. Idempotent: a second close (e.g. a stale HUP event) no-ops.
 static void econn_close(Worker *w, EConn *ec) {
+    if (ec->closed) return;
+    ec->closed = true;
     epoll_ctl(w->epfd, EPOLL_CTL_DEL, ec->fd, NULL);
     close(ec->fd);
     if (ec->kind == ECONN_WS) {
         if (ec->prev) ec->prev->next = ec->next; else if (w->ws_head == ec) w->ws_head = ec->next;
         if (ec->next) ec->next->prev = ec->prev;
     }
-    free(ec->wbuf);
-    free(ec);
+    // Reuse `next` as the dead-list link — ec is now off ws_head, and any live
+    // ws_head iterator (worker_push_stale) captured its next pointer before the
+    // close, so overwriting it here is safe.
+    ec->next = w->dead_head;
+    w->dead_head = ec;
+}
+
+// Frees every connection econn_close parked this batch. Called once at the end
+// of each epoll loop iteration, when no events[] entry can reference them.
+static void econn_drain_dead(Worker *w) {
+    EConn *d = w->dead_head;
+    w->dead_head = NULL;
+    while (d) {
+        EConn *nx = d->next;
+        free(d->wbuf);
+        free(d);
+        d = nx;
+    }
 }
 
 // Non-blocking flush of ec->wbuf[woff..wlen). Returns false iff `ec` was
@@ -2200,13 +2230,24 @@ static int econn_push_view(EConn *ec, const unsigned char *apply_in, int apply_l
 }
 
 static void worker_push_stale(Worker *w, GameSlot *game, EConn *skip) {
-    for (EConn *ec = w->ws_head; ec; ec = ec->next) {
+    // `next` MUST be captured before econn_try_flush below: on a real write
+    // error that call does econn_close(ec), which frees ec AND unlinks it from
+    // ws_head. Advancing the loop with `ec = ec->next` after that is a
+    // use-after-free (it reads the freed node's link) — and under load enough
+    // connections error out at once that it corrupts the list and cascades into
+    // a double-free / abort ("free(): invalid pointer"). econn_close only frees
+    // ec itself and re-links its neighbors, so the `next` node captured up front
+    // stays valid. (A plain `continue` does NOT avoid this — the for-loop's own
+    // `ec = ec->next` increment still runs on the freed pointer.)
+    EConn *next;
+    for (EConn *ec = w->ws_head; ec; ec = next) {
+        next = ec->next;
         if (ec == skip) continue;
         if (game && ec->slot != game) continue;
         uint32_t v;
         if (econn_push_view(ec, NULL, 0, /*only_if_stale=*/true, &v, NULL) == 1) {
             ec->last_pushed_version = v;
-            if (!econn_try_flush(w, ec)) continue;   // may have closed ec on a real write error — nothing left to do for it
+            if (!econn_try_flush(w, ec)) continue;   // ec is now freed; `next` was saved above
         }
     }
 }
@@ -2314,6 +2355,7 @@ static void *epoll_worker_main(void *arg) {
                 continue;
             }
             EConn *ec = events[i].data.ptr;
+            if (ec->closed) continue;   // a handler earlier in THIS batch already closed it (deferred-freed) — its event is stale, skip it
             uint32_t evb = events[i].events;
             if (evb & (EPOLLHUP | EPOLLERR)) { econn_close(w, ec); continue; }
             if (evb & EPOLLOUT) { if (!econn_try_flush(w, ec)) continue; }
@@ -2323,6 +2365,7 @@ static void *epoll_worker_main(void *arg) {
             drain_handoff_queue(w);
             worker_push_stale(w, NULL, NULL);   // don't know which game(s) a bot_thread notification was for — check them all
         }
+        econn_drain_dead(w);   // free everything closed during this batch, now that no events[] entry can still reference it
     }
     return NULL;
 }
