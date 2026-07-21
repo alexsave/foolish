@@ -4,15 +4,16 @@
 // server API is language-agnostic: same game, no TypeScript, no edge runtime,
 // no Postgres. A long-lived process holds every game as a `Game` struct in RAM
 // (the "in-memory authoritative state" of docs/ARCHITECTURE_AS_A_PATTERN.md),
-// guarded by one mutex, and the C KERNEL drives all of it — this file only
-// starts a socket, routes requests, and hands them to the kernel. Every rule
-// (deal, legality, apply, refill, who-is-the-fool, the masked per-seat view)
-// is c/src/*.c, exactly as the wasm/edge build uses it. Swap Postgres for a
-// hash table and the edge runtime for a thread pool and the game is unchanged.
+// guarded by per-game locks (see "Locking" below), and the C KERNEL drives all
+// of it — this file only starts a socket, routes requests, and hands them to
+// the kernel. Every rule (deal, legality, apply, refill, who-is-the-fool, the
+// masked per-seat view) is c/src/*.c, exactly as the wasm/edge build uses it.
+// Swap Postgres for a hash table and the edge runtime for a thread pool and
+// the game is unchanged.
 //
 // POC scope: HTTP/1.1 (hand-rolled — a real deployment would drop in mongoose
-// or civetweb), token auth in a memory map (no JWT), thread-per-connection with
-// a global lock (single-writer per store op). Endpoints mirror the contract:
+// or civetweb), token auth in a memory map (no JWT). Endpoints mirror the
+// contract:
 //   POST /auth/signup {username}         -> {token,user_id}
 //   POST /auth/signin {username}         -> {token,user_id}
 //   POST /create            (bearer)     -> {game_id}
@@ -31,6 +32,14 @@
 //     of thread-per-REQUEST amortizes pthread_create's cost (a fresh
 //     thread's zeroed stack/TLS was 85.8% of instructions under load,
 //     T1) over a client's entire session instead of paying it per move.
+//
+// Concurrency ("T2a", PROFILE_HOTPATH.md / SERVER_SCALING.md): a dispatcher
+// (the accept loop) reads + parses each request and routes it either to a
+// dedicated per-connection thread (a /ws upgrade — still long-lived, see
+// ws_conn_thread) or onto a small typed work-queue pool sharded by game_id
+// (every other endpoint — see "Work-queue routing" below). Per-game state is
+// guarded by that GameSlot's own lock, not one process-wide mutex — see
+// "Locking" below for the two-tier scheme and its lock-order invariant.
 
 #define _GNU_SOURCE
 #include <arpa/inet.h>
@@ -38,7 +47,9 @@
 #include <netinet/tcp.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -56,7 +67,7 @@
 #include "ws.h"
 
 // --------------------------------------------------------------------------
-// In-memory store (the "fake DB"): games + users, one global lock.
+// In-memory store (the "fake DB"): games + users, per-game locks.
 // --------------------------------------------------------------------------
 
 #define MAX_GAMES 256
@@ -87,9 +98,16 @@ typedef struct {
     char seat_user[MAX_PLAYERS][ID_LEN + 1];  // "" for a bot
     char seat_name[MAX_PLAYERS][24];
     bool seat_ready[MAX_PLAYERS];             // lobby "hit ready" — host state; kind (human/bot) lives in the kernel's strategy_key
+    // Per-game lock (T2a). Guards EVERYTHING below this point plus the
+    // `game` and lobby-roster fields above: this slot's whole game state,
+    // once it is reachable via g_game_ht. See the "Locking" block below
+    // g_registry_lock's declaration for the two-tier scheme and the lock
+    // order invariant every handler in this file follows.
+    pthread_mutex_t lock;
     // One per-game trampoline thread paces the bots (see bot_thread). It waits on
     // `cond` when a human is owed; /action signals it. `bot_running` guards
-    // against spawning a second driver.
+    // against spawning a second driver. Both now pair with `lock` (above),
+    // not a process-wide mutex.
     pthread_cond_t cond;
     bool bot_running;
     // PROFILE_HOTPATH.md "T1c": under WS+legal load, view.c:state_put was the
@@ -111,18 +129,126 @@ typedef struct {
     uint32_t view_cache_version[MAX_PLAYERS];
 } GameSlot;
 
+// --------------------------------------------------------------------------
+// STAGE 2 SEAM: SQLite WAL write-behind persistence + crash recovery. Call
+// under `s->lock` (see GameSlot.lock) at every point this slot's Game or
+// lobby roster could have changed — the exact same events that bump
+// `s->version` today (a human move via /action or /ws, a lobby transition
+// in /meta, a bot_drive cycle that applied >=1 action or ended the game, or
+// a fresh /create). A no-op today; stage 2 wires this to push (game_id,
+// version, a serialized snapshot or WAL record) onto a persistence thread's
+// own write-behind queue — it must never block the caller on disk I/O, so
+// it should only ever enqueue, the same way h_action/h_ws never block on
+// bot_thread's work today.
+// --------------------------------------------------------------------------
+static void game_mark_dirty(GameSlot *s) { (void)s; }
+
 static User     g_users[MAX_USERS];
 static GameSlot g_games[MAX_GAMES];
-static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
-static unsigned long g_seq = 0;
+
+// --------------------------------------------------------------------------
+// Locking (T2a — replaces the single global g_lock). Two tiers:
+//
+//   g_registry_lock — small and SHORT-HELD. Guards ONLY: g_users[] (signup /
+//     token lookup) + g_token_ht, game-slot allocation (claiming a free
+//     g_games[] entry) + g_game_ht (game_id -> GameSlot*). Never held during
+//     game work, bot work, or socket I/O.
+//
+//   GameSlot.lock (per game) — guards everything else about ONE game: its
+//     `Game` struct, lobby roster (seat_user/seat_name/seat_ready/owner),
+//     cond/bot_running, and the per-seat view_cache.
+//
+//   g_kernel_lock — a THIRD lock, small and narrowly scoped, held ONLY around
+//     the specific kernel calls that mutate a Game or drive bots (awire_apply,
+//     bot_drive, game_seat_and_deal — see each call site's comment). This one
+//     is NOT optional and is not a cautious extra: the kernel (c/src, read-
+//     only to us — see this file's header) keeps process-wide, non-thread-
+//     local scratch state across calls that only a single external caller was
+//     ever assumed to touch at a time. `bot_drive.c` says so directly —
+//     "`g_scratch` ... is safe: bot_drive is never re-entered" — and
+//     `game.c`'s `engine_last_reject` (the reject-reason out-param every
+//     handle_* writes) and `engine_snap_hook` (saved/restored by bot_drive's
+//     `choose_move`) are the same story. Under the OLD single global g_lock
+//     this was safe by accident (the whole server was one critical section,
+//     so no two kernel-mutating calls ever ran concurrently); per-game locks
+//     alone reintroduce exactly the concurrent-mutation-across-DIFFERENT-
+//     games case those kernel statics were never built for. Confirmed by a
+//     Helgrind run on an early per-game-lock-only build: a genuine write/
+//     write race on `engine_last_reject` between two games' threads (see
+//     SERVER_SCALING.md "T2a" for the report and the source audit that found
+//     the rest). g_kernel_lock is the honest fix, not a workaround: it does
+//     NOT serialize state reads (state_put/state_put_cached never touch
+//     these statics — confirmed by inspection, so h_state/h_status/WS polls
+//     stay fully per-game-lock-parallel), only the actual kernel writes.
+//
+// LOCK ORDER (deadlock-freedom): registry, then game, then kernel — ALWAYS,
+// and never the reverse at any step. Every handler below that needs the
+// registry takes g_registry_lock, finds the User*/GameSlot*, takes the
+// GameSlot's own lock, THEN releases g_registry_lock (never re-acquired
+// while any GameSlot.lock is held). g_kernel_lock, when needed, is taken
+// LAST — only while already holding the relevant GameSlot.lock — held for
+// just the kernel call, and released before anything else; no handler here
+// ever holds two GameSlot locks, or acquires g_registry_lock or a GameSlot
+// lock while already holding g_kernel_lock. bot_thread and the /ws dedicated
+// connection thread (ws_conn_thread) follow the same rule: each only ever
+// holds its own game's lock (plus g_kernel_lock, innermost, around its
+// kernel call) — neither touches g_registry_lock after its initial
+// (game_id -> GameSlot*) lookup.
+// --------------------------------------------------------------------------
+static pthread_mutex_t g_registry_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t g_kernel_lock = PTHREAD_MUTEX_INITIALIZER;
+// g_seq: a monotonic counter mixed into gen_id() (registry-guarded — every
+// caller holds g_registry_lock) AND read directly by h_meta's "start" branch
+// to help season the deal seed (which runs under a GameSlot lock, not the
+// registry lock — a Helgrind-caught race in an earlier build of this file).
+// Rather than invent a case where the lock order above would need registry-
+// while-holding-game (forbidden), it's simplest and correct to make the
+// counter itself atomic and drop the lock story entirely — it has no other
+// invariant to protect, just "some number that goes up."
+static atomic_ulong g_seq = 0;
+
+// --------------------------------------------------------------------------
+// STAGE 3 SEAM: OpenSSL TLS (WSS/HTTPS). Every plain-HTTP socket byte in
+// this file funnels through io_read/io_write below (ws.c's ws_read_full /
+// ws_write_full / ws_fill are the equivalent seam for the WebSocket path —
+// see ws.c's header comment). Swapping TCP for TLS means replacing these
+// two bodies (and ws.c's) with SSL_read()/SSL_write() against a
+// per-connection SSL*, threaded through wherever a bare `fd` is passed
+// today (e.g. a small `Conn { int fd; SSL *ssl; }` in place of `int`) —
+// nothing above this layer inspects the fd directly. The one non-uniform
+// spot: ws_send_frame's unmasked server path uses writev() to send a
+// header+payload in one syscall (ws.c); OpenSSL has no vector write, so
+// stage 3 will need to either concatenate into one buffer there or buffer
+// through a BIO — everything else is a drop-in swap.
+// --------------------------------------------------------------------------
+static ssize_t io_read(int fd, void *buf, size_t n)  { return read(fd, buf, n); }
+static ssize_t io_write(int fd, const void *buf, size_t n) { return write(fd, buf, n); }
 
 // --------------------------------------------------------------------------
 // Small utilities
 // --------------------------------------------------------------------------
 
+// POSIX doesn't guarantee libc rand() is thread-safe (glibc's implementation
+// shares unlocked global state across callers), and every worker-pool size
+// in this file (game/meta/create) is now runtime-configurable — see "Work-
+// queue thread routing" below — so no call site here gets to assume it's the
+// only thread reaching it. next_rand() gives every thread its own rand_r
+// state instead: seeded once per thread from the clock + thread id, no lock
+// needed because nothing is shared.
+static _Thread_local unsigned int t_rand_seed;
+static _Thread_local bool t_rand_seeded = false;
+static unsigned int next_rand(void) {
+    if (!t_rand_seeded) {
+        t_rand_seed = (unsigned int)((uintptr_t)pthread_self() ^ (uintptr_t)time(NULL) ^ (uintptr_t)getpid());
+        t_rand_seeded = true;
+    }
+    return (unsigned int)rand_r(&t_rand_seed);
+}
+
 static void gen_id(char *out, int n) {
     static const char hex[] = "0123456789abcdef";
-    unsigned long v = (++g_seq) ^ ((unsigned long)rand() << 8) ^ (unsigned long)time(NULL);
+    unsigned long v = (atomic_fetch_add_explicit(&g_seq, 1, memory_order_relaxed) + 1)
+                       ^ ((unsigned long)next_rand() << 8) ^ (unsigned long)time(NULL);
     for (int i = 0; i < n; i++) { out[i] = hex[v & 0xf]; v = v * 6364136223846793005UL + 1442695040888963407UL; v >>= 3; }
     out[n] = 0;
 }
@@ -149,7 +275,8 @@ static bool json_str(const char *body, const char *key, char *out, int cap) {
 // below 1.0 load factor for MAX_USERS/MAX_GAMES, so no growth/tombstone
 // logic is needed). A stale slot (e.g. after h_signup mints a fresh token
 // for an existing username, orphaning the old token's slot) is harmless: the
-// final `strcmp` against the LIVE field still rejects it.
+// final `strcmp` against the LIVE field still rejects it. Both tables are
+// guarded by g_registry_lock (see "Locking" above).
 #define TOKEN_HT_SIZE 1024   // power of two, > 2x MAX_USERS
 #define GAME_HT_SIZE   512   // power of two, > 2x MAX_GAMES
 
@@ -173,6 +300,7 @@ static void game_ht_insert(GameSlot *s) {
     g_game_ht[h] = s;
 }
 
+// Both lookups below: caller MUST hold g_registry_lock.
 static User *user_by_token(const char *token) {
     if (!token || !*token) return NULL;
     unsigned long h = hash_str(token) & (TOKEN_HT_SIZE - 1);
@@ -197,9 +325,10 @@ static GameSlot *game_by_id(const char *id) {
 }
 // Whether a seat is a bot: the kernel's own per-seat fact now (strategy_key),
 // not a server-side is_ai array. A human seat is STRATEGY_KEY_HUMAN; a bot holds
-// its roster index.
+// its roster index. Caller MUST hold `s`'s own lock (reads s->game).
 static bool seat_is_bot(const Game *g, int i) { return g->players[i].strategy_key != STRATEGY_KEY_HUMAN; }
 
+// Caller MUST hold `s`'s own lock (reads s->game and s->seat_user).
 static int seat_of(GameSlot *s, const char *user_id) {
     for (int i = 0; i < s->game.num_players; i++)
         if (!seat_is_bot(&s->game, i) && strcmp(s->seat_user[i], user_id) == 0) return i;
@@ -213,25 +342,34 @@ static int seat_of(GameSlot *s, const char *user_id) {
 // delay value (bot_drive + bot_pacing_ms); the host owns how it waits. The
 // `Game` struct IS the continuation, so "resume" is just the next bot_drive.
 //
-// The lock is held while touching the game and RELEASED during the pacing sleep,
-// so bots think + throw in over time while /action and /state keep serving. When
-// no bot can act (a human is owed) the thread waits on `cond` until /action
-// signals it.
+// The lock is `s->lock` — this game's own, not a process-wide one (T2a) — held
+// while touching the game and RELEASED during the pacing sleep, so bots think
+// + throw in over time while other requests for OTHER games (and, thanks to
+// the per-game lock, even other requests for THIS game between cycles) keep
+// serving. When no bot can act (a human is owed) the thread waits on `cond`
+// until /action or /ws signals it — pairing the wait with `s->lock`, same as
+// every other access to this slot.
 static void *bot_thread(void *arg) {
     GameSlot *s = arg;
-    pthread_mutex_lock(&g_lock);
+    pthread_mutex_lock(&s->lock);
     while (s->used && s->game.status == GAME_STATUS_PLAYING) {
-        uint32_t hmask = game_human_mask(&s->game);   // the kernel's own human-seat mask
+        uint32_t hmask = game_human_mask(&s->game);   // pure per-Game field read — no kernel lock needed
         BotDriveOut drv;
+        // g_kernel_lock, innermost (see "Locking" above): bot_drive touches
+        // bot_drive.c's process-wide `g_scratch` and, through apply_move/
+        // choose_move, engine_last_reject + engine_snap_hook — none of them
+        // safe to touch from more than one game's thread at a time.
+        pthread_mutex_lock(&g_kernel_lock);
         bot_drive(&s->game, hmask, BOT_DRIVE_MAX_ACTIONS, 0, 0, &drv);   // ONE cycle, then returns
+        pthread_mutex_unlock(&g_kernel_lock);
         // A bot's move (or the game ending) changes the board exactly like a
         // human's /action does — the /ws state cache must not stay stale
         // just because no HTTP handler touched this slot this time.
-        if (drv.n > 0 || drv.ended >= 0) s->version++;
+        if (drv.n > 0 || drv.ended >= 0) { s->version++; game_mark_dirty(s); }
 
         if (drv.ended >= 0) break;   // the kernel already flipped g->status to GAME_OVER
         if (drv.stop == BOT_STOP_NO_ELIGIBLE) {              // a human's move is owed
-            pthread_cond_wait(&s->cond, &g_lock);            // sleep until /action wakes us
+            pthread_cond_wait(&s->cond, &s->lock);            // sleep until /action or /ws wakes us
             continue;
         }
 
@@ -239,17 +377,19 @@ static void *bot_thread(void *arg) {
         // loop and the sleep (the trampoline). Lock released while we wait.
         int delay = bot_cycle_delay_ms(&s->game, hmask, &drv);
         if (delay > 0) {
-            pthread_mutex_unlock(&g_lock);
+            pthread_mutex_unlock(&s->lock);
             usleep((useconds_t)delay * 1000);
-            pthread_mutex_lock(&g_lock);
+            pthread_mutex_lock(&s->lock);
         }
     }
     s->bot_running = false;
-    pthread_mutex_unlock(&g_lock);
+    pthread_mutex_unlock(&s->lock);
     return NULL;
 }
 
-// Spawn the game-loop for a freshly dealt game (idempotent).
+// Spawn the game-loop for a freshly dealt game (idempotent). Caller MUST
+// hold s->lock: bot_thread's very first action is to lock it too, so this
+// just races the parent's own unlock (harmless — see bot_thread's doc).
 static void start_bot_loop(GameSlot *s) {
     if (s->bot_running) return;
     s->bot_running = true;
@@ -356,6 +496,37 @@ static void parse_request_line_and_headers(char *buf, char *hdr_end, Req *r) {
     r->is_ws_upgrade = saw_upgrade_websocket && saw_connection_upgrade && r->ws_key[0];
 }
 
+// Reads a full HTTP request (headers, then body up to Content-Length) off
+// `fd` into caller-owned `buf` (>= cap bytes), and parses it into `r`. `r->
+// body`/`r->body_len` end up pointing INTO `buf` — the caller must keep
+// `buf` alive for as long as `r` is used (see WorkItem/WsSpawnArg below,
+// which both carry the buffer alongside the parsed Req for exactly this
+// reason). Returns false on a malformed/empty request (caller should just
+// close the fd and free buf).
+#define REQ_BUF_CAP (1 << 16)
+static bool read_and_parse_request(int fd, char *buf, int cap, Req *r) {
+    int total = 0, n;
+    char *hdr_end = NULL;
+    while ((n = (int)io_read(fd, buf + total, (size_t)(cap - 1 - total))) > 0) {
+        total += n; buf[total] = 0;
+        hdr_end = find_headers_end(buf, total);
+        if (!hdr_end) continue;
+        break;
+    }
+    if (!hdr_end) return false;   // malformed / empty request
+
+    parse_request_line_and_headers(buf, hdr_end, r);
+    // Keep reading if the body (by Content-Length) hasn't fully arrived yet.
+    int have = total - (int)(hdr_end - buf);
+    while (have < r->content_length && (n = (int)io_read(fd, buf + total, (size_t)(cap - 1 - total))) > 0) {
+        total += n; buf[total] = 0;
+        have = total - (int)(hdr_end - buf);
+    }
+    r->body = hdr_end;
+    r->body_len = total - (int)(hdr_end - buf);   // real byte count (body may be binary awire)
+    return true;
+}
+
 static void respond(int fd, int code, const char *json) {
     const char *msg = code == 200 ? "OK" : code == 400 ? "Bad Request"
                     : code == 401 ? "Unauthorized" : code == 404 ? "Not Found" : "Error";
@@ -365,8 +536,8 @@ static void respond(int fd, int code, const char *json) {
         "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: *\r\n"
         "Content-Length: %zu\r\nConnection: close\r\n\r\n",
         code, msg, strlen(json));
-    write(fd, hdr, n);
-    write(fd, json, strlen(json));
+    io_write(fd, hdr, n);
+    io_write(fd, json, strlen(json));
 }
 
 // Raw bytes (the packed kernel wire) — no JSON. The client decodes with its own
@@ -377,18 +548,23 @@ static void respond_bin(int fd, int code, const unsigned char *data, int len) {
         "HTTP/1.1 %d OK\r\nContent-Type: application/octet-stream\r\n"
         "Access-Control-Allow-Origin: *\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
         code, len);
-    write(fd, hdr, n);
-    if (len > 0) write(fd, data, (size_t)len);
+    io_write(fd, hdr, n);
+    if (len > 0) io_write(fd, data, (size_t)len);
 }
 
 // --------------------------------------------------------------------------
-// Route handlers  (each locks g_lock around store access)
+// Route handlers. Each follows the SAME registry->game lock handoff (see
+// "Locking" above): take g_registry_lock, find/allocate the User*/GameSlot*
+// (copying out any User field it still needs as a local — the User itself
+// is only safe to dereference while g_registry_lock is held), take the
+// GameSlot's own `lock`, release g_registry_lock, do the game work, release
+// the GameSlot lock, THEN respond (I/O never happens with either lock held).
 // --------------------------------------------------------------------------
 
 static void h_signup(Req *r, int fd) {
     char uname[24] = {0};
     if (!json_str(r->body, "username", uname, sizeof uname)) { respond(fd, 400, "{\"error\":\"username\"}"); return; }
-    pthread_mutex_lock(&g_lock);
+    pthread_mutex_lock(&g_registry_lock);
     User *u = NULL;
     for (int i = 0; i < MAX_USERS; i++) if (g_users[i].used && !strcmp(g_users[i].username, uname)) { u = &g_users[i]; break; }
     if (!u) for (int i = 0; i < MAX_USERS; i++) if (!g_users[i].used) {
@@ -398,18 +574,22 @@ static void h_signup(Req *r, int fd) {
     if (u) { gen_id(u->token, 32); token_ht_insert(u); }   // fresh session token, indexed
     char out[160];
     if (u) snprintf(out, sizeof out, "{\"token\":\"%s\",\"user_id\":\"%s\",\"username\":\"%s\"}", u->token, u->user_id, u->username);
-    pthread_mutex_unlock(&g_lock);
+    pthread_mutex_unlock(&g_registry_lock);
     if (u) respond(fd, 200, out); else respond(fd, 400, "{\"error\":\"full\"}");
 }
 
 static void h_create(Req *r, int fd) {
-    pthread_mutex_lock(&g_lock);
+    pthread_mutex_lock(&g_registry_lock);
     User *u = user_by_token(r->token);
-    if (!u) { pthread_mutex_unlock(&g_lock); respond(fd, 401, "{\"error\":\"auth\"}"); return; }
+    if (!u) { pthread_mutex_unlock(&g_registry_lock); respond(fd, 401, "{\"error\":\"auth\"}"); return; }
+    char user_id[ID_LEN + 1]; snprintf(user_id, sizeof user_id, "%s", u->user_id);
+    char username[24]; snprintf(username, sizeof username, "%s", u->username);
+
     GameSlot *s = NULL;
     for (int i = 0; i < MAX_GAMES; i++) if (!g_games[i].used) { s = &g_games[i]; break; }
-    if (!s) { pthread_mutex_unlock(&g_lock); respond(fd, 400, "{\"error\":\"full\"}"); return; }
+    if (!s) { pthread_mutex_unlock(&g_registry_lock); respond(fd, 400, "{\"error\":\"full\"}"); return; }
     memset(s, 0, sizeof *s);
+    pthread_mutex_init(&s->lock, NULL);
     pthread_cond_init(&s->cond, NULL);
     s->used = true;
     // s->version starts at 0 (memset); view_cache_version must start at a
@@ -418,17 +598,29 @@ static void h_create(Req *r, int fd) {
     // the also-zeroed, never-computed view_cache_len (0 bytes) instead of
     // actually serializing — a silent "client gets an empty state" bug.
     for (int i = 0; i < MAX_PLAYERS; i++) s->view_cache_version[i] = (uint32_t)-1;
-    gen_id(s->id, ID_LEN); game_ht_insert(s); snprintf(s->owner, sizeof s->owner, "%s", u->user_id);
+    gen_id(s->id, ID_LEN);
+    // LOCK ORDER: registry, then this fresh slot's own lock — never the
+    // reverse (see g_registry_lock's declaration). No other thread can find
+    // this slot before game_ht_insert runs, so taking s->lock here is
+    // uncontended; it's only here for symmetry with every other handler's
+    // registry->game handoff, so nothing outside this function ever touches
+    // a GameSlot without its lock held.
+    pthread_mutex_lock(&s->lock);
+    game_ht_insert(s);
+    pthread_mutex_unlock(&g_registry_lock);   // registry work done; the rest is s->lock-only
+
+    snprintf(s->owner, sizeof s->owner, "%s", user_id);
     // Seat 0 = creator. Identity lives here; the kernel state is dealt at start.
     Game *g = &s->game; g->num_players = 1; g->status = GAME_STATUS_WAITING;
-    snprintf(s->seat_user[0], ID_LEN + 1, "%s", u->user_id);
-    snprintf(s->seat_name[0], 24, "%s", u->username);
-    snprintf(g->players[0].name, 24, "%s", u->username);
-    snprintf(g->players[0].player_id, 24, "%s", u->user_id);
+    snprintf(s->seat_user[0], ID_LEN + 1, "%s", user_id);
+    snprintf(s->seat_name[0], 24, "%s", username);
+    snprintf(g->players[0].name, 24, "%s", username);
+    snprintf(g->players[0].player_id, 24, "%s", user_id);
     g->players[0].status = PLAYER_STATUS_IDLE;
     g->players[0].strategy_key = STRATEGY_KEY_HUMAN;   // the creator is a human seat
+    game_mark_dirty(s);
     char out[80]; snprintf(out, sizeof out, "{\"game_id\":\"%s\"}", s->id);
-    pthread_mutex_unlock(&g_lock);
+    pthread_mutex_unlock(&s->lock);
     respond(fd, 200, out);
 }
 
@@ -436,20 +628,25 @@ static void h_meta(Req *r, int fd) {
     char type[16] = {0}, gid[ID_LEN + 1] = {0};
     json_str(r->body, "type", type, sizeof type);
     json_str(r->body, "game_id", gid, sizeof gid);
-    pthread_mutex_lock(&g_lock);
+
+    pthread_mutex_lock(&g_registry_lock);
     User *u = user_by_token(r->token);
     GameSlot *s = game_by_id(gid);
-    if (!u) { pthread_mutex_unlock(&g_lock); respond(fd, 401, "{\"error\":\"auth\"}"); return; }
-    if (!s) { pthread_mutex_unlock(&g_lock); respond(fd, 404, "{\"error\":\"no game\"}"); return; }
-    Game *g = &s->game;
+    if (!u) { pthread_mutex_unlock(&g_registry_lock); respond(fd, 401, "{\"error\":\"auth\"}"); return; }
+    if (!s) { pthread_mutex_unlock(&g_registry_lock); respond(fd, 404, "{\"error\":\"no game\"}"); return; }
+    char user_id[ID_LEN + 1]; snprintf(user_id, sizeof user_id, "%s", u->user_id);
+    char username[24]; snprintf(username, sizeof username, "%s", u->username);
+    pthread_mutex_lock(&s->lock);
+    pthread_mutex_unlock(&g_registry_lock);
 
+    Game *g = &s->game;
     if (!strcmp(type, "join")) {
-        if (seat_of(s, u->user_id) < 0 && g->num_players < MAX_PLAYERS && g->status == GAME_STATUS_WAITING) {
+        if (seat_of(s, user_id) < 0 && g->num_players < MAX_PLAYERS && g->status == GAME_STATUS_WAITING) {
             int i = g->num_players++;
-            snprintf(s->seat_user[i], ID_LEN + 1, "%s", u->user_id);
-            snprintf(s->seat_name[i], 24, "%s", u->username);
-            snprintf(g->players[i].name, 24, "%s", u->username);
-            snprintf(g->players[i].player_id, 24, "%s", u->user_id);
+            snprintf(s->seat_user[i], ID_LEN + 1, "%s", user_id);
+            snprintf(s->seat_name[i], 24, "%s", username);
+            snprintf(g->players[i].name, 24, "%s", username);
+            snprintf(g->players[i].player_id, 24, "%s", user_id);
             g->players[i].status = PLAYER_STATUS_IDLE;
             g->players[i].strategy_key = STRATEGY_KEY_HUMAN;   // a human seat
         }
@@ -467,17 +664,25 @@ static void h_meta(Req *r, int fd) {
             g->players[i].strategy_key = (int8_t)strat;   // the kernel's own seat kind
         }
     } else if (!strcmp(type, "start")) {
-        int me = seat_of(s, u->user_id);
+        int me = seat_of(s, user_id);
         if (me >= 0) { s->seat_ready[me] = true; g->players[me].status = PLAYER_STATUS_READY; }
         // Deal once every seated human is ready (bots are always ready) and 2+ seated.
         bool all = g->num_players >= 2;
         for (int i = 0; i < g->num_players; i++) if (!seat_is_bot(g, i) && !s->seat_ready[i]) all = false;
         if (all && g->status == GAME_STATUS_WAITING) {
-            unsigned char seed[32]; for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(rand() ^ (i * 131 + (int)g_seq));
+            unsigned char seed[32]; for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(next_rand() ^ (i * 131 + (int)g_seq));
+            // g_kernel_lock (see "Locking" above): the deal RNG state
+            // game_set_deal_seed_bytes/game_seat_and_deal touch is actually
+            // _Thread_local (safe on its own), but they're kernel calls that
+            // can reach into game.c's apply/refill paths, so they follow the
+            // same "every kernel mutation goes through g_kernel_lock" rule as
+            // awire_apply/bot_drive — one rule to audit, not a special case.
+            pthread_mutex_lock(&g_kernel_lock);
             game_set_deal_seed_bytes(seed, 32);
             // Seats were wired in the lobby (strategy_key per seat), so pass NULL:
             // the kernel owns marking them + the deal (+ g->status = PLAYING).
             game_seat_and_deal(g, NULL, g->num_players);
+            pthread_mutex_unlock(&g_kernel_lock);
             start_bot_loop(s);             // the game-loop paces bot play from here
         }
     } else if (!strcmp(type, "continue")) {
@@ -497,8 +702,9 @@ static void h_meta(Req *r, int fd) {
     // GameSlot.version's doc. Unconditional beats re-deriving "did this
     // branch actually change anything" per-branch for a rarely-called path.
     s->version++;
+    game_mark_dirty(s);
     char out[80]; snprintf(out, sizeof out, "{\"game_id\":\"%s\",\"status\":%d}", s->id, g->status);
-    pthread_mutex_unlock(&g_lock);
+    pthread_mutex_unlock(&s->lock);
     respond(fd, 200, out);
 }
 
@@ -508,26 +714,41 @@ static void h_action(Req *r, int fd) {
     char gid[ID_LEN + 1] = {0};
     const char *gp = strstr(r->query, "game_id=");
     if (gp) { gp += 8; int i = 0; while (gp[i] && gp[i] != '&' && i < ID_LEN) { gid[i] = gp[i]; i++; } gid[i] = 0; }
-    pthread_mutex_lock(&g_lock);
+
+    pthread_mutex_lock(&g_registry_lock);
     User *u = user_by_token(r->token);
     GameSlot *s = game_by_id(gid);
-    if (!u) { pthread_mutex_unlock(&g_lock); respond(fd, 401, "{\"error\":\"auth\"}"); return; }
-    if (!s || s->game.status != GAME_STATUS_PLAYING) { pthread_mutex_unlock(&g_lock); respond(fd, 400, "{\"error\":\"not playing\"}"); return; }
-    int seat = seat_of(s, u->user_id);
-    if (seat < 0) { pthread_mutex_unlock(&g_lock); respond(fd, 400, "{\"error\":\"not seated\"}"); return; }
+    if (!u) { pthread_mutex_unlock(&g_registry_lock); respond(fd, 401, "{\"error\":\"auth\"}"); return; }
+    if (!s) { pthread_mutex_unlock(&g_registry_lock); respond(fd, 400, "{\"error\":\"not playing\"}"); return; }
+    char user_id[ID_LEN + 1]; snprintf(user_id, sizeof user_id, "%s", u->user_id);
+    pthread_mutex_lock(&s->lock);
+    pthread_mutex_unlock(&g_registry_lock);
+
+    if (s->game.status != GAME_STATUS_PLAYING) { pthread_mutex_unlock(&s->lock); respond(fd, 400, "{\"error\":\"not playing\"}"); return; }
+    int seat = seat_of(s, user_id);
+    if (seat < 0) { pthread_mutex_unlock(&s->lock); respond(fd, 400, "{\"error\":\"not seated\"}"); return; }
+
     // The body is the same packed move the browser validates and the phone
     // sends: [kind, n, cards, (attacks)]. The kernel decodes and dispatches —
     // the server enumerates no move types (awire_apply owns the switch).
+    // awire_decode is stateless (no kernel globals — confirmed by inspection
+    // of awire.c), so only awire_apply needs g_kernel_lock (see "Locking"
+    // above: it's the one that reaches engine_last_reject via handle_*).
     AwireAction a;
-    bool ok = r->body && r->body_len > 0
-              && awire_decode((const unsigned char *)r->body, r->body_len, &a)
-              && awire_apply(&s->game, seat, &a);
+    bool decoded = r->body && r->body_len > 0
+                   && awire_decode((const unsigned char *)r->body, r->body_len, &a);
+    bool ok = false;
+    if (decoded) {
+        pthread_mutex_lock(&g_kernel_lock);
+        ok = awire_apply(&s->game, seat, &a);
+        pthread_mutex_unlock(&g_kernel_lock);
+    }
     // Human changed the board — wake the game-loop so bots respond (or notice
     // the game ended; awire_apply already settled g->status). If it's mid-sleep
     // it re-reads the state on its own.
-    if (ok) { pthread_cond_signal(&s->cond); s->version++; }   // real move -> the cached per-seat views are stale
+    if (ok) { s->version++; game_mark_dirty(s); pthread_cond_signal(&s->cond); }   // real move -> the cached per-seat views are stale
     char out[96]; snprintf(out, sizeof out, "{\"ok\":%s,\"status\":%d}", ok ? "true" : "false", s->game.status);
-    pthread_mutex_unlock(&g_lock);
+    pthread_mutex_unlock(&s->lock);
     respond(fd, ok ? 200 : 400, out);
 }
 
@@ -537,18 +758,22 @@ static void h_state(Req *r, int fd) {
     const char *gp = strstr(r->query, "game_id=");
     if (gp) { gp += 8; int i = 0; while (gp[i] && gp[i] != '&' && i < ID_LEN) { gid[i] = gp[i]; i++; } gid[i] = 0; }
     const char *sp = strstr(r->query, "seat="); if (sp) seat = (int)strtol(sp + 5, NULL, 10);
-    pthread_mutex_lock(&g_lock);
+
+    pthread_mutex_lock(&g_registry_lock);
     GameSlot *s = game_by_id(gid);
-    if (!s) { pthread_mutex_unlock(&g_lock); respond(fd, 404, "{\"error\":\"no game\"}"); return; }
+    if (!s) { pthread_mutex_unlock(&g_registry_lock); respond(fd, 404, "{\"error\":\"no game\"}"); return; }
+    pthread_mutex_lock(&s->lock);
+    pthread_mutex_unlock(&g_registry_lock);
+
     // The kernel renders the masked, per-seat view as the PACKED wire (view.c
     // state_put) — no JSON. The client decodes it with its own kernel-wire
     // reader (Swift MaskedView / the web's TS reader). Kernel-to-kernel.
-    // Stack-local, not `static`: this handler runs on many connection
-    // threads concurrently, and a shared buffer would let two /state
-    // requests corrupt each other's bytes.
+    // Stack-local, not `static`: this handler runs on many worker threads
+    // concurrently, and a shared buffer would let two /state requests
+    // corrupt each other's bytes.
     unsigned char buf[65536];
     int n = state_put(&s->game, seat, buf);
-    pthread_mutex_unlock(&g_lock);
+    pthread_mutex_unlock(&s->lock);
     respond_bin(fd, 200, buf, n);
 }
 
@@ -558,10 +783,18 @@ static void h_status(Req *r, int fd) {
     char gid[ID_LEN + 1] = {0};
     const char *gp = strstr(r->query, "game_id=");
     if (gp) { gp += 8; int i = 0; while (gp[i] && gp[i] != '&' && i < ID_LEN) { gid[i] = gp[i]; i++; } gid[i] = 0; }
-    pthread_mutex_lock(&g_lock);
+
+    pthread_mutex_lock(&g_registry_lock);
     GameSlot *s = game_by_id(gid);
-    int st = s ? s->game.status : -1;
-    pthread_mutex_unlock(&g_lock);
+    int st = -1;
+    if (s) {
+        pthread_mutex_lock(&s->lock);
+        pthread_mutex_unlock(&g_registry_lock);
+        st = s->game.status;
+        pthread_mutex_unlock(&s->lock);
+    } else {
+        pthread_mutex_unlock(&g_registry_lock);
+    }
     char out[16]; snprintf(out, sizeof out, "%d", st);
     respond(fd, 200, out);
 }
@@ -569,11 +802,11 @@ static void h_status(Req *r, int fd) {
 // Serialize seat's masked view, reusing the cached bytes from GameSlot when
 // nothing has changed since they were computed (PROFILE_HOTPATH.md "T1c" —
 // see GameSlot's `version`/`view_cache*` fields above for the invariant).
-// MUST be called with g_lock held (same contract as a bare state_put call
+// MUST be called with s->lock held (same contract as a bare state_put call
 // here) and `seat` MUST already be known in-range (0 <= seat < num_players
-// <= MAX_PLAYERS — h_ws validates this at handshake time before ever calling
-// in; this function does not re-check, so it is not safe to point at an
-// unvalidated/attacker-controlled seat index).
+// <= MAX_PLAYERS — ws_conn_thread validates this at handshake time before
+// ever calling in; this function does not re-check, so it is not safe to
+// point at an unvalidated/attacker-controlled seat index).
 static int state_put_cached(GameSlot *s, int seat, unsigned char *out) {
     if (s->view_cache_version[seat] != s->version) {
         // Serialize straight into a scratch buffer wider than
@@ -606,6 +839,21 @@ static int state_put_cached(GameSlot *s, int seat, unsigned char *out) {
 // every move + state push for that seat's whole session — no pthread_create
 // per action.
 //
+// T2a design note (see SERVER_SCALING.md "Deliverable 2"): a persistent /ws
+// connection is the one endpoint that does NOT go through the typed
+// work-queue pools below — a queue worker that blocked for a connection's
+// whole lifetime would defeat the point of a small, fixed worker pool. It
+// keeps its own dedicated thread (ws_conn_thread, spawned straight off the
+// dispatcher's accept loop), same as before T2a, but now takes THIS game's
+// `lock` — not a process-wide one — for every access to shared state, and
+// releases it around all socket I/O (handshake, ws_recv_message,
+// ws_send_frame). This is design (B) from the task brief: simpler and
+// easier to keep Helgrind-clean than moving WS service onto a shared
+// epoll-driven worker (design A); the tradeoff is still a thread per live
+// WS connection (PROFILE_HOTPATH.md T1c's ~0.9MB/conn memory tax), which
+// the epoll design would have removed. See SERVER_SCALING.md for the
+// measurements and the reasoning behind picking (B) here.
+//
 // Handshake: GET /ws?game_id=..&seat=.. (Bearer token), validated exactly
 // like /action (must be a real user, a real game, and THIS user's own seat —
 // no seat spoofing), then the RFC 6455 upgrade (ws_accept_from_key). After
@@ -619,39 +867,64 @@ static int state_put_cached(GameSlot *s, int seat, unsigned char *out) {
 //     [ok:u8][state_put(seat) bytes], ok=1 iff a real move decoded AND the
 //     kernel accepted it (awire_apply's own validation — same as /action).
 // A human's turn wakes the bot game-loop exactly like /action did.
-static void h_ws(Req *r, int fd) {
+typedef struct {
+    int fd;
+    Req req;
+    char *raw_buf;   // owns the bytes r.body/r.query/etc point into until freed
+} WsSpawnArg;
+
+static void *ws_conn_thread(void *argp) {
+    WsSpawnArg *sa = argp;
+    int fd = sa->fd;
+    Req *r = &sa->req;
+
     char gid[ID_LEN + 1] = {0}; int seat = -1;
     const char *gp = strstr(r->query, "game_id=");
     if (gp) { gp += 8; int i = 0; while (gp[i] && gp[i] != '&' && i < ID_LEN) { gid[i] = gp[i]; i++; } gid[i] = 0; }
     const char *sp = strstr(r->query, "seat=");
     if (sp) seat = (int)strtol(sp + 5, NULL, 10);
 
-    pthread_mutex_lock(&g_lock);
+    pthread_mutex_lock(&g_registry_lock);
     User *u = user_by_token(r->token);
     GameSlot *s = game_by_id(gid);
-    bool ok = u && s && seat >= 0 && seat < s->game.num_players && seat_of(s, u->user_id) == seat;
-    pthread_mutex_unlock(&g_lock);
-    if (!ok) { respond(fd, 401, "{\"error\":\"ws auth\"}"); return; }
+    if (!u || !s) {
+        pthread_mutex_unlock(&g_registry_lock);
+        respond(fd, 401, "{\"error\":\"ws auth\"}");
+        close(fd); free(sa->raw_buf); free(sa); return NULL;
+    }
+    char user_id[ID_LEN + 1]; snprintf(user_id, sizeof user_id, "%s", u->user_id);
+    pthread_mutex_lock(&s->lock);
+    pthread_mutex_unlock(&g_registry_lock);
+    bool ok = seat >= 0 && seat < s->game.num_players && seat_of(s, user_id) == seat;
+    pthread_mutex_unlock(&s->lock);
+    if (!ok) {
+        respond(fd, 401, "{\"error\":\"ws auth\"}");
+        close(fd); free(sa->raw_buf); free(sa); return NULL;
+    }
 
     char accept[64];
-    if (!ws_accept_from_key(r->ws_key, accept, sizeof accept)) { respond(fd, 400, "{\"error\":\"ws key\"}"); return; }
+    if (!ws_accept_from_key(r->ws_key, accept, sizeof accept)) {
+        respond(fd, 400, "{\"error\":\"ws key\"}");
+        close(fd); free(sa->raw_buf); free(sa); return NULL;
+    }
     char resp[256];
     int n = snprintf(resp, sizeof resp,
         "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
         "Sec-WebSocket-Accept: %s\r\n\r\n", accept);
-    if (n <= 0 || ws_write_full(fd, resp, n) != n) return;
+    if (n <= 0 || ws_write_full(fd, resp, n) != n) { close(fd); free(sa->raw_buf); free(sa); return NULL; }
 
     WsConn wc; ws_conn_init(&wc, fd, /*mask_outgoing=*/0);   // server frames: never masked
     if (r->body_len > 0) ws_conn_prime(&wc, (const unsigned char *)r->body, r->body_len);
+    free(sa->raw_buf); sa->raw_buf = NULL;   // primed into wc.pending — the raw request buffer is no longer referenced
 
     // [ok:u8][state_put bytes] — sized for state_put's documented worst case
     // (h_state uses the same 65536 cap).
     unsigned char msg[1 + 65536];
-    pthread_mutex_lock(&g_lock);
+    pthread_mutex_lock(&s->lock);
     int slen = s->used ? state_put_cached(s, seat, msg + 1) : 0;
-    pthread_mutex_unlock(&g_lock);
+    pthread_mutex_unlock(&s->lock);
     msg[0] = 0;
-    if (ws_send_frame(&wc, WS_OP_BIN, msg, slen + 1) < 0) return;
+    if (ws_send_frame(&wc, WS_OP_BIN, msg, slen + 1) < 0) { close(fd); free(sa); return NULL; }
 
     unsigned char in[4096];
     int opcode;
@@ -659,14 +932,22 @@ static void h_ws(Req *r, int fd) {
     while ((mlen = ws_recv_message(&wc, in, sizeof in, &opcode)) >= 0) {
         if (opcode != WS_OP_BIN && opcode != WS_OP_TEXT) continue;
         bool applied = false;
-        pthread_mutex_lock(&g_lock);
+        pthread_mutex_lock(&s->lock);
         if (s->used) {
             if (mlen > 0 && s->game.status == GAME_STATUS_PLAYING) {
                 AwireAction a;
-                if (awire_decode(in, mlen, &a) && awire_apply(&s->game, seat, &a)) {
-                    applied = true;
-                    s->version++;   // this seat's move can change every seat's view
-                    pthread_cond_signal(&s->cond);   // same wakeup /action gives the bot game-loop
+                if (awire_decode(in, mlen, &a)) {
+                    // g_kernel_lock, innermost (see h_action's identical
+                    // pattern and the "Locking" doc above).
+                    pthread_mutex_lock(&g_kernel_lock);
+                    bool applied_now = awire_apply(&s->game, seat, &a);
+                    pthread_mutex_unlock(&g_kernel_lock);
+                    if (applied_now) {
+                        applied = true;
+                        s->version++;   // this seat's move can change every seat's view
+                        game_mark_dirty(s);
+                        pthread_cond_signal(&s->cond);   // same wakeup /action gives the bot game-loop
+                    }
                 }
             }
             // PROFILE_HOTPATH.md "T1c": on a pure poll (mlen==0 or an
@@ -680,15 +961,110 @@ static void h_ws(Req *r, int fd) {
         } else {
             slen = 0;
         }
-        pthread_mutex_unlock(&g_lock);
+        pthread_mutex_unlock(&s->lock);
         msg[0] = applied ? 1 : 0;
         if (ws_send_frame(&wc, WS_OP_BIN, msg, slen + 1) < 0) break;
     }
+    close(fd);
+    free(sa);
+    return NULL;
 }
 
 // --------------------------------------------------------------------------
-// Connection handling
+// Work-queue thread routing (T2a Deliverable 2). Replaces thread-per-
+// connection for every one-shot HTTP endpoint with a dispatcher (the accept
+// loop, below) + a small number of typed worker pools, each pulling off its
+// own bounded queue:
+//   - /auth/*, /create  -> g_auth_create_q (g_n_create_workers threads)
+//   - /meta             -> g_meta_q        (g_n_meta_workers threads — see
+//                           below for the g_n_meta_workers==0 "fold into the
+//                           game pool" mode)
+//   - /action,/state,/status -> g_game_q[hash(game_id) % g_n_game_workers]
+// Sharding the game queues by game_id means every request for a given game
+// lands on the SAME worker thread, so requests for one game are serialized
+// by construction; the per-game lock (GameSlot.lock) then only has to
+// arbitrate against that game's bot_thread and its /ws dedicated thread(s),
+// not against a pile of other HTTP workers for the same game. Multiple
+// worker threads may safely share ONE WorkQueue (wq_pop is mutex-guarded,
+// any number of consumers), which is how g_n_create_workers/g_n_meta_workers
+// > 1 works below — auth/create and meta requests carry no game_id to shard
+// by, so widening those pools just adds more consumers of the same queue.
+//
+// All three counts (game/meta/create) are runtime-configurable
+// (--game-workers=N --meta-workers=N --create-workers=N) and were tuned
+// EMPIRICALLY on this 4-core box with the WS+legal hammer, not guessed —
+// see SERVER_SCALING.md "T2a Deliverable 2 — worker-pool sweep" for the
+// sweep table across connection counts and the defaults it settled on.
+// g_n_meta_workers may be 0: /meta is low-frequency (lobby join/start/
+// continue, not the hot per-move loop) and every branch it runs already
+// goes through the same registry->game lock handoff as /action, so folding
+// it onto the game pool (sharded by game_id, same as /action) instead of
+// paying for a dedicated idle thread is a real point on the sweep, not just
+// a degenerate case — the table says whether it actually wins.
 // --------------------------------------------------------------------------
+
+#define WQ_CAP 512
+#define N_GAME_WORKERS_DEFAULT 4
+#define MAX_GAME_WORKERS 64
+#define N_META_WORKERS_DEFAULT 0
+#define MAX_META_WORKERS 32
+#define N_CREATE_WORKERS_DEFAULT 1
+#define MAX_CREATE_WORKERS 32
+
+static int g_n_game_workers = N_GAME_WORKERS_DEFAULT;
+static int g_n_meta_workers = N_META_WORKERS_DEFAULT;
+static int g_n_create_workers = N_CREATE_WORKERS_DEFAULT;
+
+typedef struct {
+    int fd;
+    Req req;
+    char *raw_buf;   // owns the bytes req.body/req.query/etc point into until freed
+} WorkItem;
+
+typedef struct {
+    WorkItem *buf;    // ring buffer, WQ_CAP entries
+    int head, tail, count;
+    pthread_mutex_t mtx;
+    pthread_cond_t  not_empty;
+    pthread_cond_t  not_full;
+} WorkQueue;
+
+static void wq_init(WorkQueue *q) {
+    q->buf = calloc(WQ_CAP, sizeof(WorkItem));
+    q->head = q->tail = q->count = 0;
+    pthread_mutex_init(&q->mtx, NULL);
+    pthread_cond_init(&q->not_empty, NULL);
+    pthread_cond_init(&q->not_full, NULL);
+}
+
+// Blocking push (backpressure): if a pool's queue is full, the dispatcher
+// waits rather than dropping the connection or growing unboundedly. Fine
+// for this POC's bounded load; a production version would size WQ_CAP for
+// the target burst or shed load with a 503 instead of blocking the accept
+// loop.
+static void wq_push(WorkQueue *q, const WorkItem *item) {
+    pthread_mutex_lock(&q->mtx);
+    while (q->count == WQ_CAP) pthread_cond_wait(&q->not_full, &q->mtx);
+    q->buf[q->tail] = *item;
+    q->tail = (q->tail + 1) % WQ_CAP;
+    q->count++;
+    pthread_cond_signal(&q->not_empty);
+    pthread_mutex_unlock(&q->mtx);
+}
+
+static void wq_pop(WorkQueue *q, WorkItem *out) {
+    pthread_mutex_lock(&q->mtx);
+    while (q->count == 0) pthread_cond_wait(&q->not_empty, &q->mtx);
+    *out = q->buf[q->head];
+    q->head = (q->head + 1) % WQ_CAP;
+    q->count--;
+    pthread_cond_signal(&q->not_full);
+    pthread_mutex_unlock(&q->mtx);
+}
+
+static WorkQueue g_auth_create_q;
+static WorkQueue g_meta_q;
+static WorkQueue g_game_q[MAX_GAME_WORKERS];
 
 static void route(Req *r, int fd) {
     if (!strcmp(r->method, "OPTIONS")) { respond(fd, 200, "{}"); return; }
@@ -702,46 +1078,60 @@ static void route(Req *r, int fd) {
     respond(fd, 404, "{\"error\":\"route\"}");
 }
 
-static void *conn_thread(void *arg) {
-    int fd = (int)(long)arg;
-    static __thread char buf[1 << 16];
-    int total = 0, n;
-    char *hdr_end = NULL;
-    // Read headers (+ body when Content-Length fits one read window). One
-    // parse of the header block once it's fully in hand (item 3/4 of
-    // PROFILE_HOTPATH.md: no per-iteration sscanf/strcasestr rescans).
-    while ((n = read(fd, buf + total, sizeof buf - 1 - total)) > 0) {
-        total += n; buf[total] = 0;
-        hdr_end = find_headers_end(buf, total);
-        if (!hdr_end) continue;
-        break;
+// Picks which pool's queue a one-shot request belongs on. Called by the
+// dispatcher only for requests it hasn't already answered inline (OPTIONS,
+// /health) or handed to a dedicated thread (/ws) — see main()'s accept loop.
+static WorkQueue *classify_queue(Req *r) {
+    if (!strcmp(r->path, "/auth/signup") || !strcmp(r->path, "/auth/signin") || !strcmp(r->path, "/create"))
+        return &g_auth_create_q;
+    bool is_meta = !strcmp(r->path, "/meta");
+    bool is_game = !strcmp(r->path, "/action") || !strcmp(r->path, "/state") || !strcmp(r->path, "/status");
+    if (is_meta && g_n_meta_workers > 0) return &g_meta_q;
+    if (is_game || is_meta) {   // is_meta here implies g_n_meta_workers==0 — fold onto the game pool
+        char gid[ID_LEN + 1] = {0};
+        const char *gp = strstr(r->query, "game_id=");
+        if (gp) { gp += 8; int i = 0; while (gp[i] && gp[i] != '&' && i < ID_LEN) { gid[i] = gp[i]; i++; } gid[i] = 0; }
+        unsigned long h = gid[0] ? hash_str(gid) : 0;
+        return &g_game_q[h % (unsigned long)g_n_game_workers];
     }
-    if (!hdr_end) { close(fd); return NULL; }   // malformed / empty request
+    // unrecognized route -> route() 404s it; any pool can carry it.
+    return g_n_meta_workers > 0 ? &g_meta_q : &g_game_q[0];
+}
 
-    Req r;
-    parse_request_line_and_headers(buf, hdr_end, &r);
-    // Keep reading if the body (by Content-Length) hasn't fully arrived yet.
-    int have = total - (int)(hdr_end - buf);
-    while (have < r.content_length && (n = read(fd, buf + total, sizeof buf - 1 - total)) > 0) {
-        total += n; buf[total] = 0;
-        have = total - (int)(hdr_end - buf);
+static void *worker_thread(void *arg) {
+    WorkQueue *q = arg;
+    for (;;) {
+        WorkItem item;
+        wq_pop(q, &item);
+        route(&item.req, item.fd);
+        close(item.fd);
+        free(item.raw_buf);
     }
-    r.body = hdr_end;
-    r.body_len = total - (int)(hdr_end - buf);   // real byte count (body may be binary awire)
-
-    if (r.is_ws_upgrade && !strcmp(r.method, "GET") && !strcmp(r.path, "/ws")) {
-        h_ws(&r, fd);   // owns the connection for its whole (long) life
-        close(fd);
-        return NULL;
-    }
-    route(&r, fd);
-    close(fd);
     return NULL;
 }
 
+// --------------------------------------------------------------------------
+// Connection handling — the dispatcher (T2a Deliverable 2)
+// --------------------------------------------------------------------------
+
 int main(int argc, char **argv) {
-    int port = argc > 1 ? atoi(argv[1]) : 8099;
-    srand((unsigned)(time(NULL) ^ getpid()));
+    int port = 8099;
+    for (int i = 1; i < argc; i++) {
+        if (!strncmp(argv[i], "--game-workers=", 15)) {
+            int nw = atoi(argv[i] + 15);
+            if (nw > 0 && nw <= MAX_GAME_WORKERS) g_n_game_workers = nw;
+        } else if (!strncmp(argv[i], "--meta-workers=", 15)) {
+            int nw = atoi(argv[i] + 15);
+            if (nw >= 0 && nw <= MAX_META_WORKERS) g_n_meta_workers = nw;   // 0 = fold /meta onto the game pool
+        } else if (!strncmp(argv[i], "--create-workers=", 17)) {
+            int nw = atoi(argv[i] + 17);
+            if (nw > 0 && nw <= MAX_CREATE_WORKERS) g_n_create_workers = nw;
+        } else {
+            int p = atoi(argv[i]);
+            if (p > 0) port = p;
+        }
+    }
+    srand((unsigned)(time(NULL) ^ getpid()));   // only ever called here, before any worker thread exists
     // Long-lived /ws connections mean a peer can vanish (crash, network
     // reset, the load client's own `timeout` cutting it off) between our
     // read and our next write; the default SIGPIPE action is to kill the
@@ -749,14 +1139,35 @@ int main(int argc, char **argv) {
     // same failure as -1/EPIPE, which every write path here already checks.
     signal(SIGPIPE, SIG_IGN);
 
+    wq_init(&g_auth_create_q);
+    wq_init(&g_meta_q);
+    for (int i = 0; i < g_n_game_workers; i++) wq_init(&g_game_q[i]);
+
+    pthread_t wt;
+    for (int i = 0; i < g_n_create_workers; i++)
+        if (pthread_create(&wt, NULL, worker_thread, &g_auth_create_q) == 0) pthread_detach(wt);
+    for (int i = 0; i < g_n_meta_workers; i++)
+        if (pthread_create(&wt, NULL, worker_thread, &g_meta_q) == 0) pthread_detach(wt);
+    for (int i = 0; i < g_n_game_workers; i++)
+        if (pthread_create(&wt, NULL, worker_thread, &g_game_q[i]) == 0) pthread_detach(wt);
+
     int srv = socket(AF_INET, SOCK_STREAM, 0);
     int opt = 1; setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof opt);
     struct sockaddr_in addr = {0};
     addr.sin_family = AF_INET; addr.sin_addr.s_addr = INADDR_ANY; addr.sin_port = htons(port);
     if (bind(srv, (struct sockaddr *)&addr, sizeof addr) < 0) { perror("bind"); return 1; }
     listen(srv, 64);
-    fprintf(stderr, "foolish native server (kernel-driven, in-memory) on :%d\n", port);
+    fprintf(stderr, "foolish native server (kernel-driven, in-memory) on :%d "
+            "(game-workers=%d meta-workers=%d create-workers=%d)\n",
+            port, g_n_game_workers, g_n_meta_workers, g_n_create_workers);
 
+    // The dispatcher: accept, read+parse the request, then either hand it to
+    // a dedicated thread (/ws — a persistent connection, see ws_conn_thread's
+    // doc for why it stays off the typed queues) or enqueue it onto the
+    // right typed worker pool (classify_queue). This is the accept loop
+    // itself acting as dispatcher (no separate reader-thread pool) — see
+    // SERVER_SCALING.md for why that's an acceptable, correctness-first
+    // choice here rather than a scalability bottleneck in practice.
     for (;;) {
         int fd = accept(srv, NULL, NULL);
         if (fd < 0) continue;
@@ -764,16 +1175,35 @@ int main(int argc, char **argv) {
         // but a persistent /ws connection does many small back-and-forth
         // writes+reads — without TCP_NODELAY, Nagle batching interacting
         // with the peer's delayed ACKs turns each round trip into tens of
-        // milliseconds instead of tens of microseconds. The load client's
-        // own connect_to() already sets this; the accept side never did.
+        // milliseconds instead of tens of microseconds.
         int one = 1; setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
-        pthread_t t;
-        // Thread-per-CONNECTION (not per-request): for a /ws upgrade this
-        // one thread now lives for the client's whole session, so the
-        // pthread_create cost — 85.8% of instructions under load in the old
-        // thread-per-HTTP-request T1 profile — is paid once per client
-        // instead of once per action. See PROFILE_HOTPATH.md T1b.
-        if (pthread_create(&t, NULL, conn_thread, (void *)(long)fd) == 0) pthread_detach(t);
-        else { close(fd); }
+
+        char *buf = malloc(REQ_BUF_CAP);
+        if (!buf) { close(fd); continue; }
+        Req r;
+        if (!read_and_parse_request(fd, buf, REQ_BUF_CAP, &r)) { close(fd); free(buf); continue; }
+
+        if (r.is_ws_upgrade && !strcmp(r.method, "GET") && !strcmp(r.path, "/ws")) {
+            // Dedicated per-connection thread (design B, see ws_conn_thread's
+            // doc) — this thread now lives for the client's whole session,
+            // so the pthread_create cost — 85.8% of instructions under load
+            // in the old thread-per-HTTP-request T1 profile — is paid once
+            // per client instead of once per action. See PROFILE_HOTPATH.md T1b.
+            WsSpawnArg *sa = malloc(sizeof *sa);
+            if (!sa) { close(fd); free(buf); continue; }
+            sa->fd = fd; sa->req = r; sa->raw_buf = buf;
+            pthread_t t;
+            if (pthread_create(&t, NULL, ws_conn_thread, sa) == 0) pthread_detach(t);
+            else { close(fd); free(buf); free(sa); }
+            continue;
+        }
+
+        // Cheap, store-free routes: answer inline instead of paying a queue
+        // round trip for them.
+        if (!strcmp(r.method, "OPTIONS")) { respond(fd, 200, "{}"); close(fd); free(buf); continue; }
+        if (!strcmp(r.path, "/health"))  { respond(fd, 200, "{\"ok\":true}"); close(fd); free(buf); continue; }
+
+        WorkItem item; item.fd = fd; item.req = r; item.raw_buf = buf;
+        wq_push(classify_queue(&r), &item);
     }
 }
