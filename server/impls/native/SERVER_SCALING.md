@@ -403,15 +403,21 @@ transient threads), not from the WS connections themselves.
   applying a move, `/meta` lobby transitions and deals, and `bot_thread`'s
   cycles that applied ≥1 action or ended the game) — exactly the call sites
   Stage 2 wired up, unchanged.
-- **Stage 3 (TLS)**: `io_read`/`io_write` (foolish_server.c) — every plain-
-  HTTP socket byte funnels through these two one-line wrappers around
-  `read()`/`write()`. `ws.c`'s `ws_read_full`/`ws_write_full`/`ws_fill` are
-  the equivalent, pre-existing seam for the WebSocket path. Swapping TCP for
-  TLS means replacing these bodies with `SSL_read()`/`SSL_write()` against a
-  per-connection `SSL*`, threaded through wherever a bare `int fd` is passed
-  today (e.g. a small `Conn { int fd; SSL *ssl; }` in place of `int`) —
-  nothing above this layer inspects the fd directly. One documented
-  non-uniform spot: `ws_send_frame`'s unmasked server path uses `writev()`
-  to send a frame header + payload in one syscall; OpenSSL has no vector
-  write, so stage 3 will need to either concatenate into one buffer there or
-  buffer through a `BIO` — everything else is a drop-in swap.
+- **Stage 3 (TLS) — DONE.** `io_read`/`io_write` (foolish_server.c) and
+  `ws.c`'s `ws_read_full`/`ws_write_full`/`ws_fill` — the seam described
+  below when this section was written — are now backed by `conn.c`/`conn.h`:
+  a `Conn { int fd; SSL *ssl; }` threaded through every place that used to
+  take a bare `int fd` (respond/respond_bin, every route handler, `WorkItem`/
+  `WsSpawnArg`, `WsConn`), dispatching to `read()`/`write()` or
+  `SSL_read()`/`SSL_write()` per connection. See [`TLS.md`](TLS.md) for the
+  full design, how to run with certs, and the measured overhead. Left here
+  for the record of what the seam looked like going in: every plain-HTTP
+  socket byte funneled through `io_read`/`io_write`'s two one-line wrappers
+  around `read()`/`write()`, and `ws.c` had the equivalent, pre-existing seam
+  for the WebSocket path — swapping TCP for TLS meant replacing those
+  bodies, threaded through wherever a bare `int fd` was passed, exactly as
+  predicted. The one documented non-uniform spot predicted here —
+  `ws_send_frame`'s unmasked server path using `writev()` for one syscall,
+  which OpenSSL has no equivalent for — was resolved by concatenating into a
+  thread-local scratch buffer on the TLS branch only (see `ws_send_frame`'s
+  own comment in `ws.c`); the plaintext `writev()` path is untouched.

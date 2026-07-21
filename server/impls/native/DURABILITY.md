@@ -373,12 +373,14 @@ teardown near a signal-interrupted shutdown, not a real race in this
 program's logic. Left visible (not suppressed) rather than hidden behind a
 suppression file — see the digest for the full reasoning.
 
-## Seam left for Stage 3 (TLS)
+## Seam left for Stage 3 (TLS) — now DONE, see TLS.md
 
 Unchanged by this stage, exactly as Stage 1 left it: `io_read`/`io_write`
 (`foolish_server.c`) and `ws.c`'s `ws_read_full`/`ws_write_full`/`ws_fill`
-are still the only place plain-socket bytes flow. Stage 2 added no new
+were still the only place plain-socket bytes flowed. Stage 2 added no new
 socket I/O of its own (the persistence thread never touches a client
-connection — it only ever talks to SQLite), so there is nothing new for
+connection — it only ever talks to SQLite), so there was nothing new for
 Stage 3 to route through TLS beyond what Stage 1 already documented in
-`SERVER_SCALING.md`'s own "Seams left" section.
+`SERVER_SCALING.md`'s own "Seams left" section — confirmed true in
+practice: Stage 3 (`conn.c`/`conn.h`, see [`TLS.md`](TLS.md)) touched
+neither `persist.c` nor `persist.h` at all.

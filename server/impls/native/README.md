@@ -55,9 +55,10 @@ make run        # ./foolish_server 8099
 
 Requires a C compiler + `-framework Accelerate` (macOS; some kernel strategies
 use LAPACK) + `libsqlite3` (present as a system package on Linux and macOS;
-see [`DURABILITY.md`](DURABILITY.md)). No other external packages — the
-HTTP/1.1 layer is hand-rolled (a real deployment would drop in
-mongoose/civetweb); auth is an in-memory token map (no JWT). Concurrency: a
+see [`DURABILITY.md`](DURABILITY.md)) + `libssl`/`libcrypto` (OpenSSL 3.x;
+see [`TLS.md`](TLS.md)). No other external packages — the HTTP/1.1 layer is
+hand-rolled (a real deployment would drop in mongoose/civetweb); auth is an
+in-memory token map (no JWT). Concurrency: a
 dispatcher (the accept loop) routes one-shot requests onto small typed
 worker pools sharded by game_id, and each game has its own lock instead of
 one process-wide mutex — see [`SERVER_SCALING.md`](SERVER_SCALING.md)
@@ -75,6 +76,16 @@ tests/benchmarks that don't want a stray file. See
 [`DURABILITY.md`](DURABILITY.md) for the write-behind design, the
 crash-recovery test, and the measured overhead of persistence being on.
 
+TLS: `--tls --cert=PATH --key=PATH` turns the WHOLE listen socket over to
+TLS — every endpoint below speaks `https://` (one-shot requests) or `wss://`
+(`/ws`) instead of plaintext; without `--tls` the server is plaintext
+exactly as every earlier stage. One shared, read-only-after-setup
+`SSL_CTX`, a fresh per-connection `SSL*` off it for every accepted socket.
+See [`TLS.md`](TLS.md) for the I/O-abstraction design (`Conn`, `conn.c`/
+`conn.h`), how to generate a test cert and run with it, the handshake/WSS
+verification, and the measured TLS overhead. `foolish_hammer --tls` is the
+matching load-test client.
+
 ## Endpoints
 
 ```
@@ -87,6 +98,11 @@ GET  /status?game_id=..                 -> 0 waiting / 1 playing / 2 over
 GET  /health
 GET  /ws?game_id=..&seat=.. (Bearer, Upgrade: websocket) -> RFC 6455 WebSocket
 ```
+
+Every path above is `http://`/`ws://` by default, or `https://`/`wss://`
+when the server was started with `--tls` (see "TLS", above, and
+[`TLS.md`](TLS.md)) — same paths, same request/response shapes, just over a
+TLS-wrapped socket.
 
 `start` deals once every seated human is ready (bots are always ready, 2+
 seats). A move is the packed **awire** frame — `[kind, n, cards…(, attacks…)]`,
@@ -122,6 +138,7 @@ With the server running:
 ```sh
 bash test.sh                 # signup 2 humans, add a cordite bot, deal, attack
 bash crash_test.sh           # kill -9 a live server, restart against the same --db, verify recovery
+bash tls_test.sh             # generate a throwaway cert, verify HTTPS + WSS over TLS
 ```
 
 `test.sh` prints each seat's masked view (you see your own hand; opponents are
@@ -130,18 +147,46 @@ appear on the defender's view with the bot's response — all decided by the
 kernel. `crash_test.sh` starts its own server + its own scratch `--db`, drives
 real gameplay, hard-kills the process, restarts it against the same DB file,
 and asserts the recovered state matches — see
-[`DURABILITY.md`](DURABILITY.md).
+[`DURABILITY.md`](DURABILITY.md). `tls_test.sh` generates its own throwaway
+self-signed cert, starts its own `--tls` server, and checks a real TLS
+handshake, HTTPS, and a WSS `foolish_hammer --tls --mode=ws` run — see
+[`TLS.md`](TLS.md).
 
 ## Status / scope
 
 Proof-of-concept. Present: auth, lobby, deal, human + bot moves, masked views,
 continue-to-lobby, per-game locking + work-queue thread routing (see
 [`SERVER_SCALING.md`](SERVER_SCALING.md)), a persistent-connection `/ws` push
-path for the action+state hot loop (see above), and crash-safe SQLite
+path for the action+state hot loop (see above), crash-safe SQLite
 write-behind durability for every game and user (see
-[`DURABILITY.md`](DURABILITY.md)). Not present (deliberately): broadcasting a
-game's state to every seat's connection when ANY seat moves (`/ws` clients
-each poll their own seat instead — see `foolish_hammer.c`'s ws worker), the
-packed binary envelope the iOS client expects (this speaks plain JSON over
-HTTP; `/ws` speaks the kernel's own packed wire), TLS, rate limits. The point
-is the architecture, not production readiness.
+[`DURABILITY.md`](DURABILITY.md)), and TLS (HTTPS + WSS, see
+[`TLS.md`](TLS.md)). Not present (deliberately): broadcasting a game's state
+to every seat's connection when ANY seat moves (`/ws` clients each poll
+their own seat instead — see `foolish_hammer.c`'s ws worker), the packed
+binary envelope the iOS client expects (this speaks plain JSON over HTTP;
+`/ws` speaks the kernel's own packed wire), cert rotation, connection
+limits/backpressure beyond the work-queue's own bounded blocking push (see
+`SERVER_SCALING.md`), and rate limits. The point is the architecture, not
+full production readiness — see "Production readiness" below for a plain
+tally of what each hardening stage did and didn't cover.
+
+## Production readiness — what's done, what's still needed
+
+Three stages, each documented in its own file:
+
+| stage | what it adds | doc |
+|---|---|---|
+| 1 | per-game locks + work-queue thread routing (replaces one process-wide lock; a dispatcher shards one-shot requests onto typed worker pools by `game_id`) | [`SERVER_SCALING.md`](SERVER_SCALING.md) |
+| 2 | SQLite WAL write-behind persistence + crash recovery (a `kill -9` loses at most one write-behind interval, not everything) | [`DURABILITY.md`](DURABILITY.md) |
+| 3 | TLS for every endpoint, including the `/ws` hot loop (HTTPS + WSS, not just the one-shot requests) | [`TLS.md`](TLS.md) |
+
+Still needed for a real production deployment, not attempted here (POC
+scope, stated plainly rather than silently): cert rotation/ACME (a cert is
+loaded once at startup, not reloaded), connection-count limits or 503-style
+load shedding (the work queues apply backpressure by blocking the accept
+loop, not by rejecting — see `SERVER_SCALING.md`), rate limiting / abuse
+protection, JWT or another real auth scheme (tokens are an in-memory opaque
+map), horizontal scale-out (one process, one machine — the per-game lock
+design doesn't extend across processes), and structured observability
+(metrics/tracing beyond the stderr startup banner and the load tools'
+own stdout summaries).
