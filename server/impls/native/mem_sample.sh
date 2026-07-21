@@ -16,9 +16,17 @@
 #   ./foolish_hammer --port=8099 --games=40 --seats=4 --secs=10 --mode=ws &
 #   ./mem_sample.sh $SRV 10 0.2 > /tmp/mem_40games.csv
 #
-# Output: a CSV time series (t_secs,vmrss_kb) on stdout — redirect it to a
-# file to keep the raw samples — and a summary block on stderr so it is
+# Output: a CSV time series (t_secs,vmrss_kb,threads) on stdout — redirect it
+# to a file to keep the raw samples — and a summary block on stderr so it is
 # visible even when stdout is redirected.
+#
+# Stage 6 (SERVER_SCALING.md "Stage 6 — epoll-per-shard") addition: also
+# samples /proc/<pid>/status's own `Threads:` field alongside VmRSS — the
+# epoll-vs-thread-per-connection comparison needs "how many OS threads" as
+# directly as it needs "how much RAM", and it's the same file, so tracking
+# both costs nothing extra. Existing callers that only look at the first CSV
+# column / the RSS summary lines are unaffected — this is a pure addition,
+# no output removed or reordered.
 set -uo pipefail
 
 PID="${1:?usage: mem_sample.sh <pid> <duration_secs> [interval_secs]}"
@@ -30,13 +38,16 @@ STATUS="/proc/$PID/status"
 
 vmrss_kb() { awk '/^VmRSS:/{print $2; exit}' "$STATUS" 2>/dev/null; }
 vmhwm_kb() { awk '/^VmHWM:/{print $2; exit}' "$STATUS" 2>/dev/null; }
+threads()  { awk '/^Threads:/{print $2; exit}' "$STATUS" 2>/dev/null; }
 
-echo "t_secs,vmrss_kb"
+echo "t_secs,vmrss_kb,threads"
 
 SUM=0
 N=0
 PEAK=0
+TPEAK=0
 FIRST=""
+TFIRST=""
 T0=$(date +%s.%N)
 while :; do
     NOW=$(date +%s.%N)
@@ -44,11 +55,13 @@ while :; do
     if awk -v e="$ELAPSED" -v d="$DUR" 'BEGIN{exit !(e>=d)}'; then break; fi
     RSS=$(vmrss_kb)
     [ -n "$RSS" ] || break   # process exited mid-sample — stop, don't fail the run
-    [ -z "$FIRST" ] && FIRST="$RSS"
-    echo "$ELAPSED,$RSS"
+    TH=$(threads); TH="${TH:-0}"
+    [ -z "$FIRST" ] && FIRST="$RSS" && TFIRST="$TH"
+    echo "$ELAPSED,$RSS,$TH"
     SUM=$((SUM + RSS))
     N=$((N + 1))
     [ "$RSS" -gt "$PEAK" ] && PEAK=$RSS
+    [ "$TH" -gt "$TPEAK" ] && TPEAK=$TH
     sleep "$INTERVAL"
 done
 
@@ -62,8 +75,9 @@ HWM=$(vmhwm_kb)
 
 {
     echo "mem_sample: pid=$PID samples=$N window=${DUR}s interval=${INTERVAL}s"
-    echo "  first sample (~idle-at-start): ${FIRST} kB"
+    echo "  first sample (~idle-at-start): ${FIRST} kB, ${TFIRST} threads"
     echo "  mean (under load):             ${MEAN} kB"
     echo "  peak (sampled):                ${PEAK} kB"
     echo "  VmHWM (kernel watermark):      ${HWM:-n/a} kB   (can exceed 'peak (sampled)' — catches spikes between samples)"
+    echo "  peak threads (sampled):        ${TPEAK}"
 } >&2
