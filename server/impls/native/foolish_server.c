@@ -33,6 +33,12 @@
 //     thread's zeroed stack/TLS was 85.8% of instructions under load,
 //     T1) over a client's entire session instead of paying it per move.
 //
+// TLS (Stage 3, TLS.md): pass `--tls --cert=PATH --key=PATH` to serve every
+// endpoint above over TLS instead — https:// for the one-shot endpoints,
+// wss:// for /ws — off ONE shared, read-only-after-setup SSL_CTX with a
+// fresh per-connection SSL* (see conn.h/conn.c). Without --tls the listener
+// is plain HTTP/WS, byte-for-byte unchanged from every earlier stage.
+//
 // Concurrency ("T2a", PROFILE_HOTPATH.md / SERVER_SCALING.md): a dispatcher
 // (the accept loop) reads + parses each request and routes it either to a
 // dedicated per-connection thread (a /ws upgrade — still long-lived, see
@@ -66,6 +72,7 @@
 #include "bot_roster.h"
 #include "ws.h"
 #include "persist.h"
+#include "conn.h"   // Stage 3: TLS — see conn.h and the "STAGE 3: OpenSSL TLS" block below
 
 // --------------------------------------------------------------------------
 // In-memory store (the "fake DB"): games + users, per-game locks.
@@ -379,21 +386,27 @@ static pthread_mutex_t g_kernel_lock = PTHREAD_MUTEX_INITIALIZER;
 static atomic_ulong g_seq = 0;
 
 // --------------------------------------------------------------------------
-// STAGE 3 SEAM: OpenSSL TLS (WSS/HTTPS). Every plain-HTTP socket byte in
-// this file funnels through io_read/io_write below (ws.c's ws_read_full /
-// ws_write_full / ws_fill are the equivalent seam for the WebSocket path —
-// see ws.c's header comment). Swapping TCP for TLS means replacing these
-// two bodies (and ws.c's) with SSL_read()/SSL_write() against a
-// per-connection SSL*, threaded through wherever a bare `fd` is passed
-// today (e.g. a small `Conn { int fd; SSL *ssl; }` in place of `int`) —
-// nothing above this layer inspects the fd directly. The one non-uniform
-// spot: ws_send_frame's unmasked server path uses writev() to send a
-// header+payload in one syscall (ws.c); OpenSSL has no vector write, so
-// stage 3 will need to either concatenate into one buffer there or buffer
-// through a BIO — everything else is a drop-in swap.
+// STAGE 3: OpenSSL TLS (WSS/HTTPS) — DONE. Every plain-HTTP socket byte in
+// this file funnels through io_read/io_write below, now thin wrappers over
+// conn_read/conn_write (conn.c/conn.h), which dispatch to read()/write() or
+// SSL_read()/SSL_write() depending on this connection's Conn (a plain `int
+// fd` or a per-connection `SSL*` — see conn.h). ws.c's ws_read_full/
+// ws_write_full/ws_fill are the equivalent, already-updated seam for the
+// WebSocket path (see ws.c's header comment), and every handler in this
+// file now takes a `Conn *` instead of a bare `int fd` (respond/
+// respond_bin, h_signup/h_create/h_meta/h_action/h_state/h_status, route,
+// worker_thread's WorkItem, ws_conn_thread's WsSpawnArg) — nothing above
+// this layer inspects a raw fd directly anymore. See TLS.md for the design
+// writeup, how to run with certs, and the measured overhead. The one
+// non-uniform spot the seam comment (and SERVER_SCALING.md/DURABILITY.md's
+// "Seams left" sections) called out ahead of time: ws_send_frame's unmasked
+// server path used writev() to send a header+payload in one syscall;
+// OpenSSL has no vector write, so ws.c's TLS branch concatenates into one
+// buffer instead (see its comment) — everything else was a drop-in swap,
+// exactly as predicted.
 // --------------------------------------------------------------------------
-static ssize_t io_read(int fd, void *buf, size_t n)  { return read(fd, buf, n); }
-static ssize_t io_write(int fd, const void *buf, size_t n) { return write(fd, buf, n); }
+static ssize_t io_read(Conn *c, void *buf, size_t n)  { return conn_read(c, buf, n); }
+static ssize_t io_write(Conn *c, const void *buf, size_t n) { return conn_write(c, buf, n); }
 
 // --------------------------------------------------------------------------
 // Small utilities
@@ -775,17 +788,17 @@ static void parse_request_line_and_headers(char *buf, char *hdr_end, Req *r) {
 }
 
 // Reads a full HTTP request (headers, then body up to Content-Length) off
-// `fd` into caller-owned `buf` (>= cap bytes), and parses it into `r`. `r->
+// `conn` into caller-owned `buf` (>= cap bytes), and parses it into `r`. `r->
 // body`/`r->body_len` end up pointing INTO `buf` — the caller must keep
 // `buf` alive for as long as `r` is used (see WorkItem/WsSpawnArg below,
 // which both carry the buffer alongside the parsed Req for exactly this
 // reason). Returns false on a malformed/empty request (caller should just
-// close the fd and free buf).
+// close the conn and free buf).
 #define REQ_BUF_CAP (1 << 16)
-static bool read_and_parse_request(int fd, char *buf, int cap, Req *r) {
+static bool read_and_parse_request(Conn *conn, char *buf, int cap, Req *r) {
     int total = 0, n;
     char *hdr_end = NULL;
-    while ((n = (int)io_read(fd, buf + total, (size_t)(cap - 1 - total))) > 0) {
+    while ((n = (int)io_read(conn, buf + total, (size_t)(cap - 1 - total))) > 0) {
         total += n; buf[total] = 0;
         hdr_end = find_headers_end(buf, total);
         if (!hdr_end) continue;
@@ -796,7 +809,7 @@ static bool read_and_parse_request(int fd, char *buf, int cap, Req *r) {
     parse_request_line_and_headers(buf, hdr_end, r);
     // Keep reading if the body (by Content-Length) hasn't fully arrived yet.
     int have = total - (int)(hdr_end - buf);
-    while (have < r->content_length && (n = (int)io_read(fd, buf + total, (size_t)(cap - 1 - total))) > 0) {
+    while (have < r->content_length && (n = (int)io_read(conn, buf + total, (size_t)(cap - 1 - total))) > 0) {
         total += n; buf[total] = 0;
         have = total - (int)(hdr_end - buf);
     }
@@ -805,7 +818,7 @@ static bool read_and_parse_request(int fd, char *buf, int cap, Req *r) {
     return true;
 }
 
-static void respond(int fd, int code, const char *json) {
+static void respond(Conn *conn, int code, const char *json) {
     const char *msg = code == 200 ? "OK" : code == 400 ? "Bad Request"
                     : code == 401 ? "Unauthorized" : code == 404 ? "Not Found" : "Error";
     char hdr[512];
@@ -814,20 +827,20 @@ static void respond(int fd, int code, const char *json) {
         "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: *\r\n"
         "Content-Length: %zu\r\nConnection: close\r\n\r\n",
         code, msg, strlen(json));
-    io_write(fd, hdr, n);
-    io_write(fd, json, strlen(json));
+    io_write(conn, hdr, n);
+    io_write(conn, json, strlen(json));
 }
 
 // Raw bytes (the packed kernel wire) — no JSON. The client decodes with its own
 // kernel-wire reader (MaskedView etc.).
-static void respond_bin(int fd, int code, const unsigned char *data, int len) {
+static void respond_bin(Conn *conn, int code, const unsigned char *data, int len) {
     char hdr[256];
     int n = snprintf(hdr, sizeof hdr,
         "HTTP/1.1 %d OK\r\nContent-Type: application/octet-stream\r\n"
         "Access-Control-Allow-Origin: *\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
         code, len);
-    io_write(fd, hdr, n);
-    if (len > 0) io_write(fd, data, (size_t)len);
+    io_write(conn, hdr, n);
+    if (len > 0) io_write(conn, data, (size_t)len);
 }
 
 // --------------------------------------------------------------------------
@@ -839,9 +852,9 @@ static void respond_bin(int fd, int code, const unsigned char *data, int len) {
 // the GameSlot lock, THEN respond (I/O never happens with either lock held).
 // --------------------------------------------------------------------------
 
-static void h_signup(Req *r, int fd) {
+static void h_signup(Req *r, Conn *conn) {
     char uname[24] = {0};
-    if (!json_str(r->body, "username", uname, sizeof uname)) { respond(fd, 400, "{\"error\":\"username\"}"); return; }
+    if (!json_str(r->body, "username", uname, sizeof uname)) { respond(conn, 400, "{\"error\":\"username\"}"); return; }
     pthread_mutex_lock(&g_registry_lock);
     User *u = NULL;
     for (int i = 0; i < MAX_USERS; i++) if (g_users[i].used && !strcmp(g_users[i].username, uname)) { u = &g_users[i]; break; }
@@ -861,19 +874,19 @@ static void h_signup(Req *r, int fd) {
     char out[160];
     if (u) snprintf(out, sizeof out, "{\"token\":\"%s\",\"user_id\":\"%s\",\"username\":\"%s\"}", u->token, u->user_id, u->username);
     pthread_mutex_unlock(&g_registry_lock);
-    if (u) respond(fd, 200, out); else respond(fd, 400, "{\"error\":\"full\"}");
+    if (u) respond(conn, 200, out); else respond(conn, 400, "{\"error\":\"full\"}");
 }
 
-static void h_create(Req *r, int fd) {
+static void h_create(Req *r, Conn *conn) {
     pthread_mutex_lock(&g_registry_lock);
     User *u = user_by_token(r->token);
-    if (!u) { pthread_mutex_unlock(&g_registry_lock); respond(fd, 401, "{\"error\":\"auth\"}"); return; }
+    if (!u) { pthread_mutex_unlock(&g_registry_lock); respond(conn, 401, "{\"error\":\"auth\"}"); return; }
     char user_id[ID_LEN + 1]; snprintf(user_id, sizeof user_id, "%s", u->user_id);
     char username[24]; snprintf(username, sizeof username, "%s", u->username);
 
     GameSlot *s = NULL;
     for (int i = 0; i < MAX_GAMES; i++) if (!g_games[i].used) { s = &g_games[i]; break; }
-    if (!s) { pthread_mutex_unlock(&g_registry_lock); respond(fd, 400, "{\"error\":\"full\"}"); return; }
+    if (!s) { pthread_mutex_unlock(&g_registry_lock); respond(conn, 400, "{\"error\":\"full\"}"); return; }
     memset(s, 0, sizeof *s);
     pthread_mutex_init(&s->lock, NULL);
     pthread_cond_init(&s->cond, NULL);
@@ -907,10 +920,10 @@ static void h_create(Req *r, int fd) {
     game_mark_dirty(s);
     char out[80]; snprintf(out, sizeof out, "{\"game_id\":\"%s\"}", s->id);
     pthread_mutex_unlock(&s->lock);
-    respond(fd, 200, out);
+    respond(conn, 200, out);
 }
 
-static void h_meta(Req *r, int fd) {
+static void h_meta(Req *r, Conn *conn) {
     char type[16] = {0}, gid[ID_LEN + 1] = {0};
     json_str(r->body, "type", type, sizeof type);
     json_str(r->body, "game_id", gid, sizeof gid);
@@ -918,8 +931,8 @@ static void h_meta(Req *r, int fd) {
     pthread_mutex_lock(&g_registry_lock);
     User *u = user_by_token(r->token);
     GameSlot *s = game_by_id(gid);
-    if (!u) { pthread_mutex_unlock(&g_registry_lock); respond(fd, 401, "{\"error\":\"auth\"}"); return; }
-    if (!s) { pthread_mutex_unlock(&g_registry_lock); respond(fd, 404, "{\"error\":\"no game\"}"); return; }
+    if (!u) { pthread_mutex_unlock(&g_registry_lock); respond(conn, 401, "{\"error\":\"auth\"}"); return; }
+    if (!s) { pthread_mutex_unlock(&g_registry_lock); respond(conn, 404, "{\"error\":\"no game\"}"); return; }
     char user_id[ID_LEN + 1]; snprintf(user_id, sizeof user_id, "%s", u->user_id);
     char username[24]; snprintf(username, sizeof username, "%s", u->username);
     pthread_mutex_lock(&s->lock);
@@ -991,10 +1004,10 @@ static void h_meta(Req *r, int fd) {
     game_mark_dirty(s);
     char out[80]; snprintf(out, sizeof out, "{\"game_id\":\"%s\",\"status\":%d}", s->id, g->status);
     pthread_mutex_unlock(&s->lock);
-    respond(fd, 200, out);
+    respond(conn, 200, out);
 }
 
-static void h_action(Req *r, int fd) {
+static void h_action(Req *r, Conn *conn) {
     // game_id rides the query string (like /state); the body IS the packed awire
     // frame, so it can be binary. /action?game_id=..
     char gid[ID_LEN + 1] = {0};
@@ -1004,15 +1017,15 @@ static void h_action(Req *r, int fd) {
     pthread_mutex_lock(&g_registry_lock);
     User *u = user_by_token(r->token);
     GameSlot *s = game_by_id(gid);
-    if (!u) { pthread_mutex_unlock(&g_registry_lock); respond(fd, 401, "{\"error\":\"auth\"}"); return; }
-    if (!s) { pthread_mutex_unlock(&g_registry_lock); respond(fd, 400, "{\"error\":\"not playing\"}"); return; }
+    if (!u) { pthread_mutex_unlock(&g_registry_lock); respond(conn, 401, "{\"error\":\"auth\"}"); return; }
+    if (!s) { pthread_mutex_unlock(&g_registry_lock); respond(conn, 400, "{\"error\":\"not playing\"}"); return; }
     char user_id[ID_LEN + 1]; snprintf(user_id, sizeof user_id, "%s", u->user_id);
     pthread_mutex_lock(&s->lock);
     pthread_mutex_unlock(&g_registry_lock);
 
-    if (s->game.status != GAME_STATUS_PLAYING) { pthread_mutex_unlock(&s->lock); respond(fd, 400, "{\"error\":\"not playing\"}"); return; }
+    if (s->game.status != GAME_STATUS_PLAYING) { pthread_mutex_unlock(&s->lock); respond(conn, 400, "{\"error\":\"not playing\"}"); return; }
     int seat = seat_of(s, user_id);
-    if (seat < 0) { pthread_mutex_unlock(&s->lock); respond(fd, 400, "{\"error\":\"not seated\"}"); return; }
+    if (seat < 0) { pthread_mutex_unlock(&s->lock); respond(conn, 400, "{\"error\":\"not seated\"}"); return; }
 
     // The body is the same packed move the browser validates and the phone
     // sends: [kind, n, cards, (attacks)]. The kernel decodes and dispatches —
@@ -1035,10 +1048,10 @@ static void h_action(Req *r, int fd) {
     if (ok) { s->version++; game_mark_dirty(s); pthread_cond_signal(&s->cond); }   // real move -> the cached per-seat views are stale
     char out[96]; snprintf(out, sizeof out, "{\"ok\":%s,\"status\":%d}", ok ? "true" : "false", s->game.status);
     pthread_mutex_unlock(&s->lock);
-    respond(fd, ok ? 200 : 400, out);
+    respond(conn, ok ? 200 : 400, out);
 }
 
-static void h_state(Req *r, int fd) {
+static void h_state(Req *r, Conn *conn) {
     char gid[ID_LEN + 1] = {0}; int seat = 0;
     // query: game_id=..&seat=..
     const char *gp = strstr(r->query, "game_id=");
@@ -1047,7 +1060,7 @@ static void h_state(Req *r, int fd) {
 
     pthread_mutex_lock(&g_registry_lock);
     GameSlot *s = game_by_id(gid);
-    if (!s) { pthread_mutex_unlock(&g_registry_lock); respond(fd, 404, "{\"error\":\"no game\"}"); return; }
+    if (!s) { pthread_mutex_unlock(&g_registry_lock); respond(conn, 404, "{\"error\":\"no game\"}"); return; }
     pthread_mutex_lock(&s->lock);
     pthread_mutex_unlock(&g_registry_lock);
 
@@ -1060,12 +1073,12 @@ static void h_state(Req *r, int fd) {
     unsigned char buf[65536];
     int n = state_put(&s->game, seat, buf);
     pthread_mutex_unlock(&s->lock);
-    respond_bin(fd, 200, buf, n);
+    respond_bin(conn, 200, buf, n);
 }
 
 // A plain status int (0 waiting / 1 playing / 2 over), for smoke tests that used
 // to read it off the JSON view. Not json_out — just an integer.
-static void h_status(Req *r, int fd) {
+static void h_status(Req *r, Conn *conn) {
     char gid[ID_LEN + 1] = {0};
     const char *gp = strstr(r->query, "game_id=");
     if (gp) { gp += 8; int i = 0; while (gp[i] && gp[i] != '&' && i < ID_LEN) { gid[i] = gp[i]; i++; } gid[i] = 0; }
@@ -1082,7 +1095,7 @@ static void h_status(Req *r, int fd) {
         pthread_mutex_unlock(&g_registry_lock);
     }
     char out[16]; snprintf(out, sizeof out, "%d", st);
-    respond(fd, 200, out);
+    respond(conn, 200, out);
 }
 
 // Serialize seat's masked view, reusing the cached bytes from GameSlot when
@@ -1154,14 +1167,14 @@ static int state_put_cached(GameSlot *s, int seat, unsigned char *out) {
 //     kernel accepted it (awire_apply's own validation — same as /action).
 // A human's turn wakes the bot game-loop exactly like /action did.
 typedef struct {
-    int fd;
+    Conn conn;
     Req req;
     char *raw_buf;   // owns the bytes r.body/r.query/etc point into until freed
 } WsSpawnArg;
 
 static void *ws_conn_thread(void *argp) {
     WsSpawnArg *sa = argp;
-    int fd = sa->fd;
+    Conn *conn = &sa->conn;
     Req *r = &sa->req;
 
     char gid[ID_LEN + 1] = {0}; int seat = -1;
@@ -1175,8 +1188,8 @@ static void *ws_conn_thread(void *argp) {
     GameSlot *s = game_by_id(gid);
     if (!u || !s) {
         pthread_mutex_unlock(&g_registry_lock);
-        respond(fd, 401, "{\"error\":\"ws auth\"}");
-        close(fd); free(sa->raw_buf); free(sa); return NULL;
+        respond(conn, 401, "{\"error\":\"ws auth\"}");
+        conn_close(conn); free(sa->raw_buf); free(sa); return NULL;
     }
     char user_id[ID_LEN + 1]; snprintf(user_id, sizeof user_id, "%s", u->user_id);
     pthread_mutex_lock(&s->lock);
@@ -1184,22 +1197,22 @@ static void *ws_conn_thread(void *argp) {
     bool ok = seat >= 0 && seat < s->game.num_players && seat_of(s, user_id) == seat;
     pthread_mutex_unlock(&s->lock);
     if (!ok) {
-        respond(fd, 401, "{\"error\":\"ws auth\"}");
-        close(fd); free(sa->raw_buf); free(sa); return NULL;
+        respond(conn, 401, "{\"error\":\"ws auth\"}");
+        conn_close(conn); free(sa->raw_buf); free(sa); return NULL;
     }
 
     char accept[64];
     if (!ws_accept_from_key(r->ws_key, accept, sizeof accept)) {
-        respond(fd, 400, "{\"error\":\"ws key\"}");
-        close(fd); free(sa->raw_buf); free(sa); return NULL;
+        respond(conn, 400, "{\"error\":\"ws key\"}");
+        conn_close(conn); free(sa->raw_buf); free(sa); return NULL;
     }
     char resp[256];
     int n = snprintf(resp, sizeof resp,
         "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
         "Sec-WebSocket-Accept: %s\r\n\r\n", accept);
-    if (n <= 0 || ws_write_full(fd, resp, n) != n) { close(fd); free(sa->raw_buf); free(sa); return NULL; }
+    if (n <= 0 || ws_write_full(conn, resp, n) != n) { conn_close(conn); free(sa->raw_buf); free(sa); return NULL; }
 
-    WsConn wc; ws_conn_init(&wc, fd, /*mask_outgoing=*/0);   // server frames: never masked
+    WsConn wc; ws_conn_init(&wc, *conn, /*mask_outgoing=*/0);   // server frames: never masked; copies *conn by value — see ws_conn_init's doc
     if (r->body_len > 0) ws_conn_prime(&wc, (const unsigned char *)r->body, r->body_len);
     free(sa->raw_buf); sa->raw_buf = NULL;   // primed into wc.pending — the raw request buffer is no longer referenced
 
@@ -1210,7 +1223,7 @@ static void *ws_conn_thread(void *argp) {
     int slen = s->used ? state_put_cached(s, seat, msg + 1) : 0;
     pthread_mutex_unlock(&s->lock);
     msg[0] = 0;
-    if (ws_send_frame(&wc, WS_OP_BIN, msg, slen + 1) < 0) { close(fd); free(sa); return NULL; }
+    if (ws_send_frame(&wc, WS_OP_BIN, msg, slen + 1) < 0) { conn_close(&wc.conn); free(sa); return NULL; }
 
     unsigned char in[4096];
     int opcode;
@@ -1251,7 +1264,7 @@ static void *ws_conn_thread(void *argp) {
         msg[0] = applied ? 1 : 0;
         if (ws_send_frame(&wc, WS_OP_BIN, msg, slen + 1) < 0) break;
     }
-    close(fd);
+    conn_close(&wc.conn);
     free(sa);
     return NULL;
 }
@@ -1302,7 +1315,7 @@ static int g_n_meta_workers = N_META_WORKERS_DEFAULT;
 static int g_n_create_workers = N_CREATE_WORKERS_DEFAULT;
 
 typedef struct {
-    int fd;
+    Conn conn;
     Req req;
     char *raw_buf;   // owns the bytes req.body/req.query/etc point into until freed
 } WorkItem;
@@ -1352,16 +1365,16 @@ static WorkQueue g_auth_create_q;
 static WorkQueue g_meta_q;
 static WorkQueue g_game_q[MAX_GAME_WORKERS];
 
-static void route(Req *r, int fd) {
-    if (!strcmp(r->method, "OPTIONS")) { respond(fd, 200, "{}"); return; }
-    if (!strcmp(r->path, "/health")) { respond(fd, 200, "{\"ok\":true}"); return; }
-    if (!strcmp(r->path, "/auth/signup") || !strcmp(r->path, "/auth/signin")) { h_signup(r, fd); return; }
-    if (!strcmp(r->path, "/create")) { h_create(r, fd); return; }
-    if (!strcmp(r->path, "/meta"))   { h_meta(r, fd); return; }
-    if (!strcmp(r->path, "/action")) { h_action(r, fd); return; }
-    if (!strcmp(r->path, "/state"))  { h_state(r, fd); return; }
-    if (!strcmp(r->path, "/status")) { h_status(r, fd); return; }
-    respond(fd, 404, "{\"error\":\"route\"}");
+static void route(Req *r, Conn *conn) {
+    if (!strcmp(r->method, "OPTIONS")) { respond(conn, 200, "{}"); return; }
+    if (!strcmp(r->path, "/health")) { respond(conn, 200, "{\"ok\":true}"); return; }
+    if (!strcmp(r->path, "/auth/signup") || !strcmp(r->path, "/auth/signin")) { h_signup(r, conn); return; }
+    if (!strcmp(r->path, "/create")) { h_create(r, conn); return; }
+    if (!strcmp(r->path, "/meta"))   { h_meta(r, conn); return; }
+    if (!strcmp(r->path, "/action")) { h_action(r, conn); return; }
+    if (!strcmp(r->path, "/state"))  { h_state(r, conn); return; }
+    if (!strcmp(r->path, "/status")) { h_status(r, conn); return; }
+    respond(conn, 404, "{\"error\":\"route\"}");
 }
 
 // Picks which pool's queue a one-shot request belongs on. Called by the
@@ -1389,12 +1402,26 @@ static void *worker_thread(void *arg) {
     for (;;) {
         WorkItem item;
         wq_pop(q, &item);
-        route(&item.req, item.fd);
-        close(item.fd);
+        route(&item.req, &item.conn);
+        conn_close(&item.conn);
         free(item.raw_buf);
     }
     return NULL;
 }
+
+// --------------------------------------------------------------------------
+// STAGE 3: TLS listener state. `g_tls_ctx` is built ONCE in main() — before
+// the accept loop, before any worker/connection thread exists — off
+// tls_server_ctx_create (conn.c), then only ever READ afterward (every
+// accepted connection calls conn_tls_accept, which allocates its OWN fresh
+// SSL* off this ctx; the ctx itself is never mutated post-setup), so
+// sharing it read-only across every worker/connection thread is safe under
+// OpenSSL 3's default library context — see TLS.md's Helgrind section for
+// the verification. NULL means plaintext (the default, and the ONLY mode
+// when --tls isn't passed) — main()'s accept loop branches on this exactly
+// once per accepted connection.
+// --------------------------------------------------------------------------
+static SSL_CTX *g_tls_ctx = NULL;
 
 // --------------------------------------------------------------------------
 // Connection handling — the dispatcher (T2a Deliverable 2)
@@ -1409,6 +1436,14 @@ int main(int argc, char **argv) {
     // (50-100ms is the documented sweet spot — see persist.h).
     const char *db_path = "./foolish.db";
     int persist_interval_ms = 75;
+    // Stage 3: TLS is OFF by default (plaintext, byte-for-byte the same as
+    // every earlier stage) — `--tls --cert=PATH --key=PATH` turns the WHOLE
+    // listen socket over to TLS (HTTPS + WSS); there is no mixed
+    // plaintext+TLS listener in this design (see TLS.md for why a single
+    // `--tls`-flips-the-listener design was chosen over a second
+    // `--tls-port`).
+    bool want_tls = false;
+    const char *cert_path = NULL, *key_path = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strncmp(argv[i], "--game-workers=", 15)) {
             int nw = atoi(argv[i] + 15);
@@ -1426,6 +1461,12 @@ int main(int argc, char **argv) {
         } else if (!strncmp(argv[i], "--persist-interval-ms=", 22)) {
             int v = atoi(argv[i] + 22);
             if (v > 0) persist_interval_ms = v;
+        } else if (!strcmp(argv[i], "--tls")) {
+            want_tls = true;
+        } else if (!strncmp(argv[i], "--cert=", 7)) {
+            cert_path = argv[i] + 7;
+        } else if (!strncmp(argv[i], "--key=", 6)) {
+            key_path = argv[i] + 6;
         } else {
             int p = atoi(argv[i]);
             if (p > 0) port = p;
@@ -1436,8 +1477,33 @@ int main(int argc, char **argv) {
     // reset, the load client's own `timeout` cutting it off) between our
     // read and our next write; the default SIGPIPE action is to kill the
     // WHOLE PROCESS on that write. Ignore it — write() already reports the
-    // same failure as -1/EPIPE, which every write path here already checks.
+    // same failure as -1/EPIPE, which every write path here already checks
+    // (and, under TLS, conn_read/conn_write (conn.c) translate the
+    // equivalent SSL_ERROR_SYSCALL the same way — see their doc).
     signal(SIGPIPE, SIG_IGN);
+
+    // Stage 3: build the shared server SSL_CTX ONCE, before any worker pool
+    // or the accept loop starts (same "set up before any other thread can
+    // touch it" posture persist_start takes for crash recovery, just for a
+    // different piece of startup state) — see g_tls_ctx's own doc above. A
+    // REQUESTED (--tls passed) but failed TLS setup is fatal, never a
+    // silent downgrade to plaintext: same posture Stage 2 takes for a
+    // requested-but-failed --db (see persist_start's doc) — serving
+    // plaintext when the operator asked for TLS would be a silent security
+    // regression, worse than refusing to start.
+    if (want_tls) {
+        if (!cert_path || !key_path) {
+            fprintf(stderr, "fatal: --tls requires --cert=PATH --key=PATH\n");
+            return 1;
+        }
+        g_tls_ctx = tls_server_ctx_create(cert_path, key_path);
+        if (!g_tls_ctx) {
+            fprintf(stderr, "fatal: TLS setup failed (--cert=%s --key=%s) — "
+                             "check the cert/key are valid PEM and the key matches the cert\n",
+                    cert_path, key_path);
+            return 1;
+        }
+    }
 
     // Stage 2: the round-trip codec gate (always runs, --no-db or not — it's
     // a pure in-memory check of serialize_slot/deserialize_slot, not the DB
@@ -1476,18 +1542,21 @@ int main(int argc, char **argv) {
     addr.sin_family = AF_INET; addr.sin_addr.s_addr = INADDR_ANY; addr.sin_port = htons(port);
     if (bind(srv, (struct sockaddr *)&addr, sizeof addr) < 0) { perror("bind"); return 1; }
     listen(srv, 64);
-    fprintf(stderr, "foolish native server (kernel-driven, in-memory + SQLite write-behind) on :%d "
+    fprintf(stderr, "foolish native server (kernel-driven, in-memory + SQLite write-behind%s) on :%d "
             "(game-workers=%d meta-workers=%d create-workers=%d db=%s interval=%dms)\n",
+            g_tls_ctx ? " + TLS (https/wss)" : "",
             port, g_n_game_workers, g_n_meta_workers, g_n_create_workers,
             db_path ? db_path : "off (--no-db)", persist_interval_ms);
 
-    // The dispatcher: accept, read+parse the request, then either hand it to
-    // a dedicated thread (/ws — a persistent connection, see ws_conn_thread's
-    // doc for why it stays off the typed queues) or enqueue it onto the
-    // right typed worker pool (classify_queue). This is the accept loop
-    // itself acting as dispatcher (no separate reader-thread pool) — see
-    // SERVER_SCALING.md for why that's an acceptable, correctness-first
-    // choice here rather than a scalability bottleneck in practice.
+    // The dispatcher: accept, (Stage 3) do the TLS handshake if this
+    // listener is running TLS, read+parse the request, then either hand it
+    // to a dedicated thread (/ws — a persistent connection, see
+    // ws_conn_thread's doc for why it stays off the typed queues) or
+    // enqueue it onto the right typed worker pool (classify_queue). This is
+    // the accept loop itself acting as dispatcher (no separate
+    // reader-thread pool) — see SERVER_SCALING.md for why that's an
+    // acceptable, correctness-first choice here rather than a scalability
+    // bottleneck in practice.
     for (;;) {
         int fd = accept(srv, NULL, NULL);
         if (fd < 0) continue;
@@ -1498,10 +1567,24 @@ int main(int argc, char **argv) {
         // milliseconds instead of tens of microseconds.
         int one = 1; setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
 
+        // Stage 3: SSL_accept happens HERE, on this connection's own
+        // servicing path, before any HTTP parsing — a fresh SSL* per
+        // connection, off the one shared g_tls_ctx (see its doc above). A
+        // failed/abandoned handshake (a port scanner, a plaintext probe
+        // against a TLS listener, a client that hangs up mid-handshake) is
+        // just a dropped connection, same as a malformed plaintext request
+        // below — never fatal to the process.
+        Conn conn;
+        if (g_tls_ctx) {
+            if (!conn_tls_accept(&conn, g_tls_ctx, fd)) { close(fd); continue; }
+        } else {
+            conn_init_plain(&conn, fd);
+        }
+
         char *buf = malloc(REQ_BUF_CAP);
-        if (!buf) { close(fd); continue; }
+        if (!buf) { conn_close(&conn); continue; }
         Req r;
-        if (!read_and_parse_request(fd, buf, REQ_BUF_CAP, &r)) { close(fd); free(buf); continue; }
+        if (!read_and_parse_request(&conn, buf, REQ_BUF_CAP, &r)) { conn_close(&conn); free(buf); continue; }
 
         if (r.is_ws_upgrade && !strcmp(r.method, "GET") && !strcmp(r.path, "/ws")) {
             // Dedicated per-connection thread (design B, see ws_conn_thread's
@@ -1510,20 +1593,20 @@ int main(int argc, char **argv) {
             // in the old thread-per-HTTP-request T1 profile — is paid once
             // per client instead of once per action. See PROFILE_HOTPATH.md T1b.
             WsSpawnArg *sa = malloc(sizeof *sa);
-            if (!sa) { close(fd); free(buf); continue; }
-            sa->fd = fd; sa->req = r; sa->raw_buf = buf;
+            if (!sa) { conn_close(&conn); free(buf); continue; }
+            sa->conn = conn; sa->req = r; sa->raw_buf = buf;
             pthread_t t;
             if (pthread_create(&t, NULL, ws_conn_thread, sa) == 0) pthread_detach(t);
-            else { close(fd); free(buf); free(sa); }
+            else { conn_close(&conn); free(buf); free(sa); }
             continue;
         }
 
         // Cheap, store-free routes: answer inline instead of paying a queue
         // round trip for them.
-        if (!strcmp(r.method, "OPTIONS")) { respond(fd, 200, "{}"); close(fd); free(buf); continue; }
-        if (!strcmp(r.path, "/health"))  { respond(fd, 200, "{\"ok\":true}"); close(fd); free(buf); continue; }
+        if (!strcmp(r.method, "OPTIONS")) { respond(&conn, 200, "{}"); conn_close(&conn); free(buf); continue; }
+        if (!strcmp(r.path, "/health"))  { respond(&conn, 200, "{\"ok\":true}"); conn_close(&conn); free(buf); continue; }
 
-        WorkItem item; item.fd = fd; item.req = r; item.raw_buf = buf;
+        WorkItem item; item.conn = conn; item.req = r; item.raw_buf = buf;
         wq_push(classify_queue(&r), &item);
     }
 }
