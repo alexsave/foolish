@@ -1106,6 +1106,20 @@ static void h_meta(Req *r, Conn *conn) {
     // branch actually change anything" per-branch for a rarely-called path.
     s->version++;
     game_mark_dirty(s);
+    // PROFILE_HOTPATH.md "T1f" (push-only protocol): a lobby transition
+    // (join/add-bot/start-and-deal/continue) changes the board exactly like
+    // a human move or a bot decision does, and any live /ws connection for
+    // this game — most importantly a seat's own connection sitting blocked
+    // on its next push right after THIS SAME client issued the /meta
+    // continue+start rematch pair over HTTP — needs to hear about it
+    // without polling. Same cross-thread wakeup bot_thread already uses at
+    // its own version-bump site (see epoll_notify_game_changed's doc); a
+    // no-op under --tls (thread-per-connection fallback, no epoll worker to
+    // wake — see that doc's g_epoll_active guard). Before T1f this was
+    // masked by every /ws client polling every ~1ms regardless, so a lobby
+    // transition was noticed within a poll cycle even with no explicit
+    // wakeup; a push-only client has no such fallback.
+    epoll_notify_game_changed(s);
     char out[80]; snprintf(out, sizeof out, "{\"game_id\":\"%s\",\"status\":%d}", s->id, g->status);
     pthread_mutex_unlock(&s->lock);
     respond(conn, 200, out);
@@ -2045,29 +2059,40 @@ static bool econn_try_flush(Worker *w, EConn *ec) {
 // Pushes fresh state to every active /ws connection THIS worker owns whose
 // cached view is stale (ec->last_pushed_version != its game's current
 // s->version), skipping `skip` and, when `game` is non-NULL, every OTHER
-// game too. ONE call site: the eventfd-triggered path, woken by
-// epoll_notify_game_changed from bot_thread on a DIFFERENT thread — since
-// the eventfd carries no payload (which game changed), this is called with
-// game=NULL, skip=NULL and checks every /ws connection this worker owns.
-// Bounded by how many connections one shard holds, and only runs once per
-// actual bot decision (not per idle client poll, not per human move), so
-// it's cheap in practice.
+// game too. TWO call sites:
+//   1. The eventfd-triggered path, woken by epoll_notify_game_changed from
+//      bot_thread (or h_meta — a lobby transition) on a DIFFERENT thread —
+//      since the eventfd carries no payload (which game changed), this is
+//      called with game=NULL, skip=NULL and checks every /ws connection
+//      this worker owns.
+//   2. PROFILE_HOTPATH.md "T1f" (push-only protocol): handle_ws_readable,
+//      right after a human move applies, calls this INLINE with
+//      game=ec->slot, skip=ec — fanning the new state out to that game's
+//      OTHER live connections (the mover already got its own direct reply).
+//      No cross-thread wakeup needed here: this runs on the SAME worker
+//      thread that already owns every /ws connection for this game (see
+//      game_worker_index's doc), so it's just a normal function call, not
+//      an eventfd round trip.
+// Bounded by how many connections one shard holds, and — thanks to the
+// version-stale check above — naturally coalesces: several moves landing in
+// quick succession before a given connection is next scanned still cost it
+// only ONE push (the latest cached view), not one per move.
 //
-// Deliberately NOT also called inline after a HUMAN move (an earlier
-// version of this file did — see handle_ws_readable's own comment at its
-// call site): at multi-seat scale, proactively fanning a push out to every
-// OTHER seat on every human move created a thundering herd — each push
-// wakes every other client, which immediately re-checks eligibility and
-// often re-submits, racing the others for the same now-stale window —
-// caught live measuring the WS+legal hammer's applied/submitted ratio (see
-// SERVER_SCALING.md "Stage 6"). The task's own framing of this push was
-// specifically the bot_thread/cross-thread case (a bot's move, which a
-// human can't otherwise notice without polling); this keeps it scoped to
-// exactly that — human-to-human visibility stays the same as every earlier
-// stage: a seat learns about another seat's move on its own next round trip.
-// Same state_put_cached discipline every other reply in this file uses —
-// this is a pure fan-out of that same cached-view read, not a new
-// serialization path.
+// History: an earlier revision of this file scoped call site 2 OUT
+// (bot-thread pushes only) because the load client of the time POLLED —
+// every idle seat sent an empty frame every ~1ms regardless — so fanning
+// out on every human move on TOP of that made every OTHER seat's client
+// immediately re-check eligibility and often re-submit, racing the others
+// for the same now-stale window and measurably hurting the applied ratio
+// (SERVER_SCALING.md "Stage 6"). That was a load-tool artifact, not a
+// reason to withhold the push: a real client updates its UI and waits for
+// its human, it doesn't auto-resubmit. T1f made the reference client
+// (`foolish_hammer --mode=ws`) genuinely push-driven — it submits at most
+// one legal move per pushed state and otherwise just waits — which removes
+// the herd motive; see PROFILE_HOTPATH.md "T1f" for the measured ratio.
+// WithOUT this call site, a push-only (non-polling) client would have no
+// way to learn about another seat's move at all: it would just sit blocked
+// in ws_recv_message forever, stalling the whole game.
 static void worker_push_stale(Worker *w, GameSlot *game, EConn *skip) {
     static _Thread_local unsigned char scratch[1 + 65536];   // this worker's own thread only — never shared
     for (EConn *ec = w->ws_head; ec; ec = ec->next) {
@@ -2140,22 +2165,28 @@ static void handle_ws_readable(Worker *w, EConn *ec) {
                 uint32_t v;
                 int mtotal = ws_service_message(ec->slot, ec->seat, ec->spectator, ec->cache_idx, ec->viewer,
                                                  ec->msg_buf, ec->last_msg_len, reply, &v);
+                bool applied = reply[0] != 0;   // ws_service_message's own [ok:u8] byte — see its doc
                 if (econn_reserve_out(ec, mtotal + 14) && ws_send_frame(&ec->wc_out, WS_OP_BIN, reply, mtotal) >= 0) {
                     econn_commit_out(ec);
                     ec->last_pushed_version = v;
                 }
                 if (!econn_try_flush(w, ec)) return;   // closed (real write error) — ec is gone
-                // Deliberately NOT fanning this out to the game's OTHER
-                // connections here (unlike the bot_thread/eventfd path
-                // below) — see worker_push_stale's doc for why: at
-                // multi-seat scale, proactively pushing on every HUMAN
-                // move creates a thundering herd (each push wakes every
-                // other seat's client, which immediately re-checks
-                // eligibility and often re-submits, racing the others) that
-                // measurably hurt the submitted-vs-applied ratio without
-                // raising real throughput. Those seats still learn about
-                // the change the normal way: their own next poll/move round
-                // trip.
+                // PROFILE_HOTPATH.md "T1f" (push-only protocol): fan the new
+                // state out to this game's OTHER live /ws connections — the
+                // exact same cached-view push worker_push_stale already
+                // gives the bot_thread/eventfd path (see its doc), just
+                // called straight from THIS worker's own thread instead of
+                // via an eventfd wakeup, since this worker already owns
+                // every connection for `ec->slot` (game_worker_index's
+                // invariant). Gated on `applied`: a rejected move, a
+                // spectator's frame, or (pre-T1f-client) a plain poll never
+                // changed s->version, so worker_push_stale's own stale-check
+                // would no-op every OTHER connection anyway — skipping the
+                // call entirely on those avoids even the per-connection lock
+                // scan. `skip=ec`: the mover already has its direct reply
+                // above; it must not also receive a redundant fan-out frame
+                // for the very same version.
+                if (applied) worker_push_stale(w, ec->slot, ec);
             } else if (rc == WSF_ERROR) {
                 // Best-effort: send any queued CLOSE-echo bytes before
                 // tearing down. econn_try_flush's OWN return tells us

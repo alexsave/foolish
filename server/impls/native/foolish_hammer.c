@@ -45,19 +45,37 @@
 // --mode=ws: one persistent WebSocket connection PER SEAT (games*seats
 // connections total — `--conns` is ignored in this mode; see ws_run_load
 // below for why "one connection per client" doesn't map onto a `conns`
-// concurrency knob the way stateless HTTP requests do). Each connection's
-// worker thread loops: receive the server's pushed [ok][masked state] ->
-// state_get -> calculate_legal_moves for its own seat -> if it has a legal
-// move, awire_encode a RANDOMLY CHOSEN one and send it; if not (this seat
-// isn't currently eligible — Durak often has several eligible seats at
-// once, e.g. multiple attackers + one defender, and just as often seats
-// that aren't), send an empty poll frame instead so it still notices when
-// another seat's move makes it eligible. On game-over, POST /meta continue
-// + /meta start (a rematch, reusing the SAME game_id/seat/connection) so
-// load keeps flowing instead of idling out. Every submitted move is
-// genuinely legal, so the server's awire_apply actually applies it — no
-// cheap-reject easy-out (PROFILE_HOTPATH.md T1's random-frame mode measured
-// ~0.15% of submitted actions as legal; this mode is ~100%).
+// concurrency knob the way stateless HTTP requests do).
+//
+// PROFILE_HOTPATH.md "T1f" — PUSH-DRIVEN, no polling (plaintext, the
+// default): each connection's worker thread just blocks in
+// ws_recv_message, waiting for the server to push. On EACH received push it
+// decodes the masked state (state_get), computes this seat's legal moves
+// (calculate_legal_moves), and — iff it's eligible — awire_encodes ONE
+// randomly chosen legal move and sends it; otherwise it sends NOTHING and
+// goes straight back to blocking on the next push. This is what a real
+// client does: it never invents an empty "send me the state" frame, because
+// the server already pushes on every state change (a human move, a bot
+// decision, or a lobby transition — see foolish_server.c's
+// worker_push_stale/epoll_notify_game_changed) — see that file's own doc
+// for why this used to be scoped to bot moves only (an earlier, POLLING
+// client made fanning out on every human move a thundering herd) and why a
+// push-driven client removes that motive. On game-over the SAME received
+// push (status flips to GAME_OVER) drives POST /meta continue + /meta start
+// (a rematch, reusing the SAME game_id/seat/connection); no polling is
+// needed to notice the resulting re-deal either, since h_meta's own
+// lobby-transition pushes cover it. Every submitted move is genuinely
+// legal, so the server's awire_apply actually applies it — no cheap-reject
+// easy-out (PROFILE_HOTPATH.md T1's random-frame mode measured ~0.15% of
+// submitted actions as legal; this mode is ~100%).
+//
+// --tls falls back to the OLD polling loop (WS_IDLE_POLL_US): --tls selects
+// foolish_server's thread-per-connection design (ws_conn_thread), which has
+// no non-blocking epoll worker to proactively push from (SERVER_SCALING.md
+// "TLS-over-epoll: not attempted, documented honestly") — a push-only
+// client against that server would just stall forever the first time it
+// wasn't eligible, since nothing would ever wake it. Scoped, documented
+// fallback, not a silent gap: see ws_worker's own doc.
 //
 // Stage 4 (SERVER_SCALING.md "Stage 4 — spectators + octogen stress"), both
 // --mode=ws only, both off by default (so the pure all-human baseline above
@@ -81,8 +99,11 @@
 //   --spectators=N  N read-only WebSocket connections PER GAME
 //     (/ws?game_id=..&spectator=1) that receive the server's masked
 //     VIEW_SPECTATOR pushes and NEVER submit moves (spectator_worker) — real
-//     connection + poll/push load with none of the legal-move computation
-//     the human ws_worker does, since a spectator never acts.
+//     connection + push load with none of the legal-move computation the
+//     human ws_worker does, since a spectator never acts. Also push-driven
+//     (plaintext) / poll-driven (--tls), same split as ws_worker; still
+//     periodically sends a well-FRAMED move probe (never a poll) to verify
+//     server-side that a spectator can't move — see SPEC_MOVE_PROBE_N.
 //
 // A --mode=ws run also polls GET /stats before and after the timed load
 // window and reports the delta as "server bot decisions" / "server octogen
@@ -159,12 +180,16 @@ static atomic_bool g_stop = false;
 // cert, not a real CA-issued one; see TLS.md.
 static SSL_CTX *g_tls_ctx = NULL;
 
-// How long a seat with no legal move waits before sending its next empty
-// "poll" frame (the only way it learns another seat's move made it
-// eligible — see ws_worker). Measured on this 4-core box: at 1ms, idle
-// polling from ~120 of 160 seats (only ~1-2 seats per game are ever
-// eligible at once in Durak) saturated all 4 cores in syscall/
-// context-switch overhead (69% sys, load 4.0) and *reduced* real
+// PROFILE_HOTPATH.md "T1f": the plaintext (default) path no longer polls at
+// all — see ws_worker/spectator_worker's push-driven loop. This constant now
+// serves ONLY the --tls fallback (foolish_server's thread-per-connection
+// design has no epoll worker to push from — see ws_worker's own doc), where
+// a seat/spectator with nothing to send still needs to notice another
+// seat's move somehow, and the only way left is asking again. Measured on
+// this 4-core box back when EVERY seat polled at this cadence regardless of
+// --tls: at 1ms, idle polling from ~120 of 160 seats (only ~1-2 seats per
+// game are ever eligible at once in Durak) saturated all 4 cores in
+// syscall/context-switch overhead (69% sys, load 4.0) and *reduced* real
 // applied-moves/sec despite TCP_NODELAY making each individual round trip
 // cheap. Widening the idle interval trades poll responsiveness for giving
 // the CPU back to the round trips that actually apply a move.
@@ -699,18 +724,22 @@ static void *loader_thread(void *arg) {
 // ---------------------------------------------------------------------------
 
 typedef struct {
-    long msgs_recv;          // [ok][state] pushes received
+    long msgs_recv;          // [ok][state] pushes received (own reply + fan-out from other seats/bots/lobby transitions)
     long actions_sent;       // non-empty (real move) frames sent
     long actions_applied;    // of those, how many the server's awire_apply accepted
-    long polls_sent;         // empty frames sent (seat not eligible / game not playing)
+    long polls_sent;         // empty frames sent — PROFILE_HOTPATH.md "T1f": 0 on plaintext (push-driven, never polls); --tls only (see ws_worker)
     long rematches;          // /meta continue+start pairs issued on game-over
     long connects;           // successful WS handshakes (incl. reconnects)
     long connect_failures;   // failed connects/handshakes (counted, never fatal)
-    // Round-trip latency: moment this connection SENDS a move/poll frame ->
-    // moment it receives the server's pushed [ok][state] answer. Network
-    // latency is ~0 on loopback, so this is the SERVER-attributable latency
-    // floor (request parse + lock + apply/serialize + response write) and
-    // how it degrades as concurrency rises — see PROFILE_HOTPATH.md "T1c".
+    // Round-trip latency: moment this connection SENDS a move frame -> moment
+    // it receives the server's pushed [ok][state] answer to THAT move.
+    // PROFILE_HOTPATH.md "T1f": plaintext never sends a poll frame anymore,
+    // so (unlike T1c) this is now purely move-apply latency, never mixed
+    // with poll-response latency (--tls's legacy poll fallback still times
+    // its own poll round trips the same way it always did). Network latency
+    // is ~0 on loopback, so this is the SERVER-attributable latency floor
+    // (request parse + lock + apply/serialize + response write) and how it
+    // degrades as concurrency rises — see PROFILE_HOTPATH.md "T1c"/"T1f".
     double lat_us[LAT_RESERVOIR_CAP];   // reservoir of sampled round trips, microseconds
     long   lat_count;                   // samples currently held (<= LAT_RESERVOIR_CAP)
     long   lat_seen;                    // total round trips timed (for the reservoir's odds)
@@ -819,17 +848,70 @@ static int ws_send_timed(WsConn *wc, const unsigned char *payload, int64_t len,
     return r;
 }
 
+// PROFILE_HOTPATH.md "T1f" — push-driven per-connection loop (plaintext, the
+// default): receive one pushed [ok][masked state] frame, decode it, and
+// submit AT MOST ONE legal move against it — never an empty poll frame.
+// `recv_seq` counts pushes received on THIS connection (bumped once per
+// successful ws_recv_message, right before this is called) and
+// `submitted_seq` records which `recv_seq` this connection last submitted a
+// move against; the two are compared before sending so a seat can never
+// submit twice for the exact same received state, even if some future
+// change reintroduced a retry path here — belt-and-suspenders, since today's
+// single-pass "receive one, act at most once, go back to blocking receive"
+// structure already guarantees it by construction. Returns like
+// ws_send_timed: >= 0 sent, -1 the connection is dead (caller reconnects).
+static int ws_maybe_submit_move(WsClientArg *a, WsThreadStats *st, unsigned int *seed,
+                                 const Game *g, WsConn *wc, uint64_t recv_seq,
+                                 uint64_t *submitted_seq, double *t_pending, bool *have_pending) {
+    if (*submitted_seq == recv_seq) return 0;   // already acted on this exact push
+    static __thread LegalMoves moves;
+    calculate_legal_moves(g, a->seat, &moves);
+    if (moves.n <= 0) return 0;   // not this seat's turn — push-driven: just wait for the next push
+
+    const LegalMove *m = &moves.moves[rand_r(seed) % (unsigned)moves.n];
+    AwireAction act; memset(&act, 0, sizeof act);
+    switch (m->type) {
+        case MOVE_ATTACK: act.kind = AWIRE_ATTACK; break;
+        case MOVE_COVER:  act.kind = AWIRE_COVER;  break;
+        case MOVE_PASS:   act.kind = AWIRE_PASS;   break;
+        case MOVE_PICKUP: act.kind = AWIRE_PICKUP; break;
+        case MOVE_GOOD:   act.kind = AWIRE_GOOD;   break;
+        default: return 0;   // MOVE_WAIT or unrecognized — wait for the next push
+    }
+    act.n = (act.kind == AWIRE_PICKUP || act.kind == AWIRE_GOOD) ? 0 : m->n_cards;
+    if (act.n < 0) act.n = 0;
+    if (act.n > AWIRE_MAX_CARDS) act.n = AWIRE_MAX_CARDS;
+    for (int i = 0; i < act.n; i++) {
+        act.cards[i] = m->cards[i];
+        if (act.kind == AWIRE_COVER) act.attacks[i] = m->attack_cards[i];
+    }
+    unsigned char frame[128];
+    int flen = awire_encode(&act, frame, sizeof frame);
+    if (flen <= 0) return 0;
+    int r = ws_send_timed(wc, frame, flen, t_pending, have_pending);
+    if (r >= 0) { st->actions_sent++; *submitted_seq = recv_seq; }
+    return r;
+}
+
 static void *ws_worker(void *argp) {
     WsClientArg *a = argp;
     WsThreadStats *st = a->st;
     unsigned int seed = (unsigned int)((uintptr_t)pthread_self() ^ (uintptr_t)time(NULL) ^ (uintptr_t)a);
     static __thread Game g;
-    static __thread LegalMoves moves;
     unsigned char *msgbuf = malloc(1 + 65536);
     if (!msgbuf) return NULL;
 
     char path[64];
     snprintf(path, sizeof path, "/ws?game_id=%s&seat=%d", a->gid, a->seat);
+
+    // PROFILE_HOTPATH.md "T1f": plaintext (the default) is push-driven —
+    // the loop below never sends an empty frame. --tls falls back to the
+    // pre-T1f polling behavior because foolish_server's --tls path
+    // (ws_conn_thread, thread-per-connection) has no non-blocking epoll
+    // worker to proactively push from — see this file's header comment and
+    // foolish_server.c's worker_push_stale doc for why that's a real,
+    // documented gap and not something a push-only client can paper over.
+    bool legacy_poll = a->cfg->tls;
 
     while (!atomic_load_explicit(&g_stop, memory_order_relaxed)) {
         Conn conn;
@@ -847,6 +929,14 @@ static void *ws_worker(void *argp) {
         // never leaks a bogus latency sample into the reconnected session.
         double t_pending = 0;
         bool have_pending = false;
+        uint64_t recv_seq = 0;                        // pushes received on THIS connection
+        uint64_t submitted_seq = (uint64_t)-1;         // see ws_maybe_submit_move's doc
+        // Dedupes the game-over -> rematch transition against firing twice
+        // for the same over-state (defensive: h_meta's continue/start
+        // branches are themselves idempotent, so this is belt-and-suspenders,
+        // not a correctness requirement) if more than one GAME_OVER push
+        // somehow lands before the re-deal.
+        bool rematch_pending = false;
 
         while (!atomic_load_explicit(&g_stop, memory_order_relaxed)) {
             int opcode;
@@ -857,6 +947,7 @@ static void *ws_worker(void *argp) {
                 have_pending = false;
             }
             st->msgs_recv++;
+            recv_seq++;
             unsigned char ok = msgbuf[0];
             if (ok) st->actions_applied++;
 
@@ -864,60 +955,46 @@ static void *ws_worker(void *argp) {
             state_get(&g, msgbuf + 1, /*masked=*/1);
 
             if (g.status == GAME_STATUS_GAME_OVER) {
-                do_meta(a->cfg, a->token, "continue", a->gid);
-                do_meta(a->cfg, a->token, "start", a->gid);
-                st->rematches++;
-                usleep(2000);
-                if (ws_send_timed(&wc, NULL, 0, &t_pending, &have_pending) < 0) break;
-                st->polls_sent++;
+                // Drive the rematch off the received state, not a poll —
+                // PROFILE_HOTPATH.md "T1f".
+                if (!rematch_pending) {
+                    do_meta(a->cfg, a->token, "continue", a->gid);
+                    do_meta(a->cfg, a->token, "start", a->gid);
+                    st->rematches++;
+                    rematch_pending = true;
+                }
+                // The re-deal itself arrives as h_meta's own
+                // epoll_notify_game_changed push (plaintext) — no poll
+                // needed. --tls has no such push, so it still has to ask.
+                if (legacy_poll) {
+                    usleep(2000);
+                    if (ws_send_timed(&wc, NULL, 0, &t_pending, &have_pending) < 0) break;
+                    st->polls_sent++;
+                }
                 continue;
             }
+            rematch_pending = false;   // a live hand again — re-arm the dedupe for the NEXT game-over
+
             if (g.status != GAME_STATUS_PLAYING || a->seat < 0 || a->seat >= g.num_players) {
-                usleep(WS_IDLE_POLL_US);
-                if (ws_send_timed(&wc, NULL, 0, &t_pending, &have_pending) < 0) break;
-                st->polls_sent++;
-                continue;
+                if (legacy_poll) {
+                    usleep(WS_IDLE_POLL_US);
+                    if (ws_send_timed(&wc, NULL, 0, &t_pending, &have_pending) < 0) break;
+                    st->polls_sent++;
+                }
+                continue;   // push-driven: nothing to do but wait for the next push
             }
 
-            calculate_legal_moves(&g, a->seat, &moves);
-            if (moves.n <= 0) {
+            int sr = ws_maybe_submit_move(a, st, &seed, &g, &wc, recv_seq, &submitted_seq, &t_pending, &have_pending);
+            if (sr < 0) break;   // send failed — reconnect
+            if (sr > 0) continue;   // a move went out — wait for its reply
+            // Not (currently) eligible for this push.
+            if (legacy_poll) {
                 usleep(WS_IDLE_POLL_US);   // not this seat's turn — poll gently instead of busy-spinning
                 if (ws_send_timed(&wc, NULL, 0, &t_pending, &have_pending) < 0) break;
                 st->polls_sent++;
-                continue;
             }
-
-            const LegalMove *m = &moves.moves[rand_r(&seed) % (unsigned)moves.n];
-            AwireAction act; memset(&act, 0, sizeof act);
-            switch (m->type) {
-                case MOVE_ATTACK: act.kind = AWIRE_ATTACK; break;
-                case MOVE_COVER:  act.kind = AWIRE_COVER;  break;
-                case MOVE_PASS:   act.kind = AWIRE_PASS;   break;
-                case MOVE_PICKUP: act.kind = AWIRE_PICKUP; break;
-                case MOVE_GOOD:   act.kind = AWIRE_GOOD;   break;
-                default:
-                    if (ws_send_timed(&wc, NULL, 0, &t_pending, &have_pending) < 0) goto reconnect;
-                    st->polls_sent++;
-                    continue;   // MOVE_WAIT or unrecognized — poll instead
-            }
-            act.n = (act.kind == AWIRE_PICKUP || act.kind == AWIRE_GOOD) ? 0 : m->n_cards;
-            if (act.n < 0) act.n = 0;
-            if (act.n > AWIRE_MAX_CARDS) act.n = AWIRE_MAX_CARDS;
-            for (int i = 0; i < act.n; i++) {
-                act.cards[i] = m->cards[i];
-                if (act.kind == AWIRE_COVER) act.attacks[i] = m->attack_cards[i];
-            }
-            unsigned char frame[128];
-            int flen = awire_encode(&act, frame, sizeof frame);
-            if (flen <= 0) {
-                if (ws_send_timed(&wc, NULL, 0, &t_pending, &have_pending) < 0) break;
-                st->polls_sent++;
-                continue;
-            }
-            if (ws_send_timed(&wc, frame, flen, &t_pending, &have_pending) < 0) break;
-            st->actions_sent++;
+            // push-driven: do nothing — block on the next ws_recv_message
         }
-    reconnect:
         conn_close(&wc.conn);
         if (!atomic_load_explicit(&g_stop, memory_order_relaxed)) usleep(20 * 1000);
     }
@@ -975,7 +1052,15 @@ static void *spectator_worker(void *argp) {
     char path[80];
     snprintf(path, sizeof path, "/ws?game_id=%s&spectator=1", a->gid);
 
-    long poll_n = 0;
+    // PROFILE_HOTPATH.md "T1f": plaintext (the default) is receive-only —
+    // no empty polls, ever; the periodic move-probe (SPEC_MOVE_PROBE_N,
+    // still needed for the "spectators may not move" correctness gate) is a
+    // real, well-framed move attempt, not a poll, so it stays either way.
+    // --tls keeps the pre-T1f idle-poll cadence for the same reason
+    // ws_worker's --tls fallback does — see this file's header comment.
+    bool legacy_poll = a->cfg->tls;
+
+    long recv_n = 0;   // pushes received on this connection — drives the probe cadence either way
     while (!atomic_load_explicit(&g_stop, memory_order_relaxed)) {
         Conn conn;
         bool connected = connect_conn(a->cfg->host, a->cfg->port, &conn);
@@ -999,9 +1084,9 @@ static void *spectator_worker(void *argp) {
                 pending_probe = false;
             }
 
-            usleep(WS_IDLE_POLL_US);   // same poll cadence a not-currently-eligible human seat uses
-            poll_n++;
-            if (poll_n % SPEC_MOVE_PROBE_N == 0) {
+            if (legacy_poll) usleep(WS_IDLE_POLL_US);   // same poll cadence a not-currently-eligible human seat uses (--tls only)
+            recv_n++;
+            if (recv_n % SPEC_MOVE_PROBE_N == 0) {
                 unsigned char frame[64];
                 int flen = build_random_frame(frame, sizeof frame, &seed);
                 if (flen > 0 && ws_send_frame(&wc, WS_OP_BIN, frame, flen) >= 0) {
@@ -1009,8 +1094,10 @@ static void *spectator_worker(void *argp) {
                     pending_probe = true;
                     continue;
                 }
-                // fall through to the plain poll below on any build/send failure
+                // fall through on any build/send failure — legacy_poll still
+                // asks again below; push-driven just waits for the next push
             }
+            if (!legacy_poll) continue;   // push-driven: never send an empty poll frame
             if (ws_send_frame(&wc, WS_OP_BIN, NULL, 0) < 0) break;
             st->polls_sent++;
         }
@@ -1087,7 +1174,8 @@ static void run_ws_load(Config *cfg) {
     printf("== ws load phase: %d persistent human connections (one per seat; --conns ignored)",
            total_seats);
     if (total_specs > 0) printf(" + %d spectator connections (%d/game)", total_specs, cfg->spectators);
-    printf(" for %ds ==\n", cfg->secs);
+    printf(" for %ds [%s] ==\n", cfg->secs,
+           cfg->tls ? "poll-driven fallback, --tls (see ws_worker's doc)" : "push-driven, no polling (T1f)");
     double t0 = now_secs();
     int nthreads = 0;
     for (int i = 0; i < total_seats; i++) {
