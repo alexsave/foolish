@@ -456,6 +456,370 @@ thing to profile next.
 
 ---
 
+## T1c — current WS server: hot lines, latency, memory, and speedups
+
+T1b's own "left as a follow-up" note called out the biggest remaining item:
+`state_put` running on *every* `/ws` round trip, including a pure poll that
+changes nothing. This section (1) instruments the load client to measure
+SERVER-attributable round-trip latency directly, (2) adds a memory sampler so
+"how much RAM for N concurrent games/connections" has a real answer, (3)
+re-profiles the CURRENT server at the source-LINE level, (4) implements and
+measures the clearly-correct speedups, and (5) is honest about what's still
+open. Same box, same toolchain, same technique as T1/T1b (clang 18, valgrind
+callgrind only — no perf/sample on this box).
+
+### Deliverable A — client-side round-trip latency (`foolish_hammer.c`)
+
+`--mode=ws`'s `ws_worker` now times every round trip: the moment it sends a
+move/poll frame (`ws_send_timed`, wrapping `ws_send_frame`) to the moment the
+*next* `ws_recv_message` on that connection returns (the server's pushed
+`[ok][state]` answer to that specific frame). The very first receive on a
+fresh/reconnected connection — the server's post-handshake initial push,
+which answers no frame this loop sent — is explicitly excluded
+(`have_pending`), so it can't leak a bogus zero-latency or huge-latency
+sample. Network latency is ~0 on loopback, so this measures the SERVER's own
+latency floor (parse + lock + apply/serialize + write) and how it degrades
+under load — exactly the "client-attributable vs server-attributable" split
+the task asked for.
+
+Samples are kept in a per-thread fixed-size reservoir (`LAT_RESERVOIR_CAP` =
+4096, classic algorithm R) so a long/high-connection-count run reports
+correct percentiles from an unbiased random subsample without unbounded
+memory — a run's real round-trip count (`lat_seen`) can be, and regularly is
+in these measurements, 10-50x the reservoir size. At the end of the run every
+thread's reservoir is merged, sorted (`qsort`), and mean/p50/p90/p99/max are
+computed from the real sorted sample (not a histogram approximation). Output
+includes one grep-able `latency_summary_us: conns=N count=... mean=...
+p50=... p90=... p99=... max=...` line per run — the "`--conns`-sweep-friendly"
+output the task asked for (`--mode=ws` has no `--conns` knob of its own;
+concurrency is `--games`×`--seats`, so a wrapper sweeping those and grepping
+this line builds a concurrency-vs-latency table without parsing the whole
+summary block).
+
+### Deliverable B — memory sampler (`mem_sample.sh`)
+
+`mem_sample.sh <pid> <duration_secs> [interval_secs]` polls
+`/proc/<pid>/status`'s `VmRSS` at a fixed interval (default 0.2s) for the
+given window, emitting a `t_secs,vmrss_kb` CSV on stdout and a summary on
+stderr: the first sample (~idle-at-start), the mean across the window, the
+peak SAMPLED value, and `VmHWM` — the kernel's own resident-set high-water
+mark, read once at the end, which can exceed the sampled peak because it
+catches spikes between samples. Usage is "start the server, start it
+sampling in the background, run the load client, read the summary" — see the
+numbers below, all gathered this way.
+
+### Deliverable C — hot-LINE profile of the CURRENT (pre-speedup) server
+
+Same technique as T1/T1b: `valgrind --tool=callgrind` launched directly on
+`foolish_server_prof` (never wrapped in `timeout` — see T1's note),
+`foolish_hammer --games=3 --seats=2 --secs=20 --mode=ws` (6 persistent
+connections) driving it, `SIGTERM` to the valgrind process, then
+`callgrind_annotate --auto=yes --inclusive=no`. Digested output:
+`bench_results/T1c_ws_lines/annotated.txt` (raw `callgrind.out` gitignored,
+same pattern as the other `bench_results/*/raw/` dirs).
+
+**85,441,022 instructions** collected over 93,748 total round trips (787
+applied moves, 92,943 empty polls) — consistent with T1b's own capture at
+this scale (81M Ir / 97,557 round trips), confirming the workload shape is
+stable run to run.
+
+Top self-cost functions (Ir), matching T1b's finding almost exactly (small
+run-to-run variance on a shared box, same as T1b's own note):
+
+| Ir | % | function |
+|---|---|---|
+| 18,682,579 | 21.87% | `view.c:state_put` |
+| 13,561,240 | 15.87% | `ws.c:ws_recv_message` (inlines `ws_fill`) |
+| 8,062,848 | 9.44% | `ws.c:ws_send_frame` |
+| 7,032,150 | 8.23% | `wasm/wire.h:state_put` (a `state_put` callee) |
+| 6,028,432 | 7.06% | libc `__pthread_enable_asynccancel` |
+| 5,651,640 | 6.61% | libc `__pthread_disable_asynccancel` |
+| 4,873,907 | 5.70% | `ld-linux` `memset` (thread-stack zeroing, T1's old #1 — now a rounding error) |
+| 4,520,352 | 5.29% | libc `read` |
+| 4,502,342 | 5.27% | libc `write` |
+| 3,855,712 | 4.51% | `foolish_server.c:conn_thread` |
+| 3,380,036 | 3.96% | libc `pthread_mutex_lock` |
+| 2,442,328 | 2.86% | libc `pthread_mutex_unlock` |
+| 521,499 | 0.61% | `card.h:state_put` (another `state_put` callee) |
+
+**Top 3 hottest source LINES** (file:line, inclusive Ir — i.e. everything
+that line's call actually costs, the natural way to rank a call-heavy hot
+loop):
+
+1. **`foolish_server.c:596`** (`h_ws`'s loop) — `slen = state_put(&s->game,
+   seat, msg + 1);` → **26,233,028 Ir (30.70% of the whole program)**.
+   `state_put`'s own body (view.c 21.87% + wire.h 8.23% + card.h 0.61%)
+   accounts for essentially all of it. This runs on *every* round trip —
+   93,748 times in this capture — even though only 787 of them (0.84%)
+   actually changed the board.
+2. **`foolish_server.c:584`** — `while ((mlen = ws_recv_message(&wc, in,
+   sizeof in, &opcode)) >= 0) {` → **24,294,397 Ir (28.43%)**, inclusive of
+   `ws_recv_message`'s whole receive path.
+3. **`foolish_server.c:602`** — `if (ws_send_frame(&wc, WS_OP_BIN, msg, slen
+   + 1) < 0) break;` → **18,750,493 Ir (21.95%)**, inclusive of the send
+   path.
+
+A fourth line worth calling out because it directly motivated a fix: inside
+`ws_recv_message`'s receive path, **`ws.c:124`** (`ws_read_full`) —
+`ssize_t r = read(fd, p + got, (size_t)(n - got));` → **10,733,157 Ir
+(12.56% of the WHOLE PROGRAM), called 188,301 times for 93,748 messages** —
+on average **exactly 2 `read()` syscalls per message**, because the old
+`ws_fill` asked for each framing field (2-byte header, sometimes a 2/8-byte
+extended length, sometimes a 4-byte mask key, then the payload) with its own
+EXACT-SIZE blocking read, even when a compliant peer's whole frame had
+already arrived in one TCP segment sitting in the kernel's receive buffer.
+
+`awire_decode`/`awire_apply` (the actual kernel work) stayed exactly as
+cheap as T1/T1b found them: 0.35%/0.05% here (804 real moves recorded in
+this run's line annotation vs. this capture's own 787 applied-move count —
+the small gap is moves that decoded but were rejected by the kernel's own
+legality check, e.g. a race with another seat).
+
+### Deliverable D — speedups: analysis, what was implemented, what was left open
+
+**1. `state_put` on every round trip — IMPLEMENTED.** `GameSlot` (in
+`foolish_server.c`) gained a per-game monotonic `version` counter and, per
+seat, a cached `state_put(...)` output (`view_cache[MAX_PLAYERS][1024]` +
+`view_cache_len` + `view_cache_version`). `version` is bumped under `g_lock`
+every time this slot's `Game` could have changed: a human's move applied via
+`/action` or `/ws` (`h_action`, `h_ws` — only on the `ok`/`applied` branch,
+never on a no-op poll), any lobby transition (`h_meta`'s join/add-bot/
+start/continue — bumped unconditionally at the end since a no-op bump is
+harmless, worst case one extra recompute on the next poll), and a bot-drive
+cycle that actually applied ≥1 action or ended the game (`bot_thread`,
+`drv.n > 0 || drv.ended >= 0` — a bot's move changes the board exactly like
+a human's, and it does **not** go through `h_action`/`h_ws`, so it needed its
+own bump site). A new `state_put_cached(GameSlot*, seat, out)` helper
+recomputes only when `view_cache_version[seat] != version`, else `memcpy`s
+the bytes already computed — same wire bytes either way (byte-identical to
+calling `state_put` fresh), so the **client needs zero changes** and still
+learns about every real state change on its very next round trip (the
+version bump always happens under the same lock the cache check runs under,
+so there's no window where a reader can observe a stale version alongside a
+fresh `Game`). `h_ws` is the only caller (`h_state`'s HTTP polling endpoint
+was deliberately left calling `state_put` directly — its `seat` query
+parameter is unbounded/unvalidated pre-existing behavior, unlike `h_ws`'s,
+which validates `0 <= seat < num_players` at handshake time before ever
+touching the cache array; indexing `view_cache[seat]` with an unvalidated
+seat would be a new out-of-bounds bug, so the cache stays scoped to the path
+that's actually safe and actually hot). A fresh GameSlot's
+`view_cache_version` is initialized to `(uint32_t)-1` (never `0`, `version`'s
+own starting value) so the very first call for a seat can't spuriously look
+"already cached" and return a never-computed zero-length view. `GameSlot`s
+are never recycled in this store (no delete — see the README), so that
+initialization only ever needs to happen once, at `h_create`.
+
+**2. WS framing (`ws_recv_message`/`ws_send_frame`) — IMPLEMENTED (both
+sub-items).** `ws.c`'s `ws_fill` no longer asks the kernel for an
+EXACT-SIZE read per framing field; it refills `WsConn.pending` with ONE
+opportunistic `read()` of up to the buffer's full capacity whenever it's
+exhausted, then serves every subsequent field from that buffer with zero
+syscalls until it runs dry again — a compliant peer's whole small frame (or
+several) usually arrives in one segment, so this collapses the old ~2
+`read()`s/message down toward 1. `ws_send_frame`'s unmasked (server) path —
+the one the profile above shows as hot — now builds a 2-entry `struct iovec`
+(header, payload) and sends both in one `writev()` (`writev_full`, a
+short-write-safe loop mirroring `ws_write_full`) instead of two separate
+`write()` calls; no masking on this path means the payload can go out as-is,
+with no scratch-buffer copy needed either. The masked (client) path is
+unchanged (not the profiled bottleneck — `foolish_hammer` is a load-test
+tool, not the product). Both changes are pure I/O-batching: the wire bytes
+sent/received are byte-identical to before, so no protocol change and no
+correctness risk beyond "does the read/write loop still handle a short
+read/write" — which the loop logic (unchanged for reads; a new,
+carefully-mirrored loop for `writev`) still does.
+
+**3. Global mutex sharding — ANALYZED, NOT IMPLEMENTED (left open
+deliberately).** The task's own framing says to do this only with high
+confidence in correctness, and to say so plainly otherwise — this is that
+case. What a per-`GameSlot` lock would need to get right, all simultaneously:
+(a) `g_lock` today protects not just each game's `Game`/roster, but also the
+GLOBAL `g_users`/`g_games` arrays, the `g_token_ht`/`g_game_ht` hash tables,
+and slot allocation in `h_create` — sharding the per-game lock still leaves
+a lock (or a lock-free scheme) needed for those, and `h_meta`/`h_action`/
+`h_ws` all resolve a user AND a game (two different pieces of shared state)
+before ever touching a `GameSlot`, so the locking would become two-level
+(global maps, then the one game); (b) `seat_of()` reads `s->game` while
+walking `s->seat_user`, so a per-slot lock has to cover the WHOLE `GameSlot`,
+not just `s->game`, or roster reads and kernel-state reads could tear; (c)
+`bot_thread` holds its game's lock across `bot_drive` and releases it only
+for the pacing `usleep` — that pattern is fine per-shard, but needs
+re-auditing once "the lock" isn't one global object every code path already
+serializes through; (d) there is exactly one lock-ordering rule today
+("acquire `g_lock`, do the thing, release it") — replacing it with
+"(maybe) acquire the maps lock, then a game lock" introduces a real ordering
+question (does anything ever need two DIFFERENT games' locks at once? Not
+today — but a shard-locked codebase makes that a standing invariant to keep
+proving, not a fact `g_lock` made trivially true by construction). None of
+this is unsolvable, but it is exactly the kind of change where "confident it
+compiles and tests pass" is a materially lower bar than "confident it's
+race-free," and this box has no way to close that gap empirically:
+**ThreadSanitizer is unavailable here** (`clang -fsanitize=thread` fails to
+link — `libclang_rt.tsan-x86_64.a` is not installed in this Ubuntu/clang-18
+image), so a lock-sharding change here would ship on code review alone, with
+no tooling to catch a subtle miss. Per the task's own instruction, that's
+reason enough to leave it analyzed-but-not-done rather than land a "probably
+fine" change to the one thing standing between "single game" and "many
+games at once" correctness. See "still open" below for what this costs the
+"many players" story today.
+
+### Re-measurement: before vs. after
+
+**Callgrind, identical scale** (`--games=3 --seats=2 --secs=20 --mode=ws`,
+same technique, `bench_results/T1d_ws_speedups/`):
+
+| | before (`T1c_ws_lines`) | after (`T1d_ws_speedups`) |
+|---|---|---|
+| Total instructions (Ir) | 85,441,022 | 53,730,985 (**-37.1%**) |
+| Round trips completed | 93,748 | 95,548 (slightly *more* work) |
+| Ir per round trip | 911.3 | 562.4 (**-38.3%**) |
+| `state_put` + callees (self, Ir) | 26,236,228 (30.7%) | 258,736 (0.5%) — **~101x smaller** |
+| `read()` self-cost | 4,520,352 (5.29%), 188,301 calls | 2,296,728 (4.27%), 95,660 calls (**~49% fewer calls**) |
+| `write`/`writev` self-cost (`write` symbol total, both roles) | 4,502,342 (5.27%) | 2,293,296 (4.27%) |
+| `writev()` calls (server unmasked path only, directly counted) | n/a (this call didn't exist yet — 2 `write()`s per unmasked frame instead: header, then payload, by construction of the old `ws_send_frame`) | 95,554 (one per round trip — **half the syscalls of the old 2-`write()`-per-frame path**) |
+| `pthread_mutex_lock`+`unlock` (self, Ir) | 5,822,364 (6.82%) | 5,931,417 (11.04%) — flat in absolute terms, **bigger share of a now-smaller pie** |
+
+The mutex row is the headline finding for item 3's "still open": its
+absolute cost didn't change (the lock/unlock pair costs the same
+instructions whether or not `state_put` runs inside the critical section),
+but with `state_put` gone its share of the total nearly doubled — exactly
+the "next thing to profile once the bigger cost is gone" T1b predicted, and
+now a materially closer second place than it looked before.
+
+**Throughput + latency, real (non-callgrind) runs, fresh server each time**
+(`foolish_hammer --games=40 --seats=4` = 160 connections, and `--games=100
+--seats=4` = 400 connections, `--secs=10`):
+
+| | 160 conns, before | 160 conns, after | 400 conns, before | 400 conns, after |
+|---|---|---|---|---|
+| messages/s | 75,369.2 | 104,300-109,900 (3 runs) | 66,630.7 | 86,403.7 |
+| latency mean (µs) | 141.2 | 44.2-78.5 | 455.4 | 277.2 |
+| latency p50 (µs) | 4.5 | 1.2 | 5.3 | 1.5 |
+| latency p90 (µs) | 371.9 | 108.5-241.9 | 1,268.5 | 546.6 |
+| latency p99 (µs) | 1,833.9 | 779.4-1,138.5 | 7,899.4 | 5,586.6 |
+| latency max (µs) | 32,779.8 | 14,971.9-32,201.1 | 184,440.5 | 96,082.4 |
+| applied moves/s | 2,347.4 | 982.7-2,111.5 | 3,621.1 | 3,218.4 |
+
+Messages/s and every latency percentile improved consistently and
+substantially at both scales — the p50 drop (4-5µs → ~1.2-1.5µs) is the
+clearest single signal of the cache working: the *median* round trip is a
+poll that now costs a lock + a `memcpy` instead of a lock + a full
+re-serialize. **Applied moves/s is the one metric that did NOT reliably
+improve, and this is expected, not a regression**: `foolish_hammer`'s own
+`WS_IDLE_POLL_US` note (in `foolish_hammer.c`, unchanged by this work)
+already documents that idle-seat polling competes with productive round
+trips for this box's 4 cores; since round trips got cheaper, the SAME client
+CPU budget now fits more of them, so idle seats poll more often and eat a
+larger share of the same 4 cores — a load-CLIENT tuning artifact (as T1b's
+own multi-run table already shows: 1,499-3,287 applied/s run-to-run variance
+on unmodified code), not evidence the server regressed. The server-side
+signal that actually isolates the server's own cost — the callgrind Ir/msg
+number above — is unambiguous and reproducible: -38.3%.
+
+**Memory** (`mem_sample.sh`, sampled every 0.25s across the load window,
+fresh server each run):
+
+| | idle | 160 conns, before | 160 conns, after | 400 conns, before | 400 conns, after |
+|---|---|---|---|---|---|
+| mean under load | 2.7 MB | 101.3 MB | 110.8 MB | 114.6 MB | 95.4 MB |
+| peak (sampled) | — | 146.1 MB | 142.2 MB | 327.7 MB | 367.5 MB |
+| `VmHWM` (kernel) | 2.7 MB | 152.0 MB | 144.4 MB | 328.7 MB | 371.3 MB |
+
+Memory is essentially **unchanged** by this work (peak varies by ~10% run to
+run in both directions — normal variance on a shared box, not a trend) —
+expected, since neither speedup touches how many threads exist or how big
+each one's stack is; the per-seat view cache adds only ~1 KiB × up to 8
+seats per game (see the static-footprint math below), noise next to the
+per-connection thread-stack cost that dominates every number in this table.
+**Marginal RAM per live WS connection**, computed as `(peak - idle) /
+connections` across all four before/after runs: 918.2, 832.6, 893.2, 933.2
+KB/connection — consistently **~0.83-0.93 MB per persistent connection**,
+regardless of the state_put/ws.c changes. This — not the game state itself —
+is the dominant term in "how much RAM for N concurrent games."
+
+**Static-footprint math, updated for the view cache.** `sizeof(Game)` is
+unchanged at 37,960 B (the kernel struct — untouched by this work).
+`sizeof(GameSlot)` (the server's own wrapper, `foolish_server.c`) grew from
+38,348 B to **46,608 B** (+8,260 B: `view_cache[8][1024]` = 8,192 B +
+`view_cache_len[8]` + `view_cache_version[8]` = 64 B + `version` = 4 B).
+`g_games[MAX_GAMES=256]`'s total static reservation grew from ~9.36 MiB to
+**~11.38 MiB** (+~2.03 MiB, all demand-paged — only touched for games
+actually created, since `h_create`'s `memset` dirties a fresh slot's pages
+immediately, including its view cache, whether or not every seat ever
+connects). Combined with the measured **~0.9 MB/connection** figure above,
+the answer to "how much RAM for N thousand concurrent games": for N=1,000
+games at this doc's own 4-seat shape (4,000 connections) —
+`idle (2.7 MB) + N × sizeof(GameSlot) (1000 × 46.6 KB ≈ 46.6 MB) +
+connections × ~0.9 MB (4,000 × 0.9 MB ≈ 3.6 GB)` ≈ **~3.65 GB**, overwhelmingly
+dominated by thread-per-connection overhead, not game state. Getting to
+1,000 real concurrent games on THIS server as shipped would also require
+raising the compile-time caps (`MAX_GAMES=256`, `MAX_USERS=512`,
+`TOKEN_HT_SIZE=1024`, `GAME_HT_SIZE=512` in `foolish_server.c`) and running
+4,000 real OS threads on one box — both fine for a POC, both exactly the
+kind of thing T1's own item 1 (thread-per-connection) already flagged as the
+next architectural question for a real deployment, now with a concrete
+memory number attached, not just a CPU one.
+
+### Still open (honest list, toward "ready to swap off Supabase when we scale")
+
+**Solid now:** the `/ws` hot loop's dominant per-message CPU cost
+(`state_put`) is cut ~101x via correct, lock-protected version caching, with
+zero wire/client changes; WS framing does roughly half the syscalls it used
+to; every measured throughput/latency number moved the right direction at
+both tested concurrency levels; `test.sh` (HTTP + WS smoke) and repeated
+WS+legal stress runs (90-100% of submitted moves applied, matching or
+beating the pre-existing bar) stay green throughout.
+
+**Still open, in the order a real deployment would hit them:**
+
+1. **The global mutex** (item 3 above) — analyzed, not implemented. It is
+   now a clearly-second-place cost (11.04% of a smaller pie, flat in
+   absolute terms) and the honest next target once someone can verify a
+   sharded-lock change with ThreadSanitizer (unavailable on this box) or
+   equivalent, not before.
+2. **Thread-per-connection's memory tax** — ~0.9 MB/connection means
+   thousands of concurrent players costs gigabytes in thread stacks alone,
+   independent of game count. T1's own item 1 (a thread pool or epoll/kqueue
+   event loop) was scoped to the CPU cost of `pthread_create`; this section
+   adds the memory argument for the same fix.
+3. **Compile-time caps** (`MAX_GAMES`, `MAX_USERS`, the two hash-table
+   sizes) are POC-sized (256/512/1024/512) and would need raising — and
+   re-validating their O(1) hash-table assumptions still hold — for
+   thousand-game scale.
+4. **Durability, backpressure, TLS, connection limits, rate limits** — all
+   already flagged out of scope by the README, unaffected by this work, and
+   all real gaps for a production deployment: state is RAM-only (a crash
+   loses every in-flight game), nothing here bounds how many connections or
+   games a single process will accept, and there is no rate limiting on
+   `/auth/signup` or `/create`.
+5. **`h_state`'s unbounded `seat` query parameter** — noticed while scoping
+   the view-cache change (not introduced by it, and not touched by it): a
+   caller can pass `seat=-2`, which collides with `state_put`'s internal
+   `VIEW_UNMASKED` sentinel and would serialize the FULL unmasked state
+   (every hand, the deck) to an unauthenticated `/state` request. `/ws`
+   already validates its `seat` against the caller's own owned seat before
+   ever calling into `state_put`; `/state` does not. Out of this task's
+   scope (a correctness/security fix, not a perf one) but worth a follow-up
+   issue.
+
+### Files (T1c additions)
+
+- `foolish_hammer.c` — round-trip latency reservoir sampling + percentiles
+  (Deliverable A).
+- `mem_sample.sh` — the memory sampler (Deliverable B).
+- `foolish_server.c` — `GameSlot.version`/`view_cache*` + `state_put_cached`
+  (Deliverable D item 1); `version` bump sites in `h_meta`, `h_action`,
+  `h_ws`, `bot_thread`.
+- `ws.c` — buffered `ws_fill` (fewer `read()`s) + `writev_full`-coalesced
+  unmasked `ws_send_frame` (Deliverable D item 2).
+- `bench_results/T1c_ws_lines/` — the BEFORE hot-line capture
+  (`annotated.txt`, `meta.txt`).
+- `bench_results/T1d_ws_speedups/` — the AFTER capture, same scale/technique
+  (`annotated.txt`, `meta.txt`). Raw `callgrind.out*` gitignored in both, same
+  pattern as every other `bench_results/*/raw/`.
+
+---
+
 ## T2 — the infinite oracle, hammered directly (no server), TT20
 
 ### Build

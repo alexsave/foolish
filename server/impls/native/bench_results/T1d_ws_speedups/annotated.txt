@@ -1,0 +1,2146 @@
+--------------------------------------------------------------------------------
+Profile data file 'bench_results/T1d_ws_speedups/raw/callgrind.out' (creator: callgrind-3.22.0)
+--------------------------------------------------------------------------------
+I1 cache: 
+D1 cache: 
+LL cache: 
+Timerange: Basic block 0 - 12637781
+Trigger: Program termination
+Profiled target:  ./foolish_server_prof 8096 (PID 24133, part 1)
+Events recorded:  Ir
+Events shown:     Ir
+Event sort order: Ir
+Thresholds:       99
+Include dirs:     
+User annotated:   
+Auto-annotation:  on
+
+--------------------------------------------------------------------------------
+Ir                  
+--------------------------------------------------------------------------------
+53,730,985 (100.0%)  PROGRAM TOTALS
+
+--------------------------------------------------------------------------------
+Ir                   file:function
+--------------------------------------------------------------------------------
+14,259,644 (26.54%)  ws.c:ws_recv_message [/home/user/foolish/server/impls/native/foolish_server_prof]
+ 8,790,972 (16.36%)  ws.c:ws_send_frame [/home/user/foolish/server/impls/native/foolish_server_prof]
+ 4,466,268 ( 8.31%)  foolish_server.c:conn_thread [/home/user/foolish/server/impls/native/foolish_server_prof]
+ 4,330,350 ( 8.06%)  ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+ 3,721,977 ( 6.93%)  ./string/../sysdeps/x86_64/multiarch/../multiarch/memset-vec-unaligned-erms.S:memset [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+ 3,443,600 ( 6.41%)  ./nptl/./nptl/pthread_mutex_lock.c:pthread_mutex_lock@@GLIBC_2.2.5 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+ 3,067,184 ( 5.71%)  ./nptl/./nptl/cancellation.c:__pthread_enable_asynccancel [/usr/lib/x86_64-linux-gnu/libc.so.6]
+ 2,875,470 ( 5.35%)  ./nptl/./nptl/cancellation.c:__pthread_disable_asynccancel [/usr/lib/x86_64-linux-gnu/libc.so.6]
+ 2,487,817 ( 4.63%)  ./nptl/./nptl/pthread_mutex_unlock.c:pthread_mutex_unlock@@GLIBC_2.2.5 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+ 2,296,728 ( 4.27%)  ./io/../sysdeps/unix/sysv/linux/read.c:read [/usr/lib/x86_64-linux-gnu/libc.so.6]
+ 2,293,296 ( 4.27%)  ./misc/../sysdeps/unix/sysv/linux/writev.c:writev [/usr/lib/x86_64-linux-gnu/libc.so.6]
+   383,398 ( 0.71%)  ./nptl/../nptl/descr.h:__pthread_enable_asynccancel
+   183,860 ( 0.34%)  ../../../c/src/view.c:state_put [/home/user/foolish/server/impls/native/foolish_server_prof]
+   143,460 ( 0.27%)  ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    79,727 ( 0.15%)  ./elf/./elf/dl-tunables.c:__GI___tunables_init [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+    74,876 ( 0.14%)  ../../../c/src/../wasm/wire.h:state_put
+    52,644 ( 0.10%)  ws.c:sha1_update [/home/user/foolish/server/impls/native/foolish_server_prof]
+    43,116 ( 0.08%)  ./elf/./elf/dl-lookup.c:do_lookup_x [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+    36,246 ( 0.07%)  ./nptl/./nptl/pthread_cond_wait.c:pthread_cond_wait@@GLIBC_2.3.2 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    28,700 ( 0.05%)  ../../../c/src/game.c:handle_attack [/home/user/foolish/server/impls/native/foolish_server_prof]
+    25,650 ( 0.05%)  ./stdio-common/./stdio-common/Xprintf_buffer_write.c:__printf_buffer_write [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    24,346 ( 0.05%)  ../../../c/src/game.c:awire_apply [/home/user/foolish/server/impls/native/foolish_server_prof]
+    23,651 ( 0.04%)  ./stdio-common/./stdio-common/vfprintf-internal.c:__printf_buffer [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    23,203 ( 0.04%)  ./nptl/./nptl/pthread_cond_common.c:pthread_cond_signal@@GLIBC_2.3.2
+    22,825 ( 0.04%)  ../../../c/src/game.c:handle_cover [/home/user/foolish/server/impls/native/foolish_server_prof]
+    22,459 ( 0.04%)  ../../../c/src/game.c:refill_player_hands [/home/user/foolish/server/impls/native/foolish_server_prof]
+
+--------------------------------------------------------------------------------
+-- Auto-annotated source: ../../../c/src/view.c
+--------------------------------------------------------------------------------
+Ir              
+
+     .           #include "view.h"
+     .           #include "../wasm/wire.h"
+     .           
+     .           // Whether the hand of seat `seat` is visible to `viewer`.
+     .           static int hand_visible(int viewer, int seat) {
+ 2,336 ( 0.00%)      return viewer == VIEW_UNMASKED || viewer == seat;
+     .           }
+     .           
+     .           int state_put(const Game *g, int viewer, unsigned char *out) {
+ 7,913 ( 0.01%)      const int unmasked = (viewer == VIEW_UNMASKED);
+     .               unsigned char *q = out;
+ 1,168 ( 0.00%)      *q++ = (unsigned char)g->status;
+ 1,168 ( 0.00%)      *q++ = (unsigned char)g->num_players;
+ 1,168 ( 0.00%)      *q++ = (unsigned char)g->power_suit;
+ 1,168 ( 0.00%)      *q++ = (unsigned char)g->first_attacker;
+ 1,168 ( 0.00%)      *q++ = (unsigned char)g->defender;
+ 1,168 ( 0.00%)      *q++ = (unsigned char)(g->discard_pile_length & 0xff);
+ 1,168 ( 0.00%)      *q++ = (unsigned char)((g->discard_pile_length >> 8) & 0xff);
+ 1,168 ( 0.00%)      *q++ = (unsigned char)(g->has_flipped ? 1 : 0);
+     .               // Canonical no-flip byte: after the flipped trump is drawn the kernel
+     .               // keeps the stale card in g->flipped (gated by has_flipped) — writing it
+     .               // would make byte-equal states serialize differently depending on
+     .               // whether they came from a marshal round-trip (which normalizes to the
+     .               // {0,0} placeholder -> WIRE_CARD_HIDDEN) or stayed kernel-resident.
+     .               // Decoders ignore this byte when has_flipped is 0.
+ 2,187 ( 0.00%)      *q++ = g->has_flipped ? wire_from_card(g->flipped) : (unsigned char)WIRE_CARD_HIDDEN;
+ 1,168 ( 0.00%)      *q++ = (unsigned char)(g->good_players_mask & 0xff);
+ 1,168 ( 0.00%)      *q++ = (unsigned char)((g->good_players_mask >> 8) & 0xff);
+ 1,168 ( 0.00%)      *q++ = (unsigned char)((g->good_players_mask >> 16) & 0xff);
+ 1,168 ( 0.00%)      *q++ = (unsigned char)((g->good_players_mask >> 24) & 0xff);
+ 1,168 ( 0.00%)      *q++ = (unsigned char)(g->has_good_timestamp ? 1 : 0);
+ 1,168 ( 0.00%)      *q++ = (unsigned char)(g->deck_count & 0xff);
+ 1,752 ( 0.00%)      *q++ = (unsigned char)((g->deck_count >> 8) & 0xff);
+23,476 ( 0.04%)      for (int i = 0; i < g->deck_count; i++) {
+11,154 ( 0.02%)          *q++ = unmasked ? wire_from_card(g->deck[i]) : (unsigned char)WIRE_CARD_HIDDEN;
+     .               }
+ 5,691 ( 0.01%)      *q++ = (unsigned char)g->num_battles;
+ 4,438 ( 0.01%)      for (int i = 0; i < g->num_battles; i++) {
+     .                   const Battle *b = &g->table_battles[i];
+ 1,308 ( 0.00%)          *q++ = wire_from_card(b->attack);
+ 1,308 ( 0.00%)          *q++ = wire_from_card(b->defense);
+     .               }
+10,914 ( 0.02%)      for (int i = 0; i < g->num_players; i++) {
+ 1,168 ( 0.00%)          const Player *pl = &g->players[i];
+     .                   const int visible = hand_visible(viewer, i);
+ 3,504 ( 0.01%)          *q++ = (unsigned char)pl->status;
+ 3,504 ( 0.01%)          *q++ = (unsigned char)((visible && pl->awaiting_attack) ? 1 : 0);
+ 3,504 ( 0.01%)          *q++ = (unsigned char)pl->hand_count;
+29,996 ( 0.06%)          for (int j = 0; j < pl->hand_count; j++) {
+24,084 ( 0.04%)              *q++ = visible ? wire_from_card(pl->hand[j]) : (unsigned char)WIRE_CARD_HIDDEN;
+     .                   }
+     .               }
+ 1,168 ( 0.00%)      *q++ = (unsigned char)g->num_eliminated;
+ 1,252 ( 0.00%)      for (int i = 0; i < g->num_eliminated; i++) *q++ = (unsigned char)g->elimination_order[i];
+ 4,102 ( 0.01%)      return (int)(q - out);
+     .           }
+     .           
+     .           // Masked decode: WIRE_CARD_HIDDEN becomes the {0,1} placeholder the browser
+     .           // marshal always used for redacted cards; everything else clamps like the
+     .           // legacy path.
+     .           static Card card_from_wire_masked(unsigned char b) {
+     .               if (b == WIRE_CARD_HIDDEN) { Card c; c.suit = 0; c.value = 1; return c; }
+     .               return card_from_wire_state(b);
+-- line 63 ----------------------------------------
+
+22,749 ( 0.04%)  <counts for unidentified lines in ../../../c/src/view.c>
+
+--------------------------------------------------------------------------------
+-- Auto-annotated source: ../../../c/src/game.c
+--------------------------------------------------------------------------------
+Ir              
+
+-- line 60 ----------------------------------------
+     .           //     shuffle (~522 ns) on every drawing move — 20-40× per game — for that
+     .           //     negative space "saving".
+     .           //   - Size: ChaCha (deal_rng, ~1.4 KB) is in the binary either way; the alt
+     .           //     only ADDS code (seed-in-blob + re-derive on load).
+     .           //   - Security: the deck in the blob is masked per-viewer (WIRE_CARD_HIDDEN);
+     .           //     the seed stays in a server-only column. Putting the seed in the blob would
+     .           //     drag the crown-jewel seed toward the client boundary.
+     .           static void deal_shuffle(Game *g) {
+   560 ( 0.00%)      for (int i = g->deck_count - 1; i > 0; i--) {
+   420 ( 0.00%)          int j = (int)deal_rng_bounded(&g_deal_rng, (uint32_t)(i + 1));
+19,388 ( 0.04%)  => /home/user/foolish/server/impls/native/../../../c/src/deal_rng.c:deal_rng_bounded (140x)
+   700 ( 0.00%)          Card t = g->deck[i]; g->deck[i] = g->deck[j]; g->deck[j] = t;
+     .               }
+     .           }
+     .           #endif
+     .           
+     .           // Random index in [0, n) for a DECK DRAW. Deterministic mode pops the top of the
+     .           // pre-shuffled deck (0); legacy consumes one game_random() and clamps, byte-for-
+     .           // byte as the original inline draw code did (including on a 1-card deck, so the
+     .           // pinned LCG stream never desyncs). Deterministic mode is signalled two ways,
+     .           // both meaning "the deck is pre-shuffled, pop it": g_deal_wide during the deal
+     .           // itself, and the per-game deterministic_deck flag mid-game (restored from the
+     .           // durable blob, since the thread-local does not survive between kernel calls).
+     .           static int draw_index(const Game *g, int n) {
+   476 ( 0.00%)      if (g_deal_wide || g->deterministic_deck) return 0;
+     .               int idx = (int)(game_random() * n);
+     .               if (idx < 0) idx = 0;
+     .               if (idx >= n) idx = n - 1;
+     .               return idx;
+     .           }
+     .           
+     .           // Random index in [0, n) for the first-attacker fallback (pick among players
+     .           // when nobody holds a trump). Deterministic mode draws it, unbiased, from the
+-- line 91 ----------------------------------------
+-- line 118 ----------------------------------------
+     .               g_deal_wide = 0;   // revert the deal to the legacy 32-bit LCG path
+     .           #ifdef GRPO_RNG_DEBUG
+     .               g_seed_set = 1;
+     .           #endif
+     .           }
+     .           
+     .           #ifndef DEAL_RNG_DISABLED
+     .           void game_set_deal_seed_bytes(const uint8_t *seed, int len) {
+    28 ( 0.00%)      if (!seed || len < FOOLISH_SEED_LEN) return;  // too little entropy: leave wide mode off
+    16 ( 0.00%)      deal_rng_seed(&g_deal_rng, seed);
+   100 ( 0.00%)  => /home/user/foolish/server/impls/native/../../../c/src/deal_rng.c:deal_rng_seed (4x)
+     8 ( 0.00%)      g_deal_wide = 1;                 // start_game will shuffle; draws then pop
+     .           #ifdef GRPO_RNG_DEBUG
+     .               g_seed_set = 1;                  // a wide seed also satisfies the init guard
+     .           #endif
+     4 ( 0.00%)  }
+     .           #else
+     .           void game_set_deal_seed_bytes(const uint8_t *seed, int len) { (void)seed; (void)len; }
+     .           #endif
+     .           
+     .           int game_deal_seed_active(void) { return g_deal_wide; }
+     .           
+     .           // Deal-RNG save/restore (see game.h). Layout is private to this file: byte 0 is
+     .           // the wide flag, the rest is the ChaCha state. Nothing persists or ships it, so
+-- line 140 ----------------------------------------
+-- line 199 ----------------------------------------
+     .           #endif
+     .               g_rand_seed = g_rand_seed * 1664525u + 1013904223u;
+     .               return (double)g_rand_seed / 4294967296.0;
+     .           }
+     .           
+     .           // ---------- Helpers ----------------------------------------------------
+     .           
+     .           bool can_cover(Card attack, Card defense, int power_suit) {
+   473 ( 0.00%)      if (defense.suit != attack.suit) {
+    35 ( 0.00%)          return defense.suit == power_suit && attack.suit != power_suit;
+     .               }
+   114 ( 0.00%)      return defense.value > attack.value;
+     .           }
+     .           
+     7 ( 0.00%)  int get_next_player_index(const Game *g, int current) {
+   408 ( 0.00%)      int n = g->num_players;
+     .               // TS guard: with one (or zero) players still IN the rotation is
+     .               // meaningless — return the caller's seat unchanged. This only fires in
+     .               // the endgame (game_done is imminent) but it decides the final stored
+     .               // first_attacker/defender, so it must match.
+     .               int in_count = 0;
+ 5,489 ( 0.01%)      for (int i = 0; i < n; i++) if (g->players[i].status == PLAYER_STATUS_IN) in_count++;
+   729 ( 0.00%)      if (in_count <= 1) return current;
+     .               int next = (current + 1) % n;
+ 1,110 ( 0.00%)      while (g->players[next].status == PLAYER_STATUS_OUT) {
+     .                   next = (next + 1) % n;
+     .               }
+     .               return next;
+    14 ( 0.00%)  }
+     .           
+   966 ( 0.00%)  int game_done(const Game *g) {
+     .               int in_count = 0, out_count = 0, last_in = -1;
+ 8,936 ( 0.02%)      for (int i = 0; i < g->num_players; i++) {
+ 8,655 ( 0.02%)          if (g->players[i].status == PLAYER_STATUS_IN) { in_count++; last_in = i; }
+     4 ( 0.00%)          else if (g->players[i].status == PLAYER_STATUS_OUT) { out_count++; }
+     .               }
+ 1,954 ( 0.00%)      if (in_count == 1 && out_count == g->num_players - 1) return last_in;
+     .               return -1;
+   322 ( 0.00%)  }
+     .           
+     .           // The kernel records its own end. handle_* leave the loser on player statuses
+     .           // (game_done reads it), but never touched g->status — so "is it over" was a fact
+     .           // every host recomputed and cached in a status of its own. Now the apply paths
+     .           // call this after a move, and g->status carries the answer for everyone.
+     .           void game_settle_status(Game *g) {
+ 1,048 ( 0.00%)      if (g && g->status == GAME_STATUS_PLAYING && game_done(g) >= 0)
+     8 ( 0.00%)          g->status = GAME_STATUS_GAME_OVER;
+     .           }
+     .           
+   322 ( 0.00%)  uint32_t game_human_mask(const Game *g) {
+   644 ( 0.00%)      if (!g) return 0;
+     .               uint32_t m = 0;
+ 6,118 ( 0.01%)      for (int i = 0; i < g->num_players; i++)
+ 3,864 ( 0.01%)          if (g->players[i].strategy_key == STRATEGY_KEY_HUMAN) m |= (1u << i);
+     .               return m;
+   322 ( 0.00%)  }
+     .           
+     8 ( 0.00%)  void game_seat_and_deal(Game *g, const int8_t *strategy_keys, int n) {
+    20 ( 0.00%)      if (!g || n < 2 || n > MAX_PLAYERS) return;
+     4 ( 0.00%)      g->num_players = (int8_t)n;
+     .               // NULL keeps whatever kind the seats already hold — the incremental-lobby
+     .               // case, where a host wired strategy_key as each player joined.
+     8 ( 0.00%)      if (strategy_keys)
+     .                   for (int i = 0; i < n; i++) g->players[i].strategy_key = strategy_keys[i];
+     8 ( 0.00%)      start_game(g);   // deals; start_game_reset assigns each seated player's status
+37,146 ( 0.07%)  => ../../../c/src/game.c:start_game (4x)
+     .           }
+     .           
+     .           // ---------- Logs -------------------------------------------------------
+     .           
+     .           #ifdef GUARDS_VALIDATE_ONLY
+     .           // GUARDS_VALIDATE_ONLY: guards.wasm is a MOVE VALIDATOR. It dry-runs the real
+     .           // handle_* on a throwaway clone and reads ONLY the reject code — the animation
+     .           // logs those handlers emit (and the end-of-round stock refill, see
+-- line 271 ----------------------------------------
+-- line 279 ----------------------------------------
+     .           static GameLog *log_alloc(Game *g, int log_type, int player_idx) {
+     .               (void)g; (void)log_type; (void)player_idx;
+     .               return &g_log_sink;
+     .           }
+     .           static void log_add_card(GameLog *l, Card c) { (void)l; (void)c; }
+     .           static void log_add_pair(GameLog *l, Card primary, Card target) { (void)l; (void)primary; (void)target; }
+     .           #else
+     .           
+   250 ( 0.00%)  static GameLog *log_alloc(Game *g, int log_type, int player_idx) {
+     .               bool drop;
+ 1,234 ( 0.00%)      if (g->log_cap > 0) {
+     .                   // Short-log instance (sampled-world slot, see game.h): keep only
+     .                   // LOG_DISCARD entries, and only while a full-size instance would
+     .                   // still have kept the append (log_virt mirrors what num_logs would
+     .                   // be if every append had landed) — so espresso's discard memory
+     .                   // sees the exact same discard set as before.
+     .                   int virt = g->log_virt;
+     .                   if (virt < MAX_LOGS) g->log_virt = (int16_t)(virt + 1);
+     .                   drop = virt >= MAX_LOGS || log_type != LOG_DISCARD
+     .                       || g->num_logs >= g->log_cap;
+     .               } else {
+     .                   // Should never happen at MAX_LOGS=512 for sane games. Drop silently.
+ 1,068 ( 0.00%)          drop = g->num_logs >= MAX_LOGS;
+     .               }
+   534 ( 0.00%)      if (drop) {
+     .                   static GameLog scratch;
+     .                   memset(&scratch, 0, sizeof(scratch));
+     .                   scratch.log_type = log_type;
+     .                   scratch.player_idx = player_idx;
+     .                   scratch.defender_index = -1;
+     .                   return &scratch;
+     .               }
+ 2,665 ( 0.00%)      GameLog *l = &g->logs[g->num_logs++];
+   686 ( 0.00%)      l->log_type = log_type;
+   422 ( 0.00%)      l->player_idx = player_idx;
+   719 ( 0.00%)      l->defender_index = -1;
+     .               l->num_pairs = 0;
+     .               return l;
+   250 ( 0.00%)  }
+     .           
+     .           static void log_add_card(GameLog *l, Card c) {
+ 1,664 ( 0.00%)      if (l->num_pairs >= MAX_LOG_PAIRS) return;
+   880 ( 0.00%)      LogPair *p = &l->pairs[l->num_pairs++];
+   440 ( 0.00%)      p->primary = c;
+   550 ( 0.00%)      p->target = CARD_NONE;
+     .           }
+     .           
+     .           static void log_add_pair(GameLog *l, Card primary, Card target) {
+     .               if (l->num_pairs >= MAX_LOG_PAIRS) return;
+    73 ( 0.00%)      LogPair *p = &l->pairs[l->num_pairs++];
+    73 ( 0.00%)      p->primary = primary;
+    73 ( 0.00%)      p->target = target;
+     .           }
+     .           #endif  // GUARDS_NO_LOG
+     .           
+     .           // ---------- Hand ops ---------------------------------------------------
+     .           
+     .           static void hand_remove_card(Player *p, Card c) {
+ 4,938 ( 0.01%)      for (int i = 0; i < p->hand_count; i++) {
+   766 ( 0.00%)          if (card_eq(p->hand[i], c)) {
+ 5,119 ( 0.01%)              for (int j = i + 1; j < p->hand_count; j++) p->hand[j - 1] = p->hand[j];
+   493 ( 0.00%)              p->hand_count--;
+     .                       return;
+     .                   }
+     .               }
+     .           }
+     .           
+     .           static bool hand_contains(const Player *p, Card c) {
+ 2,728 ( 0.01%)      for (int i = 0; i < p->hand_count; i++) if (card_eq(p->hand[i], c)) return true;
+     .               return false;
+     .           }
+     .           
+     .           // ---------- Deck / draw ------------------------------------------------
+     .           
+     .           static void refill_deck(Game *g) {
+     .               int idx = 0;
+     .               int min_v = min_value_for(g->num_players);
+     .               for (int suit = 0; suit < NUM_SUITS; suit++) {
+   400 ( 0.00%)          for (int v = min_v; v <= ACE_VALUE; v++) {
+     .                       g->deck[idx].suit = (int8_t)suit;
+   460 ( 0.00%)              g->deck[idx].value = (int8_t)v;
+    12 ( 0.00%)              idx++;
+     .                   }
+     .               }
+     4 ( 0.00%)      g->deck_count = (int16_t)idx;
+     .           }
+     .           
+     .           // Draw one card. Mirrors common_utils.ts `draw`: picks a random card from the
+     .           // deck (Math.random()) and splices it; if the deck is empty, returns the
+     .           // flipped card if any.
+     .           static bool draw_card(Game *g, Card *out) {
+   482 ( 0.00%)      if (g->deck_count == 0) {
+     8 ( 0.00%)          if (!g->has_flipped) return false;
+     4 ( 0.00%)          *out = g->flipped;
+     8 ( 0.00%)          g->has_flipped = false;
+     .                   return true;
+     .               }
+     .               int idx = draw_index(g, g->deck_count);
+   292 ( 0.00%)      *out = g->deck[idx];
+21,156 ( 0.04%)      for (int i = idx + 1; i < g->deck_count; i++) g->deck[i - 1] = g->deck[i];
+   298 ( 0.00%)      g->deck_count--;
+     .               return true;
+     .           }
+     .           
+     .           static void deal_initial(Game *g) {
+     .               // Player-major deal, mirroring the TS start_game: each player draws all
+     .               // CARDS_PER_PLAYER cards before the next player starts, and a snapshot
+     .               // hook fires per player (that's the per-player DEAL animation event, with
+     .               // the deck draining 36 → 30 → 24 → ... between snapshots).
+    88 ( 0.00%)      for (int j = 0; j < g->num_players; j++) g->players[j].hand_count = 0;
+    32 ( 0.00%)      for (int j = 0; j < g->num_players; j++) {
+   144 ( 0.00%)          for (int i = 0; i < CARDS_PER_PLAYER; i++) {
+     .                       Card c;
+     .                       if (!draw_card(g, &c)) break;
+   192 ( 0.00%)              g->players[j].hand[g->players[j].hand_count++] = c;
+     .                   }
+    24 ( 0.00%)          SNAP(g, ENGINE_HOOK_DEAL, j);
+     .               }
+     .           }
+     .           
+     .           // When nobody was dealt a trump there is nothing to derive the first attacker
+     .           // FROM, and the engine rolls for it (deal_index). That roll is unreproducible
+     .           // from a replay code — the code records the deal, not the RNG state it was
+     .           // rolled against — so a replay of such a game would rebuild the right hands and
+     .           // then pick a different opening seat, at random, on every run.
+-- line 403 ----------------------------------------
+-- line 412 ----------------------------------------
+     .           // — REPLAY_EHEADER's message, which is about a different fault entirely.
+     .           static int g_forced_first_attacker = -1;
+     .           
+     .           void game_force_first_attacker(int seat) { g_forced_first_attacker = seat; }
+     .           
+     .           static int determine_lowest_power_index(Game *g) {
+     .               int lowest_v = ACE_VALUE + 1;
+     .               int lowest_p = -1;
+    60 ( 0.00%)      for (int i = 0; i < g->num_players; i++) {
+   160 ( 0.00%)          for (int j = 0; j < g->players[i].hand_count; j++) {
+    48 ( 0.00%)              Card c = g->players[i].hand[j];
+   295 ( 0.00%)              if (c.suit == g->power_suit && c.value < lowest_v) {
+     .                           lowest_v = c.value;
+     .                           lowest_p = i;
+     .                       }
+     .                   }
+     .               }
+     8 ( 0.00%)      if (lowest_p == -1) {
+     .                   lowest_p = (g_forced_first_attacker >= 0 && g_forced_first_attacker < g->num_players)
+     .                            ? g_forced_first_attacker
+     .                            : deal_index(g->num_players);
+     .               }
+     .               return lowest_p;
+     .           }
+     .           
+     .           // The lobby->playing reset every start path shares.
+     .           static void start_game_reset(Game *g) {
+     4 ( 0.00%)      g->status = GAME_STATUS_PLAYING;
+     4 ( 0.00%)      g->num_battles = 0;
+     4 ( 0.00%)      g->num_eliminated = 0;
+     4 ( 0.00%)      g->num_logs = 0;
+     4 ( 0.00%)      g->discard_pile_length = 0;
+     4 ( 0.00%)      g->good_players_mask = 0;
+     4 ( 0.00%)      g->has_good_timestamp = false;
+     .           
+     .               // Game start log (system event, no player_idx).
+     .               log_alloc(g, LOG_GAME_START, -1);
+     .           
+    80 ( 0.00%)      for (int i = 0; i < g->num_players; i++) {
+     8 ( 0.00%)          g->players[i].status = PLAYER_STATUS_IN;
+     .               }
+     .           }
+     .           
+     .           // Everything downstream of "the deck is sitting there in pop order": the deal,
+     .           // the flip, the opening seats. Split out of start_game so a rebuilt deck runs
+     .           // the identical path (start_game_with_deck) — the alternative was a second
+     .           // deal in replay_steps.c, which is the duplication this consolidation exists
+     .           // to delete.
+    36 ( 0.00%)  static void start_game_dealt(Game *g) {
+     .               // TS emits its opening MAGIC_TRANSITION here: PLAYING status, full deck,
+     .               // hands still empty from the lobby.
+    12 ( 0.00%)      SNAP(g, ENGINE_HOOK_START_MAGIC, -1);
+     .               deal_initial(g);
+     .           
+     .               // Flip a non-Ace.
+     .               Card f;
+     .               while (true) {
+     .                   if (!draw_card(g, &f)) break;
+    24 ( 0.00%)          if (f.value == ACE_VALUE) {
+     .                       // push back to deck; same as TS (no shuffle, but draw picks random)
+    10 ( 0.00%)              g->deck[g->deck_count++] = f;
+     .                       continue;
+     .                   }
+     .                   break;
+     .               }
+     4 ( 0.00%)      g->flipped = f;
+     4 ( 0.00%)      g->has_flipped = true;
+    12 ( 0.00%)      g->power_suit = f.suit;
+    12 ( 0.00%)      SNAP(g, ENGINE_HOOK_FLIPPED, -1);
+     .           
+     .               int lowest = determine_lowest_power_index(g);
+     4 ( 0.00%)      g->first_attacker = (int8_t)lowest;
+    16 ( 0.00%)      g->defender = (int8_t)((lowest + 1) % g->num_players);
+    12 ( 0.00%)      SNAP(g, ENGINE_HOOK_START_DEFENDER, g->defender);
+    32 ( 0.00%)  }
+     .           
+    28 ( 0.00%)  void start_game(Game *g) {
+     .               start_game_reset(g);
+     .           
+     .               refill_deck(g);
+     .               // Record how this game draws, so mid-game kernel calls (which restore this
+     .               // from the durable blob, not the thread-local) keep popping the pre-shuffled
+     .               // deck. Legacy deals leave it false and draw at random, exactly as before.
+     8 ( 0.00%)      g->deterministic_deck = g_deal_wide ? true : false;
+     .           #ifndef DEAL_RNG_DISABLED
+     .               // Seed-dealt game: shuffle the whole deck once from the ChaCha stream, then
+     .               // every draw below (and every mid-game refill) pops the top — the full deal
+     .               // and game are reproducible from the seed.
+     4 ( 0.00%)      if (g_deal_wide) deal_shuffle(g);
+     .           #endif
+    28 ( 0.00%)      start_game_dealt(g);
+14,638 ( 0.03%)  => ../../../c/src/game.c:start_game_dealt (4x)
+     .           }
+     .           
+     .           void game_reset_to_lobby(Game *g, unsigned int bot_mask) {
+     .               g->status = GAME_STATUS_WAITING;
+     .           
+     .               for (int i = 0; i < g->num_players; i++) {
+     .                   Player *p = &g->players[i];
+     .                   p->status = (bot_mask & (1u << i)) ? PLAYER_STATUS_READY : PLAYER_STATUS_IDLE;
+-- line 510 ----------------------------------------
+-- line 543 ----------------------------------------
+     .               g->deterministic_deck = true;
+     .           
+     .               start_game_dealt(g);
+     .           }
+     .           
+     .           // Refill phase: defender first if their hand is empty, then around starting
+     .           // from first_attacker, mirroring refillPlayerHandsWithEvents.
+     .           static bool no_cards_left(const Game *g) {
+   200 ( 0.00%)      return g->deck_count == 0 && !g->has_flipped;
+     .           }
+     .           
+     .           #ifdef GUARDS_VALIDATE_ONLY
+     .           // Validate-only build: the stock refill runs only in a move's COMMIT phase,
+     .           // AFTER every reject check has passed — no reject code depends on the cards it
+     .           // draws, and guards discards the post-move state. No-op it so the whole draw
+     .           // path (draw_card, refill_deck) dead-code-eliminates out of the validator.
+     .           // (handle_* still runs full mutation, so cover's mid-apply re-check and pass's
+     .           // post-mutation PASS_OVERFLOW reject stay byte-for-byte identical to the server.)
+     .           static void refill_player_hands(Game *g) { (void)g; }
+     .           #else
+   720 ( 0.00%)  static void refill_player_hands(Game *g) {
+    21 ( 0.00%)      if (no_cards_left(g)) {
+   273 ( 0.00%)          for (int i = 0; i < g->num_players; i++) {
+    86 ( 0.00%)              if (g->players[i].hand_count == 0 && g->players[i].status == PLAYER_STATUS_IN) {
+     1 ( 0.00%)                  g->players[i].status = PLAYER_STATUS_OUT;
+     1 ( 0.00%)                  g->players[i].awaiting_attack = false;
+     5 ( 0.00%)                  g->elimination_order[g->num_eliminated++] = (int8_t)i;
+     .                       }
+     .                   }
+     .                   return;
+     .               }
+     .           
+     .               // Defender draws first if their hand is empty.
+    59 ( 0.00%)      int defender = g->defender;
+   236 ( 0.00%)      if (g->players[defender].hand_count == 0) {
+     .                   Card drawn[CARDS_PER_PLAYER];
+     .                   int n_drawn = 0;
+     .                   while (g->players[defender].hand_count < CARDS_PER_PLAYER) {
+     .                       Card c;
+     .                       if (!draw_card(g, &c)) break;
+     .                       g->players[defender].hand[g->players[defender].hand_count++] = c;
+     .                       drawn[n_drawn++] = c;
+     .                   }
+     .                   if (n_drawn > 0) {
+     .                       GameLog *l = log_alloc(g, LOG_DRAW, defender);
+     .                       for (int i = 0; i < n_drawn; i++) log_add_card(l, drawn[i]);
+     .                       SNAP(g, ENGINE_HOOK_DRAW, defender);
+     .                   }
+     .               }
+     .           
+    59 ( 0.00%)      int p_idx = g->first_attacker;
+    59 ( 0.00%)      bool visited[MAX_PLAYERS] = { false };
+   413 ( 0.00%)      do {
+   354 ( 0.00%)          if (visited[p_idx]) break;
+   118 ( 0.00%)          visited[p_idx] = true;
+     .                   Card drawn[CARDS_PER_PLAYER];
+     .                   int n_drawn = 0;
+   642 ( 0.00%)          while (g->players[p_idx].hand_count < CARDS_PER_PLAYER) {
+     .                       Card c;
+     .                       if (!draw_card(g, &c)) break;
+   656 ( 0.00%)              g->players[p_idx].hand[g->players[p_idx].hand_count++] = c;
+   192 ( 0.00%)              drawn[n_drawn++] = c;
+     .                   }
+   116 ( 0.00%)          if (n_drawn > 0) {
+     .                       GameLog *l = log_alloc(g, LOG_DRAW, p_idx);
+   520 ( 0.00%)              for (int i = 0; i < n_drawn; i++) log_add_card(l, drawn[i]);
+     .                       // TS pushes the refill event (and its snapshot) BEFORE the
+     .                       // zero-hand OUT check below, so the hook fires here.
+   174 ( 0.00%)              SNAP(g, ENGINE_HOOK_DRAW, p_idx);
+     .                   }
+    58 ( 0.00%)          if (g->players[p_idx].hand_count == 0
+    58 ( 0.00%)              && g->players[p_idx].status == PLAYER_STATUS_IN) {
+     .                       g->players[p_idx].status = PLAYER_STATUS_OUT;
+     .                       g->players[p_idx].awaiting_attack = false;
+     .                       g->elimination_order[g->num_eliminated++] = (int8_t)p_idx;
+     .                   }
+     .                   p_idx = get_next_player_index(g, p_idx);
+   354 ( 0.00%)      } while (p_idx != g->first_attacker);
+   640 ( 0.00%)  }
+     .           #endif  // GUARDS_VALIDATE_ONLY
+     .           
+     .           // ---------- Action: attack --------------------------------------------
+     .           
+     .           static int count_uncovered(const Game *g) {
+     .               int n = 0;
+ 1,166 ( 0.00%)      for (int i = 0; i < g->num_battles; i++) if (!!card_is_none(g->table_battles[i].defense)) n++;
+     .               return n;
+     .           }
+     .           
+     .           static bool table_has_value(const Game *g, int v) {
+    35 ( 0.00%)      for (int i = 0; i < g->num_battles; i++) {
+    68 ( 0.00%)          if (g->table_battles[i].attack.value == v) return true;
+    57 ( 0.00%)          if (!card_is_none(g->table_battles[i].defense) && g->table_battles[i].defense.value == v) return true;
+     .               }
+     .               return false;
+     .           }
+     .           
+     .           // Shared move-validation predicates. Pure (no state mutation, no reject
+     .           // side-effect): each handler keeps its own REJECT at its own call site, so
+     .           // the per-handler reject-code ORDER — a tested parity contract vs the old TS
+     .           // validators — is untouched. Factored out so attack/cover/pass don't each
+     .           // inline their own copy of these sweeps (-Oz keeps them as one shared func).
+     .           static bool all_in_hand(const Player *p, const Card *c, int n) {
+ 2,493 ( 0.00%)      for (int i = 0; i < n; i++) if (!hand_contains(p, c[i])) return false;
+     .               return true;
+     .           }
+     .           static bool has_dup(const Card *c, int n) {
+ 1,132 ( 0.00%)      for (int i = 0; i < n; i++)
+ 1,345 ( 0.00%)          for (int j = i + 1; j < n; j++) if (card_eq(c[i], c[j])) return true;
+     .               return false;
+     .           }
+     .           static bool all_same_value(const Card *c, int n) {
+   366 ( 0.00%)      for (int i = 1; i < n; i++) if (c[i].value != c[0].value) return false;
+     .               return true;
+     .           }
+     .           
+   872 ( 0.00%)  bool handle_attack(Game *g, int player_idx, const Card *cards, int n_cards) {
+   109 ( 0.00%)      engine_last_reject = ENGINE_REJECT_NONE;
+   218 ( 0.00%)      if (n_cards <= 0) REJECT(ENGINE_REJECT_EMPTY);
+   218 ( 0.00%)      if (g->status != GAME_STATUS_PLAYING) REJECT(ENGINE_REJECT_NOT_PLAYING);
+   327 ( 0.00%)      if (player_idx == g->defender) REJECT(ENGINE_REJECT_IS_DEFENDER);
+     .           
+     .               // Validation ordering mirrors TS validateAttack: full in-hand sweep
+     .               // first, then the duplicate sweep, so multi-fault inputs reject for the
+     .               // same reason on both engines.
+   218 ( 0.00%)      Player *p = &g->players[player_idx];
+   218 ( 0.00%)      if (!all_in_hand(p, cards, n_cards)) REJECT(ENGINE_REJECT_NOT_IN_HAND);
+   218 ( 0.00%)      if (has_dup(cards, n_cards)) REJECT(ENGINE_REJECT_DUPLICATES);
+     .           
+   218 ( 0.00%)      bool first_attack = (g->num_battles == 0);
+   109 ( 0.00%)      if (first_attack) {
+    19 ( 0.00%)          if (!all_same_value(cards, n_cards)) REJECT(ENGINE_REJECT_NOT_SAME_VALUE);
+   249 ( 0.00%)          if (player_idx != g->first_attacker) REJECT(ENGINE_REJECT_NOT_FIRST_ATTACKER);
+     .               } else {
+   240 ( 0.00%)          for (int i = 0; i < n_cards; i++) {
+    59 ( 0.00%)              if (!table_has_value(g, cards[i].value)) REJECT(ENGINE_REJECT_VALUE_NOT_ON_TABLE);
+     .                   }
+     .               }
+     .           
+     .               int uncovered = count_uncovered(g);
+   218 ( 0.00%)      int defender_cards = g->players[g->defender].hand_count;
+   327 ( 0.00%)      if (defender_cards < uncovered + n_cards) REJECT(ENGINE_REJECT_DEFENDER_CAPACITY);
+     .           
+     .               // Apply.
+ 1,704 ( 0.00%)      for (int i = 0; i < n_cards; i++) {
+   132 ( 0.00%)          hand_remove_card(p, cards[i]);
+   396 ( 0.00%)          Battle *b = &g->table_battles[g->num_battles++];
+   264 ( 0.00%)          b->attack = cards[i];
+   132 ( 0.00%)          b->defense = CARD_NONE;
+     .               }
+     .           
+   327 ( 0.00%)      GameLog *l = log_alloc(g, LOG_ATTACK, player_idx);
+ 2,071 ( 0.00%)  => ../../../c/src/game.c:log_alloc (109x)
+   518 ( 0.00%)      for (int i = 0; i < n_cards; i++) log_add_card(l, cards[i]);
+     .           
+   109 ( 0.00%)      g->good_players_mask = 0;
+   109 ( 0.00%)      g->has_good_timestamp = false;
+   327 ( 0.00%)      SNAP(g, ENGINE_HOOK_ATTACK, player_idx);
+     .           
+     .               // Attackers only LEAVE the game when the stock is exhausted too — with
+     .               // cards still in the deck they sit out the bout and refill at round end
+     .               // (mirrors the TS no_cards_left guard; without it, dumping a whole hand
+     .               // as throw-ins "won" instantly with 20+ cards still in the stock).
+   221 ( 0.00%)      if (p->hand_count == 0 && no_cards_left(g)) {
+     6 ( 0.00%)          p->status = PLAYER_STATUS_OUT;
+     3 ( 0.00%)          p->awaiting_attack = false;
+    15 ( 0.00%)          g->elimination_order[g->num_eliminated++] = (int8_t)player_idx;
+     6 ( 0.00%)          log_alloc(g, LOG_PLAYER_OUT, player_idx);
+    57 ( 0.00%)  => ../../../c/src/game.c:log_alloc (3x)
+    12 ( 0.00%)          SNAP(g, ENGINE_HOOK_OUT, player_idx);
+     .                   return true;
+     .               }
+     .           
+   212 ( 0.00%)      bool was_first = (g->num_battles == n_cards);
+   106 ( 0.00%)      if (was_first) {
+ 1,804 ( 0.00%)          for (int i = 0; i < g->num_players; i++) if (i != g->defender) g->players[i].awaiting_attack = true;
+     .               } else {
+    78 ( 0.00%)          p->awaiting_attack = true;
+     .               }
+     .               return true;
+   981 ( 0.00%)  }
+     .           
+     .           // ---------- Action: cover ---------------------------------------------
+     .           
+     .           bool handle_cover(Game *g, int player_idx,
+   512 ( 0.00%)                    const Card *cover_cards, const Card *attack_cards, int n) {
+    64 ( 0.00%)      engine_last_reject = ENGINE_REJECT_NONE;
+   128 ( 0.00%)      if (g->status != GAME_STATUS_PLAYING) REJECT(ENGINE_REJECT_NOT_PLAYING);
+   128 ( 0.00%)      if (n <= 0) REJECT(ENGINE_REJECT_EMPTY);
+     .           
+     .               // TS validateCover checks for uncovered attacks BEFORE the defender
+     .               // check; keep that priority.
+     .               int uncovered = count_uncovered(g);
+   128 ( 0.00%)      if (uncovered == 0) REJECT(ENGINE_REJECT_NO_UNCOVERED);
+   192 ( 0.00%)      if (player_idx != g->defender) REJECT(ENGINE_REJECT_NOT_DEFENDER);
+     .           
+    64 ( 0.00%)      Player *def = &g->players[player_idx];
+   128 ( 0.00%)      if (!all_in_hand(def, cover_cards, n)) REJECT(ENGINE_REJECT_NOT_IN_HAND);
+   128 ( 0.00%)      if (has_dup(cover_cards, n)) REJECT(ENGINE_REJECT_DUPLICATES);
+     .           
+     .               // Each attack card must be on the table & uncovered — matched by EXACT
+     .               // card (suit+value), not just value. The value-only lookup let a request
+     .               // naming an already-covered card slip past validation when another
+     .               // same-rank attack was still uncovered (the defender double-tap bug the
+     .               // TS side fixed in validateCover).
+   603 ( 0.00%)      for (int i = 0; i < n; i++) {
+     .                   bool found = false;
+   114 ( 0.00%)          for (int j = 0; j < g->num_battles; j++) {
+    92 ( 0.00%)              if (!!card_is_none(g->table_battles[j].defense)
+   203 ( 0.00%)                  && card_eq(g->table_battles[j].attack, attack_cards[i])) {
+     .                           found = true; break;
+     .                       }
+     .                   }
+     .                   if (!found) REJECT(ENGINE_REJECT_ATTACK_NOT_ON_TABLE);
+     .               }
+   128 ( 0.00%)      if (has_dup(attack_cards, n)) REJECT(ENGINE_REJECT_DUPLICATES);
+   539 ( 0.00%)      for (int i = 0; i < n; i++) {
+   219 ( 0.00%)          if (!can_cover(attack_cards[i], cover_cards[i], g->power_suit)) REJECT(ENGINE_REJECT_CANNOT_COVER);
+     .               }
+     .           
+     .               // Apply each cover (with logging) and record discards if defender clears
+     .               // their hand.
+ 1,051 ( 0.00%)      for (int i = 0; i < n; i++) {
+     .                   Card cover_card = cover_cards[i];
+     .                   Card attack_card = attack_cards[i];
+     .                   int idx = -1;
+   260 ( 0.00%)          for (int j = 0; j < g->num_battles; j++) {
+    83 ( 0.00%)              if (!!card_is_none(g->table_battles[j].defense)
+   111 ( 0.00%)                  && card_eq(g->table_battles[j].attack, attack_card)) {
+     .                           idx = j; break;
+     .                       }
+     .                   }
+     .                   if (idx < 0) REJECT(ENGINE_REJECT_ATTACK_NOT_ON_TABLE);
+    73 ( 0.00%)          g->table_battles[idx].defense = cover_card;
+     .                   hand_remove_card(def, cover_card);
+     .           
+     .                   GameLog *l = log_alloc(g, LOG_COVER, player_idx);
+     .                   log_add_pair(l, cover_card, attack_card);
+   219 ( 0.00%)          SNAP(g, ENGINE_HOOK_COVER, idx);
+     .               }
+     .           
+   128 ( 0.00%)      if (def->hand_count == 0) {
+     .                   // Discard all table cards, refill, advance defender. Mirrors the TS
+     .                   // `executeCover` end-of-round branch.
+     2 ( 0.00%)          int discarded = g->num_battles * 2;
+     1 ( 0.00%)          g->discard_pile_length += discarded;
+     .           
+     4 ( 0.00%)          GameLog *l = log_alloc(g, LOG_DISCARD, -1);
+    19 ( 0.00%)  => ../../../c/src/game.c:log_alloc (1x)
+     6 ( 0.00%)          for (int i = 0; i < g->num_battles; i++) {
+     1 ( 0.00%)              log_add_card(l, g->table_battles[i].attack);
+     2 ( 0.00%)              if (!card_is_none(g->table_battles[i].defense)) log_add_card(l, g->table_battles[i].defense);
+     .                   }
+     .           
+     1 ( 0.00%)          g->num_battles = 0;
+     3 ( 0.00%)          SNAP(g, ENGINE_HOOK_DISCARD, -1);
+     .           
+     2 ( 0.00%)          refill_player_hands(g);
+    48 ( 0.00%)  => ../../../c/src/game.c:refill_player_hands (1x)
+     .           
+     2 ( 0.00%)          g->first_attacker = (int8_t)g->defender;
+     1 ( 0.00%)          g->good_players_mask = 0;
+     2 ( 0.00%)          g->has_good_timestamp = false;
+     .           
+     2 ( 0.00%)          if (def->hand_count == 0) {
+     .                       // Defender still empty after refill — they win.
+     4 ( 0.00%)              bool was_in = (g->players[g->first_attacker].status == PLAYER_STATUS_IN);
+     1 ( 0.00%)              g->players[g->first_attacker].status = PLAYER_STATUS_OUT;
+     1 ( 0.00%)              g->players[g->first_attacker].awaiting_attack = false;
+     1 ( 0.00%)              if (was_in) g->elimination_order[g->num_eliminated++] = g->first_attacker;
+     2 ( 0.00%)              log_alloc(g, LOG_PLAYER_OUT, g->first_attacker);
+    19 ( 0.00%)  => ../../../c/src/game.c:log_alloc (1x)
+     3 ( 0.00%)              SNAP(g, ENGINE_HOOK_OUT, g->first_attacker);
+     4 ( 0.00%)              g->first_attacker = (int8_t)get_next_player_index(g, g->first_attacker);
+    38 ( 0.00%)  => ../../../c/src/game.c:get_next_player_index (1x)
+     .                   }
+     5 ( 0.00%)          g->defender = (int8_t)get_next_player_index(g, g->first_attacker);
+    38 ( 0.00%)  => ../../../c/src/game.c:get_next_player_index (1x)
+     .           
+     4 ( 0.00%)          GameLog *dc = log_alloc(g, LOG_DEFENDER_CHANGE, -1);
+    19 ( 0.00%)  => ../../../c/src/game.c:log_alloc (1x)
+     2 ( 0.00%)          dc->defender_index = g->defender;
+     3 ( 0.00%)          SNAP(g, ENGINE_HOOK_DEFENDER_MOVE, g->defender);
+     .                   return true;
+     .               }
+     .           
+    63 ( 0.00%)      g->good_players_mask = 0;
+    63 ( 0.00%)      g->has_good_timestamp = false;
+     .           
+   235 ( 0.00%)      bool all_covered = (g->num_battles > 0);
+   306 ( 0.00%)      for (int i = 0; i < g->num_battles; i++) {
+    98 ( 0.00%)          if (!!card_is_none(g->table_battles[i].defense)) { all_covered = false; break; }
+     .               }
+    46 ( 0.00%)      if (all_covered) {
+    46 ( 0.00%)          g->has_good_timestamp = true; // matches `game.good_timestamp = Date.now()`
+   690 ( 0.00%)          for (int i = 0; i < g->num_players; i++) {
+   414 ( 0.00%)              if (i != g->defender && g->players[i].status == PLAYER_STATUS_IN) {
+    67 ( 0.00%)                  g->players[i].awaiting_attack = true;
+     .                       }
+     .                   }
+     .               }
+     .               return true;
+   576 ( 0.00%)  }
+     .           
+     .           // ---------- Action: pass ----------------------------------------------
+     .           
+    40 ( 0.00%)  bool handle_pass(Game *g, int player_idx, const Card *cards, int n_cards) {
+    10 ( 0.00%)      engine_last_reject = ENGINE_REJECT_NONE;
+    10 ( 0.00%)      if (g->status != GAME_STATUS_PLAYING) REJECT(ENGINE_REJECT_NOT_PLAYING);
+    10 ( 0.00%)      if (n_cards <= 0) REJECT(ENGINE_REJECT_EMPTY);
+     .           
+     .               // TS validatePass priority: same-value → duplicates → defender →
+     .               // in-hand → table-nonempty → cover-present → values-match → capacity.
+     5 ( 0.00%)      int v = cards[0].value;
+     .               if (!all_same_value(cards, n_cards)) REJECT(ENGINE_REJECT_NOT_SAME_VALUE);
+    10 ( 0.00%)      if (has_dup(cards, n_cards)) REJECT(ENGINE_REJECT_DUPLICATES);
+    20 ( 0.00%)      if (player_idx != g->defender) REJECT(ENGINE_REJECT_NOT_DEFENDER);
+     .           
+    10 ( 0.00%)      Player *def = &g->players[player_idx];
+    10 ( 0.00%)      if (!all_in_hand(def, cards, n_cards)) REJECT(ENGINE_REJECT_NOT_IN_HAND);
+    15 ( 0.00%)      if (g->num_battles == 0) REJECT(ENGINE_REJECT_NO_TABLE_CARDS);
+    40 ( 0.00%)      for (int i = 0; i < g->num_battles; i++) if (!card_is_none(g->table_battles[i].defense)) REJECT(ENGINE_REJECT_COVER_PRESENT);
+    35 ( 0.00%)      for (int i = 0; i < g->num_battles; i++) if (g->table_battles[i].attack.value != v) REJECT(ENGINE_REJECT_PASS_VALUES);
+     .           
+     5 ( 0.00%)      int next = get_next_player_index(g, g->defender);
+   235 ( 0.00%)  => ../../../c/src/game.c:get_next_player_index (5x)
+    35 ( 0.00%)      if (g->players[next].hand_count < n_cards + g->num_battles) REJECT(ENGINE_REJECT_PASS_CAPACITY);
+     .           
+    80 ( 0.00%)      for (int i = 0; i < n_cards; i++) {
+     5 ( 0.00%)          hand_remove_card(def, cards[i]);
+    15 ( 0.00%)          Battle *b = &g->table_battles[g->num_battles++];
+    10 ( 0.00%)          b->attack = cards[i];
+     5 ( 0.00%)          b->defense = CARD_NONE;
+     .               }
+     .           
+    15 ( 0.00%)      GameLog *l = log_alloc(g, LOG_PASS, player_idx);
+    95 ( 0.00%)  => ../../../c/src/game.c:log_alloc (5x)
+    15 ( 0.00%)      for (int i = 0; i < n_cards; i++) log_add_card(l, cards[i]);
+     .           
+     5 ( 0.00%)      g->good_players_mask = 0;
+     5 ( 0.00%)      g->has_good_timestamp = false;
+    15 ( 0.00%)      SNAP(g, ENGINE_HOOK_PASS, player_idx);
+     .           
+     .               if (no_cards_left(g) && def->hand_count == 0) {
+     .                   def->status = PLAYER_STATUS_OUT;
+     .                   def->awaiting_attack = false;
+     .                   g->elimination_order[g->num_eliminated++] = (int8_t)player_idx;
+     .                   log_alloc(g, LOG_PLAYER_OUT, player_idx);
+     .                   SNAP(g, ENGINE_HOOK_OUT, player_idx);
+     .               }
+     .           
+    10 ( 0.00%)      g->defender = (int8_t)next;
+    15 ( 0.00%)      GameLog *dc = log_alloc(g, LOG_DEFENDER_CHANGE, -1);
+    95 ( 0.00%)  => ../../../c/src/game.c:log_alloc (5x)
+    10 ( 0.00%)      dc->defender_index = g->defender;
+     .           
+     .               int uncovered = count_uncovered(g);
+    15 ( 0.00%)      int defender_cards = g->players[g->defender].hand_count;
+    10 ( 0.00%)      if (uncovered > defender_cards) {
+     .                   // TS throws here (post-mutation, so the move never commits). We
+     .                   // treat as fatal — abort the game — and report the reason.
+     .                   g->status = GAME_STATUS_GAME_OVER;
+     .                   REJECT(ENGINE_REJECT_PASS_OVERFLOW);
+     .               }
+     .               return true;
+    40 ( 0.00%)  }
+     .           
+     .           // ---------- Action: pickup --------------------------------------------
+     .           
+     .           bool handle_pickup(Game *g, int player_idx) {
+    46 ( 0.00%)      engine_last_reject = ENGINE_REJECT_NONE;
+    92 ( 0.00%)      if (g->status != GAME_STATUS_PLAYING) REJECT(ENGINE_REJECT_NOT_PLAYING);
+   138 ( 0.00%)      if (player_idx != g->defender) REJECT(ENGINE_REJECT_NOT_DEFENDER);
+   138 ( 0.00%)      if (g->num_battles == 0) REJECT(ENGINE_REJECT_NO_TABLE_CARDS);
+     .           
+     .               Player *def = &g->players[player_idx];
+     .               GameLog *l = log_alloc(g, LOG_PICKUP, player_idx);
+     .           
+     .               // TS pickup logs table cards attack-major (all attacks' cards in battle
+     .               // order, defense right after its attack) — same interleaving here.
+     .               //
+     .               // The hand append is BOUNDED, like log_add_card beside it. A legal bout can
+-- line 913 ----------------------------------------
+-- line 915 ----------------------------------------
+     .               // so pickup at worst doubles a hand that was already under the cap), but
+     .               // this is the engine, and a caller that hands it a wide table — a corrupt
+     .               // row, a hostile marshal, a bot's sampled world — used to walk straight off
+     .               // the end of `hand`: 2 cards per battle, no check. It cost real time to find
+     .               // (e2e/wasm_kernel_fuzz, 40 battles: 3 + 2*40 = 83 into hand[64], a wasm trap
+     .               // ~19 cards past the end) because the wide table only reaches this path
+     .               // through a ROLLOUT, so it read as a bot bug for hours. Drop the excess: a
+     .               // truncated hand is a wrong game, but a corrupted Game is a wrong process.
+   584 ( 0.00%)      for (int i = 0; i < g->num_battles; i++) {
+     .                   Battle *b = &g->table_battles[i];
+    77 ( 0.00%)          log_add_card(l, b->attack);
+   539 ( 0.00%)          if (def->hand_count < MAX_HAND_SIZE) def->hand[def->hand_count++] = b->attack;
+   154 ( 0.00%)          if (!card_is_none(b->defense)) {
+     .                       log_add_card(l, b->defense);
+   128 ( 0.00%)              if (def->hand_count < MAX_HAND_SIZE) def->hand[def->hand_count++] = b->defense;
+     .                   }
+     .               }
+    46 ( 0.00%)      g->num_battles = 0;
+   184 ( 0.00%)      SNAP(g, ENGINE_HOOK_PICKUP, player_idx);
+     .           
+    92 ( 0.00%)      refill_player_hands(g);
+10,714 ( 0.02%)  => ../../../c/src/game.c:refill_player_hands (46x)
+     .           
+   138 ( 0.00%)      g->first_attacker = (int8_t)get_next_player_index(g, g->defender);
+    46 ( 0.00%)      g->defender = (int8_t)get_next_player_index(g, g->first_attacker);
+     .           
+     .               GameLog *dc = log_alloc(g, LOG_DEFENDER_CHANGE, -1);
+    46 ( 0.00%)      dc->defender_index = g->defender;
+    46 ( 0.00%)      g->good_players_mask = 0;
+    92 ( 0.00%)      g->has_good_timestamp = false;
+     .               return true;
+    46 ( 0.00%)  }
+     .           
+     .           // ---------- Action: good ----------------------------------------------
+     .           
+   165 ( 0.00%)  static void execute_round_transition(Game *g) {
+     .               // TS emits a MAGIC_TRANSITION event with the pre-discard state.
+    99 ( 0.00%)      SNAP(g, ENGINE_HOOK_MAGIC_TRANSITION, -1);
+     .           
+    66 ( 0.00%)      int discarded = g->num_battles * 2;
+    33 ( 0.00%)      g->discard_pile_length += discarded;
+     .           
+     .               GameLog *l = log_alloc(g, LOG_DISCARD, -1);
+   290 ( 0.00%)      for (int i = 0; i < g->num_battles; i++) {
+    56 ( 0.00%)          log_add_card(l, g->table_battles[i].attack);
+   112 ( 0.00%)          if (!card_is_none(g->table_battles[i].defense)) log_add_card(l, g->table_battles[i].defense);
+     .               }
+    33 ( 0.00%)      g->num_battles = 0;
+    99 ( 0.00%)      SNAP(g, ENGINE_HOOK_TRASH, -1);
+     .           
+    66 ( 0.00%)      refill_player_hands(g);
+11,697 ( 0.02%)  => ../../../c/src/game.c:refill_player_hands (33x)
+     .           
+    66 ( 0.00%)      g->first_attacker = (int8_t)g->defender;
+    33 ( 0.00%)      g->defender = (int8_t)get_next_player_index(g, g->first_attacker);
+     .           
+     .               GameLog *dc = log_alloc(g, LOG_DEFENDER_CHANGE, -1);
+    33 ( 0.00%)      dc->defender_index = g->defender;
+     .           
+    33 ( 0.00%)      g->good_players_mask = 0;
+    33 ( 0.00%)      g->has_good_timestamp = false;
+   132 ( 0.00%)  }
+     .           
+   786 ( 0.00%)  bool handle_good(Game *g, int player_idx) {
+   131 ( 0.00%)      engine_last_reject = ENGINE_REJECT_NONE;
+   262 ( 0.00%)      if (g->status != GAME_STATUS_PLAYING) REJECT(ENGINE_REJECT_NOT_PLAYING);
+   524 ( 0.00%)      if (g->players[player_idx].status != PLAYER_STATUS_IN) REJECT(ENGINE_REJECT_NOT_IN_STATUS);
+   395 ( 0.00%)      if (player_idx == g->defender) REJECT(ENGINE_REJECT_IS_DEFENDER);
+   310 ( 0.00%)      if (g->num_battles == 0 && player_idx == g->first_attacker) REJECT(ENGINE_REJECT_FIRST_MUST_ATTACK);
+   720 ( 0.00%)      if (g->good_players_mask & (1u << player_idx)) REJECT(ENGINE_REJECT_ALREADY_GOOD);
+     .           
+   240 ( 0.00%)      g->good_players_mask |= (1u << player_idx);
+     .               log_alloc(g, LOG_GOOD, player_idx);
+   120 ( 0.00%)      g->players[player_idx].awaiting_attack = false;
+     .           
+     .               // Count attackers and check all_attackers_good.
+     .               int n_attackers = 0;
+     .               bool all_good = true;
+ 1,920 ( 0.00%)      for (int i = 0; i < g->num_players; i++) {
+ 1,080 ( 0.00%)          if (i != g->defender && g->players[i].status == PLAYER_STATUS_IN) {
+   120 ( 0.00%)              n_attackers++;
+   549 ( 0.00%)              if (!(g->good_players_mask & (1u << i))) all_good = false;
+     .                   }
+     .               }
+   240 ( 0.00%)      if (n_attackers == 0) all_good = false;
+     .           
+   186 ( 0.00%)      bool all_covered = (g->num_battles > 0);
+   450 ( 0.00%)      for (int i = 0; i < g->num_battles; i++) {
+   157 ( 0.00%)          if (!!card_is_none(g->table_battles[i].defense)) { all_covered = false; break; }
+     .               }
+   459 ( 0.00%)      if (all_good && all_covered) execute_round_transition(g);
+16,153 ( 0.03%)  => ../../../c/src/game.c:execute_round_transition (33x)
+     .               return true;
+   917 ( 0.00%)  }
+     .           
+     .           // One decoded action applied — the kind->handler dispatch every host used to
+     .           // copy (iOS fio_apply_awire, the native server's apply_move_json, bot_drive's
+     .           // own apply_move). The switch is a kernel fact, so it lives here beside the
+     .           // handlers, and callers route through it instead of re-enumerating move types.
+     .           // awire_decode already guarantees a cover frame's covering/attack cards pair up
+     .           // n-for-n, so no arity re-check is needed. engine_last_reject holds the reason
+     .           // on a false return; the caller owns any snapshot/event bookkeeping around it.
+   710 ( 0.00%)  bool awire_apply(Game *g, int seat, const AwireAction *a) {
+ 2,840 ( 0.01%)      if (!g || !a || seat < 0 || seat >= g->num_players) return false;
+     .               bool ok;
+ 3,905 ( 0.01%)      switch (a->kind) {
+   327 ( 0.00%)          case AWIRE_ATTACK: ok = handle_attack(g, seat, a->cards, a->n); break;
+32,162 ( 0.06%)  => ../../../c/src/game.c:handle_attack (109x)
+   256 ( 0.00%)          case AWIRE_COVER:  ok = handle_cover(g, seat, a->cards, a->attacks, a->n); break;
+24,754 ( 0.05%)  => ../../../c/src/game.c:handle_cover (64x)
+    15 ( 0.00%)          case AWIRE_PASS:   ok = handle_pass(g, seat, a->cards, a->n); break;
+ 1,886 ( 0.00%)  => ../../../c/src/game.c:handle_pass (5x)
+    46 ( 0.00%)          case AWIRE_PICKUP: ok = handle_pickup(g, seat); break;
+19,226 ( 0.04%)  => ../../../c/src/game.c:handle_pickup (46x)
+   131 ( 0.00%)          case AWIRE_GOOD:   ok = handle_good(g, seat); break;
+28,440 ( 0.05%)  => ../../../c/src/game.c:handle_good (131x)
+     .                   default:           return false;
+     .               }
+   820 ( 0.00%)      if (ok) game_settle_status(g);   // the kernel records its own game-over
+     .               return ok;
+   355 ( 0.00%)  }
+     .           
+     .           // Standalone entries mirroring the TS exports (see game.h).
+     .           void engine_run_round_transition(Game *g) { execute_round_transition(g); }
+     .           void engine_run_refill(Game *g) { refill_player_hands(g); }
+     .           
+     .           // ---------- should_bot_act --------------------------------------------
+     .           
+     .           bool should_bot_act(const Game *g, int bot_idx) {
+-- line 1035 ----------------------------------------
+
+23,513 ( 0.04%)  <counts for unidentified lines in ../../../c/src/game.c>
+
+--------------------------------------------------------------------------------
+-- Auto-annotated source: ../../../c/src/../wasm/wire.h
+--------------------------------------------------------------------------------
+Ir              
+
+-- line 9 ----------------------------------------
+     .           #define CNITRO_WASM_WIRE_H
+     .           
+     .           #include "card.h"
+     .           
+     .           #define WIRE_CARD_HIDDEN 0xFEu
+     .           #define WIRE_CARD_NONE   0xFFu
+     .           
+     .           static inline unsigned char wire_from_card(Card c) {
+ 5,082 ( 0.01%)      if (card_is_none(c)) return (unsigned char)WIRE_CARD_NONE;
+33,370 ( 0.06%)      if (c.suit < 0 || c.value < 1) return (unsigned char)WIRE_CARD_HIDDEN;
+32,501 ( 0.06%)      return (unsigned char)(c.suit * 13 + (c.value - 1));
+     .           }
+     .           
+     .           // State/move/action cards are always real cards; hostile ids clamp into the
+     .           // representable space (the job clamp_card did on the old 2-byte wire — the
+     .           // bot bitboards do `1ull << card_id`, undefined for out-of-range ids).
+     .           static inline Card card_from_wire_state(unsigned char b) {
+   849 ( 0.00%)      if (b > 51) b = 51;
+   849 ( 0.00%)      Card c; c.suit = (int8_t)(b / 13); c.value = (int8_t)(b % 13 + 1);
+     .               return c;
+     .           }
+     .           
+     .           // Log pairs carry the sentinels.
+     .           static inline Card card_from_wire_pair(unsigned char b) {
+     .               if (b == WIRE_CARD_NONE) return CARD_NONE;
+     .               if (b == WIRE_CARD_HIDDEN) { Card c; c.suit = -1; c.value = -1; return c; }
+     .               return card_from_wire_state(b);
+-- line 35 ----------------------------------------
+
+ 5,904 ( 0.01%)  <counts for unidentified lines in ../../../c/src/../wasm/wire.h>
+
+--------------------------------------------------------------------------------
+-- Auto-annotated source: ws.c
+--------------------------------------------------------------------------------
+Ir                 
+
+-- line 18 ----------------------------------------
+        .           
+        .           typedef struct {
+        .               uint32_t state[5];
+        .               uint64_t bitlen;
+        .               uint8_t  buf[64];
+        .               int      buflen;
+        .           } Sha1;
+        .           
+    3,648 ( 0.01%)  static uint32_t sha1_rol(uint32_t v, int n) { return (v << n) | (v >> (32 - n)); }
+        .           
+        .           static void sha1_block(Sha1 *c, const uint8_t *p) {
+        .               uint32_t w[80];
+      576 ( 0.00%)      for (int i = 0; i < 16; i++)
+      192 ( 0.00%)          w[i] = ((uint32_t)p[i * 4] << 24) | ((uint32_t)p[i * 4 + 1] << 16) |
+      384 ( 0.00%)                 ((uint32_t)p[i * 4 + 2] << 8) | (uint32_t)p[i * 4 + 3];
+    6,144 ( 0.01%)      for (int i = 16; i < 80; i++) w[i] = sha1_rol(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+        .           
+       60 ( 0.00%)      uint32_t a = c->state[0], b = c->state[1], cc = c->state[2], d = c->state[3], e = c->state[4];
+    2,880 ( 0.01%)      for (int i = 0; i < 80; i++) {
+        .                   uint32_t f, k;
+    2,880 ( 0.01%)          if (i < 20)      { f = (b & cc) | ((~b) & d);       k = 0x5A827999u; }
+    2,160 ( 0.00%)          else if (i < 40) { f = b ^ cc ^ d;                  k = 0x6ED9EBA1u; }
+    2,400 ( 0.00%)          else if (i < 60) { f = (b & cc) | (b & d) | (cc & d); k = 0x8F1BBCDCu; }
+      720 ( 0.00%)          else             { f = b ^ cc ^ d;                  k = 0xCA62C1D6u; }
+    3,840 ( 0.01%)          uint32_t t = sha1_rol(a, 5) + f + e + k + w[i];
+        .                   e = d; d = cc; cc = sha1_rol(b, 30); b = a; a = t;
+        .               }
+      120 ( 0.00%)      c->state[0] += a; c->state[1] += b; c->state[2] += cc; c->state[3] += d; c->state[4] += e;
+        .           }
+        .           
+        .           static void sha1_init(Sha1 *c) {
+       12 ( 0.00%)      c->state[0] = 0x67452301u; c->state[1] = 0xEFCDAB89u; c->state[2] = 0x98BADCFEu;
+        6 ( 0.00%)      c->state[3] = 0x10325476u; c->state[4] = 0xC3D2E1F0u;
+       18 ( 0.00%)      c->bitlen = 0; c->buflen = 0;
+        .           }
+        .           
+        .           static void sha1_update(Sha1 *c, const void *data, size_t len) {
+        .               const uint8_t *p = (const uint8_t *)data;
+      744 ( 0.00%)      c->bitlen += (uint64_t)len * 8;
+    5,580 ( 0.01%)      while (len > 0) {
+    2,232 ( 0.00%)          size_t want = (size_t)(64 - c->buflen);
+      744 ( 0.00%)          size_t take = len < want ? len : want;
+    2,232 ( 0.00%)          memcpy(c->buf + c->buflen, p, take);
+    5,910 ( 0.01%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (372x)
+      744 ( 0.00%)          c->buflen += (int)take; p += take; len -= take;
+      780 ( 0.00%)          if (c->buflen == 64) { sha1_block(c, c->buf); c->buflen = 0; }
+        .               }
+      372 ( 0.00%)  }
+        .           
+        .           static void sha1_final(Sha1 *c, uint8_t out[20]) {
+        6 ( 0.00%)      uint64_t bits = c->bitlen;
+       30 ( 0.00%)      uint8_t pad = 0x80; sha1_update(c, &pad, 1);
+      372 ( 0.00%)  => ws.c:sha1_update (6x)
+    2,142 ( 0.00%)      pad = 0x00; while (c->buflen != 56) sha1_update(c, &pad, 1);
+   39,714 ( 0.07%)  => ws.c:sha1_update (354x)
+        6 ( 0.00%)      c->bitlen = bits;   // padding must not count toward the length field
+        .               uint8_t lenbe[8];
+       12 ( 0.00%)      for (int i = 0; i < 8; i++) lenbe[i] = (uint8_t)(bits >> (56 - 8 * i));
+       12 ( 0.00%)      sha1_update(c, lenbe, 8);
+   18,120 ( 0.03%)  => ws.c:sha1_update (6x)
+        .               for (int i = 0; i < 5; i++) {
+       30 ( 0.00%)          out[i * 4]     = (uint8_t)(c->state[i] >> 24);
+        .                   out[i * 4 + 1] = (uint8_t)(c->state[i] >> 16);
+        .                   out[i * 4 + 2] = (uint8_t)(c->state[i] >> 8);
+       60 ( 0.00%)          out[i * 4 + 3] = (uint8_t)(c->state[i]);
+        .               }
+        .           }
+        .           
+       60 ( 0.00%)  void ws_sha1(const unsigned char *data, size_t len, unsigned char out[20]) {
+       12 ( 0.00%)      Sha1 c; sha1_init(&c); sha1_update(&c, data, len); sha1_final(&c, out);
+      348 ( 0.00%)  => ws.c:sha1_update (6x)
+       42 ( 0.00%)  }
+        .           
+        .           // ---------------------------------------------------------------------------
+        .           // base64
+        .           // ---------------------------------------------------------------------------
+        .           
+        .           int ws_base64_encode(const unsigned char *data, int len, char *out, int cap) {
+        .               static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        .               int oi = 0;
+        .               for (int i = 0; i < len; i += 3) {
+       84 ( 0.00%)          if (oi + 4 >= cap) return 0;
+      126 ( 0.00%)          unsigned int v = (unsigned int)data[i] << 16;
+       90 ( 0.00%)          if (i + 1 < len) v |= (unsigned int)data[i + 1] << 8;
+       72 ( 0.00%)          if (i + 2 < len) v |= (unsigned int)data[i + 2];
+      132 ( 0.00%)          out[oi++] = tbl[(v >> 18) & 0x3F];
+      168 ( 0.00%)          out[oi++] = tbl[(v >> 12) & 0x3F];
+      162 ( 0.00%)          out[oi++] = (i + 1 < len) ? tbl[(v >> 6) & 0x3F] : '=';
+      120 ( 0.00%)          out[oi++] = (i + 2 < len) ? tbl[v & 0x3F] : '=';
+        .               }
+        .               if (oi >= cap) return 0;
+        .               out[oi] = 0;
+        .               return oi;
+        .           }
+        .           
+       54 ( 0.00%)  int ws_accept_from_key(const char *client_key, char *out, int cap) {
+        .               static const char GUID[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+        .               char buf[256];
+       48 ( 0.00%)      int n = snprintf(buf, sizeof buf, "%s%s", client_key, GUID);
+    3,342 ( 0.01%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (6x)
+       18 ( 0.00%)      if (n <= 0 || n >= (int)sizeof buf) return 0;
+        .               unsigned char digest[20];
+        6 ( 0.00%)      ws_sha1((const unsigned char *)buf, (size_t)n, digest);
+   61,026 ( 0.11%)  => ws.c:ws_sha1 (6x)
+        .               return ws_base64_encode(digest, 20, out, cap);
+       42 ( 0.00%)  }
+        .           
+        .           // ---------------------------------------------------------------------------
+        .           // Reliable read/write
+        .           // ---------------------------------------------------------------------------
+        .           
+        .           int ws_read_full(int fd, void *buf, int n) {
+        .               unsigned char *p = (unsigned char *)buf;
+        .               int got = 0;
+-- line 124 ----------------------------------------
+-- line 126 ----------------------------------------
+        .                   ssize_t r = read(fd, p + got, (size_t)(n - got));
+        .                   if (r < 0) { if (errno == EINTR) continue; return -1; }
+        .                   if (r == 0) return -1;   // peer closed mid-frame
+        .                   got += (int)r;
+        .               }
+        .               return got;
+        .           }
+        .           
+       36 ( 0.00%)  int ws_write_full(int fd, const void *buf, int n) {
+        .               const unsigned char *p = (const unsigned char *)buf;
+        .               int sent = 0;
+       30 ( 0.00%)      while (sent < n) {
+       48 ( 0.00%)          ssize_t w = write(fd, p + sent, (size_t)(n - sent));
+      342 ( 0.00%)  => ./io/../sysdeps/unix/sysv/linux/write.c:write (6x)
+       12 ( 0.00%)          if (w < 0) { if (errno == EINTR) continue; return -1; }
+        6 ( 0.00%)          if (w == 0) return -1;
+        6 ( 0.00%)          sent += (int)w;
+        .               }
+        .               return sent;
+       42 ( 0.00%)  }
+        .           
+        .           // Reliable writev(): loops on a short write by advancing past fully-written
+        .           // iovecs and trimming a partially-written one, exactly like ws_write_full
+        .           // does for a single buffer — a short write is normal POSIX behavior (not an
+        .           // error), it just doesn't happen to show up in practice on loopback with
+        .           // these small frame sizes. `iov` is mutated in place (the caller's array is
+        .           // scratch for the duration of this call). Returns total bytes written, or -1.
+        .           static int64_t writev_full(int fd, struct iovec *iov, int iovcnt) {
+        .               int64_t total = 0;
+   95,554 ( 0.18%)      for (int i = 0; i < iovcnt; i++) total += (int64_t)iov[i].iov_len;
+        .               int64_t sent = 0;
+  191,108 ( 0.36%)      while (sent < total) {
+  477,774 ( 0.89%)          ssize_t w = writev(fd, iov, iovcnt);
+5,446,578 (10.14%)  => ./misc/../sysdeps/unix/sysv/linux/writev.c:writev (95,554x)
+      726 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+  191,108 ( 0.36%)          if (w < 0) { if (errno == EINTR) continue; return -1; }
+   95,554 ( 0.18%)          if (w == 0) return -1;
+   95,554 ( 0.18%)          sent += w;
+        .                   size_t rem = (size_t)w;
+1,528,864 ( 2.85%)          while (iovcnt > 0 && rem >= iov[0].iov_len) {
+        .                       rem -= iov[0].iov_len;
+  382,216 ( 0.71%)              iov++; iovcnt--;
+        .                   }
+        .                   if (iovcnt > 0 && rem > 0) {
+        .                       iov[0].iov_base = (char *)iov[0].iov_base + rem;
+        .                       iov[0].iov_len -= rem;
+        .                   }
+        .               }
+        .               return total;
+        .           }
+        .           
+        .           // ---------------------------------------------------------------------------
+        .           // WsConn: buffered read (drains `pending` before touching the socket again)
+        .           // ---------------------------------------------------------------------------
+        .           
+       12 ( 0.00%)  void ws_conn_init(WsConn *c, int fd, int mask_outgoing) {
+        6 ( 0.00%)      c->fd = fd;
+        6 ( 0.00%)      c->mask_outgoing = mask_outgoing;
+        6 ( 0.00%)      c->pending_len = 0;
+        .               c->pending_off = 0;
+       12 ( 0.00%)  }
+        .           
+        .           void ws_conn_prime(WsConn *c, const unsigned char *data, int len) {
+        .               if (len <= 0) return;
+        .               int cap = (int)sizeof c->pending;
+        .               if (len > cap) len = cap;   // realistic peers never pipeline frames ahead of the handshake
+        .               memcpy(c->pending, data, (size_t)len);
+        .               c->pending_len = len;
+        .               c->pending_off = 0;
+-- line 191 ----------------------------------------
+-- line 204 ----------------------------------------
+        .           // parse step needs — usually captures the REST of the current frame (and
+        .           // sometimes the start of the next one) in a single syscall, serving every
+        .           // subsequent ws_fill call from `pending` with no syscall at all. Falls back
+        .           // to looping (unchanged correctness: a short read here is normal POSIX
+        .           // behavior, not an error) when the peer really did split the frame smaller
+        .           // than one read.
+        .           static int ws_fill(WsConn *c, unsigned char *out, int n) {
+        .               int got = 0;
+  382,904 ( 0.71%)      while (got < n) {
+1,435,348 ( 2.67%)          if (c->pending_off < c->pending_len) {
+  382,548 ( 0.71%)              int have = c->pending_len - c->pending_off;
+  765,452 ( 1.42%)              int take = n - got; if (take > have) take = have;
+1,531,616 ( 2.85%)              memcpy(out + got, c->pending + c->pending_off, (size_t)take);
+3,159,237 ( 5.88%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (191,452x)
+  574,356 ( 1.07%)              c->pending_off += take; got += take;
+        .                       continue;
+        .                   }
+        .                   c->pending_off = 0;
+  191,214 ( 0.36%)          c->pending_len = 0;
+        .                   ssize_t r;
+  669,620 ( 1.25%)          do { r = read(c->fd, c->pending, sizeof c->pending); } while (r < 0 && errno == EINTR);
+5,452,620 (10.15%)  => ./io/../sysdeps/unix/sysv/linux/read.c:read (95,660x)
+        .                   if (r < 0) return -1;
+   95,660 ( 0.18%)          if (r == 0) return -1;   // peer closed mid-frame
+   95,654 ( 0.18%)          c->pending_len = (int)r;
+        .               }
+        .               return got;
+        .           }
+        .           
+        .           // ---------------------------------------------------------------------------
+        .           // Frame write: 0..125 / 126 (+u16) / 127 (+u64) length encoding, masked iff
+        .           // c->mask_outgoing (RFC 6455 5.1: client->server MUST be masked, server->
+        .           // client MUST NOT be).
+        .           // ---------------------------------------------------------------------------
+        .           
+1,051,094 ( 1.96%)  int ws_send_frame(WsConn *c, int opcode, const unsigned char *payload, int64_t len) {
+        .               unsigned char hdr[14];
+        .               int hn = 0;
+  286,662 ( 0.53%)      hdr[hn++] = (unsigned char)(0x80 | (opcode & 0x0F));   // FIN=1
+  573,324 ( 1.07%)      unsigned char maskbit = c->mask_outgoing ? 0x80 : 0x00;
+  191,108 ( 0.36%)      if (len <= 125) {
+   95,554 ( 0.18%)          hdr[hn++] = (unsigned char)(maskbit | (unsigned char)len);
+        .               } else if (len <= 0xFFFF) {
+        .                   hdr[hn++] = (unsigned char)(maskbit | 126);
+        .                   hdr[hn++] = (unsigned char)((len >> 8) & 0xFF);
+        .                   hdr[hn++] = (unsigned char)(len & 0xFF);
+        .               } else {
+        .                   hdr[hn++] = (unsigned char)(maskbit | 127);
+        .                   for (int i = 7; i >= 0; i--) hdr[hn++] = (unsigned char)((len >> (8 * i)) & 0xFF);
+        .               }
+   95,554 ( 0.18%)      unsigned char mkey[4] = {0, 0, 0, 0};
+   95,554 ( 0.18%)      if (c->mask_outgoing) {
+        .                   for (int i = 0; i < 4; i++) mkey[i] = (unsigned char)(rand() & 0xFF);
+        .                   memcpy(hdr + hn, mkey, 4); hn += 4;
+        .               }
+        .               if (!c->mask_outgoing) {
+        .                   // Server (unmasked) path — the measured hot one (PROFILE_HOTPATH.md
+        .                   // "T1c": ws_send_frame was ~9-10% of instructions self-cost under
+        .                   // WS+legal load). One writev() of header+payload replaces two
+        .                   // write() syscalls per frame; no masking means no transform is
+        .                   // needed before the payload goes out, so it can be handed to the
+        .                   // kernel as-is instead of copied through a scratch buffer first.
+  191,108 ( 0.36%)          if (len <= 0) return ws_write_full(c->fd, hdr, hn) == hn ? 0 : -1;
+        .                   struct iovec iov[2] = {
+  382,216 ( 0.71%)              { .iov_base = hdr, .iov_len = (size_t)hn },
+  191,108 ( 0.36%)              { .iov_base = (void *)(uintptr_t)payload, .iov_len = (size_t)len },
+        .                   };
+  477,770 ( 0.89%)          return writev_full(c->fd, iov, 2) == hn + len ? (int)len : -1;
+        .               }
+        .           
+        .               if (ws_write_full(c->fd, hdr, hn) != hn) return -1;
+        .               if (len <= 0) return 0;
+        .               // Masked send: XOR through a bounded scratch buffer so the caller's
+        .               // payload (often a shared response buffer) is never mutated.
+        .               unsigned char chunk[4096];
+        .               int64_t off = 0;
+        .               while (off < len) {
+        .                   int64_t take = len - off; if (take > (int64_t)sizeof chunk) take = (int64_t)sizeof chunk;
+        .                   for (int64_t i = 0; i < take; i++) chunk[i] = payload[off + i] ^ mkey[(off + i) & 3];
+        .                   if (ws_write_full(c->fd, chunk, (int)take) != (int)take) return -1;
+        .                   off += take;
+        .               }
+        .               return (int)len;
+  764,432 ( 1.42%)  }
+        .           
+        .           void ws_send_close(WsConn *c, uint16_t code) {
+        .               unsigned char payload[2] = { (unsigned char)(code >> 8), (unsigned char)(code & 0xFF) };
+        .               ws_send_frame(c, WS_OP_CLOSE, payload, 2);
+        .           }
+        .           
+        .           // ---------------------------------------------------------------------------
+        .           // Frame read + message assembly
+        .           // ---------------------------------------------------------------------------
+        .           
+1,337,756 ( 2.49%)  int ws_recv_message(WsConn *c, unsigned char *buf, int cap, int *opcode) {
+        .               int total = 0;
+        .               int msg_opcode = -1;
+        .           
+  477,770 ( 0.89%)      for (;;) {
+        .                   unsigned char hdr[2];
+        .                   if (ws_fill(c, hdr, 2) < 0) return -1;
+        .                   int fin    = (hdr[0] >> 7) & 1;
+        .                   int op     = hdr[0] & 0x0F;
+        .                   int masked = (hdr[1] >> 7) & 1;
+  191,096 ( 0.36%)          int64_t len = hdr[1] & 0x7F;
+        .           
+  286,644 ( 0.53%)          if (len == 126) {
+        .                       unsigned char ext[2];
+        .                       if (ws_fill(c, ext, 2) < 0) return -1;
+        .                       len = ((int64_t)ext[0] << 8) | ext[1];
+  191,096 ( 0.36%)          } else if (len == 127) {
+        .                       unsigned char ext[8];
+        .                       if (ws_fill(c, ext, 8) < 0) return -1;
+        .                       len = 0;
+        .                       for (int i = 0; i < 8; i++) len = (len << 8) | ext[i];
+        .                       if (len < 0) return -1;   // top bit set is a protocol violation per spec
+        .                   }
+        .           
+   95,548 ( 0.18%)          unsigned char mkey[4] = {0, 0, 0, 0};
+  287,356 ( 0.53%)          if (masked) { if (ws_fill(c, mkey, 4) < 0) return -1; }
+        .           
+  286,644 ( 0.53%)          if (op == WS_OP_PING || op == WS_OP_PONG || op == WS_OP_CLOSE) {
+        .                       if (len > 125) return -1;   // control frames are never fragmented/oversized
+        .                       unsigned char ctrl[125];
+        .                       if (len > 0 && ws_fill(c, ctrl, (int)len) < 0) return -1;
+        .                       if (masked) for (int i = 0; i < (int)len; i++) ctrl[i] ^= mkey[i & 3];
+        .                       if (op == WS_OP_PING) { ws_send_frame(c, WS_OP_PONG, ctrl, len); continue; }
+        .                       if (op == WS_OP_PONG) continue;
+        .                       // CLOSE: echo it back (RFC 6455 5.5.1 closing handshake), then
+        .                       // this connection is done.
+        .                       ws_send_close(c, 1000);
+        .                       return -1;
+        .                   }
+        .           
+  382,192 ( 0.71%)          if (op != WS_OP_CONT && op != WS_OP_TEXT && op != WS_OP_BIN) return -1;   // reserved/unknown opcode
+   95,548 ( 0.18%)          if (op != WS_OP_CONT) {
+        .                       if (msg_opcode != -1) return -1;   // a new message started before the last one finished
+        .                       msg_opcode = op;
+        .                   } else if (msg_opcode == -1) {
+        .                       return -1;   // continuation with nothing to continue
+        .                   }
+  573,288 ( 1.07%)          if (len < 0 || total + len > cap) return -1;   // oversized for the caller's buffer
+        .           
+  286,644 ( 0.53%)          if (len > 0) {
+      356 ( 0.00%)              if (ws_fill(c, buf + total, (int)len) < 0) return -1;
+   10,314 ( 0.02%)              if (masked) for (int64_t i = 0; i < len; i++) buf[total + i] ^= mkey[i & 3];
+        .                   }
+   95,548 ( 0.18%)          total += (int)len;
+  477,740 ( 0.89%)          if (fin) { if (opcode) *opcode = msg_opcode; return total; }
+        .                   // else: loop for the next fragment (must arrive as WS_OP_CONT)
+        .               }
+  764,432 ( 1.42%)  }
+
+3,646,388 ( 6.79%)  <counts for unidentified lines in ws.c>
+
+--------------------------------------------------------------------------------
+-- Auto-annotated source: foolish_server.c
+--------------------------------------------------------------------------------
+Ir               
+
+-- line 117 ----------------------------------------
+      .           static unsigned long g_seq = 0;
+      .           
+      .           // --------------------------------------------------------------------------
+      .           // Small utilities
+      .           // --------------------------------------------------------------------------
+      .           
+      .           static void gen_id(char *out, int n) {
+      .               static const char hex[] = "0123456789abcdef";
+    190 ( 0.00%)      unsigned long v = (++g_seq) ^ ((unsigned long)rand() << 8) ^ (unsigned long)time(NULL);
+    727 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+    855 ( 0.00%)  => ./stdlib/./stdlib/rand.c:rand (15x)
+     90 ( 0.00%)  => ./time/../sysdeps/unix/sysv/linux/time.c:time_syscall (15x)
+  2,385 ( 0.00%)      for (int i = 0; i < n; i++) { out[i] = hex[v & 0xf]; v = v * 6364136223846793005UL + 1442695040888963407UL; v >>= 3; }
+     15 ( 0.00%)      out[n] = 0;
+      .           }
+      .           
+      .           // Minimal JSON scrapers — enough for our flat request bodies. Not a parser.
+    528 ( 0.00%)  static bool json_str(const char *body, const char *key, char *out, int cap) {
+    240 ( 0.00%)      char pat[64]; snprintf(pat, sizeof pat, "\"%s\"", key);
+ 21,300 ( 0.04%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (48x)
+    244 ( 0.00%)      const char *p = body ? strstr(body, pat) : NULL;
+  4,074 ( 0.01%)  => ./string/../sysdeps/x86_64/multiarch/strstr-sse2-unaligned.S:__strstr_sse2_unaligned (48x)
+    699 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+     96 ( 0.00%)      if (!p) return false;
+    440 ( 0.00%)      p = strchr(p + strlen(pat), ':'); if (!p) return false;
+  1,521 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (2x)
+  1,008 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strchr-avx2.S:__strchr_avx2 (48x)
+    672 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strlen-avx2.S:__strlen_avx2 (48x)
+    576 ( 0.00%)      p++; while (*p == ' ' || *p == '"') p++;
+  5,304 ( 0.01%)      int i = 0; while (*p && *p != '"' && *p != ',' && *p != '}' && i < cap - 1) out[i++] = *p++;
+    192 ( 0.00%)      out[i] = 0; return i > 0;
+    384 ( 0.00%)  }
+      .           
+      .           // --------------------------------------------------------------------------
+      .           // token -> User* / game_id -> GameSlot* : fixed-size open-addressing hash
+      .           // maps (PROFILE_HOTPATH.md T1 report item 2 — these two were O(MAX_USERS)/
+      .           // O(MAX_GAMES) linear strcmp scans on EVERY authenticated request, 1.08M
+      .           // strcmp calls in one 20s hammer run). Both g_users/g_games are fixed
+      .           // static arrays whose elements never move or get freed for the life of the
+      .           // process (a POC store — no delete), so raw pointers into them are safe to
+-- line 147 ----------------------------------------
+-- line 153 ----------------------------------------
+      .           #define TOKEN_HT_SIZE 1024   // power of two, > 2x MAX_USERS
+      .           #define GAME_HT_SIZE   512   // power of two, > 2x MAX_GAMES
+      .           
+      .           static User     *g_token_ht[TOKEN_HT_SIZE];
+      .           static GameSlot *g_game_ht[GAME_HT_SIZE];
+      .           
+      .           static unsigned long hash_str(const char *s) {
+      .               unsigned long h = 1469598103934665603UL;   // FNV-1a, 64-bit offset basis
+ 10,707 ( 0.02%)      while (*s) { h ^= (unsigned char)*s++; h *= 1099511628211UL; }
+      .               return h;
+      .           }
+      .           
+      .           static void token_ht_insert(User *u) {
+      .               unsigned long h = hash_str(u->token) & (TOKEN_HT_SIZE - 1);
+     24 ( 0.00%)      while (g_token_ht[h]) h = (h + 1) & (TOKEN_HT_SIZE - 1);
+      6 ( 0.00%)      g_token_ht[h] = u;
+      .           }
+      .           static void game_ht_insert(GameSlot *s) {
+      .               unsigned long h = hash_str(s->id) & (GAME_HT_SIZE - 1);
+     12 ( 0.00%)      while (g_game_ht[h]) h = (h + 1) & (GAME_HT_SIZE - 1);
+      3 ( 0.00%)      g_game_ht[h] = s;
+      .           }
+      .           
+      .           static User *user_by_token(const char *token) {
+     90 ( 0.00%)      if (!token || !*token) return NULL;
+     30 ( 0.00%)      unsigned long h = hash_str(token) & (TOKEN_HT_SIZE - 1);
+      .               for (int probes = 0; probes < TOKEN_HT_SIZE; probes++) {
+     87 ( 0.00%)          User *u = g_token_ht[h];
+     60 ( 0.00%)          if (!u) return NULL;   // insert-only table: an empty slot ends the probe chain
+    267 ( 0.00%)          if (u->used && strcmp(u->token, token) == 0) return u;
+    810 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strcmp_avx2 (30x)
+      .                   h = (h + 1) & (TOKEN_HT_SIZE - 1);
+      .               }
+      .               return NULL;
+      .           }
+      .           static GameSlot *game_by_id(const char *id) {
+     81 ( 0.00%)      if (!id || !*id) return NULL;
+     27 ( 0.00%)      unsigned long h = hash_str(id) & (GAME_HT_SIZE - 1);
+      .               for (int probes = 0; probes < GAME_HT_SIZE; probes++) {
+     54 ( 0.00%)          GameSlot *s = g_game_ht[h];
+     54 ( 0.00%)          if (!s) return NULL;
+    237 ( 0.00%)          if (s->used && strcmp(s->id, id) == 0) return s;
+    757 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strcmp_avx2 (27x)
+      .                   h = (h + 1) & (GAME_HT_SIZE - 1);
+      .               }
+      .               return NULL;
+      .           }
+      .           // Whether a seat is a bot: the kernel's own per-seat fact now (strategy_key),
+      .           // not a server-side is_ai array. A human seat is STRATEGY_KEY_HUMAN; a bot holds
+      .           // its roster index.
+     66 ( 0.00%)  static bool seat_is_bot(const Game *g, int i) { return g->players[i].strategy_key != STRATEGY_KEY_HUMAN; }
+      .           
+      .           static int seat_of(GameSlot *s, const char *user_id) {
+    204 ( 0.00%)      for (int i = 0; i < s->game.num_players; i++)
+    222 ( 0.00%)          if (!seat_is_bot(&s->game, i) && strcmp(s->seat_user[i], user_id) == 0) return i;
+    600 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strcmp_avx2 (30x)
+      .               return -1;
+      .           }
+      .           
+      .           // The bot game-loop, one thread per game — a TRAMPOLINE, not a blocking hook.
+      .           // Each pass drives exactly ONE kernel cycle and RETURNS from the kernel; the
+      .           // server then decides how to wait. Same split as supabase (which `await`s a
+      .           // setTimeout) and the phone (Task.sleep): the KERNEL owns the cycle and the
+      .           // delay value (bot_drive + bot_pacing_ms); the host owns how it waits. The
+      .           // `Game` struct IS the continuation, so "resume" is just the next bot_drive.
+      .           //
+      .           // The lock is held while touching the game and RELEASED during the pacing sleep,
+      .           // so bots think + throw in over time while /action and /state keep serving. When
+      .           // no bot can act (a human is owed) the thread waits on `cond` until /action
+      .           // signals it.
+     36 ( 0.00%)  static void *bot_thread(void *arg) {
+      .               GameSlot *s = arg;
+     12 ( 0.00%)      pthread_mutex_lock(&g_lock);
+    167 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_lock.c:pthread_mutex_lock@@GLIBC_2.2.5 (4x)
+  1,304 ( 0.00%)      while (s->used && s->game.status == GAME_STATUS_PLAYING) {
+    966 ( 0.00%)          uint32_t hmask = game_human_mask(&s->game);   // the kernel's own human-seat mask
+ 11,914 ( 0.02%)  => /home/user/foolish/server/impls/native/../../../c/src/game.c:game_human_mask (322x)
+      .                   BotDriveOut drv;
+  2,254 ( 0.00%)          bot_drive(&s->game, hmask, BOT_DRIVE_MAX_ACTIONS, 0, 0, &drv);   // ONE cycle, then returns
+ 35,098 ( 0.07%)  => /home/user/foolish/server/impls/native/../../../c/src/bot_drive.c:bot_drive (322x)
+      .                   // A bot's move (or the game ending) changes the board exactly like a
+      .                   // human's /action does — the /ws state cache must not stay stale
+      .                   // just because no HTTP handler touched this slot this time.
+  1,610 ( 0.00%)          if (drv.n > 0 || drv.ended >= 0) s->version++;
+      .           
+      .                   if (drv.ended >= 0) break;   // the kernel already flipped g->status to GAME_OVER
+    644 ( 0.00%)          if (drv.stop == BOT_STOP_NO_ELIGIBLE) {              // a human's move is owed
+    970 ( 0.00%)              pthread_cond_wait(&s->cond, &g_lock);            // sleep until /action wakes us
+ 93,085 ( 0.17%)  => ./nptl/./nptl/pthread_cond_wait.c:pthread_cond_wait@@GLIBC_2.3.2 (322x)
+    797 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+      .                       continue;
+      .                   }
+      .           
+      .                   // A visible cycle landed — the kernel prices the wait; the host owns the
+      .                   // loop and the sleep (the trampoline). Lock released while we wait.
+      .                   int delay = bot_cycle_delay_ms(&s->game, hmask, &drv);
+      .                   if (delay > 0) {
+      .                       pthread_mutex_unlock(&g_lock);
+      .                       usleep((useconds_t)delay * 1000);
+      .                       pthread_mutex_lock(&g_lock);
+      .                   }
+      .               }
+      4 ( 0.00%)      s->bot_running = false;
+     12 ( 0.00%)      pthread_mutex_unlock(&g_lock);
+    148 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_unlock.c:pthread_mutex_unlock@@GLIBC_2.2.5 (4x)
+     36 ( 0.00%)      return NULL;
+      .           }
+      .           
+      .           // Spawn the game-loop for a freshly dealt game (idempotent).
+      .           static void start_bot_loop(GameSlot *s) {
+      8 ( 0.00%)      if (s->bot_running) return;
+      4 ( 0.00%)      s->bot_running = true;
+      .               pthread_t t;
+     44 ( 0.00%)      if (pthread_create(&t, NULL, bot_thread, s) == 0) pthread_detach(t);
+360,653 ( 0.67%)  => ./nptl/./nptl/pthread_create.c:pthread_create@@GLIBC_2.34 (4x)
+     52 ( 0.00%)  => ./nptl/./nptl/pthread_detach.c:pthread_detach@@GLIBC_2.34 (4x)
+      .               else s->bot_running = false;
+     24 ( 0.00%)  }
+      .           
+      .           // --------------------------------------------------------------------------
+      .           // HTTP layer (hand-rolled; swap for mongoose in a real deployment)
+      .           // --------------------------------------------------------------------------
+      .           
+      .           typedef struct {
+      .               char method[8];
+      .               char path[256];
+-- line 267 ----------------------------------------
+-- line 274 ----------------------------------------
+      .           } Req;
+      .           
+      .           // Finds the blank line ending the header block ("\r\n\r\n") by a plain byte
+      .           // scan instead of strstr (PROFILE_HOTPATH.md T1 report item 3: strstr's
+      .           // two-way-search internals showed up as real cost even for this 4-byte
+      .           // literal). Returns a pointer just PAST the blank line, or NULL if not seen
+      .           // yet in the bytes read so far.
+      .           static char *find_headers_end(char *buf, int n) {
+ 15,239 ( 0.03%)      for (int i = 0; i + 3 < n; i++)
+ 10,928 ( 0.02%)          if (buf[i] == '\r' && buf[i + 1] == '\n' && buf[i + 2] == '\r' && buf[i + 3] == '\n')
+      .                       return buf + i + 4;
+      .               return NULL;
+      .           }
+      .           
+      .           // Hand-rolled request-line + header parser — replaces both
+      .           // `sscanf(buf, "%7s %255s", method, path)` (2.1% of all instructions under
+      .           // load, __vfscanf_internal) and the `strcasestr` header scan (content-length:
+      .           // + authorization:, another ~3% combined) with one single pass over the
+      .           // header block using strchr-style manual scanning and fixed-width
+      .           // `strncasecmp` on each line's already-located header name. Same semantics:
+      .           // method/path/query split on the request line, Content-Length, a Bearer
+      .           // token, and (new) whatever the WebSocket upgrade needs.
+      .           static void parse_request_line_and_headers(char *buf, char *hdr_end, Req *r) {
+    152 ( 0.00%)      memset(r, 0, sizeof *r);
+  2,109 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms (37x)
+    721 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+      .               char *p = buf;
+      .           
+      .               char *s = p;
+  1,313 ( 0.00%)      while (p < hdr_end && *p != ' ' && *p != '\r' && *p != '\n') p++;
+    185 ( 0.00%)      int len = (int)(p - s); if (len > (int)sizeof r->method - 1) len = (int)sizeof r->method - 1;
+    300 ( 0.00%)      memcpy(r->method, s, (size_t)len); r->method[len] = 0;
+    576 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (37x)
+    935 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+    259 ( 0.00%)      if (p < hdr_end && *p == ' ') p++;
+      .           
+      .               s = p;
+  1,856 ( 0.00%)      while (p < hdr_end && *p != ' ' && *p != '?' && *p != '\r' && *p != '\n') p++;
+    259 ( 0.00%)      len = (int)(p - s); if (len > (int)sizeof r->path - 1) len = (int)sizeof r->path - 1;
+    259 ( 0.00%)      memcpy(r->path, s, (size_t)len); r->path[len] = 0;
+    561 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (37x)
+    111 ( 0.00%)      if (p < hdr_end && *p == '?') {
+      .                   p++; s = p;
+  1,020 ( 0.00%)          while (p < hdr_end && *p != ' ' && *p != '\r' && *p != '\n') p++;
+     36 ( 0.00%)          len = (int)(p - s); if (len > (int)sizeof r->query - 1) len = (int)sizeof r->query - 1;
+     48 ( 0.00%)          memcpy(r->query, s, (size_t)len); r->query[len] = 0;
+     66 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (6x)
+      .               }
+      .               // Skip the rest of the request line (HTTP version) up to its CRLF.
+  2,738 ( 0.01%)      while (p < hdr_end && *p != '\n') p++;
+     74 ( 0.00%)      if (p < hdr_end) p++;
+      .           
+      .               bool saw_upgrade_websocket = false, saw_connection_upgrade = false;
+    446 ( 0.00%)      while (p < hdr_end) {
+      .                   char *line_start = p;
+      .                   char *colon = NULL;
+ 46,746 ( 0.09%)          while (p < hdr_end && *p != '\r' && *p != '\n') { if (!colon && *p == ':') colon = p; p++; }
+      .                   char *line_end = p;
+    744 ( 0.00%)          if (p < hdr_end && *p == '\r') p++;
+  1,116 ( 0.00%)          if (p < hdr_end && *p == '\n') p++;
+    670 ( 0.00%)          if (!colon || line_start == colon) continue;   // blank/malformed line — skip
+      .           
+      .                   int name_len = (int)(colon - line_start);
+      .                   const char *val = colon + 1;
+  2,682 ( 0.00%)          while (val < line_end && (*val == ' ' || *val == '\t')) val++;
+      .                   int val_len = (int)(line_end - val);
+      .           
+    927 ( 0.00%)          if (name_len == 14 && strncasecmp(line_start, "content-length", 14) == 0) {
+  1,134 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strncasecmp_avx2 (27x)
+      .                       int cl = 0;
+    648 ( 0.00%)              for (const char *q = val; q < line_end && *q >= '0' && *q <= '9'; q++) cl = cl * 10 + (*q - '0');
+     54 ( 0.00%)              r->content_length = cl;
+    210 ( 0.00%)          } else if (name_len == 13 && strncasecmp(line_start, "authorization", 13) == 0) {
+  1,260 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strncasecmp_avx2 (30x)
+    210 ( 0.00%)              if (val_len > 7 && strncasecmp(val, "Bearer ", 7) == 0) {
+  1,260 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strncasecmp_avx2 (30x)
+     30 ( 0.00%)                  const char *tok = val + 7;
+    120 ( 0.00%)                  int tlen = val_len - 7; if (tlen > (int)sizeof r->token - 1) tlen = (int)sizeof r->token - 1;
+    180 ( 0.00%)                  memcpy(r->token, tok, (size_t)tlen); r->token[tlen] = 0;
+    360 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (30x)
+      .                       }
+     42 ( 0.00%)          } else if (name_len == 7 && strncasecmp(line_start, "upgrade", 7) == 0) {
+    252 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strncasecmp_avx2 (6x)
+      .                       for (int i = 0; i + 9 <= val_len; i++)
+     42 ( 0.00%)                  if (strncasecmp(val + i, "websocket", 9) == 0) { saw_upgrade_websocket = true; break; }
+    252 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strncasecmp_avx2 (6x)
+    201 ( 0.00%)          } else if (name_len == 10 && strncasecmp(line_start, "connection", 10) == 0) {
+    805 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+  1,554 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strncasecmp_avx2 (37x)
+      .                       for (int i = 0; i + 7 <= val_len; i++)
+     42 ( 0.00%)                  if (strncasecmp(val + i, "upgrade", 7) == 0) { saw_connection_upgrade = true; break; }
+    252 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strncasecmp_avx2 (6x)
+     36 ( 0.00%)          } else if (name_len == 17 && strncasecmp(line_start, "sec-websocket-key", 17) == 0) {
+    252 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strncasecmp_avx2 (6x)
+     18 ( 0.00%)              int klen = val_len; if (klen > (int)sizeof r->ws_key - 1) klen = (int)sizeof r->ws_key - 1;
+     48 ( 0.00%)              memcpy(r->ws_key, val, (size_t)klen); r->ws_key[klen] = 0;
+     66 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (6x)
+      .                   }
+      .               }
+    129 ( 0.00%)      r->is_ws_upgrade = saw_upgrade_websocket && saw_connection_upgrade && r->ws_key[0];
+      .           }
+      .           
+      .           static void respond(int fd, int code, const char *json) {
+      .               const char *msg = code == 200 ? "OK" : code == 400 ? "Bad Request"
+      .                               : code == 401 ? "Unauthorized" : code == 404 ? "Not Found" : "Error";
+      .               char hdr[512];
+     67 ( 0.00%)      int n = snprintf(hdr, sizeof hdr,
+  8,225 ( 0.02%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (7x)
+    705 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+      .                   "HTTP/1.1 %d %s\r\nContent-Type: application/json\r\n"
+      .                   "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: *\r\n"
+      .                   "Content-Length: %zu\r\nConnection: close\r\n\r\n",
+     24 ( 0.00%)          code, msg, strlen(json));
+    180 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strlen-avx2.S:__strlen_avx2 (6x)
+     45 ( 0.00%)      write(fd, hdr, n);
+    705 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+    399 ( 0.00%)  => ./io/../sysdeps/unix/sysv/linux/write.c:write (7x)
+     27 ( 0.00%)      write(fd, json, strlen(json));
+      .           }
+      .           
+      .           // Raw bytes (the packed kernel wire) — no JSON. The client decodes with its own
+      .           // kernel-wire reader (MaskedView etc.).
+      .           static void respond_bin(int fd, int code, const unsigned char *data, int len) {
+      .               char hdr[256];
+      .               int n = snprintf(hdr, sizeof hdr,
+      .                   "HTTP/1.1 %d OK\r\nContent-Type: application/octet-stream\r\n"
+-- line 377 ----------------------------------------
+-- line 381 ----------------------------------------
+      .               if (len > 0) write(fd, data, (size_t)len);
+      .           }
+      .           
+      .           // --------------------------------------------------------------------------
+      .           // Route handlers  (each locks g_lock around store access)
+      .           // --------------------------------------------------------------------------
+      .           
+      .           static void h_signup(Req *r, int fd) {
+     18 ( 0.00%)      char uname[24] = {0};
+     42 ( 0.00%)      if (!json_str(r->body, "username", uname, sizeof uname)) { respond(fd, 400, "{\"error\":\"username\"}"); return; }
+  7,446 ( 0.01%)  => foolish_server.c:json_str (6x)
+     22 ( 0.00%)      pthread_mutex_lock(&g_lock);
+    216 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_lock.c:pthread_mutex_lock@@GLIBC_2.2.5 (6x)
+    809 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+      .               User *u = NULL;
+ 15,454 ( 0.03%)      for (int i = 0; i < MAX_USERS; i++) if (g_users[i].used && !strcmp(g_users[i].username, uname)) { u = &g_users[i]; break; }
+    724 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+    410 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strcmp_avx2 (15x)
+     69 ( 0.00%)      if (!u) for (int i = 0; i < MAX_USERS; i++) if (!g_users[i].used) {
+     64 ( 0.00%)          u = &g_users[i]; u->used = true; snprintf(u->username, sizeof u->username, "%s", uname);
+  2,196 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (6x)
+      .                   gen_id(u->user_id, ID_LEN); break;
+      .               }
+      6 ( 0.00%)      if (u) { gen_id(u->token, 32); token_ht_insert(u); }   // fresh session token, indexed
+      .               char out[160];
+     66 ( 0.00%)      if (u) snprintf(out, sizeof out, "{\"token\":\"%s\",\"user_id\":\"%s\",\"username\":\"%s\"}", u->token, u->user_id, u->username);
+  5,292 ( 0.01%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (6x)
+     22 ( 0.00%)      pthread_mutex_unlock(&g_lock);
+    156 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_unlock.c:pthread_mutex_unlock@@GLIBC_2.2.5 (6x)
+    828 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+      .               if (u) respond(fd, 200, out); else respond(fd, 400, "{\"error\":\"full\"}");
+      .           }
+      .           
+      .           static void h_create(Req *r, int fd) {
+      9 ( 0.00%)      pthread_mutex_lock(&g_lock);
+    108 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_lock.c:pthread_mutex_lock@@GLIBC_2.2.5 (3x)
+      .               User *u = user_by_token(r->token);
+      .               if (!u) { pthread_mutex_unlock(&g_lock); respond(fd, 401, "{\"error\":\"auth\"}"); return; }
+      .               GameSlot *s = NULL;
+     22 ( 0.00%)      for (int i = 0; i < MAX_GAMES; i++) if (!g_games[i].used) { s = &g_games[i]; break; }
+      .               if (!s) { pthread_mutex_unlock(&g_lock); respond(fd, 400, "{\"error\":\"full\"}"); return; }
+     17 ( 0.00%)      memset(s, 0, sizeof *s);
+139,875 ( 0.26%)  => ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms (3x)
+     22 ( 0.00%)      pthread_cond_init(&s->cond, NULL);
+    944 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+     30 ( 0.00%)  => ./nptl/./nptl/pthread_cond_init.c:pthread_cond_init@@GLIBC_2.3.2 (3x)
+      3 ( 0.00%)      s->used = true;
+      .               // s->version starts at 0 (memset); view_cache_version must start at a
+      .               // value that can NEVER equal it, or state_put_cached's very first call
+      .               // for a seat would see version==cache_version (both zeroed) and return
+      .               // the also-zeroed, never-computed view_cache_len (0 bytes) instead of
+      .               // actually serializing — a silent "client gets an empty state" bug.
+      9 ( 0.00%)      for (int i = 0; i < MAX_PLAYERS; i++) s->view_cache_version[i] = (uint32_t)-1;
+     36 ( 0.00%)      gen_id(s->id, ID_LEN); game_ht_insert(s); snprintf(s->owner, sizeof s->owner, "%s", u->user_id);
+  1,104 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (3x)
+      .               // Seat 0 = creator. Identity lives here; the kernel state is dealt at start.
+      3 ( 0.00%)      Game *g = &s->game; g->num_players = 1; g->status = GAME_STATUS_WAITING;
+     24 ( 0.00%)      snprintf(s->seat_user[0], ID_LEN + 1, "%s", u->user_id);
+  1,104 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (3x)
+     27 ( 0.00%)      snprintf(s->seat_name[0], 24, "%s", u->username);
+  1,098 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (3x)
+     24 ( 0.00%)      snprintf(g->players[0].name, 24, "%s", u->username);
+  1,098 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (3x)
+     24 ( 0.00%)      snprintf(g->players[0].player_id, 24, "%s", u->user_id);
+  1,104 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (3x)
+      3 ( 0.00%)      g->players[0].status = PLAYER_STATUS_IDLE;
+      3 ( 0.00%)      g->players[0].strategy_key = STRATEGY_KEY_HUMAN;   // the creator is a human seat
+     24 ( 0.00%)      char out[80]; snprintf(out, sizeof out, "{\"game_id\":\"%s\"}", s->id);
+  1,323 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (3x)
+      .               pthread_mutex_unlock(&g_lock);
+      .               respond(fd, 200, out);
+      .           }
+      .           
+      .           static void h_meta(Req *r, int fd) {
+     84 ( 0.00%)      char type[16] = {0}, gid[ID_LEN + 1] = {0};
+    105 ( 0.00%)      json_str(r->body, "type", type, sizeof type);
+ 14,487 ( 0.03%)  => foolish_server.c:json_str (21x)
+    105 ( 0.00%)      json_str(r->body, "game_id", gid, sizeof gid);
+ 16,317 ( 0.03%)  => foolish_server.c:json_str (21x)
+     63 ( 0.00%)      pthread_mutex_lock(&g_lock);
+    825 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_lock.c:pthread_mutex_lock@@GLIBC_2.2.5 (21x)
+      .               User *u = user_by_token(r->token);
+      .               GameSlot *s = game_by_id(gid);
+     42 ( 0.00%)      if (!u) { pthread_mutex_unlock(&g_lock); respond(fd, 401, "{\"error\":\"auth\"}"); return; }
+     42 ( 0.00%)      if (!s) { pthread_mutex_unlock(&g_lock); respond(fd, 404, "{\"error\":\"no game\"}"); return; }
+     21 ( 0.00%)      Game *g = &s->game;
+      .           
+     84 ( 0.00%)      if (!strcmp(type, "join")) {
+     18 ( 0.00%)          if (seat_of(s, u->user_id) < 0 && g->num_players < MAX_PLAYERS && g->status == GAME_STATUS_WAITING) {
+      6 ( 0.00%)              int i = g->num_players++;
+     39 ( 0.00%)              snprintf(s->seat_user[i], ID_LEN + 1, "%s", u->user_id);
+  1,104 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (3x)
+     27 ( 0.00%)              snprintf(s->seat_name[i], 24, "%s", u->username);
+  1,098 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (3x)
+     27 ( 0.00%)              snprintf(g->players[i].name, 24, "%s", u->username);
+  1,098 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (3x)
+     24 ( 0.00%)              snprintf(g->players[i].player_id, 24, "%s", u->user_id);
+  1,104 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (3x)
+      3 ( 0.00%)              g->players[i].status = PLAYER_STATUS_IDLE;
+      3 ( 0.00%)              g->players[i].strategy_key = STRATEGY_KEY_HUMAN;   // a human seat
+      .                   }
+     36 ( 0.00%)      } else if (!strcmp(type, "add-bot")) {
+      .                   char skey[24] = {0}; if (!json_str(r->body, "strategy", skey, sizeof skey)) snprintf(skey, sizeof skey, "random");
+      .                   if (g->num_players < MAX_PLAYERS && g->status == GAME_STATUS_WAITING) {
+      .                       int i = g->num_players++;
+      .                       s->seat_ready[i] = true;
+      .                       int strat = bot_roster_find(skey);
+      .                       if (strat < 0) strat = bot_roster_find("random");
+      .                       snprintf(s->seat_name[i], 24, "%%%s %d", skey, i);
+      .                       snprintf(g->players[i].name, 24, "%s", s->seat_name[i]);
+      .                       snprintf(g->players[i].player_id, 24, "bot%d", i);
+      .                       g->players[i].status = PLAYER_STATUS_READY;
+      .                       g->players[i].strategy_key = (int8_t)strat;   // the kernel's own seat kind
+      .                   }
+     90 ( 0.00%)      } else if (!strcmp(type, "start")) {
+     12 ( 0.00%)          int me = seat_of(s, u->user_id);
+     48 ( 0.00%)          if (me >= 0) { s->seat_ready[me] = true; g->players[me].status = PLAYER_STATUS_READY; }
+      .                   // Deal once every seated human is ready (bots are always ready) and 2+ seated.
+     24 ( 0.00%)          bool all = g->num_players >= 2;
+    252 ( 0.00%)          for (int i = 0; i < g->num_players; i++) if (!seat_is_bot(g, i) && !s->seat_ready[i]) all = false;
+     44 ( 0.00%)          if (all && g->status == GAME_STATUS_WAITING) {
+  1,152 ( 0.00%)              unsigned char seed[32]; for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(rand() ^ (i * 131 + (int)g_seq));
+  7,292 ( 0.01%)  => ./stdlib/./stdlib/rand.c:rand (128x)
+      8 ( 0.00%)              game_set_deal_seed_bytes(seed, 32);
+    156 ( 0.00%)  => /home/user/foolish/server/impls/native/../../../c/src/game.c:game_set_deal_seed_bytes (4x)
+      .                       // Seats were wired in the lobby (strategy_key per seat), so pass NULL:
+      .                       // the kernel owns marking them + the deal (+ g->status = PLAYING).
+     16 ( 0.00%)              game_seat_and_deal(g, NULL, g->num_players);
+ 37,194 ( 0.07%)  => /home/user/foolish/server/impls/native/../../../c/src/game.c:game_seat_and_deal (4x)
+      8 ( 0.00%)              start_bot_loop(s);             // the game-loop paces bot play from here
+360,797 ( 0.67%)  => foolish_server.c:start_bot_loop (4x)
+      .                   }
+     24 ( 0.00%)      } else if (!strcmp(type, "continue")) {
+      .                   // Reset the kernel to the lobby for a rematch (identities kept, re-dealt
+      .                   // on start). The host owns only this lobby transition; game-over was the
+      .                   // kernel's to declare.
+      6 ( 0.00%)          g->status = GAME_STATUS_WAITING;
+     84 ( 0.00%)          for (int i = 0; i < g->num_players; i++) {
+      .                       bool ai = seat_is_bot(g, i);
+     12 ( 0.00%)              s->seat_ready[i] = ai;
+     12 ( 0.00%)              g->players[i].status = ai ? PLAYER_STATUS_READY : PLAYER_STATUS_IDLE;
+      .                   }
+      .               }
+      .               // Every branch above either mutates the roster/lobby state or is a no-op
+      .               // (an already-seated join, a re-ready), and bumping on a no-op is
+      .               // harmless (worst case: one extra state_put on the next /ws poll) — see
+      .               // GameSlot.version's doc. Unconditional beats re-deriving "did this
+      .               // branch actually change anything" per-branch for a rarely-called path.
+     21 ( 0.00%)      s->version++;
+    210 ( 0.00%)      char out[80]; snprintf(out, sizeof out, "{\"game_id\":\"%s\",\"status\":%d}", s->id, g->status);
+ 15,673 ( 0.03%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (21x)
+      .               pthread_mutex_unlock(&g_lock);
+      .               respond(fd, 200, out);
+      .           }
+      .           
+      .           static void h_action(Req *r, int fd) {
+      .               // game_id rides the query string (like /state); the body IS the packed awire
+      .               // frame, so it can be binary. /action?game_id=..
+      .               char gid[ID_LEN + 1] = {0};
+-- line 508 ----------------------------------------
+-- line 569 ----------------------------------------
+      .           // Serialize seat's masked view, reusing the cached bytes from GameSlot when
+      .           // nothing has changed since they were computed (PROFILE_HOTPATH.md "T1c" —
+      .           // see GameSlot's `version`/`view_cache*` fields above for the invariant).
+      .           // MUST be called with g_lock held (same contract as a bare state_put call
+      .           // here) and `seat` MUST already be known in-range (0 <= seat < num_players
+      .           // <= MAX_PLAYERS — h_ws validates this at handshake time before ever calling
+      .           // in; this function does not re-check, so it is not safe to point at an
+      .           // unvalidated/attacker-controlled seat index).
+     54 ( 0.00%)  static int state_put_cached(GameSlot *s, int seat, unsigned char *out) {
+286,668 ( 0.53%)      if (s->view_cache_version[seat] != s->version) {
+      .                   // Serialize straight into a scratch buffer wider than
+      .                   // VIEW_CACHE_CAP first: state_put's real worst case fits well
+      .                   // inside VIEW_CACHE_CAP today (see that constant's comment), but if
+      .                   // a future kernel change ever grew a cap enough to overflow it,
+      .                   // this falls back to "always recompute, never cache" for that seat
+      .                   // instead of truncating a state update — correctness over the
+      .                   // optimization.
+      .                   unsigned char scratch[1 + 65536];
+  1,174 ( 0.00%)          int n = state_put(&s->game, seat, scratch);
+  3,200 ( 0.01%)  => /home/user/foolish/server/impls/native/../../../c/src/view.c:state_put (6x)
+  1,746 ( 0.00%)          if (n < 0) n = 0;
+  1,168 ( 0.00%)          if (n <= VIEW_CACHE_CAP) {
+  2,360 ( 0.00%)              memcpy(s->view_cache[seat], scratch, (size_t)n);
+     72 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (6x)
+    584 ( 0.00%)              s->view_cache_len[seat] = n;
+  1,746 ( 0.00%)              s->view_cache_version[seat] = s->version;
+      .                   } else {
+      .                       memcpy(out, scratch, (size_t)n);
+      .                       return n;
+      .                   }
+      .               }
+189,940 ( 0.35%)      int n = s->view_cache_len[seat];
+477,764 ( 0.89%)      memcpy(out, s->view_cache[seat], (size_t)n);
+1,146,560 ( 2.13%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (95,548x)
+      .               return n;
+     48 ( 0.00%)  }
+      .           
+      .           // --------------------------------------------------------------------------
+      .           // /ws — the WebSocket hot loop (item 1/2 of PROFILE_HOTPATH.md's "where to
+      .           // speed up" list). One handshake, then ONE persistent connection carries
+      .           // every move + state push for that seat's whole session — no pthread_create
+      .           // per action.
+      .           //
+      .           // Handshake: GET /ws?game_id=..&seat=.. (Bearer token), validated exactly
+-- line 609 ----------------------------------------
+-- line 615 ----------------------------------------
+      .           //   client sends a binary frame -> [awire bytes] apply it, or [] (empty) to
+      .           //     just poll (a seat with no eligible move yet still needs to notice
+      .           //     when OTHER seats' actions make it eligible — see foolish_hammer.c's ws
+      .           //     worker) -> server always answers with one binary frame,
+      .           //     [ok:u8][state_put(seat) bytes], ok=1 iff a real move decoded AND the
+      .           //     kernel accepted it (awire_apply's own validation — same as /action).
+      .           // A human's turn wakes the bot game-loop exactly like /action did.
+      .           static void h_ws(Req *r, int fd) {
+     12 ( 0.00%)      char gid[ID_LEN + 1] = {0}; int seat = -1;
+     30 ( 0.00%)      const char *gp = strstr(r->query, "game_id=");
+    708 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strstr-sse2-unaligned.S:__strstr_sse2_unaligned (6x)
+    630 ( 0.00%)      if (gp) { gp += 8; int i = 0; while (gp[i] && gp[i] != '&' && i < ID_LEN) { gid[i] = gp[i]; i++; } gid[i] = 0; }
+     24 ( 0.00%)      const char *sp = strstr(r->query, "seat=");
+    600 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strstr-sse2-unaligned.S:__strstr_sse2_unaligned (6x)
+     48 ( 0.00%)      if (sp) seat = (int)strtol(sp + 5, NULL, 10);
+    648 ( 0.00%)  => ./stdlib/../stdlib/strtol.c:__isoc23_strtol (6x)
+      .           
+     18 ( 0.00%)      pthread_mutex_lock(&g_lock);
+    216 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_lock.c:pthread_mutex_lock@@GLIBC_2.2.5 (6x)
+      .               User *u = user_by_token(r->token);
+      .               GameSlot *s = game_by_id(gid);
+     60 ( 0.00%)      bool ok = u && s && seat >= 0 && seat < s->game.num_players && seat_of(s, u->user_id) == seat;
+     18 ( 0.00%)      pthread_mutex_unlock(&g_lock);
+    156 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_unlock.c:pthread_mutex_unlock@@GLIBC_2.2.5 (6x)
+      6 ( 0.00%)      if (!ok) { respond(fd, 401, "{\"error\":\"ws auth\"}"); return; }
+      .           
+      .               char accept[64];
+     36 ( 0.00%)      if (!ws_accept_from_key(r->ws_key, accept, sizeof accept)) { respond(fd, 400, "{\"error\":\"ws key\"}"); return; }
+ 65,556 ( 0.12%)  => /home/user/foolish/server/impls/native/ws.c:ws_accept_from_key (6x)
+      .               char resp[256];
+     42 ( 0.00%)      int n = snprintf(resp, sizeof resp,
+  2,808 ( 0.01%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (6x)
+      .                   "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+      .                   "Sec-WebSocket-Accept: %s\r\n\r\n", accept);
+     54 ( 0.00%)      if (n <= 0 || ws_write_full(fd, resp, n) != n) return;
+    552 ( 0.00%)  => /home/user/foolish/server/impls/native/ws.c:ws_write_full (6x)
+      .           
+     18 ( 0.00%)      WsConn wc; ws_conn_init(&wc, fd, /*mask_outgoing=*/0);   // server frames: never masked
+     42 ( 0.00%)  => /home/user/foolish/server/impls/native/ws.c:ws_conn_init (6x)
+     18 ( 0.00%)      if (r->body_len > 0) ws_conn_prime(&wc, (const unsigned char *)r->body, r->body_len);
+      .           
+      .               // [ok:u8][state_put bytes] — sized for state_put's documented worst case
+      .               // (h_state uses the same 65536 cap).
+      .               unsigned char msg[1 + 65536];
+     18 ( 0.00%)      pthread_mutex_lock(&g_lock);
+    280 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_lock.c:pthread_mutex_lock@@GLIBC_2.2.5 (6x)
+     36 ( 0.00%)      int slen = s->used ? state_put_cached(s, seat, msg + 1) : 0;
+  3,626 ( 0.01%)  => foolish_server.c:state_put_cached (6x)
+     18 ( 0.00%)      pthread_mutex_unlock(&g_lock);
+    167 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_unlock.c:pthread_mutex_unlock@@GLIBC_2.2.5 (6x)
+      6 ( 0.00%)      msg[0] = 0;
+     48 ( 0.00%)      if (ws_send_frame(&wc, WS_OP_BIN, msg, slen + 1) < 0) return;
+  1,624 ( 0.00%)  => /home/user/foolish/server/impls/native/ws.c:ws_send_frame (6x)
+      .           
+      .               unsigned char in[4096];
+      .               int opcode;
+      .               int mlen;
+764,408 ( 1.42%)      while ((mlen = ws_recv_message(&wc, in, sizeof in, &opcode)) >= 0) {
+22,871,501 (42.57%)  => /home/user/foolish/server/impls/native/ws.c:ws_recv_message (95,554x)
+382,192 ( 0.71%)          if (opcode != WS_OP_BIN && opcode != WS_OP_TEXT) continue;
+      .                   bool applied = false;
+286,644 ( 0.53%)          pthread_mutex_lock(&g_lock);
+3,442,364 ( 6.41%)  => ./nptl/./nptl/pthread_mutex_lock.c:pthread_mutex_lock@@GLIBC_2.2.5 (95,548x)
+191,096 ( 0.36%)          if (s->used) {
+191,808 ( 0.36%)              if (mlen > 0 && s->game.status == GAME_STATUS_PLAYING) {
+      .                           AwireAction a;
+  3,905 ( 0.01%)                  if (awire_decode(in, mlen, &a) && awire_apply(&s->game, seat, &a)) {
+130,814 ( 0.24%)  => /home/user/foolish/server/impls/native/../../../c/src/game.c:awire_apply (355x)
+ 17,463 ( 0.03%)  => /home/user/foolish/server/impls/native/../../../c/src/awire.c:awire_decode (355x)
+      .                               applied = true;
+    688 ( 0.00%)                      s->version++;   // this seat's move can change every seat's view
+    692 ( 0.00%)                      pthread_cond_signal(&s->cond);   // same wakeup /action gives the bot game-loop
+ 41,218 ( 0.08%)  => ./nptl/./nptl/pthread_cond_signal.c:pthread_cond_signal@@GLIBC_2.3.2 (344x)
+    823 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+      .                           }
+      .                       }
+      .                       // PROFILE_HOTPATH.md "T1c": on a pure poll (mlen==0 or an
+      .                       // illegal/rejected move) this seat's view did NOT change, so
+      .                       // state_put_cached memcpy's the bytes computed last time instead
+      .                       // of re-running the kernel's full masked serialization — the
+      .                       // single biggest measured cost in this loop (~21-31% of
+      .                       // instructions under WS+legal load) was paying that on EVERY
+      .                       // round trip, including the ~99% that were polls.
+      .                       slen = state_put_cached(s, seat, msg + 1);
+      .                   } else {
+      .                       slen = 0;
+      .                   }
+286,644 ( 0.53%)          pthread_mutex_unlock(&g_lock);
+2,486,514 ( 4.63%)  => ./nptl/./nptl/pthread_mutex_unlock.c:pthread_mutex_unlock@@GLIBC_2.2.5 (95,548x)
+ 95,548 ( 0.18%)          msg[0] = applied ? 1 : 0;
+859,932 ( 1.60%)          if (ws_send_frame(&wc, WS_OP_BIN, msg, slen + 1) < 0) break;
+14,236,652 (26.50%)  => /home/user/foolish/server/impls/native/ws.c:ws_send_frame (95,548x)
+      .               }
+      .           }
+      .           
+      .           // --------------------------------------------------------------------------
+      .           // Connection handling
+      .           // --------------------------------------------------------------------------
+      .           
+      .           static void route(Req *r, int fd) {
+     93 ( 0.00%)      if (!strcmp(r->method, "OPTIONS")) { respond(fd, 200, "{}"); return; }
+    124 ( 0.00%)      if (!strcmp(r->path, "/health")) { respond(fd, 200, "{\"ok\":true}"); return; }
+    270 ( 0.00%)      if (!strcmp(r->path, "/auth/signup") || !strcmp(r->path, "/auth/signin")) { h_signup(r, fd); return; }
+     48 ( 0.00%)      if (!strcmp(r->path, "/create")) { h_create(r, fd); return; }
+    105 ( 0.00%)      if (!strcmp(r->path, "/meta"))   { h_meta(r, fd); return; }
+      .               if (!strcmp(r->path, "/action")) { h_action(r, fd); return; }
+      .               if (!strcmp(r->path, "/state"))  { h_state(r, fd); return; }
+      .               if (!strcmp(r->path, "/status")) { h_status(r, fd); return; }
+      .               respond(fd, 404, "{\"error\":\"route\"}");
+      .           }
+      .           
+    407 ( 0.00%)  static void *conn_thread(void *arg) {
+      .               int fd = (int)(long)arg;
+      .               static __thread char buf[1 << 16];
+      .               int total = 0, n;
+      .               char *hdr_end = NULL;
+      .               // Read headers (+ body when Content-Length fits one read window). One
+      .               // parse of the header block once it's fully in hand (item 3/4 of
+      .               // PROFILE_HOTPATH.md: no per-iteration sscanf/strcasestr rescans).
+    337 ( 0.00%)      while ((n = read(fd, buf + total, sizeof buf - 1 - total)) > 0) {
+    681 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+  2,109 ( 0.00%)  => ./io/../sysdeps/unix/sysv/linux/read.c:read (37x)
+     74 ( 0.00%)          total += n; buf[total] = 0;
+      .                   hdr_end = find_headers_end(buf, total);
+      .                   if (!hdr_end) continue;
+      .                   break;
+      .               }
+      .               if (!hdr_end) { close(fd); return NULL; }   // malformed / empty request
+      .           
+     74 ( 0.00%)      Req r;
+      .               parse_request_line_and_headers(buf, hdr_end, &r);
+      .               // Keep reading if the body (by Content-Length) hasn't fully arrived yet.
+      .               int have = total - (int)(hdr_end - buf);
+    259 ( 0.00%)      while (have < r.content_length && (n = read(fd, buf + total, sizeof buf - 1 - total)) > 0) {
+      .                   total += n; buf[total] = 0;
+      .                   have = total - (int)(hdr_end - buf);
+      .               }
+     37 ( 0.00%)      r.body = hdr_end;
+     37 ( 0.00%)      r.body_len = total - (int)(hdr_end - buf);   // real byte count (body may be binary awire)
+      .           
+     98 ( 0.00%)      if (r.is_ws_upgrade && !strcmp(r.method, "GET") && !strcmp(r.path, "/ws")) {
+      .                   h_ws(&r, fd);   // owns the connection for its whole (long) life
+      .                   close(fd);
+      .                   return NULL;
+      .               }
+      .               route(&r, fd);
+      .               close(fd);
+      .               return NULL;
+    333 ( 0.00%)  }
+      .           
+      9 ( 0.00%)  int main(int argc, char **argv) {
+      3 ( 0.00%)      int port = argc > 1 ? atoi(argv[1]) : 8099;
+     22 ( 0.00%)      srand((unsigned)(time(NULL) ^ getpid()));
+  2,146 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (3x)
+  6,232 ( 0.01%)  => ./stdlib/./stdlib/random.c:srand (1x)
+      6 ( 0.00%)  => ./time/../sysdeps/unix/sysv/linux/time.c:time_syscall (1x)
+      4 ( 0.00%)  => ./posix/../sysdeps/unix/syscall-template.S:getpid (1x)
+      .               // Long-lived /ws connections mean a peer can vanish (crash, network
+      .               // reset, the load client's own `timeout` cutting it off) between our
+      .               // read and our next write; the default SIGPIPE action is to kill the
+      .               // WHOLE PROCESS on that write. Ignore it — write() already reports the
+      .               // same failure as -1/EPIPE, which every write path here already checks.
+      8 ( 0.00%)      signal(SIGPIPE, SIG_IGN);
+    687 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+    120 ( 0.00%)  => ./signal/../sysdeps/posix/signal.c:signal (1x)
+      .           
+     10 ( 0.00%)      int srv = socket(AF_INET, SOCK_STREAM, 0);
+    720 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+      6 ( 0.00%)  => ./socket/../sysdeps/unix/syscall-template.S:socket (1x)
+     12 ( 0.00%)      int opt = 1; setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof opt);
+    727 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+      7 ( 0.00%)  => ./socket/../sysdeps/unix/sysv/linux/setsockopt.c:setsockopt (1x)
+      1 ( 0.00%)      struct sockaddr_in addr = {0};
+      3 ( 0.00%)      addr.sin_family = AF_INET; addr.sin_addr.s_addr = INADDR_ANY; addr.sin_port = htons(port);
+     10 ( 0.00%)      if (bind(srv, (struct sockaddr *)&addr, sizeof addr) < 0) { perror("bind"); return 1; }
+    729 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+      6 ( 0.00%)  => ./socket/../sysdeps/unix/syscall-template.S:bind (1x)
+      8 ( 0.00%)      listen(srv, 64);
+    704 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+      6 ( 0.00%)  => ./socket/../sysdeps/unix/syscall-template.S:listen (1x)
+     11 ( 0.00%)      fprintf(stderr, "foolish native server (kernel-driven, in-memory) on :%d\n", port);
+    791 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+    905 ( 0.00%)  => ./stdio-common/./stdio-common/fprintf.c:fprintf (1x)
+      .           
+      .               for (;;) {
+    194 ( 0.00%)          int fd = accept(srv, NULL, NULL);
+    739 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+  2,088 ( 0.00%)  => ./socket/../sysdeps/unix/sysv/linux/accept.c:accept (38x)
+     74 ( 0.00%)          if (fd < 0) continue;
+      .                   // A one-shot HTTP request/response barely notices Nagle's algorithm,
+      .                   // but a persistent /ws connection does many small back-and-forth
+      .                   // writes+reads — without TCP_NODELAY, Nagle batching interacting
+      .                   // with the peer's delayed ACKs turns each round trip into tens of
+      .                   // milliseconds instead of tens of microseconds. The load client's
+      .                   // own connect_to() already sets this; the accept side never did.
+    296 ( 0.00%)          int one = 1; setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+    259 ( 0.00%)  => ./socket/../sysdeps/unix/sysv/linux/setsockopt.c:setsockopt (37x)
+      .                   pthread_t t;
+      .                   // Thread-per-CONNECTION (not per-request): for a /ws upgrade this
+      .                   // one thread now lives for the client's whole session, so the
+      .                   // pthread_create cost — 85.8% of instructions under load in the old
+      .                   // thread-per-HTTP-request T1 profile — is paid once per client
+      .                   // instead of once per action. See PROFILE_HOTPATH.md T1b.
+    378 ( 0.00%)          if (pthread_create(&t, NULL, conn_thread, (void *)(long)fd) == 0) pthread_detach(t);
+3,322,646 ( 6.18%)  => ./nptl/./nptl/pthread_create.c:pthread_create@@GLIBC_2.34 (37x)
+  1,622 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (2x)
+    607 ( 0.00%)  => ./nptl/./nptl/pthread_detach.c:pthread_detach@@GLIBC_2.34 (37x)
+      .                   else { close(fd); }
+      .               }
+      .           }
+
+313,849 ( 0.58%)  <counts for unidentified lines in foolish_server.c>
+
+--------------------------------------------------------------------------------
+The following files chosen for auto-annotation could not be found:
+--------------------------------------------------------------------------------
+  ./elf/./elf/dl-lookup.c
+  ./elf/./elf/dl-tunables.c
+  ./io/../sysdeps/unix/sysv/linux/read.c
+  ./misc/../sysdeps/unix/sysv/linux/writev.c
+  ./nptl/../nptl/descr.h
+  ./nptl/./nptl/cancellation.c
+  ./nptl/./nptl/pthread_cond_common.c
+  ./nptl/./nptl/pthread_cond_wait.c
+  ./nptl/./nptl/pthread_mutex_lock.c
+  ./nptl/./nptl/pthread_mutex_unlock.c
+  ./stdio-common/./stdio-common/Xprintf_buffer_write.c
+  ./stdio-common/./stdio-common/vfprintf-internal.c
+  ./string/../sysdeps/x86_64/multiarch/../multiarch/memset-vec-unaligned-erms.S
+  ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S
+  ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S
+
+--------------------------------------------------------------------------------
+Ir                  
+--------------------------------------------------------------------------------
+24,015,004 (44.69%)  events annotated
+
