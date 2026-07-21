@@ -358,6 +358,10 @@ static void setup(const Config *cfg) {
         hg.n_seats = cfg->seats;
         for (int s = 0; s < cfg->seats; s++) hg.user_idx[s] = uptr + s;
         g_games[g_n_games++] = hg;
+        // Grep-able line (server/impls/native/crash_test.sh scrapes this to
+        // find the exact game_id it should verify across a kill -9 restart —
+        // /state and /status take no auth, so the id alone is enough).
+        printf("   dealt game[%d]: id=%s\n", gi, hg.id);
         uptr += cfg->seats;
     }
     printf("   dealt %d games\n", g_n_games);
