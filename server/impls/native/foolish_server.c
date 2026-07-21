@@ -65,6 +65,7 @@
 #include "bot_drive.h"
 #include "bot_roster.h"
 #include "ws.h"
+#include "persist.h"
 
 // --------------------------------------------------------------------------
 // In-memory store (the "fake DB"): games + users, per-game locks.
@@ -129,22 +130,192 @@ typedef struct {
     uint32_t view_cache_version[MAX_PLAYERS];
 } GameSlot;
 
-// --------------------------------------------------------------------------
-// STAGE 2 SEAM: SQLite WAL write-behind persistence + crash recovery. Call
-// under `s->lock` (see GameSlot.lock) at every point this slot's Game or
-// lobby roster could have changed — the exact same events that bump
-// `s->version` today (a human move via /action or /ws, a lobby transition
-// in /meta, a bot_drive cycle that applied >=1 action or ended the game, or
-// a fresh /create). A no-op today; stage 2 wires this to push (game_id,
-// version, a serialized snapshot or WAL record) onto a persistence thread's
-// own write-behind queue — it must never block the caller on disk I/O, so
-// it should only ever enqueue, the same way h_action/h_ws never block on
-// bot_thread's work today.
-// --------------------------------------------------------------------------
-static void game_mark_dirty(GameSlot *s) { (void)s; }
-
 static User     g_users[MAX_USERS];
 static GameSlot g_games[MAX_GAMES];
+
+// Registered in main() before persist_start (see "STAGE 2: persistence"
+// below) — NULL until then, which is fine: nothing calls game_mark_dirty or
+// marks a user dirty before main() finishes setup and starts the worker
+// pools / accept loop.
+static PersistTable *g_game_table = NULL;
+static PersistTable *g_user_table = NULL;
+
+// --------------------------------------------------------------------------
+// STAGE 2: SQLite WAL write-behind persistence + crash recovery. Called
+// under `s->lock` (see GameSlot.lock) at every point this slot's Game or
+// lobby roster could have changed — the exact same events that bump
+// `s->version` (a human move via /action or /ws, a lobby transition in
+// /meta, a bot_drive cycle that applied >=1 action or ended the game, or a
+// fresh /create). O(1) and never touches disk: just flips one bool in
+// persist.c's dirty bitmap for this slot's index and signals the
+// persistence thread — see persist.h's top comment for the full write-
+// behind model and DURABILITY.md for the design writeup + measurements.
+// `s - g_games` is safe pointer arithmetic: every GameSlot this function is
+// ever called with lives inside the g_games[MAX_GAMES] array (there is no
+// other way to obtain a GameSlot*), so the difference is always in range.
+static void game_mark_dirty(GameSlot *s) {
+    if (g_game_table) persist_mark_dirty(g_game_table, (int)(s - g_games));
+}
+
+// --------------------------------------------------------------------------
+// GameSlot <-> durable blob. serialize_slot/deserialize_slot are the ONLY
+// place that knows this on-disk layout; everything above (state_put/
+// state_get) is the kernel's own exact round-trip codec for `Game` — this
+// just wraps it with the lobby/identity fields view.c's codec deliberately
+// never carries (game.h: identity lives with the host, never in the state
+// blob). Versioned with a leading byte so a future layout change can detect
+// (and refuse, rather than misinterpret) an old row.
+//
+// Layout (see DURABILITY.md for the worked-out byte budget):
+//   [0]                                  version (PERSIST_GAME_BLOB_VERSION)
+//   [1..2]                               state_len, uint16 LE
+//   [3 .. 3+state_len)                   state_put(&game, VIEW_UNMASKED, .)
+//   next ID_LEN+1 bytes                  id
+//   next ID_LEN+1 bytes                  owner
+//   next MAX_PLAYERS*(ID_LEN+1) bytes    seat_user[]
+//   next MAX_PLAYERS*24 bytes            seat_name[]
+//   next MAX_PLAYERS bytes               seat_ready[] (1 byte each, 0/1)
+// Worst case: 3 + 690 (state_put's documented worst case — see
+// VIEW_CACHE_CAP above) + 13*2 + 8*13 + 8*24 + 8 = 1023 bytes.
+// PERSIST_GAME_BLOB_CAP gives real margin, same discipline as VIEW_CACHE_CAP.
+// --------------------------------------------------------------------------
+#define PERSIST_GAME_BLOB_VERSION 1
+#define PERSIST_GAME_BLOB_CAP 2048
+
+// Returns bytes written, or -1 if it wouldn't fit in `cap` (never happens at
+// PERSIST_GAME_BLOB_CAP given the worst case above — defensive, same
+// "correctness over the optimization" stance state_put_cached takes).
+static int serialize_slot(const GameSlot *s, unsigned char *buf, int cap) {
+    unsigned char state[1 + 65536];   // state_put's own documented cap (h_state uses the same 65536)
+    int state_len = state_put(&s->game, VIEW_UNMASKED, state);
+    int need = 1 + 2 + state_len + (ID_LEN + 1) * 2
+             + MAX_PLAYERS * (ID_LEN + 1) + MAX_PLAYERS * 24 + MAX_PLAYERS;
+    if (state_len < 0 || need > cap) return -1;
+    unsigned char *q = buf;
+    *q++ = PERSIST_GAME_BLOB_VERSION;
+    *q++ = (unsigned char)(state_len & 0xff);
+    *q++ = (unsigned char)((state_len >> 8) & 0xff);
+    memcpy(q, state, (size_t)state_len); q += state_len;
+    memcpy(q, s->id, ID_LEN + 1); q += ID_LEN + 1;
+    memcpy(q, s->owner, ID_LEN + 1); q += ID_LEN + 1;
+    for (int i = 0; i < MAX_PLAYERS; i++) { memcpy(q, s->seat_user[i], ID_LEN + 1); q += ID_LEN + 1; }
+    for (int i = 0; i < MAX_PLAYERS; i++) { memcpy(q, s->seat_name[i], 24); q += 24; }
+    for (int i = 0; i < MAX_PLAYERS; i++) *q++ = (unsigned char)(s->seat_ready[i] ? 1 : 0);
+    return (int)(q - buf);
+}
+
+// Inverse of serialize_slot. `s` MUST already be zeroed by the caller (same
+// contract h_create's fresh-slot memset follows) — this never touches
+// s->lock/s->cond/s->bot_running/s->version/s->view_cache* (runtime-only
+// fields the caller (re-)initializes separately; see game_persist_load /
+// h_create). Rejects (returns false, touches nothing) on a version mismatch
+// or a length too short for its own encoded state_len — defense in depth
+// against a corrupted DB row, never trusts `len` blindly (same posture
+// state_get's own bounds-clamping takes against a hostile/corrupt blob).
+static bool deserialize_slot(GameSlot *s, const unsigned char *buf, int len) {
+    if (len < 3 || buf[0] != PERSIST_GAME_BLOB_VERSION) return false;
+    const unsigned char *q = buf + 1;
+    int state_len = q[0] | (q[1] << 8); q += 2;
+    int fixed_tail = (ID_LEN + 1) * 2 + MAX_PLAYERS * (ID_LEN + 1) + MAX_PLAYERS * 24 + MAX_PLAYERS;
+    if (state_len < 0 || state_len > 65536 || 3 + state_len + fixed_tail > len) return false;
+    state_get(&s->game, q, /*masked=*/0);   // exact inverse of state_put(.., VIEW_UNMASKED, ..)
+    q += state_len;
+    memcpy(s->id, q, ID_LEN + 1); s->id[ID_LEN] = 0; q += ID_LEN + 1;
+    memcpy(s->owner, q, ID_LEN + 1); s->owner[ID_LEN] = 0; q += ID_LEN + 1;
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        memcpy(s->seat_user[i], q, ID_LEN + 1); s->seat_user[i][ID_LEN] = 0; q += ID_LEN + 1;
+    }
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        memcpy(s->seat_name[i], q, 24); s->seat_name[i][23] = 0; q += 24;
+    }
+    for (int i = 0; i < MAX_PLAYERS; i++) s->seat_ready[i] = (*q++ != 0);
+    s->used = true;
+    return true;
+}
+
+// User <-> durable blob. Fixed-width (every User field already is), so no
+// length field is needed the way serialize_slot needs state_len.
+#define PERSIST_USER_BLOB_VERSION 1
+#define PERSIST_USER_BLOB_CAP 128
+
+static int serialize_user(const User *u, unsigned char *buf, int cap) {
+    int need = 1 + (int)sizeof u->token + (int)sizeof u->user_id + (int)sizeof u->username;
+    if (need > cap) return -1;
+    unsigned char *q = buf;
+    *q++ = PERSIST_USER_BLOB_VERSION;
+    memcpy(q, u->token, sizeof u->token); q += sizeof u->token;
+    memcpy(q, u->user_id, sizeof u->user_id); q += sizeof u->user_id;
+    memcpy(q, u->username, sizeof u->username); q += sizeof u->username;
+    return (int)(q - buf);
+}
+static bool deserialize_user(User *u, const unsigned char *buf, int len) {
+    int need = 1 + (int)sizeof u->token + (int)sizeof u->user_id + (int)sizeof u->username;
+    if (len != need || buf[0] != PERSIST_USER_BLOB_VERSION) return false;
+    const unsigned char *q = buf + 1;
+    memcpy(u->token, q, sizeof u->token); q += sizeof u->token; u->token[sizeof u->token - 1] = 0;
+    memcpy(u->user_id, q, sizeof u->user_id); q += sizeof u->user_id; u->user_id[sizeof u->user_id - 1] = 0;
+    memcpy(u->username, q, sizeof u->username); q += sizeof u->username; u->username[sizeof u->username - 1] = 0;
+    u->used = true;
+    return true;
+}
+
+// Correctness gate: serialize -> deserialize -> serialize again must be
+// byte-identical. Runs once at startup on a small synthetic game (populated
+// with non-default values in every field family — deck, battles, hands,
+// lobby roster — so a field silently dropped from either direction shows up
+// as a mismatch, not a coincidental pass) — a real regression test, not
+// decoration: a mismatch here means the wire format and the round-trip code
+// have drifted, and the server refuses to start rather than silently
+// persisting (or recovering) corrupt/lossy snapshots.
+static void persist_self_test(void) {
+    // static: sizeof(GameSlot) is tens of KB (mostly the Game's MAX_LOGS-
+    // sized log array — see game.h) and this runs once, so a static scratch
+    // beats a fat stack frame.
+    static GameSlot a, b;
+    memset(&a, 0, sizeof a);
+    a.used = true;
+    snprintf(a.id, sizeof a.id, "selftest0001");
+    snprintf(a.owner, sizeof a.owner, "selftest0001");
+    a.game.status = GAME_STATUS_PLAYING;
+    a.game.num_players = 3;
+    a.game.power_suit = 2;
+    a.game.first_attacker = 0;
+    a.game.defender = 1;
+    a.game.deck_count = 5;
+    for (int i = 0; i < 5; i++) { a.game.deck[i].suit = (int8_t)(i % 4); a.game.deck[i].value = (int8_t)(5 + i); }
+    a.game.num_battles = 1;
+    a.game.table_battles[0].attack.suit = 1; a.game.table_battles[0].attack.value = 9;
+    a.game.table_battles[0].defense = CARD_NONE;
+    for (int i = 0; i < 3; i++) {
+        snprintf(a.seat_user[i], sizeof a.seat_user[i], "user%07d", i);
+        snprintf(a.seat_name[i], sizeof a.seat_name[i], "player-%d", i);
+        a.seat_ready[i] = (i % 2) == 0;
+        snprintf(a.game.players[i].name, sizeof a.game.players[i].name, "player-%d", i);
+        snprintf(a.game.players[i].player_id, sizeof a.game.players[i].player_id, "user%07d", i);
+        a.game.players[i].status = PLAYER_STATUS_IN;
+        a.game.players[i].strategy_key = (i == 2) ? 0 : STRATEGY_KEY_HUMAN;
+        a.game.players[i].hand_count = (int8_t)(2 + i);
+        for (int j = 0; j < a.game.players[i].hand_count; j++) {
+            a.game.players[i].hand[j].suit = (int8_t)((i + j) % 4);
+            a.game.players[i].hand[j].value = (int8_t)(6 + j);
+        }
+    }
+
+    static unsigned char blob1[PERSIST_GAME_BLOB_CAP], blob2[PERSIST_GAME_BLOB_CAP];
+    int n1 = serialize_slot(&a, blob1, sizeof blob1);
+    if (n1 < 0) { fprintf(stderr, "persist self-test: FAIL (serialize_slot didn't fit)\n"); exit(1); }
+    memset(&b, 0, sizeof b);
+    if (!deserialize_slot(&b, blob1, n1)) {
+        fprintf(stderr, "persist self-test: FAIL (deserialize_slot rejected a round-trip blob)\n"); exit(1);
+    }
+    int n2 = serialize_slot(&b, blob2, sizeof blob2);
+    if (n2 != n1 || memcmp(blob1, blob2, (size_t)n1) != 0) {
+        fprintf(stderr, "persist self-test: FAIL (serialize->deserialize->serialize not byte-identical, "
+                         "n1=%d n2=%d)\n", n1, n2);
+        exit(1);
+    }
+    fprintf(stderr, "persist self-test: OK (games: %d-byte round-trip byte-identical)\n", n1);
+}
 
 // --------------------------------------------------------------------------
 // Locking (T2a — replaces the single global g_lock). Two tiers:
@@ -399,6 +570,113 @@ static void start_bot_loop(GameSlot *s) {
 }
 
 // --------------------------------------------------------------------------
+// STAGE 2: persist.c callbacks. Snapshot functions run ONLY on the
+// persistence thread (see persist.h's PersistSnapshotFn doc) — each takes
+// its OWN short-held domain lock just long enough to copy the live data,
+// releases it, THEN does the (slower, structured) serialize work with no
+// lock held at all: exactly the "briefly take the lock, memcpy, release,
+// serialize unlocked" split the design calls for, so a slow disk never
+// makes a request thread wait on a game (or the registry) lock.
+//
+// Load functions run ONLY during persist_start's synchronous crash-recovery
+// pass, before any other thread in the process exists (main() calls
+// persist_start before spawning the worker pools or starting the accept
+// loop) — so they touch g_users[]/g_games[]/the hash maps directly; the
+// lock/unlock pairs below are cheap hygiene (uncontended, nothing else is
+// running yet), not a correctness requirement at that specific moment.
+// --------------------------------------------------------------------------
+
+static int game_persist_snapshot(int idx, char *out_id, int id_cap, unsigned char *buf, int cap) {
+    GameSlot *s = &g_games[idx];
+    // static: this whole engine has exactly one persistence thread (see
+    // persist.c), so a reused static scratch avoids a ~sizeof(GameSlot)
+    // (tens of KB — see game.h's Game size notes) stack frame or a
+    // malloc/free every drain cycle.
+    static GameSlot snap;
+    // Helgrind (run over a --db=... load, per DURABILITY.md's race-check)
+    // caught a real bug in an earlier version of this function: copying
+    // `sizeof(GameSlot)` bytes — which includes s->lock/s->cond THEMSELVES,
+    // not just the game data they guard — races with any other thread's
+    // pthread_mutex_lock/unlock on this SAME `s->lock` while we hold it:
+    // POSIX does not guarantee a live pthread_mutex_t/pthread_cond_t's raw
+    // bytes are safe to read concurrently with normal lock/unlock traffic,
+    // even from the thread currently holding it (an implementation is free
+    // to touch its own internal bookkeeping via atomics outside the
+    // happens-before edge the lock itself provides — glibc's condvar/mutex
+    // internals do exactly that). Fix: copy ONLY the fields serialize_slot
+    // actually reads — used/id/game/owner/seat_user/seat_name/seat_ready —
+    // which the GameSlot layout above (see its definition) keeps
+    // contiguous and entirely BEFORE `lock`, so `offsetof(GameSlot, lock)`
+    // bytes is exactly that prefix and never touches the mutex/cond
+    // themselves. If GameSlot's field order ever changes, this offsetof
+    // still compiles but would silently stop covering the right fields —
+    // keep any new serialized field ABOVE `lock` in that struct.
+    pthread_mutex_lock(&s->lock);
+    bool used = s->used;
+    if (used) memcpy(&snap, s, offsetof(GameSlot, lock));
+    pthread_mutex_unlock(&s->lock);
+    if (!used) return -1;
+    snprintf(out_id, (size_t)id_cap, "%s", snap.id);
+    return serialize_slot(&snap, buf, cap);
+}
+
+static void game_persist_load(const char *id, const unsigned char *blob, int len) {
+    (void)id;   // deserialize_slot restores s->id from the blob itself — the authoritative copy serialize_slot signed off on
+    GameSlot *s = NULL;
+    for (int i = 0; i < MAX_GAMES; i++) if (!g_games[i].used) { s = &g_games[i]; break; }
+    if (!s) { fprintf(stderr, "persist: recovery dropped a game row — no free slot\n"); return; }
+    memset(s, 0, sizeof *s);
+    if (!deserialize_slot(s, blob, len)) {
+        fprintf(stderr, "persist: recovery dropped a corrupt/unreadable game row\n");
+        memset(s, 0, sizeof *s);   // leave it fully unused, not half-populated
+        return;
+    }
+    pthread_mutex_init(&s->lock, NULL);
+    pthread_cond_init(&s->cond, NULL);
+    // Same "must never equal s->version's initial value" reasoning as
+    // h_create's identical line — forces the first state_put_cached call
+    // for every seat to actually recompute instead of serving a bogus
+    // zero-length cached view.
+    for (int i = 0; i < MAX_PLAYERS; i++) s->view_cache_version[i] = (uint32_t)-1;
+    pthread_mutex_lock(&g_registry_lock);
+    game_ht_insert(s);
+    pthread_mutex_unlock(&g_registry_lock);
+    if (s->game.status == GAME_STATUS_PLAYING) {
+        // Crash recovery's whole point: a game that was mid-play when the
+        // process died resumes paced bot ticks exactly like a freshly
+        // dealt one — see start_bot_loop's own doc for the lock contract
+        // this follows.
+        pthread_mutex_lock(&s->lock);
+        start_bot_loop(s);
+        pthread_mutex_unlock(&s->lock);
+    }
+}
+
+static int user_persist_snapshot(int idx, char *out_id, int id_cap, unsigned char *buf, int cap) {
+    pthread_mutex_lock(&g_registry_lock);
+    User snap = g_users[idx];
+    pthread_mutex_unlock(&g_registry_lock);
+    if (!snap.used) return -1;
+    snprintf(out_id, (size_t)id_cap, "%s", snap.user_id);
+    return serialize_user(&snap, buf, cap);
+}
+
+static void user_persist_load(const char *id, const unsigned char *blob, int len) {
+    (void)id;
+    User *u = NULL;
+    for (int i = 0; i < MAX_USERS; i++) if (!g_users[i].used) { u = &g_users[i]; break; }
+    if (!u) { fprintf(stderr, "persist: recovery dropped a user row — no free slot\n"); return; }
+    if (!deserialize_user(u, blob, len)) {
+        fprintf(stderr, "persist: recovery dropped a corrupt/unreadable user row\n");
+        memset(u, 0, sizeof *u);
+        return;
+    }
+    pthread_mutex_lock(&g_registry_lock);
+    token_ht_insert(u);
+    pthread_mutex_unlock(&g_registry_lock);
+}
+
+// --------------------------------------------------------------------------
 // HTTP layer (hand-rolled; swap for mongoose in a real deployment)
 // --------------------------------------------------------------------------
 
@@ -571,7 +849,15 @@ static void h_signup(Req *r, int fd) {
         u = &g_users[i]; u->used = true; snprintf(u->username, sizeof u->username, "%s", uname);
         gen_id(u->user_id, ID_LEN); break;
     }
-    if (u) { gen_id(u->token, 32); token_ht_insert(u); }   // fresh session token, indexed
+    // Fresh session token, indexed, and marked dirty for the persistence
+    // thread (Stage 2) — a signup/signin the DB never learns about would
+    // strand that user's token past a crash, same durability need as a
+    // game's state (see game_mark_dirty's doc for the write-behind model).
+    if (u) {
+        gen_id(u->token, 32);
+        token_ht_insert(u);
+        if (g_user_table) persist_mark_dirty(g_user_table, (int)(u - g_users));
+    }
     char out[160];
     if (u) snprintf(out, sizeof out, "{\"token\":\"%s\",\"user_id\":\"%s\",\"username\":\"%s\"}", u->token, u->user_id, u->username);
     pthread_mutex_unlock(&g_registry_lock);
@@ -1116,6 +1402,13 @@ static void *worker_thread(void *arg) {
 
 int main(int argc, char **argv) {
     int port = 8099;
+    // Default: DB ON (see DURABILITY.md — "Stage 2: persistence"). --no-db
+    // opts all the way out (pure in-memory, e.g. for tests/benchmarks that
+    // don't want a stray file); --db=PATH points at a specific file instead
+    // of the default; --persist-interval-ms tunes the write-behind period
+    // (50-100ms is the documented sweet spot — see persist.h).
+    const char *db_path = "./foolish.db";
+    int persist_interval_ms = 75;
     for (int i = 1; i < argc; i++) {
         if (!strncmp(argv[i], "--game-workers=", 15)) {
             int nw = atoi(argv[i] + 15);
@@ -1126,6 +1419,13 @@ int main(int argc, char **argv) {
         } else if (!strncmp(argv[i], "--create-workers=", 17)) {
             int nw = atoi(argv[i] + 17);
             if (nw > 0 && nw <= MAX_CREATE_WORKERS) g_n_create_workers = nw;
+        } else if (!strcmp(argv[i], "--no-db")) {
+            db_path = NULL;
+        } else if (!strncmp(argv[i], "--db=", 5)) {
+            db_path = argv[i] + 5;
+        } else if (!strncmp(argv[i], "--persist-interval-ms=", 22)) {
+            int v = atoi(argv[i] + 22);
+            if (v > 0) persist_interval_ms = v;
         } else {
             int p = atoi(argv[i]);
             if (p > 0) port = p;
@@ -1138,6 +1438,25 @@ int main(int argc, char **argv) {
     // WHOLE PROCESS on that write. Ignore it — write() already reports the
     // same failure as -1/EPIPE, which every write path here already checks.
     signal(SIGPIPE, SIG_IGN);
+
+    // Stage 2: the round-trip codec gate (always runs, --no-db or not — it's
+    // a pure in-memory check of serialize_slot/deserialize_slot, not the DB
+    // itself), then registering the two durable tables and starting
+    // persistence — BEFORE any worker pool or the accept loop exists, so
+    // crash recovery's synchronous load (inside persist_start) runs with no
+    // other thread able to touch g_users[]/g_games[] yet. A requested
+    // (non-NULL) --db that fails to open/configure is fatal: silently
+    // downgrading a requested durability guarantee to "pretend it's fine"
+    // would be worse than refusing to start.
+    persist_self_test();
+    g_game_table = persist_register_table("games", MAX_GAMES, PERSIST_GAME_BLOB_CAP,
+                                           game_persist_snapshot, game_persist_load);
+    g_user_table = persist_register_table("users", MAX_USERS, PERSIST_USER_BLOB_CAP,
+                                           user_persist_snapshot, user_persist_load);
+    if (!persist_start(db_path, persist_interval_ms)) {
+        fprintf(stderr, "fatal: persistence failed to start (--db=%s)\n", db_path ? db_path : "(null)");
+        return 1;
+    }
 
     wq_init(&g_auth_create_q);
     wq_init(&g_meta_q);
@@ -1157,9 +1476,10 @@ int main(int argc, char **argv) {
     addr.sin_family = AF_INET; addr.sin_addr.s_addr = INADDR_ANY; addr.sin_port = htons(port);
     if (bind(srv, (struct sockaddr *)&addr, sizeof addr) < 0) { perror("bind"); return 1; }
     listen(srv, 64);
-    fprintf(stderr, "foolish native server (kernel-driven, in-memory) on :%d "
-            "(game-workers=%d meta-workers=%d create-workers=%d)\n",
-            port, g_n_game_workers, g_n_meta_workers, g_n_create_workers);
+    fprintf(stderr, "foolish native server (kernel-driven, in-memory + SQLite write-behind) on :%d "
+            "(game-workers=%d meta-workers=%d create-workers=%d db=%s interval=%dms)\n",
+            port, g_n_game_workers, g_n_meta_workers, g_n_create_workers,
+            db_path ? db_path : "off (--no-db)", persist_interval_ms);
 
     // The dispatcher: accept, read+parse the request, then either hand it to
     // a dedicated thread (/ws — a persistent connection, see ws_conn_thread's
