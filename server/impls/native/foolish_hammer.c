@@ -63,7 +63,6 @@
 
 #define _GNU_SOURCE
 #include <arpa/inet.h>
-#include <errno.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <pthread.h>
@@ -84,6 +83,7 @@
 #include "awire.h"
 #include "cli_util.h"   // get_arg / parse_int — shared with the cnitro_* tools
 #include "ws.h"
+#include "conn.h"   // Stage 3: TLS client — see conn.h and g_tls_ctx below
 
 // ---------------------------------------------------------------------------
 // Config
@@ -97,11 +97,24 @@ typedef struct {
     int  conns;
     int  secs;
     bool mixed;
-    bool ws;   // --mode=ws: persistent WebSocket connections + legal moves only
+    bool ws;    // --mode=ws: persistent WebSocket connections + legal moves only
+    bool tls;   // --tls: wrap every client socket (HTTP setup AND ws frames) in TLS
 } Config;
 
 static Config g_cfg;
 static atomic_bool g_stop = false;
+
+// Stage 3: built ONCE at startup (main(), before any loader/ws_worker thread
+// exists) when --tls is passed, then only ever READ afterward — every
+// client connection calls conn_tls_connect, which allocates its OWN fresh
+// SSL* off this ctx (never a shared one; see conn.h's doc), so sharing this
+// ctx read-only across every load thread is the same safe pattern
+// foolish_server.c's g_tls_ctx uses. NULL (the default) means every
+// connection this load tool opens stays plain TCP, unchanged from every
+// earlier stage. Verification is OFF (SSL_VERIFY_NONE, set in
+// tls_client_ctx_create) — this hits the server's own self-signed test
+// cert, not a real CA-issued one; see TLS.md.
+static SSL_CTX *g_tls_ctx = NULL;
 
 // How long a seat with no legal move waits before sending its next empty
 // "poll" frame (the only way it learns another seat's move made it
@@ -199,12 +212,29 @@ static int connect_to(const char *host, int port) {
     return fd;
 }
 
+// Stage 3: connect_to's raw fd, then (iff --tls) the TLS client handshake
+// (conn_tls_connect — SSL_new off the one shared g_tls_ctx + SNI +
+// SSL_connect), or just a plain Conn otherwise. Every caller below that used
+// to call connect_to directly now goes through this instead, so --tls
+// covers BOTH the HTTP setup/load path (http_do) and the WS path
+// (ws_worker) uniformly — see this file's header comment.
+static bool connect_conn(const char *host, int port, Conn *out) {
+    int fd = connect_to(host, port);
+    if (fd < 0) return false;
+    if (g_cfg.tls) {
+        if (!conn_tls_connect(out, g_tls_ctx, fd, host)) { close(fd); return false; }
+    } else {
+        conn_init_plain(out, fd);
+    }
+    return true;
+}
+
 static bool http_do(const char *host, int port, const char *method, const char *path,
                      const char *token, const unsigned char *body, int body_len,
                      unsigned char *respbuf, int respcap, HttpResp *resp) {
     resp->status = 0; resp->body = NULL; resp->body_len = 0;
-    int fd = connect_to(host, port);
-    if (fd < 0) return false;
+    Conn conn;
+    if (!connect_conn(host, port, &conn)) return false;
 
     char hdr[512];
     int hn;
@@ -223,35 +253,42 @@ static bool http_do(const char *host, int port, const char *method, const char *
     else
         hn = snprintf(hdr, sizeof hdr, "%s %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n",
             method, path, host);
-    if (hn < 0 || hn >= (int)sizeof hdr) { close(fd); return false; }
+    if (hn < 0 || hn >= (int)sizeof hdr) { conn_close(&conn); return false; }
 
     unsigned char req[4096];
-    if ((size_t)hn > sizeof req) { close(fd); return false; }
+    if ((size_t)hn > sizeof req) { conn_close(&conn); return false; }
     memcpy(req, hdr, (size_t)hn);
     int total_out = hn;
     if (body_len > 0) {
-        if (hn + body_len > (int)sizeof req) { close(fd); return false; }
+        if (hn + body_len > (int)sizeof req) { conn_close(&conn); return false; }
         memcpy(req + hn, body, (size_t)body_len);
         total_out = hn + body_len;
     }
     int off = 0;
     while (off < total_out) {
-        ssize_t w = write(fd, req + off, (size_t)(total_out - off));
-        if (w < 0) { if (errno == EINTR) continue; close(fd); return false; }
+        ssize_t w = conn_write(&conn, req + off, (size_t)(total_out - off));
+        if (w < 0) { conn_close(&conn); return false; }
         if (w == 0) break;
         off += (int)w;
     }
-    shutdown(fd, SHUT_WR);
+    // Plaintext only: a courtesy half-close so the kernel sees "done
+    // writing" promptly (not load-bearing for reading the response below —
+    // the server closes after answering regardless, same as always). Under
+    // TLS, shutdown(SHUT_WR) on the raw fd while an SSL session is live
+    // would corrupt the record layer out from under OpenSSL, so this is
+    // skipped entirely there; conn_close's SSL_shutdown is the TLS-correct
+    // equivalent, done once the response has been fully read below.
+    if (!conn.ssl) shutdown(conn.fd, SHUT_WR);
 
     int total_in = 0;
     for (;;) {
         if (total_in >= respcap) break;
-        ssize_t n = read(fd, respbuf + total_in, (size_t)(respcap - total_in));
-        if (n < 0) { if (errno == EINTR) continue; break; }
+        ssize_t n = conn_read(&conn, respbuf + total_in, (size_t)(respcap - total_in));
+        if (n < 0) break;
         if (n == 0) break;
         total_in += (int)n;
     }
-    close(fd);
+    conn_close(&conn);
 
     if (total_in < 12) return true;   // too short to hold a status line; status stays 0
     unsigned char *sp1 = memchr(respbuf, ' ', (size_t)total_in);
@@ -629,14 +666,15 @@ typedef struct {
 } WsClientArg;
 
 // Minimal WS *client* handshake: send the GET /ws upgrade over an already-
-// connected `fd`, read the 101 response, verify Sec-WebSocket-Accept against
-// what ws_accept_from_key computes for the key we sent (belt-and-suspenders
-// correctness check — not required to proceed, but cheap and it means a
-// broken handshake fails loudly instead of silently). Any leftover bytes
-// read past the header block (the server may have already written its
-// first WS frame into the same TCP segment) are primed into the returned
-// WsConn so nothing is lost — see ws_conn_prime's doc in ws.h.
-static bool ws_client_handshake(int fd, const char *host, const char *path,
+// connected (and, if --tls, already TLS-handshaked) `conn`, read the 101
+// response, verify Sec-WebSocket-Accept against what ws_accept_from_key
+// computes for the key we sent (belt-and-suspenders correctness check — not
+// required to proceed, but cheap and it means a broken handshake fails
+// loudly instead of silently). Any leftover bytes read past the header
+// block (the server may have already written its first WS frame into the
+// same TCP segment/TLS record) are primed into the returned WsConn so
+// nothing is lost — see ws_conn_prime's doc in ws.h.
+static bool ws_client_handshake(Conn *conn, const char *host, const char *path,
                                  const char *token, WsConn *out) {
     unsigned char keyraw[16];
     for (int i = 0; i < 16; i++) keyraw[i] = (unsigned char)(rand() & 0xFF);
@@ -649,13 +687,13 @@ static bool ws_client_handshake(int fd, const char *host, const char *path,
         "Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n"
         "Authorization: Bearer %s\r\n\r\n", path, host, key_b64, token);
     if (n <= 0 || n >= (int)sizeof req) return false;
-    if (ws_write_full(fd, req, n) != n) return false;
+    if (ws_write_full(conn, req, n) != n) return false;
 
     char resp[1024]; int total = 0;
     char *hdr_end = NULL;
     while (total < (int)sizeof resp - 1) {
-        ssize_t r = read(fd, resp + total, sizeof resp - 1 - (size_t)total);
-        if (r < 0) { if (errno == EINTR) continue; return false; }
+        ssize_t r = conn_read(conn, resp + total, sizeof resp - 1 - (size_t)total);
+        if (r < 0) return false;
         if (r == 0) return false;
         total += (int)r; resp[total] = 0;
         for (int i = 0; i + 3 < total; i++)
@@ -677,7 +715,7 @@ static bool ws_client_handshake(int fd, const char *host, const char *path,
     memcpy(hdrs_only, resp, (size_t)hdrs_len); hdrs_only[hdrs_len] = 0;
     if (!strstr(hdrs_only, expect)) return false;
 
-    ws_conn_init(out, fd, /*mask_outgoing=*/1);   // we are the client: our frames must be masked
+    ws_conn_init(out, *conn, /*mask_outgoing=*/1);   // we are the client: our frames must be masked; copies *conn by value
     int leftover = total - (int)(hdr_end - resp);
     if (leftover > 0) ws_conn_prime(out, (const unsigned char *)hdr_end, leftover);
     return true;
@@ -715,10 +753,11 @@ static void *ws_worker(void *argp) {
     snprintf(path, sizeof path, "/ws?game_id=%s&seat=%d", a->gid, a->seat);
 
     while (!atomic_load_explicit(&g_stop, memory_order_relaxed)) {
-        int fd = connect_to(a->cfg->host, a->cfg->port);
+        Conn conn;
+        bool connected = connect_conn(a->cfg->host, a->cfg->port, &conn);
         WsConn wc;
-        if (fd < 0 || !ws_client_handshake(fd, a->cfg->host, path, a->token, &wc)) {
-            if (fd >= 0) close(fd);
+        if (!connected || !ws_client_handshake(&conn, a->cfg->host, path, a->token, &wc)) {
+            if (connected) conn_close(&conn);
             st->connect_failures++;
             usleep(20 * 1000);
             continue;
@@ -800,7 +839,7 @@ static void *ws_worker(void *argp) {
             st->actions_sent++;
         }
     reconnect:
-        close(fd);
+        conn_close(&wc.conn);
         if (!atomic_load_explicit(&g_stop, memory_order_relaxed)) usleep(20 * 1000);
     }
     free(msgbuf);
@@ -925,6 +964,10 @@ int main(int argc, char **argv) {
     const char *mode = get_arg(argc, argv, "mode", "action");
     cfg.mixed = (strcmp(mode, "mixed") == 0);
     cfg.ws    = (strcmp(mode, "ws") == 0);
+    // --tls is a bare flag (no "=value" — get_arg/cli_util.h only matches
+    // "--key=value"), so it's checked directly here.
+    cfg.tls = false;
+    for (int i = 1; i < argc; i++) if (!strcmp(argv[i], "--tls")) { cfg.tls = true; break; }
     srand((unsigned)(time(NULL) ^ getpid()));   // seeds the WS masking-key / handshake-key rand() calls
     signal(SIGPIPE, SIG_IGN);   // persistent WS sockets: a dead peer must not kill this whole process
 
@@ -942,9 +985,19 @@ int main(int argc, char **argv) {
     if (cfg.secs < 1) cfg.secs = 1;
     g_cfg = cfg;
 
-    printf("foolish_hammer: host=%s:%d games=%d seats=%d conns=%d secs=%d mode=%s\n",
+    // Stage 3: build the ONE shared client SSL_CTX before anything opens a
+    // socket (connect_conn, called by http_do/ws_worker, reads g_cfg.tls +
+    // g_tls_ctx — both must be set before that first call). Verification is
+    // OFF (see tls_client_ctx_create) — a load tool hitting the server's
+    // own self-signed cert, not a browser.
+    if (cfg.tls) {
+        g_tls_ctx = tls_client_ctx_create();
+        if (!g_tls_ctx) { fprintf(stderr, "fatal: TLS client context setup failed\n"); return 1; }
+    }
+
+    printf("foolish_hammer: host=%s:%d games=%d seats=%d conns=%d secs=%d mode=%s tls=%s\n",
            cfg.host, cfg.port, cfg.games, cfg.seats, cfg.conns, cfg.secs,
-           cfg.ws ? "ws" : (cfg.mixed ? "mixed" : "action"));
+           cfg.ws ? "ws" : (cfg.mixed ? "mixed" : "action"), cfg.tls ? "on" : "off");
 
     {
         unsigned char resp[RESP_CAP]; HttpResp r;
