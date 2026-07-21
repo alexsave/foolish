@@ -119,24 +119,28 @@ int ws_accept_from_key(const char *client_key, char *out, int cap) {
 // Reliable read/write
 // ---------------------------------------------------------------------------
 
-int ws_read_full(int fd, void *buf, int n) {
+// EINTR is already handled inside conn_read/conn_write (conn.c) for both
+// the plaintext and TLS cases — this loop only needs to keep going on a
+// genuine short read/write, which is normal POSIX (and SSL_read/SSL_write)
+// behavior, not an error.
+int ws_read_full(Conn *c, void *buf, int n) {
     unsigned char *p = (unsigned char *)buf;
     int got = 0;
     while (got < n) {
-        ssize_t r = read(fd, p + got, (size_t)(n - got));
-        if (r < 0) { if (errno == EINTR) continue; return -1; }
+        ssize_t r = conn_read(c, p + got, (size_t)(n - got));
+        if (r < 0) return -1;
         if (r == 0) return -1;   // peer closed mid-frame
         got += (int)r;
     }
     return got;
 }
 
-int ws_write_full(int fd, const void *buf, int n) {
+int ws_write_full(Conn *c, const void *buf, int n) {
     const unsigned char *p = (const unsigned char *)buf;
     int sent = 0;
     while (sent < n) {
-        ssize_t w = write(fd, p + sent, (size_t)(n - sent));
-        if (w < 0) { if (errno == EINTR) continue; return -1; }
+        ssize_t w = conn_write(c, p + sent, (size_t)(n - sent));
+        if (w < 0) return -1;
         if (w == 0) return -1;
         sent += (int)w;
     }
@@ -175,8 +179,8 @@ static int64_t writev_full(int fd, struct iovec *iov, int iovcnt) {
 // WsConn: buffered read (drains `pending` before touching the socket again)
 // ---------------------------------------------------------------------------
 
-void ws_conn_init(WsConn *c, int fd, int mask_outgoing) {
-    c->fd = fd;
+void ws_conn_init(WsConn *c, Conn conn, int mask_outgoing) {
+    c->conn = conn;
     c->mask_outgoing = mask_outgoing;
     c->pending_len = 0;
     c->pending_off = 0;
@@ -219,10 +223,10 @@ static int ws_fill(WsConn *c, unsigned char *out, int n) {
         }
         c->pending_off = 0;
         c->pending_len = 0;
-        ssize_t r;
-        do { r = read(c->fd, c->pending, sizeof c->pending); } while (r < 0 && errno == EINTR);
-        if (r < 0) return -1;
-        if (r == 0) return -1;   // peer closed mid-frame
+        // conn_read (conn.c) already retries EINTR internally for both the
+        // plaintext and TLS cases — no local EINTR loop needed here anymore.
+        ssize_t r = conn_read(&c->conn, c->pending, sizeof c->pending);
+        if (r <= 0) return -1;   // 0 = peer closed mid-frame, <0 = real I/O error; either way, this connection is done
         c->pending_len = (int)r;
     }
     return got;
@@ -257,19 +261,43 @@ int ws_send_frame(WsConn *c, int opcode, const unsigned char *payload, int64_t l
     if (!c->mask_outgoing) {
         // Server (unmasked) path — the measured hot one (PROFILE_HOTPATH.md
         // "T1c": ws_send_frame was ~9-10% of instructions self-cost under
-        // WS+legal load). One writev() of header+payload replaces two
-        // write() syscalls per frame; no masking means no transform is
-        // needed before the payload goes out, so it can be handed to the
-        // kernel as-is instead of copied through a scratch buffer first.
-        if (len <= 0) return ws_write_full(c->fd, hdr, hn) == hn ? 0 : -1;
-        struct iovec iov[2] = {
-            { .iov_base = hdr, .iov_len = (size_t)hn },
-            { .iov_base = (void *)(uintptr_t)payload, .iov_len = (size_t)len },
-        };
-        return writev_full(c->fd, iov, 2) == hn + len ? (int)len : -1;
+        // WS+legal load). No masking means no transform is needed before
+        // the payload goes out.
+        if (len <= 0) return ws_write_full(&c->conn, hdr, hn) == hn ? 0 : -1;
+        if (!c->conn.ssl) {
+            // Plaintext: one writev() of header+payload replaces two
+            // write() syscalls per frame — it can be handed to the kernel
+            // as-is instead of copied through a scratch buffer first.
+            struct iovec iov[2] = {
+                { .iov_base = hdr, .iov_len = (size_t)hn },
+                { .iov_base = (void *)(uintptr_t)payload, .iov_len = (size_t)len },
+            };
+            return writev_full(c->conn.fd, iov, 2) == hn + len ? (int)len : -1;
+        }
+        // TLS: OpenSSL has no vector write (see TLS.md's "one non-uniform
+        // spot" note, carried over from SERVER_SCALING.md's original seam
+        // doc) — concatenate header+payload into one buffer instead of two
+        // SSL_write calls (which would cost two TLS records/MACs instead of
+        // one). Thread-local, not a stack array: ws_send_frame is only ever
+        // called from this connection's OWN thread (one thread per
+        // connection — ws_conn_thread server-side, ws_worker client-side),
+        // same reasoning foolish_server.c's t_rand_seed uses, so this avoids
+        // both a lock and a fresh ~64KB stack frame on every single frame.
+        // Capacity: the largest frame either side of this protocol ever
+        // sends is state_put's documented worst case (h_state/h_ws share
+        // the same 65536 cap) plus the 1-byte ok/poll flag plus this
+        // function's own <=14-byte frame header — sized with the same
+        // "documented worst case + real margin" discipline VIEW_CACHE_CAP
+        // uses in foolish_server.c.
+        static _Thread_local unsigned char scratch[14 + 1 + 65536];
+        int64_t total = (int64_t)hn + len;
+        if (total > (int64_t)sizeof scratch) return -1;   // never happens at this build's caps — defensive, not reachable in practice
+        memcpy(scratch, hdr, (size_t)hn);
+        memcpy(scratch + hn, payload, (size_t)len);
+        return ws_write_full(&c->conn, scratch, (int)total) == (int)total ? (int)len : -1;
     }
 
-    if (ws_write_full(c->fd, hdr, hn) != hn) return -1;
+    if (ws_write_full(&c->conn, hdr, hn) != hn) return -1;
     if (len <= 0) return 0;
     // Masked send: XOR through a bounded scratch buffer so the caller's
     // payload (often a shared response buffer) is never mutated.
@@ -278,7 +306,7 @@ int ws_send_frame(WsConn *c, int opcode, const unsigned char *payload, int64_t l
     while (off < len) {
         int64_t take = len - off; if (take > (int64_t)sizeof chunk) take = (int64_t)sizeof chunk;
         for (int64_t i = 0; i < take; i++) chunk[i] = payload[off + i] ^ mkey[(off + i) & 3];
-        if (ws_write_full(c->fd, chunk, (int)take) != (int)take) return -1;
+        if (ws_write_full(&c->conn, chunk, (int)take) != (int)take) return -1;
         off += take;
     }
     return (int)len;

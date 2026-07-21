@@ -19,6 +19,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "conn.h"   // Stage 3 (TLS): every frame read/write below goes through a Conn* now, plain fd or SSL* alike — see conn.h
+
 // ---------------------------------------------------------------------------
 // Handshake primitives: SHA-1 (public-domain-style textbook implementation,
 // mirroring c/src/sha256.c's shape — the kernel has SHA-256 but not SHA-1,
@@ -46,22 +48,28 @@ int ws_accept_from_key(const char *client_key, char *out, int cap);
 #define WS_OP_PING  0x9
 #define WS_OP_PONG  0xA
 
-// One WsConn per live connection (server: one per accepted+upgraded fd,
-// living in that connection's own thread; client: one per persistent
-// hammer worker). `pending` holds bytes the caller already read off the
-// socket before handing it to the WS layer (e.g. any bytes that rode in the
-// same TCP segment as the HTTP upgrade request/response, past its blank
-// line) — ws_conn_prime seeds it, ws_recv_message drains it before calling
-// read() again, so a coalesced read can never lose bytes.
+// One WsConn per live connection (server: one per accepted+upgraded
+// connection, living in that connection's own thread; client: one per
+// persistent hammer worker). `conn` carries either a plain fd or a
+// per-connection TLS session (Stage 3 — see conn.h); every read/write below
+// goes through it, never a bare fd. `pending` holds bytes the caller
+// already read off the socket before handing it to the WS layer (e.g. any
+// bytes that rode in the same TCP segment as the HTTP upgrade
+// request/response, past its blank line) — ws_conn_prime seeds it,
+// ws_recv_message drains it before reading again, so a coalesced read can
+// never lose bytes.
 typedef struct {
-    int fd;
+    Conn conn;
     int mask_outgoing;   // 1 = WE must mask frames we SEND (i.e. we are the client)
     unsigned char pending[4096];
     int pending_len;
     int pending_off;
 } WsConn;
 
-void ws_conn_init(WsConn *c, int fd, int mask_outgoing);
+// `conn` is copied by value into `c->conn` — the caller's own Conn variable
+// is no longer needed after this call (both foolish_server.c's
+// ws_conn_thread and foolish_hammer.c's ws_worker treat it that way).
+void ws_conn_init(WsConn *c, Conn conn, int mask_outgoing);
 // Seed already-read bytes (clamped to the pending capacity — in practice this
 // is 0 bytes almost always, since a compliant peer waits for the handshake to
 // finish before sending frames).
@@ -84,11 +92,13 @@ int ws_send_frame(WsConn *c, int opcode, const unsigned char *payload, int64_t l
 // section 5.5.1) with no reason string.
 void ws_send_close(WsConn *c, uint16_t code);
 
-// Reliable read()/write() loops (short read/write is not an error in POSIX
-// sockets, especially under load) — exported since foolish_server.c also
+// Reliable conn_read()/conn_write() loops (short read/write is not an error
+// in POSIX sockets, especially under load, and SSL_read/SSL_write can hand
+// back less than requested too) — exported since foolish_server.c also
 // needs one to send the plain-HTTP 101 response reliably before the
-// connection switches to being a WsConn.
-int ws_read_full(int fd, void *buf, int n);
-int ws_write_full(int fd, const void *buf, int n);
+// connection switches to being a WsConn, and foolish_hammer.c needs one for
+// its own client-side handshake request.
+int ws_read_full(Conn *c, void *buf, int n);
+int ws_write_full(Conn *c, const void *buf, int n);
 
 #endif
