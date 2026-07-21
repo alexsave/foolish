@@ -264,25 +264,27 @@ int ws_send_frame(WsConn *c, int opcode, const unsigned char *payload, int64_t l
         // WS+legal load). No masking means no transform is needed before
         // the payload goes out.
         if (len <= 0) return ws_write_full(&c->conn, hdr, hn) == hn ? 0 : -1;
-        if (!c->conn.ssl) {
-            // Plaintext: one writev() of header+payload replaces two
-            // write() syscalls per frame — it can be handed to the kernel
-            // as-is instead of copied through a scratch buffer first.
+        if (!c->conn.ssl && !conn_is_buffered(&c->conn)) {
+            // Plaintext, real socket: one writev() of header+payload
+            // replaces two write() syscalls per frame — it can be handed to
+            // the kernel as-is instead of copied through a scratch buffer
+            // first.
             struct iovec iov[2] = {
                 { .iov_base = hdr, .iov_len = (size_t)hn },
                 { .iov_base = (void *)(uintptr_t)payload, .iov_len = (size_t)len },
             };
             return writev_full(c->conn.fd, iov, 2) == hn + len ? (int)len : -1;
         }
-        // TLS: OpenSSL has no vector write (see TLS.md's "one non-uniform
-        // spot" note, carried over from SERVER_SCALING.md's original seam
-        // doc) — concatenate header+payload into one buffer instead of two
-        // SSL_write calls (which would cost two TLS records/MACs instead of
-        // one). Thread-local, not a stack array: ws_send_frame is only ever
-        // called from this connection's OWN thread (one thread per
-        // connection — ws_conn_thread server-side, ws_worker client-side),
-        // same reasoning foolish_server.c's t_rand_seed uses, so this avoids
-        // both a lock and a fresh ~64KB stack frame on every single frame.
+        // TLS (OpenSSL has no vector write — see TLS.md's "one non-uniform
+        // spot" note) OR a Stage 6 buffered Conn (no fd to writev() at all,
+        // see conn.h's doc): concatenate header+payload into one buffer
+        // instead of two write calls (for TLS, that's also two TLS
+        // records/MACs instead of one). Thread-local, not a stack array:
+        // ws_send_frame is only ever called from this connection's OWN
+        // thread (one thread per connection — ws_conn_thread/an epoll
+        // worker server-side, ws_worker client-side), same reasoning
+        // foolish_server.c's t_rand_seed uses, so this avoids both a lock
+        // and a fresh ~64KB stack frame on every single frame.
         // Capacity: the largest frame either side of this protocol ever
         // sends is state_put's documented worst case (h_state/h_ws share
         // the same 65536 cap) plus the 1-byte ok/poll flag plus this
