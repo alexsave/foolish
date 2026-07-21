@@ -1269,3 +1269,62 @@ removed. A seat's masked view is genuinely per-viewer (each hides a different
 hand), so the fan-out can't share one serialization across seats without a
 delta-encoding protocol change — noted as a possible future step, not needed
 now.
+
+## T1g — push-encode single-copy + async-cancel bracket
+
+Re-profiled on the **epoll** path (the default plaintext deployment;
+`epoll_worker_main` ~98% inclusive), which T1f's numbers predate. Two flat
+costs stood out and both were addressed without any wire-format change (every
+byte pushed is identical — verified by an A/B gather-vs-concatenated frame
+hash over all header-length boundaries, `make tests` stays 3165).
+
+**1. Push encode: two payload copies → one.** Each push built the reply as
+`view_cache → worker scratch` (in `state_put_cached`) and then
+`scratch → wbuf` (in `ws_send_frame` via `conn_write`). The cache slot is a
+stable snapshot under `s->lock`, and `wbuf` is owned by the single worker that
+owns the game (`game_worker_index`), so the reply is now encoded straight into
+`wbuf` **under the game lock** with one copy: `state_put_cached_ptr` returns a
+pointer into the cache (no copy on a hit) and `ws_send_frame2` gathers
+`[ok]`+`[state]` into `wbuf`. A first cut sent the two spans as separate
+`conn_write` calls and *lost* to the old code for small views (the per-call
+overhead exceeded the saved copy); the committed version writes header + ok +
+state with direct `memcpy`s into `wbuf` and a single length bump.
+
+Deterministic microbench of the encode path only (200k iters, buffered sink):
+
+| view size | old (2 copies) | new (1 copy, direct) | delta |
+|---|---|---|---|
+| 100 B | 268 Ir/push | 165 Ir/push | **−38%** |
+| 250 B | 290 Ir/push | 175 Ir/push | **−40%** |
+| 690 B (worst case) | 430 Ir/push | 246 Ir/push | **−43%** |
+
+Cheaper at *every* view size. At the whole-server level the win is diluted —
+under a load generator that spams client actions, `memcpy` is dominated by the
+*recv*-side frame parse (`wsasync_feed`), which this change doesn't touch — so
+the server-total percentage is recv-bound and noisy run to run. The gain is on
+the *send* path, which is what a real push-only client (few sends, many
+receives) actually exercises.
+
+**2. glibc async-cancel bracket, disabled per thread.** This box's glibc
+(2.39) brackets every cancellable syscall (`read`/`write`/`writev`/
+`epoll_wait`/`accept`) in a multithreaded process with an
+`__pthread_enable_asynccancel` / `__pthread_disable_asynccancel` pair. This
+server never calls `pthread_cancel`, so each worker thread now sets
+`cancelstate=DISABLE` + `canceltype=ASYNCHRONOUS` at entry
+(`thread_disable_cancellation`). Deterministic A/B (200k `read()`s, a
+keepalive thread defeating glibc's single-thread fast path):
+
+| | total Ir | asynccancel Ir |
+|---|---|---|
+| unset | 13,612,908 | ~6.6M (enable 3.20M + disable 3.00M) |
+| disabled | 10,212,988 (**−25%**) | ~3.2M (**≈ halved**; disable −73%) |
+
+Real but partial — `disable_asynccancel` collapses to its early-return, while
+`enable_asynccancel` only drops ~25% on this glibc. Fully removing the residual
+would mean calling `read`/`write`/`epoll_wait` via `syscall()` directly
+(Linux-only, which this already is) — left open as a follow-up. At the server
+level this is ~1–2% of total instructions (syscalls are a minority of the
+work), consistent with the ~4.4%→~3% seen on the noisy full-server profile.
+
+INVARIANT: do not introduce `pthread_cancel` without revisiting
+`thread_disable_cancellation`.

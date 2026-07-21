@@ -324,6 +324,77 @@ int ws_send_frame(WsConn *c, int opcode, const unsigned char *payload, int64_t l
     return (int)len;
 }
 
+int ws_send_frame2(WsConn *c, int opcode,
+                   const unsigned char *p1, int64_t l1,
+                   const unsigned char *p2, int64_t l2) {
+    int64_t len = l1 + l2;
+    unsigned char hdr[14];
+    int hn = 0;
+    hdr[hn++] = (unsigned char)(0x80 | (opcode & 0x0F));   // FIN=1
+    unsigned char maskbit = c->mask_outgoing ? 0x80 : 0x00;
+    if (len <= 125) {
+        hdr[hn++] = (unsigned char)(maskbit | (unsigned char)len);
+    } else if (len <= 0xFFFF) {
+        hdr[hn++] = (unsigned char)(maskbit | 126);
+        hdr[hn++] = (unsigned char)((len >> 8) & 0xFF);
+        hdr[hn++] = (unsigned char)(len & 0xFF);
+    } else {
+        hdr[hn++] = (unsigned char)(maskbit | 127);
+        for (int i = 7; i >= 0; i--) hdr[hn++] = (unsigned char)((len >> (8 * i)) & 0xFF);
+    }
+    if (c->mask_outgoing) {
+        // The client (masking) side never gathers; keep exact wire behavior by
+        // concatenating and going through the single-buffer masked encoder.
+        static _Thread_local unsigned char cat[1 + 65536];
+        if (len > (int64_t)sizeof cat) return -1;
+        if (l1) memcpy(cat, p1, (size_t)l1);
+        if (l2) memcpy(cat + l1, p2, (size_t)l2);
+        return ws_send_frame(c, opcode, cat, len);
+    }
+    // Server, unmasked (the measured hot push path).
+    if (!c->conn.ssl && !conn_is_buffered(&c->conn)) {
+        // Plaintext real socket: header + both spans as one writev() — no
+        // scratch concatenation, same idea as ws_send_frame's 2-iovec path.
+        struct iovec iov[3] = {
+            { .iov_base = hdr, .iov_len = (size_t)hn },
+            { .iov_base = (void *)(uintptr_t)p1, .iov_len = (size_t)l1 },
+            { .iov_base = (void *)(uintptr_t)p2, .iov_len = (size_t)l2 },
+        };
+        return writev_full(c->conn.fd, iov, 3) == hn + len ? (int)len : -1;
+    }
+    if (conn_is_buffered(&c->conn)) {
+        // Stage 6 buffered (epoll) sink: write header + both spans STRAIGHT
+        // into wbuf with direct memcpys and a single buf_len bump — not three
+        // conn_write/ws_write_full calls. p2 (the state bytes) is copied ONCE,
+        // directly from the view cache; the header and the 1-byte [ok] flag
+        // are inline stores. Going through conn_write three times instead cost
+        // more per push (the extra call + per-call room check + ws_write_full
+        // loop) than the copy it saved for the small views this protocol
+        // actually sends — the whole point is to be cheaper than the old
+        // cache->scratch->wbuf two-copy path at EVERY view size, not just the
+        // worst case. Caller reserved via econn_reserve_out; the room check
+        // here is defensive (a short append would truncate a state update).
+        Conn *cc = &c->conn;
+        int need = hn + (int)l1 + (int)l2;
+        if (need > cc->buf_cap - cc->buf_len) return -1;
+        unsigned char *q = cc->buf_out + cc->buf_len;
+        memcpy(q, hdr, (size_t)hn); q += hn;
+        if (l1) { memcpy(q, p1, (size_t)l1); q += (size_t)l1; }
+        if (l2) { memcpy(q, p2, (size_t)l2); }
+        cc->buf_len += need;
+        return (int)len;
+    }
+    // TLS: one SSL_write (one record) — concatenate into scratch, same as
+    // ws_send_frame's TLS branch.
+    static _Thread_local unsigned char scratch[14 + 1 + 65536];
+    int64_t total = (int64_t)hn + len;
+    if (total > (int64_t)sizeof scratch) return -1;
+    memcpy(scratch, hdr, (size_t)hn);
+    if (l1) memcpy(scratch + hn, p1, (size_t)l1);
+    if (l2) memcpy(scratch + hn + l1, p2, (size_t)l2);
+    return ws_write_full(&c->conn, scratch, (int)total) == (int)total ? (int)len : -1;
+}
+
 void ws_send_close(WsConn *c, uint16_t code) {
     unsigned char payload[2] = { (unsigned char)(code >> 8), (unsigned char)(code & 0xFF) };
     ws_send_frame(c, WS_OP_CLOSE, payload, 2);

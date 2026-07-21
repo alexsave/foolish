@@ -595,7 +595,29 @@ static int seat_of(GameSlot *s, const char *user_id) {
 // serving. When no bot can act (a human is owed) the thread waits on `cond`
 // until /action or /ws signals it — pairing the wait with `s->lock`, same as
 // every other access to this slot.
+// glibc (2.39 on this box) brackets every cancellable syscall wrapper this
+// server uses in its hot loops — read / write / writev / epoll_wait / accept —
+// with an __pthread_enable_asynccancel / __pthread_disable_asynccancel pair, an
+// atomic CAS on the thread's cancelhandling word before AND after each call.
+// This server NEVER calls pthread_cancel (grep the tree: zero hits — threads
+// exit on their own when a game ends / the process stops), so that bracket is
+// pure overhead — it was ~4% of instructions on the epoll build and ~11% on the
+// thread-per-connection (--tls) build (PROFILE_HOTPATH.md). Setting the cancel
+// TYPE to asynchronous makes __pthread_enable_asynccancel find the type bit
+// already set and take its no-CAS early break (and __pthread_disable_asynccancel
+// early-return); DISABLE-ing the state as well means that even if a
+// pthread_cancel were ever introduced it could not asynchronously tear a thread
+// down mid-syscall — with nothing cancelling, the async type is inert. Setting
+// both collapses the bracket regardless of which mechanism this libc gates it
+// on. Call once at each thread's entry (the setting is per-thread).
+// INVARIANT: do not introduce pthread_cancel without revisiting this.
+static void thread_disable_cancellation(void) {
+    pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
+    pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
+}
+
 static void *bot_thread(void *arg) {
+    thread_disable_cancellation();
     GameSlot *s = arg;
     pthread_mutex_lock(&s->lock);
     while (s->used && s->game.status == GAME_STATUS_PLAYING) {
@@ -1263,29 +1285,51 @@ static void h_stats(Req *r, Conn *conn) {
 // client's own seat, or the fixed spectator pair); this function does not
 // re-check, so it is not safe to point at an unvalidated/attacker-
 // controlled index.
-static int state_put_cached(GameSlot *s, int cache_idx, int viewer, unsigned char *out) {
+// Like state_put_cached, but returns a POINTER to the serialized view bytes
+// instead of copying them into an out buffer — on a cache hit that is zero
+// copies (the pointer is the cache slot itself), letting the push path land
+// the one unavoidable copy directly in its output buffer via ws_send_frame2
+// (PROFILE_HOTPATH.md: memcpy was ~18% of the epoll build, the redundant
+// cache->scratch->wbuf double copy). `fallback` is caller-owned scratch
+// (>= 1 + 65536) used ONLY on the rare path where a view is too big to cache
+// (n > VIEW_CACHE_CAP — never at this build's caps, see VIEW_CACHE_CAP): there
+// the bytes are serialized into `fallback` and *pp points at it. Same locking
+// contract as state_put_cached (s->lock held); the returned pointer is valid
+// only while that lock is still held — a later version bump may recompute the
+// slot.
+static int state_put_cached_ptr(GameSlot *s, int cache_idx, int viewer,
+                                const unsigned char **pp, unsigned char *fallback) {
     if (s->view_cache_version[cache_idx] != s->version) {
-        // Serialize straight into a scratch buffer wider than
-        // VIEW_CACHE_CAP first: state_put's real worst case fits well
+        // Serialize straight into the scratch buffer (wider than
+        // VIEW_CACHE_CAP) first: state_put's real worst case fits well
         // inside VIEW_CACHE_CAP today (see that constant's comment), but if
         // a future kernel change ever grew a cap enough to overflow it,
         // this falls back to "always recompute, never cache" for that slot
         // instead of truncating a state update — correctness over the
         // optimization.
-        unsigned char scratch[1 + 65536];
-        int n = state_put(&s->game, viewer, scratch);
+        int n = state_put(&s->game, viewer, fallback);
         if (n < 0) n = 0;
         if (n <= VIEW_CACHE_CAP) {
-            memcpy(s->view_cache[cache_idx], scratch, (size_t)n);
+            memcpy(s->view_cache[cache_idx], fallback, (size_t)n);
             s->view_cache_len[cache_idx] = n;
             s->view_cache_version[cache_idx] = s->version;
         } else {
-            memcpy(out, scratch, (size_t)n);
+            *pp = fallback;
             return n;
         }
     }
-    int n = s->view_cache_len[cache_idx];
-    memcpy(out, s->view_cache[cache_idx], (size_t)n);
+    *pp = s->view_cache[cache_idx];
+    return s->view_cache_len[cache_idx];
+}
+
+// Copy-out wrapper kept for the thread-per-connection (--tls) path, whose
+// ws_send_frame concatenates a single contiguous payload. The epoll push path
+// uses state_put_cached_ptr + ws_send_frame2 to avoid this copy.
+static int state_put_cached(GameSlot *s, int cache_idx, int viewer, unsigned char *out) {
+    unsigned char scratch[1 + 65536];
+    const unsigned char *p = scratch;
+    int n = state_put_cached_ptr(s, cache_idx, viewer, &p, scratch);
+    memcpy(out, p, (size_t)n);
     return n;
 }
 
@@ -1442,42 +1486,41 @@ static bool ws_send_handshake_and_push(WsConn *out_wc, Conn conn, const char *ac
 // before it releases — Stage 6's epoll worker uses this to record exactly
 // which version this connection's peer was just brought up to date with,
 // without a second, unlocked (racy) read of s->version afterward.
+// Decode+apply one client frame with s->lock ALREADY HELD. Returns true iff a
+// real move was decoded AND the kernel accepted it (awire_apply) — on
+// acceptance it bumps s->version, marks the game dirty, and signals the bot
+// game-loop, exactly the mutation ws_service_message used to inline. A
+// spectator frame, an empty poll, a not-playing game, or a rejected/illegal
+// move returns false and mutates nothing. Factored out so the epoll push path
+// (econn_push_view) and the --tls thread-per-conn path (ws_service_message)
+// share ONE copy of the apply logic and can never drift.
+static bool ws_apply_move_locked(GameSlot *s, int seat, bool spectator,
+                                 const unsigned char *in, int mlen) {
+    // Spectators MAY NOT submit moves (Stage 4): `!spectator` keeps ANY frame
+    // a spectator sends — empty or a well-formed move alike — from ever
+    // reaching awire_decode/awire_apply.
+    if (!s->used || spectator || mlen <= 0 || s->game.status != GAME_STATUS_PLAYING) return false;
+    AwireAction a;
+    if (!awire_decode(in, mlen, &a)) return false;
+    // No g_kernel_lock (Stage 5, see h_action's identical pattern and the
+    // "Locking" doc above) — s->lock, held for this whole call, is enough.
+    if (!awire_apply(&s->game, seat, &a)) return false;
+    s->version++;   // this seat's move can change every seat's view
+    game_mark_dirty(s);
+    pthread_cond_signal(&s->cond);   // same wakeup /action gives the bot game-loop
+    return true;
+}
+
 static int ws_service_message(GameSlot *s, int seat, bool spectator, int cache_idx, int viewer,
                                const unsigned char *in, int mlen, unsigned char *msg, uint32_t *out_version) {
-    bool applied = false;
     int slen;
     pthread_mutex_lock(&s->lock);
-    if (s->used) {
-        // Spectators MAY NOT submit moves (Stage 4): `!spectator` keeps ANY
-        // frame a spectator sends — empty or a well-formed move alike —
-        // from ever reaching awire_decode/awire_apply. It is silently
-        // treated as "send me the current state", same as a seated client's
-        // empty poll frame; `applied` stays false and the reply's ok byte is
-        // always 0.
-        if (!spectator && mlen > 0 && s->game.status == GAME_STATUS_PLAYING) {
-            AwireAction a;
-            if (awire_decode(in, mlen, &a)) {
-                // No g_kernel_lock (Stage 5, see h_action's identical
-                // pattern and the "Locking" doc above) — s->lock, held for
-                // this whole call, is enough.
-                bool applied_now = awire_apply(&s->game, seat, &a);
-                if (applied_now) {
-                    applied = true;
-                    s->version++;   // this seat's move can change every seat's view
-                    game_mark_dirty(s);
-                    pthread_cond_signal(&s->cond);   // same wakeup /action gives the bot game-loop
-                }
-            }
-        }
-        // PROFILE_HOTPATH.md "T1c": on a pure poll (mlen==0 or an
-        // illegal/rejected move, or ANY frame from a spectator) this view
-        // did NOT change, so state_put_cached memcpy's the bytes computed
-        // last time instead of re-running the kernel's full masked
-        // serialization.
-        slen = state_put_cached(s, cache_idx, viewer, msg + 1);
-    } else {
-        slen = 0;
-    }
+    bool applied = ws_apply_move_locked(s, seat, spectator, in, mlen);
+    // PROFILE_HOTPATH.md "T1c": on a pure poll (mlen==0 or an illegal/rejected
+    // move, or ANY frame from a spectator) this view did NOT change, so
+    // state_put_cached memcpy's the bytes computed last time instead of
+    // re-running the kernel's full masked serialization.
+    slen = s->used ? state_put_cached(s, cache_idx, viewer, msg + 1) : 0;
     if (out_version) *out_version = s->version;
     pthread_mutex_unlock(&s->lock);
     msg[0] = applied ? 1 : 0;
@@ -1485,6 +1528,7 @@ static int ws_service_message(GameSlot *s, int seat, bool spectator, int cache_i
 }
 
 static void *ws_conn_thread(void *argp) {
+    thread_disable_cancellation();
     WsSpawnArg *sa = argp;
     Conn *conn = &sa->conn;
     Req *r = &sa->req;
@@ -1652,6 +1696,7 @@ static WorkQueue *classify_queue(Req *r) {
 }
 
 static void *worker_thread(void *arg) {
+    thread_disable_cancellation();
     WorkQueue *q = arg;
     for (;;) {
         WorkItem item;
@@ -2108,22 +2153,58 @@ static bool econn_try_flush(Worker *w, EConn *ec) {
 // WithOUT this call site, a push-only (non-polling) client would have no
 // way to learn about another seat's move at all: it would just sit blocked
 // in ws_recv_message forever, stalling the whole game.
+// Encode one binary WS frame [ok][state_put_cached(view)] for `ec` STRAIGHT
+// into its output buffer under s->lock, copying the view bytes exactly once —
+// from the per-seat cache into wbuf — instead of the old two-step (cache ->
+// worker scratch in state_put_cached, then scratch -> wbuf in ws_send_frame).
+// wbuf is owned by this single-threaded worker (game_worker_index's
+// invariant), so appending to it while holding the GAME lock races nothing and
+// needs no extra lock; the actual socket flush stays OUTSIDE the lock, in the
+// caller. This is the two-copies-to-one push change (PROFILE_HOTPATH.md:
+// memcpy ~18% on the epoll build).
+//
+//   apply_in != NULL  -> apply that client frame first (mover-reply path); the
+//                        reply's ok byte is 1 iff the kernel accepted it.
+//   only_if_stale     -> skip entirely unless ec->last_pushed_version differs
+//                        from the (post-apply) version (fan-out path).
+// Returns 1 if a frame was encoded+committed into wbuf (caller should flush),
+// 0 if nothing was queued (only_if_stale and not stale), or -1 if the out
+// buffer had no room (caller leaves ec untouched). *out_version (may be NULL)
+// gets s->version as observed under the lock; *out_applied (may be NULL) gets
+// whether apply_in was accepted.
+static int econn_push_view(EConn *ec, const unsigned char *apply_in, int apply_len,
+                           bool only_if_stale, uint32_t *out_version, bool *out_applied) {
+    static _Thread_local unsigned char fallback[1 + 65536];   // this worker's own thread only — never shared; used only on the never-hit overflow path
+    GameSlot *s = ec->slot;
+    unsigned char ok = 0;
+    int rc = 0;
+    pthread_mutex_lock(&s->lock);
+    if (apply_in) ok = ws_apply_move_locked(s, ec->seat, ec->spectator, apply_in, apply_len) ? 1 : 0;
+    uint32_t v = s->version;
+    bool stale = ec->last_pushed_version != v;
+    if (!only_if_stale || stale) {
+        const unsigned char *state = NULL;
+        int slen = s->used ? state_put_cached_ptr(s, ec->cache_idx, ec->viewer, &state, fallback) : 0;
+        if (econn_reserve_out(ec, slen + 1 + 14) &&
+            ws_send_frame2(&ec->wc_out, WS_OP_BIN, &ok, 1, state, slen) >= 0) {
+            econn_commit_out(ec);
+            rc = 1;
+        } else {
+            rc = -1;
+        }
+    }
+    if (out_version) *out_version = v;
+    pthread_mutex_unlock(&s->lock);
+    if (out_applied) *out_applied = (ok != 0);
+    return rc;
+}
+
 static void worker_push_stale(Worker *w, GameSlot *game, EConn *skip) {
-    static _Thread_local unsigned char scratch[1 + 65536];   // this worker's own thread only — never shared
     for (EConn *ec = w->ws_head; ec; ec = ec->next) {
         if (ec == skip) continue;
         if (game && ec->slot != game) continue;
-        GameSlot *s = ec->slot;
-        pthread_mutex_lock(&s->lock);
-        uint32_t v = s->version;
-        bool stale = ec->last_pushed_version != v;
-        int slen = 0;
-        if (stale) { scratch[0] = 0; slen = s->used ? state_put_cached(s, ec->cache_idx, ec->viewer, scratch + 1) : 0; }
-        pthread_mutex_unlock(&s->lock);
-        if (!stale) continue;
-        int mtotal = slen + 1;
-        if (econn_reserve_out(ec, mtotal + 14) && ws_send_frame(&ec->wc_out, WS_OP_BIN, scratch, mtotal) >= 0) {
-            econn_commit_out(ec);
+        uint32_t v;
+        if (econn_push_view(ec, NULL, 0, /*only_if_stale=*/true, &v, NULL) == 1) {
             ec->last_pushed_version = v;
             if (!econn_try_flush(w, ec)) continue;   // may have closed ec on a real write error — nothing left to do for it
         }
@@ -2176,13 +2257,13 @@ static void handle_ws_readable(Worker *w, EConn *ec) {
             int rc = wsasync_feed(ec, tmp + off, (int)r - off, &consumed);
             off += consumed;
             if (rc == WSF_MESSAGE) {
-                unsigned char reply[1 + 65536];
-                uint32_t v;
-                int mtotal = ws_service_message(ec->slot, ec->seat, ec->spectator, ec->cache_idx, ec->viewer,
-                                                 ec->msg_buf, ec->last_msg_len, reply, &v);
-                bool applied = reply[0] != 0;   // ws_service_message's own [ok:u8] byte — see its doc
-                if (econn_reserve_out(ec, mtotal + 14) && ws_send_frame(&ec->wc_out, WS_OP_BIN, reply, mtotal) >= 0) {
-                    econn_commit_out(ec);
+                // Apply the move (if any) and encode the [ok][state] reply
+                // straight into wbuf under one lock acquisition — the same
+                // service ws_conn_thread does via ws_service_message, but the
+                // buffered (epoll) sink lets econn_push_view land the state
+                // bytes in wbuf with a single copy (see its doc).
+                uint32_t v; bool applied = false;
+                if (econn_push_view(ec, ec->msg_buf, ec->last_msg_len, /*only_if_stale=*/false, &v, &applied) == 1) {
                     ec->last_pushed_version = v;
                 }
                 if (!econn_try_flush(w, ec)) return;   // closed (real write error) — ec is gone
@@ -2219,6 +2300,7 @@ static void handle_ws_readable(Worker *w, EConn *ec) {
 }
 
 static void *epoll_worker_main(void *arg) {
+    thread_disable_cancellation();
     Worker *w = arg;
     struct epoll_event events[EPOLL_MAX_EVENTS];
     for (;;) {
@@ -2380,6 +2462,7 @@ static SSL_CTX *g_tls_ctx = NULL;
 // --------------------------------------------------------------------------
 
 int main(int argc, char **argv) {
+    thread_disable_cancellation();   // the dispatcher thread runs the accept() loop — same cancel-bracket tax, see thread_disable_cancellation
     int port = 8099;
     // Default: DB ON (see DURABILITY.md — "Stage 2: persistence"). --no-db
     // opts all the way out (pure in-memory, e.g. for tests/benchmarks that

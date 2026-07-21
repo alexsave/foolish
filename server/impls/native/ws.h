@@ -88,6 +88,20 @@ int ws_recv_message(WsConn *c, unsigned char *buf, int cap, int *opcode);
 // c->mask_outgoing. Returns the payload length sent, or -1 on I/O error.
 int ws_send_frame(WsConn *c, int opcode, const unsigned char *payload, int64_t len);
 
+// Like ws_send_frame, but the payload is the concatenation p1[0..l1) ++
+// p2[0..l2) sent as ONE frame — so a caller can hand the 1-byte [ok] flag and
+// the state bytes (a pointer straight into the per-seat view cache) WITHOUT
+// first copying them into one contiguous buffer. On the buffered (epoll) sink
+// this drops one full-payload memcpy per push (PROFILE_HOTPATH.md: memcpy was
+// ~18% of the epoll build — the redundant cache->scratch->wbuf double copy).
+// The bytes on the wire are byte-for-byte identical to
+// ws_send_frame(c, opcode, p1++p2, l1+l2). Server (unmasked) is the intended
+// caller; a masked (client) call falls back to a contiguous encode so the
+// wire format never drifts. Returns l1+l2 on success, or -1 on I/O error.
+int ws_send_frame2(WsConn *c, int opcode,
+                   const unsigned char *p1, int64_t l1,
+                   const unsigned char *p2, int64_t l2);
+
 // Sends a CLOSE frame carrying `code` (network byte order per RFC 6455
 // section 5.5.1) with no reason string.
 void ws_send_close(WsConn *c, uint16_t code);
