@@ -21,12 +21,38 @@
 // is never shared: each accepted/connected socket gets its own, fresh, in
 // conn_tls_accept/conn_tls_connect — never touched from more than the one
 // thread that owns this Conn.
+//
+// Stage 6 (epoll-per-shard, SERVER_SCALING.md "Stage 6"): `buf_out` adds a
+// THIRD mode — a write-only, socket-less Conn that appends into a
+// caller-owned memory buffer instead of doing a real write() syscall. This
+// lets every existing response-encoding call site (respond/respond_bin's
+// io_write, ws_send_frame's header+payload bytes) build a reply into memory
+// completely unchanged, so the epoll event loop can flush it to the real fd
+// non-blockingly (possibly across several EPOLLOUT events) without any
+// handler needing to know it's running under epoll instead of a blocking
+// per-connection thread. `fd == -1` and `ssl == NULL` for a buffered Conn —
+// conn_close's existing plain/TLS branches are already safe no-ops on that
+// combination, so it needs no special case there. Never valid to conn_read()
+// a buffered Conn (it is a sink, not a source) — see conn_read's own guard.
 typedef struct {
     int fd;
     SSL *ssl;
+    unsigned char *buf_out;   // NULL unless this Conn is in buffered (Stage 6) mode
+    int buf_len;
+    int buf_cap;
 } Conn;
 
-static inline void conn_init_plain(Conn *c, int fd) { c->fd = fd; c->ssl = NULL; }
+static inline void conn_init_plain(Conn *c, int fd) { c->fd = fd; c->ssl = NULL; c->buf_out = NULL; c->buf_len = 0; c->buf_cap = 0; }
+
+// Stage 6: wrap a caller-owned `out[0..cap)` scratch buffer as a Conn. Every
+// conn_write (and everything built on it — respond/respond_bin/ws_send_frame)
+// appends to `out` instead of touching a socket; conn_read must never be
+// called on the result. `out_len(out)`-equivalent is just the caller reading
+// back the Conn's own `buf_len` after the encoding calls finish.
+static inline void conn_init_buffered(Conn *c, unsigned char *out, int cap) {
+    c->fd = -1; c->ssl = NULL; c->buf_out = out; c->buf_len = 0; c->buf_cap = cap;
+}
+static inline bool conn_is_buffered(const Conn *c) { return c->buf_out != NULL; }
 
 // Single-call, EINTR-transparent read/write — the SAME contract a bare
 // read()/write() on a blocking fd has (a short result is normal, not an

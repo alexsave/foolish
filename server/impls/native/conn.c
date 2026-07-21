@@ -4,10 +4,12 @@
 
 #include <errno.h>
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 #include <openssl/err.h>
 
 ssize_t conn_read(Conn *c, void *buf, size_t n) {
+    if (c->buf_out) return -1;   // Stage 6: a buffered Conn is a write-only encode sink, never a read source
     if (!c->ssl) {
         ssize_t r;
         do { r = read(c->fd, buf, n); } while (r < 0 && errno == EINTR);
@@ -31,6 +33,12 @@ ssize_t conn_read(Conn *c, void *buf, size_t n) {
 }
 
 ssize_t conn_write(Conn *c, const void *buf, size_t n) {
+    if (c->buf_out) {   // Stage 6: append into the caller's memory buffer instead of a real write()
+        int room = c->buf_cap - c->buf_len;
+        int take = (int)n; if (take > room) take = room;
+        if (take > 0) { memcpy(c->buf_out + c->buf_len, buf, (size_t)take); c->buf_len += take; }
+        return take;   // short iff it wouldn't fit — callers (ws_write_full et al.) already treat a short result as "stop"
+    }
     if (!c->ssl) {
         ssize_t r;
         do { r = write(c->fd, buf, n); } while (r < 0 && errno == EINTR);
