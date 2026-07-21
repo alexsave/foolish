@@ -54,9 +54,15 @@ int bot_cycle_delay_ms(const Game *g, uint32_t human_mask, const BotDriveOut *dr
 
 // LegalMoves is far too big for the wasm module's 22KiB shadow stack (the same
 // reason robusta/blackpowder hoist their MC scratch off the stack). One shared
-// static is safe: bot_drive is never re-entered, and the MC bots it invokes
-// keep their own scratch.
-static LegalMoves g_scratch;
+// static is safe within a thread: bot_drive is never re-entered, and the MC
+// bots it invokes keep their own scratch. _Thread_local (Stage 5,
+// SERVER_SCALING.md) makes "one shared static" true PER THREAD instead of
+// process-wide — the native server drives concurrent games' bot_drive calls
+// on different threads (each already serialized against itself by its own
+// per-game lock), and a single process-wide g_scratch would let two games'
+// eligibility scans tear each other's move list. wasm stays a plain global
+// (c/Makefile's `-D_Thread_local=`, single-threaded module, unaffected).
+static _Thread_local LegalMoves g_scratch;
 
 static int seat_can_act(const Game *g, int seat, uint32_t human_mask, LegalMoves *lm) {
     if (human_mask & (1u << seat)) return 0;
