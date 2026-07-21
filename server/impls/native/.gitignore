@@ -36,3 +36,6 @@ bench_results/*.o
 helgrind*.log
 *.valgrind.log
 foolish_server_asm
+
+# throwaway compiler-flag A/B variant binaries (cflags experiment)
+fs_*
