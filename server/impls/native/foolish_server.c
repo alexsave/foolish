@@ -70,6 +70,14 @@ typedef struct {
     char username[24];
 } User;
 
+// Worst-case state_put(...) output for this build's caps: 16-byte header +
+// MAX_DECK (64) card bytes + 1 + MAX_BATTLES*2 (32*2) + MAX_PLAYERS*(3 +
+// MAX_HAND_SIZE) (8*(3+64)) + 1 + MAX_PLAYERS (8) = 690 bytes. Rounded up
+// with real margin for VIEW_CACHE below (h_ws/h_state's own wire buffers use
+// a much larger 65536 "don't think about it" cap; this one is sized because
+// it's paid MAX_PLAYERS times per game, see GameSlot.view_cache).
+#define VIEW_CACHE_CAP 1024
+
 typedef struct {
     bool used;
     char id[ID_LEN + 1];
@@ -84,6 +92,23 @@ typedef struct {
     // against spawning a second driver.
     pthread_cond_t cond;
     bool bot_running;
+    // PROFILE_HOTPATH.md "T1c": under WS+legal load, view.c:state_put was the
+    // single hottest function (~21-28% of instructions, inclusive) because
+    // /ws's hot loop called it on EVERY round trip, including a pure "poll"
+    // that changed nothing. `version` is bumped every time this slot's Game
+    // could have changed (a human's move applied via /action or /ws, a lobby
+    // transition, or a bot_drive cycle that applied >=1 action) — never on a
+    // no-op poll. `view_cache`/`view_cache_len` hold the last state_put(...)
+    // bytes computed for each seat, and `view_cache_version` records which
+    // `version` they were computed at; state_put_cached (below) recomputes
+    // only when the two disagree, else memcpy's the cached bytes. Same wire
+    // bytes either way — this is a pure CPU-cost cut, not a protocol change,
+    // so the client needs no changes and always sees fresh-as-of-version
+    // state on every round trip.
+    uint32_t version;
+    unsigned char view_cache[MAX_PLAYERS][VIEW_CACHE_CAP];
+    int      view_cache_len[MAX_PLAYERS];
+    uint32_t view_cache_version[MAX_PLAYERS];
 } GameSlot;
 
 static User     g_users[MAX_USERS];
@@ -199,6 +224,10 @@ static void *bot_thread(void *arg) {
         uint32_t hmask = game_human_mask(&s->game);   // the kernel's own human-seat mask
         BotDriveOut drv;
         bot_drive(&s->game, hmask, BOT_DRIVE_MAX_ACTIONS, 0, 0, &drv);   // ONE cycle, then returns
+        // A bot's move (or the game ending) changes the board exactly like a
+        // human's /action does — the /ws state cache must not stay stale
+        // just because no HTTP handler touched this slot this time.
+        if (drv.n > 0 || drv.ended >= 0) s->version++;
 
         if (drv.ended >= 0) break;   // the kernel already flipped g->status to GAME_OVER
         if (drv.stop == BOT_STOP_NO_ELIGIBLE) {              // a human's move is owed
@@ -383,6 +412,12 @@ static void h_create(Req *r, int fd) {
     memset(s, 0, sizeof *s);
     pthread_cond_init(&s->cond, NULL);
     s->used = true;
+    // s->version starts at 0 (memset); view_cache_version must start at a
+    // value that can NEVER equal it, or state_put_cached's very first call
+    // for a seat would see version==cache_version (both zeroed) and return
+    // the also-zeroed, never-computed view_cache_len (0 bytes) instead of
+    // actually serializing — a silent "client gets an empty state" bug.
+    for (int i = 0; i < MAX_PLAYERS; i++) s->view_cache_version[i] = (uint32_t)-1;
     gen_id(s->id, ID_LEN); game_ht_insert(s); snprintf(s->owner, sizeof s->owner, "%s", u->user_id);
     // Seat 0 = creator. Identity lives here; the kernel state is dealt at start.
     Game *g = &s->game; g->num_players = 1; g->status = GAME_STATUS_WAITING;
@@ -456,6 +491,12 @@ static void h_meta(Req *r, int fd) {
             g->players[i].status = ai ? PLAYER_STATUS_READY : PLAYER_STATUS_IDLE;
         }
     }
+    // Every branch above either mutates the roster/lobby state or is a no-op
+    // (an already-seated join, a re-ready), and bumping on a no-op is
+    // harmless (worst case: one extra state_put on the next /ws poll) — see
+    // GameSlot.version's doc. Unconditional beats re-deriving "did this
+    // branch actually change anything" per-branch for a rarely-called path.
+    s->version++;
     char out[80]; snprintf(out, sizeof out, "{\"game_id\":\"%s\",\"status\":%d}", s->id, g->status);
     pthread_mutex_unlock(&g_lock);
     respond(fd, 200, out);
@@ -484,7 +525,7 @@ static void h_action(Req *r, int fd) {
     // Human changed the board — wake the game-loop so bots respond (or notice
     // the game ended; awire_apply already settled g->status). If it's mid-sleep
     // it re-reads the state on its own.
-    if (ok) pthread_cond_signal(&s->cond);
+    if (ok) { pthread_cond_signal(&s->cond); s->version++; }   // real move -> the cached per-seat views are stale
     char out[96]; snprintf(out, sizeof out, "{\"ok\":%s,\"status\":%d}", ok ? "true" : "false", s->game.status);
     pthread_mutex_unlock(&g_lock);
     respond(fd, ok ? 200 : 400, out);
@@ -523,6 +564,40 @@ static void h_status(Req *r, int fd) {
     pthread_mutex_unlock(&g_lock);
     char out[16]; snprintf(out, sizeof out, "%d", st);
     respond(fd, 200, out);
+}
+
+// Serialize seat's masked view, reusing the cached bytes from GameSlot when
+// nothing has changed since they were computed (PROFILE_HOTPATH.md "T1c" —
+// see GameSlot's `version`/`view_cache*` fields above for the invariant).
+// MUST be called with g_lock held (same contract as a bare state_put call
+// here) and `seat` MUST already be known in-range (0 <= seat < num_players
+// <= MAX_PLAYERS — h_ws validates this at handshake time before ever calling
+// in; this function does not re-check, so it is not safe to point at an
+// unvalidated/attacker-controlled seat index).
+static int state_put_cached(GameSlot *s, int seat, unsigned char *out) {
+    if (s->view_cache_version[seat] != s->version) {
+        // Serialize straight into a scratch buffer wider than
+        // VIEW_CACHE_CAP first: state_put's real worst case fits well
+        // inside VIEW_CACHE_CAP today (see that constant's comment), but if
+        // a future kernel change ever grew a cap enough to overflow it,
+        // this falls back to "always recompute, never cache" for that seat
+        // instead of truncating a state update — correctness over the
+        // optimization.
+        unsigned char scratch[1 + 65536];
+        int n = state_put(&s->game, seat, scratch);
+        if (n < 0) n = 0;
+        if (n <= VIEW_CACHE_CAP) {
+            memcpy(s->view_cache[seat], scratch, (size_t)n);
+            s->view_cache_len[seat] = n;
+            s->view_cache_version[seat] = s->version;
+        } else {
+            memcpy(out, scratch, (size_t)n);
+            return n;
+        }
+    }
+    int n = s->view_cache_len[seat];
+    memcpy(out, s->view_cache[seat], (size_t)n);
+    return n;
 }
 
 // --------------------------------------------------------------------------
@@ -573,7 +648,7 @@ static void h_ws(Req *r, int fd) {
     // (h_state uses the same 65536 cap).
     unsigned char msg[1 + 65536];
     pthread_mutex_lock(&g_lock);
-    int slen = s->used ? state_put(&s->game, seat, msg + 1) : 0;
+    int slen = s->used ? state_put_cached(s, seat, msg + 1) : 0;
     pthread_mutex_unlock(&g_lock);
     msg[0] = 0;
     if (ws_send_frame(&wc, WS_OP_BIN, msg, slen + 1) < 0) return;
@@ -590,10 +665,18 @@ static void h_ws(Req *r, int fd) {
                 AwireAction a;
                 if (awire_decode(in, mlen, &a) && awire_apply(&s->game, seat, &a)) {
                     applied = true;
+                    s->version++;   // this seat's move can change every seat's view
                     pthread_cond_signal(&s->cond);   // same wakeup /action gives the bot game-loop
                 }
             }
-            slen = state_put(&s->game, seat, msg + 1);
+            // PROFILE_HOTPATH.md "T1c": on a pure poll (mlen==0 or an
+            // illegal/rejected move) this seat's view did NOT change, so
+            // state_put_cached memcpy's the bytes computed last time instead
+            // of re-running the kernel's full masked serialization — the
+            // single biggest measured cost in this loop (~21-31% of
+            // instructions under WS+legal load) was paying that on EVERY
+            // round trip, including the ~99% that were polls.
+            slen = state_put_cached(s, seat, msg + 1);
         } else {
             slen = 0;
         }

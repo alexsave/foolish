@@ -3,9 +3,11 @@
 #include "ws.h"
 
 #include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/uio.h>
 #include <unistd.h>
 
 // ---------------------------------------------------------------------------
@@ -141,6 +143,34 @@ int ws_write_full(int fd, const void *buf, int n) {
     return sent;
 }
 
+// Reliable writev(): loops on a short write by advancing past fully-written
+// iovecs and trimming a partially-written one, exactly like ws_write_full
+// does for a single buffer — a short write is normal POSIX behavior (not an
+// error), it just doesn't happen to show up in practice on loopback with
+// these small frame sizes. `iov` is mutated in place (the caller's array is
+// scratch for the duration of this call). Returns total bytes written, or -1.
+static int64_t writev_full(int fd, struct iovec *iov, int iovcnt) {
+    int64_t total = 0;
+    for (int i = 0; i < iovcnt; i++) total += (int64_t)iov[i].iov_len;
+    int64_t sent = 0;
+    while (sent < total) {
+        ssize_t w = writev(fd, iov, iovcnt);
+        if (w < 0) { if (errno == EINTR) continue; return -1; }
+        if (w == 0) return -1;
+        sent += w;
+        size_t rem = (size_t)w;
+        while (iovcnt > 0 && rem >= iov[0].iov_len) {
+            rem -= iov[0].iov_len;
+            iov++; iovcnt--;
+        }
+        if (iovcnt > 0 && rem > 0) {
+            iov[0].iov_base = (char *)iov[0].iov_base + rem;
+            iov[0].iov_len -= rem;
+        }
+    }
+    return total;
+}
+
 // ---------------------------------------------------------------------------
 // WsConn: buffered read (drains `pending` before touching the socket again)
 // ---------------------------------------------------------------------------
@@ -161,6 +191,22 @@ void ws_conn_prime(WsConn *c, const unsigned char *data, int len) {
     c->pending_off = 0;
 }
 
+// PROFILE_HOTPATH.md "T1c": ws_recv_message used to call ws_fill for each
+// framing field separately (2-byte header, maybe a 2/8-byte extended
+// length, maybe a 4-byte mask key, then the payload) — via the OLD ws_fill,
+// each of those that missed `pending` was its own EXACT-SIZE ws_read_full,
+// i.e. its own read() syscall (measured: 188,301 read() calls for 93,748
+// messages, ~2 per message, 12.56% of all instructions in that capture).
+// A compliant peer's whole frame (small poll or a few-hundred-byte state
+// push) almost always arrives as one TCP segment already sitting in the
+// kernel's receive buffer, so refilling with ONE opportunistic read() of up
+// to `pending`'s full capacity — instead of exactly the N bytes the current
+// parse step needs — usually captures the REST of the current frame (and
+// sometimes the start of the next one) in a single syscall, serving every
+// subsequent ws_fill call from `pending` with no syscall at all. Falls back
+// to looping (unchanged correctness: a short read here is normal POSIX
+// behavior, not an error) when the peer really did split the frame smaller
+// than one read.
 static int ws_fill(WsConn *c, unsigned char *out, int n) {
     int got = 0;
     while (got < n) {
@@ -171,9 +217,13 @@ static int ws_fill(WsConn *c, unsigned char *out, int n) {
             c->pending_off += take; got += take;
             continue;
         }
-        int r = ws_read_full(c->fd, out + got, n - got);
+        c->pending_off = 0;
+        c->pending_len = 0;
+        ssize_t r;
+        do { r = read(c->fd, c->pending, sizeof c->pending); } while (r < 0 && errno == EINTR);
         if (r < 0) return -1;
-        got += r;
+        if (r == 0) return -1;   // peer closed mid-frame
+        c->pending_len = (int)r;
     }
     return got;
 }
@@ -204,13 +254,23 @@ int ws_send_frame(WsConn *c, int opcode, const unsigned char *payload, int64_t l
         for (int i = 0; i < 4; i++) mkey[i] = (unsigned char)(rand() & 0xFF);
         memcpy(hdr + hn, mkey, 4); hn += 4;
     }
+    if (!c->mask_outgoing) {
+        // Server (unmasked) path — the measured hot one (PROFILE_HOTPATH.md
+        // "T1c": ws_send_frame was ~9-10% of instructions self-cost under
+        // WS+legal load). One writev() of header+payload replaces two
+        // write() syscalls per frame; no masking means no transform is
+        // needed before the payload goes out, so it can be handed to the
+        // kernel as-is instead of copied through a scratch buffer first.
+        if (len <= 0) return ws_write_full(c->fd, hdr, hn) == hn ? 0 : -1;
+        struct iovec iov[2] = {
+            { .iov_base = hdr, .iov_len = (size_t)hn },
+            { .iov_base = (void *)(uintptr_t)payload, .iov_len = (size_t)len },
+        };
+        return writev_full(c->fd, iov, 2) == hn + len ? (int)len : -1;
+    }
+
     if (ws_write_full(c->fd, hdr, hn) != hn) return -1;
     if (len <= 0) return 0;
-
-    if (!c->mask_outgoing) {
-        if (ws_write_full(c->fd, payload, (int)len) != (int)len) return -1;
-        return (int)len;
-    }
     // Masked send: XOR through a bounded scratch buffer so the caller's
     // payload (often a shared response buffer) is never mutated.
     unsigned char chunk[4096];
