@@ -55,6 +55,8 @@
 
 #define _GNU_SOURCE
 #include <arpa/inet.h>
+#include <errno.h>
+#include <fcntl.h>       // Stage 6: O_NONBLOCK
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <pthread.h>
@@ -66,6 +68,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>   // strncasecmp — the hand-rolled header scan below
+#include <sys/epoll.h>   // Stage 6: epoll-per-shard
+#include <sys/eventfd.h> // Stage 6: cross-thread worker wakeup (dispatcher handoff + bot_thread push)
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
@@ -156,6 +160,15 @@ typedef struct {
     int      view_cache_len[MAX_PLAYERS + 1];
     uint32_t view_cache_version[MAX_PLAYERS + 1];
 } GameSlot;
+
+// Stage 6 (epoll-per-shard, SERVER_SCALING.md "Stage 6"): forward-declared so
+// bot_thread (below) can call it at its existing version-bump site. Full
+// definition lives with the rest of the epoll worker machinery, near the end
+// of this file — it needs g_n_game_workers and the epoll worker array, both
+// declared later. A no-op whenever the server is running in --tls mode
+// (which keeps the pre-Stage-6 thread-per-connection /ws design — see that
+// section's own doc for why) — see the definition's `g_epoll_active` guard.
+static void epoll_notify_game_changed(GameSlot *s);
 
 static User     g_users[MAX_USERS];
 static GameSlot g_games[MAX_GAMES];
@@ -596,7 +609,13 @@ static void *bot_thread(void *arg) {
         // A bot's move (or the game ending) changes the board exactly like a
         // human's /action does — the /ws state cache must not stay stale
         // just because no HTTP handler touched this slot this time.
-        if (drv.n > 0 || drv.ended >= 0) { s->version++; game_mark_dirty(s); }
+        if (drv.n > 0 || drv.ended >= 0) {
+            s->version++; game_mark_dirty(s);
+            // Stage 6: the one cross-thread epoll seam — see
+            // epoll_notify_game_changed's own doc (near the epoll worker
+            // machinery, end of file) for why this specific call site is it.
+            epoll_notify_game_changed(s);
+        }
         // Stage 4 instrumentation (see g_bot_decisions/g_octogen_decisions'
         // doc above): count every action this cycle actually applied, and —
         // since drv.actions[] names the acting seat — how many of those
@@ -1299,11 +1318,26 @@ typedef struct {
     char *raw_buf;   // owns the bytes r.body/r.query/etc point into until freed
 } WsSpawnArg;
 
-static void *ws_conn_thread(void *argp) {
-    WsSpawnArg *sa = argp;
-    Conn *conn = &sa->conn;
-    Req *r = &sa->req;
+// --------------------------------------------------------------------------
+// Shared /ws logic (Stage 6, SERVER_SCALING.md "Stage 6 — epoll-per-shard"):
+// three helpers factored OUT of ws_conn_thread's body, byte-for-byte the same
+// checks/encodings it always ran, so the new epoll worker path (below) and
+// this thread-per-connection path (kept as the --tls fallback — see "STAGE 3:
+// TLS listener state" below) can never drift on auth, the handshake wire
+// bytes, or move-apply semantics. Splitting them out is a pure refactor: a
+// single-shard, single-connection run through ws_conn_thread produces
+// IDENTICAL bytes before and after this change.
+// --------------------------------------------------------------------------
 
+// Validates a /ws (or /ws?spectator=1) upgrade against the registry + this
+// game's roster — same checks this function's callers always made. Returns
+// NULL on any auth/seat failure (caller responds 401 and closes); on success
+// returns the owning GameSlot* with *out_seat/*out_spectator/*out_cache_idx/
+// *out_viewer resolved for the rest of the connection's life (see
+// state_put_cached's doc for why cache_idx and viewer are two different
+// values for a spectator).
+static GameSlot *ws_handshake_validate(Req *r, int *out_seat, bool *out_spectator,
+                                        int *out_cache_idx, int *out_viewer) {
     char gid[ID_LEN + 1] = {0}; int seat = -1;
     const char *gp = strstr(r->query, "game_id=");
     if (gp) { gp += 8; int i = 0; while (gp[i] && gp[i] != '&' && i < ID_LEN) { gid[i] = gp[i]; i++; } gid[i] = 0; }
@@ -1316,11 +1350,7 @@ static void *ws_conn_thread(void *argp) {
     pthread_mutex_lock(&g_registry_lock);
     User *u = user_by_token(r->token);
     GameSlot *s = game_by_id(gid);
-    if (!u || !s) {
-        pthread_mutex_unlock(&g_registry_lock);
-        respond(conn, 401, "{\"error\":\"ws auth\"}");
-        conn_close(conn); free(sa->raw_buf); free(sa); return NULL;
-    }
+    if (!u || !s) { pthread_mutex_unlock(&g_registry_lock); return NULL; }
     pthread_mutex_lock(&s->lock);
     pthread_mutex_unlock(&g_registry_lock);
     // Spectators: a real Bearer token is still required (same user_by_token
@@ -1336,33 +1366,32 @@ static void *ws_conn_thread(void *argp) {
         ok = seat >= 0 && seat < s->game.num_players && seat_of(s, user_id) == seat;
     }
     pthread_mutex_unlock(&s->lock);
-    if (!ok) {
-        respond(conn, 401, "{\"error\":\"ws auth\"}");
-        conn_close(conn); free(sa->raw_buf); free(sa); return NULL;
-    }
+    if (!ok) return NULL;
 
-    // Cache slot + state_put viewer for the rest of this connection's life:
-    // a seated client uses its own seat for both; a spectator uses the one
-    // shared SPECTATOR_CACHE_IDX slot and VIEW_SPECTATOR as the viewer (see
-    // state_put_cached's doc for why these are two separate values).
-    int cache_idx = spectator ? SPECTATOR_CACHE_IDX : seat;
-    int viewer    = spectator ? VIEW_SPECTATOR : seat;
+    *out_seat = seat; *out_spectator = spectator;
+    *out_cache_idx = spectator ? SPECTATOR_CACHE_IDX : seat;
+    *out_viewer    = spectator ? VIEW_SPECTATOR : seat;
+    return s;
+}
 
-    char accept[64];
-    if (!ws_accept_from_key(r->ws_key, accept, sizeof accept)) {
-        respond(conn, 400, "{\"error\":\"ws key\"}");
-        conn_close(conn); free(sa->raw_buf); free(sa); return NULL;
-    }
+// Encodes the 101 Switching Protocols response, THEN the immediate
+// post-handshake state push (current masked view, ok=0 — "here's where
+// things stand", not a move confirmation) into `conn` (a real fd, blocking —
+// ws_conn_thread; or a Stage 6 buffered Conn — the epoll dispatcher, see
+// conn.h). `accept` is the already-computed Sec-WebSocket-Accept value
+// (callers check ws_accept_from_key's own failure mode separately, since the
+// two paths respond to a bad key differently — see below). On success fills
+// *out_wc (mask_outgoing=0: server frames are never masked) and returns
+// true; false means "close the connection, nothing more to send."
+static bool ws_send_handshake_and_push(WsConn *out_wc, Conn conn, const char *accept,
+                                        GameSlot *s, int cache_idx, int viewer) {
     char resp[256];
     int n = snprintf(resp, sizeof resp,
         "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
         "Sec-WebSocket-Accept: %s\r\n\r\n", accept);
-    if (n <= 0 || ws_write_full(conn, resp, n) != n) { conn_close(conn); free(sa->raw_buf); free(sa); return NULL; }
+    if (n <= 0 || conn_write(&conn, resp, (size_t)n) != n) return false;
 
-    WsConn wc; ws_conn_init(&wc, *conn, /*mask_outgoing=*/0);   // server frames: never masked; copies *conn by value — see ws_conn_init's doc
-    if (r->body_len > 0) ws_conn_prime(&wc, (const unsigned char *)r->body, r->body_len);
-    free(sa->raw_buf); sa->raw_buf = NULL;   // primed into wc.pending — the raw request buffer is no longer referenced
-
+    ws_conn_init(out_wc, conn, /*mask_outgoing=*/0);
     // [ok:u8][state_put bytes] — sized for state_put's documented worst case
     // (h_state uses the same 65536 cap).
     unsigned char msg[1 + 65536];
@@ -1370,57 +1399,94 @@ static void *ws_conn_thread(void *argp) {
     int slen = s->used ? state_put_cached(s, cache_idx, viewer, msg + 1) : 0;
     pthread_mutex_unlock(&s->lock);
     msg[0] = 0;
-    if (ws_send_frame(&wc, WS_OP_BIN, msg, slen + 1) < 0) { conn_close(&wc.conn); free(sa); return NULL; }
+    return ws_send_frame(out_wc, WS_OP_BIN, msg, slen + 1) >= 0;
+}
+
+// Applies one received WS application message (a real awire move, or an
+// empty/rejected/spectator-sent poll) and produces the reply payload — the
+// exact per-message body ws_conn_thread's loop always ran. `in`/`mlen` is
+// the just-received message (mlen==0 is a plain poll); `msg` is
+// caller-owned, >= 1+65536 bytes. Returns the total reply length (>= 1),
+// [ok:u8][state_put_cached bytes]. MUST be called with NO lock held — takes
+// and releases s->lock itself, exactly once. `out_version` (may be NULL) is
+// set to `s->version` as observed under that SAME lock acquisition, right
+// before it releases — Stage 6's epoll worker uses this to record exactly
+// which version this connection's peer was just brought up to date with,
+// without a second, unlocked (racy) read of s->version afterward.
+static int ws_service_message(GameSlot *s, int seat, bool spectator, int cache_idx, int viewer,
+                               const unsigned char *in, int mlen, unsigned char *msg, uint32_t *out_version) {
+    bool applied = false;
+    int slen;
+    pthread_mutex_lock(&s->lock);
+    if (s->used) {
+        // Spectators MAY NOT submit moves (Stage 4): `!spectator` keeps ANY
+        // frame a spectator sends — empty or a well-formed move alike —
+        // from ever reaching awire_decode/awire_apply. It is silently
+        // treated as "send me the current state", same as a seated client's
+        // empty poll frame; `applied` stays false and the reply's ok byte is
+        // always 0.
+        if (!spectator && mlen > 0 && s->game.status == GAME_STATUS_PLAYING) {
+            AwireAction a;
+            if (awire_decode(in, mlen, &a)) {
+                // No g_kernel_lock (Stage 5, see h_action's identical
+                // pattern and the "Locking" doc above) — s->lock, held for
+                // this whole call, is enough.
+                bool applied_now = awire_apply(&s->game, seat, &a);
+                if (applied_now) {
+                    applied = true;
+                    s->version++;   // this seat's move can change every seat's view
+                    game_mark_dirty(s);
+                    pthread_cond_signal(&s->cond);   // same wakeup /action gives the bot game-loop
+                }
+            }
+        }
+        // PROFILE_HOTPATH.md "T1c": on a pure poll (mlen==0 or an
+        // illegal/rejected move, or ANY frame from a spectator) this view
+        // did NOT change, so state_put_cached memcpy's the bytes computed
+        // last time instead of re-running the kernel's full masked
+        // serialization.
+        slen = state_put_cached(s, cache_idx, viewer, msg + 1);
+    } else {
+        slen = 0;
+    }
+    if (out_version) *out_version = s->version;
+    pthread_mutex_unlock(&s->lock);
+    msg[0] = applied ? 1 : 0;
+    return slen + 1;
+}
+
+static void *ws_conn_thread(void *argp) {
+    WsSpawnArg *sa = argp;
+    Conn *conn = &sa->conn;
+    Req *r = &sa->req;
+
+    int seat; bool spectator; int cache_idx, viewer;
+    GameSlot *s = ws_handshake_validate(r, &seat, &spectator, &cache_idx, &viewer);
+    if (!s) {
+        respond(conn, 401, "{\"error\":\"ws auth\"}");
+        conn_close(conn); free(sa->raw_buf); free(sa); return NULL;
+    }
+
+    char accept[64];
+    if (!ws_accept_from_key(r->ws_key, accept, sizeof accept)) {
+        respond(conn, 400, "{\"error\":\"ws key\"}");
+        conn_close(conn); free(sa->raw_buf); free(sa); return NULL;
+    }
+    WsConn wc;
+    if (!ws_send_handshake_and_push(&wc, *conn, accept, s, cache_idx, viewer)) {
+        conn_close(conn); free(sa->raw_buf); free(sa); return NULL;
+    }
+    if (r->body_len > 0) ws_conn_prime(&wc, (const unsigned char *)r->body, r->body_len);
+    free(sa->raw_buf); sa->raw_buf = NULL;   // primed into wc.pending — the raw request buffer is no longer referenced
 
     unsigned char in[4096];
+    unsigned char msg[1 + 65536];
     int opcode;
     int mlen;
     while ((mlen = ws_recv_message(&wc, in, sizeof in, &opcode)) >= 0) {
         if (opcode != WS_OP_BIN && opcode != WS_OP_TEXT) continue;
-        bool applied = false;
-        pthread_mutex_lock(&s->lock);
-        if (s->used) {
-            // Spectators MAY NOT submit moves (Stage 4): `!spectator` keeps
-            // ANY frame a spectator sends — empty or a well-formed move
-            // alike — from ever reaching awire_decode/awire_apply. It is
-            // silently treated as "send me the current state", same as a
-            // seated client's empty poll frame; `applied` stays false and the
-            // reply's ok byte is always 0. This is a deliberate ignore, not a
-            // disconnect — a spectator client that (by bug or by a hostile
-            // peer) sends a move frame just gets back the current masked
-            // view, same as always.
-            if (!spectator && mlen > 0 && s->game.status == GAME_STATUS_PLAYING) {
-                AwireAction a;
-                if (awire_decode(in, mlen, &a)) {
-                    // No g_kernel_lock (Stage 5, see h_action's identical
-                    // pattern and the "Locking" doc above) — s->lock, held
-                    // for this whole frame, is enough now.
-                    bool applied_now = awire_apply(&s->game, seat, &a);
-                    if (applied_now) {
-                        applied = true;
-                        s->version++;   // this seat's move can change every seat's view
-                        game_mark_dirty(s);
-                        pthread_cond_signal(&s->cond);   // same wakeup /action gives the bot game-loop
-                    }
-                }
-            }
-            // PROFILE_HOTPATH.md "T1c": on a pure poll (mlen==0 or an
-            // illegal/rejected move, or ANY frame from a spectator) this
-            // view did NOT change, so state_put_cached memcpy's the bytes
-            // computed last time instead of re-running the kernel's full
-            // masked serialization — the single biggest measured cost in
-            // this loop (~21-31% of instructions under WS+legal load) was
-            // paying that on EVERY round trip, including the ~99% that were
-            // polls. Spectators share this exact same cache discipline, just
-            // off the one shared SPECTATOR_CACHE_IDX slot (cache_idx) instead
-            // of a per-seat one.
-            slen = state_put_cached(s, cache_idx, viewer, msg + 1);
-        } else {
-            slen = 0;
-        }
-        pthread_mutex_unlock(&s->lock);
-        msg[0] = applied ? 1 : 0;
-        if (ws_send_frame(&wc, WS_OP_BIN, msg, slen + 1) < 0) break;
+        int mtotal = ws_service_message(s, seat, spectator, cache_idx, viewer, in, mlen, msg, NULL);
+        if (ws_send_frame(&wc, WS_OP_BIN, msg, mtotal) < 0) break;
     }
     conn_close(&wc.conn);
     free(sa);
@@ -1568,6 +1634,687 @@ static void *worker_thread(void *arg) {
     return NULL;
 }
 
+// ==========================================================================
+// STAGE 6 — epoll-per-shard connection I/O (SERVER_SCALING.md "Stage 6").
+//
+// T2a (SERVER_SCALING.md "Deliverable 2 — WS design: (B), not (A)") deferred
+// this on purpose: a thread per live /ws connection was the correct,
+// Helgrind-provable-clean choice to ship first, with the tradeoff stated
+// plainly — ~0.9MB/connection (thread stack) and, at real scale, scheduler
+// oversubscription (Stage 5 measured ~300+ runnable OS threads on 4 cores at
+// 160 games, capping bot-compute CPU engagement at ~80% even with the
+// kernel's own serialization removed). This section is design (A): each of
+// the `g_n_game_workers` game-worker threads now runs its OWN epoll loop,
+// single-threaded, over exactly the connections whose game_id hashes to it
+// (the SAME hash `classify_queue` already used to shard the old typed HTTP
+// queues) — no dedicated OS thread per connection, plaintext or `/ws`,
+// one-shot or persistent.
+//
+// SCOPE (stated up front, the same "correct partial beats broken unified"
+// posture the task itself allows): this section covers **plaintext**
+// connections only. Non-blocking OpenSSL (SSL_read/SSL_write's
+// WANT_READ/WANT_WRITE state machine re-armed against epoll's read/write
+// readiness) is real, fiddly, per-direction state that this stage did not
+// implement — seeSERVER_SCALING.md's "Stage 6" section for the honest
+// writeup. A `--tls` server instead keeps the ENTIRE pre-Stage-6 design:
+// thread-per-`/ws`-connection (ws_conn_thread) + the typed HTTP work-queue
+// pools (g_game_q/g_meta_q/worker_thread, both still fully intact above,
+// unchanged) — see main()'s branch on `g_tls_ctx` for exactly where the two
+// designs split.
+//
+// DESIGN
+//   - Each epoll worker (`Worker`, below) owns one `epoll_fd`, one `eventfd`
+//     (`wake_evfd` — the cross-thread wakeup primitive, used for TWO
+//     things: the dispatcher handing off a freshly-accepted fd, and
+//     bot_thread signaling a state change — see epoll_notify_game_changed's
+//     doc), a bounded mutex-guarded handoff queue (dispatcher produces,
+//     this worker alone consumes), and a doubly-linked list of its live
+//     `/ws` connections (`ws_head` — this worker's own thread is the ONLY
+//     reader/writer of that list, so it needs no lock of its own; see
+//     "Threading" below).
+//   - The DISPATCHER (main()'s accept loop, unchanged as the single accept()
+//     thread) still fully reads+parses each request BLOCKING, exactly as
+//     every earlier stage did (read_and_parse_request) — see
+//     SERVER_SCALING.md's "Stage 6" section for why this is a deliberate,
+//     documented scope decision rather than a deviation: it keeps 100% of
+//     the existing request-parsing code (and the /ws handshake's auth+
+//     upgrade logic) completely unchanged, and it does not reintroduce
+//     thread-per-connection — no thread is spawned either way, the fd is
+//     just handed to a shard's epoll loop once the dispatcher is done with
+//     it. What's NEW is what happens AFTER the read: instead of spawning a
+//     `ws_conn_thread` or pushing a `WorkItem` onto a typed queue, the
+//     dispatcher builds the response (or the 101 handshake + initial state
+//     push) into a fresh `EConn`'s buffered output (`conn_init_buffered` —
+//     see conn.h) by calling the SAME handler code (route()/h_action/
+//     h_state/h_meta/ws_handshake_validate/ws_send_handshake_and_push) this
+//     file has always used, flips the fd non-blocking, and hands it to
+//     `game_worker_index(game_id)`'s `Worker` over the handoff queue. The
+//     worker's job from then on is purely non-blocking flush (one-shot) or
+//     the ongoing async WS frame loop (`/ws`) — it never re-does any of the
+//     auth/business logic the dispatcher already ran.
+//   - Non-blocking WS framing: `wsasync_feed` (below) is a byte-for-byte
+//     reimplementation of ws_recv_message's (ws.c) RFC 6455 decode —
+//     2-byte header, optional 2/8-byte extended length, optional 4-byte
+//     mask, payload, control frames answered inline, CONT-frame reassembly
+//     — restructured as an explicit, resumable phase machine that consumes
+//     bytes fed in from a non-blocking read() instead of blocking on
+//     conn_read/ws_fill. See its own doc for the exact contract.
+//   - The one cross-thread seam: bot_thread mutates a `GameSlot` a worker
+//     also owns connections for. See epoll_notify_game_changed +
+//     worker_push_stale's docs — this is the piece Helgrind's job is to
+//     prove race-clean (SERVER_SCALING.md "Stage 6").
+//
+// THREADING
+//   Each `Worker`'s epoll loop is fully SINGLE-THREADED over its own shard:
+//   only that worker's own thread ever touches its `EConn`s, its `ws_head`
+//   list, or calls epoll_ctl on its `epoll_fd` — so none of that needs a
+//   lock. The two things that ARE touched cross-thread are (a) the handoff
+//   queue (dispatcher produces, the worker consumes — guarded by
+//   `handoff_mtx`, the same bounded-queue discipline `WorkQueue` above
+//   uses) and (b) `GameSlot.lock` itself (already the existing, proven
+//   per-game lock every path in this file goes through — bot_thread and a
+//   worker's WS-message handling both take it exactly the way bot_thread
+//   and ws_conn_thread always have).
+// ==========================================================================
+
+#define EPOLL_MAX_EVENTS   256
+#define WS_IN_CAP          4096                  // incoming client frame cap — matches ws_conn_thread's `in[4096]`; client->server messages are always small (a move or a poll)
+#define WS_OUT_CAP         4096                  // one reply frame's cap — real worst case is 690B (VIEW_CACHE_CAP's own doc); generous margin, same sizing discipline
+#define WS_WBUF_CAP        (2 * WS_OUT_CAP)      // room for one in-flight (unflushed) frame + one freshly queued push, per live /ws connection
+#define ONESHOT_WBUF_CAP   (1 + 65536 + 512)     // one-shot HTTP response cap — h_state's raw (uncached) state_put can be up to 65536; +512 header margin
+
+typedef enum { ECONN_ONE_SHOT, ECONN_WS } EConnKind;
+
+// wsasync_feed's return contract (see its own doc).
+#define WSF_ERROR     (-1)
+#define WSF_NEED_MORE   0
+#define WSF_MESSAGE     1
+
+// Incremental, resumable WS frame-parse phase — see wsasync_feed.
+typedef enum { WSP_HDR2, WSP_EXTLEN, WSP_MASK, WSP_PAYLOAD } WsParsePhase;
+
+typedef struct EConn {
+    int fd;
+    EConnKind kind;
+
+    // Non-blocking WRITE side: wbuf[woff..wlen) are the bytes still owed to
+    // the peer. Filled by whichever handler produced a reply — a one-shot
+    // route() call, ws_send_handshake_and_push, or ws_send_frame appending
+    // through `wc_out` (a buffered Conn — conn.h — wrapping THIS SAME
+    // wbuf), never a real write() until the epoll loop flushes it. Touched
+    // only by this EConn's owning worker thread.
+    unsigned char *wbuf;
+    int wbuf_cap, wlen, woff;
+    bool want_epollout;      // whether EPOLLOUT is currently armed in epoll_ctl for this fd
+    bool close_after_flush;  // ECONN_ONE_SHOT: close once wbuf fully drains (every one-shot response ends the connection, same as the old `Connection: close`)
+
+    // ECONN_WS fields (unused for ECONN_ONE_SHOT):
+    GameSlot *slot;
+    int seat;
+    bool spectator;
+    int cache_idx, viewer;             // see state_put_cached's doc for why these differ for a spectator
+    uint32_t last_pushed_version;      // s->version as of the last reply/push THIS connection's peer actually received
+    WsConn wc_out;                     // output-only WsConn wrapping wbuf via a buffered Conn (conn.h) — see econn_reserve_out
+    // Incremental parser state (wsasync_feed):
+    WsParsePhase phase;
+    unsigned char hdrbuf[8];
+    int hdr_have, hdr_need;
+    int fin, op, masked;
+    int64_t frame_len;
+    unsigned char mkey[4];
+    int64_t payload_got;
+    bool frame_validated;               // has THIS frame's header (new-vs-continuation, oversized) already been validated? See wsasync_feed's WSP_PAYLOAD case.
+    int msg_opcode;                    // -1 iff not currently assembling a fragmented data message
+    int msg_total;                     // bytes assembled so far into msg_buf
+    int last_msg_len;                  // set alongside a WSF_MESSAGE return — see wsasync_feed's doc
+    unsigned char msg_buf[WS_IN_CAP];
+    unsigned char ctrl_buf[125];       // control-frame (PING/PONG/CLOSE) payload scratch — RFC 6455 5.5: control frames are never > 125 bytes
+
+    struct EConn *prev, *next;   // intrusive list — EITHER this worker's handoff queue (via `next` only, before the handoff completes) OR its active ws_head list (both, after) — the two lifetimes never overlap
+} EConn;
+
+typedef struct Worker {
+    int idx;
+    int epfd;
+    int wake_evfd;
+    pthread_mutex_t handoff_mtx;
+    EConn *handoff_head, *handoff_tail;   // dispatcher-produced, this worker alone consumes (drain_handoff_queue)
+    EConn *ws_head;                       // this worker's live /ws connections — single-threaded, no lock (see "Threading" above)
+} Worker;
+
+static Worker g_workers[MAX_GAME_WORKERS];
+// Set true only when main() actually starts the epoll worker pool
+// (plaintext mode). epoll_notify_game_changed no-ops while false, so a
+// --tls server (which never populates g_workers) never touches it.
+static bool g_epoll_active = false;
+
+// Same shard hash classify_queue's game-worker routing has always used
+// (hash_str(game_id) % g_n_game_workers) — reused here so a game's HTTP
+// requests, its /ws connections, AND its bot_thread's push notifications all
+// agree on exactly one owning worker.
+static int game_worker_index(const char *game_id) {
+    unsigned long h = (game_id && game_id[0]) ? hash_str(game_id) : 0;
+    return (int)(h % (unsigned long)g_n_game_workers);
+}
+
+// The one cross-thread seam (SERVER_SCALING.md "Stage 6"): bot_thread (its
+// own per-game trampoline thread) just mutated `s` — a bot's move landed, or
+// the game ended — and bumped s->version under s->lock, same as every other
+// mutation site in this file. Under the OLD thread-per-connection /ws
+// design that was enough by itself: every live connection was blocked in
+// its OWN thread's ws_recv_message, so the NEXT client poll would simply
+// see the fresh version. Under epoll, a connection sitting idle is NOT
+// blocked in a read — it is just an fd registered in its worker's epoll
+// set, and nothing else touches it until either the peer sends a frame or
+// something pokes the worker. This function is that poke: a single eventfd
+// write (no payload — it doesn't say WHICH game changed, since the scan
+// this triggers, worker_push_stale, is cheap and only runs once per actual
+// bot decision, not per idle poll) wakes the owning worker's epoll_wait,
+// which then re-scans every /ws connection it owns for a stale cached view
+// and pushes fresh state to each one that needs it. See worker_push_stale's
+// doc for the two call sites (this one, and the fast per-request path used
+// when a worker's own handling of a client's frame changed a game its OTHER
+// connections are watching).
+static void epoll_notify_game_changed(GameSlot *s) {
+    if (!g_epoll_active) return;
+    Worker *w = &g_workers[game_worker_index(s->id)];
+    uint64_t one = 1;
+    ssize_t wr = write(w->wake_evfd, &one, sizeof one);
+    (void)wr;   // best-effort wake; eventfd only fails to accept a write at counter saturation (~2^63) — unreachable here
+}
+
+// Forward declarations: wsasync_feed (below) queues inline control-frame
+// replies (PONG, a CLOSE echo) through these two — full definitions are
+// with the rest of the EConn output-buffering machinery, just after it.
+static bool econn_reserve_out(EConn *ec, int need);
+static void econn_commit_out(EConn *ec);
+
+// --------------------------------------------------------------------------
+// wsasync_feed — incremental, resumable RFC 6455 frame decode.
+//
+// Mirrors ws_recv_message's (ws.c) exact per-field logic and control-frame/
+// fragmentation semantics — see that function's own comment for the wire
+// format this replicates — but consumes bytes fed in from a non-blocking
+// read() instead of blocking on conn_read/ws_fill, resuming exactly where
+// the previous call left off (all resumable state lives in `ec`). PING is
+// answered with PONG inline (queued into ec->wbuf via ec->wc_out, same as
+// ws_recv_message's own `ws_send_frame(c, WS_OP_PONG, ...); continue;`);
+// PONG is swallowed; CLOSE gets a best-effort echo (matching
+// ws_send_close(c, 1000)) and ends the connection — none of the three ever
+// surface to the caller as a "message".
+//
+// Returns:
+//   WSF_MESSAGE   — one complete data message (TEXT or BIN, fully
+//                   reassembled across any CONT fragments) is ready:
+//                   ec->msg_buf[0..ec->last_msg_len) holds it. *consumed
+//                   says how many of `in`'s `n` bytes this call used — there
+//                   may be bytes for the START of the NEXT frame left over
+//                   in `in[*consumed..n)`; the caller must re-feed those
+//                   (after handling this message) before reading the socket
+//                   again.
+//   WSF_NEED_MORE — no complete message yet; *consumed == n (every input
+//                   byte was used). Caller should wait for more EPOLLIN.
+//   WSF_ERROR     — protocol violation, an oversized message (> WS_IN_CAP),
+//                   or a CLOSE frame. Caller must tear the connection down;
+//                   *consumed is NOT reliably set on every WSF_ERROR return
+//                   path (every caller ignores it in this case — the
+//                   connection is going away regardless).
+static int wsasync_feed(EConn *ec, const unsigned char *in, int n, int *consumed) {
+    int off = 0;
+    for (;;) {
+        switch (ec->phase) {
+        case WSP_HDR2: {
+            int take = 2 - ec->hdr_have; if (take > n - off) take = n - off;
+            if (take > 0) { memcpy(ec->hdrbuf + ec->hdr_have, in + off, (size_t)take); ec->hdr_have += take; off += take; }
+            if (ec->hdr_have < 2) { *consumed = off; return WSF_NEED_MORE; }
+            ec->fin    = (ec->hdrbuf[0] >> 7) & 1;
+            ec->op     = ec->hdrbuf[0] & 0x0F;
+            ec->masked = (ec->hdrbuf[1] >> 7) & 1;
+            int64_t len7 = ec->hdrbuf[1] & 0x7F;
+            ec->hdr_have = 0;
+            ec->frame_validated = false;   // a brand-new frame starts here — see WSP_PAYLOAD's doc
+            if (len7 == 126)      { ec->hdr_need = 2; ec->phase = WSP_EXTLEN; }
+            else if (len7 == 127) { ec->hdr_need = 8; ec->phase = WSP_EXTLEN; }
+            else { ec->frame_len = len7; ec->phase = ec->masked ? WSP_MASK : WSP_PAYLOAD; }
+            continue;
+        }
+        case WSP_EXTLEN: {
+            int take = ec->hdr_need - ec->hdr_have; if (take > n - off) take = n - off;
+            if (take > 0) { memcpy(ec->hdrbuf + ec->hdr_have, in + off, (size_t)take); ec->hdr_have += take; off += take; }
+            if (ec->hdr_have < ec->hdr_need) { *consumed = off; return WSF_NEED_MORE; }
+            int64_t len = 0;
+            for (int i = 0; i < ec->hdr_need; i++) len = (len << 8) | ec->hdrbuf[i];
+            if (len < 0) return WSF_ERROR;   // top bit set on the 8-byte form is a protocol violation per spec
+            ec->frame_len = len;
+            ec->hdr_have = 0;
+            ec->phase = ec->masked ? WSP_MASK : WSP_PAYLOAD;
+            continue;
+        }
+        case WSP_MASK: {
+            int take = 4 - ec->hdr_have; if (take > n - off) take = n - off;
+            if (take > 0) { memcpy(ec->mkey + ec->hdr_have, in + off, (size_t)take); ec->hdr_have += take; off += take; }
+            if (ec->hdr_have < 4) { *consumed = off; return WSF_NEED_MORE; }
+            ec->hdr_have = 0;
+            ec->phase = WSP_PAYLOAD;
+            continue;
+        }
+        case WSP_PAYLOAD: {
+            bool ctrl = (ec->op == WS_OP_PING || ec->op == WS_OP_PONG || ec->op == WS_OP_CLOSE);
+            // Frame-header validation (new-vs-continuation bookkeeping, the
+            // oversized check) MUST run EXACTLY ONCE per frame. wsasync_feed
+            // can be called many times while a single frame's payload
+            // trickles in across several non-blocking reads (WSF_NEED_MORE
+            // below, resumed on the next EPOLLIN) — including calls that
+            // land here with ZERO payload bytes yet available (the header
+            // and mask arrived, but the payload hasn't started at all) — so
+            // neither "first call" nor "payload_got == 0" reliably means
+            // "not yet validated" (a real, caught-live bug: a header+mask
+            // that fully arrives with 0 payload bytes in the SAME read, then
+            // the payload trickles in on a LATER read, hits this case again
+            // with payload_got still 0 — see SERVER_SCALING.md "Stage 6").
+            // `ec->frame_validated` is the actual per-FRAME signal: reset to
+            // false exactly once, when WSP_HDR2 starts parsing this frame's
+            // 2-byte header, and set true here the first time validation
+            // actually runs for it — correct regardless of how the
+            // header/mask/payload bytes happen to split across reads.
+            if (!ec->frame_validated) {
+                ec->frame_validated = true;
+                if (ctrl && ec->frame_len > 125) return WSF_ERROR;   // control frames are never fragmented/oversized (RFC 6455 5.5)
+                if (!ctrl) {
+                    if (ec->op != WS_OP_CONT && ec->op != WS_OP_TEXT && ec->op != WS_OP_BIN) return WSF_ERROR;
+                    if (ec->op != WS_OP_CONT) {
+                        if (ec->msg_opcode != -1) return WSF_ERROR;   // a new message started before the last one finished
+                        ec->msg_opcode = ec->op;
+                    } else if (ec->msg_opcode == -1) {
+                        return WSF_ERROR;   // continuation with nothing to continue
+                    }
+                    if (ec->msg_total + ec->frame_len > (int64_t)WS_IN_CAP) return WSF_ERROR;   // oversized for this buffer
+                }
+            }
+            unsigned char *dst = ctrl ? ec->ctrl_buf : ec->msg_buf + ec->msg_total;
+            int take = (int)(ec->frame_len - ec->payload_got); if (take > n - off) take = n - off;
+            if (take > 0) { memcpy(dst + ec->payload_got, in + off, (size_t)take); ec->payload_got += take; off += take; }
+            if (ec->payload_got < ec->frame_len) { *consumed = off; return WSF_NEED_MORE; }
+
+            if (ec->masked) for (int64_t i = 0; i < ec->frame_len; i++) dst[i] ^= ec->mkey[i & 3];
+            int op = ec->op; int64_t flen = ec->frame_len;
+            ec->payload_got = 0; ec->hdr_have = 0; ec->phase = WSP_HDR2;   // ready for the next frame either way
+
+            if (ctrl) {
+                if (op == WS_OP_PING) {
+                    if (econn_reserve_out(ec, (int)flen + 14)) {
+                        ws_send_frame(&ec->wc_out, WS_OP_PONG, ec->ctrl_buf, flen);
+                        econn_commit_out(ec);
+                    }
+                    continue;   // more frames may remain in this same chunk
+                }
+                if (op == WS_OP_PONG) continue;
+                // CLOSE: best-effort echo (matches ws_send_close(c, 1000)), then tear down.
+                if (econn_reserve_out(ec, 16)) {
+                    unsigned char payload[2] = { 0x03, 0xE8 };   // 1000, network byte order
+                    ws_send_frame(&ec->wc_out, WS_OP_CLOSE, payload, 2);
+                    econn_commit_out(ec);
+                }
+                *consumed = off;
+                return WSF_ERROR;
+            }
+            ec->msg_total += (int)flen;
+            if (ec->fin) {
+                *consumed = off;
+                ec->last_msg_len = ec->msg_total;
+                ec->msg_total = 0; ec->msg_opcode = -1;
+                return WSF_MESSAGE;
+            }
+            continue;   // more fragments to come
+        }
+        }
+    }
+}
+
+// --------------------------------------------------------------------------
+// EConn output buffering + epoll bookkeeping — all single-threaded per
+// worker (see "Threading" above), so none of this needs a lock.
+// --------------------------------------------------------------------------
+
+// Prepares to append `need` more bytes to ec->wbuf: compacts away any
+// already-flushed prefix first (slides the unflushed [woff,wlen) tail down
+// to offset 0), so backpressure that has only PARTIALLY drained a previous
+// write never blocks a new append from reusing that reclaimed space. Fills
+// ec->wc_out with a buffered Conn (conn.h) over the (now-compacted) tail —
+// callers append through `ec->wc_out` (ws_send_frame et al.), then MUST call
+// econn_commit_out to publish the new length. Returns false (appends
+// nothing) iff there truly isn't `need` bytes of room even after compacting
+// — a real backpressure case (this connection's peer has stopped reading
+// entirely) — callers drop that specific send rather than risk writing a
+// partial/corrupt frame into the buffer.
+static bool econn_reserve_out(EConn *ec, int need) {
+    if (ec->woff > 0) {
+        int rem = ec->wlen - ec->woff;
+        if (rem > 0) memmove(ec->wbuf, ec->wbuf + ec->woff, (size_t)rem);
+        ec->wlen = rem; ec->woff = 0;
+    }
+    if (ec->wlen + need > ec->wbuf_cap) return false;
+    Conn buffered; conn_init_buffered(&buffered, ec->wbuf, ec->wbuf_cap);
+    buffered.buf_len = ec->wlen;   // resume appending after whatever's already queued
+    ws_conn_init(&ec->wc_out, buffered, /*mask_outgoing=*/0);   // server frames are never masked
+    return true;
+}
+static void econn_commit_out(EConn *ec) { ec->wlen = ec->wc_out.conn.buf_len; }
+
+static void econn_set_epollout(Worker *w, EConn *ec, bool want) {
+    if (want == ec->want_epollout) return;
+    ec->want_epollout = want;
+    uint32_t events = (uint32_t)((ec->kind == ECONN_WS ? EPOLLIN : 0) | (want ? EPOLLOUT : 0));
+    struct epoll_event ev = { .events = events, .data.ptr = ec };
+    epoll_ctl(w->epfd, EPOLL_CTL_MOD, ec->fd, &ev);
+}
+
+static void econn_close(Worker *w, EConn *ec) {
+    epoll_ctl(w->epfd, EPOLL_CTL_DEL, ec->fd, NULL);
+    close(ec->fd);
+    if (ec->kind == ECONN_WS) {
+        if (ec->prev) ec->prev->next = ec->next; else if (w->ws_head == ec) w->ws_head = ec->next;
+        if (ec->next) ec->next->prev = ec->prev;
+    }
+    free(ec->wbuf);
+    free(ec);
+}
+
+// Non-blocking flush of ec->wbuf[woff..wlen). Returns false iff `ec` was
+// closed (a real I/O error, or — ECONN_ONE_SHOT with close_after_flush — a
+// completed flush): the caller must not touch `ec` again after a false
+// return. On EAGAIN, arms EPOLLOUT and returns true (still open, not yet
+// fully drained) — the next EPOLLOUT event resumes the flush.
+static bool econn_try_flush(Worker *w, EConn *ec) {
+    while (ec->woff < ec->wlen) {
+        ssize_t wr = write(ec->fd, ec->wbuf + ec->woff, (size_t)(ec->wlen - ec->woff));
+        if (wr < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) { econn_set_epollout(w, ec, true); return true; }
+            if (errno == EINTR) continue;
+            econn_close(w, ec); return false;
+        }
+        if (wr == 0) { econn_close(w, ec); return false; }
+        ec->woff += (int)wr;
+    }
+    ec->woff = ec->wlen = 0;
+    econn_set_epollout(w, ec, false);
+    if (ec->kind == ECONN_ONE_SHOT && ec->close_after_flush) { econn_close(w, ec); return false; }
+    return true;
+}
+
+// Pushes fresh state to every active /ws connection THIS worker owns whose
+// cached view is stale (ec->last_pushed_version != its game's current
+// s->version), skipping `skip` and, when `game` is non-NULL, every OTHER
+// game too. ONE call site: the eventfd-triggered path, woken by
+// epoll_notify_game_changed from bot_thread on a DIFFERENT thread — since
+// the eventfd carries no payload (which game changed), this is called with
+// game=NULL, skip=NULL and checks every /ws connection this worker owns.
+// Bounded by how many connections one shard holds, and only runs once per
+// actual bot decision (not per idle client poll, not per human move), so
+// it's cheap in practice.
+//
+// Deliberately NOT also called inline after a HUMAN move (an earlier
+// version of this file did — see handle_ws_readable's own comment at its
+// call site): at multi-seat scale, proactively fanning a push out to every
+// OTHER seat on every human move created a thundering herd — each push
+// wakes every other client, which immediately re-checks eligibility and
+// often re-submits, racing the others for the same now-stale window —
+// caught live measuring the WS+legal hammer's applied/submitted ratio (see
+// SERVER_SCALING.md "Stage 6"). The task's own framing of this push was
+// specifically the bot_thread/cross-thread case (a bot's move, which a
+// human can't otherwise notice without polling); this keeps it scoped to
+// exactly that — human-to-human visibility stays the same as every earlier
+// stage: a seat learns about another seat's move on its own next round trip.
+// Same state_put_cached discipline every other reply in this file uses —
+// this is a pure fan-out of that same cached-view read, not a new
+// serialization path.
+static void worker_push_stale(Worker *w, GameSlot *game, EConn *skip) {
+    static _Thread_local unsigned char scratch[1 + 65536];   // this worker's own thread only — never shared
+    for (EConn *ec = w->ws_head; ec; ec = ec->next) {
+        if (ec == skip) continue;
+        if (game && ec->slot != game) continue;
+        GameSlot *s = ec->slot;
+        pthread_mutex_lock(&s->lock);
+        uint32_t v = s->version;
+        bool stale = ec->last_pushed_version != v;
+        int slen = 0;
+        if (stale) { scratch[0] = 0; slen = s->used ? state_put_cached(s, ec->cache_idx, ec->viewer, scratch + 1) : 0; }
+        pthread_mutex_unlock(&s->lock);
+        if (!stale) continue;
+        int mtotal = slen + 1;
+        if (econn_reserve_out(ec, mtotal + 14) && ws_send_frame(&ec->wc_out, WS_OP_BIN, scratch, mtotal) >= 0) {
+            econn_commit_out(ec);
+            ec->last_pushed_version = v;
+            if (!econn_try_flush(w, ec)) continue;   // may have closed ec on a real write error — nothing left to do for it
+        }
+    }
+}
+
+// Drains fds handed off by the dispatcher (epoll_dispatch_ws/
+// epoll_dispatch_oneshot) into this worker's own epoll set. Each arrives
+// with its FIRST reply/handshake already encoded into wbuf (the dispatcher
+// built it via the buffered-Conn trick before handing the fd over) — this
+// just registers it for EPOLLOUT (to flush that) and, for a /ws connection,
+// EPOLLIN too (to read whatever the client sends next) and links it into
+// ws_head.
+static void drain_handoff_queue(Worker *w) {
+    pthread_mutex_lock(&w->handoff_mtx);
+    EConn *head = w->handoff_head;
+    w->handoff_head = w->handoff_tail = NULL;
+    pthread_mutex_unlock(&w->handoff_mtx);
+    while (head) {
+        EConn *ec = head; head = head->next; ec->next = NULL;
+        if (ec->wlen <= ec->woff) { econn_close(w, ec); continue; }   // nothing to send at all — shouldn't happen, defensive
+        uint32_t events = (uint32_t)((ec->kind == ECONN_WS ? EPOLLIN : 0) | EPOLLOUT);
+        ec->want_epollout = true;
+        struct epoll_event ev = { .events = events, .data.ptr = ec };
+        if (epoll_ctl(w->epfd, EPOLL_CTL_ADD, ec->fd, &ev) < 0) { close(ec->fd); free(ec->wbuf); free(ec); continue; }
+        if (ec->kind == ECONN_WS) {
+            ec->prev = NULL; ec->next = w->ws_head;
+            if (w->ws_head) w->ws_head->prev = ec;
+            w->ws_head = ec;
+        }
+    }
+}
+
+// EPOLLIN on a live /ws connection: drain what's available non-blockingly,
+// feed it through wsasync_feed, and for each complete message, apply it
+// (ws_service_message — the SAME function ws_conn_thread uses) and reply.
+static void handle_ws_readable(Worker *w, EConn *ec) {
+    for (;;) {
+        unsigned char tmp[8192];
+        ssize_t r = read(ec->fd, tmp, sizeof tmp);
+        if (r < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) return;
+            if (errno == EINTR) continue;
+            econn_close(w, ec); return;
+        }
+        if (r == 0) { econn_close(w, ec); return; }   // peer closed
+        int off = 0;
+        while (off < (int)r) {
+            int consumed = 0;
+            int rc = wsasync_feed(ec, tmp + off, (int)r - off, &consumed);
+            off += consumed;
+            if (rc == WSF_MESSAGE) {
+                unsigned char reply[1 + 65536];
+                uint32_t v;
+                int mtotal = ws_service_message(ec->slot, ec->seat, ec->spectator, ec->cache_idx, ec->viewer,
+                                                 ec->msg_buf, ec->last_msg_len, reply, &v);
+                if (econn_reserve_out(ec, mtotal + 14) && ws_send_frame(&ec->wc_out, WS_OP_BIN, reply, mtotal) >= 0) {
+                    econn_commit_out(ec);
+                    ec->last_pushed_version = v;
+                }
+                if (!econn_try_flush(w, ec)) return;   // closed (real write error) — ec is gone
+                // Deliberately NOT fanning this out to the game's OTHER
+                // connections here (unlike the bot_thread/eventfd path
+                // below) — see worker_push_stale's doc for why: at
+                // multi-seat scale, proactively pushing on every HUMAN
+                // move creates a thundering herd (each push wakes every
+                // other seat's client, which immediately re-checks
+                // eligibility and often re-submits, racing the others) that
+                // measurably hurt the submitted-vs-applied ratio without
+                // raising real throughput. Those seats still learn about
+                // the change the normal way: their own next poll/move round
+                // trip.
+            } else if (rc == WSF_ERROR) {
+                // Best-effort: send any queued CLOSE-echo bytes before
+                // tearing down. econn_try_flush's OWN return tells us
+                // whether it already closed `ec` (a real write error) —
+                // NEVER re-derive that by re-reading `ec` afterward, which
+                // would be a use-after-free the moment it already freed it.
+                if (econn_try_flush(w, ec)) econn_close(w, ec);
+                return;
+            } else {
+                break;   // WSF_NEED_MORE
+            }
+        }
+        if ((size_t)r < sizeof tmp) return;   // short read: likely drained for now — next EPOLLIN will confirm
+    }
+}
+
+static void *epoll_worker_main(void *arg) {
+    Worker *w = arg;
+    struct epoll_event events[EPOLL_MAX_EVENTS];
+    for (;;) {
+        int n = epoll_wait(w->epfd, events, EPOLL_MAX_EVENTS, -1);
+        if (n < 0) { if (errno == EINTR) continue; break; }
+        bool woke = false;
+        for (int i = 0; i < n; i++) {
+            if (events[i].data.ptr == NULL) {   // the wake_evfd itself — see epoll_notify_game_changed / worker_handoff_push
+                uint64_t v; ssize_t rd = read(w->wake_evfd, &v, sizeof v); (void)rd;
+                woke = true;
+                continue;
+            }
+            EConn *ec = events[i].data.ptr;
+            uint32_t evb = events[i].events;
+            if (evb & (EPOLLHUP | EPOLLERR)) { econn_close(w, ec); continue; }
+            if (evb & EPOLLOUT) { if (!econn_try_flush(w, ec)) continue; }
+            if (evb & EPOLLIN) { if (ec->kind == ECONN_WS) handle_ws_readable(w, ec); }
+        }
+        if (woke) {
+            drain_handoff_queue(w);
+            worker_push_stale(w, NULL, NULL);   // don't know which game(s) a bot_thread notification was for — check them all
+        }
+    }
+    return NULL;
+}
+
+// Pushes a freshly-prepared EConn (its first reply/handshake already
+// encoded into wbuf) onto `w`'s handoff queue and wakes it — the ONE way an
+// fd crosses from the dispatcher thread to its owning worker thread.
+static void worker_handoff_push(Worker *w, EConn *ec) {
+    pthread_mutex_lock(&w->handoff_mtx);
+    ec->next = NULL;
+    if (w->handoff_tail) w->handoff_tail->next = ec; else w->handoff_head = ec;
+    w->handoff_tail = ec;
+    pthread_mutex_unlock(&w->handoff_mtx);
+    uint64_t one = 1;
+    ssize_t wr = write(w->wake_evfd, &one, sizeof one);
+    (void)wr;
+}
+
+// --------------------------------------------------------------------------
+// Dispatcher-side handlers (Stage 6). Called from main()'s accept loop, on
+// the dispatcher thread, AFTER read_and_parse_request has already fully
+// read this request (headers + body) — exactly the same blocking read every
+// earlier stage did here. `conn`'s fd is still in its default BLOCKING mode
+// at this point (flipped to non-blocking below, right before the handoff —
+// safe because the dispatcher is the fd's sole owner until that instant).
+// --------------------------------------------------------------------------
+
+// /action, /state, /status, /meta — game_id-sharded one-shot HTTP. Builds
+// the response with the UNCHANGED route()/h_action/h_state/h_status/h_meta
+// handlers (a buffered Conn — conn.h — captures their output into memory
+// instead of a real write()), then hands the connection to its shard's
+// worker purely to flush that response non-blockingly and close.
+static void epoll_dispatch_oneshot(Conn *conn, Req *r, char *raw_buf) {
+    EConn *ec = calloc(1, sizeof *ec);
+    if (!ec) { conn_close(conn); free(raw_buf); return; }
+    ec->kind = ECONN_ONE_SHOT;
+    ec->fd = conn->fd;
+    ec->wbuf_cap = ONESHOT_WBUF_CAP;
+    ec->wbuf = malloc((size_t)ec->wbuf_cap);
+    if (!ec->wbuf) { free(ec); conn_close(conn); free(raw_buf); return; }
+
+    Conn buffered; conn_init_buffered(&buffered, ec->wbuf, ec->wbuf_cap);
+    route(r, &buffered);   // h_action/h_state/h_status/h_meta/h_stats — completely unchanged
+    ec->wlen = buffered.buf_len;
+    ec->close_after_flush = true;
+    free(raw_buf);
+
+    int fl = fcntl(ec->fd, F_GETFL, 0);
+    if (fl >= 0) fcntl(ec->fd, F_SETFL, fl | O_NONBLOCK);
+
+    char gid[ID_LEN + 1] = {0};
+    const char *gp = strstr(r->query, "game_id=");
+    if (gp) { gp += 8; int i = 0; while (gp[i] && gp[i] != '&' && i < ID_LEN) { gid[i] = gp[i]; i++; } gid[i] = 0; }
+    worker_handoff_push(&g_workers[game_worker_index(gid)], ec);
+}
+
+// GET /ws (seated or ?spectator=1) — validates + completes the handshake
+// HERE (ws_handshake_validate/ws_send_handshake_and_push — the exact checks
+// and wire bytes ws_conn_thread has always produced), then hands the
+// now-upgraded connection to its shard's worker. No thread is spawned.
+static void epoll_dispatch_ws(Conn *conn, Req *r, char *raw_buf) {
+    int seat; bool spectator; int cache_idx, viewer;
+    GameSlot *s = ws_handshake_validate(r, &seat, &spectator, &cache_idx, &viewer);
+    if (!s) { respond(conn, 401, "{\"error\":\"ws auth\"}"); conn_close(conn); free(raw_buf); return; }
+    char accept[64];
+    if (!ws_accept_from_key(r->ws_key, accept, sizeof accept)) {
+        respond(conn, 400, "{\"error\":\"ws key\"}"); conn_close(conn); free(raw_buf); return;
+    }
+
+    EConn *ec = calloc(1, sizeof *ec);
+    if (!ec) { conn_close(conn); free(raw_buf); return; }
+    ec->kind = ECONN_WS;
+    ec->fd = conn->fd;
+    ec->slot = s; ec->seat = seat; ec->spectator = spectator; ec->cache_idx = cache_idx; ec->viewer = viewer;
+    ec->phase = WSP_HDR2; ec->msg_opcode = -1;
+    ec->wbuf_cap = WS_WBUF_CAP;
+    ec->wbuf = malloc((size_t)ec->wbuf_cap);
+    if (!ec->wbuf) { free(ec); conn_close(conn); free(raw_buf); return; }
+
+    Conn buffered; conn_init_buffered(&buffered, ec->wbuf, ec->wbuf_cap);
+    WsConn wc;
+    if (!ws_send_handshake_and_push(&wc, buffered, accept, s, cache_idx, viewer)) {
+        free(ec->wbuf); free(ec); conn_close(conn); free(raw_buf); return;
+    }
+    ec->wlen = wc.conn.buf_len; ec->woff = 0;
+    pthread_mutex_lock(&s->lock);
+    ec->last_pushed_version = s->version;
+    pthread_mutex_unlock(&s->lock);
+
+    // Any bytes the client pipelined past the upgrade request (the same
+    // case ws_conn_prime primes into WsConn.pending for the thread-per-
+    // connection path) — feed them straight into this connection's async
+    // parser now, before the fd is even handed to its worker, so a
+    // pipelined first move/poll is never lost.
+    if (r->body_len > 0) {
+        int off = 0, n = r->body_len; const unsigned char *body = (const unsigned char *)r->body;
+        while (off < n) {
+            int consumed = 0;
+            int rc = wsasync_feed(ec, body + off, n - off, &consumed);
+            off += consumed;
+            if (rc == WSF_MESSAGE) {
+                unsigned char reply[1 + 65536]; uint32_t v;
+                int mtotal = ws_service_message(s, seat, spectator, cache_idx, viewer, ec->msg_buf, ec->last_msg_len, reply, &v);
+                if (econn_reserve_out(ec, mtotal + 14) && ws_send_frame(&ec->wc_out, WS_OP_BIN, reply, mtotal) >= 0) {
+                    econn_commit_out(ec);
+                    ec->last_pushed_version = v;
+                }
+            } else if (rc != WSF_NEED_MORE) {
+                break;   // a malformed pipelined frame — let the worker's own error handling take it from here once connected
+            }
+        }
+    }
+    free(raw_buf);
+
+    int fl = fcntl(ec->fd, F_GETFL, 0);
+    if (fl >= 0) fcntl(ec->fd, F_SETFL, fl | O_NONBLOCK);
+
+    worker_handoff_push(&g_workers[game_worker_index(s->id)], ec);
+}
+
 // --------------------------------------------------------------------------
 // STAGE 3: TLS listener state. `g_tls_ctx` is built ONCE in main() — before
 // the accept loop, before any worker/connection thread exists — off
@@ -1703,13 +2450,56 @@ int main(int argc, char **argv) {
     wq_init(&g_meta_q);
     for (int i = 0; i < g_n_game_workers; i++) wq_init(&g_game_q[i]);
 
+    // /auth/* and /create stay on their own threaded worker pool in BOTH
+    // modes (task-granted: "the dispatcher and create/auth worker can stay
+    // threads") — no game_id to shard by, never the hot path (see
+    // SERVER_SCALING.md's Deliverable 2 sweep — neither pool was ever close
+    // to contended).
     pthread_t wt;
     for (int i = 0; i < g_n_create_workers; i++)
         if (pthread_create(&wt, NULL, worker_thread, &g_auth_create_q) == 0) pthread_detach(wt);
-    for (int i = 0; i < g_n_meta_workers; i++)
-        if (pthread_create(&wt, NULL, worker_thread, &g_meta_q) == 0) pthread_detach(wt);
-    for (int i = 0; i < g_n_game_workers; i++)
-        if (pthread_create(&wt, NULL, worker_thread, &g_game_q[i]) == 0) pthread_detach(wt);
+
+    if (g_tls_ctx) {
+        // Stage 6 TLS fallback: non-blocking OpenSSL's WANT_READ/WANT_WRITE
+        // state machine is out of this stage's budget (see
+        // SERVER_SCALING.md "Stage 6" for the honest writeup) — a --tls
+        // server keeps the ENTIRE pre-Stage-6 design, byte-for-byte:
+        // thread-per-/ws-connection + the typed HTTP work-queue pools.
+        for (int i = 0; i < g_n_meta_workers; i++)
+            if (pthread_create(&wt, NULL, worker_thread, &g_meta_q) == 0) pthread_detach(wt);
+        for (int i = 0; i < g_n_game_workers; i++)
+            if (pthread_create(&wt, NULL, worker_thread, &g_game_q[i]) == 0) pthread_detach(wt);
+    } else {
+        // Stage 6: plaintext runs epoll-per-shard instead of the typed game/
+        // meta queues + thread-per-/ws-connection — `--game-workers=N` now
+        // ALSO sizes the epoll shard count (same knob, see
+        // SERVER_SCALING.md). g_game_q/g_meta_q/worker_thread stay fully
+        // intact above (unused in this mode) purely for the --tls fallback.
+        for (int i = 0; i < g_n_game_workers; i++) {
+            Worker *w = &g_workers[i];
+            w->idx = i;
+            w->epfd = epoll_create1(0);
+            w->wake_evfd = eventfd(0, EFD_NONBLOCK);
+            if (w->epfd < 0 || w->wake_evfd < 0) {
+                fprintf(stderr, "fatal: epoll worker %d setup failed (epoll_create1/eventfd)\n", i);
+                return 1;
+            }
+            pthread_mutex_init(&w->handoff_mtx, NULL);
+            w->handoff_head = w->handoff_tail = NULL;
+            w->ws_head = NULL;
+            struct epoll_event ev = { .events = EPOLLIN, .data.ptr = NULL };   // NULL data.ptr marks the wake_evfd itself — see epoll_worker_main
+            if (epoll_ctl(w->epfd, EPOLL_CTL_ADD, w->wake_evfd, &ev) < 0) {
+                fprintf(stderr, "fatal: epoll worker %d setup failed (epoll_ctl)\n", i);
+                return 1;
+            }
+            if (pthread_create(&wt, NULL, epoll_worker_main, w) != 0) {
+                fprintf(stderr, "fatal: epoll worker %d thread create failed\n", i);
+                return 1;
+            }
+            pthread_detach(wt);
+        }
+        g_epoll_active = true;
+    }
 
     int srv = socket(AF_INET, SOCK_STREAM, 0);
     int opt = 1; setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof opt);
@@ -1762,27 +2552,51 @@ int main(int argc, char **argv) {
         if (!read_and_parse_request(&conn, buf, REQ_BUF_CAP, &r)) { conn_close(&conn); free(buf); continue; }
 
         if (r.is_ws_upgrade && !strcmp(r.method, "GET") && !strcmp(r.path, "/ws")) {
-            // Dedicated per-connection thread (design B, see ws_conn_thread's
-            // doc) — this thread now lives for the client's whole session,
-            // so the pthread_create cost — 85.8% of instructions under load
-            // in the old thread-per-HTTP-request T1 profile — is paid once
-            // per client instead of once per action. See PROFILE_HOTPATH.md T1b.
-            WsSpawnArg *sa = malloc(sizeof *sa);
-            if (!sa) { conn_close(&conn); free(buf); continue; }
-            sa->conn = conn; sa->req = r; sa->raw_buf = buf;
-            pthread_t t;
-            if (pthread_create(&t, NULL, ws_conn_thread, sa) == 0) pthread_detach(t);
-            else { conn_close(&conn); free(buf); free(sa); }
+            if (g_tls_ctx) {
+                // Stage 6 TLS fallback: dedicated per-connection thread
+                // (design B, see ws_conn_thread's doc) — this thread lives
+                // for the client's whole session, so the pthread_create
+                // cost is paid once per client instead of once per action.
+                // See PROFILE_HOTPATH.md T1b.
+                WsSpawnArg *sa = malloc(sizeof *sa);
+                if (!sa) { conn_close(&conn); free(buf); continue; }
+                sa->conn = conn; sa->req = r; sa->raw_buf = buf;
+                pthread_t t;
+                if (pthread_create(&t, NULL, ws_conn_thread, sa) == 0) pthread_detach(t);
+                else { conn_close(&conn); free(buf); free(sa); }
+            } else {
+                // Stage 6 plaintext: no thread — hands the now-upgraded
+                // connection to its shard's epoll worker. See
+                // epoll_dispatch_ws's doc.
+                epoll_dispatch_ws(&conn, &r, buf);
+            }
             continue;
         }
 
         // Cheap, store-free routes: answer inline instead of paying a queue
-        // round trip for them.
+        // round trip for them, in EITHER mode (no game_id, never worth
+        // sharding to an epoll worker just to flush a few bytes).
         if (!strcmp(r.method, "OPTIONS")) { respond(&conn, 200, "{}"); conn_close(&conn); free(buf); continue; }
         if (!strcmp(r.path, "/health"))  { respond(&conn, 200, "{\"ok\":true}"); conn_close(&conn); free(buf); continue; }
         if (!strcmp(r.path, "/stats"))   { h_stats(&r, &conn); conn_close(&conn); free(buf); continue; }
 
-        WorkItem item; item.conn = conn; item.req = r; item.raw_buf = buf;
-        wq_push(classify_queue(&r), &item);
+        if (g_tls_ctx) {
+            // Stage 6 TLS fallback: unchanged typed HTTP work-queue pools.
+            WorkItem item; item.conn = conn; item.req = r; item.raw_buf = buf;
+            wq_push(classify_queue(&r), &item);
+            continue;
+        }
+        // Stage 6 plaintext: /auth/signup, /auth/signin, /create have no
+        // game_id to shard by — stay on the threaded create/auth pool
+        // (started above, both modes). Everything else here
+        // (/action,/state,/status,/meta) is game_id-sharded — hand it to
+        // its shard's epoll worker instead of the (now TLS-only) typed
+        // game/meta queues.
+        if (!strcmp(r.path, "/auth/signup") || !strcmp(r.path, "/auth/signin") || !strcmp(r.path, "/create")) {
+            WorkItem item; item.conn = conn; item.req = r; item.raw_buf = buf;
+            wq_push(&g_auth_create_q, &item);
+        } else {
+            epoll_dispatch_oneshot(&conn, &r, buf);
+        }
     }
 }
