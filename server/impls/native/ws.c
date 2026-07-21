@@ -275,11 +275,21 @@ int ws_send_frame(WsConn *c, int opcode, const unsigned char *payload, int64_t l
             };
             return writev_full(c->conn.fd, iov, 2) == hn + len ? (int)len : -1;
         }
-        // TLS (OpenSSL has no vector write — see TLS.md's "one non-uniform
-        // spot" note) OR a Stage 6 buffered Conn (no fd to writev() at all,
-        // see conn.h's doc): concatenate header+payload into one buffer
-        // instead of two write calls (for TLS, that's also two TLS
-        // records/MACs instead of one). Thread-local, not a stack array:
+        if (conn_is_buffered(&c->conn)) {
+            // Stage 6 buffered (epoll) Conn: a memory sink, so append the
+            // header then the payload straight into the caller's output
+            // buffer — two contiguous copies, no scratch. The scratch
+            // concatenation below is now TLS-only; reusing it here made every
+            // epoll reply pay an extra full-payload copy (PROFILE_HOTPATH.md
+            // T1e line 2143 + the standalone memcpy at ~9.65%). The bytes on
+            // the wire are byte-for-byte identical either way.
+            if (ws_write_full(&c->conn, hdr, hn) != hn) return -1;
+            return ws_write_full(&c->conn, payload, len) == len ? (int)len : -1;
+        }
+        // TLS only (OpenSSL has no vector write — see TLS.md's "one
+        // non-uniform spot" note): concatenate header+payload into one buffer
+        // so it goes out as a single SSL_write (one TLS record/MAC, not two).
+        // Thread-local, not a stack array:
         // ws_send_frame is only ever called from this connection's OWN
         // thread (one thread per connection — ws_conn_thread/an epoll
         // worker server-side, ws_worker client-side), same reasoning
