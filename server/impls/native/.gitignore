@@ -21,3 +21,17 @@ bench_results/*/annotated_cache.txt
 bench_results/eval_t2_oracle
 bench_results/eval_t3_prod
 bench_results/*.o
+
+# Stage 3 (TLS — TLS.md): never commit a private key or cert, self-signed
+# test or otherwise. tls_test.sh always generates its own throwaway cert
+# under a scratch tmp dir, never in-tree — this is a guard, not the normal
+# case.
+*.pem
+*.crt
+*.key
+
+# Raw Helgrind output (TLS.md's race-check) is a large, run-specific dump —
+# same "commit only the digested writeup" discipline persistence/profiling
+# artifacts above follow.
+helgrind*.log
+*.valgrind.log

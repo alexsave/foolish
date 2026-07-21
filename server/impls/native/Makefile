@@ -21,19 +21,27 @@ endif
 # touches the DB, so it stays free of the dependency.
 SQLITE_LDFLAGS ?= -lsqlite3
 
+# -lssl -lcrypto (Stage 3, TLS.md): conn.c wraps OpenSSL for BOTH
+# foolish_server (server-side TLS listener) and foolish_hammer (client-side
+# --tls) — unlike SQLITE_LDFLAGS, this one applies to every target below,
+# since conn.c is now part of NATIVE_SRC.
+TLS_LDFLAGS ?= -lssl -lcrypto
+
 # Every kernel source except the standalone tools (their own main()).
 KERNEL_SRC := $(filter-out $(wildcard $(KDIR)/src/main_*.c), $(wildcard $(KDIR)/src/*.c))
 
 # Native (non-kernel) helpers shared by the server and the load client: the
-# RFC 6455 WebSocket handshake (SHA-1 + base64) and frame I/O. See ws.h.
-NATIVE_SRC := ws.c
+# RFC 6455 WebSocket handshake (SHA-1 + base64) and frame I/O (ws.c/ws.h),
+# and the plaintext-or-TLS Conn I/O abstraction (conn.c/conn.h — Stage 3,
+# TLS.md) both of them now read/write through.
+NATIVE_SRC := ws.c conn.c
 
 # SQLite write-behind persistence (persist.c/persist.h — Stage 2,
 # DURABILITY.md). Only foolish_server / foolish_server_prof link this.
 PERSIST_SRC := persist.c
 
 foolish_server: foolish_server.c $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC)
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) $(SQLITE_LDFLAGS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) $(SQLITE_LDFLAGS) $(TLS_LDFLAGS)
 
 run: foolish_server
 	./foolish_server 8099
@@ -44,7 +52,7 @@ run: foolish_server
 # but never includes foolish_server.c itself: it is a separate process that
 # hits the server over the loopback socket, exactly like a real client.
 foolish_hammer: foolish_hammer.c $(NATIVE_SRC) $(KERNEL_SRC)
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) $(TLS_LDFLAGS)
 
 # Profiling build of the server: same sources, but -g -fno-omit-frame-pointer
 # and -O2 (not -O3/-flto) so callgrind/gprof attribute cost to real functions
@@ -54,7 +62,7 @@ PROF_CFLAGS := -g -fno-omit-frame-pointer -O2 -ffast-math -Wall -Wextra \
                -Wno-unused-parameter -Wno-deprecated-declarations \
                -I$(KDIR)/src -DACCELERATE_NEW_LAPACK -DCD_LEAFBOOK
 foolish_server_prof: foolish_server.c $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC)
-	$(CC) $(PROF_CFLAGS) $^ -o $@ $(LDFLAGS) $(SQLITE_LDFLAGS)
+	$(CC) $(PROF_CFLAGS) $^ -o $@ $(LDFLAGS) $(SQLITE_LDFLAGS) $(TLS_LDFLAGS)
 
 clean:
 	rm -f foolish_server foolish_hammer foolish_server_prof
