@@ -48,6 +48,9 @@ final class SeatIdentityTests: XCTestCase {
 
     // MARK: - the App Group store
 
+    private let chatA = "chat-A"
+    private let chatB = "chat-B"
+
     private func freshStore() -> MessageGameStore {
         let suite = "test.fmsg.\(UUID().uuidString)"
         let d = UserDefaults(suiteName: suite)!
@@ -55,8 +58,8 @@ final class SeatIdentityTests: XCTestCase {
         return MessageGameStore(defaults: d)
     }
 
-    private func rec(_ id: String, seat: Int, at t: Double, turn: Int = 4) -> MessageGameRecord {
-        MessageGameRecord(gameId: id, mySeat: seat, nPlayers: 2, round: 1, turn: turn,
+    private func rec(_ id: String, chatKey: String? = nil, seat: Int, at t: Double, turn: Int = 4) -> MessageGameRecord {
+        MessageGameRecord(gameId: id, chatKey: chatKey ?? chatA, mySeat: seat, nPlayers: 2, round: 1, turn: turn,
                           phase: 2, finished: false, names: [0: "Alex", 1: "Sveta"],
                           payloadBase32: "AAAA", updatedAt: t)
     }
@@ -64,16 +67,16 @@ final class SeatIdentityTests: XCTestCase {
     func testPutThenSeatAndRecordRoundTrip() {
         let s = freshStore()
         s.put(rec("g1", seat: 1, at: 100))
-        XCTAssertEqual(s.seat(gameId: "g1"), 1)
-        XCTAssertEqual(s.record(gameId: "g1")?.name(0), "Alex")
-        XCTAssertNil(s.seat(gameId: "absent"))
+        XCTAssertEqual(s.seat(gameId: "g1", chatKey: chatA), 1)
+        XCTAssertEqual(s.record(gameId: "g1", chatKey: chatA)?.name(0), "Alex")
+        XCTAssertNil(s.seat(gameId: "absent", chatKey: chatA))
     }
 
     func testGamesSortNewestFirst() {
         let s = freshStore()
         s.put(rec("old", seat: 0, at: 100))
         s.put(rec("new", seat: 0, at: 200))
-        XCTAssertEqual(s.games().map(\.gameId), ["new", "old"])
+        XCTAssertEqual(s.games(chatKey: chatA).map(\.gameId), ["new", "old"])
     }
 
     func testOlderUpdateDoesNotRollBackTheCache() {
@@ -82,24 +85,48 @@ final class SeatIdentityTests: XCTestCase {
         let s = freshStore()
         s.put(rec("g", seat: 0, at: 200, turn: 9))
         s.put(rec("g", seat: 0, at: 100, turn: 3))     // arrives later, older state
-        XCTAssertEqual(s.record(gameId: "g")?.turn, 9, "newer state kept")
+        XCTAssertEqual(s.record(gameId: "g", chatKey: chatA)?.turn, 9, "newer state kept")
     }
 
     func testRemove() {
         let s = freshStore()
         s.put(rec("g", seat: 0, at: 100))
         s.remove(gameId: "g")
-        XCTAssertNil(s.record(gameId: "g"))
-        XCTAssertTrue(s.games().isEmpty)
+        XCTAssertNil(s.record(gameId: "g", chatKey: chatA))
+        XCTAssertTrue(s.games(chatKey: chatA).isEmpty)
     }
 
     func testCorruptBlobDegradesToEmpty() {
         let suite = "test.fmsg.\(UUID().uuidString)"
         let d = UserDefaults(suiteName: suite)!
-        d.set(Data([0xff, 0x00, 0x13]), forKey: "fmsg.games.v1")   // not our JSON
+        d.set(Data([0xff, 0x00, 0x13]), forKey: "fmsg.games.v2")   // not our JSON
         let s = MessageGameStore(defaults: d)
-        XCTAssertTrue(s.games().isEmpty, "a corrupt suite reads as no games, never crashes")
+        XCTAssertTrue(s.games(chatKey: chatA).isEmpty, "a corrupt suite reads as no games, never crashes")
         s.put(rec("g", seat: 0, at: 1))                            // and recovers on write
-        XCTAssertEqual(s.seat(gameId: "g"), 0)
+        XCTAssertEqual(s.seat(gameId: "g", chatKey: chatA), 0)
+    }
+
+    // MARK: - chat scoping (the cross-chat leak fix)
+
+    /// The exact bug this fix closes: a row cached from Chat A must be invisible
+    /// to every read scoped to Chat B — `games()`, `record()`, and `seat()` alike
+    /// — even though it is the same device's single App Group suite holding
+    /// both rows. Before this fix these methods took no chatKey at all and
+    /// `games()` was device-wide, so opening the extension in Chat B with no
+    /// bubble selected could reopen Chat A's newest game.
+    func testRecordsAreScopedToTheirChat() {
+        let s = freshStore()
+        s.put(rec("gA", chatKey: chatA, seat: 0, at: 100))
+        s.put(rec("gB", chatKey: chatB, seat: 1, at: 200))
+
+        XCTAssertEqual(s.games(chatKey: chatA).map(\.gameId), ["gA"])
+        XCTAssertEqual(s.games(chatKey: chatB).map(\.gameId), ["gB"])
+
+        XCTAssertNotNil(s.record(gameId: "gA", chatKey: chatA))
+        XCTAssertNil(s.record(gameId: "gA", chatKey: chatB), "chat B must not see chat A's row")
+        XCTAssertNil(s.record(gameId: "gB", chatKey: chatA), "chat A must not see chat B's row")
+
+        XCTAssertEqual(s.seat(gameId: "gA", chatKey: chatA), 0)
+        XCTAssertNil(s.seat(gameId: "gA", chatKey: chatB), "a foreign chat's cached seat must read as unknown")
     }
 }

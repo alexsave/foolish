@@ -27,6 +27,11 @@ public struct MessagesRootView: View {
     /// Bumped by the host each time the human taps New game, so an explicit New
     /// game resets the session while a mere compact<->expanded toggle does not.
     let newGameToken: Int
+    /// This conversation's identity (`MSConversation.localParticipantIdentifier
+    /// .uuidString`), threaded down to every `MessageGameStore` lookup so a game
+    /// cached from a DIFFERENT chat on this device can never resolve `.known`
+    /// here — see the chat-scoping fix in `MessageGameStore`'s type doc.
+    let chatKey: String
     let chatIsDM: Bool
     let chatPlayers: Int
     let requestExpand: () -> Void
@@ -38,13 +43,14 @@ public struct MessagesRootView: View {
     let onUnstage: () -> Void
 
     public init(payloadURL: URL?, style: MsgPresentation, senderIsLocal: Bool,
-                startNewGame: Bool, newGameToken: Int = 0, chatIsDM: Bool, chatPlayers: Int,
+                startNewGame: Bool, newGameToken: Int = 0, chatKey: String, chatIsDM: Bool,
+                chatPlayers: Int,
                 requestExpand: @escaping () -> Void, onNewGame: @escaping () -> Void,
                 onSend: @escaping (Data, Int) async -> Void,
                 onUnstage: @escaping () -> Void = {}) {
         self.payloadURL = payloadURL; self.style = style; self.senderIsLocal = senderIsLocal
         self.startNewGame = startNewGame; self.newGameToken = newGameToken
-        self.chatIsDM = chatIsDM; self.chatPlayers = chatPlayers
+        self.chatKey = chatKey; self.chatIsDM = chatIsDM; self.chatPlayers = chatPlayers
         self.requestExpand = requestExpand; self.onNewGame = onNewGame; self.onSend = onSend
         self.onUnstage = onUnstage
     }
@@ -57,7 +63,7 @@ public struct MessagesRootView: View {
         // so its game state survives a style change; it renders the SAME table in
         // both, just sized to the strip (compact) or full-screen (expanded).
         GameSurface(payloadURL: payloadURL, style: style, senderIsLocal: senderIsLocal,
-                    startNewGame: startNewGame, newGameToken: newGameToken,
+                    startNewGame: startNewGame, newGameToken: newGameToken, chatKey: chatKey,
                     chatIsDM: chatIsDM, chatPlayers: chatPlayers,
                     requestExpand: requestExpand, onNewGame: onNewGame, onSend: onSend,
                     onUnstage: onUnstage)
@@ -72,6 +78,7 @@ private struct GameSurface: View {
     let senderIsLocal: Bool
     let startNewGame: Bool
     let newGameToken: Int
+    let chatKey: String
     let chatIsDM: Bool
     let chatPlayers: Int
     let requestExpand: () -> Void
@@ -104,8 +111,13 @@ private struct GameSurface: View {
 
     /// A style toggle keeps this key stable, so the session is NOT reloaded and
     /// the in-progress game survives. A new bubble (payloadURL) or a New game tap
-    /// (newGameToken) changes it, which resets and reloads.
-    private var loadKey: String { "\(newGameToken)|\(startNewGame)|\(payloadURL?.absoluteString ?? "")" }
+    /// (newGameToken) changes it, which resets and reloads. `chatKey` is in here
+    /// too, defensively: this view's state must never survive a conversation
+    /// change (the chat-scoping fix's whole point), even though in practice one
+    /// extension instance presents one conversation for its lifetime.
+    private var loadKey: String {
+        "\(newGameToken)|\(startNewGame)|\(chatKey)|\(payloadURL?.absoluteString ?? "")"
+    }
 
     var body: some View {
         // One game per chat, one surface for both presentation styles: always the
@@ -181,7 +193,7 @@ private struct GameSurface: View {
             // sent one, or adopted one), reopen THAT rather than offering New game
             // again (one game per chat: "I already sent a game, why New game?").
             if !startNewGame,
-               let latest = MessageGameStore.shared.games().first,
+               let latest = MessageGameStore.shared.games(chatKey: chatKey).first,
                let payload = Base32.decode(latest.payloadBase32),
                let env = try? await MessageEnvelope.decode(payload: payload, viewer: -1) {
                 if env.phase == 0 { lobby = Lobby(env: env, payload: payload) }
@@ -211,7 +223,7 @@ private struct GameSurface: View {
             // One game per chat, so there is no "this game has moved on / open the
             // latest / view anyway" prompt: we silently adopt whichever chain wins
             // Rule P. Delivery order is never trusted; only the bytes decide.
-            if let row = MessageGameStore.shared.record(gameId: env.gameId),
+            if let row = MessageGameStore.shared.record(gameId: env.gameId, chatKey: chatKey),
                let preferred = Base32.decode(row.payloadBase32), preferred != incoming,
                ((try? await MessageKernel.shared.preferred(preferred, incoming)) ?? 0) < 0,
                let penv = try? await MessageEnvelope.decode(payload: preferred, viewer: -1) {
@@ -269,7 +281,7 @@ private struct GameSurface: View {
     /// and any joiner who already sent a claim resolve to a seat; a fresh joiner is
     /// nil, which is what shows the Join button.
     private func lobbySeat(_ env: MessageEnvelope) -> Int? {
-        switch SeatIdentity.resolve(cachedSeat: MessageGameStore.shared.seat(gameId: env.gameId),
+        switch SeatIdentity.resolve(cachedSeat: MessageGameStore.shared.seat(gameId: env.gameId, chatKey: chatKey),
                                     senderIsLocal: senderIsLocal,
                                     nPlayers: env.nPlayers, lastActorSeat: env.lastActorSeat) {
         case .known(let s): return s
@@ -351,7 +363,7 @@ private struct GameSurface: View {
         // cached yet, both leave this nil (a fresh cache falls back to the
         // trailing-run heuristic in MessageTableView).
         var prevPayload: Data?
-        if let prevRow = MessageGameStore.shared.record(gameId: env.gameId),
+        if let prevRow = MessageGameStore.shared.record(gameId: env.gameId, chatKey: chatKey),
            let bytes = Base32.decode(prevRow.payloadBase32), bytes != winner {
             prevPayload = bytes
         }
@@ -369,7 +381,7 @@ private struct GameSurface: View {
         #endif
         let (survivors, discarded) = await rebasePending(gameId: env.gameId, adoptedRound: env.round)
 
-        switch SeatIdentity.resolve(cachedSeat: MessageGameStore.shared.seat(gameId: env.gameId),
+        switch SeatIdentity.resolve(cachedSeat: MessageGameStore.shared.seat(gameId: env.gameId, chatKey: chatKey),
                                     senderIsLocal: senderIsLocal,
                                     nPlayers: env.nPlayers, lastActorSeat: env.lastActorSeat) {
         case .known(let seat):
@@ -491,7 +503,7 @@ private struct GameSurface: View {
     private func cache(seat: Int, env: MessageEnvelope, payload: Data) {
         let names = Dictionary(env.joins.map { ($0.seat, $0.name) }, uniquingKeysWith: { a, _ in a })
         MessageGameStore.shared.put(MessageGameRecord(
-            gameId: env.gameId, mySeat: seat, nPlayers: env.nPlayers, round: env.round,
+            gameId: env.gameId, chatKey: chatKey, mySeat: seat, nPlayers: env.nPlayers, round: env.round,
             turn: env.turn, phase: env.phase, finished: env.phase == 3, names: names,
             payloadBase32: Base32.encode(payload), updatedAt: Date().timeIntervalSince1970))
     }

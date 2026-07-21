@@ -78,6 +78,7 @@ struct HarnessRootView: View {
             style: model.presentation,
             senderIsLocal: model.senderIsLocal,
             startNewGame: model.startNewGame,
+            chatKey: model.chatKey,
             chatIsDM: model.chatIsDM,
             chatPlayers: model.playerCount,
             requestExpand: { model.expand() },
@@ -145,6 +146,26 @@ struct HarnessRootView: View {
                         }
                     }
                 }
+            }
+
+            // Chat switcher — the two-chat leak repro (see HarnessModel's type
+            // doc). Same participant, same store suite (device), different
+            // conversation: switching here must NEVER reopen the other chat's
+            // board with no bubble selected. Deliberately styled distinctly
+            // (blue vs the participant strip's orange) so the two axes — "who
+            // you are" vs "which conversation you're in" — read as separate.
+            HStack(spacing: 6) {
+                ForEach([0, 1], id: \.self) { idx in
+                    Button { model.switchChat(idx) } label: {
+                        Text(idx == 0 ? "Chat A" : "Chat B")
+                            .font(.system(size: 11, weight: idx == model.currentChat ? .bold : .regular))
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .background(idx == model.currentChat ? Color.blue : Color.white.opacity(0.14))
+                            .foregroundStyle(.white)
+                            .clipShape(Capsule())
+                    }
+                }
+                Spacer()
             }
 
             // The transcript of sent bubbles (who sent what, in order).

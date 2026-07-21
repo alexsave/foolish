@@ -17,8 +17,18 @@ import Foundation
 /// let the drawer list render WITHOUT decoding each chain (decoding adopts, §7.3,
 /// so it must not happen just to draw a list). `payloadBase32` is the preferred
 /// chain itself, for Rule P.
+///
+/// `chatKey` is the conversation this row belongs to (`MSConversation
+/// .localParticipantIdentifier.uuidString` — Apple documents this UUID as
+/// unique per conversation per device, so it is stable across launches but
+/// distinct between two threads on the same phone). Without it `games()` was
+/// device-wide: opening the extension in chat B with no bubble selected could
+/// resolve `.known` off chat A's cached seat and stage chat A's deal-seed-
+/// bearing payload into chat B, leaking chat A players' hands to chat B's
+/// participants. Every read below is scoped by this field for that reason.
 public struct MessageGameRecord: Codable, Equatable, Sendable {
     public var gameId: String
+    public var chatKey: String
     public var mySeat: Int
     public var nPlayers: Int
     public var round: Int
@@ -29,10 +39,10 @@ public struct MessageGameRecord: Codable, Equatable, Sendable {
     public var payloadBase32: String   // the preferred chain (URL body), for Rule P
     public var updatedAt: Double        // seconds since 1970; newest sorts first in the drawer
 
-    public init(gameId: String, mySeat: Int, nPlayers: Int, round: Int, turn: Int,
+    public init(gameId: String, chatKey: String, mySeat: Int, nPlayers: Int, round: Int, turn: Int,
                 phase: Int, finished: Bool, names: [Int: String],
                 payloadBase32: String, updatedAt: Double) {
-        self.gameId = gameId; self.mySeat = mySeat; self.nPlayers = nPlayers
+        self.gameId = gameId; self.chatKey = chatKey; self.mySeat = mySeat; self.nPlayers = nPlayers
         self.round = round; self.turn = turn; self.phase = phase
         self.finished = finished; self.names = names
         self.payloadBase32 = payloadBase32; self.updatedAt = updatedAt
@@ -77,7 +87,17 @@ public final class MessageGameStore {
     }
 
     private let defaults: UserDefaults?
-    private let key = "fmsg.games.v1"
+    // v1 -> v2: `MessageGameRecord` gained a required `chatKey` field (the chat-
+    // scoping security fix — see the type doc). Swift's synthesized Codable does
+    // NOT fall back to a default when a key is missing, it throws — so a v1 blob
+    // would decode every row to nil and `all()` would silently drop them, which
+    // reads the same as "cache lost" (harmless) EXCEPT it would do so non-
+    // deterministically depending on what happened to be cached at upgrade time.
+    // Bumping the storage key instead makes old blobs simply invisible, always,
+    // which is the same "purely an optimization, §6/§7 survive its total loss"
+    // guarantee the file header already promises — cheaper and more honest than
+    // a custom decoder just to preserve rows that carry no chatKey to be correct.
+    private let key = "fmsg.games.v2"
     private let pendingKey = "fmsg.pending.v1"
     // The suite is nil on an unsigned/misconfigured build (no App Group). That is
     // not fatal — the cache simply reports empty and every §6/§7 rule still holds
@@ -108,15 +128,29 @@ public final class MessageGameStore {
 
     // MARK: read
 
-    /// This device's seat in `gameId`, or nil if unknown — the §6.1 primary
-    /// answer. nil means fall through to §6.2/§6.3.
-    public func seat(gameId: String) -> Int? { record(gameId: gameId)?.mySeat }
+    /// This device's seat in `gameId` WITHIN `chatKey`, or nil if unknown — the
+    /// §6.1 primary answer. nil means fall through to §6.2/§6.3. A row that
+    /// belongs to a different chat is treated exactly like a cache miss, never
+    /// returned: Rule P (§7.2) compares a cached chain against an incoming
+    /// bubble, and it must never compare across chats, or a stale/foreign row
+    /// could out-rank (or falsely "confirm") a bubble it was never sealed
+    /// against.
+    public func seat(gameId: String, chatKey: String) -> Int? {
+        record(gameId: gameId, chatKey: chatKey)?.mySeat
+    }
 
-    public func record(gameId: String) -> MessageGameRecord? { all()[gameId] }
+    public func record(gameId: String, chatKey: String) -> MessageGameRecord? {
+        guard let rec = all()[gameId], rec.chatKey == chatKey else { return nil }
+        return rec
+    }
 
-    /// Every cached game, newest first — the drawer list source (§10 compact).
-    public func games() -> [MessageGameRecord] {
-        all().values.sorted { $0.updatedAt > $1.updatedAt }
+    /// Every cached game IN THIS CHAT, newest first — the drawer list source
+    /// (§10 compact). Unscoped would be device-wide (the bug this type doc's
+    /// chatKey paragraph describes): reopening the extension with no bubble
+    /// selected would resolve the newest game from ANY conversation, not this
+    /// one.
+    public func games(chatKey: String) -> [MessageGameRecord] {
+        all().values.filter { $0.chatKey == chatKey }.sorted { $0.updatedAt > $1.updatedAt }
     }
 
     // MARK: write
@@ -126,6 +160,15 @@ public final class MessageGameStore {
     /// persists it. Writing a row with a strictly-older `updatedAt` than what is
     /// stored is ignored, so a late-delivered stale bubble can't roll the cache
     /// backward (§7.2 is delivery-order-independent).
+    ///
+    /// The underlying map is still keyed by `gameId` alone, device-wide, not by
+    /// `(chatKey, gameId)` — a cross-chat gameId collision would make two
+    /// different games fight over one row. Left as-is deliberately: `gameId` is
+    /// a `UInt64.random` (createWaiting/startGenesis), so a collision is as
+    /// astronomically unlikely here as it is for the pending ledger (§ below,
+    /// same reasoning) — every READ is chatKey-scoped regardless, so the only
+    /// consequence of the pathological collision would be one row's
+    /// `updatedAt`/eviction racing the other's, not a leak.
     public func put(_ rec: MessageGameRecord) {
         var map = all()
         if let existing = map[rec.gameId], existing.updatedAt > rec.updatedAt { return }
@@ -140,6 +183,16 @@ public final class MessageGameStore {
     }
 
     // MARK: pending ledger (§7.4 Rule R / §17.15) — durable, small, current-round
+    //
+    // AUDITED for the chat-scoping fix, deliberately left keyed by gameId ALONE
+    // (no chatKey): a pending action can only exist for a game this device is
+    // actively staging a move in, and `gameId` is a `UInt64.random` chosen at
+    // create time (createWaiting/startGenesis) — a same-device collision across
+    // two different chats' games is not a practical concern (same argument as
+    // `put` above). Adding chatKey here would only guard against a threat that
+    // does not exist, for no reader-side benefit: unlike `record`/`seat`/`games`,
+    // nothing about `pending` can leak another chat's hand — it is this device's
+    // OWN staged moves, never another chat's cached seat or payload.
 
     /// This game's staged-but-unsent actions, in ledger order — what Rule R
     /// replays onto a newly-adopted chain so no local move is silently lost.

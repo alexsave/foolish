@@ -114,7 +114,8 @@ final class HarnessFlowTests: XCTestCase {
     /// code and passes against the fix.)
     func test_stagingLeavesViewKeyStable() async throws {
         let m = HarnessModel(count: 2)
-        let key = m.viewKey                       // "0-0-true" on a fresh 2p launch
+        let key = m.viewKey                       // "0-0-0-true" on a fresh 2p launch (chat-scoping
+                                                   // added a currentChat segment — see HarnessModel)
 
         let g = MessageTurnController(genesisSeed: Data(repeating: 3, count: 32),
                                       players: 2, gameId: 0xCAFE, myNickname: "You")
@@ -249,5 +250,40 @@ final class HarnessFlowTests: XCTestCase {
         XCTAssertTrue(ended, "the game should reach game-over within the turn budget")
         XCTAssertGreaterThan(moves, 4, "a real game plays several turns before ending")
         XCTAssertGreaterThan(m.transcript.count, 4, "every delivered move is a transcript bubble")
+    }
+
+    // MARK: - chat scoping (the cross-chat leak fix)
+
+    /// The exact production bug, reproduced through the harness's own two-chat
+    /// model: cache a row for "You" in Chat A (mirroring what GameSurface.cache()
+    /// writes on adopt — done directly here since GameSurface is a SwiftUI view
+    /// the headless tests above don't render, per this file's MOCK note), then
+    /// switch to Chat B AS THE SAME PARTICIPANT. `switchChat` deliberately does
+    /// NOT rebind the store (see its doc) — Chat A and Chat B share one App
+    /// Group suite, exactly like one iPhone's two conversations — so this only
+    /// passes if `MessageGameStore`'s chatKey scoping, not device/store
+    /// isolation, is what is keeping Chat B blind to Chat A's game. Before the
+    /// fix (`games`/`record`/`seat` took no chatKey and the map was read
+    /// unscoped) this test fails: Chat B would see Chat A's row.
+    func test_chatSwitchDoesNotLeakACachedGameAcrossChats() throws {
+        let m = HarnessModel(count: 2)
+        let chatAKey = m.chatKey
+        MessageGameStore.shared.put(MessageGameRecord(
+            gameId: "leak-check", chatKey: chatAKey, mySeat: 0, nPlayers: 2, round: 1, turn: 3,
+            phase: 2, finished: false, names: [0: "You", 1: "Vera"],
+            payloadBase32: "AAAA", updatedAt: 100))
+        XCTAssertEqual(MessageGameStore.shared.games(chatKey: chatAKey).map(\.gameId), ["leak-check"])
+
+        m.switchChat(1)
+        XCTAssertNotEqual(m.chatKey, chatAKey, "each simulated chat has its own conversation identity")
+        XCTAssertTrue(MessageGameStore.shared.games(chatKey: m.chatKey).isEmpty,
+                      "Chat B must not see Chat A's cached game, even on the SAME device/store suite")
+        XCTAssertNil(MessageGameStore.shared.record(gameId: "leak-check", chatKey: m.chatKey),
+                     "and a direct gameId lookup must not cross chats either")
+
+        m.switchChat(0)
+        XCTAssertEqual(m.chatKey, chatAKey, "switching back restores Chat A's identity")
+        XCTAssertEqual(MessageGameStore.shared.record(gameId: "leak-check", chatKey: m.chatKey)?.mySeat, 0,
+                       "and Chat A's own row is unaffected by the round trip")
     }
 }

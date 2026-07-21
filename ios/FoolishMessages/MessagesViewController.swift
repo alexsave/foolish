@@ -50,7 +50,7 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// a chain was actually sent — insert alone is not a commit.
     override func didStartSending(_ message: MSMessage, conversation: MSConversation) {
         startingNewGame = false
-        commitPendingStage()
+        commitPendingStage(chatKey: conversation.localParticipantIdentifier.uuidString)
     }
 
     /// The user deleted the staged bubble before sending: drop the pending record
@@ -84,12 +84,23 @@ final class MessagesViewController: MSMessagesAppViewController {
         let participants = min(max(conversation.remoteParticipantIdentifiers.count + 1, 2), 8)
         let isDM = conversation.remoteParticipantIdentifiers.count <= 1
 
+        // The chat-scoping security fix: Apple documents `localParticipantIdentifier`
+        // as a UUID unique to THIS device within THIS conversation (the same person
+        // gets a different identifier in a different conversation), so it is the
+        // right key to scope every MessageGameStore lookup by. Without it, `games()`
+        // was device-wide — opening the extension in chat B with no bubble selected
+        // could reopen chat A's newest game, resolve `.known` off its cached seat,
+        // and stage chat A's deal-seed-bearing payload into chat B (see
+        // MessageGameStore's type doc for the full bug).
+        let chatKey = conversation.localParticipantIdentifier.uuidString
+
         let root = MessagesRootView(
             payloadURL: startingNewGame ? nil : selected?.url,
             style: style == .compact ? .compact : .expanded,   // map onto FoolishKit's enum
             senderIsLocal: senderIsLocal,
             startNewGame: startingNewGame,
             newGameToken: newGameToken,
+            chatKey: chatKey,
             chatIsDM: isDM,
             chatPlayers: participants,
             requestExpand: { [weak self] in self?.requestPresentationStyle(.expanded) },
@@ -205,8 +216,11 @@ final class MessagesViewController: MSMessagesAppViewController {
     }
 
     /// Commit a sent chain to the App Group cache (§6.1/§7.6): our seat becomes
-    /// durable and this chain is the preferred one for the game.
-    private func commitPendingStage() {
+    /// durable and this chain is the preferred one for the game. `chatKey` comes
+    /// from `didStartSending`'s own conversation, not a stored property, because
+    /// it must be the SAME conversation the bubble was staged/sent into (the
+    /// whole point of the chat-scoping fix).
+    private func commitPendingStage(chatKey: String) {
         guard let (payload, mySeat) = pendingStage else { return }
         pendingStage = nil
         Task {
@@ -215,7 +229,7 @@ final class MessagesViewController: MSMessagesAppViewController {
             let names = Dictionary(env.joins.map { ($0.seat, $0.name) },
                                    uniquingKeysWith: { a, _ in a })
             MessageGameStore.shared.put(MessageGameRecord(
-                gameId: env.gameId, mySeat: mySeat, nPlayers: env.nPlayers, round: env.round,
+                gameId: env.gameId, chatKey: chatKey, mySeat: mySeat, nPlayers: env.nPlayers, round: env.round,
                 turn: env.turn, phase: env.phase, finished: env.phase == 3, names: names,
                 payloadBase32: Base32.encode(payload),
                 updatedAt: Date().timeIntervalSince1970))
