@@ -37,6 +37,14 @@
 #      quantifiable — the same underlying g_kernel_lock ceiling Deliverable
 #      2 describes, just measured at the game count where it actually bites.
 #
+#      Stage 5 (SERVER_SCALING.md "Stage 5 — parallel bot compute") made the
+#      kernel's bot_drive/apply scratch _Thread_local and removed
+#      g_kernel_lock entirely; re-running this same Sweep B against a Stage-5
+#      server is exactly how that stage measured whether the ceiling above
+#      actually lifted. This comment is left as the Stage 4 design rationale
+#      for why the script is shaped the way it is — see SERVER_SCALING.md for
+#      the before/after numbers.
+#
 # Usage:
 #   bot_stress.sh [--port=8199] [--full-games=1,2,4,8] [--scale-games=1,8,32,96]
 #                 [--secs=20] [--seats=7] [--spectators=2]

@@ -68,14 +68,16 @@
 //     connection this program owns) in EVERY game, alongside `seats` human
 //     WS clients — total players = seats+1, capped at MAX_PLAYERS (so
 //     --server-bot + --seats=7 is the max-stress mix: 1 bot + 7 humans).
-//     `--server-bot=octogen` is the point of this stage: octogen is the
+//     `--server-bot=octogen` is the point of Stage 4: octogen is the
 //     strongest, most CPU-heavy bot (deep Monte-Carlo search per decision,
-//     bot_roster.h) — running it server-side, inside bot_drive, inside the
-//     SAME g_kernel_lock every game's bot compute shares (foolish_server.c's
-//     "Locking" doc), is what makes bot compute NOT parallelize across
-//     concurrently-running games today. This program never runs the bot
-//     itself — it only sets it up and drives the human seats around it,
-//     exactly like a real client would.
+//     bot_roster.h) — running it server-side, inside bot_drive, used to run
+//     inside the SAME g_kernel_lock every game's bot compute shared
+//     (foolish_server.c's "Locking" doc), which is what made bot compute NOT
+//     parallelize across concurrently-running games. Stage 5 (SERVER_
+//     SCALING.md "Stage 5 — parallel bot compute") made the kernel's
+//     bot_drive scratch _Thread_local and removed that lock; this program
+//     never runs the bot itself either way — it only sets it up and drives
+//     the human seats around it, exactly like a real client would.
 //   --spectators=N  N read-only WebSocket connections PER GAME
 //     (/ws?game_id=..&spectator=1) that receive the server's masked
 //     VIEW_SPECTATOR pushes and NEVER submit moves (spectator_worker) — real
@@ -1193,8 +1195,9 @@ static void run_ws_load(Config *cfg) {
     // Stage 4: server-side bot-decision rate for this run, from GET /stats's
     // before/after delta (see get_stats' doc) — the number bot_stress.sh
     // sweeps across game counts to show whether it holds steady or falls as
-    // concurrency rises (g_kernel_lock's ceiling on bot_drive, foolish_
-    // server.c's "Locking" doc).
+    // concurrency rises. Stage 4 measured this flattening at g_kernel_lock's
+    // ceiling on bot_drive (foolish_server.c's "Locking" doc); Stage 5
+    // removed that lock and re-ran the same sweep (SERVER_SCALING.md).
     double bot_dec_rate = (double)(bot_dec1 - bot_dec0) / elapsed;
     double oct_dec_rate = (double)(oct_dec1 - oct_dec0) / elapsed;
     printf("---- server-side bot decisions (Stage 4, from GET /stats) ----\n");
