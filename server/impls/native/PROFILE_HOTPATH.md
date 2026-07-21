@@ -1215,3 +1215,57 @@ cost attribution). For the server's CONCURRENCY work — per-game locks
 replacing the single global mutex, work-queue thread routing, the Helgrind
 race-freedom gate, and before/after throughput/latency/memory at rising
 connection counts — see [`SERVER_SCALING.md`](SERVER_SCALING.md) ("T2a").
+
+---
+
+## T1f — push-only protocol: the WS frame-decode flood, eliminated
+
+T1e found ~25% of server instructions in `wsasync_feed` (the WS frame
+decoder) for one reason: the load client **polled** — it sent an empty WS
+frame every idle tick to fetch state, so the server parsed a flood of tiny
+incoming frames. That's an anti-pattern; WebSockets exist so the server can
+**push**. This stage made the protocol push-only:
+
+- **Server:** after a human move applies and bumps `s->version`, fan the new
+  state out to that game's other live connections — `worker_push_stale(w,
+  ec->slot, ec)` — inline on the same epoll-worker thread that owns the whole
+  game's connections (game_id sharding), reusing the per-version view cache
+  (so a burst of moves collapses to one push per connection). This reverses
+  Stage 6's "deliberately NOT fanning out on human moves"; that suppression
+  was a load-tool artifact (polling clients re-submitting in a herd), not
+  real-client behavior.
+- **Client (`foolish_hammer --mode=ws`):** genuinely push-driven — zero poll
+  frames. On each received push it recomputes legal moves and submits at most
+  one move per state version, only when eligible; otherwise it waits.
+
+### Correctness (the real bar for a push protocol)
+
+A missed fan-out would stall eligible seats and hang the game. It doesn't:
+`test.sh` passes with **poll frames sent = 0**, and a 40-game / 448-connection
+/ 12 s run applied **40,948 moves with 707 game completions** (rematches) and
+zero hangs — games progress purely on pushes. **6 threads / 16 MB RSS** for
+448 connections. Helgrind over the new human-move fan-out path (human clients
++ spectators): **0 errors from 0 contexts** — `worker_push_stale` was already
+race-free on the bot path and stays so on the human path (same worker owns
+all of a game's connections).
+
+### Top functions, same scale as T1e (callgrind, games=3 seats=2)
+
+| function | T1e (polling) | T1f (push-only) |
+|---|---|---|
+| `wsasync_feed` (WS frame decode) | **20.83%** | **7.28%** |
+| `handle_ws_readable` | 13.13% | (out of top) |
+| `ws_send_frame` | 9.67% | 4.38% |
+| `view.c:state_put` (masked view) | 0.28% | **10.40%** (+wire.h 5.04%) |
+
+**The parse flood is gone** — `wsasync_feed` fell ~2.9× because the server no
+longer decodes a stream of empty polls. The honest counterpart: `state_put`
+is now the top line, but that's *because push-only makes games progress
+faster* — state propagates the instant it changes instead of on the next
+poll, so more moves happen per second and each fans out a (cached,
+per-version) serialization. That's real gameplay work, not waste; the waste
+(parsing polls to discover changes the server could have pushed) is what was
+removed. A seat's masked view is genuinely per-viewer (each hides a different
+hand), so the fan-out can't share one serialization across seats without a
+delta-encoding protocol change — noted as a possible future step, not needed
+now.

@@ -130,13 +130,16 @@ persistent connection pays that once per client SESSION instead. A
 plaintext connection no longer even gets its own OS thread for that
 session — since Stage 6 it's serviced by its game's epoll-worker shard
 (see `SERVER_SCALING.md` "Stage 6"); `--tls` still uses one thread per
-connection. After the
-upgrade the server immediately pushes the current masked state, then loops:
-a client's binary frame is either a real **awire** move (applied through the
-same `awire_decode`/`awire_apply` `/action` uses) or empty (just "send me
-the current state" — a seat with no move yet still needs to notice when
-another seat's move changes its own eligibility). Every reply is one binary
-frame, `[ok:u8][state_put(seat) bytes]`. `foolish_hammer --mode=ws` is the
+connection. **The protocol is push-only** (`PROFILE_HOTPATH.md` "T1f"):
+after the upgrade the server pushes the current masked state, and thereafter
+pushes fresh state to a seat/spectator whenever the game changes — any
+seat's move, a bot move, or a round transition — via the game's epoll-worker
+fanning out the per-version cached view (`worker_push_stale`). A client
+therefore **never polls**: its only outgoing frames are real **awire** moves
+(applied through the same `awire_decode`/`awire_apply` `/action` uses),
+submitted at most once per pushed state version and only when the seat is
+actually eligible. Every push is one binary frame,
+`[ok:u8][state_put(seat) bytes]`. `foolish_hammer --mode=ws` is the
 reference client: it decodes the pushed state, calls the kernel's own
 `calculate_legal_moves` for its seat, and submits a randomly chosen LEGAL
 move — so, unlike the HTTP load modes' mostly-illegal random frames, every
