@@ -84,6 +84,10 @@
 #include "ws.h"
 #include "persist.h"
 #include "conn.h"   // Stage 3: TLS — see conn.h and the "STAGE 3: OpenSSL TLS" block below
+#ifdef FOOLISH_QUIC
+#include "quic_wt.h"      // QUIC/HTTP3/WebTransport front-end (foolish_server_quic build)
+#include "game_bridge.h"  // wrappers quic_wt.c uses to reach the shared game
+#endif
 
 // --------------------------------------------------------------------------
 // In-memory store (the "fake DB"): games + users, per-game locks.
@@ -1636,6 +1640,62 @@ static int ws_service_message(GameSlot *s, int seat, bool spectator, int cache_i
     return slen + 1;
 }
 
+#ifdef FOOLISH_QUIC
+// --------------------------------------------------------------------------
+// game_bridge.h implementation — the QUIC/WebTransport transport (quic_wt.c)
+// reaches the shared game through these, taking the exact same registry and
+// per-game locks the HTTP/WS paths do. So QUIC is just another front-end onto
+// the one authoritative in-memory game; no game logic is duplicated here.
+// --------------------------------------------------------------------------
+
+int gb_state_for(const char *game_id, int seat, unsigned char *out, int cap) {
+    if (seat < VIEW_SPECTATOR) return -1;   // never the trusted VIEW_UNMASKED — same guard as h_state
+    if (cap < 65536) return -1;   // require state_put's documented worst-case room (same 65536 buffer h_state uses)
+    pthread_mutex_lock(&g_registry_lock);
+    GameSlot *s = game_by_id(game_id);
+    if (!s) { pthread_mutex_unlock(&g_registry_lock); return -1; }
+    pthread_mutex_lock(&s->lock);
+    pthread_mutex_unlock(&g_registry_lock);
+    int n = state_put(&s->game, seat, out);
+    pthread_mutex_unlock(&s->lock);
+    return n;
+}
+
+int gb_apply_move(const char *game_id, const char *token, int seat,
+                  const unsigned char *in, int len, unsigned char *out, int cap) {
+    if (seat < 0) return -1;                                       // seated players only (spectators use gb_state_for)
+    if (cap < 65536) return -1;                                    // room for state_put_cached's worst case (same as h_state)
+    pthread_mutex_lock(&g_registry_lock);
+    User *u = user_by_token(token);
+    GameSlot *s = game_by_id(game_id);
+    if (!u || !s) { pthread_mutex_unlock(&g_registry_lock); return -1; }
+    pthread_mutex_lock(&s->lock);
+    pthread_mutex_unlock(&g_registry_lock);
+    // Same ownership check GET /ws enforces: this token must actually hold this
+    // seat in this game (see ws_handshake_validate).
+    char user_id[ID_LEN + 1]; snprintf(user_id, sizeof user_id, "%s", u->user_id);
+    if (!(seat < s->game.num_players && seat_of(s, user_id) == seat)) {
+        pthread_mutex_unlock(&s->lock);
+        return -1;
+    }
+    // An empty payload (len==0) is a pure "fetch my current view" — no move.
+    if (in && len > 0) ws_apply_move_locked(s, seat, /*spectator=*/false, in, len);
+    int n = state_put_cached(s, /*cache_idx=*/seat, /*viewer=*/seat, out);
+    pthread_mutex_unlock(&s->lock);
+    return n;
+}
+
+// Thread wrapper: run the QUIC/HTTP3/WebTransport listener alongside the TCP
+// acceptors, sharing this process's game state via the bridge above.
+struct QuicArgs { int port; const char *cert; const char *key; };
+static void *quic_thread_main(void *a) {
+    thread_disable_cancellation();
+    struct QuicArgs *qa = a;
+    quic_wt_run(qa->port, qa->cert, qa->key);
+    return NULL;
+}
+#endif   // FOOLISH_QUIC
+
 static void *ws_conn_thread(void *argp) {
     thread_disable_cancellation();
     WsSpawnArg *sa = argp;
@@ -1734,6 +1794,15 @@ static int g_n_create_workers = N_CREATE_WORKERS_DEFAULT;
 #define N_ACCEPT_THREADS_DEFAULT 2
 #define MAX_ACCEPT_THREADS 64
 static int g_n_accept_threads = N_ACCEPT_THREADS_DEFAULT;
+
+#ifdef FOOLISH_QUIC
+// QUIC/HTTP3/WebTransport listener (foolish_server_quic build): --quic turns it
+// on, --quic-port=N sets its UDP port (default = the TCP port; UDP and TCP are
+// separate namespaces so they may share the number). Reuses --cert/--key for
+// its TLS 1.3 (QUIC has no plaintext mode). See quic_wt.c / game_bridge.h.
+static bool g_want_quic = false;
+static int  g_quic_port = 0;
+#endif
 
 typedef struct {
     Conn conn;
@@ -2745,6 +2814,10 @@ int main(int argc, char **argv) {
             if (nw > 0 && nw <= MAX_ACCEPT_THREADS) g_n_accept_threads = nw;
             continue;
         }
+#ifdef FOOLISH_QUIC
+        if (!strcmp(argv[i], "--quic")) { g_want_quic = true; continue; }
+        if (!strncmp(argv[i], "--quic-port=", 12)) { g_quic_port = atoi(argv[i] + 12); continue; }
+#endif
         if (!strncmp(argv[i], "--game-workers=", 15)) {
             int nw = atoi(argv[i] + 15);
             if (nw > 0 && nw <= MAX_GAME_WORKERS) g_n_game_workers = nw;
@@ -2895,6 +2968,26 @@ int main(int argc, char **argv) {
         }
         g_epoll_active = true;
     }
+
+#ifdef FOOLISH_QUIC
+    // QUIC/HTTP3/WebTransport listener on its own thread, sharing this
+    // process's game state through game_bridge.h. QUIC carries TLS 1.3 itself,
+    // so it needs the same cert/key the TCP --tls path would (there is no
+    // plaintext QUIC). Runs beside the TCP acceptors below.
+    if (g_want_quic) {
+        if (!cert_path || !key_path) {
+            fprintf(stderr, "fatal: --quic requires --cert=PATH --key=PATH (QUIC has no plaintext mode)\n");
+            return 1;
+        }
+        static struct QuicArgs qa;
+        qa.port = g_quic_port > 0 ? g_quic_port : port;
+        qa.cert = cert_path;
+        qa.key  = key_path;
+        pthread_t qt;
+        if (pthread_create(&qt, NULL, quic_thread_main, &qa) == 0) pthread_detach(qt);
+        else fprintf(stderr, "warning: QUIC listener thread failed to start\n");
+    }
+#endif
 
     // SO_REUSEPORT multi-acceptor bring-up. Create g_n_accept_threads
     // listeners, each bound to `port` with SO_REUSEPORT so the kernel spreads

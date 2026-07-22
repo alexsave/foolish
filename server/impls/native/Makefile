@@ -64,7 +64,25 @@ PROF_CFLAGS := -g -fno-omit-frame-pointer -O2 -ffast-math -Wall -Wextra \
 foolish_server_prof: foolish_server.c $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC)
 	$(CC) $(PROF_CFLAGS) $^ -o $@ $(LDFLAGS) $(SQLITE_LDFLAGS) $(TLS_LDFLAGS)
 
+# QUIC/HTTP3/WebTransport build (foolish_server_quic). Adds a UDP/QUIC listener
+# (quic_wt.c) that speaks HTTP/3 + WebTransport onto the SAME in-memory game as
+# the TCP front-end, via game_bridge.h. It links Cloudflare quiche
+# (libquiche.a, which bundles its own BoringSSL); to avoid a symbol clash with
+# that BoringSSL it does NOT link OpenSSL, so conn.c compiles with
+# -DFOOLISH_NO_OPENSSL (plaintext TCP — terminate TLS at the edge — while QUIC
+# carries TLS 1.3 itself). Build quiche's C FFI first, then point QUICHE_DIR at
+# a directory containing include/quiche.h and lib/libquiche.a:
+#   git clone --recursive https://github.com/cloudflare/quiche && \
+#     cd quiche && cargo build --release --features ffi
+#   make foolish_server_quic QUICHE_DIR=/path/to/quiche-ffi
+# (-ldl is quiche's only extra system dep beyond -lm -lpthread from LDFLAGS.)
+QUICHE_DIR ?= ./quiche
+QUIC_SRC   := quic_wt.c
+foolish_server_quic: foolish_server.c $(QUIC_SRC) $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC)
+	$(CC) $(CFLAGS) -DFOOLISH_QUIC -DFOOLISH_NO_OPENSSL -I$(QUICHE_DIR)/include \
+	  $^ -o $@ $(LDFLAGS) $(SQLITE_LDFLAGS) $(QUICHE_DIR)/lib/libquiche.a -ldl
+
 clean:
-	rm -f foolish_server foolish_hammer foolish_server_prof
+	rm -f foolish_server foolish_hammer foolish_server_prof foolish_server_quic
 
 .PHONY: run clean

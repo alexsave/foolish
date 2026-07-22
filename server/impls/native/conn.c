@@ -6,7 +6,9 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#ifndef FOOLISH_NO_OPENSSL
 #include <openssl/err.h>
+#endif
 
 ssize_t conn_read(Conn *c, void *buf, size_t n) {
     if (c->buf_out) return -1;   // Stage 6: a buffered Conn is a write-only encode sink, never a read source
@@ -15,6 +17,7 @@ ssize_t conn_read(Conn *c, void *buf, size_t n) {
         do { r = read(c->fd, buf, n); } while (r < 0 && errno == EINTR);
         return r;
     }
+#ifndef FOOLISH_NO_OPENSSL
     if (n == 0) return 0;
     for (;;) {
         int r = SSL_read(c->ssl, buf, (int)n);
@@ -30,6 +33,9 @@ ssize_t conn_read(Conn *c, void *buf, size_t n) {
         if (err == SSL_ERROR_SYSCALL && errno == EINTR) continue;
         return -1;   // peer gone / real error — caller already treats <0 as "tear this connection down", never crashes the process
     }
+#else
+    return -1;   // unreachable: c->ssl is always NULL in the no-OpenSSL (QUIC) build
+#endif
 }
 
 ssize_t conn_write(Conn *c, const void *buf, size_t n) {
@@ -44,6 +50,7 @@ ssize_t conn_write(Conn *c, const void *buf, size_t n) {
         do { r = write(c->fd, buf, n); } while (r < 0 && errno == EINTR);
         return r;
     }
+#ifndef FOOLISH_NO_OPENSSL
     if (n == 0) return 0;
     for (;;) {
         int r = SSL_write(c->ssl, buf, (int)n);
@@ -53,20 +60,35 @@ ssize_t conn_write(Conn *c, const void *buf, size_t n) {
         if (err == SSL_ERROR_SYSCALL && errno == EINTR) continue;
         return -1;
     }
+#else
+    return -1;   // unreachable: c->ssl is always NULL in the no-OpenSSL (QUIC) build
+#endif
 }
 
 void conn_close(Conn *c) {
+#ifndef FOOLISH_NO_OPENSSL
     if (c->ssl) {
         SSL_shutdown(c->ssl);   // best-effort clean shutdown; result never checked, see conn.h's doc
         SSL_free(c->ssl);
         c->ssl = NULL;
     }
+#endif
     if (c->fd >= 0) {
         close(c->fd);
         c->fd = -1;
     }
 }
 
+#ifdef FOOLISH_NO_OPENSSL
+// QUIC build: OpenSSL isn't linked. These never run (g_tls_ctx stays NULL, so
+// every --tls branch upstream is dead code). Stubbed so the call sites still
+// compile and link. TLS for the TCP listener is terminated at the edge;
+// encrypted transport in this build is QUIC (see quic_wt.c).
+bool conn_tls_accept(Conn *out, SSL_CTX *ctx, int fd) { (void)out; (void)ctx; (void)fd; return false; }
+bool conn_tls_connect(Conn *out, SSL_CTX *ctx, int fd, const char *sni) { (void)out; (void)ctx; (void)fd; (void)sni; return false; }
+SSL_CTX *tls_server_ctx_create(const char *cert_path, const char *key_path) { (void)cert_path; (void)key_path; return NULL; }
+SSL_CTX *tls_client_ctx_create(void) { return NULL; }
+#else
 bool conn_tls_accept(Conn *out, SSL_CTX *ctx, int fd) {
     SSL *ssl = SSL_new(ctx);
     if (!ssl) return false;
@@ -113,3 +135,4 @@ SSL_CTX *tls_client_ctx_create(void) {
     SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);   // load tool vs. a self-signed test cert — see conn.h's doc
     return ctx;
 }
+#endif   // FOOLISH_NO_OPENSSL

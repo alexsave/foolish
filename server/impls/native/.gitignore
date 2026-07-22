@@ -3,6 +3,15 @@ foolish_server_prof
 foolish_hammer
 *.o
 
+# QUIC/HTTP3/WebTransport build (foolish_server_quic — quic_wt.c). The binary
+# statically links libquiche.a (~tens of MB) and is never tracked. `quiche/`
+# is the local quiche FFI build (libquiche.a + quiche.h) the Makefile's
+# QUICHE_DIR points at — vendored/built out of tree, not committed. See the
+# foolish_server_quic target in the Makefile for how to build it.
+foolish_server_quic
+quiche/
+*.a
+
 # Stage 2 (SQLite WAL write-behind persistence — DURABILITY.md): the DB file
 # + its WAL/shm sidecars are local run state, never tracked. crash_test.sh
 # always points --db at a scratch path under a tmp dir for exactly this

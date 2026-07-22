@@ -11,8 +11,19 @@
 #define FOOLISH_CONN_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <sys/types.h>
+#ifndef FOOLISH_NO_OPENSSL
 #include <openssl/ssl.h>
+#else
+// QUIC build (foolish_server_quic): OpenSSL is intentionally NOT linked (it
+// would clash with the BoringSSL bundled inside libquiche.a). TLS for TCP is
+// terminated at the edge; QUIC brings its own TLS 1.3. Opaque stand-ins keep
+// every SSL/SSL_CTX-typed declaration below compiling — the TLS functions are
+// stubbed out in conn.c and `ssl` is always NULL (plaintext) in this build.
+typedef void SSL;
+typedef void SSL_CTX;
+#endif
 
 // fd is always valid (>= 0) for an open connection; ssl is NULL for a
 // plaintext connection and a live per-connection SSL* for a TLS one. The
