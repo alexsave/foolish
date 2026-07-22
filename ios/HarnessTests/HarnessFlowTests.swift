@@ -84,7 +84,7 @@ final class HarnessFlowTests: XCTestCase {
         // The board auto-stages -> model.stage. THE FIX under test: this must not
         // move viewKey, or `.id(model.viewKey)` tears the live board down.
         let keyBeforeStage = m.viewKey
-        m.stage(deal, seat: 0)
+        await m.stage(deal, seat: 0)
         XCTAssertNotNil(m.staged, "the blue Send arrow should light after a move stages")
         XCTAssertEqual(m.viewKey, keyBeforeStage,
                        "staging must not change viewKey (pre-fix it flipped startNewGame)")
@@ -121,7 +121,7 @@ final class HarnessFlowTests: XCTestCase {
                                       players: 2, gameId: 0xCAFE, myNickname: "You")
         await g.begin()
         if g.iCanAct, let mv = g.legal.first(where: { $0.type != .wait }) { await g.apply(mv) }
-        m.stage(try await g.stagedPayload(), seat: 0)
+        await m.stage(try await g.stagedPayload(), seat: 0)
 
         XCTAssertEqual(m.viewKey, key, "a staged move must not alter the harness view identity")
         XCTAssertEqual(screen(startNewGame: m.startNewGame, payloadURL: m.payloadURL), .setup,
@@ -147,7 +147,7 @@ final class HarnessFlowTests: XCTestCase {
                                       players: 2, gameId: 0xABCD, myNickname: "You")
         await g.begin()
         if g.iCanAct, let mv = g.legal.first(where: { $0.type != .wait }) { await g.apply(mv) }
-        m2.stage(try await g.stagedPayload(), seat: 0)  // staged, NOT delivered
+        await m2.stage(try await g.stagedPayload(), seat: 0)  // staged, NOT delivered
         m2.become(1)
         XCTAssertTrue(m2.transcript.isEmpty, "nothing was delivered")
         XCTAssertNotEqual(screen(m2), .damaged, "an undelivered draft must not damage the switch")
@@ -211,7 +211,7 @@ final class HarnessFlowTests: XCTestCase {
             XCTAssertFalse(MessageGameStore.shared.pending(gameId: String(gid)).isEmpty,
                            "applying a move writes the pending ledger (what Rule R would replay)")
         }
-        m.stage(try await g.stagedPayload(), seat: 0)
+        await m.stage(try await g.stagedPayload(), seat: 0)
         m.deliver()
         XCTAssertTrue(MessageGameStore.shared.pending(gameId: String(gid)).isEmpty,
                       "delivering commits the move -> ledger cleared -> re-adopting our own chain can't supersede it")
@@ -240,7 +240,7 @@ final class HarnessFlowTests: XCTestCase {
 
             let keyBeforeStage = m.viewKey
             guard let next = try await stageTurn(parent: latest, seat: s) else { ended = true; break }
-            m.stage(next, seat: s)
+            await m.stage(next, seat: s)
             XCTAssertEqual(m.viewKey, keyBeforeStage, "turn \(turn): staging must not move viewKey")
             m.deliver()
             XCTAssertEqual(screen(m), .board, "turn \(turn): the delivered bubble must load")

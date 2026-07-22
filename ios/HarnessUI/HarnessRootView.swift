@@ -1,129 +1,204 @@
 // HarnessRootView — the FoolishHarness chrome around the real MessagesRootView.
-// NOT SHIPPING CODE (see FoolishHarnessApp.swift). The bottom half is the exact
-// extension UI, rendered inside a fixed-size simulated iPhone SE stage (batch 5,
-// note 31) so the harness's "collapsed" toggle actually shrinks something and
-// layout testing matches the phone the owner tests against; the top strip is
-// fake-host controls: a 2-8 player switcher, the transcript of "sent" bubbles,
-// and who you currently are.
+// NOT SHIPPING CODE (see FoolishHarnessApp.swift).
+//
+// This is a from-scratch reskin (the previous attempt on this branch stalled
+// mid-way and was deliberately NOT resumed from its stash — starting clean
+// from the committed files instead) to make the harness look and BEHAVE like
+// the real Messages app hosting an iMessage extension, per the owner's
+// reference screenshot. Four explicit requirements drove the shape:
+//
+//   1. Only the transcript scrolls. Real Messages has a fixed top nav bar, a
+//      scrolling message list, and a fixed bottom area (compose bar + the
+//      extension drawer). The old harness put EVERYTHING — dev controls,
+//      transcript pills, the board — inside one `.safeAreaInset`-wrapped
+//      column, which read as "scroll everything" (the owner's own complaint).
+//      Now the chat screen is a strict VStack: fixed top, `ScrollView`
+//      middle, fixed bottom. Nothing in the fixed sections scrolls.
+//   2. The old "Chat A"/"Chat B" button pair is GONE. Reaching the other
+//      simulated conversation is now via the nav bar's back chevron -> a chat
+//      LIST screen (ChatListView.swift), exactly like real Messages routes
+//      "back" from an open thread to the conversation list.
+//   3. The participant ("who am I") swap — real Messages has no equivalent of
+//      this at all — stays pinned in the TOP BAR, visually distinct (orange
+//      dev chrome) from the simulated phone below it.
+//   4. EVERYTHING that reads as "the simulated Messages app" — the contact nav
+//      bar, the chevron, the transcript, the compose bar, AND the extension —
+//      lives inside ONE fixed iPhone-SE-sized frame (`SEScreen`, 375x667pt).
+//      An earlier pass on this redesign only constrained the extension to SE
+//      size while the Messages chrome around it freely filled the host
+//      simulator's own (larger) screen — the owner caught that split and
+//      asked for the whole simulated phone, not just the board, to be one
+//      consistently-sized unit. Only `DevBar` (harness-only chrome with no
+//      real-phone equivalent at all) stays outside that frame.
+//
+// The extension itself (MessagesRootView, hosted via its own
+// UIHostingController — see `HostedStage`'s doc for why that indirection
+// exists) is untouched: same interface, same compact/expanded transition,
+// same wool board. What's new is host-driven drag gestures on the grabber —
+// swipe up to expand, swipe down to collapse, swipe down again to dismiss
+// entirely — mirroring real Messages, where that gesture belongs to the
+// SYSTEM chrome around the extension, not the extension's own view
+// (confirmed: FoolishKit threads `requestExpand` through but never calls it
+// anywhere itself).
 
 import SwiftUI
 import UIKit
 import FoolishKit
 
+/// The one fixed size everything "inside the phone" is built to — iPhone SE
+/// (3rd gen)'s logical screen, 375x667pt. Requirement 4: this now bounds the
+/// WHOLE simulated Messages app (nav bar through extension), not just the
+/// extension's own viewport.
+private enum SEScreen {
+    static let width: CGFloat = 375
+    static let height: CGFloat = 667
+}
+
+/// Named, EXPLICIT heights for the two fixed chrome rows that sandwich the
+/// scrolling transcript — `ContactNavBar` and `ComposeBar` are each given
+/// `.frame(height:)` pinned to these constants (not left to intrinsic
+/// font/padding sizing), specifically so `StageHeight.expanded` below can be
+/// a real subtraction from `SEScreen.height` instead of another guessed
+/// constant. Web research (2026-07-22 session — developer.apple.com/forums/
+/// thread/52049: "the size of the space between the header and the bottom
+/// bar" is `view.bounds` after `topLayoutGuide`/`bottomLayoutGuide` are
+/// applied; ustwo's iMessage design writeup: expanded is "almost a full
+/// screen viewport, except header and footer chrome persist") confirms the
+/// real MSMessagesAppViewController is handed EXACTLY the leftover space
+/// between Messages' nav bar and its compose bar, i.e. a SUBTRACTIVE model —
+/// not the "whole screen, chrome overlaid via insets" reading an earlier pass
+/// took from one bare `view.bounds.height` forum data point (that number was
+/// almost certainly read before layout settled; a sibling thread on the same
+/// forums is literally titled "iMessage Navigation bar covering top of view
+/// bug" over exactly this kind of premature-read gotcha).
+private enum ChatChrome {
+    static let navBarHeight: CGFloat = 64
+    static let composeBarHeight: CGFloat = 40
+    static let dividerHeight: CGFloat = 1
+}
+
 struct HarnessRootView: View {
     @StateObject private var model = HarnessModel()
-
-    /// Fixed dimensions for the simulated Messages extension viewport (batch 5,
-    /// note 31: "harness should simulate exact iPhone SE measurements"). Every
-    /// value here is an eyeballed approximation of an iPhone SE 3rd gen
-    /// (375x667 pt) Messages extension viewport — there is no Mac in this
-    /// environment to measure the real thing against.
-    /// TODO(mac-calibrate): verify/correct these against a real device or the
-    /// simulator in the first Mac session.
-    private enum SimulatedStage {
-        static let width: CGFloat = 375
-        /// SE screen minus Messages' top chrome (nav bar + app-drawer strip).
-        static let expandedHeight: CGFloat = 554
-        /// The compact drawer: roughly the keyboard-area strip.
-        static let compactHeight: CGFloat = 261
-    }
+    /// The harness's whole "navigation stack" — one level deep, because that's
+    /// all real Messages' thread <-> conversation-list toggle is. Nothing but
+    /// the back chevron (`ContactNavBar`) and a chat-list row (`ChatListScreen`)
+    /// ever changes this.
+    @State private var screen: Screen = .chat
+    private enum Screen { case chat, chatList }
 
     var body: some View {
-        // The thing under test, staged inside a fixed-size simulated phone
-        // viewport (see `stage`/`SimulatedStage`) so "collapsed" really shrinks
-        // the surface instead of just relabeling the same full-window board.
-        // The fake-host controls hang off the whole stage area as a TOP
-        // SAFE-AREA INSET rather than a VStack sibling: MessagesRootView's
-        // WoolBackground is `.ignoresSafeArea()`, so as a sibling its hit region
-        // bled up over the control strip and the player/2p buttons went dead to
-        // taps. An inset reserves the bar's space AND keeps it topmost for
-        // hit-testing, so the board can ignore safe area underneath without
-        // stealing the controls' touches. Now that the surface is clipped to a
-        // small fixed rect, the ignoresSafeArea background can't reach past the
-        // clip anyway — but the inset structure stays exactly as it was.
-        stageArea
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .safeAreaInset(edge: .top, spacing: 0) {
-                VStack(spacing: 0) {
-                    controls
-                    Divider().overlay(Color.orange.opacity(0.4))
-                }
-                .background(Color(white: 0.09))   // opaque: the board's wool can't show through
+        VStack(spacing: 0) {
+            DevBar(model: model)          // harness-only chrome — the ONE thing outside the SE frame
+            Divider().overlay(Color.orange.opacity(0.3))
+            simulatedPhone
+                .frame(maxWidth: .infinity, maxHeight: .infinity)   // center in whatever room is left
+        }
+        .background(Color.black.ignoresSafeArea())
+        .task {
+            // DEV: `HARNESS_SEED=1` deals a board immediately for screenshotting
+            // (interactive tapping needs Accessibility perms the CI shell lacks).
+            if ProcessInfo.processInfo.environment["HARNESS_SEED"] != nil {
+                await model.seedDemoGame()
             }
-            .background(Color.black.ignoresSafeArea())
-            .task {
-                // DEV: `HARNESS_SEED=1` deals a board immediately for screenshotting
-                // (interactive tapping needs Accessibility perms the CI shell lacks).
-                if ProcessInfo.processInfo.environment["HARNESS_SEED"] != nil {
-                    await model.seedDemoGame()
-                }
-            }
-    }
-
-    /// Plain dark surround (below the control strip) with the fixed-size stage
-    /// centered in it on both axes — reads as a phone in a frame.
-    private var stageArea: some View {
-        ZStack {
-            Color.black
-            stage
         }
     }
 
-    /// The simulated extension viewport itself: exactly `SimulatedStage`-sized
-    /// (compact or expanded per `model.presentation`), clipped to rounded
-    /// corners with a subtle border, plus a non-interactive grabber divot
-    /// floating over the top edge (the real Messages drawer has one).
-    private var stage: some View {
-        HostedStage {
-            MessagesRootView(
-                payloadURL: model.payloadURL,
-                style: model.presentation,
-                senderIsLocal: model.senderIsLocal,
-                startNewGame: model.startNewGame,
-                chatKey: model.chatKey,
-                chatIsDM: model.chatIsDM,
-                chatPlayers: model.playerCount,
-                requestExpand: { model.expand() },
-                onNewGame: { model.newGame() },
-                onSend: { payload, seat in await MainActor.run { model.stage(payload, seat: seat) } },
-                onUnstage: { model.unstage() }
-            )
-            .id(model.viewKey)   // reset @State when player/transcript/intent changes
+    /// The whole simulated Messages app, clipped to one SE-sized, rounded,
+    /// bordered "device" — requirement 4. `screen` picks which Messages
+    /// SCREEN is showing inside that fixed frame; the frame itself never
+    /// changes size when it does (a real phone's screen doesn't resize when
+    /// you navigate).
+    private var simulatedPhone: some View {
+        Group {
+            switch screen {
+            case .chat:
+                ChatScreen(model: model, onBack: { screen = .chatList })
+            case .chatList:
+                // Selecting a row switches the simulated conversation (still
+                // `HarnessModel.switchChat`, unchanged — see its doc for why it
+                // deliberately does NOT rebind the store) and returns to it,
+                // exactly like tapping a row in the real Messages list.
+                ChatListScreen(model: model, onSelect: { idx in
+                    model.switchChat(idx)
+                    screen = .chat
+                })
+            }
         }
-        .frame(width: SimulatedStage.width, height: stageHeight)
-        .animation(.easeInOut(duration: 0.25), value: stageHeight)
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .frame(width: SEScreen.width, height: SEScreen.height)
+        .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            RoundedRectangle(cornerRadius: 30, style: .continuous)
                 .strokeBorder(Color.white.opacity(0.2), lineWidth: 1)
         )
-        .overlay(alignment: .top) {
-            Capsule()
-                .fill(Color.white.opacity(0.25))
-                .frame(width: 36, height: 5)
-                .padding(.top, 6)
-                .allowsHitTesting(false)   // the real drawer's grabber isn't a control either
-        }
     }
+}
 
-    /// `model.presentation`'s stage height. Written as a `switch` (not `==`)
-    /// so it doesn't depend on `MsgPresentation` (FoolishKit) being Equatable —
-    /// out of scope for this batch to touch either way.
-    private var stageHeight: CGFloat {
-        switch model.presentation {
-        case .expanded: return SimulatedStage.expandedHeight
-        case .compact: return SimulatedStage.compactHeight
+/// The open-conversation screen, sized to exactly fill `SEScreen`.
+///
+/// The extension drawer is NOT a boxed-in VStack row that just resizes under
+/// a fixed nav bar — the owner caught that mismatch against the real app:
+/// "when I expand it in a real iMessage app, it expands OVER the rest of the
+/// iMessage stuff. It doesn't remain boxed in under the chat textarea...
+/// position should be like absolute". So the nav bar + transcript are the
+/// BASE layer of a `ZStack`, and the extension is a bottom-anchored sibling
+/// that overlays them — growing tall enough while expanded to cover both
+/// entirely (see `StageHeight`'s doc), animating smoothly between that and a
+/// small bottom strip while compact (the "graceful transition" ask).
+///
+/// The compose bar is DELIBERATELY kept OUT of that overlay, its own fixed
+/// row below the `ZStack` — the owner's explicit correction after a z-order
+/// experiment that covered it while expanded: "add comment or send should be
+/// above the view. Lower y value. Up." I.e. its Y position stays smaller
+/// (higher on screen) than the drawer's at all times, full stop — not a
+/// state-dependent z-order swap.
+private struct ChatScreen: View {
+    @ObservedObject var model: HarnessModel
+    let onBack: () -> Void
+    /// Whether the extension drawer has been swiped fully away (see
+    /// ExtensionStage's doc). Lifted up here, rather than kept local to
+    /// ExtensionStage, so the compose bar's "+" button — real Messages' own
+    /// way back into a dismissed app drawer — can reach it too.
+    @State private var isDrawerDismissed = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ZStack(alignment: .bottom) {
+                VStack(spacing: 0) {
+                    ContactNavBar(model: model, onBack: onBack)
+                    Divider().overlay(Color.white.opacity(0.12))
+                    TranscriptScroll(model: model)     // the ONLY scrolling region
+                }
+                ExtensionStage(model: model, isDismissed: $isDrawerDismissed)
+            }
+            .clipped()   // the sliding drawer must never spill past this region into the compose bar
+
+            Divider().overlay(Color.white.opacity(0.12))
+            ComposeBar(model: model, isDrawerDismissed: $isDrawerDismissed)
         }
+        .background(Color(white: 0.05))
     }
+}
 
-    private var controls: some View {
-        VStack(spacing: 6) {
+/// Dev-only chrome, always visible, always orange-tinted so it never reads as
+/// part of the simulated Messages UI beneath it. Houses the player-count
+/// picker, the New-game reset, and — per requirement 3 — the "who am I" swap.
+/// That swap is genuinely not something a real phone can do (a device IS a
+/// participant); keeping it here, separate from the chat list, is what makes
+/// it read as harness tooling rather than a feature of the fake Messages host.
+private struct DevBar: View {
+    @ObservedObject var model: HarnessModel
+
+    var body: some View {
+        // Lives OUTSIDE the simulated SE screen (see HarnessRootView's
+        // `simulatedPhone`, requirement 4), so — unlike everything below —
+        // this bar's own height doesn't compete with the phone frame's fixed
+        // 667pt budget. Kept reasonably tight anyway just so it doesn't dwarf
+        // the actual phone simulation underneath it.
+        VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text("FoolishHarness — NOT the shipping extension")
                     .font(.system(size: 10, weight: .bold)).foregroundStyle(.orange)
                 Spacer()
-                // The compact "New game" menu is gone (one game per chat), so the
-                // harness offers its own reset button.
                 Button { model.newGame() } label: {
                     Text("New").font(.system(size: 11, weight: .semibold))
                         .padding(.horizontal, 8).padding(.vertical, 4)
@@ -135,118 +210,460 @@ struct HarnessRootView: View {
                 }.pickerStyle(.menu).tint(.orange)
             }
 
-            // Participant switcher — tap a name to "become" that player.
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(Array(model.participants.enumerated()), id: \.element.id) { idx, p in
-                        Button { model.become(idx) } label: {
-                            Text(p.name)
-                                .font(.system(size: 11, weight: idx == model.localIndex ? .bold : .regular))
-                                .padding(.horizontal, 10).padding(.vertical, 5)
-                                .background(idx == model.localIndex ? Color.orange : Color.white.opacity(0.14))
-                                .foregroundStyle(idx == model.localIndex ? .black : .white)
-                                .clipShape(Capsule())
-                        }
-                    }
-                }
-            }
-
-            // Chat switcher — the two-chat leak repro (see HarnessModel's type
-            // doc). Same participant, same store suite (device), different
-            // conversation: switching here must NEVER reopen the other chat's
-            // board with no bubble selected. Deliberately styled distinctly
-            // (blue vs the participant strip's orange) so the two axes — "who
-            // you are" vs "which conversation you're in" — read as separate.
+            // Requirement 3: the participant swap lives in the top bar, styled
+            // as obviously-dev chrome (orange label), NOT on the chat list —
+            // "who am I" and "which conversation am I in" are different axes
+            // (see HarnessModel's type doc), and only the latter moved to the
+            // chevron/list flow.
             HStack(spacing: 6) {
-                ForEach([0, 1], id: \.self) { idx in
-                    Button { model.switchChat(idx) } label: {
-                        Text(idx == 0 ? "Chat A" : "Chat B")
-                            .font(.system(size: 11, weight: idx == model.currentChat ? .bold : .regular))
-                            .padding(.horizontal, 10).padding(.vertical, 5)
-                            .background(idx == model.currentChat ? Color.blue : Color.white.opacity(0.14))
-                            .foregroundStyle(.white)
-                            .clipShape(Capsule())
-                    }
-                }
-                Spacer()
-            }
-
-            // The transcript of sent bubbles (who sent what, in order).
-            if !model.transcript.isEmpty {
+                Text("you are:")
+                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(.orange.opacity(0.85))
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 4) {
-                        ForEach(Array(model.transcript.enumerated()), id: \.element.id) { i, m in
-                            Text("\(i + 1)·\(m.senderName)")
-                                .font(.system(size: 9)).foregroundStyle(.white.opacity(0.7))
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(Color.white.opacity(0.1)).clipShape(Capsule())
+                    HStack(spacing: 6) {
+                        ForEach(Array(model.participants.enumerated()), id: \.element.id) { idx, p in
+                            Button { model.become(idx) } label: {
+                                Text(p.name)
+                                    .font(.system(size: 11, weight: idx == model.localIndex ? .bold : .regular))
+                                    .padding(.horizontal, 10).padding(.vertical, 5)
+                                    .background(idx == model.localIndex ? Color.orange : Color.white.opacity(0.14))
+                                    .foregroundStyle(idx == model.localIndex ? .black : .white)
+                                    .clipShape(Capsule())
+                            }
                         }
                     }
                 }
             }
-
-            HStack {
-                Text("you are \(model.localName) · \(model.senderIsLocal ? "you sent the latest" : "incoming from someone else")")
-                    .font(.system(size: 9)).foregroundStyle(.white.opacity(0.5))
-                Spacer()
-                // Simulated Messages presentation — tap to toggle (mirrors the
-                // extension's collapse-on-stage / "Open the game" expand).
-                let collapsed = model.presentation == .compact
-                Button { model.togglePresentation() } label: {
-                    Text(collapsed ? "▾ collapsed" : "▸ expanded")
-                        .font(.system(size: 10, weight: .semibold))
-                        .padding(.horizontal, 9).padding(.vertical, 5)
-                        .background(collapsed ? Color.orange.opacity(0.85) : Color.white.opacity(0.14))
-                        .foregroundStyle(collapsed ? .black : .white).clipShape(Capsule())
-                }
-                // The blue send arrow: only lit when the board has staged a move.
-                Button { model.deliver() } label: {
-                    Text("Send ➤").font(.system(size: 12, weight: .bold))
-                        .padding(.horizontal, 14).padding(.vertical, 6)
-                        .background(model.staged != nil ? Color.blue : Color.white.opacity(0.12))
-                        .foregroundStyle(.white).clipShape(Capsule())
-                }
-                .disabled(model.staged == nil)
-            }
-            if !model.debugInfo.isEmpty {
-                Text(model.debugInfo).font(.system(size: 8, design: .monospaced))
-                    .foregroundStyle(.green).frame(maxWidth: .infinity, alignment: .leading)
-            }
+            // model.debugInfo (seat/turn/legal-moves after a HARNESS_SEED)
+            // deliberately isn't rendered here anymore — the owner asked for
+            // the room back now that the whole simulated phone has to fit a
+            // fixed 375x667 SE frame (requirement 4); still readable via the
+            // debugger/model if actually needed.
         }
-        .padding(8)
+        .padding(.horizontal, 8).padding(.vertical, 3)
         .background(Color(white: 0.09))
     }
 }
 
+/// The Messages-style nav bar: back chevron (-> the chat list, requirement 2),
+/// contact avatar, and contact name. This is the piece that makes the harness
+/// actually resemble the reference screenshot instead of a bare control strip
+/// — and the chevron is the ONE control that replaces the old Chat A/B buttons.
+private struct ContactNavBar: View {
+    @ObservedObject var model: HarnessModel
+    let onBack: () -> Void
+
+    var body: some View {
+        ZStack {
+            VStack(spacing: 3) {
+                Circle()
+                    .fill(Color.blue.opacity(0.55))
+                    .frame(width: 40, height: 40)
+                    .overlay(
+                        Text(model.contactInitials)
+                            .font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+                    )
+                Text(model.contactLabel)
+                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+            }
+            HStack {
+                Button(action: onBack) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.blue)
+                        .frame(width: 34, height: 34)
+                }
+                .accessibilityLabel("Back to chat list")
+                Spacer()
+            }
+            .padding(.leading, 4)
+        }
+        .frame(height: ChatChrome.navBarHeight)   // named, not intrinsic — see ChatChrome's doc
+        .background(Color(white: 0.05))
+    }
+}
+
+/// The transcript — the ONLY scrolling region on the chat screen (requirement
+/// 1). Each delivered bubble reads like a real Messages bubble (blue/right if
+/// whichever participant is currently "you" sent it); the currently
+/// staged-but-undelivered bubble, if any, renders as the LAST item and scrolls
+/// WITH the transcript — exactly like a real Messages draft does, it is not
+/// part of the fixed bottom area (only the compose bar and the extension
+/// drawer itself are fixed).
+private struct TranscriptScroll: View {
+    @ObservedObject var model: HarnessModel
+
+    var body: some View {
+        // A plain ScrollView top-aligns sparse content, so with only 1-2
+        // bubbles they'd float under the nav bar with a dead gap above the
+        // compose bar — the opposite of real Messages, where a short
+        // transcript still hugs the bottom. The GeometryReader measures the
+        // scroll viewport so the inner VStack can be given `minHeight:` equal
+        // to it with `alignment: .bottom`: once content is shorter than the
+        // viewport, the leading Spacer absorbs the slack and pushes the
+        // bubbles down to meet the compose bar; once content overflows, the
+        // minHeight is moot and it scrolls normally.
+        GeometryReader { outer in
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(spacing: 8) {
+                        Spacer(minLength: 0)
+                        ForEach(model.transcript) { msg in
+                            MessageBubble(model: model, msg: msg, isMine: msg.senderId == model.localId)
+                                .id(msg.id)
+                        }
+                        if model.staged != nil {
+                            StagedPreviewBubble(model: model, onUnstage: { model.unstage() })
+                                .id("staged")
+                        }
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 12)
+                    .frame(minHeight: outer.size.height, alignment: .bottom)
+                }
+                .onChange(of: model.transcript.count) { _ in scrollToEnd(proxy) }
+                .onChange(of: model.staged) { _ in scrollToEnd(proxy) }
+            }
+        }
+        .background(Color(white: 0.13))
+    }
+
+    private func scrollToEnd(_ proxy: ScrollViewProxy) {
+        withAnimation {
+            if model.staged != nil { proxy.scrollTo("staged", anchor: .bottom) }
+            else if let last = model.transcript.last { proxy.scrollTo(last.id, anchor: .bottom) }
+        }
+    }
+}
+
+/// A GENUINE (not placeholder) preview of a Foolish game bubble: the IMAGE the
+/// extension snapshotted when the move was staged (`HarnessModel.Msg.preview`),
+/// which is literally what a real MSMessage carries — Messages renders the
+/// extension once at insert time and that picture never changes afterwards. The
+/// owner rejected a fake gradient here ("it should show the actual game preview
+/// as in the real chat app"); this is the actual one, from the same
+/// `BubbleSnapshot` entry the shipping extension composes with.
+///
+/// It used to mount a whole live `MessagesRootView` per bubble instead. That was
+/// not just expensive, it was WRONG in a way that produced two of the round-3
+/// bugs: each of those boards decoded its own (often stale) payload into the one
+/// static resident kernel the open board was using, cached its own seat rows,
+/// and ran its own animation stream. See `HarnessModel.Msg`.
+private struct GamePreviewCard: View {
+    let image: UIImage?
+
+    private static let thumbWidth: CGFloat = 190
+    private static let thumbHeight: CGFloat = 84
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Group {
+                if let image {
+                    Image(uiImage: image).resizable().aspectRatio(contentMode: .fill)
+                } else {
+                    // Only reachable if ImageRenderer failed at stage time.
+                    Color(white: 0.25)
+                }
+            }
+            .frame(width: Self.thumbWidth, height: Self.thumbHeight)
+            .clipped()
+            .allowsHitTesting(false)
+
+            Text("Foolish")
+                .font(.system(size: 13, weight: .semibold)).foregroundStyle(.black.opacity(0.85))
+                .padding(.horizontal, 10).padding(.vertical, 7)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(white: 0.93))
+        }
+        .frame(width: Self.thumbWidth)
+        .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous)
+            .strokeBorder(Color.white.opacity(0.15)))
+    }
+}
+
+/// One delivered transcript entry, styled like a real Messages bubble —
+/// its own `GamePreviewCard` points at `msg.url`, that PARTICULAR bubble's
+/// own payload (not necessarily the live/current one), matching how a real
+/// past message's preview never changes after the fact.
+private struct MessageBubble: View {
+    @ObservedObject var model: HarnessModel
+    let msg: HarnessModel.Msg
+    let isMine: Bool
+
+    var body: some View {
+        HStack {
+            if isMine { Spacer(minLength: 36) }
+            VStack(alignment: isMine ? .trailing : .leading, spacing: 2) {
+                if !isMine {
+                    Text(msg.senderName)
+                        .font(.system(size: 10)).foregroundStyle(.white.opacity(0.5))
+                }
+                GamePreviewCard(image: msg.preview)
+            }
+            if !isMine { Spacer(minLength: 36) }
+        }
+        .frame(maxWidth: .infinity, alignment: isMine ? .trailing : .leading)
+    }
+}
+
+/// The staged-but-undelivered bubble — a stand-in for the real extension's
+/// `insert`, previewing `model.stagedURL` (the draft that hasn't been sent
+/// yet). The X mirrors the real extension's unstage/undo (§10, batch-1 note
+/// 32).
+private struct StagedPreviewBubble: View {
+    @ObservedObject var model: HarnessModel
+    let onUnstage: () -> Void
+
+    var body: some View {
+        HStack {
+            Spacer(minLength: 36)
+            GamePreviewCard(image: model.stagedPreview)
+                .overlay(alignment: .topTrailing) {
+                    Button(action: onUnstage) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
+                            .frame(width: 20, height: 20)
+                            .background(Circle().fill(Color.black.opacity(0.45)))
+                    }
+                    .padding(6)
+                }
+        }
+    }
+}
+
+/// The fixed "Add comment or Send" row. In real Messages the compose field
+/// lives exactly here — above the extension drawer, never inside the
+/// scrolling transcript. The blue arrow is the harness's existing
+/// `model.deliver()` control, just re-homed from the old bottom-of-controls
+/// row into the spot it actually occupies on a real phone. The "+" button is
+/// real Messages' own app-drawer icon: this is the ONLY way back into a
+/// dismissed extension (see ExtensionStage's doc) — there is no separate
+/// "reopen" affordance taking up its own row, exactly like the real app.
+private struct ComposeBar: View {
+    @ObservedObject var model: HarnessModel
+    @Binding var isDrawerDismissed: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button { isDrawerDismissed = false } label: {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 24))
+                    .foregroundStyle(isDrawerDismissed ? Color.blue : .white.opacity(0.3))
+            }
+            Text(model.staged != nil ? "Send" : "Add comment or Send")
+                .font(.system(size: 14)).foregroundStyle(.white.opacity(0.45))
+                .padding(.horizontal, 12).padding(.vertical, 7)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Capsule().fill(Color.white.opacity(0.08)))
+            Button { model.deliver() } label: {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
+                    .frame(width: 26, height: 26)
+                    .background(Circle().fill(model.staged != nil ? Color.blue : Color.white.opacity(0.15)))
+            }
+            .disabled(model.staged == nil)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: ChatChrome.composeBarHeight)   // named, not intrinsic — see ChatChrome's doc
+        .background(Color(white: 0.07))
+    }
+}
+
+/// The real extension's drawer, filling the bottom of the shared `SEScreen`
+/// frame (requirement 4 — this no longer owns its own width or centering;
+/// `HarnessRootView.simulatedPhone` fixes the WHOLE simulated app to
+/// 375x667pt and this just fills whatever width/height that leaves it).
+///
+/// Heights, researched (2026-07-22 session) rather than re-guessed: an old
+/// Apple Developer Forums thread (developer.apple.com/forums/thread/50497)
+/// measured a live MSMessagesAppViewController's own `view.bounds.height` at
+/// 568pt expanded / 253pt compact on an iPhone SE — i.e. EXPANDED IS ~THE
+/// WHOLE SCREEN (568pt was that SE's entire logical height at the time), not
+/// "screen minus all the chrome"; the nav bar/compose bar apparently overlay
+/// via safe-area insets rather than shrinking the extension's own frame.
+/// `compactHeight` (261) is close to that same ratio and the owner confirmed
+/// it reads right by eye, so it's kept. `expandedHeight` (550) is nearly all
+/// of what's left of the fixed 667pt `SEScreen` budget once `ContactNavBar` +
+/// both dividers + `ComposeBar` (~103pt total) are subtracted — the owner
+/// found an earlier, more conservative value (520) left the drawer's top
+/// edge visibly too low; 550 leaves only a sliver (~14pt) of transcript above
+/// the compose bar, matching the reference screenshot's own proportions (it
+/// shows a staged bubble barely peeking through, not a fat gap).
+///
+/// Real Messages lets you DRAG the drawer — swipe up from compact to expand,
+/// swipe down from expanded to collapse, swipe down again from an already-
+/// compact drawer to dismiss it entirely. Dismissing takes the drawer's
+/// space away completely (no leftover row) — the ONLY way back in is the
+/// compose bar's "+" button, exactly like real Messages' app-drawer icon;
+/// see `ComposeBar`. `requestExpand` is threaded into MessagesRootView but is
+/// never actually CALLED anywhere in FoolishKit today (confirmed by grep) —
+/// production expand/collapse is entirely host-driven, which is exactly what
+/// the drag gesture below reproduces; nothing in FoolishKit needed to change.
+private struct ExtensionStage: View {
+    @ObservedObject var model: HarnessModel
+    /// Swiped fully away. Owned by `ChatScreen` (not `HarnessModel` — a real
+    /// dismissed drawer keeps its extension alive off-screen, this is purely
+    /// a host-chrome concern) and shared with `ComposeBar`'s "+" button via
+    /// binding, since that button is the only way back in. Does NOT touch
+    /// `model.presentation` — reopening lands back on whatever style was
+    /// active, which after a dismiss is always `.compact` (dismissing is only
+    /// reachable from compact, see `dragGesture`).
+    @Binding var isDismissed: Bool
+    /// Live drag offset — a bit of rubber-band feedback while dragging so the
+    /// grabber doesn't feel dead before the threshold triggers a transition.
+    @State private var dragOffset: CGFloat = 0
+
+    private enum StageHeight {
+        /// The entire SE screen — `ChatScreen`'s nav bar, transcript, AND
+        /// compose bar are all one base `ZStack` layer now (see its doc), so
+        /// there's nothing left to subtract: expanded covers literally
+        /// everything, compose bar included, which is what actually makes
+        /// `ChatScreen.isComposeOnTop` (the compose-bar z-order swap) show up
+        /// — a shorter height here would leave a gap the compose row could
+        /// just sit in, and the whole point was the owner's own real-device
+        /// observation that it goes fully BEHIND while expanded, not merely
+        /// "as far down as there's room for".
+        static let expanded: CGFloat = SEScreen.height
+        /// Independently defined (both by Apple's docs and by the forum
+        /// measurement in `ChatChrome`'s doc) as roughly a filled keyboard's
+        /// height, which doesn't scale with screen size the way `expanded`
+        /// does. Owner-verified by eye.
+        static let compact: CGFloat = 261
+    }
+
+    var body: some View {
+        // Dismissed = gone, no leftover row (the owner's explicit ask — the
+        // compose bar's "+" is the only way back in, not a second control
+        // taking up its own space). EmptyView contributes zero layout size.
+        if isDismissed { EmptyView() } else { dockedStage }
+    }
+
+    private var dockedStage: some View {
+        HostedStage {
+            MessagesRootView(
+                payloadURL: model.payloadURL,
+                style: model.presentation,
+                senderIsLocal: model.senderIsLocal,
+                startNewGame: model.startNewGame,
+                chatKey: model.chatKey,
+                chatIsDM: model.chatIsDM,
+                chatPlayers: model.playerCount,
+                requestExpand: { model.expand() },
+                onNewGame: { model.newGame() },
+                onSend: { payload, seat in await model.stage(payload, seat: seat) },
+                onUnstage: { model.unstage() }
+            )
+            .id(model.viewKey)   // reset @State when player/chat/transcript/intent changes
+        }
+        // No rounding/centering of its own anymore (requirement 4) — the
+        // outer SEScreen frame (HarnessRootView.simulatedPhone) is what's
+        // rounded/bordered/clipped now, the same "device silhouette" this
+        // used to draw itself. `.clipped()` is NOT optional, though: the
+        // outer frame's clipShape only clips at the SE box's own OUTER edge —
+        // it does nothing to stop one VStack row from painting over its
+        // siblings INSIDE that box. And WoolBackground's `.ignoresSafeArea()`
+        // (deep inside MessagesRootView, several SwiftUI layers below
+        // HostedStage's UIHostingController) does exactly that if left
+        // unclipped: it ignores the height this view was actually given and
+        // paints over the ENTIRE remaining box, burying the nav bar/
+        // transcript/compose bar rows above it — found empirically
+        // (screenshotted, the grabber landed mid-board instead of at its
+        // top edge). `.clipped()` forces the rendered content back to this
+        // view's own 375 x `height` rect regardless of what's happening
+        // inside the hosted controller.
+        .frame(width: SEScreen.width, height: height)
+        .clipped()
+        .offset(y: dragOffset)
+        .animation(.easeOut(duration: 0.15), value: dragOffset)
+        .animation(.easeInOut(duration: 0.25), value: height)
+        .overlay(alignment: .top) { grabber }
+    }
+
+    /// The visible grabber capsule PLUS a generously oversized invisible hit
+    /// target around it (real Messages lets you grab anywhere near the handle,
+    /// not just its exact 5pt-tall pixels) — this is the one draggable region;
+    /// the rest of the stage is left alone so in-game taps still reach the
+    /// board underneath.
+    private var grabber: some View {
+        Capsule()
+            .fill(Color.white.opacity(0.35))
+            .frame(width: 36, height: 5)
+            .padding(.top, 6)
+            .frame(width: 140, height: 34)
+            .contentShape(Rectangle())
+            .gesture(dragGesture)
+    }
+
+    private var dragGesture: some Gesture {
+        DragGesture(minimumDistance: 6)
+            .onChanged { dragOffset = $0.translation.height }
+            .onEnded { value in
+                let dy = value.translation.height
+                dragOffset = 0
+                // Written as a switch (not `==`) so it doesn't depend on
+                // `MsgPresentation` (FoolishKit) being Equatable — same reason
+                // as `height` below.
+                switch model.presentation {
+                case .expanded:
+                    if dy > 60 { model.togglePresentation() }        // swipe down -> collapse
+                case .compact:
+                    if dy < -40 { model.expand() }                   // swipe up -> expand
+                    else if dy > 40 { isDismissed = true }            // swipe down again -> dismiss
+                }
+            }
+    }
+
+    /// `model.presentation`'s stage height. Written as a `switch` (not `==`)
+    /// so it doesn't depend on `MsgPresentation` (FoolishKit) being Equatable.
+    private var height: CGFloat {
+        switch model.presentation {
+        case .expanded: return StageHeight.expanded
+        case .compact: return StageHeight.compact
+        }
+    }
+}
+
 /// Hosts `content` in its OWN `UIHostingController`, exactly the way the real
-/// extension is hosted (§ note 5): `MSMessagesAppViewController` is a genuinely
-/// separate view controller with no ambient safe area to bleed in from a host
-/// app's chrome. The harness used to embed `MessagesRootView` as a plain SwiftUI
+/// extension is hosted: `MSMessagesAppViewController` is a genuinely separate
+/// view controller with no ambient safe area to bleed in from a host app's
+/// chrome. The harness used to embed `MessagesRootView` as a plain SwiftUI
 /// child of `HarnessRootView`'s own hierarchy — a `.frame(width:height:)`-boxed
 /// ZStack child, nowhere near a physical screen edge. That still worked for
-/// everything EXCEPT `WoolBackground`'s `.ignoresSafeArea()` (needed so the wool
-/// bleeds edge-to-edge in the real, edge-to-edge extension, per note 3): nested
-/// that many SwiftUI layers deep, `.ignoresSafeArea()` expanded the wool's
-/// internal aspect-fill proposal against the HARNESS APP's own ambient bottom
-/// safe area (the home indicator, an inherited value with nothing in the tree
-/// to consume it — the top strip's `.safeAreaInset(edge: .top)` consumes the top
-/// one, nothing matching existed for the bottom), not against the fixed 375x554
-/// stage box the tester actually sees — so the wool image fell short of the
-/// stage's own bottom edge by roughly that amount, a gap the fixed-size clip
-/// then exposed as bare black. A real `UIHostingController`, added as a proper
-/// child controller, computes its OWN `safeAreaInsets` from its OWN view's
-/// position, so `.ignoresSafeArea()` inside it has nothing left over to reach
-/// for and just fills the box it was actually given — verified empirically
-/// (screenshotted before/after; this was the fix that closed the gap, several
-/// other candidates — GeometryReader wrapping, a matching bottom
-/// `.safeAreaInset`, `.ignoresSafeArea(edges: .bottom)` on the surrounding
-/// ZStack — did not).
+/// everything EXCEPT `WoolBackground`'s `.ignoresSafeArea()` (needed so the
+/// wool bleeds edge-to-edge in the real, edge-to-edge extension): nested that
+/// many SwiftUI layers deep, `.ignoresSafeArea()` expanded the wool's internal
+/// aspect-fill proposal against the HARNESS APP's own ambient safe area, not
+/// against the fixed stage box the tester actually sees — so the wool image
+/// fell short of the stage's own edge, a gap the fixed-size clip then exposed
+/// as bare black. A real `UIHostingController`, added as a proper child
+/// controller, computes its OWN `safeAreaInsets` from its OWN view's position,
+/// so `.ignoresSafeArea()` inside it has nothing left over to reach for and
+/// just fills the box it was actually given — verified empirically
+/// (screenshotted before/after; this was the fix that closed the gap).
 private struct HostedStage<Content: View>: UIViewControllerRepresentable {
     @ViewBuilder let content: () -> Content
 
     func makeUIViewController(context: Context) -> UIHostingController<Content> {
         let vc = UIHostingController(rootView: content())
         vc.view.backgroundColor = .clear
+        // 2026-07-22 session: nesting the stage inside the new SE-frame
+        // container (requirement 4 — the WHOLE simulated Messages app, not
+        // just the extension, now lives inside one fixed 375x667 box)
+        // reintroduced a variant of the exact bug this type's doc already
+        // describes once: WoolBackground's `.ignoresSafeArea()`, several
+        // SwiftUI layers below this hosting controller, was aspect-filling
+        // against the wrong (much larger) ambient safe area instead of this
+        // controller's own small given frame — not a black gap this time,
+        // but the opposite: the wool image scaled to fill some huge implied
+        // canvas, so the small box we actually see is just one over-zoomed,
+        // nearly-solid-colored corner of it (screenshotted, compared against
+        // a real device — confirmed NOT an iPhone SE quirk, a genuine host
+        // bug). `safeAreaRegions = []` (iOS 16.4+) tells the hosting
+        // controller to stop propagating ANY ambient safe area into its
+        // SwiftUI content at all, so `.ignoresSafeArea()` inside has nothing
+        // left to expand against beyond this controller's own actual bounds.
+        if #available(iOS 16.4, *) {
+            vc.safeAreaRegions = []
+        }
         return vc
     }
 

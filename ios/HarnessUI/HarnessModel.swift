@@ -20,12 +20,28 @@
 // Chat A's board. (See MessageGameStore's type doc for the underlying leak.)
 
 import SwiftUI
+import UIKit
 import FoolishKit
 
 @MainActor
 final class HarnessModel: ObservableObject {
     struct Participant: Identifiable, Equatable { let id = UUID(); let name: String }
-    struct Msg: Identifiable, Equatable { let id = UUID(); let url: URL; let senderId: UUID; let senderName: String }
+    /// One delivered transcript entry. `preview` is the bubble IMAGE, snapshotted
+    /// once when the move was staged — exactly what a real MSMessage carries
+    /// (Messages snapshots the extension at insert time and the picture never
+    /// changes afterwards). It is stored, not re-derived, for a correctness
+    /// reason and not just fidelity: the harness's transcript used to render each
+    /// bubble by mounting a LIVE MessagesRootView pointed at that bubble's
+    /// payload, and every one of those decoded its payload into the single static
+    /// resident kernel that the open board is also using. Old bubbles therefore
+    /// re-adopted stale chains (an early 8-seat lobby among them) under the live
+    /// board's feet, wrote their own rows into the seat cache, and ran their own
+    /// animation streams — which is how two participants ended up looking at
+    /// different games, and why a pickup animated twice.
+    struct Msg: Identifiable, Equatable {
+        let id = UUID(); let url: URL; let senderId: UUID; let senderName: String
+        let preview: UIImage?
+    }
 
     /// One simulated conversation's mutable state: its own transcript and its
     /// own "am I starting a fresh game" flag, exactly the two things that must
@@ -50,6 +66,8 @@ final class HarnessModel: ObservableObject {
     /// delivered. Stands in for the Messages input field: the harness Send button
     /// is the blue send arrow. nil = nothing staged.
     @Published private(set) var staged: Data?
+    /// The staged bubble's picture, snapshotted at stage time like `Msg.preview`.
+    @Published private(set) var stagedPreview: UIImage?
     /// Simulated Messages presentation style. The real extension collapses to the
     /// compact drawer (and Messages' Send) once a move is staged; the harness has no
     /// Messages host, so it fakes the same expanded<->compact transition here so the
@@ -58,7 +76,10 @@ final class HarnessModel: ObservableObject {
     /// DEV diagnostic surfaced in the chrome (seat/turn/legal after a seed).
     @Published private(set) var debugInfo = ""
 
-    private static let names = ["You", "Vera", "Boris", "Dima", "Katya", "Lev", "Mila", "Oleg"]
+    // "You" was the first name here; the owner asked for a real one — with eight
+    // participants and a "you are:" switcher above them, a player literally named
+    // "You" reads as the label rather than as a person.
+    private static let names = ["Alex", "Vera", "Boris", "Dima", "Katya", "Lev", "Mila", "Oleg"]
 
     init(count: Int? = nil) {
         let env = Int(ProcessInfo.processInfo.environment["HARNESS_PLAYERS"] ?? "")
@@ -85,11 +106,66 @@ final class HarnessModel: ObservableObject {
     var payloadURL: URL? { startNewGame ? nil : latest?.url }
     /// Did the CURRENT player send the latest bubble? Drives §6.2 sender inference.
     var senderIsLocal: Bool { latest?.senderId == localId }
+    /// `staged`, wrapped the same way a delivered bubble's `Msg.url` already is.
+    /// Kept for parity/debugging only — the transcript renders `stagedPreview`,
+    /// the snapshot, and no longer mounts a board per bubble (see `Msg`).
+    var stagedURL: URL? { staged.map { MessageEnvelope.link(payload: $0) } }
     var chatIsDM: Bool { participants.count == 2 }
     /// Reset MessagesRootView's @State whenever the player, the chat, the
     /// transcript, or the new-game intent changes, so it re-derives as the
     /// current participant IN the current chat.
     var viewKey: String { "\(localIndex)-\(currentChat)-\(transcript.count)-\(startNewGame)" }
+
+    // MARK: chat list (req 2 of the Messages-host redesign)
+    //
+    // The old chrome had a two-button "Chat A"/"Chat B" switcher living next to
+    // the participant strip. Real Messages has no such thing — you reach another
+    // conversation by tapping the back chevron in the nav bar, which shows the
+    // conversation LIST, then tapping a row. `chatSummaries` is what powers that
+    // list screen (ChatListView.swift); it stays read-only derived state so the
+    // list can never drift from `chats` itself.
+
+    /// One row in the simulated chat list.
+    struct ChatSummary: Identifiable, Equatable {
+        let id: Int              // 0 ("Chat A") or 1 ("Chat B") — same indices `switchChat` takes
+        let label: String        // e.g. "Vera chat A" or "Group chat B"
+        let preview: String      // last bubble's sender, or an empty-state string
+        let isCurrent: Bool
+    }
+
+    /// Who the chat list / nav bar should show as "the contact" — i.e. everyone
+    /// in this simulated device's conversations EXCEPT whichever participant is
+    /// currently "you" (see `become`). A DM names the other participant, exactly
+    /// like a real 1:1 thread's header; 3+ reads as "Group", matching the owner's
+    /// own example strings ("Vera chat A" / "Group chat A") rather than listing
+    /// every name (real Messages group headers are usually a short "Group Name"
+    /// too, not the full roster).
+    var contactLabel: String {
+        guard chatIsDM else { return "Group" }
+        return participants.first(where: { $0.id != localId })?.name ?? "?"
+    }
+
+    /// Avatar initials for `contactLabel` (mirrors the reference screenshot's
+    /// "KB" circle) — first letter of up to two words.
+    var contactInitials: String {
+        let words = contactLabel.split(separator: " ")
+        if words.count >= 2 { return "\(words[0].prefix(1))\(words[1].prefix(1))".uppercased() }
+        return String(contactLabel.prefix(2)).uppercased()
+    }
+
+    /// The two simulated conversations, described for the chat list. Reads
+    /// `chats` directly (private to this file) without exposing it — the list
+    /// screen only ever needs id/label/preview/isCurrent, never the transcript
+    /// or startNewGame flag of a chat that isn't open.
+    var chatSummaries: [ChatSummary] {
+        (0..<chats.count).map { idx in
+            let letter = idx == 0 ? "A" : "B"
+            let preview = chats[idx].transcript.last.map { "\($0.senderName) sent a move" }
+                ?? "No messages yet"
+            return ChatSummary(id: idx, label: "\(contactLabel) chat \(letter)",
+                               preview: preview, isCurrent: idx == currentChat)
+        }
+    }
 
     // MARK: actions
 
@@ -128,7 +204,7 @@ final class HarnessModel: ObservableObject {
         // game; (startNewGame=false, no bubble) is the "game link is damaged"
         // screen, which is wrong here — there is simply nothing sent to them.
         chats[currentChat].startNewGame = (latest == nil)
-        staged = nil                 // a half-staged move doesn't cross to another player
+        staged = nil; stagedPreview = nil   // a half-staged move doesn't cross to another player
         presentation = .expanded     // opening the game as this player
         rebindStore()
     }
@@ -144,18 +220,18 @@ final class HarnessModel: ObservableObject {
     func switchChat(_ idx: Int) {
         guard idx == 0 || idx == 1, idx != currentChat else { return }
         currentChat = idx
-        staged = nil
+        staged = nil; stagedPreview = nil
         presentation = .expanded
     }
 
     /// The current player tapped New game. New game always opens full-screen.
-    func newGame() { chats[currentChat].startNewGame = true; staged = nil; presentation = .expanded }
+    func newGame() { chats[currentChat].startNewGame = true; staged = nil; stagedPreview = nil; presentation = .expanded }
 
     /// Retract the staged bubble (§10 undo, batch-1 note 32): an undo that empties
     /// the pending ledger must drop the Send-lit payload too, not just no-op and
     /// leave a stale move ready to send. Stands in for the real extension's
     /// `pendingStage = nil` — the harness has no inserted-bubble UI to remove.
-    func unstage() { staged = nil }
+    func unstage() { staged = nil; stagedPreview = nil }
 
     /// The board auto-staged a chain (the extension's `insert`). Hold it; the
     /// human still has to press Send — that is `deliver()`.
@@ -164,8 +240,14 @@ final class HarnessModel: ObservableObject {
     /// MessagesRootView on it, so flipping it here would tear down the very board
     /// that just staged the move (it reloads with payloadURL=nil → "damaged").
     /// The new-game intent only clears when the bubble is actually delivered.
-    func stage(_ payload: Data, seat: Int) {
+    func stage(_ payload: Data, seat: Int) async {
         staged = payload
+        // Snapshot the bubble picture NOW, the way MessagesViewController.stage
+        // does — the resident kernel is this payload at exactly this moment (the
+        // board just sealed it), and the same BubbleSnapshot entry picks lobby vs
+        // board. Every later render of this bubble is that image, so nothing in
+        // the transcript ever touches the kernel again (see `Msg.preview`).
+        stagedPreview = await Self.snapshot(payload)
         // Mirror the real extension: let the move's animation play out (card flight,
         // and for a bout-ending good the discard + draws), rest ~500ms so the result
         // reads, THEN collapse to the compact drawer (which shows the staged game).
@@ -205,8 +287,10 @@ final class HarnessModel: ObservableObject {
     func deliver() {
         guard let payload = staged else { return }
         chats[currentChat].transcript.append(Msg(url: MessageEnvelope.link(payload: payload),
-                                                 senderId: localId, senderName: localName))
+                                                 senderId: localId, senderName: localName,
+                                                 preview: stagedPreview))
         staged = nil
+        stagedPreview = nil
         // Now that a real bubble exists, leave the new-game screen: the reload
         // this delivery triggers (transcript.count changed) must read the bubble,
         // not route back to setup. (Was done in stage(); see the note there.)
@@ -217,6 +301,18 @@ final class HarnessModel: ObservableObject {
         // the already-applied action, and adopt() falsely toasts "your move was
         // superseded". Cleared synchronously so it's gone before the reload adopts.
         MessageGameStore.shared.clearAllPending()
+    }
+
+    /// The bubble picture for a sealed chain — the SAME `BubbleSnapshot` entry
+    /// the real extension composes its MSMessage image with, so the harness's
+    /// transcript shows what a real thread would show. Decoding here re-adopts
+    /// the payload into the resident kernel, which is what the real extension's
+    /// `stage` does too and is safe for the same reason: it is the chain the
+    /// board just sealed, so "re-adopt" is a no-op on the state.
+    private static func snapshot(_ payload: Data) async -> UIImage? {
+        guard let env = try? await MessageEnvelope.decode(payload: payload, viewer: -1)
+        else { return nil }
+        return await BubbleSnapshot.render(env: env)
     }
 
     // Each participant → its own throwaway cache suite (fresh per app launch via
@@ -323,8 +419,11 @@ final class HarnessModel: ObservableObject {
 
             // Always seeds into chat 0 ("Chat A") — a dev screenshot helper, not the
             // two-chat leak repro, so it doesn't need to honor `currentChat`.
+            let shot = await Self.snapshot(payload)
             chats[0] = ChatState(transcript: [Msg(url: MessageEnvelope.link(payload: payload),
-                                                  senderId: participants[0].id, senderName: participants[0].name)],
+                                                  senderId: participants[0].id,
+                                                  senderName: participants[0].name,
+                                                  preview: shot)],
                                  startNewGame: false)
             currentChat = 0
             localIndex = actor           // view as the actionable seat → the board shows
