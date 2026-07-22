@@ -19,10 +19,20 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <poll.h>
+#include <time.h>
 #include <sys/socket.h>
 #include <netdb.h>
 
 #include <quiche.h>
+
+static uint64_t wtc_now_us(void) {
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)ts.tv_nsec / 1000ULL;
+}
+static int wtc_cmp_u64(const void *a, const void *b) {
+    uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b;
+    return (x > y) - (x < y);
+}
 
 #define WTC_MAX_DGRAM 1350
 
@@ -102,6 +112,13 @@ int main(int argc, char **argv) {
     int datagrams_recv = 0;
     int64_t wt_stream = -1; uint64_t wt_flow = 0;
 
+    // Ping mode (5th arg N>0): after the session is up, ping-pong N move/view
+    // DATAGRAMs measuring each round-trip, then print RTT percentiles. Used to
+    // measure QUIC/WebTransport latency (e.g. --quic-workers sharding effect).
+    int npings = (argc > 5) ? atoi(argv[5]) : 0;
+    int pings_done = 0; bool awaiting = false; uint64_t ping_t0 = 0;
+    static uint64_t rtt[20000]; int nrtt = 0;
+
     wtc_flush(sock, conn, out, sizeof out);
 
     struct pollfd pfd = { .fd = sock, .events = POLLIN };
@@ -151,6 +168,13 @@ int main(int argc, char **argv) {
                 if (n < 0) break;
                 uint64_t flow = 0; int hn = wtc_varint_decode(buf, (size_t)n, &flow);
                 datagrams_recv++;
+                if (npings > 0) {
+                    if (awaiting && nrtt < (int)(sizeof rtt / sizeof rtt[0])) {
+                        rtt[nrtt++] = wtc_now_us() - ping_t0;   // a view DATAGRAM in reply to our move = one RTT
+                        awaiting = false; pings_done++;
+                    }
+                    continue;
+                }
                 fprintf(stderr, "[wt_client] recv WT datagram: flow=%llu payload=%d bytes\n",
                         (unsigned long long)flow, (int)n - hn);
                 if (!move_sent) {   // send one move datagram back to exercise the inbound path
@@ -161,10 +185,21 @@ int main(int argc, char **argv) {
                     fprintf(stderr, "[wt_client] sent move datagram (flow=%llu)\n", (unsigned long long)wt_flow);
                 }
             }
+            // Ping driver: once the session is up and no ping is outstanding,
+            // fire the next move DATAGRAM and start its RTT timer.
+            if (npings > 0 && got_headers && datagrams_recv >= 1 && !awaiting && pings_done < npings) {
+                uint8_t d[64]; int p = wtc_varint_encode(wt_flow, d); d[p++] = 0x00; d[p++] = 0x01;
+                quiche_conn_dgram_send(conn, d, p);
+                ping_t0 = wtc_now_us(); awaiting = true;
+            }
         }
 
         wtc_flush(sock, conn, out, sizeof out);
 
+        if (npings > 0) {
+            if (pings_done >= npings) break;
+            continue;   // ping mode drives its own loop; skip the smoke-mode hold/break below
+        }
         // Optional 4th arg: hold the session open ~N seconds after the round
         // trip (≈10 poll ticks/sec) so a test can observe that an OPEN WT
         // session keeps its game pinned against reclamation.
@@ -172,6 +207,19 @@ int main(int argc, char **argv) {
             if (hold_ticks <= 0) break;
             hold_ticks--;
         }
+    }
+
+    if (npings > 0) {
+        if (nrtt == 0) { printf("FAIL: no RTT samples (session=%s)\n", got_headers ? "up" : "down"); return 1; }
+        qsort(rtt, nrtt, sizeof rtt[0], wtc_cmp_u64);
+        double sum = 0; for (int i = 0; i < nrtt; i++) sum += rtt[i];
+        printf("RTT us: n=%d mean=%.1f p50=%llu p90=%llu p99=%llu max=%llu\n",
+               nrtt, sum / nrtt,
+               (unsigned long long)rtt[nrtt / 2],
+               (unsigned long long)rtt[(nrtt * 9) / 10],
+               (unsigned long long)rtt[(nrtt * 99) / 100],
+               (unsigned long long)rtt[nrtt - 1]);
+        return 0;
     }
 
     if (got_headers && datagrams_recv >= 2) {
