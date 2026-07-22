@@ -342,4 +342,56 @@ final class MessageLobbyTests: XCTestCase {
             }
         }
     }
+    /// Rule P, through the SWIFT binding, on the exact pair the group-chat fork
+    /// produced: my own cached lobby reseal vs the LIVE game someone started
+    /// from it. `MessageSurfaceRouter` compares these two and opens the winner,
+    /// so if the lobby wins here the extension shows a lobby while the thread is
+    /// mid-game — "there is a game currently in play, with the current player in
+    /// it, yet the extension is stuck on the lobby".
+    ///
+    /// The C test (msg_wire_test) pins the RULE. This pins that the app's linked
+    /// kernel carries it — not the same thing, and exactly how this bug survived
+    /// a "fix": FoolishKit links a PREBUILT vendor/Foolish.xcframework, so a C
+    /// change reaches the app only after `make ios-lib`. An earlier single-pair
+    /// version of this test passed against the stale library on a digest
+    /// coin-flip.
+    ///
+    /// So it runs many pairs and REQUIRES that some have the lobby's digest
+    /// sorting first — the ones the tiebreak alone would get wrong. Same guard
+    /// as the C test, for the same reason.
+    func testAStartedGameBeatsMyOwnCachedLobbyThroughTheKernelBinding() async throws {
+        let k = MessageKernel.shared
+        var lobbyDigestFirst = 0
+
+        for i in 0..<12 {
+            let gid = UInt64(5150 + i)
+            try await k.newGame(seed: freshSeed(UInt8(40 + i)), players: 8)
+            let joins3 = [MessageJoin(seat: 0, name: "Alex"), MessageJoin(seat: 1, name: "Vera"),
+                          MessageJoin(seat: 2, name: "Boris")]
+            let lobby = try await k.seal(phase: 0, lastActorSeat: 2, gameId: gid,
+                                         parent8: Data(repeating: 0, count: 8), joins: joins3)
+            let lobbyEnv = try await MessageEnvelope.decode(payload: lobby, viewer: -1)
+
+            let joins5 = joins3 + [MessageJoin(seat: 3, name: "Dima"),
+                                   MessageJoin(seat: 4, name: "Katya")]
+            let live = try await k.startFromLobby(
+                lobbyPayload: lobby, gameId: gid, actingSeat: 3,
+                parent8: MessageTurnController.firstEight(hex: lobbyEnv.digest), joins: joins5)
+            let liveEnv = try await MessageEnvelope.decode(payload: live, viewer: -1)
+            XCTAssertEqual(liveEnv.phase, 2, "fixture: the started game is LIVE")
+            XCTAssertEqual(liveEnv.round, lobbyEnv.round, "fixture: same round — the tie the rule must break")
+            XCTAssertEqual(liveEnv.turn, lobbyEnv.turn, "fixture: same turn")
+            if lobbyEnv.digest < liveEnv.digest { lobbyDigestFirst += 1 }
+
+            let a = try await k.preferred(lobby, live)
+            let b = try await k.preferred(live, lobby)
+            XCTAssertGreaterThan(a, 0, "game \(gid): the started game must beat the lobby it grew out of")
+            XCTAssertLessThan(b, 0, "game \(gid): and the comparison must be symmetric")
+        }
+
+        XCTAssertGreaterThan(lobbyDigestFirst, 0,
+                             "no pair had the lobby's digest sorting first — this run could not "
+                             + "have caught a kernel without the phase rule (e.g. a stale "
+                             + "vendor/Foolish.xcframework)")
+    }
 }

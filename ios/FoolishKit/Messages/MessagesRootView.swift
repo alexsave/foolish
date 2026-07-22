@@ -182,75 +182,66 @@ private struct GameSurface: View {
     /// Reset + (re)load for a NEW input. A compact<->expanded toggle leaves
     /// loadKey unchanged, so `.task(id:)` does not fire and the game persists.
     private func reloadForInput() async {
+        AnimLog.say("surface reload key=[\(loadKey)]")
         controller = nil; lobby = nil; nameGate = nil; showSetup = false
         ambiguous = nil; spectator = nil; damaged = false
         await load()
+        AnimLog.say("surface showing \(showingWhat)")
     }
 
+    /// What the surface resolved to, for the trace. "Why is it showing a lobby
+    /// when the thread is mid-game" is only answerable if the surface says which
+    /// branch it took and off which bytes.
+    private var showingWhat: String {
+        if controller != nil { return "board" }
+        if let l = lobby { return "lobby(joins=\(l.env.joins.count) phase=\(l.env.phase) game=\(l.env.gameId))" }
+        if nameGate != nil { return "nameGate" }
+        if showSetup { return "setup" }
+        if ambiguous != nil { return "seatPicker" }
+        if spectator != nil { return "spectator" }
+        if damaged { return "damaged" }
+        return "nothing"
+    }
+
+    /// Ask the router what to show, then put it on screen. The DECISION —
+    /// setup vs lobby vs board, and which chain wins Rule P — is not made here
+    /// any more (MessageSurfaceRouter): it is a function of the selected
+    /// bubble, this chat's cache, and the New-game intent, so it can be driven
+    /// in a test without a simulator. What stays here is the part that genuinely
+    /// needs the host: seat identity (§6), the name gate, and Rule R's rebase.
     private func load() async {
-        guard let url = payloadURL else {
-            // No bubble is selected. If the human explicitly tapped New game
-            // (startNewGame), the setup IS the screen. Otherwise this is a plain
-            // re-open of the extension - and if we already committed a game (we
-            // sent one, or adopted one), reopen THAT rather than offering New game
-            // again (one game per chat: "I already sent a game, why New game?").
-            if !startNewGame,
-               let latest = MessageGameStore.shared.games(chatKey: chatKey).first,
-               let payload = Base32.decode(latest.payloadBase32),
-               let env = try? await MessageEnvelope.decode(payload: payload, viewer: -1) {
-                if env.phase == 0 { lobby = Lobby(env: env, payload: payload) }
-                else { await adopt(winner: payload, env: env) }
+        AnimLog.say("surface load url=\(payloadURL?.absoluteString.suffix(12) ?? "nil") startNew=\(startNewGame)")
+        var incoming: Data?
+        if let url = payloadURL {
+            guard let bytes = try? MessageEnvelope.payloadBytes(url: url) else {
+                damaged = true
                 return
             }
-            // Nothing to reopen (first-ever open, or an explicit New game).
-            showSetup = true
-            return
+            incoming = bytes
         }
-        do {
-            let incoming = try MessageEnvelope.payloadBytes(url: url)
-            // Decode ADOPTS and VALIDATES — a damaged link throws here (§7.3).
-            let env = try await MessageEnvelope.decode(payload: incoming, viewer: -1)
-
-            // A WAITING bubble is a lobby, not a board. The round/turn comparison
-            // Rule P normally runs is meaningless here (every lobby sits at
-            // round 0/turn 0) — but note 15: a STALE WAITING invite can still be
-            // tapped after the SAME game has since gone LIVE or FINISHED
-            // elsewhere, and every WAITING envelope reads as an open 8-seat lobby
-            // (`createWaiting`'s doc), so a stale one rendered a phantom full
-            // lobby instead of the real board. Rule P extended to lobbies: if the
-            // cache holds a chain for this exact game at a LATER phase, adopt
-            // THAT instead of showing the stale lobby. No cached row, or nothing
-            // newer than WAITING, and this bubble really is the lobby.
-            if env.phase == 0 {
-                let row = MessageGameStore.shared.record(gameId: env.gameId, chatKey: chatKey)
-                if MessageGameStore.lobbyCachePreferred(cachedPhase: row?.phase, incomingPhase: env.phase),
-                   let row, let cached = Base32.decode(row.payloadBase32),
-                   let cachedEnv = try? await MessageEnvelope.decode(payload: cached, viewer: -1) {
-                    await adopt(winner: cached, env: cachedEnv)
-                    return
-                }
-                lobby = Lobby(env: env, payload: incoming)
-                return
-            }
-
-            // Rule P (§7.2): if the chain we already hold strictly out-ranks the
-            // tapped bubble (a later state that arrived out of order, or a newer
-            // chain we committed), just open OURS — the canonically-latest state.
-            // One game per chat, so there is no "this game has moved on / open the
-            // latest / view anyway" prompt: we silently adopt whichever chain wins
-            // Rule P. Delivery order is never trusted; only the bytes decide.
-            if let row = MessageGameStore.shared.record(gameId: env.gameId, chatKey: chatKey),
-               let preferred = Base32.decode(row.payloadBase32), preferred != incoming,
-               ((try? await MessageKernel.shared.preferred(preferred, incoming)) ?? 0) < 0,
-               let penv = try? await MessageEnvelope.decode(payload: preferred, viewer: -1) {
-                await adopt(winner: preferred, env: penv)
-                return
-            }
-
-            // The tapped chain wins, ties, or is the first we've seen: adopt it.
-            await adopt(winner: incoming, env: env)
-        } catch {
+        let screen = await MessageSurfaceRouter.resolve(payload: incoming,
+                                                        startNewGame: startNewGame,
+                                                        chatKey: chatKey)
+        AnimLog.say("surface router -> \(screen)")
+        switch screen {
+        case .setup:
+            showSetup = true
+        case .damaged:
             damaged = true
+        case .lobby(let payload):
+            // Decoding also ADOPTS, so the lobby's locked seed is resident for a
+            // join/start seal — same as before this was routed.
+            guard let env = try? await MessageEnvelope.decode(payload: payload, viewer: -1) else {
+                damaged = true
+                return
+            }
+            lobby = Lobby(env: env, payload: payload)
+        case .board(let payload):
+            guard let env = try? await MessageEnvelope.decode(payload: payload, viewer: -1) else {
+                damaged = true
+                return
+            }
+            await adopt(winner: payload, env: env)
         }
     }
 

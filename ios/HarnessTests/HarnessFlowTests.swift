@@ -365,4 +365,66 @@ final class HarnessFlowTests: XCTestCase {
         m.become(1)
         XCTAssertNotEqual(m.viewKey, afterFirst, "another player is another board")
     }
+    /// The group-chat lobby flow, at the host level: a lobby, three joiners,
+    /// then someone starts it. Every one of them must end up pointed at the
+    /// NEWEST bubble when they open the extension — the owner's screenshot had
+    /// Boris looking at a three-name lobby while the thread's last bubble was a
+    /// started five-player game ("there is a game currently in play, with the
+    /// current player in it, yet the extension is stuck on the lobby").
+    ///
+    /// This is the HOST half of that: what `payloadURL` hands the surface. It
+    /// does not (cannot) test the surface's own state — but if this ever fails,
+    /// no amount of correctness inside the surface can save it.
+    func testEveryPlayerOpensTheNewestBubbleAfterAGameStarts() async throws {
+        let k = MessageKernel.shared
+        let m = HarnessModel(count: 8)
+        let gid: UInt64 = 7788
+        let seed = Data(repeating: 77, count: 32)
+
+        // Alex creates the lobby at the group's capacity and sends it.
+        try await k.newGame(seed: seed, players: 8)
+        var joins = [MessageJoin(seat: 0, name: "Alex")]
+        let lobby0 = try await k.seal(phase: 0, lastActorSeat: 0, gameId: gid,
+                                      parent8: Data(repeating: 0, count: 8), joins: joins)
+        await m.stage(lobby0, seat: 0)
+        m.deliver()
+
+        // Vera and Boris each join off the newest bubble, exactly as the lobby
+        // screen does: re-adopt it, append a seat, reseal WAITING.
+        var newest = lobby0
+        for (seat, name) in [(1, "Vera"), (2, "Boris")] {
+            m.become(seat)
+            XCTAssertEqual(m.payloadURL, MessageEnvelope.link(payload: newest),
+                           "\(name) must open the newest bubble")
+            let env = try await MessageEnvelope.decode(payload: newest, viewer: -1)
+            XCTAssertEqual(env.phase, 0, "\(name) is joining a lobby")
+            _ = try await k.decode(payload: newest, viewer: -1)
+            joins.append(MessageJoin(seat: seat, name: name))
+            newest = try await k.seal(phase: 0, lastActorSeat: seat, gameId: gid,
+                                      parent8: MessageTurnController.firstEight(hex: env.digest),
+                                      joins: joins)
+            await m.stage(newest, seat: seat)
+            m.deliver()
+        }
+
+        // Dima joins and STARTS it — the thread is now mid-game.
+        m.become(3)
+        let lobbyEnv = try await MessageEnvelope.decode(payload: newest, viewer: -1)
+        joins.append(MessageJoin(seat: 3, name: "Dima"))
+        let live = try await k.startFromLobby(
+            lobbyPayload: newest, gameId: gid, actingSeat: 3,
+            parent8: MessageTurnController.firstEight(hex: lobbyEnv.digest), joins: joins)
+        await m.stage(live, seat: 3)
+        m.deliver()
+
+        // Boris comes back. The newest bubble is the started game, and that is
+        // what his extension must be handed — not the lobby he last saw.
+        m.become(2)
+        XCTAssertEqual(m.payloadURL, MessageEnvelope.link(payload: live),
+                       "Boris must open the STARTED game, not the lobby he last looked at")
+        XCTAssertFalse(m.startNewGame, "and certainly not the New game screen")
+        let opened = try await MessageEnvelope.decode(payload: bytes(m.payloadURL), viewer: -1)
+        XCTAssertEqual(opened.phase, 2, "the bubble he opens is LIVE")
+        XCTAssertEqual(opened.nPlayers, 4, "dealt at the joined count")
+    }
 }

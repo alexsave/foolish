@@ -459,6 +459,10 @@ public struct MessageTableView: View {
         let oldHandIds = Set((old.me?.hand ?? []).map(\.identity))
         let myNewIds = Set((new.me?.hand ?? []).map(\.identity)).subtracting(oldHandIds)
         if !myNewIds.isEmpty { animator.preHide(myNewIds) }
+        // …and freeze every count to the board BEFORE this move, in this same
+        // synchronous callback. `old` IS that board — no reconstruction needed
+        // (see freezeCounts for why a single await here is already too late).
+        freezeCounts(to: old)
 
         AnimLog.say("-> boutEnd preHide=\(myNewIds.count)")
         Task {
@@ -492,13 +496,17 @@ public struct MessageTableView: View {
             deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
             animator.clearPreHidden()
         }
-        // Let the battle slots (and everything else) render + publish their rects.
-        try? await Task.sleep(nanoseconds: 120_000_000)
-
-        let pre = Self.preCounts(events, finalView: view)
-        deckCountOverride = pre.deck
-        discardCountOverride = pre.discard
-        for (seat, c) in pre.hand where seat != controller.mySeat { seatCountOverride[seat] = c }
+        // The counts are ALREADY frozen to the pre-move board by the caller —
+        // synchronously, before this Task ever got to run (see `freezeCounts`).
+        // They used to be frozen right here, one `await` in, which is a paint or
+        // two too late: the board had already drawn every badge at its FINAL
+        // count, and then this yanked them back down to start the sequence. That
+        // is the twitch — "the other players' card display twitches briefly
+        // while our pickup animation plays, as if it was making room for the
+        // dealt card, but changed its mind."
+        //
+        // Now only the per-step advance happens here, each as its flight lands.
+        try? await Task.sleep(nanoseconds: 120_000_000)   // let the rects publish
 
         for ev in events {
             await playStep {
@@ -514,6 +522,25 @@ public struct MessageTableView: View {
         }
         AnimLog.say("stream#\(run) end")
         if view.isOver { settleResults() }
+    }
+
+    /// Freeze every displayed count to `v` — the board as it looked BEFORE the
+    /// move we are about to animate. Synchronous on purpose, and that is the
+    /// whole point: it must happen in the same turn of the run loop as the
+    /// `controller.view` change that triggered the animation, so SwiftUI never
+    /// gets a chance to paint a single frame at the post-move counts. Anything
+    /// asynchronous here — even one `await` — shows up as a badge that jumps to
+    /// its final value, snaps back, and then counts up again.
+    ///
+    /// My own seat is deliberately left alone: my hand is the fan, not a badge,
+    /// and the cards it is about to gain are hidden by `animator.preHide`
+    /// instead, so the fan holds its final layout while the cards fly into it.
+    private func freezeCounts(to v: GameView) {
+        deckCountOverride = v.deckCount
+        discardCountOverride = v.discardCount
+        var counts: [Int: Int] = [:]
+        for p in v.players where p.seat != controller.mySeat { counts[p.seat] = p.handCount }
+        seatCountOverride = counts
     }
 
     /// note 39: hold the board on-screen a beat after whatever's animating
@@ -741,6 +768,17 @@ public struct MessageTableView: View {
         // one at a time" (note 12) bugs.
         let touchedIds = controller.openReplayTouchedCardIds
         if !touchedIds.isEmpty { animator.preHide(touchedIds) }
+
+        // …and the counts, in the same synchronous breath (see freezeCounts).
+        // There is no prior view on an open — this board IS the first paint — so
+        // the pre-move counts are walked BACK from the final board through the
+        // events, which is what `preCounts` is for.
+        let pre = Self.preCounts(events, finalView: view)
+        deckCountOverride = pre.deck
+        discardCountOverride = pre.discard
+        var counts: [Int: Int] = [:]
+        for (seat, c) in pre.hand where seat != controller.mySeat { counts[seat] = c }
+        seatCountOverride = counts
 
         // The SAME animator the live bout-end uses - one path, the kernel's events.
         Task { await runEventStream(events, finalView: view) }

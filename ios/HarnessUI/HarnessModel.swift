@@ -273,6 +273,7 @@ final class HarnessModel: ObservableObject {
     /// axis from switching conversations (see `switchChat`).
     func become(_ idx: Int) {
         guard idx >= 0, idx < participants.count else { return }
+        AnimLog.say("host become \(participants[idx].name) transcript=\(transcript.count) selected=\(chats[currentChat].selected != nil)")
         // Discard the current player's half-staged move — both the payload AND the
         // pending ledger. Clearing only `staged` left the ledger behind, so a later
         // switch back replayed the stale move (Rule R) onto whatever had been
