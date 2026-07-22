@@ -144,7 +144,6 @@ private struct GameSurface: View {
             LobbyView(env: lob.env, mySeat: lobbySeat(lob.env),
                       nickname: MessageGameStore.shared.nickname,
                       onJoin: { name in Task { await joinLobby(lob, nickname: name) } },
-                      onJoinAndStart: { name in Task { await joinAndStart(lob, nickname: name) } },
                       onStart: { Task { await startGame(lob) } })
         } else if let g = nameGate {
             NameGateView(prefill: MessageGameStore.shared.nickname) { name in
@@ -321,10 +320,10 @@ private struct GameSurface: View {
     /// Claim the lowest free seat (§5.2, lobby v3). Always reseals WAITING and
     /// stays in the lobby — joining NEVER starts the game, no matter how many
     /// have joined or that the lobby's own capacity (8 for a group, 2 for a DM
-    /// — see `createWaiting`) is reached; Start (below) — or `joinAndStart`,
-    /// note 2 — is the one, explicit action that flips the game LIVE. Auto-
-    /// stages the reseal (notes 14/16): the human still presses Messages' own
-    /// Send, there is no separate "Send invite" button.
+    /// — see `createWaiting`) is reached; Start (below) is the one, explicit
+    /// action that flips the game LIVE. Auto-stages the reseal (notes 14/16):
+    /// the human still presses Messages' own Send, there is no separate "Send
+    /// invite" button.
     private func joinLobby(_ lob: Lobby, nickname: String) async {
         let env = lob.env
         guard let free = (0..<env.nPlayers).first(where: { s in !env.joins.contains { $0.seat == s } }),
@@ -359,10 +358,8 @@ private struct GameSurface: View {
     /// first8(lobby digest), the same joins) and drops the starter onto the
     /// board: mechanically identical to what the OLD "last joiner auto-starts"
     /// branch of `joinLobby` used to do, just triggered explicitly instead of
-    /// implicitly by seat count. `joinAndStart` below does the same reseat/seal
-    /// from the JOINER's side, in one step instead of two bubbles — both call
-    /// the shared `MessageKernel.startFromLobby` primitive, which is what
-    /// makes the two routes PROVABLY the same deal (see its doc).
+    /// implicitly by seat count. Uses the shared `MessageKernel.startFromLobby`
+    /// primitive so this reseat/seal is provably the deal locked at create.
     private func startGame(_ lob: Lobby) async {
         let env = lob.env
         guard let seat = lobbySeat(env), let gid = UInt64(env.gameId) else { return }
@@ -375,44 +372,6 @@ private struct GameSurface: View {
             cache(seat: seat, env: newEnv, payload: payload)
             await onSend(payload, seat)
             controller = MessageTurnController(parentPayload: payload, parent: newEnv, mySeat: seat)
-            lobby = nil
-        } catch {
-            damaged = true
-        }
-    }
-
-    /// Join AND start in one step (note 2, quote: "the other player can join,
-    /// or do join+start... either way, it should be the same hand because the
-    /// seed was set by the first chat the creator sent"). Claims the lowest
-    /// free seat exactly like `joinLobby`, but instead of resealing WAITING it
-    /// immediately re-derives the LOCKED seed at the resulting joined count and
-    /// seals the LIVE handoff — one bubble sent, not two. Offered by LobbyView
-    /// alongside plain Join whenever joining is possible: the creator has
-    /// already claimed seat 0, so any join brings the count to 2+ and Start
-    /// would immediately be available anyway — this just lets the joiner (most
-    /// commonly the DM opponent) do it in the one text instead of two. Calls
-    /// the SAME `MessageKernel.startFromLobby` primitive `startGame` does, just
-    /// with a `joins` list that does not exist as its own sealed WAITING
-    /// bubble yet — which is exactly what makes the two routes PROVABLY the
-    /// same deal (MessageLobbyTests proves it): the deal depends only on the
-    /// locked seed and `joins.count`, nothing UI-path-specific.
-    private func joinAndStart(_ lob: Lobby, nickname: String) async {
-        let env = lob.env
-        guard let free = (0..<env.nPlayers).first(where: { s in !env.joins.contains { $0.seat == s } }),
-              let gid = UInt64(env.gameId) else { return }
-        let trimmed = nickname.trimmingCharacters(in: .whitespaces)
-        let nick = trimmed.isEmpty ? FStrings.t("ios.you") : trimmed
-        MessageGameStore.shared.nickname = nick
-        let joins = (env.joins + [MessageJoin(seat: free, name: nick)]).sorted { $0.seat < $1.seat }
-        do {
-            let parent = MessageTurnController.firstEight(hex: env.digest)
-            let payload = try await MessageKernel.shared.startFromLobby(
-                lobbyPayload: lob.payload, gameId: gid, actingSeat: free,
-                parent8: parent, joins: joins)
-            let newEnv = try await MessageEnvelope.decode(payload: payload, viewer: -1)
-            cache(seat: free, env: newEnv, payload: payload)
-            await onSend(payload, free)
-            controller = MessageTurnController(parentPayload: payload, parent: newEnv, mySeat: free)
             lobby = nil
         } catch {
             damaged = true
@@ -643,19 +602,17 @@ private struct NewGameSetup: View {
 /// real size is decided at Start, not now.
 ///
 /// What a viewer can do: Join (name + button, if I have not claimed a seat and
-/// the lobby has room), Join and start (alongside Join — claiming a seat here
-/// always brings the count to 2+, so Start is immediately available; this
-/// does both in the one action/text, note 2), or Start (once I'm already
-/// joined and 2+ have — any joined player may, §5.2). There is deliberately no
-/// "Send invite" button any more (notes 14/16): creating and joining both
-/// AUTO-STAGE the reseal, so the human's very next tap is Messages' own Send —
-/// a second button offering to stage the SAME bubble again was what confused
-/// the tester ("invite offered after inviting").
+/// the lobby has room), or Start (once I'm already joined and 2+ have — any
+/// joined player may, §5.2). Owner decision (this pass): there is NO combined
+/// "Join and start" button — a joiner either Joins (which stages the WAITING
+/// lobby for the human to send) or, being already joined, taps Start (which
+/// stages the LIVE game). Two distinct texts, never one fused action. There is
+/// likewise no "Send invite" button (notes 14/16): creating and joining both
+/// AUTO-STAGE the reseal, so the human's very next tap is Messages' own Send.
 private struct LobbyView: View {
     let env: MessageEnvelope
     let mySeat: Int?
     let onJoin: (String) -> Void
-    let onJoinAndStart: (String) -> Void
     let onStart: () -> Void
 
     /// The joiner's editable name (B3): compact can't host a field, so this is the
@@ -664,10 +621,10 @@ private struct LobbyView: View {
     @State private var nickname: String
 
     init(env: MessageEnvelope, mySeat: Int?, nickname: String,
-         onJoin: @escaping (String) -> Void, onJoinAndStart: @escaping (String) -> Void,
+         onJoin: @escaping (String) -> Void,
          onStart: @escaping () -> Void) {
         self.env = env; self.mySeat = mySeat
-        self.onJoin = onJoin; self.onJoinAndStart = onJoinAndStart; self.onStart = onStart
+        self.onJoin = onJoin; self.onStart = onStart
         _nickname = State(initialValue: nickname == "Me" ? "" : nickname)
     }
 
@@ -706,12 +663,6 @@ private struct LobbyView: View {
                 // outer .padding() alone, no extra inset on the field.
                 TextField(FStrings.t("ios.you"), text: $nickname).textFieldStyle(.roundedBorder)
                 FButton(FStrings.t("ios.msg.joinas", ["name": displayName]), kind: .wood) { onJoin(nickname) }
-                // note 2: joining always brings the lobby to 2+ (the creator has
-                // already claimed seat 0), so Start would be available the very
-                // next screen anyway — offer it as one action/one text instead.
-                FButton(FStrings.t("ios.msg.joinandstart", ["name": displayName]), kind: .wood) {
-                    onJoinAndStart(nickname)
-                }
             } else {
                 Text(FStrings.t("ios.msg.lobbyfull")).font(.footnote).foregroundStyle(.black.opacity(0.55))
             }

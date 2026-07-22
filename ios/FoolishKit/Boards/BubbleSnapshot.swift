@@ -39,4 +39,44 @@ public enum BubbleSnapshot {
         renderer.isOpaque = true
         return renderer.uiImage
     }
+
+    /// Render a WAITING lobby's bubble image (§5.2) — the joined players, NOT a
+    /// dealt board. A lobby seal leaves a fully-dealt game resident (the kernel
+    /// deals every hand at `newGame`, before anyone has picked a count), so
+    /// feeding that resident view to `render(publicView:)` drew a full table of
+    /// cards onto a bubble that is only an invite — the extension showed the
+    /// lobby while its own staged preview showed a played game. This draws what
+    /// the human is actually looking at: the lobby roster, on the same wool.
+    @MainActor
+    public static func renderLobby(joinedNames: [String]) -> UIImage? {
+        let content = ZStack {
+            FColor.fallback
+            Image(uiImage: WoolTexture.image(w: 900, h: 585))
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: size.width, height: size.height)
+                .clipped()
+            VStack(spacing: 6) {
+                Text(FStrings.t("ios.lobby"))
+                    .font(.headline).fontWeight(.bold).foregroundStyle(FColor.ink)
+                VStack(spacing: 3) {
+                    ForEach(Array(joinedNames.enumerated()), id: \.offset) { i, name in
+                        Text("\(i + 1). \(name)")
+                            .font(.subheadline).foregroundStyle(FColor.ink)
+                            .lineLimit(1)
+                    }
+                }
+                Text(FStrings.t("ios.msg.joininvite"))
+                    .font(.caption).foregroundStyle(.black.opacity(0.55))
+                    .padding(.top, 2)
+            }
+            .padding()
+        }
+        .frame(width: size.width, height: size.height)
+        .environment(\.colorScheme, .light)   // theme-independent, like the board bubble
+        let renderer = ImageRenderer(content: content)
+        renderer.scale = UIScreen.main.scale
+        renderer.isOpaque = true
+        return renderer.uiImage
+    }
 }

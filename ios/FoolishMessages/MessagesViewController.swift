@@ -159,7 +159,18 @@ final class MessagesViewController: MSMessagesAppViewController {
         let env = try? await MessageEnvelope.decode(payload: payload, viewer: -1)
         let names = Dictionary((env?.joins ?? []).map { ($0.seat, $0.name) },
                                uniquingKeysWith: { a, _ in a })
-        let image = publicView.flatMap { BubbleSnapshot.render(publicView: $0, names: names) }
+        // A WAITING lobby (phase 0) previews as its roster, not the dealt board:
+        // the resident game a lobby seal leaves behind IS fully dealt (the kernel
+        // deals at newGame), so rendering it like a live board put a full table
+        // of cards on what is only an invite (the extension showed the lobby, the
+        // staged bubble showed a played game). See BubbleSnapshot.renderLobby.
+        let image: UIImage?
+        if env?.phase == 0 {
+            let joinedNames = (env?.joins ?? []).sorted { $0.seat < $1.seat }.map(\.name)
+            image = BubbleSnapshot.renderLobby(joinedNames: joinedNames)
+        } else {
+            image = publicView.flatMap { BubbleSnapshot.render(publicView: $0, names: names) }
+        }
 
         // §12, revised by batch 6 item B: the FINISHED bubble stays a normal /m/
         // payload link, NOT `MessageEnvelope.replayLink`'s bare foolish.cards/<code>.
