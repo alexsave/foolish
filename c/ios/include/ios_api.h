@@ -207,6 +207,19 @@ int fio_replay_decode_packed(const char *code, unsigned char *out, int cap);
 // Delete once the last JSON consumer is off it.
 int fio_replay_events_json(const char *code, int viewer, char *out, int cap);
 
+// The animations of the chain's LAST move only, as ONE PACKED evwire frame,
+// masked for `viewer` - what an iMessage receiver sees on opening a bubble. THE
+// KERNEL decides the group (the final replay step, which bundles an action with
+// all its refill/discard/defender-change consequences); the client passes only
+// the encoded chain, never "where I last looked". The viewer's own drawn/picked-
+// up cards carry real identities, everyone else's are hidden - the same packed
+// evwire live play broadcasts and the website renders, so a reopen animates
+// through the kernel, not a client-side view diff. No JSON (§zero-JSON): Swift
+// reads the frame with EvWire.decode. Bytes written (0 if the last step produced
+// nothing), or negative. v6 only (v5 hides the deal); see fio_last_replay_error.
+int fio_replay_last_events_packed(const char *code, int viewer,
+                                  unsigned char *out, int cap);
+
 // Detail of the last replay error (a REPLAY_E* code from replay.h), else 0.
 int fio_last_replay_error(void);
 

@@ -271,6 +271,30 @@ public actor MessageKernel {
         return DecodedReplay.decode(packed: packed)
     }
 
+    /// The animations of the resident game's LAST move, masked for `viewer` — the
+    /// kernel's evwire event stream (fio_replay_last_events_json), the SAME one
+    /// live play and the website emit. THE KERNEL decides what "the last move" is
+    /// (the final replay step, which bundles a move with its refill/discard/
+    /// defender-change consequences); we hand it only the encoded chain, never
+    /// "where I last looked". The viewer's own drawn/picked-up cards come back
+    /// with real identities, everyone else's are hidden - so a reopened bubble
+    /// animates through the kernel, not a client-side GameView diff (which could
+    /// never recover the viewer's own drawn card and so silently dropped it, the
+    /// "my refill never animated on reopen" bug). [] if there is no game, it is
+    /// not v6-encodable, or the last step produced nothing to animate.
+    public func lastMoveEvents(viewer: Int) -> [GameEvent] {
+        guard let code = residentReplayCode() else { return [] }
+        let packed = code.withCString { (cstr: UnsafePointer<CChar>) -> Data? in
+            packedCall { out, cap in
+                out.withMemoryRebound(to: UInt8.self, capacity: Int(cap)) { u8 in
+                    fio_replay_last_events_packed(cstr, Int32(viewer), u8, cap)
+                }
+            }
+        }
+        guard let packed, !packed.isEmpty else { return [] }
+        return EvWire.decode(packed)
+    }
+
     /// Rule P (§7.2). <0 `a` wins, >0 `b`, 0 the same chain. Delivery order is
     /// never an input — two devices can transiently disagree about "newest".
     public func preferred(_ a: Data, _ b: Data) throws -> Int {

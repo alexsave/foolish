@@ -806,6 +806,53 @@ int fio_replay_events_json(const char *code, int viewer, char *out, int cap) {
     return j_finish(&j);
 }
 
+// The animations of the chain's LAST move only, as ONE PACKED evwire frame —
+// the "what just happened" an iMessage receiver sees on opening a bubble. Same
+// packed evwire the website renders and live play broadcasts (no JSON crosses
+// this boundary, §zero-JSON); Swift reads it with EvWire.decode.
+//
+// THE KERNEL decides the group; the client passes only the encoded chain, never
+// "where I last looked" (there was no server to emit events at move time, and
+// the boundary is a rules question, so it stays in C). "The last move" is
+// unambiguous: a v6 replay is the deal (step 0) then exactly one step per
+// action, and each step already bundles an action with ALL its kernel-internal
+// consequences - a `pickup` step carries the PICKUP, every seat's refill draws,
+// and the defender change, from the one handle_pickup call. That final step's
+// events are masked for `viewer` exactly like live play: the viewer's own
+// drawn/picked-up cards carry real identities (fixing "my own refill never
+// animated on reopen"), everyone else's are hidden backs.
+//
+// replay_steps_frames_v6 already length-prefixes each step's frame with a u16;
+// for the single last step we strip that and hand back the raw frame bytes, the
+// exact shape evwire_serialize emits and EvWire.decode reads. v6 only. Returns
+// bytes written (0 if the last step produced no events), or a negative error.
+int fio_replay_last_events_packed(const char *code, int viewer,
+                                  unsigned char *out, int cap) {
+    if (!code || !out) return FIO_EBADARG;
+    g_last_replay_error = 0;
+
+    static unsigned char intbuf[16384];
+    int ilen = b32_decode(code, intbuf, sizeof(intbuf));
+    if (ilen < 0) return FIO_ECAP;
+
+    ReplayHeader hdr;
+    int n = replay_steps_count_v6(intbuf, ilen, &hdr);
+    if (n < 0) { g_last_replay_error = -n; return FIO_EREPLAY; }
+    const int from = n > 0 ? n - 1 : 0;   // the final step = the last move's group
+
+    // One step in, so one length-prefixed frame out; write it into `out`, then
+    // slide the frame down over its own 2-byte length header.
+    int n_frames = 0, next_step = 0;
+    int r = replay_steps_frames_v6(intbuf, ilen, viewer, from, 0,
+                                   out, cap, &n_frames, &next_step);
+    if (r < 0) { g_last_replay_error = -r; return FIO_EREPLAY; }
+    if (n_frames <= 0 || r < 2) return 0;          // nothing to animate
+    int flen = out[0] | (out[1] << 8);
+    if (flen < 0 || flen + 2 > r) { g_last_replay_error = REPLAY_ECAP; return FIO_EREPLAY; }
+    memmove(out, out + 2, (size_t)flen);
+    return flen;
+}
+
 // The replay decode as its RAW binary (replay.h DECODE layout: a 20-byte header
 // then n_logs records of [type,seat,defIdx,n_pairs] + n_pairs*[primary,target]
 // wire-card bytes). Swift parses this directly (DecodedReplay.decode) — the same
