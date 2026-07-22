@@ -57,8 +57,9 @@ Requires a C compiler + `-framework Accelerate` (macOS; some kernel strategies
 use LAPACK) + `libsqlite3` (present as a system package on Linux and macOS;
 see [`DURABILITY.md`](DURABILITY.md)) + `libssl`/`libcrypto` (OpenSSL 3.x;
 see [`TLS.md`](TLS.md)). No other external packages — the HTTP/1.1 layer is
-hand-rolled (a real deployment would drop in mongoose/civetweb); auth is an
-in-memory token map (no JWT). Concurrency: a dispatcher (the accept loop)
+hand-rolled (a real deployment would drop in mongoose/civetweb); auth is a
+stateless HMAC-signed binary token with an expiry (not a JWT, not a stored
+map — see `foolish_server.c`'s make_token/verify_token). Concurrency: a dispatcher (the accept loop)
 hands each connection off by `game_id`, and each game has its own lock
 instead of one process-wide mutex — see [`SERVER_SCALING.md`](SERVER_SCALING.md)
 ("T2a") for the original design, the Helgrind-clean verdict, and measured
@@ -239,19 +240,24 @@ concurrency across multiple stages — 1, 5, and 6 below):
 
 Also present (earlier work, not a numbered stage): dynamically-grown chunked
 game/user registries and admission control (`--max-conns` sheds new
-connections at a ceiling).
+connections at a ceiling); per-IP rate limiting on `/auth/signup` and
+`/create` (`--ratelimit-rpm`, keyed by the forwarded client IP —
+Fly-Client-IP / X-Forwarded-For); stateless signed session tokens (a binary
+HMAC-SHA256 blob with an expiry, verifiable by any instance sharing
+`$FOOLISH_TOKEN_SECRET` — not a JWT and not a stored opaque map); and a
+Prometheus `GET /metrics` endpoint for scraping.
 
 Still needed for a real production deployment, not attempted here (POC
 scope, stated plainly rather than silently): cert rotation/ACME (a cert is
-loaded once at startup, not reloaded), non-blocking TLS for the TCP path (a
-`--tls` server still pays thread-per-connection — see `SERVER_SCALING.md`
-"Stage 6"; QUIC/WebTransport already carries TLS 1.3 for browser/mobile
-clients), 503-style GRACEFUL load shedding (admission control shuts excess
-connections at the fd level rather than returning a response), rate limiting /
-abuse protection (per-IP throttle on `/auth/signup` and `/create`), JWT or
-another real auth scheme (tokens are an in-memory opaque map), cross-worker
-QUIC connection migration (needs eBPF Connection-ID steering — see
-`SERVER_SCALING.md` "Stage 7"), horizontal scale-out (one process, one
-machine — the per-game lock design doesn't extend across processes), and
-structured observability (metrics/tracing beyond `/stats`, the stderr startup
-banner, and the load tools' own stdout summaries).
+loaded once at startup, not reloaded — on Fly the edge terminates TLS and
+manages certs), non-blocking TLS for the TCP path (a `--tls` server still pays
+thread-per-connection — see `SERVER_SCALING.md` "Stage 6"; QUIC/WebTransport
+already carries TLS 1.3 for browser/mobile clients), 503-style GRACEFUL load
+shedding (admission control shuts excess connections at the fd level rather
+than returning a response), cross-worker QUIC connection migration (needs eBPF
+Connection-ID steering — see `SERVER_SCALING.md` "Stage 7"), a shared user
+store (the signed tokens are stateless, but the User records they name still
+live per-process — full horizontal auth needs the store shared too),
+horizontal scale-out (one process, one machine — the per-game lock design
+doesn't extend across processes), and richer observability (tracing/alerting
+beyond the `/metrics` gauges/counters).
