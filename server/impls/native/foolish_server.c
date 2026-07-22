@@ -490,6 +490,11 @@ static atomic_ulong g_seq = 0;
 // counters needs ordering with any other memory access.
 static atomic_ulong g_bot_decisions = 0;
 static atomic_ulong g_octogen_decisions = 0;
+// Production hygiene: a live-connection gauge (admission control + observability),
+// a moves-applied counter (throughput observability), and the connection ceiling.
+static atomic_int   g_live_conns = 0;      // currently-open epoll connections
+static atomic_ulong g_moves_applied = 0;   // total client moves the kernel accepted
+static int          g_max_conns = 0;       // 0 = unlimited; --max-conns=N sheds NEW connections past N (OOM guard)
 static int g_octogen_strat = -1;
 
 // --------------------------------------------------------------------------
@@ -572,6 +577,7 @@ static bool json_str(const char *body, const char *key, char *out, int cap) {
 #define GAME_HT_SIZE   524288   // power of two, > 2x MAX_GAMES
 
 static User     *g_token_ht[TOKEN_HT_SIZE];
+static User     *g_username_ht[TOKEN_HT_SIZE];   // username -> User, so signup dedup is O(1) instead of an O(users) scan
 static GameSlot *g_game_ht[GAME_HT_SIZE];
 
 static unsigned long hash_str(const char *s) {
@@ -601,6 +607,26 @@ static bool game_ht_insert(GameSlot *s) {
     }
     fprintf(stderr, "game hash full (%d) — raise GAME_HT_SIZE\n", GAME_HT_SIZE);
     return false;
+}
+
+static bool username_ht_insert(User *u) {
+    unsigned long h = hash_str(u->username) & (TOKEN_HT_SIZE - 1);
+    for (int probes = 0; probes < TOKEN_HT_SIZE; probes++) {
+        if (!g_username_ht[h]) { g_username_ht[h] = u; return true; }
+        h = (h + 1) & (TOKEN_HT_SIZE - 1);
+    }
+    return false;
+}
+static User *user_by_username(const char *name) {
+    if (!name || !*name) return NULL;
+    unsigned long h = hash_str(name) & (TOKEN_HT_SIZE - 1);
+    for (int probes = 0; probes < TOKEN_HT_SIZE; probes++) {
+        User *u = g_username_ht[h];
+        if (!u) return NULL;
+        if (u->used && strcmp(u->username, name) == 0) return u;
+        h = (h + 1) & (TOKEN_HT_SIZE - 1);
+    }
+    return NULL;
 }
 
 // Both lookups below: caller MUST hold g_registry_lock.
@@ -871,6 +897,7 @@ static void user_persist_load(const char *id, const unsigned char *blob, int len
     }
     pthread_mutex_lock(&g_registry_lock);
     token_ht_insert(u);
+    username_ht_insert(u);
     pthread_mutex_unlock(&g_registry_lock);
 }
 
@@ -1041,18 +1068,14 @@ static void h_signup(Req *r, Conn *conn) {
     char uname[24] = {0};
     if (!json_str(r->body, "username", uname, sizeof uname)) { respond(conn, 400, "{\"error\":\"username\"}"); return; }
     pthread_mutex_lock(&g_registry_lock);
-    User *u = NULL;
-    // Dedup by username (reuse the existing account). Append-only, so scan
-    // [0, g_users_count); appends land at index g_users_count. (This scan is
-    // O(users) per signup — fine here, and unchanged in kind from the old
-    // fixed-array scan; a username hash would be the move if signup ever
-    // becomes hot at very high user counts.)
-    for (int i = 0; i < g_users_count; i++) { User *cu = user_slot_at(i); if (cu && cu->used && !strcmp(cu->username, uname)) { u = cu; break; } }
+    // Dedup by username via the O(1) hash (was an O(users) linear scan).
+    User *u = user_by_username(uname);
     if (!u) {
         int idx = g_users_count;
         u = (idx < MAX_USERS) ? user_slot_ensure(idx) : NULL;
         if (u) { g_users_count++; u->slot_idx = idx; u->used = true;
-                 snprintf(u->username, sizeof u->username, "%s", uname); gen_id(u->user_id, ID_LEN); }
+                 snprintf(u->username, sizeof u->username, "%s", uname); gen_id(u->user_id, ID_LEN);
+                 username_ht_insert(u); }
     }
     // Fresh session token, indexed, and marked dirty for the persistence
     // thread (Stage 2) — a signup/signin the DB never learns about would
@@ -1336,8 +1359,15 @@ static void h_stats(Req *r, Conn *conn) {
     (void)r;
     unsigned long bd = atomic_load_explicit(&g_bot_decisions, memory_order_relaxed);
     unsigned long od = atomic_load_explicit(&g_octogen_decisions, memory_order_relaxed);
-    char out[128];
-    snprintf(out, sizeof out, "{\"bot_decisions\":%lu,\"octogen_decisions\":%lu}", bd, od);
+    int    conns = atomic_load_explicit(&g_live_conns, memory_order_relaxed);
+    unsigned long mv = atomic_load_explicit(&g_moves_applied, memory_order_relaxed);
+    // g_games_count/g_users_count are written under g_registry_lock; a relaxed
+    // read here is fine for a stats gauge (a slightly-stale count never matters).
+    char out[256];
+    snprintf(out, sizeof out,
+        "{\"live_connections\":%d,\"max_connections\":%d,\"games\":%d,\"users\":%d,"
+        "\"moves_applied\":%lu,\"bot_decisions\":%lu,\"octogen_decisions\":%lu}",
+        conns, g_max_conns, g_games_count, g_users_count, mv, bd, od);
     respond(conn, 200, out);
 }
 
@@ -1578,6 +1608,7 @@ static bool ws_apply_move_locked(GameSlot *s, int seat, bool spectator,
     // "Locking" doc above) — s->lock, held for this whole call, is enough.
     if (!awire_apply(&s->game, seat, &a)) return false;
     s->version++;   // this seat's move can change every seat's view
+    atomic_fetch_add_explicit(&g_moves_applied, 1, memory_order_relaxed);   // /stats throughput gauge
     game_mark_dirty(s);
     pthread_cond_signal(&s->cond);   // same wakeup /action gives the bot game-loop
     return true;
@@ -2170,6 +2201,7 @@ static void econn_set_epollout(Worker *w, EConn *ec, bool want) {
 static void econn_close(Worker *w, EConn *ec) {
     if (ec->closed) return;
     ec->closed = true;
+    atomic_fetch_sub_explicit(&g_live_conns, 1, memory_order_relaxed);   // pairs with worker_handoff_push's admit
     epoll_ctl(w->epfd, EPOLL_CTL_DEL, ec->fd, NULL);
     close(ec->fd);
     if (ec->kind == ECONN_WS) {
@@ -2342,7 +2374,7 @@ static void drain_handoff_queue(Worker *w) {
         uint32_t events = (uint32_t)((ec->kind == ECONN_WS ? EPOLLIN : 0) | EPOLLOUT);
         ec->want_epollout = true;
         struct epoll_event ev = { .events = events, .data.ptr = ec };
-        if (epoll_ctl(w->epfd, EPOLL_CTL_ADD, ec->fd, &ev) < 0) { close(ec->fd); free(ec->wbuf); free(ec); continue; }
+        if (epoll_ctl(w->epfd, EPOLL_CTL_ADD, ec->fd, &ev) < 0) { atomic_fetch_sub_explicit(&g_live_conns, 1, memory_order_relaxed); close(ec->fd); free(ec->wbuf); free(ec); continue; }
         if (ec->kind == ECONN_WS) {
             ec->prev = NULL; ec->next = w->ws_head;
             if (w->ws_head) w->ws_head->prev = ec;
@@ -2446,6 +2478,7 @@ static void *epoll_worker_main(void *arg) {
 // encoded into wbuf) onto `w`'s handoff queue and wakes it — the ONE way an
 // fd crosses from the dispatcher thread to its owning worker thread.
 static void worker_handoff_push(Worker *w, EConn *ec) {
+    atomic_fetch_add_explicit(&g_live_conns, 1, memory_order_relaxed);   // admitted: every epoll connection passes through here exactly once
     pthread_mutex_lock(&w->handoff_mtx);
     ec->next = NULL;
     if (w->handoff_tail) w->handoff_tail->next = ec; else w->handoff_head = ec;
@@ -2682,6 +2715,7 @@ int main(int argc, char **argv) {
     int bench_fanout = 0;
     for (int i = 1; i < argc; i++) {
         if (!strncmp(argv[i], "--bench-fanout=", 15)) { bench_fanout = atoi(argv[i] + 15); continue; }
+        if (!strncmp(argv[i], "--max-conns=", 12)) { g_max_conns = atoi(argv[i] + 12); continue; }
         if (!strncmp(argv[i], "--game-workers=", 15)) {
             int nw = atoi(argv[i] + 15);
             if (nw > 0 && nw <= MAX_GAME_WORKERS) g_n_game_workers = nw;
@@ -2857,6 +2891,14 @@ int main(int argc, char **argv) {
     for (;;) {
         int fd = accept(srv, NULL, NULL);
         if (fd < 0) continue;
+        // Admission control: at the connection ceiling, shed the new one
+        // immediately (a closed fd, not an OOM). The OS listen backlog already
+        // absorbs bursts; this is the app-level bound that keeps a connection
+        // flood from exhausting memory faster than the fd limit alone would.
+        if (g_max_conns > 0 && atomic_load_explicit(&g_live_conns, memory_order_relaxed) >= g_max_conns) {
+            close(fd);
+            continue;
+        }
         // A one-shot HTTP request/response barely notices Nagle's algorithm,
         // but a persistent /ws connection does many small back-and-forth
         // writes+reads — without TCP_NODELAY, Nagle batching interacting
