@@ -53,7 +53,13 @@ public struct MessageBoardView: View {
                 FDeckWell(deckCount: view.deckCount, flipped: view.flipped,
                           hasFlipped: view.hasFlipped, trumpSuit: view.trumpSuit)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                // Note 10 (same fix as MessageTableView, this being the same
+                // FDeckWell/FDiscardPile pair, just this view's public/spectator
+                // rendering of it): -3 puts the discard's own centre on the
+                // draw deck's bottom-card centre — see MessageTableView's
+                // discard placement for the full derivation.
                 discardPile
+                    .offset(y: -3)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 
                 if view.isOver {

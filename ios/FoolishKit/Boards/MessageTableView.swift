@@ -184,8 +184,23 @@ public struct MessageTableView: View {
                     // small symmetric inset (note 14), so no per-call-site
                     // compensation offset is needed here anymore.
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                // Note 10: the discard pile shares the draw deck's y-baseline —
+                // the centre of the deck's BOTTOM card (FDeckWell's fixed
+                // anchor, see its type doc) must land on the centre of the
+                // discard's own rotated cards. FDeckWell is pinned top-leading
+                // with an `FSpace.s` (8pt) inset and its bottom card's rotated
+                // footprint is 46pt tall, so that centre sits at 8 + 46/2 = 31pt
+                // from the board's top edge. FDiscardPile is an (unrotated) 78×68
+                // box pinned top-TRAILING with no inset of its own, so its own
+                // centre — where its rotated cards actually converge — sits at
+                // 68/2 = 34pt by default; -3 closes that gap. (This is UNRELATED
+                // to `TableView.swift`'s own "+16" on FDeckWell's `.position()`:
+                // that one compensates for centring FDeckWell's whole 92×108
+                // frame in the OFFLINE app board, a different layout mechanism
+                // than the corner-pinned `.frame(alignment:)` used here — neither
+                // touches the other.)
                 FDiscardPile(count: discardCountOverride ?? view.discardCount)
-                    .offset(y: -16)   // snug into the top-right corner
+                    .offset(y: -3)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 
                 // Self role indicator: the local seat never got a role mark before

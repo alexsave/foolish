@@ -32,8 +32,29 @@ public struct WoolBackground: View {
                     .clipped()
                     .transition(.opacity)
             }
-            RadialGradient(colors: [.clear, .black.opacity(0.32)],
-                           center: .center, startRadius: 80, endRadius: 700)
+            // The vignette scales with the SURFACE, not in absolute points (note
+            // 3). The old fixed 80/700 radii were tuned against a full-screen
+            // phone board (~1026pt diagonal), where 80pt is a small clear centre
+            // and 700pt lands the falloff near the edges. The iMessage
+            // extension's stage is barely half that (375x554, ~669pt diagonal),
+            // so those same radii put the surface almost entirely inside the
+            // ramp: it never reached the clear centre and read as uniformly
+            // muddy rather than as a vignette. That is exactly why the tester
+            // found the message BUBBLE's wool better than the live extension's -
+            // BubbleSnapshot draws no vignette at all (see its doc), so it was
+            // the only place the weave showed at full contrast.
+            //
+            // Expressed as fractions of the diagonal, both surfaces get the same
+            // LOOK: the fractions below are the old radii over that full-screen
+            // diagonal, so a full-screen board is unchanged to the eye and every
+            // smaller surface gets a proportionally smaller falloff.
+            GeometryReader { geo in
+                let diagonal = hypot(geo.size.width, geo.size.height)
+                RadialGradient(colors: [.clear, .black.opacity(0.32)],
+                               center: .center,
+                               startRadius: diagonal * 0.078,
+                               endRadius: diagonal * 0.682)
+            }
         }
         .ignoresSafeArea()
         .task {

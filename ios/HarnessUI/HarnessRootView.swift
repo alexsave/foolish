@@ -7,6 +7,7 @@
 // and who you currently are.
 
 import SwiftUI
+import UIKit
 import FoolishKit
 
 struct HarnessRootView: View {
@@ -73,20 +74,22 @@ struct HarnessRootView: View {
     /// corners with a subtle border, plus a non-interactive grabber divot
     /// floating over the top edge (the real Messages drawer has one).
     private var stage: some View {
-        MessagesRootView(
-            payloadURL: model.payloadURL,
-            style: model.presentation,
-            senderIsLocal: model.senderIsLocal,
-            startNewGame: model.startNewGame,
-            chatKey: model.chatKey,
-            chatIsDM: model.chatIsDM,
-            chatPlayers: model.playerCount,
-            requestExpand: { model.expand() },
-            onNewGame: { model.newGame() },
-            onSend: { payload, seat in await MainActor.run { model.stage(payload, seat: seat) } },
-            onUnstage: { model.unstage() }
-        )
-        .id(model.viewKey)   // reset @State when player/transcript/intent changes
+        HostedStage {
+            MessagesRootView(
+                payloadURL: model.payloadURL,
+                style: model.presentation,
+                senderIsLocal: model.senderIsLocal,
+                startNewGame: model.startNewGame,
+                chatKey: model.chatKey,
+                chatIsDM: model.chatIsDM,
+                chatPlayers: model.playerCount,
+                requestExpand: { model.expand() },
+                onNewGame: { model.newGame() },
+                onSend: { payload, seat in await MainActor.run { model.stage(payload, seat: seat) } },
+                onUnstage: { model.unstage() }
+            )
+            .id(model.viewKey)   // reset @State when player/transcript/intent changes
+        }
         .frame(width: SimulatedStage.width, height: stageHeight)
         .animation(.easeInOut(duration: 0.25), value: stageHeight)
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
@@ -212,5 +215,42 @@ struct HarnessRootView: View {
         }
         .padding(8)
         .background(Color(white: 0.09))
+    }
+}
+
+/// Hosts `content` in its OWN `UIHostingController`, exactly the way the real
+/// extension is hosted (§ note 5): `MSMessagesAppViewController` is a genuinely
+/// separate view controller with no ambient safe area to bleed in from a host
+/// app's chrome. The harness used to embed `MessagesRootView` as a plain SwiftUI
+/// child of `HarnessRootView`'s own hierarchy — a `.frame(width:height:)`-boxed
+/// ZStack child, nowhere near a physical screen edge. That still worked for
+/// everything EXCEPT `WoolBackground`'s `.ignoresSafeArea()` (needed so the wool
+/// bleeds edge-to-edge in the real, edge-to-edge extension, per note 3): nested
+/// that many SwiftUI layers deep, `.ignoresSafeArea()` expanded the wool's
+/// internal aspect-fill proposal against the HARNESS APP's own ambient bottom
+/// safe area (the home indicator, an inherited value with nothing in the tree
+/// to consume it — the top strip's `.safeAreaInset(edge: .top)` consumes the top
+/// one, nothing matching existed for the bottom), not against the fixed 375x554
+/// stage box the tester actually sees — so the wool image fell short of the
+/// stage's own bottom edge by roughly that amount, a gap the fixed-size clip
+/// then exposed as bare black. A real `UIHostingController`, added as a proper
+/// child controller, computes its OWN `safeAreaInsets` from its OWN view's
+/// position, so `.ignoresSafeArea()` inside it has nothing left over to reach
+/// for and just fills the box it was actually given — verified empirically
+/// (screenshotted before/after; this was the fix that closed the gap, several
+/// other candidates — GeometryReader wrapping, a matching bottom
+/// `.safeAreaInset`, `.ignoresSafeArea(edges: .bottom)` on the surrounding
+/// ZStack — did not).
+private struct HostedStage<Content: View>: UIViewControllerRepresentable {
+    @ViewBuilder let content: () -> Content
+
+    func makeUIViewController(context: Context) -> UIHostingController<Content> {
+        let vc = UIHostingController(rootView: content())
+        vc.view.backgroundColor = .clear
+        return vc
+    }
+
+    func updateUIViewController(_ vc: UIHostingController<Content>, context: Context) {
+        vc.rootView = content()
     }
 }

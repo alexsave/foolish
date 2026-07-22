@@ -52,6 +52,19 @@ public struct TableView<Session: GameSession>: View {
                     // 92x108 frame (batch-2 equal-inset change); this .position
                     // centers that frame, so nudge it down to keep the stack's
                     // visual spot (content center moved ~16pt up within the frame).
+                    //
+                    // Batch 11 (notes 1/10/14) re-anchored FDeckWell's internal
+                    // stock to its BOTTOM card's own rotated corner instead of a
+                    // union-of-all-layers box (see FDeckWell's type doc), which
+                    // moves that internal visual centre a little further up/left
+                    // than it was when this +16 was eyeballed. This .position()
+                    // call is a DIFFERENT layout mechanism (centring the whole
+                    // 92x108 frame) than the corner-pinned `.frame(alignment:)`
+                    // MessageTableView uses, so nothing here needed to change for
+                    // notes 1/10 to hold in the iMessage board — but this +16 is
+                    // now a slightly stale eyeball on the OFFLINE app board
+                    // specifically, and could stand a fresh look against a live
+                    // screenshot of THIS screen in a future pass.
                     deckWell(view)
                         .position(x: geo.size.width * 0.14, y: geo.size.height * 0.14 + 16)
 

@@ -45,9 +45,14 @@ public struct FActionBar: View {
                 if canCover  { FButton(FStrings.t("cover"),  kind: .wood, compact: true, fixedWidth: Self.w, action: onCover) }
                 if canPass   { FButton(FStrings.t("pass"),   kind: .wood, compact: true, fixedWidth: Self.w, action: onPass) }
                 if canPickup { FButton(FStrings.t("pickup"), kind: .wood, compact: true, fixedWidth: Self.w, action: onPickup) }
-                // Good reads as a green check, not the word "Good" (§13): same
-                // wooden-pill footprint as the other compact buttons, icon centred.
-                if canDone   { FGoodButton(width: Self.w, action: onDone) }
+                // Good reads as the WORD "Good" (note 7), same as every other
+                // wooden pill in this column. A previous batch put the FCheck
+                // glyph here too, borrowing it from FSeatBadge's per-seat status
+                // pip (the little sword/shield/check row) - but that pip marks
+                // "this seat already said good", a different thing from the
+                // button that SAYS it. FCheck stays a status-only glyph; this
+                // button is text like its siblings.
+                if canDone   { FButton(FStrings.t("good"), kind: .wood, compact: true, fixedWidth: Self.w, action: onDone) }
                 if canUndo   { FButton(FStrings.t("ios.msg.undo"), kind: .wood, compact: true, fixedWidth: Self.w, action: onUndo) }
             }
         }
@@ -58,27 +63,5 @@ public struct FActionBar: View {
         .animation(FMotion.chrome, value: canPickup)
         .animation(FMotion.chrome, value: canDone)
         .animation(FMotion.chrome, value: canUndo)
-    }
-}
-
-/// The Good button, icon-only (§13: "Good" reads as a green check, not a word).
-/// Mirrors FButton's `.wood`/`compact` look exactly (WoodFill background, sharp
-/// corners, the same border) rather than growing FButton into a label-view type —
-/// this is the only wood button that isn't a Text, so a small standalone view is
-/// less risky than making FButton generic over its content.
-private struct FGoodButton: View {
-    let width: CGFloat
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: { Haptics.fire(.drop); action() }) {
-            FCheck(size: 20)
-                .frame(width: width, height: 40)
-                .background(WoodFill())
-                .overlay(
-                    Rectangle().strokeBorder(.black.opacity(0.35), lineWidth: 1)
-                )
-        }
-        .accessibilityLabel(Text("Good"))
     }
 }
