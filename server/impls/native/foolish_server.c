@@ -200,7 +200,10 @@ static void epoll_notify_game_changed(GameSlot *s);
 
 // Chunk directories: g_*_chunks[c] is NULL until slot c*PER_CHUNK is first
 // touched, then a calloc'd block that never moves or frees. g_*_count is the
-// append cursor (== number ever created; slots are never reclaimed).
+// append high-water. Users are append-only; GAME slots are recycled — the
+// reaper reclaims quiescent games and game_alloc_slot reuses their indices via
+// a free-list, so g_games_count is the high-water, not the live count (see
+// SERVER_SCALING.md "Stage 7" — game reclamation).
 static GameSlot *g_game_chunks[MAX_GAME_CHUNKS];
 static User     *g_user_chunks[MAX_USER_CHUNKS];
 static int       g_games_count = 0;

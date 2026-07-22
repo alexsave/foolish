@@ -70,7 +70,20 @@ since non-blocking TLS wasn't attempted; see `SERVER_SCALING.md` "Stage 6"
 for the epoll design, the game_workers tuning it needs, and why `--tls`
 differs. Pool/shard sizes are runtime-configurable:
 `./foolish_server 8099 --game-workers=N --meta-workers=N --create-workers=N`
-(`--game-workers` sizes the epoll shard count in plaintext mode).
+(`--game-workers` sizes the epoll shard count in plaintext mode). Also
+runtime-configurable (Stage 7): `--accept-threads=N` (SO_REUSEPORT parallel
+accept, default 2), `--max-conns=N` (admission control — shed new connections
+at a ceiling), and `--game-idle-ttl-s`/`--reap-interval-s` (game reclamation —
+a reaper recycles games with no live connection and no bot once idle, keeping
+RAM bounded by peak concurrent games).
+
+QUIC / HTTP-3 / WebTransport is a SEPARATE build, `foolish_server_quic`, which
+links Cloudflare quiche (bundling its own BoringSSL) instead of OpenSSL and
+adds a UDP/QUIC listener onto the same in-memory game:
+`make foolish_server_quic QUICHE_DIR=/path/to/quiche-ffi`, then
+`./foolish_server_quic 8099 --quic --quic-port=4433 --quic-workers=N
+--cert=PATH --key=PATH`. See [`SERVER_SCALING.md`](SERVER_SCALING.md)
+"Stage 7" and `quic_test.sh`.
 
 Durability: a background thread persists every game and user to a local
 SQLite (WAL) database write-behind — the request path never blocks on disk,
@@ -101,7 +114,7 @@ POST /action?game_id=..  <awire bytes>  (Bearer)   applies, then runs the bots
 GET  /state?game_id=..&seat=..          -> the kernel's masked view (packed)
 GET  /status?game_id=..                 -> 0 waiting / 1 playing / 2 over
 GET  /health
-GET  /stats                             -> {bot_decisions, octogen_decisions} (Stage 4)
+GET  /stats  -> {live_connections, max_connections, games, games_live, games_reclaimed, free_slots, users, moves_applied, bot_decisions, octogen_decisions}
 GET  /ws?game_id=..&seat=.. (Bearer, Upgrade: websocket) -> RFC 6455 WebSocket
 GET  /ws?game_id=..&spectator=1 (Bearer, Upgrade: websocket) -> read-only spectator WebSocket (Stage 4)
 ```
@@ -110,6 +123,13 @@ Every path above is `http://`/`ws://` by default, or `https://`/`wss://`
 when the server was started with `--tls` (see "TLS", above, and
 [`TLS.md`](TLS.md)) — same paths, same request/response shapes, just over a
 TLS-wrapped socket.
+
+The `foolish_server_quic` build (Stage 7) additionally serves `GET /health`
+and `GET /state` over HTTP/3, and a WebTransport session at
+`CONNECT /wt?token=..&game_id=..&seat=..` (`:protocol=webtransport`) that
+pushes the seat's masked view as a QUIC DATAGRAM and applies inbound move
+DATAGRAMs — the same push-only model as `/ws`, onto the same game. See
+[`SERVER_SCALING.md`](SERVER_SCALING.md) "Stage 7".
 
 `start` deals once every seated human is ready (bots are always ready, 2+
 seats). A move is the packed **awire** frame — `[kind, n, cards…(, attacks…)]`,
@@ -182,8 +202,13 @@ continue-to-lobby, per-game locking + work-queue thread routing (see
 [`SERVER_SCALING.md`](SERVER_SCALING.md)), a persistent-connection `/ws` push
 path for the action+state hot loop (see above), crash-safe SQLite
 write-behind durability for every game and user (see
-[`DURABILITY.md`](DURABILITY.md)), and TLS (HTTPS + WSS, see
-[`TLS.md`](TLS.md)). Partially present since Stage 6 (plaintext only): when
+[`DURABILITY.md`](DURABILITY.md)), TLS (HTTPS + WSS, see
+[`TLS.md`](TLS.md)), a SO_REUSEPORT multi-acceptor for parallel accept
+(`--accept-threads`), an optional QUIC / HTTP-3 / WebTransport front-end onto
+the same in-memory game (`foolish_server_quic`, sharded across cores — see
+[`SERVER_SCALING.md`](SERVER_SCALING.md) "Stage 7"), admission control
+(`--max-conns`), and game reclamation that bounds RAM by peak concurrent games
+rather than cumulative. Partially present since Stage 6 (plaintext only): when
 a SERVER-SIDE BOT's move changes a game, the epoll worker that owns that
 game's connections proactively pushes fresh state to all of them (see
 `SERVER_SCALING.md` "Stage 6" — the epoll↔bot_thread wakeup seam); a HUMAN
@@ -192,9 +217,9 @@ section for why fanning out on every human move measurably hurt
 throughput) — every `/ws` client still polls its own seat for that case
 (see `foolish_hammer.c`'s ws worker). The packed binary envelope the iOS
 client expects (this speaks plain JSON over HTTP; `/ws` speaks the kernel's
-own packed wire), cert rotation, connection
-limits/backpressure beyond the work-queue's own bounded blocking push (see
-`SERVER_SCALING.md`), and rate limits. The point is the architecture, not
+own packed wire), cert rotation, graceful (503-style) backpressure beyond
+admission control's fd-level shedding and the work-queue's own bounded
+blocking push (see `SERVER_SCALING.md`), and rate limits. The point is the architecture, not
 full production readiness — see "Production readiness" below for a plain
 tally of what each hardening stage did and didn't cover.
 
@@ -210,15 +235,23 @@ concurrency across multiple stages — 1, 5, and 6 below):
 | 3 | TLS for every endpoint, including the `/ws` hot loop (HTTPS + WSS, not just the one-shot requests) | [`TLS.md`](TLS.md) |
 | 5 | parallel bot compute — kernel globals on the `bot_drive`/`awire_apply` path made thread-local so games no longer serialize bot decisions through one process-wide lock | [`SERVER_SCALING.md`](SERVER_SCALING.md) |
 | 6 | epoll-per-shard connection I/O for plaintext (replaces thread-per-`/ws`-connection — a game-worker thread now runs an epoll loop over its shard instead of one OS thread per live connection); `--tls` keeps the Stage-1/5 thread-per-connection design, since non-blocking TLS wasn't attempted this stage | [`SERVER_SCALING.md`](SERVER_SCALING.md) |
+| 7 | SO_REUSEPORT multi-acceptor (parallel accept, `--accept-threads`); a QUIC / HTTP-3 / WebTransport front-end onto the same game (`foolish_server_quic`, sharded across cores with `--quic-workers`); game reclamation (RAM bounded by PEAK concurrent games, not cumulative — a reaper recycles quiescent games); and a `/state` seat-sentinel disclosure fix | [`SERVER_SCALING.md`](SERVER_SCALING.md) |
+
+Also present (earlier work, not a numbered stage): dynamically-grown chunked
+game/user registries and admission control (`--max-conns` sheds new
+connections at a ceiling).
 
 Still needed for a real production deployment, not attempted here (POC
 scope, stated plainly rather than silently): cert rotation/ACME (a cert is
-loaded once at startup, not reloaded), non-blocking TLS (a `--tls` server
-still pays thread-per-connection — see `SERVER_SCALING.md` "Stage 6"),
-connection-count limits or 503-style load shedding (the work queues apply
-backpressure by blocking the accept loop, not by rejecting — see
-`SERVER_SCALING.md`), rate limiting / abuse protection, JWT or another real
-auth scheme (tokens are an in-memory opaque map), horizontal scale-out (one
-process, one machine — the per-game lock design doesn't extend across
-processes), and structured observability (metrics/tracing beyond the
-stderr startup banner and the load tools' own stdout summaries).
+loaded once at startup, not reloaded), non-blocking TLS for the TCP path (a
+`--tls` server still pays thread-per-connection — see `SERVER_SCALING.md`
+"Stage 6"; QUIC/WebTransport already carries TLS 1.3 for browser/mobile
+clients), 503-style GRACEFUL load shedding (admission control shuts excess
+connections at the fd level rather than returning a response), rate limiting /
+abuse protection (per-IP throttle on `/auth/signup` and `/create`), JWT or
+another real auth scheme (tokens are an in-memory opaque map), cross-worker
+QUIC connection migration (needs eBPF Connection-ID steering — see
+`SERVER_SCALING.md` "Stage 7"), horizontal scale-out (one process, one
+machine — the per-game lock design doesn't extend across processes), and
+structured observability (metrics/tracing beyond `/stats`, the stderr startup
+banner, and the load tools' own stdout summaries).

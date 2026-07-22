@@ -1088,3 +1088,198 @@ design, same `--games=3 --seats=2 --secs=20` scale T1c/T1d used.
   PROFILE_HOTPATH.md "T1e").
 - `bench_results/stage6_octogen/` — the Sweep B re-run data (raw CSVs,
   matching Stage 4/5's own `bench_results/stage{4,5}_octogen/` layout).
+
+---
+
+## Stage 7 — modern-network scaling: SO_REUSEPORT, QUIC/WebTransport, and bounded memory
+
+Stage 6 made the plaintext `/ws` path event-driven; this stage removes the
+last two structural limits a long-running production server hits — a single
+accept thread, and memory that grows with every game ever created — and adds
+QUIC/WebTransport as a second, mobile-friendly transport. "No one is using the
+C server yet," so these are free to be real refactors, not bolt-ons.
+
+### Deliverable 1 — SO_REUSEPORT multi-acceptor (parallel accept)
+
+Stage 6 left ONE dispatcher thread owning the single listening socket: it
+`accept()`s, does the TLS handshake (for `--tls`), reads+parses the request,
+and hands off to the game's epoll worker. Under a connection storm that one
+thread — especially its serialized `SSL_accept`s — is the bottleneck.
+
+Now `make_listener` opens N listeners, each bound to the same port with
+`SO_REUSEPORT`, and `acceptor_main` runs the identical accept→parse→handoff
+loop on each; the kernel load-balances inbound connections across the listeners
+by 4-tuple hash. Game-affinity is unchanged — each acceptor still hands the
+parsed connection to the epoll worker that owns its game — so this parallelizes
+only the accept/handshake/parse work, which is exactly the part that was
+serial. `--accept-threads=N` (default 2); the listen backlog also went 64 →
+1024 so SYN bursts aren't dropped.
+
+Measured (connect → `GET /health` → close, 8 client threads, 4-core box):
+
+| acceptors | conns/sec | vs 1 | idle RSS |
+|---|---|---|---|
+| 1 | 32,992 | — | 10.8 MB |
+| 2 | 55,608 | +69% | 11.8 MB |
+| 4 | 57,070 | +73% | 14.0 MB |
+| 8 | 67,154 | +104% | 18.2 MB |
+
+Honest scope: this is a connection-ESTABLISHMENT win (the accept path), not a
+steady-state message-throughput win — established connections still run on the
+same epoll workers, unchanged. Memory cost is ~+1 MB per acceptor thread; the
+default of 2 is a safe improvement without oversubscribing a small box (idle
+acceptors just block in `accept()`, but on a CPU-bound box over-provisioning
+them steals cycles from the epoll workers that do the real work).
+
+### Deliverable 2 — QUIC / HTTP-3 / WebTransport front-end (`foolish_server_quic`)
+
+A UDP/QUIC listener (`quic_wt.c`) that speaks HTTP/3 and WebTransport onto the
+SAME in-memory game the TCP front-end serves, via a thin bridge
+(`game_bridge.h`) that takes the exact same registry / per-game locks and view
+codec — QUIC is just another front-end, no game logic duplicated. Why: QUIC
+carries TLS 1.3 in the transport (1-RTT, or 0-RTT on resume, vs TCP+TLS's
+2–3), has no head-of-line blocking (a lost datagram doesn't stall the others,
+which a WebSocket-over-TCP can't avoid), and survives a network change via
+connection migration (a phone moving cell↔wifi keeps its game). WebTransport
+is the browser-reachable API over HTTP/3.
+
+Build separation (the BoringSSL/OpenSSL clash): `libquiche.a` bundles its own
+BoringSSL, which would collide with the `-lssl -lcrypto` the default server
+links. So `foolish_server_quic` compiles with `-DFOOLISH_NO_OPENSSL` (conn.c's
+OpenSSL TLS path compiles out — plaintext TCP, terminate TLS at the edge) and
+links quiche instead; QUIC brings TLS 1.3 itself. The default build and the TCP
+path are byte-for-byte unchanged.
+
+`quic_wt.c` is a poll-based QUIC event loop (accept / stateless-retry / version
+negotiation, modeled on quiche's own `http3-server` example but with its libev
++ uthash replaced by `poll()` and a small intrusive conn list), serving H3
+`GET /health` and `/state`, plus WebTransport: an Extended-CONNECT request
+validates token+seat exactly like `/ws`, then the seat's masked view is pushed
+as a DATAGRAM and inbound move DATAGRAMs are applied — the same push-only model,
+now over QUIC.
+
+**Sharded across cores.** One thread/socket became N QUIC workers, each with its
+own `SO_REUSEPORT` UDP socket, poll loop, connection list, and quiche config;
+the kernel spreads inbound QUIC by 4-tuple hash, so the per-packet crypto and
+congestion work parallelizes. `--quic-workers=N` (default 2). Measured, 16
+concurrent WebTransport clients ping-ponging move/view datagrams: mean RTT
+**88.6 µs → 32.5 µs (2.7× lower)** from 1 → 4 workers, at a cost of ~+2 MB per
+worker (idle RSS 16.2 → 22.4 MB).
+
+**Migration caveat (documented, not hidden):** the kernel hashes the 4-tuple,
+not the QUIC Connection ID. A connection stays on one worker for its life unless
+it migrates to a new 4-tuple (mobile switch, NAT rebind), whose packets may then
+land on a different worker that lacks its state. Migration is left ENABLED (it
+still works within a worker); robust cross-worker migration needs eBPF
+Connection-ID steering (`SO_ATTACH_REUSEPORT_EBPF`), a documented follow-up.
+With `--quic-workers=1` there is no such limitation.
+
+**WebSocket vs WebTransport, honestly.** Same server, same game engine, single
+client, loopback — move→reply round-trip:
+
+| | WebSocket (plaintext TCP) | WebTransport (QUIC datagram) |
+|---|---|---|
+| p50 | 14.3 µs | 47 µs |
+| mean | 12.4 µs | 46.9 µs |
+| p99 | 48.1 µs | 81 µs |
+
+On a fast, reliable link WebSocket is ~3× faster per message: TCP send/recv is a
+kernel syscall with a loopback fast path, while QUIC does framing + AEAD
+encryption + ACKs + congestion control in userspace per datagram (and this WS
+test is unencrypted, which flatters it). But loopback is the one benchmark that
+flatters TCP — it has 0% loss, ~0 RTT, and never changes networks, so none of
+WebTransport's wins (1-RTT setup, no head-of-line blocking under loss,
+migration) show. On a real lossy/mobile link WT's tail latency and setup would
+win despite the higher per-packet CPU. So WT is an ADDITIONAL transport
+alongside WS — WS for LAN/datacenter, WebTransport for mobile — not a
+replacement.
+
+Verified end to end with Cloudflare's `quiche-client` (H3 `/state` is
+byte-identical to the TCP `/state`) and `wt_client` (a WebTransport datagram
+round-trip); see `quic_test.sh`.
+
+### Deliverable 3 — game reclamation (bounded memory)
+
+Game slots were append-only (the chunked-registry work), so RAM grew with
+CUMULATIVE games created and was never freed — a prod server can't do that. A
+reaper thread now scans live games every `--reap-interval-s` and recycles any
+that is fully quiescent: no `/ws` or WebTransport connection references it
+(`conn_refs == 0`), no bot thread drives it (`!bot_running`), and it has been
+idle past `--game-idle-ttl-s`. That triple guarantees no thread still holds a
+stale `GameSlot*` (an `EConn->slot` or a `--tls ws_conn_thread`), so the slot is
+unpublished (backward-shift removal from the id hash — no tombstones), its DB
+row dropped (`persist_delete`, so it neither reloads on restart nor grows the
+DB), and its index pushed on a free-list the next `create` reuses.
+
+Reference safety (the crux of a lock-per-game design): a per-game `conn_refs`
+(guarded by `s->lock`) is taken at `/ws` bind and by each WebTransport session
+(`gb_game_ref`/`gb_game_unref`), released at close; `last_active_us` (refreshed
+on create, every state change, and every connection attempt) gives a reconnect
+grace window and closes the validate→bind race. Slot reuse PRESERVES the slot's
+already-initialized lock/cond (re-initializing a live mutex is POSIX UB); the
+reaper uses `trylock` so a busy game never stalls the registry.
+
+Measured — same 3,000-game workload:
+
+| | reclaim OFF (huge TTL) | reclaim ON |
+|---|---|---|
+| slot high-water | 3,000 | **300** (10× fewer) |
+| RSS | 13 → 43 MB | 13 → 31 MB, **flat** |
+| trajectory | grows linearly forever (300k games ≈ +3 GB) | bounded by PEAK concurrent, regardless of cumulative |
+
+Latency: none. WS move p50 with the reaper active vs idle is single-digit µs and
+statistically identical — the reaper is off the hot path (its only hot-path
+touch is one `last_active_us` store under a lock the move already holds).
+Verified with valgrind **memcheck AND helgrind both 0 errors** while the reaper
+reclaimed concurrently through tens of thousands of moves + connection churn;
+an open WebTransport session keeps its game alive past the TTL and releases it
+on close. New `/stats` gauges: `games_live`, `games_reclaimed`, `free_slots`.
+
+### Deliverable 4 — `/state` seat-sentinel disclosure fix
+
+`h_state` parsed its `seat` query param with `strtol` and passed it straight to
+`state_put` as the `viewer`. `state_put`'s trusted `VIEW_UNMASKED` sentinel is
+`-2`, so `GET /state?game_id=X&seat=-2` served the FULL unmasked state (every
+hand + the deck) to an unauthenticated caller. Fixed by rejecting `seat <
+VIEW_SPECTATOR` (the only public views are `VIEW_SPECTATOR` = -1 and a concrete
+seat `0..num_players-1`). A server-side input-validation bug, not a kernel bug —
+`state_put` is a trusted primitive; `h_state` failed to sanitize before crossing
+the trust boundary (`/ws` already validated seat; `/state` didn't).
+
+### Genuinely remaining after Stage 7
+
+Struck off as now DONE across Stages 1–7: per-game locks, parallel bot compute,
+WebSocket, epoll-per-shard, push-only protocol, `state_put` version caching, O(1)
+hash lookups, SQLite persistence, TLS, dynamically-grown chunked registries,
+admission control (`--max-conns`), parallel accept (`SO_REUSEPORT`), QUIC/HTTP-3/
+WebTransport, and game reclamation (bounded memory). Still open:
+
+1. **Non-blocking TLS for the TCP path.** `--tls` still pays thread-per-
+   connection (the epoll rewrite is plaintext-only). Either implement the
+   `WANT_READ`/`WANT_WRITE` epoll re-arm state machine, or (recommended)
+   terminate TLS at the edge and run plaintext — which QUIC now complements for
+   browser/mobile clients. See [`DEPLOYMENT.md`](DEPLOYMENT.md).
+2. **Cross-worker QUIC migration** needs eBPF Connection-ID socket steering
+   (Deliverable 2's caveat).
+3. **Rate limiting / abuse protection** — no per-IP throttle on `/auth/signup`
+   or `/create` yet (the connection cap is process-wide, not per-client).
+4. **async-cancel residual** (PROFILE_HOTPATH.md T1g) — the remaining ~half
+   needs raw `syscall()`.
+5. **Horizontal scale-out** — one process, one machine; the per-game lock
+   design doesn't span processes. Sketched in [`DEPLOYMENT.md`](DEPLOYMENT.md).
+
+### Files (Stage 7 additions)
+
+- `foolish_server.c` — `make_listener`/`acceptor_main` (SO_REUSEPORT
+  multi-acceptor); the game-reclamation machinery (`conn_refs`/`last_active_us`
+  on `GameSlot`, `game_alloc_slot`/`game_slot_reset_preserving_locks`,
+  `game_ht_remove` backward-shift, `game_conn_ref`/`unref`, `reclaim_game_locked`,
+  `game_reaper_thread`); the `game_bridge.h` implementation and `--quic` wiring
+  (both under `#ifdef FOOLISH_QUIC`); the `h_state` seat clamp; `/stats` gauges.
+- `quic_wt.c`/`quic_wt.h` — the QUIC/HTTP-3/WebTransport listener (sharded).
+- `game_bridge.h` — the wrappers `quic_wt.c` uses to reach the shared game.
+- `conn.c`/`conn.h` — `FOOLISH_NO_OPENSSL` guards (plaintext-only Conn for the
+  QUIC build, which can't link OpenSSL alongside quiche's BoringSSL).
+- `wt_client.c` + `quic_test.sh` — a WebTransport smoke/latency client (with an
+  RTT ping mode) and its harness.
+- `Makefile` — the `foolish_server_quic` and `wt_client` targets (`QUICHE_DIR`).

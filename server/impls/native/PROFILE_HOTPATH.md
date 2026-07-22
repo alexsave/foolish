@@ -598,8 +598,10 @@ version bump always happens under the same lock the cache check runs under,
 so there's no window where a reader can observe a stale version alongside a
 fresh `Game`). `h_ws` is the only caller (`h_state`'s HTTP polling endpoint
 was deliberately left calling `state_put` directly — its `seat` query
-parameter is unbounded/unvalidated pre-existing behavior, unlike `h_ws`'s,
-which validates `0 <= seat < num_players` at handshake time before ever
+parameter, though now clamped to reject the `VIEW_UNMASKED` sentinel
+(SERVER_SCALING.md "Stage 7"), still isn't a valid per-seat cache index
+(`VIEW_SPECTATOR` = -1 is allowed), unlike `h_ws`'s, which validates
+`0 <= seat < num_players` at handshake time before ever
 touching the cache array; indexing `view_cache[seat]` with an unvalidated
 seat would be a new out-of-bounds bug, so the cache stays scoped to the path
 that's actually safe and actually hot). A fresh GameSlot's
@@ -770,39 +772,22 @@ both tested concurrency levels; `test.sh` (HTTP + WS smoke) and repeated
 WS+legal stress runs (90-100% of submitted moves applied, matching or
 beating the pre-existing bar) stay green throughout.
 
-**Still open, in the order a real deployment would hit them:**
-
-1. **The global mutex** (item 3 above) — analyzed, not implemented. It is
-   now a clearly-second-place cost (11.04% of a smaller pie, flat in
-   absolute terms) and the honest next target once someone can verify a
-   sharded-lock change with ThreadSanitizer (unavailable on this box) or
-   equivalent, not before.
-2. **Thread-per-connection's memory tax** — ~0.9 MB/connection means
-   thousands of concurrent players costs gigabytes in thread stacks alone,
-   independent of game count. T1's own item 1 (a thread pool or epoll/kqueue
-   event loop) was scoped to the CPU cost of `pthread_create`; this section
-   adds the memory argument for the same fix.
-3. **Compile-time caps** (`MAX_GAMES`, `MAX_USERS`, the two hash-table
-   sizes) are POC-sized (256/512/1024/512) and would need raising — and
-   re-validating their O(1) hash-table assumptions still hold — for
-   thousand-game scale.
-4. **Durability, backpressure, TLS, connection limits, rate limits** — all
-   already flagged out of scope by the README at the time this section was
-   written, unaffected by this (T1/T1b) work, and all real gaps for a
-   production deployment: state was RAM-only (a crash lost every in-flight
-   game) — since addressed by SQLite WAL write-behind persistence, see
-   [`DURABILITY.md`](DURABILITY.md) — nothing here bounds how many
-   connections or games a single process will accept, and there is no rate
-   limiting on `/auth/signup` or `/create`.
-5. **`h_state`'s unbounded `seat` query parameter** — noticed while scoping
-   the view-cache change (not introduced by it, and not touched by it): a
-   caller can pass `seat=-2`, which collides with `state_put`'s internal
-   `VIEW_UNMASKED` sentinel and would serialize the FULL unmasked state
-   (every hand, the deck) to an unauthenticated `/state` request. `/ws`
-   already validates its `seat` against the caller's own owned seat before
-   ever calling into `state_put`; `/state` does not. Out of this task's
-   scope (a correctness/security fix, not a perf one) but worth a follow-up
-   issue.
+**Since resolved.** This was the T1c-era open list; the current, authoritative
+"genuinely remaining" list lives in
+[`SERVER_SCALING.md`](SERVER_SCALING.md) "Stage 7". Everything enumerated here
+has since landed: the global mutex became per-game locks (Stage 1) then
+fully-parallel bot compute (Stage 5); thread-per-connection became
+epoll-per-shard for the plaintext hot path (Stage 6), retiring the
+~0.9 MB/connection stack tax; the POC-sized compile-time caps became
+dynamically-grown chunked registries (no fixed `MAX_GAMES`/`MAX_USERS`, hash
+tables sized to the ceilings) and then bounded-by-peak game reclamation
+(Stage 7); durability landed as SQLite WAL write-behind
+([`DURABILITY.md`](DURABILITY.md)); TLS landed ([`TLS.md`](TLS.md)); a
+process-wide connection limit landed as admission control (`--max-conns`); and
+`h_state`'s `seat=-2` sentinel is now clamped, so a `/state` request can no
+longer reach the `VIEW_UNMASKED` serialization (Stage 7, Deliverable 4). The one
+item from this list still genuinely open is per-IP rate limiting on
+`/auth/signup` and `/create`.
 
 ### Files (T1c additions)
 
