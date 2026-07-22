@@ -240,6 +240,52 @@ static uint64_t now_us(void) {
     return (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)ts.tv_nsec / 1000ULL;
 }
 
+// Per-IP rate limiting for the abuse-prone endpoints (/auth/signup, /create):
+// a token bucket per client IP. This is a speed bump, not a security boundary —
+// it stops a script minting accounts/games faster than any human, which the
+// process-wide --max-conns ceiling can't (one IP can churn short connections).
+// Fly's edge handles L3/L4 floods; this is the L7 per-endpoint logic only the
+// app can do. Direct-mapped table: a hash collision just means two IPs share a
+// bucket (slightly stricter for them), never a bypass. --ratelimit-rpm sets the
+// per-IP steady rate; 0 disables.
+#define RL_SIZE 65536   // power of two
+typedef struct { uint32_t ip; float tokens; uint64_t last_us; } RlBucket;
+static RlBucket g_rl[RL_SIZE];
+static pthread_mutex_t g_rl_lock = PTHREAD_MUTEX_INITIALIZER;
+static float g_rl_rate  = 0.0f;   // tokens/sec refilled per IP; 0 = OFF (opt-in via --ratelimit-rpm, so local load tools aren't throttled)
+static float g_rl_burst = 10.0f;  // bucket capacity (burst allowance)
+static atomic_ulong g_rate_limited = 0;
+
+static bool ratelimit_allow(uint32_t ip) {
+    if (g_rl_rate <= 0.0f) return true;   // disabled
+    uint64_t now = now_us();
+    unsigned idx = ((unsigned)(ip * 2654435761u) >> 15) & (RL_SIZE - 1);   // Knuth multiplicative hash
+    bool allow;
+    pthread_mutex_lock(&g_rl_lock);
+    RlBucket *b = &g_rl[idx];
+    if (b->ip != ip || b->last_us == 0) {
+        b->ip = ip; b->tokens = g_rl_burst; b->last_us = now;   // new/evicted IP starts with a full burst
+    } else {
+        b->tokens += (float)((double)(now - b->last_us) / 1e6) * g_rl_rate;
+        if (b->tokens > g_rl_burst) b->tokens = g_rl_burst;
+        b->last_us = now;
+    }
+    allow = b->tokens >= 1.0f;
+    if (allow) b->tokens -= 1.0f;
+    pthread_mutex_unlock(&g_rl_lock);
+    if (!allow) atomic_fetch_add_explicit(&g_rate_limited, 1, memory_order_relaxed);
+    return allow;
+}
+
+// The client's IPv4 as a host-order uint32 (0 if unavailable — a buffered Conn,
+// a non-IPv4 peer, or a getpeername failure all map to one shared bucket, which
+// only makes the limiter stricter, never leaks past it).
+static uint32_t conn_peer_ip(const Conn *c) {
+    struct sockaddr_in sa; socklen_t sl = sizeof sa;
+    if (c->fd < 0 || getpeername(c->fd, (struct sockaddr *)&sa, &sl) != 0 || sa.sin_family != AF_INET) return 0;
+    return ntohl(sa.sin_addr.s_addr);
+}
+
 // Game reclamation: recycle finished/abandoned slots so total memory is bounded
 // by PEAK concurrent games, not cumulative created. A reclaimed slot's index is
 // pushed here and reused by the next create (game_alloc_slot). Guarded by
@@ -1040,6 +1086,7 @@ typedef struct {
     int  content_length;    // parsed off Content-Length: while walking the headers
     bool is_ws_upgrade;     // GET with Upgrade: websocket + Connection: Upgrade + a key
     char ws_key[64];        // Sec-WebSocket-Key, verbatim (base64, ~24 chars)
+    char client_ip[46];     // forwarded client IP (Fly-Client-IP / X-Forwarded-For 1st hop); "" if none — rate limiting
 } Req;
 
 // Finds the blank line ending the header block ("\r\n\r\n") by a plain byte
@@ -1120,6 +1167,17 @@ static void parse_request_line_and_headers(char *buf, char *hdr_end, Req *r) {
         } else if (name_len == 17 && strncasecmp(line_start, "sec-websocket-key", 17) == 0) {
             int klen = val_len; if (klen > (int)sizeof r->ws_key - 1) klen = (int)sizeof r->ws_key - 1;
             memcpy(r->ws_key, val, (size_t)klen); r->ws_key[klen] = 0;
+        } else if (name_len == 13 && strncasecmp(line_start, "fly-client-ip", 13) == 0) {
+            // Fly's real client IP (authoritative behind the edge proxy).
+            int n = val_len; if (n > (int)sizeof r->client_ip - 1) n = (int)sizeof r->client_ip - 1;
+            memcpy(r->client_ip, val, (size_t)n); r->client_ip[n] = 0;
+        } else if (name_len == 15 && strncasecmp(line_start, "x-forwarded-for", 15) == 0) {
+            // First hop = original client; only if Fly-Client-IP didn't already set it.
+            if (!r->client_ip[0]) {
+                const char *e = val; while (e < line_end && *e != ',' && *e != ' ') e++;
+                int n = (int)(e - val); if (n > (int)sizeof r->client_ip - 1) n = (int)sizeof r->client_ip - 1;
+                memcpy(r->client_ip, val, (size_t)n); r->client_ip[n] = 0;
+            }
         }
     }
     r->is_ws_upgrade = saw_upgrade_websocket && saw_connection_upgrade && r->ws_key[0];
@@ -1158,7 +1216,8 @@ static bool read_and_parse_request(Conn *conn, char *buf, int cap, Req *r) {
 
 static void respond(Conn *conn, int code, const char *json) {
     const char *msg = code == 200 ? "OK" : code == 400 ? "Bad Request"
-                    : code == 401 ? "Unauthorized" : code == 404 ? "Not Found" : "Error";
+                    : code == 401 ? "Unauthorized" : code == 404 ? "Not Found"
+                    : code == 429 ? "Too Many Requests" : "Error";
     char hdr[512];
     int n = snprintf(hdr, sizeof hdr,
         "HTTP/1.1 %d %s\r\nContent-Type: application/json\r\n"
@@ -1181,6 +1240,19 @@ static void respond_bin(Conn *conn, int code, const unsigned char *data, int len
     if (len > 0) io_write(conn, data, (size_t)len);
 }
 
+// text/plain body — used by /metrics (Prometheus text exposition format is
+// line-based text, NOT JSON, and NOT a binary buffer: Prometheus/Grafana/Fly
+// can only scrape text, so this one endpoint speaks text on purpose).
+static void respond_text(Conn *conn, int code, const char *body, int len) {
+    char hdr[256];
+    int n = snprintf(hdr, sizeof hdr,
+        "HTTP/1.1 %d OK\r\nContent-Type: text/plain; version=0.0.4\r\n"
+        "Access-Control-Allow-Origin: *\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
+        code, len);
+    io_write(conn, hdr, n);
+    if (len > 0) io_write(conn, body, (size_t)len);
+}
+
 // --------------------------------------------------------------------------
 // Route handlers. Each follows the SAME registry->game lock handoff (see
 // "Locking" above): take g_registry_lock, find/allocate the User*/GameSlot*
@@ -1190,7 +1262,17 @@ static void respond_bin(Conn *conn, int code, const unsigned char *data, int len
 // the GameSlot lock, THEN respond (I/O never happens with either lock held).
 // --------------------------------------------------------------------------
 
+// The rate-limit bucket key for this request: the forwarded client IP hashed
+// (Fly-Client-IP / X-Forwarded-For — required to be meaningful behind Fly's
+// edge proxy, where getpeername sees only the proxy), else the direct peer's
+// IPv4. Both collapse to a uint32 the token-bucket table keys on.
+static uint32_t client_ip_key(const Req *r, const Conn *conn) {
+    if (r->client_ip[0]) return (uint32_t)hash_str(r->client_ip);
+    return conn_peer_ip(conn);
+}
+
 static void h_signup(Req *r, Conn *conn) {
+    if (!ratelimit_allow(client_ip_key(r, conn))) { respond(conn, 429, "{\"error\":\"rate limited\"}"); return; }
     char uname[24] = {0};
     if (!json_str(r->body, "username", uname, sizeof uname)) { respond(conn, 400, "{\"error\":\"username\"}"); return; }
     pthread_mutex_lock(&g_registry_lock);
@@ -1219,6 +1301,7 @@ static void h_signup(Req *r, Conn *conn) {
 }
 
 static void h_create(Req *r, Conn *conn) {
+    if (!ratelimit_allow(client_ip_key(r, conn))) { respond(conn, 429, "{\"error\":\"rate limited\"}"); return; }
     pthread_mutex_lock(&g_registry_lock);
     User *u = user_by_token(r->token);
     if (!u) { pthread_mutex_unlock(&g_registry_lock); respond(conn, 401, "{\"error\":\"auth\"}"); return; }
@@ -1506,6 +1589,40 @@ static void h_stats(Req *r, Conn *conn) {
         conns, g_max_conns, games, live_games,
         rc, freeslots, users, mv, bd, od);
     respond(conn, 200, out);
+}
+
+// Prometheus text exposition of the same gauges/counters /stats carries (plus
+// rate-limit rejections), for Fly/Grafana scraping. Text, not JSON and not a
+// binary buffer — Prometheus can only scrape the line-based text format (see
+// respond_text). The game wire stays binary; this endpoint's audience is the
+// monitoring stack, not the game client.
+static void h_metrics(Req *r, Conn *conn) {
+    (void)r;
+    unsigned long bd = atomic_load_explicit(&g_bot_decisions, memory_order_relaxed);
+    unsigned long od = atomic_load_explicit(&g_octogen_decisions, memory_order_relaxed);
+    int    conns = atomic_load_explicit(&g_live_conns, memory_order_relaxed);
+    unsigned long mv = atomic_load_explicit(&g_moves_applied, memory_order_relaxed);
+    unsigned long rc = atomic_load_explicit(&g_games_reclaimed, memory_order_relaxed);
+    unsigned long rl = atomic_load_explicit(&g_rate_limited, memory_order_relaxed);
+    pthread_mutex_lock(&g_registry_lock);
+    int games = g_games_count, users = g_users_count, freeslots = g_free_count;
+    pthread_mutex_unlock(&g_registry_lock);
+    int live_games = games - freeslots; if (live_games < 0) live_games = 0;
+    char out[1200];
+    int n = snprintf(out, sizeof out,
+        "# TYPE foolish_live_connections gauge\nfoolish_live_connections %d\n"
+        "# TYPE foolish_max_connections gauge\nfoolish_max_connections %d\n"
+        "# TYPE foolish_games_live gauge\nfoolish_games_live %d\n"
+        "# TYPE foolish_free_slots gauge\nfoolish_free_slots %d\n"
+        "# TYPE foolish_users gauge\nfoolish_users %d\n"
+        "# TYPE foolish_moves_applied_total counter\nfoolish_moves_applied_total %lu\n"
+        "# TYPE foolish_games_reclaimed_total counter\nfoolish_games_reclaimed_total %lu\n"
+        "# TYPE foolish_bot_decisions_total counter\nfoolish_bot_decisions_total %lu\n"
+        "# TYPE foolish_octogen_decisions_total counter\nfoolish_octogen_decisions_total %lu\n"
+        "# TYPE foolish_rate_limited_total counter\nfoolish_rate_limited_total %lu\n",
+        conns, g_max_conns, live_games, freeslots, users, mv, rc, bd, od, rl);
+    if (n < 0) n = 0; if (n > (int)sizeof out) n = (int)sizeof out;
+    respond_text(conn, 200, out, n);
 }
 
 // Serialize a masked view, reusing the cached bytes from GameSlot when
@@ -2023,6 +2140,7 @@ static void route(Req *r, Conn *conn) {
     if (!strcmp(r->path, "/state"))  { h_state(r, conn); return; }
     if (!strcmp(r->path, "/status")) { h_status(r, conn); return; }
     if (!strcmp(r->path, "/stats"))  { h_stats(r, conn); return; }
+    if (!strcmp(r->path, "/metrics")) { h_metrics(r, conn); return; }
     respond(conn, 404, "{\"error\":\"route\"}");
 }
 
@@ -3025,6 +3143,8 @@ int main(int argc, char **argv) {
         }
         if (!strncmp(argv[i], "--game-idle-ttl-s=", 18)) { int v = atoi(argv[i] + 18); if (v >= 0) g_game_idle_ttl_us = (uint64_t)v * 1000000ULL; continue; }
         if (!strncmp(argv[i], "--reap-interval-s=", 18)) { int v = atoi(argv[i] + 18); if (v > 0) g_reap_interval = v; continue; }
+        if (!strncmp(argv[i], "--ratelimit-rpm=", 16)) { int v = atoi(argv[i] + 16); if (v >= 0) g_rl_rate = (float)v / 60.0f; continue; }        // 0 disables
+        if (!strncmp(argv[i], "--ratelimit-burst=", 18)) { int v = atoi(argv[i] + 18); if (v > 0) g_rl_burst = (float)v; continue; }
 #ifdef FOOLISH_QUIC
         if (!strcmp(argv[i], "--quic")) { g_want_quic = true; continue; }
         if (!strncmp(argv[i], "--quic-port=", 12)) { g_quic_port = atoi(argv[i] + 12); continue; }
@@ -3342,6 +3462,7 @@ static void *acceptor_main(void *arg) {
         if (!strcmp(r.method, "OPTIONS")) { respond(&conn, 200, "{}"); conn_close(&conn); free(buf); continue; }
         if (!strcmp(r.path, "/health"))  { respond(&conn, 200, "{\"ok\":true}"); conn_close(&conn); free(buf); continue; }
         if (!strcmp(r.path, "/stats"))   { h_stats(&r, &conn); conn_close(&conn); free(buf); continue; }
+        if (!strcmp(r.path, "/metrics")) { h_metrics(&r, &conn); conn_close(&conn); free(buf); continue; }
 
         if (g_tls_ctx) {
             // Stage 6 TLS fallback: unchanged typed HTTP work-queue pools.
