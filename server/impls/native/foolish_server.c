@@ -100,7 +100,7 @@
 #define GAMES_PER_CHUNK   512
 #define USERS_PER_CHUNK   4096
 #define MAX_GAME_CHUNKS   512                       // ceiling 262,144 live games
-#define MAX_USER_CHUNKS   256                       // ceiling 1,048,576 users
+#define MAX_USER_CHUNKS   128                       // ceiling 524,288 users (kept == the token hash's half-load point)
 #define MAX_GAMES (GAMES_PER_CHUNK * MAX_GAME_CHUNKS)
 #define MAX_USERS (USERS_PER_CHUNK * MAX_USER_CHUNKS)
 #define ID_LEN 12
@@ -568,8 +568,8 @@ static bool json_str(const char *body, const char *key, char *out, int cap) {
 // for an existing username, orphaning the old token's slot) is harmless: the
 // final `strcmp` against the LIVE field still rejects it. Both tables are
 // guarded by g_registry_lock (see "Locking" above).
-#define TOKEN_HT_SIZE 1024   // power of two, > 2x MAX_USERS
-#define GAME_HT_SIZE   512   // power of two, > 2x MAX_GAMES
+#define TOKEN_HT_SIZE 1048576   // power of two, > 2x MAX_USERS (open-addressing needs load factor < 1 or inserts loop; kept at 2x the ceiling so the table never fills)
+#define GAME_HT_SIZE   524288   // power of two, > 2x MAX_GAMES
 
 static User     *g_token_ht[TOKEN_HT_SIZE];
 static GameSlot *g_game_ht[GAME_HT_SIZE];
@@ -580,15 +580,27 @@ static unsigned long hash_str(const char *s) {
     return h;
 }
 
-static void token_ht_insert(User *u) {
+// Inserts are probe-BOUNDED: the tables are sized to 2x the ceilings so they
+// never actually fill, but a bounded loop means a mis-sized table degrades to
+// "entry not indexed" (unreachable by id) rather than an infinite loop that
+// would hang the whole server. Returns true on insert.
+static bool token_ht_insert(User *u) {
     unsigned long h = hash_str(u->token) & (TOKEN_HT_SIZE - 1);
-    while (g_token_ht[h]) h = (h + 1) & (TOKEN_HT_SIZE - 1);
-    g_token_ht[h] = u;
+    for (int probes = 0; probes < TOKEN_HT_SIZE; probes++) {
+        if (!g_token_ht[h]) { g_token_ht[h] = u; return true; }
+        h = (h + 1) & (TOKEN_HT_SIZE - 1);
+    }
+    fprintf(stderr, "token hash full (%d) — raise TOKEN_HT_SIZE\n", TOKEN_HT_SIZE);
+    return false;
 }
-static void game_ht_insert(GameSlot *s) {
+static bool game_ht_insert(GameSlot *s) {
     unsigned long h = hash_str(s->id) & (GAME_HT_SIZE - 1);
-    while (g_game_ht[h]) h = (h + 1) & (GAME_HT_SIZE - 1);
-    g_game_ht[h] = s;
+    for (int probes = 0; probes < GAME_HT_SIZE; probes++) {
+        if (!g_game_ht[h]) { g_game_ht[h] = s; return true; }
+        h = (h + 1) & (GAME_HT_SIZE - 1);
+    }
+    fprintf(stderr, "game hash full (%d) — raise GAME_HT_SIZE\n", GAME_HT_SIZE);
+    return false;
 }
 
 // Both lookups below: caller MUST hold g_registry_lock.
