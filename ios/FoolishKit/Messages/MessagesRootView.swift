@@ -628,9 +628,6 @@ private struct NewGameSetup: View {
                 Text(FStrings.t("ios.msg.yourname")).font(.footnote).foregroundStyle(.black.opacity(0.55))
                 TextField(FStrings.t("ios.you"), text: $nickname).textFieldStyle(.roundedBorder)
             }
-            if isDM {
-                Text(FStrings.t("players") + ": 2").font(.footnote).foregroundStyle(.black.opacity(0.55))
-            }
             FButton(FStrings.t("ios.msg.creategame"), kind: .wood) {
                 let n = nickname.trimmingCharacters(in: .whitespaces)
                 onStart(n.isEmpty ? FStrings.t("ios.you") : n)

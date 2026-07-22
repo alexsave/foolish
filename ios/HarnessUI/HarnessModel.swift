@@ -151,7 +151,48 @@ final class HarnessModel: ObservableObject {
         }
         return latest
     }
-    var payloadURL: URL? { startNewGame ? nil : selectedMsg?.url }
+    /// The bubble the extension is presented against — routed through the SAME
+    /// `StagedBubbleRouting` the real extension uses, which the harness simply
+    /// did not have.
+    ///
+    /// Sending used to change this: `deliver()` appends the bubble and clears
+    /// the selection, so this became the NEW message's URL, `GameSurface
+    /// .loadKey` changed, the live controller was torn down and rebuilt from
+    /// the chain I had just sent — and replayed the move I had just watched
+    /// myself play. On a real device `MessagesViewController` already refuses
+    /// that (`lastSentPayload`); here it went unnoticed because the auto-game
+    /// switches player immediately after delivering, which hides it.
+    ///
+    /// So: my own bubble, staged or just sent, keeps presenting the URL already
+    /// in use. The board stays exactly as the move left it.
+    var payloadURL: URL? {
+        let selected = startNewGame ? nil : selectedMsg?.url
+        // Nothing presented yet means there is no board to protect — the very
+        // first send in a thread goes setup -> board, and pinning to a nil
+        // "URL already in use" would route it to the New game screen instead
+        // (or, worse, to "this game link is damaged").
+        guard let presented = presentedURL else { return selected }
+        return StagedBubbleRouting.resolvedPayloadURL(
+            selectedURL: selected,
+            startingNewGame: startNewGame,
+            pendingStage: staged.map { (payload: $0, mySeat: localIndex) },
+            lastPayloadURL: presented,
+            lastSentPayload: lastSentPayload)
+    }
+    /// The URL currently being presented — the `lastPayloadURL` above. Updated
+    /// by every action that genuinely changes which chain is on screen, and
+    /// deliberately NOT by `deliver()`.
+    private var presentedURL: URL?
+    /// The payload this device most recently sent, so its own bubble arriving
+    /// as the selection is recognised rather than adopted.
+    private var lastSentPayload: Data?
+
+    /// Re-point `presentedURL` at whatever is selected now. Called by the
+    /// actions that really do change the chain on screen (a tapped bubble, a
+    /// different player, a different chat, New game) — never by `deliver`.
+    private func rememberPresented() {
+        presentedURL = startNewGame ? nil : selectedMsg?.url
+    }
     /// Did the CURRENT player send the bubble being opened? Drives §6.2 sender
     /// inference — and it must follow the SELECTION, not the transcript's tail,
     /// or tapping an older bubble would resolve identity off a different message
@@ -193,6 +234,7 @@ final class HarnessModel: ObservableObject {
         staged = nil; stagedPreview = nil
         presentation = .expanded
         drawerDismissed = false
+        rememberPresented()
     }
 
     // MARK: chat list (req 2 of the Messages-host redesign)
@@ -257,6 +299,8 @@ final class HarnessModel: ObservableObject {
         currentChat = 0
         presentation = .expanded
         drawerDismissed = false
+        lastSentPayload = nil
+        rememberPresented()
         rebindStore()
     }
 
@@ -292,6 +336,8 @@ final class HarnessModel: ObservableObject {
         staged = nil; stagedPreview = nil   // a half-staged move doesn't cross to another player
         presentation = .expanded     // opening the game as this player
         drawerDismissed = false
+        lastSentPayload = nil        // a different device never sent my bubble
+        rememberPresented()
         rebindStore()
     }
 
@@ -310,6 +356,8 @@ final class HarnessModel: ObservableObject {
         staged = nil; stagedPreview = nil
         presentation = .expanded
         drawerDismissed = false
+        lastSentPayload = nil
+        rememberPresented()
     }
 
     /// The current player tapped New game. New game always opens full-screen.
@@ -317,6 +365,8 @@ final class HarnessModel: ObservableObject {
         boardEpoch += 1
         chats[currentChat].startNewGame = true; staged = nil; stagedPreview = nil
         presentation = .expanded; drawerDismissed = false
+        lastSentPayload = nil
+        rememberPresented()
     }
 
     /// Retract the staged bubble (§10 undo, batch-1 note 32): an undo that empties
@@ -447,11 +497,19 @@ final class HarnessModel: ObservableObject {
     func deliver() {
         guard let payload = staged else { return }
         AnimLog.say("host deliver")
+        // What the board is showing RIGHT NOW, captured before the transcript
+        // grows — this is the URL it keeps presenting once my own bubble lands
+        // in the thread, so sending does not reload it. Read before `append`
+        // for the obvious reason: afterwards `selectedMsg` is my new bubble.
+        presentedURL = payloadURL
         chats[currentChat].transcript.append(Msg(url: MessageEnvelope.link(payload: payload),
                                                  senderId: localId, senderName: localName,
                                                  preview: stagedPreview))
         staged = nil
         stagedPreview = nil
+        // Recognise my own bubble when it comes back as the selection, so the
+        // board I am looking at survives the send untouched (see payloadURL).
+        lastSentPayload = payload
         chats[currentChat].selected = nil     // the newest bubble is the selection again
         // Now that a real bubble exists, leave the new-game screen: the reload
         // this delivery triggers (transcript.count changed) must read the bubble,

@@ -367,6 +367,76 @@ final class HarnessFlowTests: XCTestCase {
     }
     /// The group-chat lobby flow, at the host level: a lobby, three joiners,
     /// then someone starts it. Every one of them must end up pointed at the
+    /// Round-4 note 2, the send half: "we send, and it STAYS in that same
+    /// POST-ANIMATED view."
+    ///
+    /// `deliver()` appends my bubble and clears the selection, so `payloadURL`
+    /// used to become the NEW message's URL. That changes `GameSurface.loadKey`,
+    /// which tears the live controller down and rebuilds it from the chain I
+    /// had just sent — and the rebuilt board replays the move I had just
+    /// watched myself play. The real extension already refuses this
+    /// (StagedBubbleRouting.lastSentPayload); the harness had no equivalent, and
+    /// the auto-game hid it by switching player immediately after delivering.
+    ///
+    /// The assertion is deliberately about the URL and not about the board: if
+    /// the URL is stable the surface is never reloaded, so there is no second
+    /// board to replay anything.
+    func testSendingMyOwnMoveDoesNotReloadTheBoard() async throws {
+        let k = MessageKernel.shared
+        let m = HarnessModel(count: 2)
+        try await k.newGame(seed: Data(repeating: 31, count: 32), players: 2)
+        let joins = [MessageJoin(seat: 0, name: "Alex"), MessageJoin(seat: 1, name: "Vera")]
+        let first = try await k.seal(phase: 2, lastActorSeat: 0, gameId: 9001,
+                                     parent8: Data(repeating: 0, count: 8), joins: joins)
+        await m.stage(first, seat: 0)
+        m.deliver()
+        m.become(1)                       // Vera opens it — this IS a real reload
+        let opened = m.payloadURL
+        XCTAssertEqual(opened, MessageEnvelope.link(payload: first))
+
+        // Vera plays and stages. Staging must not move the URL either.
+        let env = try await MessageEnvelope.decode(payload: first, viewer: -1)
+        _ = try await k.decode(payload: first, viewer: -1)
+        let mine = try await k.seal(phase: 2, lastActorSeat: 1, gameId: 9001,
+                                    parent8: MessageTurnController.firstEight(hex: env.digest),
+                                    joins: joins)
+        await m.stage(mine, seat: 1)
+        XCTAssertEqual(m.payloadURL, opened, "staging must not reload the board")
+
+        // …and pressing Send must not either. This is the one that was broken.
+        m.deliver()
+        XCTAssertEqual(m.payloadURL, opened,
+                       "sending my own move must not reload the board and replay it")
+    }
+
+    /// The other half of the same rule, so the fix cannot become "never reload
+    /// anything": a bubble from SOMEONE ELSE is a genuine new chain and must
+    /// reload. Otherwise the board would never show an opponent's move at all.
+    func testAnIncomingBubbleFromAnotherPlayerStillReloads() async throws {
+        let k = MessageKernel.shared
+        let m = HarnessModel(count: 2)
+        try await k.newGame(seed: Data(repeating: 41, count: 32), players: 2)
+        let joins = [MessageJoin(seat: 0, name: "Alex"), MessageJoin(seat: 1, name: "Vera")]
+        let first = try await k.seal(phase: 2, lastActorSeat: 0, gameId: 9002,
+                                     parent8: Data(repeating: 0, count: 8), joins: joins)
+        await m.stage(first, seat: 0)
+        m.deliver()
+        let afterMine = m.payloadURL
+
+        // Vera replies from her own device; Alex must be pointed at her bubble.
+        m.become(1)
+        let env = try await MessageEnvelope.decode(payload: first, viewer: -1)
+        _ = try await k.decode(payload: first, viewer: -1)
+        let hers = try await k.seal(phase: 2, lastActorSeat: 1, gameId: 9002,
+                                    parent8: MessageTurnController.firstEight(hex: env.digest),
+                                    joins: joins)
+        await m.stage(hers, seat: 1)
+        m.deliver()
+        m.become(0)
+        XCTAssertNotEqual(m.payloadURL, afterMine, "someone else's move is a real reload")
+        XCTAssertEqual(m.payloadURL, MessageEnvelope.link(payload: hers))
+    }
+
     /// NEWEST bubble when they open the extension — the owner's screenshot had
     /// Boris looking at a three-name lobby while the thread's last bubble was a
     /// started five-player game ("there is a game currently in play, with the
