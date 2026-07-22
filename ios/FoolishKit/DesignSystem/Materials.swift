@@ -20,6 +20,18 @@ public struct WoolBackground: View {
     @State private var img: UIImage? = WoolBackground.cached
     public init() {}
 
+    /// The cover-scale the wool texture needs to fill a FULL-HEIGHT stage on
+    /// this device — the constant that keeps the background's magnification the
+    /// same in the compact drawer as in the expanded board. Per-device, not
+    /// per-view, which is the whole point: read it from the screen so a view
+    /// that is only 261pt tall still draws the wool at the size it has when the
+    /// board is full-screen, and simply shows less of it.
+    static var screenFitScale: CGFloat {
+        let screen = UIScreen.main.bounds.size
+        return max(screen.width / CGFloat(WoolTexture.webCanvas.w),
+                   screen.height / CGFloat(WoolTexture.webCanvas.h))
+    }
+
     public var body: some View {
         ZStack {
             FColor.fallback   // web's beige base behind the wool (was dark-green felt)
@@ -27,8 +39,25 @@ public struct WoolBackground: View {
                 Image(uiImage: img)
                     .interpolation(.high)          // smooth the downscale (see below)
                     .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    // NOT `.aspectRatio(.fill)`. Fill sizes the texture to cover
+                    // whatever box it is in, and the extension's box changes
+                    // height by 2.5x between expanded and compact — so the wool
+                    // was drawn at 0.62 scale expanded and 0.24 compact, i.e.
+                    // the background visibly ZOOMED on every collapse ("the
+                    // expanded view is the correct zoom, use it for the
+                    // collapsed view as well").
+                    //
+                    // So the scale is pinned to the SCREEN, not to this view:
+                    // whatever cover-scale the texture would need to fill a
+                    // full-height stage. Compact then shows a vertical slice of
+                    // the very same picture at the very same magnification,
+                    // which is what "the same zoom" means. Anchored to the
+                    // BOTTOM because the drawer is: its bottom edge is pinned to
+                    // the screen while its top edge moves, so bottom-anchoring
+                    // keeps the visible weave still as it grows and shrinks.
+                    .frame(width: CGFloat(WoolTexture.webCanvas.w) * Self.screenFitScale,
+                           height: CGFloat(WoolTexture.webCanvas.h) * Self.screenFitScale)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                     .clipped()
                     .transition(.opacity)
             }
