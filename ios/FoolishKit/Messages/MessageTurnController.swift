@@ -87,6 +87,10 @@ public final class MessageTurnController: ObservableObject {
     /// the moves a rebase re-applied onto a freshly-adopted chain (§7.4). Empty on
     /// a plain open or a genesis.
     private let preStaged: [Move]
+    /// Who sealed the chain I adopted — `nil` on a genesis (nobody sealed it, I
+    /// am dealing it). `begin()` uses it to decide whether the last move is one I
+    /// need to be SHOWN or one I already watched myself play; see there.
+    private let parentLastActor: Int?
     /// DEPRECATED (retained only so GameSurface's call sites compile unchanged):
     /// the previously-cached chain, once used to diff my hand for the open-replay.
     /// The open-replay is now the kernel's evwire for the last move
@@ -112,6 +116,7 @@ public final class MessageTurnController: ObservableObject {
         self.joins = parent.joins
         self.baseRound = parent.round
         self.preStaged = preStaged
+        self.parentLastActor = parent.lastActorSeat
         self.store = store
         self.mySeat = mySeat
         self.names = Dictionary(parent.joins.map { ($0.seat, $0.name) },
@@ -130,6 +135,7 @@ public final class MessageTurnController: ObservableObject {
         self.joins = [MessageJoin(seat: 0, name: myNickname)]
         self.baseRound = 0
         self.preStaged = []
+        self.parentLastActor = nil
         self.store = store
         self.mySeat = 0
         self.names = [0: myNickname]
@@ -165,7 +171,19 @@ public final class MessageTurnController: ObservableObject {
         // RECEIVED (the chain's final step), never my own Rule R re-applications,
         // which I play interactively and must not re-watch. `prevPayload` is no
         // longer consulted: the kernel decides the group from the chain alone.
-        openReplayEvents = await kernel.lastMoveEvents(viewer: mySeat)
+        //
+        // …unless I am the one who sealed it (round-3: "double animations — for
+        // a pickup it picks up very quickly, then plays a pickup animation
+        // again, slowly"). Sending re-selects my own bubble, which reloads this
+        // whole surface from those bytes; the chain's last move is then the move
+        // I just played and WATCHED, and replaying it is the second animation.
+        // `lastActorSeat == mySeat` is exactly "the last thing on this chain is
+        // mine", and it needs no memory of what I have already seen — it is a
+        // fact about the bytes, which is the only thing a serverless client can
+        // trust (the same reason the kernel, not a client diff, decides WHAT the
+        // events are). A genesis has no sealer, so its deal still animates.
+        let sealedByMe = parentLastActor == mySeat && !isGenesis
+        openReplayEvents = sealedByMe ? [] : await kernel.lastMoveEvents(viewer: mySeat)
         pending = []
         for m in preStaged {              // §7.4 survivors, already validated by the rebase
             try? await kernel.apply(seat: mySeat, move: m)
