@@ -84,6 +84,13 @@ final class HarnessModel: ObservableObject {
     init(count: Int? = nil) {
         let env = Int(ProcessInfo.processInfo.environment["HARNESS_PLAYERS"] ?? "")
         participants = Self.make(count ?? env ?? 2)
+        // DEV: start in the compact drawer. It is otherwise reachable only by
+        // dragging the grabber, which headless screenshotting cannot do — and
+        // compact is exactly the state where the compose bar's position has to
+        // be checked. Same family as HARNESS_SEED/HARNESS_PLAYERS.
+        if ProcessInfo.processInfo.environment["HARNESS_COMPACT"] != nil {
+            presentation = .compact
+        }
         rebindStore()
     }
 

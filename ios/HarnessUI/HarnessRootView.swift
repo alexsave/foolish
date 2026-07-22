@@ -145,12 +145,21 @@ struct HarnessRootView: View {
 /// entirely (see `StageHeight`'s doc), animating smoothly between that and a
 /// small bottom strip while compact (the "graceful transition" ask).
 ///
-/// The compose bar is DELIBERATELY kept OUT of that overlay, its own fixed
-/// row below the `ZStack` — the owner's explicit correction after a z-order
-/// experiment that covered it while expanded: "add comment or send should be
-/// above the view. Lower y value. Up." I.e. its Y position stays smaller
-/// (higher on screen) than the drawer's at all times, full stop — not a
-/// state-dependent z-order swap.
+/// The compose bar is not part of that overlay, and it does not sit UNDER the
+/// drawer either — the owner's correction, twice: "the compose bar, with the +
+/// and the send and the text area, should be ON TOP, above, lower y value
+/// whatever you want to call it, over the compressed view. NOT overlapping it
+/// with a higher z index. And when we're in expanded view, it shouldn't be
+/// there at all."
+///
+/// So it is a row at the BOTTOM of the base layer, and the base layer reserves
+/// exactly the compact drawer's height beneath itself (`reservedForDrawer`).
+/// The compose bar's bottom edge then lands on the drawer's top edge: adjacent,
+/// never overlapping, and its Y is genuinely smaller rather than merely being
+/// drawn later. Expanded reserves nothing and drops the compose bar entirely,
+/// so the drawer covers the whole screen — which is what the real app does.
+/// A dismissed drawer reserves nothing but KEEPS the compose bar, since its "+"
+/// is the only way back in.
 private struct ChatScreen: View {
     @ObservedObject var model: HarnessModel
     let onBack: () -> Void
@@ -160,21 +169,37 @@ private struct ChatScreen: View {
     /// way back into a dismissed app drawer — can reach it too.
     @State private var isDrawerDismissed = false
 
-    var body: some View {
-        VStack(spacing: 0) {
-            ZStack(alignment: .bottom) {
-                VStack(spacing: 0) {
-                    ContactNavBar(model: model, onBack: onBack)
-                    Divider().overlay(Color.white.opacity(0.12))
-                    TranscriptScroll(model: model)     // the ONLY scrolling region
-                }
-                ExtensionStage(model: model, isDismissed: $isDrawerDismissed)
-            }
-            .clipped()   // the sliding drawer must never spill past this region into the compose bar
+    /// Written as a `switch` (not `==`) so it doesn't depend on
+    /// `MsgPresentation` (FoolishKit) being Equatable — same reason as
+    /// `ExtensionStage.height`.
+    private var isExpanded: Bool {
+        switch model.presentation { case .expanded: return true; case .compact: return false }
+    }
+    /// The space the base layer leaves free at its bottom for the drawer. Zero
+    /// when the drawer is expanded (it covers everything) or dismissed (there
+    /// is no drawer).
+    private var reservedForDrawer: CGFloat {
+        if isDrawerDismissed || isExpanded { return 0 }
+        return ExtensionStage.compactHeight
+    }
 
-            Divider().overlay(Color.white.opacity(0.12))
-            ComposeBar(model: model, isDrawerDismissed: $isDrawerDismissed)
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            VStack(spacing: 0) {
+                ContactNavBar(model: model, onBack: onBack)
+                Divider().overlay(Color.white.opacity(0.12))
+                TranscriptScroll(model: model)     // the ONLY scrolling region
+                if !isExpanded {
+                    Divider().overlay(Color.white.opacity(0.12))
+                    ComposeBar(model: model, isDrawerDismissed: $isDrawerDismissed)
+                }
+            }
+            .padding(.bottom, reservedForDrawer)
+            .animation(.easeInOut(duration: 0.25), value: reservedForDrawer)
+
+            ExtensionStage(model: model, isDismissed: $isDrawerDismissed)
         }
+        .clipped()   // the sliding drawer must never spill past the phone frame
         .background(Color(white: 0.05))
     }
 }
@@ -350,8 +375,11 @@ private struct TranscriptScroll: View {
 private struct GamePreviewCard: View {
     let image: UIImage?
 
+    /// The bubble picture's OWN aspect (BubbleSnapshot.size, 300x195), just
+    /// scaled to bubble width — not a crop. The card is what Messages shows:
+    /// the whole snapshot, top to bottom.
     private static let thumbWidth: CGFloat = 190
-    private static let thumbHeight: CGFloat = 84
+    private static let thumbHeight: CGFloat = thumbWidth * BubbleSnapshot.size.height / BubbleSnapshot.size.width
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -512,16 +540,17 @@ private struct ExtensionStage: View {
     /// grabber doesn't feel dead before the threshold triggers a transition.
     @State private var dragOffset: CGFloat = 0
 
+    /// The compact drawer's height, read by `ChatScreen` too — it reserves
+    /// exactly this much room under the compose bar so the two are adjacent
+    /// rather than overlapping (see that type's doc).
+    static let compactHeight: CGFloat = StageHeight.compact
+
     private enum StageHeight {
-        /// The entire SE screen — `ChatScreen`'s nav bar, transcript, AND
-        /// compose bar are all one base `ZStack` layer now (see its doc), so
-        /// there's nothing left to subtract: expanded covers literally
-        /// everything, compose bar included, which is what actually makes
-        /// `ChatScreen.isComposeOnTop` (the compose-bar z-order swap) show up
-        /// — a shorter height here would leave a gap the compose row could
-        /// just sit in, and the whole point was the owner's own real-device
-        /// observation that it goes fully BEHIND while expanded, not merely
-        /// "as far down as there's room for".
+        /// The entire SE screen. Expanded covers literally everything — nav
+        /// bar and transcript included — matching the owner's real-device
+        /// observation ("it expands OVER the rest of the iMessage stuff").
+        /// The compose bar is not covered but REMOVED while expanded (see
+        /// `ChatScreen`), so there is nothing left to subtract here.
         static let expanded: CGFloat = SEScreen.height
         /// Independently defined (both by Apple's docs and by the forum
         /// measurement in `ChatChrome`'s doc) as roughly a filled keyboard's
