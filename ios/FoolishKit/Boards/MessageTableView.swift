@@ -399,128 +399,100 @@ public struct MessageTableView: View {
         return CardPlay.coverableBattles(cards: cards, battles: view.battles, legal: controller.legal)
     }
 
-    /// When a bout closes (the table clears), run the web's ORDERED bout-end
-    /// sequence: first the table clears (cards → discard when beaten, or → the taker
-    /// on a pickup), THEN each drawing player refills from the deck as its OWN step,
-    /// in the kernel's exact order (the LOG_DRAW stream: defender-if-empty, then from
-    /// the first attacker around). Every step waits for its frames to render, plays,
-    /// and is awaited - so nothing "just jumps" and draws never overlap. (This
-    /// mirrors evwire's cards_to_trash → one refill per player → defender_move.)
+    /// A bout closed (the table cleared): animate its end - the discard or pickup
+    /// sweep, then every refill - from the KERNEL's evwire for that move, the SAME
+    /// runEventStream the open-replay uses. No GameView diff decides what flies any
+    /// more (the old takerSeat / beaten / myNewCards / lastBoutDraws reconstruction
+    /// is gone): the kernel's events are the only source, live and on open alike.
+    /// The one thing still read off old/new is the TRIGGER (did battles go
+    /// non-empty -> empty) and which of MY cards to hide before they fly - both UI
+    /// timing, not animation derivation.
     private func flyBoutEndToDiscard(to newView: GameView?) {
         let prior = lastView
         lastView = newView
-        // note 17: consumed and cleared on EVERY call, whether or not this
-        // turns out to be the matching bout-end transition — `playAt` sets it
-        // right before the apply whose resulting view change is always the
-        // very next one this function sees.
+        // note 17: consumed and cleared on EVERY call. `playAt` sets it right
+        // before the apply whose resulting view change is the next one we see.
         let cover = pendingCover
         pendingCover = nil
         guard let new = newView else { return }
         if reduceMotion {
-            // note 39b: nothing will ever animate, so settle immediately.
-            if new.isOver { showResults = true }
+            if new.isOver { showResults = true }   // note 39b
             return
         }
-        // note 10: undo can legally take battles → empty (undoing the move
-        // that opened a bout) — that must never be misread as a bout end and
-        // replay the PREVIOUS bout's draws.
+        // note 10: undo can legally take battles -> empty; never a bout end.
         if controller.lastChangeWasUndo { return }
-        // First time the board appears with a delivered game: replay the last move.
+        // First appear with a delivered game: the open-replay (same event path).
         if prior == nil { replayLastMoveOnOpen(new); return }
         guard let old = prior, !old.battles.isEmpty, new.battles.isEmpty else {
-            // No bout-end sequence here (a normal placed card animates via
-            // matchedGeometry alone, or the move ended the game WITHOUT
-            // clearing the table — an attacker/passer running out of cards
-            // with none left in the deck, game.c's early PLAYER_OUT paths).
-            // Still settle to results once that ambient spring finishes.
+            // A normal placed card animates via matchedGeometry; a move that ended
+            // the game without clearing the table just settles to results.
             if new.isOver { settleResults() }
             return
         }
 
-        let beaten = new.discardCount > old.discardCount
-        let oldBattles = old.battles
+        // note 17: a cover that ended the bout in the SAME apply still needs its
+        // landing flown first - the kernel jumped straight to a cleared table, so
+        // there is no rendered intermediate state for the discard sweep to carry it
+        // from. Its battle rect must have been part of the table we just cleared.
         let boutFrames = lastBattleFrames
-        let oldHandIds = Set((old.me?.hand ?? []).map(\.identity))
-        let myNewCards = (new.me?.hand ?? []).filter { !oldHandIds.contains($0.identity) }
-        // The pickup taker (nil when beaten) is the seat that WAS defending — the
-        // kernel only lets the defender pick up (`handle_pickup` rejects any other
-        // seat, c/src/game.c) — read off the PRE-move view, because handle_pickup
-        // reassigns g->defender before returning, so `new.defender` is already the
-        // NEXT bout's defender.
-        //
-        // This used to be "the first seat whose hand grew", which was wrong twice
-        // over: handle_pickup calls refill_player_hands in the SAME apply, so
-        // attackers' hands grow too, and `players` is seat-ascending, so the search
-        // returned the LOWEST-seated refilled attacker whenever that seat sat below
-        // the defender. That flew the whole table to the wrong badge (the reported
-        // "pickup animates to the player on the right"), or into MY hand if the
-        // misattributed seat happened to be mine, and then suppressed that seat's
-        // real draw further down.
-        let takerSeat: Int? = beaten ? nil : old.defender
-        // note 17: does the stashed pending cover belong to THIS transition?
-        // Its battle rect must have been part of the table we just cleared.
         var matchedCover: PendingCover?
-        if beaten, let pc = cover, boutFrames.values.contains(pc.battleRect) { matchedCover = pc }
+        if let pc = cover, boutFrames.values.contains(pc.battleRect) { matchedCover = pc }
 
-        // note 36: myNewCards already covers BOTH cases a viewer can land in
-        // my hand here — a draw (the ordinary refill loop below), or a
-        // pickup where I'm the taker (pickupToHandFlights below) — because a
-        // taker never also draws in the same bout (game.c's refill loop
-        // excludes them). Pre-hide synchronously, before the Task starts, so
-        // neither path renders the card first and flies it in second.
-        if !myNewCards.isEmpty { animator.preHide(Set(myNewCards.map(\.identity))) }
-
-        // Freeze every displayed count to its PRE-refill value (set now, before the
-        // async steps) so a badge/deck/discard never jumps ahead of its flight.
-        for p in old.players where p.seat != controller.mySeat { seatCountOverride[p.seat] = p.handCount }
-        deckCountOverride = old.deckCount
-        discardCountOverride = old.discardCount
+        // Pre-hide the cards about to land in MY hand so they fly from the deck
+        // rather than popping in. This is the ONE view diff that remains, and only
+        // to choose which of my cards to hide before the first paint - the events
+        // that DECIDE the animation need an async kernel call we cannot make
+        // synchronously here. Everything that actually flies is the kernel's.
+        let oldHandIds = Set((old.me?.hand ?? []).map(\.identity))
+        let myNewIds = Set((new.me?.hand ?? []).map(\.identity)).subtracting(oldHandIds)
+        if !myNewIds.isEmpty { animator.preHide(myNewIds) }
 
         Task {
-            BoardAnimator.sequenceDepth += 1
-            defer {
+            if let pc = matchedCover {
+                BoardAnimator.sequenceDepth += 1
+                await playStep { self.pendingCoverLandingFlights(pc) }
                 BoardAnimator.sequenceDepth -= 1
-                seatCountOverride = [:]; deckCountOverride = nil; discardCountOverride = nil
-                animator.clearPreHidden()
             }
-
-            // STEP 1 — the table clears; its count bumps only AFTER the flight lands.
-            if beaten {
-                if let pc = matchedCover {
-                    // note 17: the cover lands on its battle FIRST — the kernel
-                    // jumped straight from "uncovered" to "table cleared" in one
-                    // apply, so there's no intermediate rendered state to fly
-                    // this card from otherwise.
-                    await playStep { self.pendingCoverLandingFlights(pc) }
-                }
-                await playStep { self.discardFlights(oldBattles, boutFrames, extraCover: matchedCover) }
-                discardCountOverride = new.discardCount
-            } else if let taker = takerSeat {
-                if taker == controller.mySeat {
-                    await playStep { self.pickupToHandFlights(oldBattles, boutFrames) }
-                } else {
-                    await playStep { self.pickupToBadgeFlights(oldBattles, boutFrames, seat: taker) }
-                    seatCountOverride[taker] = new.players.first { $0.seat == taker }?.handCount
-                }
-            }
-
-            // STEPS 2..N — each drawing player refills, in kernel order, one at a
-            // time. The player's count (and the deck) bump only after THAT draw lands.
-            if let replay = await MessageKernel.shared.residentReplay() {
-                for ev in Self.lastBoutDraws(replay) where ev.seat != (takerSeat ?? -1) {
-                    if ev.seat == controller.mySeat {
-                        await playStep { self.myDrawFlights(myNewCards) }
-                    } else {
-                        await playStep { self.oppDrawFlights(seat: ev.seat, count: ev.count) }
-                        seatCountOverride[ev.seat] = new.players.first { $0.seat == ev.seat }?.handCount
-                    }
-                    deckCountOverride = (deckCountOverride ?? old.deckCount) - ev.count
-                }
-            }
-            // note 39a: the sequence has visibly landed — rest briefly, then
-            // swap to results if this bout end was also the game's end.
-            if new.isOver { settleResults() }
+            let events = await MessageKernel.shared.lastMoveEvents(viewer: controller.mySeat)
+            await runEventStream(events, finalView: new)
         }
+    }
+
+    /// Animate an ordered evwire stream (the kernel's events for ONE move) as
+    /// sequential flights, freezing each displayed count to that step's OWN board
+    /// (GameEvent.state) as its flight lands - so a count never jumps ahead of its
+    /// animation, and there is no backward count arithmetic to keep in sync. THE
+    /// one animation path, shared by the open-replay and the live bout-end, so
+    /// neither derives what-flies-where from a GameView diff. The caller pre-hides
+    /// the moved cards first (synchronously, before the first paint).
+    private func runEventStream(_ events: [GameEvent], finalView view: GameView) async {
+        guard !events.isEmpty else {
+            if view.isOver { settleResults() }
+            return
+        }
+        BoardAnimator.sequenceDepth += 1
+        defer {
+            BoardAnimator.sequenceDepth -= 1
+            deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
+            animator.clearPreHidden()
+        }
+        // Let the battle slots (and everything else) render + publish their rects.
+        try? await Task.sleep(nanoseconds: 120_000_000)
+
+        let pre = Self.preCounts(events, finalView: view)
+        deckCountOverride = pre.deck
+        discardCountOverride = pre.discard
+        for (seat, c) in pre.hand where seat != controller.mySeat { seatCountOverride[seat] = c }
+
+        for ev in events {
+            await playStep { self.openReplayFlights(ev, view: view) }
+            if let s = ev.state {
+                deckCountOverride = s.deckCount
+                discardCountOverride = s.discardCount
+                for p in s.players where p.seat != controller.mySeat { seatCountOverride[p.seat] = p.handCount }
+            }
+        }
+        if view.isOver { settleResults() }
     }
 
     /// note 39: hold the board on-screen a beat after whatever's animating
@@ -550,29 +522,6 @@ public struct MessageTableView: View {
 
     // MARK: bout-end flight builders (each returns nil until its frames are ready)
 
-    /// `extraCover` (note 17): a cover that ended the bout in the SAME kernel
-    /// apply as the discard, so `battles[i].defense` is still nil for its
-    /// battle even though the card is really gone — without this it would
-    /// just vanish instead of flying to the discard pile like every other
-    /// defense.
-    private func discardFlights(_ battles: [BattleView], _ frames: [Int: CGRect],
-                                extraCover: PendingCover? = nil) -> [Flight]? {
-        guard discardFrame != .zero else { return nil }
-        var f: [Flight] = []
-        for (i, b) in battles.enumerated() {
-            guard let rect = frames[i], rect != .zero else { continue }
-            f.append(Flight(id: "trash-\(b.attack.identity)", card: b.attack, from: rect, to: discardFrame))
-            if let d = b.defense {
-                f.append(Flight(id: "trash-\(d.identity)", card: d, from: rect.offsetBy(dx: 8, dy: 6), to: discardFrame))
-            } else if let pc = extraCover, pc.battleRect == rect {
-                for c in pc.cards {
-                    f.append(Flight(id: "trash-\(c.identity)", card: c, from: rect.offsetBy(dx: 8, dy: 6), to: discardFrame))
-                }
-            }
-        }
-        return f
-    }
-
     /// note 17: the cover-that-ends-the-bout's own landing step — its cards
     /// fly from their hand rects AT PLAY TIME (snapshotted before `apply`,
     /// since the hand has already moved on by the time this plays) to the
@@ -587,64 +536,12 @@ public struct MessageTableView: View {
         }
     }
 
-    private func pickupToHandFlights(_ battles: [BattleView], _ frames: [Int: CGRect]) -> [Flight]? {
-        var pairs: [(card: Card, from: CGRect)] = []
-        for (i, b) in battles.enumerated() {
-            guard let rect = frames[i], rect != .zero else { continue }
-            pairs.append((b.attack, rect))
-            if let d = b.defense { pairs.append((d, rect.offsetBy(dx: 8, dy: 6))) }
-        }
-        guard pairs.allSatisfy({ handCardFrames[$0.card.identity] != nil }) else { return pairs.isEmpty ? [] : nil }
-        return pairs.compactMap { p in handCardFrames[p.card.identity].map { Flight(id: "pick-\(p.card.identity)", card: p.card, from: p.from, to: $0) } }
-    }
-
-    private func pickupToBadgeFlights(_ battles: [BattleView], _ frames: [Int: CGRect], seat: Int) -> [Flight]? {
-        guard let badge = seatFrames[seat], badge != .zero else { return nil }
-        var f: [Flight] = []
-        for (i, b) in battles.enumerated() {
-            guard let rect = frames[i], rect != .zero else { continue }
-            f.append(Flight(id: "opick-\(b.attack.identity)", card: b.attack, from: rect, to: badge))
-            if let d = b.defense {
-                f.append(Flight(id: "opick-\(d.identity)", card: d, from: rect.offsetBy(dx: 8, dy: 6), to: badge))
-            }
-        }
-        return f
-    }
-
     private func myDrawFlights(_ cards: [Card]) -> [Flight]? {
         if cards.isEmpty { return [] }
         guard deckFrame != .zero, cards.allSatisfy({ handCardFrames[$0.identity] != nil }) else { return nil }
         return cards.compactMap { c in handCardFrames[c.identity].map { Flight(id: "draw-\(c.identity)", card: c, from: deckFrame, to: $0) } }
     }
 
-    private func oppDrawFlights(seat: Int, count: Int) -> [Flight]? {
-        guard let badge = seatFrames[seat], badge != .zero, deckFrame != .zero else { return nil }
-        return (0..<max(count, 1)).map { k in
-            Flight(id: "draw-\(seat)-\(k)", card: nil, from: deckFrame, to: badge.offsetBy(dx: CGFloat(k) * 3, dy: 0))
-        }
-    }
-
-    // game.h LOG_* (packed replay step types) — shared by every helper below
-    // AND by MessageTurnController (which resolves the open-delta window
-    // BEFORE this view's first paint, notes 6/12) via ReplayDelta.swift, the
-    // single source of truth for these values; aliased here so the many
-    // `Self.LOG_*` call sites below didn't all need touching.
-    private static let LOG_ATTACK = ReplayLogType.attack, LOG_COVER = ReplayLogType.cover
-    private static let LOG_PASS = ReplayLogType.pass, LOG_PICKUP = ReplayLogType.pickup
-    private static let LOG_DISCARD = ReplayLogType.discard, LOG_DRAW = ReplayLogType.draw
-
-    /// The last bout's refill draws in kernel order: LOG_DRAW (type 9) records after
-    /// the most recent discard/pickup, each one player's draw (seat + card count).
-    private static func lastBoutDraws(_ replay: DecodedReplay) -> [(seat: Int, count: Int)] {
-        var start = 0
-        for i in stride(from: replay.logs.count - 1, through: 0, by: -1)
-        where replay.logs[i].type == LOG_DISCARD || replay.logs[i].type == LOG_PICKUP {
-            start = i + 1; break
-        }
-        return replay.logs[start...]
-            .filter { $0.type == LOG_DRAW }
-            .map { (seat: $0.seat, count: max($0.pairs.count, 1)) }
-    }
 
     /// Deck/discard/every-seat's hand count as of BEFORE the open-replay's
     /// `events`, walked backward from the FINAL view's counts by undoing each
@@ -749,13 +646,20 @@ public struct MessageTableView: View {
                       to: badge.offsetBy(dx: CGFloat(k) * 3, dy: 0)) }
 
         case .discard, .cardsToTrash:
-            // Table -> discard. Backs from the approximate table centre (the
-            // pre-bout table is not on screen to fly real faces from).
+            // Table -> discard. Discard cards are public (the kernel does not mask
+            // them), so fly the real faces when we have them; fall back to backs by
+            // count. Source is the approximate table centre - live, that resolves to
+            // the just-cleared battles' centroid (see approximateTableCenter).
             guard let center = approximateTableCenter(), discardFrame != .zero else { return nil }
-            let n = max(ev.cards.count, 1)
-            return (0..<n).map { i in
-                Flight(id: "opendiscard-\(ev.type)-\(i)", card: nil, from: center, to: discardFrame)
+            let cards = ev.cards.compactMap { $0 }
+            if cards.isEmpty {
+                let n = max(ev.cards.count, 1)
+                return (0..<n).map { i in
+                    Flight(id: "opendiscard-\(ev.type)-\(i)", card: nil, from: center, to: discardFrame) }
             }
+            return cards.enumerated().map { i, c in
+                Flight(id: "opendiscard-\(c.identity)", card: c,
+                       from: center.offsetBy(dx: CGFloat(i) * 6, dy: CGFloat(i) * 4), to: discardFrame) }
 
         default:
             return []   // out / flipped / magic-transition: no flight.
@@ -802,36 +706,8 @@ public struct MessageTableView: View {
         let touchedIds = controller.openReplayTouchedCardIds
         if !touchedIds.isEmpty { animator.preHide(touchedIds) }
 
-        Task {
-            BoardAnimator.sequenceDepth += 1
-            defer { BoardAnimator.sequenceDepth -= 1; animator.clearPreHidden() }
-            // Let the battle slots (and everything else) render + publish rects.
-            try? await Task.sleep(nanoseconds: 120_000_000)
-
-            // Freeze deck/discard/opponent-badge counts to their PRE-move values,
-            // then set each to that step's OWN board (GameEvent.state, the kernel
-            // masked put_state at that step) as its flight lands - so a count
-            // never jumps ahead of its animation. No backward count arithmetic to
-            // keep in sync: every step carries its own authoritative board.
-            let pre = Self.preCounts(events, finalView: view)
-            deckCountOverride = pre.deck
-            discardCountOverride = pre.discard
-            for (seat, count) in pre.hand where seat != controller.mySeat { seatCountOverride[seat] = count }
-            defer { deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:] }
-
-            for ev in events {
-                await playStep { self.openReplayFlights(ev, view: view) }
-                if let s = ev.state {
-                    deckCountOverride = s.deckCount
-                    discardCountOverride = s.discardCount
-                    for p in s.players where p.seat != controller.mySeat { seatCountOverride[p.seat] = p.handCount }
-                }
-            }
-
-            // A receiver opening a decodable FINISHED chain animates its final
-            // move too, then settles.
-            if view.isOver { settleResults() }
-        }
+        // The SAME animator the live bout-end uses - one path, the kernel's events.
+        Task { await runEventStream(events, finalView: view) }
     }
 
     /// notes 33/34: FHandFan already delivers the live boardSpace point on
