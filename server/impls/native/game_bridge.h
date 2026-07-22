@@ -8,6 +8,8 @@
 #ifndef FOOLISH_GAME_BRIDGE_H
 #define FOOLISH_GAME_BRIDGE_H
 
+#include <stdbool.h>
+
 // Serialize the masked view of `game_id` for `seat` into out[0..cap).
 // Unauthenticated, exactly like HTTP GET /state: the view is already masked
 // per seat. `seat` follows /state semantics — VIEW_SPECTATOR (-1) or a concrete
@@ -27,5 +29,15 @@ int gb_state_for(const char *game_id, int seat, unsigned char *out, int cap);
 // validate the session and fetch the current view without submitting a move.
 int gb_apply_move(const char *game_id, const char *token, int seat,
                   const unsigned char *in, int len, unsigned char *out, int cap);
+
+// Pin / unpin a game against reclamation for the lifetime of a WebTransport
+// session, the same way an open /ws connection does (the reaper never recycles
+// a game with conn_refs > 0). Call gb_game_ref when a WT session is
+// established and gb_game_unref when it closes. gb_game_ref returns false if
+// the game no longer exists (already reclaimed) — the caller should treat that
+// as a dead session. Idempotency is the caller's responsibility: exactly one
+// unref per successful ref.
+bool gb_game_ref(const char *game_id);
+void gb_game_unref(const char *game_id);
 
 #endif

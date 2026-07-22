@@ -57,6 +57,7 @@ static void wtc_flush(int sock, quiche_conn *conn, uint8_t *out, size_t out_cap)
 int main(int argc, char **argv) {
     if (argc < 4) { fprintf(stderr, "usage: %s host port path\n", argv[0]); return 2; }
     const char *host = argv[1], *port = argv[2], *path = argv[3];
+    int hold_ticks = (argc > 4) ? atoi(argv[4]) * 10 : 0;   // seconds to hold the session open after the round trip
 
     struct addrinfo hints = { .ai_family = AF_INET, .ai_socktype = SOCK_DGRAM }, *peer;
     if (getaddrinfo(host, port, &hints, &peer) != 0) { perror("getaddrinfo"); return 1; }
@@ -164,7 +165,13 @@ int main(int argc, char **argv) {
 
         wtc_flush(sock, conn, out, sizeof out);
 
-        if (got_headers && datagrams_recv >= 2) break;
+        // Optional 4th arg: hold the session open ~N seconds after the round
+        // trip (≈10 poll ticks/sec) so a test can observe that an OPEN WT
+        // session keeps its game pinned against reclamation.
+        if (got_headers && datagrams_recv >= 2) {
+            if (hold_ticks <= 0) break;
+            hold_ticks--;
+        }
     }
 
     if (got_headers && datagrams_recv >= 2) {

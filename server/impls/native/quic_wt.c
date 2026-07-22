@@ -65,6 +65,7 @@ typedef struct QConn {
     int64_t  wt_stream;
     uint64_t wt_flow_id;
     bool     wt_ready;
+    bool     wt_refed;      // holds a game_bridge reclamation ref (released in qw_free)
     char     game_id[48];
     int      seat;
     char     token[128];
@@ -164,6 +165,7 @@ static QConn *qw_create(QWorker *w, const uint8_t *dcid, size_t dcid_len,
 }
 
 static void qw_free(QConn *c) {
+    if (c->wt_refed) gb_game_unref(c->game_id);   // release the reclamation ref taken at WT CONNECT
     if (c->h3)   quiche_h3_conn_free(c->h3);
     if (c->conn) quiche_conn_free(c->conn);
     free(c);
@@ -267,6 +269,7 @@ static void qw_handle_wt_connect(QConn *c, int64_t stream, const QwHdrs *h) {
     c->seat       = seat;
     snprintf(c->game_id, sizeof c->game_id, "%s", game_id);
     snprintf(c->token,   sizeof c->token,   "%s", token);
+    c->wt_refed = gb_game_ref(game_id);     // pin the game against reclamation for this session's lifetime
 
     qw_wt_datagram_send(c, view, (size_t)vn);   // initial state push
     fprintf(stderr, "quic/wt: session up stream=%lld game=%s seat=%d (pushed %d-byte view)\n",

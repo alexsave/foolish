@@ -158,6 +158,16 @@ typedef struct {
     pthread_cond_t cond;
     bool bot_running;
     int  slot_idx;   // this game's append index, for persist_mark_dirty (was `s - g_games`); runtime-only, BELOW `lock` so it is outside the serialized prefix
+    // Game reclamation (bounded memory): the reaper may recycle this slot ONLY
+    // when conn_refs==0 AND !bot_running AND it has been idle past
+    // GAME_IDLE_TTL_US — so no thread can still hold a stale GameSlot* (an
+    // EConn->slot or a --tls ws_conn_thread). conn_refs counts live /ws
+    // connections referencing this slot; last_active_us (CLOCK_MONOTONIC) is
+    // refreshed on create, every state change (game_mark_dirty), and every
+    // connection attempt/open/close. Both runtime-only, below `lock`, outside
+    // the serialized prefix (never persisted).
+    int      conn_refs;
+    uint64_t last_active_us;
     // PROFILE_HOTPATH.md "T1c": under WS+legal load, view.c:state_put was the
     // single hottest function (~21-28% of instructions, inclusive) because
     // /ws's hot loop called it on EVERY round trip, including a pure "poll"
@@ -222,6 +232,85 @@ static inline User *user_slot_at(int idx) {
     return c ? &c[idx % USERS_PER_CHUNK] : NULL;
 }
 
+static uint64_t now_us(void) {
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)ts.tv_nsec / 1000ULL;
+}
+
+// Game reclamation: recycle finished/abandoned slots so total memory is bounded
+// by PEAK concurrent games, not cumulative created. A reclaimed slot's index is
+// pushed here and reused by the next create (game_alloc_slot). Guarded by
+// g_registry_lock. g_free_slots is demand-paged BSS (only the touched prefix
+// costs RAM). See the reaper (game_reaper_thread) near main().
+#define GAME_IDLE_TTL_US   (60ULL * 1000000ULL)   // default: reclaim a ref-free, bot-free game after 60s idle
+#define GAME_REAP_INTERVAL 10                        // default reaper scan period (seconds)
+static uint64_t g_game_idle_ttl_us = GAME_IDLE_TTL_US;   // --game-idle-ttl-s=N (0 = as soon as quiescent)
+static int      g_reap_interval    = GAME_REAP_INTERVAL; // --reap-interval-s=N
+static int g_free_slots[MAX_GAMES];
+static int g_free_count = 0;
+static atomic_ulong g_games_reclaimed = 0;           // /stats gauge: total slots recycled
+
+// Clear every field of a RECLAIMED slot EXCEPT its already-initialized
+// lock/cond. Re-initializing a live pthread_mutex/cond is POSIX undefined
+// behavior (and confuses race detectors); a reclaimed slot's lock/cond are
+// already initialized and provably have no waiters or holders (the reaper only
+// recycles a quiescent slot), so we reuse them in place and zero the game /
+// roster / runtime fields on either side of them. Relies on the declared field
+// order: lock, cond, then bot_running and the rest.
+static void game_slot_reset_preserving_locks(GameSlot *s) {
+    memset(s, 0, offsetof(GameSlot, lock));
+    memset((char *)s + offsetof(GameSlot, bot_running), 0,
+           sizeof(*s) - offsetof(GameSlot, bot_running));
+}
+
+// Allocate a game slot for a NEW game: reuse a reclaimed slot if the free-list
+// has one (bounded memory), else append a fresh one. Owns each slot's lock/cond
+// lifecycle — a fresh slot's are initialized once here; a reused slot's are
+// preserved (never re-initialized). The returned slot is fully cleared with its
+// lock/cond ready; the caller just fills fields and publishes it. Caller holds
+// g_registry_lock. Returns NULL only at hard capacity (MAX_GAMES live at once).
+static GameSlot *game_alloc_slot(int *out_idx) {
+    while (g_free_count > 0) {
+        int idx = g_free_slots[--g_free_count];
+        GameSlot *s = game_slot_at(idx);
+        if (s && !s->used) {
+            game_slot_reset_preserving_locks(s);   // reuse the slot's live lock/cond in place
+            s->slot_idx = idx;
+            *out_idx = idx;
+            return s;
+        }
+        // stale free entry (should not happen) — drop it and try the next
+    }
+    int idx = g_games_count;
+    if (idx >= MAX_GAMES) return NULL;
+    GameSlot *s = game_slot_ensure(idx);   // calloc'd, already zeroed
+    if (!s) return NULL;
+    g_games_count++;
+    pthread_mutex_init(&s->lock, NULL);    // fresh slot: initialize its lock/cond exactly once
+    pthread_cond_init(&s->cond, NULL);
+    s->slot_idx = idx;
+    *out_idx = idx;
+    return s;
+}
+
+// A live /ws connection now references / no longer references slot s (locking
+// variants, for callers that don't already hold s->lock — econn_close and the
+// --tls ws_conn_thread). Refreshing last_active on ref/unref means a slot with
+// an open connection, or one opened/closed within the idle window, is never
+// eligible for reclamation. conn_refs is guarded by s->lock.
+static void game_conn_ref(GameSlot *s) {
+    pthread_mutex_lock(&s->lock);
+    s->conn_refs++;
+    s->last_active_us = now_us();
+    pthread_mutex_unlock(&s->lock);
+}
+static void game_conn_unref(GameSlot *s) {
+    pthread_mutex_lock(&s->lock);
+    if (s->conn_refs > 0) s->conn_refs--;
+    s->last_active_us = now_us();
+    pthread_mutex_unlock(&s->lock);
+}
+
 // Registered in main() before persist_start (see "STAGE 2: persistence"
 // below) — NULL until then, which is fine: nothing calls game_mark_dirty or
 // marks a user dirty before main() finishes setup and starts the worker
@@ -243,6 +332,7 @@ static PersistTable *g_user_table = NULL;
 // ever called with lives inside the g_games[MAX_GAMES] array (there is no
 // other way to obtain a GameSlot*), so the difference is always in range.
 static void game_mark_dirty(GameSlot *s) {
+    s->last_active_us = now_us();   // any state change counts as activity (reclamation TTL); called under s->lock
     if (g_game_table) persist_mark_dirty(g_game_table, s->slot_idx);
 }
 
@@ -613,6 +703,34 @@ static bool game_ht_insert(GameSlot *s) {
     return false;
 }
 
+// Remove s from the open-addressing table using Knuth's backward-shift deletion
+// (linear probing): after clearing the slot, shift back any following entry
+// whose probe chain ran through the hole, so every remaining key stays findable
+// with NO tombstones (which would otherwise accumulate across recycle cycles
+// and eventually fill the table). Caller holds g_registry_lock. No-op if absent.
+static void game_ht_remove(GameSlot *s) {
+    unsigned long mask = GAME_HT_SIZE - 1;
+    unsigned long i = hash_str(s->id) & mask;
+    int probes = 0;
+    while (g_game_ht[i] && g_game_ht[i] != s && probes < GAME_HT_SIZE) { i = (i + 1) & mask; probes++; }
+    if (g_game_ht[i] != s) return;   // not present
+    for (;;) {
+        g_game_ht[i] = NULL;
+        unsigned long j = i;
+        for (;;) {
+            j = (j + 1) & mask;
+            if (!g_game_ht[j]) return;                        // reached an empty slot — chain closed
+            unsigned long k = hash_str(g_game_ht[j]->id) & mask;   // home slot of the entry at j
+            // Keep this entry in place (keep scanning) while its home k lies
+            // cyclically within (i, j]; otherwise it must shift back into i.
+            bool keep = (i <= j) ? (i < k && k <= j) : (i < k || k <= j);
+            if (!keep) break;
+        }
+        g_game_ht[i] = g_game_ht[j];   // move the entry at j back into the hole at i
+        i = j;                          // new hole at j; continue shifting from here
+    }
+}
+
 static bool username_ht_insert(User *u) {
     unsigned long h = hash_str(u->username) & (TOKEN_HT_SIZE - 1);
     for (int probes = 0; probes < TOKEN_HT_SIZE; probes++) {
@@ -857,6 +975,7 @@ static void game_persist_load(const char *id, const unsigned char *blob, int len
     }
     pthread_mutex_init(&s->lock, NULL);
     pthread_cond_init(&s->cond, NULL);
+    s->last_active_us = now_us();   // fresh TTL on recovery; a recovered finished game reclaims one interval later
     // Same "must never equal s->version's initial value" reasoning as
     // h_create's identical line — forces the first state_put_cached call
     // for every seat (and the shared spectator slot, index MAX_PLAYERS —
@@ -1103,15 +1222,11 @@ static void h_create(Req *r, Conn *conn) {
     char user_id[ID_LEN + 1]; snprintf(user_id, sizeof user_id, "%s", u->user_id);
     char username[24]; snprintf(username, sizeof username, "%s", u->username);
 
-    int gidx = g_games_count;                       // append-only: next free slot == count
-    GameSlot *s = (gidx < MAX_GAMES) ? game_slot_ensure(gidx) : NULL;
+    int gidx;
+    GameSlot *s = game_alloc_slot(&gidx);           // cleared slot with lock/cond ready (reused or fresh); bounded memory
     if (!s) { pthread_mutex_unlock(&g_registry_lock); respond(conn, 400, "{\"error\":\"full\"}"); return; }
-    g_games_count++;
-    memset(s, 0, sizeof *s);
-    s->slot_idx = gidx;
-    pthread_mutex_init(&s->lock, NULL);
-    pthread_cond_init(&s->cond, NULL);
     s->used = true;
+    s->last_active_us = now_us();
     // s->version starts at 0 (memset); view_cache_version must start at a
     // value that can NEVER equal it, or state_put_cached's very first call
     // for a seat would see version==cache_version (both zeroed) and return
@@ -1371,13 +1486,22 @@ static void h_stats(Req *r, Conn *conn) {
     unsigned long od = atomic_load_explicit(&g_octogen_decisions, memory_order_relaxed);
     int    conns = atomic_load_explicit(&g_live_conns, memory_order_relaxed);
     unsigned long mv = atomic_load_explicit(&g_moves_applied, memory_order_relaxed);
-    // g_games_count/g_users_count are written under g_registry_lock; a relaxed
-    // read here is fine for a stats gauge (a slightly-stale count never matters).
-    char out[256];
+    unsigned long rc = atomic_load_explicit(&g_games_reclaimed, memory_order_relaxed);
+    // g_games_count/g_users_count/g_free_count are written under g_registry_lock
+    // (h_create, game_alloc_slot, the reaper). /stats is rare and polled, so take
+    // the lock briefly for a consistent, race-free snapshot rather than reading
+    // these ints unlocked. "games" is the slot high-water; live == games - free.
+    pthread_mutex_lock(&g_registry_lock);
+    int games = g_games_count, users = g_users_count, freeslots = g_free_count;
+    pthread_mutex_unlock(&g_registry_lock);
+    int live_games = games - freeslots; if (live_games < 0) live_games = 0;
+    char out[320];
     snprintf(out, sizeof out,
-        "{\"live_connections\":%d,\"max_connections\":%d,\"games\":%d,\"users\":%d,"
+        "{\"live_connections\":%d,\"max_connections\":%d,\"games\":%d,\"games_live\":%d,"
+        "\"games_reclaimed\":%lu,\"free_slots\":%d,\"users\":%d,"
         "\"moves_applied\":%lu,\"bot_decisions\":%lu,\"octogen_decisions\":%lu}",
-        conns, g_max_conns, g_games_count, g_users_count, mv, bd, od);
+        conns, g_max_conns, games, live_games,
+        rc, freeslots, users, mv, bd, od);
     respond(conn, 200, out);
 }
 
@@ -1550,6 +1674,10 @@ static GameSlot *ws_handshake_validate(Req *r, int *out_seat, bool *out_spectato
         char user_id[ID_LEN + 1]; snprintf(user_id, sizeof user_id, "%s", u->user_id);
         ok = seat >= 0 && seat < s->game.num_players && seat_of(s, user_id) == seat;
     }
+    // A connection attempt is activity: refresh last_active under s->lock so the
+    // reaper can't reclaim this game in the tiny window between here and the
+    // caller taking its own conn ref (see epoll_dispatch_ws / ws_conn_thread).
+    s->last_active_us = now_us();
     pthread_mutex_unlock(&s->lock);
     if (!ok) return NULL;
 
@@ -1685,6 +1813,29 @@ int gb_apply_move(const char *game_id, const char *token, int seat,
     return n;
 }
 
+bool gb_game_ref(const char *game_id) {
+    pthread_mutex_lock(&g_registry_lock);
+    GameSlot *s = game_by_id(game_id);
+    if (!s) { pthread_mutex_unlock(&g_registry_lock); return false; }
+    pthread_mutex_lock(&s->lock);
+    pthread_mutex_unlock(&g_registry_lock);
+    s->conn_refs++;                 // pin against reclamation for the WT session's lifetime (mirrors /ws bind)
+    s->last_active_us = now_us();
+    pthread_mutex_unlock(&s->lock);
+    return true;
+}
+
+void gb_game_unref(const char *game_id) {
+    pthread_mutex_lock(&g_registry_lock);
+    GameSlot *s = game_by_id(game_id);
+    if (!s) { pthread_mutex_unlock(&g_registry_lock); return; }
+    pthread_mutex_lock(&s->lock);
+    pthread_mutex_unlock(&g_registry_lock);
+    if (s->conn_refs > 0) s->conn_refs--;
+    s->last_active_us = now_us();
+    pthread_mutex_unlock(&s->lock);
+}
+
 // Thread wrapper: run the QUIC/HTTP3/WebTransport listener alongside the TCP
 // acceptors, sharing this process's game state via the bridge above.
 struct QuicArgs { int port; int workers; const char *cert; const char *key; };
@@ -1721,6 +1872,8 @@ static void *ws_conn_thread(void *argp) {
     if (r->body_len > 0) ws_conn_prime(&wc, (const unsigned char *)r->body, r->body_len);
     free(sa->raw_buf); sa->raw_buf = NULL;   // primed into wc.pending — the raw request buffer is no longer referenced
 
+    game_conn_ref(s);   // this thread references the slot for its whole session — reclamation-safe until unref below
+
     unsigned char in[4096];
     unsigned char msg[1 + 65536];
     int opcode;
@@ -1730,6 +1883,7 @@ static void *ws_conn_thread(void *argp) {
         int mtotal = ws_service_message(s, seat, spectator, cache_idx, viewer, in, mlen, msg, NULL);
         if (ws_send_frame(&wc, WS_OP_BIN, msg, mtotal) < 0) break;
     }
+    game_conn_unref(s);
     conn_close(&wc.conn);
     free(sa);
     return NULL;
@@ -2298,6 +2452,7 @@ static void econn_close(Worker *w, EConn *ec) {
     if (ec->kind == ECONN_WS) {
         if (ec->prev) ec->prev->next = ec->next; else if (w->ws_head == ec) w->ws_head = ec->next;
         if (ec->next) ec->next->prev = ec->prev;
+        if (ec->slot) game_conn_unref(ec->slot);   // release the reclamation ref taken at bind (epoll_dispatch_ws)
     }
     // Reuse `next` as the dead-list link — ec is now off ws_head, and any live
     // ws_head iterator (worker_push_stale) captured its next pointer before the
@@ -2649,6 +2804,8 @@ static void epoll_dispatch_ws(Conn *conn, Req *r, char *raw_buf) {
     ec->wlen = wc.conn.buf_len; ec->woff = 0;
     pthread_mutex_lock(&s->lock);
     ec->last_pushed_version = s->version;
+    s->conn_refs++;                     // this EConn now references the slot — reclamation-safe until econn_close
+    s->last_active_us = now_us();
     pthread_mutex_unlock(&s->lock);
 
     // Any bytes the client pipelined past the upgrade request (the same
@@ -2785,6 +2942,54 @@ built:;
     fprintf(stderr, "[bench] DONE — no crash at %d connections / %d games, RSS %ld MB\n", cmade, gmade, rss_c / 1024);
 }
 
+// --------------------------------------------------------------------------
+// Game reclamation reaper (bounded memory). Every GAME_REAP_INTERVAL seconds,
+// recycle any game that is fully quiescent — no /ws connection references it
+// (conn_refs==0), no bot thread drives it (!bot_running), and it has been idle
+// past GAME_IDLE_TTL_US. That triple guarantees no thread still holds a stale
+// GameSlot* (an EConn->slot or a --tls ws_conn_thread), so the slot can be
+// unpublished and reused. Without this, finished/abandoned games accumulate
+// forever and RAM grows unbounded — the whole point of this pass.
+// --------------------------------------------------------------------------
+static void reclaim_game_locked(GameSlot *s) {
+    // Caller holds g_registry_lock AND s->lock. Unpublish (no new lookup finds
+    // it), drop its DB row (so it neither reloads on restart nor grows the DB),
+    // mark the slot free, and offer its index for reuse.
+    game_ht_remove(s);
+    if (g_game_table) persist_delete(g_game_table, s->id);
+    s->used = false;
+    if (g_free_count < MAX_GAMES) g_free_slots[g_free_count++] = s->slot_idx;
+    atomic_fetch_add_explicit(&g_games_reclaimed, 1, memory_order_relaxed);
+}
+
+static void *game_reaper_thread(void *arg) {
+    (void)arg;
+    thread_disable_cancellation();
+    for (;;) {
+        sleep(g_reap_interval);
+        uint64_t now = now_us();
+        pthread_mutex_lock(&g_registry_lock);
+        int count = g_games_count;
+        pthread_mutex_unlock(&g_registry_lock);
+        for (int i = 0; i < count; i++) {
+            pthread_mutex_lock(&g_registry_lock);
+            GameSlot *s = game_slot_at(i);
+            // trylock: a game busy under its own lock (a bot mid-cycle, a move
+            // in flight) is by definition not quiescent — skip it this pass
+            // rather than block the whole registry waiting on a slow s->lock.
+            if (s && s->used && pthread_mutex_trylock(&s->lock) == 0) {
+                if (s->conn_refs == 0 && !s->bot_running &&
+                    now - s->last_active_us > g_game_idle_ttl_us) {
+                    reclaim_game_locked(s);
+                }
+                pthread_mutex_unlock(&s->lock);
+            }
+            pthread_mutex_unlock(&g_registry_lock);
+        }
+    }
+    return NULL;
+}
+
 static int   make_listener(int port, bool reuseport);   // defined just after main()
 static void *acceptor_main(void *arg);                  // defined just after main()
 
@@ -2815,6 +3020,8 @@ int main(int argc, char **argv) {
             if (nw > 0 && nw <= MAX_ACCEPT_THREADS) g_n_accept_threads = nw;
             continue;
         }
+        if (!strncmp(argv[i], "--game-idle-ttl-s=", 18)) { int v = atoi(argv[i] + 18); if (v >= 0) g_game_idle_ttl_us = (uint64_t)v * 1000000ULL; continue; }
+        if (!strncmp(argv[i], "--reap-interval-s=", 18)) { int v = atoi(argv[i] + 18); if (v > 0) g_reap_interval = v; continue; }
 #ifdef FOOLISH_QUIC
         if (!strcmp(argv[i], "--quic")) { g_want_quic = true; continue; }
         if (!strncmp(argv[i], "--quic-port=", 12)) { g_quic_port = atoi(argv[i] + 12); continue; }
@@ -2928,6 +3135,12 @@ int main(int argc, char **argv) {
     pthread_t wt;
     for (int i = 0; i < g_n_create_workers; i++)
         if (pthread_create(&wt, NULL, worker_thread, &g_auth_create_q) == 0) pthread_detach(wt);
+
+    // Game reclamation reaper (both modes): recycle quiescent finished/abandoned
+    // games so RAM is bounded by peak concurrent games, not cumulative created.
+    pthread_t reaper;
+    if (pthread_create(&reaper, NULL, game_reaper_thread, NULL) == 0) pthread_detach(reaper);
+    else fprintf(stderr, "warning: game reaper thread failed to start (memory will not be reclaimed)\n");
 
     if (g_tls_ctx) {
         // Stage 6 TLS fallback: non-blocking OpenSSL's WANT_READ/WANT_WRITE
