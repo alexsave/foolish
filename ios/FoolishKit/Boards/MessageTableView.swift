@@ -77,6 +77,16 @@ public struct MessageTableView: View {
         let fromRects: [String: CGRect]   // card.identity -> hand rect AT PLAY TIME
     }
     @State private var pendingCover: PendingCover?
+    /// False until this board has decided what (if anything) its first delivered
+    /// view is going to REPLAY — see FBattleGrid's `coversSettled`. It starts
+    /// false at construction, i.e. before any paint can happen, which is what
+    /// makes it race-free: the pre-hide that keeps a replayed cover upright runs
+    /// from an onChange, one paint later, so a board that opens on an
+    /// already-covered table would otherwise paint tilted for that one frame
+    /// ("the covered card goes from rotated back to centre, then rotates again").
+    /// Flipped true in the same synchronous breath as that pre-hide, after which
+    /// `animator.hidden` alone keeps the tilt honest.
+    @State private var coversSettled = false
 
     public init(controller: MessageTurnController, onSend: @escaping (Data) async -> Void,
                 onNewGame: @escaping () -> Void = {}, onUnstage: @escaping () -> Void = {}) {
@@ -136,6 +146,12 @@ public struct MessageTableView: View {
             // note 39: defensive reset — see `showResults`'s doc.
             showResults = false
             if !controller.ready { await controller.begin() }
+            // Backstop for `coversSettled`: a controller that was ALREADY ready
+            // when this board mounted publishes no view change, so the onChange
+            // that normally settles the tilt never fires and every cover would
+            // stay upright forever. Only safe when there is nothing to replay —
+            // when there is, that onChange is the very thing driving it.
+            if controller.openReplayEvents.isEmpty { coversSettled = true }
             // Genesis where I can't act (I dealt but I'm not the first attacker):
             // stage the deal immediately so I can send it on. When I CAN act,
             // canStage is false until I play, so this is a no-op then.
@@ -329,7 +345,7 @@ public struct MessageTableView: View {
                             coverable: passPreview ? [] : highlightBattles(view),
                             onTapBattle: { idx in tapBattle(idx, view) },
                             namespace: cardNS, hidden: animator.hidden,
-                            showGhostSlot: passPreview)
+                            showGhostSlot: passPreview, coversSettled: coversSettled)
             }
         }
         // note 33: the verb hint floats just above the battle grid's own
@@ -428,6 +444,11 @@ public struct MessageTableView: View {
         let cover = pendingCover
         pendingCover = nil
         guard let new = newView else { return }
+        // Every path below either pre-hides what it is about to fly (synchronously,
+        // right here) or has nothing to fly at all. Once it returns, the tilt can
+        // be trusted to `animator.hidden` alone — so this is exactly where the
+        // board stops suppressing it.
+        defer { coversSettled = true }
         if reduceMotion {
             if new.isOver { showResults = true }   // note 39b
             return

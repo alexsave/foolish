@@ -25,10 +25,19 @@ public struct FBattleGrid: View {
     /// false so every existing call site (MessageBoardView, TableView, the
     /// gallery/snapshot tests) keeps compiling unchanged.
     public let showGhostSlot: Bool
+    /// False while the board has not yet decided whether an already-covered
+    /// battle is about to be REPLAYED (an open-replay pre-hides the cover cards
+    /// a beat after the first paint). While false no attack tilts, so a board
+    /// that appears with covers already on the table starts UNROTATED and tilts
+    /// only as each cover lands - never "rotated, back to centre, rotated
+    /// again". Defaults true: a static render (snapshot, gallery, the offline
+    /// board) has no replay to wait for.
+    public let coversSettled: Bool
 
     public init(battles: [BattleView], trumpSuit: Suit?, coverable: Set<Int> = [],
                 onTapBattle: @escaping (Int) -> Void = { _ in }, namespace: Namespace.ID? = nil,
-                hidden: Set<String> = [], showGhostSlot: Bool = false) {
+                hidden: Set<String> = [], showGhostSlot: Bool = false,
+                coversSettled: Bool = true) {
         self.battles = battles
         self.trumpSuit = trumpSuit
         self.coverable = coverable
@@ -36,6 +45,7 @@ public struct FBattleGrid: View {
         self.namespace = namespace
         self.hidden = hidden
         self.showGhostSlot = showGhostSlot
+        self.coversSettled = coversSettled
     }
 
     private let cardSize = CGSize(width: 50, height: 70)   // web card 50x70
@@ -89,13 +99,33 @@ public struct FBattleGrid: View {
             .accessibilityHidden(true)
     }
 
+    /// Should the attacked card lie across (tilted), given who is covering it,
+    /// what is in flight, and whether the board has settled? Pulled out of the
+    /// view body so the three-state sequence this got wrong can be asserted
+    /// directly: upright on arrival, upright while the cover flies, tilted only
+    /// once it lands.
+    public static func coverLanded(defense: Card?, hidden: Set<String>,
+                                   coversSettled: Bool) -> Bool {
+        guard coversSettled, let d = defense else { return false }
+        return !hidden.contains(d.identity)
+    }
+
     private func pair(_ battle: BattleView, index: Int) -> some View {
         let covered = battle.defense != nil
         // The attacked card tilts only once the cover has LANDED — i.e. the cover's
         // flight has cleared the in-flight (`hidden`) set — NOT the instant the model
         // says covered. So while the cover is still flying in, the attacked card
         // stays upright, then both lay across together (web behavior).
-        let coverLanded = battle.defense.map { !hidden.contains($0.identity) } ?? false
+        //
+        // `coversSettled` covers the window BEFORE that: the board's very first
+        // paint happens before the open-replay gets to pre-hide anything (the
+        // pre-hide runs from an onChange, which is one paint late), so a pair
+        // that arrives already covered would flash tilted, snap upright as the
+        // pre-hide lands, then tilt again as the cover flies in. Starting from
+        // "not settled" removes the first of those three states, which is the
+        // only one that was ever wrong.
+        let coverLanded = Self.coverLanded(defense: battle.defense, hidden: hidden,
+                                           coversSettled: coversSettled)
         return ZStack(alignment: .bottom) {
             FCard(card: battle.attack,
                   trump: trumpSuit != nil && battle.attack.suit == trumpSuit,
