@@ -1307,6 +1307,12 @@ static void h_state(Req *r, Conn *conn) {
     const char *gp = strstr(r->query, "game_id=");
     if (gp) { gp += 8; int i = 0; while (gp[i] && gp[i] != '&' && i < ID_LEN) { gid[i] = gp[i]; i++; } gid[i] = 0; }
     const char *sp = strstr(r->query, "seat="); if (sp) seat = (int)strtol(sp + 5, NULL, 10);
+    // Never let an unauthenticated /state request reach state_put's trusted
+    // VIEW_UNMASKED (-2) serialization, which emits every hand and the deck.
+    // The only public views are VIEW_SPECTATOR (-1, all hands masked) and a
+    // concrete seat (0..num_players-1); reject anything below spectator so the
+    // seat= sentinel can't be spoofed into a full-state disclosure.
+    if (seat < VIEW_SPECTATOR) { respond(conn, 400, "{\"error\":\"bad seat\"}"); return; }
 
     pthread_mutex_lock(&g_registry_lock);
     GameSlot *s = game_by_id(gid);
