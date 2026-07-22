@@ -84,6 +84,7 @@
 #include "ws.h"
 #include "persist.h"
 #include "conn.h"   // Stage 3: TLS — see conn.h and the "STAGE 3: OpenSSL TLS" block below
+#include "sha256.h" // Bucket A: HMAC-SHA256 for stateless signed session tokens
 #ifdef FOOLISH_QUIC
 #include "quic_wt.h"      // QUIC/HTTP3/WebTransport front-end (foolish_server_quic build)
 #include "game_bridge.h"  // wrappers quic_wt.c uses to reach the shared game
@@ -111,7 +112,10 @@
 
 typedef struct {
     bool used;
-    char token[33];
+    // No stored token: session tokens are now stateless signed blobs verified by
+    // HMAC (see make_token/verify_token) — a user is looked up by the user_id the
+    // token carries, not by a token->user table. Users are indexed by user_id
+    // (g_userid_ht) and username (g_username_ht).
     char user_id[ID_LEN + 1];
     char username[24];
     int  slot_idx;   // this user's append index, for persist_mark_dirty (was `u - g_users`); runtime-only, not serialized
@@ -467,20 +471,18 @@ static bool deserialize_slot(GameSlot *s, const unsigned char *buf, int len) {
 #define PERSIST_USER_BLOB_CAP 128
 
 static int serialize_user(const User *u, unsigned char *buf, int cap) {
-    int need = 1 + (int)sizeof u->token + (int)sizeof u->user_id + (int)sizeof u->username;
+    int need = 1 + (int)sizeof u->user_id + (int)sizeof u->username;
     if (need > cap) return -1;
     unsigned char *q = buf;
     *q++ = PERSIST_USER_BLOB_VERSION;
-    memcpy(q, u->token, sizeof u->token); q += sizeof u->token;
     memcpy(q, u->user_id, sizeof u->user_id); q += sizeof u->user_id;
     memcpy(q, u->username, sizeof u->username); q += sizeof u->username;
     return (int)(q - buf);
 }
 static bool deserialize_user(User *u, const unsigned char *buf, int len) {
-    int need = 1 + (int)sizeof u->token + (int)sizeof u->user_id + (int)sizeof u->username;
-    if (len != need || buf[0] != PERSIST_USER_BLOB_VERSION) return false;
+    int need = 1 + (int)sizeof u->user_id + (int)sizeof u->username;
+    if (len != need || buf[0] != PERSIST_USER_BLOB_VERSION) return false;   // old (token-bearing) rows differ in length -> cleanly rejected
     const unsigned char *q = buf + 1;
-    memcpy(u->token, q, sizeof u->token); q += sizeof u->token; u->token[sizeof u->token - 1] = 0;
     memcpy(u->user_id, q, sizeof u->user_id); q += sizeof u->user_id; u->user_id[sizeof u->user_id - 1] = 0;
     memcpy(u->username, q, sizeof u->username); q += sizeof u->username; u->username[sizeof u->username - 1] = 0;
     u->used = true;
@@ -552,8 +554,8 @@ static void persist_self_test(void) {
 // safe). Two tiers remain:
 //
 //   g_registry_lock — small and SHORT-HELD. Guards ONLY: g_users[] (signup /
-//     token lookup) + g_token_ht, game-slot allocation (claiming a free
-//     g_games[] entry) + g_game_ht (game_id -> GameSlot*). Never held during
+//     user_id lookup) + g_userid_ht/g_username_ht, game-slot allocation (claiming
+//     a free g_games[] entry) + g_game_ht (game_id -> GameSlot*). Never held during
 //     game work, bot work, or socket I/O.
 //
 //   GameSlot.lock (per game) — guards everything else about ONE game: its
@@ -719,7 +721,7 @@ static bool json_str(const char *body, const char *key, char *out, int cap) {
 #define TOKEN_HT_SIZE 1048576   // power of two, > 2x MAX_USERS (open-addressing needs load factor < 1 or inserts loop; kept at 2x the ceiling so the table never fills)
 #define GAME_HT_SIZE   524288   // power of two, > 2x MAX_GAMES
 
-static User     *g_token_ht[TOKEN_HT_SIZE];
+static User     *g_userid_ht[TOKEN_HT_SIZE];     // user_id -> User (a signed token carries the user_id; verify then look up here)
 static User     *g_username_ht[TOKEN_HT_SIZE];   // username -> User, so signup dedup is O(1) instead of an O(users) scan
 static GameSlot *g_game_ht[GAME_HT_SIZE];
 
@@ -729,18 +731,118 @@ static unsigned long hash_str(const char *s) {
     return h;
 }
 
+// --------------------------------------------------------------------------
+// Stateless signed session tokens (Bucket A). A token is a signed BINARY blob
+// (NO JWT, NO JSON): base64url( user_id[ID_LEN] || exp_be[8] |
+// HMAC-SHA256(secret, user_id||exp)[32] ). Any instance holding the same secret
+// verifies it — no shared token store needed, which is the auth half of
+// horizontal scale-out — and it carries an absolute expiry. The secret comes
+// from $FOOLISH_TOKEN_SECRET (64 hex chars) so tokens survive restart and span
+// instances; absent that, a random per-process secret is used (tokens then
+// don't survive a restart — fine for dev, flagged at startup).
+#define TOKEN_TTL_S   (7 * 24 * 3600)          // 7 days
+#define TOKEN_PAYLOAD (ID_LEN + 8 + 32)
+static uint8_t g_token_secret[32];
+
+static void hmac_sha256(const uint8_t *key, size_t klen, const uint8_t *msg, size_t mlen, uint8_t out[32]) {
+    uint8_t k[64] = {0};
+    if (klen > 64) sha256(key, klen, k); else memcpy(k, key, klen);
+    uint8_t ipad[64], opad[64];
+    for (int i = 0; i < 64; i++) { ipad[i] = k[i] ^ 0x36; opad[i] = k[i] ^ 0x5c; }
+    Sha256 c; uint8_t inner[32];
+    sha256_init(&c); sha256_update(&c, ipad, 64); sha256_update(&c, msg, mlen); sha256_final(&c, inner);
+    sha256_init(&c); sha256_update(&c, opad, 64); sha256_update(&c, inner, 32); sha256_final(&c, out);
+}
+
+static const char B64U[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+static int b64url_encode(const uint8_t *in, int n, char *out, int cap) {
+    int o = 0;
+    for (int i = 0; i < n; i += 3) {
+        int rem = n - i;
+        int v = (in[i] << 16) | ((rem > 1 ? in[i + 1] : 0) << 8) | (rem > 2 ? in[i + 2] : 0);
+        int chunk = rem > 2 ? 4 : rem + 1;
+        for (int j = 0; j < chunk; j++) { if (o >= cap - 1) return -1; out[o++] = B64U[(v >> (18 - 6 * j)) & 0x3f]; }
+    }
+    out[o] = 0; return o;
+}
+static int b64url_decode(const char *in, uint8_t *out, int cap) {
+    int8_t rev[256]; memset(rev, -1, sizeof rev);
+    for (int i = 0; i < 64; i++) rev[(unsigned char)B64U[i]] = (int8_t)i;
+    int o = 0, v = 0, bits = 0;
+    for (const char *p = in; *p; p++) {
+        int8_t d = rev[(unsigned char)*p]; if (d < 0) return -1;
+        v = (v << 6) | d; bits += 6;
+        if (bits >= 8) { bits -= 8; if (o >= cap) return -1; out[o++] = (uint8_t)(v >> bits); }
+    }
+    return o;
+}
+
+static void make_token(const char *user_id, char *out, int cap) {
+    uint8_t p[TOKEN_PAYLOAD];
+    memcpy(p, user_id, ID_LEN);
+    uint64_t exp = (uint64_t)time(NULL) + TOKEN_TTL_S;
+    for (int i = 0; i < 8; i++) p[ID_LEN + i] = (uint8_t)(exp >> (56 - 8 * i));
+    hmac_sha256(g_token_secret, 32, p, ID_LEN + 8, p + ID_LEN + 8);
+    b64url_encode(p, TOKEN_PAYLOAD, out, cap);
+}
+// Verify signature + expiry; on success fills user_id_out[ID_LEN+1]. The MAC
+// compare is constant-time so a forger can't byte-search the signature.
+static bool verify_token(const char *token, char *user_id_out) {
+    uint8_t p[TOKEN_PAYLOAD];
+    if (b64url_decode(token, p, sizeof p) != TOKEN_PAYLOAD) return false;
+    uint8_t mac[32];
+    hmac_sha256(g_token_secret, 32, p, ID_LEN + 8, mac);
+    uint8_t diff = 0; for (int i = 0; i < 32; i++) diff |= (uint8_t)(mac[i] ^ p[ID_LEN + 8 + i]);
+    if (diff) return false;
+    uint64_t exp = 0; for (int i = 0; i < 8; i++) exp = (exp << 8) | p[ID_LEN + i];
+    if ((uint64_t)time(NULL) >= exp) return false;
+    memcpy(user_id_out, p, ID_LEN); user_id_out[ID_LEN] = 0;
+    return true;
+}
+
+// One-time secret init (main()). $FOOLISH_TOKEN_SECRET = 64 hex chars -> 32-byte
+// key (share it across instances / set it to survive restart), else random.
+static void token_secret_init(void) {
+    const char *env = getenv("FOOLISH_TOKEN_SECRET");
+    bool ok = env && strlen(env) >= 64;
+    for (int i = 0; ok && i < 32; i++) {
+        char a = env[2 * i], b = env[2 * i + 1];
+        int hi = (a >= '0' && a <= '9') ? a - '0' : (a | 32) >= 'a' && (a | 32) <= 'f' ? (a | 32) - 'a' + 10 : -1;
+        int lo = (b >= '0' && b <= '9') ? b - '0' : (b | 32) >= 'a' && (b | 32) <= 'f' ? (b | 32) - 'a' + 10 : -1;
+        if (hi < 0 || lo < 0) ok = false; else g_token_secret[i] = (uint8_t)((hi << 4) | lo);
+    }
+    if (!ok) {
+        int fd = open("/dev/urandom", O_RDONLY);
+        if (fd < 0 || read(fd, g_token_secret, 32) != 32)
+            for (int i = 0; i < 32; i++) g_token_secret[i] = (uint8_t)(i * 2654435761u);   // last-ditch, never expected
+        if (fd >= 0) close(fd);
+        fprintf(stderr, "warning: FOOLISH_TOKEN_SECRET unset — using a random per-process token secret "
+                        "(sessions won't survive a restart or span instances)\n");
+    }
+}
+
 // Inserts are probe-BOUNDED: the tables are sized to 2x the ceilings so they
 // never actually fill, but a bounded loop means a mis-sized table degrades to
 // "entry not indexed" (unreachable by id) rather than an infinite loop that
 // would hang the whole server. Returns true on insert.
-static bool token_ht_insert(User *u) {
-    unsigned long h = hash_str(u->token) & (TOKEN_HT_SIZE - 1);
+static bool userid_ht_insert(User *u) {
+    unsigned long h = hash_str(u->user_id) & (TOKEN_HT_SIZE - 1);
     for (int probes = 0; probes < TOKEN_HT_SIZE; probes++) {
-        if (!g_token_ht[h]) { g_token_ht[h] = u; return true; }
+        if (!g_userid_ht[h]) { g_userid_ht[h] = u; return true; }
         h = (h + 1) & (TOKEN_HT_SIZE - 1);
     }
-    fprintf(stderr, "token hash full (%d) — raise TOKEN_HT_SIZE\n", TOKEN_HT_SIZE);
+    fprintf(stderr, "userid hash full (%d) — raise TOKEN_HT_SIZE\n", TOKEN_HT_SIZE);
     return false;
+}
+static User *user_by_id(const char *user_id) {
+    unsigned long h = hash_str(user_id) & (TOKEN_HT_SIZE - 1);
+    for (int probes = 0; probes < TOKEN_HT_SIZE; probes++) {
+        User *u = g_userid_ht[h];
+        if (!u) return NULL;
+        if (u->used && strcmp(u->user_id, user_id) == 0) return u;
+        h = (h + 1) & (TOKEN_HT_SIZE - 1);
+    }
+    return NULL;
 }
 static bool game_ht_insert(GameSlot *s) {
     unsigned long h = hash_str(s->id) & (GAME_HT_SIZE - 1);
@@ -803,14 +905,9 @@ static User *user_by_username(const char *name) {
 // Both lookups below: caller MUST hold g_registry_lock.
 static User *user_by_token(const char *token) {
     if (!token || !*token) return NULL;
-    unsigned long h = hash_str(token) & (TOKEN_HT_SIZE - 1);
-    for (int probes = 0; probes < TOKEN_HT_SIZE; probes++) {
-        User *u = g_token_ht[h];
-        if (!u) return NULL;   // insert-only table: an empty slot ends the probe chain
-        if (u->used && strcmp(u->token, token) == 0) return u;
-        h = (h + 1) & (TOKEN_HT_SIZE - 1);
-    }
-    return NULL;
+    char user_id[ID_LEN + 1];
+    if (!verify_token(token, user_id)) return NULL;   // bad signature or expired
+    return user_by_id(user_id);                        // token is authentic; find the user it names
 }
 static GameSlot *game_by_id(const char *id) {
     if (!id || !*id) return NULL;
@@ -1068,7 +1165,7 @@ static void user_persist_load(const char *id, const unsigned char *blob, int len
         return;
     }
     pthread_mutex_lock(&g_registry_lock);
-    token_ht_insert(u);
+    userid_ht_insert(u);      // stateless tokens: recovered users are found by user_id
     username_ht_insert(u);
     pthread_mutex_unlock(&g_registry_lock);
 }
@@ -1081,7 +1178,7 @@ typedef struct {
     char method[8];
     char path[256];
     char query[256];
-    char token[64];
+    char token[96];         // Bearer token — a signed binary token is ~70 base64url chars
     char *body; int body_len;
     int  content_length;    // parsed off Content-Length: while walking the headers
     bool is_ws_upgrade;     // GET with Upgrade: websocket + Connection: Upgrade + a key
@@ -1283,19 +1380,17 @@ static void h_signup(Req *r, Conn *conn) {
         u = (idx < MAX_USERS) ? user_slot_ensure(idx) : NULL;
         if (u) { g_users_count++; u->slot_idx = idx; u->used = true;
                  snprintf(u->username, sizeof u->username, "%s", uname); gen_id(u->user_id, ID_LEN);
-                 username_ht_insert(u); }
+                 username_ht_insert(u); userid_ht_insert(u);
+                 // Persist the NEW user (Stage 2 write-behind). There is no token
+                 // to store — it's a stateless signed blob (see make_token).
+                 if (g_user_table) persist_mark_dirty(g_user_table, u->slot_idx); }
     }
-    // Fresh session token, indexed, and marked dirty for the persistence
-    // thread (Stage 2) — a signup/signin the DB never learns about would
-    // strand that user's token past a crash, same durability need as a
-    // game's state (see game_mark_dirty's doc for the write-behind model).
-    if (u) {
-        gen_id(u->token, 32);
-        token_ht_insert(u);
-        if (g_user_table) persist_mark_dirty(g_user_table, u->slot_idx);
-    }
-    char out[160];
-    if (u) snprintf(out, sizeof out, "{\"token\":\"%s\",\"user_id\":\"%s\",\"username\":\"%s\"}", u->token, u->user_id, u->username);
+    // A fresh signed session token: nothing to store or index — it self-validates
+    // by HMAC and carries the user_id + an absolute expiry (see make_token).
+    char token[96] = "";
+    if (u) make_token(u->user_id, token, sizeof token);
+    char out[200];
+    if (u) snprintf(out, sizeof out, "{\"token\":\"%s\",\"user_id\":\"%s\",\"username\":\"%s\"}", token, u->user_id, u->username);
     pthread_mutex_unlock(&g_registry_lock);
     if (u) respond(conn, 200, out); else respond(conn, 400, "{\"error\":\"full\"}");
 }
@@ -3245,6 +3340,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "fatal: persistence failed to start (--db=%s)\n", db_path ? db_path : "(null)");
         return 1;
     }
+
+    token_secret_init();   // stateless-token HMAC key (from $FOOLISH_TOKEN_SECRET or random) — before any signup
 
     wq_init(&g_auth_create_q);
     wq_init(&g_meta_q);

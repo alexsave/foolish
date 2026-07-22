@@ -218,7 +218,7 @@ static SSL_CTX *g_tls_ctx = NULL;
 #define HAMMER_MAX_GAMES 256   // == server MAX_GAMES
 
 typedef struct {
-    char token[40];
+    char token[96];
     char user_id[16];
 } HUser;
 
@@ -409,7 +409,7 @@ static bool do_signup(const Config *cfg, const char *username, HUser *out) {
     if (!http_do(cfg->host, cfg->port, "POST", "/auth/signup", NULL, (unsigned char *)body, bn, resp, sizeof resp, &r))
         return false;
     if (r.status != 200) return false;
-    char tok[40], uid[16];
+    char tok[96], uid[16];
     if (!json_str(r.body, r.body_len, "token", tok, sizeof tok)) return false;
     if (!json_str(r.body, r.body_len, "user_id", uid, sizeof uid)) return false;
     snprintf(out->token, sizeof out->token, "%s", tok);
@@ -768,7 +768,7 @@ static int cmp_double(const void *a, const void *b) {
 typedef struct {
     Config      *cfg;
     char         gid[16];
-    char         token[40];
+    char         token[96];
     int          seat;
     WsThreadStats *st;
 } WsClientArg;
@@ -1029,7 +1029,7 @@ typedef struct {
 typedef struct {
     Config        *cfg;
     char           gid[16];
-    char           token[40];
+    char           token[96];
     SpecThreadStats *st;
 } SpecClientArg;
 
