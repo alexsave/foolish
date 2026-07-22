@@ -37,12 +37,16 @@ public enum StagedBubbleRouting {
     ///   bubble tap, a genuinely new incoming message, or nil/no selection).
     public static func resolvedPayloadURL(selectedURL: URL?, startingNewGame: Bool,
                                           pendingStage: (payload: Data, mySeat: Int)?,
-                                          lastPayloadURL: URL?) -> URL? {
+                                          lastPayloadURL: URL?,
+                                          lastSentPayload: Data? = nil) -> URL? {
         if startingNewGame { return nil }
         guard let selectedURL else { return nil }
-        if let pending = pendingStage,
-           let incoming = try? MessageEnvelope.payloadBytes(url: selectedURL),
-           incoming == pending.payload {
+        guard let incoming = try? MessageEnvelope.payloadBytes(url: selectedURL) else {
+            return selectedURL
+        }
+        // Mine, still in the input field — or mine, already SENT. Both keep the
+        // board exactly as it is.
+        if incoming == pendingStage?.payload || incoming == lastSentPayload {
             return lastPayloadURL
         }
         return selectedURL

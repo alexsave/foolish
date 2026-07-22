@@ -85,13 +85,19 @@ struct HarnessRootView: View {
     /// ever changes this.
     @State private var screen: Screen = .chat
     private enum Screen { case chat, chatList }
+    /// The animation trace panel (AnimLog). Only reachable when the trace is
+    /// switched on (HARNESS_ANIMLOG), because it is empty otherwise.
+    @State private var showAnimLog = false
 
     var body: some View {
         VStack(spacing: 0) {
-            DevBar(model: model)          // harness-only chrome — the ONE thing outside the SE frame
+            DevBar(model: model, showAnimLog: $showAnimLog)   // harness-only chrome — the ONE thing outside the SE frame
             Divider().overlay(Color.orange.opacity(0.3))
-            simulatedPhone
-                .frame(maxWidth: .infinity, maxHeight: .infinity)   // center in whatever room is left
+            ZStack {
+                simulatedPhone
+                if showAnimLog { AnimLogPanel() }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)   // center in whatever room is left
         }
         .background(Color.black.ignoresSafeArea())
         .task {
@@ -206,6 +212,7 @@ private struct ChatScreen: View {
 /// it read as harness tooling rather than a feature of the fake Messages host.
 private struct DevBar: View {
     @ObservedObject var model: HarnessModel
+    @Binding var showAnimLog: Bool
 
     var body: some View {
         // Lives OUTSIDE the simulated SE screen (see HarnessRootView's
@@ -218,6 +225,14 @@ private struct DevBar: View {
                 Text("FoolishHarness — NOT the shipping extension")
                     .font(.system(size: 10, weight: .bold)).foregroundStyle(.orange)
                 Spacer()
+                if AnimLog.on {
+                    Button { showAnimLog.toggle() } label: {
+                        Text(showAnimLog ? "hide log" : "log").font(.system(size: 11, weight: .semibold))
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(Color.orange.opacity(showAnimLog ? 1 : 0.35))
+                            .foregroundStyle(.black).clipShape(Capsule())
+                    }
+                }
                 Button { model.newGame() } label: {
                     Text("New").font(.system(size: 11, weight: .semibold))
                         .padding(.horizontal, 8).padding(.vertical, 4)
@@ -698,5 +713,48 @@ private struct HostedStage<Content: View>: UIViewControllerRepresentable {
 
     func updateUIViewController(_ vc: UIHostingController<Content>, context: Context) {
         vc.rootView = content()
+    }
+}
+
+/// The AnimLog trace, on screen. The board's animation triggers are SwiftUI
+/// lifecycle events, so "did that run twice, and why" is only answerable from a
+/// real run — and on a phone there is no console to read it in. Tap a move, then
+/// read (or screenshot) this. Dev-only; see AnimLog.
+private struct AnimLogPanel: View {
+    @ObservedObject private var store = AnimLogStore.shared
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("ANIMLOG").font(.system(size: 11, weight: .bold)).foregroundStyle(.orange)
+                Spacer()
+                Button("clear") { store.clear() }
+                    .font(.system(size: 11)).foregroundStyle(.orange)
+            }
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 1) {
+                        ForEach(Array(store.lines.enumerated()), id: \.offset) { i, l in
+                            Text(l)
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundStyle(l.contains("stream#") ? .green
+                                                 : (l.contains("->") ? .yellow : .white))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .id(i)
+                        }
+                    }
+                    .padding(.horizontal, 6)
+                }
+                .onChange(of: store.lines.count) { n in
+                    withAnimation { proxy.scrollTo(n - 1, anchor: .bottom) }
+                }
+            }
+        }
+        .frame(width: 330, height: 420)
+        .background(Color.black.opacity(0.9))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.orange.opacity(0.5)))
+        .allowsHitTesting(true)
     }
 }

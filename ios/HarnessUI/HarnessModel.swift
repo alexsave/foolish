@@ -162,18 +162,32 @@ final class HarnessModel: ObservableObject {
     /// the snapshot, and no longer mounts a board per bubble (see `Msg`).
     var stagedURL: URL? { staged.map { MessageEnvelope.link(payload: $0) } }
     var chatIsDM: Bool { participants.count == 2 }
+    /// Bumped ONLY when the board must genuinely be rebuilt: a different
+    /// player, a different chat, an explicitly tapped bubble, a New game.
+    ///
+    /// Deliberately NOT bumped by `deliver()`, and this is the whole point.
+    /// Sending used to change `transcript.count`, which changed `viewKey`,
+    /// which tore the live board down and rebuilt it from the bubble I had
+    /// just sent — so the move I had just watched myself play was replayed as
+    /// an open-replay. That is the "double pickup animation": one live, one
+    /// from the rebuild. A real device doesn't do this either (the extension's
+    /// StagedBubbleRouting keeps presenting the same URL when the newly
+    /// selected message is my own just-staged bubble), the harness simply had
+    /// no equivalent. The board already shows that exact chain — it is my own
+    /// move — so there is nothing to reload.
+    @Published private(set) var boardEpoch = 0
+
     /// Reset MessagesRootView's @State whenever the player, the chat, the
-    /// transcript, or the new-game intent changes, so it re-derives as the
-    /// current participant IN the current chat.
-    var viewKey: String {
-        "\(localIndex)-\(currentChat)-\(transcript.count)-\(startNewGame)-\(selectedMsg?.id.uuidString ?? "")"
-    }
+    /// selected bubble, or the new-game intent changes — see `boardEpoch` for
+    /// what deliberately does NOT count.
+    var viewKey: String { "\(localIndex)-\(currentChat)-\(boardEpoch)" }
 
     /// Tap a transcript bubble: open the extension on THAT message, the way
     /// tapping a bubble does on a phone. Also brings the drawer back — a tap on
     /// a game bubble is unambiguously "show me this game", and with the drawer
     /// dismissed there is otherwise nothing on screen to tap but the bubbles.
     func openBubble(_ msg: Msg) {
+        boardEpoch += 1
         chats[currentChat].selected = msg.id
         chats[currentChat].startNewGame = false
         staged = nil; stagedPreview = nil
@@ -237,6 +251,7 @@ final class HarnessModel: ObservableObject {
     /// Change the number of pretend participants and start over (both chats).
     func setCount(_ n: Int) {
         participants = Self.make(n)
+        boardEpoch += 1
         chats = [ChatState(), ChatState()]
         localIndex = 0
         currentChat = 0
@@ -265,6 +280,7 @@ final class HarnessModel: ObservableObject {
         // has moved on". A real device never switches identity, so this only bites
         // the harness; clear it before rebinding to the next player's suite.
         MessageGameStore.shared.clearAllPending()
+        boardEpoch += 1
         localIndex = idx
         // Route to New game when this player has no bubble to open yet (switching
         // before anyone has delivered). Only a real, delivered bubble reads as a
@@ -288,6 +304,7 @@ final class HarnessModel: ObservableObject {
     /// per-conversation and never carries over when you leave a thread.
     func switchChat(_ idx: Int) {
         guard idx == 0 || idx == 1, idx != currentChat else { return }
+        boardEpoch += 1
         currentChat = idx
         staged = nil; stagedPreview = nil
         presentation = .expanded
@@ -296,6 +313,7 @@ final class HarnessModel: ObservableObject {
 
     /// The current player tapped New game. New game always opens full-screen.
     func newGame() {
+        boardEpoch += 1
         chats[currentChat].startNewGame = true; staged = nil; stagedPreview = nil
         presentation = .expanded; drawerDismissed = false
     }
@@ -314,6 +332,7 @@ final class HarnessModel: ObservableObject {
     /// that just staged the move (it reloads with payloadURL=nil → "damaged").
     /// The new-game intent only clears when the bubble is actually delivered.
     func stage(_ payload: Data, seat: Int) async {
+        AnimLog.say("host stage seat=\(seat)")
         staged = payload
         // Snapshot the bubble picture NOW, the way MessagesViewController.stage
         // does — the resident kernel is this payload at exactly this moment (the
@@ -325,12 +344,29 @@ final class HarnessModel: ObservableObject {
         // and for a bout-ending good the discard + draws), rest ~500ms so the result
         // reads, THEN collapse to the compact drawer (which shows the staged game).
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 900_000_000)
+            // The SAME wait the real extension does (round-2 note 8), which the
+            // harness never got: a flat 900ms guillotines a bout-end cascade
+            // mid-flight, and collapsing resizes the board out from under the
+            // in-flight cards, so they land against stale rects — the "glitchy"
+            // half of the pickup complaint. Short lead-in first (the sequence
+            // starts inside a Task the onChange schedules, so checking
+            // isSequencing with no lead-in can race it), then wait for however
+            // long the real sequence takes, then rest so the result reads.
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            await BoardAnimator.waitForSettle()
+            try? await Task.sleep(nanoseconds: 500_000_000)
             guard let self, self.staged != nil else { return }
             // Skip the collapse during an auto-played game so our move's animation
             // finishes on the full board (it's the point of the slow run); real
             // interactive staging still collapses to Messages' Send.
-            if ProcessInfo.processInfo.environment["HARNESS_AUTOGAME"] == nil {
+            //
+            // HARNESS_AUTOGAME_COLLAPSE forces it anyway: the collapse is the
+            // ONE thing an auto-played game does not do that a human does, so
+            // reproducing an "it animated twice when I tapped it myself" report
+            // needs it in the loop.
+            if ProcessInfo.processInfo.environment["HARNESS_AUTOGAME"] == nil
+                || ProcessInfo.processInfo.environment["HARNESS_AUTOGAME_COLLAPSE"] != nil {
+                AnimLog.say("host collapse -> compact")
                 self.presentation = .compact
             }
         }
@@ -359,6 +395,7 @@ final class HarnessModel: ObservableObject {
     /// so the next participant can read it.
     func deliver() {
         guard let payload = staged else { return }
+        AnimLog.say("host deliver")
         chats[currentChat].transcript.append(Msg(url: MessageEnvelope.link(payload: payload),
                                                  senderId: localId, senderName: localName,
                                                  preview: stagedPreview))

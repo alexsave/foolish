@@ -69,4 +69,31 @@ final class StagedBubbleRoutingTests: XCTestCase {
             pendingStage: (payload: Data([1]), mySeat: 0), lastPayloadURL: url(Data([2])))
         XCTAssertNil(resolved)
     }
+    /// …and the same must hold AFTER the send. `didStartSending` clears
+    /// `pendingStage` (that is the commit), but Messages leaves my bubble
+    /// selected — so the next present() saw a "new" selection, reloaded the
+    /// surface from my own just-sent chain, and the open-replay played the move
+    /// I had just watched myself make. The second half of round-3's double
+    /// animation, and the reason `lastSentPayload` exists.
+    func testMyOwnJustSENTBubbleAlsoKeepsTheBoard() throws {
+        let mine = Data([9, 8, 7, 6, 5])
+        let url = MessageEnvelope.link(payload: mine)
+        let previous = URL(string: "https://foolish.cards/m/1PREVIOUS")!
+
+        // pendingStage is nil now (the send committed it) — lastSentPayload is
+        // what recognises the bubble as mine.
+        XCTAssertEqual(
+            StagedBubbleRouting.resolvedPayloadURL(selectedURL: url, startingNewGame: false,
+                                                   pendingStage: nil, lastPayloadURL: previous,
+                                                   lastSentPayload: mine),
+            previous, "my own sent bubble must not reload the board")
+
+        // Someone else's bubble still routes normally.
+        let theirs = MessageEnvelope.link(payload: Data([1, 2, 3, 4]))
+        XCTAssertEqual(
+            StagedBubbleRouting.resolvedPayloadURL(selectedURL: theirs, startingNewGame: false,
+                                                   pendingStage: nil, lastPayloadURL: previous,
+                                                   lastSentPayload: mine),
+            theirs, "a bubble I did not send is a real new selection")
+    }
 }

@@ -132,6 +132,7 @@ public struct MessageTableView: View {
             Haptics.fire(.reject); toast = FStrings.t("ios.reject")
         }
         .task {
+            AnimLog.say("board .task seat=\(controller.mySeat) ready=\(controller.ready)")
             // note 39: defensive reset — see `showResults`'s doc.
             showResults = false
             if !controller.ready { await controller.begin() }
@@ -246,16 +247,27 @@ public struct MessageTableView: View {
 
     private func name(_ seat: Int) -> String { controller.names[seat] ?? "Seat \(seat + 1)" }
 
+    /// Does this seat wear the sword? An attacker keeps it until THEY say good,
+    /// even once every attack on the table is covered — not "any uncovered
+    /// battle exists", which erased every sword the instant the table filled up.
+    ///
+    /// But on an EMPTY table only ONE seat can act at all: the seat that opens
+    /// the bout. Marking every non-defender then was just wrong — "when no cards
+    /// are on the table, and only the first attacker can move, ONLY the first
+    /// attacker gets the sword. Everyone else has no icon." Once the bout is
+    /// open, throw-ins make the others attackers for real, and they get one.
+    private func showsSword(seat: Int, isOut: Bool, _ view: GameView) -> Bool {
+        guard seat != view.defender, !isOut, !view.hasSaidGood(seat) else { return false }
+        return view.battles.isEmpty ? seat == view.firstAttacker : true
+    }
+
     /// One opponent seat badge, publishing its frame in `boardSpace` so bout-end
     /// flights can target it. Placed on the ring by `ringPoint`.
     private func opponentSeat(_ p: PlayerView, _ view: GameView) -> some View {
-        // Sword consistency: an attacker keeps the sword until THEY say good, even
-        // once every attack on the table is covered — not "any uncovered battle
-        // exists" (which erased every sword the instant the table was fully covered).
         FSeatBadge(name: name(p.seat),
                    handCount: seatCountOverride[p.seat] ?? p.handCount,
                    isDefender: p.seat == view.defender,
-                   isAttacker: p.seat != view.defender && !p.isOut && !view.hasSaidGood(p.seat),
+                   isAttacker: showsSword(seat: p.seat, isOut: p.isOut, view),
                    saidGood: view.hasSaidGood(p.seat),
                    isOut: p.isOut)
             .background(GeometryReader { g in
@@ -290,7 +302,7 @@ public struct MessageTableView: View {
         let isOut = view.me?.isOut ?? false
         let isDefender = view.defender == mySeat
         let saidGood = view.hasSaidGood(mySeat)
-        let isAttacker = !isDefender && !isOut && !saidGood
+        let isAttacker = showsSword(seat: mySeat, isOut: isOut, view)
         return Group {
             if !isOut {
                 HStack(spacing: FSpace.xs) {
@@ -410,6 +422,7 @@ public struct MessageTableView: View {
     private func flyBoutEndToDiscard(to newView: GameView?) {
         let prior = lastView
         lastView = newView
+        AnimLog.say("viewChanged seat=\(controller.mySeat) prior=\(prior == nil ? "nil" : "\(prior!.battles.count)b") new=\(newView.map { "\($0.battles.count)b hand=\($0.me?.handCount ?? -1)" } ?? "nil") undo=\(controller.lastChangeWasUndo)")
         // note 17: consumed and cleared on EVERY call. `playAt` sets it right
         // before the apply whose resulting view change is the next one we see.
         let cover = pendingCover
@@ -422,7 +435,7 @@ public struct MessageTableView: View {
         // note 10: undo can legally take battles -> empty; never a bout end.
         if controller.lastChangeWasUndo { return }
         // First appear with a delivered game: the open-replay (same event path).
-        if prior == nil { replayLastMoveOnOpen(new); return }
+        if prior == nil { AnimLog.say("-> openReplay"); replayLastMoveOnOpen(new); return }
         guard let old = prior, !old.battles.isEmpty, new.battles.isEmpty else {
             // A normal placed card animates via matchedGeometry; a move that ended
             // the game without clearing the table just settles to results.
@@ -447,6 +460,7 @@ public struct MessageTableView: View {
         let myNewIds = Set((new.me?.hand ?? []).map(\.identity)).subtracting(oldHandIds)
         if !myNewIds.isEmpty { animator.preHide(myNewIds) }
 
+        AnimLog.say("-> boutEnd preHide=\(myNewIds.count)")
         Task {
             if let pc = matchedCover {
                 BoardAnimator.sequenceDepth += 1
@@ -466,6 +480,8 @@ public struct MessageTableView: View {
     /// neither derives what-flies-where from a GameView diff. The caller pre-hides
     /// the moved cards first (synchronously, before the first paint).
     private func runEventStream(_ events: [GameEvent], finalView view: GameView) async {
+        let run = AnimLog.on ? AnimLog.nextRun() : 0
+        AnimLog.say("stream#\(run) begin n=\(events.count) [\(events.map { "\($0.kind.map(String.init(describing:)) ?? "?")@\($0.seat)x\($0.cards.count)" }.joined(separator: " "))] depth=\(BoardAnimator.sequenceDepth)")
         guard !events.isEmpty else {
             if view.isOver { settleResults() }
             return
@@ -485,13 +501,18 @@ public struct MessageTableView: View {
         for (seat, c) in pre.hand where seat != controller.mySeat { seatCountOverride[seat] = c }
 
         for ev in events {
-            await playStep { self.openReplayFlights(ev, view: view) }
+            await playStep {
+                let f = self.openReplayFlights(ev, view: view)
+                if let f { AnimLog.say("stream#\(run) step \(ev.kind.map(String.init(describing:)) ?? "?")@\(ev.seat) flights=\(f.count) [\(f.map(\.id).joined(separator: ","))]") }
+                return f
+            }
             if let s = ev.state {
                 deckCountOverride = s.deckCount
                 discardCountOverride = s.discardCount
                 for p in s.players where p.seat != controller.mySeat { seatCountOverride[p.seat] = p.handCount }
             }
         }
+        AnimLog.say("stream#\(run) end")
         if view.isOver { settleResults() }
     }
 
@@ -630,20 +651,34 @@ public struct MessageTableView: View {
                       to: badge.offsetBy(dx: CGFloat(k) * 3, dy: 0)) }
 
         case .pickup:
-            // Table -> hand (mine, the real public table cards) or badge (backs).
+            // Table -> hand (mine) or a seat's badge (theirs) - FACE UP either way.
+            // These are the cards that were lying face up on the table a moment
+            // ago; turning them into backs mid-flight because someone else is
+            // taking them is a lie the viewer can disprove by looking at the
+            // board they were just shown (the web plays them face up for the
+            // same reason). The kernel agrees: evwire masks DEAL/REFILL, never
+            // PICKUP, so `ev.cards` carries real identities to every viewer -
+            // this branch was throwing them away.
             guard let center = approximateTableCenter() else { return nil }
+            let cards = ev.cards.compactMap { $0 }
             if mine {
-                let cards = ev.cards.compactMap { $0 }
                 guard cards.allSatisfy({ handCardFrames[$0.identity] != nil })
                 else { return cards.isEmpty ? [] : nil }
                 return cards.compactMap { c in handCardFrames[c.identity].map {
                     Flight(id: "openpick-\(c.identity)", card: c, from: center, to: $0) } }
             }
             guard let badge = seatFrames[ev.seat], badge != .zero else { return nil }
-            let n = max(ev.cards.count, 1)
-            return (0..<n).map { k in
-                Flight(id: "openpick-\(ev.seat)-\(k)", card: nil, from: center,
-                      to: badge.offsetBy(dx: CGFloat(k) * 3, dy: 0)) }
+            if cards.isEmpty {
+                // Only if the kernel really did withhold them (it doesn't today).
+                let n = max(ev.cards.count, 1)
+                return (0..<n).map { k in
+                    Flight(id: "openpick-\(ev.seat)-\(k)", card: nil, from: center,
+                          to: badge.offsetBy(dx: CGFloat(k) * 3, dy: 0)) }
+            }
+            return cards.enumerated().map { i, c in
+                Flight(id: "openpick-\(ev.seat)-\(c.identity)", card: c,
+                       from: center.offsetBy(dx: CGFloat(i) * 6, dy: CGFloat(i) * 4),
+                       to: badge.offsetBy(dx: CGFloat(i) * 3, dy: 0)) }
 
         case .discard, .cardsToTrash:
             // Table -> discard. Discard cards are public (the kernel does not mask
@@ -672,6 +707,7 @@ public struct MessageTableView: View {
     /// interactive bout-end sequence uses (so HARNESS_AUTOGAME's
     /// `BoardAnimator.isSequencing` wait still covers it).
     private func replayLastMoveOnOpen(_ view: GameView) {
+        AnimLog.say("openReplay events=\(controller.openReplayEvents.count) genesis=\(controller.isGenesis)")
         // The whole open-replay is now the KERNEL's evwire for the last move
         // (controller.openReplayEvents, resolved in begin()). A genesis deal's
         // last move IS the deal, so the same stream drives it - no special case.

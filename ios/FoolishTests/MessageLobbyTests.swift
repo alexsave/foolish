@@ -304,4 +304,42 @@ final class MessageLobbyTests: XCTestCase {
         XCTAssertEqual(startedSeat0, controlSeat0,
                        "Start must deal from the lobby's LOCKED seed, not the resident game")
     }
+    // MARK: - a lobby always offers SOMETHING
+
+    /// The owner hit a lobby listing one player with not a single control on
+    /// it: joined (so no Join), fewer than two players (so no Start), and the
+    /// invite button had been removed as redundant with the auto-stage — which
+    /// it is only while that staged bubble is still in the compose field. Once
+    /// it is sent or deleted, that screen is a dead end.
+    ///
+    /// This enumerates every (mySeat, joined, capacity) a lobby can be in and
+    /// asserts each maps to an action. It is a total function now, so "no
+    /// control" is not expressible — the point of pulling the branch out of the
+    /// view. The specific regression is the joined-alone case.
+    func testEveryLobbyStateOffersAnAction() {
+        XCTAssertEqual(LobbyControls.offered(mySeat: 0, joined: 1, capacity: 8), .invite,
+                       "joined but alone: the only useful action is to invite someone")
+        XCTAssertEqual(LobbyControls.offered(mySeat: 0, joined: 2, capacity: 8), .start)
+        XCTAssertEqual(LobbyControls.offered(mySeat: 0, joined: 8, capacity: 8), .start,
+                       "a full lobby I am in still starts")
+        XCTAssertEqual(LobbyControls.offered(mySeat: nil, joined: 1, capacity: 2), .join)
+        XCTAssertEqual(LobbyControls.offered(mySeat: nil, joined: 2, capacity: 2), .full,
+                       "no room and not mine: nothing to do but wait")
+
+        // Exhaustive: no combination may be unreachable or ambiguous.
+        for capacity in 2...8 {
+            for joined in 0...capacity {
+                for seat in [nil, 0] as [Int?] {
+                    let a = LobbyControls.offered(mySeat: seat, joined: joined, capacity: capacity)
+                    if seat != nil {
+                        XCTAssertTrue(a == .start || a == .invite,
+                                      "a joined player is offered start or invite, never join/full")
+                    } else {
+                        XCTAssertTrue(a == .join || a == .full,
+                                      "a non-joined player is offered join or full")
+                    }
+                }
+            }
+        }
+    }
 }

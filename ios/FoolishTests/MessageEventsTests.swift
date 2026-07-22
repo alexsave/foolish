@@ -63,23 +63,20 @@ final class MessageEventsTests: XCTestCase {
         }
     }
 
-    /// Round-3 "double animations": a move animates when you PLAY it, and then
-    /// again a moment later, slowly. Sending re-selects your own just-inserted
-    /// bubble, which reloads the board from those bytes — and the last move on
-    /// that chain is the move you just watched yourself play, so the open-replay
-    /// played it a second time.
+    /// Round-3 "double animations": a move animated when you played it, and
+    /// again a moment later. The replay itself was never the problem — opening a
+    /// chain shows its last move, whoever made it, and the owner confirmed that
+    /// is what they want ("the replay works fine for the OTHER player... for the
+    /// self, it doesn't play at all now" — after an earlier pass suppressed it).
+    /// The double was the HOST reloading the whole surface from the bubble you
+    /// had just sent; that is fixed in the hosts (HarnessModel.boardEpoch,
+    /// StagedBubbleRouting.lastSentPayload), not here.
     ///
-    /// The rule that closes it, pinned here: a chain's last move is replayed to
-    /// everyone EXCEPT the seat that sealed it. Same bytes, two seats, two
-    /// answers — so this fails against any build that decides from the chain
-    /// alone (as it did before) and against one that suppresses the replay for
-    /// everybody.
-    func testAChainsLastMoveIsNotReplayedToTheSeatThatSealedIt() async throws {
-        let k = MessageKernel.shared
-
-        // Seat 0 deals and opens; seat 1 replies. `p1` is therefore a chain
-        // whose last actor is seat 1. The creator is not always the first
-        // attacker (whoever holds the lowest trump is), so deal until seat 0 is.
+    /// So what this pins is the opposite of what it used to: the events a chain
+    /// yields do NOT depend on who sealed it. Same bytes, both seats, both get
+    /// the move to watch.
+    func testAChainsLastMoveIsReplayedToEitherSeat() async throws {
+        // Seat 0 deals and opens; seat 1 replies. `p1`'s last actor is seat 1.
         var found: MessageTurnController?
         for salt in UInt8(20)...UInt8(60) {
             let c = MessageTurnController(genesisSeed: freshSeed(salt), players: 2,
@@ -88,33 +85,28 @@ final class MessageEventsTests: XCTestCase {
             if c.legal.contains(where: { $0.type != .wait }) { found = c; break }
         }
         let creator = try XCTUnwrap(found, "no 2p deal made seat 0 the first attacker")
-        let open = try XCTUnwrap(creator.legal.first { $0.type != .wait },
-                                 "the creator must have an opening move")
+        let open = try XCTUnwrap(creator.legal.first { $0.type != .wait })
         await creator.apply(open)
         let p0 = try await creator.stagedPayload()
         let e0 = try await MessageEnvelope.decode(payload: p0, viewer: -1)
 
         let joiner = MessageTurnController(parentPayload: p0, parent: e0, mySeat: 1)
         await joiner.begin()
-        let reply = try XCTUnwrap(joiner.legal.first { $0.type != .wait },
-                                  "the joiner must have a reply")
+        let reply = try XCTUnwrap(joiner.legal.first { $0.type != .wait })
         await joiner.apply(reply)
         let p1 = try await joiner.stagedPayload()
         let e1 = try await MessageEnvelope.decode(payload: p1, viewer: -1)
         XCTAssertEqual(e1.lastActorSeat, 1, "fixture: seat 1 sealed this chain")
 
-        // Seat 0 opens it — they were not there for seat 1's move, so it plays.
         let receiver = MessageTurnController(parentPayload: p1, parent: e1, mySeat: 0)
         await receiver.begin()
         XCTAssertFalse(receiver.openReplayEvents.isEmpty,
-                       "the seat that did NOT move must be shown what happened")
+                       "the seat that did not move is shown what happened")
 
-        // Seat 1 reopens their OWN bubble — nothing to catch up on.
         let sender = MessageTurnController(parentPayload: p1, parent: e1, mySeat: 1)
         await sender.begin()
-        XCTAssertTrue(sender.openReplayEvents.isEmpty,
-                      "a seat must never be shown a replay of the move it just played")
-        _ = k
+        XCTAssertFalse(sender.openReplayEvents.isEmpty,
+                       "and so is the seat that did — opening a chain always shows its last move")
     }
 
     /// A sanity check on the decoder itself: the packed frame decodes to a

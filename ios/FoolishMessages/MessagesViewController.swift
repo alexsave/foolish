@@ -35,6 +35,12 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// (see that type's doc), so the live GameSurface's `loadKey` doesn't
     /// change and the board isn't torn down and rebuilt out from under itself.
     private var lastPayloadURL: URL?
+    /// The payload this device most recently SENT. `pendingStage` is cleared at
+    /// `didStartSending`, but Messages leaves that bubble selected — so without
+    /// this the next `present()` reloaded the whole surface from my own just-sent
+    /// chain and replayed the move I had just watched myself play (round-3's
+    /// double animation). See StagedBubbleRouting.
+    private var lastSentPayload: Data?
 
     // MARK: - Lifecycle (§11.1)
 
@@ -56,6 +62,7 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// a chain was actually sent — insert alone is not a commit.
     override func didStartSending(_ message: MSMessage, conversation: MSConversation) {
         startingNewGame = false
+        lastSentPayload = pendingStage?.payload
         commitPendingStage(chatKey: ChatKey.make(
             local: conversation.localParticipantIdentifier.uuidString,
             remotes: conversation.remoteParticipantIdentifiers.map(\.uuidString)))
@@ -90,7 +97,8 @@ final class MessagesViewController: MSMessagesAppViewController {
         // that type's doc for the full chain.
         let payloadURL = StagedBubbleRouting.resolvedPayloadURL(
             selectedURL: selected?.url, startingNewGame: startingNewGame,
-            pendingStage: pendingStage, lastPayloadURL: lastPayloadURL)
+            pendingStage: pendingStage, lastPayloadURL: lastPayloadURL,
+            lastSentPayload: lastSentPayload)
         lastPayloadURL = payloadURL
         // §6.2 S1's exact half: did THIS device send the tapped bubble? Only the
         // extension can answer — the participant UUIDs never travel in the payload.

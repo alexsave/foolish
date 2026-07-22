@@ -144,7 +144,8 @@ private struct GameSurface: View {
             LobbyView(env: lob.env, mySeat: lobbySeat(lob.env),
                       nickname: MessageGameStore.shared.nickname,
                       onJoin: { name in Task { await joinLobby(lob, nickname: name) } },
-                      onStart: { Task { await startGame(lob) } })
+                      onStart: { Task { await startGame(lob) } },
+                      onInvite: { Task { await onSend(lob.payload, lobbySeat(lob.env) ?? 0) } })
         } else if let g = nameGate {
             NameGateView(prefill: MessageGameStore.shared.nickname) { name in
                 Task { await nameThenSeat(name, gate: g) }
@@ -620,11 +621,40 @@ private struct NewGameSetup: View {
 /// stages the LIVE game). Two distinct texts, never one fused action. There is
 /// likewise no "Send invite" button (notes 14/16): creating and joining both
 /// AUTO-STAGE the reseal, so the human's very next tap is Messages' own Send.
+/// WHICH control a lobby offers, pulled out of `LobbyView` as a pure function
+/// for one reason: the view had a state with NO control at all — joined, but
+/// fewer than two players, so no Start (needs 2), no Join (already in), no
+/// invite (notes 14/16 removed that button as redundant with the auto-stage).
+/// A lobby listing one player and offering nothing is a dead end, and it is
+/// invisible in a `if/else if/else` chain until someone lands in it. As an enum
+/// there is always exactly one answer, and a test can enumerate every
+/// (mySeat, joined, capacity) and assert so.
+public enum LobbyControls {
+    /// Start the game at the joined count (I'm in, 2+ have joined).
+    case start
+    /// Re-stage the WAITING chain so the human can send the invite (I'm in,
+    /// nobody else is yet).
+    case invite
+    /// Claim a seat (I'm not in, and there is room).
+    case join
+    /// Nothing to do but wait (I'm not in, and there is no room).
+    case full
+
+    public static func offered(mySeat: Int?, joined: Int, capacity: Int) -> LobbyControls {
+        if mySeat != nil { return joined >= 2 ? .start : .invite }
+        return joined < capacity ? .join : .full
+    }
+}
+
 private struct LobbyView: View {
     let env: MessageEnvelope
     let mySeat: Int?
     let onJoin: (String) -> Void
     let onStart: () -> Void
+    /// Re-stage this same WAITING chain so the human can send the invite again
+    /// — the recovery path for a lobby whose auto-staged bubble is gone (see
+    /// the `mySeat != nil, joins < 2` branch in `body`).
+    let onInvite: () -> Void
 
     /// The joiner's editable name (B3): compact can't host a field, so this is the
     /// place a joiner names themselves before claiming a seat. Seeded from the
@@ -633,15 +663,12 @@ private struct LobbyView: View {
 
     init(env: MessageEnvelope, mySeat: Int?, nickname: String,
          onJoin: @escaping (String) -> Void,
-         onStart: @escaping () -> Void) {
+         onStart: @escaping () -> Void,
+         onInvite: @escaping () -> Void) {
         self.env = env; self.mySeat = mySeat
-        self.onJoin = onJoin; self.onStart = onStart
+        self.onJoin = onJoin; self.onStart = onStart; self.onInvite = onInvite
         _nickname = State(initialValue: nickname == "Me" ? "" : nickname)
     }
-
-    /// Free seats against this WAITING envelope's own capacity (`env.nPlayers`)
-    /// — NOT always 8; see the type doc.
-    private var freeSeats: Int { env.nPlayers - env.joins.count }
 
     var body: some View {
         VStack(spacing: 12) {
@@ -661,20 +688,37 @@ private struct LobbyView: View {
             }
             .padding(.horizontal)
 
-            if mySeat != nil {
-                // note 16: no "Waiting for players — N joined" line here any more —
-                // the joined list above already says exactly that, and the owner's
-                // read was "the lobby is too tight" for a second line saying the
-                // same thing.
-                if env.joins.count >= 2 {
-                    FButton(FStrings.t("ios.msg.startgame"), kind: .wood, action: onStart)
-                }
-            } else if freeSeats > 0 {
+            // note 16: no "Waiting for players — N joined" line here any more —
+            // the joined list above already says exactly that, and the owner's
+            // read was "the lobby is too tight" for a second line saying the
+            // same thing.
+            switch LobbyControls.offered(mySeat: mySeat, joined: env.joins.count,
+                                         capacity: env.nPlayers) {
+            case .start:
+                FButton(FStrings.t("ios.msg.startgame"), kind: .wood, action: onStart)
+            case .invite:
+                    // I'm in, nobody else is yet. This branch used to render
+                    // NOTHING — no Start (needs 2), no Join (I'm joined), no
+                    // invite (notes 14/16 dropped that button as redundant with
+                    // the auto-stage). Which is a dead end the moment the
+                    // auto-staged invite is gone: sent already, or deleted from
+                    // the input field, or the extension reopened later. The
+                    // owner hit exactly that — a lobby listing one player and
+                    // not a single control on it.
+                    //
+                    // The invite button is only redundant while the auto-staged
+                    // bubble is still sitting in the compose field, so it comes
+                    // back HERE and only here: re-stage the same WAITING chain
+                    // so there is always a way to ask someone to join.
+                    Text(FStrings.t("ios.msg.waiting"))
+                        .font(.footnote).foregroundStyle(.black.opacity(0.55))
+                    FButton(FStrings.t("ios.msg.invite"), kind: .wood, action: onInvite)
+            case .join:
                 // Same width as the buttons below (note 29) — both rely on the
                 // outer .padding() alone, no extra inset on the field.
                 TextField(FStrings.t("ios.you"), text: $nickname).textFieldStyle(.roundedBorder)
                 FButton(FStrings.t("ios.msg.joinas", ["name": displayName]), kind: .wood) { onJoin(nickname) }
-            } else {
+            case .full:
                 Text(FStrings.t("ios.msg.lobbyfull")).font(.footnote).foregroundStyle(.black.opacity(0.55))
             }
         }

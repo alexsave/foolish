@@ -338,4 +338,31 @@ final class HarnessFlowTests: XCTestCase {
         XCTAssertEqual(m.senderIsLocal, first.senderId == m.localId,
                        "sender inference follows the SELECTED bubble, not the transcript tail")
     }
+    /// The double animation, pinned at its source: sending my own move must not
+    /// rebuild the board. `viewKey` drives `.id(...)` on the live
+    /// MessagesRootView, so a change there tears the surface down and reloads it
+    /// from the bubble I just sent — whose last move is the one I just watched
+    /// myself play, which the open-replay then plays again.
+    func testDeliveringMyOwnMoveDoesNotRebuildTheBoard() async throws {
+        let m = HarnessModel(count: 2)
+        try await kickoff(m, seed: 41, gameId: 0xD00D)   // stages AND delivers
+        let afterFirst = m.viewKey
+
+        // Stage and send a second move as the same player: still the same board.
+        let parent = bytes(m.payloadURL)
+        XCTAssertFalse(parent.isEmpty)
+        if let next = try await stageTurn(parent: parent, seat: 0) {
+            let beforeStage = m.viewKey
+            await m.stage(next, seat: 0)
+            XCTAssertEqual(m.viewKey, beforeStage, "staging must not rebuild the board")
+            m.deliver()
+            XCTAssertEqual(m.viewKey, beforeStage,
+                           "and neither must sending — that reload is the second animation")
+        }
+        XCTAssertEqual(m.viewKey, afterFirst, "nothing about my own send rebuilds the board")
+
+        // But becoming another player (a real device receiving) DOES.
+        m.become(1)
+        XCTAssertNotEqual(m.viewKey, afterFirst, "another player is another board")
+    }
 }
