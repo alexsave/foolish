@@ -829,13 +829,30 @@ int fio_replay_events_json(const char *code, int viewer, char *out, int cap) {
 //
 // The group is therefore the trailing run of steps by ONE acting seat: walk
 // back from the end over the seatless tail (ROUND_END belongs to whoever caused
-// it), then back over every immediately preceding step by that same seat. It
-// stops at the first step someone else played, which is the previous bubble's
-// turn by construction — a chain alternates senders, and a seat cannot act
-// twice in a row across two bubbles without someone else's action in between.
-// Deliberately NOT recovered from the FMSG body's own action list: the boundary
-// question is "which steps belong together", and the chain answers it without
-// needing the envelope.
+// it), then back over every immediately preceding step by that same seat.
+//
+// KNOWN LIMIT, accepted deliberately (owner's call). That run is the last
+// BUBBLE only when the sender staged its actions together and sent once. A
+// player who covers, sends, covers, sends, covers, sends puts three cover steps
+// on the chain that are indistinguishable from three staged at once — so
+// opening the third bubble replays all three. Nothing in the payload can tell
+// them apart: the envelope carries `turn` (total actions) and `parent8` (the
+// parent's DIGEST), but not the parent's turn, so a receiver cannot subtract.
+//
+// Two ways out were considered:
+//
+//   1. Diff against the previous chain this device held. Rejected: it makes the
+//      animation a property of one device's CACHE rather than of the bubble, so
+//      a wiped store, a reinstall or a new phone silently changes what replays.
+//   2. Bump the FMSG format and add a u8 "actions in this bubble", written at
+//      seal time from the pending count. This is the correct fix and the one to
+//      reach for if the case ever stops being rare — it is exact, it is a
+//      property of the bubble, and it costs one byte. It was not done now only
+//      because it invalidates every format-2 payload already in a thread, which
+//      is a poor trade against how seldom anyone sends one cover at a time.
+//
+// So this stays a heuristic on purpose, and it is the RIGHT one for the common
+// case (a staged double cover, which used to replay only its last cover).
 //
 // Every frame is masked for `viewer` exactly like live play: the viewer's own
 // drawn/picked-up cards carry real identities (fixing "my own refill never
