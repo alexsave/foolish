@@ -1720,6 +1720,21 @@ static int g_n_game_workers = N_GAME_WORKERS_DEFAULT;
 static int g_n_meta_workers = N_META_WORKERS_DEFAULT;
 static int g_n_create_workers = N_CREATE_WORKERS_DEFAULT;
 
+// SO_REUSEPORT multi-acceptor (see SERVER_SCALING.md). Instead of one
+// dispatcher thread owning the single listening socket, run N acceptor
+// threads, each with its OWN listener bound to the same port with
+// SO_REUSEPORT. The kernel spreads inbound connections across the listeners
+// by 4-tuple hash, so accept() + the TLS handshake + request parsing all
+// parallelize and no single thread is the connection-arrival bottleneck (the
+// old single dispatcher serialized every SSL_accept). Game-affinity is
+// unchanged: each acceptor still hands the parsed connection to the epoll
+// worker that owns its game (worker_handoff_push), exactly as before.
+// --accept-threads=N; default 2 (a safe win over 1 without oversubscribing a
+// small box, since idle acceptors just block in accept()).
+#define N_ACCEPT_THREADS_DEFAULT 2
+#define MAX_ACCEPT_THREADS 64
+static int g_n_accept_threads = N_ACCEPT_THREADS_DEFAULT;
+
 typedef struct {
     Conn conn;
     Req req;
@@ -2700,8 +2715,11 @@ built:;
     fprintf(stderr, "[bench] DONE — no crash at %d connections / %d games, RSS %ld MB\n", cmade, gmade, rss_c / 1024);
 }
 
+static int   make_listener(int port, bool reuseport);   // defined just after main()
+static void *acceptor_main(void *arg);                  // defined just after main()
+
 int main(int argc, char **argv) {
-    thread_disable_cancellation();   // the dispatcher thread runs the accept() loop — same cancel-bracket tax, see thread_disable_cancellation
+    thread_disable_cancellation();   // main is acceptor[0]; runs the accept() loop — same cancel-bracket tax, see thread_disable_cancellation
     int port = 8099;
     // Default: DB ON (see DURABILITY.md — "Stage 2: persistence"). --no-db
     // opts all the way out (pure in-memory, e.g. for tests/benchmarks that
@@ -2722,6 +2740,11 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if (!strncmp(argv[i], "--bench-fanout=", 15)) { bench_fanout = atoi(argv[i] + 15); continue; }
         if (!strncmp(argv[i], "--max-conns=", 12)) { g_max_conns = atoi(argv[i] + 12); continue; }
+        if (!strncmp(argv[i], "--accept-threads=", 17)) {
+            int nw = atoi(argv[i] + 17);
+            if (nw > 0 && nw <= MAX_ACCEPT_THREADS) g_n_accept_threads = nw;
+            continue;
+        }
         if (!strncmp(argv[i], "--game-workers=", 15)) {
             int nw = atoi(argv[i] + 15);
             if (nw > 0 && nw <= MAX_GAME_WORKERS) g_n_game_workers = nw;
@@ -2873,27 +2896,75 @@ int main(int argc, char **argv) {
         g_epoll_active = true;
     }
 
-    int srv = socket(AF_INET, SOCK_STREAM, 0);
-    int opt = 1; setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof opt);
-    struct sockaddr_in addr = {0};
-    addr.sin_family = AF_INET; addr.sin_addr.s_addr = INADDR_ANY; addr.sin_port = htons(port);
-    if (bind(srv, (struct sockaddr *)&addr, sizeof addr) < 0) { perror("bind"); return 1; }
-    listen(srv, 64);
+    // SO_REUSEPORT multi-acceptor bring-up. Create g_n_accept_threads
+    // listeners, each bound to `port` with SO_REUSEPORT so the kernel spreads
+    // inbound connections across them; run one acceptor loop per listener.
+    // (See make_listener / acceptor_main and the g_n_accept_threads doc.)
+    int listeners[MAX_ACCEPT_THREADS];
+    int n_listeners = 0;
+    for (int i = 0; i < g_n_accept_threads; i++) {
+        int fd = make_listener(port, /*reuseport=*/true);
+        if (fd < 0) {
+            if (n_listeners == 0) return 1;   // couldn't bind even one — fatal
+            fprintf(stderr, "warning: bound only %d/%d acceptor listeners\n",
+                    n_listeners, g_n_accept_threads);
+            break;
+        }
+        listeners[n_listeners++] = fd;
+    }
+
     fprintf(stderr, "foolish native server (kernel-driven, in-memory + SQLite write-behind%s) on :%d "
-            "(game-workers=%d meta-workers=%d create-workers=%d db=%s interval=%dms)\n",
+            "(accept-threads=%d game-workers=%d meta-workers=%d create-workers=%d db=%s interval=%dms)\n",
             g_tls_ctx ? " + TLS (https/wss)" : "",
-            port, g_n_game_workers, g_n_meta_workers, g_n_create_workers,
+            port, n_listeners, g_n_game_workers, g_n_meta_workers, g_n_create_workers,
             db_path ? db_path : "off (--no-db)", persist_interval_ms);
 
-    // The dispatcher: accept, (Stage 3) do the TLS handshake if this
-    // listener is running TLS, read+parse the request, then either hand it
-    // to a dedicated thread (/ws — a persistent connection, see
-    // ws_conn_thread's doc for why it stays off the typed queues) or
-    // enqueue it onto the right typed worker pool (classify_queue). This is
-    // the accept loop itself acting as dispatcher (no separate
-    // reader-thread pool) — see SERVER_SCALING.md for why that's an
-    // acceptable, correctness-first choice here rather than a scalability
-    // bottleneck in practice.
+    // Spawn acceptors [1..n_listeners-1] as detached threads; run acceptor
+    // [0] on this (main) thread so main() blocks here forever, exactly as the
+    // old single accept loop did. The kernel decides which listener each new
+    // connection lands on (4-tuple hash).
+    for (int i = 1; i < n_listeners; i++) {
+        pthread_t at;
+        if (pthread_create(&at, NULL, acceptor_main, (void *)(intptr_t)listeners[i]) == 0)
+            pthread_detach(at);
+        else
+            fprintf(stderr, "warning: acceptor thread %d failed to start\n", i);
+    }
+    acceptor_main((void *)(intptr_t)listeners[0]);   // never returns
+    return 0;
+}
+
+// Create a listening socket bound to `port`. With reuseport, sets
+// SO_REUSEPORT so multiple sockets can share the port and the kernel
+// load-balances accepts across them (the SO_REUSEPORT multi-acceptor model);
+// it also lets a redeploy bind the port before the old process has fully
+// exited. Backlog is deliberately large — a server aiming at tens of
+// thousands of connections must not drop SYNs during an arrival burst.
+// Returns the fd, or -1 on failure (the caller decides fatal-ness).
+static int make_listener(int port, bool reuseport) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) { perror("socket"); return -1; }
+    int opt = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof opt);
+    if (reuseport && setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof opt) < 0)
+        perror("setsockopt(SO_REUSEPORT)");   // non-fatal: a single listener still works
+    struct sockaddr_in addr = {0};
+    addr.sin_family = AF_INET; addr.sin_addr.s_addr = INADDR_ANY; addr.sin_port = htons(port);
+    if (bind(fd, (struct sockaddr *)&addr, sizeof addr) < 0) { perror("bind"); close(fd); return -1; }
+    if (listen(fd, 1024) < 0) { perror("listen"); close(fd); return -1; }
+    return fd;
+}
+
+// One acceptor thread: owns `srv` (its own SO_REUSEPORT listener, passed as
+// an int in arg) and runs the accept -> (TLS handshake) -> read+parse ->
+// dispatch loop below. N of these run concurrently, one per listener. The
+// loop is exactly what the single dispatcher used to run — replicated across
+// threads, not otherwise changed; game-affinity is preserved because each
+// dispatch path still hands off to the epoll worker that owns the game
+// (worker_handoff_push / classify_queue). See SERVER_SCALING.md.
+static void *acceptor_main(void *arg) {
+    int srv = (int)(intptr_t)arg;
+    thread_disable_cancellation();   // per-thread cancel bracket; each acceptor pays it once
     for (;;) {
         int fd = accept(srv, NULL, NULL);
         if (fd < 0) continue;
@@ -2979,4 +3050,5 @@ int main(int argc, char **argv) {
             epoll_dispatch_oneshot(&conn, &r, buf);
         }
     }
+    return NULL;   // unreachable — the accept loop above never terminates
 }
