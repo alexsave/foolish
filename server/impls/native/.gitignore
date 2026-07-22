@@ -9,6 +9,7 @@ foolish_hammer
 # QUICHE_DIR points at — vendored/built out of tree, not committed. See the
 # foolish_server_quic target in the Makefile for how to build it.
 foolish_server_quic
+wt_client
 quiche/
 *.a
 

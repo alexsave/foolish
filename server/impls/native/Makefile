@@ -82,7 +82,12 @@ foolish_server_quic: foolish_server.c $(QUIC_SRC) $(NATIVE_SRC) $(PERSIST_SRC) $
 	$(CC) $(CFLAGS) -DFOOLISH_QUIC -DFOOLISH_NO_OPENSSL -I$(QUICHE_DIR)/include \
 	  $^ -o $@ $(LDFLAGS) $(SQLITE_LDFLAGS) $(QUICHE_DIR)/lib/libquiche.a -ldl
 
+# wt_client: the WebTransport smoke-test client (quic_test.sh drives it). Pure
+# quiche client — no kernel, no server sources. Same QUICHE_DIR as above.
+wt_client: wt_client.c
+	$(CC) $(CFLAGS) -I$(QUICHE_DIR)/include $^ -o $@ -lpthread -ldl -lm $(QUICHE_DIR)/lib/libquiche.a
+
 clean:
-	rm -f foolish_server foolish_hammer foolish_server_prof foolish_server_quic
+	rm -f foolish_server foolish_hammer foolish_server_prof foolish_server_quic wt_client
 
 .PHONY: run clean
