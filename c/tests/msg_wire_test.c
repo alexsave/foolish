@@ -309,6 +309,67 @@ static void test_waiting_phase(void) {
     CHECK(d.n_joins == 1 && d.n_actions == 0, "WAITING fields wrong");
 }
 
+// Rule P, rule 0: a STARTED chain beats the lobby it grew out of.
+//
+// The regression this pins is a fork, not a cosmetic preference. A WAITING
+// lobby and the LIVE handoff that starts it both sit at round 0 / turn 0, so
+// before rule 0 existed the comparison fell through to the digest tiebreak —
+// a coin flip. Roughly half of all games therefore had every device that had
+// cached the lobby REJECT the started game and keep the invite, which the
+// client then renders as a board dealt at the lobby's CAPACITY (8) instead of
+// the real player count. Two deals, two different first attackers, deadlock.
+//
+// So the loop below is not just "assert live wins": it counts the cases where
+// the lobby's digest sorts FIRST (exactly the ones the old rule got wrong) and
+// fails if there were none, because a run without them would pass against the
+// broken rule too.
+static void test_rule_p_started_beats_lobby(void) {
+    unsigned char lobby_wire[ENV_CAP], live_wire[ENV_CAP];
+    int lobby_digest_first = 0, cases = 0;
+
+    for (uint32_t g = 1; g <= 60; g++) {
+        uint8_t seed[MSG_SEED_LEN];
+        seed_fill(seed, g * 7919u);
+
+        // The invite: dealt at the lobby's capacity, only the creator joined.
+        MsgEnvelope lob;
+        env_init(&lob, seed, 8);
+        lob.phase = MSG_PHASE_WAITING;
+        lob.game_id = 0x1000ULL + g;
+        lob.n_joins = 1;
+        lob.turn = 0; lob.round = 0; lob.n_actions = 0; lob.actions_len = 0; lob.actions = 0;
+        const int nl = msg_encode(&lob, lobby_wire, sizeof(lobby_wire));
+        CHECK(nl > 0, "lobby encode failed: %d", nl);
+
+        // The handoff Start seals from the SAME locked seed: same game, real
+        // player count, no action applied yet — round 0 / turn 0, like the lobby.
+        MsgEnvelope live;
+        env_init(&live, seed, 5);
+        live.phase = MSG_PHASE_LIVE;
+        live.game_id = lob.game_id;
+        live.n_joins = 5;
+        live.turn = 0; live.round = 0; live.n_actions = 0; live.actions_len = 0; live.actions = 0;
+        const int nv = msg_encode(&live, live_wire, sizeof(live_wire));
+        CHECK(nv > 0, "live handoff encode failed: %d", nv);
+
+        MsgChainKey kl, kv;
+        CHECK(msg_chain_key(lobby_wire, nl, &kl) == MSG_EOK, "lobby chain key failed");
+        CHECK(msg_chain_key(live_wire, nv, &kv) == MSG_EOK, "live chain key failed");
+        CHECK(kl.round == kv.round && kl.turn == kv.turn,
+              "fixture no longer poses the tie (round/turn differ)");
+
+        cases++;
+        if (memcmp(kl.digest, kv.digest, SHA256_DIGEST_LEN) < 0) lobby_digest_first++;
+
+        CHECK(msg_rule_p(&kl, &kv) > 0, "game %u: lobby preferred over the started game", g);
+        CHECK(msg_rule_p(&kv, &kl) < 0, "game %u: rule P is not symmetric", g);
+    }
+    CHECK(cases > 0, "rule P lobby/live fixture built nothing");
+    CHECK(lobby_digest_first > 0,
+          "no fixture had the lobby digest sorting first — this run could not "
+          "have caught the digest-coin-flip bug");
+}
+
 // ---------- 4. tamper matrix ---------------------------------------------
 
 static void test_tamper(void) {
@@ -760,6 +821,7 @@ int main(int argc, char **argv) {
     test_sha256_kat();
     test_roundtrip(games, seed0);
     test_waiting_phase();
+    test_rule_p_started_beats_lobby();
     test_tamper();
     test_hostile_body();
     test_size_budget(games * 4, seed0);

@@ -239,9 +239,22 @@ int msg_replay(const MsgEnvelope *e, Game *g);
 //
 // Two chains for the same game_id are ordered by (§7.2):
 //
+//   0. a STARTED chain beats a pre-game one — phase >= MSG_PHASE_LIVE outranks
+//      WAITING/ACCEPT, always
 //   1. higher round wins        — a closed bout is settled history
 //   2. else higher turn wins    — more accepted actions
 //   3. else smaller SHA-256     — arbitrary, but identical everywhere
+//
+// Rule 0 is not cosmetic, and it is not subsumed by round/turn: a WAITING lobby
+// and the LIVE handoff that starts it BOTH sit at round 0 / turn 0 (the handoff
+// applies no action — see msg_seal's 0-action path), so without it the two tie
+// all the way down to the digest and the winner is a COIN FLIP. Devices that
+// cached the lobby then kept it, and `adopt` rendered that phase-0 payload as a
+// board — which is dealt at the lobby's CAPACITY (8 for a group), with joins
+// only for whoever had joined. That is the "some players see a 5-player game,
+// others see an 8-player one with seats named 'Seat N'" fork, and because those
+// two deals have different first attackers, the game deadlocks. A started chain
+// is never superseded by the invite it grew out of, so it wins outright.
 //
 // Delivery order is never an input. Two devices can transiently disagree about
 // which message is "newest", so the rule needs no clocks and no ordering
@@ -250,6 +263,7 @@ int msg_replay(const MsgEnvelope *e, Game *g);
 // In C, not in each client: this decides which game every player sees, so a
 // phone and a browser disagreeing here forks the game. There is nothing to port.
 typedef struct {
+    uint8_t  phase;                        // MSG_PHASE_*; only "started or not" is compared
     uint8_t  round;
     uint16_t turn;
     uint8_t  digest[SHA256_DIGEST_LEN];

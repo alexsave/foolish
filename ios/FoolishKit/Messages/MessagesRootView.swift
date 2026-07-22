@@ -29,10 +29,10 @@ public struct MessagesRootView: View {
     /// Bumped by the host each time the human taps New game, so an explicit New
     /// game resets the session while a mere compact<->expanded toggle does not.
     let newGameToken: Int
-    /// This conversation's identity (`MSConversation.localParticipantIdentifier
-    /// .uuidString`), threaded down to every `MessageGameStore` lookup so a game
-    /// cached from a DIFFERENT chat on this device can never resolve `.known`
-    /// here — see the chat-scoping fix in `MessageGameStore`'s type doc.
+    /// This conversation's identity (`ChatKey.make` over its participant set),
+    /// threaded down to every `MessageGameStore` lookup so a game cached from a
+    /// DIFFERENT chat on this device can never resolve `.known` here — see the
+    /// chat-scoping fix in `MessageGameStore`'s type doc.
     let chatKey: String
     let chatIsDM: Bool
     let chatPlayers: Int
@@ -381,6 +381,17 @@ private struct GameSurface: View {
     /// Adopt `winner` as the game, rebase my staged-but-unsent moves onto it
     /// (Rule R, §7.4), refresh the preferred-chain cache, and open the board.
     private func adopt(winner: Data, env: MessageEnvelope) async {
+        // A WAITING envelope is an INVITE, and this function opens a BOARD. They
+        // are never interchangeable: a lobby seal leaves a game dealt at the
+        // lobby's CAPACITY resident (8 for a group chat — see `createWaiting`),
+        // so adopting one as a board shows a phantom 8-player game whose unjoined
+        // seats read "Seat N", with a different first attacker than the real
+        // game — the round-3 "some see a 5-player game, some see 8" fork, which
+        // deadlocks the thread. Rule P now ranks any started chain above a lobby
+        // (msg_rule_p rule 0), so nothing should reach here at phase 0 any more;
+        // this is the structural guarantee behind that, not a second opinion
+        // about which chain wins.
+        if env.phase == 0 { lobby = Lobby(env: env, payload: winner); return }
         // note 4/9/38: MessageGameStore still holds the chain we PREVIOUSLY
         // cached for this game — `cache(...)` (via seatOnBoard/choose below)
         // is what overwrites it. Grab its raw bytes now, before that happens,
