@@ -2564,6 +2564,91 @@ static SSL_CTX *g_tls_ctx = NULL;
 // Connection handling — the dispatcher (T2a Deliverable 2)
 // --------------------------------------------------------------------------
 
+// --------------------------------------------------------------------------
+// --bench-fanout=N: in-process scaling probe. The container's hard ulimit -n
+// (4096) makes N real sockets impossible, but the SERVER's own scaling concerns
+// are memory + the per-connection fan-out cost, neither of which needs a real
+// fd. This builds N real EConns (2 per real dealt GameSlot) on one worker's
+// ws_head and runs the actual push path (econn_push_view — state_put_cached_ptr
+// + ws_send_frame2 into each wbuf, the exact code worker_push_stale runs),
+// reporting RSS and fan-out throughput. Proves the data structures + hot loop
+// hold at N; the socket count itself is an OS ulimit knob, not a server limit.
+static long bench_rss_kb(void) {
+    FILE *f = fopen("/proc/self/status", "r");
+    if (!f) return 0;
+    char line[256]; long kb = 0;
+    while (fgets(line, sizeof line, f)) if (sscanf(line, "VmRSS: %ld kB", &kb) == 1) break;
+    fclose(f); return kb;
+}
+static void run_bench_fanout(int n_conns) {
+    const int seats = 2;
+    int n_games = (n_conns + seats - 1) / seats;
+    fprintf(stderr, "[bench] target %d connections across %d 2-seat games (fd-free, in-process)\n", n_conns, n_games);
+    long rss0 = bench_rss_kb();
+
+    GameSlot **games = malloc(sizeof(GameSlot *) * (size_t)n_games);
+    if (!games) { fprintf(stderr, "[bench] OOM games array\n"); return; }
+    int gmade = 0;
+    for (int gi = 0; gi < n_games; gi++) {
+        int idx = g_games_count;
+        GameSlot *s = game_slot_ensure(idx);
+        if (!s) { fprintf(stderr, "[bench] game slot alloc failed at %d\n", gi); break; }
+        g_games_count++;
+        memset(s, 0, sizeof *s);
+        s->slot_idx = idx;
+        pthread_mutex_init(&s->lock, NULL);
+        pthread_cond_init(&s->cond, NULL);
+        for (int k = 0; k < MAX_PLAYERS + 1; k++) s->view_cache_version[k] = (uint32_t)-1;
+        s->used = true;
+        s->game.num_players = seats;
+        for (int p = 0; p < seats; p++) s->game.players[p].strategy_key = STRATEGY_KEY_HUMAN;
+        game_seat_and_deal(&s->game, NULL, seats);
+        s->version = 1;
+        games[gmade++] = s;
+    }
+    long rss_g = bench_rss_kb();
+
+    Worker *w = &g_workers[0];
+    int cmade = 0;
+    for (int gi = 0; gi < gmade && cmade < n_conns; gi++)
+        for (int seat = 0; seat < seats && cmade < n_conns; seat++) {
+            EConn *ec = calloc(1, sizeof(EConn));
+            if (!ec) { fprintf(stderr, "[bench] econn alloc failed at %d\n", cmade); goto built; }
+            ec->kind = ECONN_WS; ec->fd = -1; ec->slot = games[gi];
+            ec->seat = seat; ec->spectator = false; ec->cache_idx = seat; ec->viewer = seat;
+            ec->last_pushed_version = 0;
+            ec->wbuf_cap = WS_WBUF_CAP; ec->wbuf = malloc(WS_WBUF_CAP);
+            if (!ec->wbuf) { fprintf(stderr, "[bench] wbuf OOM at %d\n", cmade); free(ec); goto built; }
+            ec->prev = NULL; ec->next = w->ws_head;
+            if (w->ws_head) w->ws_head->prev = ec;
+            w->ws_head = ec; cmade++;
+        }
+built:;
+    long rss_c = bench_rss_kb();
+    fprintf(stderr, "[bench] built %d connections across %d games\n", cmade, gmade);
+    fprintf(stderr, "[bench] RSS  start=%ld MB  +games=%ld MB  +conns=%ld MB  TOTAL=%ld MB\n",
+            rss0 / 1024, (rss_g - rss0) / 1024, (rss_c - rss_g) / 1024, rss_c / 1024);
+    if (gmade) fprintf(stderr, "[bench]   per-game=%.1f KB   per-conn=%.1f KB\n",
+            (double)(rss_g - rss0) / gmade, cmade ? (double)(rss_c - rss_g) / cmade : 0.0);
+
+    // Fan-out sweeps: bump every game's version so all conns are stale, then run
+    // the real per-connection push encode over the whole ws_head list.
+    int rounds = 5; long pushes = 0;
+    for (EConn *ec = w->ws_head; ec; ec = ec->next) { uint32_t v; econn_push_view(ec, NULL, 0, false, &v, NULL); ec->wlen = ec->woff = 0; ec->last_pushed_version = 0; }  // warm caches
+    struct timespec t0, t1; clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (int r = 0; r < rounds; r++) {
+        for (int gi = 0; gi < gmade; gi++) games[gi]->version++;
+        for (EConn *ec = w->ws_head; ec; ec = ec->next) {
+            uint32_t v; if (econn_push_view(ec, NULL, 0, true, &v, NULL) == 1) { ec->last_pushed_version = v; ec->wlen = ec->woff = 0; pushes++; }
+        }
+    }
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    double secs = (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) / 1e9;
+    fprintf(stderr, "[bench] fan-out: %ld pushes in %.3fs = %.0f pushes/s (%.3f us/push); full sweep of %d conns = %.1f ms\n",
+            pushes, secs, secs > 0 ? pushes / secs : 0, pushes ? secs / pushes * 1e6 : 0, cmade, rounds ? secs / rounds * 1000 : 0);
+    fprintf(stderr, "[bench] DONE — no crash at %d connections / %d games, RSS %ld MB\n", cmade, gmade, rss_c / 1024);
+}
+
 int main(int argc, char **argv) {
     thread_disable_cancellation();   // the dispatcher thread runs the accept() loop — same cancel-bracket tax, see thread_disable_cancellation
     int port = 8099;
@@ -2582,7 +2667,9 @@ int main(int argc, char **argv) {
     // `--tls-port`).
     bool want_tls = false;
     const char *cert_path = NULL, *key_path = NULL;
+    int bench_fanout = 0;
     for (int i = 1; i < argc; i++) {
+        if (!strncmp(argv[i], "--bench-fanout=", 15)) { bench_fanout = atoi(argv[i] + 15); continue; }
         if (!strncmp(argv[i], "--game-workers=", 15)) {
             int nw = atoi(argv[i] + 15);
             if (nw > 0 && nw <= MAX_GAME_WORKERS) g_n_game_workers = nw;
@@ -2611,6 +2698,7 @@ int main(int argc, char **argv) {
         }
     }
     srand((unsigned)(time(NULL) ^ getpid()));   // only ever called here, before any worker thread exists
+    if (bench_fanout > 0) { run_bench_fanout(bench_fanout); return 0; }   // in-process scaling probe, then exit — see run_bench_fanout
     // Stage 4: resolve "octogen"'s STRAT_* brain id ONCE, before any
     // bot_thread can run — g_octogen_strat is read-only from every thread
     // after this line, so no lock is needed (same posture g_tls_ctx's doc
