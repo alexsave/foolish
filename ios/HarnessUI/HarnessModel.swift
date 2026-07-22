@@ -53,6 +53,12 @@ final class HarnessModel: ObservableObject {
         let key = UUID().uuidString
         var transcript: [Msg] = []
         var startNewGame = true
+        /// Which bubble the extension is opened against — real Messages'
+        /// `MSConversation.selectedMessage`. nil means "the newest", which is
+        /// what a fresh open gets. Tapping an OLDER bubble sets it, exactly like
+        /// tapping an older bubble on a phone: the extension opens on that
+        /// chain, and Rule P decides whether it is still the one to show.
+        var selected: UUID?
     }
 
     @Published private(set) var participants: [Participant]
@@ -73,6 +79,33 @@ final class HarnessModel: ObservableObject {
     /// Messages host, so it fakes the same expanded<->compact transition here so the
     /// collapse flow is testable. `.expanded` = full board; `.compact` = drawer.
     @Published private(set) var presentation: MsgPresentation = .expanded
+    /// The drawer has been swiped fully away (real Messages' third gesture:
+    /// swipe down again from compact). Lives HERE, not in the view, because
+    /// `presentation` and "is the drawer even on screen" have to be read
+    /// TOGETHER — see `stageIsExpanded` for the dead end that came of keeping
+    /// them apart.
+    @Published private(set) var drawerDismissed = false
+
+    /// Is the drawer covering the screen right now? A DISMISSED drawer is never
+    /// expanded, whatever `presentation` says.
+    ///
+    /// The bug this closes: `presentation` and dismissal were independent, and
+    /// the chrome hid the compose bar whenever `presentation == .expanded`. But
+    /// every one of `expand`/`become`/`switchChat`/`newGame`/`setCount` sets
+    /// `.expanded` unconditionally — so dismissing the drawer and then touching
+    /// any of them left BOTH hidden: no drawer (dismissed) and no compose bar
+    /// (nominally expanded), i.e. an empty chat with no way back in, since the
+    /// only way back is the compose bar's "+". Owner: "after I fully collapsed
+    /// the extension view so that it wouldn't appear, it was just gone."
+    var stageIsExpanded: Bool {
+        if drawerDismissed { return false }
+        switch presentation { case .expanded: return true; case .compact: return false }
+    }
+    /// Swipe-down-again from the compact drawer: put it away entirely.
+    func dismissDrawer() { drawerDismissed = true }
+    /// The compose bar's "+" — real Messages' app-drawer icon, and the only way
+    /// back to a dismissed drawer.
+    func reopenDrawer() { drawerDismissed = false }
     /// DEV diagnostic surfaced in the chrome (seat/turn/legal after a seed).
     @Published private(set) var debugInfo = ""
 
@@ -110,9 +143,20 @@ final class HarnessModel: ObservableObject {
     var transcript: [Msg] { chats[currentChat].transcript }
     var startNewGame: Bool { chats[currentChat].startNewGame }
     var latest: Msg? { transcript.last }
-    var payloadURL: URL? { startNewGame ? nil : latest?.url }
-    /// Did the CURRENT player send the latest bubble? Drives §6.2 sender inference.
-    var senderIsLocal: Bool { latest?.senderId == localId }
+    /// The bubble the extension is opened against — the tapped one, else the
+    /// newest (see `ChatState.selected`).
+    var selectedMsg: Msg? {
+        if let id = chats[currentChat].selected, let m = transcript.first(where: { $0.id == id }) {
+            return m
+        }
+        return latest
+    }
+    var payloadURL: URL? { startNewGame ? nil : selectedMsg?.url }
+    /// Did the CURRENT player send the bubble being opened? Drives §6.2 sender
+    /// inference — and it must follow the SELECTION, not the transcript's tail,
+    /// or tapping an older bubble would resolve identity off a different message
+    /// than the one being decoded.
+    var senderIsLocal: Bool { selectedMsg?.senderId == localId }
     /// `staged`, wrapped the same way a delivered bubble's `Msg.url` already is.
     /// Kept for parity/debugging only — the transcript renders `stagedPreview`,
     /// the snapshot, and no longer mounts a board per bubble (see `Msg`).
@@ -121,7 +165,21 @@ final class HarnessModel: ObservableObject {
     /// Reset MessagesRootView's @State whenever the player, the chat, the
     /// transcript, or the new-game intent changes, so it re-derives as the
     /// current participant IN the current chat.
-    var viewKey: String { "\(localIndex)-\(currentChat)-\(transcript.count)-\(startNewGame)" }
+    var viewKey: String {
+        "\(localIndex)-\(currentChat)-\(transcript.count)-\(startNewGame)-\(selectedMsg?.id.uuidString ?? "")"
+    }
+
+    /// Tap a transcript bubble: open the extension on THAT message, the way
+    /// tapping a bubble does on a phone. Also brings the drawer back — a tap on
+    /// a game bubble is unambiguously "show me this game", and with the drawer
+    /// dismissed there is otherwise nothing on screen to tap but the bubbles.
+    func openBubble(_ msg: Msg) {
+        chats[currentChat].selected = msg.id
+        chats[currentChat].startNewGame = false
+        staged = nil; stagedPreview = nil
+        presentation = .expanded
+        drawerDismissed = false
+    }
 
     // MARK: chat list (req 2 of the Messages-host redesign)
     //
@@ -183,11 +241,13 @@ final class HarnessModel: ObservableObject {
         localIndex = 0
         currentChat = 0
         presentation = .expanded
+        drawerDismissed = false
         rebindStore()
     }
 
     /// The compact drawer's "Open the game" (the extension's requestPresentationStyle).
-    func expand() { presentation = .expanded }
+    /// Un-dismisses too: asking for the game means showing it.
+    func expand() { presentation = .expanded; drawerDismissed = false }
     /// Manual expand/collapse for poking at the compact drawer in the harness.
     func togglePresentation() { presentation = presentation == .expanded ? .compact : .expanded }
 
@@ -211,8 +271,10 @@ final class HarnessModel: ObservableObject {
         // game; (startNewGame=false, no bubble) is the "game link is damaged"
         // screen, which is wrong here — there is simply nothing sent to them.
         chats[currentChat].startNewGame = (latest == nil)
+        chats[currentChat].selected = nil   // a new player opens on the newest bubble
         staged = nil; stagedPreview = nil   // a half-staged move doesn't cross to another player
         presentation = .expanded     // opening the game as this player
+        drawerDismissed = false
         rebindStore()
     }
 
@@ -229,10 +291,14 @@ final class HarnessModel: ObservableObject {
         currentChat = idx
         staged = nil; stagedPreview = nil
         presentation = .expanded
+        drawerDismissed = false
     }
 
     /// The current player tapped New game. New game always opens full-screen.
-    func newGame() { chats[currentChat].startNewGame = true; staged = nil; stagedPreview = nil; presentation = .expanded }
+    func newGame() {
+        chats[currentChat].startNewGame = true; staged = nil; stagedPreview = nil
+        presentation = .expanded; drawerDismissed = false
+    }
 
     /// Retract the staged bubble (§10 undo, batch-1 note 32): an undo that empties
     /// the pending ledger must drop the Send-lit payload too, not just no-op and
@@ -298,6 +364,7 @@ final class HarnessModel: ObservableObject {
                                                  preview: stagedPreview))
         staged = nil
         stagedPreview = nil
+        chats[currentChat].selected = nil     // the newest bubble is the selection again
         // Now that a real bubble exists, leave the new-game screen: the reload
         // this delivery triggers (transcript.count changed) must read the bubble,
         // not route back to setup. (Was done in stage(); see the note there.)

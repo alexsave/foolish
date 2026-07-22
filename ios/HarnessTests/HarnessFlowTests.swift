@@ -286,4 +286,56 @@ final class HarnessFlowTests: XCTestCase {
         XCTAssertEqual(MessageGameStore.shared.record(gameId: "leak-check", chatKey: m.chatKey)?.mySeat, 0,
                        "and Chat A's own row is unaffected by the round trip")
     }
+    // MARK: - the drawer must never strand the screen
+
+    /// Dismiss the drawer, then touch anything that opens the game ("New", a
+    /// player swap, a chat switch): the screen used to end up with NO drawer
+    /// (dismissed) and NO compose bar (nominally expanded), and since the
+    /// compose bar's "+" is the only way back to a dismissed drawer, that was a
+    /// dead end. Owner: "after I fully collapsed the extension view so that it
+    /// wouldn't appear, it was just gone."
+    ///
+    /// `stageIsExpanded` is what the chrome hides the compose bar on, so
+    /// asserting it is false while dismissed IS asserting the compose bar is
+    /// reachable.
+    func testADismissedDrawerNeverHidesTheComposeBar() async throws {
+        let m = HarnessModel(count: 2)
+        m.dismissDrawer()
+        XCTAssertTrue(m.drawerDismissed)
+        XCTAssertFalse(m.stageIsExpanded, "a dismissed drawer is not an expanded one")
+
+        // Each of these sets presentation = .expanded; none may hide the "+".
+        m.newGame()
+        XCTAssertFalse(m.drawerDismissed, "New game brings the drawer back")
+
+        m.dismissDrawer()
+        m.become(1)
+        XCTAssertFalse(m.drawerDismissed, "swapping player brings the drawer back")
+
+        m.dismissDrawer()
+        m.switchChat(1)
+        XCTAssertFalse(m.drawerDismissed, "switching chat brings the drawer back")
+
+        // And the "+" itself still works from a plain dismissed state.
+        m.dismissDrawer()
+        XCTAssertFalse(m.stageIsExpanded, "compose bar stays reachable while dismissed")
+        m.reopenDrawer()
+        XCTAssertFalse(m.drawerDismissed)
+    }
+
+    /// Tapping a transcript bubble opens the extension ON THAT MESSAGE, like a
+    /// phone — and brings a dismissed drawer back, since with the drawer gone
+    /// the bubbles are the only thing left on screen to tap.
+    func testTappingABubbleSelectsItAndReopensTheDrawer() async throws {
+        let m = HarnessModel(count: 2)
+        try await kickoff(m, seed: 31, gameId: 0xB0B)
+        let first = try XCTUnwrap(m.transcript.first)
+
+        m.dismissDrawer()
+        m.openBubble(first)
+        XCTAssertFalse(m.drawerDismissed, "tapping a game bubble means show me the game")
+        XCTAssertEqual(m.payloadURL, first.url, "the tapped bubble is what the extension opens")
+        XCTAssertEqual(m.senderIsLocal, first.senderId == m.localId,
+                       "sender inference follows the SELECTED bubble, not the transcript tail")
+    }
 }

@@ -163,23 +163,17 @@ struct HarnessRootView: View {
 private struct ChatScreen: View {
     @ObservedObject var model: HarnessModel
     let onBack: () -> Void
-    /// Whether the extension drawer has been swiped fully away (see
-    /// ExtensionStage's doc). Lifted up here, rather than kept local to
-    /// ExtensionStage, so the compose bar's "+" button — real Messages' own
-    /// way back into a dismissed app drawer — can reach it too.
-    @State private var isDrawerDismissed = false
 
-    /// Written as a `switch` (not `==`) so it doesn't depend on
-    /// `MsgPresentation` (FoolishKit) being Equatable — same reason as
-    /// `ExtensionStage.height`.
-    private var isExpanded: Bool {
-        switch model.presentation { case .expanded: return true; case .compact: return false }
-    }
+    /// `model.stageIsExpanded`, NOT `model.presentation == .expanded`: a
+    /// dismissed drawer is not expanded no matter what the style says, and
+    /// reading the style alone here is exactly what stranded the screen with
+    /// neither drawer nor compose bar. See HarnessModel.stageIsExpanded.
+    private var isExpanded: Bool { model.stageIsExpanded }
     /// The space the base layer leaves free at its bottom for the drawer. Zero
     /// when the drawer is expanded (it covers everything) or dismissed (there
     /// is no drawer).
     private var reservedForDrawer: CGFloat {
-        if isDrawerDismissed || isExpanded { return 0 }
+        if model.drawerDismissed || isExpanded { return 0 }
         return ExtensionStage.compactHeight
     }
 
@@ -191,13 +185,13 @@ private struct ChatScreen: View {
                 TranscriptScroll(model: model)     // the ONLY scrolling region
                 if !isExpanded {
                     Divider().overlay(Color.white.opacity(0.12))
-                    ComposeBar(model: model, isDrawerDismissed: $isDrawerDismissed)
+                    ComposeBar(model: model)
                 }
             }
             .padding(.bottom, reservedForDrawer)
             .animation(.easeInOut(duration: 0.25), value: reservedForDrawer)
 
-            ExtensionStage(model: model, isDismissed: $isDrawerDismissed)
+            ExtensionStage(model: model)
         }
         .clipped()   // the sliding drawer must never spill past the phone frame
         .background(Color(white: 0.05))
@@ -425,7 +419,10 @@ private struct MessageBubble: View {
                     Text(msg.senderName)
                         .font(.system(size: 10)).foregroundStyle(.white.opacity(0.5))
                 }
-                GamePreviewCard(image: msg.preview)
+                Button { model.openBubble(msg) } label: {
+                    GamePreviewCard(image: msg.preview)
+                }
+                .buttonStyle(.plain)
             }
             if !isMine { Spacer(minLength: 36) }
         }
@@ -468,14 +465,13 @@ private struct StagedPreviewBubble: View {
 /// "reopen" affordance taking up its own row, exactly like the real app.
 private struct ComposeBar: View {
     @ObservedObject var model: HarnessModel
-    @Binding var isDrawerDismissed: Bool
 
     var body: some View {
         HStack(spacing: 8) {
-            Button { isDrawerDismissed = false } label: {
+            Button { model.reopenDrawer() } label: {
                 Image(systemName: "plus.circle.fill")
                     .font(.system(size: 24))
-                    .foregroundStyle(isDrawerDismissed ? Color.blue : .white.opacity(0.3))
+                    .foregroundStyle(model.drawerDismissed ? Color.blue : .white.opacity(0.3))
             }
             Text(model.staged != nil ? "Send" : "Add comment or Send")
                 .font(.system(size: 14)).foregroundStyle(.white.opacity(0.45))
@@ -528,14 +524,6 @@ private struct ComposeBar: View {
 /// the drag gesture below reproduces; nothing in FoolishKit needed to change.
 private struct ExtensionStage: View {
     @ObservedObject var model: HarnessModel
-    /// Swiped fully away. Owned by `ChatScreen` (not `HarnessModel` — a real
-    /// dismissed drawer keeps its extension alive off-screen, this is purely
-    /// a host-chrome concern) and shared with `ComposeBar`'s "+" button via
-    /// binding, since that button is the only way back in. Does NOT touch
-    /// `model.presentation` — reopening lands back on whatever style was
-    /// active, which after a dismiss is always `.compact` (dismissing is only
-    /// reachable from compact, see `dragGesture`).
-    @Binding var isDismissed: Bool
     /// Live drag offset — a bit of rubber-band feedback while dragging so the
     /// grabber doesn't feel dead before the threshold triggers a transition.
     @State private var dragOffset: CGFloat = 0
@@ -567,7 +555,7 @@ private struct ExtensionStage: View {
         // Dismissed = gone, no leftover row (the owner's explicit ask — the
         // compose bar's "+" is the only way back in, not a second control
         // taking up its own space). EmptyView contributes zero layout size.
-        if isDismissed { EmptyView() } else { dockedStage }
+        if model.drawerDismissed { EmptyView() } else { dockedStage }
     }
 
     private var dockedStage: some View {
@@ -648,7 +636,7 @@ private struct ExtensionStage: View {
                     if dy > 60 { model.togglePresentation() }        // swipe down -> collapse
                 case .compact:
                     if dy < -40 { model.expand() }                   // swipe up -> expand
-                    else if dy > 40 { isDismissed = true }            // swipe down again -> dismiss
+                    else if dy > 40 { model.dismissDrawer() }         // swipe down again -> dismiss
                 }
             }
     }
