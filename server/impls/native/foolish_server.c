@@ -89,8 +89,20 @@
 // In-memory store (the "fake DB"): games + users, per-game locks.
 // --------------------------------------------------------------------------
 
-#define MAX_GAMES 256
-#define MAX_USERS 512
+// Games and users are APPEND-ONLY in this in-memory server (a slot's `used`
+// flag is created true and never cleared). They live in lazily-allocated,
+// fixed-size CHUNKS rather than one giant static array, so RSS tracks the number
+// of live games (each GameSlot is ~48 KB) instead of a compile-time ceiling, and
+// a chunk's address never moves — every GameSlot*/User* handed out (the hash
+// tables, EConn->slot, bot_thread) stays valid for the process lifetime.
+// MAX_GAMES/MAX_USERS are now just the (very high) ceilings; memory is spent per
+// chunk actually touched. See g_game_chunks / game_slot_ensure below.
+#define GAMES_PER_CHUNK   512
+#define USERS_PER_CHUNK   4096
+#define MAX_GAME_CHUNKS   512                       // ceiling 262,144 live games
+#define MAX_USER_CHUNKS   256                       // ceiling 1,048,576 users
+#define MAX_GAMES (GAMES_PER_CHUNK * MAX_GAME_CHUNKS)
+#define MAX_USERS (USERS_PER_CHUNK * MAX_USER_CHUNKS)
 #define ID_LEN 12
 
 typedef struct {
@@ -98,6 +110,7 @@ typedef struct {
     char token[33];
     char user_id[ID_LEN + 1];
     char username[24];
+    int  slot_idx;   // this user's append index, for persist_mark_dirty (was `u - g_users`); runtime-only, not serialized
 } User;
 
 // Worst-case state_put(...) output for this build's caps: 16-byte header +
@@ -140,6 +153,7 @@ typedef struct {
     // not a process-wide mutex.
     pthread_cond_t cond;
     bool bot_running;
+    int  slot_idx;   // this game's append index, for persist_mark_dirty (was `s - g_games`); runtime-only, BELOW `lock` so it is outside the serialized prefix
     // PROFILE_HOTPATH.md "T1c": under WS+legal load, view.c:state_put was the
     // single hottest function (~21-28% of instructions, inclusive) because
     // /ws's hot loop called it on EVERY round trip, including a pure "poll"
@@ -170,8 +184,39 @@ typedef struct {
 // section's own doc for why) — see the definition's `g_epoll_active` guard.
 static void epoll_notify_game_changed(GameSlot *s);
 
-static User     g_users[MAX_USERS];
-static GameSlot g_games[MAX_GAMES];
+// Chunk directories: g_*_chunks[c] is NULL until slot c*PER_CHUNK is first
+// touched, then a calloc'd block that never moves or frees. g_*_count is the
+// append cursor (== number ever created; slots are never reclaimed).
+static GameSlot *g_game_chunks[MAX_GAME_CHUNKS];
+static User     *g_user_chunks[MAX_USER_CHUNKS];
+static int       g_games_count = 0;
+static int       g_users_count = 0;
+
+// idx -> slot, allocating the backing chunk on first touch (this is where RAM
+// grows with live games). Returns NULL past the ceiling or on OOM.
+static GameSlot *game_slot_ensure(int idx) {
+    if (idx < 0 || idx >= MAX_GAMES) return NULL;
+    GameSlot **chunk = &g_game_chunks[idx / GAMES_PER_CHUNK];
+    if (!*chunk) { *chunk = calloc(GAMES_PER_CHUNK, sizeof(GameSlot)); if (!*chunk) return NULL; }
+    return &(*chunk)[idx % GAMES_PER_CHUNK];
+}
+static User *user_slot_ensure(int idx) {
+    if (idx < 0 || idx >= MAX_USERS) return NULL;
+    User **chunk = &g_user_chunks[idx / USERS_PER_CHUNK];
+    if (!*chunk) { *chunk = calloc(USERS_PER_CHUNK, sizeof(User)); if (!*chunk) return NULL; }
+    return &(*chunk)[idx % USERS_PER_CHUNK];
+}
+// Read-only accessors (no allocation) — valid for any idx a slot was created at.
+static inline GameSlot *game_slot_at(int idx) {
+    if (idx < 0 || idx >= g_games_count) return NULL;
+    GameSlot *c = g_game_chunks[idx / GAMES_PER_CHUNK];
+    return c ? &c[idx % GAMES_PER_CHUNK] : NULL;
+}
+static inline User *user_slot_at(int idx) {
+    if (idx < 0 || idx >= g_users_count) return NULL;
+    User *c = g_user_chunks[idx / USERS_PER_CHUNK];
+    return c ? &c[idx % USERS_PER_CHUNK] : NULL;
+}
 
 // Registered in main() before persist_start (see "STAGE 2: persistence"
 // below) — NULL until then, which is fine: nothing calls game_mark_dirty or
@@ -194,7 +239,7 @@ static PersistTable *g_user_table = NULL;
 // ever called with lives inside the g_games[MAX_GAMES] array (there is no
 // other way to obtain a GameSlot*), so the difference is always in range.
 static void game_mark_dirty(GameSlot *s) {
-    if (g_game_table) persist_mark_dirty(g_game_table, (int)(s - g_games));
+    if (g_game_table) persist_mark_dirty(g_game_table, s->slot_idx);
 }
 
 // --------------------------------------------------------------------------
@@ -721,7 +766,8 @@ static void start_bot_loop(GameSlot *s) {
 // --------------------------------------------------------------------------
 
 static int game_persist_snapshot(int idx, char *out_id, int id_cap, unsigned char *buf, int cap) {
-    GameSlot *s = &g_games[idx];
+    GameSlot *s = game_slot_at(idx);
+    if (!s) return -1;
     // static: this whole engine has exactly one persistence thread (see
     // persist.c), so a reused static scratch avoids a ~sizeof(GameSlot)
     // (tens of KB — see game.h's Game size notes) stack frame or a
@@ -756,10 +802,12 @@ static int game_persist_snapshot(int idx, char *out_id, int id_cap, unsigned cha
 
 static void game_persist_load(const char *id, const unsigned char *blob, int len) {
     (void)id;   // deserialize_slot restores s->id from the blob itself — the authoritative copy serialize_slot signed off on
-    GameSlot *s = NULL;
-    for (int i = 0; i < MAX_GAMES; i++) if (!g_games[i].used) { s = &g_games[i]; break; }
+    int idx = g_games_count;                       // append-only: next free slot == count
+    GameSlot *s = (idx < MAX_GAMES) ? game_slot_ensure(idx) : NULL;
     if (!s) { fprintf(stderr, "persist: recovery dropped a game row — no free slot\n"); return; }
+    g_games_count++;
     memset(s, 0, sizeof *s);
+    s->slot_idx = idx;
     if (!deserialize_slot(s, blob, len)) {
         fprintf(stderr, "persist: recovery dropped a corrupt/unreadable game row\n");
         memset(s, 0, sizeof *s);   // leave it fully unused, not half-populated
@@ -789,7 +837,8 @@ static void game_persist_load(const char *id, const unsigned char *blob, int len
 
 static int user_persist_snapshot(int idx, char *out_id, int id_cap, unsigned char *buf, int cap) {
     pthread_mutex_lock(&g_registry_lock);
-    User snap = g_users[idx];
+    User *up = user_slot_at(idx);
+    User snap = up ? *up : (User){0};
     pthread_mutex_unlock(&g_registry_lock);
     if (!snap.used) return -1;
     snprintf(out_id, (size_t)id_cap, "%s", snap.user_id);
@@ -798,9 +847,11 @@ static int user_persist_snapshot(int idx, char *out_id, int id_cap, unsigned cha
 
 static void user_persist_load(const char *id, const unsigned char *blob, int len) {
     (void)id;
-    User *u = NULL;
-    for (int i = 0; i < MAX_USERS; i++) if (!g_users[i].used) { u = &g_users[i]; break; }
+    int idx = g_users_count;                       // append-only
+    User *u = (idx < MAX_USERS) ? user_slot_ensure(idx) : NULL;
     if (!u) { fprintf(stderr, "persist: recovery dropped a user row — no free slot\n"); return; }
+    g_users_count++;
+    u->slot_idx = idx;
     if (!deserialize_user(u, blob, len)) {
         fprintf(stderr, "persist: recovery dropped a corrupt/unreadable user row\n");
         memset(u, 0, sizeof *u);
@@ -979,10 +1030,17 @@ static void h_signup(Req *r, Conn *conn) {
     if (!json_str(r->body, "username", uname, sizeof uname)) { respond(conn, 400, "{\"error\":\"username\"}"); return; }
     pthread_mutex_lock(&g_registry_lock);
     User *u = NULL;
-    for (int i = 0; i < MAX_USERS; i++) if (g_users[i].used && !strcmp(g_users[i].username, uname)) { u = &g_users[i]; break; }
-    if (!u) for (int i = 0; i < MAX_USERS; i++) if (!g_users[i].used) {
-        u = &g_users[i]; u->used = true; snprintf(u->username, sizeof u->username, "%s", uname);
-        gen_id(u->user_id, ID_LEN); break;
+    // Dedup by username (reuse the existing account). Append-only, so scan
+    // [0, g_users_count); appends land at index g_users_count. (This scan is
+    // O(users) per signup — fine here, and unchanged in kind from the old
+    // fixed-array scan; a username hash would be the move if signup ever
+    // becomes hot at very high user counts.)
+    for (int i = 0; i < g_users_count; i++) { User *cu = user_slot_at(i); if (cu && cu->used && !strcmp(cu->username, uname)) { u = cu; break; } }
+    if (!u) {
+        int idx = g_users_count;
+        u = (idx < MAX_USERS) ? user_slot_ensure(idx) : NULL;
+        if (u) { g_users_count++; u->slot_idx = idx; u->used = true;
+                 snprintf(u->username, sizeof u->username, "%s", uname); gen_id(u->user_id, ID_LEN); }
     }
     // Fresh session token, indexed, and marked dirty for the persistence
     // thread (Stage 2) — a signup/signin the DB never learns about would
@@ -991,7 +1049,7 @@ static void h_signup(Req *r, Conn *conn) {
     if (u) {
         gen_id(u->token, 32);
         token_ht_insert(u);
-        if (g_user_table) persist_mark_dirty(g_user_table, (int)(u - g_users));
+        if (g_user_table) persist_mark_dirty(g_user_table, u->slot_idx);
     }
     char out[160];
     if (u) snprintf(out, sizeof out, "{\"token\":\"%s\",\"user_id\":\"%s\",\"username\":\"%s\"}", u->token, u->user_id, u->username);
@@ -1006,10 +1064,12 @@ static void h_create(Req *r, Conn *conn) {
     char user_id[ID_LEN + 1]; snprintf(user_id, sizeof user_id, "%s", u->user_id);
     char username[24]; snprintf(username, sizeof username, "%s", u->username);
 
-    GameSlot *s = NULL;
-    for (int i = 0; i < MAX_GAMES; i++) if (!g_games[i].used) { s = &g_games[i]; break; }
+    int gidx = g_games_count;                       // append-only: next free slot == count
+    GameSlot *s = (gidx < MAX_GAMES) ? game_slot_ensure(gidx) : NULL;
     if (!s) { pthread_mutex_unlock(&g_registry_lock); respond(conn, 400, "{\"error\":\"full\"}"); return; }
+    g_games_count++;
     memset(s, 0, sizeof *s);
+    s->slot_idx = gidx;
     pthread_mutex_init(&s->lock, NULL);
     pthread_cond_init(&s->cond, NULL);
     s->used = true;
