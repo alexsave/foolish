@@ -65,7 +65,7 @@ public struct WoolBackground: View {
             // texture. Heavy the first time, then cached forever (memory + the
             // static above, so reloads don't re-fade).
             let image = await Task.detached(priority: .userInitiated) {
-                WoolTexture.image(w: 1600, h: 3400)
+                WoolTexture.image(w: WoolTexture.webCanvas.w, h: WoolTexture.webCanvas.h)
             }.value
             WoolBackground.cached = image
             withAnimation(.easeOut(duration: 0.4)) { img = image }

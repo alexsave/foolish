@@ -25,7 +25,7 @@ public enum BubbleSnapshot {
         // in ImageRenderer), so the bubble gets the same wool as the board.
         let content = ZStack {
             FColor.fallback
-            Image(uiImage: WoolTexture.image(w: 900, h: 585))
+            Image(uiImage: WoolTexture.image(w: WoolTexture.webCanvas.w, h: WoolTexture.webCanvas.h))
                 .resizable()
                 .aspectRatio(contentMode: .fill)
                 .frame(width: size.width, height: size.height)
@@ -51,7 +51,7 @@ public enum BubbleSnapshot {
     public static func renderLobby(joinedNames: [String]) -> UIImage? {
         let content = ZStack {
             FColor.fallback
-            Image(uiImage: WoolTexture.image(w: 900, h: 585))
+            Image(uiImage: WoolTexture.image(w: WoolTexture.webCanvas.w, h: WoolTexture.webCanvas.h))
                 .resizable()
                 .aspectRatio(contentMode: .fill)
                 .frame(width: size.width, height: size.height)

@@ -17,13 +17,31 @@ import UIKit
 public enum WoolTexture {
 
     // Bump when the algorithm changes so the on-disk cache invalidates.
-    private static let version = 4
+    private static let version = 7
 
     private static var mem: [String: UIImage] = [:]
     private static let lock = NSLock()
 
+    /// THE canvas the web generates wool on (src/components/WoolBackground.tsx:
+    /// both the WebGL path and the CPU fallback, and the fallback says 1920x1080
+    /// literally). Landscape, and that matters: the generator's fibre phases and
+    /// its iteration budget are both written in pixels of THIS shape, so a
+    /// portrait render of the same code is a different weave, not the same weave
+    /// rotated. The web then `cover`s this into a portrait viewport and crops
+    /// most of the width away — which is why the blocks look big on a phone even
+    /// though there are 24 of them across the texture.
+    ///
+    /// So we render exactly this and aspect-fill it exactly the same way. One
+    /// canonical texture for the board AND the bubble snapshot, so there is one
+    /// look and one cache entry (it is also smaller than the 1600x3400 it
+    /// replaces: 8.3MB of buffer against 21.8MB).
+    public static let webCanvas = (w: 1920, h: 1080)
+
     /// A wool image `w×h` px. Deterministic (fixed offsets) so it is stable
     /// across launches and safe to cache to disk. Synchronous; call off-main.
+    ///
+    /// Pass `webCanvas` unless you have a reason not to: every constant in
+    /// `render` is in pixels of that canvas (see `blockPx`).
     public static func image(w: Int, h: Int) -> UIImage {
         let key = "wool-v\(version)-\(w)x\(h)"
         lock.lock(); if let img = mem[key] { lock.unlock(); return img }; lock.unlock()
@@ -52,11 +70,18 @@ public enum WoolTexture {
         let offX = 0.0, offY = 0.0
         func zValue(_ r: Double) -> Double { let cr = cos(r) * 1000; return cr - floor(cr) }
 
-        // The plaid block size. The web's fixed `/80` is in pixels, so blocks
-        // shrink as the render grows; tie it to the render width instead (~5
-        // blocks across, matching the website's large soft plaid) so the weave
-        // can be high-resolution while the blocks stay big.
-        let blockPx = Double(w) / 5.0
+        // The plaid block size: the web's literal `/80`, in pixels.
+        //
+        // Three passes got this wrong before it got right, all by treating the
+        // number as a free parameter to taste instead of reading what the web
+        // actually does. `w / 5` (75pt blocks - flat slabs), then `w / 48` (8pt
+        // - hot-pink noise), then `w / 16`. The real answer is that 80 is not a
+        // fraction of anything: it is 80 PIXELS of a 1920x1080 render, and the
+        // reason our port drifted is that we were not rendering at 1920x1080.
+        // See WOOL_RENDER below - matching the web's canvas SHAPE is what makes
+        // every constant in this file line up, because the whole generator is
+        // written in pixels of that canvas.
+        let blockPx = 80.0
 
         // Iteration budget. The web renders at 4K where the area-scaled count
         // already exceeds what the vertical-fibre phase needs to reach the bottom

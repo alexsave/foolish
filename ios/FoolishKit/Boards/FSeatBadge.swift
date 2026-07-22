@@ -35,11 +35,30 @@ public struct FSeatBadge: View {
     }
 
     // Mini back geometry (web CardsVisual: 25pt wide, spread 10pt/card, count
-    // centred). Capped so a big hand doesn't fan into the neighbouring seat.
+    // centred).
     private let cardW: CGFloat = 21
     private let cardH: CGFloat = 30
-    private let spread: CGFloat = 6
-    private var visibleBacks: Int { min(max(handCount, 0), 7) }
+    /// The widest the fan may get, so a big hand cannot reach into the
+    /// neighbouring seat on the ring.
+    private let maxFanWidth: CGFloat = 62
+    /// Spread per card at a comfortable count — narrowed below once the hand
+    /// outgrows `maxFanWidth`.
+    private let baseSpread: CGFloat = 6
+
+    /// EVERY card in the hand gets a back. It used to be `min(handCount, 7)`,
+    /// which meant a badge could read "11" over six visible cards - "I can see
+    /// the number 11 but clearly see there are 6 cards in the hand". The count
+    /// and the picture have to agree, so the cap moved off the number of cards
+    /// and onto the WIDTH: the fan never grows past `maxFanWidth`, it just
+    /// packs tighter, exactly as a real hand of cards does.
+    private var visibleBacks: Int { max(handCount, 0) }
+
+    /// Per-card offset that fits `visibleBacks` inside `maxFanWidth`.
+    private var spread: CGFloat {
+        let n = visibleBacks
+        guard n > 1 else { return baseSpread }
+        return min(baseSpread, (maxFanWidth - cardW) / CGFloat(n - 1))
+    }
 
     public var body: some View {
         VStack(spacing: FSpace.xs) {

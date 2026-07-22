@@ -214,7 +214,8 @@ public struct MessageTableView: View {
                 // Let the incoming replay (the OTHER player's last move flying
                 // deck/seat→table on open) finish and rest so it's watchable,
                 // THEN auto-play our move. Dev pacing only.
-                try? await Task.sleep(nanoseconds: 2_400_000_000)
+                let pace = Double(ProcessInfo.processInfo.environment["HARNESS_PACE"] ?? "") ?? 1
+                try? await Task.sleep(nanoseconds: UInt64(2.4 * pace * 1_000_000_000))
                 play(m)
             }
             #endif

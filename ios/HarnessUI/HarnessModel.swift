@@ -127,6 +127,15 @@ final class HarnessModel: ObservableObject {
         rebindStore()
     }
 
+    /// DEV pacing multiplier (HARNESS_PACE, default 1). Every deliberate wait
+    /// in the auto-played game is scaled by this, so a run can be slowed down
+    /// to human-watchable speed without touching the beats' relative timing —
+    /// the point of an unattended run is usually to WATCH it, and at 1x the
+    /// turns go by faster than anyone can take notes on.
+    static let pace: Double = Double(ProcessInfo.processInfo.environment["HARNESS_PACE"] ?? "") ?? 1
+    /// `seconds`, scaled by `pace`, as nanoseconds for Task.sleep.
+    static func beat(_ seconds: Double) -> UInt64 { UInt64(seconds * pace * 1_000_000_000) }
+
     private static func make(_ n: Int) -> [Participant] {
         (0..<max(2, min(8, n))).map { Participant(name: names[$0]) }
     }
@@ -403,9 +412,9 @@ final class HarnessModel: ObservableObject {
             // starts inside a Task the onChange schedules, so checking
             // isSequencing with no lead-in can race it), then wait for however
             // long the real sequence takes, then rest so the result reads.
-            try? await Task.sleep(nanoseconds: 250_000_000)
+            try? await Task.sleep(nanoseconds: Self.beat(0.25))
             await BoardAnimator.waitForSettle()
-            try? await Task.sleep(nanoseconds: 500_000_000)
+            try? await Task.sleep(nanoseconds: Self.beat(0.5))
             guard let self, self.staged != nil else { return }
             // Skip the collapse during an auto-played game so our move's animation
             // finishes on the full board (it's the point of the slow run); real
@@ -428,13 +437,13 @@ final class HarnessModel: ObservableObject {
         if ProcessInfo.processInfo.environment["HARNESS_AUTOGAME"] != nil {
             Task { [weak self] in
                 // Let the move animate and any bout-end sequence START…
-                try? await Task.sleep(nanoseconds: 1_400_000_000)
+                try? await Task.sleep(nanoseconds: Self.beat(1.4))
                 // …then wait for the WHOLE bout-end sequence (discard/pickup + each
                 // player's draw, one at a time) to finish before switching users, so
                 // the beat reads: open → their move replays → we act → our move +
                 // the full discard/draw cascade animate → switch.
                 while BoardAnimator.isSequencing { try? await Task.sleep(nanoseconds: 150_000_000) }
-                try? await Task.sleep(nanoseconds: 600_000_000)   // rest so the settled board reads
+                try? await Task.sleep(nanoseconds: Self.beat(0.6))   // rest so the settled board reads
                 guard let self, self.staged != nil else { return }
                 self.deliver()
                 await self.becomeSomeoneWhoCanMove()
