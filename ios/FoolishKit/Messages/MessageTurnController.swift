@@ -35,48 +35,32 @@ public final class MessageTurnController: ObservableObject {
     /// (`begin`, `apply`), so it only ever describes the MOST RECENT change.
     public private(set) var lastChangeWasUndo = false
 
-    /// note 4/9/38: the log index in the just-adopted chain's replay stream
-    /// where the DELTA since the previously-cached chain begins — nil on a
-    /// genesis game, a fresh/empty cache, or when the raw hint didn't check
-    /// out (> the base's own log count — a genuine anomaly, the cached chain
-    /// somehow has MORE logs than the one we just adopted). Note 13: `==` the
-    /// base's own log count is NOT collapsed to nil here (it used to be) —
-    /// it means "the cached chain and the adopted chain match exactly, I've
-    /// already replayed everything", a real, empty delta, which is different
-    /// from "no cached chain at all" (the nil case, which falls back to
-    /// `openReplayDelta`'s structural heuristic in ReplayDelta.swift).
-    /// Computed once in `begin()`.
-    public private(set) var openReplayFromLog: Int?
-    /// note 36: the real cards that ended up in MY hand purely because of
-    /// this delta (a draw, or a pickup that landed in my hand) — found by
-    /// diffing my hand in the PREVIOUSLY cached chain against my hand now.
-    /// Real identities are not recoverable from the replay stream itself for
-    /// an unfinished game (LOG_DRAW/LOG_PICKUP pairs redact anything not yet
-    /// publicly played, even from the seat that holds them — see
-    /// `residentReplay()`'s doc), so this view-diff is the only clean source.
-    public private(set) var openReplayNewHandCards: [Card] = []
-    /// notes 6/12: the RESOLVED open-delta replay window — the exact log
-    /// slice `MessageTableView.replayLastMoveOnOpen` steps through —
-    /// computed HERE, synchronously as part of `begin()`, instead of lazily
-    /// inside that replay's own Task after a 120ms sleep. The timing is the
-    /// whole point: the view needs every card identity this window touches
-    /// (attacks/covers/passes landing on the table, not just cards headed
-    /// into my own hand) pre-hidden BEFORE `controller.view`'s first SwiftUI
-    /// paint, or a cover renders already-landed-and-rotated for a beat before
-    /// its flight "un-rotates" it and lands it again. Empty on a genesis game
-    /// (no replay stream to diff against — that path pre-hides straight off
-    /// `view.me.hand` instead) or when nothing changed (note 13).
-    public private(set) var openReplayEvents: [ReplayLog] = []
-    /// notes 6/12: every REAL card identity `openReplayEvents` will land on
-    /// the table this open (attacks, covers, cards transferred by a pass) —
-    /// the battle-side counterpart to `openReplayNewHandCards` (my hand).
-    /// `MessageTableView.replayLastMoveOnOpen` pre-hides the union of both,
-    /// synchronously, before the board's first paint.
+    /// notes 6/12 + round-2 #9: the animations to play when this bubble opens -
+    /// the LAST move on the adopted chain, as the KERNEL's own viewer-aware
+    /// evwire stream (MessageKernel.lastMoveEvents -> fio_replay_last_events_
+    /// packed). Resolved HERE in `begin()`, synchronously before the board's
+    /// first paint, so the view can pre-hide every card this open will move.
+    ///
+    /// This REPLACES the old GameView-diff reconstruction (openReplayNewHandCards
+    /// / openReplayFromLog / ReplayDelta's LOG_* slicing). That diff could not
+    /// recover MY OWN drawn/picked-up cards - the replayed hand looks the same
+    /// from the diff's side, and the raw LOG_* stream redacts them even from the
+    /// holder - so a reopened pickup animated every OTHER seat's refill but never
+    /// mine (the "self deal draw" bug). The kernel, replaying with my seat as the
+    /// viewer, hands them over: my cards with real identities, opponents' as backs
+    /// (nil in `GameEvent.cards`). Empty when there is nothing to animate. A
+    /// genesis deal's "last move" is the deal itself, so this covers it too.
+    @Published public private(set) var openReplayEvents: [GameEvent] = []
+    /// Every REAL card identity `openReplayEvents` moves onto the table or into
+    /// my hand this open (attack/cover/pass placements, my own draws/pickups) -
+    /// the set `MessageTableView.replayLastMoveOnOpen` pre-hides synchronously
+    /// before the first paint, so a cover never renders already-landed for a beat
+    /// (notes 6/12). Opponents' cards are nil (redacted) and need no hiding - they
+    /// render as backs regardless.
     public var openReplayTouchedCardIds: Set<String> {
-        var ids = Set(openReplayNewHandCards.map(\.identity))
-        let placing: Set<Int> = [ReplayLogType.attack, ReplayLogType.cover, ReplayLogType.pass]
-        for ev in openReplayEvents where placing.contains(ev.type) {
-            for pair in ev.pairs where !pair.primary.isHidden { ids.insert(pair.primary.identity) }
+        var ids = Set<String>()
+        for ev in openReplayEvents {
+            for case let c? in ev.cards { ids.insert(c.identity) }
         }
         return ids
     }
@@ -103,11 +87,12 @@ public final class MessageTurnController: ObservableObject {
     /// the moves a rebase re-applied onto a freshly-adopted chain (§7.4). Empty on
     /// a plain open or a genesis.
     private let preStaged: [Move]
-    /// note 4/9/38: the previously-cached chain for this game, if GameSurface
-    /// found one different from the chain we're adopting (nil on a fresh
-    /// cache, or a genesis). `begin()` decodes it — with THIS controller's
-    /// own resolved `mySeat`, so the hand-diff below is never seat-mismatched
-    /// — to derive `openReplayFromLog` / `openReplayNewHandCards`.
+    /// DEPRECATED (retained only so GameSurface's call sites compile unchanged):
+    /// the previously-cached chain, once used to diff my hand for the open-replay.
+    /// The open-replay is now the kernel's evwire for the last move
+    /// (`openReplayEvents`, resolved from the adopted chain alone), which needs no
+    /// "where I last looked", so this is no longer read. Safe to remove along with
+    /// its GameSurface threading in a follow-up cleanup.
     private let prevPayload: Data?
 
     public var gameIdString: String { String(gameId) }
@@ -172,27 +157,15 @@ public final class MessageTurnController: ObservableObject {
     /// `.task`.
     public func begin() async {
         lastChangeWasUndo = false
-        // note 4/9/38: read the previous chain's log count + my hand BEFORE
-        // re-adopting the real base below — decode() IS adopt, so this only
-        // works in this order, and rebuildBase() puts the resident game back
-        // on the real base afterward, exactly like every other call site
-        // expects. Silently skipped if the cached bytes don't even decode.
-        var fromLog: Int?
-        var prevHandIds: Set<String> = []
-        if let prevPayload,
-           (try? await kernel.decode(payload: prevPayload, viewer: mySeat)) != nil {
-            fromLog = await kernel.residentReplay()?.logs.count
-            prevHandIds = Set((await kernel.residentView(viewer: mySeat)?.me?.hand ?? []).map(\.identity))
-        }
-
         await rebuildBase()
-        if let f = fromLog {
-            let total = await kernel.residentReplay()?.logs.count ?? 0
-            // note 13: `<=`, not `<` — `f == total` ("nothing new since I
-            // last cached this game") is a real, meaningful delta of zero,
-            // not the same as "no info" (see `openReplayFromLog`'s doc).
-            openReplayFromLog = (f >= 0 && f <= total) ? f : nil
-        }
+        // The open animations: the kernel's viewer-aware evwire for the LAST move
+        // on the adopted chain (notes 6/12/#9). Resolved NOW, after rebuildBase
+        // puts the received chain resident but BEFORE re-applying my staged
+        // survivors below - "the last move" to animate is the move I just
+        // RECEIVED (the chain's final step), never my own Rule R re-applications,
+        // which I play interactively and must not re-watch. `prevPayload` is no
+        // longer consulted: the kernel decides the group from the chain alone.
+        openReplayEvents = await kernel.lastMoveEvents(viewer: mySeat)
         pending = []
         for m in preStaged {              // §7.4 survivors, already validated by the rebase
             try? await kernel.apply(seat: mySeat, move: m)
@@ -200,18 +173,6 @@ public final class MessageTurnController: ObservableObject {
         }
         persistLedger()
         await refresh()
-        // Computed AFTER preStaged/refresh so it reflects MY actual final
-        // hand, not an intermediate one — preStaged moves are MY OWN unsent
-        // re-applications, never something to animate as "arrived."
-        if openReplayFromLog != nil {
-            openReplayNewHandCards = (view?.me?.hand ?? []).filter { !prevHandIds.contains($0.identity) }
-        }
-        // notes 6/12: resolve the delta window itself here too, not lazily —
-        // see `openReplayEvents`'s doc for why the timing matters.
-        if let replay = await kernel.residentReplay() {
-            openReplayEvents = openReplayDelta(replay, from: openReplayFromLog,
-                                               battlesEmpty: view?.battles.isEmpty ?? true)
-        }
         ready = true
     }
 

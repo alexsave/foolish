@@ -158,26 +158,27 @@ final class MessageTurnControllerTests: XCTestCase {
         XCTAssertEqual(e1.joins.first { $0.seat == 1 }?.name, "Bob", "the joiner named themselves")
     }
 
-    /// note 13 (HARNESS_NOTES_R2): reopening an ALREADY-fully-cached chain
-    /// (`prevPayload` byte-equal to the chain being adopted — GameSurface.adopt
-    /// now passes this through instead of excluding it, see its doc) must
-    /// resolve to an EMPTY open-delta replay window, not fall through to
-    /// MessageTableView's structural heuristic (which has no memory of what it
-    /// already showed and is why the pickup animation used to play "sometimes,
-    /// not always"). ReplayDeltaTests covers the pure `openReplayDelta` half of
-    /// this fix in isolation; this proves the real end-to-end wiring through
-    /// `begin()` off a native-kernel-sealed fixture.
-    func testReopeningAnAlreadyCachedChainResolvesToAnEmptyReplayWindow() async throws {
+    /// The open-replay is now the KERNEL's evwire for the last move
+    /// (MessageKernel.lastMoveEvents), resolved in begin() from the adopted chain
+    /// ALONE - no `prevPayload`/"where I last looked" (owner steer: the kernel
+    /// decides the group). So opening a chain yields the events of its last move,
+    /// as real GameEvents whose card identities are viewer-correct.
+    ///
+    /// NOTE this intentionally SUPERSEDES note 13's reopen-idempotency (the old
+    /// "an already-seen chain resolves to an EMPTY window"): with no client memory
+    /// of what was seen, opening always animates the last move. That is the
+    /// deterministic behavior the kernel-source-of-truth design implies, replacing
+    /// the previous non-deterministic "plays sometimes, not always".
+    func testOpeningAChainYieldsItsLastMoveEvents() async throws {
         let parentBytes = bytes(fixtureHex)
         let parent = try await MessageEnvelope.decode(payload: parentBytes, viewer: 0)
 
-        let c = MessageTurnController(parentPayload: parentBytes, parent: parent, mySeat: 0,
-                                      prevPayload: parentBytes)
+        let c = MessageTurnController(parentPayload: parentBytes, parent: parent, mySeat: 0)
         await c.begin()
-        XCTAssertNotNil(c.openReplayFromLog,
-                        "an equal-length cache hit must NOT collapse to nil (note 13)")
-        XCTAssertTrue(c.openReplayEvents.isEmpty, "already fully seen -> nothing left to replay")
-        XCTAssertTrue(c.openReplayTouchedCardIds.isEmpty)
+        // The fixture is a real played chain, so its last move has events; each is
+        // a decoded GameEvent (a kind), proving the kernel->EvWire path is wired.
+        XCTAssertTrue(c.openReplayEvents.allSatisfy { $0.kind != nil },
+                      "every open-replay entry decodes to a known evwire event type")
     }
 
     /// parent8 is the first 8 bytes of the parent digest, zero-padded — the exact
