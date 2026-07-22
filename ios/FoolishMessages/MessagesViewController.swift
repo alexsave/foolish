@@ -56,7 +56,9 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// a chain was actually sent — insert alone is not a commit.
     override func didStartSending(_ message: MSMessage, conversation: MSConversation) {
         startingNewGame = false
-        commitPendingStage(chatKey: conversation.localParticipantIdentifier.uuidString)
+        commitPendingStage(chatKey: ChatKey.make(
+            local: conversation.localParticipantIdentifier.uuidString,
+            remotes: conversation.remoteParticipantIdentifiers.map(\.uuidString)))
     }
 
     /// The user deleted the staged bubble before sending: drop the pending record
@@ -101,15 +103,14 @@ final class MessagesViewController: MSMessagesAppViewController {
         let participants = min(max(conversation.remoteParticipantIdentifiers.count + 1, 2), 8)
         let isDM = conversation.remoteParticipantIdentifiers.count <= 1
 
-        // The chat-scoping security fix: Apple documents `localParticipantIdentifier`
-        // as a UUID unique to THIS device within THIS conversation (the same person
-        // gets a different identifier in a different conversation), so it is the
-        // right key to scope every MessageGameStore lookup by. Without it, `games()`
-        // was device-wide — opening the extension in chat B with no bubble selected
-        // could reopen chat A's newest game, resolve `.known` off its cached seat,
-        // and stage chat A's deal-seed-bearing payload into chat B (see
-        // MessageGameStore's type doc for the full bug).
-        let chatKey = conversation.localParticipantIdentifier.uuidString
+        // The chat-scoping security fix: scope every MessageGameStore lookup to
+        // THIS conversation, so chat B can never reopen chat A's board (and never
+        // stage chat A's deal-seed-bearing payload into it). Keyed on the whole
+        // PARTICIPANT SET, not `localParticipantIdentifier` alone — that one is
+        // the same UUID in every thread on a device, so it scoped by device and
+        // the leak survived. See ChatKey for the full reasoning.
+        let chatKey = ChatKey.make(local: conversation.localParticipantIdentifier.uuidString,
+                                   remotes: conversation.remoteParticipantIdentifiers.map(\.uuidString))
 
         let root = MessagesRootView(
             payloadURL: payloadURL,
@@ -153,24 +154,19 @@ final class MessagesViewController: MSMessagesAppViewController {
     @MainActor
     private func stage(payload: Data, mySeat: Int) async {
         guard let conversation = activeConversation else { return }
-        // The board the seal produced, spectator view (no hand) — bubble-safe.
-        let publicView = await MessageKernel.shared.residentView(viewer: -1)
         // Re-decode (idempotent — re-adopts the same state) for the joins/summary.
         let env = try? await MessageEnvelope.decode(payload: payload, viewer: -1)
         let names = Dictionary((env?.joins ?? []).map { ($0.seat, $0.name) },
                                uniquingKeysWith: { a, _ in a })
-        // A WAITING lobby (phase 0) previews as its roster, not the dealt board:
-        // the resident game a lobby seal leaves behind IS fully dealt (the kernel
-        // deals at newGame), so rendering it like a live board put a full table
-        // of cards on what is only an invite (the extension showed the lobby, the
-        // staged bubble showed a played game). See BubbleSnapshot.renderLobby.
-        let image: UIImage?
-        if env?.phase == 0 {
-            let joinedNames = (env?.joins ?? []).sorted { $0.seat < $1.seat }.map(\.name)
-            image = BubbleSnapshot.renderLobby(joinedNames: joinedNames)
-        } else {
-            image = publicView.flatMap { BubbleSnapshot.render(publicView: $0, names: names) }
-        }
+        // The board the seal produced, spectator view (no hand) — bubble-safe,
+        // and (below) the fool announcement's source.
+        let publicView = await MessageKernel.shared.residentView(viewer: -1)
+        // The picture is BubbleSnapshot's call, not this file's: a WAITING lobby
+        // previews as its roster, everything else as the public table. Shared
+        // with the harness's transcript so a preview can never disagree with the
+        // extension (see BubbleSnapshot.render(env:)).
+        var image: UIImage?
+        if let env { image = await BubbleSnapshot.render(env: env) }
 
         // §12, revised by batch 6 item B: the FINISHED bubble stays a normal /m/
         // payload link, NOT `MessageEnvelope.replayLink`'s bare foolish.cards/<code>.

@@ -79,4 +79,26 @@ public enum BubbleSnapshot {
         renderer.isOpaque = true
         return renderer.uiImage
     }
+
+    /// THE bubble image for a sealed chain, picking lobby-vs-board itself: a
+    /// WAITING envelope previews as its roster, anything else as the public
+    /// table. Callers (the extension's `stage`, the harness's transcript) get
+    /// the same picture for the same bytes — which is the point of having one
+    /// entry: a preview that disagrees with what the extension shows is the
+    /// round-3 "the bubble previews a dealt board but the extension shows the
+    /// lobby" report, and two call sites branching on `phase` separately is how
+    /// that comes back.
+    ///
+    /// Reads the RESIDENT game for the board case, so the caller must have just
+    /// sealed or decoded `env`'s payload (both do). Nil if there is nothing to
+    /// render.
+    @MainActor
+    public static func render(env: MessageEnvelope) async -> UIImage? {
+        if env.phase == 0 {
+            return renderLobby(joinedNames: env.joins.sorted { $0.seat < $1.seat }.map(\.name))
+        }
+        guard let publicView = await MessageKernel.shared.residentView(viewer: -1) else { return nil }
+        let names = Dictionary(env.joins.map { ($0.seat, $0.name) }, uniquingKeysWith: { a, _ in a })
+        return render(publicView: publicView, names: names)
+    }
 }

@@ -169,4 +169,35 @@ final class SeatIdentityTests: XCTestCase {
         XCTAssertEqual(s.seat(gameId: "gA", chatKey: chatA), 0)
         XCTAssertNil(s.seat(gameId: "gA", chatKey: chatB), "a foreign chat's cached seat must read as unknown")
     }
+
+    // MARK: - ChatKey (what the scoping above is only as good as)
+
+    /// The round-3 report: "every time I try to send a message it pulls up the
+    /// same game for each chat, no matter who I'm texting." The store WAS
+    /// scoped (above) — the key wasn't. `localParticipantIdentifier` is the same
+    /// UUID in every conversation on a device, so keying on it alone keyed on
+    /// the DEVICE, and every chat shared one key. Two different threads must
+    /// produce two different keys even when the local identifier is identical.
+    func testTwoChatsOnTheSameDeviceGetDifferentKeys() {
+        let me = "LOCAL-SAME-EVERYWHERE"
+        let withVera = ChatKey.make(local: me, remotes: ["vera"])
+        let withBoris = ChatKey.make(local: me, remotes: ["boris"])
+        XCTAssertNotEqual(withVera, withBoris,
+                          "two DMs from one device must not share a game cache")
+        let group = ChatKey.make(local: me, remotes: ["vera", "boris"])
+        XCTAssertNotEqual(group, withVera, "a group is not the DM inside it")
+        XCTAssertNotEqual(group, withBoris)
+    }
+
+    /// …and the same thread must key the same way every time it is opened, or a
+    /// device would lose its own seat between launches. Nothing documents the
+    /// order Messages returns `remoteParticipantIdentifiers` in, so the key is
+    /// order-independent by construction.
+    func testTheSameConversationKeysStablyRegardlessOfMemberOrder() {
+        let a = ChatKey.make(local: "me", remotes: ["vera", "boris", "dima"])
+        let b = ChatKey.make(local: "me", remotes: ["dima", "vera", "boris"])
+        XCTAssertEqual(a, b, "member order must not change a conversation's identity")
+        XCTAssertFalse(ChatKey.make(local: "", remotes: []).isEmpty,
+                       "a degenerate conversation still gets a non-empty key")
+    }
 }

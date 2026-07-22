@@ -18,14 +18,13 @@ import Foundation
 /// so it must not happen just to draw a list). `payloadBase32` is the preferred
 /// chain itself, for Rule P.
 ///
-/// `chatKey` is the conversation this row belongs to (`MSConversation
-/// .localParticipantIdentifier.uuidString` — Apple documents this UUID as
-/// unique per conversation per device, so it is stable across launches but
-/// distinct between two threads on the same phone). Without it `games()` was
-/// device-wide: opening the extension in chat B with no bubble selected could
-/// resolve `.known` off chat A's cached seat and stage chat A's deal-seed-
-/// bearing payload into chat B, leaking chat A players' hands to chat B's
-/// participants. Every read below is scoped by this field for that reason.
+/// `chatKey` is the conversation this row belongs to (`ChatKey.make` over the
+/// conversation's whole participant set — see that type for why the local
+/// participant identifier ALONE is not a conversation identity). Without it
+/// `games()` was device-wide: opening the extension in chat B with no bubble
+/// selected could resolve `.known` off chat A's cached seat and stage chat A's
+/// deal-seed-bearing payload into chat B, leaking chat A players' hands to chat
+/// B's participants. Every read below is scoped by this field for that reason.
 public struct MessageGameRecord: Codable, Equatable, Sendable {
     public var gameId: String
     public var chatKey: String
