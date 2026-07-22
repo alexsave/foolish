@@ -1687,11 +1687,11 @@ int gb_apply_move(const char *game_id, const char *token, int seat,
 
 // Thread wrapper: run the QUIC/HTTP3/WebTransport listener alongside the TCP
 // acceptors, sharing this process's game state via the bridge above.
-struct QuicArgs { int port; const char *cert; const char *key; };
+struct QuicArgs { int port; int workers; const char *cert; const char *key; };
 static void *quic_thread_main(void *a) {
     thread_disable_cancellation();
     struct QuicArgs *qa = a;
-    quic_wt_run(qa->port, qa->cert, qa->key);
+    quic_wt_run(qa->port, qa->workers, qa->cert, qa->key);
     return NULL;
 }
 #endif   // FOOLISH_QUIC
@@ -1802,6 +1802,7 @@ static int g_n_accept_threads = N_ACCEPT_THREADS_DEFAULT;
 // its TLS 1.3 (QUIC has no plaintext mode). See quic_wt.c / game_bridge.h.
 static bool g_want_quic = false;
 static int  g_quic_port = 0;
+static int  g_quic_workers = 2;   // sharded QUIC event loops (--quic-workers=N); each its own SO_REUSEPORT UDP socket
 #endif
 
 typedef struct {
@@ -2817,6 +2818,7 @@ int main(int argc, char **argv) {
 #ifdef FOOLISH_QUIC
         if (!strcmp(argv[i], "--quic")) { g_want_quic = true; continue; }
         if (!strncmp(argv[i], "--quic-port=", 12)) { g_quic_port = atoi(argv[i] + 12); continue; }
+        if (!strncmp(argv[i], "--quic-workers=", 15)) { int n = atoi(argv[i] + 15); if (n > 0) g_quic_workers = n; continue; }
 #endif
         if (!strncmp(argv[i], "--game-workers=", 15)) {
             int nw = atoi(argv[i] + 15);
@@ -2981,6 +2983,7 @@ int main(int argc, char **argv) {
         }
         static struct QuicArgs qa;
         qa.port = g_quic_port > 0 ? g_quic_port : port;
+        qa.workers = g_quic_workers;
         qa.cert = cert_path;
         qa.key  = key_path;
         pthread_t qt;

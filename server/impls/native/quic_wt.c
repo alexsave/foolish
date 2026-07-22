@@ -6,10 +6,20 @@
 // extra deps), and extended with WebTransport (Extended CONNECT + DATAGRAMs)
 // and a bridge onto the live game (game_bridge.h).
 //
-// One QUIC thread, one UDP socket, single-threaded event loop. That is enough
-// for a first, correct implementation; sharding it across cores with
-// SO_REUSEPORT UDP sockets (as the TCP side already does) is the obvious next
-// step and is called out in SERVER_SCALING.md.
+// Sharded across cores: N QUIC worker threads, each with its OWN UDP socket
+// bound to the same port with SO_REUSEPORT, its own poll loop, its own
+// connection list, and its own quiche config. The kernel load-balances inbound
+// UDP by 4-tuple hash, exactly like the TCP acceptors, so QUIC's per-packet
+// crypto/congestion work parallelizes.
+//
+// Migration caveat (documented, not hidden): the kernel hashes the 4-tuple,
+// not the QUIC Connection ID. A connection stays on one worker for its whole
+// life UNLESS the client migrates to a new 4-tuple (mobile network switch, NAT
+// rebind); post-migration packets may then land on a different worker that
+// lacks that connection's state. Migration is left ENABLED (it still works for
+// a connection that stays on its worker); robust cross-worker migration needs
+// eBPF Connection-ID steering (SO_ATTACH_REUSEPORT_EBPF), a documented
+// follow-up. With one worker (--quic-workers=1) there is no such limitation.
 #define _GNU_SOURCE
 #include "quic_wt.h"
 #include "game_bridge.h"
@@ -23,21 +33,23 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <poll.h>
+#include <pthread.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
 #include <quiche.h>
 
-#define QW_CID_LEN     16               // our locally-chosen connection-id length
-#define QW_MAX_DGRAM   1350             // conservative UDP payload (fits common MTUs)
-#define QW_RECV_BUF    65535
-#define QW_MAX_TOKEN   (sizeof("foolishq") - 1 + sizeof(struct sockaddr_storage) + QUICHE_MAX_CONN_ID_LEN)
+#define QW_CID_LEN       16              // our locally-chosen connection-id length
+#define QW_MAX_DGRAM     1350            // conservative UDP payload (fits common MTUs)
+#define QW_RECV_BUF      65535
+#define QW_MAX_TOKEN     (sizeof("foolishq") - 1 + sizeof(struct sockaddr_storage) + QUICHE_MAX_CONN_ID_LEN)
+#define QW_MAX_WORKERS   16
 
 // The view (state_put) worst case is a few hundred bytes — comfortably inside
 // one QUIC DATAGRAM. We still size the scratch generously and fall back to the
 // WebTransport stream if a view ever exceeds the datagram budget.
-#define QW_VIEW_CAP    65536
+#define QW_VIEW_CAP      65536
 
 // ---- one QUIC connection (and, for us, at most one WebTransport session) ----
 typedef struct QConn {
@@ -60,12 +72,16 @@ typedef struct QConn {
     struct QConn *next;
 } QConn;
 
-static quiche_config    *g_cfg;
-static quiche_h3_config *g_h3cfg;
-static QConn            *g_head;         // intrusive singly-linked list of live conns
-static int               g_sock = -1;
-static struct sockaddr_storage g_local;
-static socklen_t         g_local_len;
+// ---- one worker: its own socket, config, poll loop and connection list ----
+typedef struct QWorker {
+    int idx;
+    int sock;
+    struct sockaddr_storage local;
+    socklen_t local_len;
+    quiche_config *cfg;
+    quiche_h3_config *h3cfg;
+    QConn *head;                          // intrusive singly-linked list of this worker's conns
+} QWorker;
 
 // -------------------------- QUIC varint (RFC 9000 §16) --------------------------
 // WebTransport DATAGRAMs carry a leading varint flow id; encode/decode it here.
@@ -119,15 +135,15 @@ static bool qw_gen_cid(uint8_t *cid, size_t len) {
     return r == (ssize_t)len;
 }
 
-// -------------------------- connection map (intrusive list) --------------------------
-static QConn *qw_find(const uint8_t *dcid, size_t dcid_len) {
+// -------------------------- connection map (per-worker intrusive list) --------------------------
+static QConn *qw_find(QWorker *w, const uint8_t *dcid, size_t dcid_len) {
     if (dcid_len != QW_CID_LEN) return NULL;   // we always issue QW_CID_LEN cids
-    for (QConn *c = g_head; c; c = c->next)
+    for (QConn *c = w->head; c; c = c->next)
         if (memcmp(c->cid, dcid, QW_CID_LEN) == 0) return c;
     return NULL;
 }
 
-static QConn *qw_create(const uint8_t *dcid, size_t dcid_len,
+static QConn *qw_create(QWorker *w, const uint8_t *dcid, size_t dcid_len,
                         const uint8_t *odcid, size_t odcid_len,
                         struct sockaddr_storage *peer, socklen_t peer_len) {
     if (dcid_len != QW_CID_LEN) return NULL;
@@ -136,14 +152,14 @@ static QConn *qw_create(const uint8_t *dcid, size_t dcid_len,
     memcpy(c->cid, dcid, QW_CID_LEN);
     c->wt_stream = -1;
     quiche_conn *conn = quiche_accept(c->cid, QW_CID_LEN, odcid, odcid_len,
-                                      (struct sockaddr *)&g_local, g_local_len,
-                                      (struct sockaddr *)peer, peer_len, g_cfg);
+                                      (struct sockaddr *)&w->local, w->local_len,
+                                      (struct sockaddr *)peer, peer_len, w->cfg);
     if (!conn) { free(c); return NULL; }
     c->conn = conn;
     memcpy(&c->peer, peer, peer_len);
     c->peer_len = peer_len;
-    c->next = g_head;
-    g_head = c;
+    c->next = w->head;
+    w->head = c;
     return c;
 }
 
@@ -154,14 +170,14 @@ static void qw_free(QConn *c) {
 }
 
 // -------------------------- egress --------------------------
-static void qw_flush(QConn *c) {
+static void qw_flush(QWorker *w, QConn *c) {
     uint8_t out[QW_MAX_DGRAM];
     quiche_send_info si;
     for (;;) {
-        ssize_t w = quiche_conn_send(c->conn, out, sizeof out, &si);
-        if (w == QUICHE_ERR_DONE) break;
-        if (w < 0) return;
-        sendto(g_sock, out, w, 0, (struct sockaddr *)&si.to, si.to_len);
+        ssize_t written = quiche_conn_send(c->conn, out, sizeof out, &si);
+        if (written == QUICHE_ERR_DONE) break;
+        if (written < 0) return;
+        sendto(w->sock, out, written, 0, (struct sockaddr *)&si.to, si.to_len);
     }
 }
 
@@ -304,10 +320,10 @@ static void qw_drain_datagrams(QConn *c) {
 }
 
 // -------------------------- per-connection HTTP/3 processing --------------------------
-static void qw_process_h3(QConn *c) {
+static void qw_process_h3(QWorker *w, QConn *c) {
     if (!quiche_conn_is_established(c->conn)) return;
     if (!c->h3) {
-        c->h3 = quiche_h3_conn_new_with_transport(c->conn, g_h3cfg);
+        c->h3 = quiche_h3_conn_new_with_transport(c->conn, w->h3cfg);
         if (!c->h3) return;
     }
     quiche_h3_event *ev;
@@ -338,13 +354,13 @@ static void qw_process_h3(QConn *c) {
 }
 
 // -------------------------- ingress --------------------------
-static void qw_recv_all(void) {
+static void qw_recv_all(QWorker *w) {
     uint8_t buf[QW_RECV_BUF];
     uint8_t out[QW_MAX_DGRAM];
     for (;;) {
         struct sockaddr_storage peer; socklen_t peer_len = sizeof peer;
         memset(&peer, 0, sizeof peer);
-        ssize_t r = recvfrom(g_sock, buf, sizeof buf, 0, (struct sockaddr *)&peer, &peer_len);
+        ssize_t r = recvfrom(w->sock, buf, sizeof buf, 0, (struct sockaddr *)&peer, &peer_len);
         if (r < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) break;
             if (errno == EINTR) continue;
@@ -362,35 +378,35 @@ static void qw_recv_all(void) {
                                     scid, &scid_len, dcid, &dcid_len, token, &token_len);
         if (rc < 0) continue;
 
-        QConn *c = qw_find(dcid, dcid_len);
+        QConn *c = qw_find(w, dcid, dcid_len);
         if (!c) {
             // A packet for a connection we don't know yet: negotiate version,
             // do a stateless retry to validate the client's address, then
             // accept once the retry token comes back.
             if (!quiche_version_is_supported(version)) {
-                ssize_t w = quiche_negotiate_version(scid, scid_len, dcid, dcid_len, out, sizeof out);
-                if (w > 0) sendto(g_sock, out, w, 0, (struct sockaddr *)&peer, peer_len);
+                ssize_t wr = quiche_negotiate_version(scid, scid_len, dcid, dcid_len, out, sizeof out);
+                if (wr > 0) sendto(w->sock, out, wr, 0, (struct sockaddr *)&peer, peer_len);
                 continue;
             }
             if (token_len == 0) {
                 uint8_t new_cid[QW_CID_LEN];
                 if (!qw_gen_cid(new_cid, QW_CID_LEN)) continue;
                 qw_mint_token(dcid, dcid_len, &peer, peer_len, token, &token_len);
-                ssize_t w = quiche_retry(scid, scid_len, dcid, dcid_len,
-                                         new_cid, QW_CID_LEN, token, token_len,
-                                         version, out, sizeof out);
-                if (w > 0) sendto(g_sock, out, w, 0, (struct sockaddr *)&peer, peer_len);
+                ssize_t wr = quiche_retry(scid, scid_len, dcid, dcid_len,
+                                          new_cid, QW_CID_LEN, token, token_len,
+                                          version, out, sizeof out);
+                if (wr > 0) sendto(w->sock, out, wr, 0, (struct sockaddr *)&peer, peer_len);
                 continue;
             }
             odcid_len = sizeof odcid;
             if (!qw_validate_token(token, token_len, &peer, peer_len, odcid, &odcid_len)) continue;
-            c = qw_create(dcid, dcid_len, odcid, odcid_len, &peer, peer_len);
+            c = qw_create(w, dcid, dcid_len, odcid, odcid_len, &peer, peer_len);
             if (!c) continue;
         }
 
         quiche_recv_info ri = {
             (struct sockaddr *)&peer, peer_len,
-            (struct sockaddr *)&g_local, g_local_len,
+            (struct sockaddr *)&w->local, w->local_len,
         };
         if (quiche_conn_recv(c->conn, buf, (size_t)r, &ri) < 0) continue;
     }
@@ -423,55 +439,93 @@ static quiche_config *qw_config_new(const char *cert_path, const char *key_path)
     return cfg;
 }
 
-int quic_wt_run(int port, const char *cert_path, const char *key_path) {
-    g_cfg = qw_config_new(cert_path, key_path);
-    if (!g_cfg) return 1;
+// Build one worker's UDP socket (its own SO_REUSEPORT listener) + config.
+// Returns true on success.
+static bool qw_worker_init(QWorker *w, int idx, int port, const char *cert, const char *key) {
+    w->idx = idx;
+    w->head = NULL;
+    w->cfg = qw_config_new(cert, key);
+    if (!w->cfg) return false;
+    w->h3cfg = quiche_h3_config_new();
+    if (!w->h3cfg) { quiche_config_free(w->cfg); return false; }
+    quiche_h3_config_enable_extended_connect(w->h3cfg, true);   // WebTransport needs Extended CONNECT
 
-    g_h3cfg = quiche_h3_config_new();
-    if (!g_h3cfg) { quiche_config_free(g_cfg); return 1; }
-    quiche_h3_config_enable_extended_connect(g_h3cfg, true);   // WebTransport needs Extended CONNECT
-
-    g_sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (g_sock < 0) { perror("quic/wt: socket"); return 1; }
+    w->sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (w->sock < 0) { perror("quic/wt: socket"); return false; }
     int one = 1;
-    setsockopt(g_sock, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
-    setsockopt(g_sock, SOL_SOCKET, SO_REUSEPORT, &one, sizeof one);   // ready for future UDP sharding
+    setsockopt(w->sock, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+    setsockopt(w->sock, SOL_SOCKET, SO_REUSEPORT, &one, sizeof one);   // kernel spreads UDP across workers
     struct sockaddr_in addr = {0};
     addr.sin_family = AF_INET; addr.sin_addr.s_addr = INADDR_ANY; addr.sin_port = htons((uint16_t)port);
-    if (bind(g_sock, (struct sockaddr *)&addr, sizeof addr) < 0) { perror("quic/wt: bind"); return 1; }
-    fcntl(g_sock, F_SETFL, fcntl(g_sock, F_GETFL, 0) | O_NONBLOCK);
-    memcpy(&g_local, &addr, sizeof addr);
-    g_local_len = sizeof addr;
+    if (bind(w->sock, (struct sockaddr *)&addr, sizeof addr) < 0) { perror("quic/wt: bind"); return false; }
+    fcntl(w->sock, F_SETFL, fcntl(w->sock, F_GETFL, 0) | O_NONBLOCK);
+    memcpy(&w->local, &addr, sizeof addr);
+    w->local_len = sizeof addr;
+    return true;
+}
 
-    fprintf(stderr, "foolish QUIC/HTTP3/WebTransport listener on udp :%d (h3, extended-connect, datagrams)\n", port);
-
-    struct pollfd pfd = { .fd = g_sock, .events = POLLIN };
+// One worker's event loop: poll its socket, service its connections, reap.
+static void qw_worker_loop(QWorker *w) {
+    struct pollfd pfd = { .fd = w->sock, .events = POLLIN };
     for (;;) {
         // Wake at the soonest connection timeout so quiche's loss/idle timers fire.
         int timeout = 1000;
-        for (QConn *c = g_head; c; c = c->next) {
+        for (QConn *c = w->head; c; c = c->next) {
             uint64_t t = quiche_conn_timeout_as_millis(c->conn);
             if (t < (uint64_t)timeout) timeout = (int)t;
         }
         int pr = poll(&pfd, 1, timeout);
         if (pr < 0 && errno != EINTR) break;
 
-        if (pr > 0 && (pfd.revents & POLLIN)) qw_recv_all();
+        if (pr > 0 && (pfd.revents & POLLIN)) qw_recv_all(w);
 
         // Fire elapsed timeouts, run H3, flush egress.
-        for (QConn *c = g_head; c; c = c->next) {
+        for (QConn *c = w->head; c; c = c->next) {
             if (quiche_conn_timeout_as_millis(c->conn) == 0) quiche_conn_on_timeout(c->conn);
-            qw_process_h3(c);
-            qw_flush(c);
+            qw_process_h3(w, c);
+            qw_flush(w, c);
         }
 
         // Reap closed connections.
-        QConn **pp = &g_head;
+        QConn **pp = &w->head;
         while (*pp) {
             QConn *c = *pp;
             if (quiche_conn_is_closed(c->conn)) { *pp = c->next; qw_free(c); }
             else pp = &c->next;
         }
     }
+}
+
+static void *qw_worker_thread(void *arg) {
+    qw_worker_loop((QWorker *)arg);
+    return NULL;
+}
+
+int quic_wt_run(int port, int workers, const char *cert_path, const char *key_path) {
+    if (workers < 1) workers = 1;
+    if (workers > QW_MAX_WORKERS) workers = QW_MAX_WORKERS;
+
+    static QWorker w[QW_MAX_WORKERS];
+    int n = 0;
+    for (int i = 0; i < workers; i++) {
+        if (!qw_worker_init(&w[i], i, port, cert_path, key_path)) {
+            if (n == 0) return 1;                 // couldn't stand up even one worker — fatal
+            fprintf(stderr, "quic/wt: warning: only %d/%d QUIC workers started\n", n, workers);
+            break;
+        }
+        n++;
+    }
+
+    fprintf(stderr, "foolish QUIC/HTTP3/WebTransport listener on udp :%d "
+            "(h3, extended-connect, datagrams, workers=%d)\n", port, n);
+
+    // Spawn workers [1..n-1] as threads; run worker[0] on this (QUIC) thread so
+    // the QUIC thread blocks here forever, exactly like the TCP acceptors.
+    for (int i = 1; i < n; i++) {
+        pthread_t t;
+        if (pthread_create(&t, NULL, qw_worker_thread, &w[i]) == 0) pthread_detach(t);
+        else fprintf(stderr, "quic/wt: warning: QUIC worker %d thread failed to start\n", i);
+    }
+    qw_worker_loop(&w[0]);   // never returns
     return 0;
 }

@@ -15,10 +15,12 @@
 #ifndef FOOLISH_QUIC_WT_H
 #define FOOLISH_QUIC_WT_H
 
-// Run the QUIC/HTTP3/WebTransport server on UDP `port`, loading the TLS 1.3
-// cert/key from the given PEM paths (QUIC has no plaintext mode). Blocking —
-// call on its own thread. Returns non-zero only on fatal setup failure
-// (bad socket / config / cert); otherwise runs until the process exits.
-int quic_wt_run(int port, const char *cert_path, const char *key_path);
+// Run the QUIC/HTTP3/WebTransport server on UDP `port` with `workers` sharded
+// event loops (each its own SO_REUSEPORT UDP socket + poll loop; the kernel
+// load-balances inbound QUIC by 4-tuple hash). Loads the TLS 1.3 cert/key from
+// the given PEM paths (QUIC has no plaintext mode). Blocking — call on its own
+// thread. Returns non-zero only on fatal setup failure (bad socket / config /
+// cert); otherwise runs until the process exits.
+int quic_wt_run(int port, int workers, const char *cert_path, const char *key_path);
 
 #endif
