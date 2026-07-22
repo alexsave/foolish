@@ -544,6 +544,10 @@ private struct ExtensionStage: View {
     /// exactly this much room under the compose bar so the two are adjacent
     /// rather than overlapping (see that type's doc).
     static let compactHeight: CGFloat = StageHeight.compact
+    /// The drawer's top corners, rounded in both styles like the real app's.
+    /// Smaller than the phone frame's own 30 so an expanded drawer reads as a
+    /// sheet sitting inside the screen, not as the screen itself.
+    static let topCornerRadius: CGFloat = 14
 
     private enum StageHeight {
         /// The entire SE screen. Expanded covers literally everything — nav
@@ -596,11 +600,19 @@ private struct ExtensionStage: View {
         // paints over the ENTIRE remaining box, burying the nav bar/
         // transcript/compose bar rows above it — found empirically
         // (screenshotted, the grabber landed mid-board instead of at its
-        // top edge). `.clipped()` forces the rendered content back to this
-        // view's own 375 x `height` rect regardless of what's happening
-        // inside the hosted controller.
+        // top edge). The clip forces the rendered content back to this view's
+        // own 375 x `height` rect regardless of what's happening inside the
+        // hosted controller.
+        //
+        // That clip is a TOP-ROUNDED rect, not a plain `.clipped()`: real
+        // Messages rounds the app drawer's top corners in BOTH styles (the
+        // owner's ask), and doing it here — rather than with a decorative
+        // overlay — means the wool is genuinely absent from the corners
+        // instead of covered up.
         .frame(width: SEScreen.width, height: height)
-        .clipped()
+        .clipShape(UnevenRoundedRectangle(topLeadingRadius: Self.topCornerRadius,
+                                          topTrailingRadius: Self.topCornerRadius,
+                                          style: .continuous))
         .offset(y: dragOffset)
         .animation(.easeOut(duration: 0.15), value: dragOffset)
         .animation(.easeInOut(duration: 0.25), value: height)
