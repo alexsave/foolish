@@ -56,28 +56,41 @@ public struct FDeckWell: View {
     /// flipped card under.
     private var stackVisualWidth: CGFloat { cardH }
 
+    // The two anchors round-4 note 6 pins down, as STATICS so a test can assert
+    // they are constants and not functions of `deckCount` — the whole content of
+    // "position should be constant relative to the top left corner throughout
+    // the game" is that neither of these may ever take the count as an input.
+    // (Both are in FDeckWell's own top-leading space, i.e. relative to the same
+    // corner the owner is measuring from.)
+
+    /// Where the flipped trump's top-left corner sits, in every state.
+    public static let flippedOrigin = CGPoint(x: FSpace.s + (66 - 46) / 2, y: FSpace.s + 20)
+    /// Where the stock's BOTTOM card's rotated top-left corner sits, in every
+    /// state. Cards above it lean up-and-left off this one fixed card; it never
+    /// moves, so a shrinking deck drains toward this corner instead of sliding.
+    public static let bottomCardOrigin = CGPoint(x: FSpace.s, y: FSpace.s)
+
     public var body: some View {
         ZStack(alignment: .topLeading) {
             // The flipped trump: tucked under the stack (peeking out below) when
             // the stock is still there, or — once the stock is drawn out — the
             // sole piece of content, flush at the same inset as everything else.
             //
-            // Note 1: while the stock is showing, the flipped card must sit
-            // CENTRED under it, the way the remaining-count badge is centred ON
-            // it — not flush-left against the shared inset like every other
-            // state here. The stock's landscape footprint is `stackVisualWidth`
-            // (66pt) wide; the flipped card is `cardW` (46pt) wide, so centring
-            // it needs an extra (66-46)/2 = 10pt beyond the shared inset — same
-            // number as `rotationNudge`, since both are "half the width a
-            // rotated card gained." Once the stock empties (deckCount == 0)
-            // there is no stack to centre under, so the flipped card drops back
-            // to the plain shared inset like the trump glyph fallback below it —
-            // this centring is conditional on deckCount, not a permanent shift
-            // of the flipped card's home position.
+            // Note 1: the flipped card sits CENTRED under the stock's landscape
+            // footprint, the way the remaining-count badge is centred ON it —
+            // not flush-left against the shared inset like the trump glyph.
+            //
+            // Round 4 note 6: that position is now UNCONDITIONAL. It used to
+            // drop back to the plain inset the moment the stock emptied, which
+            // meant the flipped card visibly hopped 10pt left and 20pt up on
+            // the draw that took the deck to zero - "the flipped card jumps
+            // slightly when the deck finishes; its position should be constant
+            // relative to the top left corner throughout the game." Nothing
+            // about where the flipped card LIVES depends on how many cards are
+            // left above it, so nothing here reads deckCount any more.
             if hasFlipped, let flipped {
-                let centerUnderStack = deckCount > 0 ? (stackVisualWidth - cardW) / 2 : 0
                 FCard(card: flipped, trump: true, size: CGSize(width: cardW, height: cardH))
-                    .offset(x: inset + centerUnderStack, y: inset + (deckCount > 0 ? peek : 0))
+                    .offset(x: Self.flippedOrigin.x, y: Self.flippedOrigin.y)
                     .zIndex(0)
             }
 

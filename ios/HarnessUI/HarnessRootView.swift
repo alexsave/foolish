@@ -195,7 +195,6 @@ private struct ChatScreen: View {
                 }
             }
             .padding(.bottom, reservedForDrawer)
-            .animation(.easeInOut(duration: 0.25), value: reservedForDrawer)
 
             ExtensionStage(model: model)
         }
@@ -618,7 +617,29 @@ private struct ExtensionStage: View {
                                           style: .continuous))
         .offset(y: dragOffset)
         .animation(.easeOut(duration: 0.15), value: dragOffset)
-        .animation(.easeInOut(duration: 0.25), value: height)
+        // Round-4 note 2: the drawer's HEIGHT changes in one step, never over a
+        // tween. An animated height animates the hosting controller's bounds,
+        // and the board inside is laid out afresh at every intermediate size -
+        // screenshotted mid-collapse, the deck, the seat badge and the card
+        // just played were all part-way between their expanded and compact
+        // positions. So the card you had just watched fly to the table slid
+        // across the screen a second time, which is what "the animation seems
+        // to replay when the screen collapses" is: not a replay (the trace
+        // shows no board `.task` and no event stream on a collapse), a second
+        // journey. Nothing inside the board can refuse it - suppressing the
+        // ambient transaction there was tried and made no difference - so the
+        // only honest place to stop it is where the size is decided.
+        //
+        // The cost, taken deliberately: the graceful expand/collapse slide is
+        // gone. A slide between two genuinely different layouts IS the reflow,
+        // so the two cannot both be had, and there is no animation on `height`
+        // here at all - not even a short one. A short one would still tween,
+        // just too fast to catch in a screenshot, which is a fix you cannot
+        // tell apart from no fix.
+        //
+        // The drag gesture's own `dragOffset` above is untouched and still
+        // animates: it is a TRANSLATION, so it never resizes the hosting
+        // controller and never reflows anything.
         .overlay(alignment: .top) { grabber }
     }
 

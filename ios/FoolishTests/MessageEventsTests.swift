@@ -125,7 +125,86 @@ final class MessageEventsTests: XCTestCase {
         XCTAssertFalse(events.isEmpty, "an attack is one animation event at least")
         XCTAssertTrue(events.contains { $0.kind == .attackPass }, "the attack itself is in the stream")
 
+        XCTAssertTrue(events.isEmpty == false)
         XCTAssertTrue(EvWire.decode(Data()).isEmpty, "an empty frame is not a crash")
         XCTAssertTrue(EvWire.decode(Data([0xFF, 0x00, 0x00])).isEmpty, "a bad version is not a crash")
+        XCTAssertTrue(EvWire.decodeFrames(Data()).isEmpty, "no frames is not a crash")
+        // A length prefix promising more bytes than are there: keep what was
+        // whole (nothing, here), never read past the end.
+        XCTAssertTrue(EvWire.decodeFrames(Data([0x40, 0x00, 0x01])).isEmpty)
+    }
+
+    /// Round-4 note 3: "if it's a double cover, the first cover will just
+    /// already be there, and only the second one will play."
+    ///
+    /// A bubble carries a whole TURN, and staging is per-action, so a defender
+    /// who covers two attacks before sending puts TWO cover steps on the chain.
+    /// The kernel used to hand back the final step alone, so the receiver
+    /// watched one cover fly onto a table that already had the other sitting
+    /// there, landed and rotated. Both must be in the stream.
+    func testAStagedDoubleCoverReplaysBothCovers() async throws {
+        // Find a 2p deal where the attacker can open with two throw-ins the
+        // defender can beat — i.e. a real double cover exists to stage.
+        for salt in UInt8(1)...UInt8(80) {
+            let k = MessageKernel.shared
+            try await k.newGame(seed: freshSeed(salt), players: 2)
+            let legal0 = await k.residentLegal(seat: 0)
+            let attacker = legal0.contains { $0.type == .attack } ? 0 : 1
+            let defender = 1 - attacker
+
+            // Two attacks, so there are two uncovered battles to beat.
+            guard let a1 = (await k.residentLegal(seat: attacker)).first(where: { $0.type == .attack })
+            else { continue }
+            try await k.apply(seat: attacker, move: a1)
+            guard let a2 = (await k.residentLegal(seat: attacker)).first(where: { $0.type == .attack })
+            else { continue }
+            try await k.apply(seat: attacker, move: a2)
+
+            // …then the defender covers BOTH, as two staged actions in one turn.
+            guard let c1 = (await k.residentLegal(seat: defender)).first(where: { $0.type == .cover })
+            else { continue }
+            try await k.apply(seat: defender, move: c1)
+            guard let c2 = (await k.residentLegal(seat: defender)).first(where: { $0.type == .cover })
+            else { continue }
+            try await k.apply(seat: defender, move: c2)
+
+            let events = await k.lastMoveEvents(viewer: attacker)
+            let covers = events.filter { $0.kind == .cover }
+            XCTAssertEqual(covers.count, 2,
+                           "both staged covers belong to the turn the bubble carries")
+            // …and they are DIFFERENT cards, so this cannot pass by replaying
+            // the same step twice.
+            let ids = Set(covers.flatMap { $0.cards.compactMap { $0?.identity } })
+            XCTAssertEqual(ids.count, 2, "two covers, two distinct cards")
+            return
+        }
+        XCTFail("no 2p deal in 80 tries allowed a staged double cover")
+    }
+
+    /// The other side of the same rule, and the one that keeps the group from
+    /// swallowing the whole game: the run stops at the first step someone else
+    /// played. An attack by seat A followed by a cover by seat B is TWO turns,
+    /// and opening the chain replays only B's.
+    func testTheReplayedTurnStopsAtTheOtherSeatsAction() async throws {
+        let k = MessageKernel.shared
+        for salt in UInt8(1)...UInt8(80) {
+            try await k.newGame(seed: freshSeed(salt), players: 2)
+            let legal0 = await k.residentLegal(seat: 0)
+            let attacker = legal0.contains { $0.type == .attack } ? 0 : 1
+            let defender = 1 - attacker
+            guard let atk = (await k.residentLegal(seat: attacker)).first(where: { $0.type == .attack })
+            else { continue }
+            try await k.apply(seat: attacker, move: atk)
+            guard let cov = (await k.residentLegal(seat: defender)).first(where: { $0.type == .cover })
+            else { continue }
+            try await k.apply(seat: defender, move: cov)
+
+            let events = await k.lastMoveEvents(viewer: attacker)
+            XCTAssertTrue(events.contains { $0.kind == .cover }, "the cover is the last turn")
+            XCTAssertFalse(events.contains { $0.kind == .attackPass },
+                           "the attacker's own earlier turn is NOT replayed again")
+            return
+        }
+        XCTFail("no 2p deal in 80 tries produced an attack the defender could cover")
     }
 }

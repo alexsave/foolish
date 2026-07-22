@@ -77,16 +77,38 @@ public struct MessageTableView: View {
         let fromRects: [String: CGRect]   // card.identity -> hand rect AT PLAY TIME
     }
     @State private var pendingCover: PendingCover?
-    /// False until this board has decided what (if anything) its first delivered
-    /// view is going to REPLAY — see FBattleGrid's `coversSettled`. It starts
-    /// false at construction, i.e. before any paint can happen, which is what
-    /// makes it race-free: the pre-hide that keeps a replayed cover upright runs
-    /// from an onChange, one paint later, so a board that opens on an
-    /// already-covered table would otherwise paint tilted for that one frame
-    /// ("the covered card goes from rotated back to centre, then rotates again").
-    /// Flipped true in the same synchronous breath as that pre-hide, after which
-    /// `animator.hidden` alone keeps the tilt honest.
-    @State private var coversSettled = false
+    /// THE VEIL (round-4 notes 3 and 5). False until the board has handed its
+    /// pending animation over to `animator`; while false the board renders the
+    /// game as it was BEFORE that animation, not after.
+    ///
+    /// Why this exists at all: `.onChange(of: controller.view)` is where the
+    /// board pre-hides what is about to fly and freezes the counts — and
+    /// onChange runs AFTER body, i.e. one paint too late. So the board painted
+    /// once at the post-move state and only then jumped back to the pre-move
+    /// one to animate forward again. Every symptom of that is the same bug:
+    /// a cover flashing tilted before it lands, a picked-up card appearing in
+    /// the fan and then flying into the fan a second time ("double pickup
+    /// animation"), and an opponent's badge counting up, back down and up again
+    /// ("twitches as if it were making room for the deal card, but changed its
+    /// mind"). Comments in `freezeCounts` and `replayLastMoveOnOpen` claimed
+    /// their synchronous work landed before the first paint; structurally it
+    /// cannot.
+    ///
+    /// @State initialized at CONSTRUCTION is the fix, because that is the one
+    /// moment guaranteed to precede every paint. While it is false the board
+    /// derives the veil PURELY from the controller (`veiledCardIds`,
+    /// `veiledCounts`) — no mutation, so it is legal to do in `body` — and once
+    /// `flyBoutEndToDiscard` has pre-hidden and frozen for real, this flips and
+    /// `animator.hidden` + the count overrides take over unchanged. The handoff
+    /// is invisible because both sides name the same cards.
+    @State private var settled = false
+    /// My hand as it was the instant I played a move, captured SYNCHRONOUSLY in
+    /// `play` — before `controller.apply`, so before the view can publish. Any
+    /// card in my hand that is not in here is one this move just gave me
+    /// (a pickup's table cards, a bout-end refill), and it stays veiled until
+    /// the animator hides it for its flight. nil when no move of mine is
+    /// in flight. The live-play twin of the open-replay veil above.
+    @State private var handBeforeMyMove: Set<String>?
 
     public init(controller: MessageTurnController, onSend: @escaping (Data) async -> Void,
                 onNewGame: @escaping () -> Void = {}, onUnstage: @escaping () -> Void = {}) {
@@ -118,6 +140,17 @@ public struct MessageTableView: View {
                     // but the board→results swap does not.
                     boardContent(view)
                         .animation(FMotion.cardMotion(reduceMotion: reduceMotion), value: controller.view)
+                        // Round-4 note 2 ("the animation seems to replay when
+                        // the screen collapses") is NOT fixable from in here,
+                        // and it was worth finding that out before writing a
+                        // plausible-looking modifier that does nothing.
+                        // Stripping the ambient transaction on this board was
+                        // tried and screenshotted mid-collapse: no change,
+                        // because the reflow is not a SwiftUI animation of
+                        // ours. The host resizes the hosting controller's view
+                        // over the transition, and the board is simply laid out
+                        // afresh at each intermediate size. It belongs to
+                        // whoever owns the drawer — see ExtensionStage.
                 }
             } else {
                 ProgressView()
@@ -140,18 +173,26 @@ public struct MessageTableView: View {
         .fToast($toast, accent: true)
         .onChange(of: controller.rejectTick) { _ in
             Haptics.fire(.reject); toast = FStrings.t("ios.reject")
+            // A rejected move publishes NO view change, so the veil `play` put
+            // up a moment ago would never be taken down again: the counts would
+            // stay frozen at their pre-move values for the rest of the game and
+            // any card the move would have added stay invisible. Nothing
+            // happened, so give it all straight back.
+            handBeforeMyMove = nil
+            deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
         }
         .task {
             AnimLog.say("board .task seat=\(controller.mySeat) ready=\(controller.ready)")
             // note 39: defensive reset — see `showResults`'s doc.
             showResults = false
             if !controller.ready { await controller.begin() }
-            // Backstop for `coversSettled`: a controller that was ALREADY ready
-            // when this board mounted publishes no view change, so the onChange
-            // that normally settles the tilt never fires and every cover would
-            // stay upright forever. Only safe when there is nothing to replay —
-            // when there is, that onChange is the very thing driving it.
-            if controller.openReplayEvents.isEmpty { coversSettled = true }
+            // Backstop for the veil: a controller that was ALREADY ready when
+            // this board mounted publishes no view change, so the onChange that
+            // normally lifts the veil never fires and the board would sit at
+            // its pre-move state forever. Only safe when there is nothing to
+            // replay — when there is, that onChange is the very thing driving
+            // it, and lifting the veil here would be the flash we are avoiding.
+            if controller.openReplayEvents.isEmpty { settled = true }
             // Genesis where I can't act (I dealt but I'm not the first attacker):
             // stage the deal immediately so I can send it on. When I CAN act,
             // canStage is false until I play, so this is a no-op then.
@@ -159,8 +200,17 @@ public struct MessageTableView: View {
             #if DEBUG
             // FoolishHarness screenshotting only: auto-play the first legal move so
             // the auto-stage flow (move -> staged bubble) is visible without a tap.
+            // The auto-player must only make moves a HUMAN could make here.
+            // `controller.legal` is the raw kernel menu, which always offers
+            // GOOD — the owner's rule that an attacker cannot say good until
+            // the table is fully covered is a UI gate (FActionBar's `canDone`,
+            // via CardPlay.canSayGood), not a kernel one. Picking the first
+            // non-wait move off the raw menu therefore said good over uncovered
+            // attacks constantly, which no player can do, so an auto-run was
+            // exercising a game nobody can play.
             if ProcessInfo.processInfo.environment["HARNESS_AUTOMOVE"] != nil,
-               let m = controller.legal.first(where: { $0.type != .wait }) {
+               let view = controller.view,
+               let m = CardPlay.humanMoves(battles: view.battles, legal: controller.legal).first {
                 // Let the incoming replay (the OTHER player's last move flying
                 // deck/seat→table on open) finish and rest so it's watchable,
                 // THEN auto-play our move. Dev pacing only.
@@ -169,6 +219,49 @@ public struct MessageTableView: View {
             }
             #endif
         }
+    }
+
+    // MARK: the veil (round-4 notes 3/5) — see `settled`
+
+    /// The open-replay this board has NOT started yet, if any: the cards it will
+    /// move and the counts the board should show until it does. A pure function
+    /// of the controller, so `body` may read it on the very first paint — which
+    /// is the whole point, that being the paint the onChange path misses.
+    /// nil once `settled`, or when there is nothing to replay.
+    private var pendingOpen: (ids: Set<String>, counts: (deck: Int, discard: Int, hand: [Int: Int]))? {
+        guard !settled, let view = controller.view else { return nil }
+        let events = controller.openReplayEvents
+        guard !events.isEmpty else { return nil }
+        return (controller.openReplayTouchedCardIds, Self.preCounts(events, finalView: view))
+    }
+
+    /// Every card the board must render as not-yet-there: what is in flight
+    /// right now, plus what the veil is still holding back. THE set passed to
+    /// the battle grid and the hand fan, so "is this card on the table" has one
+    /// answer and the cover tilt can be read straight off it.
+    private var veiledCardIds: Set<String> {
+        var ids = animator.hidden
+        if let open = pendingOpen { ids.formUnion(open.ids) }
+        // Live play: cards this move just put in my hand, which have not been
+        // pre-hidden yet (that also happens an onChange late).
+        if let before = handBeforeMyMove, let hand = controller.view?.me?.hand {
+            ids.formUnion(Set(hand.map(\.identity)).subtracting(before))
+        }
+        return ids
+    }
+
+    /// A seat badge's displayed hand count: the per-step override once a
+    /// sequence is running, else the veil's pre-move value, else the truth.
+    private func shownHandCount(_ p: PlayerView) -> Int {
+        if let n = seatCountOverride[p.seat] { return n }
+        if let n = pendingOpen?.counts.hand[p.seat] { return n }
+        return p.handCount
+    }
+    private func shownDeckCount(_ view: GameView) -> Int {
+        deckCountOverride ?? pendingOpen?.counts.deck ?? view.deckCount
+    }
+    private func shownDiscardCount(_ view: GameView) -> Int {
+        discardCountOverride ?? pendingOpen?.counts.discard ?? view.discardCount
     }
 
     /// The live board, laid out like the web GameBoard: every piece is placed
@@ -195,7 +288,7 @@ public struct MessageTableView: View {
 
                 // Deck top-left, discard top-right — pinned to the corners and OUT
                 // of the centred flow, so they never push the ring or battles.
-                FDeckWell(deckCount: deckCountOverride ?? view.deckCount, flipped: view.flipped,
+                FDeckWell(deckCount: shownDeckCount(view), flipped: view.flipped,
                           hasFlipped: view.hasFlipped, trumpSuit: view.trumpSuit)
                     // FDeckWell now anchors its own content top-leading with a
                     // small symmetric inset (note 14), so no per-call-site
@@ -216,7 +309,7 @@ public struct MessageTableView: View {
                 // frame in the OFFLINE app board, a different layout mechanism
                 // than the corner-pinned `.frame(alignment:)` used here — neither
                 // touches the other.)
-                FDiscardPile(count: discardCountOverride ?? view.discardCount)
+                FDiscardPile(count: shownDiscardCount(view))
                     .offset(y: -3)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 
@@ -237,9 +330,33 @@ public struct MessageTableView: View {
                 // outer .padding(12) is the safe-area inset that keeps it unclipped.
                 hand(view)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+
+                // note 33 / round-4 note 4: the verb hint rides just ABOVE THE
+                // FINGER, not at a fixed spot over the battle grid. It used to
+                // be an overlay on `battlesArea` at a constant -30pt, i.e. up
+                // near the top of the board while you were dragging down by the
+                // hand - "the little attack text that pops up when you drag
+                // should be right above your finger, not at the top of the
+                // screen." Drawn LAST so it is above every other piece, and
+                // hit-testing is already off (see `dragHint`).
+                //
+                // `dragPoint` is in `boardSpace` (FHandFan publishes it there,
+                // and the drop targets are hit-tested in it), while `.position`
+                // is local to this GeometryReader - so subtract this reader's
+                // own origin in that space rather than assuming the two agree.
+                if let p = dragPoint {
+                    let origin = geo.frame(in: .named(boardSpace)).origin
+                    dragHint(view)
+                        .position(x: p.x - origin.x, y: p.y - origin.y - Self.dragHintLift)
+                }
             }
         }
     }
+
+    /// How far above the fingertip the verb hint floats. Enough to clear a
+    /// thumb (a finger covers roughly 40pt of screen) without leaving the pill
+    /// somewhere the eye has to hunt for it.
+    static let dragHintLift: CGFloat = 52
 
     /// The finish order for the end screen: rank 1 = first player out (best),
     /// counting up to the fool last. `eliminationOrder` is first-out first and
@@ -281,7 +398,7 @@ public struct MessageTableView: View {
     /// flights can target it. Placed on the ring by `ringPoint`.
     private func opponentSeat(_ p: PlayerView, _ view: GameView) -> some View {
         FSeatBadge(name: name(p.seat),
-                   handCount: seatCountOverride[p.seat] ?? p.handCount,
+                   handCount: shownHandCount(p),
                    isDefender: p.seat == view.defender,
                    isAttacker: showsSword(seat: p.seat, isOut: p.isOut, view),
                    saidGood: view.hasSaidGood(p.seat),
@@ -303,7 +420,16 @@ public struct MessageTableView: View {
         // so it and the hand don't crowd the middle - but only a little, or the
         // top badge clips against the drawer's rounded top edge.
         let ry = size.height < 340 ? 0.38 : 0.35
-        let x = (-sin(rad) * 0.35 + 0.5) * size.width
+        // Wider than it is tall (0.42 vs 0.35). At eight players the battle
+        // grid wraps to four across and the side seats sat right on top of it -
+        // Oleg's and Dima's names were behind the cards. Pushing the ring out
+        // horizontally is the only room there is: the vertical radius is
+        // already fighting the hand and the drawer's rounded top edge, and a
+        // badge is ~70pt wide against a 375pt board, so 0.42 leaves ~22pt of
+        // margin at the widest seats and no more is available. This does not
+        // make eight players roomy - the owner's read, and it is right - it
+        // just stops the collision being the first thing you see.
+        let x = (-sin(rad) * 0.42 + 0.5) * size.width
         let y = ( cos(rad) * ry + 0.5) * size.height
         return CGPoint(x: x, y: y)
     }
@@ -344,16 +470,12 @@ public struct MessageTableView: View {
                 FBattleGrid(battles: view.battles, trumpSuit: view.trumpSuit,
                             coverable: passPreview ? [] : highlightBattles(view),
                             onTapBattle: { idx in tapBattle(idx, view) },
-                            namespace: cardNS, hidden: animator.hidden,
-                            showGhostSlot: passPreview, coversSettled: coversSettled)
+                            namespace: cardNS, hidden: veiledCardIds,
+                            showGhostSlot: passPreview)
             }
         }
-        // note 33: the verb hint floats just above the battle grid's own
-        // (self-sized) top edge — attached here, BEFORE the maxWidth/maxHeight
-        // expansion below, so it tracks the grid's actual content regardless of
-        // row count instead of a fixed board-relative offset guessed once and
-        // never re-checked against a real device.
-        .overlay(alignment: .top) { dragHint(view).offset(y: -30) }
+        // The verb hint is NOT attached here any more — round-4 note 4 moved it
+        // to follow the fingertip; see the `dragPoint` branch in boardContent.
         .frame(maxWidth: .infinity)   // boardContent's call site adds maxHeight
     }
 
@@ -394,10 +516,11 @@ public struct MessageTableView: View {
     }
 
     /// note 33: a small unobtrusive pill naming what release would do — web
-    /// DragShadow parity, but anchored to a fixed spot above the battles
-    /// rather than tracking the fingertip (simplest robust placement: no
-    /// per-frame layout math, and it can never end up under the dragging
-    /// hand or over the action bar).
+    /// DragShadow parity. Round-4 note 4: it now tracks the fingertip (see
+    /// boardContent), which is what "anchored to a fixed spot above the
+    /// battles" was traded against and lost — the fixed anchor was easy to
+    /// place but sat at the top of the screen while your hand was at the
+    /// bottom, so it read as unrelated to the drag.
     @ViewBuilder
     private func dragHint(_ view: GameView) -> some View {
         if let text = dragHintText(view) {
@@ -443,23 +566,35 @@ public struct MessageTableView: View {
         // before the apply whose resulting view change is the next one we see.
         let cover = pendingCover
         pendingCover = nil
+        // The live veil is consumed here too, and only here: every path below
+        // either pre-hides the same cards for real (synchronously, before this
+        // returns) or has nothing of mine to hide, so there is no paint between
+        // dropping it and the animator picking it up.
+        handBeforeMyMove = nil
         guard let new = newView else { return }
-        // Every path below either pre-hides what it is about to fly (synchronously,
-        // right here) or has nothing to fly at all. Once it returns, the tilt can
-        // be trusted to `animator.hidden` alone — so this is exactly where the
-        // board stops suppressing it.
-        defer { coversSettled = true }
+        // Once this returns, `animator.hidden` and the count overrides are the
+        // whole truth — so this is exactly where the board stops veiling.
+        defer { settled = true }
+        // …and any path that returns WITHOUT starting a sequence has to hand the
+        // counts back, because `play` now freezes them before every move, not
+        // just the ones that end a bout. Leaving them frozen after a plain
+        // attack would pin every badge at its pre-move value for good.
+        func releaseCounts() {
+            deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
+        }
         if reduceMotion {
+            releaseCounts()
             if new.isOver { showResults = true }   // note 39b
             return
         }
         // note 10: undo can legally take battles -> empty; never a bout end.
-        if controller.lastChangeWasUndo { return }
+        if controller.lastChangeWasUndo { releaseCounts(); return }
         // First appear with a delivered game: the open-replay (same event path).
         if prior == nil { AnimLog.say("-> openReplay"); replayLastMoveOnOpen(new); return }
         guard let old = prior, !old.battles.isEmpty, new.battles.isEmpty else {
             // A normal placed card animates via matchedGeometry; a move that ended
             // the game without clearing the table just settles to results.
+            releaseCounts()
             if new.isOver { settleResults() }
             return
         }
@@ -480,9 +615,10 @@ public struct MessageTableView: View {
         let oldHandIds = Set((old.me?.hand ?? []).map(\.identity))
         let myNewIds = Set((new.me?.hand ?? []).map(\.identity)).subtracting(oldHandIds)
         if !myNewIds.isEmpty { animator.preHide(myNewIds) }
-        // …and freeze every count to the board BEFORE this move, in this same
-        // synchronous callback. `old` IS that board — no reconstruction needed
-        // (see freezeCounts for why a single await here is already too late).
+        // …and freeze every count to the board BEFORE this move. `play` already
+        // did this for a move I made (which is the only way to be early enough
+        // — see `settled`); repeating it from `old` costs nothing and keeps the
+        // sequence correct on any view change that did not come through `play`.
         freezeCounts(to: old)
 
         AnimLog.say("-> boutEnd preHide=\(myNewIds.count)")
@@ -546,12 +682,11 @@ public struct MessageTableView: View {
     }
 
     /// Freeze every displayed count to `v` — the board as it looked BEFORE the
-    /// move we are about to animate. Synchronous on purpose, and that is the
-    /// whole point: it must happen in the same turn of the run loop as the
-    /// `controller.view` change that triggered the animation, so SwiftUI never
-    /// gets a chance to paint a single frame at the post-move counts. Anything
-    /// asynchronous here — even one `await` — shows up as a badge that jumps to
-    /// its final value, snaps back, and then counts up again.
+    /// move we are about to animate. Synchronous on purpose, and it must run
+    /// BEFORE `controller.apply` (`play` does), not from the onChange the view
+    /// change triggers: onChange fires after body, so a freeze there is already
+    /// one paint late and shows up as a badge that jumps to its final value,
+    /// snaps back, and then counts up again — the twitch.
     ///
     /// My own seat is deliberately left alone: my hand is the fan, not a badge,
     /// and the cards it is about to gain are hidden by `animator.preHide`
@@ -778,22 +913,22 @@ public struct MessageTableView: View {
             return
         }
 
-        // notes 6/12: pre-hide EVERY real card this open moves - onto the table
-        // (attacks/covers/passes) OR into my hand (my own draws/pickups) - all
-        // SYNCHRONOUSLY, before this returns to the onChange callback, i.e. before
-        // boardContent's first real paint. The kernel stream already named the
-        // real cards (openReplayTouchedCardIds); without this the battle grid
-        // paints once with the cover already landed and rotated (FBattleGrid.pair's
-        // coverLanded reads !hidden.contains) - the "starts rotated, un-rotates,
-        // re-rotates" (note 6) and "all covers show landed at once, then animate
-        // one at a time" (note 12) bugs.
+        // notes 6/12: hand every real card this open moves - onto the table
+        // (attacks/covers/passes) OR into my hand (my own draws/pickups) - to
+        // the animator, so it keeps hiding them once `settled` drops the veil.
+        // These are the SAME ids `veiledCardIds` has been showing as absent
+        // since the first paint (`pendingOpen`), so the handoff is invisible;
+        // doing it only here is what used to leave one paint with the cover
+        // already landed and rotated - the "starts rotated, un-rotates,
+        // re-rotates" (note 6) and "all covers show landed at once, then
+        // animate one at a time" (note 12) bugs.
         let touchedIds = controller.openReplayTouchedCardIds
         if !touchedIds.isEmpty { animator.preHide(touchedIds) }
 
-        // …and the counts, in the same synchronous breath (see freezeCounts).
-        // There is no prior view on an open — this board IS the first paint — so
-        // the pre-move counts are walked BACK from the final board through the
-        // events, which is what `preCounts` is for.
+        // …and the counts, likewise taking over from the veil's own
+        // `pendingOpen.counts`, which is this same walk-back (`preCounts`) done
+        // in `body` because there is no prior view on an open - this board IS
+        // the first paint.
         let pre = Self.preCounts(events, finalView: view)
         deckCountOverride = pre.deck
         discardCountOverride = pre.discard
@@ -857,7 +992,7 @@ public struct MessageTableView: View {
                  selection: $selection, onTap: { toggle($0) },
                  onDragChanged: { card, point in onDragChanged(card, at: point) },
                  onDragEnded: { card, point in onDragEnded(card, at: point, view) },
-                 namespace: cardNS, hidden: animator.hidden)
+                 namespace: cardNS, hidden: veiledCardIds)
             .padding(.horizontal, FSpace.s)
     }
 
@@ -865,6 +1000,18 @@ public struct MessageTableView: View {
 
     private func play(_ move: Move) {
         selection.removeAll()
+        // The veil, live half (round-4 note 5). Both of these are the state as
+        // it is RIGHT NOW, captured before `apply` can publish a new view —
+        // which is the only moment early enough, since the onChange that would
+        // otherwise do it runs a paint after the board has already drawn the
+        // result. Without them a pickup drew its cards into the fan, then hid
+        // them and flew them into the fan again (the "double pickup animation"),
+        // and every opponent's badge jumped to its final count before counting
+        // there (the twitch).
+        if let view = controller.view {
+            handBeforeMyMove = Set((view.me?.hand ?? []).map(\.identity))
+            freezeCounts(to: view)
+        }
         Task { await controller.apply(move); await stageNow() }
     }
 

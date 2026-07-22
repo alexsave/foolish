@@ -271,11 +271,13 @@ public actor MessageKernel {
         return DecodedReplay.decode(packed: packed)
     }
 
-    /// The animations of the resident game's LAST move, masked for `viewer` — the
-    /// kernel's evwire event stream (fio_replay_last_events_json), the SAME one
-    /// live play and the website emit. THE KERNEL decides what "the last move" is
-    /// (the final replay step, which bundles a move with its refill/discard/
-    /// defender-change consequences); we hand it only the encoded chain, never
+    /// The animations of the resident game's LAST TURN, masked for `viewer` —
+    /// the kernel's evwire event stream, the SAME one live play and the website
+    /// emit. THE KERNEL decides what "the last turn" is (the trailing run of
+    /// replay steps by one acting seat — what a single bubble carries, so a
+    /// staged double cover replays both, each step still bundling its move with
+    /// its refill/discard/defender-change consequences); we hand it only the
+    /// encoded chain, never
     /// "where I last looked". The viewer's own drawn/picked-up cards come back
     /// with real identities, everyone else's are hidden - so a reopened bubble
     /// animates through the kernel, not a client-side GameView diff (which could
@@ -292,7 +294,7 @@ public actor MessageKernel {
             }
         }
         guard let packed, !packed.isEmpty else { return [] }
-        return EvWire.decode(packed)
+        return EvWire.decodeFrames(packed)
     }
 
     /// Rule P (§7.2). <0 `a` wins, >0 `b`, 0 the same chain. Delivery order is

@@ -16,8 +16,11 @@ public struct FBattleGrid: View {
     public let onTapBattle: (Int) -> Void
     /// Shared card-flight namespace (a card matches its hand slot as it lands).
     public let namespace: Namespace.ID?
-    /// Card identities currently in overlay flight — rendered invisible here so the
-    /// flying ghost is the only copy (web CardFace opacity:0 while animating).
+    /// Card identities the board is rendering as NOT YET THERE — either in
+    /// overlay flight right now (so the flying ghost is the only copy, web
+    /// CardFace opacity:0 while animating) or about to be, on a board whose
+    /// opening replay has not started yet. One set, one authority: a cover in
+    /// here has not landed, so the attack under it does not lie across.
     public let hidden: Set<String>
     /// note 34: while a drag over open table space would resolve to a PASS,
     /// the board shows this empty preview slot instead of highlighting any
@@ -25,19 +28,10 @@ public struct FBattleGrid: View {
     /// false so every existing call site (MessageBoardView, TableView, the
     /// gallery/snapshot tests) keeps compiling unchanged.
     public let showGhostSlot: Bool
-    /// False while the board has not yet decided whether an already-covered
-    /// battle is about to be REPLAYED (an open-replay pre-hides the cover cards
-    /// a beat after the first paint). While false no attack tilts, so a board
-    /// that appears with covers already on the table starts UNROTATED and tilts
-    /// only as each cover lands - never "rotated, back to centre, rotated
-    /// again". Defaults true: a static render (snapshot, gallery, the offline
-    /// board) has no replay to wait for.
-    public let coversSettled: Bool
 
     public init(battles: [BattleView], trumpSuit: Suit?, coverable: Set<Int> = [],
                 onTapBattle: @escaping (Int) -> Void = { _ in }, namespace: Namespace.ID? = nil,
-                hidden: Set<String> = [], showGhostSlot: Bool = false,
-                coversSettled: Bool = true) {
+                hidden: Set<String> = [], showGhostSlot: Bool = false) {
         self.battles = battles
         self.trumpSuit = trumpSuit
         self.coverable = coverable
@@ -45,7 +39,6 @@ public struct FBattleGrid: View {
         self.namespace = namespace
         self.hidden = hidden
         self.showGhostSlot = showGhostSlot
-        self.coversSettled = coversSettled
     }
 
     private let cardSize = CGSize(width: 50, height: 70)   // web card 50x70
@@ -99,14 +92,16 @@ public struct FBattleGrid: View {
             .accessibilityHidden(true)
     }
 
-    /// Should the attacked card lie across (tilted), given who is covering it,
-    /// what is in flight, and whether the board has settled? Pulled out of the
-    /// view body so the three-state sequence this got wrong can be asserted
-    /// directly: upright on arrival, upright while the cover flies, tilted only
-    /// once it lands.
-    public static func coverLanded(defense: Card?, hidden: Set<String>,
-                                   coversSettled: Bool) -> Bool {
-        guard coversSettled, let d = defense else { return false }
+    /// Should the attacked card lie across (tilted)? Exactly when it has a
+    /// defender AND that defender is really on the table — not in flight, and
+    /// not queued for a flight the board has not started yet. Pulled out of the
+    /// view body so the sequence this got wrong can be asserted directly:
+    /// upright on arrival, upright while the cover flies, tilted only once it
+    /// lands. The caller owns what goes in `hidden`; see MessageTableView's
+    /// `veiledCardIds`, which is why this needs no second "have we settled yet"
+    /// input to stay honest on the first paint.
+    public static func coverLanded(defense: Card?, hidden: Set<String>) -> Bool {
+        guard let d = defense else { return false }
         return !hidden.contains(d.identity)
     }
 
@@ -117,15 +112,16 @@ public struct FBattleGrid: View {
         // says covered. So while the cover is still flying in, the attacked card
         // stays upright, then both lay across together (web behavior).
         //
-        // `coversSettled` covers the window BEFORE that: the board's very first
-        // paint happens before the open-replay gets to pre-hide anything (the
-        // pre-hide runs from an onChange, which is one paint late), so a pair
-        // that arrives already covered would flash tilted, snap upright as the
-        // pre-hide lands, then tilt again as the cover flies in. Starting from
-        // "not settled" removes the first of those three states, which is the
-        // only one that was ever wrong.
-        let coverLanded = Self.coverLanded(defense: battle.defense, hidden: hidden,
-                                           coversSettled: coversSettled)
+        // That covers the FIRST paint too, because `hidden` already carries the
+        // cards a not-yet-started open-replay is going to fly (MessageTableView
+        // .veiledCardIds derives them synchronously from the controller, rather
+        // than waiting for the pre-hide that an onChange delivers a paint late).
+        // Without that a pair arriving already covered flashed tilted, snapped
+        // upright as the pre-hide landed, then tilted again as the cover flew
+        // in — and a cover from an OLDER bubble, which this open does not
+        // replay at all, animated its tilt from scratch on load ("I see that
+        // the first cover rotates a bit as soon as we load").
+        let coverLanded = Self.coverLanded(defense: battle.defense, hidden: hidden)
         return ZStack(alignment: .bottom) {
             FCard(card: battle.attack,
                   trump: trumpSuit != nil && battle.attack.suit == trumpSuit,

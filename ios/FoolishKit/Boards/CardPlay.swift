@@ -99,6 +99,35 @@ public enum CardPlay {
         has(.good, in: legal) && !battles.isEmpty && battles.allSatisfy { $0.defense != nil }
     }
 
+    /// The moves a HUMAN may actually make on this board right now — the kernel
+    /// menu minus `wait`, minus `good` while any attack is still uncovered.
+    ///
+    /// That last exclusion is a UI rule, not a kernel one: the kernel always
+    /// offers GOOD (bots need it, and `fio_actor_mask` has to agree with the
+    /// packed menu), while the owner's rule is that an attacker cannot say good
+    /// until the table is fully covered. `canSayGood` has always encoded that
+    /// for the button; this is the same answer as a SET, for the two places
+    /// that need to ask "can this seat do anything at all" rather than "is this
+    /// one button live".
+    ///
+    /// Both callers are the dev auto-player (see MessageTableView's
+    /// HARNESS_AUTOMOVE and HarnessModel's turn handoff), and they have to
+    /// agree: a handoff that reads the raw kernel menu will pass the game to a
+    /// seat whose only offer is a `good` the board will not let it make, and
+    /// the run stops dead with no button on screen. That is not a deadlock in
+    /// the game — the DEFENDER can always still cover or take — it is the
+    /// auto-player asking the wrong question.
+    public static func humanMoves(battles: [BattleView], legal: [Move]) -> [Move] {
+        let goodAllowed = canSayGood(battles: battles, legal: legal)
+        return legal.filter { m in
+            switch m.type {
+            case .wait: return false
+            case .good: return goodAllowed
+            default:    return true
+            }
+        }
+    }
+
     /// Whether the selection can be attacked / passed / covered right now — the
     /// selection-driven buttons' enable state (Attack / Pass / Cover).
     public static func canAttack(_ cards: [Card], legal: [Move]) -> Bool {

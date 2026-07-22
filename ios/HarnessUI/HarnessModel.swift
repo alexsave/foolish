@@ -387,9 +387,59 @@ final class HarnessModel: ObservableObject {
                 try? await Task.sleep(nanoseconds: 600_000_000)   // rest so the settled board reads
                 guard let self, self.staged != nil else { return }
                 self.deliver()
-                self.become((self.localIndex + 1) % self.participants.count)
+                await self.becomeSomeoneWhoCanMove()
             }
         }
+    }
+
+    /// HARNESS_AUTOGAME's handoff: become the next participant who actually has
+    /// a legal move, searching round-robin from the current one.
+    ///
+    /// It used to be a flat `(localIndex + 1) % count`, which works in a DM and
+    /// stalls at three or more from the very first turn: only the first
+    /// attacker can act on an empty table, so handing the game to whoever
+    /// happens to be seated next usually hands it to a seat whose only legal
+    /// move is `wait`. That seat stages nothing, so nothing is ever delivered,
+    /// and the run sits there — which is why an 8-player auto-run produced four
+    /// lines of trace and no game.
+    ///
+    /// The kernel answers "can this seat act" (`residentLegal`), so nothing
+    /// here guesses at turn order. Falls back to the plain next seat when
+    /// nobody can move, so a finished game still advances rather than hanging.
+    private func becomeSomeoneWhoCanMove() async {
+        let n = participants.count
+        // While the thread is still a LOBBY there is no turn order to consult —
+        // the resident game is the deal at the lobby's capacity, whose "first
+        // attacker" is a phantom of a game nobody is playing yet. Asking it
+        // would jump straight past everyone who still has to join. Plain
+        // round-robin until someone starts the game.
+        if let latest = self.latest,
+           let bytes = try? MessageEnvelope.payloadBytes(url: latest.url),
+           let env = try? await MessageEnvelope.decode(payload: bytes, viewer: -1),
+           env.phase == 0 {
+            become((localIndex + 1) % n)
+            return
+        }
+        // The just-delivered chain is the resident game (deliver() re-adopted
+        // nothing, but the board that sealed it left it resident), so this asks
+        // about the position everyone is actually looking at.
+        // "Can act" must mean what the BOARD means by it, not what the kernel
+        // menu says — the kernel always offers `good`, the board only offers it
+        // once every attack is covered. Handing the game to a seat whose sole
+        // offer is a `good` it is not allowed to make stops the run dead on a
+        // board with no live button (observed at 8 players: an attacker with
+        // nothing to throw in, two uncovered battles, and the game frozen).
+        // The defender can always still cover or take, so the game is never
+        // actually stuck — only this handoff was.
+        for step in 1...n {
+            let seat = (localIndex + step) % n
+            let legal = await MessageKernel.shared.residentLegal(seat: seat)
+            guard let view = await MessageKernel.shared.residentView(viewer: seat) else { continue }
+            if !CardPlay.humanMoves(battles: view.battles, legal: legal).isEmpty {
+                become(seat); return
+            }
+        }
+        become((localIndex + 1) % n)
     }
 
     /// The blue send arrow: deliver the staged bubble into the shared transcript

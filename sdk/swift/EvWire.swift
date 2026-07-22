@@ -34,8 +34,35 @@ public enum EvWire {
         return Card(s: v / 13, v: (v % 13) + 1)
     }
 
-    /// Decode one packed evwire frame (fio_replay_last_events_packed's output, or
-    /// a single replay_steps_frames_v6 frame) into its events, each already
+    /// Decode a run of LENGTH-PREFIXED frames (replay_steps_frames_v6's output
+    /// shape, which is what fio_replay_last_events_packed hands back) into one
+    /// flat event stream, in play order.
+    ///
+    /// A turn is several frames because it is several ACTIONS: an iMessage
+    /// bubble carries everything its sender staged, so a defender who covered
+    /// twice sends two cover steps and both have to be replayed. Flattening
+    /// here rather than in the board keeps the caller's contract unchanged —
+    /// it still gets "the events of what just happened", in order — and each
+    /// event still carries its own per-step board snapshot, so counts settle
+    /// step by step across the whole turn exactly as they do within one.
+    ///
+    /// A short or malformed buffer stops the walk and returns what was whole,
+    /// the same degrade-to-less-animation discipline `decode` keeps.
+    public static func decodeFrames(_ bytes: Data) -> [GameEvent] {
+        let b = [UInt8](bytes)
+        var p = 0, out: [GameEvent] = []
+        while p + 2 <= b.count {
+            let len = Int(b[p]) | (Int(b[p + 1]) << 8)
+            p += 2
+            guard len > 0, p + len <= b.count else { break }
+            out.append(contentsOf: decode(Data(b[p..<p + len])))
+            p += len
+        }
+        return out
+    }
+
+    /// Decode ONE packed evwire frame (a single replay_steps_frames_v6 frame,
+    /// with its u16 length already stripped) into its events, each already
     /// masked for the frame's own viewer. Empty on a short/empty/malformed
     /// buffer - a corrupt frame degrades to "no animation", never a crash, the
     /// same discipline the rest of the wire readers keep.

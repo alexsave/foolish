@@ -806,26 +806,44 @@ int fio_replay_events_json(const char *code, int viewer, char *out, int cap) {
     return j_finish(&j);
 }
 
-// The animations of the chain's LAST move only, as ONE PACKED evwire frame —
-// the "what just happened" an iMessage receiver sees on opening a bubble. Same
-// packed evwire the website renders and live play broadcasts (no JSON crosses
-// this boundary, §zero-JSON); Swift reads it with EvWire.decode.
+// The animations of the chain's LAST TURN, as packed evwire frames — the "what
+// just happened" an iMessage receiver sees on opening a bubble. Same packed
+// evwire the website renders and live play broadcasts (no JSON crosses this
+// boundary, §zero-JSON); Swift reads it with EvWire.decodeFrames.
 //
 // THE KERNEL decides the group; the client passes only the encoded chain, never
 // "where I last looked" (there was no server to emit events at move time, and
-// the boundary is a rules question, so it stays in C). "The last move" is
-// unambiguous: a v6 replay is the deal (step 0) then exactly one step per
-// action, and each step already bundles an action with ALL its kernel-internal
-// consequences - a `pickup` step carries the PICKUP, every seat's refill draws,
-// and the defender change, from the one handle_pickup call. That final step's
-// events are masked for `viewer` exactly like live play: the viewer's own
+// the boundary is a rules question, so it stays in C).
+//
+// A turn is not an action. This used to hand back the final step alone, on the
+// reasoning that a v6 replay is the deal (step 0) then exactly one step per
+// action, and that each step already bundles an action with ALL its
+// kernel-internal consequences — a `pickup` step carries the PICKUP, every
+// seat's refill draws, and the defender change, from the one handle_pickup
+// call. All true, and still one action short of what a BUBBLE carries: a
+// player stages as many actions as they like before sending, so a defender who
+// covers two attacks sends one bubble holding two cover steps. Replaying only
+// the last of them showed the first cover already sitting on the table, landed
+// and rotated, while the second flew in — "if it's a double cover, the first
+// cover will just already be there, and only the second one will play."
+//
+// The group is therefore the trailing run of steps by ONE acting seat: walk
+// back from the end over the seatless tail (ROUND_END belongs to whoever caused
+// it), then back over every immediately preceding step by that same seat. It
+// stops at the first step someone else played, which is the previous bubble's
+// turn by construction — a chain alternates senders, and a seat cannot act
+// twice in a row across two bubbles without someone else's action in between.
+// Deliberately NOT recovered from the FMSG body's own action list: the boundary
+// question is "which steps belong together", and the chain answers it without
+// needing the envelope.
+//
+// Every frame is masked for `viewer` exactly like live play: the viewer's own
 // drawn/picked-up cards carry real identities (fixing "my own refill never
 // animated on reopen"), everyone else's are hidden backs.
 //
-// replay_steps_frames_v6 already length-prefixes each step's frame with a u16;
-// for the single last step we strip that and hand back the raw frame bytes, the
-// exact shape evwire_serialize emits and EvWire.decode reads. v6 only. Returns
-// bytes written (0 if the last step produced no events), or a negative error.
+// Frames come back in the shape replay_steps_frames_v6 writes them — each
+// preceded by a u16 LE length, in play order. v6 only. Returns bytes written
+// (0 if the turn produced nothing to animate), or a negative error.
 int fio_replay_last_events_packed(const char *code, int viewer,
                                   unsigned char *out, int cap) {
     if (!code || !out) return FIO_EBADARG;
@@ -835,22 +853,47 @@ int fio_replay_last_events_packed(const char *code, int viewer,
     int ilen = b32_decode(code, intbuf, sizeof(intbuf));
     if (ilen < 0) return FIO_ECAP;
 
-    ReplayHeader hdr;
-    int n = replay_steps_count_v6(intbuf, ilen, &hdr);
-    if (n < 0) { g_last_replay_error = -n; return FIO_EREPLAY; }
-    const int from = n > 0 ? n - 1 : 0;   // the final step = the last move's group
+    // What each step IS (kind + acting seat), so the run can be found without
+    // decoding a single frame first. The ceiling is the same one `intbuf`
+    // already implies — a chain that decodes to more actions than this could
+    // not have fit in the 16KB buffer above in the first place — and
+    // replay_steps_index_v6 returns -REPLAY_ECAP rather than truncating.
+    #define FIO_MAX_REPLAY_STEPS 2048
+    static unsigned char idx[RS_INDEX_STRIDE * FIO_MAX_REPLAY_STEPS];
+    int ilen_idx = replay_steps_index_v6(intbuf, ilen, 0, idx, sizeof idx);
+    if (ilen_idx < 0) { g_last_replay_error = -ilen_idx; return FIO_EREPLAY; }
+    const int n = ilen_idx / RS_INDEX_STRIDE;
+    if (n <= 0) return 0;
 
-    // One step in, so one length-prefixed frame out; write it into `out`, then
-    // slide the frame down over its own 2-byte length header.
+    const int last = n - 1;
+    int from = last;
+    // Back over the seatless tail (ROUND_END) to the acting step that caused it.
+    int a = last;
+    while (a > 0 && idx[a * RS_INDEX_STRIDE + 1] == RS_SEAT_NONE) a--;
+    const unsigned char actor = idx[a * RS_INDEX_STRIDE + 1];
+    if (actor != RS_SEAT_NONE) {
+        from = a;
+        // …then back over every step that seat played immediately before it.
+        // Never across another seatless step: that is a closed bout, and the
+        // run on its far side is a different turn.
+        while (from > 1 && idx[(from - 1) * RS_INDEX_STRIDE + 1] == actor) from--;
+    }
+
+    // The group runs to the end of the stream, so asking for [from, ...) is
+    // exactly it. Length-prefixed frames, in play order, as written.
     int n_frames = 0, next_step = 0;
     int r = replay_steps_frames_v6(intbuf, ilen, viewer, from, 0,
                                    out, cap, &n_frames, &next_step);
     if (r < 0) { g_last_replay_error = -r; return FIO_EREPLAY; }
-    if (n_frames <= 0 || r < 2) return 0;          // nothing to animate
-    int flen = out[0] | (out[1] << 8);
-    if (flen < 0 || flen + 2 > r) { g_last_replay_error = REPLAY_ECAP; return FIO_EREPLAY; }
-    memmove(out, out + 2, (size_t)flen);
-    return flen;
+    if (n_frames <= 0) return 0;                   // nothing to animate
+    // A short buffer must not silently drop the END of the turn — the newest
+    // action is the one the viewer most needs to see. FIO_ECAP, not
+    // FIO_EREPLAY: a turn of several frames (each carrying a masked board) can
+    // outgrow the caller's first guess, and ECAP is the code that makes the
+    // Swift side retry with a bigger buffer instead of giving up on the
+    // animation. A real decode failure is still FIO_EREPLAY above.
+    if (next_step <= last) { g_last_replay_error = REPLAY_ECAP; return FIO_ECAP; }
+    return r;
 }
 
 // The replay decode as its RAW binary (replay.h DECODE layout: a 20-byte header

@@ -207,16 +207,20 @@ int fio_replay_decode_packed(const char *code, unsigned char *out, int cap);
 // Delete once the last JSON consumer is off it.
 int fio_replay_events_json(const char *code, int viewer, char *out, int cap);
 
-// The animations of the chain's LAST move only, as ONE PACKED evwire frame,
-// masked for `viewer` - what an iMessage receiver sees on opening a bubble. THE
-// KERNEL decides the group (the final replay step, which bundles an action with
-// all its refill/discard/defender-change consequences); the client passes only
-// the encoded chain, never "where I last looked". The viewer's own drawn/picked-
-// up cards carry real identities, everyone else's are hidden - the same packed
-// evwire live play broadcasts and the website renders, so a reopen animates
-// through the kernel, not a client-side view diff. No JSON (§zero-JSON): Swift
-// reads the frame with EvWire.decode. Bytes written (0 if the last step produced
-// nothing), or negative. v6 only (v5 hides the deal); see fio_last_replay_error.
+// The animations of the chain's LAST TURN, as PACKED evwire frames (each
+// preceded by a u16 LE length, in play order), masked for `viewer` - what an
+// iMessage receiver sees on opening a bubble. THE KERNEL decides the group: the
+// trailing run of replay steps by ONE acting seat, which is what a bubble
+// carries (a player may stage several actions before sending, and a double
+// cover must replay BOTH). The client passes only the encoded chain, never
+// "where I last looked". The viewer's own drawn/picked-up cards carry real
+// identities, everyone else's are hidden - the same packed evwire live play
+// broadcasts and the website renders, so a reopen animates through the kernel,
+// not a client-side view diff. No JSON (§zero-JSON): Swift reads them with
+// EvWire.decodeFrames. Bytes written (0 if the turn produced nothing), or
+// negative - including when `cap` could not hold the whole turn, which is an
+// error rather than a silently truncated animation. v6 only (v5 hides the
+// deal); see fio_last_replay_error.
 int fio_replay_last_events_packed(const char *code, int viewer,
                                   unsigned char *out, int cap);
 

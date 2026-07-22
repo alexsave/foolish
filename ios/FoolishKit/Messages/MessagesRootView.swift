@@ -131,7 +131,10 @@ private struct GameSurface: View {
         expandedContent
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .fToast($toast)
-            .task(id: loadKey) { await reloadForInput() }
+            .task(id: loadKey) {
+                await reloadForInput()
+                await autoDriveLobby()
+            }
     }
 
     @ViewBuilder private var expandedContent: some View {
@@ -243,6 +246,47 @@ private struct GameSurface: View {
             }
             await adopt(winner: payload, env: env)
         }
+    }
+
+    /// DEV ONLY (HARNESS_AUTOGAME): press the setup/lobby buttons a human would,
+    /// so an unattended run can actually reach a board. Lobby v3 put three human
+    /// taps — Create game, Join, Start — between launch and a dealt game, and the
+    /// harness's auto-play only knows how to make MOVES, so an auto-run just sat
+    /// on the setup screen forever and the animation trace it exists to produce
+    /// was four lines long. Each participant's turn through here does the one
+    /// thing that seat can do; HARNESS_AUTOGAME's own deliver+become carries it
+    /// to the next. Never compiled into Release.
+    ///
+    /// Runs INSIDE `.task(id: loadKey)`, not as a Task of its own, and that is
+    /// load-bearing: a detached one outlives the surface that started it. The
+    /// first version was detached, and its 400ms sleep regularly finished after
+    /// the harness had already switched to the next participant — so a joiner's
+    /// pending drive ran with the PREVIOUS player's captured lobby and started
+    /// the game as them. An 8-player run reached a 2-player board with a seat
+    /// nobody at that keyboard held. Under `.task` it is cancelled with the
+    /// surface, so a stale drive cannot act at all.
+    ///
+    /// It also waits for the lobby to FILL. Starting at two is what a human may
+    /// do, but an auto-run that does it turns "8 players" into a 2-player game
+    /// and never exercises the seat count being asked about.
+    private func autoDriveLobby() async {
+        #if DEBUG
+        guard ProcessInfo.processInfo.environment["HARNESS_AUTOGAME"] != nil else { return }
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        if Task.isCancelled { return }
+        if showSetup { await start(nickname: MessageGameStore.shared.nickname); return }
+        guard let lob = lobby else { return }
+        // The lobby's capacity is the WIRE's max (8) for a group, not how many
+        // people are in the chat — so the target is the chat's own size.
+        let target = min(lob.env.nPlayers, max(2, chatPlayers))
+        if lobbySeat(lob.env) == nil {
+            if lob.env.joins.count < lob.env.nPlayers {
+                await joinLobby(lob, nickname: MessageGameStore.shared.nickname)
+            }
+        } else if lob.env.joins.count >= target {
+            await startGame(lob)
+        }
+        #endif
     }
 
     // MARK: creation + lobby (§5.2)
@@ -624,15 +668,36 @@ public enum LobbyControls {
     /// Start the game at the joined count (I'm in, 2+ have joined).
     case start
     /// Re-stage the WAITING chain so the human can send the invite (I'm in,
-    /// nobody else is yet).
+    /// nobody else is yet, and the newest invite is NOT mine).
     case invite
+    /// I'm in, nobody else is yet, and the invite sitting at the head of this
+    /// chain is the one I put there. There is genuinely nothing to do but wait
+    /// for someone to join, so the lobby says so and offers no button.
+    case waiting
     /// Claim a seat (I'm not in, and there is room).
     case join
     /// Nothing to do but wait (I'm not in, and there is no room).
     case full
 
-    public static func offered(mySeat: Int?, joined: Int, capacity: Int) -> LobbyControls {
-        if mySeat != nil { return joined >= 2 ? .start : .invite }
+    /// `iSentTheInvite`: is the newest bubble on this chain one I staged or
+    /// sent (`lastActorSeat == mySeat`)? Round-4 note 1 — "if you were the last
+    /// one to send an invite, shouldn't have the Send invite pop up." Offering
+    /// it then asks the human to send a second copy of the invite already
+    /// sitting in the thread (or in the compose field, freshly auto-staged),
+    /// which is the state a creator lands in every single time.
+    ///
+    /// The trade this makes, deliberately and with the owner's call on it: the
+    /// `.invite` button exists as the recovery path for a lobby whose
+    /// auto-staged bubble is gone (sent, deleted from the compose field, or
+    /// the extension reopened later). Gating it on authorship means a creator
+    /// who deletes their own draft has no in-lobby way to re-stage it and must
+    /// use New game. That is the cost of not nagging everyone else.
+    public static func offered(mySeat: Int?, joined: Int, capacity: Int,
+                               iSentTheInvite: Bool = false) -> LobbyControls {
+        if mySeat != nil {
+            if joined >= 2 { return .start }
+            return iSentTheInvite ? .waiting : .invite
+        }
         return joined < capacity ? .join : .full
     }
 }
@@ -684,9 +749,15 @@ private struct LobbyView: View {
             // read was "the lobby is too tight" for a second line saying the
             // same thing.
             switch LobbyControls.offered(mySeat: mySeat, joined: env.joins.count,
-                                         capacity: env.nPlayers) {
+                                         capacity: env.nPlayers,
+                                         iSentTheInvite: env.lastActorSeat == mySeat) {
             case .start:
                 FButton(FStrings.t("ios.msg.startgame"), kind: .wood, action: onStart)
+            case .waiting:
+                // Round-4 note 1: my own invite is the newest thing on this
+                // chain, so there is nothing to send that isn't already sent.
+                Text(FStrings.t("ios.msg.waiting"))
+                    .font(.footnote).foregroundStyle(.black.opacity(0.55))
             case .invite:
                     // I'm in, nobody else is yet. This branch used to render
                     // NOTHING — no Start (needs 2), no Join (I'm joined), no
