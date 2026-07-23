@@ -14,6 +14,9 @@
 //      crashes. The payload arrives from a URL, so this is the hostile surface.
 //   5. Hostile bodies are refused (validation = replay, §7.3).
 //   6. Size guardrail: P95 of a full 4-player game < 1,000 base32 chars (§4.4).
+//   7. Name-length boundary (round-5 B1, docs/APP_REVIEW_NOTES.md): a 13- and
+//      a 64-byte nickname round-trip byte-for-byte; 65 is refused as MSG_ENAME,
+//      at both the struct-level API and the hostile wire.
 //
 // Reported, not asserted: the size distribution per player count and driver, and
 // `v6mid` — the mid-game-cut oracle that caught the codec's missing `good` atom
@@ -307,6 +310,99 @@ static void test_waiting_phase(void) {
     MsgEnvelope d;
     CHECK(msg_decode(wire, n, &d) == MSG_EOK, "WAITING decode failed");
     CHECK(d.n_joins == 1 && d.n_actions == 0, "WAITING fields wrong");
+}
+
+// ---------- 7. name length boundary (round-5 B1: 12 -> 64 bytes) ----------
+//
+// The App Store review's B1 (docs/APP_REVIEW_NOTES.md): a name over 12 UTF-8
+// bytes failed to seal, silently, and the client blamed the link — an 8-letter
+// Cyrillic name like "Владимир" is 16 bytes and never fit. Owner's round-5
+// call: raise MSG_MAX_NAME to 64 (the Swift UI separately caps at 16
+// characters; not this layer's job). This pins the NEW boundary the same way
+// test_tamper pins the header fields: AT the cap must round-trip byte-for-byte,
+// and one byte OVER must be refused as MSG_ENAME — never truncated, never
+// silently widened past it.
+static void test_name_length_boundary(void) {
+    uint8_t seed[MSG_SEED_LEN];
+    seed_fill(seed, 1213);
+    g_rng = 1213;
+    Chain ch; memset(&ch, 0, sizeof(ch));
+    Game played;
+    play_game(seed, 2, 40, &ch, &played, -1);
+    const int over = game_done(&played) >= 0 || played.status == GAME_STATUS_GAME_OVER;
+    const uint8_t phase = (uint8_t)(over ? MSG_PHASE_FINISHED : MSG_PHASE_LIVE);
+
+    // 13 bytes: one past the OLD cap (the exact boundary the review's table
+    // found broken). MSG_MAX_NAME: the NEW cap, exactly.
+    const int lens[] = { 13, MSG_MAX_NAME };
+    for (int li = 0; li < (int)(sizeof(lens) / sizeof(lens[0])); li++) {
+        const int len = lens[li];
+        MsgEnvelope e;
+        env_init(&e, seed, 2);
+        e.phase = phase;
+        for (int i = 0; i < len; i++) e.joins[0].name[i] = (char)('A' + (i % 26));
+        e.joins[0].name_len = (uint8_t)len;
+
+        static unsigned char body[1024];
+        static Game scratch;
+        CHECK(msg_seal(&e, &played, body, sizeof(body), &scratch) == MSG_EOK,
+              "name_len=%d seal failed", len);
+
+        unsigned char wire[ENV_CAP];
+        const int n = msg_encode(&e, wire, sizeof(wire));
+        CHECK(n > 0, "name_len=%d encode failed: %d", len, n);
+        if (n <= 0) continue;
+
+        MsgEnvelope d;
+        CHECK(msg_decode(wire, n, &d) == MSG_EOK, "name_len=%d decode failed", len);
+        CHECK(d.joins[0].name_len == (uint8_t)len &&
+              !memcmp(d.joins[0].name, e.joins[0].name, (size_t)len),
+              "name_len=%d round-trip mismatch", len);
+
+        // Re-encode must be byte-identical, same property test_roundtrip pins.
+        unsigned char wire2[ENV_CAP];
+        const int n2 = msg_encode(&d, wire2, sizeof(wire2));
+        CHECK(n2 == n && !memcmp(wire, wire2, (size_t)n),
+              "name_len=%d re-encode not byte-identical", len);
+    }
+
+    // MSG_MAX_NAME + 1 (65): one past the NEW cap. Refused at the struct-level
+    // API (encode) — content is irrelevant, the length check fires first, so
+    // leaving the rest of the fixed-size name[] array unwritten is safe.
+    {
+        MsgEnvelope e;
+        env_init(&e, seed, 2);
+        e.phase = phase;
+        e.joins[0].name_len = (uint8_t)(MSG_MAX_NAME + 1);
+        unsigned char wire[ENV_CAP];
+        CHECK(msg_encode(&e, wire, sizeof(wire)) == MSG_ENAME,
+              "name_len=%d should have been refused encoding", MSG_MAX_NAME + 1);
+    }
+
+    // Same boundary at the actual hostile surface: a wire whose join name_len
+    // byte was tampered past the cap (the payload arrives from a URL, never a
+    // trusted struct — §7.1). Build a valid at-cap envelope, then flip the one
+    // byte that claims the name's length.
+    {
+        MsgEnvelope e;
+        env_init(&e, seed, 2);
+        e.phase = phase;
+        for (int i = 0; i < MSG_MAX_NAME; i++) e.joins[0].name[i] = 'A';
+        e.joins[0].name_len = MSG_MAX_NAME;
+        static unsigned char body[1024];
+        static Game scratch;
+        CHECK(msg_seal(&e, &played, body, sizeof(body), &scratch) == MSG_EOK,
+              "name boundary tamper fixture seal failed");
+        unsigned char wire[ENV_CAP];
+        const int n = msg_encode(&e, wire, sizeof(wire));
+        CHECK(n > 0, "name boundary tamper fixture encode failed");
+        if (n > 0) {
+            wire[MSG_HEADER_LEN + 1] = MSG_MAX_NAME + 1;   // the first join's name_len byte
+            MsgEnvelope d;
+            CHECK(msg_decode(wire, n, &d) == MSG_ENAME,
+                  "wire name_len=%d should have been refused decoding", MSG_MAX_NAME + 1);
+        }
+    }
 }
 
 // Rule P, rule 0: a STARTED chain beats the lobby it grew out of.
@@ -821,6 +917,7 @@ int main(int argc, char **argv) {
     test_sha256_kat();
     test_roundtrip(games, seed0);
     test_waiting_phase();
+    test_name_length_boundary();
     test_rule_p_started_beats_lobby();
     test_tamper();
     test_hostile_body();

@@ -265,9 +265,10 @@ int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, i
 // fills in what the BODY owns (turn, round) by decoding the code it just wrote,
 // so a device cannot emit a payload it would itself reject.
 //
-// `joins_json` is [{"seat":0,"name":"Sveta"},...]; names are <=12 UTF-8 bytes
-// and are the only identity a payload carries (no participant UUID ever goes in
-// — they do not transfer across devices, §6).
+// `joins_json` is [{"seat":0,"name":"Sveta"},...]; names are <=64 UTF-8 bytes
+// (round-5 B1, docs/APP_REVIEW_NOTES.md — was 12, too tight for a byte-counted
+// Cyrillic name) and are the only identity a payload carries (no participant
+// UUID ever goes in — they do not transfer across devices, §6).
 //
 // Returns bytes written to `out`, or negative. FIO_ENOSEED if this game was not
 // dealt from a wide seed (a serverless game cannot be rebuilt without one).

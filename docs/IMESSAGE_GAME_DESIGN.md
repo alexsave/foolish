@@ -177,7 +177,7 @@ offset  size  field            notes
 26      16    seed       deal seed → game_set_deal_seed_bytes(seed,16).
                          All zeros only in fair-deal WAITING/ACCEPT (§15)
 42      1     n_joins    seats claimed so far (creator counts: >=1)
-43      var   joins      n_joins × { u8 seat, u8 name_len (<=12), name utf8 }
+43      var   joins      n_joins × { u8 seat, u8 name_len (<=64), name utf8 }
                          ordered by claim time; creator is always seat 0 (§6)
 var     2     n_actions  u16
 var     3×n   actions    packed kernel actions, 3 bytes each (§4.2)

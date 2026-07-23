@@ -26,7 +26,7 @@
 //   18   8     parent8    first 8 bytes of SHA-256(previous envelope), 0 at creation
 //   26   32    seed       -> game_set_deal_seed_bytes(seed, 32)
 //   58   1     n_joins
-//   59   var   joins      n_joins x { u8 seat, u8 name_len<=12, name utf8 }
+//   59   var   joins      n_joins x { u8 seat, u8 name_len<=64, name utf8 }
 //   var  2     n_actions  u16, the action count the body must yield
 //   var  var   body       the v6 replay code — see THE BODY
 //
@@ -108,7 +108,11 @@
 #define MSG_FLAG_FAIR_DEAL 0x01
 #define MSG_FLAG_GZIP      0x02
 
-#define MSG_MAX_NAME     12
+// Was 12: the App Store review's B1 (docs/APP_REVIEW_NOTES.md) found that cap
+// too tight for a byte-counted UTF-8 name — "Владимир" (8 letters, 16 bytes)
+// silently failed to seal. Owner's round-5 call: allow up to 64 bytes; the
+// Swift UI separately caps at 16 characters (not this layer's job).
+#define MSG_MAX_NAME     64
 #define MSG_MAX_JOINS    MAX_PLAYERS
 #define MSG_SEED_LEN     FOOLISH_SEED_LEN   // 32 — the ChaCha key width
 #define MSG_PARENT_LEN   8

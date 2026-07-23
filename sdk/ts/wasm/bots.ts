@@ -704,7 +704,11 @@ export function kernelReplayEncodeV6FromGame(
 // The unpacked header — the private ABI msg_blob_write/msg_blob_read define in
 // c/wasm/wasm_api.c. Fixed offsets, fixed-size join slots.
 const MSG_BLOB_HDR = 90;
-const MSG_BLOB_JOIN = 14;
+// 2 + the wire's MSG_MAX_NAME: was 14 (2 + 12) before round-5 B1 raised the
+// name cap to 64 bytes (docs/APP_REVIEW_NOTES.md, c/src/msg_wire.h) — must
+// match wasm_api.c's MSG_BLOB_JOIN or this bridge mis-parses every join.
+const MSG_MAX_NAME = 64;
+const MSG_BLOB_JOIN = 2 + MSG_MAX_NAME;
 
 export interface MsgJoin { seat: number; name: string }
 
@@ -787,7 +791,7 @@ function writeBlob(e: MsgEnvelope): Uint8Array {
     e.joins.forEach((j, i) => {
         const o = MSG_BLOB_HDR + i * MSG_BLOB_JOIN;
         const name = new TextEncoder().encode(j.name);
-        if (name.length > 12) throw new Error(`nickname over 12 bytes: ${j.name}`);
+        if (name.length > MSG_MAX_NAME) throw new Error(`nickname over ${MSG_MAX_NAME} bytes: ${j.name}`);
         out[o] = j.seat;
         out[o + 1] = name.length;
         out.set(name, o + 2);

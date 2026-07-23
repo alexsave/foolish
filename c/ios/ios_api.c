@@ -1019,7 +1019,7 @@ static int fio_parse_joins(const char *joins_json, MsgEnvelope *e) {
         np++;
         int n = 0;
         while (*np && *np != '"' && n < MSG_MAX_NAME) jn->name[n++] = *np++;
-        if (*np != '"') return FIO_EPARSE;   // >12 bytes, or unterminated
+        if (*np != '"') return FIO_EPARSE;   // > MSG_MAX_NAME bytes, or unterminated
         jn->name_len = (uint8_t)n;
         e->n_joins++;
         const char *close = strchr(p, '}');
