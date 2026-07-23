@@ -280,27 +280,31 @@ public struct MessageTableView: View {
     /// move" label that ate layout) marks that I must open the bout.
     private func boardContent(_ view: GameView) -> some View {
         GeometryReader { geo in
-            // Round-5 M5b ("in the collapsed view, show only the top half of
-            // the cards"): reuse the SAME compact-drawer test `ringPoint`
-            // already applies (`size.height < 340`) rather than inventing a
-            // second threshold — this view is never told "you are the compact
-            // drawer" directly, it only ever sees its own compressed geometry,
-            // so anywhere that already reads geometry to detect compact is the
-            // one true source for it.
-            let compact = geo.size.height < 340
+            // Round-6 bugs 2/4: what USED to be a binary `geo.size.height < 340`
+            // cliff — every compact-derived quantity flipping in one frame as the
+            // drawer crossed that single height — is now a CONTINUOUS collapse
+            // fraction (0 = fully expanded, 1 = fully compact drawer). The hand's
+            // card crop, the role mark / action bar offsets, and the opponent ring
+            // radius are all smooth functions of THIS, so the self hand descends
+            // gradually and its companions track it as the drawer height changes
+            // (whether the human drags the grabber — bug 4 — or the staged
+            // auto-collapse animates the height down — bug 2). The old single-
+            // instant flip is what "snapped" then; nothing about the RESTING
+            // compact/expanded look changes, only the transit between them.
+            let collapse = Self.collapseFraction(height: geo.size.height)
             let myHand = view.me?.hand ?? []
             // The width FHandFan itself actually lays out in: this reader's
             // width minus `hand(_:)`'s own `.padding(.horizontal, FSpace.s)`.
             let handWidth = max(0, geo.size.width - FSpace.s * 2)
-            // Round-5 M6: how much taller the hand got by splitting into two
-            // rows, so the self-role indicator and action bar — both floated a
-            // fixed distance above the hand — can lift by exactly that much
-            // instead of sitting on top of the second row. Comparing against
-            // an EMPTY hand's height (always exactly one row, whatever
-            // `compact` is) rather than a hard-coded second constant means
-            // this can never drift out of sync with `FHandFan.height` itself.
-            let handLift = max(0, FHandFan.height(cards: myHand, availableWidth: handWidth, topHalfOnly: compact)
-                                  - FHandFan.height(cards: [], availableWidth: handWidth, topHalfOnly: compact))
+            // The hand's ACTUAL on-screen height at this collapse fraction (one
+            // cropped/uncropped row, or two once M6 splits it). The self-role
+            // indicator and action bar float a fixed gap ABOVE this, so driving
+            // their offset off the live height is what makes them descend WITH
+            // the hand as it crops down (bug 4) instead of hanging at a fixed
+            // spot the shrinking hand pulls away from. Reading it off
+            // `FHandFan.height` (not a second constant) keeps it in lockstep
+            // with what the fan actually renders.
+            let handHeight = FHandFan.height(cards: myHand, availableWidth: handWidth, crop: collapse)
             ZStack {
                 // Battles — dead centre of the board (web: absolute, both axes).
                 battlesArea(view)
@@ -346,17 +350,17 @@ public struct MessageTableView: View {
                 // first-attacker-only sword used: just above my hand.
                 selfRoleIndicator(view)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .padding(.bottom, 86 + handLift)
+                    .padding(.bottom, handHeight + 6)
 
                 // Action buttons float bottom-right, above the hand (web absolute
                 // bottom:90/right:20). They only appear when a flag enables them.
                 actionBar(view)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                    .padding(.trailing, 4).padding(.bottom, 84 + handLift)
+                    .padding(.trailing, 4).padding(.bottom, handHeight + 4)
 
                 // My hand hugs the bottom (web: bottom max(10, safe-area)); the
                 // outer .padding(12) is the safe-area inset that keeps it unclipped.
-                hand(view, topHalfOnly: compact)
+                hand(view, crop: collapse)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
 
                 // note 33 / round-4 note 4: the verb hint rides just ABOVE THE
@@ -390,6 +394,27 @@ public struct MessageTableView: View {
     /// thumb (a finger covers roughly 40pt of screen) without leaving the pill
     /// somewhere the eye has to hunt for it.
     static let dragHintLift: CGFloat = 52
+
+    /// The board's CONTINUOUS collapse fraction from its own height: 0 at/above
+    /// `expandedAnchor` (the resting expanded board), 1 at/below `compactAnchor`
+    /// (the resting compact drawer), linearly ramped between. Every compact-
+    /// derived quantity in `boardContent`/`ringPoint` reads THIS instead of the
+    /// old `height < 340` cliff, so each is a smooth function of the drawer
+    /// height — the fix for round-6 bugs 2 and 4 (a manual grabber-drag OR the
+    /// staged auto-collapse now TWEENS the layout down as the height animates
+    /// instead of every quantity flipping in one frame at a single height). The
+    /// anchors are chosen so BOTH resting states saturate: `compactAnchor` is the
+    /// old 340 cliff, which that binary test proved the compact drawer always
+    /// sits below (so it -> 1 at rest), and the near-full-screen expanded board
+    /// is always well above 440 (so it -> 0 at rest). Only the transit between
+    /// the two is now a ramp; neither resting look changes.
+    static func collapseFraction(height: CGFloat) -> CGFloat {
+        let compactAnchor: CGFloat = 340
+        let expandedAnchor: CGFloat = 440
+        if height <= compactAnchor { return 1 }
+        if height >= expandedAnchor { return 0 }
+        return (expandedAnchor - height) / (expandedAnchor - compactAnchor)
+    }
 
     /// The finish order for the end screen: rank 1 = first player out (best),
     /// counting up to the fool last. `eliminationOrder` is first-out first and
@@ -451,8 +476,11 @@ public struct MessageTableView: View {
         let rad = 2 * Double.pi * Double(visual) / Double(max(n, 1))
         // A compressed board (the compact drawer) pushes the ring a little higher
         // so it and the hand don't crowd the middle - but only a little, or the
-        // top badge clips against the drawer's rounded top edge.
-        let ry = size.height < 340 ? 0.38 : 0.35
+        // top badge clips against the drawer's rounded top edge. Round-6: this
+        // now rides the SAME continuous collapse fraction as everything else
+        // (0.35 expanded -> 0.38 fully compact), so the ring eases open as the
+        // drawer collapses rather than jumping at a single height (bugs 2/4).
+        let ry = 0.35 + 0.03 * Self.collapseFraction(height: size.height)
         // Wider than it is tall (0.42 vs 0.35). At eight players the battle
         // grid wraps to four across and the side seats sat right on top of it -
         // Oleg's and Dima's names were behind the cards. Pushing the ring out
@@ -1031,15 +1059,17 @@ public struct MessageTableView: View {
         )
     }
 
-    /// - `topHalfOnly` (round-5 M5b): the compact drawer's own hand cards
-    ///   render only their top half — see `boardContent`'s `compact`.
-    private func hand(_ view: GameView, topHalfOnly: Bool) -> some View {
+    /// - `crop` (round-5 M5b, made continuous in round-6): how much of each hand
+    ///   card to hide off the bottom — 0 the whole card (expanded), 1 the top
+    ///   half (fully compact drawer), any value between as the drawer collapses.
+    ///   See `boardContent`'s `collapse`.
+    private func hand(_ view: GameView, crop: CGFloat) -> some View {
         FHandFan(cards: view.me?.hand ?? [], trumpSuit: view.trumpSuit,
                  selection: $selection, onTap: { toggle($0) },
                  onDragChanged: { card, point in onDragChanged(card, at: point) },
                  onDragEnded: { card, point in onDragEnded(card, at: point, view) },
                  namespace: cardNS, hidden: veiledCardIds,
-                 topHalfOnly: topHalfOnly,
+                 crop: crop,
                  onDragCardMoved: { center in dragCardCenter = center })
             .padding(.horizontal, FSpace.s)
     }

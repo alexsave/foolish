@@ -35,12 +35,19 @@ public struct FHandFan: View {
     /// only the flying ghost shows.
     public let hidden: Set<String>
     /// Round-5 M5b ("in the collapsed view, show only the top half of the
-    /// cards"): the compact drawer crops every hand card to its top half (frame
-    /// height cardH/2, alignment .top, clipped) — the corner index stays
-    /// legible, and the hand's on-screen height halves. Defaulted false so
-    /// every pre-existing call site (TableView, GalleryView, the snapshot
-    /// tests) keeps rendering the full-height card it always did.
-    public let topHalfOnly: Bool
+    /// cards"): how much of each hand card to hide off the bottom edge, as a
+    /// CONTINUOUS fraction — 0 shows the whole card (the full board), 1 reserves
+    /// only the top half so the lower half falls past the drawer's bottom edge
+    /// (the compact drawer). Any value between the two is a partly-descended
+    /// card, which is what lets `MessageTableView` drive this off its continuous
+    /// `collapse` fraction so the hand slides DOWN smoothly as the drawer height
+    /// changes (round-6 bugs 2/4 — the self cards "gradually go down as we
+    /// collapse") instead of the card height halving in one frame at a single
+    /// height threshold. Round-6: this replaced the old `topHalfOnly: Bool`; the
+    /// Bool is still accepted as an init convenience (it maps to 0 or 1) so every
+    /// pre-existing call site (TableView, GalleryView, the snapshot tests) keeps
+    /// rendering exactly the full-height card it always did.
+    public let crop: CGFloat
     /// Round-5 finding 5 ("the little mid-drag text... should be centered
     /// horizontally on the card(s)"): the dragged card's own LIVE visual centre
     /// in `boardSpace`, delivered on every `onDragChanged` alongside the raw
@@ -53,7 +60,7 @@ public struct FHandFan: View {
                 onDragChanged: @escaping (Card, CGPoint) -> Void = { _, _ in },
                 onDragEnded: @escaping (Card, CGPoint) -> Void = { _, _ in },
                 namespace: Namespace.ID? = nil, hidden: Set<String> = [],
-                topHalfOnly: Bool = false,
+                topHalfOnly: Bool = false, crop: CGFloat? = nil,
                 onDragCardMoved: @escaping (CGPoint) -> Void = { _ in }) {
         self.cards = cards
         self.trumpSuit = trumpSuit
@@ -64,7 +71,10 @@ public struct FHandFan: View {
         self.onDragEnded = onDragEnded
         self.namespace = namespace
         self.hidden = hidden
-        self.topHalfOnly = topHalfOnly
+        // `crop` wins when a caller passes a continuous value (the compact
+        // drawer, off its collapse fraction); otherwise the `topHalfOnly` Bool
+        // maps to the two endpoints, so every existing call site is unchanged.
+        self.crop = crop ?? (topHalfOnly ? 1 : 0)
         self.onDragCardMoved = onDragCardMoved
     }
 
@@ -110,6 +120,16 @@ public struct FHandFan: View {
     @State private var reorderShift: CGFloat = 0
 
     private static let cardH: CGFloat = 72   // CONSTANT height — a skinny (many-card) hand stays this tall
+
+    /// How tall a slice of each card to actually reserve, for a given `crop`
+    /// fraction: `crop` 0 shows the whole card, 1 reserves only the top half
+    /// (the card is still drawn full-height and top-aligned, so its lower part
+    /// simply falls off the bottom — see `cardView`). Continuous between the two
+    /// so the compact drawer can drive it off a smooth collapse fraction and the
+    /// hand descends gradually (round-6 bugs 2/4) instead of halving in one frame.
+    static func shownCardHeight(crop: CGFloat) -> CGFloat {
+        Self.cardH * (1 - 0.5 * max(0, min(1, crop)))
+    }
     private static let maxCardW: CGFloat = 52   // never wider than ~proper aspect, so cards never go "superwide"
     private static let gap: CGFloat = 4
     private static var rowH: CGFloat { cardH + 8 }
@@ -171,9 +191,17 @@ public struct FHandFan: View {
     /// such rows stacked with `rowGap` between once M6 splits the hand. Public
     /// and static so MessageTableView can reserve exactly this much room above
     /// the hand (see its `handLift`) instead of guessing at a second constant.
-    public static func height(cards: [Card], availableWidth: CGFloat, topHalfOnly: Bool = false) -> CGFloat {
-        let oneRow = topHalfOnly ? Self.cardH / 2 + 8 : Self.rowH
+    public static func height(cards: [Card], availableWidth: CGFloat, crop: CGFloat) -> CGFloat {
+        let oneRow = Self.shownCardHeight(crop: crop) + 8
         return Self.rowCount(cards: cards, availableWidth: availableWidth) == 2 ? oneRow * 2 + Self.rowGap : oneRow
+    }
+
+    /// `topHalfOnly` convenience overload — the pre-round-6 spelling, kept so
+    /// TableView/GalleryView/the snapshot tests that reserve room off this
+    /// function compile unchanged. `false` → crop 0 (full card), `true` → crop 1
+    /// (top half), so every pinned number in Round5BoardTests still holds exactly.
+    public static func height(cards: [Card], availableWidth: CGFloat, topHalfOnly: Bool = false) -> CGFloat {
+        Self.height(cards: cards, availableWidth: availableWidth, crop: topHalfOnly ? 1 : 0)
     }
 
     /// `cards` reordered by the local `order` state: identities still present
@@ -283,7 +311,7 @@ public struct FHandFan: View {
         // number arrives a paint later.
         .frame(height: Self.height(cards: cards,
                                    availableWidth: measuredWidth > 0 ? measuredWidth : .greatestFiniteMagnitude,
-                                   topHalfOnly: topHalfOnly))
+                                   crop: crop))
         // Round-5 M6: measure this view's own proposed WIDTH once — see
         // `measuredWidth`'s doc — so the `.frame(height:)` just above can size
         // itself for a possibly-two-row hand. Unaffected by whatever height
@@ -330,7 +358,7 @@ public struct FHandFan: View {
             // The touch target follows the RESERVED half (`.contentShape`
             // below sizes to this frame), which is exactly the part you can
             // see and therefore the only part you could sensibly aim at.
-            .frame(height: topHalfOnly ? Self.cardH / 2 : Self.cardH, alignment: .top)
+            .frame(height: Self.shownCardHeight(crop: crop), alignment: .top)
             .opacity(hidden.contains(card.identity) ? 0 : 1)
             .modifier(FlightID(id: card.identity, namespace: namespace))
             .background(GeometryReader { g in
