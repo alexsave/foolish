@@ -1302,10 +1302,15 @@ struct FGameOverList: View {
             // height — more players -> taller plank -> WIDER plank, overflowing
             // the surface and clipping the rank column first, then the names
             // (worst case: 8 players, the plank goes blank but for a stray `)`).
-            // Pinning maxWidth alongside the height is the fix the finding names
+            // Pinning the width alongside the height is the fix the finding names
             // directly: the plank is now exactly the surface width at every
             // count 2...8, and WoodFill fills THAT box instead of dictating it.
-            .frame(maxWidth: .infinity, height: plankHeight)
+            //
+            // Spelled as min/maxHeight rather than `height:` because SwiftUI has
+            // no `frame(maxWidth:height:)` overload — the fixed-size and the
+            // flexible-size frames are two different modifiers, and mixing one
+            // argument from each does not compile.
+            .frame(maxWidth: .infinity, minHeight: plankHeight, maxHeight: plankHeight)
             .clipShape(Rectangle())
             .overlay(Rectangle().strokeBorder(.black.opacity(0.4), lineWidth: 1.5))
             .padding(.horizontal, 4)

@@ -147,31 +147,34 @@ public struct WoodFill: View {
     private static let scale: CGFloat = 1.15
 
     public var body: some View {
-        ZStack {
-            // Dark wood fallback: shows while the swatch renders. `texSize` is
-            // deliberately larger than every real wood surface (see its doc),
-            // so once the swatch lands this colour should never peek past the
-            // patch — but it is still picked close to the texture's own base
-            // tone (`WoodTexture.swift`'s base fill is 70/14/9) so any future
-            // oversized surface degrades to shading, not a hard seam.
-            Color(hex: 0x5A2412)
-            if let img {
-                Image(uiImage: img)
-                    .resizable()
-                    // NOT `.aspectRatio(.fill)` (B2's root cause: fill's
-                    // proposed WIDTH tracks whatever HEIGHT the container
-                    // hands it, so a tall plank got a wide, giant-grained
-                    // image). Fixed size at the texture's own pixels × the
-                    // constant `scale` above, centred, and let the OUTER
-                    // frame's `.clipped()` below do all the cropping — same
-                    // shape as `WoolBackground`'s image sizing.
-                    .frame(width: Self.texSize.width * Self.scale,
-                           height: Self.texSize.height * Self.scale)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                    .clipped()
-                    .transition(.opacity)
+        // The FALLBACK COLOUR is the only thing that sizes this view, and that
+        // is load-bearing. A `Color` is infinitely flexible — it takes whatever
+        // its container proposes — whereas the fixed-size swatch below is
+        // 441x331pt, WIDER than a phone screen. Drawn as a ZStack sibling, that
+        // swatch made every wood surface demand its own 441pt width: the
+        // game-over plank then overflowed the 393pt board, got centred, and its
+        // `.clipShape` sliced the rank column off the left edge — B2's exact
+        // symptom, reintroduced by the cure. As an `.overlay` the swatch is
+        // painted at its natural size and clipped, but contributes NOTHING to
+        // layout, so the plank is sized by its ROWS (or by whatever box the
+        // caller gives it) and the grain simply fills it.
+        Color(hex: 0x5A2412)          // dark wood, close to the texture's own 70/14/9 base
+            .overlay {
+                if let img {
+                    Image(uiImage: img)
+                        .resizable()
+                        // NOT `.aspectRatio(.fill)` (B2's root cause: fill's
+                        // proposed WIDTH tracks whatever HEIGHT the container
+                        // hands it, so a tall plank got a wide, giant-grained
+                        // image). Fixed size at the texture's own pixels × the
+                        // constant `scale` above — one grain size everywhere,
+                        // a bigger surface just shows MORE of it.
+                        .frame(width: Self.texSize.width * Self.scale,
+                               height: Self.texSize.height * Self.scale)
+                        .transition(.opacity)
+                }
             }
-        }
+            .clipped()
         .task {
             guard img == nil else { return }
             let image = await Task.detached(priority: .userInitiated) {
