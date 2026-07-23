@@ -596,6 +596,7 @@ xcrun simctl ui <SIM> content_size accessibility-extra-extra-extra-large
 xcrun simctl ui <SIM> appearance light
 ```
 
-**Housekeeping:** `docs/review-shots-2/` is 139MB of full-resolution PNGs
-(`docs/review-shots/` is 13MB downscaled). Worth downscaling before this branch
-merges.
+Both shot directories are downscaled to a 900px long edge (24MB and 13MB) —
+enough to read every finding, including the card-rank loss in B3. The
+full-resolution originals are in this branch's history if a detail is ever
+disputed.
