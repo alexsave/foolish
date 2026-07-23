@@ -67,8 +67,24 @@ public struct Flight: Identifiable, Equatable {
     public let card: Card?
     public let from: CGRect
     public let to: CGRect
-    public init(id: String, card: Card?, from: CGRect, to: CGRect) {
+    /// Round-6 bug 1: the card's FINAL on-table rotation in degrees. A laid-across
+    /// cover lands tilted, so its overlay ghost ROTATES 0 -> `angle` as it flies
+    /// (matching the card it becomes) instead of arriving flat and the real card
+    /// snapping tilted the instant the ghost is removed — the "blend transforms
+    /// mid flight from not rotated to rotated" the round-6 device pass flagged.
+    /// Defaulted 0 (upright), so every deck / discard / pickup / attack flight
+    /// stays flat exactly as before; only the cover flight sets it.
+    public let angle: Double
+    /// The rotation the card STARTS at (round-6 bug 6). A card being swept to the
+    /// discard was lying across its battle a moment ago, so its ghost lifts off
+    /// still tilted and flattens into the pile (`fromAngle` = its table tilt,
+    /// `angle` = 0) rather than snapping upright the instant it leaves. Defaulted
+    /// 0, so a hand/deck flight starts flat exactly as before.
+    public let fromAngle: Double
+    public init(id: String, card: Card?, from: CGRect, to: CGRect,
+                angle: Double = 0, fromAngle: Double = 0) {
         self.id = id; self.card = card; self.from = from; self.to = to
+        self.angle = angle; self.fromAngle = fromAngle
     }
 }
 
@@ -130,7 +146,15 @@ public final class BoardAnimator: ObservableObject {
     /// Kept separate from `hidden` (which also covers the CURRENT in-flight
     /// step) so a later step starting doesn't accidentally un-hide a
     /// still-pending prediction for a LATER step.
-    private var preHidden: Set<String> = []
+    ///
+    /// Round-6 bug 10: also the "reserve no hand slot yet" set. A card in here
+    /// is a deal/pickup PREDICTED for a step that has not started, so the hand
+    /// fan must not widen for it yet (my present cards must not slide left in
+    /// anticipation while OTHER seats' deals animate first). `openSlots` pulls a
+    /// card out of here the instant its own step begins — still opacity-hidden
+    /// (`hidden` keeps it) but now laid out, so its landing frame publishes and
+    /// the fan opens for it AS it arrives. Published so the board's layout reacts.
+    @Published public private(set) var preHidden: Set<String> = []
 
     public init() {}
 
@@ -143,6 +167,19 @@ public final class BoardAnimator: ObservableObject {
     public func preHide(_ ids: Set<String>) {
         preHidden.formUnion(ids)
         hidden.formUnion(ids)
+    }
+
+    /// Round-6 bug 10: this step is about to fly, so its incoming hand cards
+    /// stop being "future predictions" and start reserving their real hand
+    /// slots NOW — a beat before their flight builds and plays. They leave
+    /// `preHidden` (so `MessageTableView.handSlotDeferred` no longer excludes
+    /// them and the fan opens for them, publishing their landing frame) but
+    /// stay in `hidden`, so they are still invisible until their flight lands.
+    /// The caller wraps this in a `withAnimation` matching the flight so the
+    /// fan makes room over the flight rather than jumping. A no-op for ids not
+    /// currently predicted.
+    public func openSlots(_ ids: Set<String>) {
+        preHidden.subtract(ids)
     }
 
     /// Force-reveal any still-pending pre-hidden ids — called once a whole
@@ -192,6 +229,12 @@ public struct FlyingCardsLayer: View {
                 let cx = f.from.midX + (f.to.midX - f.from.midX) * p
                 let cy = f.from.midY + (f.to.midY - f.from.midY) * p
                 FCard(card: f.card, size: CGSize(width: 50, height: 70))
+                    // Bug 1: rotate INTO the final table angle over the flight,
+                    // about the bottom edge (the same pivot FBattleGrid tilts a
+                    // laid-across card about), so a cover flies in already
+                    // rotating and the hand-off to the real tilted card is
+                    // seamless. `angle` is 0 for everything that lands flat.
+                    .rotationEffect(.degrees(f.fromAngle + (f.angle - f.fromAngle) * p), anchor: .bottom)
                     .scaleEffect(1.0 + 0.15 * (1 - abs(p - 0.5) * 2))   // bulge mid-flight
                     .shadow(color: .black.opacity(0.4 * p), radius: 10 * p, y: 8 * p)
                     .position(x: cx, y: cy)

@@ -43,7 +43,10 @@ public struct FBattleGrid: View {
 
     private let cardSize = CGSize(width: 50, height: 70)   // web card 50x70
     private let slot = CGSize(width: 62, height: 84)       // web 60x80 (+room to rotate)
-    private let coverAngle: Double = 11.25                 // web PI/16
+    /// The laid-across tilt (web PI/16). Public + static so a bout-end / open
+    /// replay flight (MessageTableView) can rotate a cover ghost INTO exactly
+    /// this angle mid-flight (round-6 bug 1) rather than hard-coding a second copy.
+    public static let coverAngle: Double = 11.25
     private let gap: CGFloat = 10
     // Round-5 M5 ("maybe we do rows of 3 instead of 4?"): deliberately NOT web
     // parity any more. The web's ~4-across assumes its own wider board; this
@@ -142,7 +145,7 @@ public struct FBattleGrid: View {
                     }
                 }
                 .opacity(hidden.contains(battle.attack.identity) ? 0 : 1)
-                .rotationEffect(.degrees(coverLanded ? -coverAngle : 0), anchor: .bottom)
+                .rotationEffect(.degrees(coverLanded ? -Self.coverAngle : 0), anchor: .bottom)
                 .animation(.easeOut(duration: 0.22), value: coverLanded)
                 .zIndex(covered ? 1 : 2)
                 .modifier(FlightID(id: battle.attack.identity, namespace: namespace))
@@ -152,7 +155,7 @@ public struct FBattleGrid: View {
                       trump: trumpSuit != nil && defense.suit == trumpSuit,
                       size: cardSize)
                     .opacity(hidden.contains(defense.identity) ? 0 : 1)
-                    .rotationEffect(.degrees(coverAngle), anchor: .bottom)   // laid across (§5.4)
+                    .rotationEffect(.degrees(Self.coverAngle), anchor: .bottom)   // laid across (§5.4)
                     .zIndex(2)
                     .modifier(FlightID(id: defense.identity, namespace: namespace))
             }

@@ -54,6 +54,15 @@ public struct FHandFan: View {
     /// finger point the board already tracks. Defaulted no-op so every
     /// pre-existing call site compiles unchanged.
     public let onDragCardMoved: (CGPoint) -> Void
+    /// Round-6 bug 10: cards present in `cards` (and in the kernel hand) but which
+    /// must reserve NO layout width YET — a deal whose flight has not started, so
+    /// its slot is not yet cut and the present cards do not slide over to make
+    /// room for it "in anticipation". These are still opacity-hidden via `hidden`
+    /// if they are also in there; this set governs LAYOUT only. A card leaves this
+    /// set the instant its own flight begins (BoardAnimator.openSlots), and the
+    /// fan opens for it then. Defaulted empty so every other call site (the
+    /// offline board, gallery, snapshot tests) lays out the whole hand unchanged.
+    public let reserveNoSlot: Set<String>
 
     public init(cards: [Card], trumpSuit: Suit?, disabled: Set<String> = [],
                 selection: Binding<Set<String>>, onTap: @escaping (Card) -> Void,
@@ -61,7 +70,8 @@ public struct FHandFan: View {
                 onDragEnded: @escaping (Card, CGPoint) -> Void = { _, _ in },
                 namespace: Namespace.ID? = nil, hidden: Set<String> = [],
                 topHalfOnly: Bool = false, crop: CGFloat? = nil,
-                onDragCardMoved: @escaping (CGPoint) -> Void = { _ in }) {
+                onDragCardMoved: @escaping (CGPoint) -> Void = { _ in },
+                reserveNoSlot: Set<String> = []) {
         self.cards = cards
         self.trumpSuit = trumpSuit
         self.disabled = disabled
@@ -76,6 +86,7 @@ public struct FHandFan: View {
         // maps to the two endpoints, so every existing call site is unchanged.
         self.crop = crop ?? (topHalfOnly ? 1 : 0)
         self.onDragCardMoved = onDragCardMoved
+        self.reserveNoSlot = reserveNoSlot
     }
 
     @State private var dragId: String?
@@ -281,10 +292,19 @@ public struct FHandFan: View {
         }
     }
 
+    /// Round-6 bug 10: the cards this fan actually lays out — `displayCards`
+    /// minus any deal still deferring its slot. A deferred card stays in `cards`
+    /// / `order` (so its position is settled the moment it is revealed) but takes
+    /// up no width until then. Empty `reserveNoSlot` (every non-message board) is
+    /// the whole hand, unchanged.
+    private var laidOutCards: [Card] {
+        reserveNoSlot.isEmpty ? displayCards : displayCards.filter { !reserveNoSlot.contains($0.identity) }
+    }
+
     public var body: some View {
         GeometryReader { geo in
             let width = geo.size.width
-            let rows = Self.rowGroups(displayCards, availableWidth: width)
+            let rows = Self.rowGroups(laidOutCards, availableWidth: width)
             // ONE card width for BOTH rows, sized by the fuller first row (it
             // gets the ceil on odd counts) — sizing each row by its own count
             // made the shorter bottom row's cards visibly WIDER than the top
@@ -309,7 +329,7 @@ public struct FHandFan: View {
         // small hand ballooned to two-row height for a frame. Infinite width
         // reproduces the pre-M6 default (one full-width row) until the real
         // number arrives a paint later.
-        .frame(height: Self.height(cards: cards,
+        .frame(height: Self.height(cards: cards.filter { !reserveNoSlot.contains($0.identity) },
                                    availableWidth: measuredWidth > 0 ? measuredWidth : .greatestFiniteMagnitude,
                                    crop: crop))
         // Round-5 M6: measure this view's own proposed WIDTH once — see

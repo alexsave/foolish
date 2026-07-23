@@ -55,6 +55,12 @@ public struct MessageTableView: View {
     /// The most recent NON-empty battle rects, so a bout-end flight still has the
     /// source positions after the table cleared (preference vs onChange can race).
     @State private var lastBattleFrames: [Int: CGRect] = [:]
+    /// Round-6 bug 6: the most recent NON-empty battle LAYOUT (which card sat in
+    /// which slot), captured alongside `lastBattleFrames`, so a discard sweep can
+    /// fly each trashed card FROM ITS OWN battle rect instead of every card
+    /// sharing one centroid (which read as a single stack sliding to the pile).
+    /// Keyed by the same battle index as `lastBattleFrames`.
+    @State private var lastBattles: [BattleView] = []
     @State private var deckFrame: CGRect = .zero
     @State private var handCardFrames: [String: CGRect] = [:]
     @State private var seatFrames: [Int: CGRect] = [:]
@@ -115,6 +121,26 @@ public struct MessageTableView: View {
     /// the animator hides it for its flight. nil when no move of mine is
     /// in flight. The live-play twin of the open-replay veil above.
     @State private var handBeforeMyMove: Set<String>?
+    /// Round-6 bug 9 ("STILL seeing double animation for pickup"). Two animated
+    /// sequences CAN overlap: an open-delta replay runs for as long as the move
+    /// it replays takes, and nothing stops the human tapping Take (or Good) part
+    /// way through it — that starts a live bout-end sequence on top of the replay
+    /// still in flight. Traced (ANIMLOG): `stream#2 begin ... depth=1` while
+    /// `stream#1 end` only lands LATER, in the middle of stream #2.
+    ///
+    /// The damage is the OLDER sequence's teardown, which unconditionally handed
+    /// the veil and the counts back (`animator.clearPreHidden()` + clearing every
+    /// count override). Run inside a newer sequence, that REVEALS the cards the
+    /// newer one has pre-hidden but not yet flown: they pop into the fan, and the
+    /// newer sequence then hides them again and flies them in — the picked-up
+    /// card animating into the hand twice. Intermittent, because it only bites
+    /// when the older sequence happens to end inside the newer one's window.
+    ///
+    /// So sequences are numbered and the NEWEST one wins: a superseded sequence
+    /// stops issuing steps and, crucially, does not tear down shared state that
+    /// no longer belongs to it. Bumped by `runEventStream` (and the genesis deal
+    /// fallback) as each claims the animator.
+    @State private var animSequenceToken = 0
 
     public init(controller: MessageTurnController, onSend: @escaping (Data) async -> Void,
                 onNewGame: @escaping () -> Void = {}, onUnstage: @escaping () -> Void = {}) {
@@ -257,6 +283,20 @@ public struct MessageTableView: View {
         return ids
     }
 
+    /// Round-6 bug 10: which veiled hand cards reserve NO fan width YET. A deal
+    /// heading for my hand is veiled from the moment the whole sequence starts,
+    /// but if it also RESERVED its slot from then, my present cards would slide
+    /// left "in anticipation" while unrelated earlier steps (other seats' deals
+    /// / pickups) play — the exact complaint. So everything veiled defers its
+    /// slot EXCEPT the card whose flight is playing this instant: that one keeps
+    /// its slot (it needs a real landing frame, and the fan opens for it as it
+    /// lands). `animator.hidden \ animator.preHidden` is precisely "flying right
+    /// now" (see `BoardAnimator.openSlots`); everything else waits its turn.
+    private var handSlotDeferred: Set<String> {
+        let flyingNow = animator.hidden.subtracting(animator.preHidden)
+        return veiledCardIds.subtracting(flyingNow)
+    }
+
     /// A seat badge's displayed hand count: the per-step override once a
     /// sequence is running, else the veil's pre-move value, else the truth.
     private func shownHandCount(_ p: PlayerView) -> Int {
@@ -296,6 +336,12 @@ public struct MessageTableView: View {
             // The width FHandFan itself actually lays out in: this reader's
             // width minus `hand(_:)`'s own `.padding(.horizontal, FSpace.s)`.
             let handWidth = max(0, geo.size.width - FSpace.s * 2)
+            // Bug 10: the cards the fan actually LAYS OUT right now — the whole
+            // hand minus any deal still deferring its slot (see
+            // `handSlotDeferred`). Room is reserved off THIS, so an incoming
+            // card's width is not reserved until its own flight opens the slot.
+            let deferredSlots = handSlotDeferred
+            let laidOutHand = myHand.filter { !deferredSlots.contains($0.identity) }
             // The hand's ACTUAL on-screen height at this collapse fraction (one
             // cropped/uncropped row, or two once M6 splits it). The self-role
             // indicator and action bar float a fixed gap ABOVE this, so driving
@@ -304,7 +350,7 @@ public struct MessageTableView: View {
             // spot the shrinking hand pulls away from. Reading it off
             // `FHandFan.height` (not a second constant) keeps it in lockstep
             // with what the fan actually renders.
-            let handHeight = FHandFan.height(cards: myHand, availableWidth: handWidth, crop: collapse)
+            let handHeight = FHandFan.height(cards: laidOutHand, availableWidth: handWidth, crop: collapse)
             ZStack {
                 // Battles — dead centre of the board (web: absolute, both axes).
                 battlesArea(view)
@@ -360,7 +406,7 @@ public struct MessageTableView: View {
 
                 // My hand hugs the bottom (web: bottom max(10, safe-area)); the
                 // outer .padding(12) is the safe-area inset that keeps it unclipped.
-                hand(view, crop: collapse)
+                hand(view, crop: collapse, reserveNoSlot: deferredSlots)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
 
                 // note 33 / round-4 note 4: the verb hint rides just ABOVE THE
@@ -632,6 +678,11 @@ public struct MessageTableView: View {
     private func flyBoutEndToDiscard(to newView: GameView?) {
         let prior = lastView
         lastView = newView
+        // Bug 6: remember the last table that actually had cards on it, so the
+        // discard sweep below can map each trashed card back to the slot it sat
+        // in. By the time the bout-end (empty-table) view arrives this still
+        // holds the pre-clear battles.
+        if let nv = newView, !nv.battles.isEmpty { lastBattles = nv.battles }
         AnimLog.say("viewChanged seat=\(controller.mySeat) prior=\(prior == nil ? "nil" : "\(prior!.battles.count)b") new=\(newView.map { "\($0.battles.count)b hand=\($0.me?.handCount ?? -1)" } ?? "nil") undo=\(controller.lastChangeWasUndo)")
         // note 17: consumed and cleared on EVERY call. `playAt` sets it right
         // before the apply whose resulting view change is the next one we see.
@@ -718,11 +769,23 @@ public struct MessageTableView: View {
             if view.isOver { settleResults() }
             return
         }
+        // Bug 9: claim the animator. Anything already running is now stale.
+        animSequenceToken += 1
+        let mySeq = animSequenceToken
         BoardAnimator.sequenceDepth += 1
         defer {
             BoardAnimator.sequenceDepth -= 1
-            deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
-            animator.clearPreHidden()
+            // ONLY the newest sequence may hand the veil and the counts back. A
+            // superseded one doing it here is the double pickup (see
+            // `animSequenceToken`): it un-hides cards the sequence that replaced
+            // it has pre-hidden but not yet flown, so they appear in the fan and
+            // are then flown into it a second time.
+            if mySeq == animSequenceToken {
+                deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
+                animator.clearPreHidden()
+            } else {
+                AnimLog.say("stream#\(run) superseded by seq \(animSequenceToken) - teardown skipped")
+            }
         }
         // The counts are ALREADY frozen to the pre-move board by the caller —
         // synchronously, before this Task ever got to run (see `freezeCounts`).
@@ -737,6 +800,26 @@ public struct MessageTableView: View {
         try? await Task.sleep(nanoseconds: 120_000_000)   // let the rects publish
 
         for ev in events {
+            // Bug 9: a newer sequence has taken over (a live bout-end played on
+            // top of a replay still in flight). Stop stepping the stale one
+            // rather than interleaving two sets of flights through one animator
+            // and two sets of count overrides through one set of badges.
+            guard mySeq == animSequenceToken else {
+                AnimLog.say("stream#\(run) abandoned - seq \(animSequenceToken) took over")
+                return
+            }
+            // Bug 10: cut THIS step's incoming hand slot(s) now — not at the
+            // sequence's start — animated over the flight so my present cards
+            // make room AS the deal arrives, never seconds early while some
+            // other seat's deal or a pickup animates first. Must precede the
+            // build below: `openReplayFlights` reads the landing slot's frame,
+            // which only publishes once the slot is laid out.
+            let landing = self.myHandLandingIds(ev)
+            if !landing.isEmpty {
+                withAnimation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime)) {
+                    self.animator.openSlots(landing)
+                }
+            }
             await playStep {
                 let f = self.openReplayFlights(ev, view: view)
                 if let f { AnimLog.say("stream#\(run) step \(ev.kind.map(String.init(describing:)) ?? "?")@\(ev.seat) flights=\(f.count) [\(f.map(\.id).joined(separator: ","))]") }
@@ -749,7 +832,22 @@ public struct MessageTableView: View {
             }
         }
         AnimLog.say("stream#\(run) end")
-        if view.isOver { settleResults() }
+        // Bug 9: a stale sequence must not settle the results screen either —
+        // the sequence that replaced it owns when the board gives way.
+        if view.isOver, mySeq == animSequenceToken { settleResults() }
+    }
+
+    /// Bug 10: the REAL card identities THIS event lands in MY hand (a deal /
+    /// refill / pickup to my own seat). Empty for everything else — an opponent's
+    /// draw (masked backs to a badge), a table placement, a discard sweep. These
+    /// are exactly the cards whose fan slot `openSlots` cuts as this step begins,
+    /// so the fan opens for them then instead of at the whole sequence's start.
+    private func myHandLandingIds(_ ev: GameEvent) -> Set<String> {
+        guard ev.seat == controller.mySeat else { return [] }
+        switch ev.kind {
+        case .deal, .refill, .pickup: return Set(ev.cards.compactMap { $0?.identity })
+        default: return []
+        }
     }
 
     /// Freeze every displayed count to `v` — the board as it looked BEFORE the
@@ -864,6 +962,40 @@ public struct MessageTableView: View {
         return CGRect(x: handFrame.midX - 25, y: y - 35, width: 50, height: 70)
     }
 
+    /// Bug 6: where a specific trashed card ACTUALLY SAT, so it can sweep to the
+    /// pile from there instead of from a shared centroid. Two corrections on top
+    /// of the raw slot rect from the last table that had cards (`lastBattles` /
+    /// `lastBattleFrames`, captured together in `flyBoutEndToDiscard`):
+    ///
+    /// 1. The card is bottom-aligned in FBattleGrid's taller 62x84 slot, so its
+    ///    own centre - which is what a flight is positioned by - sits below the
+    ///    slot's centre.
+    /// 2. An attack and its cover lie ACROSS each other, pivoting on that same
+    ///    bottom edge in opposite directions. Un-nudged they would leave the
+    ///    table from exactly the same point and read as one card, which is the
+    ///    "bunched stack" all over again just per-battle. A card rotated by
+    ///    `tilt` about the bottom edge has its centre swung sideways by
+    ///    sin(tilt)·halfHeight and down by (1-cos(tilt))·halfHeight.
+    ///
+    /// The tilt comes back too, so the ghost flattens out of it in flight
+    /// (Flight.fromAngle). nil when there is genuinely no per-card rect on
+    /// record (a cold open that never rendered the pre-bout table), so the
+    /// caller can fall back to the shared table centre.
+    private func discardSource(for card: Card) -> (rect: CGRect, tilt: Double)? {
+        guard let idx = lastBattles.firstIndex(where: { $0.attack == card || $0.defense == card }),
+              let slot = lastBattleFrames[idx] else { return nil }
+        let battle = lastBattles[idx]
+        // Only a COVERED attack lies across; an uncovered one stands upright.
+        let tilt: Double = battle.defense == card
+            ? FBattleGrid.coverAngle
+            : (battle.defense != nil ? -FBattleGrid.coverAngle : 0)
+        let half = 35.0                      // half of FBattleGrid's 70pt card height
+        let r = tilt * .pi / 180
+        let rect = slot.offsetBy(dx: CGFloat(sin(r) * half),
+                                 dy: slot.height / 2 - CGFloat(half) + CGFloat((1 - cos(r)) * half))
+        return (rect, tilt)
+    }
+
     /// One open-replay event's flights, straight from the KERNEL's evwire stream
     /// (a GameEvent). The event ALREADY carries viewer-correct cards - my own
     /// draws/pickups as real identities, opponents' as nil (a back) - so unlike
@@ -885,7 +1017,13 @@ public struct MessageTableView: View {
                 guard let idx = view.battles.firstIndex(where: { $0.attack == card || $0.defense == card }),
                       let rect = battleFrames[idx] else { continue }
                 let from = source != .zero ? source : rect.offsetBy(dx: 0, dy: -220)
-                out.append(Flight(id: "open-\(card.identity)-\(ev.type)", card: card, from: from, to: rect))
+                // Bug 1: a card that lands as the DEFENSE (cover) lies across at
+                // +coverAngle, so its ghost rotates into that tilt as it flies. An
+                // attack lands upright (0); its own later tilt, once ITS cover
+                // lands, is the battle grid's job, not this flight's.
+                let landedAngle = view.battles[idx].defense == card ? FBattleGrid.coverAngle : 0
+                out.append(Flight(id: "open-\(card.identity)-\(ev.type)", card: card,
+                                  from: from, to: rect, angle: landedAngle))
             }
             return out
 
@@ -946,9 +1084,22 @@ public struct MessageTableView: View {
                 return (0..<n).map { i in
                     Flight(id: "opendiscard-\(ev.type)-\(i)", card: nil, from: center, to: discardFrame) }
             }
+            // Bug 6: each trashed card sweeps to the pile FROM ITS OWN battle slot
+            // (where the viewer just saw it lying), so they scatter off the table
+            // individually instead of first collapsing into one stack at the
+            // centroid and sliding across as a block. Only when there is no real
+            // per-card rect — a cold open that never rendered the pre-bout table —
+            // do we fall back to the shared centre (staggered so the backs don't
+            // perfectly overlap).
             return cards.enumerated().map { i, c in
-                Flight(id: "opendiscard-\(c.identity)", card: c,
-                       from: center.offsetBy(dx: CGFloat(i) * 6, dy: CGFloat(i) * 4), to: discardFrame) }
+                guard let src = discardSource(for: c) else {
+                    return Flight(id: "opendiscard-\(c.identity)", card: c,
+                                  from: center.offsetBy(dx: CGFloat(i) * 6, dy: CGFloat(i) * 4),
+                                  to: discardFrame)
+                }
+                return Flight(id: "opendiscard-\(c.identity)", card: c, from: src.rect,
+                              to: discardFrame, angle: 0, fromAngle: src.tilt)
+            }
 
         default:
             return []   // out / flipped / magic-transition: no flight.
@@ -971,12 +1122,28 @@ public struct MessageTableView: View {
             // whose chain could not encode a v6 code (empty stream) still flies
             // its opening hand, the web's deal.
             if controller.isGenesis, let hand = view.me?.hand, !hand.isEmpty {
-                animator.preHide(Set(hand.map(\.identity)))
+                let ids = Set(hand.map(\.identity))
+                animator.preHide(ids)
+                // Bug 9: this deal is a sequence like any other — claim the
+                // animator so a live move started on top of it supersedes it,
+                // and so ITS teardown can never clear a newer sequence's veil.
+                animSequenceToken += 1
+                let mySeq = animSequenceToken
                 Task {
                     BoardAnimator.sequenceDepth += 1
-                    defer { BoardAnimator.sequenceDepth -= 1; animator.clearPreHidden() }
+                    defer {
+                        BoardAnimator.sequenceDepth -= 1
+                        if mySeq == animSequenceToken { animator.clearPreHidden() }
+                    }
+                    // Bug 10: the opening hand has no present cards to pre-shift,
+                    // but its slots are still deferred by `preHide` above, so open
+                    // them before the deal flight builds (it needs their landing
+                    // frames). One step, so all at once, animated as the fan fills.
+                    withAnimation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime)) {
+                        self.animator.openSlots(ids)
+                    }
                     await playStep { self.myDrawFlights(hand) }
-                    if view.isOver { settleResults() }
+                    if view.isOver, mySeq == animSequenceToken { settleResults() }
                 }
                 return
             }
@@ -1063,14 +1230,15 @@ public struct MessageTableView: View {
     ///   card to hide off the bottom — 0 the whole card (expanded), 1 the top
     ///   half (fully compact drawer), any value between as the drawer collapses.
     ///   See `boardContent`'s `collapse`.
-    private func hand(_ view: GameView, crop: CGFloat) -> some View {
+    private func hand(_ view: GameView, crop: CGFloat, reserveNoSlot: Set<String>) -> some View {
         FHandFan(cards: view.me?.hand ?? [], trumpSuit: view.trumpSuit,
                  selection: $selection, onTap: { toggle($0) },
                  onDragChanged: { card, point in onDragChanged(card, at: point) },
                  onDragEnded: { card, point in onDragEnded(card, at: point, view) },
                  namespace: cardNS, hidden: veiledCardIds,
                  crop: crop,
-                 onDragCardMoved: { center in dragCardCenter = center })
+                 onDragCardMoved: { center in dragCardCenter = center },
+                 reserveNoSlot: reserveNoSlot)
             .padding(.horizontal, FSpace.s)
     }
 
