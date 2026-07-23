@@ -5,87 +5,174 @@
 // a brown base woven by a horizontal fiber phase then a vertical one, with a
 // tan-XOR plaid modulating the colour. The math is ported, not the WebGL.
 //
-// Millions of pixel writes rule out per-point CGContext.fill (what FernCardBack
-// can afford at 42k iterations) — we write straight into a raw buffer and wrap
-// it in one CGImage. Rendered once per size, cached in memory and on disk so a
-// cold launch pays for it at most once ever.
+// THIS FILE NO LONGER RUNS IN THE SHIPPING APP. It is the SOURCE OF TRUTH for
+// what the wool looks like, and it is executed at BUILD time by
+// ios/Tools/GenerateTextures.swift, which bakes the result into
+// FoolishKit/Resources/wool-classic.jpg. The extension then loads that image
+// (FTextures) and generates zero procedural pixels on launch.
+//
+// Why: a 1920x1080 weave is ~2.4M brush iterations, each writing up to a 5x5
+// span — tens of millions of blends and an 8.3MB scratch buffer — on the first
+// launch of a process that iOS memory- and watchdog-caps far below an app. It
+// was a live suspect for the round-5 "the extension comes up as a dark, empty
+// panel on a real phone" report, and a disk cache does not help the launch that
+// pays for it. Build-time rendering removes the cost as a CLASS: there is no
+// first launch that renders.
+//
+// TO CHANGE THE LOOK: edit `render` / `Palette` here, then run
+//   ios/Tools/regenerate_textures.sh
+// and commit the regenerated images. Nothing else in the app reads this code.
+//
+// Deliberately UIKit-free (CoreGraphics only) so the macOS build-time tool can
+// compile this exact file — one generator, no port to drift.
 
-import SwiftUI
 import CoreGraphics
-import UIKit
+import Foundation
 
 public enum WoolTexture {
 
-    // Bump when the algorithm changes so the on-disk cache invalidates.
-    private static let version = 7
+    // MARK: - Palette (the ONE place wool colour lives)
 
-    private static var mem: [String: UIImage] = [:]
-    private static let lock = NSLock()
+    /// Every colour the weave uses. A dark-mode wool is a second `Palette` plus
+    /// a second output file (see `resourceName` and FTextures.Variant) — NOT a
+    /// second copy of the generator, and never a tint applied at draw time.
+    public struct Palette {
+        /// The brown showing between fibres (web BASE_R/G/B).
+        public let baseR, baseG, baseB: Double
+        /// Colour centre of the horizontal (weft) pass.
+        public let weftR, weftG, weftB: Double
+        /// Colour centre of the vertical (warp) pass.
+        public let warpR, warpG, warpB: Double
+        /// How far a fibre's colour swings with its phase, per channel.
+        public let swingR, swingG, swingB: Double
+        /// The tan-XOR plaid boost — what makes the ~1cm chequer blocks read.
+        public let plaid: Double
+
+        public init(baseR: Double, baseG: Double, baseB: Double,
+                    weftR: Double, weftG: Double, weftB: Double,
+                    warpR: Double, warpG: Double, warpB: Double,
+                    swingR: Double, swingG: Double, swingB: Double,
+                    plaid: Double) {
+            self.baseR = baseR; self.baseG = baseG; self.baseB = baseB
+            self.weftR = weftR; self.weftG = weftG; self.weftB = weftB
+            self.warpR = warpR; self.warpG = warpG; self.warpB = warpB
+            self.swingR = swingR; self.swingG = swingG; self.swingB = swingB
+            self.plaid = plaid
+        }
+
+        /// The shipped light wool — the web's numbers, unchanged.
+        public static let classic = Palette(
+            baseR: 113, baseG: 65,  baseB: 27,
+            weftR: 209, weftG: 208, weftB: 183,
+            warpR: 189, warpG: 188, warpB: 163,
+            swingR: 46, swingG: 45,  swingB: 53,
+            plaid: 100)
+    }
+
+    // MARK: - The shipped swatch
 
     /// THE canvas the web generates wool on (src/components/WoolBackground.tsx:
     /// both the WebGL path and the CPU fallback, and the fallback says 1920x1080
     /// literally). Landscape, and that matters: the generator's fibre phases and
     /// its iteration budget are both written in pixels of THIS shape, so a
     /// portrait render of the same code is a different weave, not the same weave
-    /// rotated. The web then `cover`s this into a portrait viewport and crops
-    /// most of the width away — which is why the blocks look big on a phone even
-    /// though there are 24 of them across the texture.
+    /// rotated.
     ///
-    /// So we render exactly this and aspect-fill it exactly the same way. One
-    /// canonical texture for the board AND the bubble snapshot, so there is one
-    /// look and one cache entry (it is also smaller than the 1600x3400 it
-    /// replaces: 8.3MB of buffer against 21.8MB).
-    public static let webCanvas = (w: 1920, h: 1080)
+    /// We render 1312 rows rather than the web's 1080 for one reason: the phone
+    /// only ever SEES a portrait sliver of this (see `shippedCrop`), and at the
+    /// one fixed magnification below, the tallest iPhone needs more than 1080
+    /// rows of weave to reach its own bottom edge. Row count is the only thing
+    /// that changes; every constant in `render` is absolute pixels, so the
+    /// weave itself is the same weave.
+    public static let renderCanvas = (w: 1920, h: 1312)
 
-    /// A wool image `w×h` px. Deterministic (fixed offsets) so it is stable
-    /// across launches and safe to cache to disk. Synchronous; call off-main.
+    /// The sub-rectangle of `renderCanvas` that actually ships.
     ///
-    /// Pass `webCanvas` unless you have a reason not to: every constant in
-    /// `render` is in pixels of that canvas (see `blockPx`).
-    public static func image(w: Int, h: Int) -> UIImage {
-        let key = "wool-v\(version)-\(w)x\(h)"
-        lock.lock(); if let img = mem[key] { lock.unlock(); return img }; lock.unlock()
+    /// A phone shows about 590 of the canvas's 1920 columns (a portrait window
+    /// on a landscape weave — the web crops the same way), so shipping the full
+    /// canvas would be ~3x the bytes and ~3x the decoded memory for pixels no
+    /// device can display. The 64/16 origin skips the canvas edges, where the
+    /// fibre passes start mid-stroke and cover thinly.
+    ///
+    /// Sized from `pointsPerTexel`: 592 x 1280 texels is 458.6 x 991.6pt, which
+    /// covers the largest iPhone stage (440 x 956pt, safe areas included) with
+    /// margin to spare.
+    ///
+    /// PORTRAIT ONLY, deliberately. The host app is portrait-locked
+    /// (FoolishApp/Info.plist) and the board layout is portrait-tuned (8-seat
+    /// arc, two-row hand, full-width plank), so a landscape stage - which the
+    /// Messages host can still hand the extension - would show the beige
+    /// fallback beside a 458pt-wide weave. Covering landscape too means a
+    /// 1248 x 1280 crop: measured, that is 1277 KB shipped and 6 MB decoded
+    /// against this one's 620 KB and 3 MB, and halving the extension's texture
+    /// memory is the whole point of round-6 #16. If landscape ever matters,
+    /// widen `w` to 1248 here and re-bake - nothing else changes.
+    public static let shippedCrop = (x: 64, y: 16, w: 592, h: 1280)
 
-        if let disk = loadDisk(key) {
-            lock.lock(); mem[key] = disk; lock.unlock()
-            return disk
-        }
-        let img = render(w: w, h: h)
-        lock.lock(); mem[key] = img; lock.unlock()
-        saveDisk(img, key)
-        return img
-    }
+    /// Base name of the baked image in FoolishKit's bundle. A dark variant
+    /// would be `wool-dark` beside it.
+    public static let resourceName = "wool-classic"
 
-    private static func render(w: Int, h: Int) -> UIImage {
+    /// THE magnification, and the only one: how many POINTS one wool texel
+    /// occupies, on every surface that shows wool (live board, compact drawer,
+    /// message-bubble preview, app screens).
+    ///
+    /// Round-6 #14: "keep the threads the same size visually no matter the view
+    /// - the block sizes of the wool should be that roughly 1cm x 1cm size on
+    /// every screen". The weave's plaid block is `blockPx` = 80 texels, so
+    ///     80 texels x 0.775 pt/texel = 62pt per block
+    /// and a point is 1/163 inch on a typical phone, i.e. 62pt ~= 0.97cm. On the
+    /// iPhone 16's actual 153.3 pt/inch it is 1.03cm. Either way: ~1cm.
+    ///
+    /// It is a CONSTANT, not a screen-derived fit, because a fit is exactly how
+    /// the surfaces drifted apart: the board pinned its scale to the screen
+    /// (so a 375pt-wide phone got 49pt blocks where a 393pt one got 63pt),
+    /// while BubbleSnapshot aspect-filled the whole 1920x1080 canvas into a
+    /// 300x195 balloon (0.181 pt/texel - 14.5pt blocks, "too zoomed out").
+    /// One constant makes disagreement impossible: a smaller surface simply
+    /// shows LESS weave, never smaller weave.
+    public static let pointsPerTexel: CGFloat = 0.775
+
+    /// The plaid block size in texels — the web's literal `/80`, in pixels.
+    ///
+    /// Three passes got this wrong before it got right, all by treating the
+    /// number as a free parameter to taste instead of reading what the web
+    /// actually does. `w / 5` (75pt blocks - flat slabs), then `w / 48` (8pt
+    /// - hot-pink noise), then `w / 16`. The real answer is that 80 is not a
+    /// fraction of anything: it is 80 PIXELS of a 1920-wide render, and the
+    /// reason our port drifted is that we were not rendering at that width.
+    /// Matching the web's canvas SHAPE is what makes every constant in this
+    /// file line up, because the whole generator is written in its pixels.
+    public static let blockPx = 80.0
+
+    // MARK: - The generator
+
+    /// Render the weave at `w x h` px. Deterministic (fixed offsets). Pure
+    /// CoreGraphics so the build-time tool can call it on macOS.
+    ///
+    /// BUILD-TIME ONLY. Nothing in the shipping app may call this; the app
+    /// loads the baked image through `FTextures`.
+    public static func renderCGImage(w: Int, h: Int,
+                                     palette: Palette = .classic) -> CGImage? {
         let count = w * h * 4
         var data = [UInt8](repeating: 0, count: count)
 
-        // Brown base (web BASE_R/G/B = 113/65/27), opaque.
+        // Brown base, opaque.
         data.withUnsafeMutableBufferPointer { buf in
             let p = buf.baseAddress!
+            let br = UInt8(palette.baseR), bg = UInt8(palette.baseG), bb = UInt8(palette.baseB)
             var i = 0
-            while i < count { p[i] = 113; p[i+1] = 65; p[i+2] = 27; p[i+3] = 255; i += 4 }
+            while i < count { p[i] = br; p[i+1] = bg; p[i+2] = bb; p[i+3] = 255; i += 4 }
         }
 
         let offX = 0.0, offY = 0.0
         func zValue(_ r: Double) -> Double { let cr = cos(r) * 1000; return cr - floor(cr) }
 
-        // The plaid block size: the web's literal `/80`, in pixels.
-        //
-        // Three passes got this wrong before it got right, all by treating the
-        // number as a free parameter to taste instead of reading what the web
-        // actually does. `w / 5` (75pt blocks - flat slabs), then `w / 48` (8pt
-        // - hot-pink noise), then `w / 16`. The real answer is that 80 is not a
-        // fraction of anything: it is 80 PIXELS of a 1920x1080 render, and the
-        // reason our port drifted is that we were not rendering at 1920x1080.
-        // See WOOL_RENDER below - matching the web's canvas SHAPE is what makes
-        // every constant in this file line up, because the whole generator is
-        // written in pixels of that canvas.
-        let blockPx = 80.0
+        let blockPx = Self.blockPx
 
         // Iteration budget. The web renders at 4K where the area-scaled count
         // already exceeds what the vertical-fibre phase needs to reach the bottom
-        // (~h²/1.8); at our smaller size that phase would stop short and leave
+        // (~h²/1.8); at a smaller size that phase would stop short and leave
         // the base brown showing through as a fringe. Floor the count at the
         // coverage requirement so the weave fills to the bottom edge.
         let areaScaled = Double(w * h) / (1920.0 * 1080.0) * 2_000_000.0
@@ -136,10 +223,10 @@ public enum WoolTexture {
                     let zVal = zValue(r)
                     let aInt = Int(floor((r + offX) / blockPx + zVal / 4))
                     let bInt = Int(floor((Double(i % h) + offY) / blockPx))
-                    let red: Double = tan(Double(aInt ^ bInt)) > 0.3 ? 100 : 0
-                    let cr = 209 + 46 * phase + red
-                    let cg = 208 + 45 * phase - red
-                    let cb = 183 + 53 * phase - red / 2
+                    let red: Double = tan(Double(aInt ^ bInt)) > 0.3 ? palette.plaid : 0
+                    let cr = palette.weftR + palette.swingR * phase + red
+                    let cg = palette.weftG + palette.swingG * phase - red
+                    let cb = palette.weftB + palette.swingB * phase - red / 2
                     let x = r + dx, y = Double(i % h)
                     if x >= 0, x < Double(w), y >= 0, y < Double(h) { writePixel(x, y, cr, cg, cb, 2) }
                 } else {
@@ -148,11 +235,11 @@ public enum WoolTexture {
                     let zVal = zValue(r)
                     let aInt = Int(floor((r + offY) / blockPx + zVal / 4))
                     let bInt = Int(floor((Double(i % w) + offX) / blockPx))
-                    let red: Double = tan(Double(aInt ^ bInt)) > 0.3 ? 100 : 0
+                    let red: Double = tan(Double(aInt ^ bInt)) > 0.3 ? palette.plaid : 0
                     let dx = 4 * sin(Double(i - 1)) + sin(Double(i) / u) * 4
-                    let cr = 189 + 46 * phase + red
-                    let cg = 188 + 45 * phase - red
-                    let cb = 163 + 53 * phase - red / 2
+                    let cr = palette.warpR + palette.swingR * phase + red
+                    let cg = palette.warpG + palette.swingG * phase - red
+                    let cb = palette.warpB + palette.swingB * phase - red / 2
                     let x = Double(i % w), y = r + dx
                     let pw = 1.4 * (phase + 1.7)
                     if x >= 0, x < Double(w), y >= 0, y < Double(h) { writePixel(x, y, cr, cg, cb, pw) }
@@ -161,36 +248,21 @@ public enum WoolTexture {
             }
         }
 
-        return imageFromRGBA(&data, w: w, h: h)
+        return cgImageFromRGBA(&data, w: w, h: h)
     }
+}
 
-    // MARK: - buffer → image + disk cache
+// MARK: - shared buffer → CGImage
 
-    private static func imageFromRGBA(_ data: inout [UInt8], w: Int, h: Int) -> UIImage {
-        let cs = CGColorSpaceCreateDeviceRGB()
-        let info = CGImageAlphaInfo.premultipliedLast.rawValue
-        let cg = data.withUnsafeMutableBytes { raw -> CGImage? in
-            let ctx = CGContext(data: raw.baseAddress, width: w, height: h,
-                                bitsPerComponent: 8, bytesPerRow: w * 4,
-                                space: cs, bitmapInfo: info)
-            return ctx?.makeImage()
-        }
-        return cg.map { UIImage(cgImage: $0) } ?? UIImage()
-    }
-
-    private static func cacheURL(_ key: String) -> URL? {
-        let dir = try? FileManager.default.url(for: .cachesDirectory, in: .userDomainMask,
-                                               appropriateFor: nil, create: true)
-        return dir?.appendingPathComponent("\(key).png")
-    }
-
-    private static func loadDisk(_ key: String) -> UIImage? {
-        guard let url = cacheURL(key), let data = try? Data(contentsOf: url) else { return nil }
-        return UIImage(data: data)
-    }
-
-    private static func saveDisk(_ img: UIImage, _ key: String) {
-        guard let url = cacheURL(key), let png = img.pngData() else { return }
-        try? png.write(to: url, options: .atomic)
+/// Wrap a straight RGBA8 buffer in a CGImage. Shared by both generators, and
+/// UIKit-free so the build-time macOS tool compiles the same code.
+func cgImageFromRGBA(_ data: inout [UInt8], w: Int, h: Int) -> CGImage? {
+    let cs = CGColorSpaceCreateDeviceRGB()
+    let info = CGImageAlphaInfo.premultipliedLast.rawValue
+    return data.withUnsafeMutableBytes { raw -> CGImage? in
+        let ctx = CGContext(data: raw.baseAddress, width: w, height: h,
+                            bitsPerComponent: 8, bytesPerRow: w * 4,
+                            space: cs, bitmapInfo: info)
+        return ctx?.makeImage()
     }
 }

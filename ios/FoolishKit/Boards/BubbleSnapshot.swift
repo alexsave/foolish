@@ -14,22 +14,41 @@ public enum BubbleSnapshot {
     /// scales to the device.
     public static let size = CGSize(width: 300, height: 195)
 
+    /// The bubble's wool: a CROP of the weave at the board's own magnification,
+    /// bottom-anchored exactly like `WoolBackground`.
+    ///
+    /// Round-6 #14, verbatim: "wool is too zoomed out in the bubble preview -
+    /// basically, try to keep the threads the same size visually no matter the
+    /// view". The cause was here and it was an `.aspectRatio(.fill)`: fitting
+    /// the whole 1920x1080 weave into a 300x195 balloon drew it at
+    /// max(300/1920, 195/1080) = 0.181 pt/texel where the live board draws it
+    /// at 0.775, so the bubble showed the ENTIRE picture shrunk instead of a
+    /// WINDOW onto it - 14.5pt plaid blocks against the board's 62pt, four
+    /// times too small. Drawing `WoolWeave` (which is pinned to
+    /// `WoolTexture.pointsPerTexel`) and clipping it to the balloon makes the
+    /// two literally the same pixels at the same size; there is no second scale
+    /// left to disagree with.
+    ///
+    /// A ZStack LAYER with an explicit frame, not a `.background` — a
+    /// background renders unreliably inside ImageRenderer. Nothing here is
+    /// async either: `FTextures.wool` is a loaded image, so it is available on
+    /// the synchronous pass ImageRenderer makes (the old procedural path had to
+    /// call the generator inline because `WoolBackground`'s `.task` never runs
+    /// under ImageRenderer).
+    private static var wool: some View {
+        WoolWeave()
+            .frame(width: size.width, height: size.height, alignment: .bottom)
+            .clipped()
+    }
+
     /// Render `publicView` (which MUST be a viewer:-1 / no-hand view) into a
     /// bubble image. Returns nil only if the renderer fails. MainActor because
     /// ImageRenderer walks a live SwiftUI view.
     @MainActor
     public static func render(publicView: GameView, names: [Int: String] = [:]) -> UIImage? {
-        // The REAL wool texture as a ZStack BASE layer (an explicit-frame Image,
-        // not a .background — that renders unreliably inside ImageRenderer).
-        // WoolTexture.image is synchronous (WoolBackground's async .task never runs
-        // in ImageRenderer), so the bubble gets the same wool as the board.
         let content = ZStack {
             FColor.fallback
-            Image(uiImage: WoolTexture.image(w: WoolTexture.webCanvas.w, h: WoolTexture.webCanvas.h))
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .frame(width: size.width, height: size.height)
-                .clipped()
+            Self.wool
             MessageBoardView(view: publicView, names: names)
         }
         .frame(width: size.width, height: size.height)
@@ -57,11 +76,7 @@ public enum BubbleSnapshot {
     public static func renderLobby(joinedNames: [String]) -> UIImage? {
         let content = ZStack {
             FColor.fallback
-            Image(uiImage: WoolTexture.image(w: WoolTexture.webCanvas.w, h: WoolTexture.webCanvas.h))
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .frame(width: size.width, height: size.height)
-                .clipped()
+            Self.wool
             VStack(spacing: 6) {
                 Text(FStrings.t("ios.lobby"))
                     .font(.headline).fontWeight(.bold).foregroundStyle(FColor.ink)
