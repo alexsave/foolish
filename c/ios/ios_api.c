@@ -18,6 +18,7 @@
 #include "bot_drive.h"
 #include "evwire.h"
 #include "msg_wire.h"
+#include "anim_plan.h"
 #include "awire.h"
 #include "sha256.h"
 #include "json_out.h"
@@ -391,6 +392,98 @@ int fio_last_events_json(int viewer, char *out, int cap) {
     J j; j_init(&j, out, cap);
     j_events(&j, viewer, g_last_event_log_start);
     return j_finish(&j);
+}
+
+// ---------- animation core (c/src/anim_plan.h) -----------------------------
+//
+// The plan/policy the web already runs through wasm, exposed to Swift. The plan
+// builder consumes the SAME evwire_walk output j_events emits (EVW_T_*/EVW_LOC_*
+// numbering is identical to ANIM_EVT_*/ANIM_LOC_*, so the EvwEvent copies
+// straight into an AnimEvent), so a plan is derived from exactly the events the
+// board would otherwise re-walk. No allocation: the events and their cards live
+// in file-static scratch (this file is single-threaded by contract).
+
+typedef struct { AnimEvent *ev; Card *pool; int cap_ev; int cap_pool; int n; int pool_n; } FioPlanCtx;
+
+static void fio_plan_sink(void *ctx, const EvwEvent *e) {
+    FioPlanCtx *c = (FioPlanCtx *)ctx;
+    if (c->n >= c->cap_ev) return;
+    if (e->n_cards > 0 && c->pool_n + e->n_cards > c->cap_pool) return;
+    AnimEvent *a = &c->ev[c->n];
+    a->type = e->type;   // EVW_T_* == ANIM_EVT_*
+    a->seat = e->seat;   // -1 == ANIM_SEAT_NONE
+    a->from = e->from;   // EVW_LOC_* == ANIM_LOC_*
+    a->to   = e->to;
+    a->mask_cards = e->mask_cards;
+    a->cards = &c->pool[c->pool_n];
+    a->n_cards = e->n_cards;
+    for (int i = 0; i < e->n_cards; i++) c->pool[c->pool_n++] = e->cards[i];
+    c->n++;
+}
+
+int fio_anim_plan_json(int viewer, char *out, int cap) {
+    if (!g_has_game) return FIO_ENOGAME;
+
+    // Walk the viewer's last-move events into AnimEvent[] (same snapshots as
+    // j_events), then build the plan against the resident (final) board's counts.
+    EvSnap refs[FIO_MAX_SNAPS];
+    for (int i = 0; i < g_n_snaps; i++) {
+        refs[i].g = (const Game *)(const void *)g_snaps[i].bytes;
+        refs[i].tag = g_snap_tags[i];
+        refs[i].aux = g_snap_aux[i];
+    }
+    static AnimEvent s_ev[ANIM_MAX_STEPS];
+    static Card s_pool[ANIM_MAX_STEPS * ANIM_MAX_CARDS];
+    FioPlanCtx ctx = { s_ev, s_pool, ANIM_MAX_STEPS,
+                       (int)(sizeof(s_pool)/sizeof(s_pool[0])), 0, 0 };
+    evwire_walk(refs, g_n_snaps, g_game.logs + g_last_event_log_start,
+                g_game.num_logs - g_last_event_log_start, viewer, fio_plan_sink, &ctx);
+
+    const int np = g_game.num_players;
+    int final_hand[MAX_PLAYERS];
+    for (int s = 0; s < np; s++) final_hand[s] = g_game.players[s].hand_count;
+
+    static AnimPlan plan;
+    const int rc = anim_build_plan(s_ev, ctx.n, np, g_game.deck_count,
+                                   g_game.discard_pile_length, final_hand, &plan);
+    if (rc != ANIM_EOK) return FIO_EBADARG;
+
+    J j; j_init(&j, out, cap);
+    j_puts(&j, "{\"durationMs\":"); j_puti(&j, ANIM_TIME_MS);
+    j_puts(&j, ",\"gapMs\":");      j_puti(&j, ANIM_GAP_MS);
+    j_puts(&j, ",\"totalMs\":");    j_puti(&j, plan.total_ms);
+    j_puts(&j, ",\"nPlayers\":");   j_puti(&j, np);
+    j_puts(&j, ",\"pre\":{\"deck\":"); j_puti(&j, plan.pre.deck);
+    j_puts(&j, ",\"discard\":");    j_puti(&j, plan.pre.discard);
+    j_puts(&j, ",\"hand\":[");
+    for (int s = 0; s < np; s++) { if (s) j_putc(&j, ','); j_puti(&j, plan.pre.hand[s]); }
+    j_puts(&j, "]},\"veil\":[");
+    for (int i = 0; i < plan.n_veil; i++) { if (i) j_putc(&j, ','); j_puti(&j, plan.veil_ids[i]); }
+    j_puts(&j, "],\"steps\":[");
+    for (int i = 0; i < plan.n_steps; i++) {
+        const AnimPlanStep *st = &plan.steps[i];
+        if (i) j_putc(&j, ',');
+        j_puts(&j, "{\"type\":");   j_puti(&j, st->type);
+        j_puts(&j, ",\"seat\":");   j_puti(&j, st->seat);
+        j_puts(&j, ",\"from\":");   j_puti(&j, st->from);
+        j_puts(&j, ",\"to\":");     j_puti(&j, st->to);
+        j_puts(&j, ",\"nCards\":"); j_puti(&j, st->n_cards);
+        j_puts(&j, ",\"durationMs\":"); j_puti(&j, st->duration_ms);
+        j_puts(&j, ",\"startMs\":");     j_puti(&j, st->start_ms);
+        j_puts(&j, ",\"deck\":");        j_puti(&j, st->deck);
+        j_puts(&j, ",\"discard\":");     j_puti(&j, st->discard);
+        j_puts(&j, ",\"inFlightFromDeck\":");  j_puti(&j, st->in_flight_from_deck);
+        j_puts(&j, ",\"inFlightToFlipped\":"); j_puti(&j, st->in_flight_to_flipped);
+        j_puts(&j, ",\"hand\":[");
+        for (int s = 0; s < np; s++) { if (s) j_putc(&j, ','); j_puti(&j, st->hand[s]); }
+        j_puts(&j, "]}");
+    }
+    j_puts(&j, "]}");
+    return j_finish(&j);
+}
+
+int fio_anim_should_drop_stale(int has_last, int last, int has_incoming, int incoming) {
+    return anim_should_drop_stale(has_last, last, has_incoming, incoming);
 }
 
 int fio_last_reject(void) { return g_last_reject; }

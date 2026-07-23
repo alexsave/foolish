@@ -46,7 +46,7 @@ CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_steps.
             src/octogen_strategy.c src/torpex_strategy.c \
             src/torpex_value.c src/novichok_strategy.c \
             src/bot_knobs.c src/bot_roster.c src/bot_drive.c \
-            src/sha256.c src/msg_wire.c
+            src/sha256.c src/msg_wire.c src/anim_plan.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 
 .PHONY: all clean tests print-core
@@ -108,9 +108,15 @@ build/replay_v6_test: tests/replay_v6_test.c $(CORE_OBJ)
 # matrix, size guardrail (docs/IMESSAGE_GAME_DESIGN.md §4/§7, src/msg_wire.h).
 build/msg_wire_test: tests/msg_wire_test.c $(CORE_OBJ)
 	$(CC) $(CFLAGS) tests/msg_wire_test.c $(CORE_OBJ) -o $@ $(LDFLAGS)
-difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/solver_difftest build/replay_difftest build/replay_v6_test
+# Animation core (c/src/anim_plan.h): the C twins of the React animation-quality
+# tests (e2e/optimistic_animation, optimistic_revert, reconcile) plus plan
+# building. The owner's headline ask — the quality tests live in C now.
+build/anim_plan_test: tests/anim_plan_test.c $(CORE_OBJ)
+	$(CC) $(CFLAGS) tests/anim_plan_test.c $(CORE_OBJ) -o $@ $(LDFLAGS)
+difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/solver_difftest build/replay_difftest build/replay_v6_test build/anim_plan_test
 	./build/sim_difftest 4 1000 && ./build/apply_difftest 4 200 && \
 	./build/msg_wire_test 20 && \
+	./build/anim_plan_test && \
 	./build/solver_difftest 2 40 "" 200000 && \
 	./build/solver_difftest 3 40 "" 200000 && \
 	./build/solver_difftest 4 40 "" 200000 && \
@@ -485,6 +491,8 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_unambiguous_cover \
   -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal \
   -Wl,--export=wasm_msg_rule_p -Wl,--export=wasm_msg_rebase \
+  -Wl,--export=wasm_anim_should_drop_stale -Wl,--export=wasm_anim_stale_optimistic \
+  -Wl,--export=wasm_anim_resolve -Wl,--export=wasm_anim_build_plan \
   -Wl,--export=wasm_belief_probe_reset -Wl,--export=wasm_belief_probe_dump
 
 # The rules module's move buffer only feeds the exported menu — production
@@ -750,7 +758,8 @@ wasm-guards: build/guards.wasm
 # artifact is the baseline to reproduce before you touch it.
 WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_steps.c \
                 src/view.c src/awire.c src/json_out.c \
-                src/evwire.c src/sha256.c src/msg_wire.c src/random_strategy.c \
+                src/evwire.c src/sha256.c src/msg_wire.c src/anim_plan.c \
+                src/random_strategy.c \
                 src/espresso_strategy.c src/handwritten_strategy.c \
                 src/robusta_strategy.c src/firecracker_strategy.c \
                 src/blackpowder_strategy.c \

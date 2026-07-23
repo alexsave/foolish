@@ -427,6 +427,20 @@ int main(void) {
             }
             ev_moves++;
             ev_total += n_ev;
+
+            // The animation PLAN for the same move (anim_plan.h): one step per
+            // event, each carrying its post-step counts, plus the pre-sequence
+            // count-freeze and the veil. This is what MessageTableView's
+            // runEventStream/preCounts/veil collapse onto — the plan is derived
+            // in C, not re-walked in Swift.
+            static char planbuf[65536];
+            int pl = fio_anim_plan_json(0, planbuf, sizeof(planbuf));
+            if (pl < 0) { printf("FAIL anim_plan err=%d\n", pl); return 1; }
+            int n_steps = count_of(planbuf, "{\"type\":");
+            if (n_steps != n_ev) { printf("FAIL plan: %d events but %d steps\n", n_ev, n_steps); return 1; }
+            if (count_of(planbuf, "\"pre\":{") != 1 || count_of(planbuf, "\"veil\":[") != 1) {
+                printf("FAIL plan: missing pre/veil\n"); return 1;
+            }
         } else {
             // not the human's turn: drive the bots one cycle (all seats but 0).
             if (fio_bot_drive_packed(1, buf, sizeof(buf)) < 0) break;

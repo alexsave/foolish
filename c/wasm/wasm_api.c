@@ -23,6 +23,7 @@
 #include "view.h"
 #include "awire.h"
 #include "evwire.h"
+#include "anim_plan.h"
 
 // ---------- minimal libc ------------------------------------------------
 
@@ -854,6 +855,166 @@ int wasm_msg_seal(int in_len) {
     const int src = msg_seal(&e, &g_game, body, (int)sizeof body, &scratch);
     if (src != MSG_EOK) return src;
     return msg_encode(&e, g_replay_io, REPLAY_IO_CAP);
+}
+
+// ---------- animation core (anim_plan.h) --------------------------------------
+//
+// The platform-independent animation policy, exported so the web pure modules
+// (src/state/*) delegate here instead of re-deriving it — the same "one kernel
+// behind every host" argument FMSG makes above. Cards cross as 1-byte wire cards
+// (wire.h: 0..51 real, 0xFE hidden, 0xFF none). These are pure functions over
+// g_io — no resident game, no session log — so they run in any module that
+// exports them (the web loads bots.wasm, which is where they ship).
+
+// The version gate (clientReconcile.shouldDropStaleSequence). Pure scalars; the
+// two has_* flags model TS null (a replay sequence has no version -> never gated).
+int wasm_anim_should_drop_stale(int has_last, int last, int has_incoming, int incoming) {
+    return anim_should_drop_stale(has_last, last, has_incoming, incoming);
+}
+
+// staleOptimisticKeysOnTable (optimisticAnimation.ts). g_io in:
+//   [0 .. n_opt)                    opt cards      (wire)
+//   [n_opt .. +n_table)             table cards    (wire)
+//   [n_opt+n_table .. +n_named)     named cards    (wire)
+// g_io out (overwrites): the release INDICES into opt (one byte each).
+// Returns the release count, or a negative ANIM_E*.
+int wasm_anim_stale_optimistic(int n_opt, int n_table, int n_named) {
+    if (n_opt < 0 || n_table < 0 || n_named < 0) return ANIM_EBADARG;
+    if (n_opt > ANIM_MAX_CARDS || n_table > ANIM_MAX_TABLE_INPUT || n_named > ANIM_MAX_TABLE_INPUT)
+        return ANIM_ECAP;
+    static Card opt[ANIM_MAX_CARDS], table[ANIM_MAX_TABLE_INPUT], named[ANIM_MAX_TABLE_INPUT];
+    int p = 0;
+    for (int i = 0; i < n_opt; i++)   opt[i]   = card_from_wire_pair(g_io[p++]);
+    for (int i = 0; i < n_table; i++) table[i] = card_from_wire_pair(g_io[p++]);
+    for (int i = 0; i < n_named; i++) named[i] = card_from_wire_pair(g_io[p++]);
+    static int rel[ANIM_MAX_CARDS];
+    int n = anim_stale_optimistic_on_table(opt, n_opt, table, n_table, named, n_named,
+                                           rel, ANIM_MAX_CARDS);
+    if (n < 0) return n;
+    for (int i = 0; i < n; i++) g_io[i] = (unsigned char)rel[i];
+    return n;
+}
+
+// resolveUnconfirmedAttackCovers (optimisticConflicts.ts). g_io in:
+//   pending: n_pending x { u8 wire card, u8 is_cover }
+//   server:  n_server  x u8 wire card
+//   events:  n_events  x { u8 type, u8 n_cards, n_cards x u8 wire card }
+// Scalars: defender (0xFF none via -1), defender_hand, final_uncovered.
+// g_io out (overwrites): u8 n_revert, u8 n_merge, u8 n_clear, then the three
+// index lists (each a byte into pending). Returns bytes written, or -ANIM_E*.
+int wasm_anim_resolve(int n_pending, int n_server, int n_events,
+                      int defender, int defender_hand, int final_uncovered) {
+    if (n_pending < 0 || n_pending > ANIM_MAX_CARDS) return ANIM_EBADARG;
+    if (n_server < 0 || n_server > ANIM_MAX_TABLE_INPUT) return ANIM_ECAP;
+    if (n_events < 0 || n_events > ANIM_MAX_STEPS) return ANIM_ECAP;
+    static AnimPending pending[ANIM_MAX_CARDS];
+    static Card server[ANIM_MAX_TABLE_INPUT];
+    // Event card storage: borrow a flat pool; each AnimEvent points into it.
+    static Card ev_cards[ANIM_MAX_STEPS * ANIM_MAX_CARDS];
+    static AnimEvent events[ANIM_MAX_STEPS];
+    int p = 0, cpool = 0;
+    for (int i = 0; i < n_pending; i++) {
+        pending[i].card = card_from_wire_pair(g_io[p++]);
+        pending[i].is_cover = g_io[p++] ? 1 : 0;
+    }
+    for (int i = 0; i < n_server; i++) server[i] = card_from_wire_pair(g_io[p++]);
+    for (int e = 0; e < n_events; e++) {
+        int type = g_io[p++];
+        int nc = g_io[p++];
+        if (nc < 0 || nc > ANIM_MAX_CARDS || cpool + nc > (int)(sizeof(ev_cards)/sizeof(ev_cards[0])))
+            return ANIM_ECAP;
+        events[e].type = type;
+        events[e].seat = ANIM_SEAT_NONE;
+        events[e].from = ANIM_LOC_NONE;
+        events[e].to = ANIM_LOC_NONE;
+        events[e].mask_cards = 0;
+        events[e].cards = &ev_cards[cpool];
+        events[e].n_cards = nc;
+        for (int k = 0; k < nc; k++) ev_cards[cpool++] = card_from_wire_pair(g_io[p++]);
+    }
+    AnimFinalState fin;
+    for (int i = 0; i < MAX_PLAYERS; i++) fin.hand_length[i] = 0;
+    fin.defender = defender;   // caller passes -1 for "none"
+    fin.n_players = MAX_PLAYERS;
+    if (defender >= 0 && defender < MAX_PLAYERS) fin.hand_length[defender] = defender_hand;
+    fin.final_uncovered_attacks = final_uncovered;
+
+    static AnimResolve r;
+    int rc = anim_resolve_unconfirmed_attack_covers(pending, n_pending, server, n_server,
+                                                    events, n_events, &fin, &r);
+    if (rc != ANIM_EOK) return rc;
+    int o = 0;
+    g_io[o++] = (unsigned char)r.n_revert;
+    g_io[o++] = (unsigned char)r.n_merge;
+    g_io[o++] = (unsigned char)r.n_clear;
+    for (int i = 0; i < r.n_revert; i++) g_io[o++] = (unsigned char)r.revert[i];
+    for (int i = 0; i < r.n_merge; i++)  g_io[o++] = (unsigned char)r.merge[i];
+    for (int i = 0; i < r.n_clear; i++)  g_io[o++] = (unsigned char)r.clear[i];
+    return o;
+}
+
+// anim_build_plan (the count-freeze + veil + timing). g_io in:
+//   [0 .. n_players)   final_hand counts (u8 each)
+//   then events: n_events x { u8 type, u8 seat(0xFF none), u8 from, u8 to,
+//                             u8 mask, u8 n_cards, n_cards x u8 wire card }
+// Scalars: n_events, n_players, final_deck, final_discard.
+// g_io out (overwrites): a packed AnimPlan blob (see the TS bridge readPlan).
+// Returns bytes written, or a negative ANIM_E*.
+static void put_u16le(unsigned char *o, int *p, int v) {
+    o[(*p)++] = (unsigned char)(v & 0xff);
+    o[(*p)++] = (unsigned char)((v >> 8) & 0xff);
+}
+int wasm_anim_build_plan(int n_events, int n_players, int final_deck, int final_discard) {
+    if (n_players < 2 || n_players > MAX_PLAYERS) return ANIM_EBADARG;
+    if (n_events < 0 || n_events > ANIM_MAX_STEPS) return ANIM_ECAP;
+    static Card ev_cards[ANIM_MAX_STEPS * ANIM_MAX_CARDS];
+    static AnimEvent events[ANIM_MAX_STEPS];
+    int final_hand[MAX_PLAYERS];
+    int p = 0, cpool = 0;
+    for (int i = 0; i < n_players; i++) final_hand[i] = g_io[p++];
+    for (int e = 0; e < n_events; e++) {
+        events[e].type = g_io[p++];
+        int seat = g_io[p++];
+        events[e].seat = (seat == 0xFF) ? ANIM_SEAT_NONE : seat;
+        events[e].from = g_io[p++];
+        events[e].to = g_io[p++];
+        events[e].mask_cards = g_io[p++] ? 1 : 0;
+        int nc = g_io[p++];
+        if (nc < 0 || nc > ANIM_MAX_CARDS || cpool + nc > (int)(sizeof(ev_cards)/sizeof(ev_cards[0])))
+            return ANIM_ECAP;
+        events[e].cards = &ev_cards[cpool];
+        events[e].n_cards = nc;
+        for (int k = 0; k < nc; k++) ev_cards[cpool++] = card_from_wire_pair(g_io[p++]);
+    }
+    static AnimPlan plan;
+    int rc = anim_build_plan(events, n_events, n_players, final_deck, final_discard, final_hand, &plan);
+    if (rc != ANIM_EOK) return rc;
+
+    int o = 0;
+    g_io[o++] = (unsigned char)plan.n_steps;
+    g_io[o++] = (unsigned char)n_players;
+    put_u16le(g_io, &o, plan.pre.deck);
+    put_u16le(g_io, &o, plan.pre.discard);
+    for (int s = 0; s < n_players; s++) put_u16le(g_io, &o, plan.pre.hand[s]);
+    put_u16le(g_io, &o, plan.total_ms);
+    g_io[o++] = (unsigned char)plan.n_veil;
+    for (int i = 0; i < plan.n_veil; i++) g_io[o++] = plan.veil_ids[i];
+    for (int i = 0; i < plan.n_steps; i++) {
+        AnimPlanStep *st = &plan.steps[i];
+        g_io[o++] = (unsigned char)st->type;
+        g_io[o++] = (unsigned char)(st->seat < 0 ? 0xFF : st->seat);
+        g_io[o++] = (unsigned char)st->from;
+        g_io[o++] = (unsigned char)st->to;
+        g_io[o++] = (unsigned char)st->n_cards;
+        put_u16le(g_io, &o, st->duration_ms);
+        put_u16le(g_io, &o, st->start_ms);
+        put_u16le(g_io, &o, st->deck);
+        put_u16le(g_io, &o, st->discard);
+        g_io[o++] = (unsigned char)st->in_flight_from_deck;
+        g_io[o++] = (unsigned char)st->in_flight_to_flipped;
+        for (int s = 0; s < n_players; s++) put_u16le(g_io, &o, st->hand[s]);
+    }
+    return o;
 }
 
 // ---------- legal moves --------------------------------------------------------

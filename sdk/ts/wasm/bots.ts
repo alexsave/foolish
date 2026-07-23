@@ -25,7 +25,7 @@ const VIEW_FORMAT_VERSION = 1;
 import {
     EngineExports, PackedRunOk, __LOG_TYPE_TO_INT, __MOVE_TYPE, __adoptEngine,
     __marshalGame, __mem, __pooledCard, __replayError, __setResident,
-    __wireLogCard, __cardFromWire, __residentLegalMoves, applyKernelStateToGame,
+    __wireLogCard, __cardFromWire, __wireStateCard, __residentLegalMoves, applyKernelStateToGame,
     exportPackedDriveProducts, rngBaseFromSeed, WIRE_NONE,
 } from './engine.ts';
 
@@ -56,6 +56,13 @@ interface BotsExports extends EngineExports {
     // Belief probe (observability; off until reset arms it)
     wasm_belief_probe_reset(): void;
     wasm_belief_probe_dump(): number;
+    // Animation core (c/src/anim_plan.h) — the platform-independent animation
+    // policy the web pure modules (src/state/*) delegate to. bots-only.
+    wasm_anim_should_drop_stale(hasLast: number, last: number, hasIncoming: number, incoming: number): number;
+    wasm_anim_stale_optimistic(nOpt: number, nTable: number, nNamed: number): number;
+    wasm_anim_resolve(nPending: number, nServer: number, nEvents: number,
+                      defender: number, defenderHand: number, finalUncovered: number): number;
+    wasm_anim_build_plan(nEvents: number, nPlayers: number, finalDeck: number, finalDiscard: number): number;
 }
 
 // Mirrors STRAT_* in c/src/strategy.h (only the ids the server uses).
@@ -1174,4 +1181,159 @@ export function replayEventFrames(code: Uint8Array, viewer: number): Uint8Array[
         throw new Error(`replay produced ${frames.length} frames for ${steps} steps`);
     }
     return frames;
+}
+
+// ===========================================================================
+// Animation core (c/src/anim_plan.h)
+// ===========================================================================
+// The bridge the web pure modules (src/state/*) delegate to, so the animation
+// policy the React glitch-fixing hardened lives in C once — the same "one kernel
+// behind every host" argument FMSG makes. bots.wasm is loaded at app boot
+// (providers.tsx awaits ensureBotsAsync), and bots() is synchronous on the
+// server, so these calls are safe synchronously in both.
+
+// ANIM_EVT_* — mirrors anim_plan.h (which mirrors ANIMATION_EVENT_TYPE / EVW_T_*).
+export const ANIM_EVT: Record<string, number> = {
+    magic_transition: 0, deal: 1, flipped: 2, defender_move: 3, attack_pass: 4,
+    cover: 5, pickup: 6, discard: 7, out: 8, refill: 9, cards_to_trash: 10, revert: 11,
+};
+// ANIM_LOC_* — mirrors anim_plan.h.
+export const ANIM_LOC: Record<string, number> = {
+    deck: 0, hand: 1, table: 2, discard: 3, flipped: 4,
+};
+const ANIM_LOC_NONE = 0xff;
+
+/** The event-type string -> ANIM_EVT_* code (0 for an unknown/None type). */
+export function animEventTypeCode(type: string | undefined): number {
+    return (type && type in ANIM_EVT) ? ANIM_EVT[type] : 0;
+}
+
+/** clientReconcile.shouldDropStaleSequence, in C. null models "no version"
+ *  (a replay sequence, never gated). */
+export function animShouldDropStale(last: number | null, incoming: number | null): boolean {
+    const ex = bots();
+    return ex.wasm_anim_should_drop_stale(
+        last === null ? 0 : 1, last ?? 0,
+        incoming === null ? 0 : 1, incoming ?? 0) !== 0;
+}
+
+/** optimisticAnimation.staleOptimisticKeysOnTable, in C. Returns the INDICES
+ *  into `optCards` to release. */
+export function animStaleOptimisticOnTable(optCards: Card[], tableCards: Card[], namedCards: Card[]): number[] {
+    const ex = bots();
+    if (optCards.length > 128 || tableCards.length > 160 || namedCards.length > 160) {
+        throw new Error('anim: card list exceeds ABI cap');
+    }
+    const buf = __mem(ex);
+    const base = ex.wasm_io_ptr();
+    let p = base;
+    for (const c of optCards) buf[p++] = __wireStateCard(c);
+    for (const c of tableCards) buf[p++] = __wireStateCard(c);
+    for (const c of namedCards) buf[p++] = __wireStateCard(c);
+    const n = ex.wasm_anim_stale_optimistic(optCards.length, tableCards.length, namedCards.length);
+    if (n < 0) throw new Error(`anim_stale_optimistic error ${n}`);
+    const out = __mem(ex);
+    const ob = ex.wasm_io_ptr();
+    const rel: number[] = [];
+    for (let i = 0; i < n; i++) rel.push(out[ob + i]);
+    return rel;
+}
+
+/** optimisticConflicts.resolveUnconfirmedAttackCovers, in C. `events` need only
+ *  carry a type code (animEventTypeCode) and the cards each names — the C side
+ *  uses them for the pickup/cards_to_trash sweep set. Returns index lists into
+ *  `pending`. */
+export function animResolveUnconfirmed(
+    pending: { card: Card; isCover: boolean }[],
+    serverTable: Card[],
+    events: { type: number; cards: Card[] }[],
+    fin: { defender: number; defenderHand: number; finalUncovered: number },
+): { revert: number[]; merge: number[]; clear: number[] } {
+    const ex = bots();
+    if (pending.length > 128 || serverTable.length > 160 || events.length > 64) {
+        throw new Error('anim: resolve input exceeds ABI cap');
+    }
+    const buf = __mem(ex);
+    const base = ex.wasm_io_ptr();
+    let p = base;
+    for (const pc of pending) { buf[p++] = __wireStateCard(pc.card); buf[p++] = pc.isCover ? 1 : 0; }
+    for (const c of serverTable) buf[p++] = __wireStateCard(c);
+    for (const e of events) {
+        buf[p++] = e.type & 0xff;
+        buf[p++] = e.cards.length & 0xff;
+        for (const c of e.cards) buf[p++] = __wireStateCard(c);
+    }
+    const rc = ex.wasm_anim_resolve(pending.length, serverTable.length, events.length,
+                                    fin.defender, fin.defenderHand, fin.finalUncovered);
+    if (rc < 0) throw new Error(`anim_resolve error ${rc}`);
+    const out = __mem(ex);
+    let q = ex.wasm_io_ptr();
+    const nRevert = out[q++], nMerge = out[q++], nClear = out[q++];
+    const revert: number[] = [], merge: number[] = [], clear: number[] = [];
+    for (let i = 0; i < nRevert; i++) revert.push(out[q++]);
+    for (let i = 0; i < nMerge; i++) merge.push(out[q++]);
+    for (let i = 0; i < nClear; i++) clear.push(out[q++]);
+    return { revert, merge, clear };
+}
+
+// One built plan step (mirrors AnimPlanStep).
+export interface AnimPlanStep {
+    type: number; seat: number; from: number; to: number; nCards: number;
+    durationMs: number; startMs: number; deck: number; discard: number;
+    inFlightFromDeck: number; inFlightToFlipped: number; hand: number[];
+}
+export interface AnimPlan {
+    nSteps: number; nPlayers: number;
+    pre: { deck: number; discard: number; hand: number[] };
+    totalMs: number; veilIds: number[]; steps: AnimPlanStep[];
+}
+
+/** anim_build_plan, in C: a decoded viewer sequence -> the timed plan (count-
+ *  freeze + veil + durations). Provided for iOS/Steam parity and completeness;
+ *  the web's React queue currently renders its own pacing (a TODO seam — see
+ *  docs/ANIMATION_CORE_C.md). `events[].seat` may be null for a seat-less event. */
+export function animBuildPlan(
+    events: { type: number; seat: number | null; from: number; to: number; mask: boolean; cards: Card[] }[],
+    nPlayers: number, finalDeck: number, finalDiscard: number, finalHand: number[],
+): AnimPlan {
+    const ex = bots();
+    if (events.length > 64) throw new Error('anim: plan exceeds ABI cap');
+    const buf = __mem(ex);
+    const base = ex.wasm_io_ptr();
+    let p = base;
+    for (let s = 0; s < nPlayers; s++) buf[p++] = finalHand[s] & 0xff;
+    for (const e of events) {
+        buf[p++] = e.type & 0xff;
+        buf[p++] = e.seat === null ? ANIM_LOC_NONE : (e.seat & 0xff);
+        buf[p++] = e.from & 0xff;
+        buf[p++] = e.to & 0xff;
+        buf[p++] = e.mask ? 1 : 0;
+        buf[p++] = e.cards.length & 0xff;
+        for (const c of e.cards) buf[p++] = __wireStateCard(c);
+    }
+    const len = ex.wasm_anim_build_plan(events.length, nPlayers, finalDeck, finalDiscard);
+    if (len < 0) throw new Error(`anim_build_plan error ${len}`);
+    const out = __mem(ex);
+    let q = ex.wasm_io_ptr();
+    const rd16 = () => { const v = out[q] | (out[q + 1] << 8); q += 2; return v; };
+    const nSteps = out[q++];
+    const np = out[q++];
+    const preDeck = rd16(), preDiscard = rd16();
+    const preHand: number[] = [];
+    for (let s = 0; s < np; s++) preHand.push(rd16());
+    const totalMs = rd16();
+    const nVeil = out[q++];
+    const veilIds: number[] = [];
+    for (let i = 0; i < nVeil; i++) veilIds.push(out[q++]);
+    const steps: AnimPlanStep[] = [];
+    for (let i = 0; i < nSteps; i++) {
+        const type = out[q++], seat = out[q++], from = out[q++], to = out[q++], nCards = out[q++];
+        const durationMs = rd16(), startMs = rd16(), deck = rd16(), discard = rd16();
+        const inFlightFromDeck = out[q++], inFlightToFlipped = out[q++];
+        const hand: number[] = [];
+        for (let s = 0; s < np; s++) hand.push(rd16());
+        steps.push({ type, seat: seat === 0xff ? -1 : seat, from, to, nCards,
+                     durationMs, startMs, deck, discard, inFlightFromDeck, inFlightToFlipped, hand });
+    }
+    return { nSteps, nPlayers: np, pre: { deck: preDeck, discard: preDiscard, hand: preHand }, totalMs, veilIds, steps };
 }

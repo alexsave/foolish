@@ -1586,4 +1586,5 @@ export const __LOG_TYPE_TO_INT: Map<string, number> = new Map(
 );
 export { pooledCard as __pooledCard, MOVE_TYPE as __MOVE_TYPE };
 export { wireLogCard as __wireLogCard, cardFromWire as __cardFromWire };
+export { wireStateCard as __wireStateCard };
 export { LOG_TYPE_FROM_INT as __LOG_TYPE_FROM_INT };

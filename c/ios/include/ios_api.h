@@ -157,6 +157,37 @@ int fio_last_events_json(int viewer, char *out, int cap);
 // (always > 0; "actions" may be empty), or a negative error.
 int fio_bot_drive_json(int human_mask, char *out, int cap);
 
+// ---------- animation core (c/src/anim_plan.h) -----------------------------
+//
+// The platform-independent animation POLICY, shared with the web (which reaches
+// the same C through wasm) and any future client. THE point: MessageTableView's
+// runEventStream + preCounts + veil each re-derive this choreography today; this
+// hands them the finished plan so Swift only tweens sprites per step and obeys
+// the freezes/veils. See docs/ANIMATION_CORE_C.md.
+//
+// The animation plan for the LAST fio_apply_awire / fio_bot_drive_json, as seen
+// by `viewer` (a seat, or -1 spectator). One ordered plan of steps, each with a
+// duration and the board counts the display advances to as its flight lands,
+// PLUS the pre-sequence count-freeze (the iOS preCounts backward walk, in C now)
+// and the veil (the card identities to hide until their step lands, the C twin
+// of preHide). Shape:
+//   {"durationMs":500,"gapMs":25,"totalMs":1550,"nPlayers":2,
+//    "pre":{"deck":24,"discard":4,"hand":[4,4]},
+//    "veil":[4,32],                       // dense card ids (suit*13+value-1)
+//    "steps":[{"type":7,"seat":-1,"from":2,"to":3,"nCards":4,
+//              "durationMs":500,"startMs":0,"deck":24,"discard":8,
+//              "inFlightFromDeck":0,"inFlightToFlipped":0,"hand":[4,4]}, ...]}
+// type/from/to are EVW_*/ANIM_* codes (identical numbering; c/src/anim_plan.h).
+// Returns bytes written, or a negative error.
+int fio_anim_plan_json(int viewer, char *out, int cap);
+
+// The live-broadcast version gate (anim_should_drop_stale): should a broadcast
+// at `incoming` be dropped as stale given the newest applied `last`? The has_*
+// flags model a missing version (a replay sequence, never gated): pass 0 for
+// "none". Returns 1 (drop) or 0 (apply). Provided for a future iOS/Steam optimism
+// layer; the web already routes its feed gate through the same C.
+int fio_anim_should_drop_stale(int has_last, int last, int has_incoming, int incoming);
+
 // ---------- strategies (offline bot roster, §7.2) --------------------------
 
 // Number of exposed offline strategies.

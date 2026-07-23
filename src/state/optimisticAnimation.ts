@@ -1,5 +1,5 @@
 import { Card } from '@api/core/types.ts';
-import { getCardKey } from '../utils/animationUtils';
+import { animStaleOptimisticOnTable } from '@sdk/ts/wasm/bots.ts';
 
 interface AnimEvent {
     cards?: Card[];
@@ -19,6 +19,17 @@ interface AnimEvent {
  * event look un-optimistic, so it would animate a SECOND time — the "I played
  * one card but it animates twice" bug.
  *
+ * The DECISION lives in the C animation core (c/src/anim_plan.h
+ * anim_stale_optimistic_on_table), reached through the wasm bridge, so the web,
+ * iOS and any future client share one implementation. This wrapper keeps the
+ * string-key contract AnimationContext depends on: it parses each optimistic map
+ * key for its `.card`, hands the cards to C, and maps the returned indices back
+ * to the keys to release. Asserted natively (c/tests/anim_plan_test.c
+ * test_optimistic_animation) and end-to-end via e2e/optimistic_animation.test.ts.
+ * The original TS body lives in src/state/__ts_reference.ts and is proven
+ * identical to this delegation by e2e/anim_core_parity.test.ts, until the
+ * deferred TS deletion (docs/ANIMATION_CORE_C.md).
+ *
  * Pure: returns the optimistic-map keys to release; no side effects.
  */
 export function staleOptimisticKeysOnTable(
@@ -26,25 +37,21 @@ export function staleOptimisticKeysOnTable(
     tableCards: Card[],
     events: AnimEvent[],
 ): string[] {
-    const onTable = new Set(tableCards.map(getCardKey));
-    const namedByThisBroadcast = new Set<string>();
-    for (const ev of events) {
-        for (const c of ev.cards ?? []) namedByThisBroadcast.add(getCardKey(c));
-    }
-
-    const release: string[] = [];
+    // Parse each key to its card, keeping the key alongside so the C indices map
+    // back. A malformed key (or one with no `.card`) is dropped here, exactly as
+    // the old inline parse did — it can never be released.
+    const optCards: Card[] = [];
+    const keyForIndex: string[] = [];
     for (const key of optimisticKeys) {
         let card: Card | undefined;
-        try {
-            card = JSON.parse(key).card;
-        } catch {
-            continue; // malformed key — leave it
-        }
+        try { card = JSON.parse(key).card; } catch { continue; }
         if (!card) continue;
-        const ck = getCardKey(card);
-        if (onTable.has(ck) && !namedByThisBroadcast.has(ck)) {
-            release.push(key);
-        }
+        optCards.push(card);
+        keyForIndex.push(key);
     }
-    return release;
+
+    const named: Card[] = [];
+    for (const ev of events) for (const c of ev.cards ?? []) named.push(c);
+
+    return animStaleOptimisticOnTable(optCards, tableCards, named).map((i) => keyForIndex[i]);
 }
