@@ -160,7 +160,10 @@ private struct GameSurface: View {
                       nickname: MessageGameStore.shared.nickname,
                       onJoin: { name in Task { await joinLobby(lob, nickname: name) } },
                       onStart: { Task { await startGame(lob) } },
-                      onInvite: { Task { await onSend(lob.payload, lobbySeat(lob.env) ?? 0) } })
+                      onInvite: { Task { await onSend(lob.payload, lobbySeat(lob.env) ?? 0) } },
+                      // nil in every shipping build: the closure only exists
+                      // where `addSoloSeat` is compiled at all.
+                      onAddSoloSeat: soloSeatAction(lob))
         } else if let g = nameGate {
             NameGateView(prefill: MessageGameStore.shared.nickname) { name in
                 Task { await nameThenSeat(name, gate: g) }
@@ -423,6 +426,53 @@ private struct GameSurface: View {
         }
     }
 
+    /// The lobby's "Add player" action, or nil when solo seating is not
+    /// compiled in — one `#if` here instead of one at the call site, so the
+    /// view code above reads the same in every configuration.
+    private func soloSeatAction(_ lob: Lobby) -> (() -> Void)? {
+        #if DEBUG || SOLO_TESTING
+        return { Task { await addSoloSeat(lob) } }
+        #else
+        return nil
+        #endif
+    }
+
+    #if DEBUG || SOLO_TESTING
+    /// Testing-only (MessageDebugFlags.soloSeats): seat a PUPPET player from this
+    /// device so a lobby with nobody else in the chat can still reach two seats
+    /// and start. Mechanically `joinLobby` minus the two things that would be
+    /// wrong here:
+    ///
+    ///   - it does NOT overwrite this device's stored nickname (the puppet is
+    ///     not me renaming myself — I keep my own name on my own seat), and
+    ///   - it does NOT re-cache MY seat as the puppet's, so identity stays
+    ///     whatever it already was; `pickSeatOnAdopt` is what switches which
+    ///     hand you are playing, one bubble at a time.
+    ///
+    /// It also deliberately does not stage/send the reseal: a puppet is local
+    /// scaffolding, and `startGame` seals the LIVE handoff off this same
+    /// in-memory lobby payload, so the chat only ever sees the real game.
+    private func addSoloSeat(_ lob: Lobby) async {
+        let env = lob.env
+        guard let free = (0..<env.nPlayers).first(where: { s in !env.joins.contains { $0.seat == s } }),
+              let gid = UInt64(env.gameId) else { return }
+        let keepSeat = lobbySeat(env) ?? 0
+        let joins = (env.joins + [MessageJoin(seat: free, name: "Solo \(free + 1)")])
+            .sorted { $0.seat < $1.seat }
+        do {
+            _ = try await MessageKernel.shared.decode(payload: lob.payload, viewer: -1)
+            let parent = MessageTurnController.firstEight(hex: env.digest)
+            let payload = try await MessageKernel.shared.seal(
+                phase: 0, lastActorSeat: free, gameId: gid, parent8: parent, joins: joins)
+            let newEnv = try await MessageEnvelope.decode(payload: payload, viewer: -1)
+            cache(seat: keepSeat, env: newEnv, payload: payload)
+            lobby = Lobby(env: newEnv, payload: payload)
+        } catch {
+            damaged = true
+        }
+    }
+    #endif
+
     /// Start the game at the ACTUAL joined count (§5.2, lobby v3). Any JOINED
     /// player may do this once 2+ have joined (LobbyView gates the button on
     /// that; nothing re-checks it here — the kernel would happily reseat and
@@ -496,7 +546,7 @@ private struct GameSurface: View {
         // Make the resident game the winner and set Rule R's round guard, then
         // rebase the pending ledger onto it.
         _ = try? await MessageKernel.shared.decode(payload: winner, viewer: -1)
-        #if DEBUG
+        #if DEBUG || SOLO_TESTING
         // Single-simulator harness: both conversations share ONE App Group cache
         // and participant identity, so a received bubble always resolves to the
         // SENDER's seat and you can never view the receiver ("Waiting for Seat 2"
@@ -523,7 +573,7 @@ private struct GameSurface: View {
                             survivors: survivors, discarded: discarded, prevPayload: prevPayload)
             }
         case .ambiguous:
-            #if DEBUG
+            #if DEBUG || SOLO_TESTING
             // Single-simulator testing keeps the real picker (see the DEBUG note
             // above in this function) — this branch is unreachable in DEBUG anyway
             // because `pickSeatOnAdopt` already returned above, but stays correct
@@ -806,6 +856,9 @@ private struct LobbyView: View {
     /// — the recovery path for a lobby whose auto-staged bubble is gone (see
     /// the `mySeat != nil, joins < 2` branch in `body`).
     let onInvite: () -> Void
+    /// Testing-only (MessageDebugFlags.soloSeats): seat a puppet player from
+    /// this device. nil in every shipping build — see `soloControls`.
+    var onAddSoloSeat: (() -> Void)?
 
     /// The joiner's editable name (B3): compact can't host a field, so this is the
     /// place a joiner names themselves before claiming a seat. Seeded from the
@@ -815,9 +868,11 @@ private struct LobbyView: View {
     init(env: MessageEnvelope, mySeat: Int?, nickname: String,
          onJoin: @escaping (String) -> Void,
          onStart: @escaping () -> Void,
-         onInvite: @escaping () -> Void) {
+         onInvite: @escaping () -> Void,
+         onAddSoloSeat: (() -> Void)? = nil) {
         self.env = env; self.mySeat = mySeat
         self.onJoin = onJoin; self.onStart = onStart; self.onInvite = onInvite
+        self.onAddSoloSeat = onAddSoloSeat
         _nickname = State(initialValue: nickname == "Me" ? "" : nickname)
     }
 
@@ -842,6 +897,40 @@ private struct LobbyView: View {
             }
             .padding(.horizontal)
 
+            // Testing-only solo controls REPLACE the normal ones when they are
+            // live, rather than sitting alongside them: the shipping lobby can
+            // legitimately be offering "waiting" at the same moment solo play
+            // wants to offer Start, and two contradictory controls on one
+            // screen is worse than either. See `soloControls`.
+            if let onAddSoloSeat, soloSeatsEnabled {
+                soloControls(onAddSoloSeat)
+            } else {
+                standardControls
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
+    }
+
+    /// Testing-only (SOLO_TESTING / DEBUG): "Add player" until the lobby has
+    /// enough seats, then Start. Deliberately bypasses `LobbyControls.offered`
+    /// — specifically its round-5 M9 authorship gate, which withholds Start
+    /// from whoever sent the newest bubble so one human cannot lock the others
+    /// out of a lobby that still has room. Seating a puppet from this device
+    /// makes me the newest sender every time, so that gate would make solo play
+    /// impossible; and there is by definition nobody to lock out.
+    @ViewBuilder
+    private func soloControls(_ addSeat: @escaping () -> Void) -> some View {
+        if env.joins.count < env.nPlayers {
+            FButton("Add player (testing)", kind: .wood, action: addSeat)
+        }
+        if env.joins.count >= 2 {
+            FButton(FStrings.t("ios.msg.startgame"), kind: .wood, action: onStart)
+        }
+    }
+
+    @ViewBuilder
+    private var standardControls: some View {
             // note 16: no "Waiting for players — N joined" line here any more —
             // the joined list above already says exactly that, and the owner's
             // read was "the lobby is too tight" for a second line saying the
@@ -899,9 +988,17 @@ private struct LobbyView: View {
                 Text(FStrings.t("ios.msg.lobbyfull")).font(.footnote).foregroundStyle(FColor.ink)
                     .shadow(color: .white.opacity(0.5), radius: 2)
             }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding()
+    }
+
+    /// Is solo seating compiled in AND switched on? False in every shipping
+    /// build — the flag type itself does not exist there, so this is the one
+    /// place the condition is spelled and the call site stays readable.
+    private var soloSeatsEnabled: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDebugFlags.soloSeats
+        #else
+        return false
+        #endif
     }
 
     /// Round-5 B1: the three-state verdict on the CURRENT field text (see
@@ -987,8 +1084,12 @@ private struct SeatPicker: View {
     }
 }
 
-#if DEBUG
-/// DEBUG-only knobs for single-simulator testing (never compiled into Release).
+#if DEBUG || SOLO_TESTING
+/// DEBUG-only knobs for single-device testing (never compiled into Release —
+/// `#if DEBUG || SOLO_TESTING` means a TestFlight/App Store build cannot contain
+/// any of this — the shipping Release build defines neither condition; the
+/// on-device testing build opts in with SWIFT_ACTIVE_COMPILATION_CONDITIONS,
+/// and the CI Release build is what proves it).
 public enum MessageDebugFlags {
     /// Force the seat picker on every adopted bubble so both seats are playable
     /// on ONE simulator (which cannot otherwise distinguish sender from receiver).
@@ -996,6 +1097,24 @@ public enum MessageDebugFlags {
     /// distinct identity + its own seat cache, so seat inference resolves
     /// automatically and the picker would be wrong to show.
     public static var pickSeatOnAdopt = true
+
+    /// SOLO PLAY (owner ask, device testing): seat extra players from this one
+    /// device so a real chat can reach a startable game with nobody else in it.
+    ///
+    /// The shipping lobby is deliberately un-startable alone — Start needs 2+
+    /// joined, and the only way to a second join is another human on another
+    /// device. That is correct for the product and useless for testing the
+    /// extension on a phone: you cannot reach a board at all, so none of the
+    /// board work can be checked on device. With this on, the lobby offers
+    /// "Add player" (claims the next free seat with a puppet name) and offers
+    /// Start as soon as two seats are filled, bypassing the round-5 M9
+    /// authorship gate — that gate exists to stop one human locking others
+    /// out, and in solo play there is nobody to lock out.
+    ///
+    /// Pairs with `pickSeatOnAdopt`: add a puppet, start, then every time you
+    /// open a bubble the picker asks which seat you are, so one person plays
+    /// every hand in one chat.
+    public static var soloSeats = true
 }
 #endif
 

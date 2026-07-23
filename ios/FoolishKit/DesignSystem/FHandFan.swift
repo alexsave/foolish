@@ -293,13 +293,21 @@ public struct FHandFan: View {
               trump: trumpSuit != nil && card.suit == trumpSuit,
               size: CGSize(width: cardW, height: Self.cardH))
             // Round-5 M5b: the compact drawer shows only the TOP HALF of each
-            // hand card — the corner index (top-leading) stays legible, and
-            // the hand's on-screen height halves without touching a single
-            // card's actual playable width. Applied before the tap/drag
-            // modifiers below, so the touch target (`.contentShape`) matches
-            // exactly what's visible — no invisible dead zone under the crop.
+            // hand card. The card is drawn WHOLE and pushed DOWN so its lower
+            // half falls past the drawer's own bottom edge — it is NOT cut in
+            // half. The first attempt did literally clip each card to cardH/2,
+            // which put a hard horizontal edge across every card mid-face
+            // (owner, on device: "don't ACTUALLY crop the cards, just move them
+            // down so that we only see the top half. right now they look
+            // fucking ridiculous"). Reserving half the height with a .top
+            // alignment and NO `.clipped()` gets the same compactness from a
+            // real card that happens to be partly off-screen — which is what a
+            // hand of cards held below the edge of a table actually looks like.
+            //
+            // The touch target follows the RESERVED half (`.contentShape`
+            // below sizes to this frame), which is exactly the part you can
+            // see and therefore the only part you could sensibly aim at.
             .frame(height: topHalfOnly ? Self.cardH / 2 : Self.cardH, alignment: .top)
-            .clipped()
             .opacity(hidden.contains(card.identity) ? 0 : 1)
             .modifier(FlightID(id: card.identity, namespace: namespace))
             .background(GeometryReader { g in
