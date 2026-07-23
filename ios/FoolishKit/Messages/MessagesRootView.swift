@@ -71,6 +71,18 @@ public struct MessagesRootView: View {
                     onUnstage: onUnstage)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(WoolBackground())          // the table surface, not system white
+            // Round-5 M4/B3/M3: Dynamic Type had no POLICY at all — some
+            // controls never scaled (M4), the card faces scaled straight out
+            // of their own bounds (B3), and the game-over list collapsed
+            // independently of both (M3). Owner's call this round: opt OUT of
+            // Dynamic Type entirely rather than pick apart which of dozens of
+            // small-screen surfaces can safely grow — "make a clamp so that
+            // dynamic type does nothing in my game." The single-value overload
+            // (not a range) pins the WHOLE hierarchy below this line to the
+            // default, non-accessibility size regardless of the system
+            // setting. Revisit if/when there is room to do this surface by
+            // surface instead of as one blanket clamp.
+            .dynamicTypeSize(.large)
     }
 }
 
@@ -171,12 +183,16 @@ private struct GameSurface: View {
             // caption explaining why there is nothing to tap (§ release security).
             VStack(spacing: 4) {
                 MessageBoardView(view: s.view, names: s.names)
+                // Round-5 M10: full-opacity ink + a LIGHT shadow, not 55%
+                // black — the busy wool weave has no fixed-opacity foreground
+                // that survives it (see the sweep note on DamagedView below).
                 Text(FStrings.t("ios.msg.spectating"))
-                    .font(.footnote).foregroundStyle(.black.opacity(0.55))
+                    .font(.footnote).foregroundStyle(FColor.ink)
+                    .shadow(color: .white.opacity(0.5), radius: 2)
                     .multilineTextAlignment(.center).padding(.horizontal).padding(.bottom, 8)
             }
         } else if damaged {
-            DamagedView()
+            DamagedView(onNewGame: onNewGame)
         } else {
             ProgressView()
         }
@@ -284,6 +300,11 @@ private struct GameSurface: View {
                 await joinLobby(lob, nickname: MessageGameStore.shared.nickname)
             }
         } else if lob.env.joins.count >= target {
+            // Calls startGame() directly — bypasses LobbyControls.offered's
+            // round-5 M9 gate (that gate only governs the UI's Start
+            // button). Fine here: this is a scripted driver racing to a
+            // dealt board for a screenshot, not a human who could be locked
+            // out of one.
             await startGame(lob)
         }
         #endif
@@ -301,9 +322,18 @@ private struct GameSurface: View {
     /// reroll by tapping New game until it was good; a locked-seed lobby
     /// closes that.
     private func start(nickname: String) async {
-        MessageGameStore.shared.nickname = nickname
+        // Round-5 B1: NewGameSetup only calls this from its `.ok` branch, so
+        // `nickname` is already NicknameGate-valid and trimmed — the "You"
+        // fallback that used to live here is unreachable now. Re-check
+        // defensively anyway (never trust a caller's promise past the type
+        // system) and, per M2, fall back to the STORED nickname rather than
+        // a placeholder if it somehow is not: skipping the write below just
+        // leaves whatever this device already had on file.
+        if case .ok(let name) = NicknameGate.check(nickname) {
+            MessageGameStore.shared.nickname = name
+        }
         showSetup = false
-        await createWaiting(nickname: nickname)
+        await createWaiting(nickname: MessageGameStore.shared.nickname)
     }
 
     /// Create a game as seat 0 and open its lobby (lobby v3): lock the seed +
@@ -364,8 +394,17 @@ private struct GameSurface: View {
         let env = lob.env
         guard let free = (0..<env.nPlayers).first(where: { s in !env.joins.contains { $0.seat == s } }),
               let gid = UInt64(env.gameId) else { return }
-        let trimmed = nickname.trimmingCharacters(in: .whitespaces)
-        let nick = trimmed.isEmpty ? FStrings.t("ios.you") : trimmed
+        // Round-5 B1: LobbyView's join button is only reachable from its
+        // `.ok` branch, so `nickname` is already NicknameGate-valid and
+        // trimmed — the "You" fallback that used to live here is unreachable
+        // now. Re-check defensively anyway and, per M2, fall back to the
+        // STORED nickname (never a placeholder) if it somehow is not.
+        let nick: String
+        if case .ok(let name) = NicknameGate.check(nickname) {
+            nick = name
+        } else {
+            nick = MessageGameStore.shared.nickname
+        }
         MessageGameStore.shared.nickname = nick   // remember it for the next game (B3)
         let joins = (env.joins + [MessageJoin(seat: free, name: nick)]).sorted { $0.seat < $1.seat }
         do {
@@ -517,12 +556,19 @@ private struct GameSurface: View {
                                            preStaged: survivors, prevPayload: prevPayload)
     }
 
-    /// The human answered the name gate: persist the name (blank falls back to the
-    /// neutral default, which still counts as "set" so we never re-ask), then seat
-    /// them. The name is baked into `joins` when they first play (sealJoins).
+    /// The human answered the name gate: persist the name, then seat them. The
+    /// name is baked into `joins` when they first play (sealJoins). Round-5
+    /// B1: NameGateView's Continue/onSubmit are only reachable from their
+    /// `.ok` branch, so `raw` is already NicknameGate-valid and trimmed — the
+    /// "call me the default" blank fallback this used to have is gone (see
+    /// NameGateView's own doc). Re-check defensively anyway and, per M2, fall
+    /// back to the STORED nickname (never a placeholder) if it somehow is not
+    /// — skipping the write below just leaves whatever this device already
+    /// had on file.
     private func nameThenSeat(_ raw: String, gate g: NameGate) async {
-        let trimmed = raw.trimmingCharacters(in: .whitespaces)
-        MessageGameStore.shared.nickname = trimmed.isEmpty ? FStrings.t("ios.you") : trimmed
+        if case .ok(let name) = NicknameGate.check(raw) {
+            MessageGameStore.shared.nickname = name
+        }
         nameGate = nil
         seatOnBoard(seat: g.seat, env: g.env, winner: g.payload,
                     survivors: g.survivors, discarded: g.discarded, prevPayload: g.prevPayload)
@@ -621,16 +667,31 @@ private struct NewGameSetup: View {
         self.onStart = onStart
     }
 
+    /// Round-5 B1: the three-state verdict on the CURRENT field text, driving
+    /// both the Create-game button's label/enabled state and — via `.ok` —
+    /// the exact trimmed name `onStart` is called with. A name that fails
+    /// either of NicknameGate's caps is REJECTED here, in the UI, rather than
+    /// lighting the button up and failing downstream at the seal layer as
+    /// "this game link is damaged" (B1's actual bug).
+    private var nameVerdict: NicknameGate.Verdict { NicknameGate.check(nickname) }
+
     var body: some View {
         VStack(spacing: 16) {
             Text(FStrings.t("ios.msg.newgame")).font(.headline).foregroundStyle(FColor.ink)
             VStack(alignment: .leading, spacing: 4) {
-                Text(FStrings.t("ios.msg.yourname")).font(.footnote).foregroundStyle(.black.opacity(0.55))
-                TextField(FStrings.t("ios.you"), text: $nickname).textFieldStyle(.roundedBorder)
+                // Round-5 M10: full-opacity ink + a light shadow, not 55%
+                // black on the busy wool weave (see DamagedView's sweep note).
+                Text(FStrings.t("ios.msg.yourname")).font(.footnote).foregroundStyle(FColor.ink)
+                    .shadow(color: .white.opacity(0.5), radius: 2)
+                TextField(FStrings.t("ios.msg.nickname_ph"), text: $nickname).textFieldStyle(.roundedBorder)
             }
-            FButton(FStrings.t("ios.msg.creategame"), kind: .wood) {
-                let n = nickname.trimmingCharacters(in: .whitespaces)
-                onStart(n.isEmpty ? FStrings.t("ios.you") : n)
+            switch nameVerdict {
+            case .ok(let name):
+                FButton(FStrings.t("ios.msg.creategame"), kind: .wood) { onStart(name) }
+            case .empty:
+                FButton(FStrings.t("ios.msg.entername"), kind: .wood, enabled: false) {}
+            case .tooLong:
+                FButton(FStrings.t("ios.msg.nametoolong"), kind: .wood, enabled: false) {}
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -646,8 +707,10 @@ private struct NewGameSetup: View {
 /// real size is decided at Start, not now.
 ///
 /// What a viewer can do: Join (name + button, if I have not claimed a seat and
-/// the lobby has room), or Start (once I'm already joined and 2+ have — any
-/// joined player may, §5.2). Owner decision (this pass): there is NO combined
+/// the lobby has room), or Start (once I'm already joined and 2+ have —
+/// round-5 M9 narrows "any joined player may" to "any joined player except
+/// whoever sent the newest bubble, unless the lobby is full" — see
+/// `LobbyControls.offered`). Owner decision (this pass): there is NO combined
 /// "Join and start" button — a joiner either Joins (which stages the WAITING
 /// lobby for the human to send) or, being already joined, taps Start (which
 /// stages the LIVE game). Two distinct texts, never one fused action. There is
@@ -662,14 +725,24 @@ private struct NewGameSetup: View {
 /// there is always exactly one answer, and a test can enumerate every
 /// (mySeat, joined, capacity) and assert so.
 public enum LobbyControls {
-    /// Start the game at the joined count (I'm in, 2+ have joined).
+    /// Start the game at the joined count. Round-5 M9 narrows this further —
+    /// it is withheld from whoever sent the newest bubble while the lobby
+    /// still has room (see `offered`'s doc): "2+ have joined" is no longer
+    /// sufficient on its own.
     case start
     /// Re-stage the WAITING chain so the human can send the invite (I'm in,
     /// nobody else is yet, and the newest invite is NOT mine).
     case invite
-    /// I'm in, nobody else is yet, and the invite sitting at the head of this
-    /// chain is the one I put there. There is genuinely nothing to do but wait
-    /// for someone to join, so the lobby says so and offers no button.
+    /// Nothing to do but wait. Two distinct situations render this way
+    /// (round-5 M9 added the second one):
+    ///  1. I'm in, nobody else is yet, and the invite sitting at the head of
+    ///     this chain is the one I put there — unchanged from before M9.
+    ///  2. I'm in, 2+ have joined, the lobby still has room, and the newest
+    ///     bubble on the chain is mine (I just joined, or just re-staged the
+    ///     invite) — M9's whole point: I cannot also be the one who starts.
+    /// Both read the same "Waiting for the others" text; the owner explicitly
+    /// ruled out a capacity/"N of M" line to tell them apart (M9 — "no
+    /// capacity text, too confusing").
     case waiting
     /// Claim a seat (I'm not in, and there is room).
     case join
@@ -677,11 +750,17 @@ public enum LobbyControls {
     case full
 
     /// `iSentTheInvite`: is the newest bubble on this chain one I staged or
-    /// sent (`lastActorSeat == mySeat`)? Round-4 note 1 — "if you were the last
-    /// one to send an invite, shouldn't have the Send invite pop up." Offering
-    /// it then asks the human to send a second copy of the invite already
-    /// sitting in the thread (or in the compose field, freshly auto-staged),
-    /// which is the state a creator lands in every single time.
+    /// sent (`lastActorSeat == mySeat`)? Kept its round-4 name even though
+    /// round-5 widens what it gates (below): it is public API and
+    /// `Round4Tests.swift` already binds this exact argument label, so
+    /// renaming it would break that file's BUILD, not just one of its
+    /// assertions, over a docstring nicety.
+    ///
+    /// Round-4 note 1 — "if you were the last one to send an invite,
+    /// shouldn't have the Send invite pop up." Offering it then asks the
+    /// human to send a second copy of the invite already sitting in the
+    /// thread (or in the compose field, freshly auto-staged), which is the
+    /// state a creator lands in every single time.
     ///
     /// The trade this makes, deliberately and with the owner's call on it: the
     /// `.invite` button exists as the recovery path for a lobby whose
@@ -689,10 +768,29 @@ public enum LobbyControls {
     /// the extension reopened later). Gating it on authorship means a creator
     /// who deletes their own draft has no in-lobby way to re-stage it and must
     /// use New game. That is the cost of not nagging everyone else.
+    ///
+    /// Round-5 M9 — "if you were the last to send one of those join texts,
+    /// you can't send a start text... that will make it a bit more difficult
+    /// to lock people out." Extends the SAME authorship check to `.start`:
+    /// once 2+ have joined, whoever sent the newest bubble (the last joiner,
+    /// or whoever last re-staged the invite) is withheld from Start too, as
+    /// long as the lobby still has room — so whoever is currently able to act
+    /// is never the same person who could instead invite one more player in.
+    ///
+    /// EXEMPTION: a FULL lobby (`joined == capacity`) always offers Start to
+    /// its last joiner regardless of authorship. Nobody else could join
+    /// instead, so withholding Start there would just strand a full lobby
+    /// with no way forward — and in a 2-player DM (capacity 2) it would force
+    /// an extra, pointless round-trip into every single game: the joiner
+    /// filling the last seat immediately starting is the designed "join and
+    /// start" flow (note 2), not the lockout M9 is guarding against.
     public static func offered(mySeat: Int?, joined: Int, capacity: Int,
                                iSentTheInvite: Bool = false) -> LobbyControls {
         if mySeat != nil {
-            if joined >= 2 { return .start }
+            if joined >= 2 {
+                if iSentTheInvite && joined < capacity { return .waiting }
+                return .start
+            }
             return iSentTheInvite ? .waiting : .invite
         }
         return joined < capacity ? .join : .full
@@ -732,7 +830,10 @@ private struct LobbyView: View {
             VStack(spacing: 6) {
                 ForEach(env.joins.sorted { $0.seat < $1.seat }, id: \.seat) { j in
                     HStack {
-                        Text("\(j.seat + 1).").foregroundStyle(.black.opacity(0.55)).monospacedDigit()
+                        // Round-5 M10: full-opacity ink + a light shadow, not
+                        // 55% black (see DamagedView's sweep note).
+                        Text("\(j.seat + 1).").foregroundStyle(FColor.ink)
+                            .shadow(color: .white.opacity(0.5), radius: 2).monospacedDigit()
                         Text(j.name + (j.seat == mySeat ? " (\(FStrings.t("ios.you")))" : ""))
                             .foregroundStyle(FColor.ink)
                         Spacer()
@@ -751,10 +852,15 @@ private struct LobbyView: View {
             case .start:
                 FButton(FStrings.t("ios.msg.startgame"), kind: .wood, action: onStart)
             case .waiting:
-                // Round-4 note 1: my own invite is the newest thing on this
-                // chain, so there is nothing to send that isn't already sent.
+                // Round-4 note 1 / round-5 M9: the newest thing on this chain
+                // is mine — either my own invite (nobody else has joined yet)
+                // or my own join/re-staged invite in a lobby that still has
+                // room (M9) — so there is nothing to send, and no Start,
+                // that isn't already mine to wait out. Round-5 M10:
+                // full-opacity ink + a light shadow, not 55% black.
                 Text(FStrings.t("ios.msg.waiting"))
-                    .font(.footnote).foregroundStyle(.black.opacity(0.55))
+                    .font(.footnote).foregroundStyle(FColor.ink)
+                    .shadow(color: .white.opacity(0.5), radius: 2)
             case .invite:
                     // I'm in, nobody else is yet. This branch used to render
                     // NOTHING — no Start (needs 2), no Join (I'm joined), no
@@ -769,33 +875,57 @@ private struct LobbyView: View {
                     // bubble is still sitting in the compose field, so it comes
                     // back HERE and only here: re-stage the same WAITING chain
                     // so there is always a way to ask someone to join.
-                    Text(FStrings.t("ios.msg.waiting"))
-                        .font(.footnote).foregroundStyle(.black.opacity(0.55))
+                    Text(FStrings.t("ios.msg.waiting"))    // round-5 M10: see .waiting above
+                        .font(.footnote).foregroundStyle(FColor.ink)
+                        .shadow(color: .white.opacity(0.5), radius: 2)
                     FButton(FStrings.t("ios.msg.invite"), kind: .wood, action: onInvite)
             case .join:
                 // Same width as the buttons below (note 29) — both rely on the
-                // outer .padding() alone, no extra inset on the field.
-                TextField(FStrings.t("ios.you"), text: $nickname).textFieldStyle(.roundedBorder)
-                FButton(FStrings.t("ios.msg.joinas", ["name": displayName]), kind: .wood) { onJoin(nickname) }
+                // outer .padding() alone, no extra inset on the field. Round-5
+                // B1: same three-state nickname gate as NewGameSetup (see
+                // `nameVerdict`) — "Join as {name}" only appears once the
+                // field holds a valid, trimmed name.
+                TextField(FStrings.t("ios.msg.nickname_ph"), text: $nickname).textFieldStyle(.roundedBorder)
+                switch nameVerdict {
+                case .ok(let name):
+                    FButton(FStrings.t("ios.msg.joinas", ["name": name]), kind: .wood) { onJoin(name) }
+                case .empty:
+                    FButton(FStrings.t("ios.msg.entername"), kind: .wood, enabled: false) {}
+                case .tooLong:
+                    FButton(FStrings.t("ios.msg.nametoolong"), kind: .wood, enabled: false) {}
+                }
             case .full:
-                Text(FStrings.t("ios.msg.lobbyfull")).font(.footnote).foregroundStyle(.black.opacity(0.55))
+                // Round-5 M10: full-opacity ink + a light shadow, not 55% black.
+                Text(FStrings.t("ios.msg.lobbyfull")).font(.footnote).foregroundStyle(FColor.ink)
+                    .shadow(color: .white.opacity(0.5), radius: 2)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
     }
 
-    private var displayName: String {
-        let t = nickname.trimmingCharacters(in: .whitespaces)
-        return t.isEmpty ? FStrings.t("ios.you") : t
-    }
+    /// Round-5 B1: the three-state verdict on the CURRENT field text (see
+    /// NicknameGate). Replaces the old `displayName`, which only ever
+    /// substituted the "You" placeholder for a blank field — there is no
+    /// substitute name any more, a name that fails either cap is rejected
+    /// outright, not replaced.
+    private var nameVerdict: NicknameGate.Verdict { NicknameGate.check(nickname) }
 }
 
 /// §B3 one-time name entry for a player being seated without a stored name — the
 /// 2-player receiver, who has neither the creator's setup screen nor the 3-8p
-/// lobby's join field. Shown once (until a name is stored), prefilled with the
-/// current nickname if it is not the neutral default. Continue is always enabled:
-/// an empty field just means "call me the default", which still counts as chosen.
+/// lobby's join field (m8: this is the ONE of the three name-asking screens
+/// that is not redundant with another — the DM opponent never sees the other
+/// two, so it cannot simply be deleted in favor of them). Shown once (until a
+/// name is stored), prefilled with the current nickname if it is not the
+/// neutral default.
+///
+/// Round-5 B1: Continue is no longer always enabled. It gates on the SAME
+/// NicknameGate verdict as NewGameSetup and LobbyView's join — blank or
+/// over-cap dims the button and swaps its label for the reason. There is no
+/// "call me the default" fallback any more: a name is REQUIRED, never
+/// substituted, and `.onSubmit` (the keyboard's own Return key) respects the
+/// same gate so it cannot hand a rejected name onward either.
 private struct NameGateView: View {
     @State private var name: String
     let onContinue: (String) -> Void
@@ -805,6 +935,8 @@ private struct NameGateView: View {
         self.onContinue = onContinue
     }
 
+    private var nameVerdict: NicknameGate.Verdict { NicknameGate.check(name) }
+
     var body: some View {
         VStack(spacing: 16) {
             Text(FStrings.t("ios.msg.nameprompt")).font(.headline)
@@ -813,9 +945,18 @@ private struct NameGateView: View {
             // both rely solely on the VStack's outer .padding() so they render the
             // same width (note 29; the field used to be inset twice, making it
             // visibly narrower than the full-width Continue button).
-            TextField(FStrings.t("ios.you"), text: $name).textFieldStyle(.roundedBorder)
-                .submitLabel(.done).onSubmit { onContinue(name) }
-            FButton(FStrings.t("ios.msg.continue"), kind: .wood) { onContinue(name) }
+            TextField(FStrings.t("ios.msg.nickname_ph"), text: $name).textFieldStyle(.roundedBorder)
+                .submitLabel(.done).onSubmit {
+                    if case .ok(let trimmed) = nameVerdict { onContinue(trimmed) }
+                }
+            switch nameVerdict {
+            case .ok(let trimmed):
+                FButton(FStrings.t("ios.msg.continue"), kind: .wood) { onContinue(trimmed) }
+            case .empty:
+                FButton(FStrings.t("ios.msg.entername"), kind: .wood, enabled: false) {}
+            case .tooLong:
+                FButton(FStrings.t("ios.msg.nametoolong"), kind: .wood, enabled: false) {}
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
@@ -859,13 +1000,36 @@ public enum MessageDebugFlags {
 #endif
 
 
+/// Round-5 M1: "This game link is damaged" used to be a dead end with no
+/// action on it at all (docs/APP_REVIEW_NOTES.md M1). Owner's fix — "just
+/// throw in the 'create a new game' button back, which when pressed will
+/// initialize a new lobby" — is the SAME New-game affordance every other
+/// dead end in this file already offers, not a bespoke retry/dismiss flow.
+///
+/// The owner also asked to exclude whoever sent the damaged link from the
+/// fresh lobby. Not implementable as asked: participant identities are
+/// device-scoped and never travel in the payload (see SeatIdentity's header —
+/// there is no "sender" field to read here, let alone exclude by). A fresh
+/// lobby that everyone, including whoever sent the bad link, re-joins by
+/// choice is the version of this fix that can actually be built.
 private struct DamagedView: View {
+    let onNewGame: () -> Void
+
     var body: some View {
         VStack(spacing: 8) {
             Text("Foolish").font(.headline).foregroundStyle(FColor.ink)
-            Text(FStrings.t("ios.msg.damaged")).font(.footnote).foregroundStyle(.black.opacity(0.55))
+            // Round-5 M10: full-opacity ink + a light shadow, not 55% black —
+            // the busy wool weave has no fixed-opacity foreground that
+            // survives it (M10's fix, applied throughout this file, mirrors
+            // the ONE string that already got it right: "Game over"'s BONE
+            // text on WOOD uses a DARK shadow; ink text on the lighter wool
+            // needs the inverse, a LIGHT one).
+            Text(FStrings.t("ios.msg.damaged")).font(.footnote).foregroundStyle(FColor.ink)
+                .shadow(color: .white.opacity(0.5), radius: 2)
                 .multilineTextAlignment(.center).padding(.horizontal)
+            FButton(FStrings.t("ios.msg.newgame"), kind: .wood, action: onNewGame)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
     }
 }

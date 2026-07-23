@@ -34,14 +34,20 @@ final class Round4Tests: XCTestCase {
                        .invite)
     }
 
-    /// Authorship must not reach any other branch — a full lobby is still full,
-    /// a joinable one still joinable, and two players still means Start. This
-    /// is the assertion that fails if the new flag is ever hoisted above the
-    /// seat/count checks.
-    func testAuthorshipOnlyAffectsTheWaitingForPlayersBranch() {
+    /// Authorship must not reach the UNSEATED branches — a full lobby is still
+    /// full and a joinable one still joinable no matter who sent the newest
+    /// bubble. This test used to also pin "two players still means Start" for
+    /// BOTH authorship values; round-5 M9 deliberately broke that half (the
+    /// newest bubble's sender is withheld from Start while the lobby has
+    /// room), so the seated case now asserts the M9 split instead —
+    /// Round5LobbyTests owns the full enumeration of that gate.
+    func testAuthorshipOnlyAffectsTheSeatedBranches() {
+        XCTAssertEqual(LobbyControls.offered(mySeat: 0, joined: 2, capacity: 8,
+                                             iSentTheInvite: false), .start)
+        XCTAssertEqual(LobbyControls.offered(mySeat: 0, joined: 2, capacity: 8,
+                                             iSentTheInvite: true), .waiting,
+                       "round-5 M9: the newest bubble's sender cannot also start a lobby with room")
         for mine in [false, true] {
-            XCTAssertEqual(LobbyControls.offered(mySeat: 0, joined: 2, capacity: 8,
-                                                 iSentTheInvite: mine), .start)
             XCTAssertEqual(LobbyControls.offered(mySeat: nil, joined: 1, capacity: 8,
                                                  iSentTheInvite: mine), .join)
             XCTAssertEqual(LobbyControls.offered(mySeat: nil, joined: 8, capacity: 8,

@@ -316,6 +316,15 @@ final class MessageLobbyTests: XCTestCase {
     /// asserts each maps to an action. It is a total function now, so "no
     /// control" is not expressible — the point of pulling the branch out of the
     /// view. The specific regression is the joined-alone case.
+    ///
+    /// Round-5 M9 added a 4th parameter, `iSentTheInvite`, that further narrows
+    /// `.start` to `.waiting` for a joined player who is BOTH the newest
+    /// bubble's sender AND still short of a full lobby (see
+    /// `LobbyControls.offered`'s doc). Every call below omits it, so it
+    /// defaults to `false` and every `.start` assertion here is completely
+    /// untouched by that change — this file stays about the pre-M9 shape of
+    /// the gate. `Round5LobbyTests.swift` is where the `iSentTheInvite: true`
+    /// side of the gate (and the full-lobby exemption) is pinned.
     func testEveryLobbyStateOffersAnAction() {
         XCTAssertEqual(LobbyControls.offered(mySeat: 0, joined: 1, capacity: 8), .invite,
                        "joined but alone: the only useful action is to invite someone")
