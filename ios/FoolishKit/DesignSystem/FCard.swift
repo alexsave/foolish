@@ -115,8 +115,12 @@ public struct FCard: View {
 
     // MARK: back — dark-red fill with a lighter-red border (fern dropped for now;
     // it kept rendering wrong). A clean placeholder per the owner.
-    private static let backFill = Color(hex: 0x8B0000)     // dark red
-    private static let backEdge = Color(hex: 0xDC2626)     // lighter red
+    //
+    // `fileprivate` (not `private`) so `FCountChip` below — a different type in
+    // this same file — can match these exactly rather than guessing a second
+    // pair of hex values that could drift from the real card back.
+    fileprivate static let backFill = Color(hex: 0x8B0000)     // dark red
+    fileprivate static let backEdge = Color(hex: 0xDC2626)     // lighter red
     private var back: some View {
         RoundedRectangle(cornerRadius: radius)
             .fill(Self.backFill)
@@ -127,9 +131,45 @@ public struct FCard: View {
     }
 
     private var a11yLabel: String {
-        guard let card, !card.isHidden, let suit = card.suit else { return "face down card" }
-        let rank = CardRank.spoken(card.v)
-        let suitName = ["spades", "hearts", "clubs", "diamonds"][suit.rawValue]
-        return "\(rank) of \(suitName)" + (trump ? ", trump" : "")
+        guard let card, !card.isHidden, let suit = card.suit else { return FStrings.t("ios.a11y.facedown") }
+        return FStrings.spokenCard(card.v, suit) + (trump ? ", " + FStrings.t("ios.a11y.trumpmark") : "")
+    }
+}
+
+/// The small chip behind a deck/hand/discard count numeral (round-5 m9: "give
+/// them black backgrounds like the cards in hand"). Before this the numeral
+/// floated bare over whatever card backs it sat on: a WHITE digit with only a
+/// black drop shadow for contrast, on a saturated red/dark-red field, is
+/// exactly the shape of an iOS unread-message badge — alarming for what is
+/// neutral game info (a card count). The fill is NEAR-BLACK, per the owner's
+/// literal words — not `FCard.backFill`'s dark red, which is the very hue the
+/// "error badge" read comes from — with a subdued slice of the card back's
+/// edge red as the border, so the chip still reads as part of the card system
+/// rather than a notification glued on top of it. Deliberately a small rect
+/// (not `FRadius.chip`'s 999 pill radius) — a label, not a button.
+public struct FCountChip: View {
+    /// Near-black, a touch warm so it sits with the deep-red card backs.
+    fileprivate static let chipFill = Color(hex: 0x161113)
+    let text: String
+    let font: Font
+    public init(_ text: String, font: Font = .system(size: 15, weight: .bold)) {
+        self.text = text
+        self.font = font
+    }
+    public var body: some View {
+        Text(text)
+            .font(font)
+            .foregroundColor(.white)
+            .shadow(color: .black.opacity(0.5), radius: 1, x: 0, y: 1)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Self.chipFill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .strokeBorder(FCard.backEdge.opacity(0.55), lineWidth: 1)
+            )
     }
 }

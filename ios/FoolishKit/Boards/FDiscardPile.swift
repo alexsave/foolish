@@ -18,16 +18,17 @@ public struct FDiscardPile: View {
                     // the existing deterministic ±20° per-layer jitter on top.
                     .rotationEffect(.degrees(90 + rotation(i)))
             }
-            Text("\(count)")
-                .font(.system(size: 15, weight: .bold))
-                .foregroundColor(.white)
-                .shadow(color: .black.opacity(0.8), radius: 1, x: 1, y: 1)
+            // Round-5 m9: matches FDeckWell/FSeatBadge — a near-black chip
+            // with the card backs' subdued edge red instead of a bare
+            // white-on-red numeral reading as an iOS unread badge.
+            FCountChip("\(count)", font: .system(size: 15, weight: .bold))
         }
         // Landscape footprint (44×62 rotated ~90°) is wider than tall — swap the
         // old portrait 68×78 buffer accordingly.
         .frame(width: 78, height: 68)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(count) cards discarded")
+        // Round-5 m2: was a hard-coded English literal.
+        .accessibilityLabel(FStrings.t("ios.a11y.discard", ["n": "\(count)"]))
         // Publish the pile's rect so a bout-end discard flight has a target — even
         // when the pile is empty (count 0), so the FIRST discard can fly to it.
         .background(GeometryReader { g in

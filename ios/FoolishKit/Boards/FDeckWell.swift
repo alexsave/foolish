@@ -97,10 +97,18 @@ public struct FDeckWell: View {
             if deckCount > 0 {
                 deckStack.zIndex(1)
             } else if !hasFlipped, let trumpSuit {
-                // Stock and flip both gone — show the trump suit glyph.
+                // Stock and flip both gone — the bare suit glyph is now the
+                // ONLY trump indicator left on the board (round-5 m1: "bare
+                // glyph can be bigger" — at the old 44pt it was the sliver-of-
+                // a-card problem all over again, just unlabeled). 44 → 60,
+                // still well inside the 92×108 well at the same shared inset,
+                // plus a dark shadow so a light suit colour still holds on
+                // the wool weave behind it (the same contrast problem M10
+                // names for text applies to a lone glyph too).
                 Text(trumpSuit.glyph)
-                    .font(.system(size: 44))
+                    .font(.system(size: 60))
                     .foregroundColor(FColor.suitColor(trumpSuit))
+                    .shadow(color: .black.opacity(0.6), radius: 2, x: 0, y: 1)
                     .offset(x: inset, y: inset)
             }
         }
@@ -110,8 +118,10 @@ public struct FDeckWell: View {
             Color.clear.preference(key: DeckFrameKey.self, value: g.frame(in: .named(boardSpace)))
         })
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(deckCount) cards left in the deck" +
-            (trumpSuit != nil ? ", trump \(["spades","hearts","clubs","diamonds"][trumpSuit!.rawValue])" : ""))
+        // Round-5 m2: was a hard-coded English sentence — every visible string
+        // in the app goes through FStrings, this label didn't.
+        .accessibilityLabel(FStrings.t("ios.a11y.deck", ["n": "\(deckCount)"]) +
+            (trumpSuit != nil ? ", " + FStrings.t("ios.a11y.trump", ["suit": FStrings.spokenSuit(trumpSuit!)]) : ""))
     }
 
     /// The leaning stock: cards fan up-and-left from a FIXED bottom card (i=0,
@@ -147,11 +157,12 @@ public struct FDeckWell: View {
             // front (exactly what the old box-centred layout got for free; this
             // box is just re-sized and re-anchored to the real bottom card
             // instead of the old artificial 78×60 union box).
+            // Round-5 m9: this numeral used to float bare on the stock's own
+            // red card backs — a white digit on saturated red reads as an iOS
+            // unread badge for what is neutral count info. `FCountChip` backs
+            // it with a near-black fill + the card backs' subdued edge red.
             ZStack {
-                Text("\(badgeTotal)")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundColor(.white)
-                    .shadow(color: .black.opacity(0.8), radius: 1, x: 1, y: 1)
+                FCountChip("\(badgeTotal)", font: .system(size: 17, weight: .bold))
             }
             .frame(width: stackVisualWidth, height: cardW)
             .offset(x: inset, y: inset - CGFloat(stackLayers))

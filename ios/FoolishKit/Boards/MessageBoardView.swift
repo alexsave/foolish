@@ -24,6 +24,22 @@ public struct MessageBoardView: View {
 
     private func name(_ seat: Int) -> String { names[seat] ?? "Seat \(seat + 1)" }
 
+    /// Round-5 owner note: "attackers shouldn't have swords except for first
+    /// attacker when there are no cards on table" — this bubble view used to
+    /// give EVERY non-defender a sword, which is only right once the bout is
+    /// open. On an EMPTY table only the seat that may actually open it (the
+    /// first attacker) can act at all, so only THAT seat gets the sword; once
+    /// the table has a battle, throw-ins make every other non-defender who
+    /// hasn't said good a real attacker too. Inlined rather than imported
+    /// because `MessageBoardView` can't reach across files for it — this is
+    /// the exact twin of `MessageTableView.showsSword` (`MessageTableView.
+    /// swift:393`), the live board's version of the same rule; keep both in
+    /// sync if the rule ever changes again.
+    private func showsSword(seat: Int, isOut: Bool, _ view: GameView) -> Bool {
+        guard seat != view.defender, !isOut, !view.hasSaidGood(seat) else { return false }
+        return view.battles.isEmpty ? seat == view.firstAttacker : true
+    }
+
     public var body: some View {
         // Same grammar as the live board (MessageTableView): deck pinned top-left,
         // discard top-right, seats ringed on a 35% ellipse, battles dead-centre -
@@ -41,10 +57,7 @@ public struct MessageBoardView: View {
                     FSeatBadge(name: name(p.seat),
                                handCount: p.handCount,
                                isDefender: p.seat == view.defender,
-                               // Sword consistency (§ batch 1): an attacker keeps the
-                               // sword until THEY say good, not merely "some battle is
-                               // still uncovered".
-                               isAttacker: p.seat != view.defender && !p.isOut && !view.hasSaidGood(p.seat),
+                               isAttacker: showsSword(seat: p.seat, isOut: p.isOut, view),
                                saidGood: view.hasSaidGood(p.seat),
                                isOut: p.isOut)   // wool bubble → bone text + shadow (like the board)
                         .position(ringPoint(seat: p.seat, n: view.players.count, in: geo.size))
@@ -63,10 +76,16 @@ public struct MessageBoardView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 
                 if view.isOver {
+                    // Round-5 M10 sweep: this was full-opacity bone text with NO
+                    // shadow at all, sitting straight on the wool — the finding's
+                    // "no fixed-opacity foreground can survive it" applies even
+                    // without a reduced-opacity color; the missing half of the
+                    // known fix (real shadow) was missing here too.
                     Text(view.gameOver >= 0
                         ? FStrings.t("ios.msg.isfool", ["name": name(view.gameOver)])
                         : FStrings.t("game_over"))
                         .font(.subheadline.weight(.semibold)).foregroundStyle(FColor.textPrimary)
+                        .shadow(color: .black.opacity(0.6), radius: 2, y: 1)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                         .padding(.bottom, 6)
                 }

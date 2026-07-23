@@ -34,6 +34,12 @@ public enum BubbleSnapshot {
         }
         .frame(width: size.width, height: size.height)
         .environment(\.colorScheme, .light)   // the balloon image is theme-independent
+        // Round-5 M4's clamp: ImageRenderer walks whatever accessibility text
+        // size the HOST app is currently at, not a neutral default — an
+        // AX-XXXL host would blow the board's card faces out of the 300×195
+        // balloon the same way B3 blows them out of the live board. The bubble
+        // is a fixed-size snapshot, so it must never inherit that setting.
+        .dynamicTypeSize(.large)
         let renderer = ImageRenderer(content: content)
         renderer.scale = UIScreen.main.scale
         renderer.isOpaque = true
@@ -66,14 +72,25 @@ public enum BubbleSnapshot {
                             .lineLimit(1)
                     }
                 }
+                // Round-5 M10: was `.black.opacity(0.55)` directly on the
+                // weave — the finding's own example of the fix that already
+                // exists elsewhere ("Game over" at full-opacity + a real
+                // shadow) not yet applied here. Full-opacity FColor.ink (dark
+                // text) takes a LIGHT shadow, not a dark one — a dark shadow
+                // under dark text on a light-ish weave adds nothing.
                 Text(FStrings.t("ios.msg.joininvite"))
-                    .font(.caption).foregroundStyle(.black.opacity(0.55))
+                    .font(.caption).foregroundStyle(FColor.ink)
+                    .shadow(color: .white.opacity(0.5), radius: 2)
                     .padding(.top, 2)
             }
             .padding()
         }
         .frame(width: size.width, height: size.height)
         .environment(\.colorScheme, .light)   // theme-independent, like the board bubble
+        // Round-5 M4's clamp — see the twin comment in `render(publicView:)`
+        // above; the lobby roster names must not blow out of the balloon
+        // either.
+        .dynamicTypeSize(.large)
         let renderer = ImageRenderer(content: content)
         renderer.scale = UIScreen.main.scale
         renderer.isOpaque = true
