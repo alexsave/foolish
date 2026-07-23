@@ -214,6 +214,26 @@ public final class MessageTurnController: ObservableObject {
         }
     }
 
+    /// The extension reports my staged chain was actually SENT (the human pressed
+    /// Send -> didStartSending). The moves are now in the thread's sent chain, so
+    /// they are no longer STAGED: empty the in-memory pending list so `canSend`/
+    /// `canUndo` go false and the collapsed view's Undo button disappears.
+    ///
+    /// Round-6 bug 4: without this, sending left `pending` populated, so the Undo
+    /// button lingered in the compact drawer and tapping it re-staged (and let the
+    /// human re-send) a move already in the thread. The DURABLE ledger is cleared
+    /// separately, at commit (didStartSending -> clearPending); this is the LIVE
+    /// half of that same "it's sent now, forget it" signal. Deliberately does NOT
+    /// rebuild the base: the sent move stays applied to the resident game, so the
+    /// board keeps showing the state I just sent, only without a pending move to
+    /// undo or re-send. No-op when nothing is staged (e.g. a genesis with no move).
+    public func markSent() async {
+        guard !pending.isEmpty else { return }
+        pending = []
+        lastChangeWasUndo = false
+        await refresh()
+    }
+
     /// Undo the last staged action by rebuilding the base and replaying all but
     /// the last pending action (§10). No-op if nothing is pending.
     public func undo() async {

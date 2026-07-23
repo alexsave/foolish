@@ -29,6 +29,14 @@ public struct MessagesRootView: View {
     /// Bumped by the host each time the human taps New game, so an explicit New
     /// game resets the session while a mere compact<->expanded toggle does not.
     let newGameToken: Int
+    /// Bumped by the host (MessagesViewController.didStartSending) each time the
+    /// human actually SENDS a staged bubble. Threaded down so the live board's
+    /// controller can drop the just-sent move from its in-memory pending
+    /// (`markSent`) - otherwise the Undo button lingers in the collapsed view and
+    /// re-stages an already-sent move (round-6 bug 4). Unlike newGameToken it must
+    /// NOT change loadKey: a send re-presents the SAME game, so the board is
+    /// signalled (via .onChange) rather than reloaded.
+    let sentToken: Int
     /// This conversation's identity (`ChatKey.make` over its participant set),
     /// threaded down to every `MessageGameStore` lookup so a game cached from a
     /// DIFFERENT chat on this device can never resolve `.known` here — see the
@@ -45,13 +53,13 @@ public struct MessagesRootView: View {
     let onUnstage: () -> Void
 
     public init(payloadURL: URL?, style: MsgPresentation, senderIsLocal: Bool,
-                startNewGame: Bool, newGameToken: Int = 0, chatKey: String, chatIsDM: Bool,
-                chatPlayers: Int,
+                startNewGame: Bool, newGameToken: Int = 0, sentToken: Int = 0, chatKey: String,
+                chatIsDM: Bool, chatPlayers: Int,
                 requestExpand: @escaping () -> Void, onNewGame: @escaping () -> Void,
                 onSend: @escaping (Data, Int) async -> Void,
                 onUnstage: @escaping () -> Void = {}) {
         self.payloadURL = payloadURL; self.style = style; self.senderIsLocal = senderIsLocal
-        self.startNewGame = startNewGame; self.newGameToken = newGameToken
+        self.startNewGame = startNewGame; self.newGameToken = newGameToken; self.sentToken = sentToken
         self.chatKey = chatKey; self.chatIsDM = chatIsDM; self.chatPlayers = chatPlayers
         self.requestExpand = requestExpand; self.onNewGame = onNewGame; self.onSend = onSend
         self.onUnstage = onUnstage
@@ -65,8 +73,8 @@ public struct MessagesRootView: View {
         // so its game state survives a style change; it renders the SAME table in
         // both, just sized to the strip (compact) or full-screen (expanded).
         GameSurface(payloadURL: payloadURL, style: style, senderIsLocal: senderIsLocal,
-                    startNewGame: startNewGame, newGameToken: newGameToken, chatKey: chatKey,
-                    chatIsDM: chatIsDM, chatPlayers: chatPlayers,
+                    startNewGame: startNewGame, newGameToken: newGameToken, sentToken: sentToken,
+                    chatKey: chatKey, chatIsDM: chatIsDM, chatPlayers: chatPlayers,
                     requestExpand: requestExpand, onNewGame: onNewGame, onSend: onSend,
                     onUnstage: onUnstage)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -92,6 +100,7 @@ private struct GameSurface: View {
     let senderIsLocal: Bool
     let startNewGame: Bool
     let newGameToken: Int
+    let sentToken: Int
     let chatKey: String
     let chatIsDM: Bool
     let chatPlayers: Int
@@ -146,6 +155,17 @@ private struct GameSurface: View {
             .task(id: loadKey) {
                 await reloadForInput()
                 await autoDriveLobby()
+            }
+            // Round-6 bug 4: the human just SENT the staged bubble (the host bumped
+            // `sentToken` from didStartSending). Tell the live controller its move
+            // is now in the thread so it drops it from `pending` - `canSend`/
+            // `canUndo` go false and the collapsed drawer's Undo button, which
+            // otherwise lingered and re-staged an already-sent move, disappears.
+            // `sentToken` is deliberately absent from loadKey, so this fires WITHOUT
+            // reloading the surface (the game is unchanged, only its staged move is
+            // no longer pending).
+            .onChange(of: sentToken) { _ in
+                Task { await controller?.markSent() }
             }
     }
 

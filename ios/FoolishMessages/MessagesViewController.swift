@@ -26,9 +26,16 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// explicit New game resets the session, while a compact<->expanded style
     /// toggle (same token) preserves the in-progress game.
     private var newGameToken = 0
+    /// Incremented on each real SEND (didStartSending). Threaded into
+    /// MessagesRootView so the live board can drop the just-sent move from its
+    /// pending list (`markSent`) - otherwise the Undo button lingered in the
+    /// collapsed view and re-staged an already-sent move (round-6 bug 4).
+    private var sentToken = 0
     /// The payload we last staged (via `insert`), awaiting the human's send/cancel
-    /// (§7.6). Committed to the cache on didStartSending, dropped on cancel.
-    private var pendingStage: (payload: Data, mySeat: Int)?
+    /// (§7.6). Committed to the cache on didStartSending, dropped on cancel. Carries
+    /// the game id so an explicit CANCEL can clear that game's pending ledger
+    /// synchronously (round-6 bugs 1 & 2), without a second async decode.
+    private var pendingStage: (payload: Data, mySeat: Int, gameId: String)?
     /// note 11: the `payloadURL` the last `present()` call actually used —
     /// what `StagedBubbleRouting.resolvedPayloadURL` falls back to when the
     /// newly-selected message turns out to be our OWN just-staged bubble
@@ -66,12 +73,38 @@ final class MessagesViewController: MSMessagesAppViewController {
         commitPendingStage(chatKey: ChatKey.make(
             local: conversation.localParticipantIdentifier.uuidString,
             remotes: conversation.remoteParticipantIdentifiers.map(\.uuidString)))
+        // Round-6 bug 4: signal the live board that its staged move is now sent, so
+        // it drops it from `pending` and the collapsed drawer's Undo button (which
+        // could otherwise re-stage and re-send the same move) goes away. Bump the
+        // token and re-present so the new value reaches MessagesRootView;
+        // StagedBubbleRouting keeps the payloadURL (hence loadKey) stable off
+        // `lastSentPayload`, so the board is SIGNALLED, not torn down and reloaded.
+        sentToken += 1
+        present(conversation, style: presentationStyle)
+        // Round-6 bug 5 ("sending should completely close, if possible"). This is
+        // the closest Messages offers: dismiss() asks it to tear the extension down
+        // and return to the conversation transcript. It is NOT guaranteed to fully
+        // close in every host state (Messages may keep the app in the compact
+        // drawer), which is exactly why the markSent signal above exists as the
+        // belt-and-braces fix for bug 4 - if the drawer stays open, the Undo button
+        // is already gone. There is no API for a harder close than this.
+        dismiss()
     }
 
     /// The user deleted the staged bubble before sending: drop the pending record
     /// so the cache never claims a chain nobody will see (§17.2). Nothing was
-    /// written yet, so there is nothing to roll back — just forget it.
+    /// written to the game cache yet, but a staged move DOES leave a durable
+    /// pending-ledger row (MessageTurnController.persistLedger, written on every
+    /// staged action) so Rule R can survive a mid-staging interruption. An explicit
+    /// cancel is the human backing the move all the way out, so that ledger row must
+    /// go too - otherwise a reopen replays the never-sent move as a Rule R survivor
+    /// and the board renders as if the move/start already happened (round-6 bugs 1 &
+    /// 2: "stage then cancel makes it look like the game already started"). This is
+    /// the CANCEL path only; a plain deactivation with a bubble still legitimately
+    /// staged never reaches here, so the ledger's survive-an-interruption purpose is
+    /// preserved.
     override func didCancelSending(_ message: MSMessage, conversation: MSConversation) {
+        if let gameId = pendingStage?.gameId { MessageGameStore.shared.clearPending(gameId: gameId) }
         pendingStage = nil
     }
 
@@ -97,7 +130,8 @@ final class MessagesViewController: MSMessagesAppViewController {
         // that type's doc for the full chain.
         let payloadURL = StagedBubbleRouting.resolvedPayloadURL(
             selectedURL: selected?.url, startingNewGame: startingNewGame,
-            pendingStage: pendingStage, lastPayloadURL: lastPayloadURL,
+            pendingStage: pendingStage.map { (payload: $0.payload, mySeat: $0.mySeat) },
+            lastPayloadURL: lastPayloadURL,
             lastSentPayload: lastSentPayload)
         lastPayloadURL = payloadURL
         // §6.2 S1's exact half: did THIS device send the tapped bubble? Only the
@@ -126,6 +160,7 @@ final class MessagesViewController: MSMessagesAppViewController {
             senderIsLocal: senderIsLocal,
             startNewGame: startingNewGame,
             newGameToken: newGameToken,
+            sentToken: sentToken,
             chatKey: chatKey,
             chatIsDM: isDM,
             chatPlayers: participants,
@@ -151,6 +186,14 @@ final class MessagesViewController: MSMessagesAppViewController {
                 // bubble — the human deletes it manually, or the next stage() call
                 // replaces it. All we can retract is our own bookkeeping, so a
                 // resumed undo-to-empty doesn't later commit a stale chain on send.
+                // Round-6 bugs 1 & 2: an undo-to-empty is the human backing the move
+                // all the way out, so clear the durable ledger too (the controller's
+                // own undo already empties it via persistLedger; clearing here keeps
+                // the extension's retract path correct on its own terms). Same intent
+                // as didCancelSending.
+                if let gameId = self?.pendingStage?.gameId {
+                    MessageGameStore.shared.clearPending(gameId: gameId)
+                }
                 self?.pendingStage = nil
             })
         setRoot(root)
@@ -233,7 +276,11 @@ final class MessagesViewController: MSMessagesAppViewController {
             summary: summary,
             session: startingNewGame ? nil : conversation.selectedMessage?.session)
 
-        pendingStage = (payload, mySeat)
+        // gameId comes from the same decode above so a later CANCEL can clear this
+        // game's pending ledger without re-decoding (round-6 bugs 1 & 2). "" only
+        // if the payload failed to decode, in which case there is no valid game to
+        // clear and clearPending("") is a harmless no-op.
+        pendingStage = (payload, mySeat, env?.gameId ?? "")
         conversation.insert(msg) { _ in }
 
         // Drop the user straight at Messages' Send (§11.4): the expanded board has
@@ -265,7 +312,7 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// it must be the SAME conversation the bubble was staged/sent into (the
     /// whole point of the chat-scoping fix).
     private func commitPendingStage(chatKey: String) {
-        guard let (payload, mySeat) = pendingStage else { return }
+        guard let (payload, mySeat, _) = pendingStage else { return }
         pendingStage = nil
         Task {
             guard let env = try? await MessageEnvelope.decode(payload: payload, viewer: mySeat)

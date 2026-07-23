@@ -181,6 +181,74 @@ final class MessageTurnControllerTests: XCTestCase {
                       "every open-replay entry decodes to a known evwire event type")
     }
 
+    /// The first seat with a legal non-wait move on the currently-resident game,
+    /// and that move — the parent must already be decoded/adopted (decode adopts).
+    private func firstActingSeatAndMove(_ parent: MessageEnvelope) async -> (seat: Int, move: Move)? {
+        let k = MessageKernel.shared
+        for seat in 0..<parent.nPlayers {
+            let menu = await k.residentLegal(seat: seat)
+            if let m = menu.first(where: { $0.type != .wait }) { return (seat, m) }
+        }
+        return nil
+    }
+
+    /// Round-6 bug 4: after the human SENDS, the live controller must forget the
+    /// staged move (`markSent`), so `canSend`/`canUndo` go false and the collapsed
+    /// drawer's Undo button — which otherwise re-staged and re-sent an already-sent
+    /// move — disappears. markSent leaves the move APPLIED (the board still shows
+    /// the sent state), it only drops it from `pending`.
+    func testMarkSentForgetsTheStagedMoveSoUndoAndSendGoAway() async throws {
+        let parentBytes = bytes(fixtureHex)
+        let parent = try await MessageEnvelope.decode(payload: parentBytes, viewer: 0)
+        guard let (seat, move) = await firstActingSeatAndMove(parent) else {
+            return XCTFail("no seat had a legal move in the fixture")
+        }
+
+        let c = MessageTurnController(parentPayload: parentBytes, parent: parent, mySeat: seat)
+        await c.begin()
+        await c.apply(move)
+        XCTAssertEqual(c.pending.count, 1, "one action staged")
+        XCTAssertTrue(c.canSend, "Undo/Send are live while staged")
+
+        await c.markSent()
+        XCTAssertTrue(c.pending.isEmpty, "markSent drops the sent move from pending")
+        XCTAssertFalse(c.canSend, "so canSend (and the Undo button gated on it) go false")
+        XCTAssertNotNil(c.view, "the sent move stays applied — the board still renders it")
+
+        // Idempotent / safe when nothing is staged.
+        await c.markSent()
+        XCTAssertTrue(c.pending.isEmpty)
+    }
+
+    /// Round-6 bugs 1 & 2: staging a move writes a durable pending-ledger row (so
+    /// Rule R can survive a mid-staging interruption). An explicit CANCEL
+    /// (didCancelSending) must clear that row via `MessageGameStore.clearPending`,
+    /// or a reopen replays the never-sent move as a Rule R survivor and the board
+    /// looks as if the move/start already happened. This drives the controller +
+    /// store directly (the didCancelSending glue itself needs the Messages
+    /// framework, but its one load-bearing action is this store call).
+    func testCancellingAStagedMoveClearsTheDurableLedger() async throws {
+        let defaults = UserDefaults(suiteName: "test.cancel.\(UUID().uuidString)")!
+        let store = MessageGameStore(defaults: defaults)
+        let parentBytes = bytes(fixtureHex)
+        let parent = try await MessageEnvelope.decode(payload: parentBytes, viewer: 0)
+        guard let (seat, move) = await firstActingSeatAndMove(parent) else {
+            return XCTFail("no seat had a legal move in the fixture")
+        }
+
+        let c = MessageTurnController(parentPayload: parentBytes, parent: parent,
+                                      mySeat: seat, store: store)
+        await c.begin()
+        await c.apply(move)
+        XCTAssertFalse(store.pending(gameId: c.gameIdString).isEmpty,
+                       "staging a move writes the durable ledger")
+
+        // The exact action didCancelSending takes for this game.
+        store.clearPending(gameId: c.gameIdString)
+        XCTAssertTrue(store.pending(gameId: c.gameIdString).isEmpty,
+                      "cancel clears the ledger so a reopen won't replay the never-sent move")
+    }
+
     /// parent8 is the first 8 bytes of the parent digest, zero-padded — the exact
     /// tag the next chain points back with (§7.4).
     func testParent8IsFirstEightDigestBytes() {
