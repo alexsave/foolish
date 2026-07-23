@@ -182,6 +182,18 @@ public final class BoardAnimator: ObservableObject {
         preHidden.subtract(ids)
     }
 
+    /// Round-6 bug 13: un-hide exactly `ids`, whether they were pre-hidden for a
+    /// flight that then played, one that never got built, or one that was
+    /// abandoned. The targeted twin of `clearPreHidden` below: that one hands
+    /// back EVERYTHING still pending, which a caller cleaning up after its own
+    /// cards must not do — it would also reveal what a newer, unrelated sequence
+    /// has pre-hidden but not yet flown (the bug-9 double animation). A no-op
+    /// for ids that are not hidden, so it is safe to call as a blanket net.
+    public func reveal(_ ids: Set<String>) {
+        preHidden.subtract(ids)
+        hidden.subtract(ids)
+    }
+
     /// Force-reveal any still-pending pre-hidden ids — called once a whole
     /// sequence (bout-end, or an open-delta replay) finishes, so a prediction
     /// that never got consumed (e.g. a frame that never became ready) cannot

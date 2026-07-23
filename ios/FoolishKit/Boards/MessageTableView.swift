@@ -38,11 +38,13 @@ public struct MessageTableView: View {
     /// so the verb hint and the pass ghost-slot preview can resolve the SAME
     /// drop target `onDragEnded` will use. nil whenever no drag is active.
     @State private var dragPoint: CGPoint?
-    /// Round-5 finding 5: the dragged card's own LIVE visual centre in
-    /// `boardSpace`, as reported by FHandFan's `onDragCardMoved` on every
-    /// `onDragChanged` — used only to horizontally re-centre `dragHint` on the
-    /// card rather than the fingertip. nil whenever no drag is active (set and
-    /// cleared alongside `dragPoint`, in `onDragChanged`/`onDragEnded`).
+    /// The dragged card's own LIVE visual centre in `boardSpace`, as reported by
+    /// FHandFan's `onDragCardMoved` on every `onDragChanged`. Round-5 finding 5
+    /// used it to re-centre `dragHint` HORIZONTALLY on the card; round-6 bug 5
+    /// anchors the pill to it on BOTH axes (a fingertip is not where the card
+    /// is), and round-6 bug 13 reads it one last time at release as the point a
+    /// played card flies FROM. nil whenever no drag is active (set and cleared
+    /// alongside `dragPoint`, in `onDragChanged`/`onDragEnded`).
     @State private var dragCardCenter: CGPoint?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Shared card-flight namespace: a card keeps its identity moving hand→table.
@@ -89,6 +91,20 @@ public struct MessageTableView: View {
         let fromRects: [String: CGRect]   // card.identity -> hand rect AT PLAY TIME
     }
     @State private var pendingCover: PendingCover?
+    /// Round-6 bug 13 ("when we drag a card then let go, it should animate from
+    /// where we let go to the table, not back from its original position in hand
+    /// to the table"): the cards a play of MINE just put on the table, and the
+    /// rect each one LEFT FROM - the release point for the card the finger was
+    /// actually holding, its resting hand slot for the rest of a multi-card
+    /// selection (they never moved) and for a play made by tapping. Captured by
+    /// `playAt` BEFORE `controller.apply`, since by the time the new view lands
+    /// the hand has already closed over the gap. Consumed by the very next
+    /// `flyBoutEndToDiscard`, exactly like `pendingCover` above.
+    private struct PendingPlacement {
+        let cards: [Card]
+        let fromRects: [String: CGRect]   // card.identity -> where it left from
+    }
+    @State private var pendingPlacement: PendingPlacement?
     /// THE VEIL (round-4 notes 3 and 5). False until the board has handed its
     /// pending animation over to `animator`; while false the board renders the
     /// game as it was BEFORE that animation, not after.
@@ -212,6 +228,14 @@ public struct MessageTableView: View {
             // happened, so give it all straight back.
             handBeforeMyMove = nil
             deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
+            // Round-6 bug 13: the same applies to a card `playAt` hid on its way
+            // to the table. A rejected move publishes no view change, so nothing
+            // will ever fly it and nothing else would take that veil down - the
+            // card would simply be missing from the hand it never left.
+            if let p = pendingPlacement {
+                animator.reveal(Set(p.cards.map(\.identity)))
+                pendingPlacement = nil
+            }
         }
         .task {
             AnimLog.say("board .task seat=\(controller.mySeat) ready=\(controller.ready)")
@@ -409,37 +433,83 @@ public struct MessageTableView: View {
                 hand(view, crop: collapse, reserveNoSlot: deferredSlots)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
 
-                // note 33 / round-4 note 4: the verb hint rides just ABOVE THE
-                // FINGER vertically, same as before. Round-5 finding 5 ("the
-                // little mid-drag text... should be centered horizontally on
-                // the card(s)") changes only the X axis: it used to track the
-                // fingertip on both axes, which read as unrelated to the drag
-                // once the card being dragged wasn't directly under the thumb
-                // any more (a wide fan, a card near an edge). `FHandFan` mirrors
-                // each card's own boardSpace frame the same way `dragPoint`
-                // itself is mirrored, and reports the dragged card's LIVE
-                // visual centre via `onDragCardMoved`; the pill's X follows
-                // THAT, falling back to the finger if a drag is somehow live
-                // without a reported card centre yet (first frame of a drag).
+                // note 33 / round-4 note 4 / round-5 finding 5: the verb hint
+                // used to ride above the FINGER on both axes, then above the
+                // finger vertically and the CARD horizontally.
                 //
-                // `dragPoint` is in `boardSpace` (FHandFan publishes it there,
-                // and the drop targets are hit-tested in it), while `.position`
-                // is local to this GeometryReader - so subtract this reader's
-                // own origin in that space rather than assuming the two agree.
+                // Round-6 bug 5 ("action text preview on drag is broken,
+                // sometimes appearing quite far away from the cards. Just keep
+                // it right above the dragged card"): the Y axis was the half
+                // that still tracked the fingertip, and a fingertip is only
+                // where the card is if you happened to grab the card dead
+                // centre. Grab one near its top edge, or drag a multi-card
+                // selection, and the pill floated a card-height away from
+                // everything it was describing. So BOTH axes now come off the
+                // dragged card's own live centre and the pill rides a fixed
+                // lift above it — see `dragHintPosition`, which is where the
+                // fallbacks and the top-edge clamp live.
+                //
+                // `dragPoint`/`dragCardCenter` are in `boardSpace` (FHandFan
+                // publishes them there, and the drop targets are hit-tested in
+                // it), while `.position` is local to this GeometryReader - so
+                // subtract this reader's own origin in that space rather than
+                // assuming the two agree.
                 if let p = dragPoint {
-                    let origin = geo.frame(in: .named(boardSpace)).origin
-                    let hintX = (dragCardCenter?.x ?? p.x) - origin.x
-                    dragHint(view)
-                        .position(x: hintX, y: p.y - origin.y - Self.dragHintLift)
+                    let resting = dragCard.flatMap { handCardFrames[$0.identity] }
+                        .map { CGPoint(x: $0.midX, y: $0.midY) }
+                    let at = Self.dragHintPosition(cardCentre: dragCardCenter, restingCentre: resting,
+                                                   finger: p,
+                                                   origin: geo.frame(in: .named(boardSpace)).origin)
+                    dragHint(view).position(x: at.x, y: at.y)
                 }
             }
         }
     }
 
-    /// How far above the fingertip the verb hint floats. Enough to clear a
-    /// thumb (a finger covers roughly 40pt of screen) without leaving the pill
-    /// somewhere the eye has to hunt for it.
+    /// How far above the dragged CARD'S CENTRE the verb hint floats (round-6
+    /// bug 5 re-anchored it from the fingertip to the card; the number itself is
+    /// unchanged). A hand card is 72pt tall, so 52 leaves the pill ~16pt clear
+    /// of the card's top edge: reads as attached to the card, still well out
+    /// from under the thumb holding it.
     static let dragHintLift: CGFloat = 52
+    /// The highest the pill may sit in the board's own coordinates. Dragging a
+    /// card up to the deck/discard corners would otherwise push it off the top
+    /// edge (a 52pt lift off a card whose centre is 40pt down is -12), and a
+    /// verb you cannot read is the same bug in a different direction. Half the
+    /// pill's own height (13pt text + 2x FSpace.xs) plus a couple of points of
+    /// margin, since `.position` places its CENTRE. When the pill cannot fit
+    /// above the card it goes BELOW it rather than parking on this line - see
+    /// `dragHintPosition`.
+    static let dragHintMinY: CGFloat = 16
+
+    /// Where the verb-hint pill sits, in the board GeometryReader's own local
+    /// coordinates (round-6 bug 5). Pure + static so the anchoring can be
+    /// asserted directly instead of eyeballed mid-drag on a device.
+    ///
+    /// `cardCentre` is the dragged card's live visual centre in `boardSpace`
+    /// (FHandFan.onDragCardMoved). `restingCentre` is that card's hand slot,
+    /// used for the ONE frame at the start of a drag where the board has a drag
+    /// point but no reported card centre yet - which is the frame the card has
+    /// not moved in anyway, so the slot IS the card. `finger` is the last
+    /// resort, and only reachable if the dragged card has no published frame at
+    /// all. A multi-card selection anchors on the card actually being dragged:
+    /// the rest of the selection has not moved out of the fan, so that is the
+    /// only card the pill could sensibly point at.
+    ///
+    /// Drag a card up against the board's top edge (the deck / discard corners)
+    /// and there is no room for the pill above it. Clamping it to the ceiling
+    /// then parks it ON TOP OF the card, hiding the very card it describes
+    /// (screenshotted on the simulator mid-fix), so it FLIPS below the card
+    /// instead: still touching the card, still fully on screen, and never
+    /// covering it, since the flip distance is the same lift that already
+    /// clears half a card.
+    static func dragHintPosition(cardCentre: CGPoint?, restingCentre: CGPoint?,
+                                 finger: CGPoint, origin: CGPoint) -> CGPoint {
+        let anchor = cardCentre ?? restingCentre ?? finger
+        let y = anchor.y - origin.y
+        return CGPoint(x: anchor.x - origin.x,
+                       y: y - dragHintLift >= dragHintMinY ? y - dragHintLift : y + dragHintLift)
+    }
 
     /// The board's CONTINUOUS collapse fraction from its own height: 0 at/above
     /// `expandedAnchor` (the resting expanded board), 1 at/below `compactAnchor`
@@ -688,6 +758,21 @@ public struct MessageTableView: View {
         // before the apply whose resulting view change is the next one we see.
         let cover = pendingCover
         pendingCover = nil
+        // Round-6 bug 13: same contract as `cover` - consumed on EVERY call, so
+        // a placement can never be replayed against a later, unrelated view
+        // change. Whichever branch below flies it owns un-hiding its cards; any
+        // branch that does not fly it must give them straight back, or a card I
+        // just played would stay invisible on the table for good. That is what
+        // the flag + defer pair enforces, rather than a `reveal` call bolted
+        // onto each of the six early returns below.
+        let placement = pendingPlacement
+        pendingPlacement = nil
+        var placementFlown = false
+        defer {
+            if !placementFlown, let p = placement {
+                animator.reveal(Set(p.cards.map(\.identity)))
+            }
+        }
         // The live veil is consumed here too, and only here: every path below
         // either pre-hides the same cards for real (synchronously, before this
         // returns) or has nothing of mine to hide, so there is no paint between
@@ -714,9 +799,18 @@ public struct MessageTableView: View {
         // First appear with a delivered game: the open-replay (same event path).
         if prior == nil { AnimLog.say("-> openReplay"); replayLastMoveOnOpen(new); return }
         guard let old = prior, !old.battles.isEmpty, new.battles.isEmpty else {
-            // A normal placed card animates via matchedGeometry; a move that ended
-            // the game without clearing the table just settles to results.
+            // The table did not just clear, so this is an ordinary placement (or
+            // someone else's move arriving). Round-6 bug 13: a card I placed
+            // myself now flies from where I let go of it to the slot it landed
+            // in - see `flyPlacement`. It used to be left to matchedGeometry,
+            // whose only possible source was the card's resting HAND slot, which
+            // is exactly what the bug reports seeing. A move that ended the game
+            // without clearing the table just settles to results.
             releaseCounts()
+            if let pp = placement {
+                placementFlown = true
+                flyPlacement(pp, to: new)
+            }
             if new.isOver { settleResults() }
             return
         }
@@ -907,6 +1001,56 @@ public struct MessageTableView: View {
                       to: pc.battleRect.offsetBy(dx: CGFloat(i) * 8, dy: CGFloat(i) * 6))
             }
         }
+    }
+
+    /// Round-6 bug 13: fly a play of MINE onto the table - from the release point
+    /// (or the hand slot, for a tap) to the slot it landed in. The cards are
+    /// already hidden (`playAt` pre-hid them before the apply), so what the
+    /// viewer sees is one continuous movement out of the fingertip.
+    ///
+    /// Wrapped in `sequenceDepth` like every other animated sequence, which is
+    /// what makes the extension's auto-collapse (note 8's `waitForSettle`) hold
+    /// off until the card has actually landed instead of yanking the drawer down
+    /// mid-flight.
+    private func flyPlacement(_ pp: PendingPlacement, to view: GameView) {
+        let ids = Set(pp.cards.map(\.identity))
+        Task {
+            BoardAnimator.sequenceDepth += 1
+            defer {
+                BoardAnimator.sequenceDepth -= 1
+                // The card must end up visible whatever happened. If it really
+                // flew, `BoardAnimator.play` already un-hid it and this is a
+                // no-op; if its landing slot never published and `playStep` gave
+                // up, this is the safety net. Targeted at THESE ids rather than
+                // `clearPreHidden`, which would also reveal whatever a newer
+                // sequence has pre-hidden but not yet flown (round-6 bug 9).
+                animator.reveal(ids)
+            }
+            await playStep { self.placementFlights(pp, view: view) }
+        }
+    }
+
+    /// The flights for one placement: each card from where it left to the battle
+    /// slot it landed in, in the FINAL view. nil (retry) while a landing slot's
+    /// rect has not published yet - an attack or a pass CREATES its slot, so the
+    /// frame only exists a paint or two after the apply. A card that is not on
+    /// the table at all any more is skipped rather than retried (best-effort,
+    /// like `openReplayFlights`), so a lost card can never wedge the poll.
+    private func placementFlights(_ pp: PendingPlacement, view: GameView) -> [Flight]? {
+        var out: [Flight] = []
+        for c in pp.cards {
+            guard let idx = view.battles.firstIndex(where: { $0.attack == c || $0.defense == c })
+            else { continue }
+            guard let rect = battleFrames[idx] else { return nil }
+            let from = pp.fromRects[c.identity] ?? handCardFrames[c.identity] ?? rect
+            // Round-6 bug 1 (batch 3) parity: a card landing as the DEFENSE lies
+            // across, so its ghost rotates INTO that tilt over the flight rather
+            // than arriving flat and snapping tilted when the ghost is removed.
+            let landedAngle = view.battles[idx].defense == c ? FBattleGrid.coverAngle : 0
+            out.append(Flight(id: "place-\(c.identity)", card: c, from: from, to: rect,
+                              angle: landedAngle))
+        }
+        return out
     }
 
     private func myDrawFlights(_ cards: [Card]) -> [Flight]? {
@@ -1187,12 +1331,25 @@ public struct MessageTableView: View {
     }
 
     private func onDragEnded(_ card: Card, at point: CGPoint, _ view: GameView) {
+        // Round-6 bug 13: WHERE the card was when the finger let go, captured
+        // BEFORE the drag state is torn down two lines down. That teardown used
+        // to happen first and `playAt` ran with no memory of the drag at all, so
+        // the card returned to its hand slot and the play animated out of the
+        // HAND - "it should animate from where we let go to the table, not back
+        // from its original position in hand". The card's own centre, not the
+        // fingertip, for the same reason the verb hint uses it (bug 5): the
+        // finger is wherever you grabbed the card, which is not where the card
+        // is. Falls back to the finger only if no card centre was ever reported.
+        let releaseCentre = dragCardCenter ?? point
         dragCard = nil
         dragPoint = nil
         dragCardCenter = nil
         let target = BoardDrop.target(at: point, battles: battleFrames, handFrame: handFrame)
-        if target == .hand { return }   // dropped back in the fan — cancel
-        playAt(target, playCards(for: card, view), view)
+        // Dropped back in the fan — cancel. Nothing to fly: FHandFan has already
+        // sprung the card home to its slot, which is the right animation for a
+        // drag that played nothing.
+        if target == .hand { return }
+        playAt(target, playCards(for: card, view), view, released: (card, releaseCentre))
     }
 
     private func actionBar(_ view: GameView) -> some View {
@@ -1291,25 +1448,60 @@ public struct MessageTableView: View {
         playAt(.battle(index), selectedCards(view), view)
     }
 
-    private func playAt(_ target: PlayTarget, _ cards: [Card], _ view: GameView) {
+    /// `released` (round-6 bug 13) is the card the finger was holding and the
+    /// board-space centre it was let go at, when this play came from a drag; nil
+    /// for a tap/button play, which starts from the hand slot as it always has.
+    private func playAt(_ target: PlayTarget, _ cards: [Card], _ view: GameView,
+                        released: (card: Card, centre: CGPoint)? = nil) {
         guard let move = CardPlay.resolve(cards: cards, target: target,
                                           isDefender: view.defender == controller.mySeat,
                                           battles: view.battles, legal: controller.legal) else {
             Haptics.fire(.reject); toast = FStrings.t("ios.reject"); return
         }
+        // Bug 13: where each card of this play leaves from. ONE answer, used by
+        // both landing animations below - the ordinary placement flight and note
+        // 17's cover-that-ended-the-bout - so a dragged card cannot start from
+        // the release point in one and from the hand in the other.
+        let fromRects = Self.playSourceRects(cards: cards, handRects: handCardFrames,
+                                             released: released.map { ($0.card.identity, $0.centre) })
         // note 17: a cover might end the bout in the SAME kernel apply as the
         // cover itself (the defender's hand empties) — stash enough, BEFORE
         // applying, for flyBoutEndToDiscard to synthesize the landing step it
         // would otherwise have no rendered state to animate from.
         if move.type == .cover, case .battle(let i) = target, i >= 0, i < view.battles.count,
            let rect = battleFrames[i] ?? lastBattleFrames[i] {
-            pendingCover = PendingCover(
-                cards: cards, battleRect: rect,
-                fromRects: handCardFrames.filter { pair in cards.contains { $0.identity == pair.key } })
+            pendingCover = PendingCover(cards: cards, battleRect: rect, fromRects: fromRects)
         } else {
             pendingCover = nil
         }
+        // Bug 13: hand the placement to `flyBoutEndToDiscard`, and hide the cards
+        // NOW - synchronously, before `apply` can publish a view with them
+        // already sitting on the table. This is the same veil trick as
+        // `handBeforeMyMove` and for the same reason (an onChange fires a paint
+        // too late): without it the card would paint landed, vanish, and only
+        // then fly. `animator.preHide` is the one hiding mechanism the board
+        // already has, so the handoff to the flight's own `hidden` set is
+        // seamless, and any path that ends up not flying them reveals them again.
+        pendingPlacement = PendingPlacement(cards: cards, fromRects: fromRects)
+        animator.preHide(Set(cards.map(\.identity)))
         play(move)
+    }
+
+    /// Bug 13: the rect each card of a play LEAVES FROM. Everything starts at its
+    /// own resting hand slot - which is where the untouched rest of a multi-card
+    /// selection, and every tap-played card, genuinely is - except the one card a
+    /// finger was dragging, which starts centred on wherever it was let go.
+    /// Flights are positioned by their rect's CENTRE (FlyingCardsLayer), so the
+    /// synthesized release rect only has to be a 50x70 card box around that
+    /// point, the same shape `approximateTableCenter` builds. Pure + static so
+    /// the release-point substitution can be asserted without a live drag.
+    static func playSourceRects(cards: [Card], handRects: [String: CGRect],
+                                released: (id: String, centre: CGPoint)?) -> [String: CGRect] {
+        var out = handRects.filter { pair in cards.contains { $0.identity == pair.key } }
+        if let r = released, cards.contains(where: { $0.identity == r.id }) {
+            out[r.id] = CGRect(x: r.centre.x - 25, y: r.centre.y - 35, width: 50, height: 70)
+        }
+        return out
     }
 
     /// Cover button: cover the first uncovered attack the selection can beat.

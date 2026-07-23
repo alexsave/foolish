@@ -109,14 +109,37 @@ public struct FHandFan: View {
     /// reorder can tell "drag point still inside the hand" from "dragged out
     /// to play" without needing the board to feed it back down.
     @State private var handFrameSelf: CGRect = .zero
-    /// Round-5 finding 5: each card's own RESTING frame in `boardSpace`,
-    /// mirrored from `HandCardFramesKey` the same way `handFrameSelf` mirrors
-    /// `HandFrameKey` just above — the dragged card's live centre is this
-    /// resting frame plus the live `dragOffset` (see `cardView`'s drag gesture;
-    /// `.offset()` is a render-only transform and does not feed back into a
-    /// GeometryReader's own layout-time frame, so the offset has to be added
-    /// back in by hand rather than simply re-reading the preference).
+    /// Each card's own frame in `boardSpace`, mirrored from `HandCardFramesKey`
+    /// the same way `handFrameSelf` mirrors `HandFrameKey` just above. AT REST
+    /// this is the card's slot, which is what `reorder` hit-tests against.
+    ///
+    /// ROUND-6 BUG 5 CORRECTION: while a card is being dragged, ITS entry here
+    /// is NOT the resting slot — it already carries the live `.offset`. The
+    /// round-5 comment that used to sit here claimed the opposite ("`.offset()`
+    /// is a render-only transform and does not feed back into a GeometryReader's
+    /// own layout-time frame, so the offset has to be added back in by hand"),
+    /// and the drag-hint code believed it. It is wrong: `.offset` is applied by
+    /// an ANCESTOR modifier of this reader (see `cardView`'s modifier order), so
+    /// `frame(in: .named(boardSpace))` — a query about where this view sits in
+    /// another space, not about its own proposed size — reports the DISPLACED
+    /// rect. Adding `dragOffset` on top therefore counted the drag twice and the
+    /// verb hint flew off at double speed: "sometimes appearing quite far away
+    /// from the cards" (traced live: rest=151,397 while off=151,-322, i.e. the
+    /// published rect had already moved by almost exactly the offset).
+    ///
+    /// The live centre is now derived from the GESTURE instead (`grabDelta`
+    /// below), which is exact and, unlike a preference, cannot lag a frame
+    /// behind the finger.
     @State private var handCardFramesSelf: [String: CGRect] = [:]
+    /// Round-6 bug 5: the vector from the finger to the dragged card's visual
+    /// CENTRE, captured once when the gesture claims a card (translation is
+    /// still ~0 then, so the published frame above is still the honest resting
+    /// slot). The card tracks the finger rigidly for the rest of the drag, so
+    /// `finger + grabDelta` IS the card's centre at every later moment — no
+    /// double counting, no preference lag. Zero when the card's frame has not
+    /// published yet, which degrades to "the hint rides the finger", the
+    /// pre-round-5 behavior.
+    @State private var grabDelta: CGSize = .zero
     /// Round-5 M6: this view's own proposed width, measured once via a
     /// preference round-trip (see `HandWidthKey`'s doc) so the row-split
     /// height below can react to it. A plain `GeometryReader` has no notion of
@@ -402,21 +425,41 @@ public struct FHandFan: View {
                 DragGesture(minimumDistance: 0, coordinateSpace: .named(boardSpace))
                     .onChanged { g in
                         guard !disabled.contains(card.identity) else { return }
-                        if dragId != card.identity { dragId = card.identity; reorderShift = 0 }
+                        if dragId != card.identity {
+                            dragId = card.identity; reorderShift = 0
+                            // Round-6 bug 5: capture finger -> card-centre ONCE,
+                            // while the published frame is still the resting slot
+                            // (see `grabDelta` / `handCardFramesSelf`). `crop`
+                            // matters here: the reserved frame is
+                            // `shownCardHeight` tall while the card is drawn full
+                            // `cardH` tall and TOP-aligned in it, so the visible
+                            // middle sits half the cropped-away part lower.
+                            if let rest = handCardFramesSelf[card.identity] {
+                                let cropDrop = (Self.cardH - Self.shownCardHeight(crop: crop)) / 2
+                                grabDelta = CGSize(width: rest.midX - g.startLocation.x,
+                                                   height: rest.midY + cropDrop - g.startLocation.y)
+                            } else {
+                                grabDelta = .zero
+                            }
+                        }
                         dragOffset = g.translation
                         onDragChanged(card, g.location)
-                        // Round-5 finding 5: the dragged card's live visual
-                        // CENTER for the board's verb-hint pill. `rest` is this
-                        // card's RESTING frame (captured above, BEFORE
-                        // `.offset` — a render-only transform that does not
-                        // feed back into a GeometryReader's layout-time frame),
-                        // so the live `dragOffset` has to be added back in by
-                        // hand to get where the card actually is right now —
-                        // exactly the same `.offset` applied a few lines up.
-                        if let rest = handCardFramesSelf[card.identity] {
-                            onDragCardMoved(CGPoint(x: rest.midX + dragOffset.width - reorderShift,
-                                                    y: rest.midY + dragOffset.height))
-                        }
+                        // The dragged card's live visual CENTRE, for the board's
+                        // verb-hint pill (round-5 finding 5) and for the flight
+                        // that now starts where the finger let go (round-6 bug
+                        // 13). Straight off the gesture: the card is rigidly
+                        // pinned to the finger by `grabDelta`, so this is exact
+                        // at every frame. `reorderShift` is the one thing that
+                        // moves the card RELATIVE to the finger — the same
+                        // compensation the `.offset` above applies when the
+                        // dragged card's slot in `order` moves out from under
+                        // it — so it comes off the x here too.
+                        //
+                        // Deliberately NOT `restingFrame + dragOffset` any more:
+                        // that double-counted the drag (see
+                        // `handCardFramesSelf`), which is round-6 bug 5.
+                        onDragCardMoved(CGPoint(x: g.location.x + grabDelta.width - reorderShift,
+                                                y: g.location.y + grabDelta.height))
                         // A TAP MUST NEVER REORDER. `minimumDistance: 0` means
                         // onChanged fires the instant a finger lands, before it
                         // has moved at all, so an ungated reorder ran on every
@@ -439,7 +482,22 @@ public struct FHandFan: View {
                     .onEnded { g in
                         let c = card
                         let wasDragging = dragId == c.identity
-                        dragId = nil; dragOffset = .zero; reorderShift = 0; dragMoved = false
+                        // Round-6 bug 13, the CANCEL half: letting go over the
+                        // hand puts the card back in its slot, and that return
+                        // trip is now sprung instead of teleporting (the offset
+                        // used to drop to zero in one frame). The PLAY half is
+                        // the board's: it hides the card the same instant it
+                        // takes it (MessageTableView.playAt pre-hides, then
+                        // flies it from the release point), so for a real play
+                        // this spring animates an already-invisible card and
+                        // costs nothing. Both mutations must sit inside the one
+                        // transaction — `.offset` reads `dragId` as well as
+                        // `dragOffset`, so animating only one of them still
+                        // snaps.
+                        withAnimation(FMotion.card) {
+                            dragId = nil; dragOffset = .zero; reorderShift = 0
+                        }
+                        dragMoved = false
                         if hypot(g.translation.width, g.translation.height) < Self.tapThreshold {
                             // A tap, not a drag — same disabled-check + haptic
                             // + `onTap` the old `.onTapGesture` used to run.
