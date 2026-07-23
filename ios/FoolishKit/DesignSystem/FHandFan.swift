@@ -70,6 +70,12 @@ public struct FHandFan: View {
 
     @State private var dragId: String?
     @State private var dragOffset: CGSize = .zero
+    /// Has THIS gesture travelled far enough to be a drag rather than a tap?
+    /// Gates the in-hand reorder: with `minimumDistance: 0` the gesture starts
+    /// on touch-down, so without this a tap reorders the hand under your
+    /// finger. Reset when the gesture ends, not when it starts, so a new
+    /// gesture always begins as a tap.
+    @State private var dragMoved = false
     /// note 5 (hand reordering): the local player's cosmetic display order —
     /// card identities, reconciled against `cards` every body evaluation via
     /// `displayCards`. This is PURELY a UI convenience (the kernel hand order
@@ -205,18 +211,35 @@ public struct FHandFan: View {
     /// there). This is a deliberate simplification, not an oversight — a
     /// cross-row drag still WORKS as a play-drag once it leaves `handFrameSelf`
     /// entirely; it just can't reorder while still hovering the other row.
-    private func reorder(_ card: Card, x: CGFloat, cardW: CGFloat, rowStart: Int, rowCount: Int) {
+    private func reorder(_ card: Card, at point: CGPoint, cardW: CGFloat,
+                         rowStart: Int, rowCount: Int) {
         let current = displayCards.map(\.identity)
         guard let from = current.firstIndex(of: card.identity) else { return }
         let slot = cardW + Self.gap
         guard slot > 0, rowCount > 0 else { return }
-        let raw = Int(((x - Self.gap) / slot).rounded())
-        let clampedRaw = min(max(raw, 0), rowCount - 1)
-        let to = rowStart + clampedRaw
-        // A tiny in-place wiggle (the drag now starts on first touch — see
-        // `tapThreshold`) resolves to the SAME slot the card already occupies,
-        // so `to == from` and this is a no-op: a press-and-lift can never
-        // itself trigger a reorder.
+
+        // Target slot by HIT-TESTING the row's real card frames, not by
+        // recomputing geometry from the hand's left edge. The arithmetic
+        // version ("(x - gap) / slot, rounded") silently assumed the cards
+        // start at the container's leading edge — but the row is CENTRED in
+        // it, so any hand narrow enough not to fill the width (cardW is capped
+        // at maxCardW) sits inset by an amount the formula never subtracted.
+        // Every slot it computed was shifted, which is how a plain tap on card
+        // 3 could resolve to slot 2 and swap two cards under your finger.
+        // The published frames are the layout's own answer and cannot drift
+        // from it.
+        let rowIds = current[rowStart..<min(rowStart + rowCount, current.count)]
+        var to = from
+        var bestDistance = CGFloat.greatestFiniteMagnitude
+        for (offset, id) in rowIds.enumerated() {
+            guard let frame = handCardFramesSelf[id] else { continue }
+            let distance = abs(frame.midX - point.x)
+            if distance < bestDistance {
+                bestDistance = distance
+                to = rowStart + offset
+            }
+        }
+        guard bestDistance < .greatestFiniteMagnitude else { return }
         guard to != from else { return }
         var next = current
         next.remove(at: from)
@@ -346,18 +369,29 @@ public struct FHandFan: View {
                             onDragCardMoved(CGPoint(x: rest.midX + dragOffset.width - reorderShift,
                                                     y: rest.midY + dragOffset.height))
                         }
+                        // A TAP MUST NEVER REORDER. `minimumDistance: 0` means
+                        // onChanged fires the instant a finger lands, before it
+                        // has moved at all, so an ungated reorder ran on every
+                        // tap — "a single tap will like cause a swap". The
+                        // gesture only becomes a reorder once it has travelled
+                        // past the same `tapThreshold` that `onEnded` uses to
+                        // tell a tap from a drag, so the two can never disagree
+                        // about which one this was.
+                        if hypot(g.translation.width, g.translation.height) >= Self.tapThreshold {
+                            dragMoved = true
+                        }
                         // note 5: live-reorder only while the point is still
                         // inside the hand's own frame — once it leaves, this is
                         // a play-drag and today's behavior is untouched.
-                        if handFrameSelf.contains(g.location) {
-                            reorder(card, x: g.location.x - handFrameSelf.minX, cardW: cardW,
+                        if dragMoved, handFrameSelf.contains(g.location) {
+                            reorder(card, at: g.location, cardW: cardW,
                                     rowStart: rowStart, rowCount: rowCount)
                         }
                     }
                     .onEnded { g in
                         let c = card
                         let wasDragging = dragId == c.identity
-                        dragId = nil; dragOffset = .zero; reorderShift = 0
+                        dragId = nil; dragOffset = .zero; reorderShift = 0; dragMoved = false
                         if hypot(g.translation.width, g.translation.height) < Self.tapThreshold {
                             // A tap, not a drag — same disabled-check + haptic
                             // + `onTap` the old `.onTapGesture` used to run.
