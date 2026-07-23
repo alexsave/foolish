@@ -136,20 +136,19 @@ public struct FCard: View {
     }
 }
 
-/// The small chip behind a deck/hand/discard count numeral (round-5 m9: "give
-/// them black backgrounds like the cards in hand"). Before this the numeral
-/// floated bare over whatever card backs it sat on: a WHITE digit with only a
-/// black drop shadow for contrast, on a saturated red/dark-red field, is
-/// exactly the shape of an iOS unread-message badge — alarming for what is
-/// neutral game info (a card count). The fill is NEAR-BLACK, per the owner's
-/// literal words — not `FCard.backFill`'s dark red, which is the very hue the
-/// "error badge" read comes from — with a subdued slice of the card back's
-/// edge red as the border, so the chip still reads as part of the card system
-/// rather than a notification glued on top of it. Deliberately a small rect
-/// (not `FRadius.chip`'s 999 pill radius) — a label, not a button.
+/// THE deck/hand/discard count numeral — one style, three call sites
+/// (`FDeckWell`, `FSeatBadge`, `FDiscardPile`), so a count can never look like
+/// two different things on one board.
+///
+/// Round-5 m9 first asked for a dark plate behind the digit ("give them black
+/// backgrounds like the cards in hand") because a bare white numeral on the
+/// saturated red backs read like an iOS unread badge. Rendered on device the
+/// plate was worse than the problem — the owner's call on seeing it: "drop the
+/// black background for the card counts, it doesn't look good at all." So the
+/// numeral is bare again, and the badge-y read is answered by WEIGHT and a
+/// hard shadow instead of a plate: heavy white digits carry on the card backs
+/// without borrowing the shape of a notification.
 public struct FCountChip: View {
-    /// Near-black, a touch warm so it sits with the deep-red card backs.
-    fileprivate static let chipFill = Color(hex: 0x161113)
     let text: String
     let font: Font
     public init(_ text: String, font: Font = .system(size: 15, weight: .bold)) {
@@ -160,16 +159,8 @@ public struct FCountChip: View {
         Text(text)
             .font(font)
             .foregroundColor(.white)
-            .shadow(color: .black.opacity(0.5), radius: 1, x: 0, y: 1)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 1)
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(Self.chipFill)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(FCard.backEdge.opacity(0.55), lineWidth: 1)
-            )
+            // A tight, opaque shadow (not a soft glow): it separates the digit
+            // from the red beneath it at every size the three call sites use.
+            .shadow(color: .black.opacity(0.85), radius: 1.5, x: 0, y: 1)
     }
 }

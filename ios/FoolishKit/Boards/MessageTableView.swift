@@ -488,7 +488,12 @@ public struct MessageTableView: View {
                 HStack(spacing: FSpace.xs) {
                     if saidGood { FCheck(size: 22) }
                     if isDefender { FShield(size: 26) }
-                    else if isAttacker { FSword(size: 23) }
+                    // Larger than the shield, not equal to it (owner, on device:
+                    // "make the sword icon larger"). FSword draws on a 24-grid
+                    // and then rotates 45°, so its blade only spans ~70% of the
+                    // box it is given — a sword and a shield at the SAME nominal
+                    // size do not read the same size on screen.
+                    else if isAttacker { FSword(size: 32) }
                 }
             }
         }
@@ -1274,16 +1279,22 @@ struct FGameOverList: View {
                         HStack(spacing: 12) {
                             // The last place reads "Fool" in the rank column itself
                             // (no separate pill); everyone else is "#N".
-                            // Rank contrast on brown wood (note 41): 1st stays
-                            // brass, the fool is a brighter lifted red (the old
-                            // dark red/brown read as near-black on the plank), and
-                            // every other place is bone with a dark drop shadow —
-                            // the same bone+shadow treatment the board's own text
-                            // uses on wool.
+                            //
+                            // EVERY rank is plain white, including the two that
+                            // used to be tinted (brass for 1st, red for the
+                            // fool). Those tints were an attempt to make the two
+                            // rows a player actually cares about stand out, and
+                            // on device they did the opposite — mid-value colours
+                            // on bright orange wood are the two LEAST legible
+                            // things on the screen (the review's own M10 reading).
+                            // Owner's call after seeing it: "just make it white
+                            // for #1 and Fool. If it's thick enough text, it
+                            // looks fine on the wood background." So the weight
+                            // (.heavy) plus the shadow does the separating, and
+                            // colour does none of it.
                             Text(row.isFool ? FStrings.t("ios.fool") : "#\(row.place)")
                                 .font(.headline.weight(.heavy)).monospacedDigit()
-                                .foregroundStyle(row.isFool ? Color(hex: 0xD84438)
-                                                 : (row.place == 1 ? FColor.win : FColor.card))
+                                .foregroundStyle(.white)
                                 .shadow(color: .black.opacity(0.5), radius: 1, y: 1)
                                 .frame(width: 56, alignment: .leading)
                             Text(row.name + (row.isYou ? " (\(FStrings.t("ios.you")))" : ""))
@@ -1313,7 +1324,12 @@ struct FGameOverList: View {
             .frame(maxWidth: .infinity, minHeight: plankHeight, maxHeight: plankHeight)
             .clipShape(Rectangle())
             .overlay(Rectangle().strokeBorder(.black.opacity(0.4), lineWidth: 1.5))
-            .padding(.horizontal, 4)
+            // NO extra horizontal inset here (owner, on device: "ranking list
+            // should be same width as the new game button"). The plank used to
+            // carry .padding(.horizontal, 4) that the button below does not, so
+            // the two wooden blocks on this screen were 4pt out of alignment on
+            // each side — enough to read as a mistake once both are full width.
+            // Both now rely on the VStack's outer .padding() alone.
             Spacer(minLength: 0)
             FButton(FStrings.t("ios.msg.newgame"), kind: .wood, action: onNewGame)
         }
