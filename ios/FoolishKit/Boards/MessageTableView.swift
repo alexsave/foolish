@@ -38,6 +38,12 @@ public struct MessageTableView: View {
     /// so the verb hint and the pass ghost-slot preview can resolve the SAME
     /// drop target `onDragEnded` will use. nil whenever no drag is active.
     @State private var dragPoint: CGPoint?
+    /// Round-5 finding 5: the dragged card's own LIVE visual centre in
+    /// `boardSpace`, as reported by FHandFan's `onDragCardMoved` on every
+    /// `onDragChanged` — used only to horizontally re-centre `dragHint` on the
+    /// card rather than the fingertip. nil whenever no drag is active (set and
+    /// cleared alongside `dragPoint`, in `onDragChanged`/`onDragEnded`).
+    @State private var dragCardCenter: CGPoint?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Shared card-flight namespace: a card keeps its identity moving hand→table.
     @Namespace private var cardNS
@@ -274,6 +280,27 @@ public struct MessageTableView: View {
     /// move" label that ate layout) marks that I must open the bout.
     private func boardContent(_ view: GameView) -> some View {
         GeometryReader { geo in
+            // Round-5 M5b ("in the collapsed view, show only the top half of
+            // the cards"): reuse the SAME compact-drawer test `ringPoint`
+            // already applies (`size.height < 340`) rather than inventing a
+            // second threshold — this view is never told "you are the compact
+            // drawer" directly, it only ever sees its own compressed geometry,
+            // so anywhere that already reads geometry to detect compact is the
+            // one true source for it.
+            let compact = geo.size.height < 340
+            let myHand = view.me?.hand ?? []
+            // The width FHandFan itself actually lays out in: this reader's
+            // width minus `hand(_:)`'s own `.padding(.horizontal, FSpace.s)`.
+            let handWidth = max(0, geo.size.width - FSpace.s * 2)
+            // Round-5 M6: how much taller the hand got by splitting into two
+            // rows, so the self-role indicator and action bar — both floated a
+            // fixed distance above the hand — can lift by exactly that much
+            // instead of sitting on top of the second row. Comparing against
+            // an EMPTY hand's height (always exactly one row, whatever
+            // `compact` is) rather than a hard-coded second constant means
+            // this can never drift out of sync with `FHandFan.height` itself.
+            let handLift = max(0, FHandFan.height(cards: myHand, availableWidth: handWidth, topHalfOnly: compact)
+                                  - FHandFan.height(cards: [], availableWidth: handWidth, topHalfOnly: compact))
             ZStack {
                 // Battles — dead centre of the board (web: absolute, both axes).
                 battlesArea(view)
@@ -319,27 +346,31 @@ public struct MessageTableView: View {
                 // first-attacker-only sword used: just above my hand.
                 selfRoleIndicator(view)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .padding(.bottom, 86)
+                    .padding(.bottom, 86 + handLift)
 
                 // Action buttons float bottom-right, above the hand (web absolute
                 // bottom:90/right:20). They only appear when a flag enables them.
                 actionBar(view)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                    .padding(.trailing, 4).padding(.bottom, 84)
+                    .padding(.trailing, 4).padding(.bottom, 84 + handLift)
 
                 // My hand hugs the bottom (web: bottom max(10, safe-area)); the
                 // outer .padding(12) is the safe-area inset that keeps it unclipped.
-                hand(view)
+                hand(view, topHalfOnly: compact)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
 
                 // note 33 / round-4 note 4: the verb hint rides just ABOVE THE
-                // FINGER, not at a fixed spot over the battle grid. It used to
-                // be an overlay on `battlesArea` at a constant -30pt, i.e. up
-                // near the top of the board while you were dragging down by the
-                // hand - "the little attack text that pops up when you drag
-                // should be right above your finger, not at the top of the
-                // screen." Drawn LAST so it is above every other piece, and
-                // hit-testing is already off (see `dragHint`).
+                // FINGER vertically, same as before. Round-5 finding 5 ("the
+                // little mid-drag text... should be centered horizontally on
+                // the card(s)") changes only the X axis: it used to track the
+                // fingertip on both axes, which read as unrelated to the drag
+                // once the card being dragged wasn't directly under the thumb
+                // any more (a wide fan, a card near an edge). `FHandFan` mirrors
+                // each card's own boardSpace frame the same way `dragPoint`
+                // itself is mirrored, and reports the dragged card's LIVE
+                // visual centre via `onDragCardMoved`; the pill's X follows
+                // THAT, falling back to the finger if a drag is somehow live
+                // without a reported card centre yet (first frame of a drag).
                 //
                 // `dragPoint` is in `boardSpace` (FHandFan publishes it there,
                 // and the drop targets are hit-tested in it), while `.position`
@@ -347,8 +378,9 @@ public struct MessageTableView: View {
                 // own origin in that space rather than assuming the two agree.
                 if let p = dragPoint {
                     let origin = geo.frame(in: .named(boardSpace)).origin
+                    let hintX = (dragCardCenter?.x ?? p.x) - origin.x
                     dragHint(view)
-                        .position(x: p.x - origin.x, y: p.y - origin.y - Self.dragHintLift)
+                        .position(x: hintX, y: p.y - origin.y - Self.dragHintLift)
                 }
             }
         }
@@ -448,10 +480,15 @@ public struct MessageTableView: View {
         let isAttacker = showsSword(seat: mySeat, isOut: isOut, view)
         return Group {
             if !isOut {
+                // Round-5 m4 ("make sword and shield larger and darker") —
+                // sized up at this call site specifically (check 19->22,
+                // shield 22->26, sword 19->23); FSeatBadge's opponent-facing
+                // copies are another agent's file and were dictated the same
+                // target sizes separately.
                 HStack(spacing: FSpace.xs) {
-                    if saidGood { FCheck(size: 19) }
-                    if isDefender { FShield(size: 22) }
-                    else if isAttacker { FSword(size: 19) }
+                    if saidGood { FCheck(size: 22) }
+                    if isDefender { FShield(size: 26) }
+                    else if isAttacker { FSword(size: 23) }
                 }
             }
         }
@@ -952,6 +989,7 @@ public struct MessageTableView: View {
     private func onDragEnded(_ card: Card, at point: CGPoint, _ view: GameView) {
         dragCard = nil
         dragPoint = nil
+        dragCardCenter = nil
         let target = BoardDrop.target(at: point, battles: battleFrames, handFrame: handFrame)
         if target == .hand { return }   // dropped back in the fan — cancel
         playAt(target, playCards(for: card, view), view)
@@ -988,12 +1026,16 @@ public struct MessageTableView: View {
         )
     }
 
-    private func hand(_ view: GameView) -> some View {
+    /// - `topHalfOnly` (round-5 M5b): the compact drawer's own hand cards
+    ///   render only their top half — see `boardContent`'s `compact`.
+    private func hand(_ view: GameView, topHalfOnly: Bool) -> some View {
         FHandFan(cards: view.me?.hand ?? [], trumpSuit: view.trumpSuit,
                  selection: $selection, onTap: { toggle($0) },
                  onDragChanged: { card, point in onDragChanged(card, at: point) },
                  onDragEnded: { card, point in onDragEnded(card, at: point, view) },
-                 namespace: cardNS, hidden: veiledCardIds)
+                 namespace: cardNS, hidden: veiledCardIds,
+                 topHalfOnly: topHalfOnly,
+                 onDragCardMoved: { center in dragCardCenter = center })
             .padding(.horizontal, FSpace.s)
     }
 
@@ -1094,7 +1136,11 @@ struct FSword: View {
             func R(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat) -> CGRect {
                 CGRect(x: x * s, y: y * s, width: w * s, height: h * s)
             }
-            let gray = Color(hex: 0x3A3A3A)
+            // Round-5 m4 ("make sword and shield larger and darker"): darkened
+            // from 0x3A3A3A so the glyph reads at a glance on the wool instead
+            // of blending into it at the sizes it's actually drawn (m4's own
+            // complaint was "no legibility... at the size they are drawn").
+            let gray = Color(hex: 0x26262A)
 
             // Blade: a pointed spike from the tip (top) down to the guard.
             var blade = Path()
@@ -1117,23 +1163,39 @@ struct FSword: View {
         }
         .frame(width: size, height: size)
         .rotationEffect(.degrees(45))   // point it up-and-to-the-right
-        .accessibilityLabel(Text("You attack first"))
+        // Round-5 m2: this was a hard-coded English literal while every visible
+        // string on the board goes through FStrings — a ru/ko VoiceOver user
+        // got an English board here even though the label was otherwise well
+        // chosen. The key already exists (en/ru/ko all carry it).
+        .accessibilityLabel(Text(FStrings.t("ios.a11y.attackfirst")))
     }
 }
 
-/// The defender shield — a hand-built heraldic shield (flat top, straight upper
-/// sides curving to a point at the bottom), filled flat LIGHT gray with a darker
-/// edge for definition on the wool. Marks the current defender.
+/// The defender shield — a hand-built heraldic shield, filled flat gray with a
+/// darker edge for definition on the wool. Marks the current defender.
+///
+/// Round-5 m4 ("make sword and shield larger and darker. Make the shield have
+/// like pointed upper corners to make it more obvious"): the old flat-top shape
+/// read as a plain gray plaque at 20pt with no legend (m4's own complaint).
+/// The top is now two points reaching UP with a shallow dip between them — a
+/// heraldic silhouette, not a rounded rectangle — and both fill and edge are
+/// darkened a step from before. The fill stays a distinctly LIGHTER gray than
+/// the sword's near-black (so the two glyphs don't collapse into "two dark
+/// blobs" at a glance); the edge alone goes almost as dark as the sword's fill,
+/// which is what actually reads as "darker" against the wool at 20pt.
 struct FShield: View {
     var size: CGFloat = 24
     var body: some View {
         Canvas { ctx, sz in
             let s = sz.width / 24
             func P(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x * s, y: y * s) }
-            let gray = Color(hex: 0xCACFD4), edge = Color(hex: 0x5E6368)
+            let gray = Color(hex: 0x878E96), edge = Color(hex: 0x2E3338)
             var shield = Path()
-            shield.move(to: P(4, 3.5))
-            shield.addLine(to: P(20, 3.5))
+            // Pointed upper corners (m4): left point up, a shallow dip at the
+            // top centre, right point up — then the unchanged sides/bottom.
+            shield.move(to: P(4, 2.6))
+            shield.addLine(to: P(12, 5.2))
+            shield.addLine(to: P(20, 2.6))
             shield.addLine(to: P(20, 11))
             shield.addQuadCurve(to: P(12, 21.5), control: P(20, 18))
             shield.addQuadCurve(to: P(4, 11), control: P(4, 18))
@@ -1142,7 +1204,8 @@ struct FShield: View {
             ctx.stroke(shield, with: .color(edge), style: StrokeStyle(lineWidth: 1.1 * s, lineJoin: .round))
         }
         .frame(width: size, height: size)
-        .accessibilityLabel(Text("Defending"))
+        // Round-5 m2: was a hard-coded English literal (see FSword's).
+        .accessibilityLabel(Text(FStrings.t("ios.a11y.defending")))
     }
 }
 
@@ -1164,7 +1227,9 @@ struct FCheck: View {
                        style: StrokeStyle(lineWidth: 3 * s, lineCap: .round, lineJoin: .round))
         }
         .frame(width: size, height: size)
-        .accessibilityLabel(Text("Good"))
+        // Round-5 m2: was a hard-coded English literal (see FSword's). "good"
+        // (no `ios.` prefix) is the same key the action bar's Good button uses.
+        .accessibilityLabel(Text(FStrings.t("good")))
     }
 }
 
@@ -1232,7 +1297,15 @@ struct FGameOverList: View {
                     }
                 }
             }
-            .frame(height: plankHeight)
+            // Round-5 B2: WoodFill is an aspect-FILL image, so height-only sizing
+            // let it propose a width that grew right along with the plank's
+            // height — more players -> taller plank -> WIDER plank, overflowing
+            // the surface and clipping the rank column first, then the names
+            // (worst case: 8 players, the plank goes blank but for a stray `)`).
+            // Pinning maxWidth alongside the height is the fix the finding names
+            // directly: the plank is now exactly the surface width at every
+            // count 2...8, and WoodFill fills THAT box instead of dictating it.
+            .frame(maxWidth: .infinity, height: plankHeight)
             .clipShape(Rectangle())
             .overlay(Rectangle().strokeBorder(.black.opacity(0.4), lineWidth: 1.5))
             .padding(.horizontal, 4)

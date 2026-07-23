@@ -45,7 +45,12 @@ public struct FBattleGrid: View {
     private let slot = CGSize(width: 62, height: 84)       // web 60x80 (+room to rotate)
     private let coverAngle: Double = 11.25                 // web PI/16
     private let gap: CGFloat = 10
-    private let perRow = 4                                 // web ~4 across (max-width 300)
+    // Round-5 M5 ("maybe we do rows of 3 instead of 4?"): deliberately NOT web
+    // parity any more. The web's ~4-across assumes its own wider board; this
+    // extension's stage is narrower (M5's own finding: at 6-8 players the
+    // table drew straight through the seat names and badges), and 3 across is
+    // what keeps a battle pair clear of the seat ring at every player count.
+    private let perRow = 3
 
     public var body: some View {
         // CENTERED wrapped rows (web flex-wrap + justify-center). A LazyVGrid left-
@@ -162,13 +167,23 @@ public struct FBattleGrid: View {
         .accessibilityLabel(a11y(battle))
     }
 
+    // Round-5 m2 ("VoiceOver labels are hard-coded English while all visible
+    // strings are localized"): this pair used to build its own English
+    // sentence out of `CardRank.spoken` (which is not localized — it's a
+    // debug/log helper, not a VoiceOver one) and a hand-rolled suit array.
+    // FStrings.spokenCard is the ONE shared builder every board component now
+    // routes through (FHandFan's cards go through FCard's own a11y label,
+    // which already used it), so "queen of spades" / "дама, пики" / "스페이드
+    // 퀸" cannot drift apart between the hand and the battles.
     private func a11y(_ b: BattleView) -> String {
         let atk = name(b.attack)
-        if let d = b.defense { return "\(atk), covered by \(name(d))" }
-        return "\(atk), uncovered"
+        if let d = b.defense {
+            return FStrings.t("ios.a11y.covered", ["attack": atk, "defense": name(d)])
+        }
+        return FStrings.t("ios.a11y.uncovered", ["attack": atk])
     }
     private func name(_ c: Card) -> String {
-        guard let suit = c.suit else { return "hidden card" }
-        return "\(CardRank.spoken(c.v)) of \(["spades","hearts","clubs","diamonds"][suit.rawValue])"
+        guard let suit = c.suit else { return FStrings.t("ios.a11y.hiddencard") }
+        return FStrings.spokenCard(c.v, suit)
     }
 }
