@@ -50,11 +50,52 @@ mirror.
   or whether Apple derives one. Flagged in the submission doc §1 as a
   Track B/C item.
 
+### Device capabilities
+
+- **`UIRequiredDeviceCapabilities` is not declared** in `FoolishMessagesApp/Info.plist`.
+  Round-5 B4 (`docs/APP_REVIEW_NOTES.md`): the key used to carry `[armv7]`, the
+  32-bit capability, on an arm64-only binary — a metadata contradiction App
+  Store Connect rejects at upload, not something a UI pass would ever catch
+  (the container is `LSApplicationLaunchProhibited` and never launches, so the
+  wrong value never bit at runtime). Owner's call: delete the key rather than
+  correct it to `arm64` — it buys this codeless container nothing either way,
+  since App Store Connect derives real device capabilities from the arm64
+  slice. `ios/project.yml` was checked and does not re-inject this key (or any
+  `UIRequiredDeviceCapabilities` value) at `xcodegen generate` time for any
+  target, so the deletion holds across regeneration.
+
+### Localization declaration
+
+- **`CFBundleLocalizations = [en, ru, ko]`** now set in both
+  `FoolishMessagesApp/Info.plist` and `FoolishMessages/Info.plist`. Round-5 Q1
+  (`docs/APP_REVIEW_NOTES.md`): visible strings were already fully localized
+  in en/ru/ko at runtime (`FStrings.swift`, switched on
+  `Locale.preferredLanguages`) but nothing declared this to the store, so the
+  listing would have advertised English-only while the app silently presented
+  Russian or Korean. The owner's decision was to ship ru/ko declared in 1.0.
+  The in-code `FStrings` table remains the backing store — there is still no
+  `.lproj` bundle — and Milestone E4's String Catalog work supersedes it
+  later; this key is the store-facing declaration and does not depend on
+  which mechanism holds the strings. `ios/project.yml` does not inject or
+  override `CFBundleLocalizations` for either target, so this is not
+  clobbered at generate time.
+
+  (`FStrings.override`'s App Group scoping bug, noted alongside Q1, is a
+  runtime/Swift fix, not a plist or compliance-doc matter, and is out of
+  scope for this pass.)
+
 ### Encryption
 
 - **`ITSAppUsesNonExemptEncryption = NO`** in both `FoolishMessagesApp/Info.plist`
   and `FoolishMessages/Info.plist` (the `.appex` is a separate binary and needs
-  its own declaration — doesn't inherit the container's).
+  its own declaration — doesn't inherit the container's). Round-5 Q2
+  (`docs/APP_REVIEW_NOTES.md`): both files' comments were extended to spell out
+  *why* `false` is still correct rather than an inherited template value — the
+  FMSG payload path (chain ordering / parent linkage) runs SHA-256
+  (`c/src/sha256.c`; swift-crypto is linked) as a **digest**, not a cipher.
+  Hashing for ordering/identity is not encryption, so this answer stands, but
+  it is explicitly flagged in both plists to be revisited the day the FMSG
+  path ever encrypts payload bytes instead of just digesting them.
 
 ### Privacy labels — this app collects literally nothing
 

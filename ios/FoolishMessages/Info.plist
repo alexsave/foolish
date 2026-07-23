@@ -26,9 +26,28 @@
 	<!-- The .appex is a separate binary from the host app, so it needs its own
 	     export-compliance declaration; Xcode does not inherit the app's. The
 	     extension uses only Apple's standard TLS/crypto (App Group cache, no
-	     bespoke encryption), so it is exempt like the host (Info.plist:31). -->
+	     bespoke encryption), so it is exempt like the host (Info.plist:31).
+
+	     Round-5 Q2: this is also the binary that actually runs the FMSG
+	     payload path — SHA-256 (c/src/sha256.c; swift-crypto is linked) over
+	     the payload for chain ordering / parent linkage. That's a digest used
+	     to order and link chains, not encryption of the payload, so `false`
+	     is correct here too. If the FMSG path ever encrypts rather than
+	     digests, this answer needs to be revisited. -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<!-- Round-5 Q1: declares ru/ko presentation to the store. FStrings.swift
+	     (in-code en/ru/ko table, switched at runtime on
+	     Locale.preferredLanguages) is the backing store, not a .lproj — no
+	     .lproj exists yet, and Milestone E4's String Catalog will supersede
+	     this table. This key is what tells the App Store the app presents
+	     Russian and Korean regardless of where the strings live. -->
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>ru</string>
+		<string>ko</string>
+	</array>
 	<!-- The App Group this extension's MessageGameStore uses. Read at runtime by
 	     FoolishKit rather than hardcoded there, because FoolishKit is shared with
 	     the host app, which owns a DIFFERENT group (group.cards.foolish). Must
