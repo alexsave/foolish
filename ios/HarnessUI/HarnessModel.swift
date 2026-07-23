@@ -532,6 +532,22 @@ final class HarnessModel: ObservableObject {
         MessageGameStore.shared.clearAllPending()
     }
 
+    /// REVIEW RIG (HarnessScenario.swift): drop a bubble into the open
+    /// transcript that this device did NOT seal and cannot decode — the
+    /// corrupt/foreign-link path. `chats` is private to this file, so this
+    /// lives here rather than in the scenario extension.
+    func appendForeignBubble(url: URL) {
+        boardEpoch += 1
+        chats[currentChat].transcript.append(Msg(url: url, senderId: participants[min(1, participants.count - 1)].id,
+                                                 senderName: participants[min(1, participants.count - 1)].name,
+                                                 preview: nil))
+        chats[currentChat].startNewGame = false
+        chats[currentChat].selected = nil
+        staged = nil; stagedPreview = nil
+        lastSentPayload = nil
+        rememberPresented()
+    }
+
     /// The bubble picture for a sealed chain — the SAME `BubbleSnapshot` entry
     /// the real extension composes its MSMessage image with, so the harness's
     /// transcript shows what a real thread would show. Decoding here re-adopts

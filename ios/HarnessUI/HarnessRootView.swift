@@ -106,6 +106,10 @@ struct HarnessRootView: View {
             if ProcessInfo.processInfo.environment["HARNESS_SEED"] != nil {
                 await model.seedDemoGame()
             }
+            // REVIEW RIG: land on one named state and stop (HarnessScenario.swift).
+            if let s = HarnessModel.scenarioName {
+                if s == "chatlist" { screen = .chatList } else { await model.runScenario(s) }
+            }
         }
     }
 
