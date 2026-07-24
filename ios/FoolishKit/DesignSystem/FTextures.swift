@@ -31,11 +31,6 @@ public enum FTextures {
 
     /// Which baked palette to load. Kept as a type rather than a bool so a third
     /// look (a seasonal table, say) is an added case and not a second flag.
-    ///
-    /// The green-vs-navy dark wool is deliberately NOT a case here. It is not a
-    /// third THEME - it is one theme's accent, and modelling it as a case would
-    /// put a choice with no UI behind it into every switch over this type.
-    /// `WoolTexture.darkAccent` owns that choice; see its doc.
     public enum Variant: String {
         case classic
         case dark
@@ -62,8 +57,7 @@ public enum FTextures {
     // cannot see `Variant`. Keeping the mapping on this side of that line is
     // what lets the generators stay one file each, shared by both.
 
-    /// The wool palette a variant wears. The dark one is `WoolTexture`'s own
-    /// `darkAccent` choice, so flipping green↔navy needs no edit here.
+    /// The wool palette a variant wears (the dark one is `WoolTexture.dark`).
     public static func woolPalette(_ variant: Variant) -> WoolTexture.Palette {
         switch variant {
         case .classic: return .classic

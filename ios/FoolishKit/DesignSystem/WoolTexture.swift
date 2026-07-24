@@ -91,67 +91,34 @@ public enum WoolTexture {
 
         // MARK: dark mode
         //
-        // The owner's round-6 brief said "wool beige -> brown"; round-7 revised
-        // it to DARK GREY ("instead of brown wool in the dark mode, let's do a
-        // dark gray") with a NAVY chequer ("the navy looks better, let's go with
-        // that"). So the fibre is now a neutral grey, not a walnut, and navy is
-        // the shipped `darkAccent`. Both palettes share the one grey field and
-        // differ ONLY in the plaid delta, so green-vs-navy stays a one-line flip.
+        // The look landed over three revisions. Round-6: "beige -> brown". Round-7
+        // first: "dark grey ... navy chequer". Round-7 final (the shipped one):
+        // "dark gray and light gray, both with very slight brown tint" - a
+        // two-tone grey plaid, NO colour accent. So the green/navy A/B is gone
+        // and there is ONE dark palette.
         //
-        // The grey: a near-neutral (R≈G≈B) fibre at ~(93,93,98), deliberately
-        // NOT a dimmed beige (which reads as brown) - it is a genuine grey wool.
-        // The base between fibres (37,37,40) and the swing come down in the same
-        // ratio, so the weave's contrast matches the light palette's rather than
-        // doubling into noise.
-
-        /// Dark wool, GREEN chequer (the alternate). Block colour lands at
-        /// ~(57,105,60), a card-table felt. Kept baked so `darkAccent` can flip
-        /// to it without a re-bake, but navy is what ships.
-        public static let darkGreen = Palette(
-            baseR: 37, baseG: 37, baseB: 40,
-            weftR: 93, weftG: 93, weftB: 98,
-            warpR: 83, warpG: 83, warpB: 88,
-            swingR: 20, swingG: 20, swingB: 22,
-            plaidR: -36, plaidG: 12, plaidB: -38,
-            fallbackHex: 0x2E2F33)
-
-        /// Dark wool, NAVY chequer — the shipped default (`darkAccent`). Block
-        /// colour lands at ~(47,63,124): a cool navy sitting on the neutral grey
-        /// field, which is the round-7 look the owner chose.
-        public static let darkNavy = Palette(
-            baseR: 37, baseG: 37, baseB: 40,
-            weftR: 93, weftG: 93, weftB: 98,
-            warpR: 83, warpG: 83, warpB: 88,
-            swingR: 20, swingG: 20, swingB: 22,
-            plaidR: -46, plaidG: -30, plaidB: 26,
-            fallbackHex: 0x2E2F33)
+        // Both tones carry a slight warm tint (R > G > B by a few points) so the
+        // grey reads as wool, not steel. The FIELD is a dark warm grey fibre
+        // (~80,76,70) between near-black gaps (~33,31,28); the PLAID BLOCKS are a
+        // light warm grey (~152,145,133), reached by a positive plaid delta - the
+        // block is LIGHTER than the field here, where the light palette's red
+        // block was a hue shift. The swing scales with the fibre so the weave's
+        // contrast matches the light palette's rather than doubling into noise.
+        public static let dark = Palette(
+            baseR: 33, baseG: 31, baseB: 28,
+            weftR: 80, weftG: 76, weftB: 70,
+            warpR: 72, warpG: 68, warpB: 63,
+            swingR: 17, swingG: 16, swingB: 15,
+            plaidR: 72, plaidG: 69, plaidB: 63,
+            fallbackHex: 0x35322D)
     }
 
-    // MARK: - The dark-accent choice (round-7 dark mode)
+    // MARK: - The dark palette
 
-    /// Which chequer the dark wool wears. The owner offered green OR navy and
-    /// asked for both, so both are palettes above and both are BAKED into the
-    /// bundle (see `bakes`) — the choice is not a re-bake, it is one line.
-    public enum DarkAccent: String {
-        case green
-        case navy
-    }
-
-    /// ===================================================================
-    /// THE ONE CONSTANT. Change `.green` to `.navy` (or back) and rebuild;
-    /// nothing else in the app, the generators or the resources changes,
-    /// because both weaves are already shipped. This single line picks the
-    /// dark board's chequer hue, its `fallbackHex`, and the file loaded.
-    /// ===================================================================
-    public static let darkAccent: DarkAccent = .navy
-
-    /// The dark palette `darkAccent` selects.
-    public static var darkPalette: Palette {
-        switch darkAccent {
-        case .green: return .darkGreen
-        case .navy:  return .darkNavy
-        }
-    }
+    /// The dark-mode wool. One palette now: the owner settled on a two-tone
+    /// grey plaid (dark grey field, light grey blocks, both faintly warm), so
+    /// the earlier green-vs-navy accent choice is gone.
+    public static var darkPalette: Palette { .dark }
 
     // MARK: - The shipped swatch
 
@@ -196,9 +163,9 @@ public enum WoolTexture {
     /// Base name of the baked LIGHT image in FoolishKit's bundle.
     public static let classicResourceName = "wool-classic"
 
-    /// Base name of the baked DARK image `darkAccent` selects. Both dark weaves
-    /// are in the bundle; this names the one in use.
-    public static var darkResourceName: String { "wool-dark-\(darkAccent.rawValue)" }
+    /// Base name of the baked DARK image. One dark weave now (the two-tone grey
+    /// plaid), so this is a plain constant, not an accent-derived name.
+    public static let darkResourceName = "wool-dark"
 
     /// Every weave the build-time tool bakes, as (file base name, palette).
     ///
@@ -209,8 +176,7 @@ public enum WoolTexture {
     /// and so cannot be seen from the macOS generator).
     public static let bakes: [(name: String, palette: Palette)] = [
         (classicResourceName, .classic),
-        ("wool-dark-green", .darkGreen),
-        ("wool-dark-navy", .darkNavy),
+        (darkResourceName, .dark),
     ]
 
     /// THE magnification, and the only one: how many POINTS one wool texel

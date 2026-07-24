@@ -1595,14 +1595,17 @@ struct FShield: View {
             func P(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x * s, y: y * s) }
             let gray = Color(hex: 0x878E96), edge = Color(hex: 0x2E3338)
             var shield = Path()
-            // Pointed upper corners (m4): left point up, a shallow dip at the
-            // top centre, right point up — then the unchanged sides/bottom.
-            shield.move(to: P(4, 2.6))
-            shield.addLine(to: P(12, 5.2))
-            shield.addLine(to: P(20, 2.6))
-            shield.addLine(to: P(20, 11))
-            shield.addQuadCurve(to: P(12, 21.5), control: P(20, 18))
-            shield.addQuadCurve(to: P(4, 11), control: P(4, 18))
+            // Round-7: the heater / crusader shield of the owner's reference - a
+            // raised POINT at the top centre, rounded shoulders as the widest
+            // span, curving to a point at the bottom. (Was round-5 m4's inverse:
+            // raised corners with a dipped centre.) The peak sits at y=1.5, the
+            // shoulders at y=5.5 span the full width, and the sides sweep to the
+            // bottom point at (12,22.5).
+            shield.move(to: P(12, 1.5))                                   // top-centre peak
+            shield.addQuadCurve(to: P(21, 5.5),  control: P(16.5, 2.2))   // peak -> right shoulder
+            shield.addQuadCurve(to: P(12, 22.5), control: P(21, 15.5))    // right side -> bottom point
+            shield.addQuadCurve(to: P(3, 5.5),   control: P(3, 15.5))     // bottom point -> left shoulder
+            shield.addQuadCurve(to: P(12, 1.5),  control: P(7.5, 2.2))    // left shoulder -> peak
             shield.closeSubpath()
             ctx.fill(shield, with: .color(gray))
             ctx.stroke(shield, with: .color(edge), style: StrokeStyle(lineWidth: 1.1 * s, lineJoin: .round))
