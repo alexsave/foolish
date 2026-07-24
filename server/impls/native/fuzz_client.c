@@ -2,8 +2,11 @@
 // games, this one tries to break the server: malformed HTTP, junk/oversized
 // signups, forged/garbage Bearer tokens, meta abuse (spamming bots to overflow
 // seats, starting games that don't exist), unparseable binary /action bodies,
-// hostile /state seat values (the VIEW_UNMASKED disclosure), and malformed
-// WebSocket handshakes + frames (bogus lengths, opcodes, unmasked frames).
+// hostile /state seat values (the VIEW_UNMASKED disclosure), malformed
+// WebSocket handshakes + frames (bogus lengths, opcodes, unmasked frames), and
+// — against a live, dealt game — well-formed but ILLEGAL moves: structurally
+// valid awire frames that pass the decoder and reach awire_apply (the legality
+// engine) carrying cards you don't hold / wrong-phase kinds / out-of-turn plays.
 //
 // It is a DEFENSIVE tool: run it against a foolish_server_asan build and watch
 // for AddressSanitizer/UBSan reports, crashes, or hangs. The fuzzer never trusts
@@ -30,6 +33,12 @@ static const char *g_host = "127.0.0.1";
 static int g_port = 8099;
 static volatile int g_stop = 0;
 static _Atomic long g_ops = 0, g_conn_fail = 0, g_anomaly = 0;
+// Illegal-move fuzzing (atk_move): how many well-formed frames reached a live
+// (PLAYING) game — i.e. actually exercised awire_apply — and how many of those
+// the engine reported applied. Accepts aren't necessarily bugs (a random frame
+// can be a legal PASS/PICKUP, or a card that happens to be in hand on your
+// turn); the number is here for visibility that the legality engine is hit.
+static _Atomic long g_move_tests = 0, g_move_accepts = 0;
 
 // -------- small helpers --------
 static uint32_t rr(unsigned *s) { return (uint32_t)rand_r(s); }
@@ -99,6 +108,11 @@ static void hostile_str(unsigned *s, char *out, int n) {
     out[n] = 0;
 }
 
+// Per-thread reply scratch (declared up here so the setup helpers below, not
+// just the attacks, can drain into it).
+static char g_rep[65536];   // unused shared buffer, referenced once to silence -Wunused
+static _Thread_local char t_rep[65536];
+
 // -------- per-worker material (a real token + game, so authed/game/ws attacks
 // have something valid to corrupt) --------
 typedef struct { char token[128]; char game[32]; } Cred;
@@ -131,9 +145,24 @@ static void get_cred(unsigned *s, Cred *c) {
     if (r > 0) extract(rep, "\"game_id\":\"", c->game, sizeof c->game);
 }
 
+// Drive this worker's game to GAME_STATUS_PLAYING so the move fuzzer's frames
+// actually reach awire_apply (the legality engine) instead of bouncing off the
+// "not playing" guard: add a bot (always ready, fills a seat) then start (the
+// creator readies -> the kernel deals, 2 seated). The creator stays a human
+// seat, so /action with this token has a real seat_of() >= 0.
+static void start_game(unsigned *s, Cred *c) {
+    (void)s;
+    if (!c->token[0] || !c->game[0]) return;
+    char body[128], req[512];
+    int bl = snprintf(body, sizeof body, "{\"type\":\"add-bot\",\"game_id\":\"%s\",\"strategy\":\"random\"}", c->game);
+    int n = snprintf(req, sizeof req, "POST /meta HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer %s\r\nContent-Length: %d\r\n\r\n%s", c->token, bl, body);
+    hit(req, n, t_rep, sizeof t_rep);
+    bl = snprintf(body, sizeof body, "{\"type\":\"start\",\"game_id\":\"%s\"}", c->game);
+    n  = snprintf(req, sizeof req, "POST /meta HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer %s\r\nContent-Length: %d\r\n\r\n%s", c->token, bl, body);
+    hit(req, n, t_rep, sizeof t_rep);
+}
+
 // ============ ATTACKS ============
-static char g_rep[65536];   // per-thread via TLS below
-static _Thread_local char t_rep[65536];
 
 // 1. Malformed HTTP: garbage lines, absurd Content-Length, huge path, no CRLF.
 static void atk_http(unsigned *s) {
@@ -283,13 +312,54 @@ static void atk_route(unsigned *s, Cred *c) {
     hit(req, n, t_rep, sizeof t_rep);
 }
 
+// 9. Well-formed but ILLEGAL moves (the point of the whole exercise). Unlike
+//    atk_action's random bytes — which almost never survive awire_decode's
+//    strict (valid kind, n<=28, EXACT length) check and so bounce off the
+//    DECODER — this builds a STRUCTURALLY VALID awire frame so it passes the
+//    decoder and reaches awire_apply, the game-rule LEGALITY engine, with
+//    hostile content: random card ids (cards you don't hold), a kind that's
+//    wrong for the phase, plays when it isn't your turn. Per awire.h the kernel
+//    must clamp hostile ids to real cards and reject them (ok:false) rather than
+//    corrupt state or crash — exactly what ASan/UBSan is watching for here.
+static void atk_move(unsigned *s, Cred *c) {
+    if (!c->token[0]) return;
+    if (!c->game[0]) { get_cred(s, c); start_game(s, c); if (!c->game[0]) return; }
+
+    uint8_t body[64];
+    int kind = ri(s, 5);                                    // 0..4: ATTACK COVER PASS PICKUP GOOD
+    int n    = (kind == 3 || kind == 4) ? 0 : ri(s, 29);    // PICKUP/GOOD must carry n==0, else 0..28
+    int bl   = 2 + n * (kind == 1 ? 2 : 1);                 // COVER frames carry 2n card bytes
+    if (bl > (int)sizeof body) { kind = 0; n = 1; bl = 3; }
+    body[0] = (uint8_t)kind;
+    body[1] = (uint8_t)n;
+    for (int i = 2; i < bl; i++) body[i] = (uint8_t)rr(s);  // hostile wire-card ids
+
+    char req[256];
+    int hn = snprintf(req, sizeof req,
+        "POST /action?game_id=%s HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer %s\r\nContent-Length: %d\r\n\r\n",
+        c->game, c->token, bl);
+    if (hn + bl > (int)sizeof req) return;
+    memcpy(req + hn, body, (size_t)bl); hn += bl;
+    int r = hit(req, hn, t_rep, sizeof t_rep);
+
+    if (r > 0) {
+        if (strstr(t_rep, "not playing") || strstr(t_rep, "not seated")) {
+            // game ended (bot loop ran it out) — mint a fresh PLAYING one
+            get_cred(s, c); start_game(s, c);
+        } else if (strstr(t_rep, "\"ok\":")) {
+            g_move_tests++;                                 // frame reached awire_apply
+            if (strstr(t_rep, "\"ok\":true")) g_move_accepts++;
+        }
+    }
+}
+
 static void *worker(void *arg) {
     unsigned seed = (unsigned)(uintptr_t)arg ^ (unsigned)time(NULL);
     Cred cred; cred.token[0] = cred.game[0] = 0;
     int since_cred = 0;
     while (!g_stop) {
-        if (!cred.token[0] || since_cred++ > 200) { get_cred(&seed, &cred); since_cred = 0; }
-        switch (ri(&seed, 9)) {
+        if (!cred.token[0] || since_cred++ > 200) { get_cred(&seed, &cred); start_game(&seed, &cred); since_cred = 0; }
+        switch (ri(&seed, 10)) {
             case 0: atk_http(&seed); break;
             case 1: atk_signup(&seed); break;
             case 2: atk_token(&seed); break;
@@ -298,7 +368,8 @@ static void *worker(void *arg) {
             case 5: atk_state(&seed, &cred); break;
             case 6: atk_ws(&seed, &cred); break;
             case 7: atk_route(&seed, &cred); break;
-            default: atk_signup(&seed); break;   // extra signup pressure (table growth + rate limit)
+            case 8: atk_move(&seed, &cred); break;   // well-formed ILLEGAL moves -> awire_apply legality engine
+            default: atk_move(&seed, &cred); break;   // extra legality-engine pressure (2/10 weight)
         }
     }
     return NULL;
@@ -319,6 +390,8 @@ int main(int argc, char **argv) {
 
     printf("fuzz done: ops=%ld connect_failures=%ld disclosure_anomalies=%ld (%d threads, %ds)\n",
            (long)g_ops, (long)g_conn_fail, (long)g_anomaly, nthreads, secs);
+    printf("  illegal-move frames that reached awire_apply: %ld (engine reported applied: %ld)\n",
+           (long)g_move_tests, (long)g_move_accepts);
     if (g_anomaly) printf("!! DISCLOSURE ANOMALY: /state seat=-2 returned a large 200 body — full-state leak!\n");
     return 0;
 }
