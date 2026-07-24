@@ -5,7 +5,8 @@
 //
 // THIS FILE NO LONGER RUNS IN THE SHIPPING APP. Like WoolTexture it is the
 // SOURCE OF TRUTH for the look, executed at BUILD time by
-// ios/Tools/GenerateTextures.swift into FoolishKit/Resources/wood-classic.jpg.
+// ios/Tools/GenerateTextures.swift into FoolishKit/Resources/ — one image per
+// entry in `bakes` (wood-classic.jpg and wood-dark.jpg).
 //
 // Why, in one paragraph, because this is the exact code that took the extension
 // down on a real phone: `renderCGImage` is 576 grain columns x every row x 25
@@ -63,6 +64,22 @@ public enum WoodTexture {
             redGain: 120, greenGain: 14, blueFlat: 9,
             streakAlpha: 0.1,
             fallbackHex: 0x5A2412)
+
+        /// The dark-mode wood ("darker wood texture", round-7).
+        ///
+        /// Every LIGHT-EMITTING number halved and nothing else touched: the base
+        /// board, the streak gains, and the fallback. `streakAlpha` deliberately
+        /// stays at 0.1 — it controls how much of each of the 576 passes lands,
+        /// i.e. the CONTRAST of the grain, not its brightness. Dimming a texture
+        /// by flattening its contrast is how wood turns into cardboard; halving
+        /// the colours the grain is painted IN keeps every streak exactly where
+        /// it was, just in walnut instead of bright orange. Same grain, same
+        /// scale (`pointsPerTexel` is untouched), one stop down.
+        public static let dark = Palette(
+            baseR: 34, baseG: 9, baseB: 6,
+            redGain: 62, greenGain: 7, blueFlat: 6,
+            streakAlpha: 0.1,
+            fallbackHex: 0x2C1209)
     }
 
     // MARK: - The shipped swatch
@@ -78,9 +95,20 @@ public enum WoodTexture {
     /// size everywhere, just maybe smaller or larger wood chunks").
     public static let renderCanvas = (w: 448, h: 288)
 
-    /// Base name of the baked image in FoolishKit's bundle. A dark variant
-    /// would be `wood-dark` beside it.
-    public static let resourceName = "wood-classic"
+    /// Base name of the baked LIGHT image in FoolishKit's bundle.
+    public static let classicResourceName = "wood-classic"
+    /// Base name of the baked DARK image. Only one dark wood exists — the
+    /// green/navy choice is the WOOL's (`WoolTexture.darkAccent`); the wood is
+    /// the same walnut under either.
+    public static let darkResourceName = "wood-dark"
+
+    /// Every grain the build-time tool bakes, as (file base name, palette) —
+    /// the twin of `WoolTexture.bakes`, and for the same reason: the list sits
+    /// beside the palettes, and the UIKit-free tool just walks it.
+    public static let bakes: [(name: String, palette: Palette)] = [
+        (classicResourceName, .classic),
+        (darkResourceName, .dark),
+    ]
 
     /// One wood texel is one POINT, everywhere. This is round-5 B2 expressed as
     /// a number: no aspect-fill, no stretch-to-fit, no per-surface scale. The

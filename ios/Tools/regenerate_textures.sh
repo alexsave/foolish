@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
-# regenerate_textures.sh — re-bake FoolishKit/Resources/wool-classic.jpg and
-# wood-classic.jpg from the generators in FoolishKit/DesignSystem/.
+# regenerate_textures.sh — re-bake every entry of WoolTexture.bakes and
+# WoodTexture.bakes into FoolishKit/Resources/, from the generators in
+# FoolishKit/DesignSystem/. Today that is five files:
 #
-# Run this after changing WoolTexture.render / WoodTexture.render or either
+#   wool-classic.jpg  wool-dark-green.jpg  wool-dark-navy.jpg
+#   wood-classic.jpg  wood-dark.jpg
+#
+# Run this after changing WoolTexture.render / WoodTexture.render or any
 # `Palette`, then commit the regenerated images. The shipping app NEVER runs the
 # generators (see the header comments in those files: a procedural render on
 # launch is what took the iMessage extension down on a real phone), so the images
 # are the only way a look change reaches the product.
+#
+# NOTE this does NOT need re-running to switch the dark board between green and
+# navy: both are already baked, and `WoolTexture.darkAccent` picks which one the
+# app loads. Re-bake only when a palette's NUMBERS change.
 #
 #   ios/Tools/regenerate_textures.sh          # writes into FoolishKit/Resources
 #   ios/Tools/regenerate_textures.sh /tmp/out # writes somewhere else (for A/B)

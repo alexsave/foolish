@@ -21,10 +21,18 @@ import UIKit
 /// It is a fixed-size view on purpose. Callers wrap it in their own frame and
 /// `.clipped()`; a smaller surface shows LESS weave, never smaller weave.
 public struct WoolWeave: View {
+    /// Dark mode is chosen HERE, once per surface, and never below: every wool
+    /// view in the app draws this one, so a board cannot end up half-dark. The
+    /// message bubble pins `.light` on its whole ImageRenderer content
+    /// (BubbleSnapshot), which is what keeps a sender's dark board out of a
+    /// recipient's light transcript - it works because this reads the
+    /// environment rather than a global.
+    @Environment(\.colorScheme) private var scheme
+
     public init() {}
 
     public var body: some View {
-        if let img = FTextures.wool {
+        if let img = FTextures.wool(FTextures.Variant(scheme)) {
             Image(uiImage: img)
                 // The weave is magnified ~2.3x on a 3x screen (0.775pt/texel x
                 // 3), so the interpolation is doing real work smoothing threads
@@ -40,11 +48,19 @@ public struct WoolWeave: View {
 /// The woven-wool table background plus the one allowed gradient — a subtle
 /// centre-out vignette (§5.1).
 public struct WoolBackground: View {
+    @Environment(\.colorScheme) private var scheme
+
     public init() {}
 
     public var body: some View {
         ZStack {
-            FColor.fallback   // web's beige base behind the wool (was dark-green felt)
+            // The flat colour behind the weave - the web's beige in light mode,
+            // the dark walnut in dark mode. It comes off the PALETTE, not off
+            // `FColor.fallback`, because it has exactly one job: be the colour
+            // the weave itself averages to, so a missing resource or an
+            // uncovered edge reads as a duller board rather than as a beige
+            // slab under a dark one.
+            Color(hex: FTextures.woolPalette(FTextures.Variant(scheme)).fallbackHex)
 
             // Bottom-anchored, and that is load-bearing for the extension: the
             // drawer's bottom edge is pinned to the screen while its top edge
@@ -79,9 +95,17 @@ public struct WoolBackground: View {
             // LOOK: the fractions below are the old radii over that full-screen
             // diagonal, so a full-screen board is unchanged to the eye and every
             // smaller surface gets a proportionally smaller falloff.
+            //
+            // Dark mode halves the falloff. The vignette's job is to sit the
+            // bright light weave down at the edges; on the dark weave (a third
+            // the average luminance) the same 0.32 black lands on a surface
+            // that has nowhere left to go, so the corners crush to flat black
+            // and the board reads as a hole rather than as a table. 0.16 keeps
+            // the same SHAPE - the geometry below is untouched - at a strength
+            // proportional to what the surface can actually absorb.
             GeometryReader { geo in
                 let diagonal = hypot(geo.size.width, geo.size.height)
-                RadialGradient(colors: [.clear, .black.opacity(0.32)],
+                RadialGradient(colors: [.clear, .black.opacity(scheme == .dark ? 0.16 : 0.32)],
                                center: .center,
                                startRadius: diagonal * 0.078,
                                endRadius: diagonal * 0.682)
@@ -95,9 +119,12 @@ public struct WoolBackground: View {
 /// wood-grain half) over a wood-toned fallback. Use behind controls via
 /// `.woodSurface(cornerRadius:)`.
 public struct WoodFill: View {
+    @Environment(\.colorScheme) private var scheme
+
     public init() {}
 
     public var body: some View {
+        let variant = FTextures.Variant(scheme)
         // The FALLBACK COLOUR is the only thing that sizes this view, and that
         // is load-bearing. A `Color` is infinitely flexible — it takes whatever
         // its container proposes. A fixed-size swatch drawn as a ZStack sibling
@@ -106,9 +133,9 @@ public struct WoodFill: View {
         // `.clipShape` sliced the rank column off the left edge — B2's exact
         // symptom, reintroduced by the cure. As an `.overlay` the grain is
         // painted and clipped but contributes NOTHING to layout.
-        Color(hex: WoodTexture.Palette.classic.fallbackHex)
+        Color(hex: FTextures.woodPalette(variant).fallbackHex)
             .overlay {
-                if let img = FTextures.wood {
+                if let img = FTextures.wood(variant) {
                     // One texel, one point, on every surface — not tiled, not
                     // stretched, not aspect-filled (round-5 B2: "the wood
                     // grains should be the same size everywhere, just maybe

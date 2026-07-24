@@ -1523,9 +1523,10 @@ public struct MessageTableView: View {
 /// actually reads as a sword: a pointed blade, a wide crossguard, a grip, and a
 /// round pommel, all filled FLAT dark gray. Marks "you open this bout".
 struct FSword: View {
+    @Environment(\.colorScheme) private var scheme
     var size: CGFloat = 24
     var body: some View {
-        Canvas { ctx, sz in
+        Canvas { [scheme] ctx, sz in
             let s = sz.width / 24
             func P(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x * s, y: y * s) }
             func R(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat) -> CGRect {
@@ -1535,7 +1536,15 @@ struct FSword: View {
             // from 0x3A3A3A so the glyph reads at a glance on the wool instead
             // of blending into it at the sizes it's actually drawn (m4's own
             // complaint was "no legibility... at the size they are drawn").
-            let gray = Color(hex: 0x26262A)
+            //
+            // Dark mode inverts that reasoning rather than repeating it: m4's
+            // near-black is legible BECAUSE the light weave is bright, and on
+            // the walnut weave it is the one glyph on the board that vanishes
+            // completely (the shield's mid-gray fill and the check's saturated
+            // green both still carry). Steel, not black, in dark mode - and it
+            // stays a FLAT fill either way, so the sword still reads as one
+            // solid silhouette and not as a shaded object.
+            let gray = scheme == .dark ? Color(hex: 0xD3D6DC) : Color(hex: 0x26262A)
 
             // Blade: a pointed spike from the tip (top) down to the guard.
             var blade = Path()

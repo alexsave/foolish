@@ -24,7 +24,23 @@ final class ComponentSnapshotTests: XCTestCase {
     }
 
     private func host<V: View>(_ view: V, width: CGFloat = 320, height: CGFloat = 200) -> UIViewController {
-        let vc = UIHostingController(rootView: view.frame(width: width, height: height).background(FColor.table))
+        // PINNED to light, and that pin is what keeps these references stable
+        // now that the board has a dark mode (round-7). Every component below
+        // reads `@Environment(\.colorScheme)` somewhere - FCard inverts its
+        // face, WoodFill loads a different bake, `onWoolText` flips its ink -
+        // and an unpinned UIHostingController inherits the SIMULATOR's current
+        // appearance, so `simctl ui <udid> appearance dark` would silently
+        // fail every image here without a line of code having changed.
+        //
+        // Light specifically, because that is what the committed references
+        // were recorded in: pinning it is a no-op against them, which is the
+        // point. A dark twin of these cases would need its own recorded
+        // references and is deliberately NOT added here (the owner records).
+        let content = view
+            .frame(width: width, height: height)
+            .background(FColor.table)
+            .environment(\.colorScheme, .light)
+        let vc = UIHostingController(rootView: content)
         vc.view.frame = CGRect(x: 0, y: 0, width: width, height: height)
         return vc
     }

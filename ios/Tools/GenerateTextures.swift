@@ -51,8 +51,8 @@ func writeJPEG(_ image: CGImage, to url: URL, quality: Double) {
 func report(_ name: String, _ url: URL, _ image: CGImage, seconds: Double) {
     let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int ?? 0
     let kb = Double(bytes) / 1024
-    print(String(format: "  %@  %dx%d px  %.0f KB  (%.1fs)",
-                 name, image.width, image.height, kb, seconds))
+    print(String(format: "  %-18@  %dx%d px  %.0f KB  (%.1fs)",
+                 name as NSString, image.width, image.height, kb, seconds))
 }
 
 // MARK: - main
@@ -72,33 +72,39 @@ static func main() {
     // in pixels of that shape), then cropped to the portrait sliver a phone can
     // actually show. Cropping is what keeps the file - and the decoded bitmap the
     // extension holds - about a third of the size for zero visible difference.
-    do {
+    //
+    // One pass per entry in `WoolTexture.bakes` (light, dark-green, dark-navy).
+    // The list is the generator's, not this tool's: a new look is a palette plus
+    // a line there, and nothing here changes.
+    for bake in WoolTexture.bakes {
         let t0 = Date()
         guard let full = WoolTexture.renderCGImage(w: WoolTexture.renderCanvas.w,
-                                                   h: WoolTexture.renderCanvas.h) else {
-            FileHandle.standardError.write(Data("wool render failed\n".utf8)); exit(1)
+                                                   h: WoolTexture.renderCanvas.h,
+                                                   palette: bake.palette) else {
+            FileHandle.standardError.write(Data("wool render failed: \(bake.name)\n".utf8)); exit(1)
         }
         let c = WoolTexture.shippedCrop
         guard let cropped = full.cropping(to: CGRect(x: c.x, y: c.y, width: c.w, height: c.h)) else {
-            FileHandle.standardError.write(Data("wool crop failed\n".utf8)); exit(1)
+            FileHandle.standardError.write(Data("wool crop failed: \(bake.name)\n".utf8)); exit(1)
         }
-        let url = outDir.appendingPathComponent("\(WoolTexture.resourceName).jpg")
+        let url = outDir.appendingPathComponent("\(bake.name).jpg")
         writeJPEG(cropped, to: url, quality: 0.85)
-        report("wool", url, cropped, seconds: Date().timeIntervalSince(t0))
+        report(bake.name, url, cropped, seconds: Date().timeIntervalSince(t0))
     }
 
     // ---- wood -------------------------------------------------------------
     // No crop: the canvas IS the swatch, sized so the largest wood surface in the
     // app is a sub-rectangle of it and nothing ever tiles.
-    do {
+    for bake in WoodTexture.bakes {
         let t0 = Date()
         guard let wood = WoodTexture.renderCGImage(w: WoodTexture.renderCanvas.w,
-                                                   h: WoodTexture.renderCanvas.h) else {
-            FileHandle.standardError.write(Data("wood render failed\n".utf8)); exit(1)
+                                                   h: WoodTexture.renderCanvas.h,
+                                                   palette: bake.palette) else {
+            FileHandle.standardError.write(Data("wood render failed: \(bake.name)\n".utf8)); exit(1)
         }
-        let url = outDir.appendingPathComponent("\(WoodTexture.resourceName).jpg")
+        let url = outDir.appendingPathComponent("\(bake.name).jpg")
         writeJPEG(wood, to: url, quality: 0.9)
-        report("wood", url, wood, seconds: Date().timeIntervalSince(t0))
+        report(bake.name, url, wood, seconds: Date().timeIntervalSince(t0))
     }
 
     print("Done. Commit the images; the app loads them through FTextures.")

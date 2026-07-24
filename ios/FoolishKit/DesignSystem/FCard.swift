@@ -6,10 +6,21 @@
 // dragged source card fades to 0.3. Trump is NOT marked per-card (the web shows
 // trump only at the deck well); the `trump` flag is kept for API compatibility.
 // Back is the procedural fern; VoiceOver reads "seven of spades" etc.
+//
+// DARK MODE inverts the face and nothing else (round-7, the owner's brief:
+// "make cards black with red suit and value for hearts and diamonds, white
+// otherwise. White outline"). Geometry, type, sizes, the thin-card fallback and
+// the selection behaviour are all scheme-independent — only three colours move,
+// and they move as a PAIR of ramps in `Ink` below so a dark card cannot end up
+// with, say, a light-mode border.
 
 import SwiftUI
 
 public struct FCard: View {
+    /// Read once, at the top of the card, and threaded into `ink` — the face,
+    /// the glyphs and the border must agree, and three separate environment
+    /// reads is three chances for them not to.
+    @Environment(\.colorScheme) private var scheme
     public let card: Card?          // nil ⇒ face-down (use `backSeed`)
     public var selected: Bool
     public var disabled: Bool       // dimmed + locked (C1 in-flight affordance)
@@ -37,6 +48,30 @@ public struct FCard: View {
     private static let redSuit = Color(hex: 0xDC2626)
     private static let blackSuit = Color(hex: 0x0A0A0A)
     private static let selRed = Color(hex: 0xE0201C)
+
+    /// The three colours a card face is made of, as ONE value per scheme.
+    ///
+    /// Light is the web's card, unchanged. Dark is its inversion: the ink
+    /// colour becomes the FACE and white stands in for the black suits, which
+    /// is precisely what "black cards, white otherwise, white outline" asks
+    /// for. `red` brightens a step in dark mode (#DC2626 → #EF4444) because
+    /// the web's red was chosen against a white face - on black it is a
+    /// 4.4:1 muddy maroon, where the brighter red is 5.6:1 and still reads as
+    /// the same red at a glance beside a light-mode card in the transcript.
+    private struct Ink {
+        let face: Color
+        let red: Color      // hearts + diamonds
+        let black: Color    // clubs + spades (white, in dark mode)
+        let border: Color
+
+        static let light = Ink(face: FCard.faceWhite, red: FCard.redSuit,
+                               black: FCard.blackSuit, border: FCard.blackSuit)
+        static let dark = Ink(face: FCard.blackSuit, red: Color(hex: 0xEF4444),
+                              black: .white, border: .white)
+    }
+
+    private var ink: Ink { scheme == .dark ? .dark : .light }
+
     private var radius: CGFloat { min(5, size.width * 0.1) }
     private var thin: Bool { size.width < 40 }   // web thin-card fallback (<40px wide)
 
@@ -59,9 +94,9 @@ public struct FCard: View {
 
     @ViewBuilder private func face(_ card: Card) -> some View {
         let suit = card.suit ?? .spades
-        let color = suit.isRed ? Self.redSuit : Self.blackSuit
+        let color = suit.isRed ? ink.red : ink.black
         RoundedRectangle(cornerRadius: radius)
-            .fill(Self.faceWhite)
+            .fill(ink.face)
             .overlay { if thin { thinCenter(card, color: color) } else { centerGlyph(suit, color: color) } }
             .overlay(alignment: .topLeading) { if !thin { corner(card, suit: suit, color: color) } }
             .overlay(alignment: .bottomTrailing) {
@@ -107,9 +142,15 @@ public struct FCard: View {
         .foregroundColor(color)
     }
 
+    // The outline. Selection still recolors it red in BOTH schemes: red on a
+    // black face against a walnut board is the only saturated thing on the
+    // card, so it still reads as "this one is picked" - and keeping the
+    // selected colour scheme-independent means the one affordance a player
+    // hunts for during a drag does not change identity when they toggle
+    // appearance mid-game.
     private var border: some View {
         RoundedRectangle(cornerRadius: radius)
-            .strokeBorder(selected ? Self.selRed : Self.blackSuit,
+            .strokeBorder(selected ? Self.selRed : ink.border,
                           lineWidth: selected ? 2.5 : 2)
     }
 

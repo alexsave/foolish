@@ -9,6 +9,9 @@
 import SwiftUI
 
 public struct FDeckWell: View {
+    /// Only the bare trump glyph below needs it: a spade or club drawn in the
+    /// light board's near-black ink disappears into a dark weave.
+    @Environment(\.colorScheme) private var scheme
     public let deckCount: Int
     public let flipped: Card?
     public let hasFlipped: Bool
@@ -107,7 +110,7 @@ public struct FDeckWell: View {
                 // names for text applies to a lone glyph too).
                 Text(trumpSuit.glyph)
                     .font(.system(size: 60))
-                    .foregroundColor(FColor.suitColor(trumpSuit))
+                    .foregroundColor(FColor.suitColor(trumpSuit, scheme: scheme))
                     .shadow(color: .black.opacity(0.6), radius: 2, x: 0, y: 1)
                     .offset(x: inset, y: inset)
             }

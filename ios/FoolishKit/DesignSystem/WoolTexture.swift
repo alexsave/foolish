@@ -7,9 +7,10 @@
 //
 // THIS FILE NO LONGER RUNS IN THE SHIPPING APP. It is the SOURCE OF TRUTH for
 // what the wool looks like, and it is executed at BUILD time by
-// ios/Tools/GenerateTextures.swift, which bakes the result into
-// FoolishKit/Resources/wool-classic.jpg. The extension then loads that image
-// (FTextures) and generates zero procedural pixels on launch.
+// ios/Tools/GenerateTextures.swift, which bakes one image per entry in `bakes`
+// into FoolishKit/Resources/ (wool-classic.jpg, wool-dark-green.jpg,
+// wool-dark-navy.jpg). The extension then loads whichever one the colour scheme
+// calls for (FTextures) and generates zero procedural pixels on launch.
 //
 // Why: a 1920x1080 weave is ~2.4M brush iterations, each writing up to a 5x5
 // span — tens of millions of blends and an 8.3MB scratch buffer — on the first
@@ -34,7 +35,7 @@ public enum WoolTexture {
     // MARK: - Palette (the ONE place wool colour lives)
 
     /// Every colour the weave uses. A dark-mode wool is a second `Palette` plus
-    /// a second output file (see `resourceName` and FTextures.Variant) — NOT a
+    /// a second output file (see `bakes` and FTextures.Variant) — NOT a
     /// second copy of the generator, and never a tint applied at draw time.
     public struct Palette {
         /// The brown showing between fibres (web BASE_R/G/B).
@@ -45,19 +46,38 @@ public enum WoolTexture {
         public let warpR, warpG, warpB: Double
         /// How far a fibre's colour swings with its phase, per channel.
         public let swingR, swingG, swingB: Double
-        /// The tan-XOR plaid boost — what makes the ~1cm chequer blocks read.
-        public let plaid: Double
+        /// The tan-XOR plaid shift — what makes the ~1cm chequer blocks read —
+        /// as a signed PER-CHANNEL delta added to the fibre colour inside a
+        /// block and nothing outside it.
+        ///
+        /// It used to be a single `plaid: Double` applied as (+p, -p, -p/2),
+        /// i.e. hard-wired to swing the blocks toward RED. That is the web's
+        /// look and it is why the light wool's chequer is pink, but it makes
+        /// "the wool red colour becomes green or navy" impossible to express:
+        /// the direction of the shift was a constant of the generator rather
+        /// than a property of the palette. Three signed numbers say the same
+        /// thing with the hue included — `classic` below is the old
+        /// (+100, -100, -50) written out, so the light bake is unchanged to
+        /// the byte.
+        public let plaidR, plaidG, plaidB: Double
+        /// The flat colour a wool surface sits on before the weave is drawn
+        /// (and all it shows if the resource is ever missing). Same contract as
+        /// `WoodTexture.Palette.fallbackHex`: close to the weave's own average
+        /// so a failure is dull, not wrong. NOT a generator input.
+        public let fallbackHex: UInt32
 
         public init(baseR: Double, baseG: Double, baseB: Double,
                     weftR: Double, weftG: Double, weftB: Double,
                     warpR: Double, warpG: Double, warpB: Double,
                     swingR: Double, swingG: Double, swingB: Double,
-                    plaid: Double) {
+                    plaidR: Double, plaidG: Double, plaidB: Double,
+                    fallbackHex: UInt32) {
             self.baseR = baseR; self.baseG = baseG; self.baseB = baseB
             self.weftR = weftR; self.weftG = weftG; self.weftB = weftB
             self.warpR = warpR; self.warpG = warpG; self.warpB = warpB
             self.swingR = swingR; self.swingG = swingG; self.swingB = swingB
-            self.plaid = plaid
+            self.plaidR = plaidR; self.plaidG = plaidG; self.plaidB = plaidB
+            self.fallbackHex = fallbackHex
         }
 
         /// The shipped light wool — the web's numbers, unchanged.
@@ -66,7 +86,73 @@ public enum WoolTexture {
             weftR: 209, weftG: 208, weftB: 183,
             warpR: 189, warpG: 188, warpB: 163,
             swingR: 46, swingG: 45,  swingB: 53,
-            plaid: 100)
+            plaidR: 100, plaidG: -100, plaidB: -50,
+            fallbackHex: 0xF5E6C8)
+
+        // MARK: dark mode
+        //
+        // The owner's brief, verbatim: "Darker wood texture. Wool beige ->
+        // brown, wool red color -> green or navy blue". Two palettes, one for
+        // each offered accent, differing ONLY in the plaid delta — the brown is
+        // the same brown in both, so choosing between them is choosing a hue for
+        // the chequer and nothing else.
+        //
+        // The brown: the light weave's beige (209,208,183) taken down to
+        // (98,66,38) — a walnut, not a tint of the beige, since a merely dimmed
+        // beige reads as grey. The base between fibres (42,26,14) and the swing
+        // both come down in the same ratio (0.47x): the swing is a PERCENTAGE of
+        // the fibre colour in effect, so carrying the light palette's ±46 onto a
+        // 98-bright fibre would double the weave's contrast and read as noise.
+
+        /// Dark wool, GREEN chequer. Block colour lands at ~(52,96,56) — a card
+        /// table's felt, which is why it is the default (`darkAccent`): it is
+        /// the one accent that says "this is where cards get played", and green
+        /// against walnut is the larger hue separation of the two options.
+        public static let darkGreen = Palette(
+            baseR: 42, baseG: 26, baseB: 14,
+            weftR: 98, weftG: 66, weftB: 38,
+            warpR: 88, warpG: 59, warpB: 34,
+            swingR: 22, swingG: 21, swingB: 25,
+            plaidR: -46, plaidG: 30, plaidB: 18,
+            fallbackHex: 0x2A1B0F)
+
+        /// Dark wool, NAVY chequer. Block colour lands at ~(40,58,106). Cooler
+        /// and a step darker than the green, so the board recedes further behind
+        /// the cards; the trade is that it shares no hue with anything else on
+        /// the table, where green at least rhymes with the "said good" check.
+        public static let darkNavy = Palette(
+            baseR: 42, baseG: 26, baseB: 14,
+            weftR: 98, weftG: 66, weftB: 38,
+            warpR: 88, warpG: 59, warpB: 34,
+            swingR: 22, swingG: 21, swingB: 25,
+            plaidR: -58, plaidG: -8, plaidB: 68,
+            fallbackHex: 0x2A1B0F)
+    }
+
+    // MARK: - The dark-accent choice (round-7 dark mode)
+
+    /// Which chequer the dark wool wears. The owner offered green OR navy and
+    /// asked for both, so both are palettes above and both are BAKED into the
+    /// bundle (see `bakes`) — the choice is not a re-bake, it is one line.
+    public enum DarkAccent: String {
+        case green
+        case navy
+    }
+
+    /// ===================================================================
+    /// THE ONE CONSTANT. Change `.green` to `.navy` (or back) and rebuild;
+    /// nothing else in the app, the generators or the resources changes,
+    /// because both weaves are already shipped. This single line picks the
+    /// dark board's chequer hue, its `fallbackHex`, and the file loaded.
+    /// ===================================================================
+    public static let darkAccent: DarkAccent = .green
+
+    /// The dark palette `darkAccent` selects.
+    public static var darkPalette: Palette {
+        switch darkAccent {
+        case .green: return .darkGreen
+        case .navy:  return .darkNavy
+        }
     }
 
     // MARK: - The shipped swatch
@@ -109,9 +195,25 @@ public enum WoolTexture {
     /// widen `w` to 1248 here and re-bake - nothing else changes.
     public static let shippedCrop = (x: 64, y: 16, w: 592, h: 1280)
 
-    /// Base name of the baked image in FoolishKit's bundle. A dark variant
-    /// would be `wool-dark` beside it.
-    public static let resourceName = "wool-classic"
+    /// Base name of the baked LIGHT image in FoolishKit's bundle.
+    public static let classicResourceName = "wool-classic"
+
+    /// Base name of the baked DARK image `darkAccent` selects. Both dark weaves
+    /// are in the bundle; this names the one in use.
+    public static var darkResourceName: String { "wool-dark-\(darkAccent.rawValue)" }
+
+    /// Every weave the build-time tool bakes, as (file base name, palette).
+    ///
+    /// The list lives HERE and not in the tool so that adding a look is one
+    /// entry beside the palette it names — and so the tool stays UIKit-free and
+    /// knows nothing about which of these the app then chooses (that is
+    /// `darkAccent` above and `FTextures.Variant`, both of which need SwiftUI
+    /// and so cannot be seen from the macOS generator).
+    public static let bakes: [(name: String, palette: Palette)] = [
+        (classicResourceName, .classic),
+        ("wool-dark-green", .darkGreen),
+        ("wool-dark-navy", .darkNavy),
+    ]
 
     /// THE magnification, and the only one: how many POINTS one wool texel
     /// occupies, on every surface that shows wool (live board, compact drawer,
@@ -223,10 +325,17 @@ public enum WoolTexture {
                     let zVal = zValue(r)
                     let aInt = Int(floor((r + offX) / blockPx + zVal / 4))
                     let bInt = Int(floor((Double(i % h) + offY) / blockPx))
-                    let red: Double = tan(Double(aInt ^ bInt)) > 0.3 ? palette.plaid : 0
-                    let cr = palette.weftR + palette.swingR * phase + red
-                    let cg = palette.weftG + palette.swingG * phase - red
-                    let cb = palette.weftB + palette.swingB * phase - red / 2
+                    // Inside a chequer block the fibre takes the palette's plaid
+                    // delta; outside it, nothing. (Was `red`/`-red`/`-red/2`,
+                    // i.e. the same three numbers with the hue hard-coded — see
+                    // `Palette.plaidR`.)
+                    let inBlock = tan(Double(aInt ^ bInt)) > 0.3
+                    let pr = inBlock ? palette.plaidR : 0
+                    let pg = inBlock ? palette.plaidG : 0
+                    let pb = inBlock ? palette.plaidB : 0
+                    let cr = palette.weftR + palette.swingR * phase + pr
+                    let cg = palette.weftG + palette.swingG * phase + pg
+                    let cb = palette.weftB + palette.swingB * phase + pb
                     let x = r + dx, y = Double(i % h)
                     if x >= 0, x < Double(w), y >= 0, y < Double(h) { writePixel(x, y, cr, cg, cb, 2) }
                 } else {
@@ -235,11 +344,14 @@ public enum WoolTexture {
                     let zVal = zValue(r)
                     let aInt = Int(floor((r + offY) / blockPx + zVal / 4))
                     let bInt = Int(floor((Double(i % w) + offX) / blockPx))
-                    let red: Double = tan(Double(aInt ^ bInt)) > 0.3 ? palette.plaid : 0
+                    let inBlock = tan(Double(aInt ^ bInt)) > 0.3
+                    let pr = inBlock ? palette.plaidR : 0
+                    let pg = inBlock ? palette.plaidG : 0
+                    let pb = inBlock ? palette.plaidB : 0
                     let dx = 4 * sin(Double(i - 1)) + sin(Double(i) / u) * 4
-                    let cr = palette.warpR + palette.swingR * phase + red
-                    let cg = palette.warpG + palette.swingG * phase - red
-                    let cb = palette.warpB + palette.swingB * phase - red / 2
+                    let cr = palette.warpR + palette.swingR * phase + pr
+                    let cg = palette.warpG + palette.swingG * phase + pg
+                    let cb = palette.warpB + palette.swingB * phase + pb
                     let x = Double(i % w), y = r + dx
                     let pw = 1.4 * (phase + 1.7)
                     if x >= 0, x < Double(w), y >= 0, y < Double(h) { writePixel(x, y, cr, cg, cb, pw) }
