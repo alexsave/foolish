@@ -97,6 +97,16 @@ bool conn_tls_accept(Conn *out, SSL_CTX *ctx, int fd) {
     if (r != 1) { SSL_free(ssl); return false; }
     out->fd = fd;
     out->ssl = ssl;
+    // Fully initialize the Stage 6 buffered-mode fields: this Conn is a real
+    // socket, never a memory sink. Callers stack-allocate `Conn conn;` and only
+    // ever set fd/ssl through us, so leaving buf_out uninitialized lets stack
+    // garbage make conn_read()'s `if (c->buf_out) return -1;` guard fire on the
+    // very first read — a TLS connection that handshakes fine then can't read a
+    // byte (intermittent, stack-layout dependent). conn_init_plain zeroes these;
+    // the TLS path must too.
+    out->buf_out = NULL;
+    out->buf_len = 0;
+    out->buf_cap = 0;
     return true;
 }
 
@@ -109,6 +119,9 @@ bool conn_tls_connect(Conn *out, SSL_CTX *ctx, int fd, const char *sni_hostname)
     if (r != 1) { SSL_free(ssl); return false; }
     out->fd = fd;
     out->ssl = ssl;
+    out->buf_out = NULL;   // see conn_tls_accept: full-init the buffered-mode fields, never a memory sink
+    out->buf_len = 0;
+    out->buf_cap = 0;
     return true;
 }
 
