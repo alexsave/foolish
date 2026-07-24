@@ -80,6 +80,20 @@ foolish_server_asan: foolish_server.c $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC)
 fuzz_client: fuzz_client.c
 	$(CC) $(CFLAGS) $^ -o $@ -lpthread
 
+# sem_fuzz: the SEMANTIC anti-cheat fuzzer. Links the kernel DIRECTLY (no server,
+# no socket — like foolish_hammer but purely in-process) and fuzzes awire_apply,
+# the legality engine, with full ground truth: it deals real games, plays them
+# with bot_drive, and fires well-formed ILLEGAL moves between turns, asserting no
+# card-not-in-hand is ever accepted, card conservation holds, rejects never
+# mutate state, and every enumerated legal move is accepted. See sem_fuzz.c.
+sem_fuzz: sem_fuzz.c $(KERNEL_SRC)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+# ASan/UBSan build of the semantic fuzzer (memory-safety of the legality engine
+# under hostile-but-well-formed moves, on top of the logical invariants).
+sem_fuzz_asan: sem_fuzz.c $(KERNEL_SRC)
+	$(CC) $(ASAN_CFLAGS) $^ -o $@ $(LDFLAGS)
+
 # QUIC/HTTP3/WebTransport build (foolish_server_quic). Adds a UDP/QUIC listener
 # (quic_wt.c) that speaks HTTP/3 + WebTransport onto the SAME in-memory game as
 # the TCP front-end, via game_bridge.h. It links Cloudflare quiche
