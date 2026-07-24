@@ -23,6 +23,11 @@ extension HarnessModel {
     /// The one entry point. Runs to a stable state and returns; nothing here
     /// loops or schedules follow-up work, so the screenshot after it is settled.
     func runScenario(_ name: String) async {
+        // Dev convenience: a fresh sim has no App Group nickname, so every board
+        // scenario would otherwise stall on the NicknameGate. Seed one when empty
+        // (scenarios that specifically test the gate set/clear it themselves after
+        // this). Harness-only.
+        if MessageGameStore.shared.nickname.isEmpty { MessageGameStore.shared.nickname = localName }
         switch name {
 
         // ---- setup / naming ------------------------------------------------

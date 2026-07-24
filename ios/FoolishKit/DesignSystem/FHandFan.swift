@@ -238,6 +238,50 @@ public struct FHandFan: View {
         Self.height(cards: cards, availableWidth: availableWidth, crop: topHalfOnly ? 1 : 0)
     }
 
+    /// The resting SLOT rect of every card in a hand of `cards`, laid out in a
+    /// container `width` wide at collapse `crop` — the SAME geometry `body`
+    /// renders, expressed as a PURE function.
+    ///
+    /// Round-7 ("fix this once and for all"): an overlay flight into the hand
+    /// needs the card's FINAL slot as its landing target. Reading it off the live
+    /// `HandCardFramesKey` fails the moment the make-room is ANIMATING — the row
+    /// re-centres as the present cards slide, so the published frame is a MOVING
+    /// target and the flight lands on a mid-slide spot, then snaps (the "bunch").
+    /// The old cures were to either SNAP the make-room (the "cards jump" the owner
+    /// hated) or SETTLE before flying (the "make-room THEN flight, not together"
+    /// the owner also hated). Computing the final slot here instead lets the
+    /// make-room animate AND the card fly to its true resting place at the SAME
+    /// time. It mirrors `body` exactly: `rowGroups` split, `singleRowCardWidth`,
+    /// the row centred in `width`, the VStack centred in `height(...)`.
+    ///
+    /// Rects are in the container's LOCAL space (origin at its top-leading); the
+    /// caller offsets by the hand's own frame origin in `boardSpace`. `cards` is
+    /// the set the fan actually lays out at that instant (present + whatever this
+    /// step just opened) - the incoming card sits at the END, exactly where the
+    /// fan puts a freshly dealt card, so its slot matches even if the player has
+    /// cosmetically reordered the cards already in hand.
+    public static func slotRects(cards: [Card], width: CGFloat, crop: CGFloat) -> [String: CGRect] {
+        guard width > 0, !cards.isEmpty else { return [:] }
+        let rows = Self.rowGroups(cards, availableWidth: width)
+        let cardW = Self.singleRowCardWidth(count: rows[0].count, availableWidth: width)
+        let cardH = Self.shownCardHeight(crop: crop)
+        let containerH = Self.height(cards: cards, availableWidth: width, crop: crop)
+        let rowN = rows.count
+        let vstackH = CGFloat(rowN) * cardH + CGFloat(max(0, rowN - 1)) * Self.rowGap
+        let vTop = (containerH - vstackH) / 2
+        var out: [String: CGRect] = [:]
+        for (r, row) in rows.enumerated() {
+            let rowW = CGFloat(row.count) * cardW + CGFloat(max(0, row.count - 1)) * Self.gap
+            let rowLeft = (width - rowW) / 2
+            let y = vTop + CGFloat(r) * (cardH + Self.rowGap)
+            for (c, card) in row.enumerated() {
+                out[card.identity] = CGRect(x: rowLeft + CGFloat(c) * (cardW + Self.gap),
+                                            y: y, width: cardW, height: cardH)
+            }
+        }
+        return out
+    }
+
     /// `cards` reordered by the local `order` state: identities still present
     /// keep their relative order from `order`; any identity in `cards` not yet
     /// in `order` (a fresh hand, or a card just dealt in) is appended in

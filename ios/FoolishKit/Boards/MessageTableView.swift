@@ -82,6 +82,11 @@ public struct MessageTableView: View {
     /// measured, instead of building a flight from the centre fallback on the
     /// first paint before the invisible grid has laid out.
     @State private var replayTableIds: Set<String> = []
+    /// The board's live collapse fraction (0 expanded, 1 compact), mirrored from
+    /// `boardContent` so a flight builder - which runs OUTSIDE the geometry reader
+    /// - can compute a hand card's final slot at the current crop (see
+    /// `handLandingSlot`). Updated as the drawer height changes.
+    @State private var currentCollapse: CGFloat = 0
     @State private var deckFrame: CGRect = .zero
     @State private var handCardFrames: [String: CGRect] = [:]
     @State private var seatFrames: [Int: CGRect] = [:]
@@ -238,7 +243,29 @@ public struct MessageTableView: View {
         .onPreferenceChange(DiscardFrameKey.self) { discardFrame = $0 }
         .onPreferenceChange(DeckFrameKey.self) { deckFrame = $0 }
         .onPreferenceChange(SeatFramesKey.self) { seatFrames = $0 }
-        .onPreferenceChange(HandCardFramesKey.self) { handCardFrames = $0 }
+        .onPreferenceChange(HandCardFramesKey.self) {
+            handCardFrames = $0
+            #if DEBUG
+            // slotRects self-check: at rest, the analytical landing slot must
+            // match the MEASURED frame for every hand card, or a flight lands off
+            // and snaps. Silent when they agree; logs the worst delta only when it
+            // exceeds a couple of points, so a geometry drift shows up in the
+            // device trace without spamming a correct build.
+            if let hand = controller.view?.me?.hand, handFrame != .zero, !$0.isEmpty, animator.hidden.isEmpty {
+                let rects = FHandFan.slotRects(cards: hand, width: handFrame.width, crop: currentCollapse)
+                var worst = 0.0, worstId = ""
+                for c in hand {
+                    guard let a = rects[c.identity]?.offsetBy(dx: handFrame.minX, dy: handFrame.minY),
+                          let m = $0[c.identity] else { continue }
+                    let d = max(abs(a.midX - m.midX), abs(a.midY - m.midY))
+                    if d > worst { worst = d; worstId = c.identity }
+                }
+                if worst > 2 {
+                    AnimLog.say("SLOTCHECK MISMATCH n=\(hand.count) worst=\(String(format: "%.1f", worst))pt @\(worstId) collapse=\(String(format: "%.2f", currentCollapse))")
+                }
+            }
+            #endif
+        }
         .onChange(of: controller.view) { flyBoutEndToDiscard(to: $0) }
         .fToast($toast, accent: true)
         .onChange(of: controller.rejectTick) { _ in
@@ -387,16 +414,24 @@ public struct MessageTableView: View {
             // `handSlotDeferred`). Room is reserved off THIS, so an incoming
             // card's width is not reserved until its own flight opens the slot.
             let deferredSlots = handSlotDeferred
-            let laidOutHand = myHand.filter { !deferredSlots.contains($0.identity) }
-            // The hand's ACTUAL on-screen height at this collapse fraction (one
+            // The hand's on-screen height at this collapse fraction (one
             // cropped/uncropped row, or two once M6 splits it). The self-role
             // indicator and action bar float a fixed gap ABOVE this, so driving
-            // their offset off the live height is what makes them descend WITH
-            // the hand as it crops down (bug 4) instead of hanging at a fixed
-            // spot the shrinking hand pulls away from. Reading it off
-            // `FHandFan.height` (not a second constant) keeps it in lockstep
-            // with what the fan actually renders.
-            let handHeight = FHandFan.height(cards: laidOutHand, availableWidth: handWidth, crop: collapse)
+            // their offset off it is what makes them descend WITH the hand as it
+            // crops down (bug 4) instead of hanging at a fixed spot the shrinking
+            // hand pulls away from.
+            //
+            // Round-7 ("buttons should not move"): measured off the FULL `myHand`,
+            // NOT `laidOutHand`. A deal/pickup adds cards that land one at a time
+            // (each `laidOutHand`-visible only once its own flight opens its slot),
+            // so anchoring off `laidOutHand` grew this height card-by-card and the
+            // buttons visibly FLOATED UP as the cards arrived. `myHand` is already
+            // the FINAL hand the instant the move applies, so the buttons sit at
+            // their final spot from the start and the incoming cards fill UP toward
+            // them - the hand makes room, the buttons hold still. Still a pure
+            // function of crop + the final card count, so the compact-drawer
+            // descent (bug 4) is unchanged.
+            let handHeight = FHandFan.height(cards: myHand, availableWidth: handWidth, crop: collapse)
             ZStack {
                 // Battles — dead centre of the board (web: absolute, both axes).
                 battlesArea(view)
@@ -443,12 +478,22 @@ public struct MessageTableView: View {
                 selfRoleIndicator(view)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                     .padding(.bottom, handHeight + 6)
+                    // Round-7 ("buttons should NEVER move"): do not ANIMATE this
+                    // anchor when the hand's height changes. `handHeight` is the
+                    // final hand's height, so a pickup that grows the hand shifts
+                    // this in ONE step - but the board's ambient card spring would
+                    // float that step over ~0.3s (the "floats up after we hit it").
+                    // Nilling the animation for handHeight changes makes it instant,
+                    // so it holds still through the whole deal/pickup (and for the
+                    // common same-row pickup, handHeight doesn't change at all).
+                    .animation(nil, value: handHeight)
 
                 // Action buttons float bottom-right, above the hand (web absolute
                 // bottom:90/right:20). They only appear when a flag enables them.
                 actionBar(view)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                     .padding(.trailing, 4).padding(.bottom, handHeight + 4)
+                    .animation(nil, value: handHeight)   // never float the buttons — see the role mark above
 
                 // My hand hugs the bottom (web: bottom max(10, safe-area)); the
                 // outer .padding(12) is the safe-area inset that keeps it unclipped.
@@ -485,6 +530,10 @@ public struct MessageTableView: View {
                     dragHint(view).position(x: at.x, y: at.y)
                 }
             }
+            // Mirror the live collapse fraction out to a flight builder, which runs
+            // outside this reader and needs it to compute a hand card's final slot.
+            .onChange(of: collapse) { currentCollapse = $0 }
+            .onAppear { currentCollapse = collapse }
         }
     }
 
@@ -677,9 +726,18 @@ public struct MessageTableView: View {
                 // pickup/discard flights read those rects and start from the
                 // laid-out table, not a bunched centre. Empty on the live board.
                 if !replayPreBattles.isEmpty {
+                    // `hidden: replayTableIds` - ALWAYS opacity 0, not just while
+                    // veiled. This grid exists ONLY to publish each card's on-table
+                    // rect; the overlay ghost is what the viewer actually sees fly.
+                    // Keying its opacity off `veiledCardIds` (as an earlier pass
+                    // did) let a card RE-APPEAR on the table the instant its flight
+                    // un-veiled it - then vanish when the grid cleared - which is
+                    // the opponent-pickup "flies to their hand, pops back on the
+                    // table, then pops out" the owner saw. Held hidden throughout,
+                    // it only ever measures.
                     FBattleGrid(battles: replayPreBattles, trumpSuit: view.trumpSuit,
-                                namespace: cardNS, hidden: veiledCardIds,
-                                flyingNow: animator.hidden.subtracting(animator.preHidden))
+                                namespace: cardNS, hidden: replayTableIds,
+                                flyingNow: [])
                 } else {
                     // Empty table: render nothing (web parity). A "no battle" label
                     // just tells the player what they can already see (owner's call).
@@ -1017,24 +1075,15 @@ public struct MessageTableView: View {
                 // cut NOW (this step, not the sequence's start) so my present cards
                 // shift exactly as the deal arrives, never seconds early (bug 10).
                 //
-                // LIVE vs OPEN-REPLAY split (round-7 "cards jump to make room"):
-                //  - LIVE: ANIMATE the make-room so the present cards SLIDE over to
-                //    let the deal in, rather than snapping to their final width in
-                //    one frame (the "jump" the owner called out). Matched to the
-                //    flight's own curve/duration so the fan opens as the card flies
-                //    into the gap.
-                //  - OPEN-REPLAY: SNAP (no animation). A cold first open builds its
-                //    draw flight off the landing slot's frame the instant it
-                //    publishes; an ANIMATED slot would still be mid-slide then, so
-                //    the draw would fly to a moving, half-open spot and "bunch then
-                //    ungroup" (the first-open bug). Snapping publishes each card's
-                //    FINAL slot at once, so a reopened draw lands dead on.
-                if openReplay {
+                // Round-7 ("it should be at the same TIME"): ANIMATE the make-room
+                // (present cards SLIDE over to let the new card in, no snap/"jump")
+                // and let the flight run at the SAME time. There is no settle now:
+                // the flight targets the card's ANALYTICAL final slot
+                // (handLandingSlot), so it lands correctly WHILE the row is still
+                // sliding - the make-room and the arrival play together, which is
+                // exactly what "the same time" asks for. Same in live and replay.
+                withAnimation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime)) {
                     self.animator.openSlots(landing)
-                } else {
-                    withAnimation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime)) {
-                        self.animator.openSlots(landing)
-                    }
                 }
             }
             // Round-7: the DECK count drops as the cards LEAVE the deck (they start
@@ -1189,13 +1238,12 @@ public struct MessageTableView: View {
         return out
     }
 
-    private func myDrawFlights(_ cards: [Card], lastChance: Bool = false) -> [Flight]? {
+    private func myDrawFlights(_ cards: [Card], laidOut: [Card], lastChance: Bool = false) -> [Flight]? {
         if cards.isEmpty { return [] }
-        guard deckFrame != .zero else { return nil }
-        let allReady = cards.allSatisfy { handCardFrames[$0.identity] != nil }
-        if !allReady && !lastChance { return nil }        // keep polling for the real slots
+        guard deckFrame != .zero, handFrame != .zero else { return nil }
         return cards.enumerated().compactMap { i, c in
-            (handCardFrames[c.identity] ?? handApproxLanding(index: i, of: cards.count))
+            (handLandingSlot(c, laidOut: laidOut) ?? handCardFrames[c.identity]
+                ?? handApproxLanding(index: i, of: cards.count))
                 .map { Flight(id: "draw-\(c.identity)", card: c, from: deckFrame, to: $0) }
         }
     }
@@ -1210,6 +1258,33 @@ public struct MessageTableView: View {
         guard handFrame != .zero, count > 0 else { return nil }
         let x = handFrame.minX + handFrame.width * (CGFloat(index) + 0.5) / CGFloat(count)
         return CGRect(x: x - 25, y: handFrame.midY - 35, width: 50, height: 70)
+    }
+
+    /// Round-7 ("at the same time"): a card's FINAL resting slot in the hand, in
+    /// `boardSpace`, computed analytically (FHandFan.slotRects) rather than read
+    /// off the live `handCardFrames`. THIS is what lets the make-room ANIMATE and
+    /// the card fly to its true place SIMULTANEOUSLY: the published frame is a
+    /// moving target while the row re-centres, but the analytical slot is the
+    /// settled one from the first instant. `laidOut` is the set the fan lays out
+    /// right now (present cards + whatever this step just opened), so the incoming
+    /// card sits at the end exactly where the fan will drop it. nil only before
+    /// the hand frame has been measured at all (then the caller falls back to the
+    /// live frame / a rough spread).
+    private func handLandingSlot(_ card: Card, laidOut: [Card]) -> CGRect? {
+        guard handFrame != .zero else { return nil }
+        let rects = FHandFan.slotRects(cards: laidOut, width: handFrame.width, crop: currentCollapse)
+        guard let local = rects[card.identity] else { return nil }
+        return local.offsetBy(dx: handFrame.minX, dy: handFrame.minY)
+    }
+
+    /// The hand cards the fan actually lays out at this instant: the whole hand
+    /// minus any deal still deferring its slot (the same rule `boardContent` uses
+    /// for `laidOutHand`, recomputed here for the flight builders). The incoming
+    /// card whose flight is playing now is NOT deferred (its slot is open), so it
+    /// is included - which is why `handLandingSlot` can find it.
+    private func laidOutHandNow(_ view: GameView) -> [Card] {
+        let deferred = handSlotDeferred
+        return (view.me?.hand ?? []).filter { !deferred.contains($0.identity) }
     }
 
 
@@ -1357,11 +1432,14 @@ public struct MessageTableView: View {
             if mine {
                 let cards = ev.cards.compactMap { $0 }
                 if cards.isEmpty { return [] }
-                guard deckFrame != .zero else { return nil }
-                let allReady = cards.allSatisfy { handCardFrames[$0.identity] != nil }
-                if !allReady && !lastChance { return nil }        // keep polling for the real slots
+                guard deckFrame != .zero, handFrame != .zero else { return nil }
+                // Fly to each card's ANALYTICAL final slot so the make-room can
+                // animate at the same time (handLandingSlot); no wait for a live
+                // frame that is still mid-slide.
+                let laid = laidOutHandNow(view)
                 return cards.enumerated().compactMap { i, c in
-                    (handCardFrames[c.identity] ?? handApproxLanding(index: i, of: cards.count)).map {
+                    (handLandingSlot(c, laidOut: laid) ?? handCardFrames[c.identity]
+                        ?? handApproxLanding(index: i, of: cards.count)).map {
                         Flight(id: "opendraw-\(c.identity)", card: c, from: deckFrame, to: $0) } }
             }
             guard let badge = seatFrames[ev.seat], badge != .zero, deckFrame != .zero else { return nil }
@@ -1382,19 +1460,19 @@ public struct MessageTableView: View {
             let cards = ev.cards.compactMap { $0 }
             if mine {
                 if cards.isEmpty { return [] }
-                let allReady = cards.allSatisfy { handCardFrames[$0.identity] != nil }
-                if !allReady && !lastChance { return nil }
+                guard handFrame != .zero else { return nil }
                 // Round-7 (replay bunch): wait for the invisible pre-bout grid to
                 // publish each card's real slot before flying, so a reopened
                 // pickup starts from the laid-out table, not the centre fallback.
                 if !tableSourceReady(cards) && !lastChance { return nil }
-                // Round-7 (pickup bunch): fly each card from its OWN table rect, not
-                // a shared centre - the ghost then covers the real card as it fades
-                // and each card travels to my hand individually, instead of the
-                // cards piling up in the middle and flying as a fading clump.
+                // Fly each card from its OWN table rect (so the ghost covers the
+                // real card) to its ANALYTICAL final hand slot (so the make-room
+                // animates at the SAME time, no mid-slide target).
+                let laid = laidOutHandNow(view)
                 return cards.enumerated().compactMap { i, c in
                     guard let from = tableCardSource(c, fallbackIndex: i) else { return nil }
-                    return (handCardFrames[c.identity] ?? handApproxLanding(index: i, of: cards.count)).map {
+                    return (handLandingSlot(c, laidOut: laid) ?? handCardFrames[c.identity]
+                        ?? handApproxLanding(index: i, of: cards.count)).map {
                         Flight(id: "openpick-\(c.identity)", card: c, from: from, to: $0) } }
             }
             guard let badge = seatFrames[ev.seat], badge != .zero else { return nil }
@@ -1508,9 +1586,11 @@ public struct MessageTableView: View {
                     // animation) so the frames are final at once and each dealt card
                     // flies to its own slot instead of a bunched mid-spread spot.
                     self.animator.openSlots(ids)
-                    // A beat for the snapped layout to publish its slot frames.
+                    // A beat for the opened layout to publish, then fly each card to
+                    // its analytical final slot (handLandingSlot, via myDrawFlights).
                     try? await Task.sleep(nanoseconds: 100_000_000)
-                    await playStep { lastChance in self.myDrawFlights(hand, lastChance: lastChance) }
+                    await playStep { lastChance in
+                        self.myDrawFlights(hand, laidOut: self.laidOutHandNow(view), lastChance: lastChance) }
                     if view.isOver, mySeq == animSequenceToken { settleResults() }
                 }
                 return

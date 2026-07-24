@@ -119,4 +119,63 @@ final class Round5BoardTests: XCTestCase {
                           FHandFan.height(cards: hand(15), availableWidth: 340),
                           "…but must be shorter than a hand that actually splits into two rows")
     }
+
+    // MARK: slotRects — the analytical landing slot a flight targets (round-7)
+
+    /// Two cards in a 300pt row, uncropped: centred, 52pt wide, 72 tall, sitting
+    /// 4pt down (the 8pt of row padding, halved by the centred VStack). These are
+    /// the exact numbers `body` renders, so a flight aimed at `slotRects` lands
+    /// dead on the real card - which is the whole point (no mid-slide bunch).
+    func testSlotRectsTwoCardsAreCentredAndExact() {
+        let cards = hand(2)
+        let r = FHandFan.slotRects(cards: cards, width: 300, crop: 0)
+        XCTAssertEqual(r.count, 2)
+        let a = r[cards[0].identity]!, b = r[cards[1].identity]!
+        XCTAssertEqual(a, CGRect(x: 96, y: 4, width: 52, height: 72))
+        XCTAssertEqual(b, CGRect(x: 152, y: 4, width: 52, height: 72))
+        // Symmetric about the container centre.
+        XCTAssertEqual((a.midX + b.midX) / 2, 150, accuracy: 0.01)
+    }
+
+    /// One card is centred horizontally in the container.
+    func testSlotRectsSingleCardCentred() {
+        let cards = hand(1)
+        let r = FHandFan.slotRects(cards: cards, width: 300, crop: 0)[cards[0].identity]!
+        XCTAssertEqual(r.midX, 150, accuracy: 0.01)
+        XCTAssertEqual(r.height, 72)
+    }
+
+    /// A hand that splits into two rows: the FIRST row gets the ceil, both rows
+    /// are vertically stacked (row 1 sits a full row+gap below row 0), and every
+    /// card gets a slot. The container height matches `FHandFan.height` exactly.
+    func testSlotRectsTwoRowsStackAndCoverEveryCard() {
+        // 15 DISTINCT cards (hand(_) above repeats identities past 12, which the
+        // slot dict would dedupe - fine for count-only tests, wrong here).
+        let cards = (0..<15).map { Card(s: $0 / 13, v: $0 % 13 + 1) }
+        let width: CGFloat = 340
+        let r = FHandFan.slotRects(cards: cards, width: width, crop: 0)
+        XCTAssertEqual(r.count, 15, "every card has a slot")
+        // 15 cards -> 8 up top, 7 below (ceil on odd). The 9th card (first of the
+        // bottom row) sits a full card-height + rowGap below the 1st.
+        let topY = r[cards[0].identity]!.minY
+        let botY = r[cards[8].identity]!.minY
+        XCTAssertGreaterThan(botY - topY, 72, "the second row is a full row below the first")
+        // Slots stay inside the reserved container height.
+        let h = FHandFan.height(cards: cards, availableWidth: width, crop: 0)
+        for c in cards {
+            let rect = r[c.identity]!
+            XCTAssertGreaterThanOrEqual(rect.minY, 0)
+            XCTAssertLessThanOrEqual(rect.maxY, h + 0.01, "slot fits within the reserved height")
+        }
+    }
+
+    /// Cropping (the compact drawer) shortens each slot the same way the fan
+    /// crops its cards, so a flight into a collapsed hand still lands true.
+    func testSlotRectsShrinkUnderCrop() {
+        let cards = hand(3)
+        let full = FHandFan.slotRects(cards: cards, width: 300, crop: 0)[cards[0].identity]!
+        let crop = FHandFan.slotRects(cards: cards, width: 300, crop: 1)[cards[0].identity]!
+        XCTAssertEqual(full.height, 72)
+        XCTAssertEqual(crop.height, 36, "top-half crop halves the slot height")
+    }
 }

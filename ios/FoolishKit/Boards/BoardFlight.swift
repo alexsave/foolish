@@ -178,6 +178,7 @@ public final class BoardAnimator: ObservableObject {
     /// this set the moment its OWN step actually plays it; `clearPreHidden`
     /// is the safety net for anything predicted but never consumed.
     public func preHide(_ ids: Set<String>) {
+        AnimLog.say("veil preHide [\(ids.sorted().joined(separator: ","))]")
         preHidden.formUnion(ids)
         hidden.formUnion(ids)
     }
@@ -192,6 +193,7 @@ public final class BoardAnimator: ObservableObject {
     /// fan makes room over the flight rather than jumping. A no-op for ids not
     /// currently predicted.
     public func openSlots(_ ids: Set<String>) {
+        AnimLog.say("veil openSlots [\(ids.sorted().joined(separator: ","))] (make room, still hidden)")
         preHidden.subtract(ids)
     }
 
@@ -203,6 +205,8 @@ public final class BoardAnimator: ObservableObject {
     /// has pre-hidden but not yet flown (the bug-9 double animation). A no-op
     /// for ids that are not hidden, so it is safe to call as a blanket net.
     public func reveal(_ ids: Set<String>) {
+        let shown = ids.filter { hidden.contains($0) }
+        if !shown.isEmpty { AnimLog.say("veil reveal (pop IN) [\(shown.sorted().joined(separator: ","))]") }
         preHidden.subtract(ids)
         hidden.subtract(ids)
     }
@@ -212,6 +216,7 @@ public final class BoardAnimator: ObservableObject {
     /// that never got consumed (e.g. a frame that never became ready) cannot
     /// leave a card invisible forever.
     public func clearPreHidden() {
+        if !preHidden.isEmpty { AnimLog.say("veil clearPreHidden (pop IN) [\(preHidden.sorted().joined(separator: ","))]") }
         hidden.subtract(preHidden)
         preHidden.removeAll()
     }
@@ -221,6 +226,7 @@ public final class BoardAnimator: ObservableObject {
             isAnimating = true
             flights = step
             let ids = Set(step.compactMap { $0.card?.identity })
+            AnimLog.say("flight START [\(step.map { f in "\(f.card?.identity ?? "back"):\(Int(f.from.midX)),\(Int(f.from.midY))->\(Int(f.to.midX)),\(Int(f.to.midY))" }.joined(separator: " "))]")
             preHidden.subtract(ids)          // these are now this step's OWN hidden cards
             hidden = preHidden.union(ids)
             progress = 0
@@ -231,6 +237,7 @@ public final class BoardAnimator: ObservableObject {
             }
             try? await Task.sleep(nanoseconds: UInt64(flightTime * 1_000_000_000))
             try? await Task.sleep(nanoseconds: UInt64(flightGap * 1_000_000_000))
+            AnimLog.say("flight LAND (pop IN at dest) [\(ids.sorted().joined(separator: ","))]")
         }
         // Un-hide this call's own step ids, but leave any OTHER pending
         // pre-hidden cards (for a step not yet reached) hidden.
