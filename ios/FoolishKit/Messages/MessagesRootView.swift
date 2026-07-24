@@ -750,12 +750,10 @@ private struct NewGameSetup: View {
             // Round-6 #17: `onWoolText` (Tokens.swift) is the wool half of
             // the wood/wool text pairing, thickened per the owner's ask.
             Text(FStrings.t("ios.msg.newgame")).font(.headline).onWoolText()
-            VStack(alignment: .leading, spacing: 4) {
-                // Round-5 M10: full-opacity ink + a light shadow, not 55%
-                // black on the busy wool weave (see DamagedView's sweep note).
-                Text(FStrings.t("ios.msg.yourname")).font(.footnote).onWoolText()
-                TextField(FStrings.t("ios.msg.nickname_ph"), text: $nickname).textFieldStyle(.roundedBorder)
-            }
+            // Round-7 #1: the "Your name" label is dropped - the field's own
+            // "your nickname" placeholder already says what it is, and the two
+            // together were redundant. The placeholder carries it alone now.
+            TextField(FStrings.t("ios.msg.nickname_ph"), text: $nickname).textFieldStyle(.roundedBorder)
             switch nameVerdict {
             case .ok(let name):
                 FButton(FStrings.t("ios.msg.creategame"), kind: .wood) { onStart(name) }

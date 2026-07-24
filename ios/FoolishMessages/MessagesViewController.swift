@@ -216,8 +216,12 @@ final class MessagesViewController: MSMessagesAppViewController {
         // previews as its roster, everything else as the public table. Shared
         // with the harness's transcript so a preview can never disagree with the
         // extension (see BubbleSnapshot.render(env:)).
+        // Round-7 #3: bake the bubble in THIS device's scheme so a dark-mode
+        // sender's bubble is dark. traitCollection is the extension's live
+        // appearance; map it onto SwiftUI's ColorScheme for BubbleSnapshot.
+        let scheme: ColorScheme = traitCollection.userInterfaceStyle == .dark ? .dark : .light
         var image: UIImage?
-        if let env { image = await BubbleSnapshot.render(env: env) }
+        if let env { image = await BubbleSnapshot.render(env: env, scheme: scheme) }
 
         // §12, revised by batch 6 item B: the FINISHED bubble stays a normal /m/
         // payload link, NOT `MessageEnvelope.replayLink`'s bare foolish.cards/<code>.

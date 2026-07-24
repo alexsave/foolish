@@ -94,8 +94,18 @@ public struct MessageBoardView: View {
                         .padding(.bottom, 6)
                 }
             }
-            .padding(8)
         }
+        // Round-7 #4: the 8pt inset lives OUTSIDE the GeometryReader, not on the
+        // ZStack inside it. With it inside, `geo.size` was the FULL bubble while
+        // the ZStack's content was 16pt narrower, so `ringPoint(in: geo.size)`
+        // placed the seat badges against the full width (centre at width/2) while
+        // FBattleGrid centred inside the padded width (centre at (width-16)/2) -
+        // the badges landed 8pt right of the battle cluster, which is the bubble
+        // card "not centered" report. Padding the GeometryReader instead makes
+        // `geo.size` the padded size, so the ring and the centred battles share
+        // one coordinate space and line up. (MessageTableView never had this: it
+        // centres everything in one unpadded `geo.size`.)
+        .padding(8)
     }
 
     /// Seat centre on the 35% ellipse (web PlayerRing). Public snapshot has no

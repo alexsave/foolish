@@ -45,14 +45,21 @@ public enum BubbleSnapshot {
     /// bubble image. Returns nil only if the renderer fails. MainActor because
     /// ImageRenderer walks a live SwiftUI view.
     @MainActor
-    public static func render(publicView: GameView, names: [Int: String] = [:]) -> UIImage? {
+    public static func render(publicView: GameView, names: [Int: String] = [:],
+                              scheme: ColorScheme = .light) -> UIImage? {
         let content = ZStack {
             FColor.fallback
             Self.wool
             MessageBoardView(view: publicView, names: names)
         }
         .frame(width: size.width, height: size.height)
-        .environment(\.colorScheme, .light)   // the balloon image is theme-independent
+        // Round-7 #3: the bubble follows the SENDER's scheme ("bubble display
+        // didn't pick up on the dark mode?"). It is baked at send time, so the
+        // only scheme available is this device's - a dark-mode sender's bubble
+        // is dark, and a recipient in the opposite scheme sees it as sent (like
+        // any screenshot). `scheme` propagates to the wool, the cards and the
+        // text treatments through the environment, so the whole image agrees.
+        .environment(\.colorScheme, scheme)
         // Round-5 M4's clamp: ImageRenderer walks whatever accessibility text
         // size the HOST app is currently at, not a neutral default — an
         // AX-XXXL host would blow the board's card faces out of the 300×195
@@ -73,7 +80,7 @@ public enum BubbleSnapshot {
     /// lobby while its own staged preview showed a played game. This draws what
     /// the human is actually looking at: the lobby roster, on the same wool.
     @MainActor
-    public static func renderLobby(joinedNames: [String]) -> UIImage? {
+    public static func renderLobby(joinedNames: [String], scheme: ColorScheme = .light) -> UIImage? {
         let content = ZStack {
             FColor.fallback
             Self.wool
@@ -103,7 +110,7 @@ public enum BubbleSnapshot {
             .padding()
         }
         .frame(width: size.width, height: size.height)
-        .environment(\.colorScheme, .light)   // theme-independent, like the board bubble
+        .environment(\.colorScheme, scheme)   // follows the sender's scheme (round-7 #3)
         // Round-5 M4's clamp — see the twin comment in `render(publicView:)`
         // above; the lobby roster names must not blow out of the balloon
         // either.
@@ -127,12 +134,13 @@ public enum BubbleSnapshot {
     /// sealed or decoded `env`'s payload (both do). Nil if there is nothing to
     /// render.
     @MainActor
-    public static func render(env: MessageEnvelope) async -> UIImage? {
+    public static func render(env: MessageEnvelope, scheme: ColorScheme = .light) async -> UIImage? {
         if env.phase == 0 {
-            return renderLobby(joinedNames: env.joins.sorted { $0.seat < $1.seat }.map(\.name))
+            return renderLobby(joinedNames: env.joins.sorted { $0.seat < $1.seat }.map(\.name),
+                               scheme: scheme)
         }
         guard let publicView = await MessageKernel.shared.residentView(viewer: -1) else { return nil }
         let names = Dictionary(env.joins.map { ($0.seat, $0.name) }, uniquingKeysWith: { a, _ in a })
-        return render(publicView: publicView, names: names)
+        return render(publicView: publicView, names: names, scheme: scheme)
     }
 }

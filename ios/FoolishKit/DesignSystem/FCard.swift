@@ -48,6 +48,13 @@ public struct FCard: View {
     private static let redSuit = Color(hex: 0xDC2626)
     private static let blackSuit = Color(hex: 0x0A0A0A)
     private static let selRed = Color(hex: 0xE0201C)
+    /// Round-7 #3: the dark-mode outline. The owner's round-6 spec said white;
+    /// round-7 revised it to "dark gray". Deliberately darker than the dark
+    /// wool field (~0x5D5D62) so a black card still has a visible edge against
+    /// the board, and lighter than the 0x0A0A0A face so the outline reads at
+    /// all - a gray that matched either surface would erase one of the two
+    /// edges. Tunable in one place if it wants nudging.
+    private static let darkBorder = Color(hex: 0x3E3E44)
 
     /// The three colours a card face is made of, as ONE value per scheme.
     ///
@@ -67,7 +74,7 @@ public struct FCard: View {
         static let light = Ink(face: FCard.faceWhite, red: FCard.redSuit,
                                black: FCard.blackSuit, border: FCard.blackSuit)
         static let dark = Ink(face: FCard.blackSuit, red: Color(hex: 0xEF4444),
-                              black: .white, border: .white)
+                              black: .white, border: FCard.darkBorder)
     }
 
     private var ink: Ink { scheme == .dark ? .dark : .light }

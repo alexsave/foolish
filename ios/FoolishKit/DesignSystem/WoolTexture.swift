@@ -91,42 +91,40 @@ public enum WoolTexture {
 
         // MARK: dark mode
         //
-        // The owner's brief, verbatim: "Darker wood texture. Wool beige ->
-        // brown, wool red color -> green or navy blue". Two palettes, one for
-        // each offered accent, differing ONLY in the plaid delta — the brown is
-        // the same brown in both, so choosing between them is choosing a hue for
-        // the chequer and nothing else.
+        // The owner's round-6 brief said "wool beige -> brown"; round-7 revised
+        // it to DARK GREY ("instead of brown wool in the dark mode, let's do a
+        // dark gray") with a NAVY chequer ("the navy looks better, let's go with
+        // that"). So the fibre is now a neutral grey, not a walnut, and navy is
+        // the shipped `darkAccent`. Both palettes share the one grey field and
+        // differ ONLY in the plaid delta, so green-vs-navy stays a one-line flip.
         //
-        // The brown: the light weave's beige (209,208,183) taken down to
-        // (98,66,38) — a walnut, not a tint of the beige, since a merely dimmed
-        // beige reads as grey. The base between fibres (42,26,14) and the swing
-        // both come down in the same ratio (0.47x): the swing is a PERCENTAGE of
-        // the fibre colour in effect, so carrying the light palette's ±46 onto a
-        // 98-bright fibre would double the weave's contrast and read as noise.
+        // The grey: a near-neutral (R≈G≈B) fibre at ~(93,93,98), deliberately
+        // NOT a dimmed beige (which reads as brown) - it is a genuine grey wool.
+        // The base between fibres (37,37,40) and the swing come down in the same
+        // ratio, so the weave's contrast matches the light palette's rather than
+        // doubling into noise.
 
-        /// Dark wool, GREEN chequer. Block colour lands at ~(52,96,56) — a card
-        /// table's felt, which is why it is the default (`darkAccent`): it is
-        /// the one accent that says "this is where cards get played", and green
-        /// against walnut is the larger hue separation of the two options.
+        /// Dark wool, GREEN chequer (the alternate). Block colour lands at
+        /// ~(57,105,60), a card-table felt. Kept baked so `darkAccent` can flip
+        /// to it without a re-bake, but navy is what ships.
         public static let darkGreen = Palette(
-            baseR: 42, baseG: 26, baseB: 14,
-            weftR: 98, weftG: 66, weftB: 38,
-            warpR: 88, warpG: 59, warpB: 34,
-            swingR: 22, swingG: 21, swingB: 25,
-            plaidR: -46, plaidG: 30, plaidB: 18,
-            fallbackHex: 0x2A1B0F)
+            baseR: 37, baseG: 37, baseB: 40,
+            weftR: 93, weftG: 93, weftB: 98,
+            warpR: 83, warpG: 83, warpB: 88,
+            swingR: 20, swingG: 20, swingB: 22,
+            plaidR: -36, plaidG: 12, plaidB: -38,
+            fallbackHex: 0x2E2F33)
 
-        /// Dark wool, NAVY chequer. Block colour lands at ~(40,58,106). Cooler
-        /// and a step darker than the green, so the board recedes further behind
-        /// the cards; the trade is that it shares no hue with anything else on
-        /// the table, where green at least rhymes with the "said good" check.
+        /// Dark wool, NAVY chequer — the shipped default (`darkAccent`). Block
+        /// colour lands at ~(47,63,124): a cool navy sitting on the neutral grey
+        /// field, which is the round-7 look the owner chose.
         public static let darkNavy = Palette(
-            baseR: 42, baseG: 26, baseB: 14,
-            weftR: 98, weftG: 66, weftB: 38,
-            warpR: 88, warpG: 59, warpB: 34,
-            swingR: 22, swingG: 21, swingB: 25,
-            plaidR: -58, plaidG: -8, plaidB: 68,
-            fallbackHex: 0x2A1B0F)
+            baseR: 37, baseG: 37, baseB: 40,
+            weftR: 93, weftG: 93, weftB: 98,
+            warpR: 83, warpG: 83, warpB: 88,
+            swingR: 20, swingG: 20, swingB: 22,
+            plaidR: -46, plaidG: -30, plaidB: 26,
+            fallbackHex: 0x2E2F33)
     }
 
     // MARK: - The dark-accent choice (round-7 dark mode)
@@ -145,7 +143,7 @@ public enum WoolTexture {
     /// because both weaves are already shipped. This single line picks the
     /// dark board's chequer hue, its `fallbackHex`, and the file loaded.
     /// ===================================================================
-    public static let darkAccent: DarkAccent = .green
+    public static let darkAccent: DarkAccent = .navy
 
     /// The dark palette `darkAccent` selects.
     public static var darkPalette: Palette {
