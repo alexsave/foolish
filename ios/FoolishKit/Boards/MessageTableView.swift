@@ -1654,10 +1654,13 @@ struct FGameOverList: View {
     var body: some View {
         // Title + ranking sit at the TOP; New game is pinned to the bottom.
         VStack(spacing: 14) {
+            // Round-6 #17: this title sits on the plain wool (it is ABOVE the
+            // wood plank, not on it), so it takes the wool half of the
+            // text-on-a-surface pairing - thick black ink, not the bone/dark-
+            // shadow combo it used to carry (that combo was tuned for wood).
             Text(FStrings.t("game_over"))
-                .font(.title2.weight(.bold))
-                .foregroundStyle(FColor.textPrimary)
-                .shadow(color: .black.opacity(0.6), radius: 3, y: 1)
+                .font(.title2)
+                .onWoolText()
             // ONE continuous wood plank behind the whole ranking (no dividers):
             // WoodFill is a ZStack LAYER (not a .background, which over-drew and
             // made the plank too tall), hard-clipped to exactly rows × rowH so it
@@ -1679,17 +1682,19 @@ struct FGameOverList: View {
                             // things on the screen (the review's own M10 reading).
                             // Owner's call after seeing it: "just make it white
                             // for #1 and Fool. If it's thick enough text, it
-                            // looks fine on the wood background." So the weight
-                            // (.heavy) plus the shadow does the separating, and
-                            // colour does none of it.
+                            // looks fine on the wood background." Round-6 #17
+                            // promoted that exact treatment to `onWoodText`
+                            // (Tokens.swift) — used here for both columns, since
+                            // the name column was ALSO plain text on the same
+                            // wood plank and used to fight the rank column with
+                            // dark instead of light text.
                             Text(row.isFool ? FStrings.t("ios.fool") : "#\(row.place)")
-                                .font(.headline.weight(.heavy)).monospacedDigit()
-                                .foregroundStyle(.white)
-                                .shadow(color: .black.opacity(0.5), radius: 1, y: 1)
+                                .font(.headline).monospacedDigit()
+                                .onWoodText()
                                 .frame(width: 56, alignment: .leading)
                             Text(row.name + (row.isYou ? " (\(FStrings.t("ios.you")))" : ""))
-                                .font(.body.weight(.semibold))
-                                .foregroundStyle(.black.opacity(0.88))
+                                .font(.body)
+                                .onWoodText()
                                 .lineLimit(1)
                             Spacer(minLength: 0)
                         }

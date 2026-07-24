@@ -135,7 +135,10 @@ public enum FStrings {
             "ios.msg.joininvite": "Foolish - tap to join",
             "ios.msg.invite": "Send invite",
             "ios.msg.nickname_ph": "your nickname",
-            "ios.msg.entername": "enter nickname",
+            // Round-6 #18: the owner wrote it "Enter Nickname" - Title Case,
+            // unlike this file's usual sentence case ("Create game") - so this
+            // ONE string breaks the convention on purpose. Leave the rest alone.
+            "ios.msg.entername": "Enter Nickname",
             "ios.msg.nametoolong": "nickname too long",
             "ios.a11y.attackfirst": "You attack first",
             "ios.a11y.defending": "Defending",
@@ -224,7 +227,10 @@ public enum FStrings {
             "ios.msg.joininvite": "Дурак - нажмите, чтобы присоединиться",
             "ios.msg.invite": "Отправить приглашение",
             "ios.msg.nickname_ph": "ваш ник",
-            "ios.msg.entername": "введите ник",
+            // Round-6 #18: capitalised to match the English "Enter Nickname" -
+            // only the first letter, per Russian convention (title-casing every
+            // word would be wrong here).
+            "ios.msg.entername": "Введите ник",
             "ios.msg.nametoolong": "слишком длинный ник",
             "ios.a11y.attackfirst": "Вы ходите первым",
             "ios.a11y.defending": "Защищается",

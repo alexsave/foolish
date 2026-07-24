@@ -80,3 +80,36 @@ extension Color {
         self.init(.sRGB, red: r, green: g, blue: b, opacity: alpha)
     }
 }
+
+// MARK: - Text on a surface (round-6 #17)
+//
+// Two textures, two treatments — the owner's exact words: "The thicker white
+// text we use for the ranks is good. Use it everywhere we put text on wood.
+// Thicker black text over wool though." The "ranks" are the game-over rank
+// column (MessageTableView.FGameOverList): `.heavy` weight, flat white, a
+// dark drop shadow. `onWoodText` lifts that treatment out to every wood
+// surface; `onWoolText` is its wool mirror — round-5 M10 already worked out
+// that dark ink on the lighter wool weave wants a LIGHT shadow, the inverse
+// of wood's dark one, or the shadow adds nothing. Round-6 only asked for more
+// WEIGHT on top of that pairing, so weight is the one thing both share.
+public extension View {
+    /// Text sitting directly on `WoodFill` — wooden buttons, the game-over
+    /// plank, any wood-surfaced control. `dimmed` is round-6 #19's disabled
+    /// state: NOT reduced opacity on the whole control (that let the wool
+    /// behind a disabled button show straight through it), just a lighter
+    /// ink on an otherwise fully opaque surface.
+    func onWoodText(dimmed: Bool = false) -> some View {
+        self.fontWeight(.heavy)
+            .foregroundStyle(dimmed ? Color.white.opacity(0.55) : .white)
+            .shadow(color: .black.opacity(dimmed ? 0.3 : 0.5), radius: 1, y: 1)
+    }
+
+    /// Text sitting directly on the wool weave (`WoolBackground` / `WoolWeave`
+    /// / the bubble snapshot's own wool crop) — labels, headlines, captions.
+    /// `dimmed` mirrors `onWoodText`'s disabled case.
+    func onWoolText(dimmed: Bool = false) -> some View {
+        self.fontWeight(.heavy)
+            .foregroundStyle(dimmed ? FColor.ink.opacity(0.55) : FColor.ink)
+            .shadow(color: .white.opacity(dimmed ? 0.3 : 0.5), radius: 2)
+    }
+}

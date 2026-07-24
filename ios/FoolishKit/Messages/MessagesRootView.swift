@@ -209,9 +209,9 @@ private struct GameSurface: View {
                 // Round-5 M10: full-opacity ink + a LIGHT shadow, not 55%
                 // black — the busy wool weave has no fixed-opacity foreground
                 // that survives it (see the sweep note on DamagedView below).
+                // Round-6 #17 added the weight: `onWoolText` (Tokens.swift).
                 Text(FStrings.t("ios.msg.spectating"))
-                    .font(.footnote).foregroundStyle(FColor.ink)
-                    .shadow(color: .white.opacity(0.5), radius: 2)
+                    .font(.footnote).onWoolText()
                     .multilineTextAlignment(.center).padding(.horizontal).padding(.bottom, 8)
             }
         } else if damaged {
@@ -747,12 +747,13 @@ private struct NewGameSetup: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            Text(FStrings.t("ios.msg.newgame")).font(.headline).foregroundStyle(FColor.ink)
+            // Round-6 #17: `onWoolText` (Tokens.swift) is the wool half of
+            // the wood/wool text pairing, thickened per the owner's ask.
+            Text(FStrings.t("ios.msg.newgame")).font(.headline).onWoolText()
             VStack(alignment: .leading, spacing: 4) {
                 // Round-5 M10: full-opacity ink + a light shadow, not 55%
                 // black on the busy wool weave (see DamagedView's sweep note).
-                Text(FStrings.t("ios.msg.yourname")).font(.footnote).foregroundStyle(FColor.ink)
-                    .shadow(color: .white.opacity(0.5), radius: 2)
+                Text(FStrings.t("ios.msg.yourname")).font(.footnote).onWoolText()
                 TextField(FStrings.t("ios.msg.nickname_ph"), text: $nickname).textFieldStyle(.roundedBorder)
             }
             switch nameVerdict {
@@ -898,7 +899,8 @@ private struct LobbyView: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            Text(FStrings.t("ios.lobby")).font(.headline).foregroundStyle(FColor.ink)
+            // Round-6 #17: `onWoolText` (Tokens.swift).
+            Text(FStrings.t("ios.lobby")).font(.headline).onWoolText()
             // Joined players only — never env.nPlayers rows: an open lobby has
             // no "open seat" placeholders, because there is no fixed seat count
             // to fill (note 19/25's whole point, unchanged by v3).
@@ -906,11 +908,11 @@ private struct LobbyView: View {
                 ForEach(env.joins.sorted { $0.seat < $1.seat }, id: \.seat) { j in
                     HStack {
                         // Round-5 M10: full-opacity ink + a light shadow, not
-                        // 55% black (see DamagedView's sweep note).
-                        Text("\(j.seat + 1).").foregroundStyle(FColor.ink)
-                            .shadow(color: .white.opacity(0.5), radius: 2).monospacedDigit()
+                        // 55% black (see DamagedView's sweep note). Round-6
+                        // #17 thickened both columns, not just the seat number.
+                        Text("\(j.seat + 1).").onWoolText().monospacedDigit()
                         Text(j.name + (j.seat == mySeat ? " (\(FStrings.t("ios.you")))" : ""))
-                            .foregroundStyle(FColor.ink)
+                            .onWoolText()
                         Spacer()
                     }
                 }
@@ -966,10 +968,10 @@ private struct LobbyView: View {
                 // or my own join/re-staged invite in a lobby that still has
                 // room (M9) — so there is nothing to send, and no Start,
                 // that isn't already mine to wait out. Round-5 M10:
-                // full-opacity ink + a light shadow, not 55% black.
+                // full-opacity ink + a light shadow, not 55% black. Round-6
+                // #17: `onWoolText` (Tokens.swift).
                 Text(FStrings.t("ios.msg.waiting"))
-                    .font(.footnote).foregroundStyle(FColor.ink)
-                    .shadow(color: .white.opacity(0.5), radius: 2)
+                    .font(.footnote).onWoolText()
             case .invite:
                     // I'm in, nobody else is yet. This branch used to render
                     // NOTHING — no Start (needs 2), no Join (I'm joined), no
@@ -984,9 +986,8 @@ private struct LobbyView: View {
                     // bubble is still sitting in the compose field, so it comes
                     // back HERE and only here: re-stage the same WAITING chain
                     // so there is always a way to ask someone to join.
-                    Text(FStrings.t("ios.msg.waiting"))    // round-5 M10: see .waiting above
-                        .font(.footnote).foregroundStyle(FColor.ink)
-                        .shadow(color: .white.opacity(0.5), radius: 2)
+                    Text(FStrings.t("ios.msg.waiting"))    // round-5 M10 / round-6 #17: see .waiting above
+                        .font(.footnote).onWoolText()
                     FButton(FStrings.t("ios.msg.invite"), kind: .wood, action: onInvite)
             case .join:
                 // Same width as the buttons below (note 29) — both rely on the
@@ -1004,9 +1005,9 @@ private struct LobbyView: View {
                     FButton(FStrings.t("ios.msg.nametoolong"), kind: .wood, enabled: false) {}
                 }
             case .full:
-                // Round-5 M10: full-opacity ink + a light shadow, not 55% black.
-                Text(FStrings.t("ios.msg.lobbyfull")).font(.footnote).foregroundStyle(FColor.ink)
-                    .shadow(color: .white.opacity(0.5), radius: 2)
+                // Round-5 M10: full-opacity ink + a light shadow, not 55%
+                // black. Round-6 #17: `onWoolText` (Tokens.swift).
+                Text(FStrings.t("ios.msg.lobbyfull")).font(.footnote).onWoolText()
             }
     }
 
@@ -1056,8 +1057,9 @@ private struct NameGateView: View {
 
     var body: some View {
         VStack(spacing: 16) {
+            // Round-6 #17: `onWoolText` (Tokens.swift).
             Text(FStrings.t("ios.msg.nameprompt")).font(.headline)
-                .foregroundStyle(FColor.ink).multilineTextAlignment(.center)
+                .onWoolText().multilineTextAlignment(.center)
             // No extra .padding(.horizontal) here — the field and the button below
             // both rely solely on the VStack's outer .padding() so they render the
             // same width (note 29; the field used to be inset twice, making it
@@ -1094,7 +1096,8 @@ private struct SeatPicker: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            Text(FStrings.t("ios.msg.pickseat")).font(.headline).foregroundStyle(FColor.ink)
+            // Round-6 #17: `onWoolText` (Tokens.swift).
+            Text(FStrings.t("ios.msg.pickseat")).font(.headline).onWoolText()
             ForEach(0..<nPlayers, id: \.self) { seat in
                 FButton(label(seat), kind: .secondary) { onPick(seat) }
             }
@@ -1156,15 +1159,15 @@ private struct DamagedView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            Text("Foolish").font(.headline).foregroundStyle(FColor.ink)
+            // Round-6 #17: `onWoolText` (Tokens.swift).
+            Text("Foolish").font(.headline).onWoolText()
             // Round-5 M10: full-opacity ink + a light shadow, not 55% black —
             // the busy wool weave has no fixed-opacity foreground that
             // survives it (M10's fix, applied throughout this file, mirrors
-            // the ONE string that already got it right: "Game over"'s BONE
-            // text on WOOD uses a DARK shadow; ink text on the lighter wool
-            // needs the inverse, a LIGHT one).
-            Text(FStrings.t("ios.msg.damaged")).font(.footnote).foregroundStyle(FColor.ink)
-                .shadow(color: .white.opacity(0.5), radius: 2)
+            // the plank rank column's BONE text on WOOD, which uses a DARK
+            // shadow; ink text on the lighter wool needs the inverse, a LIGHT
+            // one). Round-6 #17 added the weight both treatments share.
+            Text(FStrings.t("ios.msg.damaged")).font(.footnote).onWoolText()
                 .multilineTextAlignment(.center).padding(.horizontal)
             FButton(FStrings.t("ios.msg.newgame"), kind: .wood, action: onNewGame)
         }

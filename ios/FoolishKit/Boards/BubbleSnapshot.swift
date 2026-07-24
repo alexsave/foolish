@@ -78,12 +78,14 @@ public enum BubbleSnapshot {
             FColor.fallback
             Self.wool
             VStack(spacing: 6) {
+                // Round-6 #17: `onWoolText` (Tokens.swift) - thick ink, since
+                // this whole card is drawn straight on `Self.wool` above.
                 Text(FStrings.t("ios.lobby"))
-                    .font(.headline).fontWeight(.bold).foregroundStyle(FColor.ink)
+                    .font(.headline).onWoolText()
                 VStack(spacing: 3) {
                     ForEach(Array(joinedNames.enumerated()), id: \.offset) { i, name in
                         Text("\(i + 1). \(name)")
-                            .font(.subheadline).foregroundStyle(FColor.ink)
+                            .font(.subheadline).onWoolText()
                             .lineLimit(1)
                     }
                 }
@@ -92,10 +94,10 @@ public enum BubbleSnapshot {
                 // exists elsewhere ("Game over" at full-opacity + a real
                 // shadow) not yet applied here. Full-opacity FColor.ink (dark
                 // text) takes a LIGHT shadow, not a dark one — a dark shadow
-                // under dark text on a light-ish weave adds nothing.
+                // under dark text on a light-ish weave adds nothing. Round-6
+                // #17 added the weight `onWoolText` now carries.
                 Text(FStrings.t("ios.msg.joininvite"))
-                    .font(.caption).foregroundStyle(FColor.ink)
-                    .shadow(color: .white.opacity(0.5), radius: 2)
+                    .font(.caption).onWoolText()
                     .padding(.top, 2)
             }
             .padding()
