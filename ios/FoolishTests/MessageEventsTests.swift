@@ -207,4 +207,101 @@ final class MessageEventsTests: XCTestCase {
         }
         XCTFail("no 2p deal in 80 tries produced an attack the defender could cover")
     }
+
+    /// Round-7 (replay bunch): a reopened pickup/discard must reconstruct the
+    /// pre-bout TABLE so the board can lay it out (invisibly) and fly each swept
+    /// card from its real slot instead of a shared centre. `openReplayPreBattles`
+    /// is that table. For a PICKUP it is one uncovered slot per picked-up card
+    /// (the pickup step's own cards - the kernel never masks a pickup); for a
+    /// DISCARD it is the full covered table the trash step swept.
+    ///
+    /// Mutation guard: assert it is NON-EMPTY and names the RIGHT cards, so a
+    /// regression back to "no pre-battles" (every card bunches at centre) fails
+    /// here rather than only on a device.
+    func testOpenReplayReconstructsThePreBoutTableForAPickup() async throws {
+        // Seat A attacks, seat B (defender) picks it up, then B sends. Reopening
+        // B's bubble as EITHER seat must reconstruct the picked-up card as one
+        // uncovered battle.
+        for salt in UInt8(1)...UInt8(80) {
+            let k = MessageKernel.shared
+            var creator: MessageTurnController?
+            for s2 in UInt8(0)...UInt8(40) {
+                let c = MessageTurnController(genesisSeed: freshSeed(salt &+ s2), players: 2,
+                                              gameId: 91, myNickname: "A")
+                await c.begin()
+                if c.legal.contains(where: { $0.type == .attack }) { creator = c; break }
+            }
+            guard let a = creator, let atk = a.legal.first(where: { $0.type == .attack })
+            else { continue }
+            await a.apply(atk)
+            let p0 = try await a.stagedPayload()
+            let e0 = try await MessageEnvelope.decode(payload: p0, viewer: -1)
+
+            let b = MessageTurnController(parentPayload: p0, parent: e0, mySeat: 1)
+            await b.begin()
+            guard let pick = b.legal.first(where: { $0.type == .pickup }) else { continue }
+            // The card on the table now (the attack) is what the pickup sweeps.
+            let tableCard = try XCTUnwrap(b.view?.battles.first?.attack)
+            await b.apply(pick)
+            let p1 = try await b.stagedPayload()
+            let e1 = try await MessageEnvelope.decode(payload: p1, viewer: -1)
+
+            let reopen = MessageTurnController(parentPayload: p1, parent: e1, mySeat: 0)
+            await reopen.begin()
+            let pre = reopen.openReplayPreBattles
+            XCTAssertFalse(pre.isEmpty, "a reopened pickup must reconstruct the pre-bout table")
+            XCTAssertTrue(pre.contains { $0.attack == tableCard },
+                          "the picked-up card must be one of the reconstructed slots")
+            XCTAssertTrue(pre.allSatisfy { $0.defense == nil },
+                          "a pickup lays each card in its own UNCOVERED slot")
+            return
+        }
+        XCTFail("no 2p deal in 80 tries produced an attack the defender could pick up")
+    }
+
+    func testOpenReplayReconstructsThePreBoutTableForADiscard() async throws {
+        for salt in UInt8(1)...UInt8(120) {
+            let k = MessageKernel.shared
+            var creator: MessageTurnController?
+            for s2 in UInt8(0)...UInt8(40) {
+                let c = MessageTurnController(genesisSeed: freshSeed(salt &+ s2), players: 2,
+                                              gameId: 92, myNickname: "A")
+                await c.begin()
+                if c.legal.contains(where: { $0.type == .attack }) { creator = c; break }
+            }
+            guard let a = creator, let atk = a.legal.first(where: { $0.type == .attack })
+            else { continue }
+            await a.apply(atk)
+            let p0 = try await a.stagedPayload()
+            let e0 = try await MessageEnvelope.decode(payload: p0, viewer: -1)
+
+            let b = MessageTurnController(parentPayload: p0, parent: e0, mySeat: 1)
+            await b.begin()
+            guard let cov = b.legal.first(where: { $0.type == .cover }) else { continue }
+            let covered = try XCTUnwrap(b.view?.battles.first?.attack)
+            await b.apply(cov)
+            let coverCard = try XCTUnwrap(b.view?.battles.first?.defense)
+            let p1 = try await b.stagedPayload()
+            let e1 = try await MessageEnvelope.decode(payload: p1, viewer: -1)
+
+            // Seat A now says good -> the covered table is swept to the discard.
+            let a2 = MessageTurnController(parentPayload: p1, parent: e1, mySeat: 0)
+            await a2.begin()
+            guard let good = a2.legal.first(where: { $0.type == .good }) else { continue }
+            await a2.apply(good)
+            let p2 = try await a2.stagedPayload()
+            let e2 = try await MessageEnvelope.decode(payload: p2, viewer: -1)
+
+            let reopen = MessageTurnController(parentPayload: p2, parent: e2, mySeat: 1)
+            await reopen.begin()
+            let pre = reopen.openReplayPreBattles
+            guard reopen.openReplayEvents.contains(where: { $0.kind == .discard || $0.kind == .cardsToTrash })
+            else { continue }
+            XCTAssertFalse(pre.isEmpty, "a reopened discard must reconstruct the pre-bout table")
+            XCTAssertTrue(pre.contains { $0.attack == covered && $0.defense == coverCard },
+                          "the swept table must carry the covered attack+defense pair, not a bare list")
+            return
+        }
+        XCTFail("no 2p deal in 120 tries produced a clean covered defence to discard")
+    }
 }

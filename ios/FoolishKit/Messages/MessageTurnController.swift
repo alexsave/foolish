@@ -65,6 +65,43 @@ public final class MessageTurnController: ObservableObject {
         return ids
     }
 
+    /// The pre-bout TABLE for a bout-ending open-replay (a pickup or discard),
+    /// so the board can lay it out (invisibly) and measure each card's real slot
+    /// - making the reopened sweep START from the cards laid out on the table and
+    /// fly off it, exactly like watching it live. Without this the pre-bout table
+    /// is never rendered on open (`view` is already the cleared board), so every
+    /// swept card falls back to one shared board-centre point and they bunch into
+    /// a "grouped up" clump before flying (the owner's screenshots). Empty for a
+    /// non-bout-end replay (an attack/cover: those cards are still ON the table in
+    /// `view`, so they measure themselves).
+    ///
+    /// Two shapes, matching where the kernel's own event stream keeps the table:
+    ///  - discard / trash: the masked `state.battles` carried by the step just
+    ///    BEFORE the trash step. A clean defence's turn is grouped from the last
+    ///    cover, whose committed board still shows the full covered table
+    ///    (verified in MessageEventsTests: the cover/magic steps carry the
+    ///    battles, the cardsToTrash step carries the emptied table).
+    ///  - pickup: a single-action turn carries no earlier table snapshot, but the
+    ///    pickup step's OWN cards ARE the table cards (the kernel never masks a
+    ///    pickup, so every viewer gets real identities); lay each in its own
+    ///    uncovered slot. This is exactly how the web reconstructs a pickup's
+    ///    table for the same animation (AnimationContext: one battle per card).
+    public var openReplayPreBattles: [BattleView] {
+        let evs = openReplayEvents
+        guard let bi = evs.firstIndex(where: {
+            $0.kind == .discard || $0.kind == .cardsToTrash || $0.kind == .pickup
+        }) else { return [] }
+        if evs[bi].kind == .pickup {
+            return evs[bi].cards.compactMap { $0 }.map { BattleView(attack: $0, defense: nil) }
+        }
+        // discard / trash: walk back from the trash step to the last board that
+        // still had cards on the table - that is the table about to be swept.
+        for i in stride(from: bi, through: 0, by: -1) {
+            if let b = evs[i].state?.battles, !b.isEmpty { return b }
+        }
+        return []
+    }
+
     public let mySeat: Int
     public let names: [Int: String]
 

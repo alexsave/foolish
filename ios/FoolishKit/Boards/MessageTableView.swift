@@ -67,6 +67,21 @@ public struct MessageTableView: View {
     /// kept at its last non-empty value so a bout-end discard sweep can fly each
     /// trashed card from exactly where it sat, not a shared table centroid.
     @State private var lastBattleCardFrames: [String: CGRect] = [:]
+    /// Round-7 (replay bunch): the pre-bout TABLE a bout-ending open-replay is
+    /// about to sweep (from `controller.openReplayPreBattles`). While non-empty
+    /// and `view.battles` is empty, the board lays THESE out in the battle area -
+    /// veiled to opacity 0 like every other in-flight card, so nothing is drawn,
+    /// but FBattleGrid still publishes each card's real on-table rect into
+    /// `lastBattleCardFrames`. The pickup/discard flights then fly each card from
+    /// its own measured slot, so the reopened sweep starts from the laid-out
+    /// table exactly like the live one instead of a shared centre (the "grouped
+    /// up" bunch). Set as the replay stream begins, cleared as it ends.
+    @State private var replayPreBattles: [BattleView] = []
+    /// The identities `replayPreBattles` will publish frames for - so a bout-end
+    /// flight can POLL (via `playStep`) until its source slot has actually been
+    /// measured, instead of building a flight from the centre fallback on the
+    /// first paint before the invisible grid has laid out.
+    @State private var replayTableIds: Set<String> = []
     @State private var deckFrame: CGRect = .zero
     @State private var handCardFrames: [String: CGRect] = [:]
     @State private var seatFrames: [Int: CGRect] = [:]
@@ -653,9 +668,23 @@ public struct MessageTableView: View {
     private func battlesArea(_ view: GameView) -> some View {
         Group {
             if view.battles.isEmpty {
-                // Empty table: render nothing (web parity). A "no battle" label just
-                // tells the player what they can already see (owner's call).
-                Color.clear
+                // Round-7 (replay bunch): a bout-ending open-replay clears the
+                // table before it renders, so `view.battles` is empty the whole
+                // time - but the sweep still needs each swept card's real slot to
+                // fly FROM. Lay the reconstructed pre-bout table out here, veiled
+                // (every card is in `veiledCardIds`, so opacity 0 - nothing shows)
+                // purely so FBattleGrid publishes each card's on-table rect; the
+                // pickup/discard flights read those rects and start from the
+                // laid-out table, not a bunched centre. Empty on the live board.
+                if !replayPreBattles.isEmpty {
+                    FBattleGrid(battles: replayPreBattles, trumpSuit: view.trumpSuit,
+                                namespace: cardNS, hidden: veiledCardIds,
+                                flyingNow: animator.hidden.subtracting(animator.preHidden))
+                } else {
+                    // Empty table: render nothing (web parity). A "no battle" label
+                    // just tells the player what they can already see (owner's call).
+                    Color.clear
+                }
             } else {
                 // note 34: a pass preview shows the ghost slot instead of a cover
                 // highlight — the card that would get passed isn't being covered,
@@ -921,6 +950,11 @@ public struct MessageTableView: View {
             if mySeq == animSequenceToken {
                 deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
                 animator.clearPreHidden()
+                // Round-7 (replay bunch): the swept table has finished flying, so
+                // stop laying out the invisible pre-bout grid (its measurement job
+                // is done). Harmless if it lingered - it is veiled - but clearing
+                // it keeps `lastBattleCardFrames` honest for the next live bout.
+                if openReplay { replayPreBattles = []; replayTableIds = [] }
                 let stuck = openedThisSeq.filter { animator.isHidden($0) }
                 if !stuck.isEmpty {
                     AnimLog.say("stream#\(run) rescue-reveal \(stuck.count) opened-but-unflown [\(stuck.sorted().joined(separator: ","))]")
@@ -979,23 +1013,37 @@ public struct MessageTableView: View {
             let landing = self.myHandLandingIds(ev)
             if !landing.isEmpty {
                 openedThisSeq.formUnion(landing)   // rescue set — see the teardown defer
+                // Open the fan for this step's incoming card(s). The make-room is
+                // cut NOW (this step, not the sequence's start) so my present cards
+                // shift exactly as the deal arrives, never seconds early (bug 10).
+                //
+                // LIVE vs OPEN-REPLAY split (round-7 "cards jump to make room"):
+                //  - LIVE: ANIMATE the make-room so the present cards SLIDE over to
+                //    let the deal in, rather than snapping to their final width in
+                //    one frame (the "jump" the owner called out). Matched to the
+                //    flight's own curve/duration so the fan opens as the card flies
+                //    into the gap.
+                //  - OPEN-REPLAY: SNAP (no animation). A cold first open builds its
+                //    draw flight off the landing slot's frame the instant it
+                //    publishes; an ANIMATED slot would still be mid-slide then, so
+                //    the draw would fly to a moving, half-open spot and "bunch then
+                //    ungroup" (the first-open bug). Snapping publishes each card's
+                //    FINAL slot at once, so a reopened draw lands dead on.
                 if openReplay {
-                    // First open (round-7 first-open bunch): the whole hand is
-                    // appearing fresh anyway, so SNAP the slots open (no animation).
-                    // The incoming cards' landing frames are then FINAL immediately,
-                    // so the draw flies each card to its own correct slot - instead
-                    // of to a mid-animation, still-collapsing position where they
-                    // pile up and then "spontaneously ungroup" as the fan finishes
-                    // spreading. A warm reload never saw this because its layout was
-                    // already settled; snapping makes the cold first open match it.
                     self.animator.openSlots(landing)
                 } else {
-                    // Live: the hand is already on screen, so make room for the deal
-                    // UNDER a spring (round-6 bug 10) rather than jumping.
                     withAnimation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime)) {
                         self.animator.openSlots(landing)
                     }
                 }
+            }
+            // Round-7: the DECK count drops as the cards LEAVE the deck (they start
+            // flying NOW), not when they land - a full deck with cards visibly
+            // flying out of it reads wrong. Deck only, and only for deck-sourced
+            // draws; the discard pile and seat badges still tick up when THEIR cards
+            // arrive (the per-step advance after the flight, below).
+            if let s = ev.state, ev.kind == .deal || ev.kind == .refill {
+                deckCountOverride = s.deckCount
             }
             await playStep { lastChance in
                 let f = self.openReplayFlights(ev, view: view, lastChance: lastChance)
@@ -1245,6 +1293,34 @@ public struct MessageTableView: View {
         return (rect, tilt)
     }
 
+    /// Round-7 (pickup bunch): where a card currently on the table ACTUALLY sits -
+    /// its own per-card rect, published live by FBattleGrid (`lastBattleCardFrames`).
+    /// Used by BOTH bout-end sweeps, pickup AND discard, so each card flies from its
+    /// own position and the overlay ghost spawns on top of the real card (masking
+    /// its fade) instead of every card sharing one table centroid where they pile up
+    /// into a "grouped up" stack that then fades in at the middle. Falls back to the
+    /// tilt reconstruction, then a staggered centre, only for a card that never
+    /// rendered on the table (a cover that ended the bout in the same apply, so its
+    /// slot was never laid out).
+    private func tableCardSource(_ card: Card, fallbackIndex i: Int) -> CGRect? {
+        if let rect = lastBattleCardFrames[card.identity] { return rect }
+        if let src = discardSource(for: card) { return src.rect }
+        guard let center = approximateTableCenter() else { return nil }
+        return center.offsetBy(dx: CGFloat(i) * 6, dy: CGFloat(i) * 4)
+    }
+
+    /// Round-7 (replay bunch): are the on-table SOURCE slots for these swept
+    /// cards measured yet? On an open-replay the pre-bout table is laid out
+    /// invisibly (`replayPreBattles`) a paint after the stream starts, so a
+    /// bout-end flight built on the very first poll would read the centre
+    /// fallback and bunch. Gate the build on this (except on the final poll,
+    /// `lastChance`, where a rough centre still beats a card that never flies).
+    /// Cards NOT in `replayTableIds` (the live board, or an opponent whose cards
+    /// aren't reconstructed) never block - they were never going to publish here.
+    private func tableSourceReady(_ cards: [Card]) -> Bool {
+        cards.allSatisfy { !replayTableIds.contains($0.identity) || lastBattleCardFrames[$0.identity] != nil }
+    }
+
     /// One open-replay event's flights, straight from the KERNEL's evwire stream
     /// (a GameEvent). The event ALREADY carries viewer-correct cards - my own
     /// draws/pickups as real identities, opponents' as nil (a back) - so unlike
@@ -1303,28 +1379,40 @@ public struct MessageTableView: View {
             // same reason). The kernel agrees: evwire masks DEAL/REFILL, never
             // PICKUP, so `ev.cards` carries real identities to every viewer -
             // this branch was throwing them away.
-            guard let center = approximateTableCenter() else { return nil }
             let cards = ev.cards.compactMap { $0 }
             if mine {
                 if cards.isEmpty { return [] }
                 let allReady = cards.allSatisfy { handCardFrames[$0.identity] != nil }
                 if !allReady && !lastChance { return nil }
+                // Round-7 (replay bunch): wait for the invisible pre-bout grid to
+                // publish each card's real slot before flying, so a reopened
+                // pickup starts from the laid-out table, not the centre fallback.
+                if !tableSourceReady(cards) && !lastChance { return nil }
+                // Round-7 (pickup bunch): fly each card from its OWN table rect, not
+                // a shared centre - the ghost then covers the real card as it fades
+                // and each card travels to my hand individually, instead of the
+                // cards piling up in the middle and flying as a fading clump.
                 return cards.enumerated().compactMap { i, c in
-                    (handCardFrames[c.identity] ?? handApproxLanding(index: i, of: cards.count)).map {
-                        Flight(id: "openpick-\(c.identity)", card: c, from: center, to: $0) } }
+                    guard let from = tableCardSource(c, fallbackIndex: i) else { return nil }
+                    return (handCardFrames[c.identity] ?? handApproxLanding(index: i, of: cards.count)).map {
+                        Flight(id: "openpick-\(c.identity)", card: c, from: from, to: $0) } }
             }
             guard let badge = seatFrames[ev.seat], badge != .zero else { return nil }
             if cards.isEmpty {
                 // Only if the kernel really did withhold them (it doesn't today).
+                guard let center = approximateTableCenter() else { return nil }
                 let n = max(ev.cards.count, 1)
                 return (0..<n).map { k in
                     Flight(id: "openpick-\(ev.seat)-\(k)", card: nil, from: center,
                           to: badge.offsetBy(dx: CGFloat(k) * 3, dy: 0)) }
             }
-            return cards.enumerated().map { i, c in
-                Flight(id: "openpick-\(ev.seat)-\(c.identity)", card: c,
-                       from: center.offsetBy(dx: CGFloat(i) * 6, dy: CGFloat(i) * 4),
-                       to: badge.offsetBy(dx: CGFloat(i) * 3, dy: 0)) }
+            // Opponent pickup: each face-up card sweeps from its own table rect to
+            // their badge (same per-card source as mine, so wait for it to publish).
+            if !tableSourceReady(cards) && !lastChance { return nil }
+            return cards.enumerated().compactMap { i, c in
+                guard let from = tableCardSource(c, fallbackIndex: i) else { return nil }
+                return Flight(id: "openpick-\(ev.seat)-\(c.identity)", card: c, from: from,
+                              to: badge.offsetBy(dx: CGFloat(i) * 3, dy: 0)) }
 
         case .discard, .cardsToTrash:
             // Table -> discard. Discard cards are public (the kernel does not mask
@@ -1339,6 +1427,10 @@ public struct MessageTableView: View {
                 return (0..<n).map { i in
                     Flight(id: "opendiscard-\(ev.type)-\(i)", card: nil, from: center, to: discardFrame) }
             }
+            // Round-7 (replay bunch): wait for the invisible pre-bout grid to
+            // publish the trashed cards' real slots, so a reopened discard sweeps
+            // each card off the laid-out table instead of the centre fallback.
+            if !tableSourceReady(cards) && !lastChance { return nil }
             // Round-7 #2 ("just make them fly to discard - the simpler solution is
             // better"): each trashed card flies from its OWN real on-table rect
             // (`lastBattleCardFrames`, published per card by FBattleGrid), so the
@@ -1450,9 +1542,21 @@ public struct MessageTableView: View {
         for (seat, c) in pre.hand where seat != controller.mySeat { counts[seat] = c }
         seatCountOverride = counts
 
+        // Round-7 (replay bunch): the pre-bout table this open sweeps (a pickup or
+        // discard). Rendered invisibly by `battlesArea` so each swept card's real
+        // slot is measured before its flight builds - see `replayPreBattles`. Set
+        // BEFORE the stream starts so the grid lays out on the next paint, in time
+        // for playStep's poll to find the frames. Empty for a plain attack/cover
+        // replay (those cards are still on the table in `view`).
+        let preBattles = controller.openReplayPreBattles
+        replayPreBattles = preBattles
+        replayTableIds = Set(preBattles.flatMap { b -> [String] in
+            [b.attack.identity] + (b.defense.map { [$0.identity] } ?? [])
+        })
+
         // The SAME animator the live bout-end uses - one path, the kernel's events.
-        // `openReplay: true` snaps the fan open (final frames at once) so a COLD
-        // first open flies each drawn card to its correct slot instead of bunching.
+        // `openReplay: true` opens the fan for a COLD first open so each drawn card
+        // flies to its correct slot instead of bunching.
         Task { await runEventStream(events, finalView: view, openReplay: true) }
     }
 
@@ -1502,7 +1606,24 @@ public struct MessageTableView: View {
             // Selection-aware: with cards selected, the defender's Take and the
             // attacker's Good must disappear — a stray tap on either while mid-
             // selection would abandon the cards you'd picked (web parity TODO).
-            canPickup: acting && has(.pickup) && cards.isEmpty,
+            //
+            // Round-7 (pickup availability): Take must stay available to the
+            // defender even once EVERY attack is covered, matching the web
+            // (ActionButtons `rawPickup = isDefending && table_battles.length > 0`
+            // - it does NOT consult the kernel's legal menu). The kernel's `legal`
+            // stops LISTING pickup there (it becomes the attacker's turn to throw
+            // or say good), but it still ACCEPTS a defender pickup in that state -
+            // taking your own covered table is a legal surrender - so gating on
+            // `has(.pickup)`/`acting` (both false once the menu empties) wrongly
+            // HID the button. Gate on the web's OWN condition: I am the defender
+            // and there are cards on the table (plus the existing no-selection
+            // rule, so a stray tap can't abandon a picked selection). Deliberately
+            // NOT gated on `!canSend`: covering auto-stages, so the "all covered"
+            // state the owner means is exactly a staged one - Take has to survive
+            // it (undo + take both offered, like the web keeps Take through a
+            // defence). The move is one the kernel takes, so it never rejects.
+            canPickup: defending && !view.battles.isEmpty
+                && cards.isEmpty && !(view.me?.isOut ?? false),
             canDone: acting && CardPlay.canSayGood(battles: view.battles, legal: controller.legal) && cards.isEmpty,
             canUndo: controller.canSend,
             onAttack: { playAt(.table, cards, view) },
@@ -1566,7 +1687,6 @@ public struct MessageTableView: View {
         if let payload = try? await controller.stagedPayload() { await onSend(payload) }
     }
 
-    private func has(_ type: MoveType) -> Bool { controller.legal.contains { $0.type == type } }
 
     // Dumb selection; CardPlay resolves (selection, target) into one legal move,
     // exactly like the app's TableView (both read the kernel menu, never a rule).
