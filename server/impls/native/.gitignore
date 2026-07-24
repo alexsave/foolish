@@ -3,6 +3,13 @@ foolish_server_prof
 foolish_hammer
 *.o
 
+# AddressSanitizer/UBSan server build + the adversarial fuzz client
+# (fuzz_client.c). Both are local-only dev/test binaries — the source is
+# tracked, the compiled artifacts are not. See the foolish_server_asan and
+# fuzz_client targets in the Makefile.
+foolish_server_asan
+fuzz_client
+
 # QUIC/HTTP3/WebTransport build (foolish_server_quic — quic_wt.c). The binary
 # statically links libquiche.a (~tens of MB) and is never tracked. `quiche/`
 # is the local quiche FFI build (libquiche.a + quiche.h) the Makefile's

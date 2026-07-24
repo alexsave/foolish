@@ -64,6 +64,22 @@ PROF_CFLAGS := -g -fno-omit-frame-pointer -O2 -ffast-math -Wall -Wextra \
 foolish_server_prof: foolish_server.c $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC)
 	$(CC) $(PROF_CFLAGS) $^ -o $@ $(LDFLAGS) $(SQLITE_LDFLAGS) $(TLS_LDFLAGS)
 
+# AddressSanitizer + UBSan build, for fuzzing the server (fuzz_client.c): catches
+# heap/stack overflows, use-after-free, and undefined behavior even when they
+# don't crash outright. -O1 (not -O2/-ffast-math) so reports point at real
+# lines. See fuzz_client.c and fuzz_test.sh.
+ASAN_CFLAGS := -fsanitize=address,undefined -fno-omit-frame-pointer -g -O1 \
+               -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations \
+               -I$(KDIR)/src -DACCELERATE_NEW_LAPACK -DCD_LEAFBOOK
+foolish_server_asan: foolish_server.c $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC)
+	$(CC) $(ASAN_CFLAGS) $^ -o $@ $(LDFLAGS) $(SQLITE_LDFLAGS) $(TLS_LDFLAGS)
+
+# The adversarial fuzz client: hammers the server with malformed HTTP, junk
+# signups, forged tokens, meta abuse, binary action garbage, seat attacks, and
+# malformed WebSocket frames — trying to crash, corrupt, or bypass it.
+fuzz_client: fuzz_client.c
+	$(CC) $(CFLAGS) $^ -o $@ -lpthread
+
 # QUIC/HTTP3/WebTransport build (foolish_server_quic). Adds a UDP/QUIC listener
 # (quic_wt.c) that speaks HTTP/3 + WebTransport onto the SAME in-memory game as
 # the TCP front-end, via game_bridge.h. It links Cloudflare quiche
