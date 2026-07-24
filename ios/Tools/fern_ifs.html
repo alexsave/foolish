@@ -1,20 +1,28 @@
 <meta charset="utf-8">
-<title>Fern IFS — procedural card-back lab</title>
+<title>Fern IFS — the real card-back fern (faithful port of fernFractal.tsx)</title>
 <!--
-  Fern IFS lab — the SEPARATE twin of acanthus_damask.html, for the ORIGINAL
-  fern the app already ships (ios/FoolishKit/DesignSystem/FernCardBack.swift):
-  a Barnsley-style iterated function system (4 affine transforms + weights)
-  plotted as dots on a red field with a gold border. This lab exposes every
-  coefficient live so the fern can be reshaped, then ported back into
-  FernCardBack.render (the math is 1:1 - the transforms below map exactly onto
-  its `Affine`/`weights`, and the fit onto its scaleX/scaleY/originX/originY).
+  Fern IFS lab. This is a FAITHFUL port of the web's src/utils/fernFractal.tsx
+  (generateFernPattern) - the finely tuned card-back fern, NOT the crude 4-map
+  slice ios/FoolishKit/DesignSystem/FernCardBack.swift ships. The real thing has:
+    * SIX generators: f1..f4 affine PLUS circle1/circle2 (randomPointInCircle) -
+      the red / bronze BULB-DOTS that FernCardBack dropped ("v1's single-material
+      port").
+    * THREE colours with PROPAGATION: gold spine (#ffd700); a point born from a
+      bulb keeps its colour (#ff0000 / #bd7800) until the stem (f1) resets it, so
+      whole fronds glow red/bronze.
+    * a -67 degree ROTATION (the diagonal spine) and a random point-mirror
+      (negate x,y with p=0.5) that doubles the fern into a full radiating spray.
+    * ~1,000,000 iterations, on a BLACK field (CardBack.tsx composites it on #000
+      under a dark-red rounded frame).
+  Every one of those is a live control here. Copy params -> port back into
+  FernCardBack.render (the transform/colour/circle fields map 1:1).
 
   Self-contained: vanilla JS + canvas, no libraries, no network. Double-click.
 -->
 <style>
   :root{
-    --bg:#140f0f; --panel:#1e1717; --panel2:#261b1b; --ink:#f0e2d8; --muted:#b09a8f;
-    --accent:#e79743; --accent2:#b32929; --line:#3a2c2c;
+    --bg:#0c0a0a; --panel:#171212; --panel2:#211818; --ink:#f0e2d8; --muted:#b09a8f;
+    --accent:#e79743; --line:#332626;
   }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%}
@@ -37,9 +45,9 @@
   }
   .cellCard canvas{background:#000; border-radius:4px; display:block}
   .cellCard .cap{color:var(--muted); font-size:11px}
-  #hint{color:var(--muted); font-size:11px; align-self:flex-end; max-width:300px}
+  #hint{color:var(--muted); font-size:11px; align-self:flex-end; max-width:280px}
   #panel{
-    width:340px; flex:0 0 340px; height:100vh; overflow-y:auto;
+    width:344px; flex:0 0 344px; height:100vh; overflow-y:auto;
     background:var(--panel); border-left:1px solid var(--line); padding:14px;
   }
   h1{font-size:15px; margin:0 0 2px}
@@ -55,14 +63,15 @@
   .group>h2{
     font-size:12px; margin:0; padding:8px 10px; background:var(--panel2);
     color:var(--muted); text-transform:uppercase; letter-spacing:.06em; cursor:pointer;
+    display:flex; justify-content:space-between;
   }
   .group .body{padding:8px 10px}
   .ctl{display:grid; grid-template-columns:1fr auto; gap:2px 8px; align-items:center; margin:7px 0}
   .ctl label{grid-column:1/2}
   .ctl .val{grid-column:2/3; color:var(--accent); font-variant-numeric:tabular-nums; font-size:12px}
   .ctl input[type=range]{grid-column:1/3; width:100%; accent-color:var(--accent)}
-  .ctl input[type=color]{width:100%; height:26px; background:none; border:1px solid var(--line); border-radius:6px; padding:0}
   .ctl.colorctl{grid-template-columns:1fr 44px}
+  .ctl input[type=color]{width:100%; height:26px; background:none; border:1px solid var(--line); border-radius:6px; padding:0}
   .toggle{display:flex; align-items:center; gap:8px; margin:8px 0}
   .actions{display:flex; flex-wrap:wrap; gap:6px; margin-top:6px}
   textarea{width:100%; height:150px; background:#0d0908; color:#e8d0b8; border:1px solid var(--line);
@@ -75,13 +84,13 @@
   <div id="cellRow">
     <div class="cellCard"><canvas id="cellBig" width="150" height="210"></canvas><span class="cap">50x70pt @3x</span></div>
     <div class="cellCard"><canvas id="cellSmall" width="114" height="159"></canvas><span class="cap">38x53pt @3x</span></div>
-    <div id="hint">Fern IFS lab. The two small cards are the ACTUAL on-card size, so you can see whether the motif still reads when tiny. Tune on the right; <b>Copy params</b> hands the coefficients to FernCardBack.swift.</div>
+    <div id="hint">Faithful port of the web fern (fernFractal.tsx). The two small cards are the ACTUAL on-card size. <b>Copy params</b> ports the coefficients back to FernCardBack.swift.</div>
   </div>
 </div>
 
 <div id="panel">
   <h1>Fern IFS</h1>
-  <p class="sub">the original Barnsley-style card-back fern — every transform, live</p>
+  <p class="sub">the real card-back fern — 6 generators, 3 colours, rotation, mirror</p>
   <div class="presets" id="presets"></div>
   <div id="controls"></div>
   <div class="actions">
@@ -95,152 +104,194 @@
 <script>
 "use strict";
 /* =====================================================================
-   FERN IFS — the chaos game.
-   Four affine maps T = {a,b,c,d,e,f}; pick one by weight, iterate
-   (x,y) -> (a*x + b*y + e, c*x + d*y + f), plot a dot. This is exactly
-   FernCardBack.render: transforms f1..f4, weights, and the extent->card
-   fit. Every value below drives a slider and re-renders on input.
+   FERN IFS — chaos game, faithful to fernFractal.tsx.generateFernPattern.
+   Six generators (f1..f4 affine + two circle samplers); each iteration
+   picks one by weight, updates (x,y), and plots a rotated+scaled+mirrored
+   point in one of three colours with propagation.
+   All tunable values live in PARAMS; every slider writes back and re-renders.
    ===================================================================== */
 const PARAMS = {
-  // --- card + fit (FernCardBack: red field, gold border, extent fit) ---
-  cardW: 300, cardH: 420,     // preview card size (px) — a 5:7 playing-card ratio
-  fieldColor:"#b32929",       // the Soviet-card red field
-  borderColor:"#e79743",      // gold inset border
-  borderPct: 0.05,            // border width / inset as a fraction of card width
-  showBorder: true,
-  inset: 6,                   // px inset the fern is fit within
-  extentW: 6.5,               // fern x-extent the width maps to (scaleX = w/extentW)
-  extentH: 11.5,              // fern y-extent the height maps to
-  originXfrac: 0.5,           // baseline x, as a fraction of width (0.5 = centre)
-  originYfrac: 0.0,           // lift the baseline up by this fraction of the fit height
+  // --- card + render (CardBack composites the fern on BLACK, under a frame) ---
+  cardW: 300, cardH: 420,
+  fieldColor:"#000000",       // black card field (CardBack.tsx backgroundColor)
+  borderColor:"#6e1a1a",      // the dark-red rounded frame in the reference
+  showBorder: true, borderPct: 0.05, cornerRadius: 14,
 
-  // --- motif ---
-  motifColor:"#e79743",       // gold dots
-  motifAlpha: 0.92,
-  dotSize: 1.0,               // px per plotted point
-  iterations: 42000,          // chaos-game samples
+  rotationDeg: -67,           // fernFractal's -67deg (the diagonal spine)
+  scaleY: 14,                 // createCardParams: 14 * (min(w,h)/70) — resolution independent here
+  translateX: 0, translateY: 0,
+  dotSize: 1,                 // px per point (integer; gl_PointSize floors it)
+  mirror: true,               // the p=0.5 point-mirror that doubles the fern
+  iterations: 600000,         // live default (TS ships 1,000,000; download uses 3x more)
   seed: 1,
 
-  // --- f1 stem (weight w1) ---
-  w1: 0.01,  f1a: 0.02317, f1b:-0.0013, f1c: 0.0,    f1d: 0.21422, f1e: 0.0,    f1f: 0.0,
-  // --- f2 main (weight w2) ---
-  w2: 0.80,  f2a: 0.789,   f2b: 0.1533, f2c:-0.1877, f2d: 0.8734,  f2e: 0.0617, f2f: 2.0,
-  // --- f3 left (weight w3) ---
-  w3: 0.08,  f3a:-0.4556,  f3b:-0.2832, f3c:-0.3847, f3d: 0.3305,  f3e: 0.0,    f3f: 1.0,
-  // --- f4 right (weight w4) ---
-  w4: 0.08,  f4a: 0.3,     f4b: 0.2,    f4c:-0.2,    f4d: 0.2,     f4e: 0.0,    f4f: 0.0,
+  // --- colours (with propagation) ---
+  primary:"#ffd700",          // gold — spine / default
+  secondary:"#ff0000",        // red — circle1 bulbs and fronds born from them
+  tertiary:"#bd7800",         // bronze — circle2 bulbs and their fronds
+
+  // --- probabilities (normalized over all six) ---
+  p_f1:0.01, p_f2:0.80, p_f3:0.08, p_f4:0.08, p_c1:0.02, p_c2:0.01,
+
+  // --- affine transforms (fernFractal DEFAULT_FERN_PARAMS) ---
+  f1a:0.02317, f1b:-0.0013, f1c:0.0,    f1d:0.21422, f1e:0.0,    f1f:0.0,
+  f2a:0.789,   f2b:0.1533,  f2c:-0.1877,f2d:0.8734,  f2e:0.0617, f2f:2.0,
+  f3a:-0.4556, f3b:-0.2832, f3c:-0.3847,f3d:0.3305,  f3e:0.0,    f3f:1.0,
+  f4a:0.3,     f4b:0.2,     f4c:-0.2,   f4d:0.2,     f4e:0.0,    f4f:0.0,
+
+  // --- circles (the bulb-dots) ---
+  c1cx:2.803,  c1cy:0.5296, c1r:0.4817,
+  c2cx:-4.5784,c2cy:1.4463, c2r:0.2894,
 };
 
-/* Presets. "card-back" is FernCardBack.swift verbatim; "barnsley" is the
-   canonical fern to explore from; "on-ink" is a dark-card variant. */
 const PRESETS = {
-  "card-back": { ...PARAMS },
-  "barnsley": {
-    fieldColor:"#0f1a10", borderColor:"#2f5a34", motifColor:"#8fd39a", motifAlpha:0.9,
-    extentW:6.0, extentH:11.0, originXfrac:0.5, originYfrac:0.0, iterations:120000, dotSize:1.0,
-    w1:0.01, f1a:0,    f1b:0,    f1c:0,    f1d:0.16, f1e:0, f1f:0,
-    w2:0.85, f2a:0.85, f2b:0.04, f2c:-0.04,f2d:0.85, f2e:0, f2f:1.6,
-    w3:0.07, f3a:0.2,  f3b:-0.26,f3c:0.23, f3d:0.22, f3e:0, f3f:1.6,
-    w4:0.07, f4a:-0.15,f4b:0.28, f4c:0.26, f4d:0.24, f4e:0, f4f:0.44,
-  },
-  "on-ink": { fieldColor:"#141010", borderColor:"#3a2c2c", motifColor:"#efe2d8", motifAlpha:0.85 },
+  "card-back": { ...PARAMS },                                   // the real fern, verbatim
+  "dense": { ...PARAMS, iterations:1400000, dotSize:2 },        // TS title-fern density
+  "no-mirror": { ...PARAMS, mirror:false },                     // a single fern, to read the structure
 };
 
-/* ===================== the generator ===================== */
+/* ===================== generator ===================== */
 function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
-function cumulative(w){ const s=w.reduce((p,c)=>p+c,0)||1; let acc=0; return w.map(v=>{acc+=v/s;return acc;}); }
-function hexA(hex,a){ const n=parseInt(hex.slice(1),16); return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`; }
+function hex(h){ const n=parseInt(h.slice(1),16); return [(n>>16)&255,(n>>8)&255,n&255]; }
+function cumulative(w){ const s=w.reduce((p,c)=>p+c,0)||1; let a=0; return w.map(v=>{a+=v/s;return a;}); }
 
-/* Draw one fern card back of PARAMS into ctx at w x h (device px already
-   applied by the caller). Mirrors FernCardBack.render exactly. */
+/* Draw the fern of P into ctx at w x h (device px). Faithful to
+   generateFernPattern: warmup, then per-iteration pick/step/plot with colour
+   propagation, -rot rotation, scaleY, mirror. Points go into an ImageData for
+   speed (1M+ direct writes), then the frame is stroked on top. */
 function drawFern(ctx, P, w, h){
-  ctx.fillStyle = P.fieldColor; ctx.fillRect(0,0,w,h);
-  if(P.showBorder){
-    const bw = Math.max(1.0, w*P.borderPct);
-    ctx.strokeStyle = P.borderColor; ctx.lineWidth = bw;
-    ctx.strokeRect(bw, bw, w-2*bw, h-2*bw);
-  }
+  const img = ctx.createImageData(w,h), data = img.data;
+  const [fr,fg,fb] = hex(P.fieldColor);
+  for(let i=0;i<data.length;i+=4){ data[i]=fr; data[i+1]=fg; data[i+2]=fb; data[i+3]=255; }
+
   const T=[
     {a:P.f1a,b:P.f1b,c:P.f1c,d:P.f1d,e:P.f1e,f:P.f1f},
     {a:P.f2a,b:P.f2b,c:P.f2c,d:P.f2d,e:P.f2e,f:P.f2f},
     {a:P.f3a,b:P.f3b,c:P.f3c,d:P.f3d,e:P.f3e,f:P.f3f},
     {a:P.f4a,b:P.f4b,c:P.f4c,d:P.f4d,e:P.f4e,f:P.f4f},
   ];
-  const cum = cumulative([P.w1,P.w2,P.w3,P.w4]);
-  const rng = mulberry32((P.seed>>>0) || 0x9E3779B9);
-  const inset = P.inset * (w/P.cardW);           // inset scales with the render size
-  const cw = w - inset*2, ch = h - inset*2;
-  const scaleX = cw / P.extentW, scaleY = ch / P.extentH;
-  const ox = w * P.originXfrac;
-  const oy = h - inset - ch * P.originYfrac;
-  ctx.fillStyle = hexA(P.motifColor, P.motifAlpha);
-  const ds = Math.max(0.4, P.dotSize) * (w/P.cardW);
-  let x=0,y=0;
-  const N = Math.max(0, P.iterations|0);
+  const C1={cx:P.c1cx,cy:P.c1cy,r:P.c1r}, C2={cx:P.c2cx,cy:P.c2cy,r:P.c2r};
+  const cum = cumulative([P.p_f1,P.p_f2,P.p_f3,P.p_f4,P.p_c1,P.p_c2]);
+  const col = [hex(P.primary),hex(P.secondary),hex(P.tertiary)];
+  const rng = mulberry32((P.seed>>>0)||0x9E3779B9);
+
+  const rot = P.rotationDeg*Math.PI/180, cosR=Math.cos(rot), sinR=Math.sin(rot);
+  const s = Math.min(w,h)/70;               // createCardParams reference scale
+  const sc = P.scaleY * s, tx = P.translateX*s, ty = P.translateY*s;
+  const cx=w/2, cy=h/2, ds=Math.max(1,Math.floor(P.dotSize));
+
+  function circlePt(C){ const t=rng(), ang=rng()*Math.PI*2, rad=Math.sqrt(t)*C.r; return [C.cx+rad*Math.cos(ang), C.cy+rad*Math.sin(ang)]; }
+  function pick(){ const r=rng(); for(let i=0;i<cum.length;i++) if(r<cum[i]) return i; return cum.length-1; }
+  function plot(px,py,ci){
+    const c=col[ci]; let X=px|0, Y=py|0;
+    for(let dy=0;dy<ds;dy++){ const yy=Y+dy; if(yy<0||yy>=h) continue;
+      for(let dx=0;dx<ds;dx++){ const xx=X+dx; if(xx<0||xx>=w) continue;
+        const o=(yy*w+xx)<<2; data[o]=c[0]; data[o+1]=c[1]; data[o+2]=c[2]; data[o+3]=255; } }
+  }
+  function place(dx,dy){ // mirror -> rotate -> scale -> translate
+    if(P.mirror && rng()<0.5){ dx=-dx; dy=-dy; }
+    const rx=dx*cosR-dy*sinR, ry=dx*sinR+dy*cosR;
+    return [cx+rx*sc+tx, cy-(ry*sc-ty)];
+  }
+
+  let x=0,y=0,prop=0;
+  for(let i=0;i<20;i++){ const idx=pick(); if(idx===4)[x,y]=circlePt(C1); else if(idx===5)[x,y]=circlePt(C2); else { const t=T[idx]; const nx=t.a*x+t.b*y+t.e, ny=t.c*x+t.d*y+t.f; x=nx;y=ny; } }
+
+  const N=Math.max(0,P.iterations|0);
   for(let i=0;i<N;i++){
-    const r=rng();
-    let idx=0; while(idx<cum.length-1 && r>cum[idx]) idx++;
-    const t=T[idx];
-    const nx=t.a*x+t.b*y+t.e, ny=t.c*x+t.d*y+t.f;
-    x=nx; y=ny;
-    if(i<20) continue;                            // let the attractor settle
-    const px=ox + x*scaleX, py=oy - y*scaleY;
-    if(px>=-2 && px<=w+2 && py>=-2 && py<=h+2) ctx.fillRect(px,py,ds,ds);
+    const idx=pick();
+    if(idx===4){ [x,y]=circlePt(C1); const [dx,dy]=circlePt(C1); const [px,py]=place(dx,dy); plot(px,py,1); prop=1; continue; }
+    if(idx===5){ [x,y]=circlePt(C2); const [dx,dy]=circlePt(C2); const [px,py]=place(dx,dy); plot(px,py,2); prop=2; continue; }
+    const t=T[idx]; const nx=t.a*x+t.b*y+t.e, ny=t.c*x+t.d*y+t.f; x=nx; y=ny;
+    if(idx===0) prop=0;                       // stem resets colour to gold
+    const [px,py]=place(x,y);
+    plot(px,py,prop);
+  }
+
+  ctx.putImageData(img,0,0);
+  if(P.showBorder){
+    const bw=Math.max(1,w*P.borderPct), r=P.cornerRadius*(w/P.cardW);
+    ctx.lineWidth=bw; ctx.strokeStyle=P.borderColor;
+    const x0=bw/2,y0=bw/2,x1=w-bw/2,y1=h-bw/2;
+    ctx.beginPath();
+    if(ctx.roundRect){ ctx.roundRect(x0,y0,x1-x0,y1-y0,r); }
+    else { ctx.moveTo(x0+r,y0); ctx.arcTo(x1,y0,x1,y1,r); ctx.arcTo(x1,y1,x0,y1,r); ctx.arcTo(x0,y1,x0,y0,r); ctx.arcTo(x0,y0,x1,y0,r); }
+    ctx.stroke();
   }
 }
 
-/* ===================== rendering ===================== */
+/* ===================== rendering (rAF-coalesced) ===================== */
 const preview=document.getElementById("preview");
-function renderPreview(){
+let pending=false;
+function renderAll(){ if(pending) return; pending=true; requestAnimationFrame(()=>{ pending=false; doRender(); }); }
+function doRender(){
   const wrap=document.getElementById("previewWrap");
-  const availW=wrap.clientWidth-24, availH=wrap.clientHeight-24;
-  const ar=PARAMS.cardW/PARAMS.cardH;
+  const availW=wrap.clientWidth-24, availH=wrap.clientHeight-24, ar=PARAMS.cardW/PARAMS.cardH;
   let cw=availW, ch=cw/ar; if(ch>availH){ ch=availH; cw=ch*ar; }
   const dpr=Math.min(window.devicePixelRatio||1,2);
-  preview.width=Math.round(cw*dpr); preview.height=Math.round(ch*dpr);
+  preview.width=Math.max(1,Math.round(cw*dpr)); preview.height=Math.max(1,Math.round(ch*dpr));
   preview.style.width=cw+"px"; preview.style.height=ch+"px";
   drawFern(preview.getContext("2d"), PARAMS, preview.width, preview.height);
-}
-function renderCells(){
   for(const id of ["cellBig","cellSmall"]){
     const c=document.getElementById(id);
-    drawFern(c.getContext("2d"), PARAMS, c.width, c.height);
+    // scale iterations to the cell's area so density reads the same when tiny
+    const cellP={...PARAMS, iterations: Math.round(PARAMS.iterations*(c.width*c.height)/(preview.width*preview.height))};
+    drawFern(c.getContext("2d"), cellP, c.width, c.height);
   }
+  syncJSON();
 }
-function renderAll(){ renderPreview(); renderCells(); syncJSON(); }
 
-/* ===================== controls (shared shape with the acanthus lab) ===================== */
-const CO={min:-1.6,max:1.6,step:0.002}, EO={min:-3,max:3,step:0.01}, FO={min:-3,max:6,step:0.01}, WO={min:0,max:1,step:0.005};
-function xf(n,label){ return [
-  {k:"w"+n,t:"range",...WO,label:"weight"},
+/* ===================== controls ===================== */
+const CO={min:-1.6,max:1.6,step:0.002}, EO={min:-6,max:6,step:0.01}, WO={min:0,max:1,step:0.005};
+function xf(n){ return [
   {k:"f"+n+"a",t:"range",...CO,label:"a  (x from x)"},
   {k:"f"+n+"b",t:"range",...CO,label:"b  (x from y)"},
   {k:"f"+n+"c",t:"range",...CO,label:"c  (y from x)"},
   {k:"f"+n+"d",t:"range",...CO,label:"d  (y from y)"},
   {k:"f"+n+"e",t:"range",...EO,label:"e  (x shift)"},
-  {k:"f"+n+"f",t:"range",...FO,label:"f  (y shift)"},
+  {k:"f"+n+"f",t:"range",...EO,label:"f  (y shift)"},
 ]; }
 const SCHEMA=[
-  {title:"Card & fit",open:true,items:[
+  {title:"Card & render",open:true,items:[
     {k:"fieldColor",t:"color",label:"field color"},
-    {k:"borderColor",t:"color",label:"border color"},
-    {k:"showBorder",t:"toggle",label:"show border"},
-    {k:"borderPct",t:"range",min:0,max:0.15,step:0.002,label:"border / inset"},
-    {k:"inset",t:"range",min:0,max:48,step:1,label:"fit inset (px)"},
-    {k:"extentW",t:"range",min:1,max:24,step:0.1,label:"x-extent (width fit)"},
-    {k:"extentH",t:"range",min:1,max:28,step:0.1,label:"y-extent (height fit)"},
-    {k:"originXfrac",t:"range",min:-0.5,max:1.5,step:0.01,label:"baseline x"},
-    {k:"originYfrac",t:"range",min:-0.6,max:1.2,step:0.01,label:"baseline lift"},
-  ]},
-  {title:"Motif",open:true,items:[
-    {k:"motifColor",t:"color",label:"dot color"},
-    {k:"motifAlpha",t:"range",min:0,max:1,step:0.02,label:"dot opacity"},
-    {k:"dotSize",t:"range",min:0.4,max:5,step:0.1,label:"dot size (px)"},
-    {k:"iterations",t:"range",min:1000,max:400000,step:1000,label:"iterations"},
+    {k:"borderColor",t:"color",label:"frame color"},
+    {k:"showBorder",t:"toggle",label:"show frame"},
+    {k:"borderPct",t:"range",min:0,max:0.14,step:0.002,label:"frame width"},
+    {k:"cornerRadius",t:"range",min:0,max:40,step:1,label:"corner radius"},
+    {k:"rotationDeg",t:"range",min:-180,max:180,step:1,label:"rotation (deg)"},
+    {k:"scaleY",t:"range",min:1,max:40,step:0.5,label:"zoom (scaleY)"},
+    {k:"translateX",t:"range",min:-40,max:40,step:0.5,label:"translate X"},
+    {k:"translateY",t:"range",min:-40,max:40,step:0.5,label:"translate Y"},
+    {k:"dotSize",t:"range",min:1,max:6,step:1,label:"dot size (px)"},
+    {k:"mirror",t:"toggle",label:"point-mirror (doubles fern)"},
+    {k:"iterations",t:"range",min:50000,max:2500000,step:50000,label:"iterations"},
     {k:"seed",t:"range",min:0,max:999,step:1,label:"seed"},
   ]},
+  {title:"Colours (with propagation)",open:true,items:[
+    {k:"primary",t:"color",label:"spine / default (gold)"},
+    {k:"secondary",t:"color",label:"circle 1 fronds (red)"},
+    {k:"tertiary",t:"color",label:"circle 2 fronds (bronze)"},
+  ]},
+  {title:"Weights",open:true,items:[
+    {k:"p_f1",t:"range",...WO,label:"f1 stem"},
+    {k:"p_f2",t:"range",...WO,label:"f2 main"},
+    {k:"p_f3",t:"range",...WO,label:"f3 left"},
+    {k:"p_f4",t:"range",...WO,label:"f4 right"},
+    {k:"p_c1",t:"range",...WO,label:"circle 1 (red bulbs)"},
+    {k:"p_c2",t:"range",...WO,label:"circle 2 (bronze bulbs)"},
+  ]},
+  {title:"Circle 1 · red bulbs",open:false,items:[
+    {k:"c1cx",t:"range",min:-8,max:8,step:0.01,label:"center x"},
+    {k:"c1cy",t:"range",min:-6,max:6,step:0.01,label:"center y"},
+    {k:"c1r",t:"range",min:0,max:2,step:0.01,label:"radius"},
+  ]},
+  {title:"Circle 2 · bronze bulbs",open:false,items:[
+    {k:"c2cx",t:"range",min:-8,max:8,step:0.01,label:"center x"},
+    {k:"c2cy",t:"range",min:-6,max:6,step:0.01,label:"center y"},
+    {k:"c2r",t:"range",min:0,max:2,step:0.01,label:"radius"},
+  ]},
   {title:"f1 · stem",open:false,items:xf(1)},
-  {title:"f2 · main leaflets",open:true,items:xf(2)},
+  {title:"f2 · main leaflets",open:false,items:xf(2)},
   {title:"f3 · left leaflet",open:false,items:xf(3)},
   {title:"f4 · right leaflet",open:false,items:xf(4)},
 ];
@@ -268,11 +319,9 @@ function makeCtl(it){
     wrap.appendChild(inp);
     setTimeout(()=>document.getElementById("v_"+it.k).textContent=fmt(PARAMS[it.k]),0);
   } else if(it.t==="color"){
-    wrap.className="ctl colorctl";
-    wrap.innerHTML=`<label>${it.label}</label>`;
+    wrap.className="ctl colorctl"; wrap.innerHTML=`<label>${it.label}</label>`;
     const inp=document.createElement("input"); inp.type="color"; inp.value=PARAMS[it.k];
-    inp.oninput=()=>{PARAMS[it.k]=inp.value;renderAll();};
-    wrap.appendChild(inp);
+    inp.oninput=()=>{PARAMS[it.k]=inp.value;renderAll();}; wrap.appendChild(inp);
   } else if(it.t==="toggle"){
     wrap.className="toggle";
     const inp=document.createElement("input"); inp.type="checkbox"; inp.checked=!!PARAMS[it.k]; inp.id="t_"+it.k;
@@ -294,7 +343,6 @@ function buildPresets(){
   }
 }
 function syncJSON(){ const t=document.getElementById("jsonOut"); if(t.style.display!=="none") t.value=JSON.stringify(PARAMS,null,2); }
-
 document.getElementById("copyBtn").onclick=()=>{
   const ta=document.getElementById("jsonOut"); ta.style.display="block";
   ta.value=JSON.stringify(PARAMS,null,2);
@@ -303,12 +351,12 @@ document.getElementById("copyBtn").onclick=()=>{
 };
 document.getElementById("dlBtn").onclick=()=>{
   const c=document.createElement("canvas"); c.width=PARAMS.cardW*3; c.height=PARAMS.cardH*3;
-  drawFern(c.getContext("2d"), PARAMS, c.width, c.height);
+  const P={...PARAMS, iterations: PARAMS.iterations*3};   // more samples for the crisp export
+  drawFern(c.getContext("2d"), P, c.width, c.height);
   const a=document.createElement("a"); a.download="fern_card.png"; a.href=c.toDataURL("image/png"); a.click();
 };
 document.getElementById("reseed").onclick=()=>{ PARAMS.seed=(PARAMS.seed+1)%1000; buildControls(); renderAll(); };
 
-/* Headless export hook: ?shot=<preset> renders the card full-bleed. */
 function maybeShot(){
   const q=new URLSearchParams(location.search); const shot=q.get("shot"); if(!shot) return;
   if(PRESETS[shot]) Object.assign(PARAMS,PRESETS[shot]);
@@ -316,8 +364,6 @@ function maybeShot(){
   document.getElementById("cellRow").style.display="none";
   renderAll();
 }
-
-/* ===================== boot ===================== */
 buildPresets(); buildControls(); renderAll(); maybeShot();
-window.addEventListener("resize", renderPreview);
+window.addEventListener("resize", renderAll);
 </script>
