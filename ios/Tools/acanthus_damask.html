@@ -458,30 +458,34 @@ function renderCellSafe(){
 
 /* ===================== controls (schema-driven) ===================== */
 const SCHEMA=[
+  // Ranges widened well past the "sensible" band (owner: "add a larger range of
+  // values... i think some might look good negative"). Many now go negative or
+  // far past the defaults, so a slider can push the generator into territory
+  // that may break or may be beautiful - the extremes are the whole point.
   {title:"Tile & repeat",open:true,items:[
-    {k:"tileW",t:"range",min:160,max:520,step:10,label:"tile width"},
-    {k:"tileH",t:"range",min:200,max:640,step:10,label:"tile height"},
+    {k:"tileW",t:"range",min:60,max:1000,step:5,label:"tile width"},
+    {k:"tileH",t:"range",min:80,max:1200,step:5,label:"tile height"},
     {k:"repeat",t:"select",opts:["halfdrop","straight"],label:"repeat mode"},
-    {k:"zoom",t:"range",min:0.2,max:1.6,step:0.02,label:"preview zoom"},
+    {k:"zoom",t:"range",min:0.05,max:4,step:0.01,label:"preview zoom"},
   ]},
   {title:"Flame & leaves",open:true,items:[
-    {k:"leafPairs",t:"range",min:3,max:10,step:1,label:"leaves per cell"},
-    {k:"density",t:"range",min:0,max:2,step:0.05,label:"filler density"},
-    {k:"leafLength",t:"range",min:70,max:200,step:2,label:"leaf length"},
-    {k:"leafWidth",t:"range",min:12,max:64,step:1,label:"leaf width"},
-    {k:"leafCurl",t:"range",min:0,max:4.2,step:0.05,label:"tip curl"},
-    {k:"curlBias",t:"range",min:0.4,max:3,step:0.05,label:"curl bias (tip↔whole)"},
-    {k:"baseArc",t:"range",min:-1,max:1.6,step:0.02,label:"blade arc"},
-    {k:"serrations",t:"range",min:1,max:10,step:1,label:"serration count"},
-    {k:"serrationDepth",t:"range",min:0,max:0.9,step:0.02,label:"serration depth"},
-    {k:"emitBottom",t:"range",min:-40,max:60,step:1,label:"emit angle (bottom)"},
-    {k:"emitTop",t:"range",min:20,max:110,step:1,label:"emit angle (top)"},
-    {k:"spineSpan",t:"range",min:0.5,max:1,step:0.01,label:"spine span"},
+    {k:"leafPairs",t:"range",min:0,max:24,step:1,label:"leaves per cell"},
+    {k:"density",t:"range",min:-2,max:5,step:0.05,label:"filler density"},
+    {k:"leafLength",t:"range",min:-220,max:420,step:2,label:"leaf length"},
+    {k:"leafWidth",t:"range",min:-100,max:160,step:1,label:"leaf width"},
+    {k:"leafCurl",t:"range",min:-8,max:8,step:0.05,label:"tip curl"},
+    {k:"curlBias",t:"range",min:-4,max:6,step:0.05,label:"curl bias (tip↔whole)"},
+    {k:"baseArc",t:"range",min:-3.2,max:3.2,step:0.02,label:"blade arc"},
+    {k:"serrations",t:"range",min:0,max:30,step:1,label:"serration count"},
+    {k:"serrationDepth",t:"range",min:-1.2,max:1.8,step:0.02,label:"serration depth"},
+    {k:"emitBottom",t:"range",min:-180,max:180,step:1,label:"emit angle (bottom)"},
+    {k:"emitTop",t:"range",min:-90,max:220,step:1,label:"emit angle (top)"},
+    {k:"spineSpan",t:"range",min:-0.5,max:1.8,step:0.01,label:"spine span"},
   ]},
   {title:"Scrolls & stem",open:false,items:[
-    {k:"scrollTurns",t:"range",min:0.5,max:3,step:0.05,label:"scroll turns"},
-    {k:"scrollTight",t:"range",min:0.05,max:0.5,step:0.01,label:"scroll tightness"},
-    {k:"stemThickness",t:"range",min:1,max:16,step:0.5,label:"stem thickness"},
+    {k:"scrollTurns",t:"range",min:-6,max:8,step:0.05,label:"scroll turns"},
+    {k:"scrollTight",t:"range",min:-0.8,max:1.2,step:0.01,label:"scroll tightness"},
+    {k:"stemThickness",t:"range",min:-8,max:48,step:0.5,label:"stem thickness"},
     {k:"topPalmette",t:"toggle",label:"top crest palmette"},
   ]},
   {title:"Ink & paint",open:true,items:[
@@ -489,16 +493,16 @@ const SCHEMA=[
     {k:"leafColor",t:"color",label:"leaf fill"},
     {k:"midColor",t:"color",label:"shaded tone"},
     {k:"outlineColor",t:"color",label:"outline color"},
-    {k:"outlineWidth",t:"range",min:0,max:6,step:0.1,label:"outline width"},
+    {k:"outlineWidth",t:"range",min:0,max:24,step:0.1,label:"outline width"},
     {k:"shadowColor",t:"color",label:"shadow color"},
     {k:"shadowAlpha",t:"range",min:0,max:1,step:0.02,label:"shadow opacity"},
-    {k:"shadowOffX",t:"range",min:-10,max:12,step:0.5,label:"shadow offset X"},
-    {k:"shadowOffY",t:"range",min:-10,max:12,step:0.5,label:"shadow offset Y"},
+    {k:"shadowOffX",t:"range",min:-48,max:48,step:0.5,label:"shadow offset X"},
+    {k:"shadowOffY",t:"range",min:-48,max:48,step:0.5,label:"shadow offset Y"},
     {k:"veins",t:"toggle",label:"midrib veins"},
   ]},
   {title:"Structure",open:false,items:[
     {k:"mirror",t:"toggle",label:"mirror symmetry"},
-    {k:"seed",t:"range",min:0,max:64,step:1,label:"random seed"},
+    {k:"seed",t:"range",min:0,max:999,step:1,label:"random seed"},
   ]},
 ];
 
