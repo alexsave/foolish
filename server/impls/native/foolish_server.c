@@ -640,6 +640,7 @@ static atomic_ulong g_octogen_decisions = 0;
 static atomic_int   g_live_conns = 0;      // currently-open epoll connections
 static atomic_ulong g_moves_applied = 0;   // total client moves the kernel accepted
 static int          g_max_conns = 0;       // 0 = unlimited; --max-conns=N sheds NEW connections past N (OOM guard)
+static int          g_io_timeout_s = 30;   // read/write deadline on a still-blocking accepted socket (slowloris guard); 0 = off, --io-timeout-s=N
 static int g_octogen_strat = -1;
 
 // --------------------------------------------------------------------------
@@ -768,11 +769,11 @@ static int b64url_encode(const uint8_t *in, int n, char *out, int cap) {
 static int b64url_decode(const char *in, uint8_t *out, int cap) {
     int8_t rev[256]; memset(rev, -1, sizeof rev);
     for (int i = 0; i < 64; i++) rev[(unsigned char)B64U[i]] = (int8_t)i;
-    int o = 0, v = 0, bits = 0;
+    int o = 0, bits = 0; unsigned v = 0;
     for (const char *p = in; *p; p++) {
         int8_t d = rev[(unsigned char)*p]; if (d < 0) return -1;
-        v = (v << 6) | d; bits += 6;
-        if (bits >= 8) { bits -= 8; if (o >= cap) return -1; out[o++] = (uint8_t)(v >> bits); }
+        v = (v << 6) | (unsigned)d; bits += 6;   // unsigned: defined even if it wrapped; masked below so it can't
+        if (bits >= 8) { bits -= 8; if (o >= cap) return -1; out[o++] = (uint8_t)(v >> bits); v &= (1u << bits) - 1u; }
     }
     return o;
 }
@@ -2089,6 +2090,14 @@ static void *ws_conn_thread(void *argp) {
 
     game_conn_ref(s);   // this thread references the slot for its whole session — reclamation-safe until unref below
 
+    // Clear the accept-time slowloris deadline for this now-established session:
+    // the loop below is a BLOCKING SSL_read, and a live WS may sit idle between
+    // a player's moves far longer than g_io_timeout_s. (The plaintext /ws path
+    // runs non-blocking under epoll, so SO_RCVTIMEO never applied there.)
+    { struct timeval z = {0, 0};
+      setsockopt(conn->fd, SOL_SOCKET, SO_RCVTIMEO, &z, sizeof z);
+      setsockopt(conn->fd, SOL_SOCKET, SO_SNDTIMEO, &z, sizeof z); }
+
     unsigned char in[4096];
     unsigned char msg[1 + 65536];
     int opcode;
@@ -2522,10 +2531,13 @@ static int wsasync_feed(EConn *ec, const unsigned char *in, int n, int *consumed
             int take = ec->hdr_need - ec->hdr_have; if (take > n - off) take = n - off;
             if (take > 0) { memcpy(ec->hdrbuf + ec->hdr_have, in + off, (size_t)take); ec->hdr_have += take; off += take; }
             if (ec->hdr_have < ec->hdr_need) { *consumed = off; return WSF_NEED_MORE; }
-            int64_t len = 0;
-            for (int i = 0; i < ec->hdr_need; i++) len = (len << 8) | ec->hdrbuf[i];
-            if (len < 0) return WSF_ERROR;   // top bit set on the 8-byte form is a protocol violation per spec
-            ec->frame_len = len;
+            uint64_t len = 0;
+            for (int i = 0; i < ec->hdr_need; i++) len = (len << 8) | ec->hdrbuf[i];   // unsigned: a hostile 8-byte length must not overflow (UB) mid-assembly
+            // A single frame can never exceed this connection's fixed buffer;
+            // rejecting here also covers the RFC 6455 §5.2 "MSB must be 0" rule
+            // and any absurd/negative value the 8-byte form could encode.
+            if (len > (uint64_t)WS_IN_CAP) return WSF_ERROR;
+            ec->frame_len = (int64_t)len;
             ec->hdr_have = 0;
             ec->phase = ec->masked ? WSP_MASK : WSP_PAYLOAD;
             continue;
@@ -3240,6 +3252,7 @@ int main(int argc, char **argv) {
         if (!strncmp(argv[i], "--reap-interval-s=", 18)) { int v = atoi(argv[i] + 18); if (v > 0) g_reap_interval = v; continue; }
         if (!strncmp(argv[i], "--ratelimit-rpm=", 16)) { int v = atoi(argv[i] + 16); if (v >= 0) g_rl_rate = (float)v / 60.0f; continue; }        // 0 disables
         if (!strncmp(argv[i], "--ratelimit-burst=", 18)) { int v = atoi(argv[i] + 18); if (v > 0) g_rl_burst = (float)v; continue; }
+        if (!strncmp(argv[i], "--io-timeout-s=", 15)) { int v = atoi(argv[i] + 15); if (v >= 0) g_io_timeout_s = v; continue; }   // slowloris guard; 0 = off
 #ifdef FOOLISH_QUIC
         if (!strcmp(argv[i], "--quic")) { g_want_quic = true; continue; }
         if (!strncmp(argv[i], "--quic-port=", 12)) { g_quic_port = atoi(argv[i] + 12); continue; }
@@ -3511,6 +3524,21 @@ static void *acceptor_main(void *arg) {
         // with the peer's delayed ACKs turns each round trip into tens of
         // milliseconds instead of tens of microseconds.
         int one = 1; setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+
+        // Slowloris guard: a read/write deadline on the connection while it is
+        // still blocking here (the TLS handshake + the request read). A client
+        // that opens a socket and dribbles or never finishes its request would
+        // otherwise pin this acceptor thread forever — and with only a handful
+        // of acceptors, a handful of such connections is a full DoS. Generous
+        // enough (default 30s, --io-timeout-s) that a real request never trips
+        // it. Moot once the fd is flipped non-blocking for the epoll worker
+        // (SO_RCVTIMEO doesn't apply to non-blocking reads), so an established,
+        // idle /ws connection is unaffected.
+        if (g_io_timeout_s > 0) {
+            struct timeval tv = { .tv_sec = g_io_timeout_s, .tv_usec = 0 };
+            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+            setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+        }
 
         // Stage 3: SSL_accept happens HERE, on this connection's own
         // servicing path, before any HTTP parsing — a fresh SSL* per
