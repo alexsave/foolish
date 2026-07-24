@@ -1602,11 +1602,16 @@ struct FShield: View {
             // shoulders at y=5.5 span the full width, and the sides sweep to the
             // bottom point at (12,22.5).
             shield.move(to: P(12, 1.5))                                   // top-centre peak
-            shield.addQuadCurve(to: P(21, 5.5),  control: P(16.5, 2.2))   // peak -> right shoulder
+            shield.addQuadCurve(to: P(21, 5.5),  control: P(15.5, 5))     // peak -> right shoulder
             shield.addQuadCurve(to: P(12, 22.5), control: P(21, 15.5))    // right side -> bottom point
             shield.addQuadCurve(to: P(3, 5.5),   control: P(3, 15.5))     // bottom point -> left shoulder
-            shield.addQuadCurve(to: P(12, 1.5),  control: P(7.5, 2.2))    // left shoulder -> peak
+            shield.addQuadCurve(to: P(12, 1.5),  control: P(8.5, 5))      // left shoulder -> peak
             shield.closeSubpath()
+            // The two top edges are CONCAVE to the shield (owner's nudge): the
+            // control points sit BELOW the straight peak->shoulder line (y=5 vs
+            // the line's ~3.5 midpoint), so the edge bows inward/down toward the
+            // centre rather than bulging out - the crusader-shield sweep up to
+            // the point, not a balloon.
             ctx.fill(shield, with: .color(gray))
             ctx.stroke(shield, with: .color(edge), style: StrokeStyle(lineWidth: 1.1 * s, lineJoin: .round))
         }
