@@ -110,11 +110,25 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func willTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
         super.willTransition(to: presentationStyle)
-        // Present with the INCOMING style, not `self.presentationStyle`: during a
-        // transition the property still reports the OLD style, so reading it here
-        // renders the compact drawer at full expanded height (and then New game,
-        // which only requests expansion, no-ops because we are already expanded).
-        if let c = activeConversation { present(c, style: presentationStyle) }
+        // Round-7 #5 ("when we auto-collapse it should be the same as if we swiped
+        // to collapse"; "it rearranges the display right before the auto collapse").
+        // A plain compact<->expanded toggle must NOT re-present: the board is laid
+        // out purely from the HEIGHT Messages gives its GeometryReader (a continuous
+        // `collapseFraction`), never from the `style` prop, so it follows the drawer
+        // resize smoothly on its own. Re-presenting here swapped the entire hosting
+        // rootView at the START of the transition - that swap is the "display
+        // rearranges right before the collapse" jump, and it is what made the
+        // auto-collapse look different from a manual grabber swipe (a swipe the
+        // human drives frame-by-frame hit the same swap but masked it under the
+        // drag). Now BOTH just resize.
+        //
+        // The ONE case that still needs a routed present is New game: it flips
+        // `startingNewGame` and requests .expanded, and the incoming transition is
+        // where that intent has to be rendered (reading `self.presentationStyle`
+        // mid-transition would still report the old style). So present only then.
+        if startingNewGame, let c = activeConversation {
+            present(c, style: presentationStyle)
+        }
     }
 
     // MARK: - Presentation
@@ -321,25 +335,35 @@ final class MessagesViewController: MSMessagesAppViewController {
         Task {
             guard let env = try? await MessageEnvelope.decode(payload: payload, viewer: mySeat)
             else { return }
-            let names = Dictionary(env.joins.map { ($0.seat, $0.name) },
-                                   uniquingKeysWith: { a, _ in a })
-            MessageGameStore.shared.put(MessageGameRecord(
-                gameId: env.gameId, chatKey: chatKey, mySeat: mySeat, nPlayers: env.nPlayers, round: env.round,
-                turn: env.turn, phase: env.phase, finished: env.phase == 3, names: names,
-                payloadBase32: Base32.encode(payload),
-                updatedAt: Date().timeIntervalSince1970))
-            // The staged moves are now in the sent chain (this device's preferred
-            // chain). They are no longer unacked, so drop them from the pending
-            // ledger — Rule R must never replay a move on top of itself (§7.6).
+            // Round 7: the preferred-chain cache is gone — commit only the durable
+            // SEAT (§6.1). The chain the human just sent is now the thread's, and
+            // reopening it re-renders it from its own bytes.
+            MessageGameStore.shared.setSeat(gameId: env.gameId, chatKey: chatKey, seat: mySeat)
+            // The staged moves are now in the sent chain, no longer unacked: drop
+            // them from the pending ledger so Rule R never replays a move on top of
+            // itself (§7.6).
             MessageGameStore.shared.clearPending(gameId: env.gameId)
         }
     }
 
+    /// Round-7 (background gap): a scheme-adaptive wool FALLBACK colour (the same
+    /// hexes `WoolBackground` averages to) painted on the host view behind the
+    /// SwiftUI content, so if the wool ever fails to reach an edge for a frame -
+    /// e.g. the post-send reopen with the keyboard up - the exposed strip reads as
+    /// a duller patch of the SAME board, never a system-black void.
+    private static let woolFallback = UIColor { tc in
+        tc.userInterfaceStyle == .dark
+            ? UIColor(red: 0x3D/255.0, green: 0x28/255.0, blue: 0x18/255.0, alpha: 1)
+            : UIColor(red: 0xF5/255.0, green: 0xE6/255.0, blue: 0xC8/255.0, alpha: 1)
+    }
+
     private func setRoot(_ root: MessagesRootView) {
+        view.backgroundColor = Self.woolFallback
         if let host {
             host.rootView = root
         } else {
             let h = UIHostingController(rootView: root)
+            h.view.backgroundColor = Self.woolFallback
             addChild(h)
             h.view.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(h.view)

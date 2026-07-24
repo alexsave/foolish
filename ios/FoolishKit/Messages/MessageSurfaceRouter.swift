@@ -39,41 +39,23 @@ public enum MessageSurfaceRouter {
     /// Resolve the screen for `payload` (the selected bubble's bytes, or nil if
     /// no bubble is selected).
     ///
-    /// The order matters and each step is load-bearing:
+    /// ROUND 7 (owner: "the last text has everything we need"): the extension now
+    /// renders EXACTLY the tapped bubble. Rule P (prefer a cached chain over a
+    /// stale-looking tapped one) and the no-selection reopen from cache are gone
+    /// with the preferred-chain store — so this is now just:
     ///  1. New game always wins — the human just asked for it.
-    ///  2. No bubble selected: reopen this CHAT's newest cached game, if any.
-    ///     Chat-scoped (see ChatKey): a device-wide lookup here is how chat B
-    ///     used to reopen chat A's board.
-    ///  3. A bubble: decode it (which validates it), then let Rule P choose
-    ///     between it and whatever chain we already trust for that game id.
-    ///  4. The winner's PHASE decides lobby vs board. Never the incoming
-    ///     bubble's, and never the cache's — the winner's.
+    ///  2. No bubble selected, nothing to render — offer New game (setup).
+    ///  3. A bubble: decode it (which validates it); its PHASE picks lobby vs board.
+    ///
+    /// `store`/`kernel` are still accepted so every call site and test compiles
+    /// unchanged; neither is consulted any more.
     public static func resolve(payload: Data?, startNewGame: Bool, chatKey: String,
                                store: MessageGameStore = .shared,
                                kernel: MessageKernel = .shared) async -> SurfaceScreen {
         if startNewGame { return .setup }
-
-        guard let incoming = payload else {
-            guard let row = store.games(chatKey: chatKey).first,
-                  let cached = Base32.decode(row.payloadBase32),
-                  let env = try? await MessageEnvelope.decode(payload: cached, viewer: -1)
-            else { return .setup }
-            return screen(for: cached, phase: env.phase)
-        }
-
+        guard let incoming = payload else { return .setup }
         guard let env = try? await MessageEnvelope.decode(payload: incoming, viewer: -1) else {
             return .damaged
-        }
-
-        // Rule P against the chain we already hold for this game, if any. The
-        // kernel decides; a WAITING lobby never outranks the game started from
-        // it (rule 0), which is what stops a joiner's own cached lobby from
-        // hiding the game everyone else is already playing.
-        if let row = store.record(gameId: env.gameId, chatKey: chatKey),
-           let cached = Base32.decode(row.payloadBase32), cached != incoming,
-           let cachedEnv = try? await MessageEnvelope.decode(payload: cached, viewer: -1),
-           ((try? await kernel.preferred(cached, incoming)) ?? 0) < 0 {
-            return screen(for: cached, phase: cachedEnv.phase)
         }
         return screen(for: incoming, phase: env.phase)
     }

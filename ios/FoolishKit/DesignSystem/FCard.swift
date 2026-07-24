@@ -55,6 +55,15 @@ public struct FCard: View {
     /// all - a gray that matched either surface would erase one of the two
     /// edges. Tunable in one place if it wants nudging.
     private static let darkBorder = Color(hex: 0x3E3E44)
+    /// THE light-mode card outline (round-7 final): "the deep red color for not
+    /// dark mode". One value for BOTH the face border and the fern back's frame
+    /// so a face-up card in hand and a face-down card in the deck / an
+    /// opponent's fan carry the identical edge - the owner's ask that borders
+    /// "be the same whether they are in the self card view or deck or other
+    /// player view". Deep enough to read on a white face and on the black fern
+    /// alike; the dark-mode counterpart is `darkBorder` gray, applied the same
+    /// two places.
+    static let deepRed = Color(hex: 0x8B1A1A)
 
     /// The three colours a card face is made of, as ONE value per scheme.
     ///
@@ -72,7 +81,7 @@ public struct FCard: View {
         let border: Color
 
         static let light = Ink(face: FCard.faceWhite, red: FCard.redSuit,
-                               black: FCard.blackSuit, border: FCard.blackSuit)
+                               black: FCard.blackSuit, border: FCard.deepRed)
         static let dark = Ink(face: FCard.blackSuit, red: Color(hex: 0xEF4444),
                               black: .white, border: FCard.darkBorder)
     }
@@ -161,20 +170,37 @@ public struct FCard: View {
                           lineWidth: selected ? 2.5 : 2)
     }
 
-    // MARK: back — dark-red fill with a lighter-red border (fern dropped for now;
-    // it kept rendering wrong). A clean placeholder per the owner.
+    // MARK: back — the baked fern on black, framed by the SAME edge the face
+    // uses (`ink.border`).
     //
     // `fileprivate` (not `private`) so `FCountChip` below — a different type in
     // this same file — can match these exactly rather than guessing a second
     // pair of hex values that could drift from the real card back.
     fileprivate static let backFill = Color(hex: 0x8B0000)     // dark red
     fileprivate static let backEdge = Color(hex: 0xDC2626)     // lighter red
+    /// The fern card back is now the real thing (FernCardBack, baked and loaded
+    /// through FTextures): the black field with the gold-spine / red-frond /
+    /// bulb-dot fern the web ships. The old flat-red rectangle was a placeholder
+    /// that dropped the owner's tuned fern entirely. Drawn as an image so there
+    /// is no procedural cost at draw time (the bake is a build step), clipped to
+    /// the card's rounded corners with the shared card frame on top. Falls back
+    /// to flat black if the resource is somehow missing (never on a real build).
     private var back: some View {
         RoundedRectangle(cornerRadius: radius)
-            .fill(Self.backFill)
+            .fill(Color.black)
+            .overlay {
+                if let img = FTextures.fernBack {
+                    Image(uiImage: img)
+                        .resizable()
+                        .scaledToFill()
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: radius))
             .overlay(
+                // Same edge as a face-up card (`ink.border`): deep red in light,
+                // gray in dark - so the deck / opponent fans match the hand.
                 RoundedRectangle(cornerRadius: radius)
-                    .strokeBorder(selected ? Self.selRed : Self.backEdge, lineWidth: selected ? 2.5 : 1.5)
+                    .strokeBorder(selected ? Self.selRed : ink.border, lineWidth: selected ? 2.5 : 2)
             )
     }
 

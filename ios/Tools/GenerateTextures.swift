@@ -107,6 +107,22 @@ static func main() {
         report(bake.name, url, wood, seconds: Date().timeIntervalSince(t0))
     }
 
+    // ---- fern card back ---------------------------------------------------
+    // The IFS chaos game (ported from the web's fernFractal.tsx). Quality 0.92:
+    // the fern is a sparse coloured point-cloud on black, so a high-frequency
+    // gold spine on a black field is the one place JPEG could ring - but at the
+    // sizes a card back is ever shown (48-160px) the block is sub-pixel, and PNG
+    // would be ~4x the bytes of this deep-black field.
+    for bake in FernCardBack.bakes {
+        let t0 = Date()
+        guard let fern = FernCardBack.renderCGImage(w: bake.w, h: bake.h) else {
+            FileHandle.standardError.write(Data("fern render failed: \(bake.name)\n".utf8)); exit(1)
+        }
+        let url = outDir.appendingPathComponent("\(bake.name).jpg")
+        writeJPEG(fern, to: url, quality: 0.92)
+        report(bake.name, url, fern, seconds: Date().timeIntervalSince(t0))
+    }
+
     print("Done. Commit the images; the app loads them through FTextures.")
 }
 }

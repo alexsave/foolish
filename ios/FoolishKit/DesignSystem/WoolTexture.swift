@@ -91,26 +91,27 @@ public enum WoolTexture {
 
         // MARK: dark mode
         //
-        // The look landed over three revisions. Round-6: "beige -> brown". Round-7
-        // first: "dark grey ... navy chequer". Round-7 final (the shipped one):
-        // "dark gray and light gray, both with very slight brown tint" - a
-        // two-tone grey plaid, NO colour accent. So the green/navy A/B is gone
-        // and there is ONE dark palette.
+        // The look landed over four revisions. Round-6: "beige -> brown". Round-7
+        // first: "dark grey ... navy chequer". Round-7 second: "dark gray and
+        // light gray, both with very slight brown tint" - a two-tone grey. That
+        // read "too grayscale", so round-7 FINAL (the shipped one) puts the HUE
+        // back, dark: "dark brown for the beige color, and the deep red for the
+        // bright red color" - the same two roles the LIGHT wool has (a brown
+        // fibre field, a red plaid block), only dimmed for a dark table.
         //
-        // Both tones carry a slight warm tint (R > G > B by a few points) so the
-        // grey reads as wool, not steel. The FIELD is a dark warm grey fibre
-        // (~80,76,70) between near-black gaps (~33,31,28); the PLAID BLOCKS are a
-        // light warm grey (~152,145,133), reached by a positive plaid delta - the
-        // block is LIGHTER than the field here, where the light palette's red
-        // block was a hue shift. The swing scales with the fibre so the weave's
-        // contrast matches the light palette's rather than doubling into noise.
+        // The FIELD is a dark brown fibre (~92,60,36) between near-black brown
+        // gaps (~28,18,11); the PLAID BLOCKS shift to the deep red (~0x8B1A1A =
+        // 139,26,26) via a signed plaid delta off the fibre, mirroring how the
+        // light palette's plaid pushes its beige toward red - here it is a
+        // darker red on a darker brown so the chequer reads without glowing. The
+        // swing is warm (R>G>B) and small so the weave has grain, not noise.
         public static let dark = Palette(
-            baseR: 33, baseG: 31, baseB: 28,
-            weftR: 80, weftG: 76, weftB: 70,
-            warpR: 72, warpG: 68, warpB: 63,
-            swingR: 17, swingG: 16, swingB: 15,
-            plaidR: 72, plaidG: 69, plaidB: 63,
-            fallbackHex: 0x35322D)
+            baseR: 28, baseG: 18, baseB: 11,
+            weftR: 92, weftG: 60, weftB: 36,
+            warpR: 82, warpG: 53, warpB: 32,
+            swingR: 20, swingG: 14, swingB: 9,
+            plaidR: 47, plaidG: -34, plaidB: -10,
+            fallbackHex: 0x3D2818)
     }
 
     // MARK: - The dark palette

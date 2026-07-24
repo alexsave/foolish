@@ -1,15 +1,30 @@
-// MessageGameStore — the App Group cache (design §6.1 / §9.3).
+// MessageGameStore — the App Group store (design §6.1 / §9.3).
 //
 // The extension gets no background time and no push (§11.4): the message IS the
-// state. So this cache is PURELY an optimization plus the drawer's game list —
-// §6/§7 must survive its total loss, and every method here is written so that a
-// missing or corrupt suite degrades to "no games", never a crash.
+// state. So this store is PURELY an optimization — §6/§7 must survive its total
+// loss, and every method here is written so that a missing or corrupt suite
+// degrades to "nothing stored", never a crash.
 //
-// It holds two things per game_id: the durable seat identity this device claimed
-// (§6.1, the one fact a fresh bubble cannot always recover), and the preferred
-// chain seen so far as raw payload bytes, so Rule P (§7.2, decided in C over two
-// payloads) can compare an incoming bubble against what we already trust — even a
-// stale collapsed bubble the human taps.
+// ROUND 7 (owner: "if we are storing anything other than the player nickname I
+// strongly suggest removing it — the last text has everything we need to animate
+// the last move; the cache seems to only be hurting us"): the thing that could
+// make the extension render something OTHER than the tapped bubble — the
+// PREFERRED-CHAIN payload cache + its denormalized display fields (Rule P §7.2) —
+// is GONE. The router now always renders exactly the bubble you tapped, and the
+// last-move animation was already derived from that bubble alone. `put`/`record`/
+// `games`/`remove` are retained as inert stubs so the §5/§6/§7 call sites keep
+// compiling and simply behave as "nothing cached", which those paths were always
+// written to survive.
+//
+// What the store still keeps, all device-local and none of it touching what the
+// board renders/animates:
+//   • the device NICKNAME;
+//   • per game, the SEAT this device holds (§6.1 — the one fact a fresh bubble
+//     cannot always recover, and which a 3+ player game is unplayable without);
+//   • the pending-move LEDGER (Rule R §7.4) — this device's own staged-but-unsent
+//     moves, so a killed extension or a bubble arriving mid-staging never silently
+//     drops a move you made. It is read only to rebase your own moves; it is never
+//     rendered, so it is not the "cache that hurts".
 
 import Foundation
 
@@ -64,6 +79,15 @@ public struct PendingAction: Codable, Equatable, Sendable {
     }
 }
 
+/// Round 7: the whole of what the store keeps per game now — the seat this device
+/// holds, scoped to the chat it was claimed in (a device-wide seat could seat you
+/// into another conversation's game; see `MessageGameRecord`'s chatKey note).
+public struct SeatRow: Codable, Equatable, Sendable {
+    public var chatKey: String
+    public var seat: Int
+    public init(chatKey: String, seat: Int) { self.chatKey = chatKey; self.seat = seat }
+}
+
 public final class MessageGameStore {
     /// The App Group this target owns. A `var`, not a `let`, for one reason only:
     /// the FoolishHarness test app rebinds it to a per-fake-participant suite when
@@ -98,6 +122,12 @@ public final class MessageGameStore {
     // a custom decoder just to preserve rows that carry no chatKey to be correct.
     private let key = "fmsg.games.v2"
     private let pendingKey = "fmsg.pending.v1"
+    // Round 7: the ONLY per-game fact still persisted — the seat this device holds
+    // in a game, scoped by chat (see `SeatRow`/`chatKey`). A fresh key, so a
+    // device upgrading from the old `fmsg.games.v2` blob simply starts empty here
+    // (harmless: 2p seats re-infer from the payload, and a mid-game 3+ seat re-
+    // caches the next time this device seals a move into that game).
+    private let seatsKey = "fmsg.seats.v1"
     // The suite is nil on an unsigned/misconfigured build (no App Group). That is
     // not fatal — the cache simply reports empty and every §6/§7 rule still holds
     // off the payload — so this class NEVER force-unwraps it.
@@ -135,13 +165,31 @@ public final class MessageGameStore {
     /// could out-rank (or falsely "confirm") a bubble it was never sealed
     /// against.
     public func seat(gameId: String, chatKey: String) -> Int? {
-        record(gameId: gameId, chatKey: chatKey)?.mySeat
+        guard let row = allSeats()[gameId], row.chatKey == chatKey else { return nil }
+        return row.seat
     }
 
-    public func record(gameId: String, chatKey: String) -> MessageGameRecord? {
-        guard let rec = all()[gameId], rec.chatKey == chatKey else { return nil }
-        return rec
+    /// Persist this device's seat in `gameId` within `chatKey` (§6.1) — the one
+    /// per-game fact kept in round 7. Overwrites any prior seat for the game (a
+    /// device only ever holds one seat in a given game).
+    public func setSeat(gameId: String, chatKey: String, seat: Int) {
+        var map = allSeats()
+        map[gameId] = SeatRow(chatKey: chatKey, seat: seat)
+        guard let data = try? JSONEncoder().encode(map) else { return }
+        defaults?.set(data, forKey: seatsKey)
     }
+
+    private func allSeats() -> [String: SeatRow] {
+        guard let data = defaults?.data(forKey: seatsKey),
+              let map = try? JSONDecoder().decode([String: SeatRow].self, from: data)
+        else { return [:] }
+        return map
+    }
+
+    /// ROUND 7: the preferred-chain record is gone; nothing is stored per game but
+    /// the seat (`seat(gameId:chatKey:)`). Retained as a no-op returning nil so the
+    /// §5/§6/§7 call sites compile and behave as "nothing cached".
+    public func record(gameId: String, chatKey: String) -> MessageGameRecord? { nil }
 
     /// Rule P extended to lobby (phase-0/WAITING) bubbles (note 15,
     /// HARNESS_NOTES_R2). A WAITING envelope is otherwise exempt from Rule P's
@@ -234,6 +282,12 @@ public final class MessageGameStore {
     /// gameId through; a real device clears the one game via clearPending(gameId:).
     public func clearAllPending() { persistPending([:]) }
 
+    // The pending ledger stays: it is this device's OWN staged-but-unsent moves
+    // (Rule R §7.4), read back only to rebase them onto a chain that arrives
+    // mid-staging so a killed extension never silently drops a move you made. It
+    // is device-local and never enters what the board renders or animates (that is
+    // now purely the tapped bubble), so it is not the "cache that hurts" - it is a
+    // safety net, kept.
     private func allPending() -> [String: [PendingAction]] {
         guard let data = defaults?.data(forKey: pendingKey),
               let map = try? JSONDecoder().decode([String: [PendingAction]].self, from: data)
@@ -247,16 +301,11 @@ public final class MessageGameStore {
     }
 
     // MARK: storage (a corrupt blob is treated as empty, never thrown)
-
-    private func all() -> [String: MessageGameRecord] {
-        guard let data = defaults?.data(forKey: key),
-              let map = try? JSONDecoder().decode([String: MessageGameRecord].self, from: data)
-        else { return [:] }
-        return map
-    }
-
-    private func persist(_ map: [String: MessageGameRecord]) {
-        guard let data = try? JSONEncoder().encode(map) else { return }
-        defaults?.set(data, forKey: key)
-    }
+    //
+    // ROUND 7: the preferred-chain game-record cache (Rule P) is removed. `all()`
+    // reports empty and `persist` is a no-op, so `record`/`games`/`put`/`remove`
+    // are inert — the router always renders the tapped bubble, and seat identity
+    // moved to its own `fmsg.seats.v1` store (`seat`/`setSeat` above).
+    private func all() -> [String: MessageGameRecord] { [:] }
+    private func persist(_ map: [String: MessageGameRecord]) {}
 }

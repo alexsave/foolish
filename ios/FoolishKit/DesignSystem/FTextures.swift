@@ -95,6 +95,11 @@ public enum FTextures {
         }
     }
 
+    /// The fern card back (FernCardBack) - one image, scheme-independent (the
+    /// back is always the black fern in both light and dark). Nil only if the
+    /// resource is missing, in which case FCard.back falls back to flat black.
+    public static var fernBack: UIImage? { Cache.fernBack }
+
     /// One `static let` per baked image IS the cache: lazy, thread-safe, once
     /// per process, and — the part that matters on an extension's memory
     /// budget — a variant nobody looks at is never opened at all. A dictionary
@@ -104,6 +109,7 @@ public enum FTextures {
         static let woolDark    = load(WoolTexture.darkResourceName)
         static let woodClassic = load(WoodTexture.classicResourceName)
         static let woodDark    = load(WoodTexture.darkResourceName)
+        static let fernBack    = load(FernCardBack.resourceName)
     }
 
     /// Load a baked texture out of FoolishKit's own bundle.

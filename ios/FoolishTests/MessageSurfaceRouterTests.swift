@@ -68,26 +68,31 @@ final class MessageSurfaceRouterTests: XCTestCase {
                        "a joiner opening the started game must get the BOARD, not the lobby they cached")
     }
 
-    /// The other direction, which is note 15 and must not regress: tapping a
-    /// STALE invite after the game has started opens the game, not the invite.
-    func testAStaleLobbyBubbleOpensTheStartedGameInstead() async throws {
+    /// Round 7 deliberately changed the other direction (was note 15's Rule P):
+    /// tapping a STALE invite now renders that invite. Rule P — which used to
+    /// prefer a started chain the device had cached over the tapped bubble — is
+    /// gone with the preferred-chain cache, so the router always shows exactly the
+    /// bubble you tapped (owner: "the last text has everything we need"). A tapped
+    /// lobby therefore renders as a lobby, cache or no cache.
+    func testAStaleLobbyBubbleRendersAsTheTappedLobby() async throws {
         let k = MessageKernel.shared
         let gid: UInt64 = 4343
         try await k.newGame(seed: Data(repeating: 11, count: 32), players: 8)
         let joins = [MessageJoin(seat: 0, name: "Alex"), MessageJoin(seat: 1, name: "Vera")]
         let lobby = try await k.seal(phase: 0, lastActorSeat: 0, gameId: gid,
                                      parent8: Data(repeating: 0, count: 8), joins: joins)
+        // Even having "cached" a started game for this id, the tapped lobby wins.
         let lobbyEnv = try await MessageEnvelope.decode(payload: lobby, viewer: -1)
         let live = try await k.startFromLobby(
             lobbyPayload: lobby, gameId: gid, actingSeat: 1,
             parent8: MessageTurnController.firstEight(hex: lobbyEnv.digest), joins: joins)
         let liveEnv = try await MessageEnvelope.decode(payload: live, viewer: -1)
-        cache(live, env: liveEnv, seat: 1, at: 200)          // we already have the started game
+        cache(live, env: liveEnv, seat: 1, at: 200)          // inert now (no preferred-chain cache)
 
         let screen = await MessageSurfaceRouter.resolve(payload: lobby, startNewGame: false,
                                                         chatKey: chat, store: store)
-        XCTAssertEqual(screen, .board(payload: live),
-                       "a stale invite must not hide the game it started")
+        XCTAssertEqual(screen, .lobby(payload: lobby),
+                       "with Rule P removed, a tapped lobby renders as that lobby")
     }
 
     /// A genuine lobby is still a lobby — nothing above may turn every invite
@@ -103,24 +108,13 @@ final class MessageSurfaceRouterTests: XCTestCase {
         XCTAssertEqual(screen, .lobby(payload: lobby))
     }
 
-    /// No bubble selected: reopen this chat's newest cached game, and NEVER
-    /// another chat's (the ChatKey fix, from the router's side this time).
-    func testNoSelectionReopensThisChatsGameOnly() async throws {
-        let k = MessageKernel.shared
-        try await k.newGame(seed: Data(repeating: 17, count: 32), players: 2)
-        let live = try await k.seal(phase: 2, lastActorSeat: 0, gameId: 4545,
-                                    parent8: Data(repeating: 0, count: 8),
-                                    joins: [MessageJoin(seat: 0, name: "Alex")])
-        let env = try await MessageEnvelope.decode(payload: live, viewer: -1)
-        cache(live, env: env, seat: 0, at: 300)
-
-        let mine = await MessageSurfaceRouter.resolve(payload: nil, startNewGame: false,
+    /// Round 7: with the preferred-chain cache gone there is nothing to reopen when
+    /// no bubble is selected, so the surface offers New game (setup). (It used to
+    /// reopen this chat's newest cached game.) New game still always wins.
+    func testNoSelectionShowsSetup() async throws {
+        let none = await MessageSurfaceRouter.resolve(payload: nil, startNewGame: false,
                                                       chatKey: chat, store: store)
-        XCTAssertEqual(mine, .board(payload: live), "my own chat's game reopens")
-
-        let elsewhere = await MessageSurfaceRouter.resolve(payload: nil, startNewGame: false,
-                                                           chatKey: "chat-B", store: store)
-        XCTAssertEqual(elsewhere, .setup, "another chat sees no game of mine")
+        XCTAssertEqual(none, .setup, "no bubble + no cache -> New game")
 
         let asked = await MessageSurfaceRouter.resolve(payload: nil, startNewGame: true,
                                                        chatKey: chat, store: store)

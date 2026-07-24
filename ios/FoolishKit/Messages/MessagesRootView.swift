@@ -72,13 +72,31 @@ public struct MessagesRootView: View {
         // like two separate games (B4 bug). GameSurface is always the root's child,
         // so its game state survives a style change; it renders the SAME table in
         // both, just sized to the strip (compact) or full-screen (expanded).
+        // The wool is a `.background` on the content — NOT a ZStack sibling. As a
+        // sibling, `WoolBackground().ignoresSafeArea()` expands the stack into the
+        // safe areas and `GameSurface` (maxHeight: .infinity) fills THAT taller
+        // box, so the hand fan dropped off the bottom edge (cards "barely fit", cut
+        // off). As a background the wool extends behind, into the safe area via its
+        // own `.ignoresSafeArea()`, WITHOUT changing GameSurface's frame — so the
+        // content keeps the safe-area height the hand was laid out against and the
+        // wool still paints the whole screen. The "wool too short vertically" that
+        // remained was the WEAVE IMAGE itself being a fixed size shorter than a
+        // tall expanded surface (WoolWeave), fixed there, not here.
         GameSurface(payloadURL: payloadURL, style: style, senderIsLocal: senderIsLocal,
                     startNewGame: startNewGame, newGameToken: newGameToken, sentToken: sentToken,
                     chatKey: chatKey, chatIsDM: chatIsDM, chatPlayers: chatPlayers,
                     requestExpand: requestExpand, onNewGame: onNewGame, onSend: onSend,
                     onUnstage: onUnstage)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(WoolBackground())          // the table surface, not system white
+            // Order matters: apply the wool FIRST, THEN ignore the keyboard on the
+            // composite. That way the keyboard opt-out extends the CONTENT and the
+            // WOOL together into the bottom/keyboard region, so the hand never sits
+            // over a strip the wool didn't reach (the "background gap at the bottom"
+            // seen after send-brings-up-the-keyboard, then reopening the bubble).
+            // The old order ignored the keyboard on GameSurface alone, so the hand
+            // extended down but the wool behind it did not.
+            .background(WoolBackground())
+            .ignoresSafeArea(.keyboard)
             // Round-5 M4/B3/M3: Dynamic Type had no POLICY at all — some
             // controls never scaled (M4), the card faces scaled straight out
             // of their own bounds (B3), and the game-over list collapsed
@@ -537,34 +555,13 @@ private struct GameSurface: View {
         // this is the structural guarantee behind that, not a second opinion
         // about which chain wins.
         if env.phase == 0 { lobby = Lobby(env: env, payload: winner); return }
-        // note 4/9/38: MessageGameStore still holds the chain we PREVIOUSLY
-        // cached for this game — `cache(...)` (via seatOnBoard/choose below)
-        // is what overwrites it. Grab its raw bytes now, before that happens,
-        // so the controller can later diff its own resolved seat's hand +
-        // replay-log count against it (that decode happens seat-aware, inside
-        // the controller, once `mySeat` is actually known — see
-        // MessageTurnController.begin()). Only "nothing cached yet" leaves
-        // this nil (a genuine first-ever open, which falls back to
-        // MessageTableView's trailing-run heuristic).
-        //
-        // Note 13: `bytes == winner` — a REOPEN of a chain we already fully
-        // cached — used to be excluded here too ("not the same chain" was
-        // the old condition), on the reasoning that there's nothing to diff.
-        // That's wrong: it IS a real diff, of exactly zero. Passing it
-        // through lets MessageTurnController.begin() see equal log counts on
-        // both sides and resolve to an EMPTY replay window (see its
-        // `openReplayFromLog` doc) instead of silently reporting "no info" —
-        // which used to fall through to the SAME structural heuristic a
-        // genuine cache miss uses, one with no memory of what it already
-        // showed, so a pickup/draw sequence replayed again sometimes and not
-        // others depending on whether the table happened to read empty.
-        var prevPayload: Data?
-        if let prevRow = MessageGameStore.shared.record(gameId: env.gameId, chatKey: chatKey),
-           let bytes = Base32.decode(prevRow.payloadBase32) {
-            prevPayload = bytes
-        }
-        // Make the resident game the winner and set Rule R's round guard, then
-        // rebase the pending ledger onto it.
+        // Round 7: `prevPayload` (the previously-cached chain) is gone — the
+        // open-replay was already resolved purely from the adopted chain by the
+        // kernel (MessageTurnController.begin -> lastMoveEvents), never from a
+        // cached diff, so there is nothing to look up here any more.
+        let prevPayload: Data? = nil
+        // Make the resident game the winner (the round guard/ledger it used to set
+        // are gone with Rule R).
         _ = try? await MessageKernel.shared.decode(payload: winner, viewer: -1)
         #if DEBUG || SOLO_TESTING
         // Single-simulator harness: both conversations share ONE App Group cache
@@ -693,12 +690,12 @@ private struct GameSurface: View {
         ambiguous = nil
     }
 
+    /// Round 7: persist ONLY this device's seat (§6.1). The preferred-chain
+    /// payload, denormalized display fields and pending ledger the old record
+    /// carried are gone — the extension always renders the tapped bubble now, so
+    /// the one thing worth keeping is which seat is me in this game.
     private func cache(seat: Int, env: MessageEnvelope, payload: Data) {
-        let names = Dictionary(env.joins.map { ($0.seat, $0.name) }, uniquingKeysWith: { a, _ in a })
-        MessageGameStore.shared.put(MessageGameRecord(
-            gameId: env.gameId, chatKey: chatKey, mySeat: seat, nPlayers: env.nPlayers, round: env.round,
-            turn: env.turn, phase: env.phase, finished: env.phase == 3, names: names,
-            payloadBase32: Base32.encode(payload), updatedAt: Date().timeIntervalSince1970))
+        MessageGameStore.shared.setSeat(gameId: env.gameId, chatKey: chatKey, seat: seat)
     }
 }
 

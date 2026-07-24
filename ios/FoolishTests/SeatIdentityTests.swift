@@ -98,76 +98,55 @@ final class SeatIdentityTests: XCTestCase {
         return MessageGameStore(defaults: d)
     }
 
-    private func rec(_ id: String, chatKey: String? = nil, seat: Int, at t: Double, turn: Int = 4) -> MessageGameRecord {
-        MessageGameRecord(gameId: id, chatKey: chatKey ?? chatA, mySeat: seat, nPlayers: 2, round: 1, turn: turn,
-                          phase: 2, finished: false, names: [0: "Alex", 1: "Sveta"],
-                          payloadBase32: "AAAA", updatedAt: t)
-    }
-
-    func testPutThenSeatAndRecordRoundTrip() {
+    /// Round 7: the seat this device holds round-trips through the store, scoped by
+    /// chat (§6.1). This is the one per-game fact the store keeps after the cache
+    /// strip (the preferred-chain game-record cache is gone).
+    func testSetSeatRoundTrip() {
         let s = freshStore()
-        s.put(rec("g1", seat: 1, at: 100))
+        s.setSeat(gameId: "g1", chatKey: chatA, seat: 1)
         XCTAssertEqual(s.seat(gameId: "g1", chatKey: chatA), 1)
-        XCTAssertEqual(s.record(gameId: "g1", chatKey: chatA)?.name(0), "Alex")
         XCTAssertNil(s.seat(gameId: "absent", chatKey: chatA))
+        // A device only ever holds one seat in a game; the latest write wins.
+        s.setSeat(gameId: "g1", chatKey: chatA, seat: 0)
+        XCTAssertEqual(s.seat(gameId: "g1", chatKey: chatA), 0)
     }
 
-    func testGamesSortNewestFirst() {
+    /// Round 7 removed the preferred-chain game-record cache and the drawer list:
+    /// `put`/`record`/`games`/`remove` are inert now, so the extension always
+    /// renders the tapped bubble rather than a cached chain.
+    func testGameRecordCacheIsInert() {
         let s = freshStore()
-        s.put(rec("old", seat: 0, at: 100))
-        s.put(rec("new", seat: 0, at: 200))
-        XCTAssertEqual(s.games(chatKey: chatA).map(\.gameId), ["new", "old"])
+        s.put(MessageGameRecord(gameId: "g", chatKey: chatA, mySeat: 1, nPlayers: 2, round: 1,
+                                turn: 4, phase: 2, finished: false, names: [:],
+                                payloadBase32: "AAAA", updatedAt: 100))
+        XCTAssertNil(s.record(gameId: "g", chatKey: chatA), "no game-record cache after round 7")
+        XCTAssertTrue(s.games(chatKey: chatA).isEmpty, "no drawer list after round 7")
     }
 
-    func testOlderUpdateDoesNotRollBackTheCache() {
-        // A late-delivered stale bubble (lower updatedAt) must not overwrite a
-        // newer row — the cache is delivery-order-independent, like Rule P (§7.2).
-        let s = freshStore()
-        s.put(rec("g", seat: 0, at: 200, turn: 9))
-        s.put(rec("g", seat: 0, at: 100, turn: 3))     // arrives later, older state
-        XCTAssertEqual(s.record(gameId: "g", chatKey: chatA)?.turn, 9, "newer state kept")
-    }
-
-    func testRemove() {
-        let s = freshStore()
-        s.put(rec("g", seat: 0, at: 100))
-        s.remove(gameId: "g")
-        XCTAssertNil(s.record(gameId: "g", chatKey: chatA))
-        XCTAssertTrue(s.games(chatKey: chatA).isEmpty)
-    }
-
-    func testCorruptBlobDegradesToEmpty() {
+    /// A corrupt seat blob reads as no seat and never crashes; a write recovers.
+    func testCorruptSeatBlobDegradesToEmpty() {
         let suite = "test.fmsg.\(UUID().uuidString)"
         let d = UserDefaults(suiteName: suite)!
-        d.set(Data([0xff, 0x00, 0x13]), forKey: "fmsg.games.v2")   // not our JSON
+        d.set(Data([0xff, 0x00, 0x13]), forKey: "fmsg.seats.v1")   // not our JSON
         let s = MessageGameStore(defaults: d)
-        XCTAssertTrue(s.games(chatKey: chatA).isEmpty, "a corrupt suite reads as no games, never crashes")
-        s.put(rec("g", seat: 0, at: 1))                            // and recovers on write
+        XCTAssertNil(s.seat(gameId: "g", chatKey: chatA), "a corrupt suite reads as no seat, never crashes")
+        s.setSeat(gameId: "g", chatKey: chatA, seat: 0)            // and recovers on write
         XCTAssertEqual(s.seat(gameId: "g", chatKey: chatA), 0)
     }
 
     // MARK: - chat scoping (the cross-chat leak fix)
 
-    /// The exact bug this fix closes: a row cached from Chat A must be invisible
-    /// to every read scoped to Chat B — `games()`, `record()`, and `seat()` alike
-    /// — even though it is the same device's single App Group suite holding
-    /// both rows. Before this fix these methods took no chatKey at all and
-    /// `games()` was device-wide, so opening the extension in Chat B with no
-    /// bubble selected could reopen Chat A's newest game.
-    func testRecordsAreScopedToTheirChat() {
+    /// A seat cached from Chat A must be invisible to a read scoped to Chat B, even
+    /// though the same device's single App Group suite holds both — the leak the
+    /// game-record cache used to guard against, now enforced on the seat store.
+    func testSeatsAreScopedToTheirChat() {
         let s = freshStore()
-        s.put(rec("gA", chatKey: chatA, seat: 0, at: 100))
-        s.put(rec("gB", chatKey: chatB, seat: 1, at: 200))
-
-        XCTAssertEqual(s.games(chatKey: chatA).map(\.gameId), ["gA"])
-        XCTAssertEqual(s.games(chatKey: chatB).map(\.gameId), ["gB"])
-
-        XCTAssertNotNil(s.record(gameId: "gA", chatKey: chatA))
-        XCTAssertNil(s.record(gameId: "gA", chatKey: chatB), "chat B must not see chat A's row")
-        XCTAssertNil(s.record(gameId: "gB", chatKey: chatA), "chat A must not see chat B's row")
-
+        s.setSeat(gameId: "gA", chatKey: chatA, seat: 0)
+        s.setSeat(gameId: "gB", chatKey: chatB, seat: 1)
         XCTAssertEqual(s.seat(gameId: "gA", chatKey: chatA), 0)
-        XCTAssertNil(s.seat(gameId: "gA", chatKey: chatB), "a foreign chat's cached seat must read as unknown")
+        XCTAssertEqual(s.seat(gameId: "gB", chatKey: chatB), 1)
+        XCTAssertNil(s.seat(gameId: "gA", chatKey: chatB), "chat B must not see chat A's seat")
+        XCTAssertNil(s.seat(gameId: "gB", chatKey: chatA), "chat A must not see chat B's seat")
     }
 
     // MARK: - ChatKey (what the scoping above is only as good as)

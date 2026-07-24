@@ -35,6 +35,7 @@ swiftc -Ounchecked -whole-module-optimization \
   -o "$BUILD/gentex" \
   "$IOS/FoolishKit/DesignSystem/WoolTexture.swift" \
   "$IOS/FoolishKit/DesignSystem/WoodTexture.swift" \
+  "$IOS/FoolishKit/DesignSystem/FernCardBack.swift" \
   "$HERE/GenerateTextures.swift"
 
 "$BUILD/gentex" "$OUT"

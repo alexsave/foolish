@@ -28,10 +28,21 @@ public struct FBattleGrid: View {
     /// false so every existing call site (MessageBoardView, TableView, the
     /// gallery/snapshot tests) keeps compiling unchanged.
     public let showGhostSlot: Bool
+    /// Round-7 #7 ("the card being covered should rotate at the same speed as
+    /// the card about to cover it"): the identities whose overlay flight is
+    /// PLAYING RIGHT NOW (`BoardAnimator.hidden \ preHidden`). A cover in here
+    /// is mid-flight, so the attack beneath it must ALREADY be tilting into its
+    /// lay-across - synced to the cover, not snapping only once the cover lands.
+    /// Distinct from `hidden`, which also carries a cover merely QUEUED for a
+    /// flight that has not begun (an open-replay's first paint) - that one stays
+    /// upright. Defaulted empty so every static/read-only call site (a settled
+    /// board, MessageBoardView, the snapshot tests) tilts a covered pair exactly
+    /// as before.
+    public let flyingNow: Set<String>
 
     public init(battles: [BattleView], trumpSuit: Suit?, coverable: Set<Int> = [],
                 onTapBattle: @escaping (Int) -> Void = { _ in }, namespace: Namespace.ID? = nil,
-                hidden: Set<String> = [], showGhostSlot: Bool = false) {
+                hidden: Set<String> = [], showGhostSlot: Bool = false, flyingNow: Set<String> = []) {
         self.battles = battles
         self.trumpSuit = trumpSuit
         self.coverable = coverable
@@ -39,6 +50,7 @@ public struct FBattleGrid: View {
         self.namespace = namespace
         self.hidden = hidden
         self.showGhostSlot = showGhostSlot
+        self.flyingNow = flyingNow
     }
 
     private let cardSize = CGSize(width: 50, height: 70)   // web card 50x70
@@ -113,6 +125,42 @@ public struct FBattleGrid: View {
         return !hidden.contains(d.identity)
     }
 
+    /// Round-7 #7: should the attacked card lie across YET, given that a cover
+    /// should tilt IN LOCKSTEP with the covering card's flight rather than
+    /// snapping only once it lands. True the moment the cover's flight starts
+    /// (`flyingNow`) and stays true once it has landed (no longer `hidden`);
+    /// false only while the cover is still QUEUED - in `hidden` but not yet
+    /// flying - which is an open-replay's first paint, where a flash of tilt is
+    /// exactly the bug the veil exists to avoid.
+    ///
+    ///   - queued (hidden, not flying)  -> upright   (no first-paint flash)
+    ///   - flying (hidden, flyingNow)   -> tilted    (rotates WITH the cover)
+    ///   - landed (not hidden)          -> tilted
+    ///
+    /// With an empty `flyingNow` this collapses to `coverLanded` exactly, so a
+    /// static board (MessageBoardView / a settled table) is unchanged.
+    public static func coverTilted(defense: Card?, hidden: Set<String>, flyingNow: Set<String>) -> Bool {
+        guard let d = defense else { return false }
+        return !hidden.contains(d.identity) || flyingNow.contains(d.identity)
+    }
+
+    /// Round-7 #2 ("pickup animation glitchy - still has a double animation. Cards
+    /// start moving towards our hand, then fade to invisible, then are respawned in
+    /// a group and animate to the hand"). A picked-up card leaves this grid and
+    /// re-appears in the hand, both carrying `matchedGeometryEffect` under the same
+    /// id - so SwiftUI flies it grid->hand (fading, since the hand copy is veiled to
+    /// opacity 0) at the SAME time the board's overlay flies it table->hand. Two
+    /// animations of one card: the double. On this board the overlay handles every
+    /// flight (attacks/covers via flyPlacement, pickups/discards/draws via the
+    /// event stream), so matchedGeometry is pure interference for any card the
+    /// overlay owns. A card the overlay is flying is exactly the one in `hidden`, so
+    /// drop its matched namespace: it then simply appears (opacity 0) at its
+    /// destination and the overlay flies it in once, cleanly. A settled card
+    /// (not hidden) keeps its namespace, a no-op at rest.
+    private func handoffNamespace(_ id: String) -> Namespace.ID? {
+        hidden.contains(id) ? nil : namespace
+    }
+
     private func pair(_ battle: BattleView, index: Int) -> some View {
         let covered = battle.defense != nil
         // The attacked card tilts only once the cover has LANDED — i.e. the cover's
@@ -129,7 +177,14 @@ public struct FBattleGrid: View {
         // in — and a cover from an OLDER bubble, which this open does not
         // replay at all, animated its tilt from scratch on load ("I see that
         // the first cover rotates a bit as soon as we load").
-        let coverLanded = Self.coverLanded(defense: battle.defense, hidden: hidden)
+        // Round-7 #7: tilt in lockstep with the covering card's flight (same
+        // duration and timing curve, triggered the instant the cover starts
+        // flying, not once it lands), so the covered card and the card covering
+        // it rotate at the same speed. `coverTilted` starts the tilt at flight
+        // start (`flyingNow`); the animation below matches `FlyingCardsLayer`'s
+        // own `flightTime` timing curve exactly, where it used to be a faster
+        // 0.22s easeOut that only fired after the cover had already landed.
+        let coverTilted = Self.coverTilted(defense: battle.defense, hidden: hidden, flyingNow: flyingNow)
         return ZStack(alignment: .bottom) {
             FCard(card: battle.attack,
                   trump: trumpSuit != nil && battle.attack.suit == trumpSuit,
@@ -145,10 +200,18 @@ public struct FBattleGrid: View {
                     }
                 }
                 .opacity(hidden.contains(battle.attack.identity) ? 0 : 1)
-                .rotationEffect(.degrees(coverLanded ? -Self.coverAngle : 0), anchor: .bottom)
-                .animation(.easeOut(duration: 0.22), value: coverLanded)
+                .rotationEffect(.degrees(coverTilted ? -Self.coverAngle : 0), anchor: .bottom)
+                .animation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime), value: coverTilted)
                 .zIndex(covered ? 1 : 2)
-                .modifier(FlightID(id: battle.attack.identity, namespace: namespace))
+                // Round-7 #2: a card the overlay is flying (in `hidden`) must NOT
+                // also carry matchedGeometry - see `handoffNamespace`.
+                .modifier(FlightID(id: battle.attack.identity, namespace: handoffNamespace(battle.attack.identity)))
+                // Round-7 #2: publish this card's real on-table rect so a bout-end
+                // discard flies it from here, not a shared centroid.
+                .background(GeometryReader { g in
+                    Color.clear.preference(key: BattleCardFramesKey.self,
+                                           value: [battle.attack.identity: g.frame(in: .named(boardSpace))])
+                })
 
             if let defense = battle.defense {
                 FCard(card: defense,
@@ -157,7 +220,11 @@ public struct FBattleGrid: View {
                     .opacity(hidden.contains(defense.identity) ? 0 : 1)
                     .rotationEffect(.degrees(Self.coverAngle), anchor: .bottom)   // laid across (§5.4)
                     .zIndex(2)
-                    .modifier(FlightID(id: defense.identity, namespace: namespace))
+                    .modifier(FlightID(id: defense.identity, namespace: handoffNamespace(defense.identity)))
+                    .background(GeometryReader { g in
+                        Color.clear.preference(key: BattleCardFramesKey.self,
+                                               value: [defense.identity: g.frame(in: .named(boardSpace))])
+                    })
             }
         }
         .frame(width: slot.width, height: slot.height, alignment: .bottom)

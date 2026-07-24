@@ -265,26 +265,25 @@ final class HarnessFlowTests: XCTestCase {
     /// isolation, is what is keeping Chat B blind to Chat A's game. Before the
     /// fix (`games`/`record`/`seat` took no chatKey and the map was read
     /// unscoped) this test fails: Chat B would see Chat A's row.
-    func test_chatSwitchDoesNotLeakACachedGameAcrossChats() throws {
+    func test_chatSwitchDoesNotLeakACachedSeatAcrossChats() throws {
+        // Round 7: the preferred-chain game-record cache is gone; the SEAT store is
+        // the one per-game fact left, and it must stay chat-scoped for the same
+        // reason the record cache was — a seat from Chat A must never resolve in
+        // Chat B on the one shared App Group suite.
         let m = HarnessModel(count: 2)
         let chatAKey = m.chatKey
-        MessageGameStore.shared.put(MessageGameRecord(
-            gameId: "leak-check", chatKey: chatAKey, mySeat: 0, nPlayers: 2, round: 1, turn: 3,
-            phase: 2, finished: false, names: [0: "You", 1: "Vera"],
-            payloadBase32: "AAAA", updatedAt: 100))
-        XCTAssertEqual(MessageGameStore.shared.games(chatKey: chatAKey).map(\.gameId), ["leak-check"])
+        MessageGameStore.shared.setSeat(gameId: "leak-check", chatKey: chatAKey, seat: 0)
+        XCTAssertEqual(MessageGameStore.shared.seat(gameId: "leak-check", chatKey: chatAKey), 0)
 
         m.switchChat(1)
         XCTAssertNotEqual(m.chatKey, chatAKey, "each simulated chat has its own conversation identity")
-        XCTAssertTrue(MessageGameStore.shared.games(chatKey: m.chatKey).isEmpty,
-                      "Chat B must not see Chat A's cached game, even on the SAME device/store suite")
-        XCTAssertNil(MessageGameStore.shared.record(gameId: "leak-check", chatKey: m.chatKey),
-                     "and a direct gameId lookup must not cross chats either")
+        XCTAssertNil(MessageGameStore.shared.seat(gameId: "leak-check", chatKey: m.chatKey),
+                     "Chat B must not see Chat A's cached seat, even on the SAME device/store suite")
 
         m.switchChat(0)
         XCTAssertEqual(m.chatKey, chatAKey, "switching back restores Chat A's identity")
-        XCTAssertEqual(MessageGameStore.shared.record(gameId: "leak-check", chatKey: m.chatKey)?.mySeat, 0,
-                       "and Chat A's own row is unaffected by the round trip")
+        XCTAssertEqual(MessageGameStore.shared.seat(gameId: "leak-check", chatKey: m.chatKey), 0,
+                       "and Chat A's own seat is unaffected by the round trip")
     }
     // MARK: - the drawer must never strand the screen
 

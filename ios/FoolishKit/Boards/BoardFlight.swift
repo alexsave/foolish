@@ -51,6 +51,19 @@ public struct HandCardFramesKey: PreferenceKey {
     }
 }
 
+/// Per-battle-CARD rects in `boardSpace`, keyed by card.identity — where each
+/// attack/defense card ACTUALLY sits on the table. Round-7 #2: a bout-end discard
+/// sweep flies each trashed card from ITS OWN rect, so the overlay ghost spawns
+/// exactly where the real card was (reading as that card flying to the pile),
+/// instead of every card sharing one reconstructed table centroid and bunching
+/// up in the middle ("identical cards appear very close together, then fly").
+public struct BattleCardFramesKey: PreferenceKey {
+    public static let defaultValue: [String: CGRect] = [:]
+    public static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
 /// Opponent seat rects in `boardSpace`, keyed by seat — the target for opponent
 /// draws/pickup (masked card backs fly to their badge).
 public struct SeatFramesKey: PreferenceKey {

@@ -63,6 +63,10 @@ public struct MessageTableView: View {
     /// sharing one centroid (which read as a single stack sliding to the pile).
     /// Keyed by the same battle index as `lastBattleFrames`.
     @State private var lastBattles: [BattleView] = []
+    /// Round-7 #2: each battle CARD's real on-table rect (identity -> rect),
+    /// kept at its last non-empty value so a bout-end discard sweep can fly each
+    /// trashed card from exactly where it sat, not a shared table centroid.
+    @State private var lastBattleCardFrames: [String: CGRect] = [:]
     @State private var deckFrame: CGRect = .zero
     @State private var handCardFrames: [String: CGRect] = [:]
     @State private var seatFrames: [Int: CGRect] = [:]
@@ -211,6 +215,9 @@ public struct MessageTableView: View {
         .onPreferenceChange(BattleFramesKey.self) { fr in
             battleFrames = fr
             if !fr.isEmpty { lastBattleFrames = fr }
+        }
+        .onPreferenceChange(BattleCardFramesKey.self) { fr in
+            if !fr.isEmpty { lastBattleCardFrames = fr }
         }
         .onPreferenceChange(HandFrameKey.self) { handFrame = $0 }
         .onPreferenceChange(DiscardFrameKey.self) { discardFrame = $0 }
@@ -658,12 +665,34 @@ public struct MessageTableView: View {
                             coverable: passPreview ? [] : highlightBattles(view),
                             onTapBattle: { idx in tapBattle(idx, view) },
                             namespace: cardNS, hidden: veiledCardIds,
-                            showGhostSlot: passPreview)
+                            showGhostSlot: passPreview,
+                            // Round-7 #7: the covers whose flight is playing this
+                            // instant, so the attack beneath one tilts WITH it (same
+                            // set that drives `handSlotDeferred`'s "flying now").
+                            flyingNow: animator.hidden.subtracting(animator.preHidden))
             }
         }
         // The verb hint is NOT attached here any more — round-4 note 4 moved it
         // to follow the fingertip; see the `dragPoint` branch in boardContent.
         .frame(maxWidth: .infinity)   // boardContent's call site adds maxHeight
+    }
+
+    /// Round-7 #3 ("rearranging while in the compact view keeps giving 'move not
+    /// allowed'"): the hand's DROP/cancel hit-region, grown generously upward (and
+    /// a little down) from the published hand frame. In the compact drawer the fan
+    /// is cropped to a ~44pt strip at the very bottom, so a horizontal rearrange
+    /// whose finger drifts up off that thin strip fell OUTSIDE `handFrame` - and a
+    /// release there resolves to `.table`, i.e. an attack/pass, which `CardPlay`
+    /// rejects with the "move not allowed" toast. Battles are hit-tested FIRST in
+    /// `BoardDrop.target`, so widening the hand band never swallows a real cover;
+    /// and a genuine open-table attack is dropped well above this band (the centre
+    /// of the board), so it still resolves to `.table`. A rearrange that never
+    /// reached a battle now cancels quietly instead of rejecting.
+    private var handDropFrame: CGRect {
+        guard handFrame != .zero else { return handFrame }
+        let up: CGFloat = 64, down: CGFloat = 24
+        return CGRect(x: handFrame.minX, y: handFrame.minY - up,
+                      width: handFrame.width, height: handFrame.height + up + down)
     }
 
     /// The move a release right now would resolve to, if any — the SAME
@@ -672,7 +701,7 @@ public struct MessageTableView: View {
     /// neither can disagree with what actually happens on release.
     private func dragPreview(_ view: GameView) -> (target: PlayTarget, move: Move)? {
         guard let card = dragCard, let point = dragPoint else { return nil }
-        let target = BoardDrop.target(at: point, battles: battleFrames, handFrame: handFrame)
+        let target = BoardDrop.target(at: point, battles: battleFrames, handFrame: handDropFrame)
         guard target != .hand,
               let move = CardPlay.resolve(cards: playCards(for: card, view), target: target,
                                           isDefender: view.defender == controller.mySeat,
@@ -841,7 +870,7 @@ public struct MessageTableView: View {
         Task {
             if let pc = matchedCover {
                 BoardAnimator.sequenceDepth += 1
-                await playStep { self.pendingCoverLandingFlights(pc) }
+                await playStep { _ in self.pendingCoverLandingFlights(pc) }
                 BoardAnimator.sequenceDepth -= 1
             }
             let events = await MessageKernel.shared.lastMoveEvents(viewer: controller.mySeat)
@@ -856,7 +885,7 @@ public struct MessageTableView: View {
     /// one animation path, shared by the open-replay and the live bout-end, so
     /// neither derives what-flies-where from a GameView diff. The caller pre-hides
     /// the moved cards first (synchronously, before the first paint).
-    private func runEventStream(_ events: [GameEvent], finalView view: GameView) async {
+    private func runEventStream(_ events: [GameEvent], finalView view: GameView, openReplay: Bool = false) async {
         let run = AnimLog.on ? AnimLog.nextRun() : 0
         AnimLog.say("stream#\(run) begin n=\(events.count) [\(events.map { "\($0.kind.map(String.init(describing:)) ?? "?")@\($0.seat)x\($0.cards.count)" }.joined(separator: " "))] depth=\(BoardAnimator.sequenceDepth)")
         guard !events.isEmpty else {
@@ -867,6 +896,21 @@ public struct MessageTableView: View {
         animSequenceToken += 1
         let mySeq = animSequenceToken
         BoardAnimator.sequenceDepth += 1
+        // Round-7 (invisible-deal fix): every hand-card slot this sequence OPENS
+        // for an incoming deal/refill/pickup (openSlots, below). clearPreHidden()
+        // on teardown CANNOT rescue these — openSlots pulled them back OUT of
+        // preHidden so their slot would lay out — so a step whose flight never
+        // got built (a landing frame that never published, a poll that timed
+        // out, a supersede) leaves its card stuck in `hidden`: laid out, opacity
+        // 0, its slot reserved but nothing ever drawn in it. That is precisely
+        // the "no animation for our deal, then the cards move over and we have
+        // invisible cards in our hand" report — the deal opened the fan but its
+        // flight never landed and nothing took the veil back down. Tracked here
+        // and force-revealed in the teardown so an open can NEVER end with a
+        // card invisible, whatever went wrong mid-flight (`flyPlacement` already
+        // does exactly this for a live placement; these two open/bout-end
+        // teardowns were the ones still relying on clearPreHidden alone).
+        var openedThisSeq = Set<String>()
         defer {
             BoardAnimator.sequenceDepth -= 1
             // ONLY the newest sequence may hand the veil and the counts back. A
@@ -877,6 +921,11 @@ public struct MessageTableView: View {
             if mySeq == animSequenceToken {
                 deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
                 animator.clearPreHidden()
+                let stuck = openedThisSeq.filter { animator.isHidden($0) }
+                if !stuck.isEmpty {
+                    AnimLog.say("stream#\(run) rescue-reveal \(stuck.count) opened-but-unflown [\(stuck.sorted().joined(separator: ","))]")
+                    animator.reveal(stuck)
+                }
             } else {
                 AnimLog.say("stream#\(run) superseded by seq \(animSequenceToken) - teardown skipped")
             }
@@ -891,7 +940,26 @@ public struct MessageTableView: View {
         // dealt card, but changed its mind."
         //
         // Now only the per-step advance happens here, each as its flight lands.
-        try? await Task.sleep(nanoseconds: 120_000_000)   // let the rects publish
+        //
+        // Round-7 #2: this used to be a flat 120ms wait "let the rects publish"
+        // before the FIRST step. For a bout-end discard that step's rects are
+        // already captured (lastBattleCardFrames / discardFrame, from before the
+        // table cleared), so the wait only bought a visible gap in which the real
+        // table cards faded out BEFORE the overlay ghost appeared to fly them - the
+        // "cards fade away, then identical cards appear and fly" the owner saw. With
+        // the ghost spawning right away it lands on top of the still-present card
+        // and masks the fade, reading as the card itself sliding to the pile.
+        // playStep polls (45ms) for any step whose frames genuinely aren't ready
+        // yet (a fresh open's first layout), so dropping the coarse pre-wait is
+        // safe - readiness is still gated, just per-step instead of up front.
+        //
+        // Round-7 (first-open bunch): an OPEN-REPLAY builds from a COLD first
+        // layout, so give it a beat to settle before the first flight - paired with
+        // the SNAP-open below, that beat is enough for each incoming card's real
+        // slot frame to publish, so the draw flies each card to its correct place
+        // (what a warm reload already does). A live bout-end keeps the near-zero
+        // wait so its discard ghost covers the fading table card at once (#2).
+        try? await Task.sleep(nanoseconds: openReplay ? 100_000_000 : 16_000_000)
 
         for ev in events {
             // Bug 9: a newer sequence has taken over (a live bout-end played on
@@ -910,12 +978,27 @@ public struct MessageTableView: View {
             // which only publishes once the slot is laid out.
             let landing = self.myHandLandingIds(ev)
             if !landing.isEmpty {
-                withAnimation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime)) {
+                openedThisSeq.formUnion(landing)   // rescue set — see the teardown defer
+                if openReplay {
+                    // First open (round-7 first-open bunch): the whole hand is
+                    // appearing fresh anyway, so SNAP the slots open (no animation).
+                    // The incoming cards' landing frames are then FINAL immediately,
+                    // so the draw flies each card to its own correct slot - instead
+                    // of to a mid-animation, still-collapsing position where they
+                    // pile up and then "spontaneously ungroup" as the fan finishes
+                    // spreading. A warm reload never saw this because its layout was
+                    // already settled; snapping makes the cold first open match it.
                     self.animator.openSlots(landing)
+                } else {
+                    // Live: the hand is already on screen, so make room for the deal
+                    // UNDER a spring (round-6 bug 10) rather than jumping.
+                    withAnimation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime)) {
+                        self.animator.openSlots(landing)
+                    }
                 }
             }
-            await playStep {
-                let f = self.openReplayFlights(ev, view: view)
+            await playStep { lastChance in
+                let f = self.openReplayFlights(ev, view: view, lastChance: lastChance)
                 if let f { AnimLog.say("stream#\(run) step \(ev.kind.map(String.init(describing:)) ?? "?")@\(ev.seat) flights=\(f.count) [\(f.map(\.id).joined(separator: ","))]") }
                 return f
             }
@@ -977,9 +1060,14 @@ public struct MessageTableView: View {
     /// Poll (up to ~1.2s) for a step's frames to be ready, then play it and await
     /// the animation. `build` returns nil (frames not ready — retry), [] (nothing to
     /// animate), or the flights.
-    private func playStep(_ build: () -> [Flight]?) async {
-        for _ in 0..<26 {
-            if let f = build() {
+    private func playStep(_ build: (_ lastChance: Bool) -> [Flight]?) async {
+        for i in 0..<26 {
+            // Round-7 #1: the final poll passes `lastChance` so a builder that
+            // still can't resolve an exact landing frame flies to an APPROXIMATE
+            // one instead of returning nil forever, which is what leaves the card
+            // to be hard-revealed (it "just suddenly appears in hand"). A rough
+            // deck->hand flight reads far better than a pop-in.
+            if let f = build(i == 25) {
                 if !f.isEmpty { await animator.play([f]) }
                 return
             }
@@ -1026,7 +1114,7 @@ public struct MessageTableView: View {
                 // sequence has pre-hidden but not yet flown (round-6 bug 9).
                 animator.reveal(ids)
             }
-            await playStep { self.placementFlights(pp, view: view) }
+            await playStep { _ in self.placementFlights(pp, view: view) }
         }
     }
 
@@ -1053,10 +1141,27 @@ public struct MessageTableView: View {
         return out
     }
 
-    private func myDrawFlights(_ cards: [Card]) -> [Flight]? {
+    private func myDrawFlights(_ cards: [Card], lastChance: Bool = false) -> [Flight]? {
         if cards.isEmpty { return [] }
-        guard deckFrame != .zero, cards.allSatisfy({ handCardFrames[$0.identity] != nil }) else { return nil }
-        return cards.compactMap { c in handCardFrames[c.identity].map { Flight(id: "draw-\(c.identity)", card: c, from: deckFrame, to: $0) } }
+        guard deckFrame != .zero else { return nil }
+        let allReady = cards.allSatisfy { handCardFrames[$0.identity] != nil }
+        if !allReady && !lastChance { return nil }        // keep polling for the real slots
+        return cards.enumerated().compactMap { i, c in
+            (handCardFrames[c.identity] ?? handApproxLanding(index: i, of: cards.count))
+                .map { Flight(id: "draw-\(c.identity)", card: c, from: deckFrame, to: $0) }
+        }
+    }
+
+    /// Round-7 #1: a rough card-sized landing rect for a draw whose exact per-card
+    /// slot frame never published in time. SPREAD across the hand fan by index, so
+    /// several unresolved cards fly to separate places rather than piling onto one
+    /// point and then snapping apart (the first-open "bunch then ungroup"). A
+    /// deck->hand flight to about-the-right-place reads far better than the card
+    /// silently appearing; nil only if the hand itself hasn't rendered yet.
+    private func handApproxLanding(index: Int = 0, of count: Int = 1) -> CGRect? {
+        guard handFrame != .zero, count > 0 else { return nil }
+        let x = handFrame.minX + handFrame.width * (CGFloat(index) + 0.5) / CGFloat(count)
+        return CGRect(x: x - 25, y: handFrame.midY - 35, width: 50, height: 70)
     }
 
 
@@ -1148,7 +1253,7 @@ public struct MessageTableView: View {
     /// nil to ask `playStep` to retry (a needed frame isn't published yet), or a
     /// (possibly empty) flight list. `view` is the FINAL board, for locating a
     /// card still on the table.
-    private func openReplayFlights(_ ev: GameEvent, view: GameView) -> [Flight]? {
+    private func openReplayFlights(_ ev: GameEvent, view: GameView, lastChance: Bool = false) -> [Flight]? {
         let mine = ev.seat == controller.mySeat
         switch ev.kind {
         case .attackPass, .defenderMove, .cover:
@@ -1175,10 +1280,13 @@ public struct MessageTableView: View {
             // Deck -> hand (mine, real cards) or a seat's badge (backs, by count).
             if mine {
                 let cards = ev.cards.compactMap { $0 }
-                guard deckFrame != .zero, cards.allSatisfy({ handCardFrames[$0.identity] != nil })
-                else { return cards.isEmpty ? [] : nil }
-                return cards.compactMap { c in handCardFrames[c.identity].map {
-                    Flight(id: "opendraw-\(c.identity)", card: c, from: deckFrame, to: $0) } }
+                if cards.isEmpty { return [] }
+                guard deckFrame != .zero else { return nil }
+                let allReady = cards.allSatisfy { handCardFrames[$0.identity] != nil }
+                if !allReady && !lastChance { return nil }        // keep polling for the real slots
+                return cards.enumerated().compactMap { i, c in
+                    (handCardFrames[c.identity] ?? handApproxLanding(index: i, of: cards.count)).map {
+                        Flight(id: "opendraw-\(c.identity)", card: c, from: deckFrame, to: $0) } }
             }
             guard let badge = seatFrames[ev.seat], badge != .zero, deckFrame != .zero else { return nil }
             let n = max(ev.cards.count, 1)
@@ -1198,10 +1306,12 @@ public struct MessageTableView: View {
             guard let center = approximateTableCenter() else { return nil }
             let cards = ev.cards.compactMap { $0 }
             if mine {
-                guard cards.allSatisfy({ handCardFrames[$0.identity] != nil })
-                else { return cards.isEmpty ? [] : nil }
-                return cards.compactMap { c in handCardFrames[c.identity].map {
-                    Flight(id: "openpick-\(c.identity)", card: c, from: center, to: $0) } }
+                if cards.isEmpty { return [] }
+                let allReady = cards.allSatisfy { handCardFrames[$0.identity] != nil }
+                if !allReady && !lastChance { return nil }
+                return cards.enumerated().compactMap { i, c in
+                    (handCardFrames[c.identity] ?? handApproxLanding(index: i, of: cards.count)).map {
+                        Flight(id: "openpick-\(c.identity)", card: c, from: center, to: $0) } }
             }
             guard let badge = seatFrames[ev.seat], badge != .zero else { return nil }
             if cards.isEmpty {
@@ -1221,28 +1331,36 @@ public struct MessageTableView: View {
             // them), so fly the real faces when we have them; fall back to backs by
             // count. Source is the approximate table centre - live, that resolves to
             // the just-cleared battles' centroid (see approximateTableCenter).
-            guard let center = approximateTableCenter(), discardFrame != .zero else { return nil }
+            guard discardFrame != .zero else { return nil }
             let cards = ev.cards.compactMap { $0 }
             if cards.isEmpty {
+                guard let center = approximateTableCenter() else { return nil }
                 let n = max(ev.cards.count, 1)
                 return (0..<n).map { i in
                     Flight(id: "opendiscard-\(ev.type)-\(i)", card: nil, from: center, to: discardFrame) }
             }
-            // Bug 6: each trashed card sweeps to the pile FROM ITS OWN battle slot
-            // (where the viewer just saw it lying), so they scatter off the table
-            // individually instead of first collapsing into one stack at the
-            // centroid and sliding across as a block. Only when there is no real
-            // per-card rect — a cold open that never rendered the pre-bout table —
-            // do we fall back to the shared centre (staggered so the backs don't
-            // perfectly overlap).
+            // Round-7 #2 ("just make them fly to discard - the simpler solution is
+            // better"): each trashed card flies from its OWN real on-table rect
+            // (`lastBattleCardFrames`, published per card by FBattleGrid), so the
+            // overlay ghost appears exactly where the card was and slides to the
+            // pile as one clean motion — no collapsing into a bunched stack at the
+            // table centre first (the "identical cards appear very close together"
+            // the owner saw). The two fallbacks only fire when a card never
+            // rendered on the table (a cover that ended the bout in the same apply,
+            // so its slot was never laid out): the old tilt reconstruction, then a
+            // staggered table centre.
             return cards.enumerated().map { i, c in
-                guard let src = discardSource(for: c) else {
-                    return Flight(id: "opendiscard-\(c.identity)", card: c,
-                                  from: center.offsetBy(dx: CGFloat(i) * 6, dy: CGFloat(i) * 4),
-                                  to: discardFrame)
+                if let rect = lastBattleCardFrames[c.identity] {
+                    return Flight(id: "opendiscard-\(c.identity)", card: c, from: rect, to: discardFrame)
                 }
-                return Flight(id: "opendiscard-\(c.identity)", card: c, from: src.rect,
-                              to: discardFrame, angle: 0, fromAngle: src.tilt)
+                if let src = discardSource(for: c) {
+                    return Flight(id: "opendiscard-\(c.identity)", card: c, from: src.rect,
+                                  to: discardFrame, angle: 0, fromAngle: src.tilt)
+                }
+                let center = approximateTableCenter() ?? discardFrame
+                return Flight(id: "opendiscard-\(c.identity)", card: c,
+                              from: center.offsetBy(dx: CGFloat(i) * 6, dy: CGFloat(i) * 4),
+                              to: discardFrame)
             }
 
         default:
@@ -1277,16 +1395,30 @@ public struct MessageTableView: View {
                     BoardAnimator.sequenceDepth += 1
                     defer {
                         BoardAnimator.sequenceDepth -= 1
-                        if mySeq == animSequenceToken { animator.clearPreHidden() }
+                        if mySeq == animSequenceToken {
+                            animator.clearPreHidden()
+                            // Same rescue as runEventStream's teardown: openSlots
+                            // pulled the opening hand OUT of preHidden, so
+                            // clearPreHidden can't reveal it if myDrawFlights
+                            // never built (frames not ready). Force it visible so
+                            // a genesis deal can never end as invisible cards.
+                            let stuck = ids.filter { animator.isHidden($0) }
+                            if !stuck.isEmpty {
+                                AnimLog.say("genesis rescue-reveal \(stuck.count) opened-but-unflown")
+                                animator.reveal(stuck)
+                            }
+                        }
                     }
                     // Bug 10: the opening hand has no present cards to pre-shift,
                     // but its slots are still deferred by `preHide` above, so open
                     // them before the deal flight builds (it needs their landing
-                    // frames). One step, so all at once, animated as the fan fills.
-                    withAnimation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime)) {
-                        self.animator.openSlots(ids)
-                    }
-                    await playStep { self.myDrawFlights(hand) }
+                    // frames). Round-7 (first-open bunch): SNAP them open (no
+                    // animation) so the frames are final at once and each dealt card
+                    // flies to its own slot instead of a bunched mid-spread spot.
+                    self.animator.openSlots(ids)
+                    // A beat for the snapped layout to publish its slot frames.
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                    await playStep { lastChance in self.myDrawFlights(hand, lastChance: lastChance) }
                     if view.isOver, mySeq == animSequenceToken { settleResults() }
                 }
                 return
@@ -1319,7 +1451,9 @@ public struct MessageTableView: View {
         seatCountOverride = counts
 
         // The SAME animator the live bout-end uses - one path, the kernel's events.
-        Task { await runEventStream(events, finalView: view) }
+        // `openReplay: true` snaps the fan open (final frames at once) so a COLD
+        // first open flies each drawn card to its correct slot instead of bunching.
+        Task { await runEventStream(events, finalView: view, openReplay: true) }
     }
 
     /// notes 33/34: FHandFan already delivers the live boardSpace point on
@@ -1344,7 +1478,10 @@ public struct MessageTableView: View {
         dragCard = nil
         dragPoint = nil
         dragCardCenter = nil
-        let target = BoardDrop.target(at: point, battles: battleFrames, handFrame: handFrame)
+        // Round-7 #3: `handDropFrame`, not the raw published `handFrame` - a
+        // compact-drawer rearrange that drifts off the thin cropped strip still
+        // reads as a reorder/cancel, not a rejected attack. See `handDropFrame`.
+        let target = BoardDrop.target(at: point, battles: battleFrames, handFrame: handDropFrame)
         // Dropped back in the fan — cancel. Nothing to fly: FHandFan has already
         // sprung the card home to its slot, which is the right animation for a
         // drag that played nothing.

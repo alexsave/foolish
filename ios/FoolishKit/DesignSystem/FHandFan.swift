@@ -403,7 +403,15 @@ public struct FHandFan: View {
             // see and therefore the only part you could sensibly aim at.
             .frame(height: Self.shownCardHeight(crop: crop), alignment: .top)
             .opacity(hidden.contains(card.identity) ? 0 : 1)
-            .modifier(FlightID(id: card.identity, namespace: namespace))
+            // Round-7 #2: a card the board's overlay is flying (it is in `hidden`)
+            // must NOT also carry matchedGeometry, or SwiftUI flies it a SECOND
+            // time from wherever it left (a picked-up card's grid slot) into this
+            // fan while the overlay is already flying it there - the "double
+            // animation" for pickup. A hidden card drops its matched namespace so
+            // it just appears here (opacity 0) and the overlay flies it in once. At
+            // rest (not hidden) the namespace stays, a no-op. Empty `hidden` (the
+            // offline board) keeps every card matched, exactly as before.
+            .modifier(FlightID(id: card.identity, namespace: hidden.contains(card.identity) ? nil : namespace))
             .background(GeometryReader { g in
                 Color.clear.preference(key: HandCardFramesKey.self,
                                        value: [card.identity: g.frame(in: .named(boardSpace))])
