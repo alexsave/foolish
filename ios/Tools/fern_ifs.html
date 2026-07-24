@@ -1,0 +1,323 @@
+<meta charset="utf-8">
+<title>Fern IFS — procedural card-back lab</title>
+<!--
+  Fern IFS lab — the SEPARATE twin of acanthus_damask.html, for the ORIGINAL
+  fern the app already ships (ios/FoolishKit/DesignSystem/FernCardBack.swift):
+  a Barnsley-style iterated function system (4 affine transforms + weights)
+  plotted as dots on a red field with a gold border. This lab exposes every
+  coefficient live so the fern can be reshaped, then ported back into
+  FernCardBack.render (the math is 1:1 - the transforms below map exactly onto
+  its `Affine`/`weights`, and the fit onto its scaleX/scaleY/originX/originY).
+
+  Self-contained: vanilla JS + canvas, no libraries, no network. Double-click.
+-->
+<style>
+  :root{
+    --bg:#140f0f; --panel:#1e1717; --panel2:#261b1b; --ink:#f0e2d8; --muted:#b09a8f;
+    --accent:#e79743; --accent2:#b32929; --line:#3a2c2c;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg); color:var(--ink);
+    font:13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    display:flex; min-height:100%;
+  }
+  #stage{flex:1 1 auto; display:flex; flex-direction:column; min-width:0; padding:14px; gap:12px;}
+  #previewWrap{
+    position:relative; flex:1 1 auto; min-height:0;
+    border:1px solid var(--line); border-radius:10px; overflow:hidden;
+    background:#000; display:flex; align-items:center; justify-content:center;
+  }
+  #preview{display:block; max-width:100%; max-height:100%}
+  #cellRow{display:flex; gap:16px; align-items:flex-end}
+  .cellCard{
+    border:1px solid var(--line); border-radius:10px; padding:8px; background:var(--panel);
+    display:flex; flex-direction:column; gap:6px; align-items:center;
+  }
+  .cellCard canvas{background:#000; border-radius:4px; display:block}
+  .cellCard .cap{color:var(--muted); font-size:11px}
+  #hint{color:var(--muted); font-size:11px; align-self:flex-end; max-width:300px}
+  #panel{
+    width:340px; flex:0 0 340px; height:100vh; overflow-y:auto;
+    background:var(--panel); border-left:1px solid var(--line); padding:14px;
+  }
+  h1{font-size:15px; margin:0 0 2px}
+  .sub{color:var(--muted); font-size:11px; margin:0 0 12px}
+  .presets{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px}
+  button{
+    font:inherit; color:var(--ink); background:var(--panel2); border:1px solid var(--line);
+    border-radius:7px; padding:6px 10px; cursor:pointer;
+  }
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent); border-color:var(--accent); color:#2a1606; font-weight:600}
+  .group{border:1px solid var(--line); border-radius:9px; margin-bottom:10px; overflow:hidden}
+  .group>h2{
+    font-size:12px; margin:0; padding:8px 10px; background:var(--panel2);
+    color:var(--muted); text-transform:uppercase; letter-spacing:.06em; cursor:pointer;
+  }
+  .group .body{padding:8px 10px}
+  .ctl{display:grid; grid-template-columns:1fr auto; gap:2px 8px; align-items:center; margin:7px 0}
+  .ctl label{grid-column:1/2}
+  .ctl .val{grid-column:2/3; color:var(--accent); font-variant-numeric:tabular-nums; font-size:12px}
+  .ctl input[type=range]{grid-column:1/3; width:100%; accent-color:var(--accent)}
+  .ctl input[type=color]{width:100%; height:26px; background:none; border:1px solid var(--line); border-radius:6px; padding:0}
+  .ctl.colorctl{grid-template-columns:1fr 44px}
+  .toggle{display:flex; align-items:center; gap:8px; margin:8px 0}
+  .actions{display:flex; flex-wrap:wrap; gap:6px; margin-top:6px}
+  textarea{width:100%; height:150px; background:#0d0908; color:#e8d0b8; border:1px solid var(--line);
+    border-radius:7px; font:11px/1.35 ui-monospace,Menlo,monospace; padding:8px; margin-top:8px; display:none}
+  @media (max-width:820px){ body{flex-direction:column} #panel{width:100%;flex:none;height:auto;border-left:none;border-top:1px solid var(--line)} }
+</style>
+
+<div id="stage">
+  <div id="previewWrap"><canvas id="preview"></canvas></div>
+  <div id="cellRow">
+    <div class="cellCard"><canvas id="cellBig" width="150" height="210"></canvas><span class="cap">50x70pt @3x</span></div>
+    <div class="cellCard"><canvas id="cellSmall" width="114" height="159"></canvas><span class="cap">38x53pt @3x</span></div>
+    <div id="hint">Fern IFS lab. The two small cards are the ACTUAL on-card size, so you can see whether the motif still reads when tiny. Tune on the right; <b>Copy params</b> hands the coefficients to FernCardBack.swift.</div>
+  </div>
+</div>
+
+<div id="panel">
+  <h1>Fern IFS</h1>
+  <p class="sub">the original Barnsley-style card-back fern — every transform, live</p>
+  <div class="presets" id="presets"></div>
+  <div id="controls"></div>
+  <div class="actions">
+    <button id="copyBtn">Copy params</button>
+    <button id="dlBtn" class="primary">Download card PNG</button>
+    <button id="reseed">Reseed</button>
+  </div>
+  <textarea id="jsonOut" readonly></textarea>
+</div>
+
+<script>
+"use strict";
+/* =====================================================================
+   FERN IFS — the chaos game.
+   Four affine maps T = {a,b,c,d,e,f}; pick one by weight, iterate
+   (x,y) -> (a*x + b*y + e, c*x + d*y + f), plot a dot. This is exactly
+   FernCardBack.render: transforms f1..f4, weights, and the extent->card
+   fit. Every value below drives a slider and re-renders on input.
+   ===================================================================== */
+const PARAMS = {
+  // --- card + fit (FernCardBack: red field, gold border, extent fit) ---
+  cardW: 300, cardH: 420,     // preview card size (px) — a 5:7 playing-card ratio
+  fieldColor:"#b32929",       // the Soviet-card red field
+  borderColor:"#e79743",      // gold inset border
+  borderPct: 0.05,            // border width / inset as a fraction of card width
+  showBorder: true,
+  inset: 6,                   // px inset the fern is fit within
+  extentW: 6.5,               // fern x-extent the width maps to (scaleX = w/extentW)
+  extentH: 11.5,              // fern y-extent the height maps to
+  originXfrac: 0.5,           // baseline x, as a fraction of width (0.5 = centre)
+  originYfrac: 0.0,           // lift the baseline up by this fraction of the fit height
+
+  // --- motif ---
+  motifColor:"#e79743",       // gold dots
+  motifAlpha: 0.92,
+  dotSize: 1.0,               // px per plotted point
+  iterations: 42000,          // chaos-game samples
+  seed: 1,
+
+  // --- f1 stem (weight w1) ---
+  w1: 0.01,  f1a: 0.02317, f1b:-0.0013, f1c: 0.0,    f1d: 0.21422, f1e: 0.0,    f1f: 0.0,
+  // --- f2 main (weight w2) ---
+  w2: 0.80,  f2a: 0.789,   f2b: 0.1533, f2c:-0.1877, f2d: 0.8734,  f2e: 0.0617, f2f: 2.0,
+  // --- f3 left (weight w3) ---
+  w3: 0.08,  f3a:-0.4556,  f3b:-0.2832, f3c:-0.3847, f3d: 0.3305,  f3e: 0.0,    f3f: 1.0,
+  // --- f4 right (weight w4) ---
+  w4: 0.08,  f4a: 0.3,     f4b: 0.2,    f4c:-0.2,    f4d: 0.2,     f4e: 0.0,    f4f: 0.0,
+};
+
+/* Presets. "card-back" is FernCardBack.swift verbatim; "barnsley" is the
+   canonical fern to explore from; "on-ink" is a dark-card variant. */
+const PRESETS = {
+  "card-back": { ...PARAMS },
+  "barnsley": {
+    fieldColor:"#0f1a10", borderColor:"#2f5a34", motifColor:"#8fd39a", motifAlpha:0.9,
+    extentW:6.0, extentH:11.0, originXfrac:0.5, originYfrac:0.0, iterations:120000, dotSize:1.0,
+    w1:0.01, f1a:0,    f1b:0,    f1c:0,    f1d:0.16, f1e:0, f1f:0,
+    w2:0.85, f2a:0.85, f2b:0.04, f2c:-0.04,f2d:0.85, f2e:0, f2f:1.6,
+    w3:0.07, f3a:0.2,  f3b:-0.26,f3c:0.23, f3d:0.22, f3e:0, f3f:1.6,
+    w4:0.07, f4a:-0.15,f4b:0.28, f4c:0.26, f4d:0.24, f4e:0, f4f:0.44,
+  },
+  "on-ink": { fieldColor:"#141010", borderColor:"#3a2c2c", motifColor:"#efe2d8", motifAlpha:0.85 },
+};
+
+/* ===================== the generator ===================== */
+function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+function cumulative(w){ const s=w.reduce((p,c)=>p+c,0)||1; let acc=0; return w.map(v=>{acc+=v/s;return acc;}); }
+function hexA(hex,a){ const n=parseInt(hex.slice(1),16); return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`; }
+
+/* Draw one fern card back of PARAMS into ctx at w x h (device px already
+   applied by the caller). Mirrors FernCardBack.render exactly. */
+function drawFern(ctx, P, w, h){
+  ctx.fillStyle = P.fieldColor; ctx.fillRect(0,0,w,h);
+  if(P.showBorder){
+    const bw = Math.max(1.0, w*P.borderPct);
+    ctx.strokeStyle = P.borderColor; ctx.lineWidth = bw;
+    ctx.strokeRect(bw, bw, w-2*bw, h-2*bw);
+  }
+  const T=[
+    {a:P.f1a,b:P.f1b,c:P.f1c,d:P.f1d,e:P.f1e,f:P.f1f},
+    {a:P.f2a,b:P.f2b,c:P.f2c,d:P.f2d,e:P.f2e,f:P.f2f},
+    {a:P.f3a,b:P.f3b,c:P.f3c,d:P.f3d,e:P.f3e,f:P.f3f},
+    {a:P.f4a,b:P.f4b,c:P.f4c,d:P.f4d,e:P.f4e,f:P.f4f},
+  ];
+  const cum = cumulative([P.w1,P.w2,P.w3,P.w4]);
+  const rng = mulberry32((P.seed>>>0) || 0x9E3779B9);
+  const inset = P.inset * (w/P.cardW);           // inset scales with the render size
+  const cw = w - inset*2, ch = h - inset*2;
+  const scaleX = cw / P.extentW, scaleY = ch / P.extentH;
+  const ox = w * P.originXfrac;
+  const oy = h - inset - ch * P.originYfrac;
+  ctx.fillStyle = hexA(P.motifColor, P.motifAlpha);
+  const ds = Math.max(0.4, P.dotSize) * (w/P.cardW);
+  let x=0,y=0;
+  const N = Math.max(0, P.iterations|0);
+  for(let i=0;i<N;i++){
+    const r=rng();
+    let idx=0; while(idx<cum.length-1 && r>cum[idx]) idx++;
+    const t=T[idx];
+    const nx=t.a*x+t.b*y+t.e, ny=t.c*x+t.d*y+t.f;
+    x=nx; y=ny;
+    if(i<20) continue;                            // let the attractor settle
+    const px=ox + x*scaleX, py=oy - y*scaleY;
+    if(px>=-2 && px<=w+2 && py>=-2 && py<=h+2) ctx.fillRect(px,py,ds,ds);
+  }
+}
+
+/* ===================== rendering ===================== */
+const preview=document.getElementById("preview");
+function renderPreview(){
+  const wrap=document.getElementById("previewWrap");
+  const availW=wrap.clientWidth-24, availH=wrap.clientHeight-24;
+  const ar=PARAMS.cardW/PARAMS.cardH;
+  let cw=availW, ch=cw/ar; if(ch>availH){ ch=availH; cw=ch*ar; }
+  const dpr=Math.min(window.devicePixelRatio||1,2);
+  preview.width=Math.round(cw*dpr); preview.height=Math.round(ch*dpr);
+  preview.style.width=cw+"px"; preview.style.height=ch+"px";
+  drawFern(preview.getContext("2d"), PARAMS, preview.width, preview.height);
+}
+function renderCells(){
+  for(const id of ["cellBig","cellSmall"]){
+    const c=document.getElementById(id);
+    drawFern(c.getContext("2d"), PARAMS, c.width, c.height);
+  }
+}
+function renderAll(){ renderPreview(); renderCells(); syncJSON(); }
+
+/* ===================== controls (shared shape with the acanthus lab) ===================== */
+const CO={min:-1.6,max:1.6,step:0.002}, EO={min:-3,max:3,step:0.01}, FO={min:-3,max:6,step:0.01}, WO={min:0,max:1,step:0.005};
+function xf(n,label){ return [
+  {k:"w"+n,t:"range",...WO,label:"weight"},
+  {k:"f"+n+"a",t:"range",...CO,label:"a  (x from x)"},
+  {k:"f"+n+"b",t:"range",...CO,label:"b  (x from y)"},
+  {k:"f"+n+"c",t:"range",...CO,label:"c  (y from x)"},
+  {k:"f"+n+"d",t:"range",...CO,label:"d  (y from y)"},
+  {k:"f"+n+"e",t:"range",...EO,label:"e  (x shift)"},
+  {k:"f"+n+"f",t:"range",...FO,label:"f  (y shift)"},
+]; }
+const SCHEMA=[
+  {title:"Card & fit",open:true,items:[
+    {k:"fieldColor",t:"color",label:"field color"},
+    {k:"borderColor",t:"color",label:"border color"},
+    {k:"showBorder",t:"toggle",label:"show border"},
+    {k:"borderPct",t:"range",min:0,max:0.15,step:0.002,label:"border / inset"},
+    {k:"inset",t:"range",min:0,max:48,step:1,label:"fit inset (px)"},
+    {k:"extentW",t:"range",min:1,max:24,step:0.1,label:"x-extent (width fit)"},
+    {k:"extentH",t:"range",min:1,max:28,step:0.1,label:"y-extent (height fit)"},
+    {k:"originXfrac",t:"range",min:-0.5,max:1.5,step:0.01,label:"baseline x"},
+    {k:"originYfrac",t:"range",min:-0.6,max:1.2,step:0.01,label:"baseline lift"},
+  ]},
+  {title:"Motif",open:true,items:[
+    {k:"motifColor",t:"color",label:"dot color"},
+    {k:"motifAlpha",t:"range",min:0,max:1,step:0.02,label:"dot opacity"},
+    {k:"dotSize",t:"range",min:0.4,max:5,step:0.1,label:"dot size (px)"},
+    {k:"iterations",t:"range",min:1000,max:400000,step:1000,label:"iterations"},
+    {k:"seed",t:"range",min:0,max:999,step:1,label:"seed"},
+  ]},
+  {title:"f1 · stem",open:false,items:xf(1)},
+  {title:"f2 · main leaflets",open:true,items:xf(2)},
+  {title:"f3 · left leaflet",open:false,items:xf(3)},
+  {title:"f4 · right leaflet",open:false,items:xf(4)},
+];
+
+function buildControls(){
+  const root=document.getElementById("controls"); root.innerHTML="";
+  for(const g of SCHEMA){
+    const gr=document.createElement("div"); gr.className="group";
+    const h=document.createElement("h2"); h.textContent=g.title;
+    const body=document.createElement("div"); body.className="body";
+    body.style.display=g.open?"block":"none";
+    h.onclick=()=>body.style.display=body.style.display==="none"?"block":"none";
+    gr.appendChild(h); gr.appendChild(body);
+    for(const it of g.items) body.appendChild(makeCtl(it));
+    root.appendChild(gr);
+  }
+}
+function makeCtl(it){
+  const wrap=document.createElement("div"); wrap.className="ctl";
+  if(it.t==="range"){
+    wrap.innerHTML=`<label>${it.label}</label><span class="val" id="v_${it.k}"></span>`;
+    const inp=document.createElement("input"); inp.type="range";
+    inp.min=it.min; inp.max=it.max; inp.step=it.step; inp.value=PARAMS[it.k];
+    inp.oninput=()=>{ PARAMS[it.k]=parseFloat(inp.value); document.getElementById("v_"+it.k).textContent=fmt(PARAMS[it.k]); renderAll(); };
+    wrap.appendChild(inp);
+    setTimeout(()=>document.getElementById("v_"+it.k).textContent=fmt(PARAMS[it.k]),0);
+  } else if(it.t==="color"){
+    wrap.className="ctl colorctl";
+    wrap.innerHTML=`<label>${it.label}</label>`;
+    const inp=document.createElement("input"); inp.type="color"; inp.value=PARAMS[it.k];
+    inp.oninput=()=>{PARAMS[it.k]=inp.value;renderAll();};
+    wrap.appendChild(inp);
+  } else if(it.t==="toggle"){
+    wrap.className="toggle";
+    const inp=document.createElement("input"); inp.type="checkbox"; inp.checked=!!PARAMS[it.k]; inp.id="t_"+it.k;
+    inp.onchange=()=>{PARAMS[it.k]=inp.checked;renderAll();};
+    const lab=document.createElement("label"); lab.textContent=it.label; lab.htmlFor=inp.id;
+    wrap.appendChild(inp); wrap.appendChild(lab);
+  }
+  return wrap;
+}
+function fmt(v){ return (typeof v==="number" && !Number.isInteger(v)) ? (Math.abs(v)<1?v.toFixed(4):v.toFixed(2)) : String(v); }
+
+/* ===================== presets & actions ===================== */
+function buildPresets(){
+  const box=document.getElementById("presets");
+  for(const name of Object.keys(PRESETS)){
+    const b=document.createElement("button"); b.textContent=name;
+    b.onclick=()=>{ Object.assign(PARAMS,PRESETS[name]); buildControls(); renderAll(); };
+    box.appendChild(b);
+  }
+}
+function syncJSON(){ const t=document.getElementById("jsonOut"); if(t.style.display!=="none") t.value=JSON.stringify(PARAMS,null,2); }
+
+document.getElementById("copyBtn").onclick=()=>{
+  const ta=document.getElementById("jsonOut"); ta.style.display="block";
+  ta.value=JSON.stringify(PARAMS,null,2);
+  navigator.clipboard&&navigator.clipboard.writeText(ta.value);
+  const b=document.getElementById("copyBtn"); const o=b.textContent; b.textContent="copied ✓"; setTimeout(()=>b.textContent=o,1200);
+};
+document.getElementById("dlBtn").onclick=()=>{
+  const c=document.createElement("canvas"); c.width=PARAMS.cardW*3; c.height=PARAMS.cardH*3;
+  drawFern(c.getContext("2d"), PARAMS, c.width, c.height);
+  const a=document.createElement("a"); a.download="fern_card.png"; a.href=c.toDataURL("image/png"); a.click();
+};
+document.getElementById("reseed").onclick=()=>{ PARAMS.seed=(PARAMS.seed+1)%1000; buildControls(); renderAll(); };
+
+/* Headless export hook: ?shot=<preset> renders the card full-bleed. */
+function maybeShot(){
+  const q=new URLSearchParams(location.search); const shot=q.get("shot"); if(!shot) return;
+  if(PRESETS[shot]) Object.assign(PARAMS,PRESETS[shot]);
+  document.getElementById("panel").style.display="none";
+  document.getElementById("cellRow").style.display="none";
+  renderAll();
+}
+
+/* ===================== boot ===================== */
+buildPresets(); buildControls(); renderAll(); maybeShot();
+window.addEventListener("resize", renderPreview);
+</script>
