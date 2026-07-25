@@ -1,0 +1,264 @@
+// Game state, players, logs. Mirrors the TS structures in types.ts and the
+// behaviors in common_utils.ts / actions/*.ts. We don't model the production
+// fields (animations, ELO, message broadcasting) — only what the bots need.
+#ifndef CNITRO_GAME_H
+#define CNITRO_GAME_H
+
+#include "card.h"
+#include <stdbool.h>
+#include <stdint.h>
+#include <stddef.h>
+
+#define MAX_PLAYERS    8          // 2..8 players; deck size boundary is
+                                  // configurable (see card.h).
+#define MAX_HAND_SIZE  64         // generous; pickup can stack many cards.
+#ifndef MAX_BATTLES
+#define MAX_BATTLES    32         // build parameter; WASM uses 64 (a defender
+                                  // holding 33+ cards can legally face 33+
+                                  // simultaneous attacks).
+#endif
+#define MAX_DECK       64         // 36 for 2p, with slack.
+#ifndef MAX_LOGS
+#define MAX_LOGS       512        // build parameter; long games never
+                                  // approach this. The session-log importers
+                                  // (bots.wasm, TS MAX_KERNEL_LOGS) assume
+                                  // 512 — only log-free builds may shrink it.
+#endif
+
+#define LOG_GAME_START      0
+#define LOG_ATTACK          1
+#define LOG_COVER           2
+#define LOG_PASS            3
+#define LOG_PICKUP          4
+#define LOG_GOOD            5
+#define LOG_DISCARD         6
+#define LOG_DEFENDER_CHANGE 7
+#define LOG_PLAYER_OUT      8
+#define LOG_DRAW            9
+
+#define PLAYER_STATUS_IDLE  0
+#define PLAYER_STATUS_READY 1
+#define PLAYER_STATUS_IN    2
+#define PLAYER_STATUS_OUT   3
+
+#define GAME_STATUS_WAITING   0
+#define GAME_STATUS_PLAYING   1
+#define GAME_STATUS_GAME_OVER 2
+
+typedef struct {
+    Card attack;
+    Card defense;     // CARD_NONE when uncovered
+} Battle;
+
+// Each pair has a primary card and an optional target card. For COVER, target
+// is the attack card the cover defends; otherwise unused.
+//
+// Capacity is a build parameter: the native arena keeps the compact 16 (its
+// Game struct is memcpy-cloned in Monte-Carlo hot loops), while the WASM
+// production build uses 64 (-DMAX_LOG_PAIRS=64) because the TS engine logs
+// every card of a big pickup/discard and the replay codec needs them all.
+#ifndef MAX_LOG_PAIRS
+#define MAX_LOG_PAIRS 16
+#endif
+typedef struct {
+    Card  primary;
+    Card  target;
+} LogPair;
+
+typedef struct {
+    int8_t  log_type;
+    int8_t  player_idx;     // -1 = system event
+    int8_t  defender_index; // -1 if not a defender_change
+    int8_t  num_pairs;
+    LogPair pairs[MAX_LOG_PAIRS];
+} GameLog;
+
+typedef struct {
+    int8_t  status;            // PLAYER_STATUS_*
+    int8_t  hand_count;
+    bool    awaiting_attack;
+    int8_t  strategy_key;      // application-defined
+    Card    hand[MAX_HAND_SIZE];
+    char    name[24];
+    char    player_id[24];
+} Player;
+
+typedef struct {
+    int8_t  status;
+    int8_t  num_players;
+    int8_t  power_suit;
+    int8_t  first_attacker;
+    int8_t  defender;
+    int8_t  num_battles;
+    int16_t deck_count;
+    int16_t discard_pile_length;
+    bool    has_flipped;
+    // Seed-dealt game: the deck was ChaCha-shuffled once at the deal and every
+    // draw pops the top, so the whole game is reproducible from the seed. Set at
+    // the deal, carried in the durable state blob (state format v2), and read by
+    // every mid-game refill. Legacy (LCG) games leave it false and draw at
+    // random exactly as before. Not part of the ephemeral IO marshal.
+    bool    deterministic_deck;
+    Card    flipped;
+    Card    deck[MAX_DECK];
+    Battle  table_battles[MAX_BATTLES];
+    Player  players[MAX_PLAYERS];
+
+    // Elimination order: indices into players[]; length = num_eliminated.
+    int8_t  elimination_order[MAX_PLAYERS];
+    int8_t  num_eliminated;
+
+    // good_players: bitmask of player indices that have said good.
+    uint32_t good_players_mask;
+    bool     has_good_timestamp;
+
+    // Log storage control for SHORT-log instances (sampled-world slots whose
+    // logs[] array is allocated smaller than MAX_LOGS — see WORLD_LOG_CAP in
+    // cordite_sim.h). 0 (the default everywhere else) = full MAX_LOGS
+    // capacity, byte-identical behavior to before these fields existed.
+    // When log_cap > 0, log_alloc keeps ONLY LOG_DISCARD entries (the one
+    // log type any rollout policy reads back) up to log_cap, and log_virt
+    // counts every append — kept or filtered — so the MAX_LOGS capacity
+    // cliff lands on exactly the same append as a full-size instance.
+    int16_t  log_cap;
+    int16_t  log_virt;
+
+    // Logs (append-only).
+    int      num_logs;
+    GameLog  logs[MAX_LOGS];
+} Game;
+
+// ---------- RNG ---------------------------------------------------------
+
+// Mirrors `seededRandom` in common_utils.ts and `setRandomSeed` in
+// random_strategy.ts: two independent LCGs with the same recurrence.
+void   game_set_seed(uint32_t s);
+double game_random(void);            // 0..1
+uint32_t game_random_u32(void);
+
+// Integer-only uniform index in [0, n), one game_random_u32() draw. Exactly
+// equal to (int)(game_random() * n) for every n a caller here ever passes
+// (all counts fit well under 2^53, so the double path was already computing
+// this same value — see the derivation in game.c) but with no float
+// instructions, which is what let the wasm build drop the f64 ops that
+// game_random()'s double division/multiply used to emit. Prefer this over
+// game_random() at any "pick an index" call site; keep game_random() itself
+// for callers that need a probability compared against a value computed at
+// runtime (e.g. trump_attack_probability(g)), where there's no fixed literal
+// to fold into an integer threshold.
+int    game_random_below(int n);
+
+// Wide, reproducible, full-universe deal seed (see deal_rng.h). Supplying 32
+// bytes (two 128-bit lanes) switches the DEAL's random card picks from the
+// 32-bit LCG to an unbiased ChaCha stream — lifting reachable deals from 2^32
+// to the whole 52!/36! space and making the deal reproducible from the seed.
+// len must be >= 32; fewer bytes is ignored (wide mode stays off). Any later
+// game_set_seed() call turns wide mode back off, so the legacy 32-bit path and
+// its pinned test streams are byte-for-byte unchanged when no wide seed is set.
+void   game_set_deal_seed_bytes(const uint8_t *seed, int len);
+int    game_deal_seed_active(void);  // 1 if a wide deal seed is in effect
+
+// A seed-dealt game records deterministic_deck=true in its state (see the Game
+// field). Mid-game kernel calls need no seed: deserializing the durable blob
+// restores that flag, and draws pop the pre-shuffled deck. game_set_seed()
+// clears the wide flag; the persisted per-game flag is untouched by it.
+
+// Save/restore the game LCG state. Lets a strategy run internal
+// simulations (which consume game_random via draws and rollout policies)
+// without perturbing the outer game's random stream, and gives all
+// simulations of competing moves identical RNG streams (common random
+// numbers). Purely additive — no behavior change for existing callers.
+uint32_t game_rng_get(void);
+void     game_rng_set(uint32_t s);
+
+void     random_strategy_set_seed(uint32_t s);
+double   random_strategy_random(void);
+uint32_t random_strategy_random_u32(void);
+int      random_strategy_below(int n);   // integer counterpart, see game_random_below
+
+// ---------- Engine observation hooks ------------------------------------
+//
+// Optional callback fired at exactly the points where the production TS
+// server captured an intermediate game-state snapshot for an animation
+// event (see actions/*.ts). NULL (the default) costs nothing; the WASM
+// bridge installs one to reconstruct the TS AnimationEvent stream from C
+// transitions. `aux` is the acting/affected player index, or the battle
+// index for ENGINE_HOOK_COVER.
+
+#define ENGINE_HOOK_ATTACK           1
+#define ENGINE_HOOK_OUT              2
+#define ENGINE_HOOK_COVER            3
+#define ENGINE_HOOK_DISCARD          4
+#define ENGINE_HOOK_DRAW             5
+#define ENGINE_HOOK_DEFENDER_MOVE    6
+#define ENGINE_HOOK_PASS             7
+#define ENGINE_HOOK_PICKUP           8
+#define ENGINE_HOOK_MAGIC_TRANSITION 9
+#define ENGINE_HOOK_TRASH            10
+#define ENGINE_HOOK_START_MAGIC      11
+#define ENGINE_HOOK_DEAL             12
+#define ENGINE_HOOK_FLIPPED          13
+#define ENGINE_HOOK_START_DEFENDER   14
+
+extern void (*engine_snap_hook)(const Game *g, int tag, int aux);
+
+// ---------- Rejection reasons --------------------------------------------
+//
+// Why the last handle_* / validation returned false. The TS bridge maps
+// these to the exact production error messages; native callers may ignore
+// them. Reset to ENGINE_REJECT_NONE at the top of every handler.
+
+#define ENGINE_REJECT_NONE                0
+#define ENGINE_REJECT_NOT_PLAYING         1
+#define ENGINE_REJECT_EMPTY               2
+#define ENGINE_REJECT_IS_DEFENDER         3
+#define ENGINE_REJECT_NOT_DEFENDER        4
+#define ENGINE_REJECT_NOT_IN_HAND         5
+#define ENGINE_REJECT_DUPLICATES          6
+#define ENGINE_REJECT_NOT_SAME_VALUE      7
+#define ENGINE_REJECT_NOT_FIRST_ATTACKER  8
+#define ENGINE_REJECT_VALUE_NOT_ON_TABLE  9
+#define ENGINE_REJECT_DEFENDER_CAPACITY   10
+#define ENGINE_REJECT_NO_UNCOVERED        11
+#define ENGINE_REJECT_ATTACK_NOT_ON_TABLE 12
+#define ENGINE_REJECT_CANNOT_COVER        13
+#define ENGINE_REJECT_NO_TABLE_CARDS      14
+#define ENGINE_REJECT_COVER_PRESENT       15
+#define ENGINE_REJECT_PASS_VALUES         16
+#define ENGINE_REJECT_PASS_CAPACITY       17
+#define ENGINE_REJECT_NOT_IN_STATUS       18
+#define ENGINE_REJECT_ALREADY_GOOD        19
+#define ENGINE_REJECT_FIRST_MUST_ATTACK   20
+#define ENGINE_REJECT_PASS_OVERFLOW       21
+
+extern int engine_last_reject;
+
+// ---------- Helpers -----------------------------------------------------
+
+bool can_cover(Card attack, Card defense, int power_suit);
+int  get_next_player_index(const Game *g, int current);
+int  game_done(const Game *g);   // returns loser index, or -1
+void start_game(Game *g);
+
+// In-place game clone (used by collect's `before` snapshot).
+void game_clone(Game *dst, const Game *src);
+
+// ---------- Action handlers (return false on validation failure) --------
+
+bool handle_attack(Game *g, int player_idx, const Card *cards, int n_cards);
+bool handle_cover(Game *g, int player_idx,
+                  const Card *cover_cards, const Card *attack_cards, int n);
+bool handle_pass(Game *g, int player_idx, const Card *cards, int n_cards);
+bool handle_pickup(Game *g, int player_idx);
+bool handle_good(Game *g, int player_idx);
+
+// ---------- Loop helpers ------------------------------------------------
+
+bool should_bot_act(const Game *g, int bot_idx);
+
+// Public entries for the two round-lifecycle phases the TS server also
+// exposed standalone (executeRoundTransition / refillPlayerHandsWithEvents).
+void engine_run_round_transition(Game *g);
+void engine_run_refill(Game *g);
+
+#endif

@@ -200,6 +200,12 @@ public struct FBattleGrid: View {
                     }
                 }
                 .opacity(hidden.contains(battle.attack.identity) ? 0 : 1)
+                // The veil must hide INSTANTLY, not fade: when a swept card lifts
+                // off the table, the overlay ghost appears at the same spot the same
+                // instant, so an animated opacity here would read as the real card
+                // FADING beside the moving ghost (the owner's "cards fade away while
+                // new ones appear and move"). Snap it; the ghost carries the motion.
+                .animation(nil, value: hidden.contains(battle.attack.identity))
                 .rotationEffect(.degrees(coverTilted ? -Self.coverAngle : 0), anchor: .bottom)
                 .animation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime), value: coverTilted)
                 .zIndex(covered ? 1 : 2)
@@ -218,6 +224,7 @@ public struct FBattleGrid: View {
                       trump: trumpSuit != nil && defense.suit == trumpSuit,
                       size: cardSize)
                     .opacity(hidden.contains(defense.identity) ? 0 : 1)
+                    .animation(nil, value: hidden.contains(defense.identity))   // snap the veil — see the attack card
                     .rotationEffect(.degrees(Self.coverAngle), anchor: .bottom)   // laid across (§5.4)
                     .zIndex(2)
                     .modifier(FlightID(id: defense.identity, namespace: handoffNamespace(defense.identity)))

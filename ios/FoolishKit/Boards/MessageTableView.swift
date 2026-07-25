@@ -67,21 +67,31 @@ public struct MessageTableView: View {
     /// kept at its last non-empty value so a bout-end discard sweep can fly each
     /// trashed card from exactly where it sat, not a shared table centroid.
     @State private var lastBattleCardFrames: [String: CGRect] = [:]
-    /// Round-7 (replay bunch): the pre-bout TABLE a bout-ending open-replay is
-    /// about to sweep (from `controller.openReplayPreBattles`). While non-empty
-    /// and `view.battles` is empty, the board lays THESE out in the battle area -
-    /// veiled to opacity 0 like every other in-flight card, so nothing is drawn,
-    /// but FBattleGrid still publishes each card's real on-table rect into
-    /// `lastBattleCardFrames`. The pickup/discard flights then fly each card from
-    /// its own measured slot, so the reopened sweep starts from the laid-out
-    /// table exactly like the live one instead of a shared centre (the "grouped
-    /// up" bunch). Set as the replay stream begins, cleared as it ends.
-    @State private var replayPreBattles: [BattleView] = []
-    /// The identities `replayPreBattles` will publish frames for - so a bout-end
-    /// flight can POLL (via `playStep`) until its source slot has actually been
-    /// measured, instead of building a flight from the centre fallback on the
-    /// first paint before the invisible grid has laid out.
-    @State private var replayTableIds: Set<String> = []
+    /// The pre-bout TABLE a bout-end sequence is about to sweep - the cards that
+    /// were on the table right before a pickup/discard cleared it. Rendered in the
+    /// battle area (VISIBLE) while `view.battles` is empty, so the swept cards SIT
+    /// on the table and then fly off it - exactly what you watch live - instead of
+    /// the table going empty and a ghost spawning out of nowhere. Each card is
+    /// hidden the instant ITS flight starts (`sweptFlownIds`), so the overlay ghost
+    /// takes over seamlessly (no fade, no gap, no reappear).
+    ///
+    /// Used by BOTH paths:
+    ///  - live bout-end: the prior view's battles (the table I just cleared).
+    ///  - open-replay: `controller.openReplayPreBattles` (reconstructed, since the
+    ///    pre-bout table was never otherwise rendered on open).
+    /// Set as the sequence begins, cleared as it ends.
+    @State private var sweepBattles: [BattleView] = []
+    /// Every identity in `sweepBattles`, so a bout-end flight can POLL (via
+    /// `playStep`) until its source slot has been measured rather than firing off
+    /// the centre fallback before the grid has laid out.
+    @State private var sweepTableIds: Set<String> = []
+    /// Swept cards whose flight has STARTED - hidden in the pre-bout grid from that
+    /// instant on (the overlay ghost is now the only copy). Grows through the
+    /// sequence, cleared with `sweepBattles`. Kept separate from `animator.hidden`
+    /// because that set also hides the card's HAND copy (a pickup card lives in
+    /// both places); the table copy must stay VISIBLE until its own flight, which
+    /// only this set governs.
+    @State private var sweptFlownIds: Set<String> = []
     /// The board's live collapse fraction (0 expanded, 1 compact), mirrored from
     /// `boardContent` so a flight builder - which runs OUTSIDE the geometry reader
     /// - can compute a hand card's final slot at the current crop (see
@@ -251,7 +261,8 @@ public struct MessageTableView: View {
             // and snaps. Silent when they agree; logs the worst delta only when it
             // exceeds a couple of points, so a geometry drift shows up in the
             // device trace without spamming a correct build.
-            if let hand = controller.view?.me?.hand, handFrame != .zero, !$0.isEmpty, animator.hidden.isEmpty {
+            if let hand = controller.view?.me?.hand, handFrame != .zero, !$0.isEmpty,
+               animator.hidden.isEmpty, sweepBattles.isEmpty, !animator.isAnimating {
                 let rects = FHandFan.slotRects(cards: hand, width: handFrame.width, crop: currentCollapse)
                 var worst = 0.0, worstId = ""
                 for c in hand {
@@ -478,22 +489,23 @@ public struct MessageTableView: View {
                 selfRoleIndicator(view)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                     .padding(.bottom, handHeight + 6)
-                    // Round-7 ("buttons should NEVER move"): do not ANIMATE this
-                    // anchor when the hand's height changes. `handHeight` is the
-                    // final hand's height, so a pickup that grows the hand shifts
-                    // this in ONE step - but the board's ambient card spring would
-                    // float that step over ~0.3s (the "floats up after we hit it").
-                    // Nilling the animation for handHeight changes makes it instant,
-                    // so it holds still through the whole deal/pickup (and for the
-                    // common same-row pickup, handHeight doesn't change at all).
-                    .animation(nil, value: handHeight)
+                    // Round-7 ("buttons should NEVER move"): strip the animation
+                    // from this element ENTIRELY. `.animation(nil, value: handHeight)`
+                    // was not enough - the padding change is driven by the ancestor
+                    // `.animation(FMotion.cardMotion, value: controller.view)`
+                    // transaction (the whole board's card spring), not by a
+                    // standalone handHeight change, so a value-scoped nil never got a
+                    // say. A `.transaction` override DOES win: it clears the
+                    // animation on every transaction reaching this subtree, so the
+                    // role mark snaps to its (final-hand) spot instead of floating.
+                    .transaction { $0.animation = nil }
 
                 // Action buttons float bottom-right, above the hand (web absolute
                 // bottom:90/right:20). They only appear when a flag enables them.
                 actionBar(view)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                     .padding(.trailing, 4).padding(.bottom, handHeight + 4)
-                    .animation(nil, value: handHeight)   // never float the buttons — see the role mark above
+                    .transaction { $0.animation = nil }   // never float the buttons — see the role mark above
 
                 // My hand hugs the bottom (web: bottom max(10, safe-area)); the
                 // outer .padding(12) is the safe-area inset that keeps it unclipped.
@@ -717,26 +729,18 @@ public struct MessageTableView: View {
     private func battlesArea(_ view: GameView) -> some View {
         Group {
             if view.battles.isEmpty {
-                // Round-7 (replay bunch): a bout-ending open-replay clears the
-                // table before it renders, so `view.battles` is empty the whole
-                // time - but the sweep still needs each swept card's real slot to
-                // fly FROM. Lay the reconstructed pre-bout table out here, veiled
-                // (every card is in `veiledCardIds`, so opacity 0 - nothing shows)
-                // purely so FBattleGrid publishes each card's on-table rect; the
-                // pickup/discard flights read those rects and start from the
-                // laid-out table, not a bunched centre. Empty on the live board.
-                if !replayPreBattles.isEmpty {
-                    // `hidden: replayTableIds` - ALWAYS opacity 0, not just while
-                    // veiled. This grid exists ONLY to publish each card's on-table
-                    // rect; the overlay ghost is what the viewer actually sees fly.
-                    // Keying its opacity off `veiledCardIds` (as an earlier pass
-                    // did) let a card RE-APPEAR on the table the instant its flight
-                    // un-veiled it - then vanish when the grid cleared - which is
-                    // the opponent-pickup "flies to their hand, pops back on the
-                    // table, then pops out" the owner saw. Held hidden throughout,
-                    // it only ever measures.
-                    FBattleGrid(battles: replayPreBattles, trumpSuit: view.trumpSuit,
-                                namespace: cardNS, hidden: replayTableIds,
+                // A bout-end sequence clears `view.battles` before the sweep
+                // animates, so the cards that are FLYING OFF the table are no
+                // longer in the view. Lay the pre-bout table out here so they SIT
+                // on the table (visible) and then fly off it - live and replay
+                // alike. Each card stays visible until its OWN flight starts, then
+                // `sweptFlownIds` hides it and the overlay ghost carries it the
+                // rest of the way (no fade, no empty-table gap, no reappear). The
+                // visible cards also publish their real on-table rects, which the
+                // flights use as their source. Empty when no bout-end is animating.
+                if !sweepBattles.isEmpty {
+                    FBattleGrid(battles: sweepBattles, trumpSuit: view.trumpSuit,
+                                namespace: cardNS, hidden: sweptFlownIds,
                                 flyingNow: [])
                 } else {
                     // Empty table: render nothing (web parity). A "no battle" label
@@ -947,6 +951,11 @@ public struct MessageTableView: View {
         let oldHandIds = Set((old.me?.hand ?? []).map(\.identity))
         let myNewIds = Set((new.me?.hand ?? []).map(\.identity)).subtracting(oldHandIds)
         if !myNewIds.isEmpty { animator.preHide(myNewIds) }
+        // The table just cleared in the view, so render the cards it HELD (old
+        // battles) as the pre-bout table - they sit where they were and fly off,
+        // instead of vanishing (a fade) the instant the view empties. Same grid the
+        // open-replay uses; the flight hides each card as it lifts (sweptFlownIds).
+        setSweep(old.battles)
         // …and freeze every count to the board BEFORE this move. `play` already
         // did this for a move I made (which is the only way to be early enough
         // — see `settled`); repeating it from `old` costs nothing and keeps the
@@ -1008,11 +1017,10 @@ public struct MessageTableView: View {
             if mySeq == animSequenceToken {
                 deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
                 animator.clearPreHidden()
-                // Round-7 (replay bunch): the swept table has finished flying, so
-                // stop laying out the invisible pre-bout grid (its measurement job
-                // is done). Harmless if it lingered - it is veiled - but clearing
-                // it keeps `lastBattleCardFrames` honest for the next live bout.
-                if openReplay { replayPreBattles = []; replayTableIds = [] }
+                // The swept table has finished flying, so take down the pre-bout
+                // grid (its cards now live in a hand / the discard / a badge). Both
+                // paths - a live bout-end and an open-replay - lay it out now.
+                sweepBattles = []; sweepTableIds = []; sweptFlownIds = []
                 let stuck = openedThisSeq.filter { animator.isHidden($0) }
                 if !stuck.isEmpty {
                     AnimLog.say("stream#\(run) rescue-reveal \(stuck.count) opened-but-unflown [\(stuck.sorted().joined(separator: ","))]")
@@ -1093,6 +1101,15 @@ public struct MessageTableView: View {
             // arrive (the per-step advance after the flight, below).
             if let s = ev.state, ev.kind == .deal || ev.kind == .refill {
                 deckCountOverride = s.deckCount
+            }
+            // A card leaving the TABLE (pickup / discard) hides its pre-bout grid
+            // copy the instant its flight begins, so the overlay ghost is the only
+            // copy in motion - no table copy fading beside it, no copy left behind
+            // to reappear. Marked now, just before the flight plays.
+            switch ev.kind {
+            case .pickup, .discard, .cardsToTrash:
+                sweptFlownIds.formUnion(ev.cards.compactMap { $0?.identity })
+            default: break
             }
             await playStep { lastChance in
                 let f = self.openReplayFlights(ev, view: view, lastChance: lastChance)
@@ -1393,7 +1410,19 @@ public struct MessageTableView: View {
     /// Cards NOT in `replayTableIds` (the live board, or an opponent whose cards
     /// aren't reconstructed) never block - they were never going to publish here.
     private func tableSourceReady(_ cards: [Card]) -> Bool {
-        cards.allSatisfy { !replayTableIds.contains($0.identity) || lastBattleCardFrames[$0.identity] != nil }
+        cards.allSatisfy { !sweepTableIds.contains($0.identity) || lastBattleCardFrames[$0.identity] != nil }
+    }
+
+    /// Lay out `battles` as the pre-bout table a bout-end sequence sweeps - the
+    /// cards sit VISIBLE on the table (via `battlesArea`) until each flies. One
+    /// setter for both the live bout-end (prior view's battles) and the open-replay
+    /// (reconstructed). Resets `sweptFlownIds` so nothing is pre-hidden.
+    private func setSweep(_ battles: [BattleView]) {
+        sweepBattles = battles
+        sweptFlownIds = []
+        sweepTableIds = Set(battles.flatMap { b -> [String] in
+            [b.attack.identity] + (b.defense.map { [$0.identity] } ?? [])
+        })
     }
 
     /// One open-replay event's flights, straight from the KERNEL's evwire stream
@@ -1622,17 +1651,13 @@ public struct MessageTableView: View {
         for (seat, c) in pre.hand where seat != controller.mySeat { counts[seat] = c }
         seatCountOverride = counts
 
-        // Round-7 (replay bunch): the pre-bout table this open sweeps (a pickup or
-        // discard). Rendered invisibly by `battlesArea` so each swept card's real
-        // slot is measured before its flight builds - see `replayPreBattles`. Set
-        // BEFORE the stream starts so the grid lays out on the next paint, in time
-        // for playStep's poll to find the frames. Empty for a plain attack/cover
-        // replay (those cards are still on the table in `view`).
-        let preBattles = controller.openReplayPreBattles
-        replayPreBattles = preBattles
-        replayTableIds = Set(preBattles.flatMap { b -> [String] in
-            [b.attack.identity] + (b.defense.map { [$0.identity] } ?? [])
-        })
+        // The pre-bout table this open sweeps (a pickup or discard). Rendered
+        // VISIBLE by `battlesArea` so the cards sit on the table and then fly off
+        // it - see `sweepBattles`. Set BEFORE the stream starts so the grid lays
+        // out on the next paint, in time for the flight to measure and fly from it.
+        // Empty for a plain attack/cover replay (those cards are still on the table
+        // in `view`).
+        setSweep(controller.openReplayPreBattles)
 
         // The SAME animator the live bout-end uses - one path, the kernel's events.
         // `openReplay: true` opens the fan for a COLD first open so each drawn card
