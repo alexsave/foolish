@@ -97,6 +97,22 @@ public struct MessageTableView: View {
     /// - can compute a hand card's final slot at the current crop (see
     /// `handLandingSlot`). Updated as the drawer height changes.
     @State private var currentCollapse: CGFloat = 0
+    /// Round-7 ("buttons should NEVER float"): the hand's reserved height, MIRRORED
+    /// out of `boardContent` into plain @State via `.onChange`. The action bar and
+    /// self-role mark float a fixed gap above the hand, so their bottom padding is
+    /// driven by THIS, not the `handHeight` local computed inside `boardContent`.
+    ///
+    /// Why the mirror: `handHeight` is computed inside the `.animation(cardMotion,
+    /// value: controller.view)` scope, so when a pickup grows the hand past the
+    /// two-row threshold and `handHeight` jumps one row -> two, that jump rode the
+    /// board's card spring and the buttons FLOATED up with it. `.transaction { nil }`
+    /// on the buttons did not stop it - a scoped `.animation(_:value:)` is not
+    /// reliably overridden by a descendant transaction. An `.onChange` callback runs
+    /// in its OWN transaction (no ambient animation), so a value the buttons read
+    /// from here changes with a SNAP, never a spring - the buttons hold still and
+    /// only ever jump instantly to their final spot. `-1` marks "not measured yet"
+    /// so the first real height wins immediately (see `boardContent`'s onChange).
+    @State private var buttonLift: CGFloat = -1
     @State private var deckFrame: CGRect = .zero
     @State private var handCardFrames: [String: CGRect] = [:]
     @State private var seatFrames: [Int: CGRect] = [:]
@@ -443,6 +459,11 @@ public struct MessageTableView: View {
             // function of crop + the final card count, so the compact-drawer
             // descent (bug 4) is unchanged.
             let handHeight = FHandFan.height(cards: myHand, availableWidth: handWidth, crop: collapse)
+            // The buttons/role mark ride THIS, mirrored out via `.onChange` below so
+            // their movement is a snap, never the board spring (see `buttonLift`).
+            // Until the first mirror lands (-1) they read `handHeight` directly, so a
+            // fresh board places them correctly on the very first paint.
+            let lift = buttonLift < 0 ? handHeight : buttonLift
             ZStack {
                 // Battles — dead centre of the board (web: absolute, both axes).
                 battlesArea(view)
@@ -488,7 +509,7 @@ public struct MessageTableView: View {
                 // first-attacker-only sword used: just above my hand.
                 selfRoleIndicator(view)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .padding(.bottom, handHeight + 6)
+                    .padding(.bottom, lift + 6)
                     // Round-7 ("buttons should NEVER move"): strip the animation
                     // from this element ENTIRELY. `.animation(nil, value: handHeight)`
                     // was not enough - the padding change is driven by the ancestor
@@ -504,7 +525,7 @@ public struct MessageTableView: View {
                 // bottom:90/right:20). They only appear when a flag enables them.
                 actionBar(view)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                    .padding(.trailing, 4).padding(.bottom, handHeight + 4)
+                    .padding(.trailing, 4).padding(.bottom, lift + 4)
                     .transaction { $0.animation = nil }   // never float the buttons — see the role mark above
 
                 // My hand hugs the bottom (web: bottom max(10, safe-area)); the
@@ -545,7 +566,15 @@ public struct MessageTableView: View {
             // Mirror the live collapse fraction out to a flight builder, which runs
             // outside this reader and needs it to compute a hand card's final slot.
             .onChange(of: collapse) { currentCollapse = $0 }
-            .onAppear { currentCollapse = collapse }
+            // Mirror the hand height out to `buttonLift` so the buttons SNAP to it
+            // (this callback runs in its own no-animation transaction) instead of
+            // floating on the board spring. Logged so a device trace shows exactly
+            // when and why the reserved height moves - the "button floats up" report.
+            .onChange(of: handHeight) {
+                AnimLog.say("handHeight \(Int(buttonLift))->\(Int($0)) cards=\(myHand.count) rows=\(FHandFan.rowCount(cards: myHand, availableWidth: handWidth)) collapse=\(String(format: "%.2f", collapse))")
+                buttonLift = $0
+            }
+            .onAppear { currentCollapse = collapse; buttonLift = handHeight }
         }
     }
 
@@ -727,40 +756,43 @@ public struct MessageTableView: View {
     }
 
     private func battlesArea(_ view: GameView) -> some View {
-        Group {
-            if view.battles.isEmpty {
-                // A bout-end sequence clears `view.battles` before the sweep
-                // animates, so the cards that are FLYING OFF the table are no
-                // longer in the view. Lay the pre-bout table out here so they SIT
-                // on the table (visible) and then fly off it - live and replay
-                // alike. Each card stays visible until its OWN flight starts, then
-                // `sweptFlownIds` hides it and the overlay ghost carries it the
-                // rest of the way (no fade, no empty-table gap, no reappear). The
-                // visible cards also publish their real on-table rects, which the
-                // flights use as their source. Empty when no bout-end is animating.
-                if !sweepBattles.isEmpty {
-                    FBattleGrid(battles: sweepBattles, trumpSuit: view.trumpSuit,
-                                namespace: cardNS, hidden: sweptFlownIds,
-                                flyingNow: [])
-                } else {
-                    // Empty table: render nothing (web parity). A "no battle" label
-                    // just tells the player what they can already see (owner's call).
-                    Color.clear
-                }
-            } else {
-                // note 34: a pass preview shows the ghost slot instead of a cover
-                // highlight — the card that would get passed isn't being covered,
-                // so nothing on the table should look like a drop target for it.
-                let passPreview = isPassPreview(view)
-                FBattleGrid(battles: view.battles, trumpSuit: view.trumpSuit,
-                            coverable: passPreview ? [] : highlightBattles(view),
-                            onTapBattle: { idx in tapBattle(idx, view) },
-                            namespace: cardNS, hidden: veiledCardIds,
-                            showGhostSlot: passPreview,
+        // ONE grid, never two. A bout-end sequence clears `view.battles` before the
+        // sweep animates, so during a sweep we render the pre-bout table
+        // (`sweepBattles`) THROUGH THE SAME `FBattleGrid` the live table used - the
+        // cards keep their identity, so they SIT still and then fly off, instead of
+        // the old table grid being torn down (fading out under the board spring) and
+        // a separate sweep grid fading in (the owner's "cards fade away while new
+        // ones appear and move"). `sweepBattles` is set SYNCHRONOUSLY in `play`
+        // before `apply` publishes the empty table, so `shown` never blinks empty
+        // for a frame. Each swept card stays visible until its OWN flight starts,
+        // when `sweptFlownIds` snaps it hidden (FBattleGrid's `.animation(nil)`) and
+        // the overlay ghost carries it the rest of the way - no fade, no gap, no
+        // reappear. A settled empty table (nothing sweeping) renders nothing.
+        let sweeping = view.battles.isEmpty && !sweepBattles.isEmpty
+        let shown = sweeping ? sweepBattles : view.battles
+        // note 34: a pass preview shows the ghost slot instead of a cover highlight.
+        // Never while sweeping (the cards are leaving, not a drop target).
+        let passPreview = sweeping ? false : isPassPreview(view)
+        return Group {
+            if !shown.isEmpty {
+                FBattleGrid(battles: shown, trumpSuit: view.trumpSuit,
+                            coverable: sweeping || passPreview ? [] : highlightBattles(view),
+                            onTapBattle: sweeping ? { _ in } : { idx in tapBattle(idx, view) },
+                            namespace: cardNS,
+                            // Sweeping cards are hidden per-flight (`sweptFlownIds`),
+                            // NOT by the hand veil (`veiledCardIds`, which also hides
+                            // a picked-up card's HAND copy) - the table copy must
+                            // stay up until its own flight lifts it.
+                            hidden: sweeping ? sweptFlownIds : veiledCardIds,
+                            showGhostSlot: sweeping ? false : passPreview,
                             // Round-7 #7: the covers whose flight is playing this
                             // instant, so the attack beneath one tilts WITH it (same
                             // set that drives `handSlotDeferred`'s "flying now").
-                            flyingNow: animator.hidden.subtracting(animator.preHidden))
+                            flyingNow: sweeping ? [] : animator.hidden.subtracting(animator.preHidden))
+            } else {
+                // Empty table: render nothing (web parity). A "no battle" label
+                // just tells the player what they can already see (owner's call).
+                Color.clear
             }
         }
         // The verb hint is NOT attached here any more — round-4 note 4 moved it
@@ -910,12 +942,12 @@ public struct MessageTableView: View {
             deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
         }
         if reduceMotion {
-            releaseCounts()
+            releaseCounts(); clearSweep()
             if new.isOver { showResults = true }   // note 39b
             return
         }
         // note 10: undo can legally take battles -> empty; never a bout end.
-        if controller.lastChangeWasUndo { releaseCounts(); return }
+        if controller.lastChangeWasUndo { releaseCounts(); clearSweep(); return }
         // First appear with a delivered game: the open-replay (same event path).
         if prior == nil { AnimLog.say("-> openReplay"); replayLastMoveOnOpen(new); return }
         guard let old = prior, !old.battles.isEmpty, new.battles.isEmpty else {
@@ -1425,6 +1457,15 @@ public struct MessageTableView: View {
         })
     }
 
+    /// Drop the pre-bout table. Called on any view change that empties the table
+    /// WITHOUT running a bout-end sequence (reduce-motion, an undo), so a sweep
+    /// captured synchronously by `play` can never linger as phantom cards on a
+    /// table that isn't actually mid-animation. A no-op when nothing is swept.
+    private func clearSweep() {
+        guard !sweepBattles.isEmpty else { return }
+        sweepBattles = []; sweepTableIds = []; sweptFlownIds = []
+    }
+
     /// One open-replay event's flights, straight from the KERNEL's evwire stream
     /// (a GameEvent). The event ALREADY carries viewer-correct cards - my own
     /// draws/pickups as real identities, opponents' as nil (a back) - so unlike
@@ -1777,6 +1818,19 @@ public struct MessageTableView: View {
         if let view = controller.view {
             handBeforeMyMove = Set((view.me?.hand ?? []).map(\.identity))
             freezeCounts(to: view)
+            // Round-7 (live fade): a move that CLEARS the table (I take the cards, or
+            // I say good and the covered table goes to the discard) must show those
+            // cards SITTING on the table the very paint `view.battles` empties - not a
+            // frame of blank table (grid torn down -> cards fade out) followed by the
+            // sweep grid fading them back in. Capturing the table NOW, synchronously
+            // before `apply` publishes the empty view, is the only moment early
+            // enough (the onChange that re-sets this fires a paint too late, exactly
+            // like `handBeforeMyMove`). `flyBoutEndToDiscard` re-sets it from
+            // `old.battles` (identical) and owns the teardown; a move that does NOT
+            // clear the table renders `view.battles` and ignores this.
+            if (move.type == .pickup || move.type == .good), !view.battles.isEmpty {
+                setSweep(view.battles)
+            }
         }
         Task { await controller.apply(move); await stageNow() }
     }
