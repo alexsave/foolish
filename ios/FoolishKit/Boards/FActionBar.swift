@@ -40,11 +40,20 @@ public struct FActionBar: View {
             Spacer(minLength: 0)
             // All buttons share ONE fixed width so the wooden column is a clean
             // rectangle stack (web parity), not ragged to each word's length.
+            // Every button carries `.transition(.identity)` so it appears and
+            // disappears INSTANTLY - even when the flip happens inside a
+            // `withAnimation` from the bout-end sequence (a pickup stages `Undo`
+            // via `canSend` right as the sweep animation runs, so its insertion
+            // would otherwise ride that ambient spring and the outgoing Pickup pill
+            // would linger, fading, above the Undo that replaced it - the "ghostly
+            // Pickup floating above Undo"). Identity transition = no insert/remove
+            // animation under ANY transaction, so Pickup is simply gone and Undo is
+            // simply there, exactly as Attack -> Undo already reads.
             VStack(alignment: .trailing, spacing: FSpace.s) {
-                if canAttack { FButton(FStrings.t("attack"), kind: .wood, compact: true, fixedWidth: Self.w, action: onAttack) }
-                if canCover  { FButton(FStrings.t("cover"),  kind: .wood, compact: true, fixedWidth: Self.w, action: onCover) }
-                if canPass   { FButton(FStrings.t("pass"),   kind: .wood, compact: true, fixedWidth: Self.w, action: onPass) }
-                if canPickup { FButton(FStrings.t("pickup"), kind: .wood, compact: true, fixedWidth: Self.w, action: onPickup) }
+                if canAttack { FButton(FStrings.t("attack"), kind: .wood, compact: true, fixedWidth: Self.w, action: onAttack).transition(.identity) }
+                if canCover  { FButton(FStrings.t("cover"),  kind: .wood, compact: true, fixedWidth: Self.w, action: onCover).transition(.identity) }
+                if canPass   { FButton(FStrings.t("pass"),   kind: .wood, compact: true, fixedWidth: Self.w, action: onPass).transition(.identity) }
+                if canPickup { FButton(FStrings.t("pickup"), kind: .wood, compact: true, fixedWidth: Self.w, action: onPickup).transition(.identity) }
                 // Good reads as the WORD "Good" (note 7), same as every other
                 // wooden pill in this column. A previous batch put the FCheck
                 // glyph here too, borrowing it from FSeatBadge's per-seat status
@@ -52,16 +61,22 @@ public struct FActionBar: View {
                 // "this seat already said good", a different thing from the
                 // button that SAYS it. FCheck stays a status-only glyph; this
                 // button is text like its siblings.
-                if canDone   { FButton(FStrings.t("good"), kind: .wood, compact: true, fixedWidth: Self.w, action: onDone) }
-                if canUndo   { FButton(FStrings.t("ios.msg.undo"), kind: .wood, compact: true, fixedWidth: Self.w, action: onUndo) }
+                if canDone   { FButton(FStrings.t("good"), kind: .wood, compact: true, fixedWidth: Self.w, action: onDone).transition(.identity) }
+                if canUndo   { FButton(FStrings.t("ios.msg.undo"), kind: .wood, compact: true, fixedWidth: Self.w, action: onUndo).transition(.identity) }
             }
         }
         .padding(.horizontal, FSpace.m)
-        .animation(FMotion.chrome, value: canAttack)
-        .animation(FMotion.chrome, value: canCover)
-        .animation(FMotion.chrome, value: canPass)
-        .animation(FMotion.chrome, value: canPickup)
-        .animation(FMotion.chrome, value: canDone)
-        .animation(FMotion.chrome, value: canUndo)
+        // Buttons SNAP in and out - no fade, no reflow (owner: "buttons should
+        // not move / never float"). The chrome cross-fade this used to carry
+        // (`.animation(FMotion.chrome, value: canPickup/canUndo/...)`) was the
+        // actual "ghostly Pickup floating up above Undo": staging a pickup flips
+        // canPickup true->false and canUndo false->true in one update, and while
+        // the two DIFFERENT pills cross-faded they briefly stacked (Pickup on top
+        // of Undo) as the VStack collapsed - so the outgoing Pickup rose as it
+        // faded. Applied INSIDE this view, that animation sat below the board's
+        // own `.transaction { animation = nil }`, so nothing upstream could stop
+        // it. Dropping it entirely is the fix: a button that turns off just
+        // disappears, and the one replacing it is simply there.
+        .transaction { $0.animation = nil }
     }
 }

@@ -510,23 +510,24 @@ public struct MessageTableView: View {
                 selfRoleIndicator(view)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                     .padding(.bottom, lift + 6)
-                    // Round-7 ("buttons should NEVER move"): strip the animation
-                    // from this element ENTIRELY. `.animation(nil, value: handHeight)`
-                    // was not enough - the padding change is driven by the ancestor
-                    // `.animation(FMotion.cardMotion, value: controller.view)`
-                    // transaction (the whole board's card spring), not by a
-                    // standalone handHeight change, so a value-scoped nil never got a
-                    // say. A `.transaction` override DOES win: it clears the
-                    // animation on every transaction reaching this subtree, so the
-                    // role mark snaps to its (final-hand) spot instead of floating.
-                    .transaction { $0.animation = nil }
+                    // Round-7 ("buttons should NEVER move / float"): isolate this
+                    // from the board's card spring. The ancestor animates on
+                    // `.animation(cardMotion, value: controller.view)`; the correct
+                    // override is a NESTED `.animation(nil, value: controller.view)`
+                    // - same trigger value, innermost wins - NOT a `.transaction`
+                    // (which does not reliably beat a scoped value-animation, the
+                    // reason the earlier transaction fix let the role mark still
+                    // drift) and NOT keying on `handHeight` (the wrong value - the
+                    // change rides controller.view). Position now also snaps because
+                    // it reads the mirrored `lift`, not the springy `handHeight`.
+                    .animation(nil, value: controller.view)
 
                 // Action buttons float bottom-right, above the hand (web absolute
                 // bottom:90/right:20). They only appear when a flag enables them.
                 actionBar(view)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                     .padding(.trailing, 4).padding(.bottom, lift + 4)
-                    .transaction { $0.animation = nil }   // never float the buttons — see the role mark above
+                    .animation(nil, value: controller.view)   // never float the buttons — see the role mark above
 
                 // My hand hugs the bottom (web: bottom max(10, safe-area)); the
                 // outer .padding(12) is the safe-area inset that keeps it unclipped.
@@ -1753,23 +1754,24 @@ public struct MessageTableView: View {
             // attacker's Good must disappear — a stray tap on either while mid-
             // selection would abandon the cards you'd picked (web parity TODO).
             //
-            // Round-7 (pickup availability): Take must stay available to the
-            // defender even once EVERY attack is covered, matching the web
-            // (ActionButtons `rawPickup = isDefending && table_battles.length > 0`
-            // - it does NOT consult the kernel's legal menu). The kernel's `legal`
-            // stops LISTING pickup there (it becomes the attacker's turn to throw
-            // or say good), but it still ACCEPTS a defender pickup in that state -
-            // taking your own covered table is a legal surrender - so gating on
-            // `has(.pickup)`/`acting` (both false once the menu empties) wrongly
-            // HID the button. Gate on the web's OWN condition: I am the defender
-            // and there are cards on the table (plus the existing no-selection
-            // rule, so a stray tap can't abandon a picked selection). Deliberately
-            // NOT gated on `!canSend`: covering auto-stages, so the "all covered"
-            // state the owner means is exactly a staged one - Take has to survive
-            // it (undo + take both offered, like the web keeps Take through a
-            // defence). The move is one the kernel takes, so it never rejects.
-            canPickup: defending && !view.battles.isEmpty
-                && cards.isEmpty && !(view.me?.isOut ?? false),
+            // Take is available to the defender when there are cards on the table
+            // (web's own condition: `rawPickup = isDefending && table_battles > 0`,
+            // NOT the kernel's legal menu, which stops LISTING pickup once every
+            // attack is covered even though the kernel still ACCEPTS it). Plus the
+            // no-selection rule so a stray tap can't abandon a picked selection.
+            //
+            // Round-7 UPDATE (owner, on device): ALSO gated on `!canSend`, so the
+            // instant a defender move is staged the bar collapses to just Undo -
+            // exactly like every acting-gated button (attack/cover/pass/good, all
+            // `acting = iCanAct && !canSend`). This REVERSES the earlier "Take
+            // survives the staged/all-covered state" rule: leaving Take up while
+            // Undo appeared BELOW it shoved the bottom-anchored column upward, so
+            // the Take pill visibly rode up as Undo popped in (the "ghostly Pickup
+            // floating above Undo"). The owner chose the clean swap over keeping
+            // Take through a staged cover: to take your own covered table now, Undo
+            // first, then Take. (The kernel still accepts the move, so no reject.)
+            canPickup: defending && !view.battles.isEmpty && cards.isEmpty
+                && !(view.me?.isOut ?? false) && !controller.canSend,
             canDone: acting && CardPlay.canSayGood(battles: view.battles, legal: controller.legal) && cards.isEmpty,
             canUndo: controller.canSend,
             onAttack: { playAt(.table, cards, view) },
