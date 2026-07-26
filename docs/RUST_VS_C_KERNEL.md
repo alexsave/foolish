@@ -136,6 +136,54 @@ Readings:
    field; our 16-card workload cannot reach it, and the checksums confirm
    neither side did.)
 
+### 2.3 Why the compilers differ at all (callgrind, same source, same `-O3`)
+
+The gcc↔clang spread is the yardstick this whole section leans on, so it is
+worth showing it is real and understanding it. Measured with
+`valgrind --tool=callgrind --branch-sim --cache-sim`:
+
+**Legal movegen — gcc wins wall-clock by 8%, and simply emits less work:**
+
+| | I refs (1 rep) |
+|---|---|
+| c-clang | 67,836,194 |
+| c-gcc | **57,328,786 (−15.5%)** |
+
+Identical source, identical flags, 15% fewer instructions executed. That is
+inlining and unrolling policy on the recursive combination enumerators —
+gcc's heuristics happen to fit that shape better. Here instruction count is
+the whole story, and the 8% wall-clock win is a *damped* version of it.
+
+**MC playout — clang wins wall-clock by 15% while executing the MOST
+instructions.** This is the instructive one:
+
+| | I refs | D refs | D1 miss | branches | mispredicts | mispred rate | µs/playout |
+|---|---|---|---|---|---|---|---|
+| c-clang | 62.37M | 35.66M | 208,015 | 27.01M | 501,228 | 1.9% | **1.41** |
+| c-gcc | 60.81M | 34.25M | 205,511 | 27.40M | 497,298 | 1.8% | 1.62 |
+| rust | **57.87M** | **19.14M** | 271,035 | **8.23M** | 579,226 | 7.0% | 1.59 |
+
+Read the Rust column carefully: it executes **7% fewer instructions, 46%
+fewer memory references, and 70% fewer branches** than clang — and is still
+**13% slower**. The cost shows up in the two columns that stall a pipeline:
+**16% more absolute branch mispredictions** (579K vs 501K, at ~15–20 cycles
+each ≈ 1.2–1.6M wasted cycles) and **30% more L1-data misses** (271K vs
+208K). Its 7.0% mispredict *rate* is partly an artifact — eliminating
+easily-predicted loop-bound branches leaves a residue that is proportionally
+harder to predict — but the absolute count rose too, and that is real time.
+
+So the answer to "why would two compilers differ on the same code" is that
+`-O3` is a pile of *heuristics* — inline/unroll thresholds, register
+allocation and spill choices, block layout, when to vectorize — and none of
+them is a solved problem. Two toolchains make different bets, and the bets
+pay off differently depending on code shape: dense recursive enumeration
+(gcc's win) versus a long chain of small branchy bitboard updates (clang's
+win). The corollary that matters for the decision: **instruction count and
+wall-clock are decoupled here, so "Rust generates worse code" is not what the
+regressions show — Rust generates *denser* code that this hardware retires
+less smoothly.** That is a scheduling/layout gap, the kind that moves with
+compiler versions and target tuning, not a language-level ceiling.
+
 **Conclusion: there is no decisive performance case in either direction. The
 one measured Rust regression is single-digit, sits on the budget-capped
 solver, and is recoverable with targeted `unsafe` if it ever mattered.**
@@ -144,7 +192,37 @@ solver, and is recoverable with targeted `unsafe` if it ever mattered.**
 
 This is the decision-relevant evidence. All from git history and in-tree docs.
 
-### 3.1 Shipped memory-safety bugs (fixed)
+### 3.0 Where this ledger lives (main vs branch)
+
+Important framing, verified by comparing source across refs — not by commit
+topology, since PR squash-merges give main different SHAs:
+
+- **Kernel fixes reached `main`.** `origin/main:c/src/game.c` carries the
+  bounded pickup append, `card.h` carries `card_mark_value`, and `MAX_LOGS`
+  is 1024. So the kernel bugs below were real, are fixed, and the fixes are
+  in the production kernel.
+- **The server ledger is entirely off `main`.**
+  `origin/main:server/impls/native/` holds 6 files and a **~600-line**
+  `foolish_server.c` prototype — no `ws.c`, `conn.c`, `quic_wt.c`, or
+  `persist.c`. The 3,612-line server, all six of its memory-safety bugs, and
+  all six fixes live only on `claude/c-client-load-test-1j1rsj`. So "shipped"
+  is the wrong word for those: they were introduced *and caught during
+  development* of ~5.5 KLOC of fresh C, over roughly two weeks, by gates the
+  author wrote. That is a **bug-density argument about writing new C**, which
+  is precisely this project's situation — arguably stronger for a greenfield
+  decision than a production-outage argument would be.
+- **`6125fbe` (kernel globals → `_Thread_local`) is NOT on main**:
+  `origin/main:c/src/game.h` still declares `extern int engine_last_reject;`.
+  It is only needed once a threaded host drives the kernel, which today only
+  the branch server does — but it means main's kernel is not thread-safe, and
+  the fix must travel with the server whenever that merges.
+- **Of the four live residuals in §3.2, exactly one is on `main`** —
+  `state_get`'s missing length parameter, byte-identical in both refs. The
+  other three (`ws.c:427`, `Content-Length`, QUIC token) are branch-only.
+  That makes `state_get` the single highest-priority fix in this document,
+  and it is a five-line C change that does not wait on any rewrite.
+
+### 3.1 Memory-safety bugs found and fixed (kernel: on main; server: branch-only)
 
 | commit | bug | Rust verdict |
 |---|---|---|
@@ -305,14 +383,38 @@ can check a format; the type system cannot).
 
 **Yes to Rust — phased, differential, and in this order:**
 
-1. **Native server first** (5.5 KLOC; strongest case). Six of its shipped
-   bugs were compile-time-preventable; ~43% of its code is protocol/crypto
-   plumbing with maintained fuzzed crates behind it (`tokio-rustls` also
-   deletes the biggest live architectural debt: the `--tls` path forfeits the
-   measured 71–73% epoll memory win and forced the duplicated parser that
-   still carries a UB bug); `quinn` fixes the three QUIC findings at once.
+1. **Native server first** (5.5 KLOC; strongest case, and it is unmerged —
+   so this is a decision about code with no deployment to protect). Six of
+   its bugs were compile-time-preventable. On the "plumbing" share, measured
+   by categorizing all 103 top-level functions in `foolish_server.c` by
+   function span plus the whole of `ws.c`/`conn.c`/`quic_wt.c`/`persist.c`:
+   **2,231 of 5,497 lines = 41%** (an earlier draft said 43%). The
+   composition matters more than the headline, because the replaceability is
+   uneven:
+   - **~890 lines (16%) are textbook crate-replaceable**: RFC 6455 framing
+     twice over (`ws.c` 464 + `wsasync_feed` 114 → `tokio-tungstenite`),
+     HTTP/1.1 parse + response (110 → `httparse`), SHA-1/base64/base64url/
+     HMAC-SHA256 + token codec (60 → `sha1`/`sha2`/`base64`/`hmac`), and the
+     hand-rolled open-addressing table with its Knuth backward-shift delete
+     (31 → `HashMap`). This is the part where a maintained, fuzzed crate is
+     strictly better than what one author can hand-write, and it is where
+     three of the four live residuals sit.
+   - **~500 lines (9%) change shape rather than disappear**:
+     `epoll/econn/acceptor` (349) + `conn.c` (151). `tokio`+`rustls` replace
+     the *design* — and that is the real win, because it deletes the
+     `--tls`-reverts-to-thread-per-connection compromise that forfeits the
+     measured 71–73% memory saving and forced the duplicated parser — but
+     connection-lifecycle logic still has to be written, just as owned tasks
+     instead of a tombstone + deferred-free list.
+   - **~835 lines (15%) are thinner wins than the headline suggests**:
+     `quic_wt.c` (534) is glue over `libquiche` — which is *already Rust*
+     with a C FFI, so `quinn` is a swap of one Rust QUIC stack for another
+     (it does fix all three QUIC findings); `persist.c` (301) gets
+     `rusqlite` for the driver, but the write-behind/batching policy is
+     application logic that survives.
+
    Keep the kernel behind FFI initially — but give `state_get` a length
-   parameter *now*, in C, regardless.
+   parameter *now*, in C, regardless: it is the one live residual on `main`.
 2. **Rules + wire core second** (5,540 LOC). Port `game.c`, `legal.c`,
    `view.c`, `awire.c`, `evwire.c`, `msg_wire.c`, `sha256.c`, `deal_rng.c`,
    then `replay.c` last within this phase (frozen format; its only oracle is
