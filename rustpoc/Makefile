@@ -11,6 +11,8 @@ CFLAGS ?= -O3 -ffast-math -flto -Wall -Wextra -Wno-unused-parameter -I../c/src
 
 KSRC_LEGAL   = ../c/src/game.c ../c/src/deal_rng.c ../c/src/legal.c
 KSRC_PLAYOUT = $(KSRC_LEGAL) ../c/src/cordite_sim.c
+# The solver bench runs at the SHIPPED TT configuration (bots.wasm's).
+TT_FLAGS     = -DCD_TT_BITS=12 -DCD_TT_2WAY -DCD_TT_PACK8
 KSRC_WIRE    = ../c/src/game.c ../c/src/deal_rng.c ../c/src/legal.c \
                ../c/src/replay.c ../c/src/replay_steps.c ../c/src/view.c \
                ../c/src/awire.c ../c/src/evwire.c ../c/src/json_out.c \
@@ -31,11 +33,14 @@ build/bench_playout: bench_playout.c $(KSRC_PLAYOUT) | build
 build/bench_wire: bench_wire.c $(KSRC_WIRE) | build
 	$(CC) $(CFLAGS) $^ -o $@ -lm
 
+build/bench_solve: bench_solve.c $(KSRC_PLAYOUT) | build
+	$(CC) $(CFLAGS) $(TT_FLAGS) $^ -o $@ -lm
+
 gen: build/gen_states
 	cd build && ./gen_states states.bin envelopes.bin
 
-bench-c: build/bench_legal build/bench_playout build/bench_wire
-	cd build && ./bench_legal states.bin 40 && ./bench_playout states.bin 40 600 && ./bench_wire envelopes.bin 300
+bench-c: build/bench_legal build/bench_playout build/bench_wire build/bench_solve
+	cd build && ./bench_legal states.bin 40 && ./bench_playout states.bin 40 600 && ./bench_wire envelopes.bin 300 && ./bench_solve states.bin 5
 
 bench-rs:
 	cd rs && cargo build --release 2>/dev/null || cargo build --release
@@ -55,8 +60,11 @@ build-gcc/bench_playout: bench_playout.c $(KSRC_PLAYOUT) | build-gcc
 build-gcc/bench_wire: bench_wire.c $(KSRC_WIRE) | build-gcc
 	gcc $(CFLAGS) $^ -o $@ -lm
 
-bench-c-gcc: build-gcc/bench_legal build-gcc/bench_playout build-gcc/bench_wire
-	cd build && ../build-gcc/bench_legal states.bin 40 && ../build-gcc/bench_playout states.bin 40 600 && ../build-gcc/bench_wire envelopes.bin 300
+build-gcc/bench_solve: bench_solve.c $(KSRC_PLAYOUT) | build-gcc
+	gcc $(CFLAGS) $(TT_FLAGS) $^ -o $@ -lm
+
+bench-c-gcc: build-gcc/bench_legal build-gcc/bench_playout build-gcc/bench_wire build-gcc/bench_solve
+	cd build && ../build-gcc/bench_legal states.bin 40 && ../build-gcc/bench_playout states.bin 40 600 && ../build-gcc/bench_wire envelopes.bin 300 && ../build-gcc/bench_solve states.bin 5
 
 clean:
 	rm -rf build build-gcc rs/target

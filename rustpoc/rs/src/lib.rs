@@ -1,3 +1,5 @@
+pub mod sim;
+
 // Shared harness for the Rust-side POC benchmarks: portable state loading,
 // FNV-1a checksumming (must match ../bench_common.h exactly), the engine LCG,
 // and peak-RSS reporting.
