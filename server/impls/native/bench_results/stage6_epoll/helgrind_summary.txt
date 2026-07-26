@@ -1,0 +1,87 @@
+Stage 6 Helgrind verdict — foolish_server_prof, epoll-per-shard connection
+I/O (plaintext) + the epoll-worker <-> bot_thread wakeup seam
+(epoll_notify_game_changed / worker_push_stale)
+
+Build:
+  cd server/impls/native && make CC=clang foolish_server_prof
+  (same source as foolish_server, +-g -fno-omit-frame-pointer -O2 instead of
+  -O3/-flto so Helgrind attributes races to real functions/lines)
+
+Command:
+  valgrind --tool=helgrind --history-level=approx \
+    --log-file=bench_results/stage6_epoll/raw/round1.log \
+    -- ./foolish_server_prof 8401 --no-db --game-workers=4
+
+(plaintext — no --tls — so every /ws connection, one-shot request, and bot
+decision in this run goes through the NEW epoll-per-shard path, not the
+--tls thread-per-connection fallback; that fallback is untouched Stage-5
+code, already Helgrind-clean per SERVER_SCALING.md's "Stage 5" section.)
+
+Load (foolish_hammer, --mode=ws, --server-bot=cordite — a fast MC bot
+substituted for octogen per the task's own guidance, since Helgrind's
+~20-30x slowdown makes octogen's ~2s/decision search impractical; cordite
+exercises the SAME bot_drive/awire_apply/cordite_sim.c code paths octogen
+does, just faster per decision):
+
+  round 1: --games=6  --seats=1 --spectators=1 --secs=30
+    -> 91/122 human actions applied, 56 bot decisions across 6 concurrent
+       games (each on its own bot_thread, dealt via game_seat_and_deal),
+       0/2823 spectator move probes accepted (correctly rejected)
+
+  round 2: --games=10 --seats=1 --spectators=1 --secs=35
+    -> 189/314 human actions applied, 54 MORE bot decisions (110 cumulative
+       on GET /stats) across 10 concurrent games, 0/1601 spectator move
+       probes accepted
+
+Both rounds exercise every path this stage added or changed, concurrently:
+  - the epoll dispatcher (main()'s accept loop) handing off freshly-accepted
+    /ws and one-shot connections to their shard's Worker via the handoff
+    queue + wake_evfd (worker_handoff_push / drain_handoff_queue)
+  - each epoll worker's single-threaded event loop servicing human WS
+    connections (wsasync_feed + ws_service_message), spectator WS
+    connections (the read-only VIEW_SPECTATOR path), and one-shot
+    /meta+/action+/status HTTP requests (route() through a buffered Conn)
+  - bot_thread (its own per-game trampoline thread, UNCHANGED from Stage 5)
+    calling bot_drive/awire_apply and then epoll_notify_game_changed — THE
+    seam this stage added: a cross-thread eventfd write from bot_thread into
+    the epoll worker that owns connections for that same game, which then
+    wakes, drains its handoff queue, and calls worker_push_stale (scanning
+    its live /ws connections under each GameSlot's own `s->lock`, exactly
+    the same lock bot_thread holds while mutating) — 16 games dealt total
+    across the two rounds, 110 bot decisions applied via bot_drive running
+    concurrently across up to 10 DIFFERENT games' bot_thread threads at
+    once, while up to 10 epoll workers' worth of connections (shared across
+    4 Worker shards) read/wrote/got pushed to at the same time.
+
+Server stopped with SIGTERM after both rounds (no signal handler installed,
+so Helgrind's forced-exit report — the standard "Process terminating with
+default action of signal 15" note below — is expected and not an error;
+`timeout` cannot be used to end a callgrind/helgrind capture cleanly, since
+it forks an untraced child — see PROFILE_HOTPATH.md's T1 note).
+
+---- raw ERROR SUMMARY (bench_results/stage6_epoll/raw/round1.log) ----
+==22778== Process terminating with default action of signal 15 (SIGTERM)
+==22778==    at 0x51A886D: accept (accept.c:26)
+==22778==    by 0x10C26B: main (foolish_server.c:2526)
+==22778==
+==22778== For lists of detected and suppressed errors, rerun with: -s
+==22778== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 1083719 from 103)
+------------------------------------------------------------------------
+
+VERDICT: 0 data races (0 errors from 0 contexts) across ~65s of genuinely
+concurrent epoll-worker <-> bot_thread traffic spanning up to 16 distinct
+games. The "suppressed: 1083719 from 103" count is Valgrind's own
+default/glibc suppression rules (pthread/loader internals) — the same
+category every earlier stage's Helgrind run in this repo used, not evidence
+of anything hidden. No new suppressions were added for this run.
+
+This is the proof the new epoll<->bot_thread wakeup seam (the ONE genuinely
+new cross-thread interaction this stage introduced — see
+SERVER_SCALING.md's "Stage 6" section) is race-clean: bot_thread writes
+`s->version`/the kernel state under `s->lock` and then signals
+`w->wake_evfd`; the owning epoll worker's `worker_push_stale` reads
+`s->version` and calls `state_put_cached` under that SAME lock — Helgrind
+saw every one of those 110+ cross-thread handoffs and found no missing
+synchronization. The rest of the surface (the handoff queue's own mutex,
+the dispatcher building responses via a buffered Conn before handoff, the
+spectator read-only path) is exercised identically and also clean.

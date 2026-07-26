@@ -1,0 +1,37 @@
+label:      T1d_ws_speedups (AFTER the T1c speedups — see PROFILE_HOTPATH.md "T1c")
+mode:       --launch (equivalent; run directly to control lifetime — see PROFILE_HOTPATH.md T1's note)
+host uname: Linux x86_64
+tool:       callgrind
+cmd:        valgrind --tool=callgrind --callgrind-out-file=raw/callgrind.out -- ./foolish_server_prof 8096
+load:       foolish_hammer --host=127.0.0.1 --port=8096 --games=3 --seats=2 --secs=20 --mode=ws
+
+Same technique and identical scale as bench_results/T1c_ws_lines/ (the BEFORE
+capture) — same lifetime technique (SIGTERM the valgrind process, do not wrap
+in `timeout`), same --games=3 --seats=2 --secs=20 --mode=ws load.
+
+Collected: 53,730,985 instructions (Ir) over ~20s wall clock — DOWN from
+85,441,022 Ir in the BEFORE capture, a 37.1% total reduction, despite this run
+completing slightly MORE round trips (95,548 vs 93,748). Per-round-trip:
+before 85,441,022/93,748 = 911.3 Ir/msg; after 53,730,985/95,548 = 562.4
+Ir/msg — a 38.3% reduction in average per-message instruction cost.
+
+Load result: 95,548 total WS round trips (356 actions submitted, 344
+applied, 95,192 empty "poll" frames), 6 persistent WS connections.
+
+Changes present in this build (both under server/impls/native/, c/src/*
+untouched):
+  1. Per-game `version` counter + per-seat cached state_put(...) bytes
+     (GameSlot.view_cache / view_cache_len / view_cache_version,
+     foolish_server.c) — a /ws poll that finds nothing new now memcpy's the
+     last-computed bytes instead of re-running the kernel's masked
+     serialization.
+  2. ws.c: ws_fill now refills its `pending` buffer with ONE opportunistic
+     read() of up to its full capacity instead of an exact-size read per
+     framing field (header/extended-length/mask-key/payload each used to be
+     its own read() syscall); ws_send_frame's unmasked (server) path now
+     writev()s the header+payload in one syscall instead of two separate
+     write() calls.
+
+See PROFILE_HOTPATH.md's "T1c" section for the full before/after table
+(hottest lines, throughput, latency, memory) and the reasoning behind each
+change.

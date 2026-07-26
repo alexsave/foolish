@@ -1,0 +1,70 @@
+-- CURATED EXCERPT of callgrind_annotate --cache-sim output for T3 (production, TT12) --
+-- Full command that produced this (raw dump is gitignored, not committed):
+--   valgrind --tool=callgrind --cache-sim=yes --callgrind-out-file=raw_cache/callgrind.out -- <target>
+--   callgrind_annotate --auto=yes --inclusive=no raw_cache/callgrind.out
+-- This excerpt keeps: the cache geometry + totals header, the top self-cost
+-- function table, and the hottest source block (the solver's TT probe in
+-- cordite_sim.c:sim_solve_rec, the line PROFILE_HOTPATH.md discusses).
+
+--------------------------------------------------------------------------------
+Profile data file 'bench_results/T3_octogen_prod/raw_cache/callgrind.out' (creator: callgrind-3.22.0)
+--------------------------------------------------------------------------------
+I1 cache: 32768 B, 64 B, 8-way associative
+D1 cache: 49152 B, 64 B, 12-way associative
+LL cache: 276824064 B, 64 B, 33-way associative
+Timerange: Basic block 0 - 2073028902
+Trigger: Program termination
+Profiled target:  ./bench_results/eval_t3_prod --strategy=octogen --opp=octogen --players=2 --games=1 --seed-start=1 (PID 28760, part 1)
+Events recorded:  Ir Dr Dw I1mr D1mr D1mw ILmr DLmr DLmw
+Events shown:     Ir Dr Dw I1mr D1mr D1mw ILmr DLmr DLmw
+Event sort order: Ir Dr Dw I1mr D1mr D1mw ILmr DLmr DLmw
+Thresholds:       99 0 0 0 0 0 0 0 0
+Include dirs:     
+User annotated:   
+Auto-annotation:  on
+
+--------------------------------------------------------------------------------
+Ir                      Dr                     Dw                     I1mr            D1mr               D1mw             ILmr           DLmr           DLmw            
+--------------------------------------------------------------------------------
+13,373,127,673 (100.0%) 2,788,506,097 (100.0%) 1,747,525,707 (100.0%) 18,340 (100.0%) 1,764,935 (100.0%) 913,666 (100.0%) 2,559 (100.0%) 1,297 (100.0%) 32,109 (100.0%)  PROGRAM TOTALS
+
+--------------------------------------------------------------------------------
+Ir                     Dr                   Dw                   I1mr           D1mr               D1mw             ILmr         DLmr         DLmw             file:function
+--------------------------------------------------------------------------------
+4,854,274,450 (36.30%) 976,295,846 (35.01%) 511,690,996 (29.28%)   356 ( 1.94%) 1,266,789 (71.78%)   4,396 ( 0.48%)  14 ( 0.55%)   .               .           /home/user/foolish/c/src/cordite_sim.c:sim_solve_rec'2 [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+2,656,185,916 (19.86%) 516,915,645 (18.54%) 296,092,746 (16.94%)   775 ( 4.23%)         9 ( 0.00%) 238,883 (26.15%)  46 ( 1.80%)   1 ( 0.08%)     68 ( 0.21%)  /home/user/foolish/c/src/cordite_sim.c:sim_gen_moves [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+  973,772,394 ( 7.28%) 220,187,569 ( 7.90%) 165,639,656 ( 9.48%)    19 ( 0.10%)    96,284 ( 5.46%) 475,232 (52.01%)   8 ( 0.31%)   1 ( 0.08%)      1 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+  944,458,494 ( 7.06%) 222,658,776 ( 7.98%) 172,834,322 ( 9.89%)   501 ( 2.73%)        74 ( 0.00%)     215 ( 0.02%)  14 ( 0.55%)   1 ( 0.08%)      .           /home/user/foolish/c/src/cordite_sim.c:sim_apply_sol [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+  884,788,168 ( 6.62%) 136,099,632 ( 4.88%) 107,324,912 ( 6.14%)   636 ( 3.47%)         8 ( 0.00%)       3 ( 0.00%)  31 ( 1.21%)   1 ( 0.08%)      .           src/leafbook.h:leafbook_key [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+  739,490,174 ( 5.53%) 178,265,730 ( 6.39%) 146,168,313 ( 8.36%)   254 ( 1.38%)         0           49,373 ( 5.40%)   7 ( 0.27%)   0              44 ( 0.14%)  /home/user/foolish/c/src/cordite_sim.c:cover_assign [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+  446,091,188 ( 3.34%) 125,305,892 ( 4.49%)  73,611,208 ( 4.21%)   427 ( 2.33%)         0            1,184 ( 0.13%)  15 ( 0.59%)   0               2 ( 0.01%)  /home/user/foolish/c/src/cordite_sim.c:sim_refill [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+  427,401,511 ( 3.20%)  80,502,315 ( 2.89%)  47,842,344 ( 2.74%) 1,540 ( 8.40%)    20,817 ( 1.18%)   2,403 ( 0.26%)  64 ( 2.50%)   .               .           /home/user/foolish/c/src/cordite_sim.c:sim_handwritten_move [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+  408,812,757 ( 3.06%) 115,168,102 ( 4.13%)  98,437,067 ( 5.63%)    72 ( 0.39%)         0           93,736 (10.26%)   1 ( 0.04%)   0              13 ( 0.04%)  /home/user/foolish/c/src/cordite_sim.c:cover_assign'2 [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+  319,843,675 ( 2.39%)  73,936,127 ( 2.65%)  18,585,347 ( 1.06%)   277 ( 1.51%)     5,184 ( 0.29%)       1 ( 0.00%)  28 ( 1.09%)   3 ( 0.23%)      .           /home/user/foolish/c/src/cordite_sim.c:cd_sim_playout_pol [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+  282,754,335 ( 2.11%)  57,136,712 ( 2.05%)  53,792,276 ( 3.08%)   167 ( 0.91%)         2 ( 0.00%)   1,198 ( 0.13%)   8 ( 0.31%)   .               .           /home/user/foolish/c/src/cordite_sim.c:sim_apply_cover [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+  156,492,876 ( 1.17%)  37,109,739 ( 1.33%)  30,049,372 ( 1.72%)   257 ( 1.40%)         0              423 ( 0.05%)  11 ( 0.43%)   0               1 ( 0.00%)  /home/user/foolish/c/src/cordite_sim.c:sim_apply [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+   79,130,480 ( 0.59%)           0                    0              7 ( 0.04%)         0                0            3 ( 0.12%)   .               .           src/leafbook.h:cd_leafbook_value
+   45,059,725 ( 0.34%)  10,748,372 ( 0.39%)   7,551,290 ( 0.43%)    27 ( 0.15%)         1 ( 0.00%)       9 ( 0.00%)   4 ( 0.16%)   .               .           /home/user/foolish/c/src/cordite_sim.c:sim_apply_pass [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+   43,186,869 ( 0.32%)   8,732,568 ( 0.31%)   3,009,037 ( 0.17%) 4,669 (25.46%)   220,565 (12.50%)   3,561 ( 0.39%) 207 ( 8.09%)   3 ( 0.23%)      7 ( 0.02%)  /home/user/foolish/c/src/octogen_strategy.c:octogen_strategy_choose [/home/user/foolish/server/impls/native/bench_results/eval_t3_prod]
+
+... (source-line annotation for every touched line of cordite_sim.c and
+    octogen_strategy.c omitted here for size; full dump is reproducible
+    with the command above) ...
+
+-- the hot block: cordite_sim.c sim_solve_rec's TT probe (2-way bucket) --
+            .                    .                    .              .                  .               .           .           .           .                   // 2-way set associativity: each aligned slot pair is one bucket (both
+            .                    .                    .              .                  .               .           .           .           .                   // entries share a 64-byte cache line at 16 B/entry). Probe both halves;
+            .                    .                    .              .                  .               .           .           .           .                   // hit on either key. On a miss `e` is left pointing at the bucket's low
+            .                    .                    .              .                  .               .           .           .           .                   // slot so the store path still fires — the real victim is re-chosen from
+            .                    .                    .              .                  .               .           .           .           .                   // live bucket contents at the store site below.
+            .                    .                    .              .                  .               .           .           .           .                   {
+   36,814,716 ( 0.28%)           .                    .              .                  .               .           .           .           .                       CdTTEntry *bkt = &tbl[key & tmask & ~1ull];
+   49,086,303 ( 0.37%)  12,271,572 ( 0.44%)           0              0          1,277,016 (72.35%)      .           .           .           .                       if (bkt[0].valid && bkt[0].key == CD_TT_KEYTAG(key))      e = &bkt[0];
+   36,814,707 ( 0.28%)  12,271,569 ( 0.44%)           .              .                  .               .           .           .           .                       else if (bkt[1].valid && bkt[1].key == CD_TT_KEYTAG(key)) e = &bkt[1];
+            .                    .                    .              .                  .               .           .           .           .                       else                                        e = &bkt[0];
+            .                    .                    .              .                  .               .           .           .           .                   }
+            .                    .                    .              .                  .               .           .           .           .           #else
+            .                    .                    .              .                  .               .           .           .           .                   e = &tbl[key & tmask];
+            .                    .                    .              .                  .               .           .           .           .           #endif
+   24,543,156 ( 0.18%)           3 ( 0.00%)           .              .                  .               .           .           .           .                   if (e->valid && e->key == CD_TT_KEYTAG(key)) {
+            .                    .                    .              .                  .               .           .           .           .                       // stored value is depth-relative to e->depth; re-base to this depth.

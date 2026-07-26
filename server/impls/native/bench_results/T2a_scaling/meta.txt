@@ -1,0 +1,44 @@
+label:      T2a_scaling — per-game locks + work-queue routing (concurrency, not CPU profiling — see PROFILE_HOTPATH.md for that)
+host uname: Linux x86_64, 4 cores
+tool:       valgrind --tool=helgrind (race-freedom gate), foolish_hammer (throughput/latency), mem_sample.sh (RSS)
+
+Files in this directory:
+
+- helgrind_summary.txt — digest of every Helgrind run (race-freedom gate),
+  including the two real races found and fixed on the way to clean. Raw
+  valgrind logs are not committed (gitignored elsewhere in this repo's
+  convention); this is the full digested record.
+
+- worker_pool_sweep.csv — every run of the Deliverable 2 worker-pool sweep:
+  columns phase,label,gw,mw,cw,conns,applied_per_s,mean_us,p50_us,p90_us,
+  p99_us,peak_rss_kb,threads. Phase A = --mode=ws game_workers sweep (the
+  instructed decider) at 32/160/400 conns, 3 trials each. Phase B =
+  --mode=ws meta_workers/create_workers sweep @ 160 conns, 3 trials each.
+  Phase C = --mode=mixed game_workers sweep (real /action traffic through
+  the game-worker queues — the supplementary test that actually carries
+  signal for this knob, since /ws bypasses the queues by design) at
+  32/160/400 conns, 2 trials each. See SERVER_SCALING.md "worker-pool
+  sweep" for the aggregated table and the reasoning behind the shipped
+  defaults (--game-workers=4 --meta-workers=0 --create-workers=1).
+
+- deliverable3_before_after.csv — baseline (pre-T2a single global g_lock,
+  built from the commit immediately before this stage's changes) vs new
+  (T2a, shipped defaults) at 32/160/400 ws conns (--games=8/40/100
+  --seats=4, --secs=12 load window). Columns: variant,conns,games,seats,
+  applied_per_s,mean_us,p50_us,p90_us,p99_us,rss_first_kb,rss_mean_kb,
+  rss_peak_kb,rss_vmhwm_kb. RSS sampled with mem_sample.sh (0.25s interval)
+  running concurrently with the hammer's load phase. See SERVER_SCALING.md
+  "Deliverable 3" for the analysis.
+
+Reproduce the sweep/comparison with:
+  cd server/impls/native
+  make CC=clang foolish_server foolish_hammer
+  ./foolish_server <port> --game-workers=N --meta-workers=N --create-workers=N &
+  ./foolish_hammer --host=127.0.0.1 --port=<port> --games=G --seats=S --secs=N --mode=ws
+
+Reproduce the Helgrind gate with (same technique as PROFILE_HOTPATH.md's
+callgrind captures — SIGTERM the valgrind process directly, never wrap in
+`timeout`):
+  valgrind --tool=helgrind --history-level=approx -- ./foolish_server <port> [flags]
+  # in another shell: foolish_hammer --mode=mixed ...; foolish_hammer --mode=ws ...
+  kill -TERM <valgrind pid>

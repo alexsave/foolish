@@ -1,0 +1,26 @@
+label:      T1c_ws_lines (BEFORE the T1c speedups — see PROFILE_HOTPATH.md "T1c")
+mode:       --launch (equivalent; run directly to control lifetime — see PROFILE_HOTPATH.md T1's note)
+host uname: Linux x86_64
+tool:       callgrind
+cmd:        valgrind --tool=callgrind --callgrind-out-file=raw/callgrind.out -- ./foolish_server_prof 8096
+load:       foolish_hammer --host=127.0.0.1 --port=8096 --games=3 --seats=2 --secs=20 --mode=ws
+
+Same lifetime technique as T1_server/T1b_ws (see PROFILE_HOTPATH.md T1's note):
+GNU `timeout` forks+execs an untraced child, so the server was started directly
+under `valgrind --tool=callgrind` and sent SIGTERM after the load window
+instead. valgrind forwards the signal, the guest's blocking read() on the /ws
+connection unwinds, and valgrind flushes callgrind.out before exiting.
+
+Collected: 85,441,022 instructions (Ir) over ~20s wall clock.
+Load result: 93,748 total WS round trips (805 actions submitted, 787 applied,
+92,943 empty "poll" frames), 6 persistent WS connections (--games=3 --seats=2,
+one connection per seat — --conns is not used in --mode=ws). Same small scale
+as T1b_ws's own callgrind capture, deliberately: under 30-50x instrumentation
+slowdown, spinning up many real WS handshakes would dominate the whole
+capture rather than the steady-state hot loop.
+
+This is the BEFORE snapshot for PROFILE_HOTPATH.md's "T1c" section: the
+CURRENT (pre-speedup) server's line-level hot path. See
+bench_results/T1d_ws_speedups/ for the AFTER capture (same technique, same
+scale) once the version-cached state_put + ws.c buffered-read/writev changes
+landed.

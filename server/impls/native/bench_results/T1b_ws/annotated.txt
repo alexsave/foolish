@@ -1,0 +1,1180 @@
+--------------------------------------------------------------------------------
+Profile data file 'bench_results/T1b_ws/raw/callgrind.out' (creator: callgrind-3.22.0)
+--------------------------------------------------------------------------------
+I1 cache: 
+D1 cache: 
+LL cache: 
+Timerange: Basic block 0 - 18172104
+Trigger: Program termination
+Profiled target:  ./foolish_server_prof 8096 (PID 13540, part 1)
+Events recorded:  Ir
+Events shown:     Ir
+Event sort order: Ir
+Thresholds:       99
+Include dirs:     
+User annotated:   
+Auto-annotation:  on
+
+--------------------------------------------------------------------------------
+Ir                  
+--------------------------------------------------------------------------------
+81,096,990 (100.0%)  PROGRAM TOTALS
+
+--------------------------------------------------------------------------------
+Ir                   file:function
+--------------------------------------------------------------------------------
+16,922,819 (20.87%)  ../../../c/src/view.c:state_put [/home/user/foolish/server/impls/native/foolish_server_prof]
+14,074,102 (17.35%)  ws.c:ws_recv_message [/home/user/foolish/server/impls/native/foolish_server_prof]
+ 8,390,422 (10.35%)  ws.c:ws_send_frame [/home/user/foolish/server/impls/native/foolish_server_prof]
+ 6,256,736 ( 7.72%)  ./nptl/./nptl/cancellation.c:__pthread_enable_asynccancel [/usr/lib/x86_64-linux-gnu/libc.so.6]
+ 5,865,675 ( 7.23%)  ./nptl/./nptl/cancellation.c:__pthread_disable_asynccancel [/usr/lib/x86_64-linux-gnu/libc.so.6]
+ 4,895,635 ( 6.04%)  ../../../c/src/../wasm/wire.h:state_put
+ 4,691,664 ( 5.79%)  ./io/../sysdeps/unix/sysv/linux/read.c:read [/usr/lib/x86_64-linux-gnu/libc.so.6]
+ 4,684,454 ( 5.78%)  ./io/../sysdeps/unix/sysv/linux/write.c:write [/usr/lib/x86_64-linux-gnu/libc.so.6]
+ 3,940,504 ( 4.86%)  foolish_server.c:conn_thread [/home/user/foolish/server/impls/native/foolish_server_prof]
+ 3,515,324 ( 4.33%)  ./nptl/./nptl/pthread_mutex_lock.c:pthread_mutex_lock@@GLIBC_2.2.5 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+ 3,190,317 ( 3.93%)  ./string/../sysdeps/x86_64/multiarch/../multiarch/memset-vec-unaligned-erms.S:memset [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+ 2,539,499 ( 3.13%)  ./nptl/./nptl/pthread_mutex_unlock.c:pthread_mutex_unlock@@GLIBC_2.2.5 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+   782,092 ( 0.96%)  ./nptl/../nptl/descr.h:__pthread_enable_asynccancel
+   360,984 ( 0.45%)  ../../../c/src/card.h:state_put
+   118,191 ( 0.15%)  ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    79,177 ( 0.10%)  ./elf/./elf/dl-tunables.c:__GI___tunables_init [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+
+--------------------------------------------------------------------------------
+-- Auto-annotated source: ../../../c/src/view.c
+--------------------------------------------------------------------------------
+Ir                 
+
+        .           #include "view.h"
+        .           #include "../wasm/wire.h"
+        .           
+        .           // Whether the hand of seat `seat` is visible to `viewer`.
+        .           static int hand_visible(int viewer, int seat) {
+  390,252 ( 0.48%)      return viewer == VIEW_UNMASKED || viewer == seat;
+        .           }
+        .           
+        .           int state_put(const Game *g, int viewer, unsigned char *out) {
+  394,811 ( 0.49%)      const int unmasked = (viewer == VIEW_UNMASKED);
+        .               unsigned char *q = out;
+  195,126 ( 0.24%)      *q++ = (unsigned char)g->status;
+  195,126 ( 0.24%)      *q++ = (unsigned char)g->num_players;
+  195,126 ( 0.24%)      *q++ = (unsigned char)g->power_suit;
+  195,126 ( 0.24%)      *q++ = (unsigned char)g->first_attacker;
+  195,126 ( 0.24%)      *q++ = (unsigned char)g->defender;
+  195,126 ( 0.24%)      *q++ = (unsigned char)(g->discard_pile_length & 0xff);
+  195,126 ( 0.24%)      *q++ = (unsigned char)((g->discard_pile_length >> 8) & 0xff);
+  195,126 ( 0.24%)      *q++ = (unsigned char)(g->has_flipped ? 1 : 0);
+        .               // Canonical no-flip byte: after the flipped trump is drawn the kernel
+        .               // keeps the stale card in g->flipped (gated by has_flipped) — writing it
+        .               // would make byte-equal states serialize differently depending on
+        .               // whether they came from a marshal round-trip (which normalizes to the
+        .               // {0,0} placeholder -> WIRE_CARD_HIDDEN) or stayed kernel-resident.
+        .               // Decoders ignore this byte when has_flipped is 0.
+  293,081 ( 0.36%)      *q++ = g->has_flipped ? wire_from_card(g->flipped) : (unsigned char)WIRE_CARD_HIDDEN;
+  195,126 ( 0.24%)      *q++ = (unsigned char)(g->good_players_mask & 0xff);
+  195,126 ( 0.24%)      *q++ = (unsigned char)((g->good_players_mask >> 8) & 0xff);
+  195,126 ( 0.24%)      *q++ = (unsigned char)((g->good_players_mask >> 16) & 0xff);
+  195,126 ( 0.24%)      *q++ = (unsigned char)((g->good_players_mask >> 24) & 0xff);
+  195,126 ( 0.24%)      *q++ = (unsigned char)(g->has_good_timestamp ? 1 : 0);
+  195,126 ( 0.24%)      *q++ = (unsigned char)(g->deck_count & 0xff);
+  292,689 ( 0.36%)      *q++ = (unsigned char)((g->deck_count >> 8) & 0xff);
+  213,362 ( 0.26%)      for (int i = 0; i < g->deck_count; i++) {
+    9,118 ( 0.01%)          *q++ = unmasked ? wire_from_card(g->deck[i]) : (unsigned char)WIRE_CARD_HIDDEN;
+        .               }
+  878,421 ( 1.08%)      *q++ = (unsigned char)g->num_battles;
+  521,726 ( 0.64%)      for (int i = 0; i < g->num_battles; i++) {
+        .                   const Battle *b = &g->table_battles[i];
+  130,640 ( 0.16%)          *q++ = wire_from_card(b->attack);
+  130,640 ( 0.16%)          *q++ = wire_from_card(b->defense);
+        .               }
+1,724,234 ( 2.13%)      for (int i = 0; i < g->num_players; i++) {
+  195,126 ( 0.24%)          const Player *pl = &g->players[i];
+        .                   const int visible = hand_visible(viewer, i);
+  585,378 ( 0.72%)          *q++ = (unsigned char)pl->status;
+  585,378 ( 0.72%)          *q++ = (unsigned char)((visible && pl->awaiting_attack) ? 1 : 0);
+  585,378 ( 0.72%)          *q++ = (unsigned char)pl->hand_count;
+2,229,104 ( 2.75%)          for (int j = 0; j < pl->hand_count; j++) {
+1,609,091 ( 1.98%)              *q++ = visible ? wire_from_card(pl->hand[j]) : (unsigned char)WIRE_CARD_HIDDEN;
+        .                   }
+        .               }
+  195,126 ( 0.24%)      *q++ = (unsigned char)g->num_eliminated;
+  777,072 ( 0.96%)      for (int i = 0; i < g->num_eliminated; i++) *q++ = (unsigned char)g->elimination_order[i];
+  779,932 ( 0.96%)      return (int)(q - out);
+        .           }
+        .           
+        .           // Masked decode: WIRE_CARD_HIDDEN becomes the {0,1} placeholder the browser
+        .           // marshal always used for redacted cards; everything else clamps like the
+        .           // legacy path.
+        .           static Card card_from_wire_masked(unsigned char b) {
+        .               if (b == WIRE_CARD_HIDDEN) { Card c; c.suit = 0; c.value = 1; return c; }
+        .               return card_from_wire_state(b);
+-- line 63 ----------------------------------------
+
+1,670,496 ( 2.06%)  <counts for unidentified lines in ../../../c/src/view.c>
+
+--------------------------------------------------------------------------------
+-- Auto-annotated source: ../../../c/src/card.h
+--------------------------------------------------------------------------------
+Ir               
+
+-- line 20 ----------------------------------------
+      .           // _shared/core/constants.ts). Historical 5-player replays encoded under the old
+      .           // 5+ → 52 rule no longer decode; accepted when the rule was settled.
+      .           #define ACE_VALUE         13
+      .           #define MIN_VALUE_SMALL   5  // small-deck Durak (36 cards)
+      .           #define MIN_VALUE_LARGE   1  // full-deck Durak (52 cards)
+      .           #define CARDS_PER_PLAYER  6
+      .           
+      .           static inline int min_value_for(int num_players) {
+     12 ( 0.00%)      return num_players >= 6 ? MIN_VALUE_LARGE : MIN_VALUE_SMALL;
+      .           }
+      .           
+      .           // Back-compat alias: existing call sites used MIN_VALUE_2P.
+      .           #define MIN_VALUE_2P MIN_VALUE_SMALL
+      .           
+      .           // ONE byte, not two: suit lives in 3 signed bits (-4..3 — real suits 0..3
+      .           // plus the -1 hidden-card sentinel), value in 5 signed bits (-16..15 — real
+      .           // values 1..13 plus -1). Bitfields keep the `.suit`/`.value` access syntax
+-- line 36 ----------------------------------------
+-- line 40 ----------------------------------------
+      .           // independent of this in-memory representation.
+      .           typedef struct {
+      .               int8_t suit  : 3;
+      .               int8_t value : 5;
+      .           } Card;
+      .           _Static_assert(sizeof(Card) == 1, "Card must pack into one byte");
+      .           
+      .           static inline bool card_eq(Card a, Card b) {
+  2,409 ( 0.00%)      return a.suit == b.suit && a.value == b.value;
+      .           }
+      .           
+      .           // Card <-> dense id (0..51): id = suit*13 + (value-1). The replay codec's
+      .           // alphabets and the wire card byte are both this numbering.
+      .           static inline Card card_of_id(int id) {
+      .               Card c;
+      .               c.suit  = (int8_t)(id / 13);
+      .               c.value = (int8_t)(id % 13 + 1);
+-- line 56 ----------------------------------------
+-- line 73 ----------------------------------------
+      .           static inline bool card_has_value(const bool *marks, int value) {
+      .               return value >= 0 && value < CARD_VALUE_MARKS && marks[value];
+      .           }
+      .           
+      .           // "No card" sentinel: replaces the has_defense/has_target booleans (an
+      .           // uncovered battle stores CARD_NONE as its defense; a single-card log pair
+      .           // stores CARD_NONE as its target). Distinct from the -1/-1 hidden card.
+      .           #define CARD_NONE ((Card){ .suit = -2, .value = -2 })
+362,019 ( 0.45%)  static inline bool card_is_none(Card c) { return c.suit == -2 && c.value == -2; }
+      .           
+      .           #endif
+
+     12 ( 0.00%)  <counts for unidentified lines in ../../../c/src/card.h>
+
+--------------------------------------------------------------------------------
+-- Auto-annotated source: foolish_server.c
+--------------------------------------------------------------------------------
+Ir               
+
+-- line 92 ----------------------------------------
+      .           static unsigned long g_seq = 0;
+      .           
+      .           // --------------------------------------------------------------------------
+      .           // Small utilities
+      .           // --------------------------------------------------------------------------
+      .           
+      .           static void gen_id(char *out, int n) {
+      .               static const char hex[] = "0123456789abcdef";
+    190 ( 0.00%)      unsigned long v = (++g_seq) ^ ((unsigned long)rand() << 8) ^ (unsigned long)time(NULL);
+    681 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+    855 ( 0.00%)  => ./stdlib/./stdlib/rand.c:rand (15x)
+     90 ( 0.00%)  => ./time/../sysdeps/unix/sysv/linux/time.c:time_syscall (15x)
+  2,385 ( 0.00%)      for (int i = 0; i < n; i++) { out[i] = hex[v & 0xf]; v = v * 6364136223846793005UL + 1442695040888963407UL; v >>= 3; }
+     15 ( 0.00%)      out[n] = 0;
+      .           }
+      .           
+      .           // Minimal JSON scrapers — enough for our flat request bodies. Not a parser.
+    396 ( 0.00%)  static bool json_str(const char *body, const char *key, char *out, int cap) {
+    180 ( 0.00%)      char pat[64]; snprintf(pat, sizeof pat, "\"%s\"", key);
+ 15,972 ( 0.02%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (36x)
+    184 ( 0.00%)      const char *p = body ? strstr(body, pat) : NULL;
+  3,078 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strstr-sse2-unaligned.S:__strstr_sse2_unaligned (36x)
+    699 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+     72 ( 0.00%)      if (!p) return false;
+    332 ( 0.00%)      p = strchr(p + strlen(pat), ':'); if (!p) return false;
+  1,521 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (2x)
+    756 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strchr-avx2.S:__strchr_avx2 (36x)
+    504 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strlen-avx2.S:__strlen_avx2 (36x)
+    432 ( 0.00%)      p++; while (*p == ' ' || *p == '"') p++;
+  4,098 ( 0.01%)      int i = 0; while (*p && *p != '"' && *p != ',' && *p != '}' && i < cap - 1) out[i++] = *p++;
+    144 ( 0.00%)      out[i] = 0; return i > 0;
+    288 ( 0.00%)  }
+      .           
+      .           // --------------------------------------------------------------------------
+      .           // token -> User* / game_id -> GameSlot* : fixed-size open-addressing hash
+      .           // maps (PROFILE_HOTPATH.md T1 report item 2 — these two were O(MAX_USERS)/
+      .           // O(MAX_GAMES) linear strcmp scans on EVERY authenticated request, 1.08M
+      .           // strcmp calls in one 20s hammer run). Both g_users/g_games are fixed
+      .           // static arrays whose elements never move or get freed for the life of the
+      .           // process (a POC store — no delete), so raw pointers into them are safe to
+-- line 122 ----------------------------------------
+-- line 128 ----------------------------------------
+      .           #define TOKEN_HT_SIZE 1024   // power of two, > 2x MAX_USERS
+      .           #define GAME_HT_SIZE   512   // power of two, > 2x MAX_GAMES
+      .           
+      .           static User     *g_token_ht[TOKEN_HT_SIZE];
+      .           static GameSlot *g_game_ht[GAME_HT_SIZE];
+      .           
+      .           static unsigned long hash_str(const char *s) {
+      .               unsigned long h = 1469598103934665603UL;   // FNV-1a, 64-bit offset basis
+  8,847 ( 0.01%)      while (*s) { h ^= (unsigned char)*s++; h *= 1099511628211UL; }
+      .               return h;
+      .           }
+      .           
+      .           static void token_ht_insert(User *u) {
+      .               unsigned long h = hash_str(u->token) & (TOKEN_HT_SIZE - 1);
+     24 ( 0.00%)      while (g_token_ht[h]) h = (h + 1) & (TOKEN_HT_SIZE - 1);
+      6 ( 0.00%)      g_token_ht[h] = u;
+      .           }
+      .           static void game_ht_insert(GameSlot *s) {
+      .               unsigned long h = hash_str(s->id) & (GAME_HT_SIZE - 1);
+     12 ( 0.00%)      while (g_game_ht[h]) h = (h + 1) & (GAME_HT_SIZE - 1);
+      3 ( 0.00%)      g_game_ht[h] = s;
+      .           }
+      .           
+      .           static User *user_by_token(const char *token) {
+     72 ( 0.00%)      if (!token || !*token) return NULL;
+     24 ( 0.00%)      unsigned long h = hash_str(token) & (TOKEN_HT_SIZE - 1);
+      .               for (int probes = 0; probes < TOKEN_HT_SIZE; probes++) {
+     69 ( 0.00%)          User *u = g_token_ht[h];
+     48 ( 0.00%)          if (!u) return NULL;   // insert-only table: an empty slot ends the probe chain
+    213 ( 0.00%)          if (u->used && strcmp(u->token, token) == 0) return u;
+    648 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strcmp_avx2 (24x)
+      .                   h = (h + 1) & (TOKEN_HT_SIZE - 1);
+      .               }
+      .               return NULL;
+      .           }
+      .           static GameSlot *game_by_id(const char *id) {
+     63 ( 0.00%)      if (!id || !*id) return NULL;
+     21 ( 0.00%)      unsigned long h = hash_str(id) & (GAME_HT_SIZE - 1);
+      .               for (int probes = 0; probes < GAME_HT_SIZE; probes++) {
+     42 ( 0.00%)          GameSlot *s = g_game_ht[h];
+     42 ( 0.00%)          if (!s) return NULL;
+    183 ( 0.00%)          if (s->used && strcmp(s->id, id) == 0) return s;
+    601 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strcmp_avx2 (21x)
+      .                   h = (h + 1) & (GAME_HT_SIZE - 1);
+      .               }
+      .               return NULL;
+      .           }
+      .           // Whether a seat is a bot: the kernel's own per-seat fact now (strategy_key),
+      .           // not a server-side is_ai array. A human seat is STRATEGY_KEY_HUMAN; a bot holds
+      .           // its roster index.
+     50 ( 0.00%)  static bool seat_is_bot(const Game *g, int i) { return g->players[i].strategy_key != STRATEGY_KEY_HUMAN; }
+      .           
+      .           static int seat_of(GameSlot *s, const char *user_id) {
+    178 ( 0.00%)      for (int i = 0; i < s->game.num_players; i++)
+    194 ( 0.00%)          if (!seat_is_bot(&s->game, i) && strcmp(s->seat_user[i], user_id) == 0) return i;
+    666 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strcmp_avx2 (26x)
+      .               return -1;
+      .           }
+      .           
+      .           // The bot game-loop, one thread per game — a TRAMPOLINE, not a blocking hook.
+      .           // Each pass drives exactly ONE kernel cycle and RETURNS from the kernel; the
+      .           // server then decides how to wait. Same split as supabase (which `await`s a
+      .           // setTimeout) and the phone (Task.sleep): the KERNEL owns the cycle and the
+      .           // delay value (bot_drive + bot_pacing_ms); the host owns how it waits. The
+      .           // `Game` struct IS the continuation, so "resume" is just the next bot_drive.
+      .           //
+      .           // The lock is held while touching the game and RELEASED during the pacing sleep,
+      .           // so bots think + throw in over time while /action and /state keep serving. When
+      .           // no bot can act (a human is owed) the thread waits on `cond` until /action
+      .           // signals it.
+     27 ( 0.00%)  static void *bot_thread(void *arg) {
+      .               GameSlot *s = arg;
+      9 ( 0.00%)      pthread_mutex_lock(&g_lock);
+    108 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_lock.c:pthread_mutex_lock@@GLIBC_2.2.5 (3x)
+  1,300 ( 0.00%)      while (s->used && s->game.status == GAME_STATUS_PLAYING) {
+    966 ( 0.00%)          uint32_t hmask = game_human_mask(&s->game);   // the kernel's own human-seat mask
+ 11,914 ( 0.01%)  => /home/user/foolish/server/impls/native/../../../c/src/game.c:game_human_mask (322x)
+      .                   BotDriveOut drv;
+  2,254 ( 0.00%)          bot_drive(&s->game, hmask, BOT_DRIVE_MAX_ACTIONS, 0, 0, &drv);   // ONE cycle, then returns
+ 35,098 ( 0.04%)  => /home/user/foolish/server/impls/native/../../../c/src/bot_drive.c:bot_drive (322x)
+      .           
+    644 ( 0.00%)          if (drv.ended >= 0) break;   // the kernel already flipped g->status to GAME_OVER
+    644 ( 0.00%)          if (drv.stop == BOT_STOP_NO_ELIGIBLE) {              // a human's move is owed
+    970 ( 0.00%)              pthread_cond_wait(&s->cond, &g_lock);            // sleep until /action wakes us
+ 93,892 ( 0.12%)  => ./nptl/./nptl/pthread_cond_wait.c:pthread_cond_wait@@GLIBC_2.3.2 (322x)
+    813 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+      .                       continue;
+      .                   }
+      .           
+      .                   // A visible cycle landed — the kernel prices the wait; the host owns the
+      .                   // loop and the sleep (the trampoline). Lock released while we wait.
+      .                   int delay = bot_cycle_delay_ms(&s->game, hmask, &drv);
+      .                   if (delay > 0) {
+      .                       pthread_mutex_unlock(&g_lock);
+      .                       usleep((useconds_t)delay * 1000);
+      .                       pthread_mutex_lock(&g_lock);
+      .                   }
+      .               }
+      3 ( 0.00%)      s->bot_running = false;
+      9 ( 0.00%)      pthread_mutex_unlock(&g_lock);
+    111 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_unlock.c:pthread_mutex_unlock@@GLIBC_2.2.5 (3x)
+     27 ( 0.00%)      return NULL;
+      .           }
+      .           
+      .           // Spawn the game-loop for a freshly dealt game (idempotent).
+      .           static void start_bot_loop(GameSlot *s) {
+      6 ( 0.00%)      if (s->bot_running) return;
+      3 ( 0.00%)      s->bot_running = true;
+      .               pthread_t t;
+     33 ( 0.00%)      if (pthread_create(&t, NULL, bot_thread, s) == 0) pthread_detach(t);
+271,236 ( 0.33%)  => ./nptl/./nptl/pthread_create.c:pthread_create@@GLIBC_2.34 (3x)
+     39 ( 0.00%)  => ./nptl/./nptl/pthread_detach.c:pthread_detach@@GLIBC_2.34 (3x)
+      .               else s->bot_running = false;
+     18 ( 0.00%)  }
+      .           
+      .           // --------------------------------------------------------------------------
+      .           // HTTP layer (hand-rolled; swap for mongoose in a real deployment)
+      .           // --------------------------------------------------------------------------
+      .           
+      .           typedef struct {
+      .               char method[8];
+      .               char path[256];
+-- line 238 ----------------------------------------
+-- line 245 ----------------------------------------
+      .           } Req;
+      .           
+      .           // Finds the blank line ending the header block ("\r\n\r\n") by a plain byte
+      .           // scan instead of strstr (PROFILE_HOTPATH.md T1 report item 3: strstr's
+      .           // two-way-search internals showed up as real cost even for this 4-byte
+      .           // literal). Returns a pointer just PAST the blank line, or NULL if not seen
+      .           // yet in the bytes read so far.
+      .           static char *find_headers_end(char *buf, int n) {
+ 13,093 ( 0.02%)      for (int i = 0; i + 3 < n; i++)
+  9,390 ( 0.01%)          if (buf[i] == '\r' && buf[i + 1] == '\n' && buf[i + 2] == '\r' && buf[i + 3] == '\n')
+      .                       return buf + i + 4;
+      .               return NULL;
+      .           }
+      .           
+      .           // Hand-rolled request-line + header parser — replaces both
+      .           // `sscanf(buf, "%7s %255s", method, path)` (2.1% of all instructions under
+      .           // load, __vfscanf_internal) and the `strcasestr` header scan (content-length:
+      .           // + authorization:, another ~3% combined) with one single pass over the
+      .           // header block using strchr-style manual scanning and fixed-width
+      .           // `strncasecmp` on each line's already-located header name. Same semantics:
+      .           // method/path/query split on the request line, Content-Length, a Bearer
+      .           // token, and (new) whatever the WebSocket upgrade needs.
+      .           static void parse_request_line_and_headers(char *buf, char *hdr_end, Req *r) {
+    132 ( 0.00%)      memset(r, 0, sizeof *r);
+  1,824 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms (32x)
+    721 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+      .               char *p = buf;
+      .           
+      .               char *s = p;
+  1,120 ( 0.00%)      while (p < hdr_end && *p != ' ' && *p != '\r' && *p != '\n') p++;
+    160 ( 0.00%)      int len = (int)(p - s); if (len > (int)sizeof r->method - 1) len = (int)sizeof r->method - 1;
+    260 ( 0.00%)      memcpy(r->method, s, (size_t)len); r->method[len] = 0;
+    935 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+    504 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (32x)
+    224 ( 0.00%)      if (p < hdr_end && *p == ' ') p++;
+      .           
+      .               s = p;
+  1,648 ( 0.00%)      while (p < hdr_end && *p != ' ' && *p != '?' && *p != '\r' && *p != '\n') p++;
+    224 ( 0.00%)      len = (int)(p - s); if (len > (int)sizeof r->path - 1) len = (int)sizeof r->path - 1;
+    224 ( 0.00%)      memcpy(r->path, s, (size_t)len); r->path[len] = 0;
+    486 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (32x)
+     96 ( 0.00%)      if (p < hdr_end && *p == '?') {
+      .                   p++; s = p;
+  1,020 ( 0.00%)          while (p < hdr_end && *p != ' ' && *p != '\r' && *p != '\n') p++;
+     36 ( 0.00%)          len = (int)(p - s); if (len > (int)sizeof r->query - 1) len = (int)sizeof r->query - 1;
+     48 ( 0.00%)          memcpy(r->query, s, (size_t)len); r->query[len] = 0;
+     66 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (6x)
+      .               }
+      .               // Skip the rest of the request line (HTTP version) up to its CRLF.
+  2,368 ( 0.00%)      while (p < hdr_end && *p != '\n') p++;
+     64 ( 0.00%)      if (p < hdr_end) p++;
+      .           
+      .               bool saw_upgrade_websocket = false, saw_connection_upgrade = false;
+    384 ( 0.00%)      while (p < hdr_end) {
+      .                   char *line_start = p;
+      .                   char *colon = NULL;
+ 39,764 ( 0.05%)          while (p < hdr_end && *p != '\r' && *p != '\n') { if (!colon && *p == ':') colon = p; p++; }
+      .                   char *line_end = p;
+    640 ( 0.00%)          if (p < hdr_end && *p == '\r') p++;
+    960 ( 0.00%)          if (p < hdr_end && *p == '\n') p++;
+    576 ( 0.00%)          if (!colon || line_start == colon) continue;   // blank/malformed line — skip
+      .           
+      .                   int name_len = (int)(colon - line_start);
+      .                   const char *val = colon + 1;
+  2,304 ( 0.00%)          while (val < line_end && (*val == ' ' || *val == '\t')) val++;
+      .                   int val_len = (int)(line_end - val);
+      .           
+    777 ( 0.00%)          if (name_len == 14 && strncasecmp(line_start, "content-length", 14) == 0) {
+    882 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strncasecmp_avx2 (21x)
+      .                       int cl = 0;
+    504 ( 0.00%)              for (const char *q = val; q < line_end && *q >= '0' && *q <= '9'; q++) cl = cl * 10 + (*q - '0');
+     42 ( 0.00%)              r->content_length = cl;
+    168 ( 0.00%)          } else if (name_len == 13 && strncasecmp(line_start, "authorization", 13) == 0) {
+  1,008 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strncasecmp_avx2 (24x)
+    168 ( 0.00%)              if (val_len > 7 && strncasecmp(val, "Bearer ", 7) == 0) {
+  1,008 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strncasecmp_avx2 (24x)
+     24 ( 0.00%)                  const char *tok = val + 7;
+     96 ( 0.00%)                  int tlen = val_len - 7; if (tlen > (int)sizeof r->token - 1) tlen = (int)sizeof r->token - 1;
+    144 ( 0.00%)                  memcpy(r->token, tok, (size_t)tlen); r->token[tlen] = 0;
+    288 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (24x)
+      .                       }
+     42 ( 0.00%)          } else if (name_len == 7 && strncasecmp(line_start, "upgrade", 7) == 0) {
+    252 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strncasecmp_avx2 (6x)
+      .                       for (int i = 0; i + 9 <= val_len; i++)
+     42 ( 0.00%)                  if (strncasecmp(val + i, "websocket", 9) == 0) { saw_upgrade_websocket = true; break; }
+    252 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strncasecmp_avx2 (6x)
+    178 ( 0.00%)          } else if (name_len == 10 && strncasecmp(line_start, "connection", 10) == 0) {
+    805 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+  1,349 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strncasecmp_avx2 (32x)
+      .                       for (int i = 0; i + 7 <= val_len; i++)
+     42 ( 0.00%)                  if (strncasecmp(val + i, "upgrade", 7) == 0) { saw_connection_upgrade = true; break; }
+    252 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strncasecmp_avx2 (6x)
+     36 ( 0.00%)          } else if (name_len == 17 && strncasecmp(line_start, "sec-websocket-key", 17) == 0) {
+    252 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strncasecmp_avx2 (6x)
+     18 ( 0.00%)              int klen = val_len; if (klen > (int)sizeof r->ws_key - 1) klen = (int)sizeof r->ws_key - 1;
+     48 ( 0.00%)              memcpy(r->ws_key, val, (size_t)klen); r->ws_key[klen] = 0;
+     66 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (6x)
+      .                   }
+      .               }
+    114 ( 0.00%)      r->is_ws_upgrade = saw_upgrade_websocket && saw_connection_upgrade && r->ws_key[0];
+      .           }
+      .           
+      .           static void respond(int fd, int code, const char *json) {
+      .               const char *msg = code == 200 ? "OK" : code == 400 ? "Bad Request"
+      .                               : code == 401 ? "Unauthorized" : code == 404 ? "Not Found" : "Error";
+      .               char hdr[512];
+     76 ( 0.00%)      int n = snprintf(hdr, sizeof hdr,
+  9,388 ( 0.01%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (8x)
+    705 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+      .                   "HTTP/1.1 %d %s\r\nContent-Type: application/json\r\n"
+      .                   "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: *\r\n"
+      .                   "Content-Length: %zu\r\nConnection: close\r\n\r\n",
+     24 ( 0.00%)          code, msg, strlen(json));
+    180 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strlen-avx2.S:__strlen_avx2 (6x)
+     50 ( 0.00%)      write(fd, hdr, n);
+    705 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+    456 ( 0.00%)  => ./io/../sysdeps/unix/sysv/linux/write.c:write (8x)
+     30 ( 0.00%)      write(fd, json, strlen(json));
+      .           }
+      .           
+      .           // Raw bytes (the packed kernel wire) — no JSON. The client decodes with its own
+      .           // kernel-wire reader (MaskedView etc.).
+      .           static void respond_bin(int fd, int code, const unsigned char *data, int len) {
+      .               char hdr[256];
+      .               int n = snprintf(hdr, sizeof hdr,
+      .                   "HTTP/1.1 %d OK\r\nContent-Type: application/octet-stream\r\n"
+-- line 348 ----------------------------------------
+-- line 352 ----------------------------------------
+      .               if (len > 0) write(fd, data, (size_t)len);
+      .           }
+      .           
+      .           // --------------------------------------------------------------------------
+      .           // Route handlers  (each locks g_lock around store access)
+      .           // --------------------------------------------------------------------------
+      .           
+      .           static void h_signup(Req *r, int fd) {
+     18 ( 0.00%)      char uname[24] = {0};
+     42 ( 0.00%)      if (!json_str(r->body, "username", uname, sizeof uname)) { respond(fd, 400, "{\"error\":\"username\"}"); return; }
+  7,446 ( 0.01%)  => foolish_server.c:json_str (6x)
+     22 ( 0.00%)      pthread_mutex_lock(&g_lock);
+    216 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_lock.c:pthread_mutex_lock@@GLIBC_2.2.5 (6x)
+    809 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+      .               User *u = NULL;
+ 15,454 ( 0.02%)      for (int i = 0; i < MAX_USERS; i++) if (g_users[i].used && !strcmp(g_users[i].username, uname)) { u = &g_users[i]; break; }
+    770 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+    322 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strcmp_avx2 (15x)
+     69 ( 0.00%)      if (!u) for (int i = 0; i < MAX_USERS; i++) if (!g_users[i].used) {
+     64 ( 0.00%)          u = &g_users[i]; u->used = true; snprintf(u->username, sizeof u->username, "%s", uname);
+  2,196 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (6x)
+      .                   gen_id(u->user_id, ID_LEN); break;
+      .               }
+      6 ( 0.00%)      if (u) { gen_id(u->token, 32); token_ht_insert(u); }   // fresh session token, indexed
+      .               char out[160];
+     66 ( 0.00%)      if (u) snprintf(out, sizeof out, "{\"token\":\"%s\",\"user_id\":\"%s\",\"username\":\"%s\"}", u->token, u->user_id, u->username);
+  5,292 ( 0.01%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (6x)
+     22 ( 0.00%)      pthread_mutex_unlock(&g_lock);
+    156 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_unlock.c:pthread_mutex_unlock@@GLIBC_2.2.5 (6x)
+    841 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+      .               if (u) respond(fd, 200, out); else respond(fd, 400, "{\"error\":\"full\"}");
+      .           }
+      .           
+      .           static void h_create(Req *r, int fd) {
+      9 ( 0.00%)      pthread_mutex_lock(&g_lock);
+    108 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_lock.c:pthread_mutex_lock@@GLIBC_2.2.5 (3x)
+      .               User *u = user_by_token(r->token);
+      .               if (!u) { pthread_mutex_unlock(&g_lock); respond(fd, 401, "{\"error\":\"auth\"}"); return; }
+      .               GameSlot *s = NULL;
+     22 ( 0.00%)      for (int i = 0; i < MAX_GAMES; i++) if (!g_games[i].used) { s = &g_games[i]; break; }
+      .               if (!s) { pthread_mutex_unlock(&g_lock); respond(fd, 400, "{\"error\":\"full\"}"); return; }
+     17 ( 0.00%)      memset(s, 0, sizeof *s);
+115,107 ( 0.14%)  => ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms (3x)
+     22 ( 0.00%)      pthread_cond_init(&s->cond, NULL);
+    944 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+     30 ( 0.00%)  => ./nptl/./nptl/pthread_cond_init.c:pthread_cond_init@@GLIBC_2.3.2 (3x)
+      3 ( 0.00%)      s->used = true;
+     36 ( 0.00%)      gen_id(s->id, ID_LEN); game_ht_insert(s); snprintf(s->owner, sizeof s->owner, "%s", u->user_id);
+  1,104 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (3x)
+      .               // Seat 0 = creator. Identity lives here; the kernel state is dealt at start.
+      3 ( 0.00%)      Game *g = &s->game; g->num_players = 1; g->status = GAME_STATUS_WAITING;
+     24 ( 0.00%)      snprintf(s->seat_user[0], ID_LEN + 1, "%s", u->user_id);
+  1,104 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (3x)
+     27 ( 0.00%)      snprintf(s->seat_name[0], 24, "%s", u->username);
+  1,098 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (3x)
+     24 ( 0.00%)      snprintf(g->players[0].name, 24, "%s", u->username);
+  1,098 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (3x)
+     24 ( 0.00%)      snprintf(g->players[0].player_id, 24, "%s", u->user_id);
+  1,104 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (3x)
+      3 ( 0.00%)      g->players[0].status = PLAYER_STATUS_IDLE;
+      3 ( 0.00%)      g->players[0].strategy_key = STRATEGY_KEY_HUMAN;   // the creator is a human seat
+     24 ( 0.00%)      char out[80]; snprintf(out, sizeof out, "{\"game_id\":\"%s\"}", s->id);
+  1,323 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (3x)
+      .               pthread_mutex_unlock(&g_lock);
+      .               respond(fd, 200, out);
+      .           }
+      .           
+      .           static void h_meta(Req *r, int fd) {
+     60 ( 0.00%)      char type[16] = {0}, gid[ID_LEN + 1] = {0};
+     75 ( 0.00%)      json_str(r->body, "type", type, sizeof type);
+ 10,296 ( 0.01%)  => foolish_server.c:json_str (15x)
+     75 ( 0.00%)      json_str(r->body, "game_id", gid, sizeof gid);
+ 11,655 ( 0.01%)  => foolish_server.c:json_str (15x)
+     45 ( 0.00%)      pthread_mutex_lock(&g_lock);
+    540 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_lock.c:pthread_mutex_lock@@GLIBC_2.2.5 (15x)
+      .               User *u = user_by_token(r->token);
+      .               GameSlot *s = game_by_id(gid);
+     30 ( 0.00%)      if (!u) { pthread_mutex_unlock(&g_lock); respond(fd, 401, "{\"error\":\"auth\"}"); return; }
+     30 ( 0.00%)      if (!s) { pthread_mutex_unlock(&g_lock); respond(fd, 404, "{\"error\":\"no game\"}"); return; }
+     15 ( 0.00%)      Game *g = &s->game;
+      .           
+     60 ( 0.00%)      if (!strcmp(type, "join")) {
+     18 ( 0.00%)          if (seat_of(s, u->user_id) < 0 && g->num_players < MAX_PLAYERS && g->status == GAME_STATUS_WAITING) {
+      6 ( 0.00%)              int i = g->num_players++;
+     39 ( 0.00%)              snprintf(s->seat_user[i], ID_LEN + 1, "%s", u->user_id);
+  1,104 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (3x)
+     27 ( 0.00%)              snprintf(s->seat_name[i], 24, "%s", u->username);
+  1,098 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (3x)
+     27 ( 0.00%)              snprintf(g->players[i].name, 24, "%s", u->username);
+  1,098 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (3x)
+     24 ( 0.00%)              snprintf(g->players[i].player_id, 24, "%s", u->user_id);
+  1,104 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (3x)
+      3 ( 0.00%)              g->players[i].status = PLAYER_STATUS_IDLE;
+      3 ( 0.00%)              g->players[i].strategy_key = STRATEGY_KEY_HUMAN;   // a human seat
+      .                   }
+     24 ( 0.00%)      } else if (!strcmp(type, "add-bot")) {
+      .                   char skey[24] = {0}; if (!json_str(r->body, "strategy", skey, sizeof skey)) snprintf(skey, sizeof skey, "random");
+      .                   if (g->num_players < MAX_PLAYERS && g->status == GAME_STATUS_WAITING) {
+      .                       int i = g->num_players++;
+      .                       s->seat_ready[i] = true;
+      .                       int strat = bot_roster_find(skey);
+      .                       if (strat < 0) strat = bot_roster_find("random");
+      .                       snprintf(s->seat_name[i], 24, "%%%s %d", skey, i);
+      .                       snprintf(g->players[i].name, 24, "%s", s->seat_name[i]);
+      .                       snprintf(g->players[i].player_id, 24, "bot%d", i);
+      .                       g->players[i].status = PLAYER_STATUS_READY;
+      .                       g->players[i].strategy_key = (int8_t)strat;   // the kernel's own seat kind
+      .                   }
+     60 ( 0.00%)      } else if (!strcmp(type, "start")) {
+      9 ( 0.00%)          int me = seat_of(s, u->user_id);
+     36 ( 0.00%)          if (me >= 0) { s->seat_ready[me] = true; g->players[me].status = PLAYER_STATUS_READY; }
+      .                   // Deal once every seated human is ready (bots are always ready) and 2+ seated.
+     18 ( 0.00%)          bool all = g->num_players >= 2;
+    189 ( 0.00%)          for (int i = 0; i < g->num_players; i++) if (!seat_is_bot(g, i) && !s->seat_ready[i]) all = false;
+     33 ( 0.00%)          if (all && g->status == GAME_STATUS_WAITING) {
+    864 ( 0.00%)              unsigned char seed[32]; for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(rand() ^ (i * 131 + (int)g_seq));
+  5,469 ( 0.01%)  => ./stdlib/./stdlib/rand.c:rand (96x)
+      6 ( 0.00%)              game_set_deal_seed_bytes(seed, 32);
+    117 ( 0.00%)  => /home/user/foolish/server/impls/native/../../../c/src/game.c:game_set_deal_seed_bytes (3x)
+      .                       // Seats were wired in the lobby (strategy_key per seat), so pass NULL:
+      .                       // the kernel owns marking them + the deal (+ g->status = PLAYING).
+     12 ( 0.00%)              game_seat_and_deal(g, NULL, g->num_players);
+ 28,018 ( 0.03%)  => /home/user/foolish/server/impls/native/../../../c/src/game.c:game_seat_and_deal (3x)
+      6 ( 0.00%)              start_bot_loop(s);             // the game-loop paces bot play from here
+271,344 ( 0.33%)  => foolish_server.c:start_bot_loop (3x)
+      .                   }
+     12 ( 0.00%)      } else if (!strcmp(type, "continue")) {
+      .                   // Reset the kernel to the lobby for a rematch (identities kept, re-dealt
+      .                   // on start). The host owns only this lobby transition; game-over was the
+      .                   // kernel's to declare.
+      3 ( 0.00%)          g->status = GAME_STATUS_WAITING;
+     42 ( 0.00%)          for (int i = 0; i < g->num_players; i++) {
+      .                       bool ai = seat_is_bot(g, i);
+      6 ( 0.00%)              s->seat_ready[i] = ai;
+      6 ( 0.00%)              g->players[i].status = ai ? PLAYER_STATUS_READY : PLAYER_STATUS_IDLE;
+      .                   }
+      .               }
+    150 ( 0.00%)      char out[80]; snprintf(out, sizeof out, "{\"game_id\":\"%s\",\"status\":%d}", s->id, g->status);
+ 11,196 ( 0.01%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (15x)
+      .               pthread_mutex_unlock(&g_lock);
+      .               respond(fd, 200, out);
+      .           }
+      .           
+      .           static void h_action(Req *r, int fd) {
+      .               // game_id rides the query string (like /state); the body IS the packed awire
+      .               // frame, so it can be binary. /action?game_id=..
+      .               char gid[ID_LEN + 1] = {0};
+-- line 467 ----------------------------------------
+-- line 540 ----------------------------------------
+      .           //   client sends a binary frame -> [awire bytes] apply it, or [] (empty) to
+      .           //     just poll (a seat with no eligible move yet still needs to notice
+      .           //     when OTHER seats' actions make it eligible — see foolish_hammer.c's ws
+      .           //     worker) -> server always answers with one binary frame,
+      .           //     [ok:u8][state_put(seat) bytes], ok=1 iff a real move decoded AND the
+      .           //     kernel accepted it (awire_apply's own validation — same as /action).
+      .           // A human's turn wakes the bot game-loop exactly like /action did.
+      .           static void h_ws(Req *r, int fd) {
+     12 ( 0.00%)      char gid[ID_LEN + 1] = {0}; int seat = -1;
+     30 ( 0.00%)      const char *gp = strstr(r->query, "game_id=");
+    708 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strstr-sse2-unaligned.S:__strstr_sse2_unaligned (6x)
+    630 ( 0.00%)      if (gp) { gp += 8; int i = 0; while (gp[i] && gp[i] != '&' && i < ID_LEN) { gid[i] = gp[i]; i++; } gid[i] = 0; }
+     24 ( 0.00%)      const char *sp = strstr(r->query, "seat=");
+    600 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strstr-sse2-unaligned.S:__strstr_sse2_unaligned (6x)
+     48 ( 0.00%)      if (sp) seat = (int)strtol(sp + 5, NULL, 10);
+    648 ( 0.00%)  => ./stdlib/../stdlib/strtol.c:__isoc23_strtol (6x)
+      .           
+     18 ( 0.00%)      pthread_mutex_lock(&g_lock);
+    216 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_lock.c:pthread_mutex_lock@@GLIBC_2.2.5 (6x)
+      .               User *u = user_by_token(r->token);
+      .               GameSlot *s = game_by_id(gid);
+     60 ( 0.00%)      bool ok = u && s && seat >= 0 && seat < s->game.num_players && seat_of(s, u->user_id) == seat;
+     18 ( 0.00%)      pthread_mutex_unlock(&g_lock);
+    156 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_unlock.c:pthread_mutex_unlock@@GLIBC_2.2.5 (6x)
+      6 ( 0.00%)      if (!ok) { respond(fd, 401, "{\"error\":\"ws auth\"}"); return; }
+      .           
+      .               char accept[64];
+     36 ( 0.00%)      if (!ws_accept_from_key(r->ws_key, accept, sizeof accept)) { respond(fd, 400, "{\"error\":\"ws key\"}"); return; }
+ 65,556 ( 0.08%)  => /home/user/foolish/server/impls/native/ws.c:ws_accept_from_key (6x)
+      .               char resp[256];
+     42 ( 0.00%)      int n = snprintf(resp, sizeof resp,
+  2,808 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (6x)
+      .                   "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+      .                   "Sec-WebSocket-Accept: %s\r\n\r\n", accept);
+     48 ( 0.00%)      if (n <= 0 || ws_write_full(fd, resp, n) != n) return;
+    552 ( 0.00%)  => /home/user/foolish/server/impls/native/ws.c:ws_write_full (6x)
+      .           
+     18 ( 0.00%)      WsConn wc; ws_conn_init(&wc, fd, /*mask_outgoing=*/0);   // server frames: never masked
+     42 ( 0.00%)  => /home/user/foolish/server/impls/native/ws.c:ws_conn_init (6x)
+     18 ( 0.00%)      if (r->body_len > 0) ws_conn_prime(&wc, (const unsigned char *)r->body, r->body_len);
+      .           
+      .               // [ok:u8][state_put bytes] — sized for state_put's documented worst case
+      .               // (h_state uses the same 65536 cap).
+      .               unsigned char msg[1 + 65536];
+     18 ( 0.00%)      pthread_mutex_lock(&g_lock);
+    216 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_lock.c:pthread_mutex_lock@@GLIBC_2.2.5 (6x)
+     36 ( 0.00%)      int slen = s->used ? state_put(&s->game, seat, msg + 1) : 0;
+  3,174 ( 0.00%)  => /home/user/foolish/server/impls/native/../../../c/src/view.c:state_put (6x)
+     18 ( 0.00%)      pthread_mutex_unlock(&g_lock);
+    156 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_unlock.c:pthread_mutex_unlock@@GLIBC_2.2.5 (6x)
+      6 ( 0.00%)      msg[0] = 0;
+     42 ( 0.00%)      if (ws_send_frame(&wc, WS_OP_BIN, msg, slen + 1) < 0) return;
+  1,200 ( 0.00%)  => /home/user/foolish/server/impls/native/ws.c:ws_send_frame (6x)
+      .           
+      .               unsigned char in[4096];
+      .               int opcode;
+      .               int mlen;
+780,432 ( 0.96%)      while ((mlen = ws_recv_message(&wc, in, sizeof in, &opcode)) >= 0) {
+25,214,980 (31.09%)  => /home/user/foolish/server/impls/native/ws.c:ws_recv_message (97,557x)
+390,228 ( 0.48%)          if (opcode != WS_OP_BIN && opcode != WS_OP_TEXT) continue;
+      .                   bool applied = false;
+292,671 ( 0.36%)          pthread_mutex_lock(&g_lock);
+3,514,186 ( 4.33%)  => ./nptl/./nptl/pthread_mutex_lock.c:pthread_mutex_lock@@GLIBC_2.2.5 (97,557x)
+195,114 ( 0.24%)          if (s->used) {
+195,794 ( 0.24%)              if (mlen > 0 && s->game.status == GAME_STATUS_PLAYING) {
+      .                           AwireAction a;
+  4,420 ( 0.01%)                  if (awire_decode(in, mlen, &a) && awire_apply(&s->game, seat, &a)) {
+123,977 ( 0.15%)  => /home/user/foolish/server/impls/native/../../../c/src/game.c:awire_apply (340x)
+ 16,581 ( 0.02%)  => /home/user/foolish/server/impls/native/../../../c/src/awire.c:awire_decode (340x)
+      .                               applied = true;
+    674 ( 0.00%)                      pthread_cond_signal(&s->cond);   // same wakeup /action gives the bot game-loop
+ 40,843 ( 0.05%)  => ./nptl/./nptl/pthread_cond_signal.c:pthread_cond_signal@@GLIBC_2.3.2 (335x)
+    825 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+      .                           }
+      .                       }
+487,785 ( 0.60%)              slen = state_put(&s->game, seat, msg + 1);
+22,176,264 (27.35%)  => /home/user/foolish/server/impls/native/../../../c/src/view.c:state_put (97,557x)
+      .                   } else {
+      .                       slen = 0;
+      .                   }
+292,671 ( 0.36%)          pthread_mutex_unlock(&g_lock);
+2,538,396 ( 3.13%)  => ./nptl/./nptl/pthread_mutex_unlock.c:pthread_mutex_unlock@@GLIBC_2.2.5 (97,557x)
+ 97,557 ( 0.12%)          msg[0] = applied ? 1 : 0;
+878,013 ( 1.08%)          if (ws_send_frame(&wc, WS_OP_BIN, msg, slen + 1) < 0) break;
+19,512,293 (24.06%)  => /home/user/foolish/server/impls/native/ws.c:ws_send_frame (97,557x)
+      .               }
+      .           }
+      .           
+      .           // --------------------------------------------------------------------------
+      .           // Connection handling
+      .           // --------------------------------------------------------------------------
+      .           
+      .           static void route(Req *r, int fd) {
+     78 ( 0.00%)      if (!strcmp(r->method, "OPTIONS")) { respond(fd, 200, "{}"); return; }
+    104 ( 0.00%)      if (!strcmp(r->path, "/health")) { respond(fd, 200, "{\"ok\":true}"); return; }
+    210 ( 0.00%)      if (!strcmp(r->path, "/auth/signup") || !strcmp(r->path, "/auth/signin")) { h_signup(r, fd); return; }
+     36 ( 0.00%)      if (!strcmp(r->path, "/create")) { h_create(r, fd); return; }
+     75 ( 0.00%)      if (!strcmp(r->path, "/meta"))   { h_meta(r, fd); return; }
+      .               if (!strcmp(r->path, "/action")) { h_action(r, fd); return; }
+      .               if (!strcmp(r->path, "/state"))  { h_state(r, fd); return; }
+      .               if (!strcmp(r->path, "/status")) { h_status(r, fd); return; }
+      .               respond(fd, 404, "{\"error\":\"route\"}");
+      .           }
+      .           
+    352 ( 0.00%)  static void *conn_thread(void *arg) {
+      .               int fd = (int)(long)arg;
+      .               static __thread char buf[1 << 16];
+      .               int total = 0, n;
+      .               char *hdr_end = NULL;
+      .               // Read headers (+ body when Content-Length fits one read window). One
+      .               // parse of the header block once it's fully in hand (item 3/4 of
+      .               // PROFILE_HOTPATH.md: no per-iteration sscanf/strcasestr rescans).
+    292 ( 0.00%)      while ((n = read(fd, buf + total, sizeof buf - 1 - total)) > 0) {
+    681 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+  1,824 ( 0.00%)  => ./io/../sysdeps/unix/sysv/linux/read.c:read (32x)
+     64 ( 0.00%)          total += n; buf[total] = 0;
+      .                   hdr_end = find_headers_end(buf, total);
+      .                   if (!hdr_end) continue;
+      .                   break;
+      .               }
+      .               if (!hdr_end) { close(fd); return NULL; }   // malformed / empty request
+      .           
+     64 ( 0.00%)      Req r;
+      .               parse_request_line_and_headers(buf, hdr_end, &r);
+      .               // Keep reading if the body (by Content-Length) hasn't fully arrived yet.
+      .               int have = total - (int)(hdr_end - buf);
+    224 ( 0.00%)      while (have < r.content_length && (n = read(fd, buf + total, sizeof buf - 1 - total)) > 0) {
+      .                   total += n; buf[total] = 0;
+      .                   have = total - (int)(hdr_end - buf);
+      .               }
+     32 ( 0.00%)      r.body = hdr_end;
+     32 ( 0.00%)      r.body_len = total - (int)(hdr_end - buf);   // real byte count (body may be binary awire)
+      .           
+     88 ( 0.00%)      if (r.is_ws_upgrade && !strcmp(r.method, "GET") && !strcmp(r.path, "/ws")) {
+      .                   h_ws(&r, fd);   // owns the connection for its whole (long) life
+      .                   close(fd);
+      .                   return NULL;
+      .               }
+      .               route(&r, fd);
+      .               close(fd);
+      .               return NULL;
+    288 ( 0.00%)  }
+      .           
+      9 ( 0.00%)  int main(int argc, char **argv) {
+      3 ( 0.00%)      int port = argc > 1 ? atoi(argv[1]) : 8099;
+     22 ( 0.00%)      srand((unsigned)(time(NULL) ^ getpid()));
+  2,100 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (3x)
+  6,232 ( 0.01%)  => ./stdlib/./stdlib/random.c:srand (1x)
+      6 ( 0.00%)  => ./time/../sysdeps/unix/sysv/linux/time.c:time_syscall (1x)
+      4 ( 0.00%)  => ./posix/../sysdeps/unix/syscall-template.S:getpid (1x)
+      .               // Long-lived /ws connections mean a peer can vanish (crash, network
+      .               // reset, the load client's own `timeout` cutting it off) between our
+      .               // read and our next write; the default SIGPIPE action is to kill the
+      .               // WHOLE PROCESS on that write. Ignore it — write() already reports the
+      .               // same failure as -1/EPIPE, which every write path here already checks.
+      8 ( 0.00%)      signal(SIGPIPE, SIG_IGN);
+    687 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+    120 ( 0.00%)  => ./signal/../sysdeps/posix/signal.c:signal (1x)
+      .           
+     10 ( 0.00%)      int srv = socket(AF_INET, SOCK_STREAM, 0);
+    679 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+      6 ( 0.00%)  => ./socket/../sysdeps/unix/syscall-template.S:socket (1x)
+     12 ( 0.00%)      int opt = 1; setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof opt);
+    727 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+      7 ( 0.00%)  => ./socket/../sysdeps/unix/sysv/linux/setsockopt.c:setsockopt (1x)
+      1 ( 0.00%)      struct sockaddr_in addr = {0};
+      3 ( 0.00%)      addr.sin_family = AF_INET; addr.sin_addr.s_addr = INADDR_ANY; addr.sin_port = htons(port);
+     10 ( 0.00%)      if (bind(srv, (struct sockaddr *)&addr, sizeof addr) < 0) { perror("bind"); return 1; }
+    731 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+      6 ( 0.00%)  => ./socket/../sysdeps/unix/syscall-template.S:bind (1x)
+      8 ( 0.00%)      listen(srv, 64);
+    704 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+      6 ( 0.00%)  => ./socket/../sysdeps/unix/syscall-template.S:listen (1x)
+     11 ( 0.00%)      fprintf(stderr, "foolish native server (kernel-driven, in-memory) on :%d\n", port);
+    789 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+    905 ( 0.00%)  => ./stdio-common/./stdio-common/fprintf.c:fprintf (1x)
+      .           
+      .               for (;;) {
+    169 ( 0.00%)          int fd = accept(srv, NULL, NULL);
+    721 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+  1,803 ( 0.00%)  => ./socket/../sysdeps/unix/sysv/linux/accept.c:accept (33x)
+     64 ( 0.00%)          if (fd < 0) continue;
+      .                   // A one-shot HTTP request/response barely notices Nagle's algorithm,
+      .                   // but a persistent /ws connection does many small back-and-forth
+      .                   // writes+reads — without TCP_NODELAY, Nagle batching interacting
+      .                   // with the peer's delayed ACKs turns each round trip into tens of
+      .                   // milliseconds instead of tens of microseconds. The load client's
+      .                   // own connect_to() already sets this; the accept side never did.
+    256 ( 0.00%)          int one = 1; setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+    224 ( 0.00%)  => ./socket/../sysdeps/unix/sysv/linux/setsockopt.c:setsockopt (32x)
+      .                   pthread_t t;
+      .                   // Thread-per-CONNECTION (not per-request): for a /ws upgrade this
+      .                   // one thread now lives for the client's whole session, so the
+      .                   // pthread_create cost — 85.8% of instructions under load in the old
+      .                   // thread-per-HTTP-request T1 profile — is paid once per client
+      .                   // instead of once per action. See PROFILE_HOTPATH.md T1b.
+    328 ( 0.00%)          if (pthread_create(&t, NULL, conn_thread, (void *)(long)fd) == 0) pthread_detach(t);
+2,873,863 ( 3.54%)  => ./nptl/./nptl/pthread_create.c:pthread_create@@GLIBC_2.34 (32x)
+  1,714 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (2x)
+    416 ( 0.00%)  => ./nptl/./nptl/pthread_detach.c:pthread_detach@@GLIBC_2.34 (32x)
+      .                   else { close(fd); }
+      .               }
+      .           }
+
+215,183 ( 0.27%)  <counts for unidentified lines in foolish_server.c>
+
+--------------------------------------------------------------------------------
+-- Auto-annotated source: ../../../c/src/../wasm/wire.h
+--------------------------------------------------------------------------------
+Ir                 
+
+-- line 9 ----------------------------------------
+        .           #define CNITRO_WASM_WIRE_H
+        .           
+        .           #include "card.h"
+        .           
+        .           #define WIRE_CARD_HIDDEN 0xFEu
+        .           #define WIRE_CARD_NONE   0xFFu
+        .           
+        .           static inline unsigned char wire_from_card(Card c) {
+  360,984 ( 0.45%)      if (card_is_none(c)) return (unsigned char)WIRE_CARD_NONE;
+2,136,312 ( 2.63%)      if (c.suit < 0 || c.value < 1) return (unsigned char)WIRE_CARD_HIDDEN;
+2,070,824 ( 2.55%)      return (unsigned char)(c.suit * 13 + (c.value - 1));
+        .           }
+        .           
+        .           // State/move/action cards are always real cards; hostile ids clamp into the
+        .           // representable space (the job clamp_card did on the old 2-byte wire — the
+        .           // bot bitboards do `1ull << card_id`, undefined for out-of-range ids).
+        .           static inline Card card_from_wire_state(unsigned char b) {
+      795 ( 0.00%)      if (b > 51) b = 51;
+      795 ( 0.00%)      Card c; c.suit = (int8_t)(b / 13); c.value = (int8_t)(b % 13 + 1);
+        .               return c;
+        .           }
+        .           
+        .           // Log pairs carry the sentinels.
+        .           static inline Card card_from_wire_pair(unsigned char b) {
+        .               if (b == WIRE_CARD_NONE) return CARD_NONE;
+        .               if (b == WIRE_CARD_HIDDEN) { Card c; c.suit = -1; c.value = -1; return c; }
+        .               return card_from_wire_state(b);
+-- line 35 ----------------------------------------
+
+  329,370 ( 0.41%)  <counts for unidentified lines in ../../../c/src/../wasm/wire.h>
+
+--------------------------------------------------------------------------------
+-- Auto-annotated source: ws.c
+--------------------------------------------------------------------------------
+Ir                 
+
+-- line 16 ----------------------------------------
+        .           
+        .           typedef struct {
+        .               uint32_t state[5];
+        .               uint64_t bitlen;
+        .               uint8_t  buf[64];
+        .               int      buflen;
+        .           } Sha1;
+        .           
+    3,648 ( 0.00%)  static uint32_t sha1_rol(uint32_t v, int n) { return (v << n) | (v >> (32 - n)); }
+        .           
+        .           static void sha1_block(Sha1 *c, const uint8_t *p) {
+        .               uint32_t w[80];
+      576 ( 0.00%)      for (int i = 0; i < 16; i++)
+      192 ( 0.00%)          w[i] = ((uint32_t)p[i * 4] << 24) | ((uint32_t)p[i * 4 + 1] << 16) |
+      384 ( 0.00%)                 ((uint32_t)p[i * 4 + 2] << 8) | (uint32_t)p[i * 4 + 3];
+    6,144 ( 0.01%)      for (int i = 16; i < 80; i++) w[i] = sha1_rol(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+        .           
+       60 ( 0.00%)      uint32_t a = c->state[0], b = c->state[1], cc = c->state[2], d = c->state[3], e = c->state[4];
+    2,880 ( 0.00%)      for (int i = 0; i < 80; i++) {
+        .                   uint32_t f, k;
+    2,880 ( 0.00%)          if (i < 20)      { f = (b & cc) | ((~b) & d);       k = 0x5A827999u; }
+    2,160 ( 0.00%)          else if (i < 40) { f = b ^ cc ^ d;                  k = 0x6ED9EBA1u; }
+    2,400 ( 0.00%)          else if (i < 60) { f = (b & cc) | (b & d) | (cc & d); k = 0x8F1BBCDCu; }
+      720 ( 0.00%)          else             { f = b ^ cc ^ d;                  k = 0xCA62C1D6u; }
+    3,840 ( 0.00%)          uint32_t t = sha1_rol(a, 5) + f + e + k + w[i];
+        .                   e = d; d = cc; cc = sha1_rol(b, 30); b = a; a = t;
+        .               }
+      120 ( 0.00%)      c->state[0] += a; c->state[1] += b; c->state[2] += cc; c->state[3] += d; c->state[4] += e;
+        .           }
+        .           
+        .           static void sha1_init(Sha1 *c) {
+       12 ( 0.00%)      c->state[0] = 0x67452301u; c->state[1] = 0xEFCDAB89u; c->state[2] = 0x98BADCFEu;
+        6 ( 0.00%)      c->state[3] = 0x10325476u; c->state[4] = 0xC3D2E1F0u;
+       18 ( 0.00%)      c->bitlen = 0; c->buflen = 0;
+        .           }
+        .           
+        .           static void sha1_update(Sha1 *c, const void *data, size_t len) {
+        .               const uint8_t *p = (const uint8_t *)data;
+      744 ( 0.00%)      c->bitlen += (uint64_t)len * 8;
+    5,580 ( 0.01%)      while (len > 0) {
+    2,232 ( 0.00%)          size_t want = (size_t)(64 - c->buflen);
+      744 ( 0.00%)          size_t take = len < want ? len : want;
+    2,232 ( 0.00%)          memcpy(c->buf + c->buflen, p, take);
+    5,910 ( 0.01%)  => ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms (372x)
+      744 ( 0.00%)          c->buflen += (int)take; p += take; len -= take;
+      780 ( 0.00%)          if (c->buflen == 64) { sha1_block(c, c->buf); c->buflen = 0; }
+        .               }
+      372 ( 0.00%)  }
+        .           
+        .           static void sha1_final(Sha1 *c, uint8_t out[20]) {
+        6 ( 0.00%)      uint64_t bits = c->bitlen;
+       30 ( 0.00%)      uint8_t pad = 0x80; sha1_update(c, &pad, 1);
+      372 ( 0.00%)  => ws.c:sha1_update (6x)
+    2,142 ( 0.00%)      pad = 0x00; while (c->buflen != 56) sha1_update(c, &pad, 1);
+   39,714 ( 0.05%)  => ws.c:sha1_update (354x)
+        6 ( 0.00%)      c->bitlen = bits;   // padding must not count toward the length field
+        .               uint8_t lenbe[8];
+       12 ( 0.00%)      for (int i = 0; i < 8; i++) lenbe[i] = (uint8_t)(bits >> (56 - 8 * i));
+       12 ( 0.00%)      sha1_update(c, lenbe, 8);
+   18,120 ( 0.02%)  => ws.c:sha1_update (6x)
+        .               for (int i = 0; i < 5; i++) {
+       30 ( 0.00%)          out[i * 4]     = (uint8_t)(c->state[i] >> 24);
+        .                   out[i * 4 + 1] = (uint8_t)(c->state[i] >> 16);
+        .                   out[i * 4 + 2] = (uint8_t)(c->state[i] >> 8);
+       60 ( 0.00%)          out[i * 4 + 3] = (uint8_t)(c->state[i]);
+        .               }
+        .           }
+        .           
+       60 ( 0.00%)  void ws_sha1(const unsigned char *data, size_t len, unsigned char out[20]) {
+       12 ( 0.00%)      Sha1 c; sha1_init(&c); sha1_update(&c, data, len); sha1_final(&c, out);
+      348 ( 0.00%)  => ws.c:sha1_update (6x)
+       42 ( 0.00%)  }
+        .           
+        .           // ---------------------------------------------------------------------------
+        .           // base64
+        .           // ---------------------------------------------------------------------------
+        .           
+        .           int ws_base64_encode(const unsigned char *data, int len, char *out, int cap) {
+        .               static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        .               int oi = 0;
+        .               for (int i = 0; i < len; i += 3) {
+       84 ( 0.00%)          if (oi + 4 >= cap) return 0;
+      126 ( 0.00%)          unsigned int v = (unsigned int)data[i] << 16;
+       90 ( 0.00%)          if (i + 1 < len) v |= (unsigned int)data[i + 1] << 8;
+       72 ( 0.00%)          if (i + 2 < len) v |= (unsigned int)data[i + 2];
+      132 ( 0.00%)          out[oi++] = tbl[(v >> 18) & 0x3F];
+      168 ( 0.00%)          out[oi++] = tbl[(v >> 12) & 0x3F];
+      162 ( 0.00%)          out[oi++] = (i + 1 < len) ? tbl[(v >> 6) & 0x3F] : '=';
+      120 ( 0.00%)          out[oi++] = (i + 2 < len) ? tbl[v & 0x3F] : '=';
+        .               }
+        .               if (oi >= cap) return 0;
+        .               out[oi] = 0;
+        .               return oi;
+        .           }
+        .           
+       54 ( 0.00%)  int ws_accept_from_key(const char *client_key, char *out, int cap) {
+        .               static const char GUID[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+        .               char buf[256];
+       48 ( 0.00%)      int n = snprintf(buf, sizeof buf, "%s%s", client_key, GUID);
+    3,342 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (6x)
+       18 ( 0.00%)      if (n <= 0 || n >= (int)sizeof buf) return 0;
+        .               unsigned char digest[20];
+        6 ( 0.00%)      ws_sha1((const unsigned char *)buf, (size_t)n, digest);
+   61,026 ( 0.08%)  => ws.c:ws_sha1 (6x)
+        .               return ws_base64_encode(digest, 20, out, cap);
+       42 ( 0.00%)  }
+        .           
+        .           // ---------------------------------------------------------------------------
+        .           // Reliable read/write
+        .           // ---------------------------------------------------------------------------
+        .           
+        .           int ws_read_full(int fd, void *buf, int n) {
+        .               unsigned char *p = (unsigned char *)buf;
+        .               int got = 0;
+  391,928 ( 0.48%)      while (got < n) {
+1,563,632 ( 1.93%)          ssize_t r = read(fd, p + got, (size_t)(n - got));
+11,140,878 (13.74%)  => ./io/../sysdeps/unix/sysv/linux/read.c:read (195,454x)
+  390,908 ( 0.48%)          if (r < 0) { if (errno == EINTR) continue; return -1; }
+  195,454 ( 0.24%)          if (r == 0) return -1;   // peer closed mid-frame
+  195,454 ( 0.24%)          got += (int)r;
+        .               }
+        .               return got;
+        .           }
+        .           
+       36 ( 0.00%)  int ws_write_full(int fd, const void *buf, int n) {
+        .               const unsigned char *p = (const unsigned char *)buf;
+        .               int sent = 0;
+  585,396 ( 0.72%)      while (sent < n) {
+1,561,056 ( 1.92%)          ssize_t w = write(fd, p + sent, (size_t)(n - sent));
+      342 ( 0.00%)  => ./io/../sysdeps/unix/sysv/linux/write.c:write (6x)
+  390,292 ( 0.48%)          if (w < 0) { if (errno == EINTR) continue; return -1; }
+      835 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+       24 ( 0.00%)  => ./csu/./csu/errno-loc.c:__errno_location (6x)
+  195,126 ( 0.24%)          if (w == 0) return -1;
+  195,126 ( 0.24%)          sent += (int)w;
+        .               }
+        .               return sent;
+       42 ( 0.00%)  }
+        .           
+        .           // ---------------------------------------------------------------------------
+        .           // WsConn: buffered read (drains `pending` before touching the socket again)
+        .           // ---------------------------------------------------------------------------
+        .           
+       12 ( 0.00%)  void ws_conn_init(WsConn *c, int fd, int mask_outgoing) {
+        6 ( 0.00%)      c->fd = fd;
+        6 ( 0.00%)      c->mask_outgoing = mask_outgoing;
+        6 ( 0.00%)      c->pending_len = 0;
+        .               c->pending_off = 0;
+       12 ( 0.00%)  }
+        .           
+        .           void ws_conn_prime(WsConn *c, const unsigned char *data, int len) {
+        .               if (len <= 0) return;
+        .               int cap = (int)sizeof c->pending;
+        .               if (len > cap) len = cap;   // realistic peers never pipeline frames ahead of the handshake
+        .               memcpy(c->pending, data, (size_t)len);
+        .               c->pending_len = len;
+        .               c->pending_off = 0;
+        .           }
+        .           
+        .           static int ws_fill(WsConn *c, unsigned char *out, int n) {
+        .               int got = 0;
+  586,702 ( 0.72%)      while (got < n) {
+  977,270 ( 1.21%)          if (c->pending_off < c->pending_len) {
+        .                       int have = c->pending_len - c->pending_off;
+        .                       int take = n - got; if (take > have) take = have;
+        .                       memcpy(out + got, c->pending + c->pending_off, (size_t)take);
+        .                       c->pending_off += take; got += take;
+        .                       continue;
+        .                   }
+1,365,798 ( 1.68%)          int r = ws_read_full(c->fd, out + got, n - got);
+  195,114 ( 0.24%)          if (r < 0) return -1;
+        .                   got += r;
+        .               }
+        .               return got;
+        .           }
+        .           
+        .           // ---------------------------------------------------------------------------
+        .           // Frame write: 0..125 / 126 (+u16) / 127 (+u64) length encoding, masked iff
+        .           // c->mask_outgoing (RFC 6455 5.1: client->server MUST be masked, server->
+        .           // client MUST NOT be).
+        .           // ---------------------------------------------------------------------------
+        .           
+  975,630 ( 1.20%)  int ws_send_frame(WsConn *c, int opcode, const unsigned char *payload, int64_t len) {
+        .               unsigned char hdr[14];
+        .               int hn = 0;
+  292,689 ( 0.36%)      hdr[hn++] = (unsigned char)(0x80 | (opcode & 0x0F));   // FIN=1
+  585,378 ( 0.72%)      unsigned char maskbit = c->mask_outgoing ? 0x80 : 0x00;
+  195,126 ( 0.24%)      if (len <= 125) {
+   97,563 ( 0.12%)          hdr[hn++] = (unsigned char)(maskbit | (unsigned char)len);
+        .               } else if (len <= 0xFFFF) {
+        .                   hdr[hn++] = (unsigned char)(maskbit | 126);
+        .                   hdr[hn++] = (unsigned char)((len >> 8) & 0xFF);
+        .                   hdr[hn++] = (unsigned char)(len & 0xFF);
+        .               } else {
+        .                   hdr[hn++] = (unsigned char)(maskbit | 127);
+        .                   for (int i = 7; i >= 0; i--) hdr[hn++] = (unsigned char)((len >> (8 * i)) & 0xFF);
+        .               }
+   97,563 ( 0.12%)      unsigned char mkey[4] = {0, 0, 0, 0};
+   97,563 ( 0.12%)      if (c->mask_outgoing) {
+        .                   for (int i = 0; i < 4; i++) mkey[i] = (unsigned char)(rand() & 0xFF);
+        .                   memcpy(hdr + hn, mkey, 4); hn += 4;
+        .               }
+  390,252 ( 0.48%)      if (ws_write_full(c->fd, hdr, hn) != hn) return -1;
+  195,126 ( 0.24%)      if (len <= 0) return 0;
+        .           
+  195,126 ( 0.24%)      if (!c->mask_outgoing) {
+  195,126 ( 0.24%)          if (ws_write_full(c->fd, payload, (int)len) != (int)len) return -1;
+        .                   return (int)len;
+        .               }
+        .               // Masked send: XOR through a bounded scratch buffer so the caller's
+        .               // payload (often a shared response buffer) is never mutated.
+        .               unsigned char chunk[4096];
+        .               int64_t off = 0;
+        .               while (off < len) {
+        .                   int64_t take = len - off; if (take > (int64_t)sizeof chunk) take = (int64_t)sizeof chunk;
+        .                   for (int64_t i = 0; i < take; i++) chunk[i] = payload[off + i] ^ mkey[(off + i) & 3];
+        .                   if (ws_write_full(c->fd, chunk, (int)take) != (int)take) return -1;
+        .                   off += take;
+        .               }
+        .               return (int)len;
+  780,504 ( 0.96%)  }
+        .           
+        .           void ws_send_close(WsConn *c, uint16_t code) {
+        .               unsigned char payload[2] = { (unsigned char)(code >> 8), (unsigned char)(code & 0xFF) };
+        .               ws_send_frame(c, WS_OP_CLOSE, payload, 2);
+        .           }
+        .           
+        .           // ---------------------------------------------------------------------------
+        .           // Frame read + message assembly
+        .           // ---------------------------------------------------------------------------
+        .           
+1,463,355 ( 1.80%)  int ws_recv_message(WsConn *c, unsigned char *buf, int cap, int *opcode) {
+        .               int total = 0;
+        .               int msg_opcode = -1;
+        .           
+  585,342 ( 0.72%)      for (;;) {
+        .                   unsigned char hdr[2];
+        .                   if (ws_fill(c, hdr, 2) < 0) return -1;
+        .                   int fin    = (hdr[0] >> 7) & 1;
+        .                   int op     = hdr[0] & 0x0F;
+        .                   int masked = (hdr[1] >> 7) & 1;
+  195,114 ( 0.24%)          int64_t len = hdr[1] & 0x7F;
+        .           
+  292,671 ( 0.36%)          if (len == 126) {
+        .                       unsigned char ext[2];
+        .                       if (ws_fill(c, ext, 2) < 0) return -1;
+        .                       len = ((int64_t)ext[0] << 8) | ext[1];
+  195,114 ( 0.24%)          } else if (len == 127) {
+        .                       unsigned char ext[8];
+        .                       if (ws_fill(c, ext, 8) < 0) return -1;
+        .                       len = 0;
+        .                       for (int i = 0; i < 8; i++) len = (len << 8) | ext[i];
+        .                       if (len < 0) return -1;   // top bit set is a protocol violation per spec
+        .                   }
+        .           
+   97,557 ( 0.12%)          unsigned char mkey[4] = {0, 0, 0, 0};
+  293,011 ( 0.36%)          if (masked) { if (ws_fill(c, mkey, 4) < 0) return -1; }
+        .           
+  292,671 ( 0.36%)          if (op == WS_OP_PING || op == WS_OP_PONG || op == WS_OP_CLOSE) {
+        .                       if (len > 125) return -1;   // control frames are never fragmented/oversized
+        .                       unsigned char ctrl[125];
+        .                       if (len > 0 && ws_fill(c, ctrl, (int)len) < 0) return -1;
+        .                       if (masked) for (int i = 0; i < (int)len; i++) ctrl[i] ^= mkey[i & 3];
+        .                       if (op == WS_OP_PING) { ws_send_frame(c, WS_OP_PONG, ctrl, len); continue; }
+        .                       if (op == WS_OP_PONG) continue;
+        .                       // CLOSE: echo it back (RFC 6455 5.5.1 closing handshake), then
+        .                       // this connection is done.
+        .                       ws_send_close(c, 1000);
+        .                       return -1;
+        .                   }
+        .           
+  487,785 ( 0.60%)          if (op != WS_OP_CONT && op != WS_OP_TEXT && op != WS_OP_BIN) return -1;   // reserved/unknown opcode
+   97,557 ( 0.12%)          if (op != WS_OP_CONT) {
+        .                       if (msg_opcode != -1) return -1;   // a new message started before the last one finished
+        .                       msg_opcode = op;
+        .                   } else if (msg_opcode == -1) {
+        .                       return -1;   // continuation with nothing to continue
+        .                   }
+  585,342 ( 0.72%)          if (len < 0 || total + len > cap) return -1;   // oversized for the caller's buffer
+        .           
+  195,114 ( 0.24%)          if (len > 0) {
+      340 ( 0.00%)              if (ws_fill(c, buf + total, (int)len) < 0) return -1;
+   10,594 ( 0.01%)              if (masked) for (int64_t i = 0; i < len; i++) buf[total + i] ^= mkey[i & 3];
+        .                   }
+   97,557 ( 0.12%)          total += (int)len;
+  585,342 ( 0.72%)          if (fin) { if (opcode) *opcode = msg_opcode; return total; }
+        .                   // else: loop for the next fragment (must arrive as WS_OP_CONT)
+        .               }
+  780,456 ( 0.96%)  }
+
+3,336,134 ( 4.11%)  <counts for unidentified lines in ws.c>
+
+--------------------------------------------------------------------------------
+The following files chosen for auto-annotation could not be found:
+--------------------------------------------------------------------------------
+  ./elf/./elf/dl-tunables.c
+  ./io/../sysdeps/unix/sysv/linux/read.c
+  ./io/../sysdeps/unix/sysv/linux/write.c
+  ./nptl/../nptl/descr.h
+  ./nptl/./nptl/cancellation.c
+  ./nptl/./nptl/pthread_mutex_lock.c
+  ./nptl/./nptl/pthread_mutex_unlock.c
+  ./string/../sysdeps/x86_64/multiarch/../multiarch/memset-vec-unaligned-erms.S
+  ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S
+
+--------------------------------------------------------------------------------
+Ir                  
+--------------------------------------------------------------------------------
+43,111,854 (53.16%)  events annotated
+

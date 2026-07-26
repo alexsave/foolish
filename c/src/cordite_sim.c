@@ -27,12 +27,21 @@ static inline int id_suit(int id)  { return id / 13; }
 static inline int id_value(int id) { return id % 13 + 1; }
 static inline int card_id(Card c)  { return c.suit * 13 + (c.value - 1); }
 
-// Precomputed masks (id space 0..51).
-static uint64_t VALUE_MASK[14];   // VALUE_MASK[v] = all ids with value v (1..13)
-static uint64_t SUIT_MASK[4];
-static int      g_masks_ready = 0;
+// Precomputed masks (id space 0..51). Lazily built once by ensure_masks()
+// below via an unlocked check-then-set on g_masks_ready — fine for a single
+// caller, but cd_sim_from_game (the entry every cordite/octogen decision goes
+// through, per bot_roster's dispatch) calls ensure_masks() on EVERY decision,
+// so two games' threads racing here (found in this file's own Stage 5 audit —
+// not on the seed list in SERVER_SCALING.md) would data-race both the ready
+// flag and the mask contents themselves. _Thread_local: each thread fills its
+// own copy once and reuses it, matching every other MC-solver scratch in this
+// file (cd_tt, sim_forced_q, world_slot, ...). wasm is unaffected (single-
+// threaded module; c/Makefile's `-D_Thread_local=` neutralizes the qualifier).
+static _Thread_local uint64_t VALUE_MASK[14];   // VALUE_MASK[v] = all ids with value v (1..13)
+static _Thread_local uint64_t SUIT_MASK[4];
+static _Thread_local int      g_masks_ready = 0;
 
-static uint64_t HIGHER_MASK[52];  // same-suit ids with strictly higher value
+static _Thread_local uint64_t HIGHER_MASK[52];  // same-suit ids with strictly higher value
 
 static void ensure_masks(void) {
     if (g_masks_ready) return;

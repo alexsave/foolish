@@ -1,0 +1,760 @@
+--------------------------------------------------------------------------------
+Profile data file 'bench_results/T1_server/raw/callgrind.out' (creator: callgrind-3.22.0)
+--------------------------------------------------------------------------------
+I1 cache: 
+D1 cache: 
+LL cache: 
+Timerange: Basic block 0 - 387076857
+Trigger: Program termination
+Profiled target:  ./foolish_server_prof 8096 (PID 32605, part 1)
+Events recorded:  Ir
+Events shown:     Ir
+Event sort order: Ir
+Thresholds:       99
+Include dirs:     
+User annotated:   
+Auto-annotation:  on
+
+--------------------------------------------------------------------------------
+Ir                     
+--------------------------------------------------------------------------------
+2,498,336,561 (100.0%)  PROGRAM TOTALS
+
+--------------------------------------------------------------------------------
+Ir                      file:function
+--------------------------------------------------------------------------------
+2,144,628,187 (85.84%)  ./string/../sysdeps/x86_64/multiarch/../multiarch/memset-vec-unaligned-erms.S:memset [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+   52,611,983 ( 2.11%)  ./stdio-common/./stdio-common/vfscanf-internal.c:__vfscanf_internal [/usr/lib/x86_64-linux-gnu/libc.so.6]
+   40,461,411 ( 1.62%)  ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strcmp_avx2 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+   39,582,278 ( 1.58%)  ./string/./string/str-two-way.h:strcasestr
+   26,417,619 ( 1.06%)  foolish_server.c:conn_thread [/home/user/foolish/server/impls/native/foolish_server_prof]
+   19,482,338 ( 0.78%)  ./string/./string/str-two-way.h:critical_factorization [/usr/lib/x86_64-linux-gnu/libc.so.6]
+   18,094,198 ( 0.72%)  ./string/../sysdeps/x86_64/multiarch/strstr-sse2-unaligned.S:__strstr_sse2_unaligned [/usr/lib/x86_64-linux-gnu/libc.so.6]
+   12,774,734 ( 0.51%)  ./stdio-common/./stdio-common/Xprintf_buffer_write.c:__printf_buffer_write [/usr/lib/x86_64-linux-gnu/libc.so.6]
+   11,860,577 ( 0.47%)  ./stdio-common/./stdio-common/vfprintf-internal.c:__printf_buffer [/usr/lib/x86_64-linux-gnu/libc.so.6]
+   11,811,552 ( 0.47%)  ./stdio-common/./stdio-common/vfprintf-process-arg.c:__printf_buffer
+    6,679,652 ( 0.27%)  ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    6,205,917 ( 0.25%)  ./nptl/./nptl/allocatestack.c:pthread_create@@GLIBC_2.34
+    5,380,648 ( 0.22%)  ./string/../sysdeps/x86_64/multiarch/strchr-avx2.S:__strchrnul_avx2 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    4,805,915 ( 0.19%)  ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    4,495,295 ( 0.18%)  ./stdio-common/./stdio-common/_itoa.c:_itoa_word [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    3,804,560 ( 0.15%)  ./string/../sysdeps/x86_64/multiarch/strlen-avx2.S:__strlen_avx2 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    3,445,836 ( 0.14%)  ./elf/../elf/dl-tls.c:_dl_allocate_tls_init [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+    2,952,982 ( 0.12%)  ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:mempcpy [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+    2,889,293 ( 0.12%)  ./libio/./libio/vsnprintf.c:__vsnprintf_internal [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    2,858,504 ( 0.11%)  ./libio/./libio/genops.c:_IO_sputbackc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    2,831,703 ( 0.11%)  ./nptl/./nptl/pthread_create.c:pthread_create@@GLIBC_2.34 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    2,563,482 ( 0.10%)  ./stdlib/../stdlib/strtol_l.c:____strtol_l_internal [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    2,553,673 ( 0.10%)  foolish_server.c:h_state [/home/user/foolish/server/impls/native/foolish_server_prof]
+    2,472,120 ( 0.10%)  ./string/../sysdeps/x86_64/multiarch/strlen-avx2.S:__strnlen_avx2 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    2,436,680 ( 0.10%)  ./nptl/./nptl/pthread_create.c:start_thread'2 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    2,423,278 ( 0.10%)  ./stdio-common/./stdio-common/snprintf.c:snprintf [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    2,263,708 ( 0.09%)  ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strncasecmp_avx2 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    1,967,703 ( 0.08%)  ../../../c/src/view.c:state_put [/home/user/foolish/server/impls/native/foolish_server_prof]
+    1,936,168 ( 0.08%)  ./nptl/./nptl/pthread_mutex_lock.c:pthread_mutex_lock@@GLIBC_2.2.5 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    1,928,656 ( 0.08%)  ./nptl/./nptl/cancellation.c:__pthread_enable_asynccancel [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    1,859,112 ( 0.07%)  ./string/./string/strcasestr.c:strcasestr [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    1,806,300 ( 0.07%)  ./nptl/./nptl/cancellation.c:__pthread_disable_asynccancel [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    1,802,492 ( 0.07%)  ./malloc/./malloc/malloc.c:free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    1,770,876 ( 0.07%)  ./stdio-common/./stdio-common/Xprintf_buffer_done.c:__printf_buffer_done [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    1,635,360 ( 0.07%)  ./libio/./libio/strops.c:_IO_str_init_static_internal [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    1,618,294 ( 0.06%)  ./nptl/./nptl/allocatestack.c:name_stack_maps [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    1,597,826 ( 0.06%)  ./stdio-common/./stdio-common/printf-parse.h:__vfscanf_internal
+    1,553,592 ( 0.06%)  ./stdio-common/./stdio-common/isoc23_sscanf.c:__isoc23_sscanf [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    1,521,664 ( 0.06%)  ./nptl/./nptl/pthread_mutex_unlock.c:pthread_mutex_unlock@@GLIBC_2.2.5 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    1,403,716 ( 0.06%)  ./nptl/./nptl/pthread_create.c:create_thread [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    1,252,140 ( 0.05%)  foolish_server.c:h_status [/home/user/foolish/server/impls/native/foolish_server_prof]
+    1,185,636 ( 0.05%)  ./libio/./libio/genops.c:_IO_setb [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    1,155,944 ( 0.05%)  ./io/../sysdeps/unix/sysv/linux/write.c:write [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    1,089,090 ( 0.04%)  ./nptl/./nptl/pthread_attr_copy.c:__pthread_attr_copy [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    1,080,944 ( 0.04%)  ./stdio-common/./stdio-common/printf-parse.h:__printf_buffer
+    1,014,050 ( 0.04%)  ./misc/../sysdeps/unix/sysv/linux/setvmaname.c:__set_vma_name [/usr/lib/x86_64-linux-gnu/libc.so.6]
+      981,216 ( 0.04%)  ./libio/./libio/genops.c:_IO_no_init [/usr/lib/x86_64-linux-gnu/libc.so.6]
+      968,089 ( 0.04%)  ./misc/../sysdeps/unix/sysv/linux/clone-internal.c:__clone_internal [/usr/lib/x86_64-linux-gnu/libc.so.6]
+      967,890 ( 0.04%)  ./stdio-common/../string/bits/string_fortified.h:__printf_buffer_write
+      945,667 ( 0.04%)  ../../../c/src/../wasm/wire.h:awire_decode
+      940,332 ( 0.04%)  ./libio/./libio/genops.c:_IO_old_init [/usr/lib/x86_64-linux-gnu/libc.so.6]
+      940,161 ( 0.04%)  ../../../c/src/awire.c:awire_decode [/home/user/foolish/server/impls/native/foolish_server_prof]
+
+--------------------------------------------------------------------------------
+-- Auto-annotated source: ../../../c/src/awire.c
+--------------------------------------------------------------------------------
+Ir               
+
+      .           #include "awire.h"
+      .           #include "../wasm/wire.h"
+      .           
+      .           // The shared head check: validates kind/n and returns the frame's total length,
+      .           // or 0. Both the exact-length decode and the stream walk are this plus a length
+      .           // comparison, so the two can never disagree about what a frame is.
+      .           static int awire_head_len(const unsigned char *buf, int len) {
+ 32,644 ( 0.00%)      if (len < 2) return 0;
+ 32,644 ( 0.00%)      const int kind = buf[0];
+      .               const int n = buf[1];
+ 48,966 ( 0.00%)      if (kind < AWIRE_ATTACK || kind > AWIRE_GOOD) return 0;
+      .               if (n > AWIRE_MAX_CARDS) return 0;
+ 62,016 ( 0.00%)      if ((kind == AWIRE_PICKUP || kind == AWIRE_GOOD) && n != 0) return 0;
+ 91,063 ( 0.00%)      return 2 + n * (kind == AWIRE_COVER ? 2 : 1);
+      .           }
+      .           
+      .           int awire_frame_len(const unsigned char *buf, int len) {
+      .               const int want = awire_head_len(buf, len);
+      .               if (want == 0 || want > len) return 0;
+      .               return want;
+      .           }
+      .           
+ 16,322 ( 0.00%)  int awire_decode(const unsigned char *buf, int len, AwireAction *out) {
+      .               const int expected = awire_head_len(buf, len);
+ 16,322 ( 0.00%)      if (expected == 0 || len != expected) return 0;
+      .               const int kind = buf[0];
+      .               const int n = buf[1];
+ 16,322 ( 0.00%)      out->kind = kind;
+ 32,644 ( 0.00%)      out->n = n;
+335,427 ( 0.01%)      for (int i = 0; i < n; i++) out->cards[i] = card_from_wire_state(buf[2 + i]);
+ 15,631 ( 0.00%)      if (kind == AWIRE_COVER) {
+121,002 ( 0.00%)          for (int i = 0; i < n; i++) out->attacks[i] = card_from_wire_state(buf[2 + n + i]);
+      .               }
+      .               return 1;
+ 16,322 ( 0.00%)  }
+      .           
+      .           int awire_encode(const AwireAction *a, unsigned char *buf, int cap) {
+      .               if (a->kind < AWIRE_ATTACK || a->kind > AWIRE_GOOD) return 0;
+      .               if (a->n < 0 || a->n > AWIRE_MAX_CARDS) return 0;
+      .               if ((a->kind == AWIRE_PICKUP || a->kind == AWIRE_GOOD) && a->n != 0) return 0;
+      .               const int want = 2 + a->n * (a->kind == AWIRE_COVER ? 2 : 1);
+      .               if (want > cap) return 0;
+      .               buf[0] = (unsigned char)a->kind;
+-- line 43 ----------------------------------------
+
+102,836 ( 0.00%)  <counts for unidentified lines in ../../../c/src/awire.c>
+
+--------------------------------------------------------------------------------
+-- Auto-annotated source: ../../../c/src/view.c
+--------------------------------------------------------------------------------
+Ir               
+
+      .           #include "view.h"
+      .           #include "../wasm/wire.h"
+      .           
+      .           // Whether the hand of seat `seat` is visible to `viewer`.
+      .           static int hand_visible(int viewer, int seat) {
+ 19,196 ( 0.00%)      return viewer == VIEW_UNMASKED || viewer == seat;
+      .           }
+      .           
+      .           int state_put(const Game *g, int viewer, unsigned char *out) {
+129,421 ( 0.01%)      const int unmasked = (viewer == VIEW_UNMASKED);
+      .               unsigned char *q = out;
+  9,598 ( 0.00%)      *q++ = (unsigned char)g->status;
+  9,598 ( 0.00%)      *q++ = (unsigned char)g->num_players;
+  9,598 ( 0.00%)      *q++ = (unsigned char)g->power_suit;
+  9,598 ( 0.00%)      *q++ = (unsigned char)g->first_attacker;
+  9,598 ( 0.00%)      *q++ = (unsigned char)g->defender;
+  9,598 ( 0.00%)      *q++ = (unsigned char)(g->discard_pile_length & 0xff);
+  9,598 ( 0.00%)      *q++ = (unsigned char)((g->discard_pile_length >> 8) & 0xff);
+  9,598 ( 0.00%)      *q++ = (unsigned char)(g->has_flipped ? 1 : 0);
+      .               // Canonical no-flip byte: after the flipped trump is drawn the kernel
+      .               // keeps the stale card in g->flipped (gated by has_flipped) — writing it
+      .               // would make byte-equal states serialize differently depending on
+      .               // whether they came from a marshal round-trip (which normalizes to the
+      .               // {0,0} placeholder -> WIRE_CARD_HIDDEN) or stayed kernel-resident.
+      .               // Decoders ignore this byte when has_flipped is 0.
+ 19,196 ( 0.00%)      *q++ = g->has_flipped ? wire_from_card(g->flipped) : (unsigned char)WIRE_CARD_HIDDEN;
+  9,598 ( 0.00%)      *q++ = (unsigned char)(g->good_players_mask & 0xff);
+  9,598 ( 0.00%)      *q++ = (unsigned char)((g->good_players_mask >> 8) & 0xff);
+  9,598 ( 0.00%)      *q++ = (unsigned char)((g->good_players_mask >> 16) & 0xff);
+  9,598 ( 0.00%)      *q++ = (unsigned char)((g->good_players_mask >> 24) & 0xff);
+  9,598 ( 0.00%)      *q++ = (unsigned char)(g->has_good_timestamp ? 1 : 0);
+  9,598 ( 0.00%)      *q++ = (unsigned char)(g->deck_count & 0xff);
+ 14,397 ( 0.00%)      *q++ = (unsigned char)((g->deck_count >> 8) & 0xff);
+450,498 ( 0.02%)      for (int i = 0; i < g->deck_count; i++) {
+220,450 ( 0.01%)          *q++ = unmasked ? wire_from_card(g->deck[i]) : (unsigned char)WIRE_CARD_HIDDEN;
+      .               }
+ 47,990 ( 0.00%)      *q++ = (unsigned char)g->num_battles;
+  9,623 ( 0.00%)      for (int i = 0; i < g->num_battles; i++) {
+      .                   const Battle *b = &g->table_battles[i];
+     10 ( 0.00%)          *q++ = wire_from_card(b->attack);
+     10 ( 0.00%)          *q++ = wire_from_card(b->defense);
+      .               }
+ 86,387 ( 0.00%)      for (int i = 0; i < g->num_players; i++) {
+  9,598 ( 0.00%)          const Player *pl = &g->players[i];
+      .                   const int visible = hand_visible(viewer, i);
+ 28,794 ( 0.00%)          *q++ = (unsigned char)pl->status;
+ 28,794 ( 0.00%)          *q++ = (unsigned char)((visible && pl->awaiting_attack) ? 1 : 0);
+ 28,794 ( 0.00%)          *q++ = (unsigned char)pl->hand_count;
+250,136 ( 0.01%)          for (int j = 0; j < pl->hand_count; j++) {
+202,077 ( 0.01%)              *q++ = visible ? wire_from_card(pl->hand[j]) : (unsigned char)WIRE_CARD_HIDDEN;
+      .                   }
+      .               }
+  9,598 ( 0.00%)      *q++ = (unsigned char)g->num_eliminated;
+  9,598 ( 0.00%)      for (int i = 0; i < g->num_eliminated; i++) *q++ = (unsigned char)g->elimination_order[i];
+ 33,593 ( 0.00%)      return (int)(q - out);
+      .           }
+      .           
+      .           // Masked decode: WIRE_CARD_HIDDEN becomes the {0,1} placeholder the browser
+      .           // marshal always used for redacted cards; everything else clamps like the
+      .           // legacy path.
+      .           static Card card_from_wire_masked(unsigned char b) {
+      .               if (b == WIRE_CARD_HIDDEN) { Card c; c.suit = 0; c.value = 1; return c; }
+      .               return card_from_wire_state(b);
+-- line 63 ----------------------------------------
+
+235,171 ( 0.01%)  <counts for unidentified lines in ../../../c/src/view.c>
+
+--------------------------------------------------------------------------------
+-- Auto-annotated source: foolish_server.c
+--------------------------------------------------------------------------------
+Ir                 
+
+-- line 77 ----------------------------------------
+        .           static unsigned long g_seq = 0;
+        .           
+        .           // --------------------------------------------------------------------------
+        .           // Small utilities
+        .           // --------------------------------------------------------------------------
+        .           
+        .           static void gen_id(char *out, int n) {
+        .               static const char hex[] = "0123456789abcdef";
+    7,324 ( 0.00%)      unsigned long v = (++g_seq) ^ ((unsigned long)rand() << 8) ^ (unsigned long)time(NULL);
+   34,178 ( 0.00%)  => ./stdlib/./stdlib/rand.c:rand (600x)
+      722 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+    3,600 ( 0.00%)  => ./time/../sysdeps/unix/sysv/linux/time.c:time_syscall (600x)
+   95,040 ( 0.00%)      for (int i = 0; i < n; i++) { out[i] = hex[v & 0xf]; v = v * 6364136223846793005UL + 1442695040888963407UL; v >>= 3; }
+      600 ( 0.00%)      out[n] = 0;
+        .           }
+        .           
+        .           // Minimal JSON scrapers — enough for our flat request bodies. Not a parser.
+   10,560 ( 0.00%)  static bool json_str(const char *body, const char *key, char *out, int cap) {
+    4,800 ( 0.00%)      char pat[64]; snprintf(pat, sizeof pat, "\"%s\"", key);
+  425,760 ( 0.02%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (960x)
+    4,800 ( 0.00%)      const char *p = body ? strstr(body, pat) : NULL;
+   83,280 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strstr-sse2-unaligned.S:__strstr_sse2_unaligned (960x)
+    1,920 ( 0.00%)      if (!p) return false;
+    8,644 ( 0.00%)      p = strchr(p + strlen(pat), ':'); if (!p) return false;
+   20,160 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strchr-avx2.S:__strchr_avx2 (960x)
+   13,440 ( 0.00%)  => ./string/../sysdeps/x86_64/multiarch/strlen-avx2.S:__strlen_avx2 (960x)
+      787 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+   11,520 ( 0.00%)      p++; while (*p == ' ' || *p == '"') p++;
+   99,380 ( 0.00%)      int i = 0; while (*p && *p != '"' && *p != ',' && *p != '}' && i < cap - 1) out[i++] = *p++;
+    3,840 ( 0.00%)      out[i] = 0; return i > 0;
+    7,680 ( 0.00%)  }
+        .           static User *user_by_token(const char *token) {
+   33,604 ( 0.00%)      if (!token || !*token) return NULL;
+3,197,869 ( 0.13%)      for (int i = 0; i < MAX_USERS; i++)
+8,640,674 ( 0.35%)          if (g_users[i].used && strcmp(g_users[i].token, token) == 0) return &g_users[i];
+22,324,116 ( 0.89%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strcmp_avx2 (1,077,999x)
+        .               return NULL;
+        .           }
+        .           static GameSlot *game_by_id(const char *id) {
+2,196,684 ( 0.09%)      for (int i = 0; i < MAX_GAMES; i++)
+6,676,479 ( 0.27%)          if (g_games[i].used && strcmp(g_games[i].id, id) == 0) return &g_games[i];
+3,285,536 ( 0.13%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strcmp_avx2 (148,824x)
+        .               return NULL;
+        .           }
+        .           // Whether a seat is a bot: the kernel's own per-seat fact now (strategy_key),
+        .           // not a server-side is_ai array. A human seat is STRATEGY_KEY_HUMAN; a bot holds
+        .           // its roster index.
+   25,439 ( 0.00%)  static bool seat_is_bot(const Game *g, int i) { return g->players[i].strategy_key != STRATEGY_KEY_HUMAN; }
+        .           
+        .           static int seat_of(GameSlot *s, const char *user_id) {
+   75,349 ( 0.00%)      for (int i = 0; i < s->game.num_players; i++)
+  175,313 ( 0.01%)          if (!seat_is_bot(&s->game, i) && strcmp(s->seat_user[i], user_id) == 0) return i;
+  591,276 ( 0.02%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strcmp_avx2 (24,959x)
+        .               return -1;
+        .           }
+        .           
+        .           // The bot game-loop, one thread per game — a TRAMPOLINE, not a blocking hook.
+        .           // Each pass drives exactly ONE kernel cycle and RETURNS from the kernel; the
+        .           // server then decides how to wait. Same split as supabase (which `await`s a
+        .           // setTimeout) and the phone (Task.sleep): the KERNEL owns the cycle and the
+        .           // delay value (bot_drive + bot_pacing_ms); the host owns how it waits. The
+        .           // `Game` struct IS the continuation, so "resume" is just the next bot_drive.
+        .           //
+        .           // The lock is held while touching the game and RELEASED during the pacing sleep,
+        .           // so bots think + throw in over time while /action and /state keep serving. When
+        .           // no bot can act (a human is owed) the thread waits on `cond` until /action
+        .           // signals it.
+    1,080 ( 0.00%)  static void *bot_thread(void *arg) {
+        .               GameSlot *s = arg;
+      360 ( 0.00%)      pthread_mutex_lock(&g_lock);
+    4,613 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_lock.c:pthread_mutex_lock@@GLIBC_2.2.5 (120x)
+      524 ( 0.00%)      while (s->used && s->game.status == GAME_STATUS_PLAYING) {
+      393 ( 0.00%)          uint32_t hmask = game_human_mask(&s->game);   // the kernel's own human-seat mask
+    4,847 ( 0.00%)  => /home/user/foolish/server/impls/native/../../../c/src/game.c:game_human_mask (131x)
+        .                   BotDriveOut drv;
+      917 ( 0.00%)          bot_drive(&s->game, hmask, BOT_DRIVE_MAX_ACTIONS, 0, 0, &drv);   // ONE cycle, then returns
+   14,279 ( 0.00%)  => /home/user/foolish/server/impls/native/../../../c/src/bot_drive.c:bot_drive (131x)
+        .           
+      262 ( 0.00%)          if (drv.ended >= 0) break;   // the kernel already flipped g->status to GAME_OVER
+      262 ( 0.00%)          if (drv.stop == BOT_STOP_NO_ELIGIBLE) {              // a human's move is owed
+      397 ( 0.00%)              pthread_cond_wait(&s->cond, &g_lock);            // sleep until /action wakes us
+   21,241 ( 0.00%)  => ./nptl/./nptl/pthread_cond_wait.c:pthread_cond_wait@@GLIBC_2.3.2 (131x)
+      776 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+        .                       continue;
+        .                   }
+        .           
+        .                   // A visible cycle landed — the kernel prices the wait; the host owns the
+        .                   // loop and the sleep (the trampoline). Lock released while we wait.
+        .                   int delay = bot_cycle_delay_ms(&s->game, hmask, &drv);
+        .                   if (delay > 0) {
+        .                       pthread_mutex_unlock(&g_lock);
+-- line 151 ----------------------------------------
+-- line 155 ----------------------------------------
+        .               }
+        .               s->bot_running = false;
+        .               pthread_mutex_unlock(&g_lock);
+        .               return NULL;
+        .           }
+        .           
+        .           // Spawn the game-loop for a freshly dealt game (idempotent).
+        .           static void start_bot_loop(GameSlot *s) {
+      240 ( 0.00%)      if (s->bot_running) return;
+      120 ( 0.00%)      s->bot_running = true;
+        .               pthread_t t;
+    1,320 ( 0.00%)      if (pthread_create(&t, NULL, bot_thread, s) == 0) pthread_detach(t);
+10,783,785 ( 0.43%)  => ./nptl/./nptl/pthread_create.c:pthread_create@@GLIBC_2.34 (120x)
+    1,560 ( 0.00%)  => ./nptl/./nptl/pthread_detach.c:pthread_detach@@GLIBC_2.34 (120x)
+        .               else s->bot_running = false;
+      720 ( 0.00%)  }
+        .           
+        .           // --------------------------------------------------------------------------
+        .           // HTTP layer (hand-rolled; swap for mongoose in a real deployment)
+        .           // --------------------------------------------------------------------------
+        .           
+        .           typedef struct { char method[8]; char path[256]; char query[256]; char token[64]; char *body; int body_len; } Req;
+        .           
+  179,542 ( 0.01%)  static void respond(int fd, int code, const char *json) {
+   65,266 ( 0.00%)      const char *msg = code == 200 ? "OK" : code == 400 ? "Bad Request"
+        .                               : code == 401 ? "Unauthorized" : code == 404 ? "Not Found" : "Error";
+        .               char hdr[512];
+  185,553 ( 0.01%)      int n = snprintf(hdr, sizeof hdr,
+19,015,185 ( 0.76%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (16,322x)
+        .                   "HTTP/1.1 %d %s\r\nContent-Type: application/json\r\n"
+        .                   "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: *\r\n"
+        .                   "Content-Length: %zu\r\nConnection: close\r\n\r\n",
+   58,878 ( 0.00%)          code, msg, strlen(json));
+  228,508 ( 0.01%)  => ./string/../sysdeps/x86_64/multiarch/strlen-avx2.S:__strlen_avx2 (16,322x)
+   94,259 ( 0.00%)      write(fd, hdr, n);
+  930,354 ( 0.04%)  => ./io/../sysdeps/unix/sysv/linux/write.c:write (16,322x)
+  256,509 ( 0.01%)      write(fd, json, strlen(json));
+  930,354 ( 0.04%)  => ./io/../sysdeps/unix/sysv/linux/write.c:write (16,322x)
+  228,508 ( 0.01%)  => ./string/../sysdeps/x86_64/multiarch/strlen-avx2.S:__strlen_avx2 (16,322x)
+        .           }
+        .           
+        .           // Raw bytes (the packed kernel wire) — no JSON. The client decodes with its own
+        .           // kernel-wire reader (MaskedView etc.).
+        .           static void respond_bin(int fd, int code, const unsigned char *data, int len) {
+        .               char hdr[256];
+   43,191 ( 0.00%)      int n = snprintf(hdr, sizeof hdr,
+4,415,080 ( 0.18%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (4,799x)
+        .                   "HTTP/1.1 %d OK\r\nContent-Type: application/octet-stream\r\n"
+        .                   "Access-Control-Allow-Origin: *\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
+        .                   code, len);
+   23,995 ( 0.00%)      write(fd, hdr, n);
+  273,543 ( 0.01%)  => ./io/../sysdeps/unix/sysv/linux/write.c:write (4,799x)
+   19,196 ( 0.00%)      if (len > 0) write(fd, data, (size_t)len);
+        .           }
+        .           
+        .           // --------------------------------------------------------------------------
+        .           // Route handlers  (each locks g_lock around store access)
+        .           // --------------------------------------------------------------------------
+        .           
+        .           static void h_signup(Req *r, int fd) {
+      720 ( 0.00%)      char uname[24] = {0};
+    1,440 ( 0.00%)      if (!json_str(r->body, "username", uname, sizeof uname)) { respond(fd, 400, "{\"error\":\"username\"}"); return; }
+  191,421 ( 0.01%)  => foolish_server.c:json_str (240x)
+      724 ( 0.00%)      pthread_mutex_lock(&g_lock);
+    8,667 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_lock.c:pthread_mutex_lock@@GLIBC_2.2.5 (240x)
+      850 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+        .               User *u = NULL;
+  786,484 ( 0.03%)      for (int i = 0; i < MAX_USERS; i++) if (g_users[i].used && !strcmp(g_users[i].username, uname)) { u = &g_users[i]; break; }
+  611,280 ( 0.02%)  => ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S:__strcmp_avx2 (28,680x)
+      765 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+   93,960 ( 0.00%)      if (!u) for (int i = 0; i < MAX_USERS; i++) if (!g_users[i].used) {
+    2,520 ( 0.00%)          u = &g_users[i]; u->used = true; snprintf(u->username, sizeof u->username, "%s", uname);
+   88,308 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (240x)
+        .                   gen_id(u->user_id, ID_LEN); break;
+        .               }
+      240 ( 0.00%)      if (u) gen_id(u->token, 32);   // fresh session token
+        .               char out[160];
+    2,640 ( 0.00%)      if (u) snprintf(out, sizeof out, "{\"token\":\"%s\",\"user_id\":\"%s\",\"username\":\"%s\"}", u->token, u->user_id, u->username);
+  212,171 ( 0.01%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (240x)
+      724 ( 0.00%)      pthread_mutex_unlock(&g_lock);
+    6,251 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_unlock.c:pthread_mutex_unlock@@GLIBC_2.2.5 (240x)
+      905 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+        .               if (u) respond(fd, 200, out); else respond(fd, 400, "{\"error\":\"full\"}");
+        .           }
+        .           
+        .           static void h_create(Req *r, int fd) {
+      360 ( 0.00%)      pthread_mutex_lock(&g_lock);
+    4,320 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_lock.c:pthread_mutex_lock@@GLIBC_2.2.5 (120x)
+        .               User *u = user_by_token(r->token);
+        .               if (!u) { pthread_mutex_unlock(&g_lock); respond(fd, 401, "{\"error\":\"auth\"}"); return; }
+        .               GameSlot *s = NULL;
+   23,580 ( 0.00%)      for (int i = 0; i < MAX_GAMES; i++) if (!g_games[i].used) { s = &g_games[i]; break; }
+        .               if (!s) { pthread_mutex_unlock(&g_lock); respond(fd, 400, "{\"error\":\"full\"}"); return; }
+      660 ( 0.00%)      memset(s, 0, sizeof *s);
+4,604,280 ( 0.18%)  => ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms (120x)
+      724 ( 0.00%)      pthread_cond_init(&s->cond, NULL);
+      966 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+    1,200 ( 0.00%)  => ./nptl/./nptl/pthread_cond_init.c:pthread_cond_init@@GLIBC_2.3.2 (120x)
+      120 ( 0.00%)      s->used = true;
+    1,680 ( 0.00%)      gen_id(s->id, ID_LEN); snprintf(s->owner, sizeof s->owner, "%s", u->user_id);
+   44,162 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (120x)
+        .               // Seat 0 = creator. Identity lives here; the kernel state is dealt at start.
+      120 ( 0.00%)      Game *g = &s->game; g->num_players = 1; g->status = GAME_STATUS_WAITING;
+      960 ( 0.00%)      snprintf(s->seat_user[0], ID_LEN + 1, "%s", u->user_id);
+   44,162 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (120x)
+    1,080 ( 0.00%)      snprintf(s->seat_name[0], 24, "%s", u->username);
+   44,165 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (120x)
+      960 ( 0.00%)      snprintf(g->players[0].name, 24, "%s", u->username);
+   44,165 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (120x)
+      960 ( 0.00%)      snprintf(g->players[0].player_id, 24, "%s", u->user_id);
+   44,162 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (120x)
+      120 ( 0.00%)      g->players[0].status = PLAYER_STATUS_IDLE;
+      120 ( 0.00%)      g->players[0].strategy_key = STRATEGY_KEY_HUMAN;   // the creator is a human seat
+      960 ( 0.00%)      char out[80]; snprintf(out, sizeof out, "{\"game_id\":\"%s\"}", s->id);
+   52,920 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (120x)
+        .               pthread_mutex_unlock(&g_lock);
+        .               respond(fd, 200, out);
+        .           }
+        .           
+        .           static void h_meta(Req *r, int fd) {
+    1,440 ( 0.00%)      char type[16] = {0}, gid[ID_LEN + 1] = {0};
+    1,440 ( 0.00%)      json_str(r->body, "type", type, sizeof type);
+  244,200 ( 0.01%)  => foolish_server.c:json_str (360x)
+    1,800 ( 0.00%)      json_str(r->body, "game_id", gid, sizeof gid);
+  279,720 ( 0.01%)  => foolish_server.c:json_str (360x)
+    1,080 ( 0.00%)      pthread_mutex_lock(&g_lock);
+   12,983 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_lock.c:pthread_mutex_lock@@GLIBC_2.2.5 (360x)
+        .               User *u = user_by_token(r->token);
+        .               GameSlot *s = game_by_id(gid);
+      720 ( 0.00%)      if (!u) { pthread_mutex_unlock(&g_lock); respond(fd, 401, "{\"error\":\"auth\"}"); return; }
+        .               if (!s) { pthread_mutex_unlock(&g_lock); respond(fd, 404, "{\"error\":\"no game\"}"); return; }
+        .               Game *g = &s->game;
+        .           
+    2,880 ( 0.00%)      if (!strcmp(type, "join")) {
+      600 ( 0.00%)          if (seat_of(s, u->user_id) < 0 && g->num_players < MAX_PLAYERS && g->status == GAME_STATUS_WAITING) {
+      360 ( 0.00%)              int i = g->num_players++;
+    1,200 ( 0.00%)              snprintf(s->seat_user[i], ID_LEN + 1, "%s", u->user_id);
+   44,169 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (120x)
+    1,080 ( 0.00%)              snprintf(s->seat_name[i], 24, "%s", u->username);
+   44,154 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (120x)
+    1,200 ( 0.00%)              snprintf(g->players[i].name, 24, "%s", u->username);
+   44,154 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (120x)
+      960 ( 0.00%)              snprintf(g->players[i].player_id, 24, "%s", u->user_id);
+   44,169 ( 0.00%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (120x)
+      120 ( 0.00%)              g->players[i].status = PLAYER_STATUS_IDLE;
+      120 ( 0.00%)              g->players[i].strategy_key = STRATEGY_KEY_HUMAN;   // a human seat
+        .                   }
+      480 ( 0.00%)      } else if (!strcmp(type, "add-bot")) {
+        .                   char skey[24] = {0}; if (!json_str(r->body, "strategy", skey, sizeof skey)) snprintf(skey, sizeof skey, "random");
+        .                   if (g->num_players < MAX_PLAYERS && g->status == GAME_STATUS_WAITING) {
+        .                       int i = g->num_players++;
+        .                       s->seat_ready[i] = true;
+        .                       int strat = bot_roster_find(skey);
+        .                       if (strat < 0) strat = bot_roster_find("random");
+        .                       snprintf(s->seat_name[i], 24, "%%%s %d", skey, i);
+        .                       snprintf(g->players[i].name, 24, "%s", s->seat_name[i]);
+        .                       snprintf(g->players[i].player_id, 24, "bot%d", i);
+        .                       g->players[i].status = PLAYER_STATUS_READY;
+        .                       g->players[i].strategy_key = (int8_t)strat;   // the kernel's own seat kind
+        .                   }
+    1,920 ( 0.00%)      } else if (!strcmp(type, "start")) {
+        .                   int me = seat_of(s, u->user_id);
+      960 ( 0.00%)          if (me >= 0) { s->seat_ready[me] = true; g->players[me].status = PLAYER_STATUS_READY; }
+        .                   // Deal once every seated human is ready (bots are always ready) and 2+ seated.
+      480 ( 0.00%)          bool all = g->num_players >= 2;
+    5,760 ( 0.00%)          for (int i = 0; i < g->num_players; i++) if (!seat_is_bot(g, i) && !s->seat_ready[i]) all = false;
+      720 ( 0.00%)          if (all && g->status == GAME_STATUS_WAITING) {
+   34,560 ( 0.00%)              unsigned char seed[32]; for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(rand() ^ (i * 131 + (int)g_seq));
+  218,759 ( 0.01%)  => ./stdlib/./stdlib/rand.c:rand (3,840x)
+      240 ( 0.00%)              game_set_deal_seed_bytes(seed, 32);
+    4,680 ( 0.00%)  => /home/user/foolish/server/impls/native/../../../c/src/game.c:game_set_deal_seed_bytes (120x)
+        .                       // Seats were wired in the lobby (strategy_key per seat), so pass NULL:
+        .                       // the kernel owns marking them + the deal (+ g->status = PLAYING).
+      600 ( 0.00%)              game_seat_and_deal(g, NULL, g->num_players);
+1,106,746 ( 0.04%)  => /home/user/foolish/server/impls/native/../../../c/src/game.c:game_seat_and_deal (120x)
+      120 ( 0.00%)              start_bot_loop(s);             // the game-loop paces bot play from here
+10,788,105 ( 0.43%)  => foolish_server.c:start_bot_loop (120x)
+        .                   }
+        .               } else if (!strcmp(type, "continue")) {
+        .                   // Reset the kernel to the lobby for a rematch (identities kept, re-dealt
+        .                   // on start). The host owns only this lobby transition; game-over was the
+        .                   // kernel's to declare.
+        .                   g->status = GAME_STATUS_WAITING;
+        .                   for (int i = 0; i < g->num_players; i++) {
+        .                       bool ai = seat_is_bot(g, i);
+        .                       s->seat_ready[i] = ai;
+        .                       g->players[i].status = ai ? PLAYER_STATUS_READY : PLAYER_STATUS_IDLE;
+        .                   }
+        .               }
+    3,240 ( 0.00%)      char out[80]; snprintf(out, sizeof out, "{\"game_id\":\"%s\",\"status\":%d}", s->id, g->status);
+  269,040 ( 0.01%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (360x)
+        .               pthread_mutex_unlock(&g_lock);
+        .               respond(fd, 200, out);
+        .           }
+        .           
+        .           static void h_action(Req *r, int fd) {
+        .               // game_id rides the query string (like /state); the body IS the packed awire
+        .               // frame, so it can be binary. /action?game_id=..
+   32,644 ( 0.00%)      char gid[ID_LEN + 1] = {0};
+   65,288 ( 0.00%)      const char *gp = strstr(r->query, "game_id=");
+1,403,692 ( 0.06%)  => ./string/../sysdeps/x86_64/multiarch/strstr-sse2-unaligned.S:__strstr_sse2_unaligned (16,322x)
+1,681,166 ( 0.07%)      if (gp) { gp += 8; int i = 0; while (gp[i] && gp[i] != '&' && i < ID_LEN) { gid[i] = gp[i]; i++; } gid[i] = 0; }
+   48,966 ( 0.00%)      pthread_mutex_lock(&g_lock);
+  587,803 ( 0.02%)  => ./nptl/./nptl/pthread_mutex_lock.c:pthread_mutex_lock@@GLIBC_2.2.5 (16,322x)
+        .               User *u = user_by_token(r->token);
+        .               GameSlot *s = game_by_id(gid);
+   32,644 ( 0.00%)      if (!u) { pthread_mutex_unlock(&g_lock); respond(fd, 401, "{\"error\":\"auth\"}"); return; }
+   32,644 ( 0.00%)      if (!s || s->game.status != GAME_STATUS_PLAYING) { pthread_mutex_unlock(&g_lock); respond(fd, 400, "{\"error\":\"not playing\"}"); return; }
+        .               int seat = seat_of(s, u->user_id);
+   32,644 ( 0.00%)      if (seat < 0) { pthread_mutex_unlock(&g_lock); respond(fd, 400, "{\"error\":\"not seated\"}"); return; }
+        .               // The body is the same packed move the browser validates and the phone
+        .               // sends: [kind, n, cards, (attacks)]. The kernel decodes and dispatches —
+        .               // the server enumerates no move types (awire_apply owns the switch).
+        .               AwireAction a;
+  114,254 ( 0.00%)      bool ok = r->body && r->body_len > 0
+   48,966 ( 0.00%)                && awire_decode((const unsigned char *)r->body, r->body_len, &a)
+1,885,828 ( 0.08%)  => /home/user/foolish/server/impls/native/../../../c/src/awire.c:awire_decode (16,322x)
+   65,288 ( 0.00%)                && awire_apply(&s->game, seat, &a);
+1,136,876 ( 0.05%)  => /home/user/foolish/server/impls/native/../../../c/src/game.c:awire_apply (16,322x)
+        .               // Human changed the board — wake the game-loop so bots respond (or notice
+        .               // the game ended; awire_apply already settled g->status). If it's mid-sleep
+        .               // it re-reads the state on its own.
+   32,703 ( 0.00%)      if (ok) pthread_cond_signal(&s->cond);
+      814 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+    1,375 ( 0.00%)  => ./nptl/./nptl/pthread_cond_signal.c:pthread_cond_signal@@GLIBC_2.3.2 (11x)
+  146,898 ( 0.01%)      char out[96]; snprintf(out, sizeof out, "{\"ok\":%s,\"status\":%d}", ok ? "true" : "false", s->game.status);
+12,339,432 ( 0.49%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (16,322x)
+   48,966 ( 0.00%)      pthread_mutex_unlock(&g_lock);
+  424,493 ( 0.02%)  => ./nptl/./nptl/pthread_mutex_unlock.c:pthread_mutex_unlock@@GLIBC_2.2.5 (16,322x)
+   65,288 ( 0.00%)      respond(fd, ok ? 200 : 400, out);
+        .           }
+        .           
+   47,990 ( 0.00%)  static void h_state(Req *r, int fd) {
+    9,598 ( 0.00%)      char gid[ID_LEN + 1] = {0}; int seat = 0;
+        .               // query: game_id=..&seat=..
+   23,995 ( 0.00%)      const char *gp = strstr(r->query, "game_id=");
+  412,714 ( 0.02%)  => ./string/../sysdeps/x86_64/multiarch/strstr-sse2-unaligned.S:__strstr_sse2_unaligned (4,799x)
+  503,895 ( 0.02%)      if (gp) { gp += 8; int i = 0; while (gp[i] && gp[i] != '&' && i < ID_LEN) { gid[i] = gp[i]; i++; } gid[i] = 0; }
+   62,387 ( 0.00%)      const char *sp = strstr(r->query, "seat="); if (sp) seat = (int)strtol(sp + 5, NULL, 10);
+  326,332 ( 0.01%)  => ./string/../sysdeps/x86_64/multiarch/strstr-sse2-unaligned.S:__strstr_sse2_unaligned (4,799x)
+  518,270 ( 0.02%)  => ./stdlib/../stdlib/strtol.c:__isoc23_strtol (4,799x)
+   14,397 ( 0.00%)      pthread_mutex_lock(&g_lock);
+  172,841 ( 0.01%)  => ./nptl/./nptl/pthread_mutex_lock.c:pthread_mutex_lock@@GLIBC_2.2.5 (4,799x)
+        .               GameSlot *s = game_by_id(gid);
+        .               if (!s) { pthread_mutex_unlock(&g_lock); respond(fd, 404, "{\"error\":\"no game\"}"); return; }
+        .               // The kernel renders the masked, per-seat view as the PACKED wire (view.c
+        .               // state_put) — no JSON. The client decodes it with its own kernel-wire
+        .               // reader (Swift MaskedView / the web's TS reader). Kernel-to-kernel.
+        .               static unsigned char buf[65536];
+   23,995 ( 0.00%)      int n = state_put(&s->game, seat, buf);
+2,540,205 ( 0.10%)  => /home/user/foolish/server/impls/native/../../../c/src/view.c:state_put (4,799x)
+   14,397 ( 0.00%)      pthread_mutex_unlock(&g_lock);
+  124,807 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_unlock.c:pthread_mutex_unlock@@GLIBC_2.2.5 (4,799x)
+        .               respond_bin(fd, 200, buf, n);
+   38,392 ( 0.00%)  }
+        .           
+        .           // A plain status int (0 waiting / 1 playing / 2 over), for smoke tests that used
+        .           // to read it off the JSON view. Not json_out — just an integer.
+   17,904 ( 0.00%)  static void h_status(Req *r, int fd) {
+    4,476 ( 0.00%)      char gid[ID_LEN + 1] = {0};
+    8,952 ( 0.00%)      const char *gp = strstr(r->query, "game_id=");
+  192,468 ( 0.01%)  => ./string/../sysdeps/x86_64/multiarch/strstr-sse2-unaligned.S:__strstr_sse2_unaligned (2,238x)
+  232,752 ( 0.01%)      if (gp) { gp += 8; int i = 0; while (gp[i] && gp[i] != '&' && i < ID_LEN) { gid[i] = gp[i]; i++; } gid[i] = 0; }
+    6,714 ( 0.00%)      pthread_mutex_lock(&g_lock);
+   80,668 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_lock.c:pthread_mutex_lock@@GLIBC_2.2.5 (2,238x)
+        .               GameSlot *s = game_by_id(gid);
+    4,476 ( 0.00%)      int st = s ? s->game.status : -1;
+    6,714 ( 0.00%)      pthread_mutex_unlock(&g_lock);
+   58,232 ( 0.00%)  => ./nptl/./nptl/pthread_mutex_unlock.c:pthread_mutex_unlock@@GLIBC_2.2.5 (2,238x)
+   17,904 ( 0.00%)      char out[16]; snprintf(out, sizeof out, "%d", st);
+1,036,194 ( 0.04%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (2,238x)
+        .               respond(fd, 200, out);
+   15,666 ( 0.00%)  }
+        .           
+        .           // --------------------------------------------------------------------------
+        .           // Connection handling
+        .           // --------------------------------------------------------------------------
+        .           
+        .           static void route(Req *r, int fd) {
+   48,164 ( 0.00%)      if (!strcmp(r->method, "OPTIONS")) { respond(fd, 200, "{}"); return; }
+   96,328 ( 0.00%)      if (!strcmp(r->path, "/health")) { respond(fd, 200, "{\"ok\":true}"); return; }
+  239,590 ( 0.01%)      if (!strcmp(r->path, "/auth/signup") || !strcmp(r->path, "/auth/signin")) { h_signup(r, fd); return; }
+   47,678 ( 0.00%)      if (!strcmp(r->path, "/create")) { h_create(r, fd); return; }
+  118,595 ( 0.00%)      if (!strcmp(r->path, "/meta"))   { h_meta(r, fd); return; }
+   46,718 ( 0.00%)      if (!strcmp(r->path, "/action")) { h_action(r, fd); return; }
+   44,783 ( 0.00%)      if (!strcmp(r->path, "/state"))  { h_state(r, fd); return; }
+14,896,544 ( 0.60%)  => foolish_server.c:h_state (4,799x)
+    8,952 ( 0.00%)      if (!strcmp(r->path, "/status")) { h_status(r, fd); return; }
+7,058,834 ( 0.28%)  => foolish_server.c:h_status (2,238x)
+        .               respond(fd, 404, "{\"error\":\"route\"}");
+        .           }
+        .           
+  264,902 ( 0.01%)  static void *conn_thread(void *arg) {
+        .               int fd = (int)(long)arg;
+        .               static __thread char buf[1 << 16];
+        .               int total = 0, n;
+        .               // Read headers (+ body when Content-Length fits one read window).
+  144,496 ( 0.01%)      while ((n = read(fd, buf + total, sizeof buf - 1 - total)) > 0) {
+1,372,674 ( 0.05%)  => ./io/../sysdeps/unix/sysv/linux/read.c:read (24,082x)
+      722 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+   48,164 ( 0.00%)          total += n; buf[total] = 0;
+   96,332 ( 0.00%)          char *hdr_end = strstr(buf, "\r\n\r\n");
+7,837,856 ( 0.31%)  => ./string/../sysdeps/x86_64/multiarch/strstr-sse2-unaligned.S:__strstr_sse2_unaligned (24,082x)
+      740 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+   48,164 ( 0.00%)          if (!hdr_end) continue;
+   96,332 ( 0.00%)          int want = 0; char *cl = strcasestr(buf, "content-length:");
+40,649,453 ( 1.63%)  => ./string/./string/strcasestr.c:strcasestr (24,082x)
+      750 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+  149,696 ( 0.01%)          if (cl) want = (int)strtol(cl + 15, NULL, 10);
+2,175,378 ( 0.09%)  => ./stdlib/../stdlib/strtol.c:__isoc23_strtol (16,922x)
+   96,328 ( 0.00%)          int have = total - (int)(hdr_end + 4 - buf);
+   48,164 ( 0.00%)          if (have >= want) break;
+        .               }
+  120,414 ( 0.00%)      Req r; memset(&r, 0, sizeof r);
+1,204,100 ( 0.05%)  => ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms (24,082x)
+      762 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+  192,660 ( 0.01%)      sscanf(buf, "%7s %255s", r.method, r.path);
+39,988,329 ( 1.60%)  => ./stdio-common/./stdio-common/isoc23_sscanf.c:__isoc23_sscanf (24,082x)
+      798 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+  354,727 ( 0.01%)      char *q = strchr(r.path, '?'); if (q) { *q = 0; snprintf(r.query, sizeof r.query, "%s", q + 1); }
+8,549,394 ( 0.34%)  => ./stdio-common/./stdio-common/snprintf.c:snprintf (23,359x)
+  505,722 ( 0.02%)  => ./string/../sysdeps/x86_64/multiarch/strchr-avx2.S:__strchr_avx2 (24,082x)
+      774 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+   96,328 ( 0.00%)      char *auth = strcasestr(buf, "authorization:");
+25,987,463 ( 1.04%)  => ./string/./string/strcasestr.c:strcasestr (24,082x)
+  165,778 ( 0.01%)      if (auth) sscanf(auth + 14, " Bearer %63s", r.token);
+27,074,023 ( 1.08%)  => ./stdio-common/./stdio-common/isoc23_sscanf.c:__isoc23_sscanf (16,802x)
+  216,738 ( 0.01%)      char *body = strstr(buf, "\r\n\r\n"); r.body = body ? body + 4 : NULL;
+7,837,856 ( 0.31%)  => ./string/../sysdeps/x86_64/multiarch/strstr-sse2-unaligned.S:__strstr_sse2_unaligned (24,082x)
+   96,328 ( 0.00%)      r.body_len = r.body ? total - (int)(r.body - buf) : 0;   // real byte count (body may be binary awire)
+        .               route(&r, fd);
+   72,250 ( 0.00%)      close(fd);
+1,276,346 ( 0.05%)  => ./io/../sysdeps/unix/sysv/linux/close.c:close (24,082x)
+      752 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+  216,738 ( 0.01%)      return NULL;
+        .           }
+        .           
+        8 ( 0.00%)  int main(int argc, char **argv) {
+        3 ( 0.00%)      int port = argc > 1 ? atoi(argv[1]) : 8099;
+       22 ( 0.00%)      srand((unsigned)(time(NULL) ^ getpid()));
+    2,244 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (3x)
+    6,232 ( 0.00%)  => ./stdlib/./stdlib/random.c:srand (1x)
+        6 ( 0.00%)  => ./time/../sysdeps/unix/sysv/linux/time.c:time_syscall (1x)
+        4 ( 0.00%)  => ./posix/../sysdeps/unix/syscall-template.S:getpid (1x)
+        .           
+       10 ( 0.00%)      int srv = socket(AF_INET, SOCK_STREAM, 0);
+      720 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+        6 ( 0.00%)  => ./socket/../sysdeps/unix/syscall-template.S:socket (1x)
+       12 ( 0.00%)      int opt = 1; setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof opt);
+      768 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+        7 ( 0.00%)  => ./socket/../sysdeps/unix/sysv/linux/setsockopt.c:setsockopt (1x)
+        1 ( 0.00%)      struct sockaddr_in addr = {0};
+        3 ( 0.00%)      addr.sin_family = AF_INET; addr.sin_addr.s_addr = INADDR_ANY; addr.sin_port = htons(port);
+       10 ( 0.00%)      if (bind(srv, (struct sockaddr *)&addr, sizeof addr) < 0) { perror("bind"); return 1; }
+      772 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+        6 ( 0.00%)  => ./socket/../sysdeps/unix/syscall-template.S:bind (1x)
+        8 ( 0.00%)      listen(srv, 64);
+      745 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+        6 ( 0.00%)  => ./socket/../sysdeps/unix/syscall-template.S:listen (1x)
+       11 ( 0.00%)      fprintf(stderr, "foolish native server (kernel-driven, in-memory) on :%d\n", port);
+      830 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+      912 ( 0.00%)  => ./stdio-common/./stdio-common/fprintf.c:fprintf (1x)
+        .           
+        .               for (;;) {
+  120,419 ( 0.00%)          int fd = accept(srv, NULL, NULL);
+1,372,653 ( 0.05%)  => ./socket/../sysdeps/unix/sysv/linux/accept.c:accept (24,083x)
+      755 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (1x)
+   48,164 ( 0.00%)          if (fd < 0) continue;
+        .                   pthread_t t;
+  240,828 ( 0.01%)          if (pthread_create(&t, NULL, conn_thread, (void *)(long)fd) == 0) pthread_detach(t);
+2,161,252,995 (86.51%)  => ./nptl/./nptl/pthread_create.c:pthread_create@@GLIBC_2.34 (24,082x)
+  410,108 ( 0.02%)  => ./nptl/./nptl/pthread_detach.c:pthread_detach@@GLIBC_2.34 (24,082x)
+    1,755 ( 0.00%)  => ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave (2x)
+        .                   else { close(fd); }
+        .               }
+        .           }
+
+1,392,651 ( 0.06%)  <counts for unidentified lines in foolish_server.c>
+
+--------------------------------------------------------------------------------
+-- Auto-annotated source: ../../../c/src/../wasm/wire.h
+--------------------------------------------------------------------------------
+Ir               
+
+-- line 9 ----------------------------------------
+      .           #define CNITRO_WASM_WIRE_H
+      .           
+      .           #include "card.h"
+      .           
+      .           #define WIRE_CARD_HIDDEN 0xFEu
+      .           #define WIRE_CARD_NONE   0xFFu
+      .           
+      .           static inline unsigned char wire_from_card(Card c) {
+ 33,681 ( 0.00%)      if (card_is_none(c)) return (unsigned char)WIRE_CARD_NONE;
+235,737 ( 0.01%)      if (c.suit < 0 || c.value < 1) return (unsigned char)WIRE_CARD_HIDDEN;
+235,732 ( 0.01%)      return (unsigned char)(c.suit * 13 + (c.value - 1));
+      .           }
+      .           
+      .           // State/move/action cards are always real cards; hostile ids clamp into the
+      .           // representable space (the job clamp_card did on the old 2-byte wire — the
+      .           // bot bitboards do `1ull << card_id`, undefined for out-of-range ids).
+      .           static inline Card card_from_wire_state(unsigned char b) {
+454,219 ( 0.02%)      if (b > 51) b = 51;
+195,936 ( 0.01%)      Card c; c.suit = (int8_t)(b / 13); c.value = (int8_t)(b % 13 + 1);
+      .               return c;
+      .           }
+      .           
+      .           // Log pairs carry the sentinels.
+      .           static inline Card card_from_wire_pair(unsigned char b) {
+      .               if (b == WIRE_CARD_NONE) return CARD_NONE;
+      .               if (b == WIRE_CARD_HIDDEN) { Card c; c.suit = -1; c.value = -1; return c; }
+      .               return card_from_wire_state(b);
+-- line 35 ----------------------------------------
+
+329,183 ( 0.01%)  <counts for unidentified lines in ../../../c/src/../wasm/wire.h>
+
+--------------------------------------------------------------------------------
+The following files chosen for auto-annotation could not be found:
+--------------------------------------------------------------------------------
+  ./elf/../elf/dl-tls.c
+  ./io/../sysdeps/unix/sysv/linux/write.c
+  ./libio/./libio/genops.c
+  ./libio/./libio/strops.c
+  ./libio/./libio/vsnprintf.c
+  ./malloc/./malloc/malloc.c
+  ./misc/../sysdeps/unix/sysv/linux/clone-internal.c
+  ./misc/../sysdeps/unix/sysv/linux/setvmaname.c
+  ./nptl/./nptl/allocatestack.c
+  ./nptl/./nptl/cancellation.c
+  ./nptl/./nptl/pthread_attr_copy.c
+  ./nptl/./nptl/pthread_create.c
+  ./nptl/./nptl/pthread_mutex_lock.c
+  ./nptl/./nptl/pthread_mutex_unlock.c
+  ./stdio-common/../string/bits/string_fortified.h
+  ./stdio-common/./stdio-common/Xprintf_buffer_done.c
+  ./stdio-common/./stdio-common/Xprintf_buffer_write.c
+  ./stdio-common/./stdio-common/_itoa.c
+  ./stdio-common/./stdio-common/isoc23_sscanf.c
+  ./stdio-common/./stdio-common/printf-parse.h
+  ./stdio-common/./stdio-common/snprintf.c
+  ./stdio-common/./stdio-common/vfprintf-internal.c
+  ./stdio-common/./stdio-common/vfprintf-process-arg.c
+  ./stdio-common/./stdio-common/vfscanf-internal.c
+  ./stdlib/../stdlib/strtol_l.c
+  ./string/../sysdeps/x86_64/multiarch/../multiarch/memset-vec-unaligned-erms.S
+  ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S
+  ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S
+  ./string/../sysdeps/x86_64/multiarch/strchr-avx2.S
+  ./string/../sysdeps/x86_64/multiarch/strcmp-avx2.S
+  ./string/../sysdeps/x86_64/multiarch/strlen-avx2.S
+  ./string/../sysdeps/x86_64/multiarch/strstr-sse2-unaligned.S
+  ./string/./string/str-two-way.h
+  ./string/./string/strcasestr.c
+
+--------------------------------------------------------------------------------
+Ir                  
+--------------------------------------------------------------------------------
+34,009,410 ( 1.36%)  events annotated
+

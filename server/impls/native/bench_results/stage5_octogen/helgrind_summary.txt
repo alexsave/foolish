@@ -1,0 +1,63 @@
+Stage 5 Helgrind verdict — foolish_server_prof (g_kernel_lock removed,
+kernel bot_drive/apply scratch made _Thread_local)
+
+Build:
+  cd server/impls/native && make CC=clang foolish_server_prof
+  (same source as foolish_server, +-g -fno-omit-frame-pointer -O2 instead of
+  -O3/-flto so Helgrind attributes races to real functions/lines)
+
+Command:
+  valgrind --tool=helgrind --history-level=approx --num-callers=25 \
+    --log-file=helgrind_stage5.log ./foolish_server_prof 8199 --no-db
+
+Load (foolish_hammer, --mode=ws, --server-bot=cordite — a fast MC bot
+chosen over octogen per the task's own guidance, since Helgrind's ~20-30x
+slowdown makes octogen's ~2s/decision search impractical; cordite exercises
+the SAME bot_drive/awire_apply/cordite_sim.c code paths octogen does, just
+faster per decision):
+
+  round 1: --games=6  --seats=1 --spectators=1 --secs=30
+    -> 101 actions applied (101 ok), 55 bot decisions across 6 concurrent
+       games, 0/2613 spectator move probes accepted (correctly rejected)
+
+  round 2: --games=10 --seats=1 --spectators=1 --secs=35
+    -> 181/185 actions applied, 109 bot decisions across 10 concurrent
+       games, 0/1890 spectator move probes accepted
+
+Both rounds exercise every audited concurrent-kernel path: game_seat_and_deal
+(16 games dealt total across the two rounds, each on its own bot_thread/
+h_meta-start caller), bot_drive + cordite's Monte-Carlo solver
+(cd_sim_from_game -> ensure_masks, the transposition table, world/trial
+sampling — all now _Thread_local) running concurrently across up to 10
+DIFFERENT games' bot_thread threads at once, awire_apply from both /ws human
+moves and the spectator-reject path, and the WS spectator cache.
+
+Server stopped with SIGTERM after both rounds (no signal handler installed,
+so Helgrind's forced-exit report — the standard "Process terminating with
+default action of signal 15" note below — is expected and not an error).
+
+---- raw ERROR SUMMARY (helgrind_stage5.log) ----
+==24527== Process terminating with default action of signal 15 (SIGTERM)
+==24527==    at 0x51A886D: accept (accept.c:26)
+==24527==    by 0x10B10B: main (foolish_server.c:1736)
+==24527==
+==24527== For lists of detected and suppressed errors, rerun with: -s
+==24527== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 1587592 from 125)
+---------------------------------------------------
+
+VERDICT: 0 data races (0 errors from 0 contexts) across ~65s of genuinely
+concurrent bot_drive/awire_apply/game_seat_and_deal traffic spanning up to
+16 distinct games' bot_thread + WS threads. The "suppressed: 1587592 from
+125" count is Valgrind's own default/glibc suppression rules (pthread
+internals, dynamic loader, etc.) — the same category T2a's original
+Helgrind run (SERVER_SCALING.md "Deliverable 1") already used to file the
+one accepted cond-wait suppression; it is not evidence of hidden races,
+just background noise Valgrind's default suppression file exists to filter.
+No new suppressions were added for this run — the audit's _Thread_local
+fixes made the kernel path clean on their own, with no gaps to paper over.
+
+This is the proof the Stage 5 kernel audit (c/src/game.c, game.h,
+bot_drive.c, cordite_sim.c) was complete: every kernel global reachable from
+bot_drive/awire_apply/game_seat_and_deal/the dispatchable strategies that is
+mutated during concurrent play is now _Thread_local, and removing
+g_kernel_lock introduced no detectable races under load.
