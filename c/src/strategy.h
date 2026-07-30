@@ -39,6 +39,7 @@
 #define STRAT_OCTOGEN_ORACLE    21   // octogen at 6x worlds (research/audit only)
 #define STRAT_TORPEX            22   // semtex + learned value net replacing rollouts
 #define STRAT_NOVICHOK          23   // CHEATING apex (real hands; research/eval only)
+#define STRAT_OCTOGEN_SELF      24   // octogen with itself as rollout policy (research)
 
 // Returns chosen move index in moves->moves[] (0..moves->n-1).
 typedef int (*StrategyFn)(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
@@ -72,6 +73,9 @@ int semtex_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, 
 int semtex_oracle_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 int octogen_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 int octogen_oracle_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
+// Self-rollout octogen (research): sampled worlds played out by a recursive
+// in-world tournament instead of the handwritten policy (OG_SELF_* knobs).
+int octogen_self_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 int torpex_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 int novichok_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 
@@ -101,6 +105,7 @@ static inline int parse_strategy(const char *s) {
     if (!strcmp(s, "semtex_oracle")     || !strcmp(s, "sxo")) return STRAT_SEMTEX_ORACLE;
     if (!strcmp(s, "octogen")           || !strcmp(s, "og"))  return STRAT_OCTOGEN;
     if (!strcmp(s, "octogen_oracle")    || !strcmp(s, "ogo")) return STRAT_OCTOGEN_ORACLE;
+    if (!strcmp(s, "octogen_self")      || !strcmp(s, "ogs")) return STRAT_OCTOGEN_SELF;
     if (!strcmp(s, "torpex")            || !strcmp(s, "tx"))  return STRAT_TORPEX;
     if (!strcmp(s, "novichok")          || !strcmp(s, "nv"))  return STRAT_NOVICHOK;
     return -1;

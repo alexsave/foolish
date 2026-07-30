@@ -126,6 +126,30 @@ static _Thread_local int og_adapt = 1;
 static _Thread_local int og_reply = 0;   // flat vs semtex; research knob
 static _Thread_local int og_reply_cap = 6;
 static _Thread_local int og_reply_stage = 2;
+// Self-rollout ("infinite oracle" recursion, hunt 5 — research only, engaged
+// solely through the octogen_self/ogs strategy id so a paired --control run
+// can hold plain octogen in the same process): sampled worlds are played out
+// by cd_sim_playout_self — every in-world seat deliberates via a nested
+// tournament instead of the handwritten policy. OG_SELF_DEPTH: recursion
+// depth (1 = tournament over playouts, 2 = tournament over depth-1 self
+// playouts, ...). OG_SELF_CAP: moves searched per in-world decision (0 =
+// base-case-only: policy play + immediate-win override). OG_SELF_PLIES:
+// searched plies per playout level (0 = all). OG_SELF_WIN: the "does this
+// move let me win" base case. OG_SELF_STAGE: first MC stage that self-rolls.
+static _Thread_local int og_self = 0;          // set by octogen_self wrapper
+static _Thread_local int og_self_depth = 1;
+static _Thread_local int og_self_cap = 6;
+static _Thread_local int og_self_plies = 0;
+static _Thread_local int og_self_win = 1;
+static _Thread_local int og_self_stage = 0;
+// OG_SELF_LEAF_CARDS / OG_SELF_LEAF_BUDGET (-1 = inherit the bbleaf
+// defaults): hero-only override of the in-rollout exact-leaf threshold, so
+// the recursion LIMIT (perfect in-world endgame play) can be probed directly
+// and cheaply — the solver+TT reach the same fixed point as infinite
+// depth/cap in the deck-dead heads-up phase. Extends the hunt-4 "deeper
+// rollout leaves" axis (10 cards / 8k nodes: flat at 4x cost).
+static _Thread_local int og_self_leaf_cards = -1;
+static _Thread_local long og_self_leaf_budget = -1;
 // OG_MCDEF (default 0 — measured flat-to-harmful vs semtex, pc3
 // +0.055±0.039; the 50% pickup rate over-models strategic pickups):
 // seats with a proven mc_tell roll out with CD_POL_MCDEF. Research knob.
@@ -1575,6 +1599,13 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
         og_mcdef = og_env_int("OG_MCDEF", 0);
         og_reply_cap = og_env_int("OG_REPLY_CAP", 6);
         og_reply_stage = og_env_int("OG_REPLY_STAGE", 2);
+        og_self_depth = og_env_int("OG_SELF_DEPTH", 1);
+        og_self_cap = og_env_int("OG_SELF_CAP", 6);
+        og_self_plies = og_env_int("OG_SELF_PLIES", 0);
+        og_self_win = og_env_int("OG_SELF_WIN", 1);
+        og_self_stage = og_env_int("OG_SELF_STAGE", 0);
+        og_self_leaf_cards = og_env_int("OG_SELF_LEAF_CARDS", -1);
+        og_self_leaf_budget = og_env_int("OG_SELF_LEAF_BUDGET", -1);
         og_void_mod = og_env_int("OG_VOID_MOD", 4);
         if (og_void_mod < 2) og_void_mod = 2;
         og_profile = og_env_int("OG_PROFILE", 0);
@@ -1733,6 +1764,7 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
             if (fast_path) {
                 cd_sim_from_game(world_sim, world);     // convert world ONCE
                 bool reply_stage = og_reply && stage >= og_reply_stage;
+                bool self_stage = og_self && stage >= og_self_stage;
                 for (int ci = 0; ci < C.n; ci++) {
                     if (!alive[ci]) continue;
                     *trial_sim = *world_sim;            // cheap struct copy
@@ -1741,6 +1773,16 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
                     if (!cd_sim_apply_root_move(trial_sim, bot_idx,
                                                 &moves->moves[C.idx[ci]])) {
                         fp = g->num_players;
+                    } else if (self_stage) {
+                        int slc = og_self_leaf_cards >= 0 ? og_self_leaf_cards
+                                : (og_bbleaf_on ? og_bbleaf_cards_eff : 0);
+                        long slb = og_self_leaf_budget >= 0 ? og_self_leaf_budget
+                                 : og_bbleaf_budget;
+                        fp = cd_sim_playout_self(trial_sim, bot_idx, 600,
+                                                 slc, slb, og_polmap,
+                                                 og_self_depth, og_self_cap,
+                                                 og_self_plies, og_self_win);
+                        if (fp == 0) fp = g->num_players;
                     } else if (reply_stage) {
                         fp = cd_sim_playout_reply(trial_sim, bot_idx, 600,
                                                   og_bbleaf_on ? og_bbleaf_cards_eff : 0,
@@ -1879,5 +1921,24 @@ int octogen_oracle_strategy_choose(const Game *g, int bot_idx,
     og_oracle = 1;
     int r = octogen_strategy_choose(g, bot_idx, moves, ctx);
     og_oracle = 0;
+    return r;
+}
+
+// octogen_self: octogen with ITSELF (approximated) as the rollout policy —
+// the "infinite oracle" recursion, hunt 5 (OG_SELF_* knobs; see
+// cd_sim_playout_self in cordite_sim.c and OCTOGEN.md). Research-only: the
+// nested tournament multiplies playout cost by ~(cap x plies)^depth, and
+// inside a determinized world the recursion limit is perfect full-info play
+// of that world — the opponent model CORDITE.md's leaf study and the OG_REPLY
+// hunt both measured as worse than modeling the real, imperfect opponent.
+// A separate strategy id (not an env gate on octogen) so the paired
+// --control harness can run it against plain octogen in one process.
+// Requires the fast bitboard path (the default; OG_NO_FASTROLL/OG_LEAF/
+// OG_DIFFTEST silently fall back to the plain rollout).
+int octogen_self_strategy_choose(const Game *g, int bot_idx,
+                                 const LegalMoves *moves, void *ctx) {
+    og_self = 1;
+    int r = octogen_strategy_choose(g, bot_idx, moves, ctx);
+    og_self = 0;
     return r;
 }

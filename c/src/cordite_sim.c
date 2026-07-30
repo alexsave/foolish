@@ -2157,6 +2157,190 @@ int cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
                               leaf_cards, leaf_budget, pol);
 }
 
+// ---------- self-rollout playout (octogen as its own rollout policy) ------
+// The "infinite oracle" recursion (OCTOGEN.md hunt 5): instead of the fixed
+// handwritten policy, EVERY seat inside the sampled world deliberates like the
+// outer MC bot — a tournament over its full legal move set, each candidate
+// evaluated by a playout one recursion level down (depth 0 = the plain policy
+// playout). Base cases: the immediate-win check ("does this move let me win"
+// — a move that eliminates the actor on the spot is taken without search),
+// the existing exact bitboard leaf solve, and the handwritten policy when
+// depth or plies run out. NOTE the honest framing: inside a fully
+// determinized world an information-set player has nothing left to sample,
+// so this recursion converges (in depth/cap/plies) to perfect FULL-
+// INFORMATION play of the world, not to "octogen all the way down" — see
+// OCTOGEN.md for why that limit is a worse opponent model, measured.
+//
+// Cost is O((cap x plies)^depth) playouts per rollout — research-only, native
+// harness only. cap == 0 is the base-case-only ablation: pure policy play
+// plus the immediate-win override at zero tournament cost.
+
+static int self_step(SimState *s, int actor, int max_turns,
+                     int leaf_cards, long leaf_budget, const uint8_t *pol,
+                     int depth, int cap, int nest_plies, int win_check);
+
+int cd_sim_playout_self(SimState *s, int my_idx, int max_turns,
+                        int leaf_cards, long leaf_budget, const uint8_t *pol,
+                        int depth, int cap, int nest_plies, int win_check) {
+    if (depth <= 0)
+        return cd_sim_playout_pol(s, my_idx, max_turns, 1,
+                                  leaf_cards, leaf_budget, pol);
+    int turns = 0;
+    int leaf_tried = 0;
+    while (sim_done(s) < 0 && turns++ < max_turns) {
+        // Early exit: my finish is decided the moment I'm out (the same
+        // semantics as cd_sim_playout_pol's early_exit).
+        if (s->status_p[my_idx] != PLAYER_STATUS_IN) {
+            for (int i = 0; i < s->num_eliminated; i++)
+                if (s->elim_order[i] == my_idx) return i + 1;
+            break;
+        }
+        // Exact leaf endgames, same gate as cd_sim_playout_pol: without this
+        // the searched traversal would keep tournamenting through positions
+        // the solver can terminate exactly (and the cap==0 base-case mode
+        // would silently LOSE the baseline's leaf behavior).
+        if (leaf_cards > 0 && !leaf_tried && s->deck_n == 0 && !s->has_flipped) {
+            int a = -1, b = -1;
+            for (int i = 0; i < s->num_players; i++) {
+                if (s->status_p[i] != PLAYER_STATUS_IN) continue;
+                if (a < 0) a = i; else if (b < 0) b = i; else { b = -2; break; }
+            }
+            if (a >= 0 && b >= 0) {
+                int total = __builtin_popcountll(s->hand[a])
+                          + __builtin_popcountll(s->hand[b]);
+                for (int i = 0; i < s->num_battles; i++)
+                    total += 1 + ((s->covered_mask >> i) & 1);
+                if (total <= leaf_cards) {
+                    leaf_tried = 1;
+                    int aborted = 0;
+                    long budget = leaf_budget;
+                    int v = cd_sim_solve_d(s, a, -1, 1, &budget, 0, &aborted);
+                    if (!aborted && v != 0) {
+                        int loser = (v < 0) ? a : b;
+                        int np = s->num_players;
+                        if (my_idx == loser) return np;
+                        if (my_idx == a || my_idx == b) return np - 1;
+                        for (int i = 0; i < s->num_eliminated; i++)
+                            if (s->elim_order[i] == my_idx) return i + 1;
+                        return np - 1;
+                    }
+                }
+            }
+        }
+        // Ply budget for THIS playout level spent: policy-finish the rest.
+        if (nest_plies > 0 && turns > nest_plies)
+            return cd_sim_playout_pol(s, my_idx, max_turns - turns, 1,
+                                      leaf_cards, leaf_budget, pol);
+        int actor = -1;
+        for (int pi = 0; pi < s->num_players; pi++)
+            if (sim_should_act(s, pi)) { actor = pi; break; }
+        if (actor < 0) break;
+        if (!self_step(s, actor, max_turns, leaf_cards, leaf_budget, pol,
+                       depth, cap, nest_plies, win_check)) {
+            // Nothing searchable (or cap==0 with no immediate win): one
+            // policy step keeps the playout moving, mirroring the reply
+            // tournament's fallback.
+            SimMove m;
+            int got = (pol && pol[actor] == CD_POL_LOOSE)
+                    ? sim_loose_move(s, actor, &m)
+                    : (pol && pol[actor] == CD_POL_MCDEF)
+                    ? sim_mcdef_move(s, actor, &m)
+                    : sim_handwritten_move(s, actor, &m);
+            if (!got) break;
+            sim_apply(s, actor, &m);
+        }
+    }
+    if (sim_done(s) < 0) return 0;
+    for (int i = 0; i < s->num_eliminated; i++)
+        if (s->elim_order[i] == my_idx) return i + 1;
+    return s->num_players;
+}
+
+// One searched in-world decision: returns 1 when a move was chosen AND
+// applied, 0 to let the caller fall back to a plain policy step.
+static int self_step(SimState *s, int actor, int max_turns,
+                     int leaf_cards, long leaf_budget, const uint8_t *pol,
+                     int depth, int cap, int nest_plies, int win_check) {
+    // Eliminations only happen with the stock exhausted (refill blocks them
+    // otherwise), so the win base case is dead until then; with cap == 0
+    // there is nothing else to do here either.
+    int deck_dead = (s->deck_n == 0 && !s->has_flipped);
+    if (cap <= 0 && !(win_check && deck_dead)) return 0;
+
+    SolMove buf[CD_SIM_SOLVE_MAX_MOVES];
+    int n = sim_gen_moves(s, actor, buf, CD_SIM_SOLVE_MAX_MOVES);
+    if (n <= 0) return 0;
+
+    uint32_t rng0 = game_rng_get();
+
+    // Base case ("does this move let me win"): a move that immediately
+    // eliminates the actor is the best possible outcome for them — take it
+    // without any search. Escapes fire on round-ending covers/goods and on
+    // stock-exhausted attacks/passes (sim_apply_* handle elimination).
+    if (win_check && deck_dead) {
+        for (int i = 0; i < n; i++) {
+            SimState trial = *s;
+            game_rng_set(rng0);
+            sim_apply_sol(&trial, actor, &buf[i]);
+            if (trial.status_p[actor] != PLAYER_STATUS_IN) {
+                game_rng_set(rng0);
+                sim_apply_sol(s, actor, &buf[i]);
+                return 1;
+            }
+        }
+        game_rng_set(rng0);
+    }
+    if (cap <= 0) return 0;   // base-case-only mode: policy plays the ply
+    if (n == 1) { sim_apply_sol(s, actor, &buf[0]); return 1; }
+
+    // Rank cheap-first and search the top `cap`; PICKUP and GOOD (which rank
+    // last) are always searched — the reply-tournament lesson: "just take
+    // the cards" must never be pruned by a large cover-combination set.
+    int order[CD_SIM_SOLVE_MAX_MOVES];
+    double key[CD_SIM_SOLVE_MAX_MOVES];
+    for (int i = 0; i < n; i++) {
+        order[i] = i;
+        key[i] = sol_rank_key(&buf[i], s->power_suit);
+    }
+    for (int i = 1; i < n; i++) {   // insertion sort, small n
+        int oi = order[i]; double ki = key[oi];
+        int j = i - 1;
+        while (j >= 0 && key[order[j]] > ki) { order[j+1] = order[j]; j--; }
+        order[j+1] = oi;
+    }
+    int kept_idx[CD_SIM_SOLVE_MAX_MOVES];
+    int kept = 0;
+    for (int k = 0; k < n && kept < cap; k++) {
+        uint8_t t = buf[order[k]].type;
+        if (t == MV_PICKUP || t == MV_GOOD) continue;   // added below
+        kept_idx[kept++] = order[k];
+    }
+    for (int i = 0; i < n; i++) {
+        uint8_t t = buf[i].type;
+        if (t == MV_PICKUP || t == MV_GOOD) kept_idx[kept++] = i;
+    }
+
+    // Tournament: each kept move evaluated by a depth-1 self playout from
+    // the ACTOR's perspective (max^n — every seat plays for itself). CRN
+    // across candidates; strict < keeps the cheapest-ranked move on ties.
+    int best_idx = -1;
+    int best_pos = 1 << 20;
+    for (int k = 0; k < kept; k++) {
+        SimState trial = *s;
+        game_rng_set(rng0);
+        sim_apply_sol(&trial, actor, &buf[kept_idx[k]]);
+        int ap = cd_sim_playout_self(&trial, actor, max_turns, leaf_cards,
+                                     leaf_budget, pol, depth - 1, cap,
+                                     nest_plies, win_check);
+        if (ap == 0) continue;   // unterminated playout: skip
+        if (ap < best_pos) { best_pos = ap; best_idx = kept_idx[k]; }
+    }
+    if (best_idx < 0) return 0;   // every trial failed: policy fallback
+    game_rng_set(rng0);
+    sim_apply_sol(s, actor, &buf[best_idx]);
+    return 1;
+}
+
 // As cd_sim_playout, but resolves small 2-player deck-empty endgames exactly
 // with the bitboard solver instead of finishing them with policy play (one
 // attempt per playout; a failed solve falls back to the policy for good).

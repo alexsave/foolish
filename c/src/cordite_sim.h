@@ -118,6 +118,20 @@ int  cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
                           int leaf_cards, long leaf_budget,
                           const uint8_t *pol, int reply_cap);
 
+// Self-rollout playout (octogen-as-its-own-rollout-policy research lever,
+// OG_SELF_* / the octogen_self strategy — OCTOGEN.md hunt 5): every in-world
+// decision, all seats, up to `nest_plies` plies per playout level (0 = all),
+// is chosen by a nested tournament — full legal enumeration, cheap-first
+// ranked, top `cap` searched (PICKUP/GOOD always kept), each evaluated by a
+// depth-1 self playout; the actor takes the best finish FOR THEM (max^n).
+// depth 0 = the plain policy playout. `win_check` short-circuits with any
+// move that immediately eliminates the actor ("does this move let me win").
+// cap == 0: base-case-only — policy play plus the win_check override.
+// Cost O((cap x plies)^depth) playouts per rollout; research/native only.
+int  cd_sim_playout_self(SimState *s, int my_idx, int max_turns,
+                         int leaf_cards, long leaf_budget, const uint8_t *pol,
+                         int depth, int cap, int nest_plies, int win_check);
+
 // Exact 2-player deck-empty endgame solver on the bitboard state. Returns the
 // value of position `s` from `me`'s perspective in [-1000,1000] (positive = me
 // escapes, magnitude prefers faster wins / slower losses), identical to the
