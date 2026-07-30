@@ -2231,24 +2231,33 @@ int cd_sim_playout_self(SimState *s, int my_idx, int max_turns,
         if (nest_plies > 0 && turns > nest_plies)
             return cd_sim_playout_pol(s, my_idx, max_turns - turns, 1,
                                       leaf_cards, leaf_budget, pol);
-        int actor = -1;
-        for (int pi = 0; pi < s->num_players; pi++)
-            if (sim_should_act(s, pi)) { actor = pi; break; }
-        if (actor < 0) break;
-        if (!self_step(s, actor, max_turns, leaf_cards, leaf_budget, pol,
-                       depth, cap, nest_plies, win_check)) {
+        // Same eligible-seat scan as cd_sim_playout_pol, INCLUDING trying
+        // the next seat when neither search nor policy produce a move —
+        // ending the playout there instead would score the world worst-place
+        // for the hero only, the exact class of rare anti-hero harness
+        // artifact hunt 4 was burned by.
+        int acted = 0;
+        for (int pi = 0; pi < s->num_players; pi++) {
+            if (!sim_should_act(s, pi)) continue;
+            if (self_step(s, pi, max_turns, leaf_cards, leaf_budget, pol,
+                          depth, cap, nest_plies, win_check)) {
+                acted = 1;
+                break;
+            }
             // Nothing searchable (or cap==0 with no immediate win): one
-            // policy step keeps the playout moving, mirroring the reply
-            // tournament's fallback.
+            // policy step keeps the playout moving.
             SimMove m;
-            int got = (pol && pol[actor] == CD_POL_LOOSE)
-                    ? sim_loose_move(s, actor, &m)
-                    : (pol && pol[actor] == CD_POL_MCDEF)
-                    ? sim_mcdef_move(s, actor, &m)
-                    : sim_handwritten_move(s, actor, &m);
-            if (!got) break;
-            sim_apply(s, actor, &m);
+            int got = (pol && pol[pi] == CD_POL_LOOSE)
+                    ? sim_loose_move(s, pi, &m)
+                    : (pol && pol[pi] == CD_POL_MCDEF)
+                    ? sim_mcdef_move(s, pi, &m)
+                    : sim_handwritten_move(s, pi, &m);
+            if (!got) continue;
+            sim_apply(s, pi, &m);
+            acted = 1;
+            break;
         }
+        if (!acted) break;
     }
     if (sim_done(s) < 0) return 0;
     for (int i = 0; i < s->num_eliminated; i++)
