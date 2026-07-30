@@ -65,6 +65,27 @@ ever paid; opponent-model refinements of an already-close policy wash out.
 A qualitatively stronger successor needs a different architecture (learned
 information-set values or true information-set search).
 
+## Hunt 5: octogen as its own rollout policy (the "infinite oracle" recursion)
+
+Asked and answered (docs/OCTOGEN_SELF_ROLLOUT.md has the full argument,
+costs, and reproduction): replace the handwritten rollout policy with
+octogen itself, recursively, base case "does this move let me win?" — is
+that the strongest possible bot on unlimited compute? **No.** Implemented as
+`octogen_self`/`ogs` (`cd_sim_playout_self`: every in-world seat runs a
+nested cheap-first tournament over its full legal set, evaluated by
+playouts one recursion level down; base cases = immediate-win check, the
+exact leaf, handwritten at depth 0). Inside a determinized world a
+recursive octogen has nothing left to sample, so the recursion limit is
+perfect FULL-INFORMATION play of the world — the opponent-model regime
+already measured harmful by CD_LEAF (10x slower AND weaker) and OG_REPLY
+(paranoid distortion), and reachable far cheaper via the solver than via
+nesting. Measured here: memory flat at every depth (~4.3 MB RSS — the
+recursion is O(depth) SimStates); wall-clock ~(cap x plies)^depth (full
+depth-1 ~70x, projected full depth-2 ~5,000x); strength XXX-HUNT5-RESULT.
+Knobs: `OG_SELF_DEPTH/CAP/PLIES/WIN/STAGE`, `OG_SELF_LEAF_CARDS/BUDGET`
+(engage only through the `octogen_self` strategy id, so paired runs hold
+plain octogen in-process).
+
 ## Knobs (`OG_*`, octogen only)
 
 - `OG_SOLVE_CARDS` (28) / `OG_BB_WIN` (400k) / `OG_BB_AVOID` (250k) — the
