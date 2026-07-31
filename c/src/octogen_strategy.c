@@ -148,6 +148,16 @@ static _Thread_local int og_self_stage = 0;
 // understates the real continuation) while keeping the measured-good
 // opponent model. The one axis none of the hunt-4 levers covered.
 static _Thread_local int og_self_own = 0;
+// OG_SELF_HONEST=M (default 0, needs OG_SELF_OWN): the future self chooses
+// on its BELIEF, not on the world's hidden truth. Its in-world tournaments
+// evaluate each candidate on M re-determinizations of the cards it cannot
+// see — root pins/voids/floors carried forward, plus everything the rollout
+// prefix revealed (public pickups stay known; a seat's constraints expire
+// when it draws) — and the argmax is taken on the average; the chosen move
+// then applies to the true world. Removes the future self's clairvoyance
+// (strategy-fusion leak) at M x the own-seat cost.
+static _Thread_local int og_self_honest = 0;
+static _Thread_local CdSelfRootBelief og_self_rb;
 // OG_SELF_LEAF_CARDS / OG_SELF_LEAF_BUDGET (-1 = inherit the bbleaf
 // defaults): hero-only override of the in-rollout exact-leaf threshold, so
 // the recursion LIMIT (perfect in-world endgame play) can be probed directly
@@ -1613,6 +1623,7 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
         og_self_leaf_cards = og_env_int("OG_SELF_LEAF_CARDS", -1);
         og_self_leaf_budget = og_env_int("OG_SELF_LEAF_BUDGET", -1);
         og_self_own = og_env_int("OG_SELF_OWN", 0);
+        og_self_honest = og_env_int("OG_SELF_HONEST", 0);
         og_void_mod = og_env_int("OG_VOID_MOD", 4);
         if (og_void_mod < 2) og_void_mod = 2;
         og_profile = og_env_int("OG_PROFILE", 0);
@@ -1752,6 +1763,34 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
     // the exact-equivalence difftest.
     bool fast_path = !og_no_fastroll && og_no_leaf && !og_difftest && !og_flag("OG_NO_WORLDSIM");
 
+    // Honest future self (OG_SELF_HONEST + OG_SELF_OWN): hand the sim the
+    // ROOT belief in card-id mask form, so the in-world future self starts
+    // from exactly what we know NOW and accretes only what each rollout
+    // prefix legitimately reveals. pinned = publicly located cards;
+    // forbid = void/floor-excluded ids (trust-filtered by og_build_belief).
+    if (fast_path && og_self && og_self_own && og_self_honest > 0) {
+        for (int p = 0; p < MAX_PLAYERS; p++) {
+            og_self_rb.pinned[p] = 0;
+            og_self_rb.forbid[p] = 0;
+        }
+        for (int p = 0; p < g->num_players; p++) {
+            if (p == bot_idx) continue;
+            for (int k = 0; k < B.pinned_n[p]; k++) {
+                int id = (int)B.pinned[p][k].suit * 13 + (B.pinned[p][k].value - 1);
+                if (id >= 0 && id < 52) og_self_rb.pinned[p] |= 1ull << id;
+            }
+            for (int id = 0; id < 52; id++) {
+                Card c;
+                c.suit = (int8_t)(id / 13);
+                c.value = (int8_t)(id % 13 + 1);
+                bool bad = og_void_forbidden(&B, g, p, c)
+                        || og_floor_forbidden(&B, g, p, c);
+                if (bad) og_self_rb.forbid[p] |= 1ull << id;
+            }
+        }
+        cd_sim_set_self_belief(&og_self_rb, og_self_honest);
+    }
+
     // Stage 1: all candidates on W1 shared worlds.
     // Stage 2: surviving third on W2 more shared worlds.
     // Stage 3: top 2 duel on W3 final shared worlds.
@@ -1856,6 +1895,10 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
             }
         }
     }
+
+    // Honest-future-self belief must not leak into other strategies on this
+    // thread (paired harnesses run the control bot in-process).
+    cd_sim_set_self_belief(NULL, 0);
 
     int best = -1;
     double best_v = 1e30;

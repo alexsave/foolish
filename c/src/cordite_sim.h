@@ -136,6 +136,34 @@ int  cd_sim_playout_self(SimState *s, int my_idx, int max_turns,
                          int depth, int cap, int nest_plies, int win_check,
                          int only_seat);
 
+// Root-belief masks for the HONEST future self (cd_sim_set_self_belief):
+// pinned[p] = card ids publicly located in p's hand at the ROOT decision;
+// forbid[p] = ids the root belief says p cannot hold (void + floor
+// constraints, already trust-filtered). Both in sim id space
+// (id = suit*13 + value-1).
+typedef struct {
+    uint64_t pinned[MAX_PLAYERS];
+    uint64_t forbid[MAX_PLAYERS];
+} CdSelfRootBelief;
+
+// Honest-future-self mode for cd_sim_playout_self (research: the
+// belief-consistent "octogen as our own future" — OG_SELF_HONEST):
+// samples > 0 turns every searched OWN decision into a belief-consistent
+// tournament. Future-self's information set at a rollout ply = own hand +
+// public state + root pins/forbids carried forward + everything the prefix
+// revealed (cards publicly picked up stay known; root constraints on a seat
+// expire when it draws unknown cards, mirroring og_build_belief). Each
+// candidate is evaluated on `samples` re-determinizations of the cards
+// future-self cannot see (opponent unknowns + deck re-partitioned, counts
+// kept, forbids respected best-effort), and the argmax is taken on the
+// AVERAGE — the choice is measurable w.r.t. future-self's information, not
+// the world's hidden truth. The chosen move is then applied to the TRUE
+// world state, which keeps unfolding on the actual hands (choose on belief,
+// live in truth). belief may be NULL (= no root pins/forbids).
+// samples == 0 restores the clairvoyant tournament. Reset per playout batch:
+// the prefix-derived state is rebuilt at each playout entry.
+void cd_sim_set_self_belief(const CdSelfRootBelief *belief, int samples);
+
 // Exact 2-player deck-empty endgame solver on the bitboard state. Returns the
 // value of position `s` from `me`'s perspective in [-1000,1000] (positive = me
 // escapes, magnitude prefers faster wins / slower losses), identical to the

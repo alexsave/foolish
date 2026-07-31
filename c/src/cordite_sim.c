@@ -2175,10 +2175,127 @@ int cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
 // harness only. cap == 0 is the base-case-only ablation: pure policy play
 // plus the immediate-win override at zero tournament cost.
 
+// ----- honest future self (OG_SELF_HONEST): belief tracking + re-deal -----
+// Future-self's evolving information about hidden cards during ONE playout:
+// seen[p]   = cards p publicly acquired in the rollout prefix (pickups) and
+//             still holds — future-self watched them go in;
+// forbid[p] = live root void/floor constraints on p, expiring the moment p
+//             draws unknown cards (og_build_belief's own expiry rule);
+// prev_hand = last ply's hands, to classify gains as pickup vs draw.
+typedef struct {
+    uint64_t seen[MAX_PLAYERS];
+    uint64_t forbid[MAX_PLAYERS];
+    uint64_t prev_hand[MAX_PLAYERS];
+} SelfTrack;
+
+static _Thread_local const CdSelfRootBelief *self_root_belief = NULL;
+static _Thread_local int self_honest_samples = 0;
+static _Thread_local int self_in_playout = 0;   // top-level guard (recursion)
+
+void cd_sim_set_self_belief(const CdSelfRootBelief *belief, int samples) {
+    self_root_belief = belief;
+    self_honest_samples = belief ? samples : 0;
+}
+
+static inline uint64_t self_table_mask(const SimState *s) {
+    uint64_t m = 0;
+    for (int i = 0; i < s->num_battles; i++) {
+        m |= 1ull << s->atk[i];
+        if (s->covered_mask & (1ull << i)) m |= 1ull << s->def[i];
+    }
+    return m;
+}
+
+static inline uint64_t self_rng_next(uint64_t *st) {
+    *st = *st * 6364136223846793005ULL + 1442695040888963407ULL;
+    return *st >> 17;
+}
+
+// Re-deal the cards future-self cannot see: opponents' unknown hand cards and
+// the deck are pooled and re-partitioned (counts preserved, known cards kept
+// in place, forbid[] respected best-effort). Own hand, table, flip, and all
+// public state are untouched. The result is one belief-consistent sample of
+// "worlds I could be in", from future-self's information set.
+static void self_redet(SimState *dst, const SimState *src, int me,
+                       const SelfTrack *tk, uint64_t *rng) {
+    *dst = *src;
+    uint8_t pool[64];
+    int pn = 0;
+    uint64_t known[MAX_PLAYERS];
+    int need[MAX_PLAYERS];
+    for (int p = 0; p < src->num_players; p++) {
+        known[p] = 0; need[p] = 0;
+        if (p == me || src->status_p[p] != PLAYER_STATUS_IN) continue;
+        uint64_t rp = self_root_belief ? self_root_belief->pinned[p] : 0;
+        known[p] = (rp | tk->seen[p]) & src->hand[p];
+        uint64_t unk = src->hand[p] & ~known[p];
+        need[p] = __builtin_popcountll(unk);
+        while (unk) { pool[pn++] = (uint8_t)ctz64(unk); unk &= unk - 1; }
+    }
+    for (int i = 0; i < src->deck_n; i++) pool[pn++] = src->deck[i];
+    // Fisher-Yates the pool, then deal: each opponent takes need[p] cards,
+    // preferring non-forbidden ones (linear probe from a random start; if
+    // every remaining card is forbidden, take one anyway — best-effort).
+    for (int i = pn - 1; i > 0; i--) {
+        int j = (int)(self_rng_next(rng) % (uint64_t)(i + 1));
+        uint8_t t = pool[i]; pool[i] = pool[j]; pool[j] = t;
+    }
+    int taken[64] = {0};
+    int left = pn;
+    for (int p = 0; p < src->num_players; p++) {
+        if (need[p] == 0) continue;
+        uint64_t h = known[p];
+        for (int k = 0; k < need[p]; k++) {
+            int pick = -1;
+            for (int off = 0; off < pn; off++) {
+                int i = off;
+                if (taken[i]) continue;
+                if (!(tk->forbid[p] >> pool[i] & 1ull)) { pick = i; break; }
+                if (pick < 0) pick = i;   // fallback: first free (forbidden)
+            }
+            // prefer a non-forbidden card anywhere in the pool; the loop
+            // above already returns the first non-forbidden free slot and
+            // falls back to the first free slot if none exists
+            if (pick < 0) break;
+            taken[pick] = 1; left--;
+            h |= 1ull << pool[pick];
+        }
+        dst->hand[p] = h;
+    }
+    dst->deck_n = 0;
+    for (int i = 0; i < pn; i++)
+        if (!taken[i]) dst->deck[dst->deck_n++] = pool[i];
+    dst->deck_count = dst->deck_n;
+    (void)left;
+}
+
+// Post-ply belief update: classify each opponent's hand gains. Cards that
+// came off the table (pickup) become known; unknown gains are deck draws,
+// which expire that seat's root constraints (the belief's own rule). Cards
+// played simply fall out via the &-with-hand at use time.
+static void self_track_ply(SelfTrack *tk, const SimState *s, int me,
+                           uint64_t pre_table) {
+    for (int p = 0; p < s->num_players; p++) {
+        if (p == me) { tk->prev_hand[p] = s->hand[p]; continue; }
+        uint64_t gained = s->hand[p] & ~tk->prev_hand[p];
+        if (gained) {
+            tk->seen[p] |= gained & pre_table;
+            if (gained & ~pre_table) tk->forbid[p] = 0;
+        }
+        tk->seen[p] &= s->hand[p];
+        tk->prev_hand[p] = s->hand[p];
+    }
+}
+
 static int self_step(SimState *s, int actor, int max_turns,
                      int leaf_cards, long leaf_budget, const uint8_t *pol,
                      int depth, int cap, int nest_plies, int win_check,
-                     int only_seat);
+                     int only_seat, SelfTrack *tk);
+
+static int self_playout_run(SimState *s, int my_idx, int max_turns,
+                            int leaf_cards, long leaf_budget, const uint8_t *pol,
+                            int depth, int cap, int nest_plies, int win_check,
+                            int only_seat, SelfTrack *tk);
 
 int cd_sim_playout_self(SimState *s, int my_idx, int max_turns,
                         int leaf_cards, long leaf_budget, const uint8_t *pol,
@@ -2187,6 +2304,32 @@ int cd_sim_playout_self(SimState *s, int my_idx, int max_turns,
     if (depth <= 0)
         return cd_sim_playout_pol(s, my_idx, max_turns, 1,
                                   leaf_cards, leaf_budget, pol);
+    // Honest mode engages at the TOP playout level only (tournament
+    // evaluations run clairvoyant one level down — they are hypotheticals
+    // inside one belief sample, not places to nest more re-dealing).
+    if (self_honest_samples > 0 && only_seat >= 0 && !self_in_playout) {
+        SelfTrack tk;
+        for (int p = 0; p < MAX_PLAYERS; p++) {
+            tk.seen[p] = 0;
+            tk.forbid[p] = self_root_belief ? self_root_belief->forbid[p] : 0;
+            tk.prev_hand[p] = s->hand[p];
+        }
+        self_in_playout = 1;
+        int r = self_playout_run(s, my_idx, max_turns, leaf_cards, leaf_budget,
+                                 pol, depth, cap, nest_plies, win_check,
+                                 only_seat, &tk);
+        self_in_playout = 0;
+        return r;
+    }
+    return self_playout_run(s, my_idx, max_turns, leaf_cards, leaf_budget,
+                            pol, depth, cap, nest_plies, win_check,
+                            only_seat, NULL);
+}
+
+static int self_playout_run(SimState *s, int my_idx, int max_turns,
+                            int leaf_cards, long leaf_budget, const uint8_t *pol,
+                            int depth, int cap, int nest_plies, int win_check,
+                            int only_seat, SelfTrack *tk) {
     int turns = 0;
     int leaf_tried = 0;
     while (sim_done(s) < 0 && turns++ < max_turns) {
@@ -2238,6 +2381,7 @@ int cd_sim_playout_self(SimState *s, int my_idx, int max_turns,
         // ending the playout there instead would score the world worst-place
         // for the hero only, the exact class of rare anti-hero harness
         // artifact hunt 4 was burned by.
+        uint64_t pre_table = tk ? self_table_mask(s) : 0;
         int acted = 0;
         for (int pi = 0; pi < s->num_players; pi++) {
             if (!sim_should_act(s, pi)) continue;
@@ -2247,7 +2391,8 @@ int cd_sim_playout_self(SimState *s, int my_idx, int max_turns,
             // fall straight through to the policy step.
             if ((only_seat < 0 || pi == only_seat)
                 && self_step(s, pi, max_turns, leaf_cards, leaf_budget, pol,
-                             depth, cap, nest_plies, win_check, only_seat)) {
+                             depth, cap, nest_plies, win_check, only_seat,
+                             tk)) {
                 acted = 1;
                 break;
             }
@@ -2265,6 +2410,10 @@ int cd_sim_playout_self(SimState *s, int my_idx, int max_turns,
             break;
         }
         if (!acted) break;
+        // Belief bookkeeping for the honest future self: pickups off the
+        // pre-move table become known cards; unknown gains are draws and
+        // expire that seat's root constraints.
+        if (tk) self_track_ply(tk, s, my_idx, pre_table);
     }
     if (sim_done(s) < 0) return 0;
     for (int i = 0; i < s->num_eliminated; i++)
@@ -2277,7 +2426,7 @@ int cd_sim_playout_self(SimState *s, int my_idx, int max_turns,
 static int self_step(SimState *s, int actor, int max_turns,
                      int leaf_cards, long leaf_budget, const uint8_t *pol,
                      int depth, int cap, int nest_plies, int win_check,
-                     int only_seat) {
+                     int only_seat, SelfTrack *tk) {
     // Eliminations only happen with the stock exhausted (refill blocks them
     // otherwise), so the win base case is dead until then; with cap == 0
     // there is nothing else to do here either.
@@ -2335,6 +2484,44 @@ static int self_step(SimState *s, int actor, int max_turns,
     for (int i = 0; i < n; i++) {
         uint8_t t = buf[i].type;
         if (t == MV_PICKUP || t == MV_GOOD) kept_idx[kept++] = i;
+    }
+
+    // HONEST tournament (OG_SELF_HONEST, tk != NULL): the choice must be
+    // measurable w.r.t. future-self's information, not the world's hidden
+    // truth. Each candidate is evaluated on `self_honest_samples`
+    // re-determinizations of the unseen cards (root belief carried forward
+    // + prefix-derived knowledge, see SelfTrack) and the argmax is taken on
+    // the AVERAGE; the chosen move is then applied to the TRUE state —
+    // choose on belief, live in truth. CRN: same rng0 for every
+    // (sample x candidate) trial, and the re-deal RNG derives from rng0, so
+    // outer-root candidates still share their random numbers.
+    if (tk && self_honest_samples > 0) {
+        uint64_t hrng = ((uint64_t)rng0 << 32)
+                      ^ (0x9E3779B97F4A7C15ULL + s->hand[actor]);
+        double hsum[CD_SIM_SOLVE_MAX_MOVES];
+        for (int k = 0; k < kept; k++) hsum[k] = 0.0;
+        for (int m = 0; m < self_honest_samples; m++) {
+            SimState redet;
+            self_redet(&redet, s, actor, tk, &hrng);
+            for (int k = 0; k < kept; k++) {
+                SimState trial = redet;
+                game_rng_set(rng0);
+                sim_apply_sol(&trial, actor, &buf[kept_idx[k]]);
+                int ap = cd_sim_playout_self(&trial, actor, max_turns,
+                                             leaf_cards, leaf_budget, pol,
+                                             depth - 1, cap, nest_plies,
+                                             win_check, only_seat);
+                hsum[k] += (double)(ap ? ap : trial.num_players);
+            }
+        }
+        int best_k = -1;
+        double best_v = 1e30;
+        for (int k = 0; k < kept; k++)
+            if (hsum[k] < best_v) { best_v = hsum[k]; best_k = kept_idx[k]; }
+        if (best_k < 0) return 0;
+        game_rng_set(rng0);
+        sim_apply_sol(s, actor, &buf[best_k]);
+        return 1;
     }
 
     // Tournament: each kept move evaluated by a depth-1 self playout from
