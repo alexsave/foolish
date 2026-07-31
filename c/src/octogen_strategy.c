@@ -158,6 +158,22 @@ static _Thread_local int og_self_own = 0;
 // (strategy-fusion leak) at M x the own-seat cost.
 static _Thread_local int og_self_honest = 0;
 static _Thread_local CdSelfRootBelief og_self_rb;
+// OG_SELF_TT (default 0 = off; else log2 table entries, e.g. 22 = 128 MB per
+// thread): transposition cache over searched in-world decisions — the
+// "cache many many states" leg of the infinite-oracle recursion. Generation
+// bumped per root decision so cache warmth never couples paired games.
+// OG_SELF_TT_STATS=1 prints main-thread probe/hit counts at exit (use
+// OMP_NUM_THREADS=1 for meaningful numbers).
+static _Thread_local int og_self_tt = 0;
+
+#ifndef CD_WASM_OVERLAY
+static void og_self_tt_report(void) {
+    long probes = 0, hits = 0;
+    cd_sim_self_tt_stats(&probes, &hits);
+    fprintf(stderr, "[og_self_tt] main-thread probes=%ld hits=%ld (%.1f%%)\n",
+            probes, hits, probes ? 100.0 * hits / probes : 0.0);
+}
+#endif
 // OG_SELF_LEAF_CARDS / OG_SELF_LEAF_BUDGET (-1 = inherit the bbleaf
 // defaults): hero-only override of the in-rollout exact-leaf threshold, so
 // the recursion LIMIT (perfect in-world endgame play) can be probed directly
@@ -1624,6 +1640,11 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
         og_self_leaf_budget = og_env_int("OG_SELF_LEAF_BUDGET", -1);
         og_self_own = og_env_int("OG_SELF_OWN", 0);
         og_self_honest = og_env_int("OG_SELF_HONEST", 0);
+        og_self_tt = og_env_int("OG_SELF_TT", 0);
+#ifndef CD_WASM_OVERLAY
+        if (og_self_tt > 0 && og_env_int("OG_SELF_TT_STATS", 0))
+            atexit(og_self_tt_report);
+#endif
         og_void_mod = og_env_int("OG_VOID_MOD", 4);
         if (og_void_mod < 2) og_void_mod = 2;
         og_profile = og_env_int("OG_PROFILE", 0);
@@ -1768,6 +1789,11 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
     // from exactly what we know NOW and accretes only what each rollout
     // prefix legitimately reveals. pinned = publicly located cards;
     // forbid = void/floor-excluded ids (trust-filtered by og_build_belief).
+    // Per-decision generation bump for the self-rollout transposition cache
+    // (allocates lazily on first use; entries never survive a decision).
+    if (fast_path && og_self && og_self_tt > 0)
+        cd_sim_self_tt_config(og_self_tt);
+
     if (fast_path && og_self && og_self_own && og_self_honest > 0) {
         for (int p = 0; p < MAX_PLAYERS; p++) {
             og_self_rb.pinned[p] = 0;

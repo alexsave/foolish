@@ -164,6 +164,24 @@ typedef struct {
 // the prefix-derived state is rebuilt at each playout entry.
 void cd_sim_set_self_belief(const CdSelfRootBelief *belief, int samples);
 
+// Self-rollout transposition cache (OG_SELF_TT — the "cache many many
+// states" leg of the infinite-oracle idea): memoizes each searched in-world
+// decision (position fingerprint x actor x depth -> chosen move), so rollout
+// paths that transpose into the same state — increasingly common toward the
+// shrinking endgame — skip the whole nested tournament. Turns the
+// (cap x plies)^depth recursion TREE into a DAG. Approximation: a cached
+// argmax was computed under one RNG context and is reused in another
+// (deterministic policy-ization of the searched seat) — hence flag-guarded
+// and A/B tested, never assumed neutral. Clairvoyant tournaments only (an
+// honest-mode choice depends on the evolving belief, which is not in the
+// key). bits = log2 entries (e.g. 22 = 4M entries x 32 B = 128 MB per
+// thread); 0 disables. Each call bumps the generation, invalidating prior
+// entries WITHOUT a memset — call once per root decision so cache warmth
+// never couples paired games (the hunt-4 harness-bug lesson). Native
+// research builds only (stubbed under CD_WASM_OVERLAY).
+void cd_sim_self_tt_config(int bits);
+void cd_sim_self_tt_stats(long *probes, long *hits);
+
 // Exact 2-player deck-empty endgame solver on the bitboard state. Returns the
 // value of position `s` from `me`'s perspective in [-1000,1000] (positive = me
 // escapes, magnitude prefers faster wins / slower losses), identical to the

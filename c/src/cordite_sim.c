@@ -2197,6 +2197,101 @@ void cd_sim_set_self_belief(const CdSelfRootBelief *belief, int samples) {
     self_honest_samples = belief ? samples : 0;
 }
 
+// ----- self-rollout transposition cache (OG_SELF_TT) ----------------------
+// (state, actor, depth) -> the tournament's chosen move. See cordite_sim.h.
+// Entries carry a generation stamp; cd_sim_self_tt_config bumps it per root
+// decision, so stale entries die without a memset and cache warmth never
+// crosses a decision boundary (let alone a game — the hunt-4 lesson).
+#ifndef CD_WASM_OVERLAY
+#include <stdlib.h>
+typedef struct {
+    uint64_t key;
+    uint32_t gen;
+    SolMove  mv;
+} SelfTTEntry;
+static _Thread_local SelfTTEntry *self_tt = NULL;
+static _Thread_local int  self_tt_bits = 0;
+static _Thread_local uint32_t self_tt_gen = 0;
+static _Thread_local long self_tt_probes = 0, self_tt_hits = 0;
+
+void cd_sim_self_tt_config(int bits) {
+    if (bits <= 0) { self_tt_bits = 0; return; }
+    if (bits > 26) bits = 26;
+    if (!self_tt || self_tt_bits != bits) {
+        free(self_tt);
+        self_tt = calloc((size_t)1 << bits, sizeof(SelfTTEntry));
+        self_tt_bits = self_tt ? bits : 0;
+        self_tt_gen = 0;
+    }
+    self_tt_gen++;   // one generation per root decision
+    if (self_tt_gen == 0) {   // u32 wrap: flush for real
+        memset(self_tt, 0, ((size_t)1 << self_tt_bits) * sizeof(SelfTTEntry));
+        self_tt_gen = 1;
+    }
+}
+
+void cd_sim_self_tt_stats(long *probes, long *hits) {
+    if (probes) *probes = self_tt_probes;
+    if (hits)   *hits   = self_tt_hits;
+}
+
+static uint64_t self_tt_key(const SimState *s, int actor, int depth) {
+    uint64_t h = 0x9E3779B97F4A7C15ULL ^ ((uint64_t)actor << 1)
+               ^ ((uint64_t)depth << 8);
+    #define STT_MIX(v) do { h ^= (uint64_t)(v); h *= 0xFF51AFD7ED558CCDULL; \
+                            h ^= h >> 33; } while (0)
+    for (int p = 0; p < s->num_players; p++) STT_MIX(s->hand[p]);
+    STT_MIX((uint64_t)s->defender | ((uint64_t)s->first_attacker << 8)
+            | ((uint64_t)s->good_mask << 16));
+    STT_MIX((uint64_t)s->in_mask | ((uint64_t)s->num_battles << 32)
+            | ((uint64_t)s->num_eliminated << 40));
+    STT_MIX(s->covered_mask);
+    for (int i = 0; i < s->num_battles; i++)
+        STT_MIX((uint64_t)s->atk[i]
+                | ((uint64_t)((s->covered_mask >> i) & 1 ? s->def[i] : 0xFF) << 8)
+                | ((uint64_t)i << 16));
+    uint64_t deck_mask = 0;
+    for (int i = 0; i < s->deck_n; i++) deck_mask |= 1ull << s->deck[i];
+    STT_MIX(deck_mask);
+    STT_MIX((uint64_t)s->deck_n | ((uint64_t)s->has_flipped << 16)
+            | ((uint64_t)s->flipped_id << 24));
+    #undef STT_MIX
+    return h ? h : 1;
+}
+
+// Cheap legality re-check of a cached move against the live state — belt
+// and suspenders for the astronomically-unlikely 64-bit key collision.
+static int self_tt_move_ok(const SimState *s, int actor, const SolMove *m) {
+    switch (m->type) {
+        case MV_ATTACK: case MV_PASS:
+            for (int i = 0; i < m->n; i++)
+                if (!(s->hand[actor] >> m->cards[i] & 1ull)) return 0;
+            return 1;
+        case MV_COVER:
+            if (actor != s->defender) return 0;
+            for (int i = 0; i < m->n; i++) {
+                if (!(s->hand[actor] >> m->cards[i] & 1ull)) return 0;
+                if (m->battle[i] >= s->num_battles) return 0;
+                if (s->covered_mask & (1ull << m->battle[i])) return 0;
+            }
+            return 1;
+        case MV_PICKUP:
+            return actor == s->defender && s->num_battles > 0
+                && !sim_all_covered(s);
+        case MV_GOOD:
+            return actor != s->defender && s->num_battles > 0
+                && !(s->good_mask >> actor & 1u);
+        default: return 0;
+    }
+}
+#else
+void cd_sim_self_tt_config(int bits) { (void)bits; }
+void cd_sim_self_tt_stats(long *probes, long *hits) {
+    if (probes) *probes = 0;
+    if (hits) *hits = 0;
+}
+#endif
+
 static inline uint64_t self_table_mask(const SimState *s) {
     uint64_t m = 0;
     for (int i = 0; i < s->num_battles; i++) {
@@ -2459,6 +2554,27 @@ static int self_step(SimState *s, int actor, int max_turns,
     if (cap <= 0) return 0;   // base-case-only mode: policy plays the ply
     if (n == 1) { sim_apply_sol(s, actor, &buf[0]); return 1; }
 
+#ifndef CD_WASM_OVERLAY
+    // Transposition probe (clairvoyant only: an honest choice depends on
+    // the evolving belief, which is not part of the key). A hit skips the
+    // whole nested tournament — transposing paths converge on the same
+    // shrinking endgames, so hits concentrate exactly where the recursion
+    // is deepest.
+    uint64_t stt_key = 0;
+    SelfTTEntry *stt_e = NULL;
+    if (self_tt_bits > 0 && !tk) {
+        stt_key = self_tt_key(s, actor, depth);
+        stt_e = &self_tt[stt_key & (((uint64_t)1 << self_tt_bits) - 1)];
+        self_tt_probes++;
+        if (stt_e->gen == self_tt_gen && stt_e->key == stt_key
+            && self_tt_move_ok(s, actor, &stt_e->mv)) {
+            self_tt_hits++;
+            sim_apply_sol(s, actor, &stt_e->mv);
+            return 1;
+        }
+    }
+#endif
+
     // Rank cheap-first and search the top `cap`; PICKUP and GOOD (which rank
     // last) are always searched — the reply-tournament lesson: "just take
     // the cards" must never be pruned by a large cover-combination set.
@@ -2540,6 +2656,13 @@ static int self_step(SimState *s, int actor, int max_turns,
         if (ap < best_pos) { best_pos = ap; best_idx = kept_idx[k]; }
     }
     if (best_idx < 0) return 0;   // every trial failed: policy fallback
+#ifndef CD_WASM_OVERLAY
+    if (stt_e) {   // memoize the tournament's choice (always-replace)
+        stt_e->key = stt_key;
+        stt_e->gen = self_tt_gen;
+        stt_e->mv  = buf[best_idx];
+    }
+#endif
     game_rng_set(rng0);
     sim_apply_sol(s, actor, &buf[best_idx]);
     return 1;
