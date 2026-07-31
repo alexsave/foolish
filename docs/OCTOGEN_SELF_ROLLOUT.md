@@ -68,6 +68,17 @@ traversal), and the handwritten policy when depth or `OG_SELF_PLIES` run
 out. As depth/cap/plies grow this converges to perfect full-information
 play of each world — i.e. exactly the recursion limit of reading (a).
 
+**(c) The asymmetric refinement — search only OUR seat.** `OG_SELF_OWN=1`
+keeps the honest handwritten model for every opponent and searches only our
+own seat's in-world decisions. This dodges the paranoid-distortion
+objection entirely: our future moves are under our control, so a
+handwritten self-model genuinely *understates* our continuation strength,
+while opponent-side search models imperfect opponents as world-omniscient
+punishers. It is the one axis hunt 4 never measured (its levers — reply
+tournaments, MC-defender models, deeper leaves — were all opponent-side or
+truth-side). If ANY form of "octogen as rollout policy" should pay, it is
+this one.
+
 ## 2. Cost: memory flat, wall-clock exponential
 
 Measured on the native harness, pc2 vs cordite tables, one game, 4-core
@@ -110,18 +121,22 @@ matters for "strongest bot"):
 
 | config | pc | pairs | diff ± SE | h<c/h>c/eq |
 |---|---|---|---|---|
-| cap=0, win-check only | 2 | 400 | XXX | XXX |
-| cap=0, win-check only | 3 | 400 | XXX | XXX |
+| cap=0, win-check only | 2 | 400 | −0.015 ± 0.019 | 32/26/342 |
+| cap=0, win-check only | 3 | 400 | −0.033 ± 0.042 | 78/67/255 |
 | depth=1, cap=6, plies=8 | 2 | 200 | XXX | XXX |
 | depth=1, cap=6, all plies | 2 | 80 | XXX | XXX |
 | leaf-limit probe (18 cards / 100k nodes) | 2 | 150 | XXX | XXX |
+| own-seat only (`OG_SELF_OWN`), all plies | 2 | 200 | XXX | XXX |
+| own-seat only (`OG_SELF_OWN`), all plies | 3 | 150 | XXX | XXX |
 
 @ handwritten tables (the opponents the shipped rollout policy models
-*correctly* — self-rollout replaces a true model with a wrong one):
+*correctly* — symmetric self-rollout replaces a true opponent model with a
+wrong one, while the own-seat variant leaves it intact):
 
 | config | pc | pairs | diff ± SE | h<c/h>c/eq |
 |---|---|---|---|---|
 | depth=1, cap=6, plies=8 | 2 | 200 | XXX | XXX |
+| own-seat only (`OG_SELF_OWN`), all plies | 2 | 200 | XXX | XXX |
 
 XXX-RESULTS-DISCUSSION
 
