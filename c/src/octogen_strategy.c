@@ -142,6 +142,12 @@ static _Thread_local int og_self_cap = 6;
 static _Thread_local int og_self_plies = 0;
 static _Thread_local int og_self_win = 1;
 static _Thread_local int og_self_stage = 0;
+// OG_SELF_OWN (default 0): search ONLY our own seat's in-world decisions;
+// opponents keep the honest handwritten model. Kills the paranoid-distortion
+// objection (we CONTROL our future moves — modeling them handwritten
+// understates the real continuation) while keeping the measured-good
+// opponent model. The one axis none of the hunt-4 levers covered.
+static _Thread_local int og_self_own = 0;
 // OG_SELF_LEAF_CARDS / OG_SELF_LEAF_BUDGET (-1 = inherit the bbleaf
 // defaults): hero-only override of the in-rollout exact-leaf threshold, so
 // the recursion LIMIT (perfect in-world endgame play) can be probed directly
@@ -1606,6 +1612,7 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
         og_self_stage = og_env_int("OG_SELF_STAGE", 0);
         og_self_leaf_cards = og_env_int("OG_SELF_LEAF_CARDS", -1);
         og_self_leaf_budget = og_env_int("OG_SELF_LEAF_BUDGET", -1);
+        og_self_own = og_env_int("OG_SELF_OWN", 0);
         og_void_mod = og_env_int("OG_VOID_MOD", 4);
         if (og_void_mod < 2) og_void_mod = 2;
         og_profile = og_env_int("OG_PROFILE", 0);
@@ -1781,7 +1788,8 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
                         fp = cd_sim_playout_self(trial_sim, bot_idx, 600,
                                                  slc, slb, og_polmap,
                                                  og_self_depth, og_self_cap,
-                                                 og_self_plies, og_self_win);
+                                                 og_self_plies, og_self_win,
+                                                 og_self_own ? bot_idx : -1);
                         if (fp == 0) fp = g->num_players;
                     } else if (reply_stage) {
                         fp = cd_sim_playout_reply(trial_sim, bot_idx, 600,

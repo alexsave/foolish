@@ -2177,11 +2177,13 @@ int cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
 
 static int self_step(SimState *s, int actor, int max_turns,
                      int leaf_cards, long leaf_budget, const uint8_t *pol,
-                     int depth, int cap, int nest_plies, int win_check);
+                     int depth, int cap, int nest_plies, int win_check,
+                     int only_seat);
 
 int cd_sim_playout_self(SimState *s, int my_idx, int max_turns,
                         int leaf_cards, long leaf_budget, const uint8_t *pol,
-                        int depth, int cap, int nest_plies, int win_check) {
+                        int depth, int cap, int nest_plies, int win_check,
+                        int only_seat) {
     if (depth <= 0)
         return cd_sim_playout_pol(s, my_idx, max_turns, 1,
                                   leaf_cards, leaf_budget, pol);
@@ -2239,8 +2241,13 @@ int cd_sim_playout_self(SimState *s, int my_idx, int max_turns,
         int acted = 0;
         for (int pi = 0; pi < s->num_players; pi++) {
             if (!sim_should_act(s, pi)) continue;
-            if (self_step(s, pi, max_turns, leaf_cards, leaf_budget, pol,
-                          depth, cap, nest_plies, win_check)) {
+            // only_seat >= 0: search ONLY that seat's decisions (the
+            // asymmetric own-future variant — a strong self-model with the
+            // honest handwritten opponent model kept intact); other seats
+            // fall straight through to the policy step.
+            if ((only_seat < 0 || pi == only_seat)
+                && self_step(s, pi, max_turns, leaf_cards, leaf_budget, pol,
+                             depth, cap, nest_plies, win_check, only_seat)) {
                 acted = 1;
                 break;
             }
@@ -2269,7 +2276,8 @@ int cd_sim_playout_self(SimState *s, int my_idx, int max_turns,
 // applied, 0 to let the caller fall back to a plain policy step.
 static int self_step(SimState *s, int actor, int max_turns,
                      int leaf_cards, long leaf_budget, const uint8_t *pol,
-                     int depth, int cap, int nest_plies, int win_check) {
+                     int depth, int cap, int nest_plies, int win_check,
+                     int only_seat) {
     // Eliminations only happen with the stock exhausted (refill blocks them
     // otherwise), so the win base case is dead until then; with cap == 0
     // there is nothing else to do here either.
@@ -2340,7 +2348,7 @@ static int self_step(SimState *s, int actor, int max_turns,
         sim_apply_sol(&trial, actor, &buf[kept_idx[k]]);
         int ap = cd_sim_playout_self(&trial, actor, max_turns, leaf_cards,
                                      leaf_budget, pol, depth - 1, cap,
-                                     nest_plies, win_check);
+                                     nest_plies, win_check, only_seat);
         if (ap == 0) continue;   // unterminated playout: skip
         if (ap < best_pos) { best_pos = ap; best_idx = kept_idx[k]; }
     }
