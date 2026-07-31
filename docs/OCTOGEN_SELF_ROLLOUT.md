@@ -79,6 +79,22 @@ tournaments, MC-defender models, deeper leaves — were all opponent-side or
 truth-side). If ANY form of "octogen as rollout policy" should pay, it is
 this one.
 
+**(d) The belief-fed future self.** Plain `OG_SELF_OWN` still leaks: its
+tournament argmaxes on the outcome in THIS world, i.e. the future self
+best-responds to hidden cards it could not know — the strategy-fusion
+clairvoyance that makes determinized search overvalue "lucky-here" lines.
+`OG_SELF_HONEST=M` closes the leak: the future self chooses on its
+*information set* — the ROOT belief (pins, void/floor forbids,
+trust-filtered) carried forward through the rollout prefix, accreting
+exactly what the prefix legitimately reveals (cards publicly picked up
+stay known; a seat's root constraints expire when it draws, mirroring
+`og_build_belief`'s own rules) — by evaluating each candidate on M
+re-determinizations of the unseen cards and argmaxing the AVERAGE. The
+chosen move is then applied to the true world: choose on belief, live in
+truth. This is genuine one-level IS-MCTS for our own future decisions —
+the closest thing to "octogen as our own future self" that is honest and
+computable. Cost: M x the own-seat cost; memory still flat.
+
 ## 2. Cost: memory flat, wall-clock exponential
 
 Measured on the native harness, pc2 vs cordite tables, one game, 4-core
@@ -128,6 +144,7 @@ matters for "strongest bot"):
 | leaf-limit probe (18 cards / 100k nodes) | 2 | 150 | XXX | XXX |
 | own-seat only (`OG_SELF_OWN`), all plies | 2 | 200 | XXX | XXX |
 | own-seat only (`OG_SELF_OWN`), all plies | 3 | 150 | XXX | XXX |
+| own-seat + belief-fed (`OG_SELF_HONEST=2`) | 2 | 150 | XXX | XXX |
 
 @ handwritten tables (the opponents the shipped rollout policy models
 *correctly* — symmetric self-rollout replaces a true opponent model with a
@@ -137,6 +154,7 @@ wrong one, while the own-seat variant leaves it intact):
 |---|---|---|---|---|
 | depth=1, cap=6, plies=8 | 2 | 200 | XXX | XXX |
 | own-seat only (`OG_SELF_OWN`), all plies | 2 | 200 | XXX | XXX |
+| own-seat + belief-fed (`OG_SELF_HONEST=2`) | 2 | 150 | XXX | XXX |
 
 XXX-RESULTS-DISCUSSION
 
