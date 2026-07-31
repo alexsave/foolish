@@ -125,6 +125,25 @@ container (`scratchpad/rss_time.sh` = wall + peak `VmHWM`):
 - The recursion limit itself is NOT out of reach, though: alpha-beta + the
   transposition table reach perfect in-world play far cheaper than naive
   nesting. That equivalence is what makes the limit measurable today (§4).
+- **Caching ("multiple paths lead to the same endgame")**: rollout paths do
+  transpose heavily into the same shrinking endgames — the exact solver's
+  TT exists for precisely this reason, and TT size is a documented
+  bot-strength knob (`c/Makefile` TT comments; `docs/WASM_L1_BUDGET.md`).
+  `OG_SELF_TT=<bits>` extends the idea to the MC recursion itself: each
+  searched in-world decision is memoized (position x actor x depth → chosen
+  move), so a hit skips the whole nested tournament and the recursion tree
+  collapses toward a DAG. Two honesty caveats, which is why it is
+  flag-guarded and A/B'd rather than assumed: (a) a cached argmax was
+  computed under one RNG context and is reused in another — it
+  deterministic-izes the searched seat's policy, a real behavioral change;
+  (b) cache entries are generation-stamped and die at every ROOT decision,
+  because cross-decision (let alone cross-game) cache warmth is exactly the
+  anti-hero coupling artifact that corrupted hunt 4's first harness. Hit
+  rate / speedup / strength A/B: XXX-TT-RESULTS. Note the asymmetry with
+  memory: the sound place for "infinite memory" is the EXACT solver's TT
+  (proven values, transferable by definition — the oracle wasm build
+  already spends 8 MiB there); MC-layer caching only ever reuses noisy
+  argmaxes.
 
 ## 3. Strength: the paired same-deal results
 
@@ -145,6 +164,8 @@ matters for "strongest bot"):
 | own-seat only (`OG_SELF_OWN`), all plies | 2 | 200 | XXX | XXX |
 | own-seat only (`OG_SELF_OWN`), all plies | 3 | 150 | XXX | XXX |
 | own-seat + belief-fed (`OG_SELF_HONEST=2`) | 2 | 150 | XXX | XXX |
+| own-seat + transposition cache (`OG_SELF_TT=22`) | 2 | 150 | XXX | XXX |
+| depth=1 all plies + transposition cache | 2 | 80 | XXX | XXX |
 
 @ handwritten tables (the opponents the shipped rollout policy models
 *correctly* — symmetric self-rollout replaces a true opponent model with a
