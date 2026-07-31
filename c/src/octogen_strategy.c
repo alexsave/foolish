@@ -165,6 +165,17 @@ static _Thread_local CdSelfRootBelief og_self_rb;
 // OG_SELF_TT_STATS=1 prints main-thread probe/hit counts at exit (use
 // OMP_NUM_THREADS=1 for meaningful numbers).
 static _Thread_local int og_self_tt = 0;
+// OG_SELF_TELL (default 0): engage the self-rollout ONLY on decisions where
+// some live opponent has a proven mc_tell — the public-log behavioral
+// evidence (strategic pickup while holding a cover) that handwritten-class
+// players never produce but MC bots and thinking humans produce constantly.
+// This is the legitimacy-compatible adaptive deployment: the bot never
+// KNOWS opponent types, it reads observed behavior, exactly like the rest
+// of the belief. Measured motivation: the symmetric self-rollout is
+// +strength vs cordite (-0.237+-0.060 d1full pc2) but -strength vs
+// handwritten (+0.105+-0.032) — this gate aims to keep the first and shed
+// the second without any table knowledge.
+static _Thread_local int og_self_tell = 0;
 
 #ifndef CD_WASM_OVERLAY
 static void og_self_tt_report(void) {
@@ -1641,6 +1652,7 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
         og_self_own = og_env_int("OG_SELF_OWN", 0);
         og_self_honest = og_env_int("OG_SELF_HONEST", 0);
         og_self_tt = og_env_int("OG_SELF_TT", 0);
+        og_self_tell = og_env_int("OG_SELF_TELL", 0);
 #ifndef CD_WASM_OVERLAY
         if (og_self_tt > 0 && og_env_int("OG_SELF_TT_STATS", 0))
             atexit(og_self_tt_report);
@@ -1789,12 +1801,27 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
     // from exactly what we know NOW and accretes only what each rollout
     // prefix legitimately reveals. pinned = publicly located cards;
     // forbid = void/floor-excluded ids (trust-filtered by og_build_belief).
+    // OG_SELF_TELL gate: engage the self-rollout only once some live
+    // opponent has behaviorally proven strategic play (mc_tell). Until then
+    // this decision runs as plain octogen — vs handwritten-class opponents
+    // the tell never fires and the measured self-rollout harm never applies.
+    bool og_self_engaged = true;
+    if (og_self && og_self_tell) {
+        og_self_engaged = false;
+        for (int p = 0; p < g->num_players; p++) {
+            if (p == bot_idx) continue;
+            if (g->players[p].status != PLAYER_STATUS_IN) continue;
+            if (B.mc_tell[p]) { og_self_engaged = true; break; }
+        }
+    }
+
     // Per-decision generation bump for the self-rollout transposition cache
     // (allocates lazily on first use; entries never survive a decision).
-    if (fast_path && og_self && og_self_tt > 0)
+    if (fast_path && og_self && og_self_engaged && og_self_tt > 0)
         cd_sim_self_tt_config(og_self_tt);
 
-    if (fast_path && og_self && og_self_own && og_self_honest > 0) {
+    if (fast_path && og_self && og_self_engaged && og_self_own
+        && og_self_honest > 0) {
         for (int p = 0; p < MAX_PLAYERS; p++) {
             og_self_rb.pinned[p] = 0;
             og_self_rb.forbid[p] = 0;
@@ -1836,7 +1863,8 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
             if (fast_path) {
                 cd_sim_from_game(world_sim, world);     // convert world ONCE
                 bool reply_stage = og_reply && stage >= og_reply_stage;
-                bool self_stage = og_self && stage >= og_self_stage;
+                bool self_stage = og_self && og_self_engaged
+                                && stage >= og_self_stage;
                 for (int ci = 0; ci < C.n; ci++) {
                     if (!alive[ci]) continue;
                     *trial_sim = *world_sim;            // cheap struct copy
