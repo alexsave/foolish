@@ -275,7 +275,81 @@ lever of hunt 4 that ever paid, provably never worse), and (iii) many-core
 parallel worlds for latency. The infinite-oracle *replay analyzer*
 (docs/INFINITE_ORACLE_DESIGN.md) is exactly this recipe already.
 
-## 6. Reproduce
+## 6. Why the sign flips: the handwritten harm and the cordite win, explained
+
+The natural objection: "it would make sense that it hurts if we swapped the
+OPPONENT's rollout policy — but we changed OUR OWN. What gives?"
+
+**First, the factual answer: in the symmetric configs we changed both.**
+`d1p8`/`d1full` — the cells that measured +0.105 vs handwritten and −0.237
+vs cordite — replace the in-world policy for EVERY seat of every sampled
+world: our future self AND the in-world stand-in for the opponent. A
+rollout policy in a determinized MC bot plays two roles at once: it is the
+model of our own continuation on our plies, and the model of the
+opponent's responses on theirs. The symmetric lever moves both, so vs
+handwritten we really did swap the opponent's model away from the one that
+is *literally the true generative model* of that opponent (the stock
+rollout IS handwritten's decision function — zero model error by
+construction). The `OG_SELF_OWN` configs exist precisely to split this:
+they search only our own plies and leave the opponent model untouched.
+Decomposition results: own-only @ handwritten XXX-OWN-HW (prediction
+written before the numbers: ≈ null — the harm should be attributable to
+the opponent-model half, with any residual coming from the clairvoyant
+argmax, which `OG_SELF_HONEST` then shaves: XXX-HONEST-HW); own-only @
+cordite XXX-OWN-CD (prediction: keeps part but not all of −0.237, since it
+forfeits the better-opponent-model half).
+
+**Why the wrong opponent model costs real points vs handwritten** (two
+channels):
+
+1. *Phantom punishment (paranoia).* The searching in-world opponent finds
+   refutations handwritten will never play — handwritten covers cheapest
+   mechanically, never strategically picks up, attacks lowest-first.
+   Candidates that exploit those mechanical habits get devalued by the
+   search and we stop playing them: forfeited exploitation, the classic
+   paranoid-search failure. NOVICHOK.md finding 4 measured the identical
+   sign flip with TRUE-hand worlds (searched replies: −0.175 → −0.085 vs
+   handwritten pc3) — so this is not about world-sampling error at all;
+   it is about answering "what if they punish me?" when they provably
+   won't.
+2. *Phantom competence.* Our plans are graded against an in-world defender
+   that saves trumps and takes strategic pickups; handwritten never does.
+   Move ranking optimizes against a fiction strictly farther from the true
+   opponent than the stock model (whose distance is zero).
+
+And a saturation asymmetry amplifies the asymmetry of outcomes: against
+handwritten the control already scores 1.060 mean / 94% wins — there is
+almost no headroom, so any injected bias converts directly into losses;
+against cordite the control sits at 1.320-1.375 with plenty of decidable
+deals left.
+
+**Why the big win vs cordite** (the same two channels, signs reversed):
+
+1. *The opponent model got closer, not farther.* Cordite actually does
+   what the searching rollout does: weighs alternatives, protects trumps
+   with strategic pickups, refuses doomed covers, punishes overextension.
+   The entire `mc_tell`/`OG_MCDEF` machinery exists because handwritten
+   "NEVER picks up while holding a full cover, but MC bots and thinking
+   humans do it constantly" — i.e., the stock opponent model is known-wrong
+   against MC opponents, and the 1-ply-search model is much closer. Value
+   estimates against cordite become less biased; move ranking improves.
+2. *Our own continuation model got truer too.* The real octogen at future
+   decisions plays strongly; the stock rollout models our future self as
+   handwritten, so lines whose payoff needs competent follow-up (keeping a
+   trump for a later squeeze, covering now to set up a pass) are
+   systematically undervalued. The in-repo smoking gun: the trump-keep tax
+   exists because "the weak handwritten rollout policy undervalues keeping
+   trumps... (measured: 52.5% -> 36.7% under a stronger rollout)" — a
+   hand-written patch for ONE instance of exactly the bias the self-rollout
+   removes wholesale. Against a strong opponent those follow-up-sensitive
+   lines are where games are decided.
+
+The leaf18 null pins the location: none of the cordite gain comes from
+endgame truth (already exact and saturated) — it is mid-game modeling,
+where hands are big, choices are discretionary, and the two policies
+disagree most.
+
+## 7. Reproduce
 
 ```bash
 cd c && make
