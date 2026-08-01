@@ -1180,6 +1180,160 @@ typedef struct {
     int n;
 } Candidates;
 
+#ifdef FOOLISH_ORACLE_BUILD
+// ---------- oracle path aggregation (the "why this EF" data) ---------------
+// Per-candidate aggregation of the cd_orc playout traces across every
+// (world x candidate) rollout of ONE deliberation: path-prefix clusters
+// (base-5 id over the first CD_ORC_ROUNDS round symbols -> count + finish
+// sum) plus whole-playout marginals. Emitted per candidate by og_ex_emit as
+// "paths"/"agg", the raw material for the overlay's template-string proof.
+// ~130 KiB thread-local BSS — oracle build only, where memory is free.
+#define OG_ORC_PATHS 625   // 5^CD_ORC_ROUNDS
+#define OG_ORC_RTYPES 6    // MV_ATTACK..MV_NONE
+#define OG_ORC_RCARDS 53   // card id 0..51, 52 = card-less (pickup/good)
+static _Thread_local uint32_t og_orc_cnt[OG_MAX_CANDS][OG_ORC_PATHS];
+static _Thread_local float    og_orc_fin[OG_MAX_CANDS][OG_ORC_PATHS];
+static _Thread_local uint32_t og_orc_reply[OG_MAX_CANDS][OG_ORC_RTYPES][OG_ORC_RCARDS];
+static _Thread_local uint32_t og_orc_n[OG_MAX_CANDS];
+static _Thread_local uint32_t og_orc_mepk[OG_MAX_CANDS], og_orc_oppk[OG_MAX_CANDS];
+static _Thread_local uint32_t og_orc_metr[OG_MAX_CANDS], og_orc_opptr[OG_MAX_CANDS];
+static _Thread_local uint32_t og_orc_rounds[OG_MAX_CANDS];
+
+static void og_orc_reset(void) {
+    memset(og_orc_cnt, 0, sizeof og_orc_cnt);
+    memset(og_orc_fin, 0, sizeof og_orc_fin);
+    memset(og_orc_reply, 0, sizeof og_orc_reply);
+    memset(og_orc_n, 0, sizeof og_orc_n);
+    memset(og_orc_mepk, 0, sizeof og_orc_mepk);
+    memset(og_orc_oppk, 0, sizeof og_orc_oppk);
+    memset(og_orc_metr, 0, sizeof og_orc_metr);
+    memset(og_orc_opptr, 0, sizeof og_orc_opptr);
+    memset(og_orc_rounds, 0, sizeof og_orc_rounds);
+}
+
+static void og_orc_fold(int ci, int fp) {
+    if (ci < 0 || ci >= OG_MAX_CANDS) return;
+    int id = 0, m = 1;
+    for (int i = 0; i < cd_orc.nsym; i++) { id += m * cd_orc.sym[i]; m *= 5; }
+    og_orc_cnt[ci][id]++;
+    og_orc_fin[ci][id] += (float)fp;
+    if (cd_orc.have_reply) {
+        int t = cd_orc.reply_type < OG_ORC_RTYPES ? cd_orc.reply_type : OG_ORC_RTYPES - 1;
+        int c = cd_orc.reply_card < 52 ? cd_orc.reply_card : 52;
+        og_orc_reply[ci][t][c]++;
+    }
+    og_orc_n[ci]++;
+    og_orc_mepk[ci] += (uint32_t)cd_orc.me_pickups;
+    og_orc_oppk[ci] += (uint32_t)cd_orc.opp_pickups;
+    og_orc_metr[ci] += (uint32_t)cd_orc.me_trumps;
+    og_orc_opptr[ci] += (uint32_t)cd_orc.opp_trumps;
+    og_orc_rounds[ci] += (uint32_t)cd_orc.rounds;
+}
+
+// ---- binary sidecar (wasm_og_paths_ptr/len) -------------------------------
+// The per-candidate path/reply/marginal data rides NEXT TO the JSONL record
+// as a packed little-endian blob — no JSON encode/parse on the hot batch
+// path. Layout (all offsets byte-based, floats IEEE f32 via memcpy):
+//   header: u32 magic "OGP1" (0x3150474F); u16 nentries; u8 stride=244; u8 0
+//   entry (244 B), one per candidate with samples, in candidate-list order:
+//     +0  u8 k (index into the record's candidates array)
+//     +1  u8 npaths (<=12)   +2 u8 nreplies (<=3)   +3 u8 0
+//     +4  u32 n (playouts folded)
+//     +8  f32 mepk, oppk, metr, opptr, rnds        (marginal means)
+//     +28 reply[3]:  u8 type; u8 card(52=none); u16 0; u32 n     (8 B each)
+//     +52 path[12]:  u8 len; u8 sym[4]; u8 pad[3]; u32 n; f32 fin (16 B each)
+#define OG_ORC_TOP_PATHS 12
+#define OG_ORC_TOP_REPLIES 3
+#define OG_ORC_STRIDE 244
+static _Thread_local uint8_t og_orc_blob[8 + OG_MAX_CANDS * OG_ORC_STRIDE];
+static _Thread_local int og_orc_blob_len = 0;
+#ifdef CD_WASM_OVERLAY
+const uint8_t *wasm_og_paths_ptr(void) { return og_orc_blob; }
+int            wasm_og_paths_len(void) { return og_orc_blob_len; }
+#endif
+static void og_orc_put32(uint8_t *p, uint32_t v) { memcpy(p, &v, 4); }
+static void og_orc_putf(uint8_t *p, float v)     { memcpy(p, &v, 4); }
+
+static void og_orc_write_blob(int ncand, const int *nsim) {
+    int off = 8, nc = 0;
+    for (int k = 0; k < ncand && k < OG_MAX_CANDS; k++) {
+        if (!nsim || nsim[k] <= 0 || og_orc_n[k] == 0) continue;
+        uint8_t *e = og_orc_blob + off;
+        memset(e, 0, OG_ORC_STRIDE);
+        e[0] = (uint8_t)k;
+        og_orc_put32(e + 4, og_orc_n[k]);
+        double on = (double)og_orc_n[k];
+        og_orc_putf(e + 8,  (float)(og_orc_mepk[k] / on));
+        og_orc_putf(e + 12, (float)(og_orc_oppk[k] / on));
+        og_orc_putf(e + 16, (float)(og_orc_metr[k] / on));
+        og_orc_putf(e + 20, (float)(og_orc_opptr[k] / on));
+        og_orc_putf(e + 24, (float)(og_orc_rounds[k] / on));
+        // top replies by count (insertion top-3 over the 6x53 table)
+        {
+            int bt[OG_ORC_TOP_REPLIES], bc[OG_ORC_TOP_REPLIES];
+            uint32_t bn[OG_ORC_TOP_REPLIES];
+            int nr = 0;
+            for (int t = 0; t < OG_ORC_RTYPES; t++)
+                for (int c = 0; c < OG_ORC_RCARDS; c++) {
+                    uint32_t v = og_orc_reply[k][t][c];
+                    if (!v) continue;
+                    int ins = nr;
+                    while (ins > 0 && bn[ins - 1] < v) ins--;
+                    if (ins >= OG_ORC_TOP_REPLIES) continue;
+                    if (nr < OG_ORC_TOP_REPLIES) nr++;
+                    for (int j = nr - 1; j > ins; j--) {
+                        bt[j] = bt[j-1]; bc[j] = bc[j-1]; bn[j] = bn[j-1];
+                    }
+                    bt[ins] = t; bc[ins] = c; bn[ins] = v;
+                }
+            e[2] = (uint8_t)nr;
+            for (int r = 0; r < nr; r++) {
+                uint8_t *re = e + 28 + r * 8;
+                re[0] = (uint8_t)bt[r];
+                re[1] = (uint8_t)bc[r];
+                og_orc_put32(re + 4, bn[r]);
+            }
+        }
+        // top path clusters by count (insertion top-12 over 625 slots)
+        {
+            int top[OG_ORC_TOP_PATHS];
+            int nt = 0;
+            for (int pid = 0; pid < OG_ORC_PATHS; pid++) {
+                uint32_t v = og_orc_cnt[k][pid];
+                if (!v) continue;
+                int ins = nt;
+                while (ins > 0 && og_orc_cnt[k][top[ins - 1]] < v) ins--;
+                if (ins >= OG_ORC_TOP_PATHS) continue;
+                if (nt < OG_ORC_TOP_PATHS) nt++;
+                for (int j = nt - 1; j > ins; j--) top[j] = top[j-1];
+                top[ins] = pid;
+            }
+            e[1] = (uint8_t)nt;
+            for (int ti = 0; ti < nt; ti++) {
+                uint8_t *pe = e + 52 + ti * 16;
+                int x = top[ti], len = 0;
+                while (x > 0 && len < CD_ORC_ROUNDS) {
+                    pe[1 + len] = (uint8_t)(x % 5);
+                    x /= 5; len++;
+                }
+                pe[0] = (uint8_t)len;
+                og_orc_put32(pe + 8, og_orc_cnt[k][top[ti]]);
+                og_orc_putf(pe + 12,
+                            (float)(og_orc_fin[k][top[ti]] / (double)og_orc_cnt[k][top[ti]]));
+            }
+        }
+        off += OG_ORC_STRIDE;
+        nc++;
+    }
+    og_orc_put32(og_orc_blob, 0x3150474Fu);   // "OGP1"
+    og_orc_blob[4] = (uint8_t)(nc & 0xFF);
+    og_orc_blob[5] = (uint8_t)((nc >> 8) & 0xFF);
+    og_orc_blob[6] = OG_ORC_STRIDE;
+    og_orc_blob[7] = 0;
+    og_orc_blob_len = off;
+}
+#endif
+
 static void og_ranked_insert(int *idxs, double *keys, int *n, int cap,
                              int idx, double key) {
     int pos = *n;
@@ -1518,6 +1672,12 @@ static void og_ex_emit(const Game *g, int bot_idx, const LegalMoves *moves,
           og_ex_move_label(label, sizeof label, &moves->moves[chosen_idx], trump);
       OGA(",\"chosen\":\"%s\"}", label); }
     #undef OGA
+#ifdef FOOLISH_ORACLE_BUILD
+    // Refresh the binary paths sidecar in lockstep with the record: stale
+    // data must never survive a record that carries no MC candidates.
+    og_orc_blob_len = 0;
+    if (C && score && nsim) og_orc_write_blob(ncand, nsim);
+#endif
 #ifdef CD_WASM_OVERLAY
 #ifdef FOOLISH_ORACLE_BUILD
     // §6.3: the freestanding snprintf clamps (saturating w at sizeof(buf)-1)
@@ -1714,6 +1874,9 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
     int    nsim [OG_MAX_CANDS] = {0};
     bool   alive[OG_MAX_CANDS];
     for (int i = 0; i < C.n; i++) alive[i] = true;
+#ifdef FOOLISH_ORACLE_BUILD
+    og_orc_reset();   // fresh path aggregation per deliberation
+#endif
 
     // Trump-conservation tie-break tax (added to a candidate's mean-finish score
     // ONLY at selection; the raw MC scores in score[]/nsim[] are left untouched so
@@ -1769,6 +1932,9 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
                     if (!alive[ci]) continue;
                     *trial_sim = *world_sim;            // cheap struct copy
                     game_rng_set(sim_rng);              // identical stream
+#ifdef FOOLISH_ORACLE_BUILD
+                    cd_orc_begin(bot_idx);   // trace root apply + playout
+#endif
                     int fp;
                     if (!cd_sim_apply_root_move(trial_sim, bot_idx,
                                                 &moves->moves[C.idx[ci]])) {
@@ -1800,6 +1966,10 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
                     }
                     score[ci] += (double)fp;
                     nsim[ci]++;
+#ifdef FOOLISH_ORACLE_BUILD
+                    cd_orc_end();
+                    og_orc_fold(ci, fp);
+#endif
                 }
                 continue;
             }

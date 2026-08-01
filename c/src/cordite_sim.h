@@ -214,6 +214,36 @@ Game *solve_scratch_root(void);
 // read inside the slot.
 void  solve_clone_root(Game *dst, const Game *src);
 
+#ifdef FOOLISH_ORACLE_BUILD
+// Infinite-oracle path trace (docs/INFINITE_ORACLE_DESIGN.md, the "why this
+// EF" panel): while active, playouts record the first few ROUND outcomes
+// from the hero's perspective plus salient marginals, so the oracle UI can
+// explain a candidate's expected finish with real MC path probabilities.
+// Compiled ONLY into oracle.wasm (-DFOOLISH_ORACLE_BUILD); shipped builds
+// carry no trace of it. Suppressed inside exact solves (cd_sim_solve
+// explores hypothetical lines through the same apply handlers).
+#define CD_ORC_ROUNDS 4
+typedef struct {
+    int      active;
+    int      me;
+    // Round outcome symbols, base-5 digits (0 = playout ended before round):
+    //   1 = I defended and beat the round     2 = I defended and picked up
+    //   3 = an opponent beat the round        4 = an opponent picked up
+    uint8_t  sym[CD_ORC_ROUNDS];
+    int      nsym;
+    int      me_pickups, opp_pickups;   // whole-playout pickup counts
+    int      me_trumps,  opp_trumps;    // trump cards played (attack/cover/pass)
+    int      rounds;                    // rounds resolved before termination
+    // First move by any seat other than `me` after the root move — the
+    // chess.com-style "most likely reply" datum. card = first card id, or
+    // 0xFF for card-less moves (pickup/good).
+    uint8_t  have_reply, reply_type, reply_card;
+} CdOrcTrace;
+extern _Thread_local CdOrcTrace cd_orc;
+void cd_orc_begin(int me);   // reset + activate for one root-move playout
+void cd_orc_end(void);       // deactivate
+#endif
+
 // Difftest slow-rollout slot (CD/SX/OG_DIFFTEST research modes): the "slow"
 // game a difftest rollout replays on. One shared copy — difftests run one
 // family at a time and the fast rollout completes before the slow one

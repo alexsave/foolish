@@ -12,13 +12,14 @@
  * progress bars.
  * ========================================================================== */
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Card } from '@api/core/types.ts';
 import { useLocalization } from '../contexts/LocalizationContext';
 import { SegmentText } from './SegmentDisplay';
 import {
     OracleSnapshot, OracleCandidate, oracleClassify, OracleClass,
 } from '../oracle/types';
+import { explainCandidate, WhyTreeNode, symPhrase, TFn } from '../oracle/explain';
 
 // Inverse of oracleCardToken (types.ts): recover the decoded Card so it can
 // be re-rendered as segment glyphs. Rank strings are OG_EX_VAL; suit is
@@ -160,9 +161,179 @@ function EqBar({ pct, color }: { pct: number; color: string }) {
     );
 }
 
-function McRow({ c, best, worst, bestAdj, t }: {
+/* ------------------- the click-to-open "why" detail panel ------------------ */
+
+// Colored card-token strip ("10H*" grammar) as plain monospace text — the
+// proof panel is prose-heavy, so tokens render inline rather than as segment
+// glyphs. Red suits tinted like the row titles.
+const TOKEN_SUIT = { S: '♠', H: '♥', C: '♣', D: '♦' } as Record<string, string>;
+function TokenList({ tokens }: { tokens: string[] }) {
+    return (
+        <>
+            {tokens.map((tok, i) => {
+                const star = tok.endsWith('*');
+                const body = star ? tok.slice(0, -1) : tok;
+                const suit = body[body.length - 1];
+                const red = suit === 'H' || suit === 'D';
+                return (
+                    <span key={i} style={{
+                        fontFamily: LCD_MONO, fontWeight: 700,
+                        color: red ? SUIT_RED : CARD_COLOR,
+                        marginRight: 4, whiteSpace: 'nowrap',
+                    }}>
+                        {body.slice(0, -1)}{TOKEN_SUIT[suit] ?? suit}{star ? '·' : ''}
+                    </span>
+                );
+            })}
+        </>
+    );
+}
+
+// One storyline-tree node row: indented, share bargraph, clause, and the
+// expected finish on leaves. The tree is tiny (≤ ~10 nodes) — render it all.
+function TreeRows({ nodes, depth, t }: { nodes: WhyTreeNode[]; depth: number; t: TFn }) {
+    return (
+        <>
+            {nodes.map((nd, i) => (
+                <React.Fragment key={`${depth}:${i}`}>
+                    <div style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        paddingLeft: 6 + depth * 14, marginTop: 2,
+                    }}>
+                        <span style={{ ...ledText(TEAL), fontSize: '0.62rem', flex: '0 0 34px', textAlign: 'right' }}>
+                            {Math.round(nd.share * 100)}%
+                        </span>
+                        <div style={{ flex: '0 0 46px' }}>
+                            <EqBarMini pct={nd.share * 100} color={nd.sym === 2 ? '#D45B4E' : nd.sym === 4 ? '#4CAF7D' : TEAL} />
+                        </div>
+                        <span style={{ fontSize: '0.66rem', color: 'var(--color-text-primary)', opacity: 0.92 }}>
+                            {nd.sym == null ? t('oracle_ev_resolved') : symPhrase(t, nd.sym)}
+                            {nd.fin != null && (
+                                <span style={{ ...ledText(AMBER), marginLeft: 5, fontSize: '0.6rem' }}>
+                                    EF {nd.fin.toFixed(2)}
+                                </span>
+                            )}
+                        </span>
+                    </div>
+                    {nd.children.length > 0 && <TreeRows nodes={nd.children} depth={depth + 1} t={t} />}
+                </React.Fragment>
+            ))}
+        </>
+    );
+}
+
+const EQ_MINI = 8;
+function EqBarMini({ pct, color }: { pct: number; color: string }) {
+    const lit = Math.round((Math.max(0, Math.min(100, pct)) / 100) * EQ_MINI);
+    return (
+        <div style={{ display: 'flex', gap: 1, height: 5 }}>
+            {Array.from({ length: EQ_MINI }).map((_, i) => (
+                <div key={i} style={{
+                    flex: 1, borderRadius: 1,
+                    background: i < lit ? color : 'rgba(255,255,255,0.07)',
+                }} />
+            ))}
+        </div>
+    );
+}
+
+const DetailTitle = ({ text }: { text: string }) => (
+    <div style={{ marginTop: 7, marginBottom: 2 }}>
+        <SegmentText text={text} color={TEAL} height={7} gap={1.2} />
+    </div>
+);
+
+// The expanded panel under a clicked candidate row: the hard-coded proof
+// (headline, likely reply, storyline tree, path clauses, counterfactual,
+// marginals) plus octogen's belief block. All template strings + measured
+// MC probabilities — no AI call anywhere near this (product requirement).
+function WhyPanel({ c, bestCand, s, t }: {
+    c: OracleCandidate; bestCand: OracleCandidate | null; s: OracleSnapshot; t: TFn;
+}) {
+    const why = useMemo(() => explainCandidate(t, c, bestCand, s), [t, c, bestCand, s]);
+    const b = s.belief;
+    const prose: React.CSSProperties = {
+        fontSize: '0.68rem', lineHeight: 1.45, color: 'var(--color-text-primary)', opacity: 0.94,
+    };
+    return (
+        <div data-testid="oracle-why" style={{
+            margin: '2px 0 6px', padding: '6px 8px', borderRadius: 5,
+            border: '1px solid rgba(94,234,212,0.25)', background: 'rgba(0,0,0,0.4)',
+        }}>
+            {why ? (
+                <>
+                    <div style={{ ...ledText(AMBER), fontSize: '0.7rem' }}>{why.headline}</div>
+                    {why.reply && <div style={{ ...prose, marginTop: 4 }}>{why.reply}</div>}
+                    {why.tree.length > 0 && (
+                        <>
+                            <DetailTitle text={t('oracle_tree_title')} />
+                            <TreeRows nodes={why.tree} depth={0} t={t} />
+                        </>
+                    )}
+                    {why.proof.length > 0 && (
+                        <>
+                            <DetailTitle text={t('oracle_why_title')} />
+                            {why.proof.map((p, i) => (
+                                <div key={i} style={{ ...prose, marginTop: i ? 3 : 0 }}>{p}</div>
+                            ))}
+                        </>
+                    )}
+                    {why.versusBest && (
+                        <div style={{ ...prose, marginTop: 4, color: '#E0B341', opacity: 1 }}>{why.versusBest}</div>
+                    )}
+                    {why.marginals && (
+                        <div style={{ ...prose, marginTop: 4, fontSize: '0.6rem', opacity: 0.62 }}>{why.marginals}</div>
+                    )}
+                </>
+            ) : (
+                <div style={{ ...prose, opacity: 0.6 }}>…</div>
+            )}
+            {b && (
+                <>
+                    <DetailTitle text={t('oracle_belief_title')} />
+                    <div style={prose}>
+                        {(() => {
+                            const rows: React.ReactNode[] = [];
+                            for (let p = 0; p < (b.pinned?.length ?? 0); p++) {
+                                if (p === s.seat) continue;
+                                if (b.pinned[p]?.length) {
+                                    rows.push(
+                                        <div key={`pin${p}`}>
+                                            {t('oracle_belief_pinned', { n: p + 1, cards: '' })}
+                                            <TokenList tokens={b.pinned[p]} />
+                                        </div>,
+                                    );
+                                }
+                                if (b.voids[p]?.length) {
+                                    rows.push(
+                                        <div key={`void${p}`}>
+                                            {t('oracle_belief_voids', { n: p + 1, cards: '' })}
+                                            <TokenList tokens={b.voids[p]} />
+                                        </div>,
+                                    );
+                                }
+                                if (b.floor[p] > 0) {
+                                    rows.push(
+                                        <div key={`floor${p}`}>
+                                            {t('oracle_belief_floor', { n: p + 1, v: VALUE_TO_RANK[b.floor[p]] ?? b.floor[p] })}
+                                        </div>,
+                                    );
+                                }
+                            }
+                            if (rows.length === 0) rows.push(<div key="none">{t('oracle_belief_none')}</div>);
+                            rows.push(<div key="pool" style={{ opacity: 0.62, marginTop: 2 }}>{t('oracle_belief_pool', { n: b.poolCount })}</div>);
+                            return rows;
+                        })()}
+                    </div>
+                </>
+            )}
+        </div>
+    );
+}
+
+function McRow({ c, best, worst, bestAdj, t, open, onClick }: {
     c: OracleCandidate; best: number; worst: number; bestAdj: number | null;
-    t: (id: any, p?: any) => string;
+    t: (id: any, p?: any) => string; open: boolean; onClick: () => void;
 }) {
     // Bar, sort, classification and the displayed number ALL key off the true
     // expected finish (mean) — the 0.04/trump tie-break tax never distorts what
@@ -183,12 +354,16 @@ function McRow({ c, best, worst, bestAdj, t }: {
 
     return (
         <div
+            data-testid="oracle-row"
+            onClick={onClick}
             style={{
                 display: 'flex', flexDirection: 'column', gap: 3,
-                padding: '5px 7px', borderRadius: 5,
-                border: c.played ? '1px solid rgba(255,165,60,0.5)' : '1px solid rgba(255,255,255,0.04)',
+                padding: '5px 7px', borderRadius: 5, cursor: 'pointer',
+                border: open ? `1px solid ${TEAL}88`
+                    : c.played ? '1px solid rgba(255,165,60,0.5)' : '1px solid rgba(255,255,255,0.04)',
                 background: c.played ? 'rgba(255,165,60,0.07)' : 'rgba(0,0,0,0.28)',
                 opacity: scored ? 1 : 0.7,
+                boxShadow: open ? `0 0 6px ${TEAL}33` : 'none',
             }}
         >
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -215,8 +390,8 @@ function McRow({ c, best, worst, bestAdj, t }: {
     );
 }
 
-function VerdictRow({ c, t }: {
-    c: OracleCandidate; t: (id: any, p?: any) => string;
+function VerdictRow({ c, t, open, onClick }: {
+    c: OracleCandidate; t: (id: any, p?: any) => string; open: boolean; onClick: () => void;
 }) {
     const barW = VERDICT_BAR[c.verdict] ?? 30;
     const color = VERDICT_COLOR[c.verdict] ?? VERDICT_COLOR.none;
@@ -226,10 +401,13 @@ function VerdictRow({ c, t }: {
         : c.verdict === 'loss' ? `LOSS${depth != null ? ` in ${depth}` : ''}`
         : c.verdict === 'draw' ? 'DRAW' : c.verdict === 'unknown' ? '?' : '';
     return (
-        <div style={{
+        <div data-testid="oracle-row" onClick={onClick} style={{
             display: 'flex', flexDirection: 'column', gap: 3, padding: '5px 7px', borderRadius: 5,
-            border: c.played ? '1px solid rgba(255,165,60,0.5)' : '1px solid rgba(255,255,255,0.04)',
+            cursor: 'pointer',
+            border: open ? `1px solid ${TEAL}88`
+                : c.played ? '1px solid rgba(255,165,60,0.5)' : '1px solid rgba(255,255,255,0.04)',
             background: c.played ? 'rgba(255,165,60,0.07)' : 'rgba(0,0,0,0.28)',
+            boxShadow: open ? `0 0 6px ${TEAL}33` : 'none',
         }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <div style={{ flex: '1 1 auto', display: 'flex', alignItems: 'center', minWidth: 0 }}>
@@ -258,6 +436,10 @@ const Rivet = ({ style }: { style: React.CSSProperties }) => (
 
 export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry }: Props) => {
     const { t } = useLocalization();
+    // The clicked candidate whose "why" panel is open. Keyed by canonical move
+    // key so it survives re-sorting as estimates sharpen; explanation text is
+    // computed on click only (§ product requirement), never while streaming.
+    const [openKey, setOpenKey] = useState<string | null>(null);
 
     const scored = useMemo(
         () => (snapshot?.candidates ?? []).filter((c) => c.mean != null).map((c) => c.mean!),
@@ -378,11 +560,24 @@ export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry }: Pr
                     </div>
                 ) : (
                     <>
-                        {s.candidates.map((c) => (
-                            exact
-                                ? <VerdictRow key={c.key} c={c} t={t} />
-                                : <McRow key={c.key} c={c} best={best} worst={worst} bestAdj={bestAdj} t={t} />
-                        ))}
+                        {s.candidates.map((c) => {
+                            const open = openKey === c.key;
+                            const onClick = () => setOpenKey(open ? null : c.key);
+                            const bestCand = s.candidates.find((x) => x.mean != null) ?? null;
+                            return (
+                                <React.Fragment key={c.key}>
+                                    {exact
+                                        ? <VerdictRow c={c} t={t} open={open} onClick={onClick} />
+                                        : <McRow c={c} best={best} worst={worst} bestAdj={bestAdj} t={t} open={open} onClick={onClick} />}
+                                    {open && <WhyPanel c={c} bestCand={bestCand} s={s} t={t as unknown as TFn} />}
+                                </React.Fragment>
+                            );
+                        })}
+                        {openKey == null && s.status !== 'forced' && (
+                            <div style={{ padding: '3px 7px 0', fontSize: '0.58rem', fontStyle: 'italic', ...ledText('rgba(200,200,210,0.55)') }}>
+                                {t('oracle_detail_hint')}
+                            </div>
+                        )}
                         {!s.recordedPresent && s.status !== 'forced' && (
                             <div style={{ padding: '6px 7px', fontSize: '0.64rem', fontStyle: 'italic', ...ledText('rgba(210,210,216,0.6)') }}
                                 title={t('oracle_pruned_tip')}>

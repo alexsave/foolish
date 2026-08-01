@@ -15,7 +15,7 @@ import {
 } from './types';
 
 const ctx = self as unknown as {
-    postMessage(m: WorkerToMain): void;
+    postMessage(m: WorkerToMain, transfer?: Transferable[]): void;
     onmessage: ((e: MessageEvent<MainToWorker>) => void) | null;
 };
 
@@ -80,7 +80,14 @@ async function runLoop(job: OracleJob, seedSalt: number, gen: number): Promise<v
         }
 
         const rec = res.record;
-        post({ t: 'batch', decisionId: job.decisionId, record: rec, batchMs, gen });
+        if (res.paths) {
+            ctx.postMessage(
+                { t: 'batch', decisionId: job.decisionId, record: rec, batchMs, gen, paths: res.paths },
+                [res.paths],   // transfer, don't copy — binary stays zero-cost
+            );
+        } else {
+            post({ t: 'batch', decisionId: job.decisionId, record: rec, batchMs, gen });
+        }
 
         const solverApplied = !!(rec.solver && rec.solver.applied);
         const cands = rec.candidates || [];

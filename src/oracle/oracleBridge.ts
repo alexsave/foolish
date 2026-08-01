@@ -27,10 +27,12 @@ interface OracleExports {
     wasm_og_explain_ptr(): number;
     wasm_og_explain_len(): number;
     wasm_og_explain_reset(): void;
+    wasm_og_paths_ptr(): number;
+    wasm_og_paths_len(): number;
 }
 
 export type BatchResult =
-    | { record: OracleDumpRecord }
+    | { record: OracleDumpRecord; paths?: ArrayBuffer }
     | { error: 'empty' | 'parse' | 'overflow' };
 
 export class OracleInstance {
@@ -112,10 +114,23 @@ export class OracleInstance {
         // 9. a parse failure or an {"overflow":1} line is a REAL signal (§6.3):
         //    surface it, don't retry-loop a malformed dump.
         if (line.indexOf('"overflow"') >= 0) return { error: 'overflow' };
+        let record: OracleDumpRecord;
         try {
-            return { record: JSON.parse(line) as OracleDumpRecord };
+            record = JSON.parse(line) as OracleDumpRecord;
         } catch {
             return { error: 'parse' };
         }
+
+        // 10. the binary paths sidecar (wasm_og_paths_ptr/len): COPY it out —
+        //     the wasm buffer is rewritten next batch — into a transferable
+        //     ArrayBuffer the worker ships to the controller zero-copy.
+        const plen = ex.wasm_og_paths_len();
+        if (plen > 0) {
+            const pptr = ex.wasm_og_paths_ptr();
+            const view = __mem(ex as never);
+            const paths = view.slice(pptr, pptr + plen).buffer as ArrayBuffer;
+            return { record, paths };
+        }
+        return { record };
     }
 }

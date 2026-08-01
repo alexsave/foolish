@@ -1,5 +1,20 @@
 # The Infinite Oracle — replay move-strength analysis, designed
 
+**Addendum (the "why" panel)**: the overlay now carries a click-to-open
+detail per candidate — octogen's belief block rendered visually (pins,
+voids, floors, unseen pool) and a chess.com-style TEMPLATE proof of why the
+expected finish is what it is (no AI calls): the most likely concrete
+reply, the dominant playout storylines as a probability tree, prose chains
+with measured MC probabilities, and a counterfactual against the best
+candidate. Data rides a BINARY sidecar next to the JSONL record
+(`wasm_og_paths_ptr/len`, decoded by `src/oracle/pathsBlob.ts` — no JSON on
+the hot batch path): per candidate, top-12 round-outcome path clusters +
+top-3 first replies + whole-playout marginals, traced by `cd_orc` hooks in
+`cordite_sim.c` and aggregated per deliberation in `octogen_strategy.c`
+(all `-DFOOLISH_ORACLE_BUILD`-gated; shipped modules untouched). Proof
+templates: `src/oracle/explain.ts`; UI: `OracleOverlay.tsx` WhyPanel;
+headless coverage: `e2e/oracle_replay.test.ts` §12.2-7.
+
 **Status: IMPLEMENTED (Mode A).** Mode A shipped on branch
 `claude/replay-ui-new-feature-tektn9`: the C hooks (`-DFOOLISH_ORACLE_BUILD`),
 the `wasm-oracle` Makefile target + committed `public/oracle.wasm.gz`, the

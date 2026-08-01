@@ -916,7 +916,8 @@ WASM_ORACLE_CFLAGS := $(filter-out -DCD_TT_BITS=12,$(WASM_BOT_CFLAGS)) \
 WASM_ORACLE_LDFLAGS := $(filter -Wl%,$(WASM_FLAGS))
 WASM_ORACLE_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
   -Wl,--export=wasm_og_explain_ptr -Wl,--export=wasm_og_explain_len \
-  -Wl,--export=wasm_og_explain_reset -Wl,--export=wasm_og_reload_flags
+  -Wl,--export=wasm_og_explain_reset -Wl,--export=wasm_og_reload_flags \
+  -Wl,--export=wasm_og_paths_ptr -Wl,--export=wasm_og_paths_len
 .PHONY: wasm-oracle
 wasm-oracle:
 	@mkdir -p build/botoracle

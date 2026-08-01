@@ -143,7 +143,7 @@ export class OracleController {
 
         switch (m.t) {
             case 'batch': {
-                this.acc.add(m.record);
+                this.acc.add(m.record, m.paths);
                 // convergence checkpoint (§8.7), held past the minimum focus
                 // duration so the sharpening is perceptible on fast devices.
                 const elapsed = Date.now() - this.startMs;
@@ -210,6 +210,18 @@ export class OracleController {
             recordedPresent: acc ? acc.hasKey(job.recordedKey) : false,
             approx: job.approx,
             deckAlive: job.deckAlive,
+            numPlayers: job.numPlayers,
+            belief: acc?.belief ? {
+                pinned: acc.belief.pinned,
+                voids: acc.belief.voids,
+                floor: acc.belief.floor,
+                poolCount: acc.belief.pool.length,
+                hand: acc.beliefCtx?.hand ?? [],
+                oppCounts: acc.beliefCtx?.oppCounts ?? [],
+                table: acc.beliefCtx?.table ?? [],
+                defender: acc.beliefCtx?.defender ?? -1,
+                trump: acc.beliefCtx?.trump ?? -1,
+            } : undefined,
             error: this.error,
         };
     }

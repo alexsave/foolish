@@ -109,6 +109,44 @@ export type StringId =
   | 'oracle_ef_tip'
   | 'oracle_unavailable'
   | 'oracle_retry'
+  | 'oracle_why_title'
+  | 'oracle_belief_title'
+  | 'oracle_tree_title'
+  | 'oracle_detail_hint'
+  | 'oracle_belief_pinned'
+  | 'oracle_belief_voids'
+  | 'oracle_belief_floor'
+  | 'oracle_belief_pool'
+  | 'oracle_belief_none'
+  | 'oracle_reply_attack'
+  | 'oracle_reply_cover'
+  | 'oracle_reply_pass'
+  | 'oracle_reply_pickup'
+  | 'oracle_reply_good'
+  | 'oracle_ev_me_beat'
+  | 'oracle_ev_me_pickup'
+  | 'oracle_ev_opp_beat'
+  | 'oracle_ev_opp_pickup'
+  | 'oracle_ev_resolved'
+  | 'oracle_out_win'
+  | 'oracle_out_loss'
+  | 'oracle_out_mixed'
+  | 'oracle_out_place'
+  | 'oracle_why_best'
+  | 'oracle_why_delta'
+  | 'oracle_why_reply'
+  | 'oracle_why_then'
+  | 'oracle_why_path'
+  | 'oracle_why_vs_pickup'
+  | 'oracle_why_vs_trump'
+  | 'oracle_why_vs_opp'
+  | 'oracle_why_vs_diverge'
+  | 'oracle_why_vs_noise'
+  | 'oracle_why_marginals'
+  | 'oracle_why_exact_win'
+  | 'oracle_why_exact_loss'
+  | 'oracle_why_exact_draw'
+  | 'oracle_why_exact_proof'
   | 'oracle_class_best'
   | 'oracle_class_excellent'
   | 'oracle_class_good'
@@ -228,6 +266,44 @@ const strings_en: Record<StringId, string> = {
   oracle_ef_tip: 'Expected finishing place over the sampled worlds (lower is better).',
   oracle_unavailable: 'Oracle failed to load',
   oracle_retry: 'Retry',
+  oracle_why_title: 'WHY',
+  oracle_belief_title: 'BELIEFS',
+  oracle_tree_title: 'FUTURES',
+  oracle_detail_hint: 'Tap a move for the proof',
+  oracle_belief_pinned: 'P{n} is known to hold {cards}',
+  oracle_belief_voids: 'P{n} demonstrably cannot beat {cards}',
+  oracle_belief_floor: 'P{n} holds no off-trump card below {v}',
+  oracle_belief_pool: '{n} cards unseen (deck + hidden hands)',
+  oracle_belief_none: 'No hard deductions yet — every unseen card is possible',
+  oracle_reply_attack: 'attacks with {card}',
+  oracle_reply_cover: 'covers with {card}',
+  oracle_reply_pass: 'passes it on with {card}',
+  oracle_reply_pickup: 'picks the cards up',
+  oracle_reply_good: 'stops attacking',
+  oracle_ev_me_beat: 'you beat the round',
+  oracle_ev_me_pickup: 'you are forced to pick up',
+  oracle_ev_opp_beat: 'the opponent covers through',
+  oracle_ev_opp_pickup: 'the opponent must pick up',
+  oracle_ev_resolved: 'the game resolves right there',
+  oracle_out_win: 'you escape — they are the fool',
+  oracle_out_loss: 'you are the fool',
+  oracle_out_mixed: 'you end up the fool {pct}% of the time',
+  oracle_out_place: 'expected place {place}',
+  oracle_why_best: 'Best line — expected finish {ef}.',
+  oracle_why_delta: 'Expected finish {ef} — {delta} worse than {best}.',
+  oracle_why_reply: 'Most likely reply: {phrase} ({pct}% of futures).',
+  oracle_why_then: ', then ',
+  oracle_why_path: 'In {pct}% of futures: {chain} — finishing {fin}, so {outcome}.',
+  oracle_why_vs_pickup: 'Against {best} you would pick up {b}× per future; here it is {a}× — those extra pickups are the {delta} gap.',
+  oracle_why_vs_trump: 'This line spends {a} trumps per future vs {b} after {best} — the wasted trumps are the {delta} gap.',
+  oracle_why_vs_opp: 'After {best} the opponent is forced to pick up {a}× per future vs {b} here — the lost pressure is the {delta} gap.',
+  oracle_why_vs_diverge: 'The futures split from {best} at round {round}: here {here}, there {there} — worth {delta} expected finish.',
+  oracle_why_vs_noise: 'No single cause dominates vs {best}; many small differences add up to {delta}.',
+  oracle_why_marginals: 'Over {n} futures: you pick up {mepk}×, they pick up {oppk}×; you spend {metr} trumps, they spend {opptr}; ~{rnds} rounds to resolution.',
+  oracle_why_exact_win: 'Proven WIN in {d} plies — exhaustive endgame search.',
+  oracle_why_exact_loss: 'Proven LOSS in {d} plies — exhaustive endgame search.',
+  oracle_why_exact_draw: 'Proven DRAW — exhaustive endgame search.',
+  oracle_why_exact_proof: 'The deck is empty and the opponent’s hand is fully deduced, so the solver enumerated every line to the end. This is a certainty, not an estimate.',
   oracle_class_best: 'best',
   oracle_class_excellent: 'excellent',
   oracle_class_good: 'good',
@@ -348,6 +424,44 @@ const strings_ru: Record<StringId, string> = {
   oracle_ef_tip: 'Ожидаемое место в сыгранных мирах (меньше — лучше).',
   oracle_unavailable: 'Не удалось загрузить оракула',
   oracle_retry: 'Повторить',
+  oracle_why_title: 'ПОЧЕМУ',
+  oracle_belief_title: 'ЗНАНИЯ БОТА',
+  oracle_tree_title: 'ВАРИАНТЫ',
+  oracle_detail_hint: 'Нажмите на ход, чтобы увидеть доказательство',
+  oracle_belief_pinned: 'Известно, что у P{n} на руках {cards}',
+  oracle_belief_voids: 'P{n} доказуемо не может побить {cards}',
+  oracle_belief_floor: 'У P{n} нет некозырных карт ниже {v}',
+  oracle_belief_pool: '{n} карт неизвестно (колода + скрытые руки)',
+  oracle_belief_none: 'Пока нет твёрдых выводов — возможна любая невидимая карта',
+  oracle_reply_attack: 'атакует картой {card}',
+  oracle_reply_cover: 'кроет картой {card}',
+  oracle_reply_pass: 'переводит картой {card}',
+  oracle_reply_pickup: 'забирает карты',
+  oracle_reply_good: 'прекращает атаку',
+  oracle_ev_me_beat: 'вы отбиваетесь',
+  oracle_ev_me_pickup: 'вам приходится забрать',
+  oracle_ev_opp_beat: 'соперник отбивается',
+  oracle_ev_opp_pickup: 'соперник вынужден забрать',
+  oracle_ev_resolved: 'игра решается на этом',
+  oracle_out_win: 'вы выходите — дурак не вы',
+  oracle_out_loss: 'вы остаётесь дураком',
+  oracle_out_mixed: 'вы остаётесь дураком в {pct}% случаев',
+  oracle_out_place: 'ожидаемое место {place}',
+  oracle_why_best: 'Лучшая линия — ожидаемый финиш {ef}.',
+  oracle_why_delta: 'Ожидаемый финиш {ef} — на {delta} хуже, чем {best}.',
+  oracle_why_reply: 'Наиболее вероятный ответ: {phrase} ({pct}% вариантов).',
+  oracle_why_then: ', затем ',
+  oracle_why_path: 'В {pct}% вариантов: {chain} — финиш {fin}, то есть {outcome}.',
+  oracle_why_vs_pickup: 'После {best} вы забирали бы {b} раза за партию; здесь {a} — эти лишние взятия и есть разница в {delta}.',
+  oracle_why_vs_trump: 'Эта линия тратит {a} козыря за партию против {b} после {best} — потраченные козыри и есть разница в {delta}.',
+  oracle_why_vs_opp: 'После {best} соперник вынужден забирать {a} раза за партию против {b} здесь — потерянное давление и есть разница в {delta}.',
+  oracle_why_vs_diverge: 'Линии расходятся с {best} на раунде {round}: здесь {here}, там {there} — цена {delta} ожидаемого финиша.',
+  oracle_why_vs_noise: 'Нет одной решающей причины против {best}; множество мелких различий складываются в {delta}.',
+  oracle_why_marginals: 'За {n} партий: вы забираете {mepk}×, они {oppk}×; вы тратите {metr} козырей, они {opptr}; ~{rnds} раундов до развязки.',
+  oracle_why_exact_win: 'Доказанная ПОБЕДА за {d} ходов — полный перебор эндшпиля.',
+  oracle_why_exact_loss: 'Доказанное ПОРАЖЕНИЕ за {d} ходов — полный перебор эндшпиля.',
+  oracle_why_exact_draw: 'Доказанная НИЧЬЯ — полный перебор эндшпиля.',
+  oracle_why_exact_proof: 'Колода пуста, рука соперника полностью вычислена, и решатель перебрал все линии до конца. Это достоверность, а не оценка.',
   oracle_class_best: 'лучший',
   oracle_class_excellent: 'отличный',
   oracle_class_good: 'хороший',
@@ -468,6 +582,44 @@ const strings_ko: Record<StringId, string> = {
   oracle_ef_tip: '표본 월드에서의 예상 순위 (낮을수록 좋음).',
   oracle_unavailable: '오라클을 불러오지 못했습니다',
   oracle_retry: '다시 시도',
+  oracle_why_title: '이유',
+  oracle_belief_title: '봇의 추론',
+  oracle_tree_title: '미래 분기',
+  oracle_detail_hint: '수를 누르면 증명을 볼 수 있습니다',
+  oracle_belief_pinned: 'P{n}이(가) {cards}를 가진 것으로 확인됨',
+  oracle_belief_voids: 'P{n}은(는) {cards}를 이길 수 없음이 입증됨',
+  oracle_belief_floor: 'P{n}에게는 {v} 미만의 비트럼프 카드가 없음',
+  oracle_belief_pool: '미확인 카드 {n}장 (덱 + 숨겨진 손패)',
+  oracle_belief_none: '아직 확정된 추론 없음 — 모든 미확인 카드가 가능합니다',
+  oracle_reply_attack: '{card}(으)로 공격',
+  oracle_reply_cover: '{card}(으)로 방어',
+  oracle_reply_pass: '{card}(으)로 넘기기',
+  oracle_reply_pickup: '카드를 가져감',
+  oracle_reply_good: '공격 중단',
+  oracle_ev_me_beat: '내가 라운드를 막아냄',
+  oracle_ev_me_pickup: '내가 카드를 가져가야 함',
+  oracle_ev_opp_beat: '상대가 막아냄',
+  oracle_ev_opp_pickup: '상대가 가져가야 함',
+  oracle_ev_resolved: '게임이 그 자리에서 결판남',
+  oracle_out_win: '탈출 성공 — 상대가 바보',
+  oracle_out_loss: '내가 바보가 됨',
+  oracle_out_mixed: '{pct}%의 확률로 바보가 됨',
+  oracle_out_place: '예상 순위 {place}',
+  oracle_why_best: '최선의 수 — 예상 순위 {ef}.',
+  oracle_why_delta: '예상 순위 {ef} — {best}보다 {delta} 나쁨.',
+  oracle_why_reply: '가장 유력한 응수: {phrase} (미래의 {pct}%).',
+  oracle_why_then: ', 그다음 ',
+  oracle_why_path: '미래의 {pct}%: {chain} — 순위 {fin}, 즉 {outcome}.',
+  oracle_why_vs_pickup: '{best} 이후에는 판당 {b}회 가져가지만 여기서는 {a}회 — 그 추가 픽업이 {delta} 차이입니다.',
+  oracle_why_vs_trump: '이 라인은 판당 트럼프를 {a}장 쓰지만 {best} 이후에는 {b}장 — 낭비된 트럼프가 {delta} 차이입니다.',
+  oracle_why_vs_opp: '{best} 이후 상대는 판당 {a}회 가져가야 하지만 여기서는 {b}회 — 잃어버린 압박이 {delta} 차이입니다.',
+  oracle_why_vs_diverge: '{round}라운드에서 {best}와 갈라집니다: 여기서는 {here}, 거기서는 {there} — 예상 순위 {delta}만큼의 값어치.',
+  oracle_why_vs_noise: '{best} 대비 단일 원인은 없습니다; 작은 차이들이 모여 {delta}가 됩니다.',
+  oracle_why_marginals: '{n}판 기준: 나는 {mepk}회, 상대는 {oppk}회 픽업; 나는 트럼프 {metr}장, 상대는 {opptr}장 사용; 결판까지 약 {rnds}라운드.',
+  oracle_why_exact_win: '{d}수 만에 입증된 승리 — 완전 탐색 엔드게임.',
+  oracle_why_exact_loss: '{d}수 만에 입증된 패배 — 완전 탐색 엔드게임.',
+  oracle_why_exact_draw: '입증된 무승부 — 완전 탐색 엔드게임.',
+  oracle_why_exact_proof: '덱이 비었고 상대의 손패가 완전히 추론되어, 솔버가 모든 라인을 끝까지 탐색했습니다. 추정이 아니라 확정입니다.',
   oracle_class_best: '최선',
   oracle_class_excellent: '훌륭함',
   oracle_class_good: '좋음',

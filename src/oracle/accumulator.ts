@@ -6,10 +6,12 @@
  * ========================================================================== */
 
 import {
-    OracleDumpRecord, OracleDumpCandidate, OracleCandidate, OracleVerdict,
+    OracleDumpRecord, OracleCandidate, OracleVerdict, OracleCandPaths,
+    OraclePathStat, OracleReplyStat,
     ORACLE_TRUMP_KEEP, ORACLE_CONVERGE_MIN_N, ORACLE_CONVERGE_MAX_SE,
     canonicalMoveKey,
 } from './types';
+import { decodePathsBlob } from './pathsBlob';
 
 interface Welford { count: number; mean: number; m2: number; }
 function welfordAdd(w: Welford, x: number): void {
@@ -39,6 +41,12 @@ interface Acc {
     forcedLoss: boolean;
     pruned: boolean;
     chosen: boolean;
+    // ---- "why" sidecar pools (merged across batches) ----
+    whyN: number;                                          // playouts folded
+    whyMepk: number; whyOppk: number;                      // Σ mean·n (weighted)
+    whyMetr: number; whyOpptr: number; whyRnds: number;
+    pathPool: Map<string, { seq: number[]; n: number; finSum: number }>;
+    replyPool: Map<number, { type: number; card: number; n: number }>;
 }
 
 const VERDICT_RANK: Record<string, number> = {
@@ -52,11 +60,34 @@ export class OracleAccumulator {
 
     constructor(private opts: { deckAlive: boolean; recordedKey: string }) {}
 
-    /** Merge one decision record (one worker's one batch). */
-    add(rec: OracleDumpRecord): void {
+    /** Decision-static context captured from the first record that carries a
+     *  belief block (identical every batch — the belief is a function of the
+     *  marshaled position, not of the sampling). */
+    belief: OracleDumpRecord['belief'] | null = null;
+    beliefCtx: {
+        hand: string[]; oppCounts: number[];
+        table: { attack: string; defense: string | null }[];
+        defender: number; trump: number;
+    } | null = null;
+
+    /** Merge one decision record (one worker's one batch), plus its optional
+     *  binary paths sidecar. */
+    add(rec: OracleDumpRecord, pathsBlob?: ArrayBuffer): void {
         const cands = rec.candidates || [];
+        const why = pathsBlob ? decodePathsBlob(pathsBlob) : null;
+        if (!this.belief && rec.belief) {
+            this.belief = rec.belief;
+            this.beliefCtx = {
+                hand: rec.hand ?? [],
+                oppCounts: rec.opp_counts ?? [],
+                table: rec.table ?? [],
+                defender: rec.defender,
+                trump: rec.trump,
+            };
+        }
         let batchWorlds = 0;
-        for (const c of cands) {
+        for (let ci = 0; ci < cands.length; ci++) {
+            const c = cands[ci];
             const key = canonicalMoveKey(c.type, c.cards, c.target);
             let a = this.acc.get(key);
             if (!a) {
@@ -64,6 +95,8 @@ export class OracleAccumulator {
                     key, type: c.type, label: c.label, cards: c.cards, target: c.target,
                     n: 0, sum: 0, bm: { count: 0, mean: 0, m2: 0 },
                     verdict: 'none', forcedLoss: false, pruned: false, chosen: false,
+                    whyN: 0, whyMepk: 0, whyOppk: 0, whyMetr: 0, whyOpptr: 0, whyRnds: 0,
+                    pathPool: new Map(), replyPool: new Map(),
                 };
                 this.acc.set(key, a);
             }
@@ -80,6 +113,28 @@ export class OracleAccumulator {
             if (c.pruned) a.pruned = true;
             if (c.forced_loss) a.forcedLoss = true;
             if (c.chosen) a.chosen = true;
+            // sidecar entries key by candidate INDEX within this record
+            const w = why?.get(ci);
+            if (w && w.agg.n > 0) {
+                a.whyN += w.agg.n;
+                a.whyMepk += w.agg.mepk * w.agg.n;
+                a.whyOppk += w.agg.oppk * w.agg.n;
+                a.whyMetr += w.agg.metr * w.agg.n;
+                a.whyOpptr += w.agg.opptr * w.agg.n;
+                a.whyRnds += w.agg.rnds * w.agg.n;
+                for (const p of w.paths) {
+                    const pk = p.seq.join('');
+                    const e = a.pathPool.get(pk);
+                    if (e) { e.n += p.n; e.finSum += p.fin * p.n; }
+                    else a.pathPool.set(pk, { seq: p.seq, n: p.n, finSum: p.fin * p.n });
+                }
+                for (const r of w.replies) {
+                    const rk = r.type * 64 + r.card;
+                    const e = a.replyPool.get(rk);
+                    if (e) e.n += r.n;
+                    else a.replyPool.set(rk, { type: r.type, card: r.card, n: r.n });
+                }
+            }
         }
         // nsim is uniform across candidates (racing off, common random numbers),
         // so one representative delta is the batch's true world count.
@@ -126,6 +181,28 @@ export class OracleAccumulator {
         for (const a of this.acc.values()) {
             const mean = a.n > 0 ? a.sum / a.n : null;
             const tax = mean == null ? 0 : this.trumpTax(a);
+            let why: OracleCandidate['why'];
+            if (a.whyN > 0) {
+                const paths: OraclePathStat[] = [...a.pathPool.values()]
+                    .sort((x, y) => y.n - x.n)
+                    .slice(0, 6)
+                    .map((p) => ({ seq: p.seq, n: p.n, fin: p.finSum / p.n }));
+                const replies: OracleReplyStat[] = [...a.replyPool.values()]
+                    .sort((x, y) => y.n - x.n)
+                    .slice(0, 3);
+                why = {
+                    agg: {
+                        n: a.whyN,
+                        mepk: a.whyMepk / a.whyN,
+                        oppk: a.whyOppk / a.whyN,
+                        metr: a.whyMetr / a.whyN,
+                        opptr: a.whyOpptr / a.whyN,
+                        rnds: a.whyRnds / a.whyN,
+                    },
+                    replies,
+                    paths,
+                } satisfies OracleCandPaths;
+            }
             list.push({
                 key: a.key, type: a.type, label: a.label, cards: a.cards, target: a.target,
                 n: a.n,
@@ -138,6 +215,7 @@ export class OracleAccumulator {
                 pruned: a.pruned,
                 chosen: a.chosen,
                 played: a.key === this.opts.recordedKey,
+                why,
             });
         }
         if (exact) {

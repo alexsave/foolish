@@ -173,6 +173,84 @@ test('§12.2-5 exact regime: a proven win/loss verdict appears near the end', as
     console.log('  §12.2-5: exact win/loss verdict observed');
 });
 
+test('§12.2-7 why sidecar: binary paths decode, merge, and template into a proof', async () => {
+    const { decodePathsBlob } = await import('../src/oracle/pathsBlob.ts');
+    const { explainCandidate } = await import('../src/oracle/explain.ts');
+    const { strings } = await import('../src/localization/strings.ts');
+    const en = strings.en;
+    const t = (id: string, params?: Record<string, string | number>) => {
+        let s = (en as Record<string, string>)[id] ?? id;
+        for (const [k, v] of Object.entries(params ?? {})) s = s.split(`{${k}}`).join(String(v));
+        return s;
+    };
+
+    const inst = await freshInstance();
+    const { decoded, frames, id } = await fixture('4p', 4, 42);
+    const idx = Math.floor(frames.length * 0.4);
+    const job = buildOracleJob(frames, decoded, idx, true, id)!;
+    const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey });
+    inst.writeEnv({ ...ENV_BASE, OG_W1: '24' });
+    for (let b = 0; b < 3; b++) {
+        const r = inst.analyzeOnce(job.gameBlob, job.seat, job.logsWire, true, 4242 + b * 101);
+        assert.ok('record' in r, 'record parsed');
+        const { record, paths } = r as { record: any; paths?: ArrayBuffer };
+        // the sidecar must be present whenever the record carries MC scores
+        const scored = record.candidates.filter((c: any) => c.nsim > 0);
+        if (scored.length > 0) {
+            assert.ok(paths && paths.byteLength >= 8, 'binary sidecar present');
+            const decodedBlob = decodePathsBlob(paths!);
+            assert.ok(decodedBlob.size > 0, 'sidecar decodes to entries');
+            // every entry indexes a real candidate and carries a sane share sum
+            for (const [k, w] of decodedBlob) {
+                assert.ok(k < record.candidates.length, 'entry indexes a candidate');
+                assert.ok(w.agg.n > 0, 'entry has folded playouts');
+                const pathN = w.paths.reduce((s2: number, p: any) => s2 + p.n, 0);
+                assert.ok(pathN <= w.agg.n, 'cluster counts bounded by total');
+                for (const p of w.paths) {
+                    assert.ok(p.seq.every((sym: number) => sym >= 1 && sym <= 4), 'symbols in 1..4');
+                    assert.ok(p.fin >= 1 && p.fin <= job.numPlayers, `cluster fin ${p.fin} in range`);
+                }
+            }
+        }
+        acc.add(record, paths);
+    }
+    // belief context captured for the panel
+    assert.ok(acc.belief, 'belief block captured');
+    // the merged candidates carry why-data, and the generator produces prose
+    const cands = acc.candidates(false);
+    const best = cands.find((c) => c.mean != null) ?? null;
+    const withWhy = cands.filter((c) => c.why && c.why.agg.n > 0);
+    assert.ok(withWhy.length > 0, 'merged candidates carry why-data');
+    let proofs = 0;
+    for (const c of withWhy) {
+        const snapshot = {
+            numPlayers: job.numPlayers,
+            seat: job.seat,
+            belief: {
+                pinned: acc.belief!.pinned, voids: acc.belief!.voids, floor: acc.belief!.floor,
+                poolCount: acc.belief!.pool.length,
+                hand: [], oppCounts: [], table: [], defender: 0,
+                trump: acc.beliefCtx?.trump ?? -1,
+            },
+        } as never;
+        const why = explainCandidate(t, c, best, snapshot);
+        assert.ok(why, `explanation built for ${c.label}`);
+        assert.ok(why!.headline.length > 0, 'headline text');
+        assert.ok(!why!.headline.includes('{'), 'no unfilled template params');
+        for (const p of why!.proof) {
+            assert.ok(p.includes('%'), 'proof cites a probability');
+            assert.ok(!p.includes('oracle_'), 'no raw string ids leak');
+        }
+        if (why!.proof.length > 0) proofs++;
+        if (why!.tree.length > 0) {
+            const share = why!.tree.reduce((s2, nd) => s2 + nd.share, 0);
+            assert.ok(share <= 1.0001, 'tree shares bounded');
+        }
+    }
+    assert.ok(proofs > 0, 'at least one candidate has a storyline proof');
+    console.log(`  §12.2-7: sidecar decoded; ${withWhy.length} candidates explained, ${proofs} with storyline proofs`);
+});
+
 test('§12.2-6 env reload: raising OG_W1 grows nsim between batches', async () => {
     const inst = await freshInstance();
     const { decoded, frames, id } = await fixture('4p', 4, 42);

@@ -216,6 +216,51 @@ static int sim_draw(SimState *s, int *out) {
     return 1;
 }
 
+#ifdef FOOLISH_ORACLE_BUILD
+// Infinite-oracle path trace (cordite_sim.h). Zero-cost when inactive; the
+// hooks below fire from the shared apply handlers, so cd_sim_solve* clears
+// `active` around its exploration (hypothetical solver lines must not
+// pollute the playout's story).
+_Thread_local CdOrcTrace cd_orc;
+void cd_orc_begin(int me) {
+    memset(&cd_orc, 0, sizeof cd_orc);
+    cd_orc.active = 1;
+    cd_orc.me = me;
+}
+void cd_orc_end(void) { cd_orc.active = 0; }
+static inline void cd_orc_round(int defender, int me, int pickup) {
+    if (!cd_orc.active) return;
+    cd_orc.rounds++;
+    if (pickup) {
+        if (defender == me) cd_orc.me_pickups++; else cd_orc.opp_pickups++;
+    }
+    if (cd_orc.nsym < CD_ORC_ROUNDS) {
+        cd_orc.sym[cd_orc.nsym++] =
+            (uint8_t)((defender == me) ? (pickup ? 2 : 1) : (pickup ? 4 : 3));
+    }
+}
+static inline void cd_orc_trumps(const SimState *s, int p, const uint8_t *ids, int n) {
+    if (!cd_orc.active) return;
+    int t = 0;
+    for (int i = 0; i < n; i++) if (id_suit(ids[i]) == s->power_suit) t++;
+    if (!t) return;
+    if (p == cd_orc.me) cd_orc.me_trumps += t; else cd_orc.opp_trumps += t;
+}
+static inline void cd_orc_reply(int p, uint8_t type, uint8_t card) {
+    if (!cd_orc.active || cd_orc.have_reply || p == cd_orc.me) return;
+    cd_orc.have_reply = 1;
+    cd_orc.reply_type = type;
+    cd_orc.reply_card = card;
+}
+#define CD_ORC_ROUND(def, pickup)  cd_orc_round((def), cd_orc.me, (pickup))
+#define CD_ORC_TRUMPS(s, p, ids, n) cd_orc_trumps((s), (p), (ids), (n))
+#define CD_ORC_REPLY(p, type, card) cd_orc_reply((p), (type), (card))
+#else
+#define CD_ORC_ROUND(def, pickup)   ((void)0)
+#define CD_ORC_TRUMPS(s, p, ids, n) ((void)0)
+#define CD_ORC_REPLY(p, type, card) ((void)0)
+#endif
+
 static void sim_eliminate(SimState *s, int p) {
     s->status_p[p] = PLAYER_STATUS_OUT;
     s->in_mask  &= ~(1u << p);
@@ -261,6 +306,7 @@ static void sim_refill(SimState *s) {
 // (the rollout never reads logs). Each takes an already-validated move.
 
 static void sim_apply_attack(SimState *s, int p_idx, const uint8_t *ids, int n) {
+    CD_ORC_TRUMPS(s, p_idx, ids, n);
     for (int i = 0; i < n; i++) {
         s->hand[p_idx] &= ~(1ull << ids[i]);
         int b = s->num_battles++;
@@ -280,6 +326,7 @@ static void sim_apply_attack(SimState *s, int p_idx, const uint8_t *ids, int n) 
 // cover all uncovered battles with the given (cover,attack-battle) assignment.
 static void sim_apply_cover(SimState *s, int p_idx,
                             const uint8_t *covers, const int *battle_idx, int n) {
+    CD_ORC_TRUMPS(s, p_idx, covers, n);
     for (int i = 0; i < n; i++) {
         int b = battle_idx[i];
         s->def[b] = covers[i];
@@ -289,6 +336,7 @@ static void sim_apply_cover(SimState *s, int p_idx,
     }
 
     if (sim_hand_count(s, p_idx) == 0) {
+        CD_ORC_ROUND(p_idx, 0);   // hand-empty full cover beats the round
         s->discard_pile_length += s->num_battles * 2;
         s->num_battles = 0;
         s->covered_mask = 0;
@@ -311,6 +359,7 @@ static void sim_apply_cover(SimState *s, int p_idx,
 }
 
 static void sim_apply_pass(SimState *s, int p_idx, const uint8_t *ids, int n) {
+    CD_ORC_TRUMPS(s, p_idx, ids, n);
     int next = sim_next_player(s, s->defender);
     for (int i = 0; i < n; i++) {
         s->hand[p_idx] &= ~(1ull << ids[i]);
@@ -327,6 +376,7 @@ static void sim_apply_pass(SimState *s, int p_idx, const uint8_t *ids, int n) {
 }
 
 static void sim_apply_pickup(SimState *s, int p_idx) {
+    CD_ORC_ROUND(p_idx, 1);
     for (int i = 0; i < s->num_battles; i++) {
         s->hand[p_idx] |= (1ull << s->atk[i]);
         if (s->covered_mask & (1ull << i)) s->hand[p_idx] |= (1ull << s->def[i]);
@@ -341,6 +391,7 @@ static void sim_apply_pickup(SimState *s, int p_idx) {
 }
 
 static void sim_round_transition(SimState *s) {
+    CD_ORC_ROUND(s->defender, 0);
     s->discard_pile_length += s->num_battles * 2;
     s->num_battles = 0;
     s->covered_mask = 0;
@@ -681,6 +732,9 @@ static int sim_handwritten_move(SimState *s, int p, SimMove *out) {
 // ---------- playout ----------------------------------------------------
 
 static void sim_apply(SimState *s, int p, const SimMove *m) {
+    CD_ORC_REPLY(p, (uint8_t)m->type,
+                 (m->n > 0 && m->type != MV_PICKUP && m->type != MV_GOOD)
+                     ? m->cards[0] : (uint8_t)0xFF);
     switch (m->type) {
         case MV_ATTACK: sim_apply_attack(s, p, m->cards, m->n); break;
         case MV_COVER:  sim_apply_cover(s, p, m->cards, m->battle, m->n); break;
@@ -1262,6 +1316,9 @@ static int sim_gen_cover(const SimState *s, int power, SolMove *buf, int max_n) 
 
 // Apply a SolMove to a SimState (uses the same handlers as the rollout).
 static void sim_apply_sol(SimState *s, int p, const SolMove *m) {
+    CD_ORC_REPLY(p, (uint8_t)m->type,
+                 (m->n > 0 && m->type != MV_PICKUP && m->type != MV_GOOD)
+                     ? m->cards[0] : (uint8_t)0xFF);
     switch (m->type) {
         case MV_ATTACK: sim_apply_attack(s, p, m->cards, m->n); break;
         case MV_PASS:   sim_apply_pass(s, p, m->cards, m->n); break;
@@ -1755,6 +1812,13 @@ int cd_sim_solve_d(SimState *s, int me, int alpha, int beta, long *budget,
 #endif
     S.tt = cd_tt_get();
     if (!S.tt) { if (aborted) *aborted = 1; return 0; }
+#ifdef FOOLISH_ORACLE_BUILD
+    // The solver explores hypothetical lines through the shared apply
+    // handlers — mute the oracle path trace so a leaf solve inside a playout
+    // doesn't pollute the playout's recorded story.
+    int orc_save = cd_orc.active;
+    cd_orc.active = 0;
+#endif
 #ifdef CD_TT_TRACE
     int _call = cd_tr_call++;
     long _nodes0 = cd_tr_nodes;
@@ -1796,6 +1860,9 @@ int cd_sim_solve_d(SimState *s, int me, int alpha, int beta, long *budget,
     fprintf(stderr,"SUM g=%ld call=%d me=%d a=%d b=%d v=%d aborted=%d budgetleft=%ld root=[%s]\n",
             cd_tr_group,_call,me,alpha,beta,v,S.aborted,*budget,_tbl);
     cd_tr_active = 0;
+#endif
+#ifdef FOOLISH_ORACLE_BUILD
+    cd_orc.active = orc_save;
 #endif
     return v;
 }
