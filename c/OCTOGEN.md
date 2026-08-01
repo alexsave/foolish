@@ -68,23 +68,49 @@ information-set values or true information-set search).
 ## Hunt 5: octogen as its own rollout policy (the "infinite oracle" recursion)
 
 Asked and answered (docs/OCTOGEN_SELF_ROLLOUT.md has the full argument,
-costs, and reproduction): replace the handwritten rollout policy with
-octogen itself, recursively, base case "does this move let me win?" — is
-that the strongest possible bot on unlimited compute? **No.** Implemented as
-`octogen_self`/`ogs` (`cd_sim_playout_self`: every in-world seat runs a
-nested cheap-first tournament over its full legal set, evaluated by
-playouts one recursion level down; base cases = immediate-win check, the
-exact leaf, handwritten at depth 0). Inside a determinized world a
-recursive octogen has nothing left to sample, so the recursion limit is
-perfect FULL-INFORMATION play of the world — the opponent-model regime
-already measured harmful by CD_LEAF (10x slower AND weaker) and OG_REPLY
-(paranoid distortion), and reachable far cheaper via the solver than via
-nesting. Measured here: memory flat at every depth (~4.3 MB RSS — the
-recursion is O(depth) SimStates); wall-clock ~(cap x plies)^depth (full
-depth-1 ~70x, projected full depth-2 ~5,000x); strength XXX-HUNT5-RESULT.
-Knobs: `OG_SELF_DEPTH/CAP/PLIES/WIN/STAGE`, `OG_SELF_LEAF_CARDS/BUDGET`
-(engage only through the `octogen_self` strategy id, so paired runs hold
-plain octogen in-process).
+costs, decomposition, and reproduction): replace the handwritten rollout
+policy with octogen itself, recursively, base case "does this move let me
+win?" — is that the strongest possible bot on unlimited compute?
+**Not universally — the sign is the opponent's property — but gated on
+behavioral evidence it is the strongest legit bot this repo has measured.**
+Implemented as `octogen_self`/`ogs` (`cd_sim_playout_self`: every in-world
+seat runs a nested cheap-first tournament over its full legal set,
+evaluated by playouts one recursion level down; base cases = immediate-win
+check, the exact leaf, handwritten at depth 0).
+
+Paired same-deal vs octogen control, pc2 (seeds 910001+): @ cordite tables
+the full symmetric self-rollout is **−0.237±0.060** (86.2%/62.5% wins,
+23/4/53) at ~70x decision cost, dose-responsive (8 plies: −0.080±0.045);
+@ handwritten tables the same lever is **+0.105±0.032 WORSE** (the
+paranoid-distortion prior, confirmed); @ random, saturated null. So hunt
+4's "opponent-model refinements never pay" was dose- and table-limited:
+at full dose vs a strong determinized-MC opponent, in-world search pays
+big — and it is a MID-GAME effect (extending the exact rollout leaf to 18
+cards / 100k nodes: +0.000±0.058, the endgame axis stays saturated).
+Decomposition: own-seat-only search (honest opponent model kept) is safe
+everywhere (−0.075±0.045 cordite, −0.020±0.022 handwritten, −0.087±0.091
+pc3) — two-thirds of the cordite win is the better OPPONENT model, and the
+whole handwritten harm was the opponent side too. Belief-feeding the
+future self (OG_SELF_HONEST, re-determinized information-set choice) is
+strength-neutral at 2x cost — clairvoyant is the keeper. A transposition
+cache over searched in-world decisions (OG_SELF_TT; ~30% hit rate) buys
+1.69x/2.01x at depth 1/2, strength preserved on the same seeds; memory
+flat (~4.3 MB) without it, 128 MB/thread with it.
+
+**The keeper: `OG_SELF_TELL=1`** — engage the searching rollout only when
+a live opponent has a proven `mc_tell` (strategic pickup-while-holding-
+cover, public-log evidence handwritten-class players never produce).
+Measured never worse in any cell — handwritten 200/200 and random 150/150
+deals decision-identical to stock octogen (zero false fires; the profiler
+reads random seats as loose, not strategic) — and **−0.113±0.033 better @
+cordite tables** (22/5/123): the same never-worse/strictly-better bar this
+bot cleared over semtex, at 5-70x decision cost only when engaged.
+
+Knobs: `OG_SELF_DEPTH/CAP/PLIES/WIN/STAGE`, `OG_SELF_OWN`,
+`OG_SELF_HONEST`, `OG_SELF_TT(_STATS)`, `OG_SELF_TELL`,
+`OG_SELF_LEAF_CARDS/BUDGET` (engage only through the `octogen_self`
+strategy id, so paired runs hold plain octogen in-process; octogen itself
+is decision-identical with the lever off, verified over 80 games).
 
 ## Knobs (`OG_*`, octogen only)
 
