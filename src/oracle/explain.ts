@@ -52,7 +52,9 @@ export function symPhrase(t: TFn, sym: number): string {
 }
 
 /** Cluster outcome → localized finish clause. Heads-up gets the crisp
- *  durak-probability phrasing; multiplayer gets expected place. */
+ *  durak-probability phrasing (finish−1 IS the fool probability there);
+ *  multiplayer gets a qualitative band so the clause carries meaning instead
+ *  of repeating the number. */
 function outcomePhrase(t: TFn, fin: number, numPlayers: number): string {
     if (numPlayers === 2) {
         const loss = Math.max(0, Math.min(1, fin - 1));
@@ -60,7 +62,35 @@ function outcomePhrase(t: TFn, fin: number, numPlayers: number): string {
         if (loss >= 0.98) return t('oracle_out_loss');
         return t('oracle_out_mixed', { pct: Math.round(loss * 100) });
     }
-    return t('oracle_out_place', { place: fin.toFixed(2) });
+    const base = (numPlayers + 1) / 2;
+    if (fin <= 1.15) return t('oracle_out_first');
+    if (fin >= numPlayers - 0.15) return t('oracle_out_loss');
+    if (fin <= base - 0.25) return t('oracle_out_strong', { place: fin.toFixed(2) });
+    if (fin >= base + 0.25) return t('oracle_out_bad', { place: fin.toFixed(2) });
+    return t('oracle_out_mid', { place: fin.toFixed(2) });
+}
+
+/** Round-symbol sequence → compressed clause chain: repeated symbols fold
+ *  into "you beat the round (3× in a row)", and a 4-round chain of a game
+ *  whose playouts run visibly longer gets a "…and the game runs on" tail so
+ *  a truncated prefix never reads as the whole story. */
+function chainPhrase(t: TFn, seq: number[], meanRounds: number): string {
+    if (seq.length === 0) return t('oracle_ev_resolved');
+    const clauses: string[] = [];
+    let i = 0;
+    while (i < seq.length) {
+        let j = i;
+        while (j + 1 < seq.length && seq[j + 1] === seq[i]) j++;
+        const k = j - i + 1;
+        const phrase = symPhrase(t, seq[i]);
+        clauses.push(k > 1 ? t('oracle_why_repeat', { clause: phrase, k }) : phrase);
+        i = j + 1;
+    }
+    let chain = clauses.join(t('oracle_why_then'));
+    if (seq.length >= 4 && meanRounds > 5) {
+        chain += t('oracle_why_continues', { r: Math.round(meanRounds) });
+    }
+    return chain;
 }
 
 /* ------------------------------ tree view --------------------------------- */
@@ -163,11 +193,9 @@ export function explainCandidate(
     for (const p of shown) {
         const share = pct(p.n / total);
         if (share < 5) continue;                       // noise floor
-        const chain = p.seq.length > 0
-            ? p.seq.map((sym) => symPhrase(t, sym)).join(t('oracle_why_then'))
-            : t('oracle_ev_resolved');
         proof.push(t('oracle_why_path', {
-            pct: share, chain, fin: p.fin.toFixed(2),
+            pct: share,
+            chain: chainPhrase(t, p.seq, why.agg.rnds),
             outcome: outcomePhrase(t, p.fin, np),
         }));
     }
@@ -176,6 +204,21 @@ export function explainCandidate(
     let versusBest: string | null = null;
     if (best && best.key !== c.key && best.mean != null && best.why && delta >= 0.0001) {
         const bw = best.why;
+        // A noise-level gap gets the honest no-single-cause line — never
+        // dress up a 0.04 in causal language.
+        if (delta < 0.05) {
+            return {
+                headline, reply, proof,
+                versusBest: t('oracle_why_vs_noise', { best: best.label, delta: delta.toFixed(2) }),
+                marginals: t('oracle_why_marginals', {
+                    n: total,
+                    mepk: why.agg.mepk.toFixed(2), oppk: why.agg.oppk.toFixed(2),
+                    metr: why.agg.metr.toFixed(2), opptr: why.agg.opptr.toFixed(2),
+                    rnds: why.agg.rnds.toFixed(1),
+                }),
+                tree: buildWhyTree(why.paths, total),
+            };
+        }
         // name the biggest measured driver of the gap
         const dPk = why.agg.mepk - bw.agg.mepk;
         const dTr = why.agg.metr - bw.agg.metr;

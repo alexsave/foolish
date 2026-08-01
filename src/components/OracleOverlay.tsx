@@ -286,7 +286,7 @@ function WhyPanel({ c, bestCand, s, t }: {
                     )}
                 </>
             ) : (
-                <div style={{ ...prose, opacity: 0.6 }}>…</div>
+                <div style={{ ...prose, opacity: 0.6 }}>{t('oracle_why_nodata')}</div>
             )}
             {b && (
                 <>
