@@ -142,6 +142,49 @@ static _Thread_local int og_self_cap = 6;
 static _Thread_local int og_self_plies = 0;
 static _Thread_local int og_self_win = 1;
 static _Thread_local int og_self_stage = 0;
+// OG_SELF_OWN (default 0): search ONLY our own seat's in-world decisions;
+// opponents keep the honest handwritten model. Kills the paranoid-distortion
+// objection (we CONTROL our future moves — modeling them handwritten
+// understates the real continuation) while keeping the measured-good
+// opponent model. The one axis none of the hunt-4 levers covered.
+static _Thread_local int og_self_own = 0;
+// OG_SELF_HONEST=M (default 0, needs OG_SELF_OWN): the future self chooses
+// on its BELIEF, not on the world's hidden truth. Its in-world tournaments
+// evaluate each candidate on M re-determinizations of the cards it cannot
+// see — root pins/voids/floors carried forward, plus everything the rollout
+// prefix revealed (public pickups stay known; a seat's constraints expire
+// when it draws) — and the argmax is taken on the average; the chosen move
+// then applies to the true world. Removes the future self's clairvoyance
+// (strategy-fusion leak) at M x the own-seat cost.
+static _Thread_local int og_self_honest = 0;
+static _Thread_local CdSelfRootBelief og_self_rb;
+// OG_SELF_TT (default 0 = off; else log2 table entries, e.g. 22 = 128 MB per
+// thread): transposition cache over searched in-world decisions — the
+// "cache many many states" leg of the infinite-oracle recursion. Generation
+// bumped per root decision so cache warmth never couples paired games.
+// OG_SELF_TT_STATS=1 prints main-thread probe/hit counts at exit (use
+// OMP_NUM_THREADS=1 for meaningful numbers).
+static _Thread_local int og_self_tt = 0;
+// OG_SELF_TELL (default 0): engage the self-rollout ONLY on decisions where
+// some live opponent has a proven mc_tell — the public-log behavioral
+// evidence (strategic pickup while holding a cover) that handwritten-class
+// players never produce but MC bots and thinking humans produce constantly.
+// This is the legitimacy-compatible adaptive deployment: the bot never
+// KNOWS opponent types, it reads observed behavior, exactly like the rest
+// of the belief. Measured motivation: the symmetric self-rollout is
+// +strength vs cordite (-0.237+-0.060 d1full pc2) but -strength vs
+// handwritten (+0.105+-0.032) — this gate aims to keep the first and shed
+// the second without any table knowledge.
+static _Thread_local int og_self_tell = 0;
+
+#ifndef CD_WASM_OVERLAY
+static void og_self_tt_report(void) {
+    long probes = 0, hits = 0;
+    cd_sim_self_tt_stats(&probes, &hits);
+    fprintf(stderr, "[og_self_tt] main-thread probes=%ld hits=%ld (%.1f%%)\n",
+            probes, hits, probes ? 100.0 * hits / probes : 0.0);
+}
+#endif
 // OG_SELF_LEAF_CARDS / OG_SELF_LEAF_BUDGET (-1 = inherit the bbleaf
 // defaults): hero-only override of the in-rollout exact-leaf threshold, so
 // the recursion LIMIT (perfect in-world endgame play) can be probed directly
@@ -1766,6 +1809,14 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
         og_self_stage = og_env_int("OG_SELF_STAGE", 0);
         og_self_leaf_cards = og_env_int("OG_SELF_LEAF_CARDS", -1);
         og_self_leaf_budget = og_env_int("OG_SELF_LEAF_BUDGET", -1);
+        og_self_own = og_env_int("OG_SELF_OWN", 0);
+        og_self_honest = og_env_int("OG_SELF_HONEST", 0);
+        og_self_tt = og_env_int("OG_SELF_TT", 0);
+        og_self_tell = og_env_int("OG_SELF_TELL", 0);
+#ifndef CD_WASM_OVERLAY
+        if (og_self_tt > 0 && og_env_int("OG_SELF_TT_STATS", 0))
+            atexit(og_self_tt_report);
+#endif
         og_void_mod = og_env_int("OG_VOID_MOD", 4);
         if (og_void_mod < 2) og_void_mod = 2;
         og_profile = og_env_int("OG_PROFILE", 0);
@@ -1908,6 +1959,54 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
     // the exact-equivalence difftest.
     bool fast_path = !og_no_fastroll && og_no_leaf && !og_difftest && !og_flag("OG_NO_WORLDSIM");
 
+    // Honest future self (OG_SELF_HONEST + OG_SELF_OWN): hand the sim the
+    // ROOT belief in card-id mask form, so the in-world future self starts
+    // from exactly what we know NOW and accretes only what each rollout
+    // prefix legitimately reveals. pinned = publicly located cards;
+    // forbid = void/floor-excluded ids (trust-filtered by og_build_belief).
+    // OG_SELF_TELL gate: engage the self-rollout only once some live
+    // opponent has behaviorally proven strategic play (mc_tell). Until then
+    // this decision runs as plain octogen — vs handwritten-class opponents
+    // the tell never fires and the measured self-rollout harm never applies.
+    bool og_self_engaged = true;
+    if (og_self && og_self_tell) {
+        og_self_engaged = false;
+        for (int p = 0; p < g->num_players; p++) {
+            if (p == bot_idx) continue;
+            if (g->players[p].status != PLAYER_STATUS_IN) continue;
+            if (B.mc_tell[p]) { og_self_engaged = true; break; }
+        }
+    }
+
+    // Per-decision generation bump for the self-rollout transposition cache
+    // (allocates lazily on first use; entries never survive a decision).
+    if (fast_path && og_self && og_self_engaged && og_self_tt > 0)
+        cd_sim_self_tt_config(og_self_tt);
+
+    if (fast_path && og_self && og_self_engaged && og_self_own
+        && og_self_honest > 0) {
+        for (int p = 0; p < MAX_PLAYERS; p++) {
+            og_self_rb.pinned[p] = 0;
+            og_self_rb.forbid[p] = 0;
+        }
+        for (int p = 0; p < g->num_players; p++) {
+            if (p == bot_idx) continue;
+            for (int k = 0; k < B.pinned_n[p]; k++) {
+                int id = (int)B.pinned[p][k].suit * 13 + (B.pinned[p][k].value - 1);
+                if (id >= 0 && id < 52) og_self_rb.pinned[p] |= 1ull << id;
+            }
+            for (int id = 0; id < 52; id++) {
+                Card c;
+                c.suit = (int8_t)(id / 13);
+                c.value = (int8_t)(id % 13 + 1);
+                bool bad = og_void_forbidden(&B, g, p, c)
+                        || og_floor_forbidden(&B, g, p, c);
+                if (bad) og_self_rb.forbid[p] |= 1ull << id;
+            }
+        }
+        cd_sim_set_self_belief(&og_self_rb, og_self_honest);
+    }
+
     // Stage 1: all candidates on W1 shared worlds.
     // Stage 2: surviving third on W2 more shared worlds.
     // Stage 3: top 2 duel on W3 final shared worlds.
@@ -1927,7 +2026,8 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
             if (fast_path) {
                 cd_sim_from_game(world_sim, world);     // convert world ONCE
                 bool reply_stage = og_reply && stage >= og_reply_stage;
-                bool self_stage = og_self && stage >= og_self_stage;
+                bool self_stage = og_self && og_self_engaged
+                                && stage >= og_self_stage;
                 for (int ci = 0; ci < C.n; ci++) {
                     if (!alive[ci]) continue;
                     *trial_sim = *world_sim;            // cheap struct copy
@@ -1947,7 +2047,8 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
                         fp = cd_sim_playout_self(trial_sim, bot_idx, 600,
                                                  slc, slb, og_polmap,
                                                  og_self_depth, og_self_cap,
-                                                 og_self_plies, og_self_win);
+                                                 og_self_plies, og_self_win,
+                                                 og_self_own ? bot_idx : -1);
                         if (fp == 0) fp = g->num_players;
                     } else if (reply_stage) {
                         fp = cd_sim_playout_reply(trial_sim, bot_idx, 600,
@@ -2018,6 +2119,10 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
             }
         }
     }
+
+    // Honest-future-self belief must not leak into other strategies on this
+    // thread (paired harnesses run the control bot in-process).
+    cd_sim_set_self_belief(NULL, 0);
 
     int best = -1;
     double best_v = 1e30;

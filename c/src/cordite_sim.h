@@ -127,10 +127,60 @@ int  cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
 // depth 0 = the plain policy playout. `win_check` short-circuits with any
 // move that immediately eliminates the actor ("does this move let me win").
 // cap == 0: base-case-only — policy play plus the win_check override.
+// only_seat >= 0 searches ONLY that seat's decisions (the asymmetric
+// own-future variant: strong self-model, honest handwritten opponent model);
+// -1 searches every seat.
 // Cost O((cap x plies)^depth) playouts per rollout; research/native only.
 int  cd_sim_playout_self(SimState *s, int my_idx, int max_turns,
                          int leaf_cards, long leaf_budget, const uint8_t *pol,
-                         int depth, int cap, int nest_plies, int win_check);
+                         int depth, int cap, int nest_plies, int win_check,
+                         int only_seat);
+
+// Root-belief masks for the HONEST future self (cd_sim_set_self_belief):
+// pinned[p] = card ids publicly located in p's hand at the ROOT decision;
+// forbid[p] = ids the root belief says p cannot hold (void + floor
+// constraints, already trust-filtered). Both in sim id space
+// (id = suit*13 + value-1).
+typedef struct {
+    uint64_t pinned[MAX_PLAYERS];
+    uint64_t forbid[MAX_PLAYERS];
+} CdSelfRootBelief;
+
+// Honest-future-self mode for cd_sim_playout_self (research: the
+// belief-consistent "octogen as our own future" — OG_SELF_HONEST):
+// samples > 0 turns every searched OWN decision into a belief-consistent
+// tournament. Future-self's information set at a rollout ply = own hand +
+// public state + root pins/forbids carried forward + everything the prefix
+// revealed (cards publicly picked up stay known; root constraints on a seat
+// expire when it draws unknown cards, mirroring og_build_belief). Each
+// candidate is evaluated on `samples` re-determinizations of the cards
+// future-self cannot see (opponent unknowns + deck re-partitioned, counts
+// kept, forbids respected best-effort), and the argmax is taken on the
+// AVERAGE — the choice is measurable w.r.t. future-self's information, not
+// the world's hidden truth. The chosen move is then applied to the TRUE
+// world state, which keeps unfolding on the actual hands (choose on belief,
+// live in truth). belief may be NULL (= no root pins/forbids).
+// samples == 0 restores the clairvoyant tournament. Reset per playout batch:
+// the prefix-derived state is rebuilt at each playout entry.
+void cd_sim_set_self_belief(const CdSelfRootBelief *belief, int samples);
+
+// Self-rollout transposition cache (OG_SELF_TT — the "cache many many
+// states" leg of the infinite-oracle idea): memoizes each searched in-world
+// decision (position fingerprint x actor x depth -> chosen move), so rollout
+// paths that transpose into the same state — increasingly common toward the
+// shrinking endgame — skip the whole nested tournament. Turns the
+// (cap x plies)^depth recursion TREE into a DAG. Approximation: a cached
+// argmax was computed under one RNG context and is reused in another
+// (deterministic policy-ization of the searched seat) — hence flag-guarded
+// and A/B tested, never assumed neutral. Clairvoyant tournaments only (an
+// honest-mode choice depends on the evolving belief, which is not in the
+// key). bits = log2 entries (e.g. 22 = 4M entries x 32 B = 128 MB per
+// thread); 0 disables. Each call bumps the generation, invalidating prior
+// entries WITHOUT a memset — call once per root decision so cache warmth
+// never couples paired games (the hunt-4 harness-bug lesson). Native
+// research builds only (stubbed under CD_WASM_OVERLAY).
+void cd_sim_self_tt_config(int bits);
+void cd_sim_self_tt_stats(long *probes, long *hits);
 
 // Exact 2-player deck-empty endgame solver on the bitboard state. Returns the
 // value of position `s` from `me`'s perspective in [-1000,1000] (positive = me
