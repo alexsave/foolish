@@ -239,6 +239,22 @@ public final class MessageGameStore {
         persist(map)
     }
 
+    /// Round-8: remember `payload` as this chat's latest game chain, for the app
+    /// drawer's + reopen (§ one game per thread). Call this ONLY for a DELIVERED
+    /// chain - a bubble that is actually in the thread: one received+adopted, or
+    /// one just SENT (didStartSending / the harness deliver). NEVER for a staged-
+    /// but-unsent move, or an undo would leave the cache holding a chain the thread
+    /// never got - the reopen would then diverge from tapping the real last message
+    /// (a game-state conflict). `at` is the caller's clock (newest wins in `put`);
+    /// pass `Date().timeIntervalSince1970`.
+    public func remember(env: MessageEnvelope, chatKey: String, seat: Int, payload: Data, at: Double) {
+        let names = Dictionary(env.joins.map { ($0.seat, $0.name) }, uniquingKeysWith: { a, _ in a })
+        put(MessageGameRecord(
+            gameId: env.gameId, chatKey: chatKey, mySeat: seat, nPlayers: env.nPlayers,
+            round: env.round, turn: env.turn, phase: env.phase, finished: env.phase == 3,
+            names: names, payloadBase32: Base32.encode(payload), updatedAt: at))
+    }
+
     public func remove(gameId: String) {
         var map = all()
         guard map.removeValue(forKey: gameId) != nil else { return }
@@ -302,10 +318,24 @@ public final class MessageGameStore {
 
     // MARK: storage (a corrupt blob is treated as empty, never thrown)
     //
-    // ROUND 7: the preferred-chain game-record cache (Rule P) is removed. `all()`
-    // reports empty and `persist` is a no-op, so `record`/`games`/`put`/`remove`
-    // are inert — the router always renders the tapped bubble, and seat identity
-    // moved to its own `fmsg.seats.v1` store (`seat`/`setSeat` above).
-    private func all() -> [String: MessageGameRecord] { [:] }
-    private func persist(_ map: [String: MessageGameRecord]) {}
+    // ROUND 8: the game-record cache is BACK, but ONLY for `games`/`put` - the
+    // drawer's + button reopening this chat's last chain (there is no transcript
+    // to read - see MessageSurfaceRouter). `record(gameId:chatKey:)` above stays a
+    // nil no-op ON PURPOSE: that reader WAS Rule P ("prefer a cached chain over
+    // the tapped bubble"), the exact thing that got the extension stuck on a stale
+    // lobby in Round 7. Reopen is not Rule P - it only reads the cache when NO
+    // bubble is tapped, so it never competes with (or overrides) a tapped bubble,
+    // and tapping is unchanged. Fresh key (v3), so no ancient pre-Round-7 v2 blob
+    // is ever read back as a game.
+    private let gamesKey = "fmsg.games.v3"
+    private func all() -> [String: MessageGameRecord] {
+        guard let data = defaults?.data(forKey: gamesKey),
+              let map = try? JSONDecoder().decode([String: MessageGameRecord].self, from: data)
+        else { return [:] }
+        return map
+    }
+    private func persist(_ map: [String: MessageGameRecord]) {
+        guard let data = try? JSONEncoder().encode(map) else { return }
+        defaults?.set(data, forKey: gamesKey)
+    }
 }

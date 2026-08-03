@@ -335,10 +335,14 @@ final class MessagesViewController: MSMessagesAppViewController {
         Task {
             guard let env = try? await MessageEnvelope.decode(payload: payload, viewer: mySeat)
             else { return }
-            // Round 7: the preferred-chain cache is gone — commit only the durable
-            // SEAT (§6.1). The chain the human just sent is now the thread's, and
-            // reopening it re-renders it from its own bytes.
             MessageGameStore.shared.setSeat(gameId: env.gameId, chatKey: chatKey, seat: mySeat)
+            // Round 8 (one game per thread): the chain I just SENT is now the
+            // thread's latest DELIVERED message, so remember it - the app-drawer +
+            // button reopens THIS, identical to tapping the bubble I just sent. Only
+            // here (didStartSending), never at stage time, so an undone move never
+            // becomes the cached game (no reopen/thread divergence).
+            MessageGameStore.shared.remember(env: env, chatKey: chatKey, seat: mySeat,
+                                             payload: payload, at: Date().timeIntervalSince1970)
             // The staged moves are now in the sent chain, no longer unacked: drop
             // them from the pending ledger so Rule R never replays a move on top of
             // itself (§7.6).
