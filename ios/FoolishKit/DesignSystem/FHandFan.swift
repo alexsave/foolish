@@ -63,6 +63,18 @@ public struct FHandFan: View {
     /// fan opens for it then. Defaulted empty so every other call site (the
     /// offline board, gallery, snapshot tests) lays out the whole hand unchanged.
     public let reserveNoSlot: Set<String>
+    /// Round-8: when the CALLER owns card flights through an overlay (the message
+    /// board's `BoardAnimator` - a played card flies as a ghost while its hand
+    /// copy is `hidden`), a card must EXIT this fan instantly, never by a
+    /// cross-fade. It cannot be decided from `hidden` at render time: SwiftUI
+    /// captures a leaving view's transition from its LAST rendered body, which is
+    /// the frame BEFORE `preHide` marked it hidden - so a `hidden`-keyed
+    /// transition is always read as the visible-card `.opacity` fade and the card
+    /// lingers half-visible in its old slot beside its own flying ghost (the "two
+    /// of the same card" bug). A STATIC flag has no such capture race. Defaulted
+    /// false so the offline board / gallery / snapshots keep their cross-fade and
+    /// their hand↔table matchedGeometry flight, exactly as before.
+    public let instantExit: Bool
 
     public init(cards: [Card], trumpSuit: Suit?, disabled: Set<String> = [],
                 selection: Binding<Set<String>>, onTap: @escaping (Card) -> Void,
@@ -71,7 +83,8 @@ public struct FHandFan: View {
                 namespace: Namespace.ID? = nil, hidden: Set<String> = [],
                 topHalfOnly: Bool = false, crop: CGFloat? = nil,
                 onDragCardMoved: @escaping (CGPoint) -> Void = { _ in },
-                reserveNoSlot: Set<String> = []) {
+                reserveNoSlot: Set<String> = [], instantExit: Bool = false) {
+        self.instantExit = instantExit
         self.cards = cards
         self.trumpSuit = trumpSuit
         self.disabled = disabled
@@ -389,6 +402,20 @@ public struct FHandFan: View {
                 }
             }
             .frame(width: width, height: geo.size.height, alignment: .center)
+            // Round-8: animate the fan's own re-layout when the laid-out SET
+            // changes, so present cards SLIDE to their new slots as one is
+            // added/removed (a deal makes room, a play closes the gap) instead of
+            // snapping. INSIDE the GeometryReader and ON the row VStack on purpose:
+            // the outer frame is below the reader, and a value-animation there does
+            // not reliably propagate through GeometryReader to the row reflow it is
+            // meant to drive (the cards just jumped). Keyed on the SET, not its
+            // order, so a drag-reorder (same members, different order) keeps its own
+            // FMotion.card spring and rigid finger tracking, and `crop` is excluded
+            // so the compact-drawer collapse stays the board's animation. A leaving
+            // card still EXITS instantly (`instantExit` / the identity transition),
+            // so only the survivors slide - no fade, no ghost.
+            .animation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime),
+                       value: Set(laidOutCards.map(\.identity)))
         }
         // Before the width probe lands (`measuredWidth == 0`, the very first
         // paint) assume ONE row: at an unknown-but-real width the single-row
@@ -447,6 +474,13 @@ public struct FHandFan: View {
             // see and therefore the only part you could sensibly aim at.
             .frame(height: Self.shownCardHeight(crop: crop), alignment: .top)
             .opacity(hidden.contains(card.identity) ? 0 : 1)
+            // Round-8: the veil SNAPS - opacity never animates (belt to the exit
+            // transition below), so a card cannot half-fade under the fan's own
+            // slide animation or the board spring.
+            .animation(nil, value: hidden.contains(card.identity))
+            // Round-8: an overlay-flight board exits a card INSTANTLY (no fade);
+            // see `instantExit`. Everyone else keeps the default cross-fade.
+            .transition(instantExit ? .identity : .opacity)
             // Round-7 #2: a card the board's overlay is flying (it is in `hidden`)
             // must NOT also carry matchedGeometry, or SwiftUI flies it a SECOND
             // time from wherever it left (a picked-up card's grid slot) into this

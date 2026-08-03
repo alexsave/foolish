@@ -47,8 +47,19 @@ public struct MessageTableView: View {
     /// alongside `dragPoint`, in `onDragChanged`/`onDragEnded`).
     @State private var dragCardCenter: CGPoint?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    /// Shared card-flight namespace: a card keeps its identity moving hand→table.
-    @Namespace private var cardNS
+    // Round-8: this board has NO card-flight matchedGeometry namespace (unlike the
+    // offline TableView, where matchedGeometry IS the primary flight). Here the
+    // overlay (`BoardAnimator`) owns EVERY flight - attacks/covers via
+    // flyPlacement, deals/pickups/discards via the event stream - so a shared
+    // namespace would only DOUBLE-animate: SwiftUI would fly a card hand↔table on
+    // its own, cross-fading between the two matched copies, at the same time the
+    // overlay flies it. That cross-fade is an opacity animation (the owner's hard
+    // rule: a card is 1.0 or 0.0, never a fade), and it is exactly the "solid card
+    // + a ghost that fades in at the destination" seen on UNDO - the one move the
+    // overlay does NOT own, so the card returns table→hand purely by
+    // matchedGeometry. With no namespace, undo (and any non-overlay move) SNAPS the
+    // card home instantly, which is what an instantaneous swap should look like.
+    private var cardNS: Namespace.ID? { nil }
     // Overlay flights to the discard pile (bout end), where matchedGeometry has no
     // target view to match against.
     @StateObject private var animator = BoardAnimator()
@@ -309,6 +320,10 @@ public struct MessageTableView: View {
             // will ever fly it and nothing else would take that veil down - the
             // card would simply be missing from the hand it never left.
             if let p = pendingPlacement {
+                // Round-8: also drop the resting held ghost `playAt` spawned - the
+                // move was rejected, so it will never fly; reveal the hand copy AND
+                // clear the ghost, or a static ghost would sit at the source.
+                animator.cancelHeld(Set(p.cards.map(\.identity)))
                 animator.reveal(Set(p.cards.map(\.identity)))
                 pendingPlacement = nil
             }
@@ -348,7 +363,26 @@ public struct MessageTableView: View {
                 // THEN auto-play our move. Dev pacing only.
                 let pace = Double(ProcessInfo.processInfo.environment["HARNESS_PACE"] ?? "") ?? 1
                 try? await Task.sleep(nanoseconds: UInt64(2.4 * pace * 1_000_000_000))
-                play(m)
+                // Route through the SAME entry points a human tap hits (playAt /
+                // playCover), not `play(m)` directly - so an auto-run exercises the
+                // real placement path (preHide + the hand→table flight), which is
+                // where the "ghost card / cards jump" bugs live. `play(m)` skips
+                // all of that, so an auto-run of it can never reproduce them.
+                switch m.type {
+                case .attack, .pass: playAt(.table, m.cards, view)
+                case .cover:         playCover(m.cards, view)
+                case .pickup:        play(.pickup)
+                case .good:          play(.good)
+                default:             play(m)
+                }
+                // HARNESS_AUTOUNDO: after auto-playing, wait for the move to settle
+                // (and the drawer to auto-collapse, if it does), then undo it - so a
+                // run reproduces the "undo double animation / fade" the overlay-less
+                // undo path shows, without a human tapping Undo.
+                if ProcessInfo.processInfo.environment["HARNESS_AUTOUNDO"] != nil {
+                    try? await Task.sleep(nanoseconds: UInt64(3.0 * pace * 1_000_000_000))
+                    await controller.undo()
+                }
             }
             #endif
         }
@@ -1801,7 +1835,7 @@ public struct MessageTableView: View {
                  namespace: cardNS, hidden: veiledCardIds,
                  crop: crop,
                  onDragCardMoved: { center in dragCardCenter = center },
-                 reserveNoSlot: reserveNoSlot)
+                 reserveNoSlot: reserveNoSlot, instantExit: true)
             .padding(.horizontal, FSpace.s)
     }
 
@@ -1902,6 +1936,15 @@ public struct MessageTableView: View {
         // seamless, and any path that ends up not flying them reveals them again.
         pendingPlacement = PendingPlacement(cards: cards, fromRects: fromRects)
         animator.preHide(Set(cards.map(\.identity)))
+        // Round-8 (atomic takeoff): the same instant the hand copy is veiled above,
+        // put a resting ghost where each card WAS, so the swap is seamless - no
+        // frame where the card is neither in the hand nor in the overlay. The real
+        // `place-<id>` flight (`placementFlights` -> `animator.play`) reuses these
+        // ids and simply starts moving them once the kernel publishes the table
+        // slot. `fromRects` is the card's own hand slot (or drag-release point).
+        animator.showHeld(cards.compactMap { c in
+            fromRects[c.identity].map { Flight(id: "place-\(c.identity)", card: c, from: $0, to: $0) }
+        })
         play(move)
     }
 

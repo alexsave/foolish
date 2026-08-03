@@ -221,6 +221,41 @@ public final class BoardAnimator: ObservableObject {
         preHidden.removeAll()
     }
 
+    /// Round-8 (atomic takeoff): show `f` as ghosts resting AT THEIR SOURCE right
+    /// now - synchronously, the same instant the caller veils the real cards -
+    /// then hold them there (progress 0) until the real flight `play`s and carries
+    /// them off. This closes the gap the owner saw as "the card disappears for a
+    /// few frames": a played card's hand copy is veiled the instant it is played,
+    /// but its overlay flight could not START until the kernel `apply` had
+    /// published a table slot to fly TO (an `await` later) - so for those frames
+    /// the card was veiled in the hand and not yet anywhere in the overlay. The
+    /// ghost now appears in the SAME frame the hand copy vanishes, sitting exactly
+    /// where the card was, so the swap reads as one object, never a blink. `play`
+    /// reuses the SAME flight ids (`place-<id>`), so the ghost view persists and
+    /// simply starts moving - no re-spawn. Cleared by `play` on success, or by
+    /// `cancelHeld` if the move is rejected and never flies.
+    public func showHeld(_ f: [Flight]) {
+        guard !f.isEmpty else { return }
+        AnimLog.say("held ghost at source [\(f.map { $0.card?.identity ?? "?" }.sorted().joined(separator: ","))]")
+        flights = f
+        hidden.formUnion(Set(f.compactMap { $0.card?.identity }))
+        progress = 0
+        isAnimating = true
+    }
+
+    /// Round-8: drop a held ghost that will never fly (its move was rejected), so
+    /// the resting ghost does not linger at the source after its real card has
+    /// been revealed back into the hand. Only clears the overlay if these ARE the
+    /// held ghosts (nothing else is mid-flight), never a real in-flight step.
+    public func cancelHeld(_ ids: Set<String>) {
+        guard !isAnimating || progress == 0 else { return }
+        let mine = flights.filter { $0.card.map { ids.contains($0.identity) } ?? false }
+        guard !mine.isEmpty else { return }
+        flights = []
+        isAnimating = false
+        progress = 0
+    }
+
     public func play(_ steps: [FlightStep]) async {
         for step in steps where !step.isEmpty {
             isAnimating = true
