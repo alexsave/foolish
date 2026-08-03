@@ -982,7 +982,17 @@ public struct MessageTableView: View {
             return
         }
         // note 10: undo can legally take battles -> empty; never a bout end.
-        if controller.lastChangeWasUndo { releaseCounts(); clearSweep(); return }
+        // Round-8: an undo is the EXACT REVERSE of the play it undoes - the card
+        // flies FROM the table back to its hand slot while the present cards slide
+        // apart to make room, never fading on the table and teleporting into the
+        // hand. `flyUndoReturn` runs that reverse flight and returns true when it
+        // owns the animation; a non-return undo (nothing came back to MY hand -
+        // e.g. undoing a pickup, or someone else's move) falls through to the snap.
+        if controller.lastChangeWasUndo {
+            releaseCounts()
+            if let old = prior, flyUndoReturn(old: old, new: new) { return }
+            clearSweep(); return
+        }
         // First appear with a delivered game: the open-replay (same event path).
         if prior == nil { AnimLog.say("-> openReplay"); replayLastMoveOnOpen(new); return }
         guard let old = prior, !old.battles.isEmpty, new.battles.isEmpty else {
@@ -1297,6 +1307,65 @@ public struct MessageTableView: View {
             }
             await playStep { _ in self.placementFlights(pp, view: view) }
         }
+    }
+
+    /// Round-8: the EXACT REVERSE of `flyPlacement`. Undoing a play flies each
+    /// card that came back to MY hand FROM the table slot it sat in TO its hand
+    /// slot, while the present cards slide apart to make room (openSlots, animated
+    /// over the flight) - mirroring the play's gap-close. The table copy is SWEPT
+    /// (kept rendered, then snapped hidden the instant its own flight lifts it) so
+    /// it never fades out on the table and the card never teleports into the hand.
+    /// Returns false when nothing came back to my hand (a non-return undo - undoing
+    /// a pickup, or someone else's move), so the caller falls back to a plain snap.
+    private func flyUndoReturn(old: GameView, new: GameView) -> Bool {
+        let oldHand = Set((old.me?.hand ?? []).map(\.identity))
+        let returned = (new.me?.hand ?? []).filter { !oldHand.contains($0.identity) }
+        guard !returned.isEmpty, handFrame != .zero else { return false }
+        let ids = Set(returned.map(\.identity))
+        AnimLog.say("-> undoReturn [\(ids.sorted().joined(separator: ","))]")
+        // Veil the returning cards in the hand AND defer their fan slots - the hand
+        // opens for each only as its flight arrives (the mirror of the play's veil).
+        animator.preHide(ids)
+        // Keep the pre-undo table rendered so each card flies FROM where it sat,
+        // rather than the table copy fading out (its FBattleGrid removal) as the
+        // view empties. The sweep hides each copy as its own flight lifts it.
+        setSweep(old.battles)
+        animSequenceToken += 1
+        let mySeq = animSequenceToken
+        Task {
+            BoardAnimator.sequenceDepth += 1
+            defer {
+                BoardAnimator.sequenceDepth -= 1
+                if mySeq == animSequenceToken {
+                    animator.clearPreHidden()
+                    sweepBattles = []; sweepTableIds = []; sweptFlownIds = []
+                    let stuck = ids.filter { animator.isHidden($0) }
+                    if !stuck.isEmpty { animator.reveal(stuck) }
+                }
+            }
+            // A beat for the swept table and the (deferred) hand to publish frames.
+            try? await Task.sleep(nanoseconds: 16_000_000)
+            // Make room for the returning cards (present cards slide apart),
+            // animated over the flight - the reverse of the play's gap-close.
+            withAnimation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime)) {
+                self.animator.openSlots(ids)
+            }
+            // Lift the table copies: snap them hidden (no fade) as the flight starts.
+            self.sweptFlownIds.formUnion(ids)
+            await playStep { lastChance in
+                let laid = self.laidOutHandNow(new)
+                var flights: [Flight] = []
+                for c in returned {
+                    guard let from = self.lastBattleCardFrames[c.identity]
+                            ?? self.lastBattleFrames.values.first else { continue }
+                    guard let to = self.handLandingSlot(c, laidOut: laid)
+                            ?? (lastChance ? self.handApproxLanding() : nil) else { return nil }
+                    flights.append(Flight(id: "undo-\(c.identity)", card: c, from: from, to: to))
+                }
+                return flights.isEmpty ? (lastChance ? [] : nil) : flights
+            }
+        }
+        return true
     }
 
     /// The flights for one placement: each card from where it left to the battle

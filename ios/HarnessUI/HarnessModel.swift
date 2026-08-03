@@ -424,7 +424,8 @@ final class HarnessModel: ObservableObject {
             // ONE thing an auto-played game does not do that a human does, so
             // reproducing an "it animated twice when I tapped it myself" report
             // needs it in the loop.
-            if ProcessInfo.processInfo.environment["HARNESS_AUTOGAME"] == nil
+            if ProcessInfo.processInfo.environment["HARNESS_NOCOLLAPSE"] == nil,
+               ProcessInfo.processInfo.environment["HARNESS_AUTOGAME"] == nil
                 || ProcessInfo.processInfo.environment["HARNESS_AUTOGAME_COLLAPSE"] != nil {
                 AnimLog.say("host collapse -> compact")
                 self.presentation = .compact
