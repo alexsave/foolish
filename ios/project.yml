@@ -131,6 +131,11 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.msg
         INFOPLIST_FILE: FoolishMessagesApp/Info.plist
         TARGETED_DEVICE_FAMILY: "1"
+        # App Store validation requires the container to carry an app icon +
+        # CFBundleIconName even though it is a codeless Messages-only app (no Home
+        # Screen icon). Same 1024 icon as the main Foolish app
+        # (FoolishMessagesApp/Assets.xcassets/AppIcon, copied from FoolishApp).
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
   # ---- The iMessage extension (M1) ---------------------------------------
   # An iMessage game has no server: the whole game is the MSMessage URL, so this
