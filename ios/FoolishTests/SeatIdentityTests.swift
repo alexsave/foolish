@@ -111,25 +111,16 @@ final class SeatIdentityTests: XCTestCase {
         XCTAssertEqual(s.seat(gameId: "g1", chatKey: chatA), 0)
     }
 
-    /// Round 8 brought the game-record store BACK for `put`/`games` (the app-drawer
-    /// + reopen, § one game per thread) - but `record` stays a nil no-op ON PURPOSE:
-    /// that reader was Rule P ("prefer a cached chain over the tapped bubble"), the
-    /// Round-7 "stuck on a stale lobby" bug. So a tapped bubble is still rendered
-    /// exactly as tapped (record nil), while a drawer-open with no bubble can reopen
-    /// the last stored chain (games non-empty).
-    func testGameRecordServesReopenButNotRuleP() {
+    /// Round 7 removed the preferred-chain game-record cache and the drawer list:
+    /// `put`/`record`/`games`/`remove` are inert now, so the extension always
+    /// renders the tapped bubble rather than a cached chain.
+    func testGameRecordCacheIsInert() {
         let s = freshStore()
         s.put(MessageGameRecord(gameId: "g", chatKey: chatA, mySeat: 1, nPlayers: 2, round: 1,
                                 turn: 4, phase: 2, finished: false, names: [:],
                                 payloadBase32: "AAAA", updatedAt: 100))
-        XCTAssertNil(s.record(gameId: "g", chatKey: chatA), "record stays nil - Rule P is not back")
-        XCTAssertEqual(s.games(chatKey: chatA).map(\.gameId), ["g"], "but games() serves the drawer reopen")
-        // Newest wins, and it stays chat-scoped.
-        s.put(MessageGameRecord(gameId: "g2", chatKey: chatA, mySeat: 0, nPlayers: 2, round: 2,
-                                turn: 0, phase: 2, finished: false, names: [:],
-                                payloadBase32: "BBBB", updatedAt: 200))
-        XCTAssertEqual(s.games(chatKey: chatA).first?.gameId, "g2", "newest chain reopens first")
-        XCTAssertTrue(s.games(chatKey: "chat-B-xyz").isEmpty, "another chat sees none of it")
+        XCTAssertNil(s.record(gameId: "g", chatKey: chatA), "no game-record cache after round 7")
+        XCTAssertTrue(s.games(chatKey: chatA).isEmpty, "no drawer list after round 7")
     }
 
     /// A corrupt seat blob reads as no seat and never crashes; a write recovers.

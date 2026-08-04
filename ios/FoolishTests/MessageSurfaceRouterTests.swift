@@ -108,9 +108,10 @@ final class MessageSurfaceRouterTests: XCTestCase {
         XCTAssertEqual(screen, .lobby(payload: lobby))
     }
 
-    /// A thread with no game and no bubble tapped offers New game; New game always
-    /// wins even when a game IS cached.
-    func testNoSelectionNoCacheShowsSetup() async throws {
+    /// Round 7: with the preferred-chain cache gone there is nothing to reopen when
+    /// no bubble is selected, so the surface offers New game (setup). (It used to
+    /// reopen this chat's newest cached game.) New game still always wins.
+    func testNoSelectionShowsSetup() async throws {
         let none = await MessageSurfaceRouter.resolve(payload: nil, startNewGame: false,
                                                       chatKey: chat, store: store)
         XCTAssertEqual(none, .setup, "no bubble + no cache -> New game")
@@ -118,43 +119,6 @@ final class MessageSurfaceRouterTests: XCTestCase {
         let asked = await MessageSurfaceRouter.resolve(payload: nil, startNewGame: true,
                                                        chatKey: chat, store: store)
         XCTAssertEqual(asked, .setup, "New game always wins")
-    }
-
-    /// ROUND 8, the drawer's + button (owner: "hitting + should be IDENTICAL to
-    /// hitting the last message"): opening the extension with NO bubble selected
-    /// reopens THIS chat's last cached chain (there is no transcript to read), so
-    /// it lands on the same BOARD tapping that last message would. Chat-scoped:
-    /// another conversation's cached game must not leak in.
-    func testNoSelectionReopensThisChatsCachedGame() async throws {
-        let k = MessageKernel.shared
-        let gid: UInt64 = 4545
-        try await k.newGame(seed: Data(repeating: 7, count: 32), players: 8)
-        let joins = [MessageJoin(seat: 0, name: "Alex"), MessageJoin(seat: 1, name: "Vera")]
-        let lobby = try await k.seal(phase: 0, lastActorSeat: 0, gameId: gid,
-                                     parent8: Data(repeating: 0, count: 8), joins: joins)
-        let lobbyEnv = try await MessageEnvelope.decode(payload: lobby, viewer: -1)
-        let live = try await k.startFromLobby(
-            lobbyPayload: lobby, gameId: gid, actingSeat: 1,
-            parent8: MessageTurnController.firstEight(hex: lobbyEnv.digest), joins: joins)
-        let liveEnv = try await MessageEnvelope.decode(payload: live, viewer: -1)
-
-        // A DIFFERENT conversation caches a game too - it must never be reopened here.
-        let otherStore = store!
-        cache(live, env: liveEnv, seat: 1, at: 50)   // this chat
-        otherStore.put(MessageGameRecord(
-            gameId: "9999", chatKey: "some-other-chat", mySeat: 0, nPlayers: 2, round: 0,
-            turn: 0, phase: 2, finished: false, names: [:],
-            payloadBase32: Base32.encode(Data([9, 9, 9])), updatedAt: 999))
-
-        let screen = await MessageSurfaceRouter.resolve(payload: nil, startNewGame: false,
-                                                        chatKey: chat, store: store)
-        XCTAssertEqual(screen, .board(payload: live),
-                       "drawer + with no bubble reopens THIS chat's last chain, not New game")
-
-        // New game still wins over the cache.
-        let asked = await MessageSurfaceRouter.resolve(payload: nil, startNewGame: true,
-                                                       chatKey: chat, store: store)
-        XCTAssertEqual(asked, .setup, "New game always wins over the cached reopen")
     }
 
     /// Bytes that are not a chain are damaged, not a blank board.

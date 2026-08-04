@@ -696,13 +696,6 @@ private struct GameSurface: View {
     /// the one thing worth keeping is which seat is me in this game.
     private func cache(seat: Int, env: MessageEnvelope, payload: Data) {
         MessageGameStore.shared.setSeat(gameId: env.gameId, chatKey: chatKey, seat: seat)
-        // One game per thread: remember this DELIVERED chain (a bubble I adopted -
-        // it is really in the thread) so the app-drawer + button can reopen the
-        // thread's game (there is no transcript to read - see MessageSurfaceRouter).
-        // The SENT half is `MessagesViewController.commitPendingStage` (on actual
-        // send), NEVER a staged-but-unsent move - see `remember`'s doc.
-        MessageGameStore.shared.remember(env: env, chatKey: chatKey, seat: seat,
-                                         payload: payload, at: Date().timeIntervalSince1970)
     }
 }
 
