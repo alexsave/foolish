@@ -20,9 +20,9 @@
 	<key>CFBundlePackageType</key>
 	<string>XPC!</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
+	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<!-- The .appex is a separate binary from the host app, so it needs its own
 	     export-compliance declaration; Xcode does not inherit the app's. The
 	     extension uses only Apple's standard TLS/crypto (App Group cache, no
