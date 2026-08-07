@@ -777,6 +777,35 @@ BEGIN
 END;
 $$;
 
+-- SECURITY: these state-mutating RPCs are SECURITY DEFINER (they bypass RLS by
+-- design — the edge functions call them with the service-role key). Postgres
+-- grants EXECUTE to PUBLIC by default, so without this an authenticated user
+-- could call them straight through PostgREST and rewrite any game's state / any
+-- player's hand, bypassing every app-layer check. No client calls these
+-- directly, so locking them to the service role changes no app behavior. Same
+-- pattern as delete_account (migration 20260714120000). See migration
+-- 20260807120000_lock_down_state_rpcs.sql.
+DO $$
+DECLARE
+  fn regprocedure;
+BEGIN
+  FOR fn IN
+    SELECT p.oid::regprocedure
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public'
+      AND p.proname IN (
+        'commit_game', 'create_game',
+        'try_acquire_bot_lease', 'release_bot_lease', 'renew_bot_lease'
+      )
+  LOOP
+    EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC;', fn);
+    EXECUTE format('REVOKE ALL ON FUNCTION %s FROM anon;', fn);
+    EXECUTE format('REVOKE ALL ON FUNCTION %s FROM authenticated;', fn);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO service_role;', fn);
+  END LOOP;
+END $$;
+
 -- =============================================================================
 -- REALTIME AUTHORIZATION POLICIES
 -- Enable Supabase Realtime with proper security
