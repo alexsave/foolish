@@ -15,7 +15,8 @@
 //   off  size  field
 //   0    1     magic      0xF7
 //   1    1     format     2 (see THE BODY below; 1 was cut before shipping)
-//   2    1     flags      bit0 fair_deal, bit1 gzip-body, bits2-7 reserved=0
+//   2    1     flags      bit0 fair_deal, bit1 gzip-body, bit2 passing_allowed,
+//                          bits3-7 reserved=0
 //   3    1     phase      0 WAITING, 1 ACCEPT, 2 LIVE, 3 FINISHED
 //   4    8     game_id    random u64, constant for the game
 //   12   2     turn       u16, count of kernel actions applied
@@ -107,6 +108,14 @@
 
 #define MSG_FLAG_FAIR_DEAL 0x01
 #define MSG_FLAG_GZIP      0x02
+// bit2: PASSING_ALLOWED. A forward-compat marker set on EVERY sealed envelope
+// (msg_encode) so a future build can gate "passing" (defender transfers the
+// attack) on it without a wire migration - every message already carries it.
+// It is WRITTEN and TOLERATED (validate_fields accepts it) but READ NOWHERE yet:
+// nothing branches on it, so setting it changes no game behavior. Unlike
+// fair_deal/gzip (spec'd-but-unbuilt, so rejected to keep the version honest),
+// this bit is a real thing this build emits; the reading of it lands later.
+#define MSG_FLAG_PASSING_ALLOWED 0x04
 
 // Was 12: the App Store review's B1 (docs/APP_REVIEW_NOTES.md) found that cap
 // too tight for a byte-counted UTF-8 name — "Владимир" (8 letters, 16 bytes)
