@@ -134,6 +134,22 @@ no web access → every question in the current questionnaire answers
 "None"/"No". Full question-by-question key: submission doc §3.
 Expected band: **4+**.
 
+### Pricing & Availability
+
+- Price: Free. No IAP, no pre-orders (submission doc §4).
+- Availability: **all territories** — and this is a live fix, not a default:
+  **1.0 (3) shipped with South Korea missing.** Verified 2026-08-10 from a
+  KR-storefront device — the store page dies on Apple's "not available in
+  your country or region" alert. That check lives only in App Store Connect
+  (no plist/binary involvement, no new build or review), so the fix is the
+  availability edit in the app record: select all territories, confirm South
+  Korea, keep new-territories auto-add on. Full symptom/diagnosis/steps:
+  submission doc §4a.
+- KR needs nothing beyond the checkbox — 4+ card game, gambling questions all
+  "None", so the platform questionnaire self-classifies it and no GRAC filing
+  applies. Excluding KR was never intended; the app even declares `ko`
+  localization (Q1 above).
+
 ### App Review notes (reviewer script)
 
 Full text: submission doc §5a. Summary: **there is no demo account concept to
