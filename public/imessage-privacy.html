@@ -1,0 +1,100 @@
+<!doctype html>
+<!-- Privacy policy for the standalone iMessage app (FoolishMessagesApp,
+     cards.foolish.msg). This is the URL App Store Connect points at, so it is
+     deliberately a static file with zero JavaScript: the React routes render
+     behind KernelGate (providers.tsx), which blocks on a wasm fetch — a policy
+     page a reviewer opens must not depend on the game kernel loading. Served
+     at /imessage-privacy via the rewrite in next.config.mjs. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy Policy — Foolish Cards for iMessage</title>
+  <meta name="description" content="Privacy policy for Foolish Cards for iMessage. The app collects no data of any kind.">
+  <link rel="icon" href="/favicon.ico">
+  <style>
+    body {
+      margin: 0;
+      background: #14231C;
+      color: #EDE9DF;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      line-height: 1.6;
+      -webkit-text-size-adjust: 100%;
+    }
+    main { max-width: 640px; margin: 0 auto; padding: 48px 20px 64px; }
+    h1 { font-size: 28px; line-height: 1.25; margin: 0 0 4px; }
+    h2 { font-size: 19px; margin: 32px 0 8px; }
+    p, li { margin: 0 0 12px; }
+    ul { padding-left: 22px; margin: 0 0 12px; }
+    a { color: #E79743; }
+    .date { color: #9AA69E; margin-bottom: 28px; }
+    .summary {
+      background: #1E2A24;
+      border: 1px solid #9AA69E;
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-bottom: 28px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Privacy Policy</h1>
+    <p><strong>Foolish Cards for iMessage</strong> (shown as “Foolish” in Messages)</p>
+    <p class="date">Effective date: August 13, 2026</p>
+
+    <p class="summary"><strong>The short version:</strong> this app collects no data.
+    It has no servers, no accounts, no analytics, no ads, and no third-party code.
+    Your moves travel as iMessages, the same way your texts do, and we never see them.</p>
+
+    <h2>What this app is</h2>
+    <p>Foolish Cards for iMessage is a two-player Durak card game played entirely
+    inside Apple’s Messages app. It is a standalone iMessage app — there is no
+    separate Home Screen app behind it.</p>
+
+    <h2>Data we collect</h2>
+    <p>None. Specifically, the app has:</p>
+    <ul>
+      <li>no accounts and no sign-in,</li>
+      <li>no analytics, usage tracking, or crash reporting,</li>
+      <li>no ads and no third-party SDKs of any kind,</li>
+      <li>no access to your contacts, location, photos, or anything else on your
+          device beyond its own game data,</li>
+      <li>no in-app purchases.</li>
+    </ul>
+    <p>The app makes no network connections of its own, and we do not operate any
+    server for it. There is nothing on our end that could receive your data, so
+    none of it is collected, stored, shared, or sold — by us or by anyone on our
+    behalf.</p>
+
+    <h2>How your game moves travel</h2>
+    <p>Each move you make is encoded directly into the iMessage bubble the app
+    sends. That message — the cards played and the nickname you choose to type
+    into the game, if any — is delivered by Apple’s iMessage service exactly like
+    an ordinary text and is visible only to the people in your conversation.
+    Apple’s handling of iMessage is described in
+    <a href="https://www.apple.com/legal/privacy/">Apple’s privacy policy</a>.</p>
+    <p>The app never sees who your contacts are. Messages identifies conversation
+    participants to the app only by anonymous identifiers; the names shown in the
+    game are the nicknames players type in themselves.</p>
+
+    <h2>What stays on your device</h2>
+    <p>The app keeps a small local record of your games — which games you are in,
+    which seat is yours, and the latest game state — so it can show your list of
+    games in the Messages drawer. This lives only on your device and is removed
+    when you delete the app.</p>
+
+    <h2>Children</h2>
+    <p>The app collects no data from anyone, children included.</p>
+
+    <h2>Changes to this policy</h2>
+    <p>If the app’s behavior ever changes, we will update this page and its
+    effective date. Since the app collects nothing, there is nothing to opt out
+    of today.</p>
+
+    <h2>Contact</h2>
+    <p>Questions about this policy or the app:
+    <a href="mailto:alexvsaveliev@gmail.com">alexvsaveliev@gmail.com</a></p>
+  </main>
+</body>
+</html>
