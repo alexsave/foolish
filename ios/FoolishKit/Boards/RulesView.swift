@@ -16,9 +16,13 @@ public struct RulesView: View {
     private static let trump: Suit = .hearts
 
     public var body: some View {
-        ZStack {
-            WoolBackground().ignoresSafeArea()
-            VStack(spacing: 0) {
+        // The wool is a `.background`, NOT a ZStack sibling: a sibling
+        // `.ignoresSafeArea()` grows the stack into the safe area and the header
+        // ("How to play") clips under the notch / the sheet's rounded corner
+        // (owner's screenshot). As a background the wool fills the edges while the
+        // content stays inside the safe area (the same fix MessagesRootView uses
+        // for the board).
+        VStack(spacing: 0) {
                 header
                 ScrollView {
                     VStack(alignment: .leading, spacing: FSpace.xl) {
@@ -53,20 +57,17 @@ public struct RulesView: View {
                     .padding(.bottom, FSpace.xxl)
                 }
             }
-        }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(WoolBackground().ignoresSafeArea())
     }
 
     private var header: some View {
-        HStack {
-            Text(FStrings.t("ios.rules.title"))
-                .font(FType.title(22)).onWoolText()
-            Spacer()
-            Button(action: onClose) {
-                Text(FStrings.t("ios.done")).font(FType.title(16)).onWoolText()
-            }
-        }
-        .padding(.horizontal, FSpace.xl)
-        .padding(.vertical, FSpace.l)
+        // No Done button: swiping the sheet down dismisses it (owner). Centered.
+        Text(FStrings.t("ios.rules.title"))
+            .font(FType.title(22)).onWoolText()
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.horizontal, FSpace.xl)
+            .padding(.vertical, FSpace.l)
     }
 
     // MARK: sections

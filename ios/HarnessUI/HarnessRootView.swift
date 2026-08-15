@@ -106,6 +106,15 @@ struct HarnessRootView: View {
             if ProcessInfo.processInfo.environment["HARNESS_SEED"] != nil {
                 await model.seedDemoGame()
             }
+            // Blink repro (HARNESS_RECEIVE_LIVE): after a seeded board, simulate a
+            // bubble arriving from ANOTHER seat while THIS viewer stays put and
+            // expanded - the real "live receive" (a loadKey reload of the mounted
+            // board), the case `become` cannot model. Watch the AnimLog for a
+            // "surface reload" NOT followed by "surface BLANK render".
+            if ProcessInfo.processInfo.environment["HARNESS_RECEIVE_LIVE"] != nil {
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                await model.simulateLiveReceive()
+            }
             // REVIEW RIG: land on one named state and stop (HarnessScenario.swift).
             if let s = HarnessModel.scenarioName {
                 if s == "chatlist" { screen = .chatList } else { await model.runScenario(s) }

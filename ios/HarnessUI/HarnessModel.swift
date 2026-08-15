@@ -502,6 +502,45 @@ final class HarnessModel: ObservableObject {
         become((localIndex + 1) % n)
     }
 
+    #if DEBUG
+    /// Blink repro (HARNESS_RECEIVE_LIVE): a bubble arrives from ANOTHER seat
+    /// while THIS viewer stays put and expanded. Unlike `become` (a full
+    /// boardEpoch/viewKey remount that models a different device opening the
+    /// app), this is the REAL live receive: the transcript grows, so the active
+    /// board's `payloadURL` moves to the new bubble and its `loadKey` reloads -
+    /// with NO boardEpoch bump. That is exactly the case whose reload used to
+    /// flash `Color.clear`. Headlessly seals the other seat's first legal move
+    /// off the resident game (a throwaway controller); the mounted board's own
+    /// controller keeps its cached view until the reload swaps it.
+    func simulateLiveReceive() async {
+        guard let latest = self.latest,
+              let bytes = try? MessageEnvelope.payloadBytes(url: latest.url),
+              let env = try? await MessageEnvelope.decode(payload: bytes, viewer: -1) else {
+            AnimLog.say("host simulateLiveReceive: no bubble"); return
+        }
+        let n = participants.count
+        for step in 1...n {                       // prefer a seat that is NOT me
+            let seat = (localIndex + step) % n
+            let legal = await MessageKernel.shared.residentLegal(seat: seat)
+            guard let view = await MessageKernel.shared.residentView(viewer: seat),
+                  let move = CardPlay.humanMoves(battles: view.battles, legal: legal).first else { continue }
+            let ctrl = MessageTurnController(parentPayload: bytes, parent: env, mySeat: seat)
+            await ctrl.begin()
+            await ctrl.apply(move)
+            guard let payload = try? await ctrl.stagedPayload() else { continue }
+            chats[currentChat].transcript.append(Msg(url: MessageEnvelope.link(payload: payload),
+                                                     senderId: participants[seat].id,
+                                                     senderName: participants[seat].name,
+                                                     preview: nil))
+            chats[currentChat].selected = nil
+            lastSentPayload = nil                 // I did not send it -> payloadURL moves -> loadKey reload
+            AnimLog.say("host simulateLiveReceive from \(participants[seat].name) seat=\(seat)")
+            return
+        }
+        AnimLog.say("host simulateLiveReceive: no seat could move")
+    }
+    #endif
+
     /// The blue send arrow: deliver the staged bubble into the shared transcript
     /// so the next participant can read it.
     func deliver() {

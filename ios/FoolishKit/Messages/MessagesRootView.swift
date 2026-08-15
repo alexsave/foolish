@@ -193,6 +193,16 @@ private struct GameSurface: View {
                              onSend: { payload in await onSend(payload, controller.mySeat) },
                              onNewGame: onNewGame,
                              onUnstage: onUnstage)
+                // 1.0(4) live-receive blink: a received bubble reloads the surface
+                // with a NEW controller. Tying the board's identity to the
+                // controller INSTANCE (not just the `if let` slot) means a reload
+                // still gets a fresh board with fresh @State - so the open-move
+                // replay fires exactly as before - but WITHOUT the controller ever
+                // going nil, which is what flashed `Color.clear` between the old
+                // board and the new one. A style toggle keeps the same controller
+                // instance, so the id is stable and the in-progress board survives
+                // (same guarantee as before). See reloadForInput / load.
+                .id(ObjectIdentifier(controller))
         } else if let lob = lobby {
             LobbyView(env: lob.env, mySeat: lobbySeat(lob.env),
                       nickname: MessageGameStore.shared.nickname,
@@ -246,6 +256,12 @@ private struct GameSurface: View {
             // entirely needs frame-by-frame harness verification, tracked
             // separately, since it would otherwise kill that replay.
             Color.clear
+                // Verification hook: this branch is the blink. It legitimately
+                // shows on a COLD open (fresh surface, no controller yet), but must
+                // NOT appear on a live RECEIVE (a loadKey reload of an already-live
+                // board) - that is the bug. The harness watches for this line right
+                // after a "surface reload" on an unchanged board.
+                .onAppear { AnimLog.say("surface BLANK render") }
         }
     }
 
@@ -253,7 +269,13 @@ private struct GameSurface: View {
     /// loadKey unchanged, so `.task(id:)` does not fire and the game persists.
     private func reloadForInput() async {
         AnimLog.say("surface reload key=[\(loadKey)]")
-        controller = nil; lobby = nil; nameGate = nil; showSetup = false
+        // Do NOT tear the board down to nil up front: on a live receive that
+        // blank (Color.clear) between the old controller and the new one is the
+        // "blink". Reset only the NON-board transient screens here; the resolved
+        // screen sets `controller` - a fresh instance for a board (the `.id` in
+        // expandedContent gives it fresh @State), or nil in the branches below
+        // that show something other than a board.
+        lobby = nil; nameGate = nil; showSetup = false
         ambiguous = nil; spectator = nil; damaged = false
         await load()
         AnimLog.say("surface showing \(showingWhat)")
@@ -293,12 +315,19 @@ private struct GameSurface: View {
                                                         startNewGame: startNewGame,
                                                         chatKey: chatKey)
         AnimLog.say("surface router -> \(screen)")
+        // reloadForInput no longer clears `controller` up front (blink fix), so a
+        // resolution that is NOT a board must clear the old one itself, or the
+        // stale board would win expandedContent's `if let controller` over the
+        // lobby/setup/damaged screen.
         switch screen {
         case .setup:
+            controller = nil
             showSetup = true
         case .damaged:
+            controller = nil
             damaged = true
         case .lobby(let payload):
+            controller = nil
             // Decoding also ADOPTS, so the lobby's locked seed is resident for a
             // join/start seal — same as before this was routed.
             guard let env = try? await MessageEnvelope.decode(payload: payload, viewer: -1) else {
@@ -564,7 +593,7 @@ private struct GameSurface: View {
         // (msg_rule_p rule 0), so nothing should reach here at phase 0 any more;
         // this is the structural guarantee behind that, not a second opinion
         // about which chain wins.
-        if env.phase == 0 { lobby = Lobby(env: env, payload: winner); return }
+        if env.phase == 0 { controller = nil; lobby = Lobby(env: env, payload: winner); return }
         // Round 7: `prevPayload` (the previously-cached chain) is gone — the
         // open-replay was already resolved purely from the adopted chain by the
         // kernel (MessageTurnController.begin -> lastMoveEvents), never from a
@@ -580,7 +609,7 @@ private struct GameSurface: View {
         // while you ARE seat 2). In DEBUG, ask who you are so both seats are
         // playable on one sim. Release resolves automatically (real devices have
         // separate caches + distinct participant UUIDs) and never shows this.
-        if MessageDebugFlags.pickSeatOnAdopt { ambiguous = (env, winner); return }
+        if MessageDebugFlags.pickSeatOnAdopt { controller = nil; ambiguous = (env, winner); return }
         #endif
         let (survivors, discarded) = await rebasePending(gameId: env.gameId, adoptedRound: env.round)
 
@@ -593,6 +622,7 @@ private struct GameSurface: View {
             // lobby joiners already set theirs, so this only fires for the DM
             // opponent's first game; it never re-asks once stored.
             if !MessageGameStore.shared.hasSetNickname {
+                controller = nil
                 nameGate = NameGate(env: env, payload: winner, seat: seat,
                                     survivors: survivors, discarded: discarded, prevPayload: prevPayload)
             } else {
@@ -600,6 +630,7 @@ private struct GameSurface: View {
                             survivors: survivors, discarded: discarded, prevPayload: prevPayload)
             }
         case .ambiguous:
+            controller = nil
             #if DEBUG || SOLO_TESTING
             // Single-simulator testing keeps the real picker (see the DEBUG note
             // above in this function) — this branch is unreachable in DEBUG anyway

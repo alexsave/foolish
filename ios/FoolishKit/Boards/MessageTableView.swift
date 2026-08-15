@@ -350,6 +350,10 @@ public struct MessageTableView: View {
             // canStage is false until I play, so this is a no-op then.
             await stageNow()
             #if DEBUG
+            // FoolishHarness screenshotting only: auto-open the Settings / Help
+            // sheet so it can be captured settled without a tap.
+            if ProcessInfo.processInfo.environment["HARNESS_OPEN_SETTINGS"] != nil { showSettings = true }
+            if ProcessInfo.processInfo.environment["HARNESS_OPEN_RULES"] != nil { showRules = true }
             // FoolishHarness screenshotting only: auto-play the first legal move so
             // the auto-stage flow (move -> staged bubble) is visible without a tap.
             // The auto-player must only make moves a HUMAN could make here.

@@ -65,7 +65,7 @@ final class ComponentSnapshotTests: XCTestCase {
 
     func testFActionBarRu() {
         FStrings.override = .ru
-        defer { FStrings.override = .system }
+        defer { FStrings.override = .en }   // no more .system; restore to English default
         assertSnapshot(of: host(FActionBar(canPass: true, canPickup: true, canDone: true,
                                            onPass: {}, onPickup: {}, onDone: {}),
                                 width: 340, height: 80),

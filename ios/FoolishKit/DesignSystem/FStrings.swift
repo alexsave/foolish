@@ -9,10 +9,12 @@
 import Foundation
 
 public enum AppLanguage: String, CaseIterable, Sendable {
-    case system, en, ru, ko
+    // No "System": the owner found it confusing. We resolve the OS locale ONCE
+    // (default English) and land on a concrete language, which the user can then
+    // switch among these three (see FStrings.override).
+    case en, ru, ko
     public var display: String {
         switch self {
-        case .system: return "System"
         case .en: return "English"
         case .ru: return "Русский"
         case .ko: return "한국어"
@@ -21,19 +23,28 @@ public enum AppLanguage: String, CaseIterable, Sendable {
 }
 
 public enum FStrings {
-    /// Settings language override (§16.E3). Persisted; `.system` follows the OS.
+    /// The active language (§16.E3). On first use we detect it from the OS locale
+    /// (English fallback) and land on a concrete choice; once the user picks one
+    /// it is persisted. There is no "System" option any more.
     public static var override: AppLanguage {
-        get { AppLanguage(rawValue: UserDefaults.standard.string(forKey: "ios.language") ?? "system") ?? .system }
+        get {
+            if let raw = UserDefaults.standard.string(forKey: "ios.language"),
+               let lang = AppLanguage(rawValue: raw) { return lang }
+            return systemDetected
+        }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "ios.language") }
     }
 
-    private static var activeLang: String {
-        if override != .system { return override.rawValue }
+    /// The OS locale mapped onto our three languages, English by default. This is
+    /// the initial `override` until the user makes an explicit choice.
+    private static var systemDetected: AppLanguage {
         let pref = Locale.preferredLanguages.first ?? "en"
-        if pref.hasPrefix("ru") { return "ru" }
-        if pref.hasPrefix("ko") { return "ko" }
-        return "en"
+        if pref.hasPrefix("ru") { return .ru }
+        if pref.hasPrefix("ko") { return .ko }
+        return .en
     }
+
+    private static var activeLang: String { override.rawValue }
 
     /// Look up `key`, interpolating {name}-style placeholders from `args`.
     public static func t(_ key: String, _ args: [String: String] = [:]) -> String {
@@ -196,22 +207,22 @@ public enum FStrings {
             "ios.settings.language": "Language",
             "ios.rules.title": "How to play",
             "ios.rules.goal.h": "The goal",
-            "ios.rules.goal.b": "Don’t be the fool. Empty your hand before everyone else - the last player still holding cards is the durak (the fool).",
-            "ios.rules.deck.h": "Deck & trump",
-            "ios.rules.deck.b": "36 cards, 6 up to Ace. One suit is trump and beats every other suit; the lowest trump decides who attacks first.",
+            "ios.rules.goal.b": "You attack and defend with cards, and the goal is to get rid of all of yours. The last player still holding cards is the дурак - the fool.",
+            "ios.rules.deck.h": "The deck & the power suit",
+            "ios.rules.deck.b": "Four players or fewer use only 6 up to Ace - the 2s through 5s are out. Everyone gets six cards, then one more is flipped face-up under the draw pile. Its suit is the power suit: a power-suit card beats any other suit, whatever the value. Whoever holds the lowest power-suit card attacks first.",
             "ios.rules.attack.h": "Attacking",
-            "ios.rules.attack.b": "The attacker lays a card in front of the defender. Tap a card in your hand to attack with it.",
+            "ios.rules.attack.b": "To start a round, put a card on the table toward the next player - they’re the defender now. Tap a card then tap Attack, or just drag it onto the table.",
             "ios.rules.defend.h": "Defending",
-            "ios.rules.defend.b": "Beat the attack with a higher card of the same suit…",
-            "ios.rules.defend.trump": "…or with any trump.",
+            "ios.rules.defend.b": "As the defender, beat each attack with a higher card of the same suit. Tap your card then tap the attack it covers, or just drag it on. A stack never grows past two - the attack on the bottom, its cover on top.",
+            "ios.rules.defend.trump": "…or any card from the power suit.",
             "ios.rules.throw.h": "Throwing in",
-            "ios.rules.throw.b": "Once a rank is on the table, any attacker can add more cards of a rank already in play - up to the number the defender can still cover.",
-            "ios.rules.takegood.h": "Take, or Good",
-            "ios.rules.takegood.b": "Can’t or won’t beat them all? Take the cards into your hand. Once every attack is covered, the attacker taps Good and the cards go to the discard.",
-            "ios.rules.pass.h": "Passing",
-            "ios.rules.pass.b": "Hold the same rank as the attack? Instead of defending you can pass it to the next player, adding your card to the attack.",
+            "ios.rules.throw.b": "See a card on the table with the same value as one in your hand? Throw it in as another attack. The table can blow up fast - that’s part of the fun - but the uncovered attacks can never outnumber the defender’s hand.",
+            "ios.rules.takegood.h": "Take, or good",
+            "ios.rules.takegood.b": "Can’t or won’t cover it all? Take every card on the table into your hand - your turn is skipped. Once everything’s covered and nobody wants to throw in more, tap Good and the table goes to the discard, face down.",
+            "ios.rules.pass.h": "Passing it on",
+            "ios.rules.pass.b": "If nothing’s covered yet and you hold the same value, lay it down and pass the whole attack to the next player instead of defending. Now they’re the defender.",
             "ios.rules.win.h": "Drawing & winning",
-            "ios.rules.win.b": "After each bout everyone refills to six from the deck, attacker first. Empty your hand once the deck runs out to get out. The last player left holding cards is the fool.",
+            "ios.rules.win.b": "Between rounds everyone tops back up to six from the draw pile - attacker first, defender last. Once the pile is empty, clear your hand to get out. The last player still holding cards is the fool, and gets attacked first next game.",
             "ios.a11y.attackfirst": "You attack first",
             "ios.a11y.defending": "Defending",
             "ios.a11y.attacking": "attacking",
@@ -331,22 +342,22 @@ public enum FStrings {
             "ios.settings.language": "Язык",
             "ios.rules.title": "Как играть",
             "ios.rules.goal.h": "Цель",
-            "ios.rules.goal.b": "Не остаться дураком. Избавьтесь от карт раньше всех - последний игрок с картами и есть дурак.",
+            "ios.rules.goal.b": "Вы атакуете и защищаетесь картами, а цель - избавиться от всех своих. Последний игрок с картами на руках - дурак.",
             "ios.rules.deck.h": "Колода и козырь",
-            "ios.rules.deck.b": "36 карт, от шестёрки до туза. Одна масть - козырь и бьёт любую другую; младший козырь определяет, кто ходит первым.",
+            "ios.rules.deck.b": "Вчетвером и меньше играют только от шестёрки до туза - двойки-пятёрки убирают. Каждому сдают шесть карт, затем ещё одну кладут в открытую под колоду. Её масть - козырь: козырная карта бьёт любую другую масть, каким бы ни было достоинство. Первым ходит тот, у кого младший козырь.",
             "ios.rules.attack.h": "Атака",
-            "ios.rules.attack.b": "Атакующий кладёт карту перед защищающимся. Коснитесь карты в руке, чтобы атаковать ею.",
+            "ios.rules.attack.b": "Чтобы начать раунд, положите карту на стол в сторону следующего игрока - теперь он защищается. Коснитесь карты и нажмите «Атака» или просто перетащите её на стол.",
             "ios.rules.defend.h": "Защита",
-            "ios.rules.defend.b": "Побейте атаку старшей картой той же масти…",
+            "ios.rules.defend.b": "Защищаясь, бейте каждую атаку старшей картой той же масти. Коснитесь своей карты и нажмите на атаку, которую кроете, или перетащите её. Стопка не бывает больше двух: снизу атака, сверху защита.",
             "ios.rules.defend.trump": "…или любым козырем.",
             "ios.rules.throw.h": "Подкидывание",
-            "ios.rules.throw.b": "Когда достоинство уже на столе, любой атакующий может подкинуть ещё карты того же достоинства - не больше, чем защищающийся способен покрыть.",
+            "ios.rules.throw.b": "Видите на столе карту того же достоинства, что и у вас в руке? Подкиньте её как ещё одну атаку. Стол может разрастись быстро - в этом часть азарта - но открытых атак не может быть больше, чем карт у защищающегося.",
             "ios.rules.takegood.h": "Взять или бито",
-            "ios.rules.takegood.b": "Не можете или не хотите отбиться? Заберите карты в руку. Когда все атаки покрыты, атакующий говорит «бито», и карты уходят в отбой.",
+            "ios.rules.takegood.b": "Не можете или не хотите отбиться? Заберите все карты со стола в руку - ваш ход пропускается. Когда всё покрыто и больше никто не подкидывает, нажмите «Бито», и стол уходит в отбой рубашкой вверх.",
             "ios.rules.pass.h": "Перевод",
-            "ios.rules.pass.b": "Есть карта того же достоинства, что и атака? Вместо защиты можно перевести атаку на следующего игрока, добавив свою карту.",
+            "ios.rules.pass.b": "Если ещё ничего не покрыто и у вас есть карта того же достоинства, положите её и переведите всю атаку на следующего игрока вместо защиты. Теперь защищается он.",
             "ios.rules.win.h": "Добор и победа",
-            "ios.rules.win.b": "После каждого боя все добирают до шести из колоды, начиная с атакующего. Избавьтесь от карт, когда колода кончится, чтобы выйти. Последний с картами - дурак.",
+            "ios.rules.win.b": "Между раундами все добирают до шести из колоды - сначала атакующий, защищающийся последним. Когда колода кончилась, избавьтесь от карт, чтобы выйти. Последний с картами - дурак, и в следующей игре его атакуют первым.",
             "ios.a11y.attackfirst": "Вы ходите первым",
             "ios.a11y.defending": "Защищается",
             "ios.a11y.attacking": "атакует",
@@ -463,22 +474,22 @@ public enum FStrings {
             "ios.settings.language": "언어",
             "ios.rules.title": "게임 방법",
             "ios.rules.goal.h": "목표",
-            "ios.rules.goal.b": "바보가 되지 마세요. 누구보다 먼저 손패를 비우세요 - 마지막까지 카드를 든 사람이 바보(두락)입니다.",
+            "ios.rules.goal.b": "카드로 공격하고 방어하며, 목표는 손패를 모두 없애는 것입니다. 마지막까지 카드를 든 사람이 바보(두락)입니다.",
             "ios.rules.deck.h": "덱과 으뜸패",
-            "ios.rules.deck.b": "카드 36장, 6부터 에이스까지. 한 무늬가 으뜸패로 다른 모든 무늬를 이기며, 가장 낮은 으뜸패가 첫 공격자를 정합니다.",
+            "ios.rules.deck.b": "네 명 이하면 6부터 에이스까지만 씁니다 - 2~5는 뺍니다. 각자 여섯 장을 받고, 한 장을 더 뒤집어 뽑을 더미 아래에 둡니다. 그 무늬가 으뜸패입니다: 으뜸패 카드는 값에 상관없이 다른 모든 무늬를 이깁니다. 가장 낮은 으뜸패를 든 사람이 먼저 공격합니다.",
             "ios.rules.attack.h": "공격",
-            "ios.rules.attack.b": "공격자는 방어자 앞에 카드를 냅니다. 손패의 카드를 탭하여 공격하세요.",
+            "ios.rules.attack.b": "라운드를 시작하려면 다음 플레이어 쪽으로 카드를 냅니다 - 이제 그 사람이 방어자입니다. 카드를 탭한 뒤 공격을 누르거나, 그냥 테이블로 끌어다 놓으세요.",
             "ios.rules.defend.h": "방어",
-            "ios.rules.defend.b": "같은 무늬의 더 높은 카드로 공격을 막거나…",
-            "ios.rules.defend.trump": "…아무 으뜸패로 막으세요.",
+            "ios.rules.defend.b": "방어자는 각 공격을 같은 무늬의 더 높은 카드로 막습니다. 자신의 카드를 탭한 뒤 막을 공격을 누르거나 끌어다 놓으세요. 한 더미는 둘을 넘지 않습니다 - 아래가 공격, 위가 방어.",
+            "ios.rules.defend.trump": "…또는 아무 으뜸패로.",
             "ios.rules.throw.h": "추가 공격",
-            "ios.rules.throw.b": "어떤 숫자가 테이블에 있으면, 공격자는 이미 나온 숫자의 카드를 더 던질 수 있습니다 - 방어자가 막을 수 있는 만큼만.",
+            "ios.rules.throw.b": "테이블에 손패와 같은 숫자의 카드가 보이나요? 또 다른 공격으로 던져 넣으세요. 테이블이 순식간에 커질 수 있는데 - 그게 재미의 일부입니다 - 다만 막지 않은 공격은 방어자의 손패 수를 넘을 수 없습니다.",
             "ios.rules.takegood.h": "가져오기 또는 완료",
-            "ios.rules.takegood.b": "모두 막을 수 없거나 막지 않으려면 카드를 손에 가져오세요. 모든 공격이 막히면 공격자가 완료를 눌러 카드를 버립니다.",
+            "ios.rules.takegood.b": "다 막을 수 없거나 막기 싫나요? 테이블의 카드를 전부 손에 가져오세요 - 이번 차례는 건너뜁니다. 모두 막히고 아무도 더 던지지 않으면 완료를 눌러 테이블을 뒷면으로 버립니다.",
             "ios.rules.pass.h": "넘기기",
-            "ios.rules.pass.b": "공격과 같은 숫자가 있나요? 방어 대신 자신의 카드를 더해 다음 플레이어에게 공격을 넘길 수 있습니다.",
+            "ios.rules.pass.b": "아직 아무것도 막지 않았고 같은 숫자가 있다면, 그것을 내고 방어 대신 공격 전체를 다음 플레이어에게 넘기세요. 이제 그 사람이 방어자입니다.",
             "ios.rules.win.h": "보충과 승리",
-            "ios.rules.win.b": "각 판이 끝나면 공격자부터 덱에서 여섯 장까지 보충합니다. 덱이 떨어진 뒤 손패를 비우면 탈락(승리)합니다. 마지막까지 카드를 든 사람이 바보입니다.",
+            "ios.rules.win.b": "라운드 사이에 모두 뽑을 더미에서 여섯 장까지 채웁니다 - 공격자부터, 방어자가 마지막. 더미가 비면 손패를 비워야 빠져나갑니다. 마지막까지 카드를 든 사람이 바보이고, 다음 게임에서 먼저 공격받습니다.",
             "ios.a11y.attackfirst": "당신이 먼저 공격합니다",
             "ios.a11y.defending": "방어 중",
             "ios.a11y.attacking": "공격 중",
