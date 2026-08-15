@@ -251,25 +251,35 @@ final class MessagesViewController: MSMessagesAppViewController {
         // MessageEnvelope.swift) still exist and are still exercised by
         // MessageTurnControllerTests (the underlying kernel capability the web
         // page's replay derivation mirrors), just no longer called from here.
-        let url: URL
+        // 1.0(4): the summary describes the move this bubble carries, from the
+        // kernel's own evwire (the same stream the board animates), so the
+        // transcript/notification reads "Alex attacks with K of ♠". Public view
+        // (viewer -1) so no hand leaks into the notification line.
+        func seatName(_ seat: Int) -> String {
+            names[seat] ?? FStrings.t("ios.msg.seatn", ["n": "\(seat + 1)"])
+        }
+        let url = MessageEnvelope.link(payload: payload)
         let summary: String
         if env?.phase == 3 {
-            url = MessageEnvelope.link(payload: payload)
             let fool = publicView?.gameOver ?? -1
             summary = fool >= 0
-                ? FStrings.t("ios.msg.fool", ["name": names[fool] ?? "Seat \(fool + 1)"])
+                ? FStrings.t("ios.msg.fool", ["name": seatName(fool)])
                 : FStrings.t("ios.msg.tap")
         } else if env?.phase == 0 {
-            // A WAITING lobby (§5.2): the summary invites the thread to join.
-            url = MessageEnvelope.link(payload: payload)
-            summary = FStrings.t("ios.msg.joininvite")
+            // A WAITING lobby (§5.2): the creator's bubble invites the thread to
+            // join; a later join re-seals with the joiner as last actor.
+            let joinCount = env?.joins.count ?? 0
+            summary = joinCount > 1
+                ? FStrings.t("ios.msg.joined", ["name": seatName(env?.lastActorSeat ?? -1)])
+                : FStrings.t("ios.msg.joininvite")
         } else if env?.phase == 2, env?.turn == 0 {
-            // The last-joiner LIVE handoff carries no move yet - "game on".
-            url = MessageEnvelope.link(payload: payload)
-            summary = FStrings.t("ios.msg.gameon")
+            // The last-joiner LIVE handoff carries no move yet - the game just
+            // started; name who started it.
+            summary = FStrings.t("ios.msg.started", ["name": seatName(env?.lastActorSeat ?? -1)])
         } else {
-            url = MessageEnvelope.link(payload: payload)
-            summary = FStrings.t("ios.msg.tap")
+            // An ordinary live move: describe it from the kernel's event stream.
+            let events = await MessageKernel.shared.lastMoveEvents(viewer: -1)
+            summary = MessageSummary.move(events: events, names: names, view: publicView)
         }
 
         // §11.3/note 21: ONE session per game, and a NEW game must never collapse

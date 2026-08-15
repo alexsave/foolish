@@ -61,14 +61,16 @@ static int name_is_clean(const char *s, int len) {
 
 static int validate_fields(const MsgEnvelope *e) {
     if (e->format != MSG_FORMAT_V6) return MSG_EFORMAT;
-    if (e->flags & ~(unsigned)(MSG_FLAG_FAIR_DEAL | MSG_FLAG_GZIP
-                               | MSG_FLAG_PASSING_ALLOWED)) return MSG_EFLAGS;
+    // bit2 (0x04) is the LEGACY passing-allowed marker 1.0(3) briefly set on
+    // every seal. The pass/perevod mode now lives in the replay code (the v7
+    // bit, replay.h), so this build no longer sets or reads it - but bit2 is
+    // still TOLERATED here so a bubble sealed by 1.0(3) still decodes (and
+    // re-encodes to itself, keeping the wire canonical). No meaning is attached.
+    if (e->flags & ~(unsigned)(MSG_FLAG_FAIR_DEAL | MSG_FLAG_GZIP | 0x04u)) return MSG_EFLAGS;
     // fair_deal / gzip are spec'd but unbuilt (fair-deal is v2 per §15; gzip
     // never paid for itself at these sizes). Refusing them is what keeps the
     // version byte honest: a build that silently ignored a flag would read a
-    // DIFFERENT game than the sender wrote. PASSING_ALLOWED is the exception -
-    // it is a real bit this build EMITS (msg_encode) and TOLERATES here, but
-    // reads nowhere, so accepting it changes nothing about the decoded game.
+    // DIFFERENT game than the sender wrote.
     if (e->flags & MSG_FLAG_FAIR_DEAL) return MSG_EFLAGS;
     if (e->flags & MSG_FLAG_GZIP) return MSG_EFLAGS;
 
@@ -186,10 +188,7 @@ int msg_encode(const MsgEnvelope *e, unsigned char *out, int out_cap) {
 
     out[0] = MSG_MAGIC;
     out[1] = e->format;
-    // Faithful: whatever flags the envelope carries (PASSING_ALLOWED is set at
-    // SEAL time, not forced here - forcing broke wire canonicality, since a
-    // bit2-cleared message would decode yet re-encode with it set).
-    out[2] = e->flags;
+    out[2] = e->flags;   // faithful: whatever flags the envelope carries
     out[3] = e->phase;
     wr64(out + 4, e->game_id);
     wr16(out + 12, e->turn);
@@ -379,11 +378,6 @@ int msg_replay(const MsgEnvelope *e, Game *g) {
 
 int msg_seal(MsgEnvelope *e, const Game *g, unsigned char *body, int body_cap,
              Game *scratch) {
-    // Set PASSING_ALLOWED on EVERY sealed envelope (all games), lobby and live
-    // alike - this is before the 0-action early return so a WAITING/handoff seal
-    // carries it too. Written on `e->flags`, so msg_encode stays faithful and the
-    // wire stays canonical. Read nowhere yet (forward-compat marker only).
-    e->flags |= MSG_FLAG_PASSING_ALLOWED;
     // A 0-action game seals to an EMPTY body: a WAITING lobby, or the last-joiner
     // LIVE handoff that "applies nothing" (§5.2). The v6 producer is an action-run
     // codec keyed on the logged opening attack — it has nothing to encode and no

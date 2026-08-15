@@ -44,6 +44,9 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
     public enum Failure: Error, Equatable {
         case notAFoolishLink        // wrong scheme/format version — not ours
         case damaged(code: Int)     // MSG_E* — the payload does not replay
+        case rejected(reason: Int)  // a move the kernel refused; reason is an
+                                    // ENGINE_REJECT_* code (fio_last_reject),
+                                    // mapped to a human line by FStrings.rejectReason
     }
 
     /// The URL a bubble carries: https://foolish.cards/m/1<base32>. The leading
@@ -222,7 +225,13 @@ public actor MessageKernel {
         let rc = awire.withUnsafeBytes { raw in
             fio_apply_awire(Int32(seat), raw.bindMemory(to: UInt8.self).baseAddress, Int32(awire.count))
         }
-        guard rc == 0 else { throw MessageEnvelope.Failure.damaged(code: Int(rc)) }
+        guard rc == 0 else {
+            // An illegal move (FIO_EREJECT) carries a specific ENGINE_REJECT_*
+            // reason; surface it so the board can say WHY, not just "no". Every
+            // other rc is a genuine decode/marshalling fault.
+            if rc == FIO_EREJECT { throw MessageEnvelope.Failure.rejected(reason: Int(fio_last_reject())) }
+            throw MessageEnvelope.Failure.damaged(code: Int(rc))
+        }
     }
 
     /// Seal the resident game — the send path, after the local player moved.

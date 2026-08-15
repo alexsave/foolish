@@ -235,7 +235,17 @@ private struct GameSurface: View {
         } else if damaged {
             DamagedView(onNewGame: onNewGame)
         } else {
-            ProgressView()
+            // 1.0(4) live-receive blink: while a received bubble reloads the
+            // surface (controller briefly nil), a ProgressView spinner flashed
+            // over the wool for a frame or two - the "slight blink". The reload is
+            // sub-frame in the common case, so show the steady wool (Color.clear
+            // over GameSurface's WoolBackground) instead of a spinner that
+            // announces the reload. NOTE: the board still tears down and remounts
+            // on a live receive (that remount is what drives the incoming-move
+            // replay off the view nil->value transition); removing the remount
+            // entirely needs frame-by-frame harness verification, tracked
+            // separately, since it would otherwise kill that replay.
+            Color.clear
         }
     }
 

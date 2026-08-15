@@ -580,9 +580,10 @@ static void test_tamper(void) {
         { "format:raw",   1,  1,    MSG_EFORMAT },
         { "flags:fair",   2,  MSG_FLAG_FAIR_DEAL, MSG_EFLAGS },
         { "flags:gzip",   2,  MSG_FLAG_GZIP, MSG_EFLAGS },
-        // bit2 (PASSING_ALLOWED) is now TOLERATED, not rejected - every message
-        // carries it. bit3 (0x08) is still reserved and still rejected.
-        { "flags:passing",2,  MSG_FLAG_PASSING_ALLOWED, MSG_EOK },
+        // bit2 (0x04) is the LEGACY passing-allowed marker (1.0(3)); no longer
+        // set, but still TOLERATED on decode so a 1.0(3) bubble still opens. bit3
+        // (0x08) is still reserved and still rejected.
+        { "flags:legacy", 2,  0x04, MSG_EOK },
         { "flags:rsvd",   2,  0x08, MSG_EFLAGS },
         { "phase:oob",    3,  4,    MSG_EPHASE },
         { "phase:accept", 3,  MSG_PHASE_ACCEPT, MSG_EPHASE },

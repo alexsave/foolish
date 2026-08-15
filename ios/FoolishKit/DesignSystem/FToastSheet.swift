@@ -60,4 +60,29 @@ public extension View {
         }
         .animation(FMotion.chrome, value: message.wrappedValue)
     }
+
+    /// A brief plain-text flash (1.0(4)) — white text, NO background pill — for
+    /// the message board's reject reasons. The owner asked for "white text
+    /// briefly with no background instead of the pill"; legibility over the wool
+    /// comes from a soft shadow, not a surface. Fades, then auto-clears.
+    func fFlash(_ message: Binding<String?>, seconds: Double = 1.7) -> some View {
+        overlay(alignment: .top) {
+            if let text = message.wrappedValue {
+                Text(text)
+                    .font(FType.body(15))
+                    .fontWeight(.semibold)
+                    .foregroundColor(.white)
+                    .multilineTextAlignment(.center)
+                    .shadow(color: .black.opacity(0.55), radius: 4, y: 1)
+                    .padding(.horizontal, FSpace.xl)
+                    .padding(.top, FSpace.m)
+                    .transition(.opacity)
+                    .task {
+                        try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                        withAnimation(FMotion.chrome) { message.wrappedValue = nil }
+                    }
+            }
+        }
+        .animation(FMotion.chrome, value: message.wrappedValue)
+    }
 }

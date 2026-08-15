@@ -56,7 +56,7 @@ test('the envelope is rejected before it can be replayed: magic, format, seed', 
     bad(b => { b[1] = 1; }, /unsupported format/);      // the raw format was cut
     bad(b => { b[1] = 3; }, /unsupported format/);
     bad(b => { b[2] = 0x01; }, /unsupported flags/);    // fair-deal: spec'd, unbuilt
-    bad(b => { b[2] = 0x04; }, /unsupported flags/);    // reserved bit
+    bad(b => { b[2] = 0x08; }, /unsupported flags/);    // reserved bit (0x04 = legacy passing-allowed, tolerated for 1.0(3) msgs)
     bad(b => { b[15] = 1; }, /bad player count/);
     bad(b => { b[15] = 9; }, /bad player count/);
     bad(b => { b[16] = 1; }, /unknown variant/);

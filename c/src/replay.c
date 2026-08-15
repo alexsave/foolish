@@ -310,8 +310,11 @@ typedef struct {
     int out_pos, out_cap;
     uint32_t out_logs;
     int err;
-    // ---- Format 6 only (0 / NULL for v5) ----
-    int format;                // 5 (default) or 6
+    // ---- Format 6/7 only (0 / NULL for v5) ----
+    int format;                // 5 (default), 6, or 7
+    int pass_allowed;          // v7 pass-mode bit: 1 perevodnoy (default), 0 podkidnoy.
+                               // Stored but not yet branched on — see replay.h's
+                               // TODO(podkidnoy). 1 for every v5/v6 code.
     Coder *rev_coder;          // coder reached from draw_for to code reveals
     const unsigned char *rev;  // encode: real hidden card ids (deal + draws)
     int rev_n, rev_pos;        // reveal stream length / cursor
@@ -505,8 +508,8 @@ static void draw_for(RModel *m, int seat) {
     while (hand_len(m, seat) < CARDS_PER_PLAYER) {
         if (m->deck_count > 0) {
             m->deck_count--;
-            if (m->format == 6) {
-                // v6: reveal the real drawn card inline (unseen now == stock).
+            if (m->format >= 6) {
+                // v6/v7: reveal the real drawn card inline (unseen now == stock).
                 int id = code_reveal(m, m->rev_coder, seat);
                 if (m->err) return;
                 pairs[nd][0] = (unsigned char)id;
@@ -770,7 +773,13 @@ static int build_top_menu(RModel *m, Opt *opts, uint32_t *weights) {
                 }
             }
             // pass / perevod (validatePass: nothing covered, one rank on the
-            // table, next player must cover everything incl. the passed card)
+            // table, next player must cover everything incl. the passed card).
+            // TODO(podkidnoy) — replay.h: this block sits MID-menu today. The
+            // owner's chosen fix is to APPEND it at the very end of this menu and
+            // gate it on `m->pass_allowed`, so a podkidnoy menu is this menu minus
+            // a trailing block (every other index/weight unchanged), not a splice
+            // out of the middle. `m->pass_allowed` is already threaded (always 1
+            // for now), so only the reorder + gate remain.
             if (uncovered == m->num_battles) {
                 int v = id_value(m->battles[0].attack);
                 bool one_rank = true;
@@ -1369,13 +1378,14 @@ static void model_init(RModel *m, int n, int trump_id, int first_attacker,
     m->trump_id = trump_id;
     m->power_suit = trump_id / 13;
     m->format = format;
+    m->pass_allowed = 1;   // perevodnoy default; a v7 decode overrides from the mode bit
     int min_v = min_value_for(n);  // THE deck rule — card.h, shared with game.c
     int deck_size = 4 * (ACE_VALUE - min_v + 1);
     for (int s = 0; s < n; s++) {
         m->status[s] = true;
-        // v6 deals the initial hands explicitly (code_reveal), so they start
+        // v6/v7 deal the initial hands explicitly (code_reveal), so they start
         // empty and are filled before the first atom; v5 leaves them hidden.
-        m->unknown[s] = (format == 6) ? 0 : CARDS_PER_PLAYER;
+        m->unknown[s] = (format >= 6) ? 0 : CARDS_PER_PLAYER;
     }
     m->deck_count = deck_size - n * CARDS_PER_PLAYER - 1;
     m->flipped_held = true;
@@ -1602,7 +1612,10 @@ static int encode_v6_run(int n, int trump_id, int fa, int n_actions,
     memset(&c, 0, sizeof c);
     c.encode = true;
 
-    coder_uniform(&c, REPLAY_VERSION_ALPHABET, REPLAY_FORMAT_VERSION_V6);
+    coder_uniform(&c, REPLAY_VERSION_ALPHABET, REPLAY_FORMAT_VERSION_V7);
+    // v7 pass-mode bit, right after the version symbol. Always 1 (perevodnoy)
+    // for now — see replay.h's TODO(podkidnoy). The decoder reads it back below.
+    coder_uniform(&c, 2, 1);
     coder_uniform(&c, 7, n - 2);
     int8_t alpha[48];
     int alen = trump_alphabet(n, alpha);
@@ -1617,7 +1630,8 @@ static int encode_v6_run(int n, int trump_id, int fa, int n_actions,
     if (c.err) return -c.err;
 
     RModel *m = &g_model;
-    model_init(m, n, trump_id, fa, 0, 0, 0, REPLAY_FORMAT_VERSION_V6);
+    model_init(m, n, trump_id, fa, 0, 0, 0, REPLAY_FORMAT_VERSION_V7);
+    m->pass_allowed = 1;   // perevodnoy (always, for now)
     m->rev = reveals;
     m->rev_n = n_reveals;
     m->rev_pos = 0;
@@ -1791,9 +1805,17 @@ static int decode_impl(const unsigned char *in, int in_len,
     c.x = &g_bn;
 
     int version = coder_uniform(&c, REPLAY_VERSION_ALPHABET, -1);
-    if (version != REPLAY_FORMAT_VERSION && version != REPLAY_FORMAT_VERSION_V6) {
+    if (version != REPLAY_FORMAT_VERSION && version != REPLAY_FORMAT_VERSION_V6
+        && version != REPLAY_FORMAT_VERSION_V7) {
         g_err_detail = version;
         return -REPLAY_EVERSION;
+    }
+    // v7 carries a pass-mode bit right after the version symbol; v5/v6 carry no
+    // bit and are perevodnoy by definition (existing games decode unchanged).
+    int pass_allowed = 1;
+    if (version == REPLAY_FORMAT_VERSION_V7) {
+        pass_allowed = coder_uniform(&c, 2, -1);
+        if (c.err) return -c.err;
     }
     int n = coder_uniform(&c, 7, -1) + 2;
     int8_t alpha[48];
@@ -1805,7 +1827,8 @@ static int decode_impl(const unsigned char *in, int in_len,
     RModel *m = &g_model;
     model_init(m, n, trump_id, first_attacker, out, REPLAY_DEC_HDR,
                out ? out_cap : 0, version);
-    if (version == REPLAY_FORMAT_VERSION_V6) {
+    m->pass_allowed = pass_allowed;
+    if (version == REPLAY_FORMAT_VERSION_V6 || version == REPLAY_FORMAT_VERSION_V7) {
         uint32_t atoms = 0;
         code_varint(&c, &atoms);
         if (c.err) return -c.err;
@@ -1827,6 +1850,7 @@ static int decode_impl(const unsigned char *in, int in_len,
 
     if (hdr) {
         hdr->version = version;
+        hdr->pass_allowed = pass_allowed;
         hdr->n = n;
         hdr->trump_id = trump_id;
         hdr->first_attacker = first_attacker;
@@ -1874,7 +1898,8 @@ int replay_decode_atoms_v6(const unsigned char *in, int in_len,
     g_atom_ctx  = 0;
     if (r < 0) return r;
     // v5 hides the deal, so its atoms are not a deck and cannot rebuild a Game.
-    if (hdr->version != REPLAY_FORMAT_VERSION_V6) {
+    // v6 and v7 both carry the real deal (v7 == v6 + the perevodnoy bit).
+    if (hdr->version != REPLAY_FORMAT_VERSION_V6 && hdr->version != REPLAY_FORMAT_VERSION_V7) {
         g_err_detail = hdr->version;
         return -REPLAY_EVERSION;
     }

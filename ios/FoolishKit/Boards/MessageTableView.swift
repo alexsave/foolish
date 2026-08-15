@@ -29,6 +29,9 @@ public struct MessageTableView: View {
 
     @State private var selection: Set<String> = []
     @State private var toast: String?
+    // 1.0(4): the left Settings/Help squares present these.
+    @State private var showSettings = false
+    @State private var showRules = false
     // Drag-to-play state (frames published by FBattleGrid/FHandFan in `boardSpace`).
     @State private var battleFrames: [Int: CGRect] = [:]
     @State private var handFrame: CGRect = .zero
@@ -305,9 +308,11 @@ public struct MessageTableView: View {
             #endif
         }
         .onChange(of: controller.view) { flyBoutEndToDiscard(to: $0) }
-        .fToast($toast, accent: true)
+        .fFlash($toast)
         .onChange(of: controller.rejectTick) { _ in
-            Haptics.fire(.reject); toast = FStrings.t("ios.reject")
+            // 1.0(4): say WHY, from the kernel's reason code, as a plain white
+            // flash (no pill).
+            Haptics.fire(.reject); toast = FStrings.rejectReason(controller.lastRejectReason)
             // A rejected move publishes NO view change, so the veil `play` put
             // up a moment ago would never be taken down again: the counts would
             // stay frozen at their pre-move values for the rest of the game and
@@ -385,6 +390,13 @@ public struct MessageTableView: View {
                 }
             }
             #endif
+        }
+        // 1.0(4): the left Settings/Help squares present these.
+        .sheet(isPresented: $showSettings) {
+            MessageSettingsView { showSettings = false }
+        }
+        .sheet(isPresented: $showRules) {
+            RulesView { showRules = false }
         }
     }
 
@@ -562,6 +574,21 @@ public struct MessageTableView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                     .padding(.trailing, 4).padding(.bottom, lift + 4)
                     .animation(nil, value: controller.view)   // never float the buttons — see the role mark above
+
+                // 1.0(4): Settings + Help squares, MIRRORING the action column on
+                // the LEFT. Same 40pt height as the action pills, square, at the
+                // same bottom line (lift + 4) and the SAME 16pt edge inset (4
+                // outer + FSpace.m inner, exactly like actionBar's trailing). The
+                // two squares + their gap span one action-button width
+                // (40 + 16 + 40 = 96), so the left group is the mirror of the
+                // right one. Faded out as the drawer collapses so they never
+                // crowd the compact strip; the board spring never floats them.
+                settingsHelpBar
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                    .padding(.leading, 4).padding(.bottom, lift + 4)
+                    .opacity(Double(1 - min(1, collapse * 2)))
+                    .allowsHitTesting(collapse < 0.4)
+                    .animation(nil, value: controller.view)
 
                 // My hand hugs the bottom (web: bottom max(10, safe-area)); the
                 // outer .padding(12) is the safe-area inset that keeps it unclipped.
@@ -1843,6 +1870,22 @@ public struct MessageTableView: View {
         playAt(target, playCards(for: card, view), view, released: (card, releaseCentre))
     }
 
+    /// The Settings + Help squares, mirroring `actionBar` on the LEFT (1.0(4)).
+    /// The 16pt gap between the two squares plus the two 40pt squares equals one
+    /// action-button width (96), so the pair is the exact mirror of the right
+    /// column. Persistent (unlike the move buttons) — Settings and Help are always
+    /// available while playing.
+    private var settingsHelpBar: some View {
+        HStack(spacing: FSpace.l) {   // 40 + 16 + 40 = 96 = FActionBar width
+            FSquareButton(systemImage: "gearshape.fill", side: 40,
+                          accessibility: FStrings.t("ios.settings.title")) { showSettings = true }
+            FSquareButton(systemImage: "questionmark", side: 40,
+                          accessibility: FStrings.t("ios.help")) { showRules = true }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, FSpace.m)   // same inner inset as FActionBar
+    }
+
     private func actionBar(_ view: GameView) -> some View {
         let cards = selectedCards(view)
         let defending = view.defender == controller.mySeat
@@ -1884,10 +1927,16 @@ public struct MessageTableView: View {
             onDone: { play(.good) },
             onUndo: { Task {
                 await controller.undo()
-                // Undo that empties `pending` leaves `stageNow()` a no-op (canStage
-                // goes false) — but the host still holds the PREVIOUSLY staged
-                // bubble/payload. Retract it explicitly instead of leaving it lit.
-                if controller.canStage { await stageNow() } else { onUnstage() }
+                // Undo that still has staged moves re-stages the shorter chain
+                // (replaces the input bubble). Undo that empties `pending` must
+                // CANCEL the staged move: Apple offers no API to remove an
+                // inserted bubble, so on a continuation we overwrite it with the
+                // base (received) state — the undone move can then no longer be
+                // sent. A genesis with no move left is not sealable, so there we
+                // can only retract our own bookkeeping (`onUnstage`).
+                if controller.canStage { await stageNow() }
+                else if controller.isContinuation { await stageBaseNow() }
+                else { onUnstage() }
             } }
         )
     }
@@ -1948,6 +1997,16 @@ public struct MessageTableView: View {
     /// staged (a 0-action genesis body is unsealable).
     private func stageNow() async {
         guard controller.canStage else { return }
+        if let payload = try? await controller.stagedPayload() { await onSend(payload) }
+    }
+
+    /// Undo-to-empty on a continuation (1.0(4)): re-seal the base (received) state
+    /// and stage it, REPLACING the stale move bubble the host still holds. This is
+    /// the closest to "cancel the staged move" the Messages API allows — there is
+    /// no call to remove an inserted bubble, so the move is overwritten with a
+    /// bubble that carries nothing new (sending it just re-shares the same board).
+    private func stageBaseNow() async {
+        guard controller.isContinuation else { return }
         if let payload = try? await controller.stagedPayload() { await onSend(payload) }
     }
 

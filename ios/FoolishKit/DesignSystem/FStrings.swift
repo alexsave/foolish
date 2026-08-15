@@ -43,6 +43,27 @@ public enum FStrings {
         return s
     }
 
+    /// A human reason for a rejected move (1.0(4)). The kernel's 21
+    /// ENGINE_REJECT_* codes (c/src/game.h, surfaced by fio_last_reject) fold
+    /// into a handful of clear, non-code-y sentences. `code` 0 / unknown falls
+    /// back to the generic "That move isn't allowed."
+    public static func rejectReason(_ code: Int) -> String {
+        switch code {
+        case 1, 4, 8, 18: return t("ios.rej.turn")     // NOT_PLAYING/NOT_DEFENDER/NOT_FIRST_ATTACKER/NOT_IN_STATUS
+        case 2:            return t("ios.rej.pickone")  // EMPTY
+        case 3:            return t("ios.rej.defending")// IS_DEFENDER
+        case 5, 6:         return t("ios.rej.notyours") // NOT_IN_HAND/DUPLICATES
+        case 7, 9:         return t("ios.rej.addrank")  // NOT_SAME_VALUE/VALUE_NOT_ON_TABLE
+        case 11, 12, 13, 15: return t("ios.rej.cover")  // NO_UNCOVERED/ATTACK_NOT_ON_TABLE/CANNOT_COVER/COVER_PRESENT
+        case 10, 17, 21:   return t("ios.rej.capacity") // DEFENDER_CAPACITY/PASS_CAPACITY/PASS_OVERFLOW
+        case 16:           return t("ios.rej.passrank") // PASS_VALUES
+        case 20:           return t("ios.rej.mustattack")// FIRST_MUST_ATTACK
+        case 19:           return t("ios.rej.alreadygood")// ALREADY_GOOD
+        case 14:           return t("ios.rej.notake")   // NO_TABLE_CARDS
+        default:           return t("ios.reject")
+        }
+    }
+
     // Spoken card names for VoiceOver (round-5 m2): the visible strings were
     // localized while every accessibilityLabel was English, so a ru/ko VoiceOver
     // user got an English board. One builder, shared by every board component,
@@ -140,6 +161,57 @@ public enum FStrings {
             // ONE string breaks the convention on purpose. Leave the rest alone.
             "ios.msg.entername": "Enter Nickname",
             "ios.msg.nametoolong": "nickname too long",
+            // 1.0(4): descriptive bubble summaries - the collapsed / notification
+            // line describes the move the bubble carries ("Alex attacks with K of
+            // ♠"), not a generic "tap to play". The move facts come from the
+            // kernel's own evwire (MessageSummary), the words are localized here.
+            "ios.msg.cardfmt": "{rank} of {suit}",
+            "ios.msg.seatn": "Seat {n}",
+            "ios.msg.mv.attack": "{name} attacks with {cards}",
+            "ios.msg.mv.pass": "{name} passes {cards}",
+            "ios.msg.mv.cover": "{name} covers {target} with {card}",
+            "ios.msg.mv.pickup": "{name} took the cards",
+            "ios.msg.mv.out": "{name} is out!",
+            "ios.msg.mv.roundover": "Round over - {name} attacks next",
+            "ios.msg.started": "{name} started the game - tap to play",
+            "ios.msg.joined": "{name} joined - tap to join",
+            // 1.0(4): descriptive reject reasons (the plain white flash on the
+            // message board). The 21 ENGINE_REJECT_* codes fold into a few clear,
+            // non-code-y reasons (FStrings.rejectReason).
+            "ios.rej.turn": "It’s not your turn.",
+            "ios.rej.pickone": "Pick a card first.",
+            "ios.rej.defending": "You’re defending - beat the attack or take it.",
+            "ios.rej.notyours": "That card isn’t in your hand.",
+            "ios.rej.addrank": "You can only add a rank already on the table.",
+            "ios.rej.cover": "That won’t beat it - play higher, or a trump.",
+            "ios.rej.capacity": "Too many attacks for the defender’s hand.",
+            "ios.rej.passrank": "You can only pass with a matching rank.",
+            "ios.rej.mustattack": "The first attacker has to attack.",
+            "ios.rej.alreadygood": "You already said good.",
+            "ios.rej.notake": "There’s nothing to take.",
+            // 1.0(4): the board's left Settings/Help squares + the rules page.
+            "ios.help": "Help",
+            "ios.done": "Done",
+            "ios.settings.title": "Settings",
+            "ios.settings.language": "Language",
+            "ios.rules.title": "How to play",
+            "ios.rules.goal.h": "The goal",
+            "ios.rules.goal.b": "Don’t be the fool. Empty your hand before everyone else - the last player still holding cards is the durak (the fool).",
+            "ios.rules.deck.h": "Deck & trump",
+            "ios.rules.deck.b": "36 cards, 6 up to Ace. One suit is trump and beats every other suit; the lowest trump decides who attacks first.",
+            "ios.rules.attack.h": "Attacking",
+            "ios.rules.attack.b": "The attacker lays a card in front of the defender. Tap a card in your hand to attack with it.",
+            "ios.rules.defend.h": "Defending",
+            "ios.rules.defend.b": "Beat the attack with a higher card of the same suit…",
+            "ios.rules.defend.trump": "…or with any trump.",
+            "ios.rules.throw.h": "Throwing in",
+            "ios.rules.throw.b": "Once a rank is on the table, any attacker can add more cards of a rank already in play - up to the number the defender can still cover.",
+            "ios.rules.takegood.h": "Take, or Good",
+            "ios.rules.takegood.b": "Can’t or won’t beat them all? Take the cards into your hand. Once every attack is covered, the attacker taps Good and the cards go to the discard.",
+            "ios.rules.pass.h": "Passing",
+            "ios.rules.pass.b": "Hold the same rank as the attack? Instead of defending you can pass it to the next player, adding your card to the attack.",
+            "ios.rules.win.h": "Drawing & winning",
+            "ios.rules.win.b": "After each bout everyone refills to six from the deck, attacker first. Empty your hand once the deck runs out to get out. The last player left holding cards is the fool.",
             "ios.a11y.attackfirst": "You attack first",
             "ios.a11y.defending": "Defending",
             "ios.a11y.attacking": "attacking",
@@ -232,6 +304,49 @@ public enum FStrings {
             // word would be wrong here).
             "ios.msg.entername": "Введите ник",
             "ios.msg.nametoolong": "слишком длинный ник",
+            "ios.msg.cardfmt": "{rank} {suit}",
+            "ios.msg.seatn": "Игрок {n}",
+            "ios.msg.mv.attack": "{name} атакует: {cards}",
+            "ios.msg.mv.pass": "{name} переводит: {cards}",
+            "ios.msg.mv.cover": "{name} кроет {target}: {card}",
+            "ios.msg.mv.pickup": "{name} забирает карты",
+            "ios.msg.mv.out": "{name} вышел!",
+            "ios.msg.mv.roundover": "Раунд окончен - атакует {name}",
+            "ios.msg.started": "{name} начал игру - нажмите, чтобы играть",
+            "ios.msg.joined": "{name} присоединился - нажмите, чтобы войти",
+            "ios.rej.turn": "Сейчас не ваш ход.",
+            "ios.rej.pickone": "Сначала выберите карту.",
+            "ios.rej.defending": "Вы защищаетесь - побейте атаку или возьмите.",
+            "ios.rej.notyours": "Этой карты нет в вашей руке.",
+            "ios.rej.addrank": "Подкинуть можно только карту достоинства, что уже на столе.",
+            "ios.rej.cover": "Так не побить - сыграйте старше или козырем.",
+            "ios.rej.capacity": "Слишком много карт для руки защищающегося.",
+            "ios.rej.passrank": "Переводить можно только картой того же достоинства.",
+            "ios.rej.mustattack": "Первый игрок должен атаковать.",
+            "ios.rej.alreadygood": "Вы уже сказали «бито».",
+            "ios.rej.notake": "Брать нечего.",
+            "ios.help": "Помощь",
+            "ios.done": "Готово",
+            "ios.settings.title": "Настройки",
+            "ios.settings.language": "Язык",
+            "ios.rules.title": "Как играть",
+            "ios.rules.goal.h": "Цель",
+            "ios.rules.goal.b": "Не остаться дураком. Избавьтесь от карт раньше всех - последний игрок с картами и есть дурак.",
+            "ios.rules.deck.h": "Колода и козырь",
+            "ios.rules.deck.b": "36 карт, от шестёрки до туза. Одна масть - козырь и бьёт любую другую; младший козырь определяет, кто ходит первым.",
+            "ios.rules.attack.h": "Атака",
+            "ios.rules.attack.b": "Атакующий кладёт карту перед защищающимся. Коснитесь карты в руке, чтобы атаковать ею.",
+            "ios.rules.defend.h": "Защита",
+            "ios.rules.defend.b": "Побейте атаку старшей картой той же масти…",
+            "ios.rules.defend.trump": "…или любым козырем.",
+            "ios.rules.throw.h": "Подкидывание",
+            "ios.rules.throw.b": "Когда достоинство уже на столе, любой атакующий может подкинуть ещё карты того же достоинства - не больше, чем защищающийся способен покрыть.",
+            "ios.rules.takegood.h": "Взять или бито",
+            "ios.rules.takegood.b": "Не можете или не хотите отбиться? Заберите карты в руку. Когда все атаки покрыты, атакующий говорит «бито», и карты уходят в отбой.",
+            "ios.rules.pass.h": "Перевод",
+            "ios.rules.pass.b": "Есть карта того же достоинства, что и атака? Вместо защиты можно перевести атаку на следующего игрока, добавив свою карту.",
+            "ios.rules.win.h": "Добор и победа",
+            "ios.rules.win.b": "После каждого боя все добирают до шести из колоды, начиная с атакующего. Избавьтесь от карт, когда колода кончится, чтобы выйти. Последний с картами - дурак.",
             "ios.a11y.attackfirst": "Вы ходите первым",
             "ios.a11y.defending": "Защищается",
             "ios.a11y.attacking": "атакует",
@@ -321,6 +436,49 @@ public enum FStrings {
             "ios.msg.nickname_ph": "닉네임",
             "ios.msg.entername": "닉네임을 입력하세요",
             "ios.msg.nametoolong": "닉네임이 너무 깁니다",
+            "ios.msg.cardfmt": "{rank} {suit}",
+            "ios.msg.seatn": "{n}번 자리",
+            "ios.msg.mv.attack": "{name} 공격: {cards}",
+            "ios.msg.mv.pass": "{name} 넘김: {cards}",
+            "ios.msg.mv.cover": "{name}, {target} 방어: {card}",
+            "ios.msg.mv.pickup": "{name} 카드 가져감",
+            "ios.msg.mv.out": "{name} 탈락!",
+            "ios.msg.mv.roundover": "라운드 종료 - 다음 공격: {name}",
+            "ios.msg.started": "{name} 게임 시작 - 탭하여 플레이",
+            "ios.msg.joined": "{name} 참가 - 탭하여 참가",
+            "ios.rej.turn": "당신 차례가 아닙니다.",
+            "ios.rej.pickone": "먼저 카드를 선택하세요.",
+            "ios.rej.defending": "방어 중입니다 - 공격을 막거나 가져오세요.",
+            "ios.rej.notyours": "그 카드는 손패에 없습니다.",
+            "ios.rej.addrank": "테이블에 이미 있는 숫자만 추가할 수 있습니다.",
+            "ios.rej.cover": "그걸로는 못 이깁니다 - 더 높거나 으뜸패를 내세요.",
+            "ios.rej.capacity": "방어자 손패에 비해 공격이 너무 많습니다.",
+            "ios.rej.passrank": "같은 숫자로만 넘길 수 있습니다.",
+            "ios.rej.mustattack": "첫 공격자는 공격해야 합니다.",
+            "ios.rej.alreadygood": "이미 완료를 선언했습니다.",
+            "ios.rej.notake": "가져올 카드가 없습니다.",
+            "ios.help": "도움말",
+            "ios.done": "완료",
+            "ios.settings.title": "설정",
+            "ios.settings.language": "언어",
+            "ios.rules.title": "게임 방법",
+            "ios.rules.goal.h": "목표",
+            "ios.rules.goal.b": "바보가 되지 마세요. 누구보다 먼저 손패를 비우세요 - 마지막까지 카드를 든 사람이 바보(두락)입니다.",
+            "ios.rules.deck.h": "덱과 으뜸패",
+            "ios.rules.deck.b": "카드 36장, 6부터 에이스까지. 한 무늬가 으뜸패로 다른 모든 무늬를 이기며, 가장 낮은 으뜸패가 첫 공격자를 정합니다.",
+            "ios.rules.attack.h": "공격",
+            "ios.rules.attack.b": "공격자는 방어자 앞에 카드를 냅니다. 손패의 카드를 탭하여 공격하세요.",
+            "ios.rules.defend.h": "방어",
+            "ios.rules.defend.b": "같은 무늬의 더 높은 카드로 공격을 막거나…",
+            "ios.rules.defend.trump": "…아무 으뜸패로 막으세요.",
+            "ios.rules.throw.h": "추가 공격",
+            "ios.rules.throw.b": "어떤 숫자가 테이블에 있으면, 공격자는 이미 나온 숫자의 카드를 더 던질 수 있습니다 - 방어자가 막을 수 있는 만큼만.",
+            "ios.rules.takegood.h": "가져오기 또는 완료",
+            "ios.rules.takegood.b": "모두 막을 수 없거나 막지 않으려면 카드를 손에 가져오세요. 모든 공격이 막히면 공격자가 완료를 눌러 카드를 버립니다.",
+            "ios.rules.pass.h": "넘기기",
+            "ios.rules.pass.b": "공격과 같은 숫자가 있나요? 방어 대신 자신의 카드를 더해 다음 플레이어에게 공격을 넘길 수 있습니다.",
+            "ios.rules.win.h": "보충과 승리",
+            "ios.rules.win.b": "각 판이 끝나면 공격자부터 덱에서 여섯 장까지 보충합니다. 덱이 떨어진 뒤 손패를 비우면 탈락(승리)합니다. 마지막까지 카드를 든 사람이 바보입니다.",
             "ios.a11y.attackfirst": "당신이 먼저 공격합니다",
             "ios.a11y.defending": "방어 중",
             "ios.a11y.attacking": "공격 중",

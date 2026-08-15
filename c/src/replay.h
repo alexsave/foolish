@@ -28,6 +28,31 @@
 // carried (that is §16's alternative; the seed lives only in the FMSG envelope).
 // v5 stays byte-frozen; v6 is purely additive with its own version byte.
 #define REPLAY_FORMAT_VERSION_V6 6
+// Format 7 (1.0(4)): v6 plus a single PASS-MODE bit written right after the
+// version symbol — 1 = perevodnoy (transfer/pass allowed), 0 = podkidnoy
+// (throw-in, no pass). The bit is needed because the move MENU differs when
+// passing is off: v6/v7 code each move as an INDEX into build_top_menu's
+// fixed-order menu, and the PASS options sit MID-menu, so removing them shifts
+// every later index and desyncs the whole rANS integer — a code cannot be
+// decoded under the wrong variant, so the variant must be pinned by the code
+// itself, never guessed.
+//
+// FOR NOW the bit is ALWAYS written as 1 (perevodnoy) and nothing branches on
+// it beyond storing it: v7 plays byte-for-byte like v6 (same menu). A v5/v6
+// code — every game made before this — carries NO bit and is treated as
+// perevodnoy ENABLED, so existing games decode unchanged.
+//
+// TODO(podkidnoy): when the no-pass variant is actually implemented, the owner's
+// DESIGN DECISION is APPEND, not splice: move the PASS block to the BACK of
+// build_top_menu so perevodnoy == the podkidnoy menu + an appended pass block.
+// That keeps every non-pass index AND weight identical across modes, and it is
+// SIZE-NEUTRAL (arithmetic-code cost depends on an option's weight, not its menu
+// position). Gate the appended block on m->pass_allowed. (We do NOT care that
+// this makes v7-perevodnoy differ from v6 byte-for-byte — v6 stays frozen and
+// still decodes via its own path.) The redundant MSG_FLAG_PASSING_ALLOWED bit
+// has already been removed from the FMSG message format (msg_wire.h, 1.0(4)),
+// now that the mode lives here.
+#define REPLAY_FORMAT_VERSION_V7 7
 #define REPLAY_VERSION_ALPHABET 16
 // Hard guard: a malformed integer must never hang (mirrors core.ts MAX_ATOMS).
 #define REPLAY_MAX_ATOMS 20000
@@ -226,6 +251,7 @@ typedef void (*ReplayAtomSink)(void *ctx, const ReplayAtom *a);
 // The decode header, as fields instead of the 20 packed bytes.
 typedef struct {
     int version, n, trump_id, first_attacker;
+    int pass_allowed;    // v7: 1 perevodnoy / 0 podkidnoy. Always 1 for v5/v6 (no bit).
     int fool;            // -1 when the stream is a mid-game cut
     int discard_count;
     int num_eliminated;

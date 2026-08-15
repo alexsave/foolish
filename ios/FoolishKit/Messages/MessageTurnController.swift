@@ -26,6 +26,11 @@ public final class MessageTurnController: ObservableObject {
     @Published public private(set) var legal: [Move] = []
     @Published public private(set) var pending: [Move] = []
     @Published public private(set) var rejectTick = 0
+    /// The reason the LAST move was rejected — an ENGINE_REJECT_* code
+    /// (fio_last_reject), mapped to a human line by FStrings.rejectReason. Paired
+    /// with `rejectTick`: the tick fires the toast, this says what it reads. 0
+    /// (generic) for a non-kernel reject (e.g. a drop that hit no legal target).
+    @Published public private(set) var lastRejectReason = 0
     /// False until `begin()` has established the base game once.
     @Published public private(set) var ready = false
     /// True immediately after `undo()` rebuilds the base minus the last
@@ -186,6 +191,14 @@ public final class MessageTurnController: ObservableObject {
     /// A genesis game with no move yet is not sealable (a 0-action opening is not
     /// a valid FMSG body, MSG_EBODY); continuations always are.
     public var isGenesis: Bool { if case .genesis = base { return true }; return false }
+    /// A continuation (I opened someone's bubble) is ALWAYS sealable, even with
+    /// zero staged moves — re-sealing the adopted chain is valid FMSG. This is
+    /// what lets an undo-to-empty REPLACE its stale staged bubble with the base
+    /// state (§10 / 1.0(4)): Apple gives no API to remove an inserted bubble, so
+    /// the closest to "cancel the staged move" is to overwrite it with a bubble
+    /// that carries nothing new. A genesis with no move is NOT sealable (see the
+    /// isGenesis note), so this is false there.
+    public var isContinuation: Bool { !isGenesis }
 
     // MARK: lifecycle
 
@@ -246,7 +259,11 @@ public final class MessageTurnController: ObservableObject {
             pending.append(move)
             persistLedger()
             await refresh()
+        } catch MessageEnvelope.Failure.rejected(let reason) {
+            lastRejectReason = reason
+            rejectTick += 1
         } catch {
+            lastRejectReason = 0
             rejectTick += 1
         }
     }
