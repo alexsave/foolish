@@ -149,6 +149,9 @@ private struct GameSurface: View {
     @State private var showSetup = false
     @State private var toast: String?
     @State private var damaged = false
+    /// 1.0(6) DIAGNOSTIC: the last decode error, shown in the on-screen dump so a
+    /// message that fails to open can be captured by screenshot (temporary).
+    @State private var diagError: String?
 
     /// A style toggle keeps this key stable, so the session is NOT reloaded and
     /// the in-progress game survives. A new bubble (payloadURL) or a New game tap
@@ -185,6 +188,33 @@ private struct GameSurface: View {
             .onChange(of: sentToken) { _ in
                 Task { await controller?.markSent() }
             }
+            // 1.0(6) DIAGNOSTIC (temporary): dump the payload URL (which carries
+            // the full FMSG / replay code), the resolved surface, and any decode
+            // error, so a message that fails to open can be captured by screenshot.
+            .overlay(alignment: .top) { diagnosticDump }
+    }
+
+    /// 1.0(6) DIAGNOSTIC. Remove once the cross-version bug is pinned.
+    private var diagnosticDump: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("DIAG 1.0(6) · surface: \(showingWhat)").bold()
+                if let e = diagError { Text("ERR: \(e)").foregroundColor(.yellow) }
+                Text("chat \(chatKey.prefix(8))… sender=\(senderIsLocal) players=\(chatPlayers) newGame=\(startNewGame)")
+                if let u = payloadURL?.absoluteString {
+                    Text("URL (\(u.count) chars):")
+                    Text(u).textSelection(.enabled)
+                } else {
+                    Text("URL: nil")
+                }
+            }
+            .font(.system(size: 10, design: .monospaced))
+            .foregroundColor(.white)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(8)
+        }
+        .frame(maxHeight: 300)
+        .background(Color.black.opacity(0.88))
     }
 
     @ViewBuilder private var expandedContent: some View {
@@ -303,13 +333,11 @@ private struct GameSurface: View {
     /// needs the host: seat identity (§6), the name gate, and Rule R's rebase.
     private func load() async {
         AnimLog.say("surface load url=\(payloadURL?.absoluteString.suffix(12) ?? "nil") startNew=\(startNewGame)")
+        diagError = nil   // 1.0(6) diagnostic
         var incoming: Data?
         if let url = payloadURL {
-            guard let bytes = try? MessageEnvelope.payloadBytes(url: url) else {
-                damaged = true
-                return
-            }
-            incoming = bytes
+            do { incoming = try MessageEnvelope.payloadBytes(url: url) }
+            catch { diagError = "payloadBytes: \(error)"; damaged = true; return }
         }
         let screen = await MessageSurfaceRouter.resolve(payload: incoming,
                                                         startNewGame: startNewGame,
@@ -336,10 +364,9 @@ private struct GameSurface: View {
             }
             lobby = Lobby(env: env, payload: payload)
         case .board(let payload):
-            guard let env = try? await MessageEnvelope.decode(payload: payload, viewer: -1) else {
-                damaged = true
-                return
-            }
+            let env: MessageEnvelope
+            do { env = try await MessageEnvelope.decode(payload: payload, viewer: -1) }
+            catch { diagError = "board decode: \(error)"; damaged = true; return }
             await adopt(winner: payload, env: env)
         }
     }
