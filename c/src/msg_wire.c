@@ -59,6 +59,10 @@ static int name_is_clean(const char *s, int len) {
     return 1;
 }
 
+// 1.0(6) DIAGNOSTIC: the replay codec version (5/6/7) of the last body decoded
+// by msg_replay; -1 if the last message had no body (an empty lobby/handoff).
+int msg_last_body_version = -1;
+
 static int validate_fields(const MsgEnvelope *e) {
     if (e->format != MSG_FORMAT_V6) return MSG_EFORMAT;
     // bit2 (0x04) is the LEGACY passing-allowed marker 1.0(3) briefly set on
@@ -354,6 +358,7 @@ int msg_replay(const MsgEnvelope *e, Game *g) {
         ReplayHeader hdr;
         const int d = replay_decode_atoms_v6(e->actions, e->actions_len, &hdr, msg_atom, &m);
         if (d < 0) return MSG_EBODY;
+        msg_last_body_version = hdr.version;   // 1.0(6) diag: the body's replay codec version
         if (m.err != MSG_EOK) return m.err;
         // The code's own header must describe the table the envelope claims.
         if (hdr.n != e->n_players) return MSG_EBODY;

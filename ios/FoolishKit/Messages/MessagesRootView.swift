@@ -206,11 +206,18 @@ private struct GameSurface: View {
                 Text("DIAG 1.0(6) · surface: \(showingWhat)").bold()
                 if let e = diagError { Text("ERR: \(e)").foregroundColor(.yellow) }
                 Text("chat \(chatKey.prefix(8))… sender=\(senderIsLocal) players=\(chatPlayers) newGame=\(startNewGame)")
-                if !diagInfo.isEmpty { Text("env: \(diagInfo)").foregroundColor(.green) }
-                // The RAW envelope bytes: byte[2] is the flags (0x04 = 1.0(3)
-                // passing bit), then game_id / seed / digest / joins / body.
+                // THE version fields: the iMessage FMSG format byte (byte 1), the
+                // flags byte (byte 2 - 0x04 = 1.0(3) passing bit), the URL text
+                // version (the '1' after /m/), and the replay-body ENCODING
+                // version (5/6/7, from the kernel - the real cross-version signal).
                 if !diagHex.isEmpty {
-                    Text("HEX (\(diagHex.count / 2) bytes, flags=0x\(diagHex.dropFirst(4).prefix(2))):")
+                    Text("VER: msgFmt=0x\(diagHex.dropFirst(2).prefix(2)) flags=0x\(diagHex.dropFirst(4).prefix(2)) urlVer=\(payloadURL?.pathComponents.last?.first.map(String.init) ?? "?")").foregroundColor(.cyan)
+                }
+                if !diagInfo.isEmpty { Text("env: \(diagInfo)").foregroundColor(.green) }
+                // The RAW envelope bytes: magic/format/flags/phase/game_id/seed/
+                // digest/joins/body - the full iMessage format.
+                if !diagHex.isEmpty {
+                    Text("HEX (\(diagHex.count / 2) bytes):")
                     Text(diagHex).textSelection(.enabled)
                 }
                 if let u = payloadURL?.absoluteString {
@@ -378,10 +385,10 @@ private struct GameSurface: View {
             }
             lobby = Lobby(env: env, payload: payload)
         case .board(let payload):
-            let env: MessageEnvelope
-            do { env = try await MessageEnvelope.decode(payload: payload, viewer: -1) }
+            let env: MessageEnvelope; let bodyVer: Int
+            do { (env, bodyVer) = try await MessageKernel.shared.decodeWithBodyVersion(payload: payload) }
             catch { diagError = "board decode: \(error)"; damaged = true; return }
-            diagInfo = "phase \(env.phase) turn \(env.turn) round \(env.round) n \(env.nPlayers) actor \(env.lastActorSeat) game \(env.gameId) joins \(env.joins.count)"
+            diagInfo = "phase \(env.phase) turn \(env.turn) round \(env.round) n \(env.nPlayers) actor \(env.lastActorSeat) game \(env.gameId) joins \(env.joins.count) · bodyVer=\(bodyVer)"
             await adopt(winner: payload, env: env)
         }
     }

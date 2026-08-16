@@ -291,6 +291,10 @@ int fio_last_replay_error(void);
 // Bytes written or negative (FIO_EMSG → fio_last_msg_error).
 int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, int cap);
 
+// 1.0(6) DIAGNOSTIC: replay codec version (5/6/7) of the body the last
+// fio_msg_decode_packed replayed, or -1 for an empty-body message.
+int fio_msg_last_body_version(void);
+
 // Seal the RESIDENT game into a payload — the send path, after the local player
 // has applied a move. The caller supplies what the PROTOCOL owns; the kernel
 // fills in what the BODY owns (turn, round) by decoding the code it just wrote,

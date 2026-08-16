@@ -221,6 +221,10 @@ int msg_seal(MsgEnvelope *e, const Game *g, unsigned char *body, int body_cap,
 // `out->actions` points into `in`.
 int msg_decode(const unsigned char *in, int in_len, MsgEnvelope *out);
 
+// 1.0(6) DIAGNOSTIC: replay codec version (5/6/7) of the last body msg_replay
+// decoded, or -1 for an empty-body message. Set by msg_replay.
+extern int msg_last_body_version;
+
 // Serialize `e` into `out`. Returns bytes written, or a negative MSG_E*. The
 // same field validation decode applies runs here too, so this host can never
 // emit a payload it would itself reject.

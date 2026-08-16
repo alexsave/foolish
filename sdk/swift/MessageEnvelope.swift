@@ -141,6 +141,18 @@ public actor MessageKernel {
     }
 
 
+    /// 1.0(6) DIAGNOSTIC: the replay codec version (5/6/7) of the body the last
+    /// `decode` replayed, or -1 for an empty-body (lobby/handoff) message.
+    public func lastBodyVersion() -> Int { Int(fio_msg_last_body_version()) }
+
+    /// 1.0(6) DIAGNOSTIC: decode AND read the body version in ONE actor hop, so a
+    /// concurrent decode (e.g. the board's begin()) can't clobber the shared
+    /// version global between the two reads.
+    public func decodeWithBodyVersion(payload: Data) throws -> (MessageEnvelope, Int) {
+        let env = try decode(payload: payload, viewer: -1)
+        return (env, Int(fio_msg_last_body_version()))
+    }
+
     /// The masked board the last `decode` left resident, for `viewer` (or -1 for
     /// the public/spectator view the bubble snapshot needs). Same packed wire the
     /// app reads — decoded in this actor so it never races EngineC on the shared

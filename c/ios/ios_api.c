@@ -1046,9 +1046,15 @@ int fio_last_msg_error(void) { return g_last_msg_error; }
 // Layout: phase(1) n_players(1) last_actor_seat(1) round(1) turn(u16 LE)
 //   game_id(u64 LE) parent8(8) digest(32) n_joins(1)
 //   then n_joins * { seat(1) name_len(1) name[name_len] }.
+// 1.0(6) DIAGNOSTIC: the replay codec version (5/6/7) of the body the last
+// fio_msg_decode_packed replayed, or -1 for an empty-body message. Set through
+// msg_last_body_version (msg_wire.c).
+int fio_msg_last_body_version(void) { return msg_last_body_version; }
+
 int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, int cap) {
     if (!payload || !out || cap <= 0) return FIO_EBADARG;
     g_last_msg_error = 0;
+    msg_last_body_version = -1;   // 1.0(6) diagnostic reset
 
     MsgEnvelope e;
     int rc = msg_decode(payload, len, &e);
