@@ -134,6 +134,16 @@ final class MessagesViewController: MSMessagesAppViewController {
     // MARK: - Presentation
 
     private func present(_ conversation: MSConversation, style: MSMessagesAppPresentationStyle) {
+        // 1.0(7): a live-layout bubble scrolled into view. The system spins up a
+        // SEPARATE, dedicated instance of this controller in `.transcript` style to
+        // DRAW that one message (never to play it), so this instance renders the
+        // passive TranscriptBubbleView and returns — none of the interactive
+        // routing / staging below applies. A tap is Messages' own and launches a
+        // fresh compact instance, which does take the path below.
+        if style == .transcript {
+            presentTranscript(conversation)
+            return
+        }
         let selected = conversation.selectedMessage
         // note 11: `conversation.insert` (in `stage`, below) makes the
         // just-staged bubble `selectedMessage`; the auto-collapse that
@@ -255,31 +265,18 @@ final class MessagesViewController: MSMessagesAppViewController {
         // kernel's own evwire (the same stream the board animates), so the
         // transcript/notification reads "Alex attacks with K of ♠". Public view
         // (viewer -1) so no hand leaks into the notification line.
-        func seatName(_ seat: Int) -> String {
-            names[seat] ?? FStrings.t("ios.msg.seatn", ["n": "\(seat + 1)"])
-        }
+        // 1.0(7): the baked `summaryText` and the live TranscriptBubbleView describe
+        // the bubble through the SAME MessageSummary.describe, so the two never
+        // disagree — the sender bakes it in HIS language here, each receiver draws
+        // it in THEIRS. Only an ordinary live move needs the event stream.
         let url = MessageEnvelope.link(payload: payload)
         let summary: String
-        if env?.phase == 3 {
-            let fool = publicView?.gameOver ?? -1
-            summary = fool >= 0
-                ? FStrings.t("ios.msg.fool", ["name": seatName(fool)])
-                : FStrings.t("ios.msg.tap")
-        } else if env?.phase == 0 {
-            // A WAITING lobby (§5.2): the creator's bubble invites the thread to
-            // join; a later join re-seals with the joiner as last actor.
-            let joinCount = env?.joins.count ?? 0
-            summary = joinCount > 1
-                ? FStrings.t("ios.msg.joined", ["name": seatName(env?.lastActorSeat ?? -1)])
-                : FStrings.t("ios.msg.joininvite")
-        } else if env?.phase == 2, env?.turn == 0 {
-            // The last-joiner LIVE handoff carries no move yet - the game just
-            // started; name who started it.
-            summary = FStrings.t("ios.msg.started", ["name": seatName(env?.lastActorSeat ?? -1)])
+        if let env {
+            let events = (env.phase == 2 && env.turn > 0)
+                ? await MessageKernel.shared.lastMoveEvents(viewer: -1) : []
+            summary = MessageSummary.describe(env: env, names: names, view: publicView, events: events)
         } else {
-            // An ordinary live move: describe it from the kernel's event stream.
-            let events = await MessageKernel.shared.lastMoveEvents(viewer: -1)
-            summary = MessageSummary.move(events: events, names: names, view: publicView)
+            summary = FStrings.t("ios.msg.tap")
         }
 
         // §11.3/note 21: ONE session per game, and a NEW game must never collapse
@@ -365,6 +362,44 @@ final class MessagesViewController: MSMessagesAppViewController {
         tc.userInterfaceStyle == .dark
             ? UIColor(red: 0x3D/255.0, green: 0x28/255.0, blue: 0x18/255.0, alpha: 1)
             : UIColor(red: 0xF5/255.0, green: 0xE6/255.0, blue: 0xC8/255.0, alpha: 1)
+    }
+
+    /// The host for a `.transcript` instance's passive bubble. A given controller
+    /// instance is EITHER interactive (compact/expanded, `host`) or a transcript
+    /// renderer (this) — the system never asks one instance to be both — so the two
+    /// hosts never coexist on the same controller.
+    private var transcriptHost: UIHostingController<TranscriptBubbleView>?
+
+    private func presentTranscript(_ conversation: MSConversation) {
+        view.backgroundColor = Self.woolFallback
+        let root = TranscriptBubbleView(payloadURL: conversation.selectedMessage?.url)
+        if let transcriptHost {
+            transcriptHost.rootView = root
+        } else {
+            let h = UIHostingController(rootView: root)
+            h.view.backgroundColor = .clear
+            addChild(h)
+            h.view.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(h.view)
+            NSLayoutConstraint.activate([
+                h.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                h.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                h.view.topAnchor.constraint(equalTo: view.topAnchor),
+                h.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            ])
+            h.didMove(toParent: self)
+            transcriptHost = h
+        }
+    }
+
+    /// The size Messages gives our live-layout bubble in the transcript. Only the
+    /// `.transcript` instance is asked; fill the offered width at the bubble's
+    /// fixed board+caption aspect so the balloon never letterboxes or clips.
+    override func contentSizeThatFits(_ size: CGSize) -> CGSize {
+        guard presentationStyle == .transcript else { return size }
+        let w = size.width
+        let d = TranscriptBubbleView.designSize
+        return CGSize(width: w, height: (w * d.height / d.width).rounded())
     }
 
     private func setRoot(_ root: MessagesRootView) {

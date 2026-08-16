@@ -153,6 +153,20 @@ public actor MessageKernel {
         return (env, Int(fio_msg_last_body_version()))
     }
 
+    /// Everything the transcript bubble (MSMessageLiveLayout) needs to draw a
+    /// received message, in ONE actor-isolated hop: decode+adopt the payload, then
+    /// read the public board and the last-move events off the SAME resident game
+    /// before any other decode can replace it. A live-layout thread renders every
+    /// visible bubble from this one process's shared static Game, so splitting this
+    /// into three awaits would let bubble B's decode land between bubble A's decode
+    /// and A's `residentView` read. Public view (-1) — a transcript picture never
+    /// leaks a hand. Throws if the payload doesn't replay.
+    public func transcriptBubble(payload: Data) throws
+        -> (env: MessageEnvelope, view: GameView?, events: [GameEvent]) {
+        let env = try decode(payload: payload, viewer: -1)
+        return (env, residentView(viewer: -1), lastMoveEvents(viewer: -1))
+    }
+
     /// The masked board the last `decode` left resident, for `viewer` (or -1 for
     /// the public/spectator view the bubble snapshot needs). Same packed wire the
     /// app reads — decoded in this actor so it never races EngineC on the shared

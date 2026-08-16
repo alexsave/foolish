@@ -88,6 +88,13 @@ struct HarnessRootView: View {
     /// The animation trace panel (AnimLog). Only reachable when the trace is
     /// switched on (HARNESS_ANIMLOG), because it is empty otherwise.
     @State private var showAnimLog = false
+    /// DEV (HARNESS_TRANSCRIPT): a sealed demo payload's url, rendered through the
+    /// live-layout TranscriptBubbleView so its layout/localization can be
+    /// screenshotted without two real devices. Set once in `.task`.
+    @State private var transcriptURL: URL?
+    private var showingTranscript: Bool {
+        ProcessInfo.processInfo.environment["HARNESS_TRANSCRIPT"] != nil
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -96,11 +103,18 @@ struct HarnessRootView: View {
             ZStack {
                 simulatedPhone
                 if showAnimLog { AnimLogPanel() }
+                if showingTranscript { TranscriptPreview(url: transcriptURL) }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)   // center in whatever room is left
         }
         .background(Color.black.ignoresSafeArea())
         .task {
+            // DEV (HARNESS_LANG=ru|ko|en): force the reader's language so the
+            // transcript preview can be screenshotted per locale — the live layout's
+            // whole point is that this flips the drawn bubble.
+            if let raw = ProcessInfo.processInfo.environment["HARNESS_LANG"],
+               let lang = AppLanguage(rawValue: raw) { FStrings.override = lang }
+            if showingTranscript { transcriptURL = await Self.demoTranscriptURL() }
             // DEV: `HARNESS_SEED=1` deals a board immediately for screenshotting
             // (interactive tapping needs Accessibility perms the CI shell lacks).
             if ProcessInfo.processInfo.environment["HARNESS_SEED"] != nil {
@@ -149,6 +163,53 @@ struct HarnessRootView: View {
             RoundedRectangle(cornerRadius: 30, style: .continuous)
                 .strokeBorder(Color.white.opacity(0.2), lineWidth: 1)
         )
+    }
+
+    /// DEV: seal a short demo game and hand back its `/m/` url — the same bytes a
+    /// real received bubble would carry — so `TranscriptPreview` can draw it.
+    private static func demoTranscriptURL() async -> URL? {
+        let n = 4
+        let names = ["Alex", "Sam", "Kai", "Noa"]
+        let joins = (0..<n).map { MessageJoin(seat: $0, name: names[$0]) }
+        do {
+            try await MessageKernel.shared.newGame(seed: Data(repeating: 42, count: 32), players: n)
+            var lastSeat = 0
+            for _ in 0..<3 {
+                for s in 0..<n {
+                    let legal = await MessageKernel.shared.residentLegal(seat: s)
+                    if let m = legal.first(where: { $0.type != .wait }) {
+                        try? await MessageKernel.shared.apply(seat: s, move: m)
+                        lastSeat = s; break
+                    }
+                }
+            }
+            let payload = try await MessageKernel.shared.seal(
+                phase: 2, lastActorSeat: lastSeat, gameId: 0xF00D,
+                parent8: Data(repeating: 0, count: 8), joins: joins)
+            return MessageEnvelope.link(payload: payload)
+        } catch { return nil }
+    }
+}
+
+/// DEV: the live transcript bubble drawn in BOTH schemes at a realistic balloon
+/// width, so one screenshot shows how a received message renders on the reader's
+/// device. Localization follows `FStrings.override` (HARNESS_LANG).
+private struct TranscriptPreview: View {
+    let url: URL?
+    var body: some View {
+        VStack(spacing: 22) {
+            Text("Live transcript · \(FStrings.override.display)")
+                .font(.caption).foregroundStyle(.white.opacity(0.8))
+            bubble.environment(\.colorScheme, .light)
+            bubble.environment(\.colorScheme, .dark)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(white: 0.12).ignoresSafeArea())
+    }
+    private var bubble: some View {
+        TranscriptBubbleView(payloadURL: url)
+            .frame(width: 260)   // height follows the view's own fixed aspect
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
 
