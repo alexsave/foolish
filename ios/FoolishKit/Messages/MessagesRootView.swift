@@ -152,6 +152,11 @@ private struct GameSurface: View {
     /// 1.0(6) DIAGNOSTIC: the last decode error, shown in the on-screen dump so a
     /// message that fails to open can be captured by screenshot (temporary).
     @State private var diagError: String?
+    /// 1.0(6) DIAGNOSTIC: the FULL raw FMSG envelope bytes as hex (the iMessage
+    /// format itself - magic/format/flags/phase/game_id/seed/digest/joins/body -
+    /// not just the replay code), and the parsed header fields when decode works.
+    @State private var diagHex = ""
+    @State private var diagInfo = ""
 
     /// A style toggle keeps this key stable, so the session is NOT reloaded and
     /// the in-progress game survives. A new bubble (payloadURL) or a New game tap
@@ -201,6 +206,13 @@ private struct GameSurface: View {
                 Text("DIAG 1.0(6) · surface: \(showingWhat)").bold()
                 if let e = diagError { Text("ERR: \(e)").foregroundColor(.yellow) }
                 Text("chat \(chatKey.prefix(8))… sender=\(senderIsLocal) players=\(chatPlayers) newGame=\(startNewGame)")
+                if !diagInfo.isEmpty { Text("env: \(diagInfo)").foregroundColor(.green) }
+                // The RAW envelope bytes: byte[2] is the flags (0x04 = 1.0(3)
+                // passing bit), then game_id / seed / digest / joins / body.
+                if !diagHex.isEmpty {
+                    Text("HEX (\(diagHex.count / 2) bytes, flags=0x\(diagHex.dropFirst(4).prefix(2))):")
+                    Text(diagHex).textSelection(.enabled)
+                }
                 if let u = payloadURL?.absoluteString {
                     Text("URL (\(u.count) chars):")
                     Text(u).textSelection(.enabled)
@@ -208,13 +220,13 @@ private struct GameSurface: View {
                     Text("URL: nil")
                 }
             }
-            .font(.system(size: 10, design: .monospaced))
+            .font(.system(size: 9, design: .monospaced))
             .foregroundColor(.white)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(8)
         }
-        .frame(maxHeight: 300)
-        .background(Color.black.opacity(0.88))
+        .frame(maxHeight: 380)
+        .background(Color.black.opacity(0.9))
     }
 
     @ViewBuilder private var expandedContent: some View {
@@ -333,12 +345,14 @@ private struct GameSurface: View {
     /// needs the host: seat identity (§6), the name gate, and Rule R's rebase.
     private func load() async {
         AnimLog.say("surface load url=\(payloadURL?.absoluteString.suffix(12) ?? "nil") startNew=\(startNewGame)")
-        diagError = nil   // 1.0(6) diagnostic
+        diagError = nil; diagInfo = ""   // 1.0(6) diagnostic
         var incoming: Data?
         if let url = payloadURL {
             do { incoming = try MessageEnvelope.payloadBytes(url: url) }
             catch { diagError = "payloadBytes: \(error)"; damaged = true; return }
         }
+        // 1.0(6): the raw envelope bytes (the iMessage format, header + body).
+        diagHex = incoming.map { $0.map { String(format: "%02x", $0) }.joined() } ?? ""
         let screen = await MessageSurfaceRouter.resolve(payload: incoming,
                                                         startNewGame: startNewGame,
                                                         chatKey: chatKey)
@@ -367,6 +381,7 @@ private struct GameSurface: View {
             let env: MessageEnvelope
             do { env = try await MessageEnvelope.decode(payload: payload, viewer: -1) }
             catch { diagError = "board decode: \(error)"; damaged = true; return }
+            diagInfo = "phase \(env.phase) turn \(env.turn) round \(env.round) n \(env.nPlayers) actor \(env.lastActorSeat) game \(env.gameId) joins \(env.joins.count)"
             await adopt(winner: payload, env: env)
         }
     }
