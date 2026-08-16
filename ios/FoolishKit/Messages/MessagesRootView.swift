@@ -193,47 +193,46 @@ private struct GameSurface: View {
             .onChange(of: sentToken) { _ in
                 Task { await controller?.markSent() }
             }
-            // 1.0(6) DIAGNOSTIC (temporary): dump the payload URL (which carries
-            // the full FMSG / replay code), the resolved surface, and any decode
-            // error, so a message that fails to open can be captured by screenshot.
-            .overlay(alignment: .top) { diagnosticDump }
     }
 
-    /// 1.0(6) DIAGNOSTIC. Remove once the cross-version bug is pinned.
-    private var diagnosticDump: some View {
+    /// 1.0(6): the graceful failure screen - shown ONLY when a message fails to
+    /// open (decode error / damaged), never during normal play. It gives the
+    /// human a way out (New game) and dumps the full payload + versions so a
+    /// recurrence can be captured by screenshot. A HARD process crash cannot show
+    /// any UI; this covers the graceful "gray screen" failures the extension can
+    /// still render through.
+    private var diagnosticFailView: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("DIAG 1.0(6) · surface: \(showingWhat)").bold()
-                if let e = diagError { Text("ERR: \(e)").foregroundColor(.yellow) }
-                Text("chat \(chatKey.prefix(8))… sender=\(senderIsLocal) players=\(chatPlayers) newGame=\(startNewGame)")
-                // THE version fields: the iMessage FMSG format byte (byte 1), the
-                // flags byte (byte 2 - 0x04 = 1.0(3) passing bit), the URL text
-                // version (the '1' after /m/), and the replay-body ENCODING
-                // version (5/6/7, from the kernel - the real cross-version signal).
-                if !diagHex.isEmpty {
-                    Text("VER: msgFmt=0x\(diagHex.dropFirst(2).prefix(2)) flags=0x\(diagHex.dropFirst(4).prefix(2)) urlVer=\(payloadURL?.pathComponents.last?.first.map(String.init) ?? "?")").foregroundColor(.cyan)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Couldn’t open this game").font(FType.title(18)).onWoolText()
+                FButton(FStrings.t("ios.msg.newgame"), kind: .wood, action: onNewGame)
+                Group {
+                    if let e = diagError { Text("ERR: \(e)").foregroundColor(.red) }
+                    // The version fields: FMSG format byte (byte 1), flags byte
+                    // (byte 2 - 0x04 = 1.0(3) passing bit), the URL text version,
+                    // and the replay-body ENCODING version (5/6/7 - the real
+                    // cross-version signal).
+                    if !diagHex.isEmpty {
+                        Text("VER msgFmt=0x\(diagHex.dropFirst(2).prefix(2)) flags=0x\(diagHex.dropFirst(4).prefix(2)) urlVer=\(payloadURL?.pathComponents.last?.first.map(String.init) ?? "?")")
+                    }
+                    if !diagInfo.isEmpty { Text("env: \(diagInfo)") }
+                    if !diagHex.isEmpty {
+                        Text("HEX (\(diagHex.count / 2) bytes):")
+                        Text(diagHex).textSelection(.enabled)
+                    }
+                    if let u = payloadURL?.absoluteString {
+                        Text("URL:")
+                        Text(u).textSelection(.enabled)
+                    }
                 }
-                if !diagInfo.isEmpty { Text("env: \(diagInfo)").foregroundColor(.green) }
-                // The RAW envelope bytes: magic/format/flags/phase/game_id/seed/
-                // digest/joins/body - the full iMessage format.
-                if !diagHex.isEmpty {
-                    Text("HEX (\(diagHex.count / 2) bytes):")
-                    Text(diagHex).textSelection(.enabled)
-                }
-                if let u = payloadURL?.absoluteString {
-                    Text("URL (\(u.count) chars):")
-                    Text(u).textSelection(.enabled)
-                } else {
-                    Text("URL: nil")
-                }
+                .font(.system(size: 10, design: .monospaced))
+                .onWoolText()
             }
-            .font(.system(size: 9, design: .monospaced))
-            .foregroundColor(.white)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(8)
+            .padding()
         }
-        .frame(maxHeight: 380)
-        .background(Color.black.opacity(0.9))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(WoolBackground().ignoresSafeArea())
     }
 
     @ViewBuilder private var expandedContent: some View {
@@ -291,8 +290,12 @@ private struct GameSurface: View {
                     .font(.footnote).onWoolText()
                     .multilineTextAlignment(.center).padding(.horizontal).padding(.bottom, 8)
             }
-        } else if damaged {
-            DamagedView(onNewGame: onNewGame)
+        } else if damaged || diagError != nil {
+            // 1.0(6): a message that FAILS to open shows a graceful diagnostic
+            // (the full payload/version dump + New game) instead of a gray screen.
+            // This branch is reached ONLY on a real decode failure - normal play,
+            // and the transient reload below, never show it.
+            diagnosticFailView
         } else {
             // 1.0(4) live-receive blink: while a received bubble reloads the
             // surface (controller briefly nil), a ProgressView spinner flashed
@@ -305,12 +308,6 @@ private struct GameSurface: View {
             // entirely needs frame-by-frame harness verification, tracked
             // separately, since it would otherwise kill that replay.
             Color.clear
-                // Verification hook: this branch is the blink. It legitimately
-                // shows on a COLD open (fresh surface, no controller yet), but must
-                // NOT appear on a live RECEIVE (a loadKey reload of an already-live
-                // board) - that is the bug. The harness watches for this line right
-                // after a "surface reload" on an unchanged board.
-                .onAppear { AnimLog.say("surface BLANK render") }
         }
     }
 
