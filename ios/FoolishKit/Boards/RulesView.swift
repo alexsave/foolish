@@ -252,20 +252,27 @@ public struct RulesView: View {
         .padding(.top, FSpace.xs)
     }
 
-    /// An attack card with its cover laid over it, the way a covered battle
-    /// reads on the board (cover offset down-right) — or the bare attack when
-    /// `cover` is nil.
+    /// An attack card with its cover laid over it, EXACTLY the way FBattleGrid
+    /// draws a covered battle (owner, durak-rules-redesign follow-up: the rules
+    /// page used to keep the attack upright under a 6°-offset cover, while the
+    /// real board tilts BOTH cards, in opposite directions): both pivot about
+    /// their bottom-centre, the attack -coverAngle and the cover +coverAngle —
+    /// FBattleGrid's own constant, so the page can never disagree with the
+    /// board it teaches. The slot keeps FBattleGrid's headroom proportions
+    /// (card 50×70 in 62×84 → +12/+14 here) and its bottom alignment, so an
+    /// uncovered attack stands upright on the same bottom line, board-style.
     private func battle(_ attack: Card, _ cover: Card?) -> some View {
-        ZStack(alignment: .topLeading) {
+        ZStack(alignment: .bottom) {
             FCard(card: attack, size: Self.exSize)
+                .rotationEffect(.degrees(cover == nil ? 0 : -FBattleGrid.coverAngle),
+                                anchor: .bottom)
             if let cover {
                 FCard(card: cover, size: Self.exSize)
-                    .offset(x: 12, y: 14)
-                    .rotationEffect(.degrees(6))
+                    .rotationEffect(.degrees(FBattleGrid.coverAngle), anchor: .bottom)
             }
         }
-        .frame(width: Self.exSize.width + (cover == nil ? 0 : 12),
-               height: Self.exSize.height + (cover == nil ? 0 : 14), alignment: .topLeading)
+        .frame(width: Self.exSize.width + 12,
+               height: Self.exSize.height + 14, alignment: .bottom)
     }
 
     /// A covering verdict: ✓/✗, the battle, the reason.
