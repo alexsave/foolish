@@ -1875,19 +1875,13 @@ public struct MessageTableView: View {
     }
 
     /// The Settings + Help squares, mirroring `actionBar` on the LEFT (1.0(4)).
-    /// The 16pt gap between the two squares plus the two 40pt squares equals one
-    /// action-button width (96), so the pair is the exact mirror of the right
-    /// column. Persistent (unlike the move buttons) — Settings and Help are always
-    /// available while playing.
+    /// Now the shared `SettingsHelpSquares` pair — the New-game setup and the
+    /// lobby float the same component at the same corner (durak-rules-redesign),
+    /// so the three screens cannot drift apart. Persistent (unlike the move
+    /// buttons) — Settings and Help are always available while playing.
     private var settingsHelpBar: some View {
-        HStack(spacing: FSpace.l) {   // 40 + 16 + 40 = 96 = FActionBar width
-            FSquareButton(systemImage: "gearshape.fill", side: 40,
-                          accessibility: FStrings.t("ios.settings.title")) { showSettings = true }
-            FSquareButton(systemImage: "questionmark", side: 40,
-                          accessibility: FStrings.t("ios.help")) { showRules = true }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, FSpace.m)   // same inner inset as FActionBar
+        SettingsHelpSquares(onSettings: { showSettings = true },
+                            onHelp: { showRules = true })
     }
 
     private func actionBar(_ view: GameView) -> some View {

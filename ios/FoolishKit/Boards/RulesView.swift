@@ -1,10 +1,17 @@
-// RulesView.swift — the scrollable "How to play" page (1.0(4)), opened from the
-// board's Help (?) square. A decently long walk through Durak with small visual
-// examples that REUSE the real FCard, so the cards a player sees on the board are
-// the same cards they learn the rules from (never a second, drifting card art).
+// RulesView.swift — the scrollable "How to play" page, opened from the Settings/
+// Help squares on the board, the New-game setup and the lobby. Rewritten to the
+// owner's own rules text (durak-rules-redesign): eleven sections in playing
+// order — goal, setup, start, attacking, defending, covering, throwing in,
+// picking up, round end, passing, game end — each with the worked examples the
+// owner spelled out. Every illustration REUSES the real board furniture (FCard,
+// FSword/FShield, FSeatBadge's mini hand, the wood Pickup pill), so the cards a
+// player learns from are the cards they play with (never a second, drifting
+// card art).
 //
 // Text is localized (ios.rules.*). The examples are static illustrations, not a
-// live game — FCard renders them straight, no kernel involved.
+// live game — FCard renders them straight, no kernel involved. Hearts are the
+// power suit in every example on this page; the setup section's caption says so
+// once, and everything below relies on it.
 
 import SwiftUI
 
@@ -12,8 +19,25 @@ public struct RulesView: View {
     private let onClose: () -> Void
     public init(onClose: @escaping () -> Void = {}) { self.onClose = onClose }
 
-    // A trump for the illustrations (hearts here — only for the page's examples).
-    private static let trump: Suit = .hearts
+    /// The power suit for every illustration on the page (declared to the
+    /// reader in the setup caption).
+    private static let power: Suit = .hearts
+
+    /// Kernel values by face label (CardRank.label's inverse), so the example
+    /// cards below read like cards ("9 of clubs") and not like off-by-one rank
+    /// indices — value 5 is a SIX (Models.swift's own warning).
+    private static func c(_ rank: String, _ suit: Suit) -> Card {
+        let v: Int
+        switch rank {
+        case "A": v = 13
+        case "K": v = 12
+        case "Q": v = 11
+        case "J": v = 10
+        case "10": v = 9
+        default: v = (Int(rank) ?? 7) - 1   // "6"->5 … "9"->8
+        }
+        return Card(s: suit.rawValue, v: v)
+    }
 
     public var body: some View {
         // The wool is a `.background`, NOT a ZStack sibling: a sibling
@@ -23,42 +47,27 @@ public struct RulesView: View {
         // content stays inside the safe area (the same fix MessagesRootView uses
         // for the board).
         VStack(spacing: 0) {
-                header
-                ScrollView {
-                    VStack(alignment: .leading, spacing: FSpace.xl) {
-                        section("ios.rules.goal.h", "ios.rules.goal.b")
-
-                        section("ios.rules.deck.h", "ios.rules.deck.b") {
-                            cardRow([Card(s: 1, v: 1), Card(s: 1, v: 5), Card(s: 1, v: 13)], trumpSuit: Self.trump)
-                        }
-
-                        section("ios.rules.attack.h", "ios.rules.attack.b") {
-                            cardRow([Card(s: 0, v: 6)])
-                        }
-
-                        section("ios.rules.defend.h", "ios.rules.defend.b") {
-                            battleRow(attack: Card(s: 0, v: 6), defense: Card(s: 0, v: 10))
-                            battleRow(attack: Card(s: 0, v: 6), defense: Card(s: 1, v: 1), note: "ios.rules.defend.trump")
-                        }
-
-                        section("ios.rules.throw.h", "ios.rules.throw.b") {
-                            cardRow([Card(s: 0, v: 6), Card(s: 2, v: 6), Card(s: 3, v: 6)])
-                        }
-
-                        section("ios.rules.takegood.h", "ios.rules.takegood.b")
-
-                        section("ios.rules.pass.h", "ios.rules.pass.b") {
-                            cardRow([Card(s: 0, v: 6), Card(s: 3, v: 6)])
-                        }
-
-                        section("ios.rules.win.h", "ios.rules.win.b")
-                    }
-                    .padding(FSpace.xl)
-                    .padding(.bottom, FSpace.xxl)
+            header
+            ScrollView {
+                VStack(alignment: .leading, spacing: FSpace.xl) {
+                    section("ios.rules.goal.h", "ios.rules.goal.b")
+                    setupSection
+                    section("ios.rules.start.h", "ios.rules.start.b")
+                    attackSection
+                    section("ios.rules.defend.h", "ios.rules.defend.b")
+                    coverSection
+                    throwSection
+                    pickupSection
+                    section("ios.rules.round.h", "ios.rules.round.b")
+                    passSection
+                    section("ios.rules.end.h", "ios.rules.end.b")
                 }
+                .padding(FSpace.xl)
+                .padding(.bottom, FSpace.xxl)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(WoolBackground().ignoresSafeArea())
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(WoolBackground().ignoresSafeArea())
     }
 
     private var header: some View {
@@ -84,35 +93,252 @@ public struct RulesView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // MARK: card illustrations (reusing FCard)
+    /// Game setup: the draw pile with the flipped power card tucked under it —
+    /// FDeckWell's own stock+flip geometry (46×66 cards, the flip peeking out
+    /// below the landscape stack), minus its live frame publishing.
+    private var setupSection: some View {
+        section("ios.rules.setup.h", "ios.rules.setup.b") {
+            HStack(alignment: .top, spacing: FSpace.l) {
+                ZStack(alignment: .topLeading) {
+                    FCard(card: Self.c("6", Self.power), trump: true,
+                          size: CGSize(width: 46, height: 66))
+                        .offset(x: 18, y: 28)
+                    ForEach(0..<3, id: \.self) { i in
+                        FCard(card: nil, backSeed: UInt64(42 + i),
+                              size: CGSize(width: 46, height: 66))
+                            .rotationEffect(.degrees(90))
+                            // The same rotation nudge FDeckWell documents: the
+                            // bottom card's rotated top-left lands on (8, 8).
+                            .offset(x: 18 - CGFloat(i), y: -2 - CGFloat(i * 2))
+                    }
+                }
+                .frame(width: 80, height: 96, alignment: .topLeading)
+                caption("ios.rules.setup.cap")
+            }
+            .padding(.top, FSpace.xs)
+        }
+    }
+
+    /// Attacking: the role-mark legend, the owner's 6-card hand, and the three
+    /// verdicts on it (the Queen alone / both Kings / never the 7 with the 10).
+    private var attackSection: some View {
+        section("ios.rules.attack.h", "ios.rules.attack.b") {
+            legend("ios.rules.sword") { FSword(size: 30) }
+            legend("ios.rules.shield") { FShield(size: 24) }
+            cardRow([Self.c("6", .clubs), Self.c("7", .diamonds), Self.c("10", .spades),
+                     Self.c("Q", .diamonds), Self.c("K", .spades), Self.c("K", .clubs)])
+            example(ok: true, "ios.rules.attack.ok1")
+            example(ok: true, "ios.rules.attack.ok2")
+            example(ok: false, "ios.rules.attack.no1")
+        }
+    }
+
+    /// Covering: the four battles the owner asked for — higher same suit, power
+    /// over a higher value, a too-low power on a power attack, and the classic
+    /// higher-but-wrong-suit mistake.
+    private var coverSection: some View {
+        section("ios.rules.cover.h", "ios.rules.cover.b") {
+            coverExample(ok: true, attack: Self.c("7", .clubs), cover: Self.c("9", .clubs),
+                         key: "ios.rules.cover.ok1")
+            coverExample(ok: true, attack: Self.c("9", .clubs), cover: Self.c("6", Self.power),
+                         key: "ios.rules.cover.ok2")
+            coverExample(ok: false, attack: Self.c("9", Self.power), cover: Self.c("7", Self.power),
+                         key: "ios.rules.cover.no1")
+            coverExample(ok: false, attack: Self.c("7", .clubs), cover: Self.c("9", .spades),
+                         key: "ios.rules.cover.no2")
+        }
+    }
+
+    /// Throwing in, kept 2-player (owner): one covered battle on the table (a 6
+    /// and a 9 in play), your hand beside it, and the defender's unseen hand as
+    /// the same mini card fan + count the board shows (the "little card view").
+    private var throwSection: some View {
+        let table: [(Card, Card?)] = [(Self.c("6", .spades), Self.c("9", .spades))]
+        return section("ios.rules.throw.h", "ios.rules.throw.b") {
+            tableExample(ok: true, battles: table, hand: [Self.c("9", .diamonds)],
+                         key: "ios.rules.throw.ok1")
+            tableExample(ok: true, battles: table,
+                         hand: [Self.c("6", Self.power), Self.c("6", .diamonds)],
+                         key: "ios.rules.throw.ok2")
+            tableExample(ok: true, battles: table,
+                         hand: [Self.c("6", Self.power), Self.c("9", .diamonds)],
+                         key: "ios.rules.throw.ok3")
+            tableExample(ok: false, battles: table,
+                         hand: [Self.c("8", .diamonds), Self.c("J", .clubs)],
+                         key: "ios.rules.throw.no1")
+            tableExample(ok: false,
+                         battles: [(Self.c("6", .spades), Self.c("9", .spades)),
+                                   (Self.c("9", .clubs), nil)],
+                         hand: [Self.c("6", .diamonds)],
+                         badgeKey: "ios.rules.defender", badgeCount: 1, badgeShield: true,
+                         key: "ios.rules.throw.no2")
+        }
+    }
+
+    /// Picking up: the half-covered table beside the real wood Pickup pill (an
+    /// illustration, not a control), and the note that ALL of it goes.
+    private var pickupSection: some View {
+        section("ios.rules.pickup.h", "ios.rules.pickup.b") {
+            HStack(alignment: .center, spacing: FSpace.l) {
+                battle(Self.c("6", .spades), Self.c("9", .spades))
+                battle(Self.c("6", .diamonds), nil)
+                FButton(FStrings.t("pickup"), kind: .wood, compact: true) {}
+                    .allowsHitTesting(false)
+                Spacer(minLength: 0)
+            }
+            .padding(.top, FSpace.xs)
+            caption("ios.rules.pickup.cap")
+        }
+    }
+
+    /// Passing: possible; blocked by a cover; blocked by no matching value;
+    /// blocked by the next player's hand being too small for the grown attack.
+    private var passSection: some View {
+        section("ios.rules.pass.h", "ios.rules.pass.b") {
+            tableExample(ok: true, battles: [(Self.c("8", .spades), nil)],
+                         hand: [Self.c("8", .diamonds)],
+                         key: "ios.rules.pass.ok1")
+            tableExample(ok: false, battles: [(Self.c("8", .spades), Self.c("10", .spades))],
+                         hand: [Self.c("8", .diamonds)],
+                         key: "ios.rules.pass.no1")
+            tableExample(ok: false, battles: [(Self.c("8", .spades), nil)],
+                         hand: [Self.c("9", .diamonds), Self.c("Q", .clubs)],
+                         key: "ios.rules.pass.no2")
+            tableExample(ok: false,
+                         battles: [(Self.c("8", .spades), nil), (Self.c("8", .clubs), nil)],
+                         hand: [Self.c("8", .diamonds)],
+                         badgeKey: "ios.rules.nextplayer", badgeCount: 2,
+                         key: "ios.rules.pass.no3")
+        }
+    }
+
+    // MARK: illustration helpers (reusing the real components)
 
     private static let exSize = CGSize(width: 46, height: 64)
 
-    private func cardRow(_ cards: [Card], trumpSuit: Suit? = nil) -> some View {
+    private func caption(_ key: String) -> some View {
+        Text(FStrings.t(key)).font(FType.body(14)).onWoolText()
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// A role-mark legend line: the board's own glyph beside what it means.
+    private func legend(_ key: String, @ViewBuilder icon: () -> some View) -> some View {
+        HStack(alignment: .center, spacing: FSpace.s) {
+            icon().frame(width: 32)
+            caption(key)
+        }
+    }
+
+    /// A ✓/✗ verdict beside its caption alone (the attack section's hand is
+    /// shown once above all three verdicts).
+    private func example(ok: Bool, _ key: String) -> some View {
+        HStack(alignment: .top, spacing: FSpace.s) {
+            verdict(ok)
+            caption(key)
+        }
+        .padding(.top, FSpace.xs)
+    }
+
+    @ViewBuilder private func verdict(_ ok: Bool) -> some View {
+        if ok { FCheck(size: 20) } else { FCross(size: 20) }
+    }
+
+    private func cardRow(_ cards: [Card]) -> some View {
         HStack(spacing: FSpace.s) {
-            ForEach(Array(cards.enumerated()), id: \.offset) { _, c in
-                FCard(card: c, trump: trumpSuit != nil && c.suit == trumpSuit, size: Self.exSize)
+            ForEach(cards, id: \.identity) { c in
+                FCard(card: c, size: Self.exSize)
             }
         }
         .padding(.top, FSpace.xs)
     }
 
-    /// An attack card with a defence card laid over it, the way a covered battle
-    /// reads on the board (defence offset down-right).
-    private func battleRow(attack: Card, defense: Card, note: String? = nil) -> some View {
-        HStack(spacing: FSpace.l) {
-            ZStack {
-                FCard(card: attack, size: Self.exSize)
-                FCard(card: defense, trump: defense.suit == Self.trump, size: Self.exSize)
+    /// An attack card with its cover laid over it, the way a covered battle
+    /// reads on the board (cover offset down-right) — or the bare attack when
+    /// `cover` is nil.
+    private func battle(_ attack: Card, _ cover: Card?) -> some View {
+        ZStack(alignment: .topLeading) {
+            FCard(card: attack, size: Self.exSize)
+            if let cover {
+                FCard(card: cover, size: Self.exSize)
                     .offset(x: 12, y: 14)
                     .rotationEffect(.degrees(6))
             }
-            .frame(width: Self.exSize.width + 12, height: Self.exSize.height + 14, alignment: .topLeading)
-            if let note {
-                Text(FStrings.t(note)).font(FType.body(14)).onWoolText()
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+        }
+        .frame(width: Self.exSize.width + (cover == nil ? 0 : 12),
+               height: Self.exSize.height + (cover == nil ? 0 : 14), alignment: .topLeading)
+    }
+
+    /// A covering verdict: ✓/✗, the battle, the reason.
+    private func coverExample(ok: Bool, attack: Card, cover: Card, key: String) -> some View {
+        HStack(alignment: .top, spacing: FSpace.m) {
+            verdict(ok).padding(.top, FSpace.m)
+            battle(attack, cover)
+            caption(key)
+            Spacer(minLength: 0)
         }
         .padding(.top, FSpace.xs)
+    }
+
+    /// A labelled group of cards ("on the table" / "your hand") for the
+    /// throwing-in and passing scenes.
+    private func group(_ labelKey: String, @ViewBuilder cards: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: FSpace.xs) {
+            Text(FStrings.t(labelKey)).font(FType.body(11)).onWoolText(dimmed: true)
+            HStack(alignment: .top, spacing: FSpace.s) { cards() }
+        }
+    }
+
+    /// One 2-player table scene: verdict, the table's battles, your hand, and —
+    /// when a hand size matters (throw-in capacity, pass capacity) — the other
+    /// player's unseen hand as the board's own mini fan + count (FSeatBadge).
+    private func tableExample(ok: Bool, battles: [(Card, Card?)], hand: [Card],
+                              badgeKey: String? = nil, badgeCount: Int = 0,
+                              badgeShield: Bool = false, key: String) -> some View {
+        VStack(alignment: .leading, spacing: FSpace.xs) {
+            HStack(alignment: .top, spacing: FSpace.l) {
+                verdict(ok).padding(.top, FSpace.l)
+                group("ios.rules.lbl.table") {
+                    ForEach(Array(battles.enumerated()), id: \.offset) { _, b in
+                        battle(b.0, b.1)
+                    }
+                }
+                group("ios.rules.lbl.hand") {
+                    ForEach(hand, id: \.identity) { c in
+                        FCard(card: c, size: Self.exSize)
+                    }
+                }
+                if let badgeKey {
+                    FSeatBadge(name: FStrings.t(badgeKey), handCount: badgeCount,
+                               isDefender: badgeShield)
+                }
+                Spacer(minLength: 0)
+            }
+            caption(key)
+        }
+        .padding(.top, FSpace.xs)
+    }
+}
+
+/// The "not allowed" mark for the rules examples — a hand-built red cross on the
+/// same 24×24 grid and stroke style as FCheck, so the two verdicts read as one
+/// family (and for FCheck's own reason: SF Symbols are unreliable under
+/// ImageRenderer snapshots, so board glyphs are hand-built throughout).
+struct FCross: View {
+    var size: CGFloat = 24
+    var body: some View {
+        Canvas { ctx, sz in
+            let s = sz.width / 24
+            func P(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x * s, y: y * s) }
+            let red = Color(hex: 0xC0392B)
+            var cross = Path()
+            cross.move(to: P(5.5, 5.5))
+            cross.addLine(to: P(18.5, 18.5))
+            cross.move(to: P(18.5, 5.5))
+            cross.addLine(to: P(5.5, 18.5))
+            ctx.stroke(cross, with: .color(red),
+                       style: StrokeStyle(lineWidth: 3 * s, lineCap: .round))
+        }
+        .frame(width: size, height: size)
+        .accessibilityLabel(Text(FStrings.t("ios.reject")))
     }
 }

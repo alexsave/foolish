@@ -138,6 +138,11 @@ private struct GameSurface: View {
                               let prevPayload: Data? }   // note 4/9/38: threaded to seatOnBoard
 
     @State private var controller: MessageTurnController?
+    /// The setup/lobby screens' Settings + Help squares present these
+    /// (durak-rules-redesign) — the board keeps its own pair of flags inside
+    /// MessageTableView, so the two never fight over one sheet.
+    @State private var showSettings = false
+    @State private var showRules = false
     @State private var ambiguous: (env: MessageEnvelope, payload: Data)?
     /// RELEASE-ONLY substitute for `ambiguous` (§6.3): an unresolved identity in
     /// Release must never offer a seat picker (anyone could claim any hand), so we
@@ -178,6 +183,14 @@ private struct GameSurface: View {
         expandedContent
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .fToast($toast)
+            // The setup/lobby Settings + Help squares present these — same
+            // sheets as the board's own pair (MessageTableView).
+            .sheet(isPresented: $showSettings) {
+                MessageSettingsView { showSettings = false }
+            }
+            .sheet(isPresented: $showRules) {
+                RulesView { showRules = false }
+            }
             .task(id: loadKey) {
                 await reloadForInput()
                 await autoDriveLobby()
@@ -260,6 +273,7 @@ private struct GameSurface: View {
                       // nil in every shipping build: the closure only exists
                       // where `addSoloSeat` is compiled at all.
                       onAddSoloSeat: soloSeatAction(lob))
+                .overlay(alignment: .bottomLeading) { settingsHelpCorner }
         } else if let g = nameGate {
             NameGateView(prefill: MessageGameStore.shared.nickname) { name in
                 Task { await nameThenSeat(name, gate: g) }
@@ -273,6 +287,7 @@ private struct GameSurface: View {
                          isDM: chatIsDM, chatPlayers: chatPlayers) { name in
                 Task { await start(nickname: name) }
             }
+            .overlay(alignment: .bottomLeading) { settingsHelpCorner }
         } else if let a = ambiguous {
             SeatPicker(nPlayers: a.env.nPlayers, joins: a.env.joins) { seat in
                 Task { await choose(seat: seat, from: a) }
@@ -308,6 +323,24 @@ private struct GameSurface: View {
             // entirely needs frame-by-frame harness verification, tracked
             // separately, since it would otherwise kill that replay.
             Color.clear
+        }
+    }
+
+    /// The Settings + Help squares on the setup and lobby screens (owner ask,
+    /// durak-rules-redesign): the SAME 40pt pair the board floats bottom-left
+    /// (`SettingsHelpSquares`), at the same corner inset — 4 outer + the pair's
+    /// own FSpace.m inner = 16pt off the edge, exactly the board's line — so
+    /// Settings and the rules are reachable before a game exists at all.
+    /// Expanded only: the compact drawer is too short for persistent chrome
+    /// (the board fades its own pair out as the drawer collapses; this is the
+    /// discrete version of the same rule, since these screens have no
+    /// continuous collapse fraction to read).
+    @ViewBuilder private var settingsHelpCorner: some View {
+        if style == .expanded {
+            SettingsHelpSquares(onSettings: { showSettings = true },
+                                onHelp: { showRules = true })
+                .padding(.leading, 4)
+                .padding(.bottom, 4)
         }
     }
 

@@ -36,3 +36,31 @@ public struct FSquareButton: View {
         .accessibilityLabel(accessibility)
     }
 }
+
+/// The Settings (gear) + Help (?) pair — ONE layout for every surface that
+/// floats it bottom-left: the board, the New-game setup and the lobby
+/// (durak-rules-redesign put it on the latter two). Two 40pt squares with a
+/// 16pt gap, so the pair spans one action-button width (40 + 16 + 40 = 96 =
+/// FActionBar width) and mirrors the right-hand action column wherever both
+/// appear; the inner horizontal padding is FActionBar's own inset, so the pair
+/// lands on the same edge line on every screen.
+public struct SettingsHelpSquares: View {
+    private let onSettings: () -> Void
+    private let onHelp: () -> Void
+
+    public init(onSettings: @escaping () -> Void, onHelp: @escaping () -> Void) {
+        self.onSettings = onSettings
+        self.onHelp = onHelp
+    }
+
+    public var body: some View {
+        HStack(spacing: FSpace.l) {   // 40 + 16 + 40 = 96 = FActionBar width
+            FSquareButton(systemImage: "gearshape.fill", side: 40,
+                          accessibility: FStrings.t("ios.settings.title"), action: onSettings)
+            FSquareButton(systemImage: "questionmark", side: 40,
+                          accessibility: FStrings.t("ios.help"), action: onHelp)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, FSpace.m)   // same inner inset as FActionBar
+    }
+}
