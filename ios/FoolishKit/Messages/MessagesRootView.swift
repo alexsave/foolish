@@ -46,7 +46,7 @@ public struct MessagesRootView: View {
     let chatPlayers: Int
     let requestExpand: () -> Void
     let onNewGame: () -> Void
-    let onSend: (Data, Int) async -> Void
+    let onSend: (Data, Int, Bool) async -> Void
     /// Retract a previously-staged bubble (§10 undo). No-op by default so every
     /// existing caller keeps compiling; the real extension has no API to remove an
     /// inserted input-field bubble, so it can only drop its own pending-stage record.
@@ -56,7 +56,7 @@ public struct MessagesRootView: View {
                 startNewGame: Bool, newGameToken: Int = 0, sentToken: Int = 0, chatKey: String,
                 chatIsDM: Bool, chatPlayers: Int,
                 requestExpand: @escaping () -> Void, onNewGame: @escaping () -> Void,
-                onSend: @escaping (Data, Int) async -> Void,
+                onSend: @escaping (Data, Int, Bool) async -> Void,
                 onUnstage: @escaping () -> Void = {}) {
         self.payloadURL = payloadURL; self.style = style; self.senderIsLocal = senderIsLocal
         self.startNewGame = startNewGame; self.newGameToken = newGameToken; self.sentToken = sentToken
@@ -124,7 +124,7 @@ private struct GameSurface: View {
     let chatPlayers: Int
     let requestExpand: () -> Void
     let onNewGame: () -> Void
-    let onSend: (Data, Int) async -> Void
+    let onSend: (Data, Int, Bool) async -> Void
     let onUnstage: () -> Void
 
     /// A phase-0/handoff lobby the extension shows instead of the board (§5.2).
@@ -251,7 +251,7 @@ private struct GameSurface: View {
     @ViewBuilder private var expandedContent: some View {
         if let controller {
             MessageTableView(controller: controller,
-                             onSend: { payload in await onSend(payload, controller.mySeat) },
+                             onSend: { payload, fromUndo in await onSend(payload, controller.mySeat, fromUndo) },
                              onNewGame: onNewGame,
                              onUnstage: onUnstage)
                 // 1.0(4) live-receive blink: a received bubble reloads the surface
@@ -269,7 +269,7 @@ private struct GameSurface: View {
                       nickname: MessageGameStore.shared.nickname,
                       onJoin: { name in Task { await joinLobby(lob, nickname: name) } },
                       onStart: { Task { await startGame(lob) } },
-                      onInvite: { Task { await onSend(lob.payload, lobbySeat(lob.env) ?? 0) } },
+                      onInvite: { Task { await onSend(lob.payload, lobbySeat(lob.env) ?? 0, false) } },
                       // nil in every shipping build: the closure only exists
                       // where `addSoloSeat` is compiled at all.
                       onAddSoloSeat: soloSeatAction(lob))
@@ -522,7 +522,7 @@ private struct GameSurface: View {
             let env = try await MessageEnvelope.decode(payload: payload, viewer: -1)
             cache(seat: 0, env: env, payload: payload)
             lobby = Lobby(env: env, payload: payload)
-            await onSend(payload, 0)
+            await onSend(payload, 0, false)
         } catch {
             damaged = true
         }
@@ -575,7 +575,7 @@ private struct GameSurface: View {
                 phase: 0, lastActorSeat: free, gameId: gid, parent8: parent, joins: joins)
             let newEnv = try await MessageEnvelope.decode(payload: payload, viewer: -1)
             cache(seat: free, env: newEnv, payload: payload)
-            await onSend(payload, free)
+            await onSend(payload, free, false)
             lobby = Lobby(env: newEnv, payload: payload)
         } catch {
             damaged = true
@@ -651,7 +651,7 @@ private struct GameSurface: View {
                 parent8: parent, joins: env.joins)
             let newEnv = try await MessageEnvelope.decode(payload: payload, viewer: -1)
             cache(seat: seat, env: newEnv, payload: payload)
-            await onSend(payload, seat)
+            await onSend(payload, seat, false)
             controller = MessageTurnController(parentPayload: payload, parent: newEnv, mySeat: seat)
             lobby = nil
         } catch {

@@ -529,7 +529,25 @@ public struct FHandFan: View {
                             }
                         }
                         dragOffset = g.translation
-                        onDragChanged(card, g.location)
+                        // Only tell the consumer a DRAG is happening once the finger
+                        // has actually travelled past the tap/drag threshold — the
+                        // SAME line `onEnded` uses to tell a tap from a drag. With
+                        // `minimumDistance: 0`, onChanged fires the instant a finger
+                        // lands, so an ungated `onDragChanged` set the board's
+                        // `dragCard` on every TAP; the tap branch of onEnded then
+                        // returns without an `onDragEnded`, so that `dragCard` was
+                        // never cleared and lingered. `highlightBattles` prefers
+                        // `dragCard` over the real selection, so the last-tapped
+                        // card's cover targets stayed lit no matter what you then
+                        // selected or deselected (a stale trump lit every six; a
+                        // stale J♦ lit only the 6♦). Gating here means a tap never
+                        // sets `dragCard` at all. `dragMoved` keeps it firing for the
+                        // rest of a real drag even if the finger drifts back near the
+                        // start. `dragOffset` above is untouched, so the card still
+                        // follows the finger from the first pixel.
+                        if dragMoved || hypot(g.translation.width, g.translation.height) >= Self.tapThreshold {
+                            onDragChanged(card, g.location)
+                        }
                         // The dragged card's live visual CENTRE, for the board's
                         // verb-hint pill (round-5 finding 5) and for the flight
                         // that now starts where the finger let go (round-6 bug

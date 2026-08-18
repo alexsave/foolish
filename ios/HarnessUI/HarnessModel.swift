@@ -391,8 +391,8 @@ final class HarnessModel: ObservableObject {
     /// MessagesRootView on it, so flipping it here would tear down the very board
     /// that just staged the move (it reloads with payloadURL=nil → "damaged").
     /// The new-game intent only clears when the bubble is actually delivered.
-    func stage(_ payload: Data, seat: Int) async {
-        AnimLog.say("host stage seat=\(seat)")
+    func stage(_ payload: Data, seat: Int, fromUndo: Bool = false) async {
+        AnimLog.say("host stage seat=\(seat) fromUndo=\(fromUndo)")
         staged = payload
         // Snapshot the bubble picture NOW, the way MessagesViewController.stage
         // does — the resident kernel is this payload at exactly this moment (the
@@ -424,7 +424,11 @@ final class HarnessModel: ObservableObject {
             // ONE thing an auto-played game does not do that a human does, so
             // reproducing an "it animated twice when I tapped it myself" report
             // needs it in the loop.
-            if ProcessInfo.processInfo.environment["HARNESS_NOCOLLAPSE"] == nil,
+            // An undo re-stage must never collapse - it keeps the expanded board up
+            // so the player can pick a different move (mirrors the real extension's
+            // `fromUndo` guard in MessagesViewController.stage).
+            if !fromUndo,
+               ProcessInfo.processInfo.environment["HARNESS_NOCOLLAPSE"] == nil,
                ProcessInfo.processInfo.environment["HARNESS_AUTOGAME"] == nil
                 || ProcessInfo.processInfo.environment["HARNESS_AUTOGAME_COLLAPSE"] != nil {
                 AnimLog.say("host collapse -> compact")

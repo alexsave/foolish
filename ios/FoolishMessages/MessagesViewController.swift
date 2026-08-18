@@ -192,8 +192,8 @@ final class MessagesViewController: MSMessagesAppViewController {
                     self.requestPresentationStyle(.expanded)
                 }
             },
-            onSend: { [weak self] payload, mySeat in
-                await self?.stage(payload: payload, mySeat: mySeat)
+            onSend: { [weak self] payload, mySeat, fromUndo in
+                await self?.stage(payload: payload, mySeat: mySeat, fromUndo: fromUndo)
             },
             onUnstage: { [weak self] in
                 // Messages provides no API to remove an already-inserted input-field
@@ -217,7 +217,7 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// The picture is the PUBLIC table (§10) rendered from the resident game the
     /// seal just left in place. Insert only STAGES — the human sends.
     @MainActor
-    private func stage(payload: Data, mySeat: Int) async {
+    private func stage(payload: Data, mySeat: Int, fromUndo: Bool = false) async {
         guard let conversation = activeConversation else { return }
         // Re-decode (idempotent — re-adopts the same state) for the joins/summary.
         let env = try? await MessageEnvelope.decode(payload: payload, viewer: -1)
@@ -310,6 +310,13 @@ final class MessagesViewController: MSMessagesAppViewController {
         // clear and clearPending("") is a harmless no-op.
         pendingStage = (payload, mySeat, env?.gameId ?? "")
         conversation.insert(msg) { _ in }
+
+        // An UNDO re-stages only to refresh the input bubble - it is NOT a move the
+        // player is trying to send, it is them backing up to pick a DIFFERENT move.
+        // Collapsing the board out from under them there is exactly wrong (owner:
+        // "undo should NOT collapse the screen... best to keep it expanded for
+        // moves"), so stay expanded and skip the whole drop-to-Send tail below.
+        if fromUndo { return }
 
         // Drop the user straight at Messages' Send (§11.4): the expanded board has
         // no send control of its own — Send lives in the compose area — so once a

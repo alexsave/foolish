@@ -597,7 +597,7 @@ private struct ExtensionStage: View {
                 chatPlayers: model.playerCount,
                 requestExpand: { model.expand() },
                 onNewGame: { model.newGame() },
-                onSend: { payload, seat in await model.stage(payload, seat: seat) },
+                onSend: { payload, seat, fromUndo in await model.stage(payload, seat: seat, fromUndo: fromUndo) },
                 onUnstage: { model.unstage() }
             )
             .id(model.viewKey)   // reset @State when player/chat/transcript/intent changes

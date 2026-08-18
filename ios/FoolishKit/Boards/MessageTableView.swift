@@ -14,8 +14,12 @@ import Foundation   // sin/cos for the ring placement
 public struct MessageTableView: View {
     @ObservedObject private var controller: MessageTurnController
     /// Seal the staged chain and hand it to the extension to compose + insert.
-    /// The view never touches MSMessage; it only produces the payload.
-    private let onSend: (Data) async -> Void
+    /// The view never touches MSMessage; it only produces the payload. The `Bool`
+    /// is `fromUndo`: a fresh move drops the player at Messages' Send (the drawer
+    /// collapses), but an UNDO re-stages only to refresh the input bubble and must
+    /// KEEP the expanded board up - undoing means "let me pick a different move",
+    /// so collapsing the screen out from under them is wrong.
+    private let onSend: (Data, _ fromUndo: Bool) async -> Void
     /// Start a fresh game in this thread. Offered on the board only once the game
     /// is over (the fool is decided) — any player, out or not, can deal the next
     /// one. Routes through the host's New game (§5.2), same as the chrome button.
@@ -222,7 +226,7 @@ public struct MessageTableView: View {
     /// fallback) as each claims the animator.
     @State private var animSequenceToken = 0
 
-    public init(controller: MessageTurnController, onSend: @escaping (Data) async -> Void,
+    public init(controller: MessageTurnController, onSend: @escaping (Data, Bool) async -> Void,
                 onNewGame: @escaping () -> Void = {}, onUnstage: @escaping () -> Void = {}) {
         self.controller = controller
         self.onSend = onSend
@@ -1995,7 +1999,13 @@ public struct MessageTableView: View {
     /// staged (a 0-action genesis body is unsealable).
     private func stageNow() async {
         guard controller.canStage else { return }
-        if let payload = try? await controller.stagedPayload() { await onSend(payload) }
+        // `lastChangeWasUndo` is the one signal that separates a re-stage after Undo
+        // (keep expanded) from a fresh move's stage (collapse to Send). It is set by
+        // undo() and reset by apply()/markSent, so it is true here ONLY when this
+        // stage follows an undo.
+        if let payload = try? await controller.stagedPayload() {
+            await onSend(payload, controller.lastChangeWasUndo)
+        }
     }
 
     /// Undo-to-empty on a continuation (1.0(4)): re-seal the base (received) state
@@ -2005,7 +2015,11 @@ public struct MessageTableView: View {
     /// bubble that carries nothing new (sending it just re-shares the same board).
     private func stageBaseNow() async {
         guard controller.isContinuation else { return }
-        if let payload = try? await controller.stagedPayload() { await onSend(payload) }
+        // Always a consequence of undo-to-empty (the only caller is onUndo), so keep
+        // the board expanded - never collapse on an undo.
+        if let payload = try? await controller.stagedPayload() {
+            await onSend(payload, controller.lastChangeWasUndo)
+        }
     }
 
 
