@@ -38,32 +38,39 @@ public enum MessageSummary {
     /// The summary for a staged LIVE move (phase 2, turn > 0). `events` is
     /// `MessageKernel.lastMoveEvents(viewer: -1)` for the resident game (the
     /// trailing run of steps the bubble's sender produced); `view` is the public
-    /// resident board, for the round-over "whose turn" line. Falls back to the
+    /// resident board, for the round-over "whose turn" line; `actor` is the
+    /// envelope's own lastActorSeat (who sealed this bubble). Falls back to the
     /// generic tap line if the stream yields no headline.
-    public static func move(events: [GameEvent], names: [Int: String], view: GameView?) -> String {
+    public static func move(events: [GameEvent], names: [Int: String], view: GameView?,
+                            actor: Int = -1) -> String {
         var primary: String?
+        var primarySeat = -1
         var outParts: [String] = []
         var roundOver = false
 
         // First headline wins for `primary`; OUT and the round transition are
         // consequences appended after it (a defender who covers the last card
         // and thereby ends the bout reads "… covers … · Round over - X attacks").
+        func headline(_ seat: Int, _ text: String) {
+            guard primary == nil else { return }
+            primary = text; primarySeat = seat
+        }
         for e in events {
             switch e.msg {
             case Msg.attacked:
-                primary = primary ?? FStrings.t("ios.msg.mv.attack",
-                    ["name": name(e.seat, names), "cards": cardList(e.cards)])
+                headline(e.seat, FStrings.t("ios.msg.mv.attack",
+                    ["name": name(e.seat, names), "cards": cardList(e.cards)]))
             case Msg.passed:
-                primary = primary ?? FStrings.t("ios.msg.mv.pass",
-                    ["name": name(e.seat, names), "cards": cardList(e.cards)])
+                headline(e.seat, FStrings.t("ios.msg.mv.pass",
+                    ["name": name(e.seat, names), "cards": cardList(e.cards)]))
             case Msg.covered:
                 let def = e.cards.compactMap { $0 }.first
-                primary = primary ?? FStrings.t("ios.msg.mv.cover", [
+                headline(e.seat, FStrings.t("ios.msg.mv.cover", [
                     "name": name(e.seat, names),
                     "target": e.target.map(card) ?? "",
-                    "card": def.map(card) ?? ""])
+                    "card": def.map(card) ?? ""]))
             case Msg.pickup:
-                primary = primary ?? FStrings.t("ios.msg.mv.pickup", ["name": name(e.seat, names)])
+                headline(e.seat, FStrings.t("ios.msg.mv.pickup", ["name": name(e.seat, names)]))
             case Msg.out:
                 if e.seat >= 0 { outParts.append(FStrings.t("ios.msg.mv.out", ["name": name(e.seat, names)])) }
             case Msg.goodTransition:
@@ -71,6 +78,25 @@ public enum MessageSummary {
             default:
                 break
             }
+        }
+
+        // "Says good" is the ONE silent move: every other live action leaves a
+        // headline event naming its seat (attack/pass/cover/pickup all emit
+        // their EVW_MSG_*), but a good emits nothing of its own - evwire has no
+        // said-good tag. Two shapes reach here (round-8 #2):
+        //  - a BARE good (the bout stays open): the event stream is empty, no
+        //    headline at all - the old caption fell to the generic tap line;
+        //  - a round-CLOSING good: the wire encodes it as the seatless
+        //    ROUND_END step, so the last-move grouping backs over the tail to
+        //    the PREVIOUS actor's step - the headline says the other seat's
+        //    cover (already captioned on its own bubble) and never that this
+        //    bubble's sender said good.
+        // Both give themselves away the same way: the headline's seat is not
+        // the envelope's own lastActorSeat. The actor's action was the silent
+        // good, so it takes the headline; the consequences (outs, the round
+        // transition) still follow. All kernel facts, nothing re-derived.
+        if actor >= 0, primarySeat != actor {
+            primary = FStrings.t("ios.msg.mv.good", ["name": name(actor, names)])
         }
 
         var parts: [String] = []

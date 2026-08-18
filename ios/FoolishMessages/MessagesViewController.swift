@@ -295,7 +295,8 @@ final class MessagesViewController: MSMessagesAppViewController {
         } else {
             // An ordinary live move: describe it from the kernel's event stream.
             let events = await MessageKernel.shared.lastMoveEvents(viewer: -1)
-            summary = MessageSummary.move(events: events, names: names, view: publicView)
+            summary = MessageSummary.move(events: events, names: names, view: publicView,
+                                          actor: env?.lastActorSeat ?? -1)
         }
 
         // §11.3/note 21: ONE session per game, and a NEW game must never collapse

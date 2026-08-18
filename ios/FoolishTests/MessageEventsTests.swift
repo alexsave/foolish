@@ -304,4 +304,137 @@ final class MessageEventsTests: XCTestCase {
         }
         XCTFail("no 2p deal in 120 tries produced a clean covered defence to discard")
     }
+
+    // MARK: round-8 #2 — the "says good" bubble captions
+
+    private let names = [0: "Alex", 1: "Vera", 2: "Boris"]
+
+    /// A bare good (3p: one attacker says good, the bout stays open) is the ONE
+    /// move that leaves the kernel's event stream with no headline at all - the
+    /// old summary fell through to the generic "tap to play" line. It must now
+    /// read "X says good", named from the envelope's own lastActorSeat. Built
+    /// the way real bubbles are (each action sealed into the chain, the summary
+    /// read off the decoded chain), because the grouping of "the last move"
+    /// only holds at the chain's action boundaries.
+    func testBareGoodCaptionNamesTheActor() async throws {
+        let k = MessageKernel.shared
+        for salt in UInt8(1)...UInt8(120) {
+            var creator: MessageTurnController?
+            for s2 in UInt8(0)...UInt8(40) {
+                let c = MessageTurnController(genesisSeed: freshSeed(salt &+ s2), players: 3,
+                                              gameId: 93, myNickname: "Alex")
+                await c.begin()
+                if c.legal.contains(where: { $0.type == .attack }) { creator = c; break }
+            }
+            guard let a = creator, let atk = a.legal.first(where: { $0.type == .attack })
+            else { continue }
+            await a.apply(atk)
+            let p0 = try await a.stagedPayload()
+            let e0 = try await MessageEnvelope.decode(payload: p0, viewer: -1)
+
+            let defenderOrNil = await firstSeat(k, n: 3, with: .cover)
+            guard let defender = defenderOrNil else { continue }
+            let b = MessageTurnController(parentPayload: p0, parent: e0, mySeat: defender)
+            await b.begin()
+            guard let cov = b.legal.first(where: { $0.type == .cover }) else { continue }
+            await b.apply(cov)
+            let p1 = try await b.stagedPayload()
+            let e1 = try await MessageEnvelope.decode(payload: p1, viewer: -1)
+
+            // ONE of the two attackers says good; with the other still to
+            // speak, the bout stays open - the exact silent-move case.
+            guard let gooder = await firstSeat(k, n: 3, with: .good) else { continue }
+            let g = MessageTurnController(parentPayload: p1, parent: e1, mySeat: gooder)
+            await g.begin()
+            guard let good = g.legal.first(where: { $0.type == .good }) else { continue }
+            await g.apply(good)
+            let p2 = try await g.stagedPayload()
+            let e2 = try await MessageEnvelope.decode(payload: p2, viewer: -1)
+            guard let v = await k.residentView(viewer: -1), !v.battles.isEmpty else { continue }
+
+            let events = await k.lastMoveEvents(viewer: -1)
+            let s = MessageSummary.move(events: events, names: names, view: v,
+                                        actor: e2.lastActorSeat)
+            XCTAssertEqual(s, FStrings.t("ios.msg.mv.good", ["name": names[gooder]!]),
+                           "a bare good must caption who said it, not the generic tap line")
+            return
+        }
+        XCTFail("no 3p deal in 120 tries produced attack -> cover -> one good with the bout open")
+    }
+
+    /// A good that CLOSES the bout emits only consequences (discard + draws +
+    /// the round transition) - still no headline naming the actor. The caption
+    /// must read "X says good · Round over - Y attacks next". Same sealed-chain
+    /// construction as the bare-good test above.
+    func testRoundClosingGoodCaptionCarriesGoodAndRoundOver() async throws {
+        let k = MessageKernel.shared
+        for salt in UInt8(1)...UInt8(120) {
+            var creator: MessageTurnController?
+            for s2 in UInt8(0)...UInt8(40) {
+                let c = MessageTurnController(genesisSeed: freshSeed(salt &+ s2), players: 2,
+                                              gameId: 94, myNickname: "Alex")
+                await c.begin()
+                if c.legal.contains(where: { $0.type == .attack }) { creator = c; break }
+            }
+            guard let a = creator, let atk = a.legal.first(where: { $0.type == .attack })
+            else { continue }
+            await a.apply(atk)
+            let p0 = try await a.stagedPayload()
+            let e0 = try await MessageEnvelope.decode(payload: p0, viewer: -1)
+
+            let b = MessageTurnController(parentPayload: p0, parent: e0, mySeat: 1)
+            await b.begin()
+            guard let cov = b.legal.first(where: { $0.type == .cover }) else { continue }
+            await b.apply(cov)
+            let p1 = try await b.stagedPayload()
+            let e1 = try await MessageEnvelope.decode(payload: p1, viewer: -1)
+
+            let g = MessageTurnController(parentPayload: p1, parent: e1, mySeat: 0)
+            await g.begin()
+            guard let good = g.legal.first(where: { $0.type == .good }) else { continue }
+            await g.apply(good)
+            let p2 = try await g.stagedPayload()
+            let e2 = try await MessageEnvelope.decode(payload: p2, viewer: -1)
+            guard let v = await k.residentView(viewer: -1), v.battles.isEmpty, !v.isOver
+            else { continue }
+
+            let events = await k.lastMoveEvents(viewer: -1)
+            let s = MessageSummary.move(events: events, names: names, view: v,
+                                        actor: e2.lastActorSeat)
+            XCTAssertTrue(s.contains(FStrings.t("ios.msg.mv.good", ["name": names[0]!])),
+                          "a round-closing good must still say who said it: \(s)")
+            if v.firstAttacker >= 0 {
+                XCTAssertTrue(s.contains(FStrings.t("ios.msg.mv.roundover",
+                                                    ["name": names[v.firstAttacker]!])),
+                              "the round transition must name the next attacker: \(s)")
+            }
+            return
+        }
+        XCTFail("no 2p deal in 120 tries produced attack -> cover -> good closing the bout")
+    }
+
+    /// The synthesis must be CONDITIONAL: a move with a real headline (an
+    /// attack) may never also claim its actor said good.
+    func testAttackCaptionDoesNotSynthesizeGood() async throws {
+        let k = MessageKernel.shared
+        try await k.newGame(seed: freshSeed(9), players: 2)
+        let attackerOrNil = await firstSeat(k, n: 2, with: .attack)
+        let attacker = try XCTUnwrap(attackerOrNil)
+        let atk = await k.residentLegal(seat: attacker).first { $0.type == .attack }!
+        try await k.apply(seat: attacker, move: atk)
+        let events = await k.lastMoveEvents(viewer: -1)
+        let v = await k.residentView(viewer: -1)
+        let s = MessageSummary.move(events: events, names: names, view: v, actor: attacker)
+        XCTAssertFalse(s.contains(FStrings.t("ios.msg.mv.good", ["name": names[attacker]!])),
+                       "an attack already has a headline; no good may be synthesized: \(s)")
+        XCTAssertTrue(s.contains(names[attacker]!), "the attack headline names the attacker")
+    }
+
+    private func firstSeat(_ k: MessageKernel, n: Int, with type: MoveType) async -> Int? {
+        for s in 0..<n {
+            let legal = await k.residentLegal(seat: s)
+            if legal.contains(where: { $0.type == type }) { return s }
+        }
+        return nil
+    }
 }

@@ -863,11 +863,14 @@ private struct GameSurface: View {
         var survivors: [Move] = []
         var kept: [PendingAction] = []
         var discarded = 0
-        for p in MessageGameStore.shared.pending(gameId: gameId) {
+        let rows = MessageGameStore.shared.pending(gameId: gameId)
+        if !rows.isEmpty { AnimLog.say("rebase pending=\(rows.count) game=\(gameId)") }
+        for p in rows {
             let awire = MoveWire.encodeAction(p.move)
             let verdict = awire.isEmpty ? MessageKernel.Rebase.discardedIllegal
                 : ((try? await MessageKernel.shared.rebase(pendingRound: p.round, seat: p.seat, awire: awire))
                    ?? .discardedIllegal)
+            AnimLog.say("rebase verdict=\(verdict) seat=\(p.seat) round=\(p.round) move=\(p.move.type)")
             if verdict == .reapplied {
                 survivors.append(p.move)
                 // Re-tagged to the adopted round: it is now composed against THIS

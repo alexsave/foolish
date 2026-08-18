@@ -31,7 +31,14 @@ public struct FButton: View {
     public var body: some View {
         Button(action: { Haptics.fire(.drop); action() }) {
             titleText
-                .padding(.horizontal, compact ? 16 : 0)
+                // A button label is ALWAYS one line (owner, on device: the
+                // Russian "Отменить" wrapped inside the fixed-width wooden
+                // pill). Tighter compact padding buys the longer locales room
+                // first; a label that still cannot fit scales down instead of
+                // wrapping.
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .padding(.horizontal, compact ? 10 : 0)
                 .frame(minWidth: fixedWidth,
                        maxWidth: fixedWidth ?? (compact ? nil : .infinity),
                        minHeight: compact ? 40 : 52)

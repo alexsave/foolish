@@ -226,6 +226,15 @@ public struct MessageTableView: View {
     /// fallback) as each claims the animator.
     @State private var animSequenceToken = 0
 
+    /// Round-8 #3: the staged-but-unsent send reminder (the bobbing blue arrow
+    /// under Messages' own Send button). Flipped true by the `.task(id:
+    /// controller.canSend)` below after a move has sat staged for 3 seconds
+    /// without being sent; flipped false the instant nothing is staged any more
+    /// (the human sent it - markSent - or undid it all the way back). A timer
+    /// off the STAGED state, not a log of send latencies: the reminder needs no
+    /// record of how fast this human usually sends.
+    @State private var sendHintShown = false
+
     public init(controller: MessageTurnController, onSend: @escaping (Data, Bool) async -> Void,
                 onNewGame: @escaping () -> Void = {}, onUnstage: @escaping () -> Void = {}) {
         self.controller = controller
@@ -312,6 +321,16 @@ public struct MessageTableView: View {
             #endif
         }
         .onChange(of: controller.view) { flyBoutEndToDiscard(to: $0) }
+        // Round-8 #3: the send reminder's 3-second fuse. `id:` cancels and
+        // restarts this whenever the staged state flips, so: stage a move ->
+        // 3s later the arrow fades in (if it is STILL staged); send or
+        // undo-to-empty -> `canSend` goes false and the arrow is gone at once.
+        .task(id: controller.canSend) {
+            guard controller.canSend else { sendHintShown = false; return }
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard !Task.isCancelled, controller.canSend else { return }
+            withAnimation(.easeIn(duration: 0.5)) { sendHintShown = true }
+        }
         .fFlash($toast)
         .onChange(of: controller.rejectTick) { _ in
             // 1.0(4): say WHY, from the kernel's reason code, as a plain white
@@ -602,6 +621,22 @@ public struct MessageTableView: View {
                 // outer .padding(12) is the safe-area inset that keeps it unclipped.
                 hand(view, crop: collapse, reserveNoSlot: deferredSlots)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+
+                // Round-8 #3: the staged-but-unsent reminder - a blue arrow
+                // bobbing under Messages' own Send button (which sits in the
+                // compose bar directly above this view's top-right corner), with
+                // a small caption in the same blue. COLLAPSED VIEW ONLY (the
+                // expanded board is not under the Send button at all), and only
+                // after the 3-second fuse above has decided the human has sat on
+                // a staged move. Purely decorative: it never eats a tap.
+                SendHintReminder()
+                    .alignmentGuide(.trailing) { d in
+                        d[HorizontalAlignment.sendAxis] + Self.sendHintCenterFromTrailing
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .opacity(sendHintShown && collapse > 0.95 ? 1 : 0)
+                    .allowsHitTesting(false)
+                    .animation(nil, value: controller.view)   // never ride the board spring
 
                 // note 33 / round-4 note 4 / round-5 finding 5: the verb hint
                 // used to ride above the FINGER on both axes, then above the
@@ -2117,6 +2152,76 @@ public struct MessageTableView: View {
     private func coverableBattles(_ view: GameView) -> Set<Int> {
         let out = CardPlay.coverableBattles(cards: selectedCards(view), battles: view.battles, legal: controller.legal)
         return out
+    }
+
+    /// Round-8 #3: where the send reminder's CENTRE sits, measured from the
+    /// board's trailing edge. Messages' Send button is a ~29pt circle sitting
+    /// inside the compose field's right end, its centre ~24pt from the screen's
+    /// right edge; the board is inset 8 (`.padding(.horizontal, 8)` on the
+    /// root), leaving 24 - 8 = 16 to line the arrow up directly under it.
+    static let sendHintCenterFromTrailing: CGFloat = 16
+}
+
+/// Round-8 #3: the shared axis the send reminder's arrow and caption align on
+/// - the vertical line under Messages' Send button. The arrow always centres
+/// on it; the caption centres on it too UNLESS that would push it past the
+/// board's right edge (a Russian caption did exactly that, running off
+/// screen), in which case its own guide shifts so it hugs the edge instead.
+private extension HorizontalAlignment {
+    enum SendAxis: AlignmentID {
+        static func defaultValue(in d: ViewDimensions) -> CGFloat {
+            d[HorizontalAlignment.center]
+        }
+    }
+    static let sendAxis = HorizontalAlignment(SendAxis.self)
+}
+
+/// Round-8 #3: the staged-but-unsent reminder. An up-arrow in the exact glyph
+/// Messages' own Send button carries (SF Symbols `arrow.up`, bold - the same
+/// symbol the compose bar's circle draws in white), in the same system blue
+/// that circle is filled with, bobbing on a sine wave; under it, at the BOTTOM
+/// of the arrow's travel, a small caption in the same blue. The arrow only
+/// travels UP from its resting spot, so its rest position - directly above the
+/// caption - is the bottom of the wave.
+private struct SendHintReminder: View {
+    @Environment(\.colorScheme) private var scheme
+    @State private var bobbing = false
+
+    /// Messages fills its Send circle with the system blue, so match it
+    /// exactly: UIKit systemBlue's resolved values (#007AFF light, #0A84FF
+    /// dark), written out as literals so FoolishKit needs no UIKit import.
+    private var sendBlue: Color {
+        scheme == .dark ? Color(red: 0x0A / 255, green: 0x84 / 255, blue: 0xFF / 255)
+                        : Color(red: 0x00 / 255, green: 0x7A / 255, blue: 0xFF / 255)
+    }
+
+    var body: some View {
+        VStack(alignment: .sendAxis, spacing: 3) {
+            Image(systemName: "arrow.up")
+                .font(.system(size: 16, weight: .bold))
+                .offset(y: bobbing ? -5 : 0)
+                .alignmentGuide(.sendAxis) { d in d[HorizontalAlignment.center] }
+            Text(FStrings.t("ios.msg.sendhint"))
+                .font(.system(size: 11, weight: .semibold))
+                .fixedSize()
+                // Centred on the arrow, CLAMPED to the screen: the axis sits
+                // `sendHintCenterFromTrailing` from the board's right edge, so
+                // at most that much of the caption (minus a 2pt margin) may
+                // extend right of it. A caption wider than 2x that shifts left
+                // to hug the edge instead of running off it.
+                .alignmentGuide(.sendAxis) { d in
+                    max(d[HorizontalAlignment.center],
+                        d.width - (MessageTableView.sendHintCenterFromTrailing - 2))
+                }
+        }
+        .foregroundColor(sendBlue)
+        // easeInOut auto-reversed is the sine: smooth at both extremes.
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.75).repeatForever(autoreverses: true)) {
+                bobbing = true
+            }
+        }
+        .accessibilityHidden(true)   // decorative; the staged state already reads via Undo
     }
 }
 

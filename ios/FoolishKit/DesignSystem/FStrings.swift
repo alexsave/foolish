@@ -183,7 +183,13 @@ public enum FStrings {
             "ios.msg.mv.cover": "{name} covers {target} with {card}",
             "ios.msg.mv.pickup": "{name} took the cards",
             "ios.msg.mv.out": "{name} is out!",
+            "ios.msg.mv.good": "{name} says good",
             "ios.msg.mv.roundover": "Round over - {name} attacks next",
+            // The staged-but-unsent reminder under Messages' own Send button
+            // (the bobbing blue arrow, MessageTableView.sendHint). ONE short
+            // word: it centres under an arrow ~16pt from the screen edge, so a
+            // longer phrase runs off the right side (seen with the ru string).
+            "ios.msg.sendhint": "Send",
             "ios.msg.started": "{name} started the game - tap to play",
             "ios.msg.joined": "{name} joined - tap to join",
             // 1.0(4): descriptive reject reasons (the plain white flash on the
@@ -352,7 +358,9 @@ public enum FStrings {
             "ios.msg.mv.cover": "{name} кроет {target}: {card}",
             "ios.msg.mv.pickup": "{name} забирает карты",
             "ios.msg.mv.out": "{name} вышел!",
+            "ios.msg.mv.good": "{name} говорит: бито",
             "ios.msg.mv.roundover": "Раунд окончен - атакует {name}",
+            "ios.msg.sendhint": "Отправить",
             "ios.msg.started": "{name} начал игру - нажмите, чтобы играть",
             "ios.msg.joined": "{name} присоединился - нажмите, чтобы войти",
             "ios.rej.turn": "Сейчас не ваш ход.",
@@ -514,7 +522,9 @@ public enum FStrings {
             "ios.msg.mv.cover": "{name}, {target} 방어: {card}",
             "ios.msg.mv.pickup": "{name} 카드 가져감",
             "ios.msg.mv.out": "{name} 탈락!",
+            "ios.msg.mv.good": "{name} 완료 선언",
             "ios.msg.mv.roundover": "라운드 종료 - 다음 공격: {name}",
+            "ios.msg.sendhint": "보내기",
             "ios.msg.started": "{name} 게임 시작 - 탭하여 플레이",
             "ios.msg.joined": "{name} 참가 - 탭하여 참가",
             "ios.rej.turn": "당신 차례가 아닙니다.",
