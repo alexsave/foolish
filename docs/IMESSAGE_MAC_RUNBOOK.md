@@ -27,7 +27,9 @@ brew install xcodegen
 
 git clone <repo> foolish && cd foolish
 cd c && make ios-lib                  # → ios/vendor/Foolish.xcframework
-make ios-smoke ios-view-test          # sanity: both green (same checks as Linux CI)
+make ios-smoke                        # sanity: green (same check as Linux CI; the old
+                                      # ios-view-test C harness is retired — packed-view
+                                      # decode is covered by PackedViewTests in Part 2)
 cd ../ios && xcodegen generate        # → Foolish.xcodeproj (a build artifact)
 ```
 
