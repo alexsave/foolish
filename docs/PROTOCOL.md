@@ -97,9 +97,11 @@ The `bump` nudge (`ServerContext.tsx:649`) is a JSON `action` body
 [q+4..]  masked state — view.c state_put layout (writeMaskedState is its TS mirror)
 ```
 
-iOS parses the header in Swift and hands the **inner masked state** (`[q+4..]`)
-to the kernel (`fio_view_from_packed_json` → `view.c state_get`, proven by
-`make ios-view-test`), then merges the roster's real names in. `player_views.
+iOS decodes the whole envelope in pure Swift (`MaskedView`, the mirror of
+`view.c state_put`; proven against kernel-emitted fixtures by
+`ios/FoolishTests/PackedViewTests.swift` — the old `fio_view_from_packed_json`
+C bridge and its `make ios-view-test` harness are retired), then merges the
+roster's real names in. `player_views.
 view` (hex) and the `create` response body are this same envelope.
 
 ## 6. Auth (RESOLVED)
