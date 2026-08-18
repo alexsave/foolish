@@ -35,34 +35,6 @@ public enum MessageSummary {
         names[seat] ?? FStrings.t("ios.msg.seatn", ["n": "\(seat + 1)"])
     }
 
-    /// THE one line for a bubble, phase and all — the whole "what does this
-    /// message say" decision in one place so the sender's baked `summaryText`
-    /// (MessagesViewController.stage) and the receiver's LIVE transcript bubble
-    /// (TranscriptBubbleView, via MSMessageLiveLayout) can never disagree. A
-    /// FINISHED game names the fool; a WAITING lobby invites or acknowledges a
-    /// join; the last-joiner LIVE handoff (turn 0) names who started; everything
-    /// else is an ordinary move described from `events`. Because it routes through
-    /// `FStrings.t`, the SAME bytes render in the SENDER's language when baked and
-    /// in the RECEIVER's language when drawn live — which is the point of the
-    /// live layout.
-    public static func describe(env: MessageEnvelope, names: [Int: String],
-                                view: GameView?, events: [GameEvent]) -> String {
-        if env.phase == 3 {
-            let fool = view?.gameOver ?? -1
-            return fool >= 0 ? FStrings.t("ios.msg.fool", ["name": name(fool, names)])
-                             : FStrings.t("ios.msg.tap")
-        }
-        if env.phase == 0 {
-            return env.joins.count > 1
-                ? FStrings.t("ios.msg.joined", ["name": name(env.lastActorSeat, names)])
-                : FStrings.t("ios.msg.joininvite")
-        }
-        if env.phase == 2, env.turn == 0 {
-            return FStrings.t("ios.msg.started", ["name": name(env.lastActorSeat, names)])
-        }
-        return move(events: events, names: names, view: view)
-    }
-
     /// The summary for a staged LIVE move (phase 2, turn > 0). `events` is
     /// `MessageKernel.lastMoveEvents(viewer: -1)` for the resident game (the
     /// trailing run of steps the bubble's sender produced); `view` is the public

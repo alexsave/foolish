@@ -4,14 +4,6 @@
 // stages the bubble into the input field and the human presses send (§11.4).
 // Reusing `selectedMessage.session` is what makes Messages COLLAPSE the previous
 // bubble instead of piling a new one per turn (§5.2 "one bubble per game").
-//
-// 1.0(7): the balloon is an MSMessageLiveLayout, so each RECEIVING device draws
-// the bubble itself (TranscriptBubbleView) in ITS OWN language and light/dark
-// scheme, instead of everyone seeing the sender's baked caption and appearance.
-// The template below rides along as the `alternateLayout` — what Messages shows
-// anyone WITHOUT the app installed, in notifications, and on the lock screen,
-// where the extension never runs. So the baked image + caption + summaryText are
-// still exactly as before for those surfaces; app users just get the live one.
 
 import Messages
 import UIKit
@@ -31,14 +23,10 @@ enum MessageComposer {
         let msg = MSMessage(session: session ?? MSSession())
         msg.url = url
 
-        // The fallback balloon (non-app users, notifications, lock screen): the
-        // baked snapshot + caption, exactly as 1.0(6) shipped it.
-        let template = MSMessageTemplateLayout()
-        template.image = snapshot
-        template.caption = caption
-        // The app-user balloon: our own view, drawn on THEIR device in THEIR
-        // locale/scheme. `alternateLayout` is the required non-app fallback.
-        msg.layout = MSMessageLiveLayout(alternateLayout: template)
+        let layout = MSMessageTemplateLayout()
+        layout.image = snapshot
+        layout.caption = caption
+        msg.layout = layout
         msg.summaryText = summary          // the collapsed / notification line
         return msg
     }
