@@ -119,9 +119,16 @@ public final class MessageTurnController: ObservableObject {
         self.prevPayload = prevPayload
     }
 
-    /// Start a brand-new game as seat 0 (§5.2 creation). `seed` MUST be 32 bytes
-    /// (the wide ChaCha deal both devices reproduce). `gameId` is this game's
-    /// random identity; `myNickname` seats me in the joins list.
+    /// Start a brand-new game as seat 0. TEST/HARNESS ONLY since lobby v3:
+    /// `startGenesis` — the v2 DM path that dealt a board straight from New
+    /// game — is deleted (it let the creator reroll a bad hand), and EVERY
+    /// shipping game now begins as a WAITING lobby, DM included, so no
+    /// production code constructs a genesis controller any more. Kept because
+    /// the turn-mechanics suites drive a controller without a lobby through
+    /// it. `players` is any 2-8 — nothing about a genesis is 2-player-shaped;
+    /// the suites just happen to use 2. `seed` MUST be 32 bytes (the wide
+    /// ChaCha deal); `gameId` is this game's random identity; `myNickname`
+    /// seats me in the joins list.
     public init(genesisSeed seed: Data, players: Int, gameId: UInt64, myNickname: String,
                 store: MessageGameStore = .shared) {
         self.base = .genesis(seed: seed, players: players)

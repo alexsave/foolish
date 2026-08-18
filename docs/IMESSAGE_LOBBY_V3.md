@@ -225,3 +225,32 @@ after the fuller chain arrived and its Rule R rebase was refused — Messages
 offers no API to withdraw an inserted bubble (§17.2), so that send re-forks
 the game, converging everyone onto the smaller roster rather than
 deadlocking. Serverless has no fix for that; it needs transport ordering.
+
+## Audit: zero 2-player-game assumptions
+
+A sweep of the whole iMessage surface (FoolishKit/Messages, Boards,
+FoolishMessages, sdk/swift, the C msg path, the harness) for anything shaped
+like "there are exactly two players" — `n == 2`, `1 - seat`, singular
+"opponent", hardcoded seats. Everything that decides gameplay, layout,
+animation, Rule P, or the wire is parameterized on the envelope's `n_players`
+/ the roster. Exactly four spots still touch the number 2, and each is a fact
+about a DM CHAT (two humans hold phones in this thread), never an assumption
+about the GAME:
+
+1. `SeatIdentity.resolve` — the S1 "I didn't send this 2-player bubble, so I
+   am the other seat" inference, now gated on `chatIsDM`: sound only where
+   two humans exist. Groups fall through to ambiguous/spectator.
+2. `createWaiting` — DM lobby capacity is 2 (the one possible opponent), a
+   group's is the wire max 8.
+3. `NewGameSetup` — the "Players: 2" DM label, displaying fact 2.
+4. `MessagesViewController` — `isDM = remoteParticipantIdentifiers.count <= 1`,
+   the definition the other three consume.
+
+The genesis controller path (`MessageTurnController(genesisSeed:players:)`)
+is TEST/HARNESS ONLY since v3 deleted `startGenesis` — its `players` is any
+2-8; the suites merely happen to drive it at 2. The §B3 name gate is
+cache-loss recovery at any player count, not a "2-player receiver" screen —
+comments updated to match. Known residual trust edge, unchanged: a group
+that SHRINKS to two members reads as a DM, so a departed player's 2-player
+game could S1-resolve for the remaining bystander — same §6.3 trust level as
+the picker, unreachable without mid-game membership churn.

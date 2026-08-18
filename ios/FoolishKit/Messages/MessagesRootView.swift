@@ -115,10 +115,12 @@ private struct GameSurface: View {
 
     /// A phase-0/handoff lobby the extension shows instead of the board (§5.2).
     private struct Lobby { let env: MessageEnvelope; let payload: Data }
-    /// A resolved seat waiting on the human's name (§B3). The 2-player receiver
-    /// reaches a board with no name set — the creator named themselves in setup and
-    /// 3-8p joiners in the lobby, but the DM opponent has neither. Ask once, store
-    /// it, then seat them; every later game reuses the stored name.
+    /// A resolved seat waiting on the human's name (§B3). Since lobby v3 EVERY
+    /// seated player named themselves on the way in (the creator in setup, every
+    /// joiner — DM opponent included — at the lobby's Join field), so this fires
+    /// only on §6.2 cache-loss recovery: a reinstall or second device, where the
+    /// seat resolves from an exact signal but the stored nickname is gone with
+    /// the cache. Any player count. Ask once, store it, then seat them.
     private struct NameGate { let env: MessageEnvelope; let payload: Data; let seat: Int
                               let survivors: [Move]; let discarded: Int
                               let prevPayload: Data? }   // note 4/9/38: threaded to seatOnBoard
@@ -585,10 +587,11 @@ private struct GameSurface: View {
                                     nPlayers: env.nPlayers, lastActorSeat: env.lastActorSeat,
                                     chatIsDM: chatIsDM) {
         case .known(let seat):
-            // §B3: a player about to be seated who has never chosen a name is asked
-            // once (the 2-player receiver has no setup/lobby screen). Creator +
-            // lobby joiners already set theirs, so this only fires for the DM
-            // opponent's first game; it never re-asks once stored.
+            // §B3: a player about to be seated who has never chosen a name is
+            // asked once. Since lobby v3 everyone named themselves at setup or
+            // the lobby's Join field, so this fires only on §6.2 cache-loss
+            // recovery (reinstall/second device — the nickname went with the
+            // cache), at any player count; it never re-asks once stored.
             if !MessageGameStore.shared.hasSetNickname {
                 nameGate = NameGate(env: env, payload: winner, seat: seat,
                                     survivors: survivors, discarded: discarded, prevPayload: prevPayload)
@@ -986,13 +989,15 @@ private struct LobbyView: View {
     private var nameVerdict: NicknameGate.Verdict { NicknameGate.check(nickname) }
 }
 
-/// §B3 one-time name entry for a player being seated without a stored name — the
-/// 2-player receiver, who has neither the creator's setup screen nor the 3-8p
-/// lobby's join field (m8: this is the ONE of the three name-asking screens
-/// that is not redundant with another — the DM opponent never sees the other
-/// two, so it cannot simply be deleted in favor of them). Shown once (until a
-/// name is stored), prefilled with the current nickname if it is not the
-/// neutral default.
+/// §B3 one-time name entry for a player being seated without a stored name.
+/// Since lobby v3 every player names themselves on the way in (setup or the
+/// lobby's Join field), so the one REACHABLE road here is §6.2 cache-loss
+/// recovery — a reinstall or second device resolves the seat from an exact
+/// signal while the stored nickname is gone with the cache — at any player
+/// count (m8's "not redundant with the other two name screens" survives as
+/// exactly this: recovery has no setup or Join field to pass through). Shown
+/// once (until a name is stored), prefilled with the current nickname if it
+/// is not the neutral default.
 ///
 /// Round-5 B1: Continue is no longer always enabled. It gates on the SAME
 /// NicknameGate verdict as NewGameSetup and LobbyView's join — blank or
