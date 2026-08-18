@@ -173,4 +173,28 @@ final class Round5LobbyTests: XCTestCase {
             }
         }
     }
+
+    // MARK: - per-chain name uniqueness (the identity the payload leans on)
+
+    /// Names are the only identity a payload carries (§6), and the ghost-seat
+    /// guard, the §6.3 picker and the "(you)" tag all key on them — so within
+    /// one chain they must be unique. The Join button refuses a taken name.
+    func testATakenNameCannotJoin() {
+        let joins = [MessageJoin(seat: 0, name: "Alex"), MessageJoin(seat: 1, name: "Vera")]
+        XCTAssertTrue(NicknameGate.isTaken("Alex", in: joins))
+        XCTAssertTrue(NicknameGate.isTaken("Vera", in: joins))
+        XCTAssertFalse(NicknameGate.isTaken("Boris", in: joins))
+        XCTAssertFalse(NicknameGate.isTaken("Alex", in: []), "an empty lobby holds no names")
+    }
+
+    /// Exact match on the sealed, trimmed string — "alex" and "Alex" are two
+    /// different names on the wire, so they are two different identities here
+    /// too. (Whether that is friendly enough is a UX question; the guard's job
+    /// is only to mirror what the chain actually stores.)
+    func testTakenIsExactMatchOnTheSealedString() {
+        let joins = [MessageJoin(seat: 0, name: "Alex")]
+        XCTAssertFalse(NicknameGate.isTaken("alex", in: joins))
+        XCTAssertFalse(NicknameGate.isTaken("Alex ", in: joins),
+                       "untrimmed input never reaches the gate — .ok carries the trimmed string")
+    }
 }

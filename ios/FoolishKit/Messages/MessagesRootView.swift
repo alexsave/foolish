@@ -470,6 +470,11 @@ private struct GameSurface: View {
         } else {
             nick = MessageGameStore.shared.nickname
         }
+        // Names must stay unique WITHIN a chain (they are the only identity
+        // the payload carries, §6 — see NicknameGate.isTaken). LobbyView's
+        // join button already refuses a taken name; this re-check covers the
+        // fallback path above landing on a stored nickname that collides.
+        guard !NicknameGate.isTaken(nick, in: env.joins) else { return }
         MessageGameStore.shared.nickname = nick   // remember it for the next game (B3)
         let joins = (env.joins + [MessageJoin(seat: free, name: nick)]).sorted { $0.seat < $1.seat }
         do {
@@ -965,7 +970,15 @@ private struct LobbyView: View {
                 TextField(FStrings.t("ios.msg.nickname_ph"), text: $nickname).textFieldStyle(.roundedBorder)
                 switch nameVerdict {
                 case .ok(let name):
-                    FButton(FStrings.t("ios.msg.joinas", ["name": name]), kind: .wood) { onJoin(name) }
+                    // Names are the only identity the payload carries (§6), so
+                    // each chain's names must stay distinct — the ghost-seat
+                    // guard, the §6.3 picker and the "(you)" tag all key on
+                    // them (NicknameGate.isTaken's doc has the full story).
+                    if NicknameGate.isTaken(name, in: env.joins) {
+                        FButton(FStrings.t("ios.msg.nametaken"), kind: .wood, enabled: false) {}
+                    } else {
+                        FButton(FStrings.t("ios.msg.joinas", ["name": name]), kind: .wood) { onJoin(name) }
+                    }
                 case .empty:
                     FButton(FStrings.t("ios.msg.entername"), kind: .wood, enabled: false) {}
                 case .tooLong:
