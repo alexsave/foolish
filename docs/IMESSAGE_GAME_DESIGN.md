@@ -177,7 +177,7 @@ offset  size  field            notes
 26      16    seed       deal seed → game_set_deal_seed_bytes(seed,16).
                          All zeros only in fair-deal WAITING/ACCEPT (§15)
 42      1     n_joins    seats claimed so far (creator counts: >=1)
-43      var   joins      n_joins × { u8 seat, u8 name_len (<=12), name utf8 }
+43      var   joins      n_joins × { u8 seat, u8 name_len (<=64), name utf8 }
                          ordered by claim time; creator is always seat 0 (§6)
 var     2     n_actions  u16
 var     3×n   actions    packed kernel actions, 3 bytes each (§4.2)
@@ -516,6 +516,15 @@ pattern the repo already uses for replay v5 (`e2e/replay_ts_oracle.ts`).
 ## 9. Xcode & host app
 
 ### 9.1 The decision Apple forces (read this before creating the app record)
+
+> **Reversed 2026-07-18 (`e9b9120`).** The "choose the bundled form" decision
+> below was superseded: the iMessage game now ships as its own standalone App
+> Store record (`cards.foolish.msg`, `ios/project.yml`'s `FoolishMessagesApp`
+> target) rather than embedded in the host app. The tradeoff/reasoning
+> section immediately below is kept for the historical record of why bundled
+> was chosen first; `ios/project.yml`'s own comments and
+> `docs/IMESSAGE_APP_STORE_SUBMISSION.md` are ground truth for the current
+> (standalone) submission model.
 
 Apple: an iMessage app is either **standalone** (no visible iOS app) or an
 **extension bundled in an iOS app** — and converting between the two later

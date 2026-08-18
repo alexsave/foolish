@@ -26,7 +26,7 @@
 //   18   8     parent8    first 8 bytes of SHA-256(previous envelope), 0 at creation
 //   26   32    seed       -> game_set_deal_seed_bytes(seed, 32)
 //   58   1     n_joins
-//   59   var   joins      n_joins x { u8 seat, u8 name_len<=12, name utf8 }
+//   59   var   joins      n_joins x { u8 seat, u8 name_len<=64, name utf8 }
 //   var  2     n_actions  u16, the action count the body must yield
 //   var  var   body       the v6 replay code — see THE BODY
 //
@@ -108,7 +108,11 @@
 #define MSG_FLAG_FAIR_DEAL 0x01
 #define MSG_FLAG_GZIP      0x02
 
-#define MSG_MAX_NAME     12
+// Was 12: the App Store review's B1 (docs/APP_REVIEW_NOTES.md) found that cap
+// too tight for a byte-counted UTF-8 name — "Владимир" (8 letters, 16 bytes)
+// silently failed to seal. Owner's round-5 call: allow up to 64 bytes; the
+// Swift UI separately caps at 16 characters (not this layer's job).
+#define MSG_MAX_NAME     64
 #define MSG_MAX_JOINS    MAX_PLAYERS
 #define MSG_SEED_LEN     FOOLISH_SEED_LEN   // 32 — the ChaCha key width
 #define MSG_PARENT_LEN   8
@@ -239,9 +243,22 @@ int msg_replay(const MsgEnvelope *e, Game *g);
 //
 // Two chains for the same game_id are ordered by (§7.2):
 //
+//   0. a STARTED chain beats a pre-game one — phase >= MSG_PHASE_LIVE outranks
+//      WAITING/ACCEPT, always
 //   1. higher round wins        — a closed bout is settled history
 //   2. else higher turn wins    — more accepted actions
 //   3. else smaller SHA-256     — arbitrary, but identical everywhere
+//
+// Rule 0 is not cosmetic, and it is not subsumed by round/turn: a WAITING lobby
+// and the LIVE handoff that starts it BOTH sit at round 0 / turn 0 (the handoff
+// applies no action — see msg_seal's 0-action path), so without it the two tie
+// all the way down to the digest and the winner is a COIN FLIP. Devices that
+// cached the lobby then kept it, and `adopt` rendered that phase-0 payload as a
+// board — which is dealt at the lobby's CAPACITY (8 for a group), with joins
+// only for whoever had joined. That is the "some players see a 5-player game,
+// others see an 8-player one with seats named 'Seat N'" fork, and because those
+// two deals have different first attackers, the game deadlocks. A started chain
+// is never superseded by the invite it grew out of, so it wins outright.
 //
 // Delivery order is never an input. Two devices can transiently disagree about
 // which message is "newest", so the rule needs no clocks and no ordering
@@ -250,6 +267,7 @@ int msg_replay(const MsgEnvelope *e, Game *g);
 // In C, not in each client: this decides which game every player sees, so a
 // phone and a browser disagreeing here forks the game. There is nothing to port.
 typedef struct {
+    uint8_t  phase;                        // MSG_PHASE_*; only "started or not" is compared
     uint8_t  round;
     uint16_t turn;
     uint8_t  digest[SHA256_DIGEST_LEN];

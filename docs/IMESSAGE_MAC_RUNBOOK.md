@@ -10,7 +10,7 @@ quick wins worth grabbing while a Mac is open.*
 
 | Part | Needs |
 | --- | --- |
-| 1–3 (build, tests, **two-player simulator game**) | A Mac with Xcode 16+. **No Apple Developer account, no signing, no Apple IDs** — the project ships with signing off and the simulator harness fakes both participants. |
+| 1–3 (build, tests, **two-player simulator game**) | A Mac with Xcode 16+. **No Apple Developer account login needed for the simulator** — Automatic signing is configured project-wide (`8aafbbf`) but simulator builds don't require an active signed-in account, and the simulator harness fakes both participants. |
 | 4 (device pair over real iMessage) | Apple Developer team (signing) + two iPhones signed into two different Apple IDs. |
 | 5 (quick wins) | Same Mac; some items want the account. |
 
@@ -66,15 +66,29 @@ insert → send → receive plumbing is what you're about to exercise.
 
 ### 3.2 Launch the extension
 
-1. In Xcode, select the **FoolishMessages** scheme (auto-generated; if the
-   scheme list hides it: Product ▸ Scheme ▸ Manage Schemes ▸ check Show).
-2. Run on an iPhone simulator. Xcode asks which host app to run in — choose
-   **Messages**.
+**Corrected 2026-07-18** — `e9b9120` made the iMessage game its own standalone
+App Store product (`cards.foolish.msg`), no longer embedded in the `Foolish`
+host-app scheme. The scheme to run is **`FoolishMessagesApp`**, not
+`FoolishMessages` (that's the extension *target*, not a runnable scheme) and
+not `Foolish` (which no longer embeds the extension at all — see
+`ios/project.yml`'s own comments on the `Foolish` target).
+
+1. In Xcode, select the **`FoolishMessagesApp`** scheme (project.yml's own
+   comment: *"Run this scheme to launch Messages in the simulator with the
+   extension installed"*). If the scheme list hides it: Product ▸ Scheme ▸
+   Manage Schemes ▸ check Show.
+2. Run on an iPhone simulator. Because `FoolishMessagesApp` is
+   `LSApplicationLaunchProhibited` (no Home Screen presence by design — a
+   standard Messages-only app), Xcode should launch straight into Messages
+   with the extension installed; if it instead asks which host app to run in,
+   choose **Messages**.
 3. Messages opens in the simulator. Open the first seeded conversation, tap
    the **+ / apps** button next to the text field, and find Foolish in the
    app drawer.
-   - **Expected blemish:** the tile will be blank/generic — the extension has
-     no iMessage icon asset yet (blockers doc B5.1). That's cosmetic here.
+   - The tile should now show the real jester-Д icon (the iMessage app-icon
+     gap from the original blockers doc — B5.1 — closed on `main` since this
+     runbook was first written; if it's still blank/generic on your build,
+     that's a regression worth filing, not expected behavior).
 
 ### 3.3 Play a full 2-player game
 
@@ -180,20 +194,22 @@ they build against a fresh `make ios-lib` (new C symbols): run Part 2 first.
 Only this part needs the team. Simulator results usually hold, but §17.12
 warns real-device timing differs — do this once before shipping the extension.
 
-1. **Signing setup** (edit `ios/project.yml`, not the xcodeproj):
-   - Under `settings.base`: set `DEVELOPMENT_TEAM: <TEAMID>`,
-     `CODE_SIGN_STYLE: Automatic`, and delete the
-     `CODE_SIGNING_REQUIRED/ALLOWED: NO` lines.
-   - `xcodegen generate`, then in Xcode sign in (Settings ▸ Accounts) with a
-     team member Apple ID. Automatic signing will create the two bundle ids
-     (`cards.foolish.app`, `.MessagesExtension`) and the
-     `group.cards.foolish` App Group in the portal on first build.
+1. **Signing** is already configured (`DEVELOPMENT_TEAM: 8N2Z544SB4`,
+   `CODE_SIGN_STYLE: Automatic` in `ios/project.yml`, since `8aafbbf`) —
+   nothing to edit. Just sign in to Xcode (Settings ▸ Accounts) with a team
+   member Apple ID. Automatic signing should create the standalone app's
+   bundle ids (`cards.foolish.msg`, `.MessagesExtension`) and the
+   `group.cards.foolish.msg` App Group in the portal on first device build —
+   confirm they match what's registered (see the submission doc §1a for the
+   one still-open icon question).
 2. **Devices:** two iPhones, each signed into a *different* Apple ID with
    iMessage active, both on the team (or use TestFlight internal testing
    once the App Store Connect record exists).
-3. Build the `Foolish` scheme to each device (the extension embeds
-   automatically). On each phone: Messages ▸ conversation with the other
-   Apple ID ▸ + drawer ▸ Foolish.
+3. Build the **`FoolishMessagesApp`** scheme to each device (this is the
+   standalone container — see the 2026-07-18 correction in §3.2 above; the
+   `Foolish` host-app scheme no longer embeds the extension at all). On each
+   phone: Messages ▸ conversation with the other Apple ID ▸ + drawer ▸
+   Foolish.
 4. Re-run the whole §3.3–3.4 matrix across the pair. Add the real-world
    cases the simulator can't produce: delivery lag (airplane-mode one phone
    mid-turn), lock-screen preview of the bubble (must show only the PUBLIC
@@ -205,15 +221,16 @@ warns real-device timing differs — do this once before shipping the extension.
 
 Each is small and currently gated only on "someone has a Mac":
 
-1. **Render the app icon** (blockers A4):
-   `swift run --package-path ios/Tools/IconGen icongen` → commit the PNG into
-   `FoolishApp/Assets.xcassets/AppIcon.appiconset/`. Upload validation fails
-   without it.
+1. ~~Render the app icon~~ — **done**, both icons (host app + the iMessage
+   4:3 `.stickersiconset`) are committed jester-Д art, Mac-build-verified
+   (`351820e`, `51688c5`). Nothing to do here.
 2. **Record snapshot references** if Part 2 found them missing/drifted.
 3. **`make ios-goldens`** if anything engine-side changed; commit if dirty.
 4. **Enable macOS CI** (B7): uncomment the `xcode` job in
    `.github/workflows/ios.yml` — simulator build+test needs no signing, only
    macOS runner minutes.
-5. With the account: create the App Store Connect record and start the
-   `Compliance.md` TODO(F) checklist (demo account, deletion URL, name
-   availability).
+5. With the account: create the App Store Connect record for **`cards.foolish.msg`**
+   (not `cards.foolish.app` — the iMessage game is its own standalone record
+   now, `e9b9120`) and paste in `docs/IMESSAGE_APP_STORE_SUBMISSION.md`,
+   which has every field drafted (App Privacy, age rating, review notes, a
+   verified demo replay code).

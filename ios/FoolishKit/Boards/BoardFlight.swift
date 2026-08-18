@@ -82,11 +82,37 @@ public typealias FlightStep = [Flight]
 /// long-lived event loop).
 @MainActor
 public final class BoardAnimator: ObservableObject {
-    /// DEV (harness auto-game): non-zero while a board is mid multi-step bout-end
-    /// sequence (discard/pickup + each player's draw), so the harness waits for the
-    /// whole sequence to finish before switching players. Not used in the real ext.
+    /// Non-zero while a board is mid multi-step ANIMATED sequence: a bout-end
+    /// cascade (discard/pickup, then each drawing player's refill) or an
+    /// open-delta replay (`MessageTableView.flyBoutEndToDiscard` /
+    /// `replayLastMoveOnOpen`, both wrap their Task in `sequenceDepth += 1` /
+    /// `-= 1`). Originally HARNESS_AUTOGAME-only (it waited on this before
+    /// switching players); note 8 promoted it into the real extension's own
+    /// completion signal too — see `waitForSettle` below, which
+    /// `MessagesViewController.stage` awaits instead of guessing a fixed
+    /// sleep long enough for the longest possible sequence.
     public static var sequenceDepth = 0
     public static var isSequencing: Bool { sequenceDepth > 0 }
+
+    /// note 8: block until no animated sequence is running, instead of a
+    /// caller guessing how long one might take. A plain attack/cover (no
+    /// bout end) never touches `sequenceDepth` at all — matchedGeometry's own
+    /// spring animates it — so this returns almost immediately then; a bout
+    /// end or open-delta replay can run several steps at ~`flightTime` +
+    /// `flightGap` (≈0.55s) each, and this waits out the real total instead
+    /// of a constant tuned for the common short case (the bug an all-players-
+    /// draw sequence used to get cut off mid-flight by, note 8). `timeout`
+    /// bounds the wait: an unbalanced `sequenceDepth` increment (a bug, not a
+    /// real long sequence) must never wedge the caller forever. 8s is
+    /// comfortably above the longest sequence today (an 8-seat bout end: one
+    /// discard/pickup step + up to 7 draw steps, each ≈0.55s, is under 4.5s).
+    public static func waitForSettle(pollInterval: UInt64 = 100_000_000,
+                                     timeout: TimeInterval = 8.0) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while isSequencing, Date() < deadline {
+            try? await Task.sleep(nanoseconds: pollInterval)
+        }
+    }
 
     /// Cards currently in flight (rendered by FlyingCardsLayer). `progress` 0→1
     /// drives the position/scale tween.
@@ -96,14 +122,45 @@ public final class BoardAnimator: ObservableObject {
     /// reads as the card lifting out and landing (web CardFace opacity:0).
     @Published public private(set) var hidden: Set<String> = []
     @Published public private(set) var isAnimating = false
+    /// note 36: cards that already exist in the model (a refilled hand) but
+    /// have not YET had their deck→hand (or table→hand) flight play — hidden
+    /// the instant a caller predicts them, synchronously, well before `play`
+    /// gets around to that step. Without this a newly-drawn card renders at
+    /// its landing spot for a beat, THEN vanishes and re-flies in (the flash).
+    /// Kept separate from `hidden` (which also covers the CURRENT in-flight
+    /// step) so a later step starting doesn't accidentally un-hide a
+    /// still-pending prediction for a LATER step.
+    private var preHidden: Set<String> = []
 
     public init() {}
+
+    /// Synchronously hide `ids` before their flight is even scheduled (note
+    /// 36). Callers predict these — e.g. "my hand minus what I had before" —
+    /// and must call this BEFORE the state change that would render them
+    /// renders, so there is no gap for the flash. `play` removes an id from
+    /// this set the moment its OWN step actually plays it; `clearPreHidden`
+    /// is the safety net for anything predicted but never consumed.
+    public func preHide(_ ids: Set<String>) {
+        preHidden.formUnion(ids)
+        hidden.formUnion(ids)
+    }
+
+    /// Force-reveal any still-pending pre-hidden ids — called once a whole
+    /// sequence (bout-end, or an open-delta replay) finishes, so a prediction
+    /// that never got consumed (e.g. a frame that never became ready) cannot
+    /// leave a card invisible forever.
+    public func clearPreHidden() {
+        hidden.subtract(preHidden)
+        preHidden.removeAll()
+    }
 
     public func play(_ steps: [FlightStep]) async {
         for step in steps where !step.isEmpty {
             isAnimating = true
             flights = step
-            hidden = Set(step.compactMap { $0.card?.identity })
+            let ids = Set(step.compactMap { $0.card?.identity })
+            preHidden.subtract(ids)          // these are now this step's OWN hidden cards
+            hidden = preHidden.union(ids)
             progress = 0
             // One paint at from-position, then animate to-position.
             try? await Task.sleep(nanoseconds: 25_000_000)
@@ -113,7 +170,9 @@ public final class BoardAnimator: ObservableObject {
             try? await Task.sleep(nanoseconds: UInt64(flightTime * 1_000_000_000))
             try? await Task.sleep(nanoseconds: UInt64(flightGap * 1_000_000_000))
         }
-        flights = []; hidden = []; isAnimating = false; progress = 0
+        // Un-hide this call's own step ids, but leave any OTHER pending
+        // pre-hidden cards (for a step not yet reached) hidden.
+        flights = []; hidden = preHidden; isAnimating = false; progress = 0
     }
 
     public func isHidden(_ identity: String) -> Bool { hidden.contains(identity) }

@@ -45,7 +45,14 @@ public struct FActionBar: View {
                 if canCover  { FButton(FStrings.t("cover"),  kind: .wood, compact: true, fixedWidth: Self.w, action: onCover) }
                 if canPass   { FButton(FStrings.t("pass"),   kind: .wood, compact: true, fixedWidth: Self.w, action: onPass) }
                 if canPickup { FButton(FStrings.t("pickup"), kind: .wood, compact: true, fixedWidth: Self.w, action: onPickup) }
-                if canDone   { FButton(FStrings.t("good"),   kind: .wood, compact: true, fixedWidth: Self.w, action: onDone) }
+                // Good reads as the WORD "Good" (note 7), same as every other
+                // wooden pill in this column. A previous batch put the FCheck
+                // glyph here too, borrowing it from FSeatBadge's per-seat status
+                // pip (the little sword/shield/check row) - but that pip marks
+                // "this seat already said good", a different thing from the
+                // button that SAYS it. FCheck stays a status-only glyph; this
+                // button is text like its siblings.
+                if canDone   { FButton(FStrings.t("good"), kind: .wood, compact: true, fixedWidth: Self.w, action: onDone) }
                 if canUndo   { FButton(FStrings.t("ios.msg.undo"), kind: .wood, compact: true, fixedWidth: Self.w, action: onUndo) }
             }
         }

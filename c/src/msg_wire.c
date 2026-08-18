@@ -424,6 +424,7 @@ int msg_chain_key(const unsigned char *envelope, int len, MsgChainKey *out) {
     MsgEnvelope e;
     const int rc = msg_decode(envelope, len, &e);
     if (rc != MSG_EOK) return rc;
+    out->phase = e.phase;
     out->round = e.round;
     out->turn  = e.turn;
     msg_digest(envelope, len, out->digest);
@@ -431,6 +432,12 @@ int msg_chain_key(const unsigned char *envelope, int len, MsgChainKey *out) {
 }
 
 int msg_rule_p(const MsgChainKey *a, const MsgChainKey *b) {
+    // A dealt game outranks the invite it grew out of, whatever the digests say
+    // — see the header's rule 0 for the fork this closes. Only the boundary is
+    // compared (started vs not), never FINISHED > LIVE: round/turn already order
+    // those correctly, and a finished chain always has more of both.
+    const int sa = a->phase >= MSG_PHASE_LIVE, sb = b->phase >= MSG_PHASE_LIVE;
+    if (sa != sb) return sa ? -1 : 1;
     if (a->round != b->round) return a->round > b->round ? -1 : 1;
     if (a->turn  != b->turn)  return a->turn  > b->turn  ? -1 : 1;
     // Lexicographic over the full digest. Arbitrary, total, and identical on

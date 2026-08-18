@@ -29,7 +29,11 @@ struct FoolishHarnessApp: App {
         // Each fake participant gets its OWN seat cache (see HarnessModel), so
         // seat identity resolves automatically — the DEBUG single-sim seat picker
         // would be wrong here.
+        // The flag only exists in DEBUG builds; Release already resolves seats
+        // automatically, which is the behavior the harness wants anyway.
+        #if DEBUG
         MessageDebugFlags.pickSeatOnAdopt = false
+        #endif
     }
 
     var body: some Scene {

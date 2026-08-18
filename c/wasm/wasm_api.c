@@ -722,9 +722,16 @@ int wasm_replay_error_detail(void) { return replay_last_error_detail(); }
 //                  these lexicographically, and parent8 is a parent's first 8.
 //                  Decode-only: msg_seal ignores it (an envelope cannot contain
 //                  its own digest).
-//   90 n_joins x 14 { u8 seat, u8 name_len, 12 B name }
+//   90 n_joins x 66 { u8 seat, u8 name_len, 64 B name }
 #define MSG_BLOB_HDR   90
-#define MSG_BLOB_JOIN  14
+// 2 + MSG_MAX_NAME: was 14 (2 + 12) before round-5 B1 raised the name cap to
+// 64 (docs/APP_REVIEW_NOTES.md, msg_wire.h). Unlike the wire encoding (which
+// is length-prefixed per join and needs no slack), this TS bridge blob uses a
+// FIXED-SIZE join slot, so the slot itself must grow with the cap.
+#define MSG_BLOB_JOIN  (2 + MSG_MAX_NAME)
+// 90 + 8 x 66 = 618 B, well inside REPLAY_IO_CAP (32,768 B on the wasm builds
+// that export FMSG) — see wasm_msg_decode/wasm_msg_seal below, which write
+// this blob into g_replay_io.
 #define MSG_BLOB_MAX   (MSG_BLOB_HDR + MSG_MAX_JOINS * MSG_BLOB_JOIN)
 
 static void msg_blob_write(const MsgEnvelope *e, const uint8_t *digest, unsigned char *o) {

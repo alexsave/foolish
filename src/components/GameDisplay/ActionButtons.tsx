@@ -144,6 +144,10 @@ export const ActionButtons = () => {
     // raw "this button is relevant" predicates, ignoring the optimistic pressed
     // flag. The rendered button additionally requires !pressedActions[name], so a
     // press (click OR keyboard) hides it immediately until the server catches up.
+    //
+    // TODO(ios-parity): iMessage board hides Take while cards are selected
+    // (defender) and Good while cards are selected (attacker); consider matching
+    // here.
     const rawGood = !!(!isDefending &&
         (game?.table_battles.length ?? 0) > 0 &&
         (game?.table_battles.every(battle => battle.defense) ?? false) &&

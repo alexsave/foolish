@@ -28,6 +28,42 @@ public final class MessageTurnController: ObservableObject {
     @Published public private(set) var rejectTick = 0
     /// False until `begin()` has established the base game once.
     @Published public private(set) var ready = false
+    /// True immediately after `undo()` rebuilds the base minus the last
+    /// pending action — set BEFORE `refresh()` so a `view` change caused by
+    /// undo is distinguishable from a real bout end (note 10) the instant it
+    /// happens. Reset at the start of every OTHER state-changing entry point
+    /// (`begin`, `apply`), so it only ever describes the MOST RECENT change.
+    public private(set) var lastChangeWasUndo = false
+
+    /// notes 6/12 + round-2 #9: the animations to play when this bubble opens -
+    /// the LAST move on the adopted chain, as the KERNEL's own viewer-aware
+    /// evwire stream (MessageKernel.lastMoveEvents -> fio_replay_last_events_
+    /// packed). Resolved HERE in `begin()`, synchronously before the board's
+    /// first paint, so the view can pre-hide every card this open will move.
+    ///
+    /// This REPLACES the old GameView-diff reconstruction (openReplayNewHandCards
+    /// / openReplayFromLog / ReplayDelta's LOG_* slicing). That diff could not
+    /// recover MY OWN drawn/picked-up cards - the replayed hand looks the same
+    /// from the diff's side, and the raw LOG_* stream redacts them even from the
+    /// holder - so a reopened pickup animated every OTHER seat's refill but never
+    /// mine (the "self deal draw" bug). The kernel, replaying with my seat as the
+    /// viewer, hands them over: my cards with real identities, opponents' as backs
+    /// (nil in `GameEvent.cards`). Empty when there is nothing to animate. A
+    /// genesis deal's "last move" is the deal itself, so this covers it too.
+    @Published public private(set) var openReplayEvents: [GameEvent] = []
+    /// Every REAL card identity `openReplayEvents` moves onto the table or into
+    /// my hand this open (attack/cover/pass placements, my own draws/pickups) -
+    /// the set `MessageTableView.replayLastMoveOnOpen` pre-hides synchronously
+    /// before the first paint, so a cover never renders already-landed for a beat
+    /// (notes 6/12). Opponents' cards are nil (redacted) and need no hiding - they
+    /// render as backs regardless.
+    public var openReplayTouchedCardIds: Set<String> {
+        var ids = Set<String>()
+        for ev in openReplayEvents {
+            for case let c? in ev.cards { ids.insert(c.identity) }
+        }
+        return ids
+    }
 
     public let mySeat: Int
     public let names: [Int: String]
@@ -51,6 +87,13 @@ public final class MessageTurnController: ObservableObject {
     /// the moves a rebase re-applied onto a freshly-adopted chain (§7.4). Empty on
     /// a plain open or a genesis.
     private let preStaged: [Move]
+    /// DEPRECATED (retained only so GameSurface's call sites compile unchanged):
+    /// the previously-cached chain, once used to diff my hand for the open-replay.
+    /// The open-replay is now the kernel's evwire for the last move
+    /// (`openReplayEvents`, resolved from the adopted chain alone), which needs no
+    /// "where I last looked", so this is no longer read. Safe to remove along with
+    /// its GameSurface threading in a follow-up cleanup.
+    private let prevPayload: Data?
 
     public var gameIdString: String { String(gameId) }
 
@@ -58,8 +101,11 @@ public final class MessageTurnController: ObservableObject {
     /// payload (the view decoded it to resolve my seat); `begin()` re-adopts it
     /// anyway so the controller owns the base unambiguously. `preStaged` are Rule
     /// R survivors (§7.4) to replay on top; `store` is the pending-ledger home.
+    /// `prevPayload` is the previously-cached chain for this game (§ open-delta
+    /// replay, notes 4/9/38) — nil skips the delta computation entirely.
     public init(parentPayload: Data, parent: MessageEnvelope, mySeat: Int,
-                preStaged: [Move] = [], store: MessageGameStore = .shared) {
+                preStaged: [Move] = [], store: MessageGameStore = .shared,
+                prevPayload: Data? = nil) {
         self.base = .continuation(payload: parentPayload)
         self.gameId = UInt64(parent.gameId) ?? 0
         self.parent8 = Self.firstEight(hex: parent.digest)
@@ -70,6 +116,7 @@ public final class MessageTurnController: ObservableObject {
         self.mySeat = mySeat
         self.names = Dictionary(parent.joins.map { ($0.seat, $0.name) },
                                 uniquingKeysWith: { a, _ in a })
+        self.prevPayload = prevPayload
     }
 
     /// Start a brand-new game as seat 0 (§5.2 creation). `seed` MUST be 32 bytes
@@ -86,6 +133,7 @@ public final class MessageTurnController: ObservableObject {
         self.store = store
         self.mySeat = 0
         self.names = [0: myNickname]
+        self.prevPayload = nil
     }
 
     public var canSend: Bool { !pending.isEmpty }
@@ -108,7 +156,26 @@ public final class MessageTurnController: ObservableObject {
     /// Rule R survivors on top, then read the board. Call once from the view's
     /// `.task`.
     public func begin() async {
+        lastChangeWasUndo = false
         await rebuildBase()
+        // The open animations: the kernel's viewer-aware evwire for the LAST move
+        // on the adopted chain (notes 6/12/#9). Resolved NOW, after rebuildBase
+        // puts the received chain resident but BEFORE re-applying my staged
+        // survivors below - "the last move" to animate is the move I just
+        // RECEIVED (the chain's final step), never my own Rule R re-applications,
+        // which I play interactively and must not re-watch. `prevPayload` is no
+        // longer consulted: the kernel decides the group from the chain alone.
+        //
+        // Note this does NOT depend on who sealed the chain. An earlier pass
+        // suppressed the replay when `lastActorSeat == mySeat`, to kill a
+        // double animation after sending — wrong cure: opening a chain always
+        // shows its last move, mine included ("the replay works fine for the
+        // OTHER player when they load the picked-up text, but for the self it
+        // doesn't play at all"). The double was the HOST rebuilding this whole
+        // surface when I sent — fixed where it happens (HarnessModel.boardEpoch;
+        // StagedBubbleRouting in the extension), so there is no second load to
+        // replay from in the first place.
+        openReplayEvents = await kernel.lastMoveEvents(viewer: mySeat)
         pending = []
         for m in preStaged {              // §7.4 survivors, already validated by the rebase
             try? await kernel.apply(seat: mySeat, move: m)
@@ -136,6 +203,7 @@ public final class MessageTurnController: ObservableObject {
     // MARK: turn actions
 
     public func apply(_ move: Move) async {
+        lastChangeWasUndo = false
         do {
             try await kernel.apply(seat: mySeat, move: move)
             pending.append(move)
@@ -158,6 +226,11 @@ public final class MessageTurnController: ObservableObject {
             pending.append(m)
         }
         persistLedger()
+        // note 10: set BEFORE refresh() — the state may legally go
+        // battles→empty here (undoing the move that opened a bout), and
+        // flyBoutEndToDiscard must not mistake that for a real bout end and
+        // replay the PREVIOUS bout's draws.
+        lastChangeWasUndo = true
         await refresh()
     }
 

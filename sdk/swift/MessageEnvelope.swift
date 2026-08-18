@@ -178,6 +178,39 @@ public actor MessageKernel {
         guard rc == 0 else { throw MessageEnvelope.Failure.damaged(code: Int(rc)) }
     }
 
+    /// Re-deal the RESIDENT game's own LOCKED seed at a different player count —
+    /// the group lobby's Start action (docs/IMESSAGE_LOBBY_V2.md): a lobby is
+    /// created OPEN (`newGame(seed:, players: 8)`, the wire's max capacity) so
+    /// seats stay free; Start re-derives the SAME seed's deal at the ACTUAL
+    /// joined count (never a new random seed — that is the "locked at create"
+    /// guarantee). The seed itself never crosses back into Swift: the kernel
+    /// already holds it resident from whichever call last dealt or decoded it
+    /// (`newGame` or `decode`), the same "kernel keeps the seed" discipline
+    /// `residentReplayCode` already relies on. Throws FIO_ENOSEED if nothing is
+    /// resident to re-derive from (only reachable by calling this out of order —
+    /// every real lobby is created wide-seeded) or a bad player count.
+    public func reseatResidentGame(players: Int) throws {
+        let rc = fio_reseat_game(Int32(players))
+        guard rc == 0 else { throw MessageEnvelope.Failure.damaged(code: Int(rc)) }
+    }
+
+    /// Reseat the LOCKED seed at `joins.count` and seal a LIVE handoff — the
+    /// one primitive lobby v3's two Start routes share (docs note 2): any
+    /// already-joined player tapping Start after a plain Join, or a fresh
+    /// joiner tapping "Join and start" in one step. Both call this with the
+    /// same `lobbyPayload` (a chain carrying the locked seed) and the same
+    /// FINAL `joins` list, so they are PROVABLY the same deal — it depends
+    /// only on the seed already resident on `lobbyPayload` and `joins.count`,
+    /// never on which UI path assembled `joins` or when it was sealed as its
+    /// own WAITING bubble (MessageLobbyTests proves both routes agree).
+    public func startFromLobby(lobbyPayload: Data, gameId: UInt64, actingSeat: Int,
+                               parent8: Data, joins: [MessageJoin]) throws -> Data {
+        _ = try decode(payload: lobbyPayload, viewer: -1)
+        try reseatResidentGame(players: joins.count)
+        return try seal(phase: 2, lastActorSeat: actingSeat, gameId: gameId,
+                        parent8: parent8, joins: joins)
+    }
+
     /// Apply one action by `seat` to the resident (adopted) game — the LOCAL half
     /// of a turn, before `seal`. Same packed awire frame the app and server apply
     /// through, and the kernel is the only judge of legality: an illegal move
@@ -236,6 +269,32 @@ public actor MessageKernel {
         }
         guard let packed else { return nil }
         return DecodedReplay.decode(packed: packed)
+    }
+
+    /// The animations of the resident game's LAST TURN, masked for `viewer` —
+    /// the kernel's evwire event stream, the SAME one live play and the website
+    /// emit. THE KERNEL decides what "the last turn" is (the trailing run of
+    /// replay steps by one acting seat — what a single bubble carries, so a
+    /// staged double cover replays both, each step still bundling its move with
+    /// its refill/discard/defender-change consequences); we hand it only the
+    /// encoded chain, never
+    /// "where I last looked". The viewer's own drawn/picked-up cards come back
+    /// with real identities, everyone else's are hidden - so a reopened bubble
+    /// animates through the kernel, not a client-side GameView diff (which could
+    /// never recover the viewer's own drawn card and so silently dropped it, the
+    /// "my refill never animated on reopen" bug). [] if there is no game, it is
+    /// not v6-encodable, or the last step produced nothing to animate.
+    public func lastMoveEvents(viewer: Int) -> [GameEvent] {
+        guard let code = residentReplayCode() else { return [] }
+        let packed = code.withCString { (cstr: UnsafePointer<CChar>) -> Data? in
+            packedCall { out, cap in
+                out.withMemoryRebound(to: UInt8.self, capacity: Int(cap)) { u8 in
+                    fio_replay_last_events_packed(cstr, Int32(viewer), u8, cap)
+                }
+            }
+        }
+        guard let packed, !packed.isEmpty else { return [] }
+        return EvWire.decodeFrames(packed)
     }
 
     /// Rule P (§7.2). <0 `a` wins, >0 `b`, 0 the same chain. Delivery order is

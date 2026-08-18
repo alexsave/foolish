@@ -55,6 +55,19 @@ extern "C" {
 // n_players must be 2..8. Returns FIO_EOK or a negative error.
 int fio_new_game(const uint8_t *seed, int seed_len, int n_players);
 
+// Re-deal the RESIDENT game's own locked deal seed at a DIFFERENT player
+// count — the iMessage lobby's "Start" action (docs/IMESSAGE_LOBBY_V2.md): a
+// group lobby is created OPEN (fio_new_game with the wire's max capacity, 8)
+// so seats stay free to fill; this re-derives the SAME seed's deal at the
+// actual joined count once the group decides to start (never a new random
+// seed — that is the "locked at create" guarantee). Requires a wide (32-byte)
+// seed to already be resident (a prior fio_new_game, or an
+// fio_msg_decode_packed of an envelope that carried one) — FIO_ENOSEED
+// otherwise. n_players must be 2..8 (FIO_EBADARG, see fio_new_game). The seed
+// itself never crosses back into Swift; this is the same "the kernel keeps
+// the seed" discipline fio_replay_encode_v6_b32 already relies on.
+int fio_reseat_game(int n_players);
+
 // Assign a strategy to a seat (offline bots). strategy_id is a FIO strategy id
 // (0..fio_strategy_count()-1, see fio_strategy_name). Seat 0 is conventionally
 // the local human but nothing enforces that. Safe to call any time before the
@@ -194,6 +207,23 @@ int fio_replay_decode_packed(const char *code, unsigned char *out, int cap);
 // Delete once the last JSON consumer is off it.
 int fio_replay_events_json(const char *code, int viewer, char *out, int cap);
 
+// The animations of the chain's LAST TURN, as PACKED evwire frames (each
+// preceded by a u16 LE length, in play order), masked for `viewer` - what an
+// iMessage receiver sees on opening a bubble. THE KERNEL decides the group: the
+// trailing run of replay steps by ONE acting seat, which is what a bubble
+// carries (a player may stage several actions before sending, and a double
+// cover must replay BOTH). The client passes only the encoded chain, never
+// "where I last looked". The viewer's own drawn/picked-up cards carry real
+// identities, everyone else's are hidden - the same packed evwire live play
+// broadcasts and the website renders, so a reopen animates through the kernel,
+// not a client-side view diff. No JSON (§zero-JSON): Swift reads them with
+// EvWire.decodeFrames. Bytes written (0 if the turn produced nothing), or
+// negative - including when `cap` could not hold the whole turn, which is an
+// error rather than a silently truncated animation. v6 only (v5 hides the
+// deal); see fio_last_replay_error.
+int fio_replay_last_events_packed(const char *code, int viewer,
+                                  unsigned char *out, int cap);
+
 // Detail of the last replay error (a REPLAY_E* code from replay.h), else 0.
 int fio_last_replay_error(void);
 
@@ -235,9 +265,10 @@ int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, i
 // fills in what the BODY owns (turn, round) by decoding the code it just wrote,
 // so a device cannot emit a payload it would itself reject.
 //
-// `joins_json` is [{"seat":0,"name":"Sveta"},...]; names are <=12 UTF-8 bytes
-// and are the only identity a payload carries (no participant UUID ever goes in
-// — they do not transfer across devices, §6).
+// `joins_json` is [{"seat":0,"name":"Sveta"},...]; names are <=64 UTF-8 bytes
+// (round-5 B1, docs/APP_REVIEW_NOTES.md — was 12, too tight for a byte-counted
+// Cyrillic name) and are the only identity a payload carries (no participant
+// UUID ever goes in — they do not transfer across devices, §6).
 //
 // Returns bytes written to `out`, or negative. FIO_ENOSEED if this game was not
 // dealt from a wide seed (a serverless game cannot be rebuilt without one).

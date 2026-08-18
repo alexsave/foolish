@@ -4,6 +4,15 @@
 // multi-selection; DRAGGING a card lifts it out to play (the board resolves the
 // drop against the table/battles). The board turns selection+gesture into a move,
 // never this view.
+//
+// Round-5 additions (M5b, M6, drag-feel, drag-hint centering — see each below):
+// a compact caller can crop every card to its top half; a very wide hand splits
+// into two rows instead of thinning past the touch-target minimum; the drag now
+// grabs on first touch instead of after a minimum travel; and the dragged card's
+// live centre is reported so the board can centre its verb hint on the card
+// instead of the fingertip. `rowCount`/`height` are static and pure specifically
+// so MessageTableView can reserve the SAME room this view will actually use,
+// rather than carrying a second hard-coded constant that can drift out of sync.
 
 import SwiftUI
 
@@ -25,12 +34,27 @@ public struct FHandFan: View {
     /// Cards currently in overlay flight (a draw landing) — rendered invisible so
     /// only the flying ghost shows.
     public let hidden: Set<String>
+    /// Round-5 M5b ("in the collapsed view, show only the top half of the
+    /// cards"): the compact drawer crops every hand card to its top half (frame
+    /// height cardH/2, alignment .top, clipped) — the corner index stays
+    /// legible, and the hand's on-screen height halves. Defaulted false so
+    /// every pre-existing call site (TableView, GalleryView, the snapshot
+    /// tests) keeps rendering the full-height card it always did.
+    public let topHalfOnly: Bool
+    /// Round-5 finding 5 ("the little mid-drag text... should be centered
+    /// horizontally on the card(s)"): the dragged card's own LIVE visual centre
+    /// in `boardSpace`, delivered on every `onDragChanged` alongside the raw
+    /// finger point the board already tracks. Defaulted no-op so every
+    /// pre-existing call site compiles unchanged.
+    public let onDragCardMoved: (CGPoint) -> Void
 
     public init(cards: [Card], trumpSuit: Suit?, disabled: Set<String> = [],
                 selection: Binding<Set<String>>, onTap: @escaping (Card) -> Void,
                 onDragChanged: @escaping (Card, CGPoint) -> Void = { _, _ in },
                 onDragEnded: @escaping (Card, CGPoint) -> Void = { _, _ in },
-                namespace: Namespace.ID? = nil, hidden: Set<String> = []) {
+                namespace: Namespace.ID? = nil, hidden: Set<String> = [],
+                topHalfOnly: Bool = false,
+                onDragCardMoved: @escaping (CGPoint) -> Void = { _ in }) {
         self.cards = cards
         self.trumpSuit = trumpSuit
         self.disabled = disabled
@@ -40,68 +64,313 @@ public struct FHandFan: View {
         self.onDragEnded = onDragEnded
         self.namespace = namespace
         self.hidden = hidden
+        self.topHalfOnly = topHalfOnly
+        self.onDragCardMoved = onDragCardMoved
     }
 
     @State private var dragId: String?
     @State private var dragOffset: CGSize = .zero
+    /// note 5 (hand reordering): the local player's cosmetic display order —
+    /// card identities, reconciled against `cards` every body evaluation via
+    /// `displayCards`. This is PURELY a UI convenience (the kernel hand order
+    /// never changes): it lives only in this view's @State, so it resets
+    /// whenever FHandFan is recreated (a board reload swaps in a fresh view),
+    /// and is never persisted or sent anywhere.
+    @State private var order: [String] = []
+    /// This view's own frame in `boardSpace`, mirrored from the same
+    /// `HandFrameKey` preference it publishes below — read locally so a
+    /// reorder can tell "drag point still inside the hand" from "dragged out
+    /// to play" without needing the board to feed it back down.
+    @State private var handFrameSelf: CGRect = .zero
+    /// Round-5 finding 5: each card's own RESTING frame in `boardSpace`,
+    /// mirrored from `HandCardFramesKey` the same way `handFrameSelf` mirrors
+    /// `HandFrameKey` just above — the dragged card's live centre is this
+    /// resting frame plus the live `dragOffset` (see `cardView`'s drag gesture;
+    /// `.offset()` is a render-only transform and does not feed back into a
+    /// GeometryReader's own layout-time frame, so the offset has to be added
+    /// back in by hand rather than simply re-reading the preference).
+    @State private var handCardFramesSelf: [String: CGRect] = [:]
+    /// Round-5 M6: this view's own proposed width, measured once via a
+    /// preference round-trip (see `HandWidthKey`'s doc) so the row-split
+    /// height below can react to it. A plain `GeometryReader` has no notion of
+    /// an "ideal" height independent of what its parent proposes — there is no
+    /// `.fixedSize` escape hatch for it — so this is the standard two-step fix:
+    /// measure width, THEN size height from it.
+    @State private var measuredWidth: CGFloat = 0
+    /// Cumulative x-compensation from in-flight reorders, subtracted from
+    /// `dragOffset` so the DRAGGED card's own `.offset` doesn't jump when its
+    /// slot in `order` moves out from under it (only the OTHER cards should
+    /// visibly slide — the dragged one keeps tracking the finger).
+    @State private var reorderShift: CGFloat = 0
 
-    private let cardH: CGFloat = 72          // CONSTANT height — a skinny (many-card) hand stays this tall
-    private let maxCardW: CGFloat = 52       // never wider than ~proper aspect, so cards never go "superwide"
-    private let gap: CGFloat = 4
-    private var rowH: CGFloat { cardH + 8 }
+    private static let cardH: CGFloat = 72   // CONSTANT height — a skinny (many-card) hand stays this tall
+    private static let maxCardW: CGFloat = 52   // never wider than ~proper aspect, so cards never go "superwide"
+    private static let gap: CGFloat = 4
+    private static var rowH: CGFloat { cardH + 8 }
+    /// Vertical gap between the two rows once M6 splits the hand.
+    private static let rowGap: CGFloat = 6
+    /// Round-5 M6: below this per-card width, split into two rows rather than
+    /// keep thinning — Durak routinely leaves a defender holding 15-20 cards
+    /// after two pickups, which fell under Apple's 44pt hit-target minimum in
+    /// a single row (M6's own finding). ~34pt still reads as a proper card,
+    /// just a narrow one; the web's own answer to the same problem ("that's
+    /// what we do if we have a lot of cards in the replay on the website") is
+    /// exactly a second row, not a hard floor on width.
+    private static let twoRowThreshold: CGFloat = 34
+    /// Round-5 drag feel ("you need to drag a bit of a distance before it
+    /// actually grabs the card. Should be immediate right?"): with
+    /// `DragGesture(minimumDistance: 0)` a plain tap and a real drag are both
+    /// the SAME gesture stream now, distinguished only by how far the finger
+    /// actually travelled before lifting. Comfortably below both a human's
+    /// natural "still basically a tap" wobble and the ~12pt the old
+    /// `minimumDistance` used to require before anything happened at all.
+    private static let tapThreshold: CGFloat = 8
+
+    // MARK: - Row-split math (round-5 M6) — static and pure so MessageTableView
+    // and Round5BoardTests share EXACTLY this arithmetic; nothing here reads
+    // `self`, so none of it can drift from what `body` actually renders.
+
+    /// Per-card width if `count` cards shared `availableWidth` in ONE row — the
+    /// same formula `body` used before M6 (`min(52, max(22, avail/count))`),
+    /// pulled out so the split threshold below can reuse it without a live view.
+    private static func singleRowCardWidth(count: Int, availableWidth: CGFloat) -> CGFloat {
+        let n = max(count, 1)
+        let avail = availableWidth - Self.gap * CGFloat(n + 1)
+        return min(Self.maxCardW, max(22, avail / CGFloat(n)))
+    }
+
+    /// How many rows this hand needs at `availableWidth`: two once the
+    /// single-row math above would put a card below `twoRowThreshold`, else
+    /// one — except a 0/1-card hand is ALWAYS one row no matter what the width
+    /// math says, so a degenerate (zero or negative) `availableWidth` can
+    /// never report a split there is nothing to actually split (`rowGroups`
+    /// relies on that: it needs more than one card before it will ever hand
+    /// back two arrays).
+    public static func rowCount(cards: [Card], availableWidth: CGFloat) -> Int {
+        guard cards.count > 1 else { return 1 }
+        return Self.singleRowCardWidth(count: cards.count, availableWidth: availableWidth) < Self.twoRowThreshold ? 2 : 1
+    }
+
+    /// Split `cards` into 1 or 2 display rows for `availableWidth`. The FIRST
+    /// row gets the extra card on an odd count. Row membership is also what
+    /// constrains the in-hand reorder to "within a row" — see `reorder`.
+    private static func rowGroups(_ cards: [Card], availableWidth: CGFloat) -> [[Card]] {
+        guard Self.rowCount(cards: cards, availableWidth: availableWidth) == 2 else { return [cards] }
+        let firstCount = (cards.count + 1) / 2   // ceil: extra card up top on odd counts
+        return [Array(cards.prefix(firstCount)), Array(cards.suffix(from: firstCount))]
+    }
+
+    /// The fan's total on-screen height at `availableWidth` — one row (full
+    /// `rowH`, or half that under `topHalfOnly` — round-5 M5b) normally, or two
+    /// such rows stacked with `rowGap` between once M6 splits the hand. Public
+    /// and static so MessageTableView can reserve exactly this much room above
+    /// the hand (see its `handLift`) instead of guessing at a second constant.
+    public static func height(cards: [Card], availableWidth: CGFloat, topHalfOnly: Bool = false) -> CGFloat {
+        let oneRow = topHalfOnly ? Self.cardH / 2 + 8 : Self.rowH
+        return Self.rowCount(cards: cards, availableWidth: availableWidth) == 2 ? oneRow * 2 + Self.rowGap : oneRow
+    }
+
+    /// `cards` reordered by the local `order` state: identities still present
+    /// keep their relative order from `order`; any identity in `cards` not yet
+    /// in `order` (a fresh hand, or a card just dealt in) is appended in
+    /// kernel order. Pure — never mutates `order` itself, so it's safe to read
+    /// from `body` on every evaluation.
+    private var displayCards: [Card] {
+        guard !order.isEmpty else { return cards }
+        let byId = Dictionary(uniqueKeysWithValues: cards.map { ($0.identity, $0) })
+        var seen = Set<String>()
+        var result: [Card] = []
+        result.reserveCapacity(cards.count)
+        for id in order {
+            if let c = byId[id], seen.insert(id).inserted { result.append(c) }
+        }
+        for c in cards where !seen.contains(c.identity) {
+            result.append(c); seen.insert(c.identity)
+        }
+        return result
+    }
+
+    /// In-hand reorder (note 5): turn the drag's x (within this view's own
+    /// width) into a slot index and, if it differs from the dragged card's
+    /// current slot, splice `order` there under a spring — the other cards
+    /// slide apart, mirroring the web's live reorder feel. `cardW` is this
+    /// row's per-evaluation slot width (depends on the row's own width/count).
+    ///
+    /// Round-5 M6: `rowStart`/`rowCount` locate the dragged card's OWN row
+    /// within the flat `order` array, and `to` is clamped to stay inside it —
+    /// once a hand splits into two rows, letting a card cross the boundary
+    /// would read as it randomly resorting which cards sit on top vs bottom.
+    /// For a one-row hand `rowStart` is always 0 and `rowCount` the whole hand,
+    /// so this is a strict superset of the pre-M6 behavior (nothing changes
+    /// there). This is a deliberate simplification, not an oversight — a
+    /// cross-row drag still WORKS as a play-drag once it leaves `handFrameSelf`
+    /// entirely; it just can't reorder while still hovering the other row.
+    private func reorder(_ card: Card, x: CGFloat, cardW: CGFloat, rowStart: Int, rowCount: Int) {
+        let current = displayCards.map(\.identity)
+        guard let from = current.firstIndex(of: card.identity) else { return }
+        let slot = cardW + Self.gap
+        guard slot > 0, rowCount > 0 else { return }
+        let raw = Int(((x - Self.gap) / slot).rounded())
+        let clampedRaw = min(max(raw, 0), rowCount - 1)
+        let to = rowStart + clampedRaw
+        // A tiny in-place wiggle (the drag now starts on first touch — see
+        // `tapThreshold`) resolves to the SAME slot the card already occupies,
+        // so `to == from` and this is a no-op: a press-and-lift can never
+        // itself trigger a reorder.
+        guard to != from else { return }
+        var next = current
+        next.remove(at: from)
+        next.insert(card.identity, at: min(to, next.count))
+        // Both mutations animate together (same spring, same transaction) so
+        // the compensation tracks the layout's own transition instead of
+        // stepping instantly while the slide is still mid-spring.
+        withAnimation(FMotion.card) {
+            order = next
+            reorderShift += CGFloat(to - from) * slot
+        }
+    }
 
     public var body: some View {
         GeometryReader { geo in
-            let count = max(cards.count, 1)
-            let avail = geo.size.width - gap * CGFloat(count + 1)
-            // Width shrinks to fit a big hand (skinny cards), grows only up to
-            // maxCardW for a small hand. Height is CONSTANT either way - a skinny
-            // card is narrow but full-height, never squished, never superwide.
-            let cardW = min(maxCardW, max(22, avail / CGFloat(count)))
-            HStack(spacing: gap) {
-                ForEach(cards, id: \.identity) { card in
-                    FCard(card: card,
-                          selected: selection.contains(card.identity),
-                          disabled: disabled.contains(card.identity),
-                          trump: trumpSuit != nil && card.suit == trumpSuit,
-                          size: CGSize(width: cardW, height: cardH))
-                        .opacity(hidden.contains(card.identity) ? 0 : 1)
-                        .modifier(FlightID(id: card.identity, namespace: namespace))
-                        .background(GeometryReader { g in
-                            Color.clear.preference(key: HandCardFramesKey.self,
-                                                   value: [card.identity: g.frame(in: .named(boardSpace))])
-                        })
-                        .contentShape(Rectangle())
-                        .offset(dragId == card.identity ? dragOffset : .zero)
-                        .zIndex(dragId == card.identity ? 1000 : 0)
-                        .onTapGesture {
-                            guard !disabled.contains(card.identity) else { Haptics.fire(.reject); return }
-                            Haptics.fire(.pickUp)
-                            onTap(card)
+            let width = geo.size.width
+            let rows = Self.rowGroups(displayCards, availableWidth: width)
+            // ONE card width for BOTH rows, sized by the fuller first row (it
+            // gets the ceil on odd counts) — sizing each row by its own count
+            // made the shorter bottom row's cards visibly WIDER than the top
+            // row's, which read as two different decks rather than one hand
+            // that wrapped.
+            let cardW = Self.singleRowCardWidth(count: rows[0].count, availableWidth: width)
+            VStack(spacing: Self.rowGap) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { rowIdx, rowCards in
+                    let rowStart = rows.prefix(rowIdx).reduce(0) { $0 + $1.count }
+                    HStack(spacing: Self.gap) {
+                        ForEach(rowCards, id: \.identity) { card in
+                            cardView(card, cardW: cardW, rowStart: rowStart, rowCount: rowCards.count)
                         }
-                        .gesture(
-                            DragGesture(minimumDistance: 12, coordinateSpace: .named(boardSpace))
-                                .onChanged { g in
-                                    guard !disabled.contains(card.identity) else { return }
-                                    dragId = card.identity
-                                    dragOffset = g.translation
-                                    onDragChanged(card, g.location)
-                                }
-                                .onEnded { g in
-                                    let c = card
-                                    let wasDragging = dragId == c.identity
-                                    dragId = nil; dragOffset = .zero
-                                    if wasDragging { onDragEnded(c, g.location) }
-                                }
-                        )
+                    }
                 }
             }
-            .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
+            .frame(width: width, height: geo.size.height, alignment: .center)
         }
-        .frame(height: rowH)
+        // Before the width probe lands (`measuredWidth == 0`, the very first
+        // paint) assume ONE row: at an unknown-but-real width the single-row
+        // math with width 0 would report every 2+-card hand as split, so a
+        // small hand ballooned to two-row height for a frame. Infinite width
+        // reproduces the pre-M6 default (one full-width row) until the real
+        // number arrives a paint later.
+        .frame(height: Self.height(cards: cards,
+                                   availableWidth: measuredWidth > 0 ? measuredWidth : .greatestFiniteMagnitude,
+                                   topHalfOnly: topHalfOnly))
+        // Round-5 M6: measure this view's own proposed WIDTH once — see
+        // `measuredWidth`'s doc — so the `.frame(height:)` just above can size
+        // itself for a possibly-two-row hand. Unaffected by whatever height
+        // that frame picks, since `.frame(height:)` never touches width; the
+        // measurement therefore converges immediately regardless of which
+        // height this renders with first.
+        .background(GeometryReader { g in
+            Color.clear.preference(key: HandWidthKey.self, value: g.size.width)
+        })
+        .onPreferenceChange(HandWidthKey.self) { measuredWidth = $0 }
         // Publish the hand's frame so a drop back inside it cancels the play.
         .background(GeometryReader { g in
             Color.clear.preference(key: HandFrameKey.self, value: g.frame(in: .named(boardSpace)))
         })
+        // Mirror that same frame locally (note 5) — this doesn't stop it from
+        // also bubbling up to the board's own `onPreferenceChange`.
+        .onPreferenceChange(HandFrameKey.self) { handFrameSelf = $0 }
+        // Round-5 finding 5: mirror each card's own resting frame too, the
+        // same way — `onDragCardMoved` needs it (see `cardView`).
+        .onPreferenceChange(HandCardFramesKey.self) { handCardFramesSelf = $0 }
+    }
+
+    /// One hand card, wired for tap/drag/reorder within its OWN row (see
+    /// `reorder`'s doc for why row membership constrains it).
+    @ViewBuilder
+    private func cardView(_ card: Card, cardW: CGFloat, rowStart: Int, rowCount: Int) -> some View {
+        FCard(card: card,
+              selected: selection.contains(card.identity),
+              disabled: disabled.contains(card.identity),
+              trump: trumpSuit != nil && card.suit == trumpSuit,
+              size: CGSize(width: cardW, height: Self.cardH))
+            // Round-5 M5b: the compact drawer shows only the TOP HALF of each
+            // hand card — the corner index (top-leading) stays legible, and
+            // the hand's on-screen height halves without touching a single
+            // card's actual playable width. Applied before the tap/drag
+            // modifiers below, so the touch target (`.contentShape`) matches
+            // exactly what's visible — no invisible dead zone under the crop.
+            .frame(height: topHalfOnly ? Self.cardH / 2 : Self.cardH, alignment: .top)
+            .clipped()
+            .opacity(hidden.contains(card.identity) ? 0 : 1)
+            .modifier(FlightID(id: card.identity, namespace: namespace))
+            .background(GeometryReader { g in
+                Color.clear.preference(key: HandCardFramesKey.self,
+                                       value: [card.identity: g.frame(in: .named(boardSpace))])
+            })
+            .contentShape(Rectangle())
+            .offset(dragId == card.identity
+                    ? CGSize(width: dragOffset.width - reorderShift, height: dragOffset.height)
+                    : .zero)
+            .zIndex(dragId == card.identity ? 1000 : 0)
+            .gesture(
+                // Round-5 drag feel: `minimumDistance: 0` claims the touch the
+                // instant a finger lands, which is also why the separate
+                // `.onTapGesture` this view used to carry is GONE — a
+                // 0-distance drag and a sibling tap gesture compete for the
+                // same touch, and the drag always wins, so the tap gesture
+                // simply stopped firing the moment this changed. The tap is
+                // synthesized in `onEnded` below instead (translation magnitude
+                // under `tapThreshold` ⇒ it was a tap, not a drag).
+                DragGesture(minimumDistance: 0, coordinateSpace: .named(boardSpace))
+                    .onChanged { g in
+                        guard !disabled.contains(card.identity) else { return }
+                        if dragId != card.identity { dragId = card.identity; reorderShift = 0 }
+                        dragOffset = g.translation
+                        onDragChanged(card, g.location)
+                        // Round-5 finding 5: the dragged card's live visual
+                        // CENTER for the board's verb-hint pill. `rest` is this
+                        // card's RESTING frame (captured above, BEFORE
+                        // `.offset` — a render-only transform that does not
+                        // feed back into a GeometryReader's layout-time frame),
+                        // so the live `dragOffset` has to be added back in by
+                        // hand to get where the card actually is right now —
+                        // exactly the same `.offset` applied a few lines up.
+                        if let rest = handCardFramesSelf[card.identity] {
+                            onDragCardMoved(CGPoint(x: rest.midX + dragOffset.width - reorderShift,
+                                                    y: rest.midY + dragOffset.height))
+                        }
+                        // note 5: live-reorder only while the point is still
+                        // inside the hand's own frame — once it leaves, this is
+                        // a play-drag and today's behavior is untouched.
+                        if handFrameSelf.contains(g.location) {
+                            reorder(card, x: g.location.x - handFrameSelf.minX, cardW: cardW,
+                                    rowStart: rowStart, rowCount: rowCount)
+                        }
+                    }
+                    .onEnded { g in
+                        let c = card
+                        let wasDragging = dragId == c.identity
+                        dragId = nil; dragOffset = .zero; reorderShift = 0
+                        if hypot(g.translation.width, g.translation.height) < Self.tapThreshold {
+                            // A tap, not a drag — same disabled-check + haptic
+                            // + `onTap` the old `.onTapGesture` used to run.
+                            guard !disabled.contains(c.identity) else { Haptics.fire(.reject); return }
+                            Haptics.fire(.pickUp)
+                            onTap(c)
+                            return
+                        }
+                        if wasDragging { onDragEnded(c, g.location) }
+                    }
+            )
+    }
+}
+
+/// Round-5 M6: width-measurement probe for the row-split math — see
+/// `measuredWidth`'s doc on why `FHandFan` needs this two-step preference
+/// round-trip instead of computing its outer `.frame(height:)` directly.
+private struct HandWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        let n = nextValue()
+        if n > 0 { value = n }
     }
 }

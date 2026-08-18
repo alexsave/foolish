@@ -434,6 +434,30 @@ int fio_new_game(const uint8_t *seed, int seed_len, int n_players) {
     return FIO_EOK;
 }
 
+// Re-deal the CURRENT resident game's own LOCKED seed at a different player
+// count — the iMessage lobby's "Start" action (docs/IMESSAGE_LOBBY_V2.md): a
+// group lobby is created OPEN (fio_new_game with the wire's max capacity, 8,
+// §5.2) so seats stay free to fill; when the joined players decide to start,
+// this re-derives the SAME seed's deal at the ACTUAL joined count (seats are
+// claimed lowest-first, so it is always a contiguous 0..<n) — never a new
+// random seed, which is the "locked at create" guarantee the lobby promises.
+//
+// Just fio_new_game fed g_deal_seed back to itself: the seed already lives in
+// the resident-game statics (kept there from whichever call last dealt or
+// decoded it — fio_new_game or fio_msg_decode_packed), so it never has to
+// cross back out to Swift and back in, mirroring the same "the kernel keeps
+// the seed, the app never touches it" discipline fio_replay_encode_v6_b32
+// already relies on. Returns FIO_ENOSEED if no wide seed is resident (nothing
+// to re-derive from — a lobby is always created wide-seeded, so this is only
+// reachable by calling it out of order), or whatever fio_new_game returns for
+// a bad n_players.
+int fio_reseat_game(int n_players) {
+    if (!g_has_deal_seed) return FIO_ENOSEED;
+    uint8_t seed[FOOLISH_SEED_LEN];
+    memcpy(seed, g_deal_seed, FOOLISH_SEED_LEN);   // copy out first: fio_new_game
+    return fio_new_game(seed, FOOLISH_SEED_LEN, n_players);  // will overwrite g_deal_seed
+}
+
 int fio_set_seat_strategy(int seat, int strategy_id) {
     if (!g_has_game) return FIO_ENOGAME;
     if (seat < 0 || seat >= g_game.num_players) return FIO_EBADARG;
@@ -782,6 +806,113 @@ int fio_replay_events_json(const char *code, int viewer, char *out, int cap) {
     return j_finish(&j);
 }
 
+// The animations of the chain's LAST TURN, as packed evwire frames — the "what
+// just happened" an iMessage receiver sees on opening a bubble. Same packed
+// evwire the website renders and live play broadcasts (no JSON crosses this
+// boundary, §zero-JSON); Swift reads it with EvWire.decodeFrames.
+//
+// THE KERNEL decides the group; the client passes only the encoded chain, never
+// "where I last looked" (there was no server to emit events at move time, and
+// the boundary is a rules question, so it stays in C).
+//
+// A turn is not an action. This used to hand back the final step alone, on the
+// reasoning that a v6 replay is the deal (step 0) then exactly one step per
+// action, and that each step already bundles an action with ALL its
+// kernel-internal consequences — a `pickup` step carries the PICKUP, every
+// seat's refill draws, and the defender change, from the one handle_pickup
+// call. All true, and still one action short of what a BUBBLE carries: a
+// player stages as many actions as they like before sending, so a defender who
+// covers two attacks sends one bubble holding two cover steps. Replaying only
+// the last of them showed the first cover already sitting on the table, landed
+// and rotated, while the second flew in — "if it's a double cover, the first
+// cover will just already be there, and only the second one will play."
+//
+// The group is therefore the trailing run of steps by ONE acting seat: walk
+// back from the end over the seatless tail (ROUND_END belongs to whoever caused
+// it), then back over every immediately preceding step by that same seat.
+//
+// KNOWN LIMIT, accepted deliberately (owner's call). That run is the last
+// BUBBLE only when the sender staged its actions together and sent once. A
+// player who covers, sends, covers, sends, covers, sends puts three cover steps
+// on the chain that are indistinguishable from three staged at once — so
+// opening the third bubble replays all three. Nothing in the payload can tell
+// them apart: the envelope carries `turn` (total actions) and `parent8` (the
+// parent's DIGEST), but not the parent's turn, so a receiver cannot subtract.
+//
+// Two ways out were considered:
+//
+//   1. Diff against the previous chain this device held. Rejected: it makes the
+//      animation a property of one device's CACHE rather than of the bubble, so
+//      a wiped store, a reinstall or a new phone silently changes what replays.
+//   2. Bump the FMSG format and add a u8 "actions in this bubble", written at
+//      seal time from the pending count. This is the correct fix and the one to
+//      reach for if the case ever stops being rare — it is exact, it is a
+//      property of the bubble, and it costs one byte. It was not done now only
+//      because it invalidates every format-2 payload already in a thread, which
+//      is a poor trade against how seldom anyone sends one cover at a time.
+//
+// So this stays a heuristic on purpose, and it is the RIGHT one for the common
+// case (a staged double cover, which used to replay only its last cover).
+//
+// Every frame is masked for `viewer` exactly like live play: the viewer's own
+// drawn/picked-up cards carry real identities (fixing "my own refill never
+// animated on reopen"), everyone else's are hidden backs.
+//
+// Frames come back in the shape replay_steps_frames_v6 writes them — each
+// preceded by a u16 LE length, in play order. v6 only. Returns bytes written
+// (0 if the turn produced nothing to animate), or a negative error.
+int fio_replay_last_events_packed(const char *code, int viewer,
+                                  unsigned char *out, int cap) {
+    if (!code || !out) return FIO_EBADARG;
+    g_last_replay_error = 0;
+
+    static unsigned char intbuf[16384];
+    int ilen = b32_decode(code, intbuf, sizeof(intbuf));
+    if (ilen < 0) return FIO_ECAP;
+
+    // What each step IS (kind + acting seat), so the run can be found without
+    // decoding a single frame first. The ceiling is the same one `intbuf`
+    // already implies — a chain that decodes to more actions than this could
+    // not have fit in the 16KB buffer above in the first place — and
+    // replay_steps_index_v6 returns -REPLAY_ECAP rather than truncating.
+    #define FIO_MAX_REPLAY_STEPS 2048
+    static unsigned char idx[RS_INDEX_STRIDE * FIO_MAX_REPLAY_STEPS];
+    int ilen_idx = replay_steps_index_v6(intbuf, ilen, 0, idx, sizeof idx);
+    if (ilen_idx < 0) { g_last_replay_error = -ilen_idx; return FIO_EREPLAY; }
+    const int n = ilen_idx / RS_INDEX_STRIDE;
+    if (n <= 0) return 0;
+
+    const int last = n - 1;
+    int from = last;
+    // Back over the seatless tail (ROUND_END) to the acting step that caused it.
+    int a = last;
+    while (a > 0 && idx[a * RS_INDEX_STRIDE + 1] == RS_SEAT_NONE) a--;
+    const unsigned char actor = idx[a * RS_INDEX_STRIDE + 1];
+    if (actor != RS_SEAT_NONE) {
+        from = a;
+        // …then back over every step that seat played immediately before it.
+        // Never across another seatless step: that is a closed bout, and the
+        // run on its far side is a different turn.
+        while (from > 1 && idx[(from - 1) * RS_INDEX_STRIDE + 1] == actor) from--;
+    }
+
+    // The group runs to the end of the stream, so asking for [from, ...) is
+    // exactly it. Length-prefixed frames, in play order, as written.
+    int n_frames = 0, next_step = 0;
+    int r = replay_steps_frames_v6(intbuf, ilen, viewer, from, 0,
+                                   out, cap, &n_frames, &next_step);
+    if (r < 0) { g_last_replay_error = -r; return FIO_EREPLAY; }
+    if (n_frames <= 0) return 0;                   // nothing to animate
+    // A short buffer must not silently drop the END of the turn — the newest
+    // action is the one the viewer most needs to see. FIO_ECAP, not
+    // FIO_EREPLAY: a turn of several frames (each carrying a masked board) can
+    // outgrow the caller's first guess, and ECAP is the code that makes the
+    // Swift side retry with a bigger buffer instead of giving up on the
+    // animation. A real decode failure is still FIO_EREPLAY above.
+    if (next_step <= last) { g_last_replay_error = REPLAY_ECAP; return FIO_ECAP; }
+    return r;
+}
+
 // The replay decode as its RAW binary (replay.h DECODE layout: a 20-byte header
 // then n_logs records of [type,seat,defIdx,n_pairs] + n_pairs*[primary,target]
 // wire-card bytes). Swift parses this directly (DecodedReplay.decode) — the same
@@ -888,7 +1019,7 @@ static int fio_parse_joins(const char *joins_json, MsgEnvelope *e) {
         np++;
         int n = 0;
         while (*np && *np != '"' && n < MSG_MAX_NAME) jn->name[n++] = *np++;
-        if (*np != '"') return FIO_EPARSE;   // >12 bytes, or unterminated
+        if (*np != '"') return FIO_EPARSE;   // > MSG_MAX_NAME bytes, or unterminated
         jn->name_len = (uint8_t)n;
         e->n_joins++;
         const char *close = strchr(p, '}');

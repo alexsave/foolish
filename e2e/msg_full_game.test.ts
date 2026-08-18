@@ -15,8 +15,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
     kernelMsgDecode, kernelMsgSeal, kernelMsgRebase, kernelMsgLegalMoves,
-    kernelMsgPublicView, MSG_REBASE_REAPPLY,
+    kernelMsgPublicView, kernelResidentReplayCodeV6, MSG_REBASE_REAPPLY,
 } from '../sdk/ts/wasm/bots.ts';
+import { base32Encode, classifyPathSegment } from '../server/api/common/replay/codec.ts';
 
 const AWIRE = { attack: 0, cover: 1, pass: 2, pickup: 3, good: 4 } as const;
 const wireCard = (c: { suit: number; value: number }) => c.suit * 13 + (c.value - 1);
@@ -82,4 +83,55 @@ test('a full 2p game plays to a fool through the FMSG send/accept leg, and no pu
     assert.ok(steps < CAP, 'game did not terminate within the step cap');
     assert.ok(fool >= 0, 'game ended without a fool');
     assert.ok(sealBytesMax < 240, `a turn bubble grew to ${sealBytesMax} B — past the MSMessage.url budget`);
+});
+
+// batch 6 item B: the FINISHED bubble's own URL is a normal /m/ payload link
+// now (MessageEnvelope.link, decodable by ANY receiver — MessagesViewController.
+// stage's doc explains why the old bare replay-code link broke for receivers),
+// and the replay funnel moved one hop out to the web /m/ page: it decodes that
+// SAME payload and derives the replay code from what it just decoded
+// (kernelResidentReplayCodeV6, sdk/ts/wasm/bots.ts). This drives the same
+// fixture to a fool and proves that derivation actually produces a working
+// replay code from a FINISHED envelope's own (decoded) seed — the exact thing
+// src/app/m/[payload]/page.tsx now does for its "Watch the replay" CTA.
+test('a FINISHED envelope\'s own seed derives a real replay code — the /m/ page funnel (batch 6 item B)', () => {
+    let bubble = hex(START_2P);
+    let finishedEnv: ReturnType<typeof kernelMsgDecode> | null = null;
+
+    for (let steps = 0; steps < CAP; steps++) {
+        const p = kernelMsgDecode(bubble);
+        if (kernelMsgPublicView().view.gameOver >= 0) { finishedEnv = p; break; }
+
+        let chosen: { seat: number; move: any } | null = null;
+        scan: for (const type of PRIORITY) {
+            for (let s = 0; s < p.n_players; s++) {
+                const m = kernelMsgLegalMoves(s).find(x => x.type === type);
+                if (m) { chosen = { seat: s, move: m }; break scan; }
+            }
+        }
+        if (!chosen) break;
+        kernelMsgRebase(p.round, chosen.seat, toWire(chosen.move));
+        const finished = kernelMsgPublicView().view.gameOver >= 0;
+        bubble = kernelMsgSeal({
+            flags: 0, phase: finished ? 3 : 2, n_players: p.n_players, variant: 0,
+            last_actor_seat: chosen.seat, game_id: p.game_id,
+            parent8: p.digest.slice(0, 8), seed: p.seed, joins: p.joins,
+        });
+    }
+
+    assert.ok(finishedEnv, 'the fixture must reach a fool within the step cap');
+    assert.equal(finishedEnv!.phase, 3, 'FINISHED');
+
+    // The page's exact call: derive the code from the decoded envelope's own
+    // seed, with nothing re-marshalled (kernelMsgDecode already left the whole
+    // session log resident).
+    const code = kernelResidentReplayCodeV6(finishedEnv!.seed);
+    assert.ok(code.length > 0, 'a finished game must produce a replay code');
+
+    // The resulting URL (https://foolish.cards/<b32>) must actually route to
+    // the replay screen, not the legacy authenticated shortcode path — the
+    // same classifier the site's own [game_id] page uses.
+    const b32 = base32Encode(code);
+    assert.equal(classifyPathSegment(b32), 'replay',
+                'the derived code must be long enough to route to ReplayScreen');
 });

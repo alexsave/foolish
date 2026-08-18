@@ -75,9 +75,18 @@ final class MessageTurnControllerTests: XCTestCase {
         XCTAssertEqual(c.view?.me?.handCount, beforeHand, "undo restored my hand")
     }
 
-    /// §12 funnel: a genesis game played to the end yields a REPLAY code that
-    /// decodes to a finished game, and the FINISHED bubble links to it (not /m/).
-    /// Drives to completion through MessageKernel.apply — the same path a turn uses.
+    /// §12 funnel, revised by batch 6 item B: the FINISHED bubble itself now
+    /// links to a normal `/m/` payload (MessagesViewController.stage — a bare
+    /// `replayLink` cannot be re-decoded by `payloadBytes(url:)`, so a receiver
+    /// tapping it got the damaged-link screen instead of the final board). The
+    /// replay funnel moved one hop out to the web `/m/` page, which decodes the
+    /// FINISHED payload itself and derives the code there. What this test still
+    /// proves is the underlying KERNEL capability the web page's derivation
+    /// mirrors: a genesis game played to the end yields a REPLAY code
+    /// (`residentReplayCode`) that decodes to a finished game, and
+    /// `MessageEnvelope.replayLink` still builds the funnel URL from a code —
+    /// both remain real, just no longer the bubble's own URL. Drives to
+    /// completion through MessageKernel.apply — the same path a turn uses.
     func testFinishedGameProducesAReplayFunnelLink() async throws {
         let k = MessageKernel.shared
         let seed = Data((0..<32).map { UInt8(($0 &* 5 &+ 1) | 1) })
@@ -147,6 +156,29 @@ final class MessageTurnControllerTests: XCTestCase {
         XCTAssertEqual(e1.joins.count, 2, "both seats are now named")
         XCTAssertEqual(e1.joins.first { $0.seat == 0 }?.name, "Alice", "the creator's name survived")
         XCTAssertEqual(e1.joins.first { $0.seat == 1 }?.name, "Bob", "the joiner named themselves")
+    }
+
+    /// The open-replay is now the KERNEL's evwire for the last move
+    /// (MessageKernel.lastMoveEvents), resolved in begin() from the adopted chain
+    /// ALONE - no `prevPayload`/"where I last looked" (owner steer: the kernel
+    /// decides the group). So opening a chain yields the events of its last move,
+    /// as real GameEvents whose card identities are viewer-correct.
+    ///
+    /// NOTE this intentionally SUPERSEDES note 13's reopen-idempotency (the old
+    /// "an already-seen chain resolves to an EMPTY window"): with no client memory
+    /// of what was seen, opening always animates the last move. That is the
+    /// deterministic behavior the kernel-source-of-truth design implies, replacing
+    /// the previous non-deterministic "plays sometimes, not always".
+    func testOpeningAChainYieldsItsLastMoveEvents() async throws {
+        let parentBytes = bytes(fixtureHex)
+        let parent = try await MessageEnvelope.decode(payload: parentBytes, viewer: 0)
+
+        let c = MessageTurnController(parentPayload: parentBytes, parent: parent, mySeat: 0)
+        await c.begin()
+        // The fixture is a real played chain, so its last move has events; each is
+        // a decoded GameEvent (a kind), proving the kernel->EvWire path is wired.
+        XCTAssertTrue(c.openReplayEvents.allSatisfy { $0.kind != nil },
+                      "every open-replay entry decodes to a known evwire event type")
     }
 
     /// parent8 is the first 8 bytes of the parent digest, zero-padded — the exact

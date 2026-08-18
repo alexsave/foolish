@@ -704,7 +704,11 @@ export function kernelReplayEncodeV6FromGame(
 // The unpacked header — the private ABI msg_blob_write/msg_blob_read define in
 // c/wasm/wasm_api.c. Fixed offsets, fixed-size join slots.
 const MSG_BLOB_HDR = 90;
-const MSG_BLOB_JOIN = 14;
+// 2 + the wire's MSG_MAX_NAME: was 14 (2 + 12) before round-5 B1 raised the
+// name cap to 64 bytes (docs/APP_REVIEW_NOTES.md, c/src/msg_wire.h) — must
+// match wasm_api.c's MSG_BLOB_JOIN or this bridge mis-parses every join.
+const MSG_MAX_NAME = 64;
+const MSG_BLOB_JOIN = 2 + MSG_MAX_NAME;
 
 export interface MsgJoin { seat: number; name: string }
 
@@ -787,7 +791,7 @@ function writeBlob(e: MsgEnvelope): Uint8Array {
     e.joins.forEach((j, i) => {
         const o = MSG_BLOB_HDR + i * MSG_BLOB_JOIN;
         const name = new TextEncoder().encode(j.name);
-        if (name.length > 12) throw new Error(`nickname over 12 bytes: ${j.name}`);
+        if (name.length > MSG_MAX_NAME) throw new Error(`nickname over ${MSG_MAX_NAME} bytes: ${j.name}`);
         out[o] = j.seat;
         out[o + 1] = name.length;
         out.set(name, o + 2);
@@ -1043,6 +1047,35 @@ export function kernelMsgSeal(header: Omit<MsgEnvelope, 'digest' | 'turn' | 'rou
     const r = ex.wasm_msg_seal(blob.length);
     if (r < 0) throw msgError(r);
     return __mem(ex).slice(base, base + r);
+}
+
+// The best shareable REPLAY code for the game the last kernelMsgDecode
+// adopted — the TS-side twin of MessageKernel.residentReplayCode()
+// (sdk/swift/MessageEnvelope.swift), reached off the same resident g_game
+// instead of Swift's fio_replay_share_code_b32. Used by the /m/ page's
+// FINISHED-bubble funnel (docs/IMESSAGE_LOBBY_V2.md, batch 6 item B): once a
+// payload decodes, msg_replay has already run the whole chain through the
+// ORDINARY kernel handlers (handle_attack etc.), which log exactly like any
+// other play — so the resident game already carries the full session log a
+// v6 code needs. Only the envelope's own seed (env.seed, already decoded — no
+// second kernel round-trip to fetch it) has to be supplied.
+//
+// Deliberately NOT kernelReplayEncodeV6FromGame: that helper re-marshals a
+// `Game` object (__marshalGame -> wasm_import_state), which resets the
+// resident log to 0 and would throw away exactly the log kernelMsgDecode just
+// built. This calls the same C export (wasm_replay_encode_v6_from_game)
+// directly against whatever is already resident, exactly as fio_replay_share_
+// code_b32 does on the native/Swift side.
+export function kernelResidentReplayCodeV6(seed: Uint8Array): Uint8Array {
+    if (seed.length !== 32) {
+        throw new Error(`replay: v6 needs a 32-byte deal seed, got ${seed.length}`);
+    }
+    const ex = bots();
+    const base = ex.wasm_replay_io_ptr();
+    __mem(ex).set(seed, base);
+    const n = ex.wasm_replay_encode_v6_from_game(1 << 30);
+    if (n < 0) throw __replayError(n, ex.wasm_replay_error_detail());
+    return __mem(ex).slice(base, base + n);
 }
 
 // ---------------------------------------------------------------------------

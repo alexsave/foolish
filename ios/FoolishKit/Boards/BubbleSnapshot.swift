@@ -25,7 +25,7 @@ public enum BubbleSnapshot {
         // in ImageRenderer), so the bubble gets the same wool as the board.
         let content = ZStack {
             FColor.fallback
-            Image(uiImage: WoolTexture.image(w: 900, h: 585))
+            Image(uiImage: WoolTexture.image(w: WoolTexture.webCanvas.w, h: WoolTexture.webCanvas.h))
                 .resizable()
                 .aspectRatio(contentMode: .fill)
                 .frame(width: size.width, height: size.height)
@@ -34,9 +34,88 @@ public enum BubbleSnapshot {
         }
         .frame(width: size.width, height: size.height)
         .environment(\.colorScheme, .light)   // the balloon image is theme-independent
+        // Round-5 M4's clamp: ImageRenderer walks whatever accessibility text
+        // size the HOST app is currently at, not a neutral default — an
+        // AX-XXXL host would blow the board's card faces out of the 300×195
+        // balloon the same way B3 blows them out of the live board. The bubble
+        // is a fixed-size snapshot, so it must never inherit that setting.
+        .dynamicTypeSize(.large)
         let renderer = ImageRenderer(content: content)
         renderer.scale = UIScreen.main.scale
         renderer.isOpaque = true
         return renderer.uiImage
+    }
+
+    /// Render a WAITING lobby's bubble image (§5.2) — the joined players, NOT a
+    /// dealt board. A lobby seal leaves a fully-dealt game resident (the kernel
+    /// deals every hand at `newGame`, before anyone has picked a count), so
+    /// feeding that resident view to `render(publicView:)` drew a full table of
+    /// cards onto a bubble that is only an invite — the extension showed the
+    /// lobby while its own staged preview showed a played game. This draws what
+    /// the human is actually looking at: the lobby roster, on the same wool.
+    @MainActor
+    public static func renderLobby(joinedNames: [String]) -> UIImage? {
+        let content = ZStack {
+            FColor.fallback
+            Image(uiImage: WoolTexture.image(w: WoolTexture.webCanvas.w, h: WoolTexture.webCanvas.h))
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: size.width, height: size.height)
+                .clipped()
+            VStack(spacing: 6) {
+                Text(FStrings.t("ios.lobby"))
+                    .font(.headline).fontWeight(.bold).foregroundStyle(FColor.ink)
+                VStack(spacing: 3) {
+                    ForEach(Array(joinedNames.enumerated()), id: \.offset) { i, name in
+                        Text("\(i + 1). \(name)")
+                            .font(.subheadline).foregroundStyle(FColor.ink)
+                            .lineLimit(1)
+                    }
+                }
+                // Round-5 M10: was `.black.opacity(0.55)` directly on the
+                // weave — the finding's own example of the fix that already
+                // exists elsewhere ("Game over" at full-opacity + a real
+                // shadow) not yet applied here. Full-opacity FColor.ink (dark
+                // text) takes a LIGHT shadow, not a dark one — a dark shadow
+                // under dark text on a light-ish weave adds nothing.
+                Text(FStrings.t("ios.msg.joininvite"))
+                    .font(.caption).foregroundStyle(FColor.ink)
+                    .shadow(color: .white.opacity(0.5), radius: 2)
+                    .padding(.top, 2)
+            }
+            .padding()
+        }
+        .frame(width: size.width, height: size.height)
+        .environment(\.colorScheme, .light)   // theme-independent, like the board bubble
+        // Round-5 M4's clamp — see the twin comment in `render(publicView:)`
+        // above; the lobby roster names must not blow out of the balloon
+        // either.
+        .dynamicTypeSize(.large)
+        let renderer = ImageRenderer(content: content)
+        renderer.scale = UIScreen.main.scale
+        renderer.isOpaque = true
+        return renderer.uiImage
+    }
+
+    /// THE bubble image for a sealed chain, picking lobby-vs-board itself: a
+    /// WAITING envelope previews as its roster, anything else as the public
+    /// table. Callers (the extension's `stage`, the harness's transcript) get
+    /// the same picture for the same bytes — which is the point of having one
+    /// entry: a preview that disagrees with what the extension shows is the
+    /// round-3 "the bubble previews a dealt board but the extension shows the
+    /// lobby" report, and two call sites branching on `phase` separately is how
+    /// that comes back.
+    ///
+    /// Reads the RESIDENT game for the board case, so the caller must have just
+    /// sealed or decoded `env`'s payload (both do). Nil if there is nothing to
+    /// render.
+    @MainActor
+    public static func render(env: MessageEnvelope) async -> UIImage? {
+        if env.phase == 0 {
+            return renderLobby(joinedNames: env.joins.sorted { $0.seat < $1.seat }.map(\.name))
+        }
+        guard let publicView = await MessageKernel.shared.residentView(viewer: -1) else { return nil }
+        let names = Dictionary(env.joins.map { ($0.seat, $0.name) }, uniquingKeysWith: { a, _ in a })
+        return render(publicView: publicView, names: names)
     }
 }

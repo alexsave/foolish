@@ -43,6 +43,38 @@ public enum FStrings {
         return s
     }
 
+    // Spoken card names for VoiceOver (round-5 m2): the visible strings were
+    // localized while every accessibilityLabel was English, so a ru/ko VoiceOver
+    // user got an English board. One builder, shared by every board component,
+    // so "queen of spades" / "дама, пики" / "스페이드 퀸" cannot drift apart
+    // between the hand, the battles and the deck. Rank indices are the kernel's
+    // (9='10' … 13='A', CardRank.label's mapping); numeric ranks stay digits,
+    // which VoiceOver reads in its own language already.
+
+    public static func spokenRank(_ value: Int) -> String {
+        switch value {
+        case 13: return t("ios.rank.ace")
+        case 12: return t("ios.rank.king")
+        case 11: return t("ios.rank.queen")
+        case 10: return t("ios.rank.jack")
+        case 9:  return t("ios.rank.ten")
+        default: return String(value + 1)
+        }
+    }
+
+    public static func spokenSuit(_ suit: Suit) -> String {
+        switch suit {
+        case .spades: return t("ios.suit.spades")
+        case .hearts: return t("ios.suit.hearts")
+        case .clubs: return t("ios.suit.clubs")
+        case .diamonds: return t("ios.suit.diamonds")
+        }
+    }
+
+    public static func spokenCard(_ value: Int, _ suit: Suit) -> String {
+        t("ios.a11y.card", ["rank": spokenRank(value), "suit": spokenSuit(suit)])
+    }
+
     // The seed table. Trimmed to what the app renders today; the generator will
     // supersede it with the full 113-key set from the web (§16.E4). All three
     // languages carry every key (CI check enforces identical key sets — §16.E4).
@@ -51,7 +83,7 @@ public enum FStrings {
             "play": "Play", "offline": "Offline", "join_by_code": "Join by code",
             "resume": "Resume game", "replays": "Replays", "tutorial": "Tutorial",
             "settings": "Settings", "about": "About",
-            "pass": "Pass", "pickup": "Take", "good": "Good", "attack": "Attack", "cover": "Cover",
+            "pass": "Pass", "pickup": "Pickup", "good": "Good", "attack": "Attack", "cover": "Cover",
             "game_over": "Game over", "you_win": "You win", "you_lose": "You are the fool",
             "rematch": "Rematch", "share_replay": "Share replay", "home": "Home",
             "choose_opponent": "Choose opponent", "start_game": "Start game",
@@ -75,6 +107,7 @@ public enum FStrings {
             "ios.msg.undo": "Undo",
             "ios.msg.newgame": "New game",
             "ios.msg.pickseat": "Which player are you?",
+            "ios.msg.spectating": "Spectating — open the game from your own bubble to play",
             "ios.msg.thread": "A game in this thread",
             "ios.msg.tap": "Durak - tap to play",
             "ios.msg.damaged": "This game link is damaged.",
@@ -91,17 +124,45 @@ public enum FStrings {
             "ios.msg.continue": "Continue",
             "ios.msg.seatopen": "Open seat",
             "ios.msg.joinas": "Join as {name}",
-            "ios.msg.sendinvite": "Send invite",
             "ios.msg.waitingjoin": "Waiting for {n} more",
             "ios.msg.lobbyfull": "All seats taken",
+            "ios.msg.creategame": "Create game",
+            // "Start playing", not "Start game" — round-5 m10: the lobby's two
+            // buttons read as near-synonyms ("Create game" / "Start game"); the
+            // verb keeps them distinct.
+            "ios.msg.startgame": "Start playing",
             "ios.msg.gameon": "Foolish - game on! Tap to play",
             "ios.msg.joininvite": "Foolish - tap to join",
+            "ios.msg.invite": "Send invite",
+            "ios.msg.nickname_ph": "your nickname",
+            "ios.msg.entername": "enter nickname",
+            "ios.msg.nametoolong": "nickname too long",
+            "ios.a11y.attackfirst": "You attack first",
+            "ios.a11y.defending": "Defending",
+            "ios.a11y.attacking": "attacking",
+            "ios.a11y.saidgood": "said good",
+            "ios.a11y.thinking": "thinking",
+            "ios.a11y.out": "out of the game",
+            "ios.a11y.cards": "{n} cards",
+            "ios.a11y.deck": "{n} cards left in the deck",
+            "ios.a11y.trump": "trump {suit}",
+            "ios.a11y.trumpmark": "trump",
+            "ios.a11y.discard": "{n} cards discarded",
+            "ios.a11y.covered": "{attack}, covered by {defense}",
+            "ios.a11y.uncovered": "{attack}, uncovered",
+            "ios.a11y.hiddencard": "hidden card",
+            "ios.a11y.facedown": "face down card",
+            "ios.a11y.card": "{rank} of {suit}",
+            "ios.suit.spades": "spades", "ios.suit.hearts": "hearts",
+            "ios.suit.clubs": "clubs", "ios.suit.diamonds": "diamonds",
+            "ios.rank.ace": "ace", "ios.rank.king": "king",
+            "ios.rank.queen": "queen", "ios.rank.jack": "jack", "ios.rank.ten": "ten",
             "ios.tut_next": "Got it",
             "ios.tut_done": "Start playing",
             "ios.tut_1": "Welcome to Durak. The lowest card of the trump suit decides who attacks first. Trump beats every other suit.",
             "ios.tut_2": "To attack, tap a card in your hand. Your opponent must beat it - or pick it all up.",
             "ios.tut_3": "To defend, tap one of your cards, then tap the attack it beats. A higher card of the same suit, or any trump, covers it.",
-            "ios.tut_4": "Can’t or won’t defend? Tap Take to pick up the cards. Finished attacking? Tap Done.",
+            "ios.tut_4": "Can’t or won’t defend? Tap Pickup to pick up the cards. Finished attacking? Tap Done.",
             "ios.tut_5": "Empty your hand before everyone else. The last player holding cards is the fool. Good luck!",
             "ios.bot.random": "Miami", "ios.bot.handwritten": "New York",
             "ios.bot.robusta": "Seoul", "ios.bot.firecracker": "Madrid",
@@ -138,6 +199,7 @@ public enum FStrings {
             "ios.msg.undo": "Отменить",
             "ios.msg.newgame": "Новая игра",
             "ios.msg.pickseat": "Кто вы из игроков?",
+            "ios.msg.spectating": "Вы наблюдаете — чтобы играть, откройте игру из своего сообщения",
             "ios.msg.thread": "Игра в этой переписке",
             "ios.msg.tap": "Дурак - нажмите, чтобы играть",
             "ios.msg.damaged": "Ссылка на игру повреждена.",
@@ -154,11 +216,36 @@ public enum FStrings {
             "ios.msg.continue": "Продолжить",
             "ios.msg.seatopen": "Свободное место",
             "ios.msg.joinas": "Войти как {name}",
-            "ios.msg.sendinvite": "Отправить приглашение",
             "ios.msg.waitingjoin": "Ждём ещё: {n}",
             "ios.msg.lobbyfull": "Все места заняты",
+            "ios.msg.creategame": "Создать игру",
+            "ios.msg.startgame": "Начать играть",
             "ios.msg.gameon": "Дурак - игра началась! Нажмите, чтобы играть",
             "ios.msg.joininvite": "Дурак - нажмите, чтобы присоединиться",
+            "ios.msg.invite": "Отправить приглашение",
+            "ios.msg.nickname_ph": "ваш ник",
+            "ios.msg.entername": "введите ник",
+            "ios.msg.nametoolong": "слишком длинный ник",
+            "ios.a11y.attackfirst": "Вы ходите первым",
+            "ios.a11y.defending": "Защищается",
+            "ios.a11y.attacking": "атакует",
+            "ios.a11y.saidgood": "сказал бито",
+            "ios.a11y.thinking": "думает",
+            "ios.a11y.out": "вышел из игры",
+            "ios.a11y.cards": "карт: {n}",
+            "ios.a11y.deck": "карт в колоде: {n}",
+            "ios.a11y.trump": "козырь: {suit}",
+            "ios.a11y.trumpmark": "козырь",
+            "ios.a11y.discard": "карт в отбое: {n}",
+            "ios.a11y.covered": "{attack}, покрыта: {defense}",
+            "ios.a11y.uncovered": "{attack}, не покрыта",
+            "ios.a11y.hiddencard": "закрытая карта",
+            "ios.a11y.facedown": "карта рубашкой вверх",
+            "ios.a11y.card": "{rank}, {suit}",
+            "ios.suit.spades": "пики", "ios.suit.hearts": "черви",
+            "ios.suit.clubs": "трефы", "ios.suit.diamonds": "бубны",
+            "ios.rank.ace": "туз", "ios.rank.king": "король",
+            "ios.rank.queen": "дама", "ios.rank.jack": "валет", "ios.rank.ten": "десятка",
             "ios.tut_next": "Понятно",
             "ios.tut_done": "Начать игру",
             "ios.tut_1": "Добро пожаловать в Дурак. Младшая козырная карта определяет, кто атакует первым. Козырь бьёт любую другую масть.",
@@ -201,6 +288,7 @@ public enum FStrings {
             "ios.msg.undo": "취소",
             "ios.msg.newgame": "새 게임",
             "ios.msg.pickseat": "당신은 어느 플레이어인가요?",
+            "ios.msg.spectating": "관전 중 — 플레이하려면 내 말풍선에서 게임을 여세요",
             "ios.msg.thread": "이 대화의 게임",
             "ios.msg.tap": "두락 - 탭하여 플레이",
             "ios.msg.damaged": "게임 링크가 손상되었습니다.",
@@ -217,11 +305,36 @@ public enum FStrings {
             "ios.msg.continue": "계속",
             "ios.msg.seatopen": "빈 자리",
             "ios.msg.joinas": "{name}(으)로 참가",
-            "ios.msg.sendinvite": "초대 보내기",
             "ios.msg.waitingjoin": "{n}명 더 기다리는 중",
             "ios.msg.lobbyfull": "모든 자리가 찼습니다",
+            "ios.msg.creategame": "게임 만들기",
+            "ios.msg.startgame": "플레이 시작",
             "ios.msg.gameon": "두락 - 게임 시작! 탭하여 플레이",
             "ios.msg.joininvite": "두락 - 탭하여 참가",
+            "ios.msg.invite": "초대 보내기",
+            "ios.msg.nickname_ph": "닉네임",
+            "ios.msg.entername": "닉네임을 입력하세요",
+            "ios.msg.nametoolong": "닉네임이 너무 깁니다",
+            "ios.a11y.attackfirst": "당신이 먼저 공격합니다",
+            "ios.a11y.defending": "방어 중",
+            "ios.a11y.attacking": "공격 중",
+            "ios.a11y.saidgood": "완료 선언",
+            "ios.a11y.thinking": "생각 중",
+            "ios.a11y.out": "탈락",
+            "ios.a11y.cards": "카드 {n}장",
+            "ios.a11y.deck": "덱에 카드 {n}장 남음",
+            "ios.a11y.trump": "으뜸패: {suit}",
+            "ios.a11y.trumpmark": "으뜸패",
+            "ios.a11y.discard": "버린 카드 {n}장",
+            "ios.a11y.covered": "{attack}, {defense}(으)로 방어됨",
+            "ios.a11y.uncovered": "{attack}, 방어되지 않음",
+            "ios.a11y.hiddencard": "뒷면 카드",
+            "ios.a11y.facedown": "뒷면 카드",
+            "ios.a11y.card": "{suit} {rank}",
+            "ios.suit.spades": "스페이드", "ios.suit.hearts": "하트",
+            "ios.suit.clubs": "클럽", "ios.suit.diamonds": "다이아몬드",
+            "ios.rank.ace": "에이스", "ios.rank.king": "킹",
+            "ios.rank.queen": "퀸", "ios.rank.jack": "잭", "ios.rank.ten": "10",
             "ios.tut_next": "알겠어요",
             "ios.tut_done": "게임 시작",
             "ios.tut_1": "두락에 오신 것을 환영합니다. 으뜸패의 가장 낮은 카드가 첫 공격자를 정합니다. 으뜸패는 다른 모든 무늬를 이깁니다.",

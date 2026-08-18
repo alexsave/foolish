@@ -46,7 +46,50 @@ final class SeatIdentityTests: XCTestCase {
         XCTAssertEqual(r, .known(1), "out-of-range cache ignored, 2p inference used")
     }
 
+    // MARK: - §6 resolution, gated for a lobby bubble (note 14, HARNESS_NOTES_R2)
+
+    /// The exact bug note 14 describes: a cached seat that is NOT in this
+    /// bubble's own `joins` must not read as joined — an older WAITING bubble,
+    /// reopened after I've since joined elsewhere, would otherwise still hand
+    /// me Start/Send for a lobby that does not list me.
+    func testCachedSeatAbsentFromJoinsIsNotJoined() {
+        let staleJoins = [MessageJoin(seat: 0, name: "Alex")]   // seat 1 (me) not in here yet
+        let r = SeatIdentity.resolveInLobby(cachedSeat: 1, senderIsLocal: false,
+                                            nPlayers: 8, lastActorSeat: 0, joins: staleJoins)
+        XCTAssertNil(r, "a cached seat this bubble's own joins does not list must not read as joined")
+    }
+
+    /// The flip side of the same bug: once the bubble's `joins` DOES list my
+    /// cached seat (the freshest lobby bubble, post-join), I must resolve as
+    /// joined again — the gate only rejects a MISMATCH, not every lobby.
+    func testCachedSeatPresentInJoinsIsJoined() {
+        let freshJoins = [MessageJoin(seat: 0, name: "Alex"), MessageJoin(seat: 1, name: "Sveta")]
+        let r = SeatIdentity.resolveInLobby(cachedSeat: 1, senderIsLocal: false,
+                                            nPlayers: 8, lastActorSeat: 0, joins: freshJoins)
+        XCTAssertEqual(r, 1, "once this bubble's own joins list me, I resolve as joined")
+    }
+
+    /// Sender inference (S1) is gated the same way: even though I sent the
+    /// stale bubble (so plain `resolve` would say `.known(lastActorSeat)`),
+    /// that bubble's joins must still be checked.
+    func testSenderInferredSeatAbsentFromJoinsIsNotJoined() {
+        let staleJoins = [MessageJoin(seat: 0, name: "Alex")]
+        let r = SeatIdentity.resolveInLobby(cachedSeat: nil, senderIsLocal: true,
+                                            nPlayers: 8, lastActorSeat: 2, joins: staleJoins)
+        XCTAssertNil(r, "sender-inferred seat 2 is not in this stale bubble's joins")
+    }
+
+    /// `.ambiguous` still maps to nil either way (no seat to check joins against).
+    func testAmbiguousStaysNilInLobby() {
+        let r = SeatIdentity.resolveInLobby(cachedSeat: nil, senderIsLocal: false,
+                                            nPlayers: 4, lastActorSeat: 2, joins: [])
+        XCTAssertNil(r)
+    }
+
     // MARK: - the App Group store
+
+    private let chatA = "chat-A"
+    private let chatB = "chat-B"
 
     private func freshStore() -> MessageGameStore {
         let suite = "test.fmsg.\(UUID().uuidString)"
@@ -55,8 +98,8 @@ final class SeatIdentityTests: XCTestCase {
         return MessageGameStore(defaults: d)
     }
 
-    private func rec(_ id: String, seat: Int, at t: Double, turn: Int = 4) -> MessageGameRecord {
-        MessageGameRecord(gameId: id, mySeat: seat, nPlayers: 2, round: 1, turn: turn,
+    private func rec(_ id: String, chatKey: String? = nil, seat: Int, at t: Double, turn: Int = 4) -> MessageGameRecord {
+        MessageGameRecord(gameId: id, chatKey: chatKey ?? chatA, mySeat: seat, nPlayers: 2, round: 1, turn: turn,
                           phase: 2, finished: false, names: [0: "Alex", 1: "Sveta"],
                           payloadBase32: "AAAA", updatedAt: t)
     }
@@ -64,16 +107,16 @@ final class SeatIdentityTests: XCTestCase {
     func testPutThenSeatAndRecordRoundTrip() {
         let s = freshStore()
         s.put(rec("g1", seat: 1, at: 100))
-        XCTAssertEqual(s.seat(gameId: "g1"), 1)
-        XCTAssertEqual(s.record(gameId: "g1")?.name(0), "Alex")
-        XCTAssertNil(s.seat(gameId: "absent"))
+        XCTAssertEqual(s.seat(gameId: "g1", chatKey: chatA), 1)
+        XCTAssertEqual(s.record(gameId: "g1", chatKey: chatA)?.name(0), "Alex")
+        XCTAssertNil(s.seat(gameId: "absent", chatKey: chatA))
     }
 
     func testGamesSortNewestFirst() {
         let s = freshStore()
         s.put(rec("old", seat: 0, at: 100))
         s.put(rec("new", seat: 0, at: 200))
-        XCTAssertEqual(s.games().map(\.gameId), ["new", "old"])
+        XCTAssertEqual(s.games(chatKey: chatA).map(\.gameId), ["new", "old"])
     }
 
     func testOlderUpdateDoesNotRollBackTheCache() {
@@ -82,24 +125,79 @@ final class SeatIdentityTests: XCTestCase {
         let s = freshStore()
         s.put(rec("g", seat: 0, at: 200, turn: 9))
         s.put(rec("g", seat: 0, at: 100, turn: 3))     // arrives later, older state
-        XCTAssertEqual(s.record(gameId: "g")?.turn, 9, "newer state kept")
+        XCTAssertEqual(s.record(gameId: "g", chatKey: chatA)?.turn, 9, "newer state kept")
     }
 
     func testRemove() {
         let s = freshStore()
         s.put(rec("g", seat: 0, at: 100))
         s.remove(gameId: "g")
-        XCTAssertNil(s.record(gameId: "g"))
-        XCTAssertTrue(s.games().isEmpty)
+        XCTAssertNil(s.record(gameId: "g", chatKey: chatA))
+        XCTAssertTrue(s.games(chatKey: chatA).isEmpty)
     }
 
     func testCorruptBlobDegradesToEmpty() {
         let suite = "test.fmsg.\(UUID().uuidString)"
         let d = UserDefaults(suiteName: suite)!
-        d.set(Data([0xff, 0x00, 0x13]), forKey: "fmsg.games.v1")   // not our JSON
+        d.set(Data([0xff, 0x00, 0x13]), forKey: "fmsg.games.v2")   // not our JSON
         let s = MessageGameStore(defaults: d)
-        XCTAssertTrue(s.games().isEmpty, "a corrupt suite reads as no games, never crashes")
+        XCTAssertTrue(s.games(chatKey: chatA).isEmpty, "a corrupt suite reads as no games, never crashes")
         s.put(rec("g", seat: 0, at: 1))                            // and recovers on write
-        XCTAssertEqual(s.seat(gameId: "g"), 0)
+        XCTAssertEqual(s.seat(gameId: "g", chatKey: chatA), 0)
+    }
+
+    // MARK: - chat scoping (the cross-chat leak fix)
+
+    /// The exact bug this fix closes: a row cached from Chat A must be invisible
+    /// to every read scoped to Chat B — `games()`, `record()`, and `seat()` alike
+    /// — even though it is the same device's single App Group suite holding
+    /// both rows. Before this fix these methods took no chatKey at all and
+    /// `games()` was device-wide, so opening the extension in Chat B with no
+    /// bubble selected could reopen Chat A's newest game.
+    func testRecordsAreScopedToTheirChat() {
+        let s = freshStore()
+        s.put(rec("gA", chatKey: chatA, seat: 0, at: 100))
+        s.put(rec("gB", chatKey: chatB, seat: 1, at: 200))
+
+        XCTAssertEqual(s.games(chatKey: chatA).map(\.gameId), ["gA"])
+        XCTAssertEqual(s.games(chatKey: chatB).map(\.gameId), ["gB"])
+
+        XCTAssertNotNil(s.record(gameId: "gA", chatKey: chatA))
+        XCTAssertNil(s.record(gameId: "gA", chatKey: chatB), "chat B must not see chat A's row")
+        XCTAssertNil(s.record(gameId: "gB", chatKey: chatA), "chat A must not see chat B's row")
+
+        XCTAssertEqual(s.seat(gameId: "gA", chatKey: chatA), 0)
+        XCTAssertNil(s.seat(gameId: "gA", chatKey: chatB), "a foreign chat's cached seat must read as unknown")
+    }
+
+    // MARK: - ChatKey (what the scoping above is only as good as)
+
+    /// The round-3 report: "every time I try to send a message it pulls up the
+    /// same game for each chat, no matter who I'm texting." The store WAS
+    /// scoped (above) — the key wasn't. `localParticipantIdentifier` is the same
+    /// UUID in every conversation on a device, so keying on it alone keyed on
+    /// the DEVICE, and every chat shared one key. Two different threads must
+    /// produce two different keys even when the local identifier is identical.
+    func testTwoChatsOnTheSameDeviceGetDifferentKeys() {
+        let me = "LOCAL-SAME-EVERYWHERE"
+        let withVera = ChatKey.make(local: me, remotes: ["vera"])
+        let withBoris = ChatKey.make(local: me, remotes: ["boris"])
+        XCTAssertNotEqual(withVera, withBoris,
+                          "two DMs from one device must not share a game cache")
+        let group = ChatKey.make(local: me, remotes: ["vera", "boris"])
+        XCTAssertNotEqual(group, withVera, "a group is not the DM inside it")
+        XCTAssertNotEqual(group, withBoris)
+    }
+
+    /// …and the same thread must key the same way every time it is opened, or a
+    /// device would lose its own seat between launches. Nothing documents the
+    /// order Messages returns `remoteParticipantIdentifiers` in, so the key is
+    /// order-independent by construction.
+    func testTheSameConversationKeysStablyRegardlessOfMemberOrder() {
+        let a = ChatKey.make(local: "me", remotes: ["vera", "boris", "dima"])
+        let b = ChatKey.make(local: "me", remotes: ["dima", "vera", "boris"])
+        XCTAssertEqual(a, b, "member order must not change a conversation's identity")
+        XCTAssertFalse(ChatKey.make(local: "", remotes: []).isEmpty,
+                       "a degenerate conversation still gets a non-empty key")
     }
 }

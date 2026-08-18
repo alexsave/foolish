@@ -305,6 +305,73 @@ static int fmsg_check(void) {
     return 0;
 }
 
+// ---------- Lobby v2: open-count WAITING -> Start reseat -> LIVE -----------
+//
+// Proves the mechanism batch 6 / item C picked for the iMessage group lobby
+// (docs/IMESSAGE_LOBBY_V2.md): a group lobby is created OPEN (n_players=8, the
+// wire's max) so seats stay free; "Start" re-derives the SAME locked seed at
+// the ACTUAL joined count via fio_reseat_game, and the resulting LIVE
+// envelope's n_players (3) legitimately differs from its WAITING parent's (8)
+// — nothing in msg_wire.c cross-checks a child's n_players against a parent
+// (parentage is only the 8-byte digest tag, msg_wire.h's parent8), so this is
+// a property of the wire, not a hole: each envelope is independently sealed
+// and independently replayed from its OWN header.
+static int lobby_v2_reseat_check(void) {
+    unsigned char seed[32];
+    for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(i * 13 + 5);
+
+    // Create: lock the seed in at the wire's max capacity (8) — the "open
+    // lobby" convention — and seal WAITING with just the creator's join.
+    if (fio_new_game(seed, 32, 8) != FIO_EOK) { printf("FAIL lobby new_game(8)\n"); return 1; }
+    const uint8_t zero8[8] = {0};
+    const char *joins1 = "[{\"seat\":0,\"name\":\"Alex\"}]";
+    unsigned char waiting[2048];
+    const int wn = fio_msg_encode(0 /* WAITING */, 0, 0xF001ULL, zero8, joins1, waiting, sizeof(waiting));
+    if (wn <= 0) { printf("FAIL lobby waiting encode: %d (msg_err=%d)\n", wn, fio_last_msg_error()); return 1; }
+
+    // Two joins land (seats 1, 2) — mechanically identical to today's join
+    // flow, just never auto-starting: still WAITING, still n_players=8.
+    unsigned char mb[1 << 16];
+    if (fio_msg_decode_packed(waiting, wn, mb, sizeof(mb)) <= 0) {
+        printf("FAIL lobby waiting decode: msg_err=%d\n", fio_last_msg_error()); return 1;
+    }
+    const char *joins3 = "[{\"seat\":0,\"name\":\"Alex\"},{\"seat\":1,\"name\":\"Sveta\"},"
+                        "{\"seat\":2,\"name\":\"Boris\"}]";
+    unsigned char waiting3[2048];
+    const int wn3 = fio_msg_encode(0, 2, 0xF001ULL, zero8, joins3, waiting3, sizeof(waiting3));
+    if (wn3 <= 0) { printf("FAIL lobby waiting3 encode: %d\n", wn3); return 1; }
+    if (fio_msg_decode_packed(waiting3, wn3, mb, sizeof(mb)) <= 0) {
+        printf("FAIL lobby waiting3 decode: msg_err=%d\n", fio_last_msg_error()); return 1;
+    }
+    if (mb[0] != 0 || mb[1] != 8) {
+        printf("FAIL lobby: expected WAITING/8 after 2 joins, got phase=%d n=%d\n", mb[0], mb[1]);
+        return 1;   // never auto-starts, whatever the join count
+    }
+
+    // Start: re-adopt is already resident (the decode above), so just reseat
+    // at the actual joined count (3) from the SAME locked seed, then seal LIVE.
+    if (fio_reseat_game(3) != FIO_EOK) { printf("FAIL lobby reseat(3)\n"); return 1; }
+    unsigned char live[2048];
+    const int ln = fio_msg_encode(2 /* LIVE */, 0, 0xF001ULL, zero8, joins3, live, sizeof(live));
+    if (ln <= 0) { printf("FAIL lobby live encode: %d (msg_err=%d)\n", ln, fio_last_msg_error()); return 1; }
+
+    // THE claim: the wire accepts a LIVE child whose n_players (3) differs
+    // from its WAITING parent's (8) — decode+replay (validation IS replay)
+    // succeeds standalone, exactly as any other envelope would.
+    if (fio_msg_decode_packed(live, ln, mb, sizeof(mb)) <= 0) {
+        printf("FAIL lobby live decode: msg_err=%d\n", fio_last_msg_error()); return 1;
+    }
+    if (mb[0] != 2 || mb[1] != 3) {
+        printf("FAIL lobby: expected LIVE/3 after start, got phase=%d n=%d\n", mb[0], mb[1]);
+        return 1;
+    }
+    // Someone (the first attacker on the freshly-dealt 3p game) can act.
+    if (fio_actor_mask() == 0) { printf("FAIL lobby: no seat can act after start\n"); return 1; }
+
+    printf("lobby v2 OK (WAITING/8 -> 3 joins, still WAITING/8 -> reseat(3) -> LIVE/3, wire accepted)\n");
+    return 0;
+}
+
 int main(void) {
     unsigned char seed[32];
     for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(i * 7 + 1);
@@ -391,6 +458,7 @@ int main(void) {
 
     if (replay_sweep() != 0) return 1;
     if (fmsg_check() != 0) return 1;
+    if (lobby_v2_reseat_check() != 0) return 1;
 
     printf("SMOKE OK\n");
     return 0;

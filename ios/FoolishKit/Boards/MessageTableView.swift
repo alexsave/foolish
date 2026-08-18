@@ -20,6 +20,12 @@ public struct MessageTableView: View {
     /// is over (the fool is decided) — any player, out or not, can deal the next
     /// one. Routes through the host's New game (§5.2), same as the chrome button.
     private let onNewGame: () -> Void
+    /// Retract a bubble already staged with the host (§10 undo). Undo alone can't
+    /// do this: rebuilding the base + replaying `pending` minus the last action is
+    /// a LOCAL replay, but the host (harness `staged`, or the real extension's
+    /// already-inserted input-field bubble) is a separate piece of state that only
+    /// the host can clear. Called when an undo empties `pending` entirely.
+    private let onUnstage: () -> Void
 
     @State private var selection: Set<String> = []
     @State private var toast: String?
@@ -27,6 +33,17 @@ public struct MessageTableView: View {
     @State private var battleFrames: [Int: CGRect] = [:]
     @State private var handFrame: CGRect = .zero
     @State private var dragCard: Card?
+    /// notes 33/34: the drag's live point in `boardSpace`, kept (FHandFan
+    /// already delivers it on every `onDragChanged`, previously discarded)
+    /// so the verb hint and the pass ghost-slot preview can resolve the SAME
+    /// drop target `onDragEnded` will use. nil whenever no drag is active.
+    @State private var dragPoint: CGPoint?
+    /// Round-5 finding 5: the dragged card's own LIVE visual centre in
+    /// `boardSpace`, as reported by FHandFan's `onDragCardMoved` on every
+    /// `onDragChanged` — used only to horizontally re-centre `dragHint` on the
+    /// card rather than the fingertip. nil whenever no drag is active (set and
+    /// cleared alongside `dragPoint`, in `onDragChanged`/`onDragEnded`).
+    @State private var dragCardCenter: CGPoint?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Shared card-flight namespace: a card keeps its identity moving hand→table.
     @Namespace private var cardNS
@@ -47,12 +64,64 @@ public struct MessageTableView: View {
     @State private var seatCountOverride: [Int: Int] = [:]
     @State private var deckCountOverride: Int?
     @State private var discardCountOverride: Int?
+    /// note 39: the board keeps its stage until whatever's animating (a
+    /// bout-end sequence, or an open-delta replay) visibly finishes — the
+    /// end screen only swaps in once this flips. Starts false; `.task` resets
+    /// it defensively in case this view ever survives a controller swap
+    /// (structurally it doesn't today — GameSurface always nils `controller`
+    /// before assigning a new one — but nothing here should rely on that).
+    @State private var showResults = false
+    /// note 17: a cover that's about to empty the defender's hand ends the
+    /// bout in the SAME kernel apply as the cover itself, so
+    /// `flyBoutEndToDiscard` never sees an intermediate "covered" table to
+    /// animate from — the card would just vanish straight to the discard
+    /// pile. Stashed by `playAt` right before `controller.apply`, consumed
+    /// (and always cleared) by the very next `flyBoutEndToDiscard` call.
+    private struct PendingCover {
+        let cards: [Card]
+        let battleRect: CGRect
+        let fromRects: [String: CGRect]   // card.identity -> hand rect AT PLAY TIME
+    }
+    @State private var pendingCover: PendingCover?
+    /// THE VEIL (round-4 notes 3 and 5). False until the board has handed its
+    /// pending animation over to `animator`; while false the board renders the
+    /// game as it was BEFORE that animation, not after.
+    ///
+    /// Why this exists at all: `.onChange(of: controller.view)` is where the
+    /// board pre-hides what is about to fly and freezes the counts — and
+    /// onChange runs AFTER body, i.e. one paint too late. So the board painted
+    /// once at the post-move state and only then jumped back to the pre-move
+    /// one to animate forward again. Every symptom of that is the same bug:
+    /// a cover flashing tilted before it lands, a picked-up card appearing in
+    /// the fan and then flying into the fan a second time ("double pickup
+    /// animation"), and an opponent's badge counting up, back down and up again
+    /// ("twitches as if it were making room for the deal card, but changed its
+    /// mind"). Comments in `freezeCounts` and `replayLastMoveOnOpen` claimed
+    /// their synchronous work landed before the first paint; structurally it
+    /// cannot.
+    ///
+    /// @State initialized at CONSTRUCTION is the fix, because that is the one
+    /// moment guaranteed to precede every paint. While it is false the board
+    /// derives the veil PURELY from the controller (`veiledCardIds`,
+    /// `veiledCounts`) — no mutation, so it is legal to do in `body` — and once
+    /// `flyBoutEndToDiscard` has pre-hidden and frozen for real, this flips and
+    /// `animator.hidden` + the count overrides take over unchanged. The handoff
+    /// is invisible because both sides name the same cards.
+    @State private var settled = false
+    /// My hand as it was the instant I played a move, captured SYNCHRONOUSLY in
+    /// `play` — before `controller.apply`, so before the view can publish. Any
+    /// card in my hand that is not in here is one this move just gave me
+    /// (a pickup's table cards, a bout-end refill), and it stays veiled until
+    /// the animator hides it for its flight. nil when no move of mine is
+    /// in flight. The live-play twin of the open-replay veil above.
+    @State private var handBeforeMyMove: Set<String>?
 
     public init(controller: MessageTurnController, onSend: @escaping (Data) async -> Void,
-                onNewGame: @escaping () -> Void = {}) {
+                onNewGame: @escaping () -> Void = {}, onUnstage: @escaping () -> Void = {}) {
         self.controller = controller
         self.onSend = onSend
         self.onNewGame = onNewGame
+        self.onUnstage = onUnstage
     }
 
     public var body: some View {
@@ -60,11 +129,34 @@ public struct MessageTableView: View {
             if let view = controller.view {
                 // Game over: the board gives way to the ranked results screen (web
                 // WinScreen parity) - finish order first-out down to the fool, with
-                // New game there.
-                if controller.isOver {
+                // New game there. Gated on `showResults` too (note 39): the board
+                // stays the stage until the last flight (a bout-end sequence, or an
+                // open-delta replay of someone else's final move) has visibly
+                // landed, so the end screen never just cuts in mid-animation.
+                if controller.isOver && showResults {
                     FGameOverList(rows: finishRows(view), onNewGame: onNewGame)
                 } else {
+                    // The card-motion spring is scoped to the LIVE board only (note
+                    // 18/40): it used to sit on this whole VStack, so the swap TO
+                    // this branch's FGameOverList animated implicitly too — the
+                    // WoodFill plank grew in under the spring, reading as the
+                    // background "zooming" (worse with more rows; invisible in 2p,
+                    // hence note 40). Attaching it here instead of on the root means
+                    // in-board changes (deck count, hand, seat badges) still animate,
+                    // but the board→results swap does not.
                     boardContent(view)
+                        .animation(FMotion.cardMotion(reduceMotion: reduceMotion), value: controller.view)
+                        // Round-4 note 2 ("the animation seems to replay when
+                        // the screen collapses") is NOT fixable from in here,
+                        // and it was worth finding that out before writing a
+                        // plausible-looking modifier that does nothing.
+                        // Stripping the ambient transaction on this board was
+                        // tried and screenshotted mid-collapse: no change,
+                        // because the reflow is not a SwiftUI animation of
+                        // ours. The host resizes the hosting controller's view
+                        // over the transition, and the board is simply laid out
+                        // afresh at each intermediate size. It belongs to
+                        // whoever owns the drawer — see ExtensionStage.
                 }
             } else {
                 ProgressView()
@@ -72,7 +164,6 @@ public struct MessageTableView: View {
         }
         .padding(.horizontal, 8).padding(.top, 14).padding(.bottom, 4)   // top margin so the ring isn't clipped in the compact drawer
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .animation(FMotion.cardMotion(reduceMotion: reduceMotion), value: controller.view)
         .overlay { FlyingCardsLayer(animator: animator) }
         .coordinateSpace(name: boardSpace)
         .onPreferenceChange(BattleFramesKey.self) { fr in
@@ -88,9 +179,26 @@ public struct MessageTableView: View {
         .fToast($toast, accent: true)
         .onChange(of: controller.rejectTick) { _ in
             Haptics.fire(.reject); toast = FStrings.t("ios.reject")
+            // A rejected move publishes NO view change, so the veil `play` put
+            // up a moment ago would never be taken down again: the counts would
+            // stay frozen at their pre-move values for the rest of the game and
+            // any card the move would have added stay invisible. Nothing
+            // happened, so give it all straight back.
+            handBeforeMyMove = nil
+            deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
         }
         .task {
+            AnimLog.say("board .task seat=\(controller.mySeat) ready=\(controller.ready)")
+            // note 39: defensive reset — see `showResults`'s doc.
+            showResults = false
             if !controller.ready { await controller.begin() }
+            // Backstop for the veil: a controller that was ALREADY ready when
+            // this board mounted publishes no view change, so the onChange that
+            // normally lifts the veil never fires and the board would sit at
+            // its pre-move state forever. Only safe when there is nothing to
+            // replay — when there is, that onChange is the very thing driving
+            // it, and lifting the veil here would be the flash we are avoiding.
+            if controller.openReplayEvents.isEmpty { settled = true }
             // Genesis where I can't act (I dealt but I'm not the first attacker):
             // stage the deal immediately so I can send it on. When I CAN act,
             // canStage is false until I play, so this is a no-op then.
@@ -98,16 +206,69 @@ public struct MessageTableView: View {
             #if DEBUG
             // FoolishHarness screenshotting only: auto-play the first legal move so
             // the auto-stage flow (move -> staged bubble) is visible without a tap.
+            // The auto-player must only make moves a HUMAN could make here.
+            // `controller.legal` is the raw kernel menu, which always offers
+            // GOOD — the owner's rule that an attacker cannot say good until
+            // the table is fully covered is a UI gate (FActionBar's `canDone`,
+            // via CardPlay.canSayGood), not a kernel one. Picking the first
+            // non-wait move off the raw menu therefore said good over uncovered
+            // attacks constantly, which no player can do, so an auto-run was
+            // exercising a game nobody can play.
             if ProcessInfo.processInfo.environment["HARNESS_AUTOMOVE"] != nil,
-               let m = controller.legal.first(where: { $0.type != .wait }) {
+               let view = controller.view,
+               let m = CardPlay.humanMoves(battles: view.battles, legal: controller.legal).first {
                 // Let the incoming replay (the OTHER player's last move flying
                 // deck/seat→table on open) finish and rest so it's watchable,
                 // THEN auto-play our move. Dev pacing only.
-                try? await Task.sleep(nanoseconds: 2_400_000_000)
+                let pace = Double(ProcessInfo.processInfo.environment["HARNESS_PACE"] ?? "") ?? 1
+                try? await Task.sleep(nanoseconds: UInt64(2.4 * pace * 1_000_000_000))
                 play(m)
             }
             #endif
         }
+    }
+
+    // MARK: the veil (round-4 notes 3/5) — see `settled`
+
+    /// The open-replay this board has NOT started yet, if any: the cards it will
+    /// move and the counts the board should show until it does. A pure function
+    /// of the controller, so `body` may read it on the very first paint — which
+    /// is the whole point, that being the paint the onChange path misses.
+    /// nil once `settled`, or when there is nothing to replay.
+    private var pendingOpen: (ids: Set<String>, counts: (deck: Int, discard: Int, hand: [Int: Int]))? {
+        guard !settled, let view = controller.view else { return nil }
+        let events = controller.openReplayEvents
+        guard !events.isEmpty else { return nil }
+        return (controller.openReplayTouchedCardIds, Self.preCounts(events, finalView: view))
+    }
+
+    /// Every card the board must render as not-yet-there: what is in flight
+    /// right now, plus what the veil is still holding back. THE set passed to
+    /// the battle grid and the hand fan, so "is this card on the table" has one
+    /// answer and the cover tilt can be read straight off it.
+    private var veiledCardIds: Set<String> {
+        var ids = animator.hidden
+        if let open = pendingOpen { ids.formUnion(open.ids) }
+        // Live play: cards this move just put in my hand, which have not been
+        // pre-hidden yet (that also happens an onChange late).
+        if let before = handBeforeMyMove, let hand = controller.view?.me?.hand {
+            ids.formUnion(Set(hand.map(\.identity)).subtracting(before))
+        }
+        return ids
+    }
+
+    /// A seat badge's displayed hand count: the per-step override once a
+    /// sequence is running, else the veil's pre-move value, else the truth.
+    private func shownHandCount(_ p: PlayerView) -> Int {
+        if let n = seatCountOverride[p.seat] { return n }
+        if let n = pendingOpen?.counts.hand[p.seat] { return n }
+        return p.handCount
+    }
+    private func shownDeckCount(_ view: GameView) -> Int {
+        deckCountOverride ?? pendingOpen?.counts.deck ?? view.deckCount
+    }
+    private func shownDiscardCount(_ view: GameView) -> Int {
+        discardCountOverride ?? pendingOpen?.counts.discard ?? view.discardCount
     }
 
     /// The live board, laid out like the web GameBoard: every piece is placed
@@ -119,6 +280,27 @@ public struct MessageTableView: View {
     /// move" label that ate layout) marks that I must open the bout.
     private func boardContent(_ view: GameView) -> some View {
         GeometryReader { geo in
+            // Round-5 M5b ("in the collapsed view, show only the top half of
+            // the cards"): reuse the SAME compact-drawer test `ringPoint`
+            // already applies (`size.height < 340`) rather than inventing a
+            // second threshold — this view is never told "you are the compact
+            // drawer" directly, it only ever sees its own compressed geometry,
+            // so anywhere that already reads geometry to detect compact is the
+            // one true source for it.
+            let compact = geo.size.height < 340
+            let myHand = view.me?.hand ?? []
+            // The width FHandFan itself actually lays out in: this reader's
+            // width minus `hand(_:)`'s own `.padding(.horizontal, FSpace.s)`.
+            let handWidth = max(0, geo.size.width - FSpace.s * 2)
+            // Round-5 M6: how much taller the hand got by splitting into two
+            // rows, so the self-role indicator and action bar — both floated a
+            // fixed distance above the hand — can lift by exactly that much
+            // instead of sitting on top of the second row. Comparing against
+            // an EMPTY hand's height (always exactly one row, whatever
+            // `compact` is) rather than a hard-coded second constant means
+            // this can never drift out of sync with `FHandFan.height` itself.
+            let handLift = max(0, FHandFan.height(cards: myHand, availableWidth: handWidth, topHalfOnly: compact)
+                                  - FHandFan.height(cards: [], availableWidth: handWidth, topHalfOnly: compact))
             ZStack {
                 // Battles — dead centre of the board (web: absolute, both axes).
                 battlesArea(view)
@@ -134,36 +316,80 @@ public struct MessageTableView: View {
 
                 // Deck top-left, discard top-right — pinned to the corners and OUT
                 // of the centred flow, so they never push the ring or battles.
-                FDeckWell(deckCount: deckCountOverride ?? view.deckCount, flipped: view.flipped,
+                FDeckWell(deckCount: shownDeckCount(view), flipped: view.flipped,
                           hasFlipped: view.hasFlipped, trumpSuit: view.trumpSuit)
-                    .offset(y: -30)   // snug into the top-left corner (the well has empty space above the stack)
+                    // FDeckWell now anchors its own content top-leading with a
+                    // small symmetric inset (note 14), so no per-call-site
+                    // compensation offset is needed here anymore.
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                FDiscardPile(count: discardCountOverride ?? view.discardCount)
-                    .offset(y: -16)   // snug into the top-right corner
+                // Note 10: the discard pile shares the draw deck's y-baseline —
+                // the centre of the deck's BOTTOM card (FDeckWell's fixed
+                // anchor, see its type doc) must land on the centre of the
+                // discard's own rotated cards. FDeckWell is pinned top-leading
+                // with an `FSpace.s` (8pt) inset and its bottom card's rotated
+                // footprint is 46pt tall, so that centre sits at 8 + 46/2 = 31pt
+                // from the board's top edge. FDiscardPile is an (unrotated) 78×68
+                // box pinned top-TRAILING with no inset of its own, so its own
+                // centre — where its rotated cards actually converge — sits at
+                // 68/2 = 34pt by default; -3 closes that gap. (This is UNRELATED
+                // to `TableView.swift`'s own "+16" on FDeckWell's `.position()`:
+                // that one compensates for centring FDeckWell's whole 92×108
+                // frame in the OFFLINE app board, a different layout mechanism
+                // than the corner-pinned `.frame(alignment:)` used here — neither
+                // touches the other.)
+                FDiscardPile(count: shownDiscardCount(view))
+                    .offset(y: -3)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 
-                // First-attacker sword: it's my open (empty table, I'm first
-                // attacker). Sits just above my hand - the web PlayerRing sword,
-                // replacing the old centred "your move" pill.
-                if firstAttackerMustOpen(view) {
-                    FSword(size: 30)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                        .padding(.bottom, 86)
-                }
+                // Self role indicator: the local seat never got a role mark before
+                // (note 3) — only opponents (FSeatBadge) did. Same spot the old
+                // first-attacker-only sword used: just above my hand.
+                selfRoleIndicator(view)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .padding(.bottom, 86 + handLift)
 
                 // Action buttons float bottom-right, above the hand (web absolute
                 // bottom:90/right:20). They only appear when a flag enables them.
                 actionBar(view)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                    .padding(.trailing, 4).padding(.bottom, 84)
+                    .padding(.trailing, 4).padding(.bottom, 84 + handLift)
 
                 // My hand hugs the bottom (web: bottom max(10, safe-area)); the
                 // outer .padding(12) is the safe-area inset that keeps it unclipped.
-                hand(view)
+                hand(view, topHalfOnly: compact)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+
+                // note 33 / round-4 note 4: the verb hint rides just ABOVE THE
+                // FINGER vertically, same as before. Round-5 finding 5 ("the
+                // little mid-drag text... should be centered horizontally on
+                // the card(s)") changes only the X axis: it used to track the
+                // fingertip on both axes, which read as unrelated to the drag
+                // once the card being dragged wasn't directly under the thumb
+                // any more (a wide fan, a card near an edge). `FHandFan` mirrors
+                // each card's own boardSpace frame the same way `dragPoint`
+                // itself is mirrored, and reports the dragged card's LIVE
+                // visual centre via `onDragCardMoved`; the pill's X follows
+                // THAT, falling back to the finger if a drag is somehow live
+                // without a reported card centre yet (first frame of a drag).
+                //
+                // `dragPoint` is in `boardSpace` (FHandFan publishes it there,
+                // and the drop targets are hit-tested in it), while `.position`
+                // is local to this GeometryReader - so subtract this reader's
+                // own origin in that space rather than assuming the two agree.
+                if let p = dragPoint {
+                    let origin = geo.frame(in: .named(boardSpace)).origin
+                    let hintX = (dragCardCenter?.x ?? p.x) - origin.x
+                    dragHint(view)
+                        .position(x: hintX, y: p.y - origin.y - Self.dragHintLift)
+                }
             }
         }
     }
+
+    /// How far above the fingertip the verb hint floats. Enough to clear a
+    /// thumb (a finger covers roughly 40pt of screen) without leaving the pill
+    /// somewhere the eye has to hunt for it.
+    static let dragHintLift: CGFloat = 52
 
     /// The finish order for the end screen: rank 1 = first player out (best),
     /// counting up to the fool last. `eliminationOrder` is first-out first and
@@ -187,18 +413,27 @@ public struct MessageTableView: View {
 
     private func name(_ seat: Int) -> String { controller.names[seat] ?? "Seat \(seat + 1)" }
 
-    private var attackersActive: Bool {
-        guard let v = controller.view else { return false }
-        return v.battles.contains { $0.defense == nil } || v.battles.isEmpty
+    /// Does this seat wear the sword? An attacker keeps it until THEY say good,
+    /// even once every attack on the table is covered — not "any uncovered
+    /// battle exists", which erased every sword the instant the table filled up.
+    ///
+    /// But on an EMPTY table only ONE seat can act at all: the seat that opens
+    /// the bout. Marking every non-defender then was just wrong — "when no cards
+    /// are on the table, and only the first attacker can move, ONLY the first
+    /// attacker gets the sword. Everyone else has no icon." Once the bout is
+    /// open, throw-ins make the others attackers for real, and they get one.
+    private func showsSword(seat: Int, isOut: Bool, _ view: GameView) -> Bool {
+        guard seat != view.defender, !isOut, !view.hasSaidGood(seat) else { return false }
+        return view.battles.isEmpty ? seat == view.firstAttacker : true
     }
 
     /// One opponent seat badge, publishing its frame in `boardSpace` so bout-end
     /// flights can target it. Placed on the ring by `ringPoint`.
     private func opponentSeat(_ p: PlayerView, _ view: GameView) -> some View {
         FSeatBadge(name: name(p.seat),
-                   handCount: seatCountOverride[p.seat] ?? p.handCount,
+                   handCount: shownHandCount(p),
                    isDefender: p.seat == view.defender,
-                   isAttacker: p.seat != view.defender && !p.isOut && attackersActive,
+                   isAttacker: showsSword(seat: p.seat, isOut: p.isOut, view),
                    saidGood: view.hasSaidGood(p.seat),
                    isOut: p.isOut)
             .background(GeometryReader { g in
@@ -218,15 +453,45 @@ public struct MessageTableView: View {
         // so it and the hand don't crowd the middle - but only a little, or the
         // top badge clips against the drawer's rounded top edge.
         let ry = size.height < 340 ? 0.38 : 0.35
-        let x = (-sin(rad) * 0.35 + 0.5) * size.width
+        // Wider than it is tall (0.42 vs 0.35). At eight players the battle
+        // grid wraps to four across and the side seats sat right on top of it -
+        // Oleg's and Dima's names were behind the cards. Pushing the ring out
+        // horizontally is the only room there is: the vertical radius is
+        // already fighting the hand and the drawer's rounded top edge, and a
+        // badge is ~70pt wide against a 375pt board, so 0.42 leaves ~22pt of
+        // margin at the widest seats and no more is available. This does not
+        // make eight players roomy - the owner's read, and it is right - it
+        // just stops the collision being the first thing you see.
+        let x = (-sin(rad) * 0.42 + 0.5) * size.width
         let y = ( cos(rad) * ry + 0.5) * size.height
         return CGPoint(x: x, y: y)
     }
 
-    /// I must open this bout: the table is empty, I'm the first attacker, and I
-    /// have a legal move. Drives the first-attacker sword (web PlayerRing).
-    private func firstAttackerMustOpen(_ view: GameView) -> Bool {
-        view.battles.isEmpty && view.firstAttacker == controller.mySeat && controller.iCanAct
+    /// My own role mark — shield/check/sword — mirroring FSeatBadge's roleRow for
+    /// opponents (note 3: the local player never saw their own role before, only
+    /// the special-cased first-attacker sword). Nothing shows once I'm out (the
+    /// game-over screen replaces the whole board, so "game over" is already
+    /// handled by the caller never reaching here then).
+    private func selfRoleIndicator(_ view: GameView) -> some View {
+        let mySeat = controller.mySeat
+        let isOut = view.me?.isOut ?? false
+        let isDefender = view.defender == mySeat
+        let saidGood = view.hasSaidGood(mySeat)
+        let isAttacker = showsSword(seat: mySeat, isOut: isOut, view)
+        return Group {
+            if !isOut {
+                // Round-5 m4 ("make sword and shield larger and darker") —
+                // sized up at this call site specifically (check 19->22,
+                // shield 22->26, sword 19->23); FSeatBadge's opponent-facing
+                // copies are another agent's file and were dictated the same
+                // target sizes separately.
+                HStack(spacing: FSpace.xs) {
+                    if saidGood { FCheck(size: 22) }
+                    if isDefender { FShield(size: 26) }
+                    else if isAttacker { FSword(size: 23) }
+                }
+            }
+        }
     }
 
     private func battlesArea(_ view: GameView) -> some View {
@@ -236,13 +501,78 @@ public struct MessageTableView: View {
                 // tells the player what they can already see (owner's call).
                 Color.clear
             } else {
+                // note 34: a pass preview shows the ghost slot instead of a cover
+                // highlight — the card that would get passed isn't being covered,
+                // so nothing on the table should look like a drop target for it.
+                let passPreview = isPassPreview(view)
                 FBattleGrid(battles: view.battles, trumpSuit: view.trumpSuit,
-                            coverable: highlightBattles(view),
+                            coverable: passPreview ? [] : highlightBattles(view),
                             onTapBattle: { idx in tapBattle(idx, view) },
-                            namespace: cardNS, hidden: animator.hidden)
+                            namespace: cardNS, hidden: veiledCardIds,
+                            showGhostSlot: passPreview)
             }
         }
-        .frame(maxWidth: .infinity)
+        // The verb hint is NOT attached here any more — round-4 note 4 moved it
+        // to follow the fingertip; see the `dragPoint` branch in boardContent.
+        .frame(maxWidth: .infinity)   // boardContent's call site adds maxHeight
+    }
+
+    /// The move a release right now would resolve to, if any — the SAME
+    /// `BoardDrop.target` + `CardPlay.resolve` math `onDragEnded` uses, shared
+    /// by the verb hint (note 33) and the pass ghost-slot preview (note 34) so
+    /// neither can disagree with what actually happens on release.
+    private func dragPreview(_ view: GameView) -> (target: PlayTarget, move: Move)? {
+        guard let card = dragCard, let point = dragPoint else { return nil }
+        let target = BoardDrop.target(at: point, battles: battleFrames, handFrame: handFrame)
+        guard target != .hand,
+              let move = CardPlay.resolve(cards: playCards(for: card, view), target: target,
+                                          isDefender: view.defender == controller.mySeat,
+                                          battles: view.battles, legal: controller.legal)
+        else { return nil }
+        return (target, move)
+    }
+
+    /// note 34: is the live drag currently previewing a PASS onto open table
+    /// space? Gates both the ghost slot and the suppression of the ordinary
+    /// per-battle cover highlight while it's showing.
+    private func isPassPreview(_ view: GameView) -> Bool {
+        guard let preview = dragPreview(view) else { return false }
+        return preview.target == .table && preview.move.type == .pass
+    }
+
+    /// note 33: what a release would do, localized — "Attack" / "Cover" /
+    /// "Pass". Nothing over the hand (that's a reorder, not a play) or for a
+    /// drop `CardPlay` can't resolve into a legal move.
+    private func dragHintText(_ view: GameView) -> String? {
+        guard let move = dragPreview(view)?.move else { return nil }
+        switch move.type {
+        case .attack: return FStrings.t("attack")
+        case .cover: return FStrings.t("cover")
+        case .pass: return FStrings.t("pass")
+        default: return nil
+        }
+    }
+
+    /// note 33: a small unobtrusive pill naming what release would do — web
+    /// DragShadow parity. Round-4 note 4: it now tracks the fingertip (see
+    /// boardContent), which is what "anchored to a fixed spot above the
+    /// battles" was traded against and lost — the fixed anchor was easy to
+    /// place but sat at the top of the screen while your hand was at the
+    /// bottom, so it read as unrelated to the drag.
+    @ViewBuilder
+    private func dragHint(_ view: GameView) -> some View {
+        if let text = dragHintText(view) {
+            Text(text)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(FColor.card)
+                .padding(.horizontal, FSpace.m)
+                .padding(.vertical, FSpace.xs)
+                .background(FColor.ink.opacity(0.85))
+                .clipShape(RoundedRectangle(cornerRadius: FRadius.chip))
+                .shadow(color: .black.opacity(0.35), radius: 6, y: 2)
+                .transition(.opacity)
+                .allowsHitTesting(false)
+        }
     }
 
     /// The cards a play would use right now: the whole selection if the dragged (or
@@ -258,68 +588,164 @@ public struct MessageTableView: View {
         return CardPlay.coverableBattles(cards: cards, battles: view.battles, legal: controller.legal)
     }
 
-    /// When a bout closes (the table clears), run the web's ORDERED bout-end
-    /// sequence: first the table clears (cards → discard when beaten, or → the taker
-    /// on a pickup), THEN each drawing player refills from the deck as its OWN step,
-    /// in the kernel's exact order (the LOG_DRAW stream: defender-if-empty, then from
-    /// the first attacker around). Every step waits for its frames to render, plays,
-    /// and is awaited - so nothing "just jumps" and draws never overlap. (This
-    /// mirrors evwire's cards_to_trash → one refill per player → defender_move.)
+    /// A bout closed (the table cleared): animate its end - the discard or pickup
+    /// sweep, then every refill - from the KERNEL's evwire for that move, the SAME
+    /// runEventStream the open-replay uses. No GameView diff decides what flies any
+    /// more (the old takerSeat / beaten / myNewCards / lastBoutDraws reconstruction
+    /// is gone): the kernel's events are the only source, live and on open alike.
+    /// The one thing still read off old/new is the TRIGGER (did battles go
+    /// non-empty -> empty) and which of MY cards to hide before they fly - both UI
+    /// timing, not animation derivation.
     private func flyBoutEndToDiscard(to newView: GameView?) {
         let prior = lastView
         lastView = newView
-        guard !reduceMotion, let new = newView else { return }
-        // First time the board appears with a delivered game: replay the last move.
-        if prior == nil { replayLastMoveOnOpen(new); return }
-        guard let old = prior, !old.battles.isEmpty, new.battles.isEmpty else { return }
+        AnimLog.say("viewChanged seat=\(controller.mySeat) prior=\(prior == nil ? "nil" : "\(prior!.battles.count)b") new=\(newView.map { "\($0.battles.count)b hand=\($0.me?.handCount ?? -1)" } ?? "nil") undo=\(controller.lastChangeWasUndo)")
+        // note 17: consumed and cleared on EVERY call. `playAt` sets it right
+        // before the apply whose resulting view change is the next one we see.
+        let cover = pendingCover
+        pendingCover = nil
+        // The live veil is consumed here too, and only here: every path below
+        // either pre-hides the same cards for real (synchronously, before this
+        // returns) or has nothing of mine to hide, so there is no paint between
+        // dropping it and the animator picking it up.
+        handBeforeMyMove = nil
+        guard let new = newView else { return }
+        // Once this returns, `animator.hidden` and the count overrides are the
+        // whole truth — so this is exactly where the board stops veiling.
+        defer { settled = true }
+        // …and any path that returns WITHOUT starting a sequence has to hand the
+        // counts back, because `play` now freezes them before every move, not
+        // just the ones that end a bout. Leaving them frozen after a plain
+        // attack would pin every badge at its pre-move value for good.
+        func releaseCounts() {
+            deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
+        }
+        if reduceMotion {
+            releaseCounts()
+            if new.isOver { showResults = true }   // note 39b
+            return
+        }
+        // note 10: undo can legally take battles -> empty; never a bout end.
+        if controller.lastChangeWasUndo { releaseCounts(); return }
+        // First appear with a delivered game: the open-replay (same event path).
+        if prior == nil { AnimLog.say("-> openReplay"); replayLastMoveOnOpen(new); return }
+        guard let old = prior, !old.battles.isEmpty, new.battles.isEmpty else {
+            // A normal placed card animates via matchedGeometry; a move that ended
+            // the game without clearing the table just settles to results.
+            releaseCounts()
+            if new.isOver { settleResults() }
+            return
+        }
 
-        let beaten = new.discardCount > old.discardCount
-        let oldBattles = old.battles
+        // note 17: a cover that ended the bout in the SAME apply still needs its
+        // landing flown first - the kernel jumped straight to a cleared table, so
+        // there is no rendered intermediate state for the discard sweep to carry it
+        // from. Its battle rect must have been part of the table we just cleared.
         let boutFrames = lastBattleFrames
+        var matchedCover: PendingCover?
+        if let pc = cover, boutFrames.values.contains(pc.battleRect) { matchedCover = pc }
+
+        // Pre-hide the cards about to land in MY hand so they fly from the deck
+        // rather than popping in. This is the ONE view diff that remains, and only
+        // to choose which of my cards to hide before the first paint - the events
+        // that DECIDE the animation need an async kernel call we cannot make
+        // synchronously here. Everything that actually flies is the kernel's.
         let oldHandIds = Set((old.me?.hand ?? []).map(\.identity))
-        let myNewCards = (new.me?.hand ?? []).filter { !oldHandIds.contains($0.identity) }
-        // The pickup taker (nil when beaten): the seat whose hand grew by the table.
-        let takerSeat: Int? = beaten ? nil
-            : new.players.first { p in p.handCount > (old.players.first { $0.seat == p.seat }?.handCount ?? 0) }?.seat
+        let myNewIds = Set((new.me?.hand ?? []).map(\.identity)).subtracting(oldHandIds)
+        if !myNewIds.isEmpty { animator.preHide(myNewIds) }
+        // …and freeze every count to the board BEFORE this move. `play` already
+        // did this for a move I made (which is the only way to be early enough
+        // — see `settled`); repeating it from `old` costs nothing and keeps the
+        // sequence correct on any view change that did not come through `play`.
+        freezeCounts(to: old)
 
-        // Freeze every displayed count to its PRE-refill value (set now, before the
-        // async steps) so a badge/deck/discard never jumps ahead of its flight.
-        for p in old.players where p.seat != controller.mySeat { seatCountOverride[p.seat] = p.handCount }
-        deckCountOverride = old.deckCount
-        discardCountOverride = old.discardCount
-
+        AnimLog.say("-> boutEnd preHide=\(myNewIds.count)")
         Task {
-            BoardAnimator.sequenceDepth += 1
-            defer {
+            if let pc = matchedCover {
+                BoardAnimator.sequenceDepth += 1
+                await playStep { self.pendingCoverLandingFlights(pc) }
                 BoardAnimator.sequenceDepth -= 1
-                seatCountOverride = [:]; deckCountOverride = nil; discardCountOverride = nil
             }
+            let events = await MessageKernel.shared.lastMoveEvents(viewer: controller.mySeat)
+            await runEventStream(events, finalView: new)
+        }
+    }
 
-            // STEP 1 — the table clears; its count bumps only AFTER the flight lands.
-            if beaten {
-                await playStep { self.discardFlights(oldBattles, boutFrames) }
-                discardCountOverride = new.discardCount
-            } else if let taker = takerSeat {
-                if taker == controller.mySeat {
-                    await playStep { self.pickupToHandFlights(oldBattles, boutFrames) }
-                } else {
-                    await playStep { self.pickupToBadgeFlights(oldBattles, boutFrames, seat: taker) }
-                    seatCountOverride[taker] = new.players.first { $0.seat == taker }?.handCount
-                }
-            }
+    /// Animate an ordered evwire stream (the kernel's events for ONE move) as
+    /// sequential flights, freezing each displayed count to that step's OWN board
+    /// (GameEvent.state) as its flight lands - so a count never jumps ahead of its
+    /// animation, and there is no backward count arithmetic to keep in sync. THE
+    /// one animation path, shared by the open-replay and the live bout-end, so
+    /// neither derives what-flies-where from a GameView diff. The caller pre-hides
+    /// the moved cards first (synchronously, before the first paint).
+    private func runEventStream(_ events: [GameEvent], finalView view: GameView) async {
+        let run = AnimLog.on ? AnimLog.nextRun() : 0
+        AnimLog.say("stream#\(run) begin n=\(events.count) [\(events.map { "\($0.kind.map(String.init(describing:)) ?? "?")@\($0.seat)x\($0.cards.count)" }.joined(separator: " "))] depth=\(BoardAnimator.sequenceDepth)")
+        guard !events.isEmpty else {
+            if view.isOver { settleResults() }
+            return
+        }
+        BoardAnimator.sequenceDepth += 1
+        defer {
+            BoardAnimator.sequenceDepth -= 1
+            deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
+            animator.clearPreHidden()
+        }
+        // The counts are ALREADY frozen to the pre-move board by the caller —
+        // synchronously, before this Task ever got to run (see `freezeCounts`).
+        // They used to be frozen right here, one `await` in, which is a paint or
+        // two too late: the board had already drawn every badge at its FINAL
+        // count, and then this yanked them back down to start the sequence. That
+        // is the twitch — "the other players' card display twitches briefly
+        // while our pickup animation plays, as if it was making room for the
+        // dealt card, but changed its mind."
+        //
+        // Now only the per-step advance happens here, each as its flight lands.
+        try? await Task.sleep(nanoseconds: 120_000_000)   // let the rects publish
 
-            // STEPS 2..N — each drawing player refills, in kernel order, one at a
-            // time. The player's count (and the deck) bump only after THAT draw lands.
-            guard let replay = await MessageKernel.shared.residentReplay() else { return }
-            for ev in Self.lastBoutDraws(replay) where ev.seat != (takerSeat ?? -1) {
-                if ev.seat == controller.mySeat {
-                    await playStep { self.myDrawFlights(myNewCards) }
-                } else {
-                    await playStep { self.oppDrawFlights(seat: ev.seat, count: ev.count) }
-                    seatCountOverride[ev.seat] = new.players.first { $0.seat == ev.seat }?.handCount
-                }
-                deckCountOverride = (deckCountOverride ?? old.deckCount) - ev.count
+        for ev in events {
+            await playStep {
+                let f = self.openReplayFlights(ev, view: view)
+                if let f { AnimLog.say("stream#\(run) step \(ev.kind.map(String.init(describing:)) ?? "?")@\(ev.seat) flights=\(f.count) [\(f.map(\.id).joined(separator: ","))]") }
+                return f
             }
+            if let s = ev.state {
+                deckCountOverride = s.deckCount
+                discardCountOverride = s.discardCount
+                for p in s.players where p.seat != controller.mySeat { seatCountOverride[p.seat] = p.handCount }
+            }
+        }
+        AnimLog.say("stream#\(run) end")
+        if view.isOver { settleResults() }
+    }
+
+    /// Freeze every displayed count to `v` — the board as it looked BEFORE the
+    /// move we are about to animate. Synchronous on purpose, and it must run
+    /// BEFORE `controller.apply` (`play` does), not from the onChange the view
+    /// change triggers: onChange fires after body, so a freeze there is already
+    /// one paint late and shows up as a badge that jumps to its final value,
+    /// snaps back, and then counts up again — the twitch.
+    ///
+    /// My own seat is deliberately left alone: my hand is the fan, not a badge,
+    /// and the cards it is about to gain are hidden by `animator.preHide`
+    /// instead, so the fan holds its final layout while the cards fly into it.
+    private func freezeCounts(to v: GameView) {
+        deckCountOverride = v.deckCount
+        discardCountOverride = v.discardCount
+        var counts: [Int: Int] = [:]
+        for p in v.players where p.seat != controller.mySeat { counts[p.seat] = p.handCount }
+        seatCountOverride = counts
+    }
+
+    /// note 39: hold the board on-screen a beat after whatever's animating
+    /// (a bout-end sequence, or an open-delta replay) has visibly finished,
+    /// THEN swap to the results screen. The only place `showResults` is ever
+    /// set true. A short guard against re-scheduling once it's already flipped.
+    private func settleResults() {
+        guard !showResults else { return }
+        Task {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            withAnimation(.easeOut) { showResults = true }
         }
     }
 
@@ -338,41 +764,18 @@ public struct MessageTableView: View {
 
     // MARK: bout-end flight builders (each returns nil until its frames are ready)
 
-    private func discardFlights(_ battles: [BattleView], _ frames: [Int: CGRect]) -> [Flight]? {
-        guard discardFrame != .zero else { return nil }
-        var f: [Flight] = []
-        for (i, b) in battles.enumerated() {
-            guard let rect = frames[i], rect != .zero else { continue }
-            f.append(Flight(id: "trash-\(b.attack.identity)", card: b.attack, from: rect, to: discardFrame))
-            if let d = b.defense {
-                f.append(Flight(id: "trash-\(d.identity)", card: d, from: rect.offsetBy(dx: 8, dy: 6), to: discardFrame))
+    /// note 17: the cover-that-ends-the-bout's own landing step — its cards
+    /// fly from their hand rects AT PLAY TIME (snapshotted before `apply`,
+    /// since the hand has already moved on by the time this plays) to the
+    /// battle they covered. A pure snapshot, so no retry: what was measured
+    /// is what there is.
+    private func pendingCoverLandingFlights(_ pc: PendingCover) -> [Flight]? {
+        pc.cards.enumerated().compactMap { i, c in
+            pc.fromRects[c.identity].map {
+                Flight(id: "coverland-\(c.identity)", card: c, from: $0,
+                      to: pc.battleRect.offsetBy(dx: CGFloat(i) * 8, dy: CGFloat(i) * 6))
             }
         }
-        return f
-    }
-
-    private func pickupToHandFlights(_ battles: [BattleView], _ frames: [Int: CGRect]) -> [Flight]? {
-        var pairs: [(card: Card, from: CGRect)] = []
-        for (i, b) in battles.enumerated() {
-            guard let rect = frames[i], rect != .zero else { continue }
-            pairs.append((b.attack, rect))
-            if let d = b.defense { pairs.append((d, rect.offsetBy(dx: 8, dy: 6))) }
-        }
-        guard pairs.allSatisfy({ handCardFrames[$0.card.identity] != nil }) else { return pairs.isEmpty ? [] : nil }
-        return pairs.compactMap { p in handCardFrames[p.card.identity].map { Flight(id: "pick-\(p.card.identity)", card: p.card, from: p.from, to: $0) } }
-    }
-
-    private func pickupToBadgeFlights(_ battles: [BattleView], _ frames: [Int: CGRect], seat: Int) -> [Flight]? {
-        guard let badge = seatFrames[seat], badge != .zero else { return nil }
-        var f: [Flight] = []
-        for (i, b) in battles.enumerated() {
-            guard let rect = frames[i], rect != .zero else { continue }
-            f.append(Flight(id: "opick-\(b.attack.identity)", card: b.attack, from: rect, to: badge))
-            if let d = b.defense {
-                f.append(Flight(id: "opick-\(d.identity)", card: d, from: rect.offsetBy(dx: 8, dy: 6), to: badge))
-            }
-        }
-        return f
     }
 
     private func myDrawFlights(_ cards: [Card]) -> [Flight]? {
@@ -381,76 +784,212 @@ public struct MessageTableView: View {
         return cards.compactMap { c in handCardFrames[c.identity].map { Flight(id: "draw-\(c.identity)", card: c, from: deckFrame, to: $0) } }
     }
 
-    private func oppDrawFlights(seat: Int, count: Int) -> [Flight]? {
-        guard let badge = seatFrames[seat], badge != .zero, deckFrame != .zero else { return nil }
-        return (0..<max(count, 1)).map { k in
-            Flight(id: "draw-\(seat)-\(k)", card: nil, from: deckFrame, to: badge.offsetBy(dx: CGFloat(k) * 3, dy: 0))
-        }
-    }
 
-    /// The last bout's refill draws in kernel order: LOG_DRAW (type 9) records after
-    /// the most recent discard/pickup, each one player's draw (seat + card count).
-    private static func lastBoutDraws(_ replay: DecodedReplay) -> [(seat: Int, count: Int)] {
-        let LOG_PICKUP = 4, LOG_DISCARD = 6, LOG_DRAW = 9
-        var start = 0
-        for i in stride(from: replay.logs.count - 1, through: 0, by: -1)
-        where replay.logs[i].type == LOG_DISCARD || replay.logs[i].type == LOG_PICKUP {
-            start = i + 1; break
-        }
-        return replay.logs[start...]
-            .filter { $0.type == LOG_DRAW }
-            .map { (seat: $0.seat, count: max($0.pairs.count, 1)) }
-    }
-
-    /// On opening a delivered bubble, replay the last card-placing move: fly the
-    /// card(s) it put on the table into their battle slots FROM THE PLAYER WHO
-    /// PLAYED THEM - the actor's seat badge (an opponent) or my hand (my own move)
-    /// - so the direction reflects who attacked, not a generic "from the top"
-    /// (which, in a 2p game, made every attack look like the opponent's). Reads the
-    /// last LOG_ATTACK/LOG_COVER (and its actor seat) from the packed replay stream.
-    private func replayLastMoveOnOpen(_ view: GameView) {
-        guard !reduceMotion, !controller.isOver else { return }
-        // Fresh genesis deal (no moves yet): fly the opening hand from the deck —
-        // the web's deal, one step through the same sequencer.
-        if view.battles.isEmpty {
-            if controller.isGenesis, let hand = view.me?.hand, !hand.isEmpty {
-                Task {
-                    BoardAnimator.sequenceDepth += 1
-                    defer { BoardAnimator.sequenceDepth -= 1 }
-                    await playStep { self.myDrawFlights(hand) }
-                }
+    /// Deck/discard/every-seat's hand count as of BEFORE the open-replay's
+    /// `events`, walked backward from the FINAL view's counts by undoing each
+    /// event's card movement. This freezes the on-screen counts to their pre-move
+    /// values before the sequence starts; every step then jumps forward to its
+    /// OWN board (GameEvent.state) as its flight lands, so this only sets the
+    /// starting frame, not the per-step values. Card COUNTS are all we need here
+    /// (real identities the events already carry): a deal/refill takes n out of
+    /// the deck into the acting seat; a discard adds to the pile; a pickup takes
+    /// the table into a hand; an attack/cover/pass puts a card onto the table.
+    private static func preCounts(_ events: [GameEvent], finalView: GameView)
+        -> (deck: Int, discard: Int, hand: [Int: Int]) {
+        var deck = finalView.deckCount, discard = finalView.discardCount
+        var hand = Dictionary(uniqueKeysWithValues: finalView.players.map { ($0.seat, $0.handCount) })
+        for ev in events.reversed() {
+            let n = ev.cards.count
+            switch ev.kind {
+            case .deal, .refill: deck += n; if let s = ev.actorSeat { hand[s, default: 0] -= n }
+            case .discard, .cardsToTrash: discard -= n
+            case .pickup: if let s = ev.actorSeat { hand[s, default: 0] -= n }
+            case .attackPass, .cover, .defenderMove: if let s = ev.actorSeat { hand[s, default: 0] += n }
+            default: break
             }
-            return
         }
-        Task {
-            BoardAnimator.sequenceDepth += 1
-            defer { BoardAnimator.sequenceDepth -= 1 }
-            // Let the battle slots render + publish their rects first.
-            try? await Task.sleep(nanoseconds: 120_000_000)
-            guard let replay = await MessageKernel.shared.residentReplay() else { return }
-            let LOG_ATTACK = 1, LOG_COVER = 2   // game.h LOG_* (packed step types)
-            guard let last = replay.logs.last(where: { $0.type == LOG_ATTACK || $0.type == LOG_COVER })
-            else { return }
-            // Where the card comes FROM: the actor's seat badge if it's someone
-            // else, my hand if it was me. Fall back to a downward slide only if
-            // that rect hasn't been measured yet.
-            let actorSource = last.seat == controller.mySeat ? handFrame : (seatFrames[last.seat] ?? .zero)
-            var flights: [Flight] = []
-            for card in last.pairs.map(\.primary) where !card.isHidden {
+        return (deck, discard, hand)
+    }
+
+    /// note 4: an approximate source rect for a pickup/discard flight replayed
+    /// on open — the pre-bout table itself is never rendered (the game is
+    /// already past it by the time we open), so there is no real per-battle
+    /// rect to fly from. Prefers the last REAL battle rects seen this session
+    /// (rare on a fresh open); otherwise a small rect at the board's visual
+    /// centre, between the deck/discard corners and the hand, so the flight
+    /// still reads as "from the table" rather than from nowhere. nil only
+    /// when even the hand hasn't rendered yet (poll again via playStep).
+    private func approximateTableCenter() -> CGRect? {
+        if !lastBattleFrames.isEmpty {
+            let rects = Array(lastBattleFrames.values)
+            let midX = rects.map(\.midX).reduce(0, +) / CGFloat(rects.count)
+            let midY = rects.map(\.midY).reduce(0, +) / CGFloat(rects.count)
+            return CGRect(x: midX - 25, y: midY - 35, width: 50, height: 70)
+        }
+        guard handFrame != .zero else { return nil }
+        let y = deckFrame != .zero ? (deckFrame.midY + handFrame.minY) / 2 : handFrame.minY - 140
+        return CGRect(x: handFrame.midX - 25, y: y - 35, width: 50, height: 70)
+    }
+
+    /// One open-replay event's flights, straight from the KERNEL's evwire stream
+    /// (a GameEvent). The event ALREADY carries viewer-correct cards - my own
+    /// draws/pickups as real identities, opponents' as nil (a back) - so unlike
+    /// the old diff path there is no reconstructed "my cards" argument, and no
+    /// case where my own cards silently go missing (the round-2 #9 bug). Returns
+    /// nil to ask `playStep` to retry (a needed frame isn't published yet), or a
+    /// (possibly empty) flight list. `view` is the FINAL board, for locating a
+    /// card still on the table.
+    private func openReplayFlights(_ ev: GameEvent, view: GameView) -> [Flight]? {
+        let mine = ev.seat == controller.mySeat
+        switch ev.kind {
+        case .attackPass, .defenderMove, .cover:
+            // A card placed on the table (hand -> its battle). Best-effort, no
+            // retry: a card already swept onward to a discard/pickup later in
+            // this same open is simply skipped (that event flies it).
+            let source = mine ? handFrame : (seatFrames[ev.seat] ?? .zero)
+            var out: [Flight] = []
+            for case let card? in ev.cards {
                 guard let idx = view.battles.firstIndex(where: { $0.attack == card || $0.defense == card }),
                       let rect = battleFrames[idx] else { continue }
-                let from = actorSource != .zero ? actorSource : rect.offsetBy(dx: 0, dy: -220)
-                flights.append(Flight(id: "open-\(card.identity)", card: card, from: from, to: rect))
+                let from = source != .zero ? source : rect.offsetBy(dx: 0, dy: -220)
+                out.append(Flight(id: "open-\(card.identity)-\(ev.type)", card: card, from: from, to: rect))
             }
-            guard !flights.isEmpty else { return }
-            await animator.play([flights])
+            return out
+
+        case .refill, .deal:
+            // Deck -> hand (mine, real cards) or a seat's badge (backs, by count).
+            if mine {
+                let cards = ev.cards.compactMap { $0 }
+                guard deckFrame != .zero, cards.allSatisfy({ handCardFrames[$0.identity] != nil })
+                else { return cards.isEmpty ? [] : nil }
+                return cards.compactMap { c in handCardFrames[c.identity].map {
+                    Flight(id: "opendraw-\(c.identity)", card: c, from: deckFrame, to: $0) } }
+            }
+            guard let badge = seatFrames[ev.seat], badge != .zero, deckFrame != .zero else { return nil }
+            let n = max(ev.cards.count, 1)
+            return (0..<n).map { k in
+                Flight(id: "opendraw-\(ev.seat)-\(n)-\(k)", card: nil, from: deckFrame,
+                      to: badge.offsetBy(dx: CGFloat(k) * 3, dy: 0)) }
+
+        case .pickup:
+            // Table -> hand (mine) or a seat's badge (theirs) - FACE UP either way.
+            // These are the cards that were lying face up on the table a moment
+            // ago; turning them into backs mid-flight because someone else is
+            // taking them is a lie the viewer can disprove by looking at the
+            // board they were just shown (the web plays them face up for the
+            // same reason). The kernel agrees: evwire masks DEAL/REFILL, never
+            // PICKUP, so `ev.cards` carries real identities to every viewer -
+            // this branch was throwing them away.
+            guard let center = approximateTableCenter() else { return nil }
+            let cards = ev.cards.compactMap { $0 }
+            if mine {
+                guard cards.allSatisfy({ handCardFrames[$0.identity] != nil })
+                else { return cards.isEmpty ? [] : nil }
+                return cards.compactMap { c in handCardFrames[c.identity].map {
+                    Flight(id: "openpick-\(c.identity)", card: c, from: center, to: $0) } }
+            }
+            guard let badge = seatFrames[ev.seat], badge != .zero else { return nil }
+            if cards.isEmpty {
+                // Only if the kernel really did withhold them (it doesn't today).
+                let n = max(ev.cards.count, 1)
+                return (0..<n).map { k in
+                    Flight(id: "openpick-\(ev.seat)-\(k)", card: nil, from: center,
+                          to: badge.offsetBy(dx: CGFloat(k) * 3, dy: 0)) }
+            }
+            return cards.enumerated().map { i, c in
+                Flight(id: "openpick-\(ev.seat)-\(c.identity)", card: c,
+                       from: center.offsetBy(dx: CGFloat(i) * 6, dy: CGFloat(i) * 4),
+                       to: badge.offsetBy(dx: CGFloat(i) * 3, dy: 0)) }
+
+        case .discard, .cardsToTrash:
+            // Table -> discard. Discard cards are public (the kernel does not mask
+            // them), so fly the real faces when we have them; fall back to backs by
+            // count. Source is the approximate table centre - live, that resolves to
+            // the just-cleared battles' centroid (see approximateTableCenter).
+            guard let center = approximateTableCenter(), discardFrame != .zero else { return nil }
+            let cards = ev.cards.compactMap { $0 }
+            if cards.isEmpty {
+                let n = max(ev.cards.count, 1)
+                return (0..<n).map { i in
+                    Flight(id: "opendiscard-\(ev.type)-\(i)", card: nil, from: center, to: discardFrame) }
+            }
+            return cards.enumerated().map { i, c in
+                Flight(id: "opendiscard-\(c.identity)", card: c,
+                       from: center.offsetBy(dx: CGFloat(i) * 6, dy: CGFloat(i) * 4), to: discardFrame) }
+
+        default:
+            return []   // out / flipped / magic-transition: no flight.
         }
     }
 
-    private func onDragChanged(_ card: Card) { dragCard = card }
+    /// On opening a delivered bubble, replay everything that happened since I
+    /// last looked (notes 4/9/38), as ORDERED sequential animator steps — one
+    /// per log entry, using the same `playStep`/`animator.play` machinery the
+    /// interactive bout-end sequence uses (so HARNESS_AUTOGAME's
+    /// `BoardAnimator.isSequencing` wait still covers it).
+    private func replayLastMoveOnOpen(_ view: GameView) {
+        AnimLog.say("openReplay events=\(controller.openReplayEvents.count) genesis=\(controller.isGenesis)")
+        // The whole open-replay is now the KERNEL's evwire for the last move
+        // (controller.openReplayEvents, resolved in begin()). A genesis deal's
+        // last move IS the deal, so the same stream drives it - no special case.
+        let events = controller.openReplayEvents
+        guard !events.isEmpty else {
+            // Nothing the kernel gave us to animate. One safety net: a genesis
+            // whose chain could not encode a v6 code (empty stream) still flies
+            // its opening hand, the web's deal.
+            if controller.isGenesis, let hand = view.me?.hand, !hand.isEmpty {
+                animator.preHide(Set(hand.map(\.identity)))
+                Task {
+                    BoardAnimator.sequenceDepth += 1
+                    defer { BoardAnimator.sequenceDepth -= 1; animator.clearPreHidden() }
+                    await playStep { self.myDrawFlights(hand) }
+                    if view.isOver { settleResults() }
+                }
+                return
+            }
+            if view.isOver { showResults = true }   // note 39c: nothing to animate
+            return
+        }
+
+        // notes 6/12: hand every real card this open moves - onto the table
+        // (attacks/covers/passes) OR into my hand (my own draws/pickups) - to
+        // the animator, so it keeps hiding them once `settled` drops the veil.
+        // These are the SAME ids `veiledCardIds` has been showing as absent
+        // since the first paint (`pendingOpen`), so the handoff is invisible;
+        // doing it only here is what used to leave one paint with the cover
+        // already landed and rotated - the "starts rotated, un-rotates,
+        // re-rotates" (note 6) and "all covers show landed at once, then
+        // animate one at a time" (note 12) bugs.
+        let touchedIds = controller.openReplayTouchedCardIds
+        if !touchedIds.isEmpty { animator.preHide(touchedIds) }
+
+        // …and the counts, likewise taking over from the veil's own
+        // `pendingOpen.counts`, which is this same walk-back (`preCounts`) done
+        // in `body` because there is no prior view on an open - this board IS
+        // the first paint.
+        let pre = Self.preCounts(events, finalView: view)
+        deckCountOverride = pre.deck
+        discardCountOverride = pre.discard
+        var counts: [Int: Int] = [:]
+        for (seat, c) in pre.hand where seat != controller.mySeat { counts[seat] = c }
+        seatCountOverride = counts
+
+        // The SAME animator the live bout-end uses - one path, the kernel's events.
+        Task { await runEventStream(events, finalView: view) }
+    }
+
+    /// notes 33/34: FHandFan already delivers the live boardSpace point on
+    /// every change — kept now (previously discarded at the call site) so the
+    /// verb hint / ghost-slot preview can resolve the same drop target live.
+    private func onDragChanged(_ card: Card, at point: CGPoint) {
+        dragCard = card
+        dragPoint = point
+    }
 
     private func onDragEnded(_ card: Card, at point: CGPoint, _ view: GameView) {
         dragCard = nil
+        dragPoint = nil
+        dragCardCenter = nil
         let target = BoardDrop.target(at: point, battles: battleFrames, handFrame: handFrame)
         if target == .hand { return }   // dropped back in the fan — cancel
         playAt(target, playCards(for: card, view), view)
@@ -466,24 +1005,37 @@ public struct MessageTableView: View {
             canAttack: acting && !defending && CardPlay.canAttack(cards, legal: controller.legal),
             canCover: acting && defending && CardPlay.canCover(cards, battles: view.battles, legal: controller.legal),
             canPass: acting && defending && CardPlay.canPass(cards, legal: controller.legal),
-            canPickup: acting && has(.pickup),
-            canDone: acting && CardPlay.canSayGood(battles: view.battles, legal: controller.legal),
+            // Selection-aware: with cards selected, the defender's Take and the
+            // attacker's Good must disappear — a stray tap on either while mid-
+            // selection would abandon the cards you'd picked (web parity TODO).
+            canPickup: acting && has(.pickup) && cards.isEmpty,
+            canDone: acting && CardPlay.canSayGood(battles: view.battles, legal: controller.legal) && cards.isEmpty,
             canUndo: controller.canSend,
             onAttack: { playAt(.table, cards, view) },
             onCover: { playCover(cards, view) },
             onPass: { playAt(.table, cards, view) },
             onPickup: { play(.pickup) },
             onDone: { play(.good) },
-            onUndo: { Task { await controller.undo(); await stageNow() } }
+            onUndo: { Task {
+                await controller.undo()
+                // Undo that empties `pending` leaves `stageNow()` a no-op (canStage
+                // goes false) — but the host still holds the PREVIOUSLY staged
+                // bubble/payload. Retract it explicitly instead of leaving it lit.
+                if controller.canStage { await stageNow() } else { onUnstage() }
+            } }
         )
     }
 
-    private func hand(_ view: GameView) -> some View {
+    /// - `topHalfOnly` (round-5 M5b): the compact drawer's own hand cards
+    ///   render only their top half — see `boardContent`'s `compact`.
+    private func hand(_ view: GameView, topHalfOnly: Bool) -> some View {
         FHandFan(cards: view.me?.hand ?? [], trumpSuit: view.trumpSuit,
                  selection: $selection, onTap: { toggle($0) },
-                 onDragChanged: { card, _ in onDragChanged(card) },
+                 onDragChanged: { card, point in onDragChanged(card, at: point) },
                  onDragEnded: { card, point in onDragEnded(card, at: point, view) },
-                 namespace: cardNS, hidden: animator.hidden)
+                 namespace: cardNS, hidden: veiledCardIds,
+                 topHalfOnly: topHalfOnly,
+                 onDragCardMoved: { center in dragCardCenter = center })
             .padding(.horizontal, FSpace.s)
     }
 
@@ -491,6 +1043,18 @@ public struct MessageTableView: View {
 
     private func play(_ move: Move) {
         selection.removeAll()
+        // The veil, live half (round-4 note 5). Both of these are the state as
+        // it is RIGHT NOW, captured before `apply` can publish a new view —
+        // which is the only moment early enough, since the onChange that would
+        // otherwise do it runs a paint after the board has already drawn the
+        // result. Without them a pickup drew its cards into the fan, then hid
+        // them and flew them into the fan again (the "double pickup animation"),
+        // and every opponent's badge jumped to its final count before counting
+        // there (the twitch).
+        if let view = controller.view {
+            handBeforeMyMove = Set((view.me?.hand ?? []).map(\.identity))
+            freezeCounts(to: view)
+        }
         Task { await controller.apply(move); await stageNow() }
     }
 
@@ -530,6 +1094,18 @@ public struct MessageTableView: View {
                                           battles: view.battles, legal: controller.legal) else {
             Haptics.fire(.reject); toast = FStrings.t("ios.reject"); return
         }
+        // note 17: a cover might end the bout in the SAME kernel apply as the
+        // cover itself (the defender's hand empties) — stash enough, BEFORE
+        // applying, for flyBoutEndToDiscard to synthesize the landing step it
+        // would otherwise have no rendered state to animate from.
+        if move.type == .cover, case .battle(let i) = target, i >= 0, i < view.battles.count,
+           let rect = battleFrames[i] ?? lastBattleFrames[i] {
+            pendingCover = PendingCover(
+                cards: cards, battleRect: rect,
+                fromRects: handCardFrames.filter { pair in cards.contains { $0.identity == pair.key } })
+        } else {
+            pendingCover = nil
+        }
         play(move)
     }
 
@@ -560,7 +1136,11 @@ struct FSword: View {
             func R(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat) -> CGRect {
                 CGRect(x: x * s, y: y * s, width: w * s, height: h * s)
             }
-            let gray = Color(hex: 0x3A3A3A)
+            // Round-5 m4 ("make sword and shield larger and darker"): darkened
+            // from 0x3A3A3A so the glyph reads at a glance on the wool instead
+            // of blending into it at the sizes it's actually drawn (m4's own
+            // complaint was "no legibility... at the size they are drawn").
+            let gray = Color(hex: 0x26262A)
 
             // Blade: a pointed spike from the tip (top) down to the guard.
             var blade = Path()
@@ -583,23 +1163,39 @@ struct FSword: View {
         }
         .frame(width: size, height: size)
         .rotationEffect(.degrees(45))   // point it up-and-to-the-right
-        .accessibilityLabel(Text("You attack first"))
+        // Round-5 m2: this was a hard-coded English literal while every visible
+        // string on the board goes through FStrings — a ru/ko VoiceOver user
+        // got an English board here even though the label was otherwise well
+        // chosen. The key already exists (en/ru/ko all carry it).
+        .accessibilityLabel(Text(FStrings.t("ios.a11y.attackfirst")))
     }
 }
 
-/// The defender shield — a hand-built heraldic shield (flat top, straight upper
-/// sides curving to a point at the bottom), filled flat LIGHT gray with a darker
-/// edge for definition on the wool. Marks the current defender.
+/// The defender shield — a hand-built heraldic shield, filled flat gray with a
+/// darker edge for definition on the wool. Marks the current defender.
+///
+/// Round-5 m4 ("make sword and shield larger and darker. Make the shield have
+/// like pointed upper corners to make it more obvious"): the old flat-top shape
+/// read as a plain gray plaque at 20pt with no legend (m4's own complaint).
+/// The top is now two points reaching UP with a shallow dip between them — a
+/// heraldic silhouette, not a rounded rectangle — and both fill and edge are
+/// darkened a step from before. The fill stays a distinctly LIGHTER gray than
+/// the sword's near-black (so the two glyphs don't collapse into "two dark
+/// blobs" at a glance); the edge alone goes almost as dark as the sword's fill,
+/// which is what actually reads as "darker" against the wool at 20pt.
 struct FShield: View {
     var size: CGFloat = 24
     var body: some View {
         Canvas { ctx, sz in
             let s = sz.width / 24
             func P(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x * s, y: y * s) }
-            let gray = Color(hex: 0xCACFD4), edge = Color(hex: 0x5E6368)
+            let gray = Color(hex: 0x878E96), edge = Color(hex: 0x2E3338)
             var shield = Path()
-            shield.move(to: P(4, 3.5))
-            shield.addLine(to: P(20, 3.5))
+            // Pointed upper corners (m4): left point up, a shallow dip at the
+            // top centre, right point up — then the unchanged sides/bottom.
+            shield.move(to: P(4, 2.6))
+            shield.addLine(to: P(12, 5.2))
+            shield.addLine(to: P(20, 2.6))
             shield.addLine(to: P(20, 11))
             shield.addQuadCurve(to: P(12, 21.5), control: P(20, 18))
             shield.addQuadCurve(to: P(4, 11), control: P(4, 18))
@@ -608,7 +1204,32 @@ struct FShield: View {
             ctx.stroke(shield, with: .color(edge), style: StrokeStyle(lineWidth: 1.1 * s, lineJoin: .round))
         }
         .frame(width: size, height: size)
-        .accessibilityLabel(Text("Defending"))
+        // Round-5 m2: was a hard-coded English literal (see FSword's).
+        .accessibilityLabel(Text(FStrings.t("ios.a11y.defending")))
+    }
+}
+
+/// The "said good" mark — a hand-built green check stroke on the same 24x24 grid
+/// as FSword/FShield. Hand-built for the same reason: SF Symbols (previously
+/// `checkmark.seal.fill`) are unreliable under ImageRenderer bubble snapshots.
+struct FCheck: View {
+    var size: CGFloat = 24
+    var body: some View {
+        Canvas { ctx, sz in
+            let s = sz.width / 24
+            func P(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x * s, y: y * s) }
+            let green = Color(hex: 0x2E9E4F)
+            var check = Path()
+            check.move(to: P(4.5, 12.5))
+            check.addLine(to: P(9.5, 18))
+            check.addLine(to: P(20, 5.5))
+            ctx.stroke(check, with: .color(green),
+                       style: StrokeStyle(lineWidth: 3 * s, lineCap: .round, lineJoin: .round))
+        }
+        .frame(width: size, height: size)
+        // Round-5 m2: was a hard-coded English literal (see FSword's). "good"
+        // (no `ios.` prefix) is the same key the action bar's Good button uses.
+        .accessibilityLabel(Text(FStrings.t("good")))
     }
 }
 
@@ -653,10 +1274,17 @@ struct FGameOverList: View {
                         HStack(spacing: 12) {
                             // The last place reads "Fool" in the rank column itself
                             // (no separate pill); everyone else is "#N".
+                            // Rank contrast on brown wood (note 41): 1st stays
+                            // brass, the fool is a brighter lifted red (the old
+                            // dark red/brown read as near-black on the plank), and
+                            // every other place is bone with a dark drop shadow —
+                            // the same bone+shadow treatment the board's own text
+                            // uses on wool.
                             Text(row.isFool ? FStrings.t("ios.fool") : "#\(row.place)")
                                 .font(.headline.weight(.heavy)).monospacedDigit()
-                                .foregroundStyle(row.isFool ? Color(hex: 0x8A1810)
-                                                 : (row.place == 1 ? Color(hex: 0x5A3B00) : .black.opacity(0.55)))
+                                .foregroundStyle(row.isFool ? Color(hex: 0xD84438)
+                                                 : (row.place == 1 ? FColor.win : FColor.card))
+                                .shadow(color: .black.opacity(0.5), radius: 1, y: 1)
                                 .frame(width: 56, alignment: .leading)
                             Text(row.name + (row.isYou ? " (\(FStrings.t("ios.you")))" : ""))
                                 .font(.body.weight(.semibold))
@@ -669,7 +1297,15 @@ struct FGameOverList: View {
                     }
                 }
             }
-            .frame(height: plankHeight)
+            // Round-5 B2: WoodFill is an aspect-FILL image, so height-only sizing
+            // let it propose a width that grew right along with the plank's
+            // height — more players -> taller plank -> WIDER plank, overflowing
+            // the surface and clipping the rank column first, then the names
+            // (worst case: 8 players, the plank goes blank but for a stray `)`).
+            // Pinning maxWidth alongside the height is the fix the finding names
+            // directly: the plank is now exactly the surface width at every
+            // count 2...8, and WoodFill fills THAT box instead of dictating it.
+            .frame(maxWidth: .infinity, height: plankHeight)
             .clipShape(Rectangle())
             .overlay(Rectangle().strokeBorder(.black.opacity(0.4), lineWidth: 1.5))
             .padding(.horizontal, 4)

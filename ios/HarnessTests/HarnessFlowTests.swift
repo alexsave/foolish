@@ -84,7 +84,7 @@ final class HarnessFlowTests: XCTestCase {
         // The board auto-stages -> model.stage. THE FIX under test: this must not
         // move viewKey, or `.id(model.viewKey)` tears the live board down.
         let keyBeforeStage = m.viewKey
-        m.stage(deal, seat: 0)
+        await m.stage(deal, seat: 0)
         XCTAssertNotNil(m.staged, "the blue Send arrow should light after a move stages")
         XCTAssertEqual(m.viewKey, keyBeforeStage,
                        "staging must not change viewKey (pre-fix it flipped startNewGame)")
@@ -114,13 +114,14 @@ final class HarnessFlowTests: XCTestCase {
     /// code and passes against the fix.)
     func test_stagingLeavesViewKeyStable() async throws {
         let m = HarnessModel(count: 2)
-        let key = m.viewKey                       // "0-0-true" on a fresh 2p launch
+        let key = m.viewKey                       // "0-0-0-true" on a fresh 2p launch (chat-scoping
+                                                   // added a currentChat segment — see HarnessModel)
 
         let g = MessageTurnController(genesisSeed: Data(repeating: 3, count: 32),
                                       players: 2, gameId: 0xCAFE, myNickname: "You")
         await g.begin()
         if g.iCanAct, let mv = g.legal.first(where: { $0.type != .wait }) { await g.apply(mv) }
-        m.stage(try await g.stagedPayload(), seat: 0)
+        await m.stage(try await g.stagedPayload(), seat: 0)
 
         XCTAssertEqual(m.viewKey, key, "a staged move must not alter the harness view identity")
         XCTAssertEqual(screen(startNewGame: m.startNewGame, payloadURL: m.payloadURL), .setup,
@@ -146,7 +147,7 @@ final class HarnessFlowTests: XCTestCase {
                                       players: 2, gameId: 0xABCD, myNickname: "You")
         await g.begin()
         if g.iCanAct, let mv = g.legal.first(where: { $0.type != .wait }) { await g.apply(mv) }
-        m2.stage(try await g.stagedPayload(), seat: 0)  // staged, NOT delivered
+        await m2.stage(try await g.stagedPayload(), seat: 0)  // staged, NOT delivered
         m2.become(1)
         XCTAssertTrue(m2.transcript.isEmpty, "nothing was delivered")
         XCTAssertNotEqual(screen(m2), .damaged, "an undelivered draft must not damage the switch")
@@ -210,7 +211,7 @@ final class HarnessFlowTests: XCTestCase {
             XCTAssertFalse(MessageGameStore.shared.pending(gameId: String(gid)).isEmpty,
                            "applying a move writes the pending ledger (what Rule R would replay)")
         }
-        m.stage(try await g.stagedPayload(), seat: 0)
+        await m.stage(try await g.stagedPayload(), seat: 0)
         m.deliver()
         XCTAssertTrue(MessageGameStore.shared.pending(gameId: String(gid)).isEmpty,
                       "delivering commits the move -> ledger cleared -> re-adopting our own chain can't supersede it")
@@ -239,7 +240,7 @@ final class HarnessFlowTests: XCTestCase {
 
             let keyBeforeStage = m.viewKey
             guard let next = try await stageTurn(parent: latest, seat: s) else { ended = true; break }
-            m.stage(next, seat: s)
+            await m.stage(next, seat: s)
             XCTAssertEqual(m.viewKey, keyBeforeStage, "turn \(turn): staging must not move viewKey")
             m.deliver()
             XCTAssertEqual(screen(m), .board, "turn \(turn): the delivered bubble must load")
@@ -249,5 +250,251 @@ final class HarnessFlowTests: XCTestCase {
         XCTAssertTrue(ended, "the game should reach game-over within the turn budget")
         XCTAssertGreaterThan(moves, 4, "a real game plays several turns before ending")
         XCTAssertGreaterThan(m.transcript.count, 4, "every delivered move is a transcript bubble")
+    }
+
+    // MARK: - chat scoping (the cross-chat leak fix)
+
+    /// The exact production bug, reproduced through the harness's own two-chat
+    /// model: cache a row for "You" in Chat A (mirroring what GameSurface.cache()
+    /// writes on adopt — done directly here since GameSurface is a SwiftUI view
+    /// the headless tests above don't render, per this file's MOCK note), then
+    /// switch to Chat B AS THE SAME PARTICIPANT. `switchChat` deliberately does
+    /// NOT rebind the store (see its doc) — Chat A and Chat B share one App
+    /// Group suite, exactly like one iPhone's two conversations — so this only
+    /// passes if `MessageGameStore`'s chatKey scoping, not device/store
+    /// isolation, is what is keeping Chat B blind to Chat A's game. Before the
+    /// fix (`games`/`record`/`seat` took no chatKey and the map was read
+    /// unscoped) this test fails: Chat B would see Chat A's row.
+    func test_chatSwitchDoesNotLeakACachedGameAcrossChats() throws {
+        let m = HarnessModel(count: 2)
+        let chatAKey = m.chatKey
+        MessageGameStore.shared.put(MessageGameRecord(
+            gameId: "leak-check", chatKey: chatAKey, mySeat: 0, nPlayers: 2, round: 1, turn: 3,
+            phase: 2, finished: false, names: [0: "You", 1: "Vera"],
+            payloadBase32: "AAAA", updatedAt: 100))
+        XCTAssertEqual(MessageGameStore.shared.games(chatKey: chatAKey).map(\.gameId), ["leak-check"])
+
+        m.switchChat(1)
+        XCTAssertNotEqual(m.chatKey, chatAKey, "each simulated chat has its own conversation identity")
+        XCTAssertTrue(MessageGameStore.shared.games(chatKey: m.chatKey).isEmpty,
+                      "Chat B must not see Chat A's cached game, even on the SAME device/store suite")
+        XCTAssertNil(MessageGameStore.shared.record(gameId: "leak-check", chatKey: m.chatKey),
+                     "and a direct gameId lookup must not cross chats either")
+
+        m.switchChat(0)
+        XCTAssertEqual(m.chatKey, chatAKey, "switching back restores Chat A's identity")
+        XCTAssertEqual(MessageGameStore.shared.record(gameId: "leak-check", chatKey: m.chatKey)?.mySeat, 0,
+                       "and Chat A's own row is unaffected by the round trip")
+    }
+    // MARK: - the drawer must never strand the screen
+
+    /// Dismiss the drawer, then touch anything that opens the game ("New", a
+    /// player swap, a chat switch): the screen used to end up with NO drawer
+    /// (dismissed) and NO compose bar (nominally expanded), and since the
+    /// compose bar's "+" is the only way back to a dismissed drawer, that was a
+    /// dead end. Owner: "after I fully collapsed the extension view so that it
+    /// wouldn't appear, it was just gone."
+    ///
+    /// `stageIsExpanded` is what the chrome hides the compose bar on, so
+    /// asserting it is false while dismissed IS asserting the compose bar is
+    /// reachable.
+    func testADismissedDrawerNeverHidesTheComposeBar() async throws {
+        let m = HarnessModel(count: 2)
+        m.dismissDrawer()
+        XCTAssertTrue(m.drawerDismissed)
+        XCTAssertFalse(m.stageIsExpanded, "a dismissed drawer is not an expanded one")
+
+        // Each of these sets presentation = .expanded; none may hide the "+".
+        m.newGame()
+        XCTAssertFalse(m.drawerDismissed, "New game brings the drawer back")
+
+        m.dismissDrawer()
+        m.become(1)
+        XCTAssertFalse(m.drawerDismissed, "swapping player brings the drawer back")
+
+        m.dismissDrawer()
+        m.switchChat(1)
+        XCTAssertFalse(m.drawerDismissed, "switching chat brings the drawer back")
+
+        // And the "+" itself still works from a plain dismissed state.
+        m.dismissDrawer()
+        XCTAssertFalse(m.stageIsExpanded, "compose bar stays reachable while dismissed")
+        m.reopenDrawer()
+        XCTAssertFalse(m.drawerDismissed)
+    }
+
+    /// Tapping a transcript bubble opens the extension ON THAT MESSAGE, like a
+    /// phone — and brings a dismissed drawer back, since with the drawer gone
+    /// the bubbles are the only thing left on screen to tap.
+    func testTappingABubbleSelectsItAndReopensTheDrawer() async throws {
+        let m = HarnessModel(count: 2)
+        try await kickoff(m, seed: 31, gameId: 0xB0B)
+        let first = try XCTUnwrap(m.transcript.first)
+
+        m.dismissDrawer()
+        m.openBubble(first)
+        XCTAssertFalse(m.drawerDismissed, "tapping a game bubble means show me the game")
+        XCTAssertEqual(m.payloadURL, first.url, "the tapped bubble is what the extension opens")
+        XCTAssertEqual(m.senderIsLocal, first.senderId == m.localId,
+                       "sender inference follows the SELECTED bubble, not the transcript tail")
+    }
+    /// The double animation, pinned at its source: sending my own move must not
+    /// rebuild the board. `viewKey` drives `.id(...)` on the live
+    /// MessagesRootView, so a change there tears the surface down and reloads it
+    /// from the bubble I just sent — whose last move is the one I just watched
+    /// myself play, which the open-replay then plays again.
+    func testDeliveringMyOwnMoveDoesNotRebuildTheBoard() async throws {
+        let m = HarnessModel(count: 2)
+        try await kickoff(m, seed: 41, gameId: 0xD00D)   // stages AND delivers
+        let afterFirst = m.viewKey
+
+        // Stage and send a second move as the same player: still the same board.
+        let parent = bytes(m.payloadURL)
+        XCTAssertFalse(parent.isEmpty)
+        if let next = try await stageTurn(parent: parent, seat: 0) {
+            let beforeStage = m.viewKey
+            await m.stage(next, seat: 0)
+            XCTAssertEqual(m.viewKey, beforeStage, "staging must not rebuild the board")
+            m.deliver()
+            XCTAssertEqual(m.viewKey, beforeStage,
+                           "and neither must sending — that reload is the second animation")
+        }
+        XCTAssertEqual(m.viewKey, afterFirst, "nothing about my own send rebuilds the board")
+
+        // But becoming another player (a real device receiving) DOES.
+        m.become(1)
+        XCTAssertNotEqual(m.viewKey, afterFirst, "another player is another board")
+    }
+    /// The group-chat lobby flow, at the host level: a lobby, three joiners,
+    /// then someone starts it. Every one of them must end up pointed at the
+    /// Round-4 note 2, the send half: "we send, and it STAYS in that same
+    /// POST-ANIMATED view."
+    ///
+    /// `deliver()` appends my bubble and clears the selection, so `payloadURL`
+    /// used to become the NEW message's URL. That changes `GameSurface.loadKey`,
+    /// which tears the live controller down and rebuilds it from the chain I
+    /// had just sent — and the rebuilt board replays the move I had just
+    /// watched myself play. The real extension already refuses this
+    /// (StagedBubbleRouting.lastSentPayload); the harness had no equivalent, and
+    /// the auto-game hid it by switching player immediately after delivering.
+    ///
+    /// The assertion is deliberately about the URL and not about the board: if
+    /// the URL is stable the surface is never reloaded, so there is no second
+    /// board to replay anything.
+    func testSendingMyOwnMoveDoesNotReloadTheBoard() async throws {
+        let k = MessageKernel.shared
+        let m = HarnessModel(count: 2)
+        try await k.newGame(seed: Data(repeating: 31, count: 32), players: 2)
+        let joins = [MessageJoin(seat: 0, name: "Alex"), MessageJoin(seat: 1, name: "Vera")]
+        let first = try await k.seal(phase: 2, lastActorSeat: 0, gameId: 9001,
+                                     parent8: Data(repeating: 0, count: 8), joins: joins)
+        await m.stage(first, seat: 0)
+        m.deliver()
+        m.become(1)                       // Vera opens it — this IS a real reload
+        let opened = m.payloadURL
+        XCTAssertEqual(opened, MessageEnvelope.link(payload: first))
+
+        // Vera plays and stages. Staging must not move the URL either.
+        let env = try await MessageEnvelope.decode(payload: first, viewer: -1)
+        _ = try await k.decode(payload: first, viewer: -1)
+        let mine = try await k.seal(phase: 2, lastActorSeat: 1, gameId: 9001,
+                                    parent8: MessageTurnController.firstEight(hex: env.digest),
+                                    joins: joins)
+        await m.stage(mine, seat: 1)
+        XCTAssertEqual(m.payloadURL, opened, "staging must not reload the board")
+
+        // …and pressing Send must not either. This is the one that was broken.
+        m.deliver()
+        XCTAssertEqual(m.payloadURL, opened,
+                       "sending my own move must not reload the board and replay it")
+    }
+
+    /// The other half of the same rule, so the fix cannot become "never reload
+    /// anything": a bubble from SOMEONE ELSE is a genuine new chain and must
+    /// reload. Otherwise the board would never show an opponent's move at all.
+    func testAnIncomingBubbleFromAnotherPlayerStillReloads() async throws {
+        let k = MessageKernel.shared
+        let m = HarnessModel(count: 2)
+        try await k.newGame(seed: Data(repeating: 41, count: 32), players: 2)
+        let joins = [MessageJoin(seat: 0, name: "Alex"), MessageJoin(seat: 1, name: "Vera")]
+        let first = try await k.seal(phase: 2, lastActorSeat: 0, gameId: 9002,
+                                     parent8: Data(repeating: 0, count: 8), joins: joins)
+        await m.stage(first, seat: 0)
+        m.deliver()
+        let afterMine = m.payloadURL
+
+        // Vera replies from her own device; Alex must be pointed at her bubble.
+        m.become(1)
+        let env = try await MessageEnvelope.decode(payload: first, viewer: -1)
+        _ = try await k.decode(payload: first, viewer: -1)
+        let hers = try await k.seal(phase: 2, lastActorSeat: 1, gameId: 9002,
+                                    parent8: MessageTurnController.firstEight(hex: env.digest),
+                                    joins: joins)
+        await m.stage(hers, seat: 1)
+        m.deliver()
+        m.become(0)
+        XCTAssertNotEqual(m.payloadURL, afterMine, "someone else's move is a real reload")
+        XCTAssertEqual(m.payloadURL, MessageEnvelope.link(payload: hers))
+    }
+
+    /// NEWEST bubble when they open the extension — the owner's screenshot had
+    /// Boris looking at a three-name lobby while the thread's last bubble was a
+    /// started five-player game ("there is a game currently in play, with the
+    /// current player in it, yet the extension is stuck on the lobby").
+    ///
+    /// This is the HOST half of that: what `payloadURL` hands the surface. It
+    /// does not (cannot) test the surface's own state — but if this ever fails,
+    /// no amount of correctness inside the surface can save it.
+    func testEveryPlayerOpensTheNewestBubbleAfterAGameStarts() async throws {
+        let k = MessageKernel.shared
+        let m = HarnessModel(count: 8)
+        let gid: UInt64 = 7788
+        let seed = Data(repeating: 77, count: 32)
+
+        // Alex creates the lobby at the group's capacity and sends it.
+        try await k.newGame(seed: seed, players: 8)
+        var joins = [MessageJoin(seat: 0, name: "Alex")]
+        let lobby0 = try await k.seal(phase: 0, lastActorSeat: 0, gameId: gid,
+                                      parent8: Data(repeating: 0, count: 8), joins: joins)
+        await m.stage(lobby0, seat: 0)
+        m.deliver()
+
+        // Vera and Boris each join off the newest bubble, exactly as the lobby
+        // screen does: re-adopt it, append a seat, reseal WAITING.
+        var newest = lobby0
+        for (seat, name) in [(1, "Vera"), (2, "Boris")] {
+            m.become(seat)
+            XCTAssertEqual(m.payloadURL, MessageEnvelope.link(payload: newest),
+                           "\(name) must open the newest bubble")
+            let env = try await MessageEnvelope.decode(payload: newest, viewer: -1)
+            XCTAssertEqual(env.phase, 0, "\(name) is joining a lobby")
+            _ = try await k.decode(payload: newest, viewer: -1)
+            joins.append(MessageJoin(seat: seat, name: name))
+            newest = try await k.seal(phase: 0, lastActorSeat: seat, gameId: gid,
+                                      parent8: MessageTurnController.firstEight(hex: env.digest),
+                                      joins: joins)
+            await m.stage(newest, seat: seat)
+            m.deliver()
+        }
+
+        // Dima joins and STARTS it — the thread is now mid-game.
+        m.become(3)
+        let lobbyEnv = try await MessageEnvelope.decode(payload: newest, viewer: -1)
+        joins.append(MessageJoin(seat: 3, name: "Dima"))
+        let live = try await k.startFromLobby(
+            lobbyPayload: newest, gameId: gid, actingSeat: 3,
+            parent8: MessageTurnController.firstEight(hex: lobbyEnv.digest), joins: joins)
+        await m.stage(live, seat: 3)
+        m.deliver()
+
+        // Boris comes back. The newest bubble is the started game, and that is
+        // what his extension must be handed — not the lobby he last saw.
+        m.become(2)
+        XCTAssertEqual(m.payloadURL, MessageEnvelope.link(payload: live),
+                       "Boris must open the STARTED game, not the lobby he last looked at")
+        XCTAssertFalse(m.startNewGame, "and certainly not the New game screen")
+        let opened = try await MessageEnvelope.decode(payload: bytes(m.payloadURL), viewer: -1)
+        XCTAssertEqual(opened.phase, 2, "the bubble he opens is LIVE")
+        XCTAssertEqual(opened.nPlayers, 4, "dealt at the joined count")
     }
 }
