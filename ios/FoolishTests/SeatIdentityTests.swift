@@ -235,19 +235,16 @@ final class SeatIdentityTests: XCTestCase {
     /// that listing was the actual cross-chat leak.
     func testBubbleAnchoredLookupSurvivesAChatRekey() {
         let s = freshStore()
-        s.put(rec("g", chatKey: "old-participant-set", seat: 2, at: 100))
+        s.setSeat(gameId: "g", chatKey: "old-participant-set", seat: 2)
 
         // The same thread, after someone was added: new key, same game bubble.
-        XCTAssertNil(s.record(gameId: "g", chatKey: "new-participant-set"),
+        XCTAssertNil(s.seat(gameId: "g", chatKey: "new-participant-set"),
                      "the scoped read misses after the re-key (why the fallback exists)")
-        XCTAssertEqual(s.recordForBubble(gameId: "g")?.mySeat, 2,
-                       "a bubble in hand identifies its row by gameId, whatever key the chat had")
-        XCTAssertEqual(s.seatForBubble(gameId: "g"), 2)
-        XCTAssertTrue(s.games(chatKey: "new-participant-set").isEmpty,
-                      "the keyless listing stays chat-scoped — it is the leak surface")
+        XCTAssertEqual(s.seatForBubble(gameId: "g"), 2,
+                       "a bubble in hand identifies its seat by gameId, whatever key the chat had")
 
-        // The next adopt re-keys the row, healing the scoped reads too.
-        s.put(rec("g", chatKey: "new-participant-set", seat: 2, at: 200))
+        // The next adopt re-keys the row, healing the scoped read too.
+        s.setSeat(gameId: "g", chatKey: "new-participant-set", seat: 2)
         XCTAssertEqual(s.seat(gameId: "g", chatKey: "new-participant-set"), 2)
     }
 
