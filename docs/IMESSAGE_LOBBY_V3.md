@@ -177,3 +177,51 @@ that started without them; serverless, nobody can know a join is "in flight".
 Round-5 M9's authorship gate (the newest bubble's sender cannot Start while
 the lobby has room) already narrows that window; the full answer would need a
 transport with ordering, which iMessage is not.
+
+## The rest of the fork/identity family (hardened alongside rule 3)
+
+Auditing every way two chains can tie — and every way a device resolves "who
+am I" without a trustworthy cache — surfaced three more members of the same
+family. All three are closed in the Swift layer (the kernel needs nothing
+beyond rule 3):
+
+- **The 2-player inference in a group chat** (`SeatIdentity.resolve`, now
+  DM-gated). S1's "2p and I didn't send it ⇒ I'm the other seat" is sound
+  only in a DM, where exactly two humans exist. In a group chat a 2-player
+  game's bubble — like the deadlocked thread's own "Vera started the game" —
+  can be tapped by ANY member; a cache-less bystander was one tap from being
+  silently seated as the second player, that player's hand face-up and its
+  moves playable. Groups now fall through to ambiguous (Release: the public
+  spectator board). A group-chat 2p game still resolves fine: both players
+  claimed lobby seats, so the cache answers.
+
+- **Ghost seats after a claim race** (`SeatIdentity.cacheDisownedByJoins`).
+  Two people claim the same seat off the same stale lobby bubble; one chain
+  wins; the loser's cache still says "I am seat s" and the board path used to
+  trust it blindly — seating them on the winner's hand. The cached seat now
+  counts only if the chain's own roster lists it under the name this device
+  recorded at claim time. Disowned on a board ⇒ treated as no cache
+  (spectator, never someone else's hand); disowned in a lobby ⇒ the Join
+  button comes back, so the loser re-claims the next free seat — §5.2's
+  original "the loser's device re-claims on next open", finally implemented.
+  Same-nickname collisions defeat the check; accepted, §6.3's trust level.
+
+- **ChatKey churn orphaning the cache** (`MessageGameStore.recordForBubble`).
+  ChatKey is the sorted participant-UUID set, so adding/removing a group
+  member re-keys the conversation mid-game — after which every scoped read
+  missed, seated players degraded to spectators, and Rule P lost its cached
+  side. Lookups anchored to a bubble IN HAND now fall back to the row by the
+  bubble's own gameId (a random u64 minted at creation — proof enough of
+  which game it is); the next adopt re-keys the row. The no-bubble listing
+  `games(chatKey:)` — the surface of the original cross-chat leak — stays
+  strictly scoped.
+
+Still open, by design: rule 3 sits below turn, so a move made on a LOSING
+fork during the convergence window promotes that fork permanently (real
+progress must never be clobbered by a wider turn-0 restart). Adopt-on-arrival
+shrinks that window to roughly one delivery latency; a residual sliver
+remains where a player's already-staged bubble from the losing fork is sent
+after the fuller chain arrived and its Rule R rebase was refused — Messages
+offers no API to withdraw an inserted bubble (§17.2), so that send re-forks
+the game, converging everyone onto the smaller roster rather than
+deadlocking. Serverless has no fix for that; it needs transport ordering.

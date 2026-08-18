@@ -329,10 +329,16 @@ Rule S1: on opening a bubble,
   if selectedMessage.senderParticipantIdentifier
      == conversation.localParticipantIdentifier
   then mySeat = envelope.last_actor_seat        // exact, any N
-  else if n_players == 2
-  then mySeat = 1 - envelope.last_actor_seat    // exact for 2p
-  else fall through to 6.3                      // N>=3, cache lost, not last actor
+  else if n_players == 2 AND the chat is a DM
+  then mySeat = 1 - envelope.last_actor_seat    // exact ONLY in a DM: two humans total
+  else fall through to 6.3                      // cache lost, no exact signal
 ```
+
+The DM gate on the 2-player branch is load-bearing: in a GROUP chat a
+2-player game's bubble can be tapped by any member, and without the gate a
+cache-less bystander was silently seated as "the other player" — that seat's
+hand face-up, its moves playable. A group-chat 2p game resolves through the
+cache (both players claimed seats in the lobby) or falls to 6.3.
 
 ### 6.3 Tertiary: nickname recovery (N≥3 after reinstall)
 

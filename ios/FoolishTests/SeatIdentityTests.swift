@@ -12,38 +12,76 @@ final class SeatIdentityTests: XCTestCase {
         // Even when I sent the bubble (S1 would say seat 3), a cached seat is the
         // authoritative §6.1 answer — the one thing a fresh bubble can't recover.
         let r = SeatIdentity.resolve(cachedSeat: 1, senderIsLocal: true,
-                                     nPlayers: 4, lastActorSeat: 3)
+                                     nPlayers: 4, lastActorSeat: 3, chatIsDM: false)
         XCTAssertEqual(r, .known(1))
     }
 
     func testSenderInferenceIsExactForAnyN() {
         // §6.2 S1: no cache, but THIS device sent the tapped bubble ⇒ I am its
-        // last actor, exact regardless of player count.
+        // last actor, exact regardless of player count or chat shape.
         XCTAssertEqual(SeatIdentity.resolve(cachedSeat: nil, senderIsLocal: true,
-                                            nPlayers: 5, lastActorSeat: 2), .known(2))
+                                            nPlayers: 5, lastActorSeat: 2, chatIsDM: false), .known(2))
     }
 
-    func testTwoPlayerInfersTheOtherSeat() {
-        // §6.2 S1: 2p, I did NOT send it ⇒ I must be the other of two seats.
+    func testTwoPlayerInfersTheOtherSeatInADM() {
+        // §6.2 S1: DM 2p, I did NOT send it ⇒ I must be the other of two seats —
+        // sound ONLY because a DM has exactly two humans in it.
         XCTAssertEqual(SeatIdentity.resolve(cachedSeat: nil, senderIsLocal: false,
-                                            nPlayers: 2, lastActorSeat: 0), .known(1))
+                                            nPlayers: 2, lastActorSeat: 0, chatIsDM: true), .known(1))
         XCTAssertEqual(SeatIdentity.resolve(cachedSeat: nil, senderIsLocal: false,
-                                            nPlayers: 2, lastActorSeat: 1), .known(0))
+                                            nPlayers: 2, lastActorSeat: 1, chatIsDM: true), .known(0))
+    }
+
+    func testTwoPlayerInferenceIsRefusedInAGroupChat() {
+        // The deadlocked-thread hardening: a 2-player game's bubble in a GROUP
+        // chat can be tapped by any member — a bystander with no cache must NOT
+        // be silently seated as "the other player" (that shows them that
+        // player's hand and lets them move for them). Ambiguous instead, which
+        // Release renders as the public spectator board.
+        XCTAssertEqual(SeatIdentity.resolve(cachedSeat: nil, senderIsLocal: false,
+                                            nPlayers: 2, lastActorSeat: 0, chatIsDM: false), .ambiguous)
     }
 
     func testThreePlusWithoutCacheOrSenderIsAmbiguous() {
         // §6.3: N≥3, no cache, not the last actor — the only honest answer is to
         // ask (the nickname picker), NOT to guess a seat.
         XCTAssertEqual(SeatIdentity.resolve(cachedSeat: nil, senderIsLocal: false,
-                                            nPlayers: 4, lastActorSeat: 2), .ambiguous)
+                                            nPlayers: 4, lastActorSeat: 2, chatIsDM: false), .ambiguous)
     }
 
     func testStaleOutOfRangeCacheIsIgnoredNotTrusted() {
         // A cache from a different (bigger) game must never seat me out of range;
         // fall through to the live signals instead of returning .known(7).
         let r = SeatIdentity.resolve(cachedSeat: 7, senderIsLocal: false,
-                                     nPlayers: 2, lastActorSeat: 0)
-        XCTAssertEqual(r, .known(1), "out-of-range cache ignored, 2p inference used")
+                                     nPlayers: 2, lastActorSeat: 0, chatIsDM: true)
+        XCTAssertEqual(r, .known(1), "out-of-range cache ignored, DM 2p inference used")
+    }
+
+    // MARK: - the ghost-seat guard (a lost seat-claim race must not seat me)
+
+    /// Two people claimed seat 2 off the same stale lobby bubble; this device's
+    /// claim lost, so the canonical chain lists the OTHER person at seat 2.
+    /// Trusting the cache would put their hand face-up on my screen.
+    func testCacheDisownedWhenTheChainNamesSomeoneElseAtMySeat() {
+        let joins = [MessageJoin(seat: 0, name: "Alex"), MessageJoin(seat: 1, name: "Sveta"),
+                     MessageJoin(seat: 2, name: "Dima")]          // Dima won the race for 2
+        XCTAssertTrue(SeatIdentity.cacheDisownedByJoins(cachedSeat: 2, recordedName: "Boris",
+                                                        joins: joins),
+                      "the chain says seat 2 is Dima; my row says I claimed it as Boris — not my seat")
+    }
+
+    func testCacheConfirmedWhenNamesAgreeOrEitherSideIsSilent() {
+        let joins = [MessageJoin(seat: 0, name: "Alex"), MessageJoin(seat: 2, name: "Boris")]
+        XCTAssertFalse(SeatIdentity.cacheDisownedByJoins(cachedSeat: 2, recordedName: "Boris",
+                                                         joins: joins), "names agree — my seat")
+        XCTAssertFalse(SeatIdentity.cacheDisownedByJoins(cachedSeat: 1, recordedName: "Boris",
+                                                         joins: joins),
+                       "no join at my seat — nothing disowns it (range checks still apply)")
+        XCTAssertFalse(SeatIdentity.cacheDisownedByJoins(cachedSeat: 2, recordedName: nil,
+                                                         joins: joins),
+                       "no recorded name to compare — stay permissive")
+        XCTAssertFalse(SeatIdentity.cacheDisownedByJoins(cachedSeat: nil, recordedName: "Boris",
+                                                         joins: joins), "no cache, nothing to disown")
     }
 
     // MARK: - §6 resolution, gated for a lobby bubble (note 14, HARNESS_NOTES_R2)
@@ -55,7 +93,8 @@ final class SeatIdentityTests: XCTestCase {
     func testCachedSeatAbsentFromJoinsIsNotJoined() {
         let staleJoins = [MessageJoin(seat: 0, name: "Alex")]   // seat 1 (me) not in here yet
         let r = SeatIdentity.resolveInLobby(cachedSeat: 1, senderIsLocal: false,
-                                            nPlayers: 8, lastActorSeat: 0, joins: staleJoins)
+                                            nPlayers: 8, lastActorSeat: 0, joins: staleJoins,
+                                            chatIsDM: false)
         XCTAssertNil(r, "a cached seat this bubble's own joins does not list must not read as joined")
     }
 
@@ -65,7 +104,8 @@ final class SeatIdentityTests: XCTestCase {
     func testCachedSeatPresentInJoinsIsJoined() {
         let freshJoins = [MessageJoin(seat: 0, name: "Alex"), MessageJoin(seat: 1, name: "Sveta")]
         let r = SeatIdentity.resolveInLobby(cachedSeat: 1, senderIsLocal: false,
-                                            nPlayers: 8, lastActorSeat: 0, joins: freshJoins)
+                                            nPlayers: 8, lastActorSeat: 0, joins: freshJoins,
+                                            chatIsDM: false, recordedName: "Sveta")
         XCTAssertEqual(r, 1, "once this bubble's own joins list me, I resolve as joined")
     }
 
@@ -75,15 +115,30 @@ final class SeatIdentityTests: XCTestCase {
     func testSenderInferredSeatAbsentFromJoinsIsNotJoined() {
         let staleJoins = [MessageJoin(seat: 0, name: "Alex")]
         let r = SeatIdentity.resolveInLobby(cachedSeat: nil, senderIsLocal: true,
-                                            nPlayers: 8, lastActorSeat: 2, joins: staleJoins)
+                                            nPlayers: 8, lastActorSeat: 2, joins: staleJoins,
+                                            chatIsDM: false)
         XCTAssertNil(r, "sender-inferred seat 2 is not in this stale bubble's joins")
     }
 
     /// `.ambiguous` still maps to nil either way (no seat to check joins against).
     func testAmbiguousStaysNilInLobby() {
         let r = SeatIdentity.resolveInLobby(cachedSeat: nil, senderIsLocal: false,
-                                            nPlayers: 4, lastActorSeat: 2, joins: [])
+                                            nPlayers: 4, lastActorSeat: 2, joins: [],
+                                            chatIsDM: false)
         XCTAssertNil(r)
+    }
+
+    /// The ghost-seat guard in the lobby: my cached seat is LISTED, but under
+    /// somebody else's name — a claim race this device lost. nil is what puts
+    /// the Join button back so I re-claim the next free seat (§5.2's "the
+    /// loser's device re-claims on next open"), instead of reading as seated
+    /// on a seat that is no longer mine.
+    func testLobbySeatDisownedByNameOffersJoinAgain() {
+        let joins = [MessageJoin(seat: 0, name: "Alex"), MessageJoin(seat: 1, name: "Dima")]
+        let r = SeatIdentity.resolveInLobby(cachedSeat: 1, senderIsLocal: false,
+                                            nPlayers: 8, lastActorSeat: 1, joins: joins,
+                                            chatIsDM: false, recordedName: "Sveta")
+        XCTAssertNil(r, "seat 1 is Dima's now — I must fall back to Join, not squat on it")
     }
 
     // MARK: - the App Group store
@@ -168,6 +223,32 @@ final class SeatIdentityTests: XCTestCase {
 
         XCTAssertEqual(s.seat(gameId: "gA", chatKey: chatA), 0)
         XCTAssertNil(s.seat(gameId: "gA", chatKey: chatB), "a foreign chat's cached seat must read as unknown")
+    }
+
+    /// Membership churn: ChatKey is the sorted participant-UUID set, so adding
+    /// or removing a group member re-keys the conversation mid-game — after
+    /// which every strictly-scoped read above misses and a seated player
+    /// degrades to the spectator board. A TAPPED bubble carries the game's own
+    /// random gameId, which is proof enough of which row it is: the
+    /// bubble-anchored lookups must survive the re-key. The no-bubble listing
+    /// (`games(chatKey:)`) has no such anchor and must STAY strictly scoped —
+    /// that listing was the actual cross-chat leak.
+    func testBubbleAnchoredLookupSurvivesAChatRekey() {
+        let s = freshStore()
+        s.put(rec("g", chatKey: "old-participant-set", seat: 2, at: 100))
+
+        // The same thread, after someone was added: new key, same game bubble.
+        XCTAssertNil(s.record(gameId: "g", chatKey: "new-participant-set"),
+                     "the scoped read misses after the re-key (why the fallback exists)")
+        XCTAssertEqual(s.recordForBubble(gameId: "g")?.mySeat, 2,
+                       "a bubble in hand identifies its row by gameId, whatever key the chat had")
+        XCTAssertEqual(s.seatForBubble(gameId: "g"), 2)
+        XCTAssertTrue(s.games(chatKey: "new-participant-set").isEmpty,
+                      "the keyless listing stays chat-scoped — it is the leak surface")
+
+        // The next adopt re-keys the row, healing the scoped reads too.
+        s.put(rec("g", chatKey: "new-participant-set", seat: 2, at: 200))
+        XCTAssertEqual(s.seat(gameId: "g", chatKey: "new-participant-set"), 2)
     }
 
     // MARK: - ChatKey (what the scoping above is only as good as)

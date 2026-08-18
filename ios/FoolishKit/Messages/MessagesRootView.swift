@@ -196,7 +196,7 @@ private struct GameSurface: View {
         // cached chain for this game is the standing preference — keep it when
         // it outranks the arrival, exactly as load() would.
         if current == nil,
-           let row = MessageGameStore.shared.record(gameId: env.gameId, chatKey: chatKey),
+           let row = MessageGameStore.shared.recordForBubble(gameId: env.gameId),
            let cached = Base32.decode(row.payloadBase32),
            ((try? await MessageKernel.shared.preferred(cached, bytes)) ?? 1) < 0 { return }
         AnimLog.say("surface adopts arrival phase=\(env.phase) joins=\(env.joins.count) turn=\(env.turn)")
@@ -430,11 +430,20 @@ private struct GameSurface: View {
     /// the flip side, a fresh join not showing as joined). Note 15's Rule-P-
     /// for-lobbies fix in `load()` means the NEWEST bubble (the one that really
     /// does list me) is what gets shown here in the first place.
+    ///
+    /// Bubble-anchored lookup (`recordForBubble`): this env came off a real
+    /// bubble, whose gameId identifies the row even after a group-membership
+    /// change re-keyed the chat. `recordedName` extends note 14's membership
+    /// gate by name: a lobby carrying someone ELSE's name at my cached seat is
+    /// a claim race this device lost — nil here brings the Join button back so
+    /// I re-claim the next free seat instead of squatting on theirs.
     private func lobbySeat(_ env: MessageEnvelope) -> Int? {
-        SeatIdentity.resolveInLobby(
-            cachedSeat: MessageGameStore.shared.seat(gameId: env.gameId, chatKey: chatKey),
+        let row = MessageGameStore.shared.recordForBubble(gameId: env.gameId)
+        return SeatIdentity.resolveInLobby(
+            cachedSeat: row?.mySeat,
             senderIsLocal: senderIsLocal, nPlayers: env.nPlayers,
-            lastActorSeat: env.lastActorSeat, joins: env.joins)
+            lastActorSeat: env.lastActorSeat, joins: env.joins, chatIsDM: chatIsDM,
+            recordedName: row.flatMap { $0.names[$0.mySeat] })
     }
 
     /// Claim the lowest free seat (§5.2, lobby v3). Always reseals WAITING and
@@ -543,8 +552,8 @@ private struct GameSurface: View {
         // showed, so a pickup/draw sequence replayed again sometimes and not
         // others depending on whether the table happened to read empty.
         var prevPayload: Data?
-        if let prevRow = MessageGameStore.shared.record(gameId: env.gameId, chatKey: chatKey),
-           let bytes = Base32.decode(prevRow.payloadBase32) {
+        let row = MessageGameStore.shared.recordForBubble(gameId: env.gameId)
+        if let prevRow = row, let bytes = Base32.decode(prevRow.payloadBase32) {
             prevPayload = bytes
         }
         // Make the resident game the winner and set Rule R's round guard, then
@@ -561,9 +570,20 @@ private struct GameSurface: View {
         #endif
         let (survivors, discarded) = await rebasePending(gameId: env.gameId, adoptedRound: env.round)
 
-        switch SeatIdentity.resolve(cachedSeat: MessageGameStore.shared.seat(gameId: env.gameId, chatKey: chatKey),
+        // Bubble-anchored row (recordForBubble): the winner chain's gameId
+        // identifies it even after a group-membership change re-keyed the chat.
+        // The name gate (cacheDisownedByJoins) is the ghost-seat guard: a chain
+        // whose roster lists somebody ELSE's name at my cached seat means my
+        // claim lost a seat race — trusting the cache would put that person's
+        // hand face-up on my screen and let me move for them. Disowned reads as
+        // no-cache: §6.2's exact signals, else the Release spectator board.
+        let cachedSeat: Int? = SeatIdentity.cacheDisownedByJoins(
+            cachedSeat: row?.mySeat, recordedName: row.flatMap { $0.names[$0.mySeat] },
+            joins: env.joins) ? nil : row?.mySeat
+        switch SeatIdentity.resolve(cachedSeat: cachedSeat,
                                     senderIsLocal: senderIsLocal,
-                                    nPlayers: env.nPlayers, lastActorSeat: env.lastActorSeat) {
+                                    nPlayers: env.nPlayers, lastActorSeat: env.lastActorSeat,
+                                    chatIsDM: chatIsDM) {
         case .known(let seat):
             // §B3: a player about to be seated who has never chosen a name is asked
             // once (the 2-player receiver has no setup/lobby screen). Creator +

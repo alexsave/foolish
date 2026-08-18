@@ -68,8 +68,11 @@ public enum MessageSurfaceRouter {
         // Rule P against the chain we already hold for this game, if any. The
         // kernel decides; a WAITING lobby never outranks the game started from
         // it (rule 0), which is what stops a joiner's own cached lobby from
-        // hiding the game everyone else is already playing.
-        if let row = store.record(gameId: env.gameId, chatKey: chatKey),
+        // hiding the game everyone else is already playing. Bubble-anchored
+        // lookup (recordForBubble): the tapped bubble's gameId identifies the
+        // row even after a group-membership change re-keyed this chat — the
+        // strictly-scoped `games(chatKey:)` above stays the no-bubble gate.
+        if let row = store.recordForBubble(gameId: env.gameId),
            let cached = Base32.decode(row.payloadBase32), cached != incoming,
            let cachedEnv = try? await MessageEnvelope.decode(payload: cached, viewer: -1),
            ((try? await kernel.preferred(cached, incoming)) ?? 0) < 0 {

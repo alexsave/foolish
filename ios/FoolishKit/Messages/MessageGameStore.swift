@@ -143,6 +143,25 @@ public final class MessageGameStore {
         return rec
     }
 
+    /// The row for `gameId` regardless of which chat it was cached under — the
+    /// lookup for a bubble that is IN HAND (tapped, or just arrived). `ChatKey`
+    /// is the sorted participant-UUID set, so ADDING OR REMOVING A GROUP MEMBER
+    /// changes it mid-game — after which every strictly-scoped read above
+    /// misses, this device's own seat degrades to §6.2/§6.3 (the Release
+    /// spectator board: a seated player suddenly "can't act"), and Rule P loses
+    /// its cached side. When the caller holds an actual bubble, the bubble's
+    /// `game_id` — a `UInt64.random` minted once at creation — is itself the
+    /// proof it is this game's row: a row can only exist because THIS DEVICE
+    /// created/joined/played that game, whatever key the conversation hashed to
+    /// at the time. The cross-chat leak the scoping fixed lived in the OTHER
+    /// lookup — `games(chatKey:)`, the no-bubble reopen, which has no gameId to
+    /// anchor on and stays strictly scoped. The next `put` re-keys the row to
+    /// the current chatKey, so one tap heals the scoped reads too.
+    public func recordForBubble(gameId: String) -> MessageGameRecord? { all()[gameId] }
+
+    /// `seat(gameId:chatKey:)`'s bubble-anchored twin (see recordForBubble).
+    public func seatForBubble(gameId: String) -> Int? { recordForBubble(gameId: gameId)?.mySeat }
+
     /// Rule P extended to lobby (phase-0/WAITING) bubbles (note 15,
     /// HARNESS_NOTES_R2). A WAITING envelope is otherwise exempt from Rule P's
     /// round/turn comparison — every lobby sits at round 0/turn 0, so that
