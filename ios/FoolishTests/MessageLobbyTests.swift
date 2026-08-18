@@ -466,9 +466,11 @@ final class MessageLobbyTests: XCTestCase {
                           "fixture must pose the digest coin-flip the old rule lost")
 
         // Rule 3: every device prefers the fuller start, in both directions.
-        XCTAssertLessThan(try await k.preferred(live4, live3), 0,
+        let fullVsStale = try await k.preferred(live4, live3)
+        let staleVsFull = try await k.preferred(live3, live4)
+        XCTAssertLessThan(fullVsStale, 0,
                           "the full 4-player game must beat the stale 3-player start")
-        XCTAssertGreaterThan(try await k.preferred(live3, live4), 0,
+        XCTAssertGreaterThan(staleVsFull, 0,
                              "and the comparison must be symmetric")
 
         // But a chain someone actually PLAYED on still out-ranks a wider turn-0
@@ -486,7 +488,8 @@ final class MessageLobbyTests: XCTestCase {
         }
         let playedEnv = try await MessageEnvelope.decode(payload: played3!, viewer: -1)
         XCTAssertEqual(playedEnv.turn, 1)
-        XCTAssertLessThan(try await k.preferred(played3!, live4), 0,
+        let playedVsWider = try await k.preferred(played3!, live4)
+        XCTAssertLessThan(playedVsWider, 0,
                           "a played-on chain must not be clobbered by a stale wider Start")
     }
 }

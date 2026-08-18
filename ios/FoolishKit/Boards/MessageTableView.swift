@@ -1305,7 +1305,10 @@ struct FGameOverList: View {
             // Pinning maxWidth alongside the height is the fix the finding names
             // directly: the plank is now exactly the surface width at every
             // count 2...8, and WoodFill fills THAT box instead of dictating it.
-            .frame(maxWidth: .infinity, height: plankHeight)
+            // (Two frames: SwiftUI has no maxWidth+height overload — fix the
+            // height, then let the outer frame stretch the width.)
+            .frame(height: plankHeight)
+            .frame(maxWidth: .infinity)
             .clipShape(Rectangle())
             .overlay(Rectangle().strokeBorder(.black.opacity(0.4), lineWidth: 1.5))
             .padding(.horizontal, 4)
