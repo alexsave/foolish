@@ -141,6 +141,27 @@ final class SeatIdentityTests: XCTestCase {
         XCTAssertNil(r, "seat 1 is Dima's now — I must fall back to Join, not squat on it")
     }
 
+    /// Name RECOVERY, the flip side of disownment (flow_sim_v3's find): I
+    /// joined as "Sveta" at seat 1; a stale fork later showed Join again (my
+    /// name wasn't on it) and I claimed seat 3 there; the FIRST fork won. My
+    /// numeric cache says 3 — which the winning roster gives to Dima — but the
+    /// roster still carries Sveta at 1. The seat wearing MY name is mine:
+    /// resolve there, on the lobby and (via adopt's identical lookup) the
+    /// board, instead of spectating my own game — which, when I am its first
+    /// attacker, was a whole-table stall.
+    func testALostSecondClaimRecoversTheFirstByName() {
+        let joins = [MessageJoin(seat: 0, name: "Alex"), MessageJoin(seat: 1, name: "Sveta"),
+                     MessageJoin(seat: 3, name: "Dima")]
+        XCTAssertEqual(SeatIdentity.seatClaimedByName(recordedName: "Sveta", joins: joins), 1)
+        XCTAssertEqual(SeatIdentity.resolveInLobby(cachedSeat: 3, senderIsLocal: false,
+                                                   nPlayers: 8, lastActorSeat: 3, joins: joins,
+                                                   chatIsDM: false, recordedName: "Sveta"), 1)
+        XCTAssertNil(SeatIdentity.seatClaimedByName(recordedName: "Igor", joins: joins),
+                     "a name the roster does not carry recovers nothing")
+        XCTAssertNil(SeatIdentity.seatClaimedByName(recordedName: nil, joins: joins),
+                     "no recorded name (no row) recovers nothing")
+    }
+
     // MARK: - the App Group store
 
     private let chatA = "chat-A"

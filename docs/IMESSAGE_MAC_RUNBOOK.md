@@ -234,3 +234,42 @@ Each is small and currently gated only on "someone has a Mac":
    now, `e9b9120`) and paste in `docs/IMESSAGE_APP_STORE_SUBMISSION.md`,
    which has every field drafted (App Privacy, age rating, review notes, a
    verified demo replay code).
+
+---
+
+## Part 6 — verifying the attacker-bug branch (claude/imessage-game-attacker-bug-r00opj)
+
+Everything Linux could verify on this branch already is: the kernel's Rule P
+rule 3 + the 8-seat cap (msg_wire_test, ios_api_smoke, difftests minus the
+pre-existing issue-#56 solver stage), the rebuilt wasm (full msg/lobby/
+concurrency/fuzz/bot-parity e2e), byte-identical ios goldens, `tsc --noEmit`
+clean, and a Monte-Carlo of the ported Swift layer over the real kernel
+(flow_sim_v3: 300×9-human, 300×8, 300×4 random schedules with races, stale
+taps, double Starts, evaporated sends — 0 safety / exclusion / convergence /
+liveness violations). What is left is exactly the Swift compile + the suites,
+in this order:
+
+1. **`cd c && make ios-lib` FIRST.** The branch changed the kernel
+   (msg_wire rule 3, MsgChainKey.n_joins); against a stale vendored
+   xcframework the new kernel-binding tests FAIL CORRECTLY
+   (`MessageLobbyTests.testFullerStartBeatsAStaleSmallerStart` even says so
+   in its digest-guard message).
+2. `xcodegen && xcodebuild test -scheme FoolishKit` (or run the FoolishTests +
+   HarnessTests plans in Xcode). New/changed suites to expect green:
+   SeatIdentityTests (DM gate, disown/recovery matrix, re-key survival),
+   Round5LobbyTests (name-taken gate, the 9th-player composition),
+   MessageLobbyTests (rule 3 through the xcframework), plus every pre-existing
+   message suite.
+3. **Harness reproduction of the shipped incident** (the fun one):
+   `HARNESS_PLAYERS=4` FoolishHarness — create as You, join Vera+Boris, have
+   Dima join off a STALE bubble path if you want the fork, then Start from two
+   different participants' views in quick succession. Pre-branch this
+   deadlocks ~half the time on the digest coin-flip; post-branch every
+   participant lands on the fuller game and the first attacker can act.
+4. The device pair (Part 4) for the real-Messages behaviors no harness fakes:
+   didReceive adopt-on-arrival (the stranded-starter board converging without
+   a re-tap), session collapse, and the staged-bubble evaporation flows.
+
+Known/expected on Mac: nothing in this branch touches Parts 1–5's steps;
+`solver_difftest` still fails per issue #56; claim tokens
+(IMESSAGE_SEAT_IDENTITY_V2 §3) are DEFERRED — do not build them casually.

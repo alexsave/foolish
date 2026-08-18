@@ -80,6 +80,25 @@ public enum SeatIdentity {
         return listed != mine
     }
 
+    /// The seat carrying this device's own recorded claim name in `joins`, if
+    /// any. Per-chain names are unique (NicknameGate.isTaken gates every Join)
+    /// and only this device seals its own name — so when a fork race leaves
+    /// the cache pointing at a LOSING claim (join; tap a stale lobby that
+    /// predates it; be offered Join again; claim a second seat), the winning
+    /// chain still carries the name at whichever claim survived. Scanning by
+    /// name recovers that seat where the seat-NUMBER cache alone reads
+    /// disowned and would strand the player as a spectator of their own game
+    /// — including when they are its first attacker, the liveness stall the
+    /// flow simulator caught (300×9-human random schedules: this closes every
+    /// convergence/liveness violation it found). Same trust level as every
+    /// name-keyed decision (§6.3): two humans sharing a nickname collide only
+    /// across forks, the residual IMESSAGE_SEAT_IDENTITY_V2's deferred tokens
+    /// exist to close.
+    public static func seatClaimedByName(recordedName: String?, joins: [MessageJoin]) -> Int? {
+        guard let mine = recordedName else { return nil }
+        return joins.first(where: { $0.name == mine })?.seat
+    }
+
     /// `resolve`, gated for a LOBBY bubble specifically (note 14, HARNESS_NOTES_R2):
     /// a resolved seat only counts as MINE if this bubble's own `joins` list
     /// actually contains it. `resolve` alone answers "who does the cache/sender
@@ -100,6 +119,12 @@ public enum SeatIdentity {
                                       nPlayers: Int, lastActorSeat: Int,
                                       joins: [MessageJoin], chatIsDM: Bool,
                                       recordedName: String? = nil) -> Int? {
+        // Name recovery first (seatClaimedByName's doc): the seat carrying MY
+        // claim name in THIS bubble's roster is my seat here, even when a fork
+        // race left the numeric cache pointing at a claim that lost.
+        if let byName = seatClaimedByName(recordedName: recordedName, joins: joins) {
+            return byName
+        }
         let cached = cacheDisownedByJoins(cachedSeat: cachedSeat, recordedName: recordedName,
                                           joins: joins) ? nil : cachedSeat
         switch resolve(cachedSeat: cached, senderIsLocal: senderIsLocal,

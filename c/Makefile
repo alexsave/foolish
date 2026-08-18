@@ -175,6 +175,20 @@ ios-smoke:
 	$(CC) $(IOS_CFLAGS) ios/ios_api_smoke.c ios/ios_api.c $(CORE_SRC) -lm -o build/ios_smoke
 	./build/ios_smoke
 
+# Monte-Carlo the iMessage SWIFT layer's decisions over the real kernel
+# (tests/msg_flow_sim.c): random 4/8/9-human schedules with racing joins,
+# racing Starts, stale taps and evaporated sends, checking safety (nobody ever
+# renders a seat that isn't theirs), exclusion, convergence and liveness.
+# Runnable without a Mac; the file header lists the Swift functions it ports
+# line for line — keep them in step.
+.PHONY: msg-flow-sim
+msg-flow-sim:
+	@mkdir -p build
+	$(CC) $(IOS_CFLAGS) tests/msg_flow_sim.c ios/ios_api.c $(CORE_SRC) -lm -o build/msg_flow_sim
+	./build/msg_flow_sim 300 9 0
+	./build/msg_flow_sim 300 8 1
+	./build/msg_flow_sim 300 4 1
+
 # The online packed-view decode is now pure Swift (MaskedView) — see
 # ios/FoolishTests/PackedViewTests.swift, which replaces the retired C harness.
 

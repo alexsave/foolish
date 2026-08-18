@@ -579,14 +579,20 @@ private struct GameSurface: View {
 
         // Bubble-anchored row (recordForBubble): the winner chain's gameId
         // identifies it even after a group-membership change re-keyed the chat.
-        // The name gate (cacheDisownedByJoins) is the ghost-seat guard: a chain
-        // whose roster lists somebody ELSE's name at my cached seat means my
-        // claim lost a seat race — trusting the cache would put that person's
-        // hand face-up on my screen and let me move for them. Disowned reads as
-        // no-cache: §6.2's exact signals, else the Release spectator board.
-        let cachedSeat: Int? = SeatIdentity.cacheDisownedByJoins(
-            cachedSeat: row?.mySeat, recordedName: row.flatMap { $0.names[$0.mySeat] },
-            joins: env.joins) ? nil : row?.mySeat
+        // Seat resolution then leans on the roster's NAMES, both ways:
+        //  - recovery (seatClaimedByName): the seat carrying MY claim name in
+        //    THIS chain is my seat here, even when a fork race left the numeric
+        //    cache pointing at a claim that lost (the flow simulator's
+        //    convergence/liveness stall);
+        //  - the ghost guard (cacheDisownedByJoins): a roster listing somebody
+        //    ELSE's name at my cached seat means my claim lost — trusting the
+        //    number would put that person's hand face-up on my screen. Disowned
+        //    with no name to recover reads as no-cache: §6.2's exact signals,
+        //    else the Release spectator board.
+        let recorded = row.flatMap { $0.names[$0.mySeat] }
+        let cachedSeat: Int? = SeatIdentity.seatClaimedByName(recordedName: recorded, joins: env.joins)
+            ?? (SeatIdentity.cacheDisownedByJoins(cachedSeat: row?.mySeat, recordedName: recorded,
+                                                  joins: env.joins) ? nil : row?.mySeat)
         switch SeatIdentity.resolve(cachedSeat: cachedSeat,
                                     senderIsLocal: senderIsLocal,
                                     nPlayers: env.nPlayers, lastActorSeat: env.lastActorSeat,

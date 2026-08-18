@@ -1,5 +1,9 @@
 # Seat identity v2 — "shouldn't there be an id → seat mapping?"
 
+> **Status: §3's claim tokens are DEFERRED (owner call, 2026-08-18) — out of
+> scope for this branch. Do not build them without re-raising the wire-compat
+> and privacy-page questions in §3. Everything in §4 is shipped.**
+
 The question this document answers: why doesn't the payload carry a player-id
 → seat mapping, so that it is simply impossible for one player's device to
 show another player's cards? Short answer: the mapping every device CAN have
