@@ -247,7 +247,8 @@ int msg_replay(const MsgEnvelope *e, Game *g);
 //      WAITING/ACCEPT, always
 //   1. higher round wins        — a closed bout is settled history
 //   2. else higher turn wins    — more accepted actions
-//   3. else smaller SHA-256     — arbitrary, but identical everywhere
+//   3. else more JOINS wins     — the fuller roster is strictly later history
+//   4. else smaller SHA-256     — arbitrary, but identical everywhere
 //
 // Rule 0 is not cosmetic, and it is not subsumed by round/turn: a WAITING lobby
 // and the LIVE handoff that starts it BOTH sit at round 0 / turn 0 (the handoff
@@ -260,6 +261,25 @@ int msg_replay(const MsgEnvelope *e, Game *g);
 // two deals have different first attackers, the game deadlocks. A started chain
 // is never superseded by the invite it grew out of, so it wins outright.
 //
+// Rule 3 closes the SAME class of fork one layer up, between two STARTED
+// chains. Lobby v3 lets ANY joined player tap Start, and Start deals at the
+// tapped bubble's join count — so two players starting near-simultaneously
+// (or one starting off a stale bubble that predates the last join) seal TWO
+// LIVE handoffs, both at round 0 / turn 0, dealt from the same locked seed at
+// DIFFERENT player counts. Those are different games: different trump,
+// different first attacker. Under the digest tiebreak the 3-player fork beat
+// the real 4-player game half the time (measured 1008/2000 seeds), the two
+// forks disagreed on the first attacker in 2/3 of deals, and when the full
+// game's first attacker was the player stuck on the small fork's board, the
+// whole table deadlocked — everyone waiting on a player whose own screen says
+// someone else must open. Joins-count ordering makes every such fork resolve
+// to the fullest roster, on every device, deterministically. It also orders
+// WAITING chains among themselves (a 3-join lobby beats the 2-join lobby it
+// grew from), which is what lets a device refresh its roster from an incoming
+// join instead of coin-flipping against its own cached invite. It ranks BELOW
+// turn on purpose: a chain someone has actually played on must never be
+// clobbered by a stale wider Start sealed after the fact.
+//
 // Delivery order is never an input. Two devices can transiently disagree about
 // which message is "newest", so the rule needs no clocks and no ordering
 // guarantee from Messages — that is the whole point.
@@ -270,6 +290,7 @@ typedef struct {
     uint8_t  phase;                        // MSG_PHASE_*; only "started or not" is compared
     uint8_t  round;
     uint16_t turn;
+    uint8_t  n_joins;                      // rule 3: the fuller roster wins the turn-0 tie
     uint8_t  digest[SHA256_DIGEST_LEN];
 } MsgChainKey;
 

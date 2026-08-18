@@ -29,6 +29,15 @@ public struct MessagesRootView: View {
     /// Bumped by the host each time the human taps New game, so an explicit New
     /// game resets the session while a mere compact<->expanded toggle does not.
     let newGameToken: Int
+    /// The bubble that just ARRIVED while the extension is open (`didReceive`),
+    /// with `incomingToken` bumped per arrival. Apple does not move
+    /// `selectedMessage` for an arrival, so without this the surface sat on its
+    /// stale chain until the human happened to re-tap a bubble — which is how a
+    /// player stranded on a losing Start fork stayed stranded (the 4-player
+    /// double-Start deadlock; see GameSurface.maybeAdoptIncoming). Rule P still
+    /// decides: a stale or duplicate arrival changes nothing on screen.
+    let incomingURL: URL?
+    let incomingToken: Int
     /// This conversation's identity (`ChatKey.make` over its participant set),
     /// threaded down to every `MessageGameStore` lookup so a game cached from a
     /// DIFFERENT chat on this device can never resolve `.known` here — see the
@@ -46,13 +55,14 @@ public struct MessagesRootView: View {
 
     public init(payloadURL: URL?, style: MsgPresentation, senderIsLocal: Bool,
                 startNewGame: Bool, newGameToken: Int = 0, chatKey: String, chatIsDM: Bool,
-                chatPlayers: Int,
+                chatPlayers: Int, incomingURL: URL? = nil, incomingToken: Int = 0,
                 requestExpand: @escaping () -> Void, onNewGame: @escaping () -> Void,
                 onSend: @escaping (Data, Int) async -> Void,
                 onUnstage: @escaping () -> Void = {}) {
         self.payloadURL = payloadURL; self.style = style; self.senderIsLocal = senderIsLocal
         self.startNewGame = startNewGame; self.newGameToken = newGameToken
         self.chatKey = chatKey; self.chatIsDM = chatIsDM; self.chatPlayers = chatPlayers
+        self.incomingURL = incomingURL; self.incomingToken = incomingToken
         self.requestExpand = requestExpand; self.onNewGame = onNewGame; self.onSend = onSend
         self.onUnstage = onUnstage
     }
@@ -67,6 +77,7 @@ public struct MessagesRootView: View {
         GameSurface(payloadURL: payloadURL, style: style, senderIsLocal: senderIsLocal,
                     startNewGame: startNewGame, newGameToken: newGameToken, chatKey: chatKey,
                     chatIsDM: chatIsDM, chatPlayers: chatPlayers,
+                    incomingURL: incomingURL, incomingToken: incomingToken,
                     requestExpand: requestExpand, onNewGame: onNewGame, onSend: onSend,
                     onUnstage: onUnstage)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -95,6 +106,8 @@ private struct GameSurface: View {
     let chatKey: String
     let chatIsDM: Bool
     let chatPlayers: Int
+    let incomingURL: URL?
+    let incomingToken: Int
     let requestExpand: () -> Void
     let onNewGame: () -> Void
     let onSend: (Data, Int) async -> Void
@@ -147,6 +160,47 @@ private struct GameSurface: View {
                 await reloadForInput()
                 await autoDriveLobby()
             }
+            // A bubble ARRIVED while this surface is open (didReceive). Apple
+            // does not move `selectedMessage` for an arrival, so loadKey does
+            // not change and the .task above will not re-run — this one does.
+            .task(id: incomingToken) { await maybeAdoptIncoming() }
+    }
+
+    /// Fold an ARRIVING bubble into the live surface, Rule P deciding (§7.2).
+    ///
+    /// Why this exists: `didReceive` fires while the extension is open, but the
+    /// arrival does not become `selectedMessage`, so nothing reloaded and the
+    /// surface sat on whatever chain it last adopted until the human re-tapped
+    /// a bubble. Mostly that was just staleness (an opponent's move not showing
+    /// until reopen; a lobby roster missing the join that just arrived). In the
+    /// double-Start race it was a DEADLOCK: two players tap Start off different
+    /// lobby states, two LIVE handoffs exist, Rule P (kernel rule 3) picks the
+    /// fuller one — but the losing starter's own device was already sitting on
+    /// its fork's board and never re-compared, so if the real game's first
+    /// attacker was that player, every screen in the chat waited forever.
+    ///
+    /// Rule P still decides everything: a stale or duplicate arrival loses to
+    /// the chain on screen and changes NOTHING (no teardown, no replay). Only a
+    /// strictly-preferred arrival is adopted — through the same `adopt` a tap
+    /// goes through, so seat identity, Rule R and the phase-0 lobby route all
+    /// hold. `showSetup` is exempt: the human explicitly asked for a new game.
+    private func maybeAdoptIncoming() async {
+        guard let url = incomingURL, !showSetup, !startNewGame,
+              let bytes = try? MessageEnvelope.payloadBytes(url: url) else { return }
+        let current = controller?.basePayload ?? lobby?.payload
+        if bytes == current { return }
+        if let current,
+           ((try? await MessageKernel.shared.preferred(current, bytes)) ?? -1) <= 0 { return }
+        guard let env = try? await MessageEnvelope.decode(payload: bytes, viewer: -1) else { return }
+        // Nothing on screen to compare (spectator / picker / name gate): the
+        // cached chain for this game is the standing preference — keep it when
+        // it outranks the arrival, exactly as load() would.
+        if current == nil,
+           let row = MessageGameStore.shared.record(gameId: env.gameId, chatKey: chatKey),
+           let cached = Base32.decode(row.payloadBase32),
+           ((try? await MessageKernel.shared.preferred(cached, bytes)) ?? 1) < 0 { return }
+        AnimLog.say("surface adopts arrival phase=\(env.phase) joins=\(env.joins.count) turn=\(env.turn)")
+        await adopt(winner: bytes, env: env)
     }
 
     @ViewBuilder private var expandedContent: some View {

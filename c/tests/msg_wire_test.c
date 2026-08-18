@@ -466,6 +466,81 @@ static void test_rule_p_started_beats_lobby(void) {
           "have caught the digest-coin-flip bug");
 }
 
+// Rule P, rule 3: at an equal (round, turn), the fuller roster wins.
+//
+// The fork this pins is lobby v3's double Start: any joined player may Start,
+// and Start deals at the tapped bubble's join count — so one player starting
+// off the full 4-join lobby and another off a stale 3-join view seal TWO LIVE
+// handoffs, both round 0 / turn 0, from the same locked seed at DIFFERENT
+// player counts. Different deals: different trump, different first attacker.
+// Under the digest tiebreak the 3-player fork won half the time, and when the
+// 4-player game's first attacker was the player stranded on the 3-player
+// board, nobody anywhere could act (the shipped 4p incident). Like the rule-0
+// test above, this counts the fixtures the OLD rule got wrong (smaller-roster
+// digest sorting first) and fails if the run produced none.
+static void test_rule_p_fuller_start_wins(void) {
+    unsigned char full_wire[ENV_CAP], stale_wire[ENV_CAP];
+    int small_digest_first = 0, cases = 0;
+
+    for (uint32_t g = 1; g <= 60; g++) {
+        uint8_t seed[MSG_SEED_LEN];
+        seed_fill(seed, g * 6271u);
+
+        // Start from the full lobby: 4 joined, dealt at 4, no action yet.
+        MsgEnvelope full;
+        env_init(&full, seed, 4);
+        full.game_id = 0x2000ULL + g;
+        full.turn = 0; full.round = 0; full.n_actions = 0; full.actions_len = 0; full.actions = 0;
+        const int nf = msg_encode(&full, full_wire, sizeof(full_wire));
+        CHECK(nf > 0, "full start encode failed: %d", nf);
+
+        // The racing Start off a stale 3-join view of the SAME lobby chain.
+        MsgEnvelope stale;
+        env_init(&stale, seed, 3);
+        stale.game_id = full.game_id;
+        stale.last_actor_seat = 2;
+        stale.turn = 0; stale.round = 0; stale.n_actions = 0; stale.actions_len = 0; stale.actions = 0;
+        const int ns = msg_encode(&stale, stale_wire, sizeof(stale_wire));
+        CHECK(ns > 0, "stale start encode failed: %d", ns);
+
+        MsgChainKey kf, ks;
+        CHECK(msg_chain_key(full_wire, nf, &kf) == MSG_EOK, "full chain key failed");
+        CHECK(msg_chain_key(stale_wire, ns, &ks) == MSG_EOK, "stale chain key failed");
+        CHECK(kf.round == ks.round && kf.turn == ks.turn,
+              "fixture no longer poses the tie (round/turn differ)");
+        CHECK(kf.n_joins == 4 && ks.n_joins == 3, "chain key lost the join count");
+
+        cases++;
+        if (memcmp(ks.digest, kf.digest, SHA256_DIGEST_LEN) < 0) small_digest_first++;
+
+        CHECK(msg_rule_p(&kf, &ks) < 0, "game %u: the stale 3p start beat the full 4p game", g);
+        CHECK(msg_rule_p(&ks, &kf) > 0, "game %u: rule P is not symmetric", g);
+    }
+    CHECK(cases > 0, "rule P fuller-start fixture built nothing");
+    CHECK(small_digest_first > 0,
+          "no fixture had the small roster's digest sorting first — this run "
+          "could not have caught the digest-coin-flip bug");
+
+    // The ordering around rule 3, pinned on synthetic keys: turn STILL
+    // dominates joins (a chain someone played on is never clobbered by a stale
+    // wider Start), and joins order WAITING chains too (a 3-join lobby beats
+    // the 2-join lobby it grew from — that is what lets an open lobby screen
+    // adopt an incoming join instead of coin-flipping against its own invite).
+    {
+        MsgChainKey played = {0}, wide = {0};
+        played.phase = MSG_PHASE_LIVE; played.turn = 1; played.n_joins = 3;
+        wide.phase   = MSG_PHASE_LIVE; wide.turn   = 0; wide.n_joins   = 4;
+        memset(played.digest, 0xFF, SHA256_DIGEST_LEN);   // digest would pick `wide`
+        CHECK(msg_rule_p(&played, &wide) < 0, "a played-on chain lost to a stale wider start");
+
+        MsgChainKey lob2 = {0}, lob3 = {0};
+        lob2.phase = MSG_PHASE_WAITING; lob2.n_joins = 2;
+        lob3.phase = MSG_PHASE_WAITING; lob3.n_joins = 3;
+        memset(lob3.digest, 0xFF, SHA256_DIGEST_LEN);     // digest would pick lob2
+        CHECK(msg_rule_p(&lob3, &lob2) < 0, "the fuller lobby lost to the invite it grew from");
+    }
+}
+
 // ---------- 4. tamper matrix ---------------------------------------------
 
 static void test_tamper(void) {
@@ -919,6 +994,7 @@ int main(int argc, char **argv) {
     test_waiting_phase();
     test_name_length_boundary();
     test_rule_p_started_beats_lobby();
+    test_rule_p_fuller_start_wins();
     test_tamper();
     test_hostile_body();
     test_size_budget(games * 4, seed0);

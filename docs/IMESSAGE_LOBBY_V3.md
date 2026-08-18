@@ -123,3 +123,57 @@ list directly above it already says exactly that, and the screen was tight.
 - Any joined player may Start once 2+ have joined.
 - The joined list is the player count so far. There are no open-seat
   placeholders, because there is no fixed count to fill.
+
+## Racing Starts (the 4-player deadlock) — Rule P rule 3
+
+"Any joined player may Start" has a race v3 shipped without an answer for: two
+players tap Start off different views of the lobby — or one taps it off a
+stale bubble that predates the last join — and the thread now holds TWO LIVE
+handoffs, both round 0 / turn 0, dealt from the same locked seed at DIFFERENT
+player counts. Those are different games: a different flip, a different trump,
+a different first attacker (the deal is player-major off one shuffled deck, so
+the HANDS of the shared seats even match — only the flip and stock move —
+which made the fork nearly invisible).
+
+Rule P as shipped compared (round, turn, digest): the two Starts tied to the
+digest — a coin flip between two different games. Measured over 2000 seeds of
+the 4-players-joined / one-Start-off-the-3-join-view race: the 3-player fork
+won 1008 times, the forks disagreed about the first attacker 1334 times, and
+in 149 the full game's first attacker was exactly the player whose own device
+sat on the small fork's board — every screen in the chat waiting on a player
+whose own screen shows the attacker position on somebody else (their
+right-hand neighbour, in the shipped report) and offers them no legal move.
+The last joiner is stranded in every 3p-fork win too: their cached seat 3 is
+out of range of a 3-player game, which Release renders as the spectator board.
+
+Two fixes, one in each layer that owned a piece of the hole:
+
+- **Kernel — rule 3 (`msg_wire.h`)**: at an equal (round, turn), MORE JOINS
+  wins, before the digest. Every device now resolves a Start race to the
+  fullest roster, deterministically. It sits BELOW turn on purpose: a chain
+  someone has actually played on is never clobbered by a stale wider Start
+  sealed after the fact. It also orders WAITING chains among themselves (a
+  3-join lobby beats the 2-join lobby it grew from), which is what lets the
+  arrival path below refresh a lobby roster instead of coin-flipping against
+  its own cached invite. Pinned in `c/tests/msg_wire_test.c`
+  (test_rule_p_fuller_start_wins), `e2e/msg_lobby_v2.test.ts` (the wasm the
+  web replays through), and `MessageLobbyTests.testFullerStartBeatsAStale
+  SmallerStart` (the xcframework binding).
+
+- **Extension — adopt on arrival (`GameSurface.maybeAdoptIncoming`)**: Apple
+  does not make a `didReceive` arrival the `selectedMessage`, so the surface
+  never reloaded for it — the losing starter's device stayed on its fork's
+  board until the human happened to re-tap a bubble. The arrival is now
+  threaded through as its own input and adopted iff Rule P says it strictly
+  out-ranks what is showing; a stale or duplicate arrival changes nothing (no
+  teardown, no replay). The same path live-refreshes an open lobby when a
+  join arrives.
+
+What rule 3 deliberately does NOT solve: a single Start off a stale bubble
+while the last join is still in flight produces only ONE started chain, and it
+wins (rule 0 — started beats lobby, which is what prevents the round-3
+deadlock). The player whose join lost that race stays a spectator of a game
+that started without them; serverless, nobody can know a join is "in flight".
+Round-5 M9's authorship gate (the newest bubble's sender cannot Start while
+the lobby has room) already narrows that window; the full answer would need a
+transport with ordering, which iMessage is not.

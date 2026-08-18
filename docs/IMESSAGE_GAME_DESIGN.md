@@ -380,9 +380,13 @@ computes the same winner regardless of message delivery order:
 
 ```
 Rule P (total preference order):
+  0. a STARTED chain (phase >= LIVE) beats a pre-game one   (msg_wire.h rule 0)
   1. higher round wins                (a closed round is settled history)
   2. else higher turn wins            (more accepted actions)
-  3. else lexicographically smaller SHA-256(envelope bytes) wins  (arbitrary but universal)
+  3. else more joins wins             (the fuller roster is strictly later history;
+                                       orders racing Starts and racing lobbies —
+                                       see msg_wire.h rule 3)
+  4. else lexicographically smaller SHA-256(envelope bytes) wins  (arbitrary but universal)
 ```
 
 The device's cache stores the preferred chain seen so far. On every open

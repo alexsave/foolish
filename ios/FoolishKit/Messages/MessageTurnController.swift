@@ -149,6 +149,11 @@ public final class MessageTurnController: ObservableObject {
     /// A genesis game with no move yet is not sealable (a 0-action opening is not
     /// a valid FMSG body, MSG_EBODY); continuations always are.
     public var isGenesis: Bool { if case .genesis = base { return true }; return false }
+    /// The chain this board is built on (nil for a genesis, which has no chain
+    /// yet). What an ARRIVING bubble is Rule-P-compared against so a stale or
+    /// duplicate delivery never tears the live board down (GameSurface's
+    /// maybeAdoptIncoming).
+    public var basePayload: Data? { if case .continuation(let p) = base { return p }; return nil }
 
     // MARK: lifecycle
 

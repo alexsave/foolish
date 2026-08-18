@@ -123,3 +123,68 @@ test('create-open-lobby(8) -> 3 joins (never auto-starting) -> start-at-3 -> pla
     assert.ok(played.turn > 0, 'the move is now part of the chain');
     assert.equal(played.phase, finished ? 3 : 2);
 });
+
+// Rule P rule 3 — the double-Start fork (the shipped 4-player deadlock).
+//
+// Any joined player may Start, and Start deals at the tapped bubble's join
+// count. Two players starting near-simultaneously — or one starting off a
+// stale bubble that predates the last join — therefore seal TWO LIVE handoffs,
+// both round 0 / turn 0, dealt from the SAME locked seed at DIFFERENT player
+// counts: different games (different trump, different first attacker). Under
+// the digest tiebreak the smaller fork won half the time, stranding the last
+// joiner (their cached seat is out of range of the smaller game) and, when the
+// full game's first attacker was the player stuck on the small fork's board,
+// deadlocking every screen in the chat. Kernel rule 3 (msg_wire.h): at an
+// equal (round, turn) the fuller roster wins, before the digest — on the phone
+// AND here in the wasm the web replays through, or the two would fork.
+// A 0-action envelope assembled byte-for-byte (msg_wire.h layout). The two
+// racing Starts are exactly this — turn 0, round 0, empty body, the deal alone
+// is the state — and building them by hand keeps this test independent of what
+// the previous test left resident (kernelMsgSeal seals the RESIDENT game).
+// kernelMsgDecode below validates every byte of them through the kernel.
+function handoff0(phase: number, nPlayers: number, la: number, gid: bigint,
+                  joins: { seat: number; name: string }[]): Uint8Array {
+    const out = [0xf7, 2, 0, phase];                                   // magic, format, flags, phase
+    for (let i = 0n; i < 8n; i++) out.push(Number((gid >> (8n * i)) & 0xffn));
+    out.push(0, 0, la, nPlayers, 0, 0);                                // turn u16, last_actor, n_players, variant, round
+    out.push(...ZERO8, ...SEED, joins.length);
+    for (const j of joins) {
+        const name = Array.from(new TextEncoder().encode(j.name));
+        out.push(j.seat, name.length, ...name);
+    }
+    out.push(0, 0);                                                    // n_actions u16: the deal alone
+    return Uint8Array.from(out);
+}
+
+test('two Starts race: the fuller roster wins Rule P everywhere, but never over real progress', () => {
+    const gid = GAME_ID + 1n;
+    const joins3 = [{ seat: 0, name: 'Alex' }, { seat: 1, name: 'Sveta' }, { seat: 2, name: 'Boris' }];
+    const joins4 = [...joins3, { seat: 3, name: 'Dima' }];
+
+    // Alex starts from the full 4-join lobby; Sveta from her stale 3-join view.
+    const live4 = handoff0(2, 4, 0, gid, joins4);
+    const live3 = handoff0(2, 3, 1, gid, joins3);
+    const env4 = kernelMsgDecode(live4);
+    const env3 = kernelMsgDecode(live3);
+    assert.equal(env4.turn, 0); assert.equal(env3.turn, 0);   // the tie rule 3 must break
+
+    assert.ok(kernelMsgRuleP(live4, live3) < 0, 'the full 4p game must beat the stale 3p start');
+    assert.ok(kernelMsgRuleP(live3, live4) > 0, 'and the comparison must be symmetric');
+
+    // But rule 3 sits BELOW turn: a chain someone actually played on is never
+    // clobbered by a stale wider Start sealed after the fact.
+    let chosen: { seat: number; move: any } | null = null;
+    for (let s = 0; s < env3.n_players && !chosen; s++) {
+        const m = kernelMsgLegalMoves(s).find(x => x.type !== 'wait');
+        if (m) chosen = { seat: s, move: m };
+    }
+    assert.ok(chosen, 'the 3p deal must have a first attacker with a legal move');
+    assert.equal(kernelMsgRebase(env3.round, chosen!.seat, toWire(chosen!.move)), MSG_REBASE_REAPPLY);
+    const played3 = kernelMsgSeal({
+        flags: 0, phase: kernelMsgPublicView().view.gameOver >= 0 ? 3 : 2, n_players: 3, variant: 0,
+        last_actor_seat: chosen!.seat, game_id: gid,
+        parent8: env3.digest.slice(0, 8), seed: env3.seed, joins: env3.joins,
+    });
+    assert.ok(kernelMsgRuleP(played3, live4) < 0,
+              'a played-on chain out-ranks a wider turn-0 start (turn dominates joins)');
+});
