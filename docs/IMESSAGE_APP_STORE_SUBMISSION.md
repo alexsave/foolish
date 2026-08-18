@@ -162,9 +162,45 @@ questionnaire.
 | Field | Recommendation |
 | --- | --- |
 | Price | Free |
-| Availability | All territories — no gambling/age-restricted content, nothing region-sensitive |
+| Availability | **All territories** — no gambling/age-restricted content, nothing region-sensitive. No longer just a recommendation: 1.0 (3) went live with South Korea missing (§4a) — when editing, select the *all-territories* toggle, not a hand-picked subset. |
 | In-App Purchases | None |
 | Pre-orders | N/A |
+
+### 4a. Post-release fix — 1.0 (3) unavailable in South Korea (reported 2026-08-10)
+
+**Symptom.** On a KR-storefront device, opening this app's store page from the
+Messages App Store surfaces Apple's system alert *"앱을 사용할 수 없음 — 이 앱은
+현재 사용자의 국가 또는 지역에서 사용할 수 없습니다"* ("App unavailable — this
+app is not currently available in the user's country or region").
+
+**Diagnosis.** That alert is the storefront's territory-availability check.
+Nothing in the binary, its plists, or this repo controls it — territory
+availability lives only in App Store Connect — so there is no code-side fix
+and no new build or review pass involved. The live record's availability
+simply does not include South Korea, contradicting the row above. The miss is
+doubly wrong for this app: 1.0 declares `ko` in `CFBundleLocalizations` and
+ships full Korean strings (§9 / round-5 Q1), and the whole iMessage growth
+loop (recipient without the app taps a bubble → store page → install) dies at
+exactly this alert for every KR recipient.
+
+**Fix (App Store Connect, owner — no build needed).**
+
+1. My Apps → **Foolish — Durak** (`cards.foolish.msg`) → **Distribution →
+   Pricing and Availability**.
+2. Under **Availability**, hit Edit and select **all territories** (~175) —
+   use the select-all control rather than re-picking a subset, and explicitly
+   confirm **South Korea** is checked before saving.
+3. If the UI offers *automatically make available in new territories*, leave
+   it **on** so future storefronts don't silently drop out.
+4. Storefront propagation takes minutes to a few hours; then re-verify from a
+   KR-storefront Apple Account that the same bubble/store-page tap lands on
+   the listing instead of the alert.
+
+**Korea needs nothing beyond the checkbox.** Under Korea's game-rating regime
+the platform's own age questionnaire self-classifies everything below the
+adult (19+) band; this is a 4+ card game with every gambling question
+answered "None" (§3), so no separate GRAC filing applies. There is no
+region-legal reason to exclude KR — or any other territory.
 
 ---
 

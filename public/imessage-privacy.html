@@ -1,0 +1,73 @@
+<!doctype html>
+<!-- Privacy policy for the standalone iMessage app (FoolishMessagesApp,
+     cards.foolish.msg). This is the URL App Store Connect points at, so it is
+     deliberately a static file with zero JavaScript: the React routes render
+     behind KernelGate (providers.tsx), which blocks on a wasm fetch, and a
+     policy page a reviewer opens must not depend on the game kernel loading.
+     Served at /imessage-privacy via the rewrite in next.config.mjs. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy Policy - Foolish Cards for iMessage</title>
+  <meta name="description" content="Privacy policy for Foolish Cards for iMessage. The app collects no data of any kind.">
+  <link rel="icon" href="/favicon.ico">
+</head>
+<body>
+  <h1>Privacy Policy</h1>
+  <p><strong>Foolish Cards for iMessage</strong> (shown as "Foolish" in Messages)</p>
+  <p>Effective date: August 13, 2026</p>
+
+  <p>This app collects no data. It has no servers, no accounts, no analytics,
+  no ads, and no third-party code. Your moves travel as iMessages, the same way
+  your texts do.</p>
+
+  <h2>What this app is</h2>
+  <p>Foolish Cards for iMessage is a two-player Durak card game played inside
+  Apple's Messages app. It is a standalone iMessage app. There is no separate
+  Home Screen app.</p>
+
+  <h2>Data we collect</h2>
+  <p>None. The app has:</p>
+  <ul>
+    <li>no accounts and no sign-in,</li>
+    <li>no analytics, usage tracking, or crash reporting,</li>
+    <li>no ads and no third-party SDKs,</li>
+    <li>no access to your contacts, location, photos, or anything else on your
+        device beyond its own game data,</li>
+    <li>no in-app purchases.</li>
+  </ul>
+  <p>The app makes no network connections of its own, and we do not operate any
+  server for it. Nothing on our end can receive your data, so none of it is
+  collected, stored, shared, or sold.</p>
+
+  <h2>How your game moves travel</h2>
+  <p>Each move is encoded into the iMessage bubble the app sends. That message
+  contains the cards played and the nickname you type into the game, if you
+  choose to enter one. It is delivered by Apple's iMessage service like an
+  ordinary text and is visible only to the people in your conversation. Apple's
+  handling of iMessage is described in
+  <a href="https://www.apple.com/legal/privacy/">Apple's privacy policy</a>.</p>
+  <p>The app never sees who your contacts are. Messages identifies conversation
+  participants to the app only by anonymous identifiers. The names shown in the
+  game are nicknames players type in themselves.</p>
+
+  <h2>What stays on your device</h2>
+  <p>The app stores three small things on your device: the nickname you last
+  typed, which seat is yours in each game, and any move you have made but not
+  yet sent. Everything else about a game lives in the message bubbles
+  themselves. None of this leaves your device, and it is removed when you
+  delete the app.</p>
+
+  <h2>Children</h2>
+  <p>The app collects no data from anyone, including children.</p>
+
+  <h2>Changes to this policy</h2>
+  <p>If the app's behavior changes, we will update this page and the effective
+  date.</p>
+
+  <h2>Contact</h2>
+  <p>Questions about this policy or the app:
+  <a href="mailto:alexvsaveliev@gmail.com">alexvsaveliev@gmail.com</a></p>
+</body>
+</html>

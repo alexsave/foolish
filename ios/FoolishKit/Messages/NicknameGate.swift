@@ -59,4 +59,19 @@ public enum NicknameGate {
         if trimmed.utf8.count > maxBytes { return .tooLong }
         return .ok(trimmed)
     }
+
+    /// Is this (already-trimmed) name held by a seat in the lobby being
+    /// joined? Names are the only identity a payload can carry (§6 — no
+    /// account, and Apple's participant UUIDs neither transfer across devices
+    /// nor belong in the wire), so the ghost-seat guard, the §6.3 picker, and
+    /// the lobby's "(you)" tag all lean on them. They can only lean as far as
+    /// names are unique WITHIN a chain — which nothing enforced: two "Alex"es
+    /// in one lobby made the picker a coin flip and the disown check blind
+    /// between them. The Join button refuses a taken name (exact match on the
+    /// sealed, trimmed string), so any single chain's names stay distinct;
+    /// forked chains can still each hold their own "Alex" — the residual the
+    /// claim-token design (docs/IMESSAGE_SEAT_IDENTITY_V2.md) exists to close.
+    public static func isTaken(_ name: String, in joins: [MessageJoin]) -> Bool {
+        joins.contains { $0.name == name }
+    }
 }

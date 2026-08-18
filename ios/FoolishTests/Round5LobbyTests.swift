@@ -173,4 +173,72 @@ final class Round5LobbyTests: XCTestCase {
             }
         }
     }
+
+    // MARK: - a 9th player against the 8-seat wire (rapid-succession joins)
+
+    /// A 9+-person group chat racing into a capacity-8 lobby. The kernel side
+    /// is pinned in c (repro: an honest 9th join cannot seal, a forged 9-join
+    /// payload cannot decode, reseat(9) is refused, and the raced final seat
+    /// resolves deterministically with the loser's name absent from the
+    /// winning chain). This is the Swift half: what the 9th human's SCREEN
+    /// does, composed from the same pure pieces the views call.
+    func testNinthPlayerAgainstAFullLobbyIsRejectedNotSeated() {
+        let full = (0..<8).map { MessageJoin(seat: $0, name: "P\($0)") }
+
+        // A never-joined 9th human taps the full 8-join lobby: no seat
+        // resolves, and the one control offered is "lobby full" — no Join.
+        XCTAssertNil(SeatIdentity.resolveInLobby(cachedSeat: nil, senderIsLocal: false,
+                                                 nPlayers: 8, lastActorSeat: 7, joins: full,
+                                                 chatIsDM: false))
+        XCTAssertEqual(LobbyControls.offered(mySeat: nil, joined: 8, capacity: 8,
+                                             iSentTheInvite: false), .full)
+
+        // The RACED variant: the 9th human's claim for seat 7 lost the fork —
+        // their cache says 7, but the winning chain's seat 7 carries the other
+        // claimant's name. Disowned -> nil -> the same "lobby full" dead end,
+        // never "(you)" on somebody else's seat.
+        XCTAssertNil(SeatIdentity.resolveInLobby(cachedSeat: 7, senderIsLocal: false,
+                                                 nPlayers: 8, lastActorSeat: 7, joins: full,
+                                                 chatIsDM: false, recordedName: "Igor"))
+        // And on the STARTED chain the same disownment reads as no-cache, so
+        // board resolution falls to ambiguous (Release: spectator) — never
+        // seat 7's hand.
+        XCTAssertTrue(SeatIdentity.cacheDisownedByJoins(cachedSeat: 7, recordedName: "Igor",
+                                                        joins: full))
+        XCTAssertEqual(SeatIdentity.resolve(cachedSeat: nil, senderIsLocal: false,
+                                            nPlayers: 8, lastActorSeat: 7, chatIsDM: false),
+                       .ambiguous)
+
+        // The race WINNER (seat 7, their own name on the chain) is untouched:
+        // seated, and — M9's full-lobby exemption — allowed to Start.
+        XCTAssertEqual(SeatIdentity.resolveInLobby(cachedSeat: 7, senderIsLocal: false,
+                                                   nPlayers: 8, lastActorSeat: 7, joins: full,
+                                                   chatIsDM: false, recordedName: "P7"), 7)
+        XCTAssertEqual(LobbyControls.offered(mySeat: 7, joined: 8, capacity: 8,
+                                             iSentTheInvite: true), .start)
+    }
+
+    // MARK: - per-chain name uniqueness (the identity the payload leans on)
+
+    /// Names are the only identity a payload carries (§6), and the ghost-seat
+    /// guard, the §6.3 picker and the "(you)" tag all key on them — so within
+    /// one chain they must be unique. The Join button refuses a taken name.
+    func testATakenNameCannotJoin() {
+        let joins = [MessageJoin(seat: 0, name: "Alex"), MessageJoin(seat: 1, name: "Vera")]
+        XCTAssertTrue(NicknameGate.isTaken("Alex", in: joins))
+        XCTAssertTrue(NicknameGate.isTaken("Vera", in: joins))
+        XCTAssertFalse(NicknameGate.isTaken("Boris", in: joins))
+        XCTAssertFalse(NicknameGate.isTaken("Alex", in: []), "an empty lobby holds no names")
+    }
+
+    /// Exact match on the sealed, trimmed string — "alex" and "Alex" are two
+    /// different names on the wire, so they are two different identities here
+    /// too. (Whether that is friendly enough is a UX question; the guard's job
+    /// is only to mirror what the chain actually stores.)
+    func testTakenIsExactMatchOnTheSealedString() {
+        let joins = [MessageJoin(seat: 0, name: "Alex")]
+        XCTAssertFalse(NicknameGate.isTaken("alex", in: joins))
+        XCTAssertFalse(NicknameGate.isTaken("Alex ", in: joins),
+                       "untrimmed input never reaches the gate — .ok carries the trimmed string")
+    }
 }

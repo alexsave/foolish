@@ -48,6 +48,15 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// chain and replayed the move I had just watched myself play (round-3's
     /// double animation). See StagedBubbleRouting.
     private var lastSentPayload: Data?
+    /// The bubble that last ARRIVED while we are on screen (`didReceive`), and a
+    /// token bumped per arrival. Apple does not make an arrival the
+    /// `selectedMessage`, so `payloadURL`/loadKey never move for it — the surface
+    /// folds it in separately (GameSurface.maybeAdoptIncoming), Rule P deciding.
+    /// Without this a player stranded on a losing Start fork stayed stranded
+    /// until they happened to re-tap a bubble (the 4-player double-Start
+    /// deadlock).
+    private var incomingURL: URL?
+    private var incomingToken = 0
 
     // MARK: - Lifecycle (§11.1)
 
@@ -57,10 +66,15 @@ final class MessagesViewController: MSMessagesAppViewController {
     }
 
     /// A message arrived while we are on screen — an opponent may be live-playing.
-    /// Rule P decides progress vs stale (in MessageTurnController), never delivery
-    /// order (§7.2). A fresh receive cancels any half-started New game.
+    /// Rule P decides progress vs stale (never delivery order, §7.2): the arrival
+    /// is threaded to the surface as `incomingURL` (it does NOT become the
+    /// `selectedMessage`, so the ordinary payloadURL/loadKey path cannot see it)
+    /// and GameSurface adopts it only if it strictly out-ranks what is showing.
+    /// A fresh receive cancels any half-started New game.
     override func didReceive(_ message: MSMessage, conversation: MSConversation) {
         startingNewGame = false
+        incomingURL = message.url
+        incomingToken += 1
         present(conversation, style: presentationStyle)
     }
 
@@ -178,6 +192,8 @@ final class MessagesViewController: MSMessagesAppViewController {
             chatKey: chatKey,
             chatIsDM: isDM,
             chatPlayers: participants,
+            incomingURL: incomingURL,
+            incomingToken: incomingToken,
             requestExpand: { [weak self] in self?.requestPresentationStyle(.expanded) },
             onNewGame: { [weak self] in
                 guard let self else { return }

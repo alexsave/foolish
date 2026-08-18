@@ -88,8 +88,11 @@ mock.module('../src/components/Text.tsx', { namedExports: { Text: () => null } }
 mock.module('../src/contexts/LocalizationContext.tsx', { namedExports: { useLocalization: () => ({ t: (id: string, v?: any) => (v?.name ? `Add ${v.name}` : id) }) } });
 mock.module('../src/components/SovietIcon.tsx', { namedExports: { SovietIcon: () => null } });
 mock.module('../src/contexts/StyleContext.tsx', { namedExports: { useStyles: () => ({ texture: { useWoodTexture: false } }) } });
-mock.module('@shared/types.ts', { namedExports: { PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, PublicPlayer: {} } });
-mock.module('@shared/constants.ts', { namedExports: { MAX_PLAYERS: 6 } });
+// Lobby.tsx imports these from @api/core (it used to be @shared, whose alias
+// now points at a path with no types.ts — mock.module on an unresolvable
+// specifier throws ERR_MODULE_NOT_FOUND and killed the whole file at load).
+mock.module('@api/core/types.ts', { namedExports: { PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, PublicPlayer: {} } });
+mock.module('@api/core/constants.ts', { namedExports: { MAX_PLAYERS: 6 } });
 
 test('lobby: clicking Add Bot before the roster loads adds a SPECIFIC bot, not a random one', async () => {
     const React = (await import('react')).default;

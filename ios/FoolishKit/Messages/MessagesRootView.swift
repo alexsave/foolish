@@ -37,6 +37,15 @@ public struct MessagesRootView: View {
     /// NOT change loadKey: a send re-presents the SAME game, so the board is
     /// signalled (via .onChange) rather than reloaded.
     let sentToken: Int
+    /// The bubble that just ARRIVED while the extension is open (`didReceive`),
+    /// with `incomingToken` bumped per arrival. Apple does not move
+    /// `selectedMessage` for an arrival, so without this the surface sat on its
+    /// stale chain until the human happened to re-tap a bubble - which is how a
+    /// player stranded on a losing Start fork stayed stranded (the 4-player
+    /// double-Start deadlock; see GameSurface.maybeAdoptIncoming). Rule P still
+    /// decides: a stale or duplicate arrival changes nothing on screen.
+    let incomingURL: URL?
+    let incomingToken: Int
     /// This conversation's identity (`ChatKey.make` over its participant set),
     /// threaded down to every `MessageGameStore` lookup so a game cached from a
     /// DIFFERENT chat on this device can never resolve `.known` here — see the
@@ -55,12 +64,14 @@ public struct MessagesRootView: View {
     public init(payloadURL: URL?, style: MsgPresentation, senderIsLocal: Bool,
                 startNewGame: Bool, newGameToken: Int = 0, sentToken: Int = 0, chatKey: String,
                 chatIsDM: Bool, chatPlayers: Int,
+                incomingURL: URL? = nil, incomingToken: Int = 0,
                 requestExpand: @escaping () -> Void, onNewGame: @escaping () -> Void,
                 onSend: @escaping (Data, Int, Bool) async -> Void,
                 onUnstage: @escaping () -> Void = {}) {
         self.payloadURL = payloadURL; self.style = style; self.senderIsLocal = senderIsLocal
         self.startNewGame = startNewGame; self.newGameToken = newGameToken; self.sentToken = sentToken
         self.chatKey = chatKey; self.chatIsDM = chatIsDM; self.chatPlayers = chatPlayers
+        self.incomingURL = incomingURL; self.incomingToken = incomingToken
         self.requestExpand = requestExpand; self.onNewGame = onNewGame; self.onSend = onSend
         self.onUnstage = onUnstage
     }
@@ -85,6 +96,7 @@ public struct MessagesRootView: View {
         GameSurface(payloadURL: payloadURL, style: style, senderIsLocal: senderIsLocal,
                     startNewGame: startNewGame, newGameToken: newGameToken, sentToken: sentToken,
                     chatKey: chatKey, chatIsDM: chatIsDM, chatPlayers: chatPlayers,
+                    incomingURL: incomingURL, incomingToken: incomingToken,
                     requestExpand: requestExpand, onNewGame: onNewGame, onSend: onSend,
                     onUnstage: onUnstage)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -122,6 +134,8 @@ private struct GameSurface: View {
     let chatKey: String
     let chatIsDM: Bool
     let chatPlayers: Int
+    let incomingURL: URL?
+    let incomingToken: Int
     let requestExpand: () -> Void
     let onNewGame: () -> Void
     let onSend: (Data, Int, Bool) async -> Void
@@ -129,10 +143,12 @@ private struct GameSurface: View {
 
     /// A phase-0/handoff lobby the extension shows instead of the board (§5.2).
     private struct Lobby { let env: MessageEnvelope; let payload: Data }
-    /// A resolved seat waiting on the human's name (§B3). The 2-player receiver
-    /// reaches a board with no name set — the creator named themselves in setup and
-    /// 3-8p joiners in the lobby, but the DM opponent has neither. Ask once, store
-    /// it, then seat them; every later game reuses the stored name.
+    /// A resolved seat waiting on the human's name (§B3). Since lobby v3 EVERY
+    /// seated player named themselves on the way in (the creator in setup, every
+    /// joiner — DM opponent included — at the lobby's Join field), so this fires
+    /// only on §6.2 cache-loss recovery: a reinstall or second device, where the
+    /// seat resolves from an exact signal but the stored nickname is gone with
+    /// the cache. Any player count. Ask once, store it, then seat them.
     private struct NameGate { let env: MessageEnvelope; let payload: Data; let seat: Int
                               let survivors: [Move]; let discarded: Int
                               let prevPayload: Data? }   // note 4/9/38: threaded to seatOnBoard
@@ -206,6 +222,43 @@ private struct GameSurface: View {
             .onChange(of: sentToken) { _ in
                 Task { await controller?.markSent() }
             }
+            // A bubble ARRIVED while this surface is open (didReceive). Apple
+            // does not move `selectedMessage` for an arrival, so loadKey does
+            // not change and the .task above will not re-run - this one does.
+            .task(id: incomingToken) { await maybeAdoptIncoming() }
+    }
+
+    /// Fold an ARRIVING bubble into the live surface, Rule P deciding (§7.2).
+    ///
+    /// Why this exists: `didReceive` fires while the extension is open, but the
+    /// arrival does not become `selectedMessage`, so nothing reloaded and the
+    /// surface sat on whatever chain it last adopted until the human re-tapped
+    /// a bubble. Mostly that was just staleness (an opponent's move not showing
+    /// until reopen; a lobby roster missing the join that just arrived). In the
+    /// double-Start race it was a DEADLOCK: two players tap Start off different
+    /// lobby states, two LIVE handoffs exist, Rule P (kernel rule 3) picks the
+    /// fuller one - but the losing starter's own device was already sitting on
+    /// its fork's board and never re-compared, so if the real game's first
+    /// attacker was that player, every screen in the chat waited forever.
+    ///
+    /// Rule P still decides everything: a stale or duplicate arrival loses to
+    /// the chain on screen and changes NOTHING (no teardown, no replay). Only a
+    /// strictly-preferred arrival is adopted - through the same `adopt` a tap
+    /// goes through, so seat identity, Rule R and the phase-0 lobby route all
+    /// hold. With nothing on screen to compare (spectator / picker / name
+    /// gate), the arrival simply renders - round 7 keeps no cached chain to
+    /// weigh it against. `showSetup` is exempt: the human explicitly asked for
+    /// a new game.
+    private func maybeAdoptIncoming() async {
+        guard let url = incomingURL, !showSetup, !startNewGame,
+              let bytes = try? MessageEnvelope.payloadBytes(url: url) else { return }
+        let current = controller?.basePayload ?? lobby?.payload
+        if bytes == current { return }
+        if let current,
+           ((try? await MessageKernel.shared.preferred(current, bytes)) ?? -1) <= 0 { return }
+        guard let env = try? await MessageEnvelope.decode(payload: bytes, viewer: -1) else { return }
+        AnimLog.say("surface adopts arrival phase=\(env.phase) joins=\(env.joins.count) turn=\(env.turn)")
+        await adopt(winner: bytes, env: env)
     }
 
     /// 1.0(6): the graceful failure screen - shown ONLY when a message fails to
@@ -535,11 +588,22 @@ private struct GameSurface: View {
     /// the flip side, a fresh join not showing as joined). Note 15's Rule-P-
     /// for-lobbies fix in `load()` means the NEWEST bubble (the one that really
     /// does list me) is what gets shown here in the first place.
+    ///
+    /// Bubble-anchored lookup (`seatForBubble`): this env came off a real
+    /// bubble, whose gameId identifies my seat even after a group-membership
+    /// change re-keyed the chat. `recordedName` extends note 14's membership
+    /// gate by name: a lobby carrying someone ELSE's name at my cached seat is
+    /// a claim race this device lost - nil here brings the Join button back so
+    /// I re-claim the next free seat instead of squatting on theirs. Round 7
+    /// stores no claim-time name; the device nickname is what my own Join
+    /// sealed (see adopt()'s note), used only once actually set.
     private func lobbySeat(_ env: MessageEnvelope) -> Int? {
         SeatIdentity.resolveInLobby(
-            cachedSeat: MessageGameStore.shared.seat(gameId: env.gameId, chatKey: chatKey),
+            cachedSeat: MessageGameStore.shared.seatForBubble(gameId: env.gameId),
             senderIsLocal: senderIsLocal, nPlayers: env.nPlayers,
-            lastActorSeat: env.lastActorSeat, joins: env.joins)
+            lastActorSeat: env.lastActorSeat, joins: env.joins, chatIsDM: chatIsDM,
+            recordedName: MessageGameStore.shared.hasSetNickname
+                ? MessageGameStore.shared.nickname : nil)
     }
 
     /// Claim the lowest free seat (§5.2, lobby v3). Always reseals WAITING and
@@ -564,6 +628,11 @@ private struct GameSurface: View {
         } else {
             nick = MessageGameStore.shared.nickname
         }
+        // Names must stay unique WITHIN a chain (they are the only identity
+        // the payload carries, §6 — see NicknameGate.isTaken). LobbyView's
+        // join button already refuses a taken name; this re-check covers the
+        // fallback path above landing on a stored nickname that collides.
+        guard !NicknameGate.isTaken(nick, in: env.joins) else { return }
         MessageGameStore.shared.nickname = nick   // remember it for the next game (B3)
         let joins = (env.joins + [MessageJoin(seat: free, name: nick)]).sorted { $0.seat < $1.seat }
         do {
@@ -673,7 +742,7 @@ private struct GameSurface: View {
         // this is the structural guarantee behind that, not a second opinion
         // about which chain wins.
         if env.phase == 0 { controller = nil; lobby = Lobby(env: env, payload: winner); return }
-        // Round 7: `prevPayload` (the previously-cached chain) is gone — the
+        // Round 7: `prevPayload` (the previously-cached chain) is gone - the
         // open-replay was already resolved purely from the adopted chain by the
         // kernel (MessageTurnController.begin -> lastMoveEvents), never from a
         // cached diff, so there is nothing to look up here any more.
@@ -692,14 +761,39 @@ private struct GameSurface: View {
         #endif
         let (survivors, discarded) = await rebasePending(gameId: env.gameId, adoptedRound: env.round)
 
-        switch SeatIdentity.resolve(cachedSeat: MessageGameStore.shared.seat(gameId: env.gameId, chatKey: chatKey),
+        // Bubble-anchored seat (seatForBubble): the winner chain's gameId
+        // identifies this device's seat even after a group-membership change
+        // re-keyed the chat (round 7 keeps only the seat per game, so the seat
+        // IS the whole lookup now). Seat resolution then leans on the roster's
+        // NAMES, both ways:
+        //  - recovery (seatClaimedByName): the seat carrying MY claim name in
+        //    THIS chain is my seat here, even when a fork race left the numeric
+        //    cache pointing at a claim that lost (the flow simulator's
+        //    convergence/liveness stall);
+        //  - the ghost guard (cacheDisownedByJoins): a roster listing somebody
+        //    ELSE's name at my cached seat means my claim lost - trusting the
+        //    number would put that person's hand face-up on my screen. Disowned
+        //    with no name to recover reads as no-cache: §6.2's exact signals,
+        //    else the Release spectator board.
+        // Round 7 stores no claim-time name; the device nickname is what was
+        // sealed into MY join (it only diverges if the human renamed since -
+        // §6.3's trust level either way), and it only counts once actually set.
+        let numericSeat = MessageGameStore.shared.seatForBubble(gameId: env.gameId)
+        let recorded: String? = MessageGameStore.shared.hasSetNickname
+            ? MessageGameStore.shared.nickname : nil
+        let cachedSeat: Int? = SeatIdentity.seatClaimedByName(recordedName: recorded, joins: env.joins)
+            ?? (SeatIdentity.cacheDisownedByJoins(cachedSeat: numericSeat, recordedName: recorded,
+                                                  joins: env.joins) ? nil : numericSeat)
+        switch SeatIdentity.resolve(cachedSeat: cachedSeat,
                                     senderIsLocal: senderIsLocal,
-                                    nPlayers: env.nPlayers, lastActorSeat: env.lastActorSeat) {
+                                    nPlayers: env.nPlayers, lastActorSeat: env.lastActorSeat,
+                                    chatIsDM: chatIsDM) {
         case .known(let seat):
-            // §B3: a player about to be seated who has never chosen a name is asked
-            // once (the 2-player receiver has no setup/lobby screen). Creator +
-            // lobby joiners already set theirs, so this only fires for the DM
-            // opponent's first game; it never re-asks once stored.
+            // §B3: a player about to be seated who has never chosen a name is
+            // asked once. Since lobby v3 everyone named themselves at setup or
+            // the lobby's Join field, so this fires only on §6.2 cache-loss
+            // recovery (reinstall/second device — the nickname went with the
+            // cache), at any player count; it never re-asks once stored.
             if !MessageGameStore.shared.hasSetNickname {
                 controller = nil
                 nameGate = NameGate(env: env, payload: winner, seat: seat,
@@ -1113,7 +1207,15 @@ private struct LobbyView: View {
                 TextField(FStrings.t("ios.msg.nickname_ph"), text: $nickname).textFieldStyle(.roundedBorder)
                 switch nameVerdict {
                 case .ok(let name):
-                    FButton(FStrings.t("ios.msg.joinas", ["name": name]), kind: .wood) { onJoin(name) }
+                    // Names are the only identity the payload carries (§6), so
+                    // each chain's names must stay distinct — the ghost-seat
+                    // guard, the §6.3 picker and the "(you)" tag all key on
+                    // them (NicknameGate.isTaken's doc has the full story).
+                    if NicknameGate.isTaken(name, in: env.joins) {
+                        FButton(FStrings.t("ios.msg.nametaken"), kind: .wood, enabled: false) {}
+                    } else {
+                        FButton(FStrings.t("ios.msg.joinas", ["name": name]), kind: .wood) { onJoin(name) }
+                    }
                 case .empty:
                     FButton(FStrings.t("ios.msg.entername"), kind: .wood, enabled: false) {}
                 case .tooLong:
@@ -1145,13 +1247,15 @@ private struct LobbyView: View {
     private var nameVerdict: NicknameGate.Verdict { NicknameGate.check(nickname) }
 }
 
-/// §B3 one-time name entry for a player being seated without a stored name — the
-/// 2-player receiver, who has neither the creator's setup screen nor the 3-8p
-/// lobby's join field (m8: this is the ONE of the three name-asking screens
-/// that is not redundant with another — the DM opponent never sees the other
-/// two, so it cannot simply be deleted in favor of them). Shown once (until a
-/// name is stored), prefilled with the current nickname if it is not the
-/// neutral default.
+/// §B3 one-time name entry for a player being seated without a stored name.
+/// Since lobby v3 every player names themselves on the way in (setup or the
+/// lobby's Join field), so the one REACHABLE road here is §6.2 cache-loss
+/// recovery — a reinstall or second device resolves the seat from an exact
+/// signal while the stored nickname is gone with the cache — at any player
+/// count (m8's "not redundant with the other two name screens" survives as
+/// exactly this: recovery has no setup or Join field to pass through). Shown
+/// once (until a name is stored), prefilled with the current nickname if it
+/// is not the neutral default.
 ///
 /// Round-5 B1: Continue is no longer always enabled. It gates on the SAME
 /// NicknameGate verdict as NewGameSetup and LobbyView's join — blank or

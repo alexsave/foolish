@@ -967,11 +967,12 @@ branch; start new work from `main`. Live milestone summary:
 
 ### 17.3 What is DONE and verified (Linux, no Mac)
 
-- **C engine bridge** (`c/ios/`, `make ios-lib`/`ios-smoke`/`ios-goldens`/
-  `ios-view-test`): all green. `ios-smoke` drives a full game + replay round-trip
-  through the `fio_*` API; `ios-view-test` proves the server packed masked-view
-  decodes through the SAME kernel as offline (view + legal moves match). The
-  bridge is the same `game.c`/`legal.c`/`view.c`/`replay.c` as the wasm build.
+- **C engine bridge** (`c/ios/`, `make ios-lib`/`ios-smoke`/`ios-goldens`):
+  all green. `ios-smoke` drives a full game + replay round-trip through the
+  `fio_*` API. (The `ios-view-test` C harness verified packed masked-view
+  decode at the time; it has since been retired — that decode is now pure
+  Swift `MaskedView`, proven by `PackedViewTests.swift`.) The bridge is the
+  same `game.c`/`legal.c`/`view.c`/`replay.c` as the wasm build.
 - **Native replay codec** (encode+decode, base32 + shared `replay.c`) —
   round-trip proven; byte-parity with the server by construction.
 - **Verified wire primitives** (unit-tested in isolation): `PackedAction` (awire,
@@ -1002,10 +1003,11 @@ skeleton:
    subscribes those and decodes `row.view` via `PackedGame`. The
    `animation_events` broadcast is Stage-C2 animation polish, deferred.
 
-New verified C: `fio_view_from_packed_json` + `fio_legal_from_packed_json` decode
-the server's masked-view wire through the SAME kernel as offline
-(`make ios-view-test`, green). So online renders and computes legal moves with
-zero rules in Swift.
+Masked-view wire (historical note): this was first verified through C bridges
+(`fio_view_from_packed_json` + `fio_legal_from_packed_json`, `make
+ios-view-test`); those are retired — today the packed view decodes in pure
+Swift (`MaskedView`, proven by `PackedViewTests.swift`) and legal moves come
+through the packed `fio_legal_from_packed`. Rules still live only in the kernel.
 
 The supabase-swift 2.x API shapes used in `Net/` were **verified against the SDK
 source** (Functions invoke overloads + `FunctionInvokeOptions(body: some
@@ -1022,7 +1024,8 @@ against a staging Supabase project. `docs/PROTOCOL.md` §9 lists it.
 ### 17.6 First-Mac-session checklist
 
 1. `cd c && make ios-lib` (needs Xcode CLT), then `make ios-smoke`,
-   `make ios-view-test`, `make ios-goldens` — confirm all green.
+   `make ios-goldens` — confirm all green (`ios-view-test` is retired;
+   packed-view decode is covered by `PackedViewTests` in step 3).
 2. `brew install xcodegen`; `cd ios && xcodegen generate`.
 3. `xcodebuild -scheme Foolish -destination 'platform=iOS Simulator,name=iPhone 16' build test` — fix compile nits (Engine/DesignSystem/Boards first, then Net/ supabase-swift shapes).
 4. Record snapshot references (`ComponentSnapshotTests`, set `record=true` once, commit `__Snapshots__`, set back).

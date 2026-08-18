@@ -186,6 +186,21 @@ public final class MessageGameStore {
         return map
     }
 
+    /// My seat for `gameId` regardless of which chat it was claimed under - the
+    /// lookup for a bubble that is IN HAND (tapped, or just arrived). `ChatKey`
+    /// is the sorted participant-UUID set, so ADDING OR REMOVING A GROUP MEMBER
+    /// changes it mid-game - after which the strictly-scoped `seat(gameId:
+    /// chatKey:)` misses and this device's own seat degrades to §6.2/§6.3 (the
+    /// Release spectator board: a seated player suddenly "can't act"). When the
+    /// caller holds an actual bubble, the bubble's `game_id` - a `UInt64.random`
+    /// minted once at creation - is itself the proof this row is this game's: a
+    /// row can only exist because THIS DEVICE created/joined/played that game,
+    /// whatever key the conversation hashed to at the time. The cross-chat leak
+    /// the scoping fixed lived in the NO-BUBBLE reopen, which has no gameId to
+    /// anchor on and keeps using the scoped read. The next `setSeat` re-keys the
+    /// row to the current chatKey, so one tap heals the scoped read too.
+    public func seatForBubble(gameId: String) -> Int? { allSeats()[gameId]?.seat }
+
     /// ROUND 7: the preferred-chain record is gone; nothing is stored per game but
     /// the seat (`seat(gameId:chatKey:)`). Retained as a no-op returning nil so the
     /// §5/§6/§7 call sites compile and behave as "nothing cached".

@@ -403,4 +403,93 @@ final class MessageLobbyTests: XCTestCase {
                              + "have caught a kernel without the phase rule (e.g. a stale "
                              + "vendor/Foolish.xcframework)")
     }
+
+    // MARK: - Rule P rule 3: the double-Start fork (the 4-player incident)
+
+    /// Any joined player may Start, and Start deals at the tapped bubble's join
+    /// count — so two players starting near-simultaneously (or one starting off
+    /// a stale bubble that predates the last join) seal TWO LIVE handoffs, both
+    /// round 0 / turn 0, dealt from the SAME locked seed at DIFFERENT player
+    /// counts. Those are different games: different trump, different first
+    /// attacker. Under the digest tiebreak the smaller fork won half the time;
+    /// when the full game's first attacker was the player stranded on the small
+    /// fork's board, every screen in the chat waited on a player whose own
+    /// screen said someone else must open — the shipped 4-player deadlock.
+    ///
+    /// Kernel rule 3 (msg_wire.h): at an equal (round, turn), the fuller roster
+    /// wins, before the digest. This seed (salt 1) is chosen so the fixture
+    /// genuinely poses the old bug: its two forks disagree about the first
+    /// attacker AND the 3-player fork's digest sorts first — against a pre-rule-3
+    /// kernel both `preferred` assertions below fail.
+    func testFullerStartBeatsAStaleSmallerStart() async throws {
+        let k = MessageKernel.shared
+        let gid: UInt64 = 904
+        try await k.newGame(seed: freshSeed(1), players: 8)   // open lobby, cap 8
+        var payload = try await k.seal(phase: 0, lastActorSeat: 0, gameId: gid,
+                                       parent8: Data(repeating: 0, count: 8),
+                                       joins: [MessageJoin(seat: 0, name: "Alex")])
+        var stale3: Data?          // the 3-join lobby a stale Start races from
+        for (seat, name) in [(1, "Sveta"), (2, "Boris"), (3, "Dima")] {
+            let env = try await MessageEnvelope.decode(payload: payload, viewer: -1)
+            let joins = (env.joins + [MessageJoin(seat: seat, name: name)]).sorted { $0.seat < $1.seat }
+            payload = try await k.seal(phase: 0, lastActorSeat: seat, gameId: gid,
+                                       parent8: MessageTurnController.firstEight(hex: env.digest),
+                                       joins: joins)
+            if joins.count == 3 { stale3 = payload }
+        }
+
+        // Alex starts from the full 4-join lobby…
+        let fullLobby = try await MessageEnvelope.decode(payload: payload, viewer: -1)
+        let live4 = try await k.startFromLobby(
+            lobbyPayload: payload, gameId: gid, actingSeat: 0,
+            parent8: MessageTurnController.firstEight(hex: fullLobby.digest), joins: fullLobby.joins)
+        let env4 = try await MessageEnvelope.decode(payload: live4, viewer: -1)
+        let fa4 = await k.residentView(viewer: -1)?.firstAttacker ?? -1
+
+        // …while Sveta, whose device has not seen Dima's join yet, starts from
+        // her stale 3-join view of the same lobby chain.
+        let staleEnv = try await MessageEnvelope.decode(payload: stale3!, viewer: -1)
+        let live3 = try await k.startFromLobby(
+            lobbyPayload: stale3!, gameId: gid, actingSeat: 1,
+            parent8: MessageTurnController.firstEight(hex: staleEnv.digest), joins: staleEnv.joins)
+        let env3 = try await MessageEnvelope.decode(payload: live3, viewer: -1)
+        let fa3 = await k.residentView(viewer: -1)?.firstAttacker ?? -1
+
+        // The fixture is the real thing: two LIVE turn-0 chains of one game id,
+        // different sizes, disagreeing about the opener, with the smaller one's
+        // digest sorting first (what the old rule wrongly rewarded).
+        XCTAssertEqual(env4.phase, 2); XCTAssertEqual(env3.phase, 2)
+        XCTAssertEqual(env4.nPlayers, 4); XCTAssertEqual(env3.nPlayers, 3)
+        XCTAssertEqual(env4.turn, 0); XCTAssertEqual(env3.turn, 0)
+        XCTAssertNotEqual(fa4, fa3, "this seed's forks disagree about the opener — the deadlock ingredient")
+        XCTAssertLessThan(env3.digest, env4.digest,
+                          "fixture must pose the digest coin-flip the old rule lost")
+
+        // Rule 3: every device prefers the fuller start, in both directions.
+        let fullVsStale = try await k.preferred(live4, live3)
+        let staleVsFull = try await k.preferred(live3, live4)
+        XCTAssertLessThan(fullVsStale, 0,
+                          "the full 4-player game must beat the stale 3-player start")
+        XCTAssertGreaterThan(staleVsFull, 0,
+                             "and the comparison must be symmetric")
+
+        // But a chain someone actually PLAYED on still out-ranks a wider turn-0
+        // start: rule 3 sits below turn, so real progress is never clobbered.
+        _ = try await k.decode(payload: live3, viewer: -1)
+        var played3: Data?
+        for s in 0..<env3.nPlayers {
+            if let m = await k.residentLegal(seat: s).first(where: { $0.type != .wait }) {
+                try await k.apply(seat: s, move: m)
+                played3 = try await k.seal(phase: 2, lastActorSeat: s, gameId: gid,
+                                           parent8: MessageTurnController.firstEight(hex: env3.digest),
+                                           joins: env3.joins)
+                break
+            }
+        }
+        let playedEnv = try await MessageEnvelope.decode(payload: played3!, viewer: -1)
+        XCTAssertEqual(playedEnv.turn, 1)
+        let playedVsWider = try await k.preferred(played3!, live4)
+        XCTAssertLessThan(playedVsWider, 0,
+                          "a played-on chain must not be clobbered by a stale wider Start")
+    }
 }

@@ -437,6 +437,7 @@ int msg_chain_key(const unsigned char *envelope, int len, MsgChainKey *out) {
     out->phase = e.phase;
     out->round = e.round;
     out->turn  = e.turn;
+    out->n_joins = (uint8_t)e.n_joins;
     msg_digest(envelope, len, out->digest);
     return MSG_EOK;
 }
@@ -450,6 +451,12 @@ int msg_rule_p(const MsgChainKey *a, const MsgChainKey *b) {
     if (sa != sb) return sa ? -1 : 1;
     if (a->round != b->round) return a->round > b->round ? -1 : 1;
     if (a->turn  != b->turn)  return a->turn  > b->turn  ? -1 : 1;
+    // The fuller roster wins the turn-0 tie (header rule 3): two Starts sealed
+    // from different lobby states are DIFFERENT deals of the same seed, and the
+    // digest was a coin flip between them — see the header for the deadlock
+    // that produced. Below turn on purpose: a played-on chain is never clobbered
+    // by a stale wider Start.
+    if (a->n_joins != b->n_joins) return a->n_joins > b->n_joins ? -1 : 1;
     // Lexicographic over the full digest. Arbitrary, total, and identical on
     // every device — which is all a tiebreak has to be.
     for (int i = 0; i < SHA256_DIGEST_LEN; i++) {

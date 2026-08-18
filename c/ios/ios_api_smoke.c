@@ -131,8 +131,12 @@ static int replay_sweep(void) {
                        fio_last_replay_error());
                 return 1;
             }
-            if ((unsigned char)buf[0] != 6) {   // version is byte[0]
-                printf("FAIL sweep v6 version p=%d seed=%d\n", players, s);
+            // Since 1.0(4) the seeded encoder stamps v7 (v6 + the pass-mode
+            // bit, byte-identical play — replay.h's REPLAY_FORMAT_VERSION_V7
+            // note). Old v6 codes still decode; fresh encodes must be v7.
+            if ((unsigned char)buf[0] != 7) {   // version is byte[0]
+                printf("FAIL sweep v6 version p=%d seed=%d got=%d\n", players, s,
+                       (unsigned char)buf[0]);
                 return 1;
             }
             if (((unsigned char)buf[4] == 0xFF ? -1 : (unsigned char)buf[4]) != fool) {
@@ -372,6 +376,58 @@ static int lobby_v2_reseat_check(void) {
     return 0;
 }
 
+// ---------- The 8-seat cap against a 9th player -----------------------------
+//
+// A 9+-person group chat racing into an open lobby: the 9th join must be
+// impossible at every layer the bridge owns. (The DECODE side — a forged
+// n_joins=9 header — is the tamper matrix's job, msg_wire_test.c.) The Swift
+// halves — the full lobby offering only "lobby full", and a raced-out
+// claimant's disowned cache reading as spectator — are pinned in
+// Round5LobbyTests.testNinthPlayerAgainstAFullLobbyIsRejectedNotSeated.
+static int nine_player_cap_check(void) {
+    unsigned char seed[32];
+    for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(i * 29 + 11);
+    if (fio_new_game(seed, 32, 8) != FIO_EOK) { printf("FAIL cap new_game(8)\n"); return 1; }
+
+    const uint8_t zero8[8] = {0};
+    unsigned char out[2048];
+
+    // A full 8-join WAITING lobby seals fine (the cap itself is reachable)…
+    char joins8[512]; int off = 0;
+    off += snprintf(joins8 + off, sizeof(joins8) - off, "[");
+    for (int s = 0; s < 8; s++)
+        off += snprintf(joins8 + off, sizeof(joins8) - off,
+                        "%s{\"seat\":%d,\"name\":\"P%d\"}", s ? "," : "", s, s);
+    snprintf(joins8 + off, sizeof(joins8) - off, "]");
+    if (fio_msg_encode(0, 7, 0xF002ULL, zero8, joins8, out, sizeof(out)) <= 0) {
+        printf("FAIL cap: a full 8-join lobby refused to seal (msg_err=%d)\n",
+               fio_last_msg_error());
+        return 1;
+    }
+
+    // …a 9th join in the list does not (fio_parse_joins caps at MSG_MAX_JOINS)…
+    char joins9[600];
+    snprintf(joins9, sizeof(joins9), "%.*s,{\"seat\":8,\"name\":\"P8\"}]",
+             (int)strlen(joins8) - 1, joins8);
+    if (fio_msg_encode(0, 7, 0xF002ULL, zero8, joins9, out, sizeof(out)) > 0) {
+        printf("FAIL cap: a 9-join lobby sealed\n"); return 1;
+    }
+
+    // …a claim on seat 8 (outside the 0..7 wire range) does not…
+    if (fio_msg_encode(0, 0, 0xF002ULL, zero8,
+                       "[{\"seat\":0,\"name\":\"A\"},{\"seat\":8,\"name\":\"I\"}]",
+                       out, sizeof(out)) > 0) {
+        printf("FAIL cap: a seat-8 claim sealed\n"); return 1;
+    }
+
+    // …and no 9-player deal exists to start into.
+    if (fio_reseat_game(9) == FIO_EOK) { printf("FAIL cap: reseat(9) accepted\n"); return 1; }
+    if (fio_reseat_game(8) != FIO_EOK) { printf("FAIL cap: reseat(8) refused\n"); return 1; }
+
+    printf("nine-player cap OK (8-join seals; 9th join / seat 8 / reseat(9) all refused)\n");
+    return 0;
+}
+
 int main(void) {
     unsigned char seed[32];
     for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(i * 7 + 1);
@@ -473,6 +529,7 @@ int main(void) {
     if (replay_sweep() != 0) return 1;
     if (fmsg_check() != 0) return 1;
     if (lobby_v2_reseat_check() != 0) return 1;
+    if (nine_player_cap_check() != 0) return 1;
 
     printf("SMOKE OK\n");
     return 0;
