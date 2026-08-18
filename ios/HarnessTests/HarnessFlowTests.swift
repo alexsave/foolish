@@ -496,4 +496,129 @@ final class HarnessFlowTests: XCTestCase {
         XCTAssertEqual(opened.phase, 2, "the bubble he opens is LIVE")
         XCTAssertEqual(opened.nPlayers, 4, "dealt at the joined count")
     }
+
+    /// THE SHIPPED 4-PLAYER DEADLOCK, replayed bubble for bubble (2026-08 group
+    /// thread: create, one join, "started the game", two more joins off the
+    /// stale lobby, a second start). Two LIVE turn-0 chains of one game id now
+    /// exist - a 2-player deal and a 4-player deal of the SAME seed - and they
+    /// disagree about the first attacker. Pre-fix, Rule P broke this tie on the
+    /// digest coin-flip (rule 4), so about half of all seeds crowned the
+    /// 2-player fork: the real first attacker's own device sat on a board where
+    /// the sword pointed at the seat to their right and none of their taps were
+    /// legal, forever. Kernel rule 3 (more joins outranks, still below turn) is
+    /// the fix; this test replays the incident and pins every layer of it.
+    /// The incident chains for one candidate seed, pure kernel calls: lobby ->
+    /// Alex joins -> Vera starts at 2 -> Irina+tvist join the stale lobby ->
+    /// second start at 4. Returns both LIVE chains and their envelopes.
+    private func incidentChains(seedByte: UInt8, gid: UInt64) async throws
+        -> (live2: Data, live4: Data, env2: MessageEnvelope, env4: MessageEnvelope,
+            bubbles: [(Data, Int)]) {
+        let k = MessageKernel.shared
+        let seed = Data(repeating: seedByte, count: 32)
+        try await k.newGame(seed: seed, players: 8)
+        var joins = [MessageJoin(seat: 0, name: "Vera")]
+        var bubbles: [(Data, Int)] = []
+        let lobby1 = try await k.seal(phase: 0, lastActorSeat: 0, gameId: gid,
+                                      parent8: Data(repeating: 0, count: 8), joins: joins)
+        bubbles.append((lobby1, 0))
+        var env = try await MessageEnvelope.decode(payload: lobby1, viewer: -1)
+        _ = try? await k.decode(payload: lobby1, viewer: -1)
+        joins.append(MessageJoin(seat: 1, name: "Alex"))
+        let lobby2 = try await k.seal(phase: 0, lastActorSeat: 1, gameId: gid,
+                                      parent8: MessageTurnController.firstEight(hex: env.digest),
+                                      joins: joins)
+        bubbles.append((lobby2, 1))
+
+        // "Vera started the game" - off the 2-join state she was looking at.
+        env = try await MessageEnvelope.decode(payload: lobby2, viewer: -1)
+        let live2 = try await k.startFromLobby(
+            lobbyPayload: lobby2, gameId: gid, actingSeat: 0,
+            parent8: MessageTurnController.firstEight(hex: env.digest), joins: joins)
+        bubbles.append((live2, 0))
+        let env2 = try await MessageEnvelope.decode(payload: live2, viewer: -1)
+
+        // Irina and tvist join off the STALE 2-join lobby bubble (they tapped
+        // the invite, not the started game - exactly the incident's order).
+        var staleLobby = lobby2
+        for (seat, name) in [(2, "Irina"), (3, "tvist")] {
+            env = try await MessageEnvelope.decode(payload: staleLobby, viewer: -1)
+            _ = try? await k.decode(payload: staleLobby, viewer: -1)
+            joins.append(MessageJoin(seat: seat, name: name))
+            staleLobby = try await k.seal(phase: 0, lastActorSeat: seat, gameId: gid,
+                                          parent8: MessageTurnController.firstEight(hex: env.digest),
+                                          joins: joins)
+            bubbles.append((staleLobby, seat))
+        }
+
+        // The second Start, off the full 4-join lobby.
+        env = try await MessageEnvelope.decode(payload: staleLobby, viewer: -1)
+        let live4 = try await k.startFromLobby(
+            lobbyPayload: staleLobby, gameId: gid, actingSeat: 0,
+            parent8: MessageTurnController.firstEight(hex: env.digest), joins: joins)
+        bubbles.append((live4, 0))
+        let env4 = try await MessageEnvelope.decode(payload: live4, viewer: -1)
+        return (live2, live4, env2, env4, bubbles)
+    }
+
+    func testDoubleStartIncident_fullerGameWinsEverywhere() async throws {
+        let k = MessageKernel.shared
+        let m = HarnessModel(count: 4)
+
+        // FIXTURE SCAN: rule 3 sits above the digest tiebreak, so a seed whose
+        // digests happen to favor the fuller chain would pass even WITHOUT the
+        // fix (the coin flip is ~50/50 per seed). Pick the first seed where the
+        // 2-player fork's digest sorts FIRST - the half of the flip the old
+        // rule lost, the one that shipped the deadlock - so this test dies the
+        // moment rule 3 is broken. (Hex digests compare like the raw bytes
+        // msg_rule_p compares.)
+        var chosen: UInt8? = nil
+        for b: UInt8 in 1...16 {
+            let probe = try await incidentChains(seedByte: b, gid: 202600 + UInt64(b))
+            if probe.env2.digest < probe.env4.digest { chosen = b; break }
+        }
+        guard let seedByte = chosen else {
+            return XCTFail("no seed in 1...16 poses the digest coin-flip - statistically impossible")
+        }
+        // Rebuild the incident at the chosen seed, staging every bubble into
+        // the fake thread in the incident's exact order.
+        let r = try await incidentChains(seedByte: seedByte, gid: 202600 + UInt64(seedByte))
+        for (payload, seat) in r.bubbles {
+            m.become(seat)
+            await m.stage(payload, seat: seat)
+            m.deliver()
+        }
+        let (live2, live4, env2, env4) = (r.live2, r.live4, r.env2, r.env4)
+        XCTAssertEqual(env2.phase, 2); XCTAssertEqual(env2.nPlayers, 2)
+        XCTAssertEqual(env4.phase, 2); XCTAssertEqual(env4.nPlayers, 4)
+        XCTAssertEqual(env4.turn, 0, "both forks are at turn 0 - the tie rule 3 breaks")
+        // The fixture guard: this seed poses the half of the digest coin-flip
+        // the old rule LOST, so pre-rule-3 kernels fail here, never silently pass.
+        XCTAssertLessThan(env2.digest, env4.digest,
+                          "fixture must pose the digest coin-flip the old rule lost")
+
+        // 1. The kernel: the fuller start wins Rule P in BOTH directions,
+        //    digest coin-flip be damned.
+        let fourVsTwo = try await k.preferred(live4, live2)
+        let twoVsFour = try await k.preferred(live2, live4)
+        XCTAssertLessThan(fourVsTwo, 0, "the 4-player game must beat the 2-player fork")
+        XCTAssertGreaterThan(twoVsFour, 0, "symmetrically")
+
+        // 2. The surface: every one of the four players reopens onto the
+        //    4-player game, and specifically its first attacker...
+        for seat in 0..<4 {
+            m.become(seat)
+            XCTAssertEqual(m.payloadURL, MessageEnvelope.link(payload: live4),
+                           "seat \(seat) must open the 4-player game")
+        }
+
+        // 3. ...can actually act: the sword points at someone whose taps are
+        //    legal (the deadlock was precisely this player being move-less).
+        _ = try? await k.decode(payload: live4, viewer: -1)
+        let view = await k.residentView(viewer: -1)
+        let fa = view?.firstAttacker ?? -1
+        XCTAssertTrue((0..<4).contains(fa), "the 4p deal names a first attacker")
+        let moves = await k.residentLegal(seat: fa)
+        XCTAssertTrue(moves.contains { $0.type != .wait },
+                      "the first attacker of the real game has a real move - no deadlock")
+    }
 }
