@@ -2221,9 +2221,21 @@ struct SendHintReminder: View {
                 // Rest at 0, crest at -5, period 1.5s: (1-cos) starts the wave
                 // at the caption and only ever lifts away from it.
                 let lift = 2.5 * (1 - cos(t * 2 * .pi / 1.5))
-                Image(systemName: "arrow.up")
+                let arrow = Image(systemName: "arrow.up")
                     .font(.system(size: 16, weight: .bold))
-                    .offset(y: -lift)
+                // Round-10 #3 (owner): a WHITE stroke around the blue arrow so
+                // it carries on the wool. SF Symbols have no outline mode, so
+                // the stroke is the same glyph stamped in white at 8 compass
+                // offsets under the blue one - a solid ~1.3pt ring.
+                ZStack {
+                    ForEach(0..<8, id: \.self) { i in
+                        let a = CGFloat(i) * .pi / 4
+                        arrow.foregroundColor(.white)
+                            .offset(x: 1.3 * cos(a), y: 1.3 * sin(a))
+                    }
+                    arrow
+                }
+                .offset(y: -lift)
             }
             .alignmentGuide(.sendAxis) { d in d[HorizontalAlignment.center] }
             Text(FStrings.t("ios.msg.sendhint"))
@@ -2261,20 +2273,25 @@ struct StagedSendHint: View {
     @State private var shown = false
 
     var body: some View {
-        SendHintReminder(paused: !(shown && visible))
+        let on = shown && visible
+        SendHintReminder(paused: !on)
             .alignmentGuide(.trailing) { d in
                 d[HorizontalAlignment.sendAxis] + centerFromTrailing
             }
             // Room for the crest of the bob, so the arrow never clips against
             // the container's top edge (seen on device at the drawer's corner).
             .padding(.top, 6)
-            .opacity(shown && visible ? 1 : 0)
+            .opacity(on ? 1 : 0)
+            // Round-10 #2 ("fade it out"): BOTH directions animate - the old
+            // one-way withAnimation faded it in but let a style change snap it
+            // off (or on) instantly. Scoped to `on` so nothing else rides it.
+            .animation(.easeInOut(duration: 0.35), value: on)
             .allowsHitTesting(false)
             .task(id: staged) {
                 guard staged else { shown = false; return }
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
                 guard !Task.isCancelled, staged else { return }
-                withAnimation(.easeIn(duration: 0.5)) { shown = true }
+                shown = true
             }
     }
 }

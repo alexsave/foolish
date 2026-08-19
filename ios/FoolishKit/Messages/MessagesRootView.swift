@@ -23,6 +23,14 @@ public enum MsgPresentation { case compact, expanded }
 
 public struct MessagesRootView: View {
     let payloadURL: URL?
+    /// The presentation style of the present() call that BUILT this view. Kept
+    /// for host-API symmetry, but round-10 stopped gating any visual on it:
+    /// present() only runs on discrete host events (activate, receive, send,
+    /// New game), so across a grabber drag or an auto-collapse this value goes
+    /// STALE - it is how the send reminder leaked into the expanded lobby.
+    /// Anything that must know how tall the drawer is reads its own live
+    /// geometry instead (see `stageHeight` and MessageTableView's
+    /// `collapseFraction`).
     let style: MsgPresentation
     let senderIsLocal: Bool
     let startNewGame: Bool
@@ -83,6 +91,20 @@ public struct MessagesRootView: View {
         self.onUnstage = onUnstage
     }
 
+    /// Round-10 #1: the height the surface is actually LAID OUT against.
+    /// A manual grabber drag feeds this view a fresh height every frame, and the
+    /// board - a continuous function of height since round 6 - tweens smoothly.
+    /// An ANIMATED style change (the auto-collapse after a move, tapping a
+    /// bubble to expand) does not: Messages sets the hosting view's model height
+    /// to the TARGET in one step and animates only the visible drawer frame, so
+    /// the content snapped straight to its compact layout while the drawer was
+    /// still tall (filmed frame-by-frame: everything "jumps up at once, THEN
+    /// starts collapsing", the host's flat fallback brown filling the vacated
+    /// strip). The fix: follow small steps exactly (the manual drag), and TWEEN
+    /// through a big one, reproducing in SwiftUI the same intermediate heights a
+    /// manual swipe would have delivered. 0 until the first real height lands.
+    @State private var stageHeight: CGFloat = 0
+
     public var body: some View {
         // ONE surface for both presentation styles — NOT a compact/expanded switch.
         // The switch made SwiftUI destroy the expanded @State (the whole in-progress
@@ -100,23 +122,44 @@ public struct MessagesRootView: View {
         // wool still paints the whole screen. The "wool too short vertically" that
         // remained was the WEAVE IMAGE itself being a fixed size shorter than a
         // tall expanded surface (WoolWeave), fixed there, not here.
-        GameSurface(payloadURL: payloadURL, style: style, senderIsLocal: senderIsLocal,
-                    startNewGame: startNewGame, newGameToken: newGameToken, sentToken: sentToken,
-                    chatKey: chatKey, chatIsDM: chatIsDM, chatPlayers: chatPlayers,
-                    incomingURL: incomingURL, incomingToken: incomingToken,
-                    cancelToken: cancelToken,
-                    requestExpand: requestExpand, onNewGame: onNewGame, onSend: onSend,
-                    onUnstage: onUnstage)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // Order matters: apply the wool FIRST, THEN ignore the keyboard on the
-            // composite. That way the keyboard opt-out extends the CONTENT and the
-            // WOOL together into the bottom/keyboard region, so the hand never sits
-            // over a strip the wool didn't reach (the "background gap at the bottom"
-            // seen after send-brings-up-the-keyboard, then reopening the bubble).
-            // The old order ignored the keyboard on GameSurface alone, so the hand
-            // extended down but the wool behind it did not.
-            .background(WoolBackground())
-            .ignoresSafeArea(.keyboard)
+        GeometryReader { geo in
+            GameSurface(payloadURL: payloadURL, senderIsLocal: senderIsLocal,
+                        startNewGame: startNewGame, newGameToken: newGameToken, sentToken: sentToken,
+                        chatKey: chatKey, chatIsDM: chatIsDM, chatPlayers: chatPlayers,
+                        incomingURL: incomingURL, incomingToken: incomingToken,
+                        cancelToken: cancelToken,
+                        requestExpand: requestExpand, onNewGame: onNewGame, onSend: onSend,
+                        onUnstage: onUnstage)
+                // Round-10 #1: lay the surface out against the SMOOTHED height,
+                // and anchor it to the BOTTOM - the drawer's bottom edge is the
+                // one edge that never moves during a style transition (the top
+                // edge is what slides), so the hand stays glued to the bottom
+                // while everything above eases down/up. The wool rides the same
+                // smoothed frame so it always covers exactly what the content
+                // occupies - no more fallback-brown strip.
+                .frame(width: geo.size.width,
+                       height: stageHeight > 0 ? stageHeight : geo.size.height)
+                .background(WoolBackground())
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .onAppear { stageHeight = geo.size.height }
+                .onChange(of: geo.size.height) { h in
+                    // A manual drag's per-frame step is a few points - follow it
+                    // exactly, zero added latency. Anything bigger is a host-
+                    // animated transition's one-step snap: tween through it at
+                    // roughly Messages' own transition pace.
+                    if abs(h - stageHeight) > 60 {
+                        withAnimation(.easeInOut(duration: 0.4)) { stageHeight = h }
+                    } else {
+                        stageHeight = h
+                    }
+                }
+        }
+        // Order matters: the wool is applied INSIDE this, so the keyboard opt-out
+        // extends the CONTENT and the WOOL together into the bottom/keyboard
+        // region - the hand never sits over a strip the wool didn't reach (the
+        // "background gap at the bottom" seen after send-brings-up-the-keyboard,
+        // then reopening the bubble).
+        .ignoresSafeArea(.keyboard)
             // Round-5 M4/B3/M3: Dynamic Type had no POLICY at all — some
             // controls never scaled (M4), the card faces scaled straight out
             // of their own bounds (B3), and the game-over list collapsed
@@ -134,7 +177,6 @@ public struct MessagesRootView: View {
 
 private struct GameSurface: View {
     let payloadURL: URL?
-    let style: MsgPresentation
     let senderIsLocal: Bool
     let startNewGame: Bool
     let newGameToken: Int
@@ -359,8 +401,18 @@ private struct GameSurface: View {
                 // just board moves - a join/invite/start left unsent stalls the
                 // whole thread the same way. Collapsed view only, same as the
                 // board's; full-bleed container, so the screen-edge axis.
+                //
+                // Round-10 #2: gated on the surface's LIVE height (the same
+                // collapseFraction the board uses), NOT the `style` prop -
+                // present() only runs on discrete host events, so `style` goes
+                // stale across a grabber drag or an auto-transition, which is
+                // exactly how the arrow leaked into the EXPANDED lobby.
                 .overlay(alignment: .topTrailing) {
-                    StagedSendHint(staged: surfaceStaged, visible: style == .compact)
+                    GeometryReader { g in
+                        StagedSendHint(staged: surfaceStaged,
+                                       visible: MessageTableView.collapseFraction(height: g.size.height) > 0.95)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    }
                 }
         } else if let g = nameGate {
             NameGateView(prefill: MessageGameStore.shared.nickname) { name in

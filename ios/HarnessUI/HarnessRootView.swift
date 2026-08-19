@@ -630,25 +630,19 @@ private struct ExtensionStage: View {
                                           style: .continuous))
         .offset(y: dragOffset)
         .animation(.easeOut(duration: 0.15), value: dragOffset)
-        // Round-4 note 2: the drawer's HEIGHT changes in one step, never over a
-        // tween. An animated height animates the hosting controller's bounds,
-        // and the board inside is laid out afresh at every intermediate size -
-        // screenshotted mid-collapse, the deck, the seat badge and the card
-        // just played were all part-way between their expanded and compact
-        // positions. So the card you had just watched fly to the table slid
-        // across the screen a second time, which is what "the animation seems
-        // to replay when the screen collapses" is: not a replay (the trace
-        // shows no board `.task` and no event stream on a collapse), a second
-        // journey. Nothing inside the board can refuse it - suppressing the
-        // ambient transaction there was tried and made no difference - so the
-        // only honest place to stop it is where the size is decided.
-        //
-        // The cost, taken deliberately: the graceful expand/collapse slide is
-        // gone. A slide between two genuinely different layouts IS the reflow,
-        // so the two cannot both be had, and there is no animation on `height`
-        // here at all - not even a short one. A short one would still tween,
-        // just too fast to catch in a screenshot, which is a fix you cannot
-        // tell apart from no fix.
+        // Round-4 note 2 / round-10 #1: the drawer's HEIGHT changes in one
+        // step, never over a tween - and that ONE-STEP SNAP is now this fake
+        // drawer's most faithful piece of device modelling. The real Messages
+        // does exactly the same on an animated style change: it sets the
+        // hosting view's model height to the target in one step and animates
+        // only the visible frame (the round-10 frame-by-frame film). The
+        // production fix for the resulting jump lives INSIDE MessagesRootView
+        // (its `stageHeight` smoothing tweens through a big height step), so
+        // keeping the snap here is what exercises that code the way the
+        // device does. Round-4's original worry - the tween re-flying a
+        // just-played card - is settled: the round-6 continuous
+        // collapseFraction made the transit layout the owner-approved look
+        // (the manual swipe, which IS a tween, "transitions just fine").
         //
         // The drag gesture's own `dragOffset` above is untouched and still
         // animates: it is a TRANSLATION, so it never resizes the hosting
