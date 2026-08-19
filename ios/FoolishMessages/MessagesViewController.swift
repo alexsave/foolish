@@ -141,6 +141,87 @@ final class MessagesViewController: MSMessagesAppViewController {
         if startingNewGame, let c = activeConversation {
             present(c, style: presentationStyle)
         }
+        trackStageMotion()
+    }
+
+    // MARK: - Stage motion (round-10b)
+
+    /// The measured bottom-edge correction the board reads (see
+    /// StageMotionTracker). One instance for the extension's lifetime; the
+    /// same object is passed into every present().
+    private let stageMotion = StageMotionTracker()
+    private var motionLink: CADisplayLink?
+    private var motionStart: CFTimeInterval = 0
+    /// Consecutive settled ticks - the link stops after a few, so a spring's
+    /// last touch-down isn't mistaken for the end.
+    private var motionSettled = 0
+
+    /// Round-10b: on an animated style change Messages snaps this view's MODEL
+    /// frame to the target in one step and animates the PRESENTATION in our
+    /// process (probe-measured: presented height 762 -> 369 over ~0.5s on a
+    /// fast spring, model already 369). Mid-flight the presented frame bottom
+    /// SINKS below the screen by ~100pt+ before converging, and everything
+    /// bottom-anchored in the model rides it under the screen edge - the
+    /// owner's "self cards go a bit under the screen briefly". The sink is the
+    /// host's own animation (unknowable in advance), so it is SAMPLED: each
+    /// frame, measure where the model's bottom safe-area line actually renders
+    /// in the window, and publish the overshoot below its resting line as
+    /// `lift`. The board pads itself up by exactly that much - pinned to the
+    /// visible bottom edge the whole way, the guarantee a manual drag gives
+    /// for free.
+    private func trackStageMotion() {
+        motionLink?.invalidate()
+        motionStart = CACurrentMediaTime()
+        motionSettled = 0
+        let link = CADisplayLink(target: self, selector: #selector(motionTick))
+        link.add(to: .main, forMode: .common)
+        motionLink = link
+    }
+
+    private func stopStageMotion() {
+        motionLink?.invalidate()
+        motionLink = nil
+        if stageMotion.lift != 0 { stageMotion.lift = 0 }
+    }
+
+    @objc private func motionTick() {
+        // Hard stop: no host transition runs anywhere near this long.
+        guard CACurrentMediaTime() - motionStart < 1.5, let window = view.window else {
+            stopStageMotion(); return
+        }
+        // Where the model's bottom safe-area line RENDERS in the window right
+        // now (presentation walk) vs where it RESTS (model walk) - the SAME
+        // frame/bounds walk both times, so any structural quirk on the chain
+        // (a scroll offset, a host container's standing presentation skew -
+        // measured: a constant 13pt when the two methods were mixed) cancels
+        // and only genuine in-flight animation deltas remain.
+        //
+        // The walk starts at the HOSTING view's layer, not self.view's:
+        // autolayout re-applies the hosting view's frame INSIDE the host's
+        // animation block, so its layer carries its own leg of the animation -
+        // starting above it missed most of the real motion (measured: the
+        // anchor "never sank" while the film showed the hand under the
+        // screen).
+        let anchor: UIView = host?.view ?? view
+        let base = anchor.bounds.height - anchor.safeAreaInsets.bottom
+        var y = base, rest = base
+        var layer: CALayer? = anchor.layer
+        while let l = layer, l !== window.layer {
+            let pres = l.presentation() ?? l
+            y += pres.frame.minY - pres.bounds.minY
+            rest += l.frame.minY - l.bounds.minY
+            layer = l.superlayer
+        }
+        let lift = max(0, y - rest)
+        #if DEBUG
+        AnimLog.say("stage motion y=\(Int(y)) rest=\(Int(rest)) lift=\(Int(lift))")
+        #endif
+        if abs(stageMotion.lift - lift) > 0.25 { stageMotion.lift = lift }
+        // Settled = the presented line sits on its resting line again. Require
+        // a short streak so a spring passing through zero doesn't end the
+        // watch early.
+        motionSettled = abs(y - rest) < 0.5 ? motionSettled + 1 : 0
+        if motionSettled >= 6 { stopStageMotion() }
     }
 
     // MARK: - Presentation
@@ -193,6 +274,7 @@ final class MessagesViewController: MSMessagesAppViewController {
             incomingURL: incomingURL,
             incomingToken: incomingToken,
             cancelToken: cancelToken,
+            motion: stageMotion,
             requestExpand: { [weak self] in self?.requestPresentationStyle(.expanded) },
             onNewGame: { [weak self] in
                 guard let self else { return }

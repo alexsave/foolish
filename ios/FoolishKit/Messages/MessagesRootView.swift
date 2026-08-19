@@ -79,9 +79,11 @@ public struct MessagesRootView: View {
                 startNewGame: Bool, newGameToken: Int = 0, sentToken: Int = 0, chatKey: String,
                 chatIsDM: Bool, chatPlayers: Int,
                 incomingURL: URL? = nil, incomingToken: Int = 0, cancelToken: Int = 0,
+                motion: StageMotionTracker = StageMotionTracker(),
                 requestExpand: @escaping () -> Void, onNewGame: @escaping () -> Void,
                 onSend: @escaping (Data, Int, Bool) async -> Void,
                 onUnstage: @escaping () -> Void = {}) {
+        self.motion = motion
         self.payloadURL = payloadURL; self.style = style; self.senderIsLocal = senderIsLocal
         self.startNewGame = startNewGame; self.newGameToken = newGameToken; self.sentToken = sentToken
         self.chatKey = chatKey; self.chatIsDM = chatIsDM; self.chatPlayers = chatPlayers
@@ -104,6 +106,26 @@ public struct MessagesRootView: View {
     /// through a big one, reproducing in SwiftUI the same intermediate heights a
     /// manual swipe would have delivered. 0 until the first real height lands.
     @State private var stageHeight: CGFloat = 0
+    /// Round-10b ("the self cards go a bit under the screen briefly"): the
+    /// measured per-frame lift that keeps the bottom-anchored content pinned
+    /// to the drawer's VISIBLE bottom edge while the host's transition
+    /// animation carries the model anchor below the screen. Fed by the host's
+    /// display-link sampler (MessagesViewController.trackStageMotion); the
+    /// default instance never publishes, so the harness is unaffected. See
+    /// StageMotionTracker's doc for the measurements.
+    @ObservedObject var motion: StageMotionTracker
+
+    /// Round-10: small height steps (a manual grabber drag) are followed
+    /// exactly; a big one-step snap - an animated style transition - is
+    /// tweened through at roughly the host's own transition pace.
+    private func follow(height: CGFloat) {
+        AnimLog.say("stage follow h=\(Int(stageHeight))->\(Int(height))")
+        if abs(height - stageHeight) > 60 {
+            withAnimation(.easeInOut(duration: 0.4)) { stageHeight = height }
+        } else {
+            stageHeight = height
+        }
+    }
 
     public var body: some View {
         // ONE surface for both presentation styles — NOT a compact/expanded switch.
@@ -140,19 +162,34 @@ public struct MessagesRootView: View {
                 .frame(width: geo.size.width,
                        height: stageHeight > 0 ? stageHeight : geo.size.height)
                 .background(WoolBackground())
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                .onAppear { stageHeight = geo.size.height }
-                .onChange(of: geo.size.height) { h in
-                    // A manual drag's per-frame step is a few points - follow it
-                    // exactly, zero added latency. Anything bigger is a host-
-                    // animated transition's one-step snap: tween through it at
-                    // roughly Messages' own transition pace.
-                    if abs(h - stageHeight) > 60 {
-                        withAnimation(.easeInOut(duration: 0.4)) { stageHeight = h }
-                    } else {
-                        stageHeight = h
+                // Round-10b: the measured per-frame lift that pins the bottom
+                // edge to the VISIBLE drawer bottom while the host's own
+                // animation sinks the model anchor below the screen. Raw
+                // per-frame values - never animated from in here.
+                .padding(.bottom, motion.lift)
+                #if DEBUG
+                // TEMPORARY round-10b diagnostic ruler - reads the model->screen
+                // mapping straight off a screen recording. Delete before ship.
+                .overlay {
+                    GeometryReader { g in
+                        ZStack(alignment: .topLeading) {
+                            Rectangle().fill(Color.yellow).frame(height: 3)
+                                .position(x: g.size.width / 2, y: 1.5)
+                            ForEach(1..<12) { i in
+                                Rectangle().fill(Color.cyan).frame(height: 2)
+                                    .position(x: g.size.width / 2,
+                                              y: g.size.height - CGFloat(i) * 100)
+                            }
+                            Rectangle().fill(Color(red: 1, green: 0, blue: 1)).frame(height: 3)
+                                .position(x: g.size.width / 2, y: g.size.height - 1.5)
+                        }
+                        .allowsHitTesting(false)
                     }
                 }
+                #endif
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .onAppear { stageHeight = geo.size.height }
+                .onChange(of: geo.size.height) { follow(height: $0) }
         }
         // Order matters: the wool is applied INSIDE this, so the keyboard opt-out
         // extends the CONTENT and the WOOL together into the bottom/keyboard
