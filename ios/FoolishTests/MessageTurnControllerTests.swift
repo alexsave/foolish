@@ -220,35 +220,6 @@ final class MessageTurnControllerTests: XCTestCase {
         XCTAssertTrue(c.pending.isEmpty)
     }
 
-    /// Round-6 bugs 1 & 2: staging a move writes a durable pending-ledger row (so
-    /// Rule R can survive a mid-staging interruption). An explicit CANCEL
-    /// (didCancelSending) must clear that row via `MessageGameStore.clearPending`,
-    /// or a reopen replays the never-sent move as a Rule R survivor and the board
-    /// looks as if the move/start already happened. This drives the controller +
-    /// store directly (the didCancelSending glue itself needs the Messages
-    /// framework, but its one load-bearing action is this store call).
-    func testCancellingAStagedMoveClearsTheDurableLedger() async throws {
-        let defaults = UserDefaults(suiteName: "test.cancel.\(UUID().uuidString)")!
-        let store = MessageGameStore(defaults: defaults)
-        let parentBytes = bytes(fixtureHex)
-        let parent = try await MessageEnvelope.decode(payload: parentBytes, viewer: 0)
-        guard let (seat, move) = await firstActingSeatAndMove(parent) else {
-            return XCTFail("no seat had a legal move in the fixture")
-        }
-
-        let c = MessageTurnController(parentPayload: parentBytes, parent: parent,
-                                      mySeat: seat, store: store)
-        await c.begin()
-        await c.apply(move)
-        XCTAssertFalse(store.pending(gameId: c.gameIdString).isEmpty,
-                       "staging a move writes the durable ledger")
-
-        // The exact action didCancelSending takes for this game.
-        store.clearPending(gameId: c.gameIdString)
-        XCTAssertTrue(store.pending(gameId: c.gameIdString).isEmpty,
-                      "cancel clears the ledger so a reopen won't replay the never-sent move")
-    }
-
     /// parent8 is the first 8 bytes of the parent digest, zero-padded — the exact
     /// tag the next chain points back with (§7.4).
     func testParent8IsFirstEightDigestBytes() {
@@ -257,6 +228,44 @@ final class MessageTurnControllerTests: XCTestCase {
         // Short/odd digests never overrun — they zero-pad to 8.
         XCTAssertEqual([UInt8](MessageTurnController.firstEight(hex: "aabb")),
                        [0xaa, 0xbb, 0, 0, 0, 0, 0, 0])
+    }
+
+    // MARK: round-9 #5 — the send that replayed itself
+
+    /// The durable just-sent marker is one-shot and exact-match: the reopen
+    /// right after a send consumes it; any other adopt consumes it WITHOUT
+    /// matching, so a stale marker can never silence a later real replay.
+    func testJustSentMarkerIsOneShotAndExactMatch() {
+        let store = MessageGameStore(defaults: UserDefaults(suiteName: "test.js.\(UUID().uuidString)")!)
+        let mine = Data([1, 2, 3]), other = Data([9, 9])
+
+        XCTAssertFalse(store.consumeJustSent(matching: mine), "no marker yet")
+        store.markJustSent(payload: mine)
+        XCTAssertFalse(store.consumeJustSent(matching: other), "a different chain never matches")
+        XCTAssertFalse(store.consumeJustSent(matching: mine),
+                       "…and the mismatching adopt still consumed the marker")
+        store.markJustSent(payload: mine)
+        XCTAssertTrue(store.consumeJustSent(matching: mine), "the post-send reopen matches")
+        XCTAssertFalse(store.consumeJustSent(matching: mine), "one-shot: gone after use")
+    }
+
+    /// A quiet open (my own just-sent chain) must produce NO open-replay - the
+    /// last move on it is mine, watched live seconds ago. A normal open of the
+    /// same chain still replays it (any other device, or a later revisit).
+    func testJustSentReopenSuppressesTheSelfReplay() async throws {
+        let parentBytes = bytes(fixtureHex)
+        let parent = try await MessageEnvelope.decode(payload: parentBytes, viewer: 0)
+
+        let loud = MessageTurnController(parentPayload: parentBytes, parent: parent, mySeat: 0)
+        await loud.begin()
+        XCTAssertFalse(loud.openReplayEvents.isEmpty, "a normal open replays the chain's last move")
+
+        let quiet = MessageTurnController(parentPayload: parentBytes, parent: parent, mySeat: 0,
+                                          suppressOpenReplay: true)
+        await quiet.begin()
+        XCTAssertTrue(quiet.openReplayEvents.isEmpty,
+                      "the reopen right after MY send plays nothing back at me")
+        XCTAssertNotNil(quiet.view, "the board itself still renders the sent state")
     }
 
     // MARK: round-8 #4 — the persisted hand arrangement

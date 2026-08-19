@@ -327,13 +327,8 @@ final class HarnessModel: ObservableObject {
     func become(_ idx: Int) {
         guard idx >= 0, idx < participants.count else { return }
         AnimLog.say("host become \(participants[idx].name) transcript=\(transcript.count) selected=\(chats[currentChat].selected != nil)")
-        // Discard the current player's half-staged move — both the payload AND the
-        // pending ledger. Clearing only `staged` left the ledger behind, so a later
-        // switch back replayed the stale move (Rule R) onto whatever had been
-        // delivered meanwhile, forking the chain a round ahead → a bogus "this game
-        // has moved on". A real device never switches identity, so this only bites
-        // the harness; clear it before rebinding to the next player's suite.
-        MessageGameStore.shared.clearAllPending()
+        // Discard the current player's half-staged move. (ROUND 9: the durable
+        // pending ledger this also had to clear is gone entirely - owner call.)
         boardEpoch += 1
         localIndex = idx
         // Route to New game when this player has no bubble to open yet (switching
@@ -568,12 +563,10 @@ final class HarnessModel: ObservableObject {
         // this delivery triggers (transcript.count changed) must read the bubble,
         // not route back to setup. (Was done in stage(); see the note there.)
         chats[currentChat].startNewGame = false
-        // Commit the sent move (the harness's didStartSending): drop it from the
-        // pending ledger. Otherwise the reload re-adopts our OWN just-sent chain,
-        // Rule R replays the move the chain already contains, the kernel rejects
-        // the already-applied action, and adopt() falsely toasts "your move was
-        // superseded". Cleared synchronously so it's gone before the reload adopts.
-        MessageGameStore.shared.clearAllPending()
+        // ROUND 9: mirror the real didStartSending - the pending-ledger clear is
+        // gone with the ledger itself (owner call); the just-sent marker is what
+        // keeps a reload of my OWN chain from replaying my move back at me.
+        MessageGameStore.shared.markJustSent(payload: payload)
     }
 
     /// REVIEW RIG (HarnessScenario.swift): drop a bubble into the open

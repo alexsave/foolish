@@ -57,6 +57,9 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// deadlock).
     private var incomingURL: URL?
     private var incomingToken = 0
+    /// Round-9: bumped when the human deletes the staged bubble
+    /// (didCancelSending), so the surface can drop its send reminder.
+    private var cancelToken = 0
 
     // MARK: - Lifecycle (§11.1)
 
@@ -106,20 +109,15 @@ final class MessagesViewController: MSMessagesAppViewController {
     }
 
     /// The user deleted the staged bubble before sending: drop the pending record
-    /// so the cache never claims a chain nobody will see (§17.2). Nothing was
-    /// written to the game cache yet, but a staged move DOES leave a durable
-    /// pending-ledger row (MessageTurnController.persistLedger, written on every
-    /// staged action) so Rule R can survive a mid-staging interruption. An explicit
-    /// cancel is the human backing the move all the way out, so that ledger row must
-    /// go too - otherwise a reopen replays the never-sent move as a Rule R survivor
-    /// and the board renders as if the move/start already happened (round-6 bugs 1 &
-    /// 2: "stage then cancel makes it look like the game already started"). This is
-    /// the CANCEL path only; a plain deactivation with a bubble still legitimately
-    /// staged never reaches here, so the ledger's survive-an-interruption purpose is
-    /// preserved.
+    /// so the cache never claims a chain nobody will see (§17.2). ROUND 9: the
+    /// durable pending ledger this used to clear is gone entirely (owner call).
     override func didCancelSending(_ message: MSMessage, conversation: MSConversation) {
-        if let gameId = pendingStage?.gameId { MessageGameStore.shared.clearPending(gameId: gameId) }
         pendingStage = nil
+        // Round-9: tell the surface nothing awaits Send any more, so the send
+        // reminder (which now also covers lobby join/invite/start bubbles)
+        // doesn't keep pointing at a bubble the human just deleted.
+        cancelToken += 1
+        present(conversation, style: presentationStyle)
     }
 
     override func willTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
@@ -194,6 +192,7 @@ final class MessagesViewController: MSMessagesAppViewController {
             chatPlayers: participants,
             incomingURL: incomingURL,
             incomingToken: incomingToken,
+            cancelToken: cancelToken,
             requestExpand: { [weak self] in self?.requestPresentationStyle(.expanded) },
             onNewGame: { [weak self] in
                 guard let self else { return }
@@ -216,14 +215,7 @@ final class MessagesViewController: MSMessagesAppViewController {
                 // bubble — the human deletes it manually, or the next stage() call
                 // replaces it. All we can retract is our own bookkeeping, so a
                 // resumed undo-to-empty doesn't later commit a stale chain on send.
-                // Round-6 bugs 1 & 2: an undo-to-empty is the human backing the move
-                // all the way out, so clear the durable ledger too (the controller's
-                // own undo already empties it via persistLedger; clearing here keeps
-                // the extension's retract path correct on its own terms). Same intent
-                // as didCancelSending.
-                if let gameId = self?.pendingStage?.gameId {
-                    MessageGameStore.shared.clearPending(gameId: gameId)
-                }
+                // (ROUND 9: the durable ledger this also used to clear is gone.)
                 self?.pendingStage = nil
             })
         setRoot(root)
@@ -321,10 +313,9 @@ final class MessagesViewController: MSMessagesAppViewController {
             summary: summary,
             session: startingNewGame ? nil : conversation.selectedMessage?.session)
 
-        // gameId comes from the same decode above so a later CANCEL can clear this
-        // game's pending ledger without re-decoding (round-6 bugs 1 & 2). "" only
-        // if the payload failed to decode, in which case there is no valid game to
-        // clear and clearPending("") is a harmless no-op.
+        // gameId comes from the same decode above so didStartSending's commit
+        // can persist the seat without re-decoding. "" only if the payload
+        // failed to decode - the commit then skips the seat write.
         pendingStage = (payload, mySeat, env?.gameId ?? "")
         conversation.insert(msg) { _ in }
 
@@ -363,21 +354,29 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// from `didStartSending`'s own conversation, not a stored property, because
     /// it must be the SAME conversation the bubble was staged/sent into (the
     /// whole point of the chat-scoping fix).
+    ///
+    /// ROUND-9 #5: fully SYNCHRONOUS. This used to decode the payload in a
+    /// fire-and-forget Task just to learn the gameId - but `pendingStage`
+    /// already carries it (round 6), and the Task raced the `dismiss()` /
+    /// VC-swap teardown that follows a send. When the clear lost that race, the
+    /// reopen of my OWN sent chain still saw the ledger rows, Rule R discarded
+    /// them against a chain that already contains those moves, and every send
+    /// ended in a "move superseded" toast + a replay of my own move. Three
+    /// UserDefaults writes need no Task and cannot lose the race.
     private func commitPendingStage(chatKey: String) {
-        guard let (payload, mySeat, _) = pendingStage else { return }
+        guard let (payload, mySeat, gameId) = pendingStage else { return }
         pendingStage = nil
-        Task {
-            guard let env = try? await MessageEnvelope.decode(payload: payload, viewer: mySeat)
-            else { return }
+        if !gameId.isEmpty {
             // Round 7: the preferred-chain cache is gone — commit only the durable
             // SEAT (§6.1). The chain the human just sent is now the thread's, and
-            // reopening it re-renders it from its own bytes.
-            MessageGameStore.shared.setSeat(gameId: env.gameId, chatKey: chatKey, seat: mySeat)
-            // The staged moves are now in the sent chain, no longer unacked: drop
-            // them from the pending ledger so Rule R never replays a move on top of
-            // itself (§7.6).
-            MessageGameStore.shared.clearPending(gameId: env.gameId)
+            // reopening it re-renders it from its own bytes. (ROUND 9: the pending
+            // ledger this also used to clear is gone entirely - owner call.)
+            MessageGameStore.shared.setSeat(gameId: gameId, chatKey: chatKey, seat: mySeat)
         }
+        // The durable half of `lastSentPayload` (round-9 #5): if the send tears
+        // this VC down, the reopen consumes this and opens my own chain QUIETLY
+        // (no self-replay) instead of treating it as a new arrival.
+        MessageGameStore.shared.markJustSent(payload: payload)
     }
 
     /// Round-7 (background gap): a scheme-adaptive wool FALLBACK colour (the same

@@ -16,8 +16,20 @@
 import SwiftUI
 
 public struct RulesView: View {
+    /// Round-9 (owner): which page the rulebook opens as.
+    /// - `.full`: the complete how-to-play, opened from the board.
+    /// - `.lobby`: the simpler page the setup/lobby screens open - just how
+    ///   the lobby works (add your name to join, then anyone can press Start,
+    ///   after that no one can join) and the goal section as a quick
+    ///   description of the game.
+    public enum Scope { case full, lobby }
+
     private let onClose: () -> Void
-    public init(onClose: @escaping () -> Void = {}) { self.onClose = onClose }
+    private let scope: Scope
+    public init(scope: Scope = .full, onClose: @escaping () -> Void = {}) {
+        self.scope = scope
+        self.onClose = onClose
+    }
 
     /// The power suit for every illustration on the page (declared to the
     /// reader in the setup caption).
@@ -50,17 +62,24 @@ public struct RulesView: View {
             header
             ScrollView {
                 VStack(alignment: .leading, spacing: FSpace.xl) {
-                    section("ios.rules.goal.h", "ios.rules.goal.b")
-                    setupSection
-                    section("ios.rules.start.h", "ios.rules.start.b")
-                    attackSection
-                    section("ios.rules.defend.h", "ios.rules.defend.b")
-                    coverSection
-                    throwSection
-                    pickupSection
-                    section("ios.rules.round.h", "ios.rules.round.b")
-                    passSection
-                    section("ios.rules.end.h", "ios.rules.end.b")
+                    if scope == .lobby {
+                        // The pre-game page: how this lobby works, then the
+                        // goal section as the quick what-is-this-game.
+                        section("ios.rules.lobby.h", "ios.rules.lobby.b")
+                        section("ios.rules.goal.h", "ios.rules.goal.b")
+                    } else {
+                        section("ios.rules.goal.h", "ios.rules.goal.b")
+                        setupSection
+                        section("ios.rules.start.h", "ios.rules.start.b")
+                        attackSection
+                        section("ios.rules.defend.h", "ios.rules.defend.b")
+                        coverSection
+                        throwSection
+                        pickupSection
+                        section("ios.rules.round.h", "ios.rules.round.b")
+                        passSection
+                        section("ios.rules.end.h", "ios.rules.end.b")
+                    }
                 }
                 .padding(FSpace.xl)
                 .padding(.bottom, FSpace.xxl)

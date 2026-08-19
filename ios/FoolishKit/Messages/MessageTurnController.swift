@@ -122,13 +122,6 @@ public final class MessageTurnController: ObservableObject {
     private let gameId: UInt64
     private let parent8: Data
     private let joins: [MessageJoin]
-    /// The bout the base chain sits at — the round every staged move here is
-    /// composed against, and the tag the pending ledger carries for Rule R.
-    private let baseRound: Int
-    /// Rule R survivors to re-stage on top of the base at `begin()`, in order —
-    /// the moves a rebase re-applied onto a freshly-adopted chain (§7.4). Empty on
-    /// a plain open or a genesis.
-    private let preStaged: [Move]
     /// DEPRECATED (retained only so GameSurface's call sites compile unchanged):
     /// the previously-cached chain, once used to diff my hand for the open-replay.
     /// The open-replay is now the kernel's evwire for the last move
@@ -136,29 +129,34 @@ public final class MessageTurnController: ObservableObject {
     /// "where I last looked", so this is no longer read. Safe to remove along with
     /// its GameSurface threading in a follow-up cleanup.
     private let prevPayload: Data?
+    /// Round-9 #5: this base is the chain THIS DEVICE just pressed Send on
+    /// (MessageGameStore's one-shot just-sent marker matched at adopt). Opening
+    /// it must be QUIET - the "last move" on it is my own, watched live seconds
+    /// ago; replaying it (plus the Rule-R "superseded" the stale ledger used to
+    /// add) is what made every send end in a confusing self-replay.
+    private let suppressOpenReplay: Bool
 
     public var gameIdString: String { String(gameId) }
 
     /// Continue a chain I just opened. The resident game may already be this
     /// payload (the view decoded it to resolve my seat); `begin()` re-adopts it
-    /// anyway so the controller owns the base unambiguously. `preStaged` are Rule
-    /// R survivors (§7.4) to replay on top; `store` is the pending-ledger home.
+    /// anyway so the controller owns the base unambiguously. `store` is where
+    /// the hand-arrangement rows live (round-8 #4).
     /// `prevPayload` is the previously-cached chain for this game (§ open-delta
     /// replay, notes 4/9/38) — nil skips the delta computation entirely.
     public init(parentPayload: Data, parent: MessageEnvelope, mySeat: Int,
-                preStaged: [Move] = [], store: MessageGameStore = .shared,
-                prevPayload: Data? = nil) {
+                store: MessageGameStore = .shared,
+                prevPayload: Data? = nil, suppressOpenReplay: Bool = false) {
         self.base = .continuation(payload: parentPayload)
         self.gameId = UInt64(parent.gameId) ?? 0
         self.parent8 = Self.firstEight(hex: parent.digest)
         self.joins = parent.joins
-        self.baseRound = parent.round
-        self.preStaged = preStaged
         self.store = store
         self.mySeat = mySeat
         self.names = Dictionary(parent.joins.map { ($0.seat, $0.name) },
                                 uniquingKeysWith: { a, _ in a })
         self.prevPayload = prevPayload
+        self.suppressOpenReplay = suppressOpenReplay
     }
 
     /// Start a brand-new game as seat 0. TEST/HARNESS ONLY since lobby v3:
@@ -177,12 +175,11 @@ public final class MessageTurnController: ObservableObject {
         self.gameId = gameId
         self.parent8 = Data(repeating: 0, count: 8)   // the root has no parent
         self.joins = [MessageJoin(seat: 0, name: myNickname)]
-        self.baseRound = 0
-        self.preStaged = []
         self.store = store
         self.mySeat = 0
         self.names = [0: myNickname]
         self.prevPayload = nil
+        self.suppressOpenReplay = false
     }
 
     public var canSend: Bool { !pending.isEmpty }
@@ -222,12 +219,9 @@ public final class MessageTurnController: ObservableObject {
         lastChangeWasUndo = false
         await rebuildBase()
         // The open animations: the kernel's viewer-aware evwire for the LAST move
-        // on the adopted chain (notes 6/12/#9). Resolved NOW, after rebuildBase
-        // puts the received chain resident but BEFORE re-applying my staged
-        // survivors below - "the last move" to animate is the move I just
-        // RECEIVED (the chain's final step), never my own Rule R re-applications,
-        // which I play interactively and must not re-watch. `prevPayload` is no
-        // longer consulted: the kernel decides the group from the chain alone.
+        // on the adopted chain (notes 6/12/#9), resolved after rebuildBase puts
+        // the received chain resident. `prevPayload` is no longer consulted:
+        // the kernel decides the group from the chain alone.
         //
         // Note this does NOT depend on who sealed the chain. An earlier pass
         // suppressed the replay when `lastActorSeat == mySeat`, to kill a
@@ -238,13 +232,12 @@ public final class MessageTurnController: ObservableObject {
         // surface when I sent — fixed where it happens (HarnessModel.boardEpoch;
         // StagedBubbleRouting in the extension), so there is no second load to
         // replay from in the first place.
-        openReplayEvents = await kernel.lastMoveEvents(viewer: mySeat)
+        openReplayEvents = suppressOpenReplay ? [] : await kernel.lastMoveEvents(viewer: mySeat)
+        // ROUND 9 (owner): the durable pending ledger - and the Rule R rebase
+        // that replayed its survivors here as `preStaged` - is REMOVED. Staged
+        // moves live only in memory; the staged input-field bubble itself still
+        // carries them as a sealed chain.
         pending = []
-        for m in preStaged {              // §7.4 survivors, already validated by the rebase
-            try? await kernel.apply(seat: mySeat, move: m)
-            pending.append(m)
-        }
-        persistLedger()
         await refresh()
         // Round-8 #4: opening a FINISHED chain is one of the two moments a game
         // provably ends on this device (the other is committing my own final
@@ -277,7 +270,6 @@ public final class MessageTurnController: ObservableObject {
         do {
             try await kernel.apply(seat: mySeat, move: move)
             pending.append(move)
-            persistLedger()
             await refresh()
         } catch MessageEnvelope.Failure.rejected(let reason) {
             lastRejectReason = reason
@@ -295,9 +287,7 @@ public final class MessageTurnController: ObservableObject {
     ///
     /// Round-6 bug 4: without this, sending left `pending` populated, so the Undo
     /// button lingered in the compact drawer and tapping it re-staged (and let the
-    /// human re-send) a move already in the thread. The DURABLE ledger is cleared
-    /// separately, at commit (didStartSending -> clearPending); this is the LIVE
-    /// half of that same "it's sent now, forget it" signal. Deliberately does NOT
+    /// human re-send) a move already in the thread. Deliberately does NOT
     /// rebuild the base: the sent move stays applied to the resident game, so the
     /// board keeps showing the state I just sent, only without a pending move to
     /// undo or re-send. No-op when nothing is staged (e.g. a genesis with no move).
@@ -322,23 +312,12 @@ public final class MessageTurnController: ObservableObject {
             try? await kernel.apply(seat: mySeat, move: m)
             pending.append(m)
         }
-        persistLedger()
         // note 10: set BEFORE refresh() — the state may legally go
         // battles→empty here (undoing the move that opened a bout), and
         // flyBoutEndToDiscard must not mistake that for a real bout end and
         // replay the PREVIOUS bout's draws.
         lastChangeWasUndo = true
         await refresh()
-    }
-
-    /// Mirror the in-memory staged list into the durable pending ledger (§17.15)
-    /// so a bubble that arrives mid-staging — or a killed extension — can rebase
-    /// these moves onto whatever chain wins, rather than dropping them. Tagged
-    /// with the bout they were composed against (`baseRound`), the round guard's
-    /// key. Sent moves are cleared from the ledger at commit (§7.6).
-    private func persistLedger() {
-        store.setPending(pending.map { PendingAction(seat: mySeat, round: baseRound, move: $0) },
-                         gameId: gameIdString)
     }
 
     /// The joins to seal: the parent's, plus MY seat if it wasn't named yet — a

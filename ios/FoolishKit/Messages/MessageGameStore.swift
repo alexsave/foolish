@@ -21,10 +21,10 @@
 //   • the device NICKNAME;
 //   • per game, the SEAT this device holds (§6.1 — the one fact a fresh bubble
 //     cannot always recover, and which a 3+ player game is unplayable without);
-//   • the pending-move LEDGER (Rule R §7.4) — this device's own staged-but-unsent
-//     moves, so a killed extension or a bubble arriving mid-staging never silently
-//     drops a move you made. It is read only to rebase your own moves; it is never
-//     rendered, so it is not the "cache that hurts".
+//   • the cosmetic HAND ARRANGEMENT per game (round-8 #4), and the one-shot
+//     JUST-SENT marker (round-9 #5) — both presentation-only.
+// ROUND 9 (owner): the pending-move LEDGER (Rule R §7.4) is removed too — see
+// the note at its old section below.
 
 import Foundation
 
@@ -63,20 +63,6 @@ public struct MessageGameRecord: Codable, Equatable, Sendable {
     }
 
     public func name(_ seat: Int) -> String { names[seat] ?? "Seat \(seat + 1)" }
-}
-
-/// One staged-but-unsent action in a game's pending ledger (§7.4 / §17.15). It is
-/// what Rule R replays when a preferred chain is adopted that does not contain it:
-/// `round` is the bout it was composed against (the round-boundary guard's key),
-/// `seat` who staged it, `move` the action itself. Kept small and durable so a
-/// killed extension or a bubble that arrives mid-staging never strands the move.
-public struct PendingAction: Codable, Equatable, Sendable {
-    public var seat: Int
-    public var round: Int
-    public var move: Move
-    public init(seat: Int, round: Int, move: Move) {
-        self.seat = seat; self.round = round; self.move = move
-    }
 }
 
 /// Round 7: the whole of what the store keeps per game now — the seat this device
@@ -121,7 +107,6 @@ public final class MessageGameStore {
     // guarantee the file header already promises — cheaper and more honest than
     // a custom decoder just to preserve rows that carry no chatKey to be correct.
     private let key = "fmsg.games.v2"
-    private let pendingKey = "fmsg.pending.v1"
     // Round-8 #4: the local player's cosmetic hand arrangement, per game (see
     // the "hand order" section below).
     private let handOrderKey = "fmsg.handorder.v1"
@@ -246,7 +231,7 @@ public final class MessageGameStore {
     /// `(chatKey, gameId)` — a cross-chat gameId collision would make two
     /// different games fight over one row. Left as-is deliberately: `gameId` is
     /// a `UInt64.random` (createWaiting/startGenesis), so a collision is as
-    /// astronomically unlikely here as it is for the pending ledger (§ below,
+    /// astronomically unlikely here as it is for the hand-order rows (§ below,
     /// same reasoning) — every READ is chatKey-scoped regardless, so the only
     /// consequence of the pathological collision would be one row's
     /// `updatedAt`/eviction racing the other's, not a leak.
@@ -263,42 +248,43 @@ public final class MessageGameStore {
         persist(map)
     }
 
-    // MARK: pending ledger (§7.4 Rule R / §17.15) — durable, small, current-round
+    // ROUND-9 (owner): the durable pending ledger (§7.4 Rule R's safety net) is
+    // REMOVED - "caching has caused A LOT of problems in the past. The extension
+    // is rarely killed, and it's rare that an arriving bubble can happen mid
+    // staging." The staged-but-unsent moves live only in the controller's
+    // in-memory `pending` now; the staged input-field bubble itself still
+    // carries them (a sealed chain IS the moves), so nothing a human actually
+    // sends can be lost - only an un-sent staging dies with the extension,
+    // which is the accepted trade. Old `fmsg.pending.v1` blobs are simply
+    // never read again.
+
+    // MARK: just sent (round-9 #5) — the chain this device just committed to Send
     //
-    // AUDITED for the chat-scoping fix, deliberately left keyed by gameId ALONE
-    // (no chatKey): a pending action can only exist for a game this device is
-    // actively staging a move in, and `gameId` is a `UInt64.random` chosen at
-    // create time (createWaiting/startGenesis) — a same-device collision across
-    // two different chats' games is not a practical concern (same argument as
-    // `put` above). Adding chatKey here would only guard against a threat that
-    // does not exist, for no reader-side benefit: unlike `record`/`seat`/`games`,
-    // nothing about `pending` can leak another chat's hand — it is this device's
-    // OWN staged moves, never another chat's cached seat or payload.
+    // Pressing Send can tear the extension down (didStartSending's dismiss(); a
+    // VC swap on the auto-reopen), so the in-memory `lastSentPayload` that
+    // keeps StagedBubbleRouting from reloading my own bubble does not always
+    // survive to the reopen. When it doesn't, the reopen rebuilds the surface
+    // from my own just-sent chain and the open-replay played MY OWN move back
+    // at me ("replays the move I just did! Super confusing"). This durable
+    // ONE-SHOT marker is the cross-teardown half of that same signal: written
+    // synchronously in didStartSending, consumed by the first adopt - a match
+    // means "this is the chain I just sent, open it QUIETLY" (no replay).
+    // Consumed (cleared) on ANY adopt, match or not, so a stale marker can
+    // never suppress a later genuine replay.
 
-    /// This game's staged-but-unsent actions, in ledger order — what Rule R
-    /// replays onto a newly-adopted chain so no local move is silently lost.
-    public func pending(gameId: String) -> [PendingAction] { allPending()[gameId] ?? [] }
+    private let justSentKey = "fmsg.justsent.v1"
 
-    /// Replace a game's pending ledger. The controller writes its whole staged
-    /// list here on every apply/undo so a mid-staging interruption (a bubble that
-    /// arrives, or a killed extension) survives; the adopt path reads it back and
-    /// rebases. An empty list clears the row.
-    public func setPending(_ list: [PendingAction], gameId: String) {
-        var map = allPending()
-        if list.isEmpty { guard map.removeValue(forKey: gameId) != nil else { return } }
-        else { map[gameId] = list }
-        persistPending(map)
+    /// Record the chain the human just pressed Send on (didStartSending, §7.6).
+    public func markJustSent(payload: Data) { defaults?.set(payload, forKey: justSentKey) }
+
+    /// One-shot check at adopt: true iff `payload` is byte-identical to the
+    /// marked chain. Always clears the marker - the marker describes exactly
+    /// one send, and whichever adopt comes first is the reopen it was for.
+    public func consumeJustSent(matching payload: Data) -> Bool {
+        guard let d = defaults?.data(forKey: justSentKey) else { return false }
+        defaults?.removeObject(forKey: justSentKey)
+        return d == payload
     }
-
-    /// Drop this game's pending ledger — called once a chain containing these
-    /// moves is committed to the thread (§7.6 didStartSending), so they are no
-    /// longer unacked and must never be replayed on top of themselves.
-    public func clearPending(gameId: String) { setPending([], gameId: gameId) }
-
-    /// Drop EVERY game's pending ledger. The harness uses this on deliver (its
-    /// stand-in for didStartSending) to commit staged moves without threading a
-    /// gameId through; a real device clears the one game via clearPending(gameId:).
-    public func clearAllPending() { persistPending([:]) }
 
     // MARK: hand order (round-8 #4) — the sticky arrangement memory, per game
     //
@@ -318,7 +304,6 @@ public final class MessageGameStore {
     // opponents and fork digests over a sort. Same trust level as the seats
     // row: losing it costs a convenience, never correctness.
     //
-    // Keyed by gameId alone, like the pending ledger (same collision
     // reasoning). Rows are cleared when the game ends
     // (MessageTurnController.begin on a finished chain / markSent on the final
     // move); the cap below bounds what abandoned games can leak.
@@ -373,24 +358,6 @@ public final class MessageGameStore {
     private func persistHandOrders(_ map: [String: HandOrderRow]) {
         guard let data = try? JSONEncoder().encode(map) else { return }
         defaults?.set(data, forKey: handOrderKey)
-    }
-
-    // The pending ledger stays: it is this device's OWN staged-but-unsent moves
-    // (Rule R §7.4), read back only to rebase them onto a chain that arrives
-    // mid-staging so a killed extension never silently drops a move you made. It
-    // is device-local and never enters what the board renders or animates (that is
-    // now purely the tapped bubble), so it is not the "cache that hurts" - it is a
-    // safety net, kept.
-    private func allPending() -> [String: [PendingAction]] {
-        guard let data = defaults?.data(forKey: pendingKey),
-              let map = try? JSONDecoder().decode([String: [PendingAction]].self, from: data)
-        else { return [:] }
-        return map
-    }
-
-    private func persistPending(_ map: [String: [PendingAction]]) {
-        guard let data = try? JSONEncoder().encode(map) else { return }
-        defaults?.set(data, forKey: pendingKey)
     }
 
     // MARK: storage (a corrupt blob is treated as empty, never thrown)

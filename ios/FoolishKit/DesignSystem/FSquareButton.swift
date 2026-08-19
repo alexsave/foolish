@@ -37,13 +37,14 @@ public struct FSquareButton: View {
     }
 }
 
-/// The Settings (gear) + Help (?) pair — ONE layout for every surface that
-/// floats it bottom-left: the board, the New-game setup and the lobby
+/// The Settings (gear) + Rulebook (book) pair — ONE layout for every surface
+/// that floats it bottom-left: the board, the New-game setup and the lobby
 /// (durak-rules-redesign put it on the latter two). Two 40pt squares with a
 /// 16pt gap, so the pair spans one action-button width (40 + 16 + 40 = 96 =
 /// FActionBar width) and mirrors the right-hand action column wherever both
 /// appear; the inner horizontal padding is FActionBar's own inset, so the pair
-/// lands on the same edge line on every screen.
+/// lands on the same edge line on every screen. Round-9 (owner): the help "?"
+/// became a little book - it opens the rulebook, so it looks like one.
 public struct SettingsHelpSquares: View {
     private let onSettings: () -> Void
     private let onHelp: () -> Void
@@ -57,7 +58,7 @@ public struct SettingsHelpSquares: View {
         HStack(spacing: FSpace.l) {   // 40 + 16 + 40 = 96 = FActionBar width
             FSquareButton(systemImage: "gearshape.fill", side: 40,
                           accessibility: FStrings.t("ios.settings.title"), action: onSettings)
-            FSquareButton(systemImage: "questionmark", side: 40,
+            FSquareButton(systemImage: "book.fill", side: 40,
                           accessibility: FStrings.t("ios.help"), action: onHelp)
             Spacer(minLength: 0)
         }

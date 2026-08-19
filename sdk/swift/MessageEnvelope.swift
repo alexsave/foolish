@@ -331,26 +331,11 @@ public actor MessageKernel {
         return Int(r)
     }
 
-    public enum Rebase: Int, Sendable {
-        case reapplied = 0          // applied to the resident game — that IS the rebase
-        case discardedRoundEnded = 1
-        case discardedIllegal = 2
-    }
-
-    /// Rule R (§7.4), one pending move, in ledger order. `awire` is the packed
-    /// action frame (MoveWire.encodeAction) — the same bytes the pending ledger
-    /// stores and `apply` sends, so nothing crosses this boundary as JSON. A
-    /// REAPPLY leaves the move applied to the resident (adopted) game; a DISCARD
-    /// leaves it untouched. Rebases against the round the last `decode` adopted.
-    public func rebase(pendingRound: Int, seat: Int, awire: [UInt8]) throws -> Rebase {
-        let r = awire.withUnsafeBufferPointer { bp in
-            fio_msg_rebase_awire(Int32(pendingRound), Int32(seat), bp.baseAddress, Int32(bp.count))
-        }
-        guard r >= 0, let v = Rebase(rawValue: Int(r)) else {
-            throw MessageEnvelope.Failure.damaged(code: Int(r))
-        }
-        return v
-    }
+    // ROUND 9 (owner): the Swift Rule-R binding (`rebase(pendingRound:seat:
+    // awire:)` over fio_msg_rebase_awire) is removed with the iOS pending
+    // ledger - nothing on this platform rebases stored moves any more. The C
+    // kernel entry itself stays (the wasm bridge and the FMSG e2e concurrency
+    // suite still exercise Rule R as a kernel capability).
 }
 
 /// RFC 4648 base32, uppercase, no padding — the same alphabet the replay codec

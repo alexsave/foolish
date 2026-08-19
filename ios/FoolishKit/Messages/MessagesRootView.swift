@@ -61,10 +61,16 @@ public struct MessagesRootView: View {
     /// inserted input-field bubble, so it can only drop its own pending-stage record.
     let onUnstage: () -> Void
 
+    /// Round-9: bumped by the host (didCancelSending) when the human deletes
+    /// the staged bubble from the input field - the surface drops its own
+    /// staged-unsent flag so the send reminder doesn't point at a bubble that
+    /// no longer exists.
+    let cancelToken: Int
+
     public init(payloadURL: URL?, style: MsgPresentation, senderIsLocal: Bool,
                 startNewGame: Bool, newGameToken: Int = 0, sentToken: Int = 0, chatKey: String,
                 chatIsDM: Bool, chatPlayers: Int,
-                incomingURL: URL? = nil, incomingToken: Int = 0,
+                incomingURL: URL? = nil, incomingToken: Int = 0, cancelToken: Int = 0,
                 requestExpand: @escaping () -> Void, onNewGame: @escaping () -> Void,
                 onSend: @escaping (Data, Int, Bool) async -> Void,
                 onUnstage: @escaping () -> Void = {}) {
@@ -72,6 +78,7 @@ public struct MessagesRootView: View {
         self.startNewGame = startNewGame; self.newGameToken = newGameToken; self.sentToken = sentToken
         self.chatKey = chatKey; self.chatIsDM = chatIsDM; self.chatPlayers = chatPlayers
         self.incomingURL = incomingURL; self.incomingToken = incomingToken
+        self.cancelToken = cancelToken
         self.requestExpand = requestExpand; self.onNewGame = onNewGame; self.onSend = onSend
         self.onUnstage = onUnstage
     }
@@ -97,6 +104,7 @@ public struct MessagesRootView: View {
                     startNewGame: startNewGame, newGameToken: newGameToken, sentToken: sentToken,
                     chatKey: chatKey, chatIsDM: chatIsDM, chatPlayers: chatPlayers,
                     incomingURL: incomingURL, incomingToken: incomingToken,
+                    cancelToken: cancelToken,
                     requestExpand: requestExpand, onNewGame: onNewGame, onSend: onSend,
                     onUnstage: onUnstage)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -136,6 +144,7 @@ private struct GameSurface: View {
     let chatPlayers: Int
     let incomingURL: URL?
     let incomingToken: Int
+    let cancelToken: Int
     let requestExpand: () -> Void
     let onNewGame: () -> Void
     let onSend: (Data, Int, Bool) async -> Void
@@ -150,8 +159,8 @@ private struct GameSurface: View {
     /// seat resolves from an exact signal but the stored nickname is gone with
     /// the cache. Any player count. Ask once, store it, then seat them.
     private struct NameGate { let env: MessageEnvelope; let payload: Data; let seat: Int
-                              let survivors: [Move]; let discarded: Int
-                              let prevPayload: Data? }   // note 4/9/38: threaded to seatOnBoard
+                              let prevPayload: Data?     // note 4/9/38: threaded to seatOnBoard
+                              var quietOpen = false }    // round-9 #5: my just-sent chain
 
     @State private var controller: MessageTurnController?
     /// The setup/lobby screens' Settings + Help squares present these
@@ -178,6 +187,13 @@ private struct GameSurface: View {
     /// not just the replay code), and the parsed header fields when decode works.
     @State private var diagHex = ""
     @State private var diagInfo = ""
+    /// Round-9: the SURFACE just staged a sendable bubble (create/join/invite/
+    /// start) that the human has not sent yet - what the send reminder shows
+    /// for on the lobby screens, and (via `alsoStaged`) on the starter's
+    /// handoff board, where the controller's own pending list is empty. Reset
+    /// when the bubble is sent (sentToken), cancelled (cancelToken), or a new
+    /// input reloads the surface.
+    @State private var surfaceStaged = false
 
     /// A style toggle keeps this key stable, so the session is NOT reloaded and
     /// the in-progress game survives. A new bubble (payloadURL) or a New game tap
@@ -205,7 +221,11 @@ private struct GameSurface: View {
                 MessageSettingsView { showSettings = false }
             }
             .sheet(isPresented: $showRules) {
-                RulesView { showRules = false }
+                // Round-9 (owner): this sheet only serves the PRE-GAME screens
+                // (the board presents its own pair inside MessageTableView), so
+                // the rulebook here is the simpler lobby page: how the lobby
+                // works + the goal. The full rules stay one tap away in-game.
+                RulesView(scope: .lobby) { showRules = false }
             }
             .task(id: loadKey) {
                 await reloadForInput()
@@ -220,8 +240,12 @@ private struct GameSurface: View {
             // reloading the surface (the game is unchanged, only its staged move is
             // no longer pending).
             .onChange(of: sentToken) { _ in
+                surfaceStaged = false   // round-9: the staged bubble is sent
                 Task { await controller?.markSent() }
             }
+            // Round-9: the human deleted the staged bubble from the input field
+            // (didCancelSending) - nothing is awaiting Send any more.
+            .onChange(of: cancelToken) { _ in surfaceStaged = false }
             // A bubble ARRIVED while this surface is open (didReceive). Apple
             // does not move `selectedMessage` for an arrival, so loadKey does
             // not change and the .task above will not re-run - this one does.
@@ -244,7 +268,7 @@ private struct GameSurface: View {
     /// Rule P still decides everything: a stale or duplicate arrival loses to
     /// the chain on screen and changes NOTHING (no teardown, no replay). Only a
     /// strictly-preferred arrival is adopted - through the same `adopt` a tap
-    /// goes through, so seat identity, Rule R and the phase-0 lobby route all
+    /// goes through, so seat identity and the phase-0 lobby route both
     /// hold. With nothing on screen to compare (spectator / picker / name
     /// gate), the arrival simply renders - round 7 keeps no cached chain to
     /// weigh it against. `showSetup` is exempt: the human explicitly asked for
@@ -306,7 +330,8 @@ private struct GameSurface: View {
             MessageTableView(controller: controller,
                              onSend: { payload, fromUndo in await onSend(payload, controller.mySeat, fromUndo) },
                              onNewGame: onNewGame,
-                             onUnstage: onUnstage)
+                             onUnstage: onUnstage,
+                             alsoStaged: surfaceStaged)
                 // 1.0(4) live-receive blink: a received bubble reloads the surface
                 // with a NEW controller. Tying the board's identity to the
                 // controller INSTANCE (not just the `if let` slot) means a reload
@@ -322,11 +347,21 @@ private struct GameSurface: View {
                       nickname: MessageGameStore.shared.nickname,
                       onJoin: { name in Task { await joinLobby(lob, nickname: name) } },
                       onStart: { Task { await startGame(lob) } },
-                      onInvite: { Task { await onSend(lob.payload, lobbySeat(lob.env) ?? 0, false) } },
+                      onInvite: { Task {
+                          await onSend(lob.payload, lobbySeat(lob.env) ?? 0, false)
+                          surfaceStaged = true   // round-9: the invite awaits Send
+                      } },
                       // nil in every shipping build: the closure only exists
                       // where `addSoloSeat` is compiled at all.
                       onAddSoloSeat: soloSeatAction(lob))
                 .overlay(alignment: .bottomLeading) { settingsHelpCorner }
+                // Round-9: the send reminder covers EVERY staged bubble, not
+                // just board moves - a join/invite/start left unsent stalls the
+                // whole thread the same way. Collapsed view only, same as the
+                // board's; full-bleed container, so the screen-edge axis.
+                .overlay(alignment: .topTrailing) {
+                    StagedSendHint(staged: surfaceStaged, visible: style == .compact)
+                }
         } else if let g = nameGate {
             NameGateView(prefill: MessageGameStore.shared.nickname) { name in
                 Task { await nameThenSeat(name, gate: g) }
@@ -379,22 +414,20 @@ private struct GameSurface: View {
         }
     }
 
-    /// The Settings + Help squares on the setup and lobby screens (owner ask,
-    /// durak-rules-redesign): the SAME 40pt pair the board floats bottom-left
-    /// (`SettingsHelpSquares`), at the same corner inset — 4 outer + the pair's
-    /// own FSpace.m inner = 16pt off the edge, exactly the board's line — so
-    /// Settings and the rules are reachable before a game exists at all.
-    /// Expanded only: the compact drawer is too short for persistent chrome
-    /// (the board fades its own pair out as the drawer collapses; this is the
-    /// discrete version of the same rule, since these screens have no
-    /// continuous collapse fraction to read).
-    @ViewBuilder private var settingsHelpCorner: some View {
-        if style == .expanded {
-            SettingsHelpSquares(onSettings: { showSettings = true },
-                                onHelp: { showRules = true })
-                .padding(.leading, 4)
-                .padding(.bottom, 4)
-        }
+    /// The Settings + Rulebook squares on the setup and lobby screens (owner
+    /// ask, durak-rules-redesign): the SAME 40pt pair the board floats
+    /// bottom-left (`SettingsHelpSquares`), at the same corner inset — 4 outer
+    /// + the pair's own FSpace.m inner = 16pt off the edge, exactly the board's
+    /// line — so Settings and the rules are reachable before a game exists at
+    /// all. Round-9 (owner: "we need to bring them back"): shown in EVERY
+    /// presentation style — the old expanded-only gate meant the pair was
+    /// invisible in the compact drawer, which is where the extension actually
+    /// opens, so in practice it read as removed.
+    private var settingsHelpCorner: some View {
+        SettingsHelpSquares(onSettings: { showSettings = true },
+                            onHelp: { showRules = true })
+            .padding(.leading, 4)
+            .padding(.bottom, 4)
     }
 
     /// Reset + (re)load for a NEW input. A compact<->expanded toggle leaves
@@ -409,6 +442,7 @@ private struct GameSurface: View {
         // that show something other than a board.
         lobby = nil; nameGate = nil; showSetup = false
         ambiguous = nil; spectator = nil; damaged = false
+        surfaceStaged = false   // round-9: a new input owes nothing to Send yet
         await load()
         AnimLog.say("surface showing \(showingWhat)")
     }
@@ -432,7 +466,7 @@ private struct GameSurface: View {
     /// any more (MessageSurfaceRouter): it is a function of the selected
     /// bubble, this chat's cache, and the New-game intent, so it can be driven
     /// in a test without a simulator. What stays here is the part that genuinely
-    /// needs the host: seat identity (§6), the name gate, and Rule R's rebase.
+    /// needs the host: seat identity (§6) and the name gate.
     private func load() async {
         AnimLog.say("surface load url=\(payloadURL?.absoluteString.suffix(12) ?? "nil") startNew=\(startNewGame)")
         diagError = nil; diagInfo = ""   // 1.0(6) diagnostic
@@ -576,6 +610,7 @@ private struct GameSurface: View {
             cache(seat: 0, env: env, payload: payload)
             lobby = Lobby(env: env, payload: payload)
             await onSend(payload, 0, false)
+            surfaceStaged = true   // round-9: the created lobby awaits Send
         } catch {
             damaged = true
         }
@@ -645,6 +680,7 @@ private struct GameSurface: View {
             let newEnv = try await MessageEnvelope.decode(payload: payload, viewer: -1)
             cache(seat: free, env: newEnv, payload: payload)
             await onSend(payload, free, false)
+            surfaceStaged = true   // round-9: the join reseal awaits Send
             lobby = Lobby(env: newEnv, payload: payload)
         } catch {
             damaged = true
@@ -721,6 +757,7 @@ private struct GameSurface: View {
             let newEnv = try await MessageEnvelope.decode(payload: payload, viewer: -1)
             cache(seat: seat, env: newEnv, payload: payload)
             await onSend(payload, seat, false)
+            surfaceStaged = true   // round-9: the LIVE handoff awaits Send (alsoStaged)
             controller = MessageTurnController(parentPayload: payload, parent: newEnv, mySeat: seat)
             lobby = nil
         } catch {
@@ -728,8 +765,7 @@ private struct GameSurface: View {
         }
     }
 
-    /// Adopt `winner` as the game, rebase my staged-but-unsent moves onto it
-    /// (Rule R, §7.4), refresh the preferred-chain cache, and open the board.
+    /// Adopt `winner` as the game and open the board.
     private func adopt(winner: Data, env: MessageEnvelope) async {
         // A WAITING envelope is an INVITE, and this function opens a BOARD. They
         // are never interchangeable: a lobby seal leaves a game dealt at the
@@ -742,6 +778,13 @@ private struct GameSurface: View {
         // this is the structural guarantee behind that, not a second opinion
         // about which chain wins.
         if env.phase == 0 { controller = nil; lobby = Lobby(env: env, payload: winner); return }
+        // Round-9 #5: is this the chain THIS DEVICE just pressed Send on? The
+        // send can tear the extension down (dismiss / VC swap), so the reopen
+        // arrives here as a cold load of my own bubble - without this it
+        // REPLAYED the move I had just watched myself play. One-shot: consumed
+        // (cleared) whether it matches or not, so a stale marker can never
+        // silence a later genuine replay.
+        let justSent = MessageGameStore.shared.consumeJustSent(matching: winner)
         // Round 7: `prevPayload` (the previously-cached chain) is gone - the
         // open-replay was already resolved purely from the adopted chain by the
         // kernel (MessageTurnController.begin -> lastMoveEvents), never from a
@@ -759,7 +802,11 @@ private struct GameSurface: View {
         // separate caches + distinct participant UUIDs) and never shows this.
         if MessageDebugFlags.pickSeatOnAdopt { controller = nil; ambiguous = (env, winner); return }
         #endif
-        let (survivors, discarded) = await rebasePending(gameId: env.gameId, adoptedRound: env.round)
+        // ROUND 9 (owner): the durable pending ledger and its Rule R rebase are
+        // REMOVED ("caching has caused A LOT of problems... drop the pending
+        // ledger altogether"). An adopt no longer replays any stored moves - a
+        // staged-but-unsent move survives only in the live controller, and in
+        // the staged input-field bubble itself.
 
         // Bubble-anchored seat (seatForBubble): the winner chain's gameId
         // identifies this device's seat even after a group-membership change
@@ -797,10 +844,10 @@ private struct GameSurface: View {
             if !MessageGameStore.shared.hasSetNickname {
                 controller = nil
                 nameGate = NameGate(env: env, payload: winner, seat: seat,
-                                    survivors: survivors, discarded: discarded, prevPayload: prevPayload)
+                                    prevPayload: prevPayload, quietOpen: justSent)
             } else {
                 seatOnBoard(seat: seat, env: env, winner: winner,
-                            survivors: survivors, discarded: discarded, prevPayload: prevPayload)
+                            prevPayload: prevPayload, quietOpen: justSent)
             }
         case .ambiguous:
             controller = nil
@@ -826,15 +873,16 @@ private struct GameSurface: View {
         }
     }
 
-    /// Open the board for a resolved seat: cache it, surface any Rule R rebase
-    /// toast, and hand the winner chain to a fresh controller with the survivors
-    /// pre-staged. The tail of `adopt`'s `.known` branch, shared with the name gate.
+    /// Open the board for a resolved seat: cache it and hand the winner chain
+    /// to a fresh controller. The tail of `adopt`'s `.known` branch, shared
+    /// with the name gate. `quietOpen` (round-9 #5): this is my own just-sent
+    /// chain, so its last move - mine, watched live - is not replayed.
     private func seatOnBoard(seat: Int, env: MessageEnvelope, winner: Data,
-                             survivors: [Move], discarded: Int, prevPayload: Data? = nil) {
+                             prevPayload: Data? = nil, quietOpen: Bool = false) {
         cache(seat: seat, env: env, payload: winner)
-        toast = rebaseToast(survivors: survivors, discarded: discarded)
         controller = MessageTurnController(parentPayload: winner, parent: env, mySeat: seat,
-                                           preStaged: survivors, prevPayload: prevPayload)
+                                           prevPayload: prevPayload,
+                                           suppressOpenReplay: quietOpen)
     }
 
     /// The human answered the name gate: persist the name, then seat them. The
@@ -852,46 +900,10 @@ private struct GameSurface: View {
         }
         nameGate = nil
         seatOnBoard(seat: g.seat, env: g.env, winner: g.payload,
-                    survivors: g.survivors, discarded: g.discarded, prevPayload: g.prevPayload)
+                    prevPayload: g.prevPayload, quietOpen: g.quietOpen)
     }
 
-    /// Rule R (§7.4): replay each pending action onto the just-adopted chain. A
-    /// re-applied move survives as a staged move to re-send; a discarded one is
-    /// gone (round closed, or the new state refuses it). The ledger is rewritten
-    /// to exactly the survivors, re-tagged to the adopted round.
-    private func rebasePending(gameId: String, adoptedRound: Int) async -> (survivors: [Move], discarded: Int) {
-        var survivors: [Move] = []
-        var kept: [PendingAction] = []
-        var discarded = 0
-        let rows = MessageGameStore.shared.pending(gameId: gameId)
-        if !rows.isEmpty { AnimLog.say("rebase pending=\(rows.count) game=\(gameId)") }
-        for p in rows {
-            let awire = MoveWire.encodeAction(p.move)
-            let verdict = awire.isEmpty ? MessageKernel.Rebase.discardedIllegal
-                : ((try? await MessageKernel.shared.rebase(pendingRound: p.round, seat: p.seat, awire: awire))
-                   ?? .discardedIllegal)
-            AnimLog.say("rebase verdict=\(verdict) seat=\(p.seat) round=\(p.round) move=\(p.move.type)")
-            if verdict == .reapplied {
-                survivors.append(p.move)
-                // Re-tagged to the adopted round: it is now composed against THIS
-                // chain, so a later round closure guards it correctly.
-                kept.append(PendingAction(seat: p.seat, round: adoptedRound, move: p.move))
-            } else {
-                discarded += 1
-            }
-        }
-        MessageGameStore.shared.setPending(kept, gameId: gameId)
-        return (survivors, discarded)
-    }
-
-    private func rebaseToast(survivors: [Move], discarded: Int) -> String? {
-        if !survivors.isEmpty { return FStrings.t("ios.msg.rebased") }
-        if discarded > 0 { return FStrings.t("ios.msg.superseded") }
-        return nil
-    }
-
-
-    /// §6.3 pick resolved: remember the seat, rebase, then play. DEBUG-only
+    /// §6.3 pick resolved: remember the seat, then play. DEBUG-only
     /// single-simulator path (never compiled into Release): deliberately skips
     /// the open-delta-replay hint (`prevPayload` stays nil below) rather than
     /// duplicating `adopt`'s prev-chain lookup for a testing-only picker that
@@ -901,9 +913,7 @@ private struct GameSurface: View {
     /// dev aid.
     private func choose(seat: Int, from a: (env: MessageEnvelope, payload: Data)) async {
         cache(seat: seat, env: a.env, payload: a.payload)
-        let (survivors, _) = await rebasePending(gameId: a.env.gameId, adoptedRound: a.env.round)
-        controller = MessageTurnController(parentPayload: a.payload, parent: a.env, mySeat: seat,
-                                           preStaged: survivors)
+        controller = MessageTurnController(parentPayload: a.payload, parent: a.env, mySeat: seat)
         ambiguous = nil
     }
 

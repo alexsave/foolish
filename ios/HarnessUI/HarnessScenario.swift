@@ -82,12 +82,13 @@ extension HarnessModel {
         case "staged-compact":
             // Round-8 #3 (the send reminder): a move STAGED but not sent,
             // sitting in the compact drawer. After the 3-second fuse the blue
-            // arrow + caption fade in under the Send button. Built the way the
-            // real thing is: the viewer's first legal move applied + resealed +
-            // staged (Send circle lit), with the pending-ledger row that makes
-            // the reloading board pick the move back up as staged (Undo shown).
+            // arrow + caption fade in under the Send button. ROUND 9: the
+            // pending-ledger trick this used to seed the staged state with is
+            // gone with the ledger itself - pair this scenario with
+            // SIMCTL_CHILD_HARNESS_AUTOMOVE=1 instead: the board auto-plays the
+            // first human-playable move through its OWN tap path, which stages
+            // and auto-collapses exactly like a real player.
             await seedDemoGame()
-            await stageMoveForReview()
 
         // ---- identity edges -------------------------------------------------
         case "namegate":
@@ -272,39 +273,6 @@ extension HarnessModel {
         else { return }
         MessageGameStore.shared.setHandOrder(hand.reversed().map(\.identity), gameId: env.gameId)
         openBubble(latest)
-    }
-
-    /// Play the viewer's first legal move through the model's own staging path,
-    /// leaving the harness exactly where the real extension leaves a human who
-    /// just played: move applied + resealed + staged (Send lit), auto-collapse
-    /// scheduled, NOT sent. The pending-ledger row is what the board's Rule R
-    /// rebase turns back into a staged move (canSend/Undo) when the surface
-    /// reloads off the tapped (pre-move) bubble.
-    private func stageMoveForReview() async {
-        guard let latest,
-              let bytes = try? MessageEnvelope.payloadBytes(url: latest.url),
-              let env = try? await MessageEnvelope.decode(payload: bytes, viewer: -1),
-              let gid = UInt64(env.gameId) else { return }
-        let seat = localIndex
-        let legal = await MessageKernel.shared.residentLegal(seat: seat)
-        guard let m = legal.first(where: { $0.type != .wait }) else { return }
-        try? await MessageKernel.shared.apply(seat: seat, move: m)
-        guard let stagedPayload = try? await MessageKernel.shared.seal(
-            phase: 2, lastActorSeat: seat, gameId: gid,
-            parent8: MessageTurnController.firstEight(hex: env.digest),
-            joins: env.joins) else { return }
-        // Let the FIRST board (the one seedDemoGame put up) finish `begin()`
-        // before planting the ledger row: begin mirrors its (empty) staged list
-        // into the ledger, so a row written while it is still starting up gets
-        // wiped before the reload below can rebase it.
-        try? await Task.sleep(nanoseconds: 800_000_000)
-        MessageGameStore.shared.setSeat(gameId: env.gameId, chatKey: chatKey, seat: seat)
-        MessageGameStore.shared.setPending(
-            [PendingAction(seat: seat, round: env.round, move: m)], gameId: env.gameId)
-        // Reload the surface with the ledger in place, then stage - the model's
-        // own collapse-after-settle takes it to the compact drawer.
-        openBubble(latest)
-        await stage(stagedPayload, seat: seat)
     }
 
     // MARK: - pass 2 building blocks

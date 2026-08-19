@@ -414,6 +414,18 @@ via public kernel calls, never memcpy into `Game`.
 
 ### 7.4 Rebase: no legal move is silently lost
 
+> **RETIRED ON iOS (round 9, owner call, 1.0(11)).**
+> The durable pending ledger and the adopt-time rebase are removed from the
+> extension: "caching has caused A LOT of problems in the past. The extension
+> is rarely killed, and it's rare that an arriving bubble can happen mid
+> staging."
+> Staged-but-unsent moves now live only in the controller's memory (undo still
+> works), and the staged input-field bubble itself still carries them as a
+> sealed chain - sending it is always valid FMSG.
+> Rule R remains a KERNEL capability (`fio_msg_rebase_awire`), exercised by the
+> wasm bridge and `e2e/msg_concurrency.test.ts`; the section below documents
+> the semantics that kernel entry still implements.
+
 Per `game_id`, the device keeps a small **pending ledger**: the actions *this
 seat* has staged/sent, each tagged with the `(round, turn, parent8)` it was
 composed against. When the device adopts a preferred chain that does NOT

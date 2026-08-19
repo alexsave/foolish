@@ -196,11 +196,12 @@ final class HarnessFlowTests: XCTestCase {
         XCTAssertTrue(veraSealed, "seat 1 should get a turn to seal her name")
     }
 
-    /// A delivered move is committed, so re-adopting our OWN just-sent chain must not
-    /// falsely toast "your move was superseded" — Rule R would replay a move the
-    /// chain already contains. deliver() clears the pending ledger, exactly as the
-    /// extension does on didStartSending.
-    func test_deliveredMoveIsCommitted_notSuperseded() async throws {
+    /// A delivered move is committed. ROUND 9: the pending ledger is gone, so
+    /// nothing can be falsely "superseded" any more - what deliver() must now
+    /// leave behind is the one-shot JUST-SENT marker, so a reload of our OWN
+    /// just-sent chain opens quietly (no self-replay) exactly as the extension's
+    /// didStartSending arranges it.
+    func test_deliveredMoveLeavesTheJustSentMarker() async throws {
         let m = HarnessModel(count: 2)
         let gid: UInt64 = 0xD00D
         let g = MessageTurnController(genesisSeed: Data(repeating: 4, count: 32),
@@ -208,13 +209,12 @@ final class HarnessFlowTests: XCTestCase {
         await g.begin()
         if g.iCanAct, let mv = g.legal.first(where: { $0.type != .wait }) {
             await g.apply(mv)
-            XCTAssertFalse(MessageGameStore.shared.pending(gameId: String(gid)).isEmpty,
-                           "applying a move writes the pending ledger (what Rule R would replay)")
         }
-        await m.stage(try await g.stagedPayload(), seat: 0)
+        let payload = try await g.stagedPayload()
+        await m.stage(payload, seat: 0)
         m.deliver()
-        XCTAssertTrue(MessageGameStore.shared.pending(gameId: String(gid)).isEmpty,
-                      "delivering commits the move -> ledger cleared -> re-adopting our own chain can't supersede it")
+        XCTAssertTrue(MessageGameStore.shared.consumeJustSent(matching: payload),
+                      "delivering marks the just-sent chain, so its reload adopts quietly")
     }
 
     /// Play a whole 2-player game by switching between the two players every turn,
