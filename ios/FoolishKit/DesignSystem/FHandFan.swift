@@ -75,6 +75,12 @@ public struct FHandFan: View {
     /// false so the offline board / gallery / snapshots keep their cross-fade and
     /// their hand↔table matchedGeometry flight, exactly as before.
     public let instantExit: Bool
+    /// Round-8 #4: how the caller hears about an in-hand reorder — the full
+    /// display order (card identities) after each splice. The message board
+    /// persists it per game (MessageGameStore.setHandOrder) so a sorted hand
+    /// survives closing and reopening the game; defaulted no-op so every other
+    /// call site (offline board, gallery, snapshots) is unchanged.
+    public let onOrderChanged: ([String]) -> Void
 
     public init(cards: [Card], trumpSuit: Suit?, disabled: Set<String> = [],
                 selection: Binding<Set<String>>, onTap: @escaping (Card) -> Void,
@@ -83,7 +89,9 @@ public struct FHandFan: View {
                 namespace: Namespace.ID? = nil, hidden: Set<String> = [],
                 topHalfOnly: Bool = false, crop: CGFloat? = nil,
                 onDragCardMoved: @escaping (CGPoint) -> Void = { _ in },
-                reserveNoSlot: Set<String> = [], instantExit: Bool = false) {
+                reserveNoSlot: Set<String> = [], instantExit: Bool = false,
+                initialOrder: [String] = [],
+                onOrderChanged: @escaping ([String]) -> Void = { _ in }) {
         self.instantExit = instantExit
         self.cards = cards
         self.trumpSuit = trumpSuit
@@ -100,6 +108,13 @@ public struct FHandFan: View {
         self.crop = crop ?? (topHalfOnly ? 1 : 0)
         self.onDragCardMoved = onDragCardMoved
         self.reserveNoSlot = reserveNoSlot
+        // Round-8 #4: seed the cosmetic order from the caller's persisted copy.
+        // @State takes an initial value only when the view IDENTITY is created
+        // (a board reload gives a fresh board via its `.id`, which is exactly
+        // when the seed should re-apply); later re-inits of the same identity
+        // keep the live @State, so mid-game re-renders never reset a reorder.
+        self._order = State(initialValue: initialOrder)
+        self.onOrderChanged = onOrderChanged
     }
 
     @State private var dragId: String?
@@ -113,10 +128,12 @@ public struct FHandFan: View {
     /// note 5 (hand reordering): the local player's cosmetic display order —
     /// card identities, reconciled against `cards` every body evaluation via
     /// `displayCards`. This is PURELY a UI convenience (the kernel hand order
-    /// never changes): it lives only in this view's @State, so it resets
-    /// whenever FHandFan is recreated (a board reload swaps in a fresh view),
-    /// and is never persisted or sent anywhere.
-    @State private var order: [String] = []
+    /// never changes). Round-8 #4: seeded from `initialOrder` at view creation
+    /// and reported through `onOrderChanged` on every splice, so a caller can
+    /// persist it per game (the message board does, via MessageGameStore) —
+    /// a board reload swaps in a fresh view whose seed restores the
+    /// arrangement instead of resetting it. Never sent anywhere off-device.
+    @State private var order: [String]
     /// This view's own frame in `boardSpace`, mirrored from the same
     /// `HandFrameKey` preference it publishes below — read locally so a
     /// reorder can tell "drag point still inside the hand" from "dragged out
@@ -300,7 +317,15 @@ public struct FHandFan: View {
     /// in `order` (a fresh hand, or a card just dealt in) is appended in
     /// kernel order. Pure — never mutates `order` itself, so it's safe to read
     /// from `body` on every evaluation.
-    private var displayCards: [Card] {
+    private var displayCards: [Card] { Self.displayOrder(cards: cards, order: order) }
+
+    /// The reconcile itself, static + pure so it can be asserted directly (the
+    /// same contract as the web's displayedHand, src/state/clientReconcile.ts):
+    /// only cards actually in `cards` render; `order` decides the relative
+    /// order of the ones it knows; unknown cards append in kernel order; stale
+    /// ids (played cards the sticky memory still remembers) and duplicates
+    /// drop out by construction.
+    public static func displayOrder(cards: [Card], order: [String]) -> [Card] {
         guard !order.isEmpty else { return cards }
         let byId = Dictionary(uniqueKeysWithValues: cards.map { ($0.identity, $0) })
         var seen = Set<String>()
@@ -370,6 +395,10 @@ public struct FHandFan: View {
             order = next
             reorderShift += CGFloat(to - from) * slot
         }
+        // Round-8 #4: report the arrangement OUTSIDE the animation transaction
+        // (persisting is not a visual change). `next` is the full display
+        // order, sticky ids included, exactly what a later seed restores.
+        onOrderChanged(next)
     }
 
     /// Round-6 bug 10: the cards this fan actually lays out — `displayCards`

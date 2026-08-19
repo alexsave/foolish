@@ -122,6 +122,9 @@ public final class MessageGameStore {
     // a custom decoder just to preserve rows that carry no chatKey to be correct.
     private let key = "fmsg.games.v2"
     private let pendingKey = "fmsg.pending.v1"
+    // Round-8 #4: the local player's cosmetic hand arrangement, per game (see
+    // the "hand order" section below).
+    private let handOrderKey = "fmsg.handorder.v1"
     // Round 7: the ONLY per-game fact still persisted — the seat this device holds
     // in a game, scoped by chat (see `SeatRow`/`chatKey`). A fresh key, so a
     // device upgrading from the old `fmsg.games.v2` blob simply starts empty here
@@ -296,6 +299,81 @@ public final class MessageGameStore {
     /// stand-in for didStartSending) to commit staged moves without threading a
     /// gameId through; a real device clears the one game via clearPending(gameId:).
     public func clearAllPending() { persistPending([:]) }
+
+    // MARK: hand order (round-8 #4) — the sticky arrangement memory, per game
+    //
+    // The web keeps a client-side "arrangement memory" per game
+    // (src/state/clientReconcile.ts reconcileHandMemory/displayedHand): the
+    // RENDERED hand is the authoritative hand ordered by that memory, so a
+    // player who sorts their cards keeps the sorted order across reloads. On
+    // iMessage the same memory lived only in FHandFan's @State ("never
+    // persisted or sent anywhere"), so every reopen of a game reset the hand
+    // to the kernel's canonical order. This store is the web's memory made
+    // durable: card IDENTITIES in display order, keyed by gameId.
+    //
+    // It is deliberately NOT in the kernel and NOT in the wire: the resident
+    // Game is rebuilt from the shared chain on every decode (the canonical
+    // hand order every player agrees on), while this is one device's cosmetic
+    // preference - putting it in the chain would leak a hand-order signal to
+    // opponents and fork digests over a sort. Same trust level as the seats
+    // row: losing it costs a convenience, never correctness.
+    //
+    // Keyed by gameId alone, like the pending ledger (same collision
+    // reasoning). Rows are cleared when the game ends
+    // (MessageTurnController.begin on a finished chain / markSent on the final
+    // move); the cap below bounds what abandoned games can leak.
+
+    /// One game's stored arrangement. `updatedAt` orders eviction only.
+    public struct HandOrderRow: Codable, Equatable, Sendable {
+        public var order: [String]
+        public var updatedAt: TimeInterval
+        public init(order: [String], updatedAt: TimeInterval) {
+            self.order = order; self.updatedAt = updatedAt
+        }
+    }
+
+    /// Abandoned games never call the end-of-game clear, so the map could grow
+    /// forever; at 32 games x ~36 card ids it is still tiny, and the oldest row
+    /// beyond the cap is evicted on write.
+    static let handOrderCap = 32
+
+    /// The stored arrangement for `gameId` — card identities in display order —
+    /// or empty when none was ever saved (kernel order applies).
+    public func handOrder(gameId: String) -> [String] {
+        allHandOrders()[gameId]?.order ?? []
+    }
+
+    /// Persist `order` as `gameId`'s arrangement. Empty clears the row (an
+    /// arrangement identical to kernel order is still stored as given — the
+    /// caller only reports real reorders).
+    public func setHandOrder(_ order: [String], gameId: String) {
+        var map = allHandOrders()
+        if order.isEmpty { guard map.removeValue(forKey: gameId) != nil else { return } }
+        else {
+            map[gameId] = HandOrderRow(order: order, updatedAt: Date().timeIntervalSince1970)
+            while map.count > Self.handOrderCap,
+                  let oldest = map.min(by: { $0.value.updatedAt < $1.value.updatedAt }) {
+                map.removeValue(forKey: oldest.key)
+            }
+        }
+        persistHandOrders(map)
+    }
+
+    /// Drop `gameId`'s arrangement — called when the game ends (§ the section
+    /// doc above): a finished game's hand no longer needs a preferred order.
+    public func clearHandOrder(gameId: String) { setHandOrder([], gameId: gameId) }
+
+    private func allHandOrders() -> [String: HandOrderRow] {
+        guard let data = defaults?.data(forKey: handOrderKey),
+              let map = try? JSONDecoder().decode([String: HandOrderRow].self, from: data)
+        else { return [:] }
+        return map
+    }
+
+    private func persistHandOrders(_ map: [String: HandOrderRow]) {
+        guard let data = try? JSONEncoder().encode(map) else { return }
+        defaults?.set(data, forKey: handOrderKey)
+    }
 
     // The pending ledger stays: it is this device's OWN staged-but-unsent moves
     // (Rule R §7.4), read back only to rebase them onto a chain that arrives

@@ -246,6 +246,13 @@ public final class MessageTurnController: ObservableObject {
         }
         persistLedger()
         await refresh()
+        // Round-8 #4: opening a FINISHED chain is one of the two moments a game
+        // provably ends on this device (the other is committing my own final
+        // move, markSent below) - drop its stored hand arrangement, the cache
+        // exists only to survive mid-game reopens. Not done at apply(): an
+        // unsent final move can still be undone, and the arrangement must
+        // survive that undo.
+        if view?.isOver == true { store.clearHandOrder(gameId: gameIdString) }
         ready = true
     }
 
@@ -299,6 +306,9 @@ public final class MessageTurnController: ObservableObject {
         pending = []
         lastChangeWasUndo = false
         await refresh()
+        // Round-8 #4: the final move is committed to the thread (no undo left),
+        // so this game's stored hand arrangement has nothing left to order.
+        if view?.isOver == true { store.clearHandOrder(gameId: gameIdString) }
     }
 
     /// Undo the last staged action by rebuilding the base and replaying all but

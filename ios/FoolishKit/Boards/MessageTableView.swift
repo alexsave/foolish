@@ -306,7 +306,15 @@ public struct MessageTableView: View {
             // device trace without spamming a correct build.
             if let hand = controller.view?.me?.hand, handFrame != .zero, !$0.isEmpty,
                animator.hidden.isEmpty, sweepBattles.isEmpty, !animator.isAnimating {
-                let rects = FHandFan.slotRects(cards: hand, width: handFrame.width, crop: currentCollapse)
+                // Round-8 #4: the fan renders the DISPLAY order (the stored
+                // per-game arrangement; the store and the fan's live order are
+                // kept in sync by onOrderChanged), so the analytical slots must
+                // be computed against it too, or every cosmetic reorder would
+                // log as a phantom geometry mismatch here.
+                let display = FHandFan.displayOrder(
+                    cards: hand,
+                    order: MessageGameStore.shared.handOrder(gameId: controller.gameIdString))
+                let rects = FHandFan.slotRects(cards: display, width: handFrame.width, crop: currentCollapse)
                 var worst = 0.0, worstId = ""
                 for c in hand {
                     guard let a = rects[c.identity]?.offsetBy(dx: handFrame.minX, dy: handFrame.minY),
@@ -1990,7 +1998,17 @@ public struct MessageTableView: View {
                  namespace: cardNS, hidden: veiledCardIds,
                  crop: crop,
                  onDragCardMoved: { center in dragCardCenter = center },
-                 reserveNoSlot: reserveNoSlot, instantExit: true)
+                 reserveNoSlot: reserveNoSlot, instantExit: true,
+                 // Round-8 #4: a sorted hand survives closing and reopening the
+                 // game. Seed the fan's cosmetic order from this game's stored
+                 // arrangement (the kernel hand stays canonical; the fan only
+                 // renders it in this order) and persist every reorder back.
+                 // The rows die with the game (MessageTurnController clears
+                 // them when a chain finishes).
+                 initialOrder: MessageGameStore.shared.handOrder(gameId: controller.gameIdString),
+                 onOrderChanged: { [gameId = controller.gameIdString] in
+                     MessageGameStore.shared.setHandOrder($0, gameId: gameId)
+                 })
             .padding(.horizontal, FSpace.s)
     }
 

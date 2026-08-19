@@ -258,4 +258,76 @@ final class MessageTurnControllerTests: XCTestCase {
         XCTAssertEqual([UInt8](MessageTurnController.firstEight(hex: "aabb")),
                        [0xaa, 0xbb, 0, 0, 0, 0, 0, 0])
     }
+
+    // MARK: round-8 #4 — the persisted hand arrangement
+
+    /// The store half: a per-game arrangement round-trips, clears, and the map
+    /// is capped so abandoned games (which never hit the end-of-game clear)
+    /// cannot grow it forever.
+    func testHandOrderStoreRoundTripClearAndCap() {
+        let store = MessageGameStore(defaults: UserDefaults(suiteName: "test.ho.\(UUID().uuidString)")!)
+
+        XCTAssertTrue(store.handOrder(gameId: "g1").isEmpty, "empty until saved")
+        store.setHandOrder(["S-6", "H-10", "C-14"], gameId: "g1")
+        XCTAssertEqual(store.handOrder(gameId: "g1"), ["S-6", "H-10", "C-14"])
+        store.setHandOrder(["H-10", "S-6", "C-14"], gameId: "g1")
+        XCTAssertEqual(store.handOrder(gameId: "g1"), ["H-10", "S-6", "C-14"],
+                       "a later reorder overwrites")
+
+        store.clearHandOrder(gameId: "g1")
+        XCTAssertTrue(store.handOrder(gameId: "g1").isEmpty, "the end-of-game clear empties the row")
+
+        // Cap: write well past it; the newest row survives, the oldest are gone.
+        for i in 0..<(MessageGameStore.handOrderCap + 8) {
+            store.setHandOrder(["S-\(i)"], gameId: "cap\(i)")
+        }
+        XCTAssertEqual(store.handOrder(gameId: "cap\(MessageGameStore.handOrderCap + 7)"), ["S-39"],
+                       "the newest row is always kept")
+        XCTAssertTrue(store.handOrder(gameId: "cap0").isEmpty,
+                      "the oldest rows are evicted past the cap")
+    }
+
+    /// Opening a FINISHED chain drops that game's stored arrangement (the cache
+    /// exists only to survive mid-game reopens); opening a live chain must not.
+    func testFinishedChainClearsTheHandArrangementAndALiveOneDoesNot() async throws {
+        let store = MessageGameStore(defaults: UserDefaults(suiteName: "test.hoc.\(UUID().uuidString)")!)
+
+        // The live half first: the fixture chain is mid-game.
+        let parentBytes = bytes(fixtureHex)
+        let parent = try await MessageEnvelope.decode(payload: parentBytes, viewer: 0)
+        let live = MessageTurnController(parentPayload: parentBytes, parent: parent,
+                                         mySeat: 0, store: store)
+        store.setHandOrder(["S-6", "H-10"], gameId: live.gameIdString)
+        await live.begin()
+        XCTAssertFalse(live.isOver)
+        XCTAssertEqual(store.handOrder(gameId: live.gameIdString), ["S-6", "H-10"],
+                       "a mid-game open keeps the arrangement - that is the whole point of the cache")
+
+        // Now a finished chain: play a real game out, seal phase 3, open it.
+        let k = MessageKernel.shared
+        try await k.newGame(seed: Data((0..<32).map { UInt8($0 &* 7 &+ 3) | 1 }), players: 2)
+        var guardN = 0
+        while (await k.residentView(viewer: -1))?.isOver != true, guardN < 6000 {
+            guardN += 1
+            var acted = false
+            for s in 0..<2 {
+                let legal = await k.residentLegal(seat: s)
+                if let m = legal.first(where: { $0.type != .wait }) {
+                    try? await k.apply(seat: s, move: m); acted = true; break
+                }
+            }
+            if !acted { break }
+        }
+        let joins = [MessageJoin(seat: 0, name: "A"), MessageJoin(seat: 1, name: "B")]
+        let finished = try await k.seal(phase: 3, lastActorSeat: 0, gameId: 4242,
+                                        parent8: Data(repeating: 0, count: 8), joins: joins)
+        let env = try await MessageEnvelope.decode(payload: finished, viewer: -1)
+        store.setHandOrder(["S-6", "H-10"], gameId: "4242")
+        let over = MessageTurnController(parentPayload: finished, parent: env,
+                                         mySeat: 0, store: store)
+        await over.begin()
+        XCTAssertTrue(over.isOver, "the played-out chain is finished")
+        XCTAssertTrue(store.handOrder(gameId: "4242").isEmpty,
+                      "opening a finished chain clears the arrangement")
+    }
 }

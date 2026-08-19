@@ -71,6 +71,14 @@ extension HarnessModel {
             await seedDemoGame()
             collapseForReview()
 
+        case "board-sorted":
+            // Round-8 #4: the persisted hand arrangement, seed-to-render. Store
+            // a REVERSED arrangement for the demo game, then reopen the bubble:
+            // the board must deal the same kernel hand but render it reversed.
+            // Compare against the plain `board` scenario to see the difference.
+            await seedDemoGame()
+            await sortHandForReview()
+
         case "staged-compact":
             // Round-8 #3 (the send reminder): a move STAGED but not sent,
             // sitting in the compact drawer. After the 3-second fuse the blue
@@ -251,6 +259,20 @@ extension HarnessModel {
     }
 
     private func collapseForReview() { togglePresentation() }
+
+    /// Round-8 #4: store a reversed arrangement for the viewer's demo hand, the
+    /// way a real reorder would have persisted it, then reload the surface so
+    /// the board seeds from it - proving the store -> FHandFan seed leg end to
+    /// end (the reorder -> store leg is the fan's onOrderChanged, gesture-only).
+    private func sortHandForReview() async {
+        guard let latest,
+              let bytes = try? MessageEnvelope.payloadBytes(url: latest.url),
+              let env = try? await MessageEnvelope.decode(payload: bytes, viewer: -1),
+              let hand = await MessageKernel.shared.residentView(viewer: localIndex)?.me?.hand
+        else { return }
+        MessageGameStore.shared.setHandOrder(hand.reversed().map(\.identity), gameId: env.gameId)
+        openBubble(latest)
+    }
 
     /// Play the viewer's first legal move through the model's own staging path,
     /// leaving the harness exactly where the real extension leaves a human who

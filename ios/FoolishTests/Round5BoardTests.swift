@@ -178,4 +178,33 @@ final class Round5BoardTests: XCTestCase {
         XCTAssertEqual(full.height, 72)
         XCTAssertEqual(crop.height, 36, "top-half crop halves the slot height")
     }
+
+    // MARK: round-8 #4 — the display-order reconcile (the web's displayedHand)
+
+    /// The persisted arrangement decides the RELATIVE order of the cards it
+    /// knows; cards it does not know append in kernel order; ids for cards no
+    /// longer in the hand (played since the arrangement was saved) drop out.
+    /// Same contract as src/state/clientReconcile.ts displayedHand.
+    func testDisplayOrderReconcilesStoredArrangementAgainstTheKernelHand() {
+        let a = Card(s: 0, v: 6), b = Card(s: 1, v: 10), c = Card(s: 2, v: 13), d = Card(s: 3, v: 7)
+
+        // No arrangement: kernel order verbatim.
+        XCTAssertEqual(FHandFan.displayOrder(cards: [a, b, c], order: []), [a, b, c])
+
+        // A full known arrangement reorders outright.
+        XCTAssertEqual(FHandFan.displayOrder(cards: [a, b, c],
+                                             order: [c.identity, a.identity, b.identity]),
+                       [c, a, b])
+
+        // A card drawn since the save (d) appends in kernel order; a stale id
+        // (b was played) silently drops; a duplicated id cannot double a card.
+        XCTAssertEqual(FHandFan.displayOrder(cards: [a, c, d],
+                                             order: [c.identity, b.identity, a.identity, c.identity]),
+                       [c, a, d])
+
+        // A card never leaves the render just because the arrangement missed
+        // it - the authoritative hand always renders in full.
+        XCTAssertEqual(Set(FHandFan.displayOrder(cards: [a, b, c, d], order: [c.identity])),
+                       Set([a, b, c, d]))
+    }
 }
