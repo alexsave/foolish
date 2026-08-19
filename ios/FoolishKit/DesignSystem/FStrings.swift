@@ -360,7 +360,7 @@ public enum FStrings {
             "ios.msg.mv.out": "{name} вышел!",
             "ios.msg.mv.good": "{name} говорит: бито",
             "ios.msg.mv.roundover": "Раунд окончен - атакует {name}",
-            "ios.msg.sendhint": "Отправить",
+            "ios.msg.sendhint": "Отправь",
             "ios.msg.started": "{name} начал игру - нажмите, чтобы играть",
             "ios.msg.joined": "{name} присоединился - нажмите, чтобы войти",
             "ios.rej.turn": "Сейчас не ваш ход.",
