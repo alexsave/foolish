@@ -637,6 +637,19 @@ public struct MessageTableView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 .padding(.bottom, lift + 4)
                 .animation(nil, value: controller.view)   // never float the buttons — see the role mark above
+                // Round-10e: and NOTHING may interpolate anything in this row.
+                // A tinted-row film showed the row itself sitting correctly at
+                // the drawer's bottom while the Undo PILL flew down into it
+                // from ~270pt above over ~7 frames: the collapse tween is an
+                // explicit `withAnimation` transaction, and it was animating
+                // the pill's position inside the row. `.animation(nil, value:)`
+                // above only covers changes driven by `controller.view`, so it
+                // could not stop that; nilling the transaction can, and it
+                // applies to the squares and the pills alike - which is what
+                // "make it do whatever the settings + rules buttons are doing"
+                // means at the layout level. The row still tracks the collapse
+                // exactly, because `lift` is recomputed every frame of it.
+                .transaction { $0.animation = nil }
 
                 // My hand hugs the bottom (web: bottom max(10, safe-area)); the
                 // outer .padding(12) is the safe-area inset that keeps it unclipped.

@@ -148,6 +148,8 @@ public struct MessagesRootView: View {
     /// tapped straight into expanded in a fresh process), pre-collapse is
     /// skipped and the transition behaves as in 1.0(12).
     private static var lastCompactHeight: CGFloat?
+    /// The last EXPANDED drawer height seen - the collapse tween's start.
+    private static var lastExpandedHeight: CGFloat?
     private static let compactThreshold: CGFloat = 500
 
     /// Round-10c: the expanded height, held through the pre-collapse and the
@@ -211,6 +213,14 @@ public struct MessagesRootView: View {
     private func follow(height: CGFloat) {
         AnimLog.say("stage follow geo=\(Int(lastGeoHeight))->\(Int(height)) armed=\(armed)")
         if height < Self.compactThreshold { Self.lastCompactHeight = height }
+        // Remember the EXPANDED height continuously. The arm signal can arrive
+        // after the model has already snapped to the compact height (SwiftUI
+        // delivers onChange asynchronously), in which case sampling the height
+        // at arm time captured the compact one, the tween's start == its end,
+        // and the whole thing was inert - filmed as the control row jumping
+        // ~300pt up at the flip and easing back, i.e. the untweened baseline.
+        // A continuously-recorded expanded height cannot be mistimed.
+        if height >= Self.compactThreshold { Self.lastExpandedHeight = height }
         let prev = lastGeoHeight
         lastGeoHeight = height
         // The collapse flip: armed by the host right before it requests
@@ -223,15 +233,32 @@ public struct MessagesRootView: View {
         // instead was filmed leading the host by ~3 frames: the box shrank
         // while the drawer was still full, i.e. the hand rose. Starting later
         // lagged it. The snap is the phase reference.)
-        if armed, armedFrom > height + 60 {
+        let from = max(armedFrom, Self.lastExpandedHeight ?? 0)
+        // NOT gated on the arm signal any more: SwiftUI delivers that
+        // onChange asynchronously, so it can land AFTER the model has already
+        // snapped - and then the tween never ran at all (filmed: the whole
+        // control row and the hand riding the host's top-pinned compositing
+        // up ~290pt and easing back). A large DOWN-snap is itself the reliable
+        // signal: a manual grabber drag only ever delivers small continuous
+        // steps, so it cannot trigger this, and an up-snap (the expand, which
+        // the host composites bottom-referenced) is deliberately excluded.
+        if from > height + 60 {
             armed = false
             collapsing = true
             // From the height captured at arm time (the true expanded height,
             // before the transition's noisy intermediate reports) down to the
             // height the host just snapped to.
-            boxHeight = armedFrom
-            withAnimation(.timingCurve(0.165, 0.84, 0.44, 1, duration: 0.38)) {
-                boxHeight = height
+            // Set the START value, let SwiftUI RENDER it, and only then start
+            // the tween. Doing both in one runloop turn coalesces them into a
+            // single 0 -> height change, so the start value never rendered and
+            // the whole tween was invisible - filmed as the board snapping to
+            // the compact layout at the drawer's top edge and riding back down,
+            // i.e. the untweened baseline wearing a tween's clothes.
+            boxHeight = from
+            DispatchQueue.main.async {
+                withAnimation(.timingCurve(0.165, 0.84, 0.44, 1, duration: 0.38)) {
+                    boxHeight = height
+                }
             }
             Task {
                 try? await Task.sleep(nanoseconds: 1_200_000_000)
@@ -805,6 +832,23 @@ private struct GameSurface: View {
     private func createWaiting(nickname: String) async {
         var seed = Data(count: 32)
         for i in 0..<32 { seed[i] = UInt8.random(in: 0...UInt8.max) }
+        #if DEBUG
+        // Round-10e dev hook (owner: "if it keeps handing you defender seat,
+        // find a different fixed seed that gives you attacker"). A `dev.seed`
+        // file in the App Group container pins the deal, so a verification run
+        // can pick a deal in which the CREATOR opens the bout and the automove
+        // hook therefore has a legal move the moment the board opens. Its
+        // contents are the seed byte, repeated; write it with
+        //   printf 7 > <appgroup>/dev.seed
+        // Compiled out of every Release build.
+        if let dir = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: "group.cards.foolish.msg"),
+           let raw = try? String(contentsOf: dir.appendingPathComponent("dev.seed"),
+                                 encoding: .utf8),
+           let n = UInt8(raw.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            seed = Data(repeating: n, count: 32)
+        }
+        #endif
         let gameId = UInt64.random(in: 1...UInt64.max)
         let capacity = chatIsDM ? 2 : 8
         do {
