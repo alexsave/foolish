@@ -384,7 +384,25 @@ public struct MessageTableView: View {
             // non-wait move off the raw menu therefore said good over uncovered
             // attacks constantly, which no player can do, so an auto-run was
             // exercising a game nobody can play.
-            if ProcessInfo.processInfo.environment["HARNESS_AUTOMOVE"] != nil,
+            // Round-10e (owner: "for reproducibility of taps I would suggest a
+            // fixed seed, enabled by some flags - dev build flags only"): the
+            // iMessage extension is launched by Messages, so it never sees our
+            // environment. This DEBUG-only App Group key is the equivalent
+            // switch, settable from the outside with
+            //   xcrun simctl spawn <sim> defaults write \
+            //       group.cards.foolish.msg dev.automove -bool YES
+            // so a verification run can play a legal move without depending on
+            // synthesized drags or which seat the deal handed us. Compiled out
+            // of every Release build with the rest of this block.
+            // A FILE in the App Group container, not a UserDefaults key:
+            // `defaults write` from outside lands in the wrong domain, and
+            // cfprefsd caches group prefs in memory (a write is not seen until
+            // a reboot). A file is read straight off disk, every open.
+            let devAutoMove = FileManager.default
+                .containerURL(forSecurityApplicationGroupIdentifier: "group.cards.foolish.msg")
+                .map { FileManager.default.fileExists(atPath: $0.appendingPathComponent("dev.automove").path) }
+                ?? false
+            if ProcessInfo.processInfo.environment["HARNESS_AUTOMOVE"] != nil || devAutoMove,
                let view = controller.view,
                let m = CardPlay.humanMoves(battles: view.battles, legal: controller.legal).first {
                 // Let the incoming replay (the OTHER player's last move flying
@@ -592,27 +610,33 @@ public struct MessageTableView: View {
                     // it reads the mirrored `lift`, not the springy `handHeight`.
                     .animation(nil, value: controller.view)
 
-                // Action buttons float bottom-right, above the hand (web absolute
-                // bottom:90/right:20). They only appear when a flag enables them.
-                actionBar(view)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                    .padding(.trailing, 4).padding(.bottom, lift + 4)
-                    .animation(nil, value: controller.view)   // never float the buttons — see the role mark above
-
-                // 1.0(4): Settings + Rulebook squares, MIRRORING the action
-                // column on the LEFT. Same 40pt height as the action pills,
-                // square, at the same bottom line (lift + 4) and the SAME 16pt
-                // edge inset (4 outer + FSpace.m inner, exactly like actionBar's
-                // trailing). The two squares + their gap span one action-button
-                // width (40 + 16 + 40 = 96), so the left group is the mirror of
-                // the right one. Round-9 (owner: "we need to bring them back"):
-                // ALWAYS visible - the old collapse fade hid them in the compact
-                // drawer, which is where most play happens, so in practice the
-                // pair read as removed. The board spring never floats them.
-                settingsHelpBar
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                    .padding(.leading, 4).padding(.bottom, lift + 4)
-                    .animation(nil, value: controller.view)
+                // The bottom control row: Settings + Rulebook squares on the
+                // LEFT, the action pills on the RIGHT (web absolute
+                // bottom:90/right:20; the two squares + their gap span exactly
+                // one action-button width, 40 + 16 + 40 = 96, so the left group
+                // mirrors the right). Round-9 (owner: "we need to bring them
+                // back"): the squares are ALWAYS visible - the old collapse
+                // fade hid them in the compact drawer, where most play happens.
+                //
+                // Round-10e (owner: "the Undo button jumps way up - make it do
+                // whatever the settings + rules buttons are doing"): these were
+                // two SEPARATE bottom-anchored overlays sharing only an
+                // arithmetic expression, so nothing tied them together and the
+                // action column could - and did - move on its own: measured off
+                // the film, Undo teleported 295pt up at the staging frame and
+                // eased back over ~0.2s while the squares descended smoothly.
+                // One HStack, bottom-aligned, one padding, one animation
+                // context: now they are the same row by construction and CANNOT
+                // diverge, whatever animation is in flight.
+                HStack(alignment: .bottom, spacing: 0) {
+                    settingsHelpBar
+                    Spacer(minLength: 0)
+                    actionBar(view)
+                }
+                .padding(.horizontal, 4)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .padding(.bottom, lift + 4)
+                .animation(nil, value: controller.view)   // never float the buttons — see the role mark above
 
                 // My hand hugs the bottom (web: bottom max(10, safe-area)); the
                 // outer .padding(12) is the safe-area inset that keeps it unclipped.

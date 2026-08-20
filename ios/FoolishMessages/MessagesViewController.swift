@@ -60,10 +60,9 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// Round-9: bumped when the human deletes the staged bubble
     /// (didCancelSending), so the surface can drop its send reminder.
     private var cancelToken = 0
-    /// Round-10c: bumped right before the post-stage auto-collapse so the
-    /// surface packs the board down to compact size under its own animation
-    /// first - see MessagesRootView.preCollapseToken.
-    private var preCollapseToken = 0
+    /// Round-10d: the collapse arm, delivered in place (no re-present, which
+    /// would reload the board mid-transition) - see CollapseSignal.
+    private let collapseSignal = CollapseSignal()
 
     // MARK: - Lifecycle (§11.1)
 
@@ -227,7 +226,7 @@ final class MessagesViewController: MSMessagesAppViewController {
             incomingURL: incomingURL,
             incomingToken: incomingToken,
             cancelToken: cancelToken,
-            preCollapseToken: preCollapseToken,
+            collapseSignal: collapseSignal,
             requestExpand: { [weak self] in self?.requestPresentationStyle(.expanded) },
             onNewGame: { [weak self] in
                 guard let self else { return }
@@ -411,9 +410,11 @@ final class MessagesViewController: MSMessagesAppViewController {
         // the visible collapse, fully controlled, hand pinned - and only then
         // change style: both snapshot endpoints now share an identical bottom
         // strip, and all that shrinks away above it is featureless wool.
-        preCollapseToken += 1
-        if let c = activeConversation { present(c, style: presentationStyle) }
-        try? await Task.sleep(nanoseconds: 450_000_000)
+        // Round-10d: ARM the surface (no pre-animation of any kind - the
+        // round-10c "pack the board up first" WAS the owner's "goes up, then
+        // goes back down"), then request the collapse. The surface's own
+        // height tween takes it from there; see MessagesRootView.follow.
+        collapseSignal.token += 1
         requestPresentationStyle(.compact)
         await awaitTransitionSettled()
         conversation.insert(msg) { _ in }

@@ -21,6 +21,18 @@ import SwiftUI
 /// `Messages`.
 public enum MsgPresentation { case compact, expanded }
 
+/// Round-10d: the collapse arm signal, delivered WITHOUT re-presenting.
+/// The host used to bump a token and call present() to hand it over, but that
+/// rebuilds MessagesRootView, and the routing it re-runs can resolve a
+/// different payloadURL - which changes GameSurface's loadKey and reloads the
+/// whole board. Filmed: four frames of bare wool and a spinner in the middle
+/// of the collapse. An ObservableObject bumped in place re-renders only what
+/// observes it, so the live board is untouched.
+public final class CollapseSignal: ObservableObject {
+    @Published public var token = 0
+    public init() {}
+}
+
 
 public struct MessagesRootView: View {
     let payloadURL: URL?
@@ -87,13 +99,13 @@ public struct MessagesRootView: View {
     /// influence), the two endpoints' visible bottom strips are now pixel-
     /// identical and everything above is featureless wool - nothing left on
     /// screen that can visibly jump.
-    let preCollapseToken: Int
+    @ObservedObject var collapseSignal: CollapseSignal
 
     public init(payloadURL: URL?, style: MsgPresentation, senderIsLocal: Bool,
                 startNewGame: Bool, newGameToken: Int = 0, sentToken: Int = 0, chatKey: String,
                 chatIsDM: Bool, chatPlayers: Int,
                 incomingURL: URL? = nil, incomingToken: Int = 0, cancelToken: Int = 0,
-                preCollapseToken: Int = 0,
+                collapseSignal: CollapseSignal = CollapseSignal(),
                 requestExpand: @escaping () -> Void, onNewGame: @escaping () -> Void,
                 onSend: @escaping (Data, Int, Bool) async -> Void,
                 onUnstage: @escaping () -> Void = {}) {
@@ -101,7 +113,7 @@ public struct MessagesRootView: View {
         self.startNewGame = startNewGame; self.newGameToken = newGameToken; self.sentToken = sentToken
         self.chatKey = chatKey; self.chatIsDM = chatIsDM; self.chatPlayers = chatPlayers
         self.incomingURL = incomingURL; self.incomingToken = incomingToken
-        self.cancelToken = cancelToken; self.preCollapseToken = preCollapseToken
+        self.cancelToken = cancelToken; self.collapseSignal = collapseSignal
         self.requestExpand = requestExpand; self.onNewGame = onNewGame; self.onSend = onSend
         self.onUnstage = onUnstage
     }
@@ -145,6 +157,18 @@ public struct MessagesRootView: View {
     /// the packed board shows the host's flat fallback colour. Set when the
     /// pre-collapse begins, cleared after the transition has long settled.
     @State private var extentHold: CGFloat = 0
+    /// Round-10d: the box's height while the collapse tween runs; 0 = follow
+    /// the model box exactly (every other moment, including manual drags).
+    @State private var boxHeight: CGFloat = 0
+    /// The previous geometry height, to spot the collapse flip's down-snap.
+    @State private var lastGeoHeight: CGFloat = 0
+    /// Set by the host right before it requests .compact, consumed by the
+    /// first down-snap - see `follow`.
+    @State private var armed = false
+    /// The drawer height at the moment the host armed us - i.e. the EXPANDED
+    /// height, captured before any of the transition's noisy reports arrive.
+    /// The collapse tween starts here.
+    @State private var armedFrom: CGFloat = 0
     /// Round-10c: true from the pre-collapse until well after the transition.
     /// While set, the packed box is TOP-anchored in the wool extent - which is
     /// exactly where the host's collapse compositing expects it. Filmed
@@ -160,23 +184,63 @@ public struct MessagesRootView: View {
     /// expanded-sized geometry report - those are the same transition noise.
     @State private var collapsing = false
 
-    /// Round-10: small height steps (a manual grabber drag) are followed
-    /// exactly; a big one-step snap - an animated style transition - is
-    /// tweened through at roughly the host's own transition pace.
+    /// Round-10d: the auto-collapse, MEASURED (a ruler drawn on the live
+    /// surface, filmed at 30fps in real Messages, bands read per frame):
+    ///
+    ///   rest expanded   box top  94   box bottom 838
+    ///   flip frame      box top ~105  box bottom 405   <- teleport
+    ///   +1..+13 frames  bottom 498, 603, 676, 728, 772, 798, 811, 815, 824, 831
+    ///
+    /// The host snaps our MODEL box to the compact height and renders it glued
+    /// to the drawer's DESCENDING TOP edge. So a box that keeps its top on that
+    /// edge is already correct at the top; what it needs is the right HEIGHT -
+    /// if the box is as tall as the drawer is VISIBLE at that instant, it
+    /// exactly fills the drawer: the deck rides the top edge down, and the hand,
+    /// action bar and settings squares stay pinned to the screen bottom. That is
+    /// the manual-swipe look, and the owner's spec.
+    ///
+    /// So on the collapse flip the box holds its EXPANDED height (top-anchored,
+    /// still filling the drawer) and tweens down to the compact height on the
+    /// host's own curve, measured above: a quartic-out over 0.45s (the bezier
+    /// below tracks those ten sampled points to within a couple of points).
+    /// Nothing is packed, offset or sampled - one height, one curve.
+    ///
+    /// The EXPAND direction is composited bottom-referenced by the host (the
+    /// owner: it "works much better... cards stay at the bottom"), so up-snaps
+    /// are followed instantly, exactly as before.
     private func follow(height: CGFloat) {
-        AnimLog.say("stage follow h=\(Int(stageHeight))->\(Int(height)) collapsing=\(collapsing)")
+        AnimLog.say("stage follow geo=\(Int(lastGeoHeight))->\(Int(height)) armed=\(armed)")
         if height < Self.compactThreshold { Self.lastCompactHeight = height }
-        // Mid-collapse the host reports several bogus intermediate heights in
-        // BOTH directions (logged: 748->315->307->778->758->253->315 within one
-        // transition). While the collapse episode runs, the board is packed to
-        // the compact height on purpose - only accept compact-sized reports
-        // (the final settle), and let the episode timer restore normality.
-        if collapsing, height >= Self.compactThreshold { return }
-        if abs(height - stageHeight) > 60 {
-            withAnimation(.easeInOut(duration: 0.4)) { stageHeight = height }
-        } else {
-            stageHeight = height
+        let prev = lastGeoHeight
+        lastGeoHeight = height
+        // The collapse flip: armed by the host right before it requests
+        // .compact, and consumed here, so the transition's later noisy reports
+        // (one collapse logged 748->315->307->778->758->253->315) cannot
+        // retrigger it, and a manual grabber drag - never armed - never does.
+        // The collapse flip. Armed by the host right before it requests
+        // .compact and consumed here, on the MODEL SNAP - which is when the
+        // host's own drawer animation begins. (Starting on the arm signal
+        // instead was filmed leading the host by ~3 frames: the box shrank
+        // while the drawer was still full, i.e. the hand rose. Starting later
+        // lagged it. The snap is the phase reference.)
+        if armed, armedFrom > height + 60 {
+            armed = false
+            collapsing = true
+            // From the height captured at arm time (the true expanded height,
+            // before the transition's noisy intermediate reports) down to the
+            // height the host just snapped to.
+            boxHeight = armedFrom
+            withAnimation(.timingCurve(0.165, 0.84, 0.44, 1, duration: 0.38)) {
+                boxHeight = height
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                collapsing = false
+                boxHeight = 0
+            }
+            return
         }
+        if !collapsing { boxHeight = 0 }
     }
 
     public var body: some View {
@@ -214,38 +278,35 @@ public struct MessagesRootView: View {
                 // packed-down board instead of exposing the host's flat
                 // fallback colour. At rest and during transitions the two
                 // heights agree and this is a no-op.
+                // Round-10d: the box is the model box, except while the
+                // collapse tween runs - then it holds the expanded height and
+                // eases down on the host's own curve (see `follow`).
                 .frame(width: geo.size.width,
-                       height: stageHeight > 0 ? stageHeight : geo.size.height)
-                .frame(width: geo.size.width,
-                       height: max(stageHeight > 0 ? stageHeight : geo.size.height,
-                                   geo.size.height, extentHold),
-                       // TOP-anchored while the collapse episode runs - the box
-                       // packs upward and sits exactly where the host's
-                       // top-pinned collapse compositing keeps it, riding the
-                       // shrink down. BOTTOM-anchored otherwise, which is what
-                       // the (bottom-referenced) expand needs. At rest the box
-                       // fills the extent and the anchor is moot, so the swap
-                       // itself never moves a pixel.
-                       alignment: collapsing ? .top : .bottom)
+                       height: boxHeight > 0 ? boxHeight : geo.size.height)
                 .background(WoolBackground())
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                .onAppear { stageHeight = geo.size.height }
+                // TOP-anchored through the collapse: the host glues our content
+                // to the drawer's descending top edge, so a box of the drawer's
+                // visible height starting there fills it exactly. Bottom
+                // otherwise (the expand is composited bottom-referenced). At
+                // rest the box fills the frame and the two agree.
+                .frame(maxWidth: .infinity, maxHeight: .infinity,
+                       alignment: collapsing ? .top : .bottom)
+                .onAppear { lastGeoHeight = geo.size.height }
                 .onChange(of: geo.size.height) { follow(height: $0) }
-                // Round-10c: the host is about to auto-collapse - pack the
-                // board to the compact size at the drawer's TOP under OUR
-                // animation first (see `collapsing`), so the host's transition
-                // carries it seamlessly down into the compact rest.
-                .onChange(of: preCollapseToken) { _ in
-                    guard let h = Self.lastCompactHeight, h < geo.size.height else { return }
-                    extentHold = geo.size.height
-                    collapsing = true
-                    withAnimation(.easeInOut(duration: 0.35)) { stageHeight = h }
-                    Task {
-                        // Long past both the pre-collapse and the transition.
-                        try? await Task.sleep(nanoseconds: 3_000_000_000)
-                        extentHold = 0
-                        collapsing = false
-                    }
+                // The host is about to request .compact - see `follow`.
+                // Round-10d: the host arms us and requests .compact in the
+                // SAME runloop turn, so starting the tween here starts it in
+                // lockstep with the host's own drawer animation. Starting it
+                // later - when the geometry snap arrives, 2-3 frames on - left
+                // the box taller than the drawer just long enough to clip the
+                // hand below its bottom edge (filmed: two frames of bare wool
+                // where the hand should be). This is NOT round-10c's
+                // pre-collapse pack, which ran a full 0.35s BEFORE the host
+                // moved at all and read as "the cards go up, then come back
+                // down"; nothing here precedes the host.
+                .onChange(of: collapseSignal.token) { _ in
+                    armed = true
+                    armedFrom = geo.size.height
                 }
         }
         // Order matters: the wool is applied INSIDE this, so the keyboard opt-out
