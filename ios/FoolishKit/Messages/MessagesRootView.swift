@@ -21,6 +21,7 @@ import SwiftUI
 /// `Messages`.
 public enum MsgPresentation { case compact, expanded }
 
+
 public struct MessagesRootView: View {
     let payloadURL: URL?
     /// The presentation style of the present() call that BUILT this view. Kept
@@ -75,10 +76,24 @@ public struct MessagesRootView: View {
     /// no longer exists.
     let cancelToken: Int
 
+    /// Round-10c: bumped by the host right before it requests the compact
+    /// style for the post-stage auto-collapse. The surface responds by
+    /// animating ITSELF down to the last compact height it has seen - the
+    /// board visibly packs into the bottom of the still-expanded drawer under
+    /// OUR animation (hand pinned, full control). Only then does the host run
+    /// requestPresentationStyle(.compact): whatever snapshot games Messages
+    /// plays for that transition (ruler-instrumented films proved the
+    /// mid-flight imagery is snapshot compositing our live view can't
+    /// influence), the two endpoints' visible bottom strips are now pixel-
+    /// identical and everything above is featureless wool - nothing left on
+    /// screen that can visibly jump.
+    let preCollapseToken: Int
+
     public init(payloadURL: URL?, style: MsgPresentation, senderIsLocal: Bool,
                 startNewGame: Bool, newGameToken: Int = 0, sentToken: Int = 0, chatKey: String,
                 chatIsDM: Bool, chatPlayers: Int,
                 incomingURL: URL? = nil, incomingToken: Int = 0, cancelToken: Int = 0,
+                preCollapseToken: Int = 0,
                 requestExpand: @escaping () -> Void, onNewGame: @escaping () -> Void,
                 onSend: @escaping (Data, Int, Bool) async -> Void,
                 onUnstage: @escaping () -> Void = {}) {
@@ -86,7 +101,7 @@ public struct MessagesRootView: View {
         self.startNewGame = startNewGame; self.newGameToken = newGameToken; self.sentToken = sentToken
         self.chatKey = chatKey; self.chatIsDM = chatIsDM; self.chatPlayers = chatPlayers
         self.incomingURL = incomingURL; self.incomingToken = incomingToken
-        self.cancelToken = cancelToken
+        self.cancelToken = cancelToken; self.preCollapseToken = preCollapseToken
         self.requestExpand = requestExpand; self.onNewGame = onNewGame; self.onSend = onSend
         self.onUnstage = onUnstage
     }
@@ -113,11 +128,50 @@ public struct MessagesRootView: View {
     /// FIRST and inserts the bubble after the transition settles.
     @State private var stageHeight: CGFloat = 0
 
+    /// Round-10c: the last COMPACT drawer height this process has laid out
+    /// (anything under this threshold is the compact strip; the expanded board
+    /// is always far taller). The pre-collapse animation shrinks the box to
+    /// this before the host changes style. The extension almost always opens
+    /// compact first, so it is nearly always known; when it is not (a bubble
+    /// tapped straight into expanded in a fresh process), pre-collapse is
+    /// skipped and the transition behaves as in 1.0(12).
+    private static var lastCompactHeight: CGFloat?
+    private static let compactThreshold: CGFloat = 500
+
+    /// Round-10c: the expanded height, held through the pre-collapse and the
+    /// style transition so the wool EXTENT keeps covering the whole (still
+    /// tall) presented drawer while the content box is compact-sized - without
+    /// it the extent collapses with the model at the flip and the region above
+    /// the packed board shows the host's flat fallback colour. Set when the
+    /// pre-collapse begins, cleared after the transition has long settled.
+    @State private var extentHold: CGFloat = 0
+    /// Round-10c: true from the pre-collapse until well after the transition.
+    /// While set, the packed box is TOP-anchored in the wool extent - which is
+    /// exactly where the host's collapse compositing expects it. Filmed
+    /// mechanics: the collapse renders the (already compact) model pinned to
+    /// the drawer's DESCENDING top edge, so a box packed at the top is
+    /// continuous through the flip and simply rides the shrink down into the
+    /// compact rest under the host's own animation. (A bottom-packed box
+    /// teleported ~400pt up at the flip; a display-link counter starved when
+    /// the main thread was busiest; an edge-triggered offset mis-accumulated
+    /// on the transition's NOISY geometry, which bounces through several
+    /// heights in both directions - all three were filmed failing. This is
+    /// level-based only.) While collapsing, `follow` also ignores any
+    /// expanded-sized geometry report - those are the same transition noise.
+    @State private var collapsing = false
+
     /// Round-10: small height steps (a manual grabber drag) are followed
     /// exactly; a big one-step snap - an animated style transition - is
     /// tweened through at roughly the host's own transition pace.
     private func follow(height: CGFloat) {
-        AnimLog.say("stage follow h=\(Int(stageHeight))->\(Int(height))")
+        AnimLog.say("stage follow h=\(Int(stageHeight))->\(Int(height)) collapsing=\(collapsing)")
+        if height < Self.compactThreshold { Self.lastCompactHeight = height }
+        // Mid-collapse the host reports several bogus intermediate heights in
+        // BOTH directions (logged: 748->315->307->778->758->253->315 within one
+        // transition). While the collapse episode runs, the board is packed to
+        // the compact height on purpose - only accept compact-sized reports
+        // (the final settle), and let the episode timer restore normality.
+        if collapsing, height >= Self.compactThreshold { return }
         if abs(height - stageHeight) > 60 {
             withAnimation(.easeInOut(duration: 0.4)) { stageHeight = height }
         } else {
@@ -151,22 +205,48 @@ public struct MessagesRootView: View {
                         requestExpand: requestExpand, onNewGame: onNewGame, onSend: onSend,
                         onUnstage: onUnstage)
                 // Round-10 #1: lay the surface out against the SMOOTHED height,
-                // and anchor it to the BOTTOM - the drawer's bottom edge is the
-                // one edge that never moves during a style transition (the top
-                // edge is what slides), so the hand stays glued to the bottom
-                // while everything above eases down/up. The wool rides the same
-                // smoothed frame so it always covers exactly what the content
-                // occupies - no more fallback-brown strip.
+                // bottom-anchored - the drawer's bottom edge is the one edge
+                // that never moves, so the hand stays glued to it while
+                // everything above eases. Round-10c: the box sits inside a wool
+                // EXTENT of max(box, model) so that during the pre-collapse -
+                // when the box is deliberately SHORTER than the still-expanded
+                // drawer - the weave keeps covering the whole drawer above the
+                // packed-down board instead of exposing the host's flat
+                // fallback colour. At rest and during transitions the two
+                // heights agree and this is a no-op.
                 .frame(width: geo.size.width,
                        height: stageHeight > 0 ? stageHeight : geo.size.height)
+                .frame(width: geo.size.width,
+                       height: max(stageHeight > 0 ? stageHeight : geo.size.height,
+                                   geo.size.height, extentHold),
+                       // TOP-anchored while the collapse episode runs - the box
+                       // packs upward and sits exactly where the host's
+                       // top-pinned collapse compositing keeps it, riding the
+                       // shrink down. BOTTOM-anchored otherwise, which is what
+                       // the (bottom-referenced) expand needs. At rest the box
+                       // fills the extent and the anchor is moot, so the swap
+                       // itself never moves a pixel.
+                       alignment: collapsing ? .top : .bottom)
                 .background(WoolBackground())
-                // Round-10b: the measured per-frame lift that pins the bottom
-                // edge to the VISIBLE drawer bottom while the host's own
-                // animation sinks the model anchor below the screen. Raw
-                // per-frame values - never animated from in here.
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 .onAppear { stageHeight = geo.size.height }
                 .onChange(of: geo.size.height) { follow(height: $0) }
+                // Round-10c: the host is about to auto-collapse - pack the
+                // board to the compact size at the drawer's TOP under OUR
+                // animation first (see `collapsing`), so the host's transition
+                // carries it seamlessly down into the compact rest.
+                .onChange(of: preCollapseToken) { _ in
+                    guard let h = Self.lastCompactHeight, h < geo.size.height else { return }
+                    extentHold = geo.size.height
+                    collapsing = true
+                    withAnimation(.easeInOut(duration: 0.35)) { stageHeight = h }
+                    Task {
+                        // Long past both the pre-collapse and the transition.
+                        try? await Task.sleep(nanoseconds: 3_000_000_000)
+                        extentHold = 0
+                        collapsing = false
+                    }
+                }
         }
         // Order matters: the wool is applied INSIDE this, so the keyboard opt-out
         // extends the CONTENT and the WOOL together into the bottom/keyboard

@@ -60,6 +60,10 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// Round-9: bumped when the human deletes the staged bubble
     /// (didCancelSending), so the surface can drop its send reminder.
     private var cancelToken = 0
+    /// Round-10c: bumped right before the post-stage auto-collapse so the
+    /// surface packs the board down to compact size under its own animation
+    /// first - see MessagesRootView.preCollapseToken.
+    private var preCollapseToken = 0
 
     // MARK: - Lifecycle (§11.1)
 
@@ -223,6 +227,7 @@ final class MessagesViewController: MSMessagesAppViewController {
             incomingURL: incomingURL,
             incomingToken: incomingToken,
             cancelToken: cancelToken,
+            preCollapseToken: preCollapseToken,
             requestExpand: { [weak self] in self?.requestPresentationStyle(.expanded) },
             onNewGame: { [weak self] in
                 guard let self else { return }
@@ -397,6 +402,18 @@ final class MessagesViewController: MSMessagesAppViewController {
         // LIVE board alone (exactly like a manual swipe), and the bubble
         // simply appears in its slot at the end. (The already-compact case
         // returned above - this path is expanded-only.)
+        //
+        // Round-10c, the LAST piece: ruler-instrumented films proved the
+        // style transition itself is SNAPSHOT compositing we cannot influence
+        // (mid-flight imagery our live tree cannot produce), and it visibly
+        // dropped the board's bottom half. So first PACK the board into a
+        // compact-sized box at the drawer's bottom under our own animation -
+        // the visible collapse, fully controlled, hand pinned - and only then
+        // change style: both snapshot endpoints now share an identical bottom
+        // strip, and all that shrinks away above it is featureless wool.
+        preCollapseToken += 1
+        if let c = activeConversation { present(c, style: presentationStyle) }
+        try? await Task.sleep(nanoseconds: 450_000_000)
         requestPresentationStyle(.compact)
         await awaitTransitionSettled()
         conversation.insert(msg) { _ in }
