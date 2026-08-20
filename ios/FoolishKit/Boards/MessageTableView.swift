@@ -592,69 +592,54 @@ public struct MessageTableView: View {
                     .offset(y: -3)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 
-                // Self role indicator: the local seat never got a role mark before
-                // (note 3) — only opponents (FSeatBadge) did. Same spot the old
-                // first-attacker-only sword used: just above my hand.
-                selfRoleIndicator(view)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .padding(.bottom, lift + 6)
-                    // Round-7 ("buttons should NEVER move / float"): isolate this
-                    // from the board's card spring. The ancestor animates on
-                    // `.animation(cardMotion, value: controller.view)`; the correct
-                    // override is a NESTED `.animation(nil, value: controller.view)`
-                    // - same trigger value, innermost wins - NOT a `.transaction`
-                    // (which does not reliably beat a scoped value-animation, the
-                    // reason the earlier transaction fix let the role mark still
-                    // drift) and NOT keying on `handHeight` (the wrong value - the
-                    // change rides controller.view). Position now also snaps because
-                    // it reads the mirrored `lift`, not the springy `handHeight`.
-                    .animation(nil, value: controller.view)
-
-                // The bottom control row: Settings + Rulebook squares on the
-                // LEFT, the action pills on the RIGHT (web absolute
-                // bottom:90/right:20; the two squares + their gap span exactly
-                // one action-button width, 40 + 16 + 40 = 96, so the left group
-                // mirrors the right). Round-9 (owner: "we need to bring them
-                // back"): the squares are ALWAYS visible - the old collapse
-                // fade hid them in the compact drawer, where most play happens.
+                // Round-10f (owner: "can you make the action buttons and
+                // settings rulebook boxes move similar to the self player
+                // cards"): the role mark, the control row and the hand are now
+                // ONE bottom-anchored stack, so the two button groups are
+                // glued directly above the hand and inherit its motion exactly
+                // - no mirrored `lift`, no padding arithmetic, no animation
+                // overrides. Every previous round positioned them by floating
+                // them `lift + n` above the board's bottom, which is why they
+                // could travel differently from the cards during a collapse:
+                // `lift` is a MIRRORED @State (updated by an onChange, so a
+                // frame behind) and the overrides made them snap to it while
+                // the hand animated smoothly. Filmed: the hand held its line
+                // while the row swung ~220pt. Stacked, they cannot.
                 //
-                // Round-10e (owner: "the Undo button jumps way up - make it do
-                // whatever the settings + rules buttons are doing"): these were
-                // two SEPARATE bottom-anchored overlays sharing only an
-                // arithmetic expression, so nothing tied them together and the
-                // action column could - and did - move on its own: measured off
-                // the film, Undo teleported 295pt up at the staging frame and
-                // eased back over ~0.2s while the squares descended smoothly.
-                // One HStack, bottom-aligned, one padding, one animation
-                // context: now they are the same row by construction and CANNOT
-                // diverge, whatever animation is in flight.
-                HStack(alignment: .bottom, spacing: 0) {
-                    settingsHelpBar
-                    Spacer(minLength: 0)
-                    actionBar(view)
-                }
-                .padding(.horizontal, 4)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                .padding(.bottom, lift + 4)
-                .animation(nil, value: controller.view)   // never float the buttons — see the role mark above
-                // Round-10e: and NOTHING may interpolate anything in this row.
-                // A tinted-row film showed the row itself sitting correctly at
-                // the drawer's bottom while the Undo PILL flew down into it
-                // from ~270pt above over ~7 frames: the collapse tween is an
-                // explicit `withAnimation` transaction, and it was animating
-                // the pill's position inside the row. `.animation(nil, value:)`
-                // above only covers changes driven by `controller.view`, so it
-                // could not stop that; nilling the transaction can, and it
-                // applies to the squares and the pills alike - which is what
-                // "make it do whatever the settings + rules buttons are doing"
-                // means at the layout level. The row still tracks the collapse
-                // exactly, because `lift` is recomputed every frame of it.
-                .transaction { $0.animation = nil }
+                // The role mark sits centred BETWEEN the two 96-wide groups
+                // (the squares span 40 + 16 + 40 = 96, one action-button
+                // width, which is what makes the left group the mirror of the
+                // right); the action column is given that same width so the
+                // mark stays centred even when no action pill is showing.
+                VStack(spacing: 4) {
+                    HStack(alignment: .bottom, spacing: 0) {
+                        settingsHelpBar
+                        Spacer(minLength: 0)
+                        actionBar(view)
+                    }
+                    .padding(.horizontal, 4)
+                    // The role mark is an OVERLAY, not a stack child, so it
+                    // stays centred on the BOARD however wide the two groups
+                    // are (as a child between two Spacers it drifted ~48pt
+                    // right of centre whenever the action column was empty).
+                    .overlay { selfRoleIndicator(view) }
+                    // Nothing inside the row may be interpolated. A pill that
+                    // appears (Attack -> Undo at the staging frame) must simply
+                    // BE there: filmed without this, the Undo pill flew into
+                    // the row from ~240pt above over ~7 frames while the row
+                    // itself sat still. FActionBar's own `.transaction` sits
+                    // below the row's layout, so it cannot stop that; this can.
+                    // Scoped to the row alone, so the hand below keeps its own
+                    // motion - which is what the row now inherits by being
+                    // stacked on top of it.
+                    .transaction { $0.animation = nil }
 
-                // My hand hugs the bottom (web: bottom max(10, safe-area)); the
-                // outer .padding(12) is the safe-area inset that keeps it unclipped.
-                hand(view, crop: collapse, reserveNoSlot: deferredSlots)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    // My hand hugs the bottom (web: bottom max(10, safe-area));
+                    // the outer .padding(12) is the safe-area inset that keeps
+                    // it unclipped.
+                    hand(view, crop: collapse, reserveNoSlot: deferredSlots)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
 
                 // Round-8 #3 / round-9: the staged-but-unsent reminder - a blue
                 // arrow bobbing under Messages' own Send button (in the compose
