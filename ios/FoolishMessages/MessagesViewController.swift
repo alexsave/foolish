@@ -141,87 +141,36 @@ final class MessagesViewController: MSMessagesAppViewController {
         if startingNewGame, let c = activeConversation {
             present(c, style: presentationStyle)
         }
-        trackStageMotion()
     }
 
-    // MARK: - Stage motion (round-10b)
+    /// Round-10b: continuations parked by `awaitTransitionSettled`, resumed
+    /// when `didTransition` reports the style change has completed.
+    private var transitionWaiters: [Int: CheckedContinuation<Void, Never>] = [:]
+    private var transitionWaiterSeq = 0
 
-    /// The measured bottom-edge correction the board reads (see
-    /// StageMotionTracker). One instance for the extension's lifetime; the
-    /// same object is passed into every present().
-    private let stageMotion = StageMotionTracker()
-    private var motionLink: CADisplayLink?
-    private var motionStart: CFTimeInterval = 0
-    /// Consecutive settled ticks - the link stops after a few, so a spring's
-    /// last touch-down isn't mistaken for the end.
-    private var motionSettled = 0
-
-    /// Round-10b: on an animated style change Messages snaps this view's MODEL
-    /// frame to the target in one step and animates the PRESENTATION in our
-    /// process (probe-measured: presented height 762 -> 369 over ~0.5s on a
-    /// fast spring, model already 369). Mid-flight the presented frame bottom
-    /// SINKS below the screen by ~100pt+ before converging, and everything
-    /// bottom-anchored in the model rides it under the screen edge - the
-    /// owner's "self cards go a bit under the screen briefly". The sink is the
-    /// host's own animation (unknowable in advance), so it is SAMPLED: each
-    /// frame, measure where the model's bottom safe-area line actually renders
-    /// in the window, and publish the overshoot below its resting line as
-    /// `lift`. The board pads itself up by exactly that much - pinned to the
-    /// visible bottom edge the whole way, the guarantee a manual drag gives
-    /// for free.
-    private func trackStageMotion() {
-        motionLink?.invalidate()
-        motionStart = CACurrentMediaTime()
-        motionSettled = 0
-        let link = CADisplayLink(target: self, selector: #selector(motionTick))
-        link.add(to: .main, forMode: .common)
-        motionLink = link
+    override func didTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
+        super.didTransition(to: presentationStyle)
+        let waiters = transitionWaiters
+        transitionWaiters.removeAll()
+        waiters.values.forEach { $0.resume() }
     }
 
-    private func stopStageMotion() {
-        motionLink?.invalidate()
-        motionLink = nil
-        if stageMotion.lift != 0 { stageMotion.lift = 0 }
-    }
-
-    @objc private func motionTick() {
-        // Hard stop: no host transition runs anywhere near this long.
-        guard CACurrentMediaTime() - motionStart < 1.5, let window = view.window else {
-            stopStageMotion(); return
+    /// Wait until the in-flight presentation-style transition finishes
+    /// (didTransition), or a timeout if none ever fires - the caller must
+    /// never hang on a transition Messages decided not to run.
+    @MainActor
+    private func awaitTransitionSettled(timeoutNs: UInt64 = 1_200_000_000) async {
+        transitionWaiterSeq += 1
+        let id = transitionWaiterSeq
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            transitionWaiters[id] = c
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: timeoutNs)
+                if let waiter = self?.transitionWaiters.removeValue(forKey: id) {
+                    waiter.resume()
+                }
+            }
         }
-        // Where the model's bottom safe-area line RENDERS in the window right
-        // now (presentation walk) vs where it RESTS (model walk) - the SAME
-        // frame/bounds walk both times, so any structural quirk on the chain
-        // (a scroll offset, a host container's standing presentation skew -
-        // measured: a constant 13pt when the two methods were mixed) cancels
-        // and only genuine in-flight animation deltas remain.
-        //
-        // The walk starts at the HOSTING view's layer, not self.view's:
-        // autolayout re-applies the hosting view's frame INSIDE the host's
-        // animation block, so its layer carries its own leg of the animation -
-        // starting above it missed most of the real motion (measured: the
-        // anchor "never sank" while the film showed the hand under the
-        // screen).
-        let anchor: UIView = host?.view ?? view
-        let base = anchor.bounds.height - anchor.safeAreaInsets.bottom
-        var y = base, rest = base
-        var layer: CALayer? = anchor.layer
-        while let l = layer, l !== window.layer {
-            let pres = l.presentation() ?? l
-            y += pres.frame.minY - pres.bounds.minY
-            rest += l.frame.minY - l.bounds.minY
-            layer = l.superlayer
-        }
-        let lift = max(0, y - rest)
-        #if DEBUG
-        AnimLog.say("stage motion y=\(Int(y)) rest=\(Int(rest)) lift=\(Int(lift))")
-        #endif
-        if abs(stageMotion.lift - lift) > 0.25 { stageMotion.lift = lift }
-        // Settled = the presented line sits on its resting line again. Require
-        // a short streak so a spring passing through zero doesn't end the
-        // watch early.
-        motionSettled = abs(y - rest) < 0.5 ? motionSettled + 1 : 0
-        if motionSettled >= 6 { stopStageMotion() }
     }
 
     // MARK: - Presentation
@@ -274,7 +223,6 @@ final class MessagesViewController: MSMessagesAppViewController {
             incomingURL: incomingURL,
             incomingToken: incomingToken,
             cancelToken: cancelToken,
-            motion: stageMotion,
             requestExpand: { [weak self] in self?.requestPresentationStyle(.expanded) },
             onNewGame: { [weak self] in
                 guard let self else { return }
@@ -399,14 +347,21 @@ final class MessagesViewController: MSMessagesAppViewController {
         // can persist the seat without re-decoding. "" only if the payload
         // failed to decode - the commit then skips the seat write.
         pendingStage = (payload, mySeat, env?.gameId ?? "")
-        conversation.insert(msg) { _ in }
 
         // An UNDO re-stages only to refresh the input bubble - it is NOT a move the
         // player is trying to send, it is them backing up to pick a DIFFERENT move.
         // Collapsing the board out from under them there is exactly wrong (owner:
         // "undo should NOT collapse the screen... best to keep it expanded for
-        // moves"), so stay expanded and skip the whole drop-to-Send tail below.
-        if fromUndo { return }
+        // moves"), so insert now, stay expanded, and skip the drop-to-Send tail.
+        if fromUndo { conversation.insert(msg) { _ in }; return }
+
+        // Already in the compact drawer (an ordinary in-drawer move): no style
+        // transition will run, so there is no preview flyover to avoid - stage
+        // the bubble immediately, exactly the pre-round-10b timing.
+        if presentationStyle != .expanded {
+            conversation.insert(msg) { _ in }
+            return
+        }
 
         // Drop the user straight at Messages' Send (§11.4): the expanded board has
         // no send control of its own — Send lives in the compose area — so once a
@@ -428,7 +383,23 @@ final class MessagesViewController: MSMessagesAppViewController {
         try? await Task.sleep(nanoseconds: 250_000_000)
         await BoardAnimator.waitForSettle()
         try? await Task.sleep(nanoseconds: 500_000_000)
+
+        // Round-10b (the residual "self cards go a bit under the screen"):
+        // COLLAPSE FIRST, insert AFTER the transition settles. Inserting while
+        // still expanded made Messages animate the brand-new input-field
+        // bubble from a large preview into its compose slot ON TOP of the
+        // collapsing drawer - and since the bubble's picture is the PUBLIC
+        // table (no hand, no buttons), the board's bottom looked like it dove
+        // under the screen until the preview landed. Filmed with a debug
+        // ruler drawn on the live surface: the flying rect carried no ruler
+        // lines, so it was never our view - it was the bubble preview. With
+        // the insert deferred until didTransition, the collapse animates the
+        // LIVE board alone (exactly like a manual swipe), and the bubble
+        // simply appears in its slot at the end. (The already-compact case
+        // returned above - this path is expanded-only.)
         requestPresentationStyle(.compact)
+        await awaitTransitionSettled()
+        conversation.insert(msg) { _ in }
     }
 
     /// Commit a sent chain to the App Group cache (§6.1/§7.6): our seat becomes

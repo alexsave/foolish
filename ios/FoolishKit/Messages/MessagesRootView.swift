@@ -79,11 +79,9 @@ public struct MessagesRootView: View {
                 startNewGame: Bool, newGameToken: Int = 0, sentToken: Int = 0, chatKey: String,
                 chatIsDM: Bool, chatPlayers: Int,
                 incomingURL: URL? = nil, incomingToken: Int = 0, cancelToken: Int = 0,
-                motion: StageMotionTracker = StageMotionTracker(),
                 requestExpand: @escaping () -> Void, onNewGame: @escaping () -> Void,
                 onSend: @escaping (Data, Int, Bool) async -> Void,
                 onUnstage: @escaping () -> Void = {}) {
-        self.motion = motion
         self.payloadURL = payloadURL; self.style = style; self.senderIsLocal = senderIsLocal
         self.startNewGame = startNewGame; self.newGameToken = newGameToken; self.sentToken = sentToken
         self.chatKey = chatKey; self.chatIsDM = chatIsDM; self.chatPlayers = chatPlayers
@@ -105,15 +103,15 @@ public struct MessagesRootView: View {
     /// strip). The fix: follow small steps exactly (the manual drag), and TWEEN
     /// through a big one, reproducing in SwiftUI the same intermediate heights a
     /// manual swipe would have delivered. 0 until the first real height lands.
+    ///
+    /// Round-10b postscript: the residual "self cards dip under the screen"
+    /// during the auto-collapse turned out NOT to be this view's geometry at
+    /// all - a debug ruler drawn on the surface proved the flying rect in the
+    /// films was the just-inserted STAGED BUBBLE's snapshot (public table, no
+    /// hand) that Messages animates into the compose slot OVER the drawer.
+    /// Fixed at the source: MessagesViewController.stage() now collapses
+    /// FIRST and inserts the bubble after the transition settles.
     @State private var stageHeight: CGFloat = 0
-    /// Round-10b ("the self cards go a bit under the screen briefly"): the
-    /// measured per-frame lift that keeps the bottom-anchored content pinned
-    /// to the drawer's VISIBLE bottom edge while the host's transition
-    /// animation carries the model anchor below the screen. Fed by the host's
-    /// display-link sampler (MessagesViewController.trackStageMotion); the
-    /// default instance never publishes, so the harness is unaffected. See
-    /// StageMotionTracker's doc for the measurements.
-    @ObservedObject var motion: StageMotionTracker
 
     /// Round-10: small height steps (a manual grabber drag) are followed
     /// exactly; a big one-step snap - an animated style transition - is
@@ -166,27 +164,6 @@ public struct MessagesRootView: View {
                 // edge to the VISIBLE drawer bottom while the host's own
                 // animation sinks the model anchor below the screen. Raw
                 // per-frame values - never animated from in here.
-                .padding(.bottom, motion.lift)
-                #if DEBUG
-                // TEMPORARY round-10b diagnostic ruler - reads the model->screen
-                // mapping straight off a screen recording. Delete before ship.
-                .overlay {
-                    GeometryReader { g in
-                        ZStack(alignment: .topLeading) {
-                            Rectangle().fill(Color.yellow).frame(height: 3)
-                                .position(x: g.size.width / 2, y: 1.5)
-                            ForEach(1..<12) { i in
-                                Rectangle().fill(Color.cyan).frame(height: 2)
-                                    .position(x: g.size.width / 2,
-                                              y: g.size.height - CGFloat(i) * 100)
-                            }
-                            Rectangle().fill(Color(red: 1, green: 0, blue: 1)).frame(height: 3)
-                                .position(x: g.size.width / 2, y: g.size.height - 1.5)
-                        }
-                        .allowsHitTesting(false)
-                    }
-                }
-                #endif
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 .onAppear { stageHeight = geo.size.height }
                 .onChange(of: geo.size.height) { follow(height: $0) }
