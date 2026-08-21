@@ -108,7 +108,36 @@ public final class MessageTurnController: ObservableObject {
     }
 
     public let mySeat: Int
-    public let names: [Int: String]
+    /// Seat -> nickname, from the chain's joins. A `var` since round-12: a chain
+    /// that ARRIVES into this same controller can carry a join the old one did
+    /// not (a 2p opponent who names themselves on their first move), and the
+    /// board would otherwise keep calling them "Seat 2" for the rest of the game.
+    public private(set) var names: [Int: String]
+
+    /// Bumped by `adopt` - a chain that ARRIVED while this board was open,
+    /// folded into this controller instead of a fresh one.
+    ///
+    /// The board watches this to know that the next `view` change is not its own
+    /// move but somebody else's turn landing, so it plays the arrival the way a
+    /// cold open plays it (`replayLastMoveOnOpen`) rather than as an ordinary
+    /// placement. Monotonic, so a board that missed one still notices.
+    @Published public private(set) var arrivalTick = 0
+
+    /// THE VEIL's owner. True from the moment a chain (opened or arrived) is
+    /// resident with animations still to play, false once the board has taken
+    /// those animations over.
+    ///
+    /// It lives on the CONTROLLER, not the board, and that is the whole point.
+    /// It used to be `@State private var settled` initialized at construction,
+    /// on the reasoning that construction is the one moment guaranteed to
+    /// precede every paint - which is true, and is exactly why an arriving
+    /// bubble had to REBUILD the whole board to be veiled in time. Rebuilding
+    /// the board is what the owner sees as "still flashes if move comes in
+    /// during expanded screen". Published state gets the veil up before the
+    /// first paint of the new chain WITHOUT a teardown: `adopt` sets this and
+    /// `openReplayEvents` before it publishes the new `view`, so the very first
+    /// body evaluation that can see the arrival already knows to hide it.
+    @Published public private(set) var replayPending = false
 
     private let kernel = MessageKernel.shared
     private let store: MessageGameStore
@@ -118,10 +147,13 @@ public final class MessageTurnController: ObservableObject {
         case continuation(payload: Data)          // re-adopt this chain
         case genesis(seed: Data, players: Int)    // re-deal this game
     }
-    private let base: Base
+    /// All four are replaced wholesale by `adopt` when a newer chain arrives,
+    /// which is why they are `var`: the controller's identity is the GAME and
+    /// the SEAT, not any one chain along it.
+    private var base: Base
     private let gameId: UInt64
-    private let parent8: Data
-    private let joins: [MessageJoin]
+    private var parent8: Data
+    private var joins: [MessageJoin]
     /// DEPRECATED (retained only so GameSurface's call sites compile unchanged):
     /// the previously-cached chain, once used to diff my hand for the open-replay.
     /// The open-replay is now the kernel's evwire for the last move
@@ -134,7 +166,7 @@ public final class MessageTurnController: ObservableObject {
     /// it must be QUIET - the "last move" on it is my own, watched live seconds
     /// ago; replaying it (plus the Rule-R "superseded" the stale ledger used to
     /// add) is what made every send end in a confusing self-replay.
-    private let suppressOpenReplay: Bool
+    private var suppressOpenReplay: Bool
 
     public var gameIdString: String { String(gameId) }
 
@@ -233,6 +265,9 @@ public final class MessageTurnController: ObservableObject {
         // StagedBubbleRouting in the extension), so there is no second load to
         // replay from in the first place.
         openReplayEvents = suppressOpenReplay ? [] : await kernel.lastMoveEvents(viewer: mySeat)
+        // Raise the veil BEFORE `refresh()` publishes the board: the paint that
+        // first shows this chain must already know which cards are still to fly.
+        replayPending = !openReplayEvents.isEmpty
         // ROUND 9 (owner): the durable pending ledger - and the Rule R rebase
         // that replayed its survivors here as `preStaged` - is REMOVED. Staged
         // moves live only in memory; the staged input-field bubble itself still
@@ -249,6 +284,47 @@ public final class MessageTurnController: ObservableObject {
         ready = true
     }
 
+    /// Fold a chain that ARRIVED into this same controller (design §7.2's adopt,
+    /// without the teardown). Same game, same seat - only the chain moves on.
+    ///
+    /// Why not just build a fresh controller, which is what every adopt used to
+    /// do? Because the board is keyed on the controller's identity
+    /// (`GameSurface.expandedContent`'s `.id(ObjectIdentifier(controller))`), so
+    /// a new controller means SwiftUI throws the whole board away and builds
+    /// another: new `@State`, unmeasured geometry, a first paint at defaults.
+    /// That teardown IS the flash the owner reports when a move arrives on an
+    /// expanded board. Keeping the controller keeps the board, its measured
+    /// frames and its animator - and the arrival plays as an animation on a
+    /// board that never blinked.
+    ///
+    /// Staged moves do NOT survive: the arriving chain is the thread's truth and
+    /// `pending` was composed against a parent that is now history. That is the
+    /// same thing a fresh controller did (round 9 dropped the durable ledger),
+    /// so nothing regresses here - see §7.4 for what a real rebase would add.
+    /// May an arriving chain be folded into THIS controller rather than
+    /// replacing it? Only when it is the same game, the same seat, and this
+    /// controller is a started continuation that has finished `begin()`.
+    ///
+    /// A rule about IDENTITY - "the board on screen is still this board" - and
+    /// getting it subtly wrong is worse than the flash it exists to prevent:
+    /// re-adopting across a different game would put one game's chain onto
+    /// another game's measured board.
+    public func canAdopt(seat: Int, gameId: String) -> Bool {
+        ready && mySeat == seat && gameIdString == gameId && isContinuation
+    }
+
+    public func adopt(payload: Data, parent: MessageEnvelope, quietOpen: Bool = false) async {
+        base = .continuation(payload: payload)
+        parent8 = Self.firstEight(hex: parent.digest)
+        joins = parent.joins
+        names = Dictionary(parent.joins.map { ($0.seat, $0.name) },
+                           uniquingKeysWith: { a, _ in a })
+        suppressOpenReplay = quietOpen
+        lastChangeWasUndo = false
+        arrivalTick += 1
+        await begin()
+    }
+
     private func rebuildBase() async {
         switch base {
         case .continuation(let payload):
@@ -256,6 +332,12 @@ public final class MessageTurnController: ObservableObject {
         case .genesis(let seed, let players):
             try? await kernel.newGame(seed: seed, players: players)
         }
+    }
+
+    /// The board has taken the pending animations over (or there were none):
+    /// drop the veil. Idempotent - every view change calls it.
+    public func consumeReplayPending() {
+        if replayPending { replayPending = false }
     }
 
     public func refresh() async {

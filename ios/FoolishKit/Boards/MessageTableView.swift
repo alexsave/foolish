@@ -13,6 +13,10 @@ import Foundation   // sin/cos for the ring placement
 
 public struct MessageTableView: View {
     @ObservedObject private var controller: MessageTurnController
+    /// Re-render this view when a setting changes (see FPrefs). Only the
+    /// OBSERVATION matters - the strings still come from FStrings.t and the
+    /// table surface still comes from FTextures.
+    @ObservedObject private var prefs = FPrefs.shared
     /// Seal the staged chain and hand it to the extension to compose + insert.
     /// The view never touches MSMessage; it only produces the payload. The `Bool`
     /// is `fromUndo`: a fresh move drops the player at Messages' Send (the drawer
@@ -195,14 +199,27 @@ public struct MessageTableView: View {
     /// their synchronous work landed before the first paint; structurally it
     /// cannot.
     ///
-    /// @State initialized at CONSTRUCTION is the fix, because that is the one
-    /// moment guaranteed to precede every paint. While it is false the board
-    /// derives the veil PURELY from the controller (`veiledCardIds`,
-    /// `veiledCounts`) — no mutation, so it is legal to do in `body` — and once
-    /// `flyBoutEndToDiscard` has pre-hidden and frozen for real, this flips and
-    /// `animator.hidden` + the count overrides take over unchanged. The handoff
-    /// is invisible because both sides name the same cards.
-    @State private var settled = false
+    /// Round-12: this now READS the controller (`replayPending`) instead of
+    /// being board `@State` initialized at construction. Same contract, one
+    /// less reason to tear the board down.
+    ///
+    /// The old version was right that construction is the one moment guaranteed
+    /// to precede every paint - which is precisely why an arriving bubble had to
+    /// build a WHOLE NEW BOARD to be veiled in time, and that rebuild is the
+    /// "still flashes if move comes in during expanded screen" the owner sees.
+    /// Published controller state is up before the first paint of the new chain
+    /// as well, and costs no teardown; see `MessageTurnController.replayPending`.
+    /// While it is false the board derives the veil PURELY from the controller
+    /// (`veiledCardIds`, `veiledCounts`) — no mutation, so it is legal to do in
+    /// `body` — and once `flyBoutEndToDiscard` has pre-hidden and frozen for
+    /// real, this flips and `animator.hidden` + the count overrides take over
+    /// unchanged. The handoff is invisible because both sides name the same cards.
+    private var settled: Bool { !controller.replayPending }
+    /// The last `controller.arrivalTick` this board has reacted to. When it
+    /// falls behind, the next view change is a bubble that ARRIVED rather than a
+    /// move made here, and it is played like a cold open (see
+    /// `flyBoutEndToDiscard`).
+    @State private var seenArrivalTick = 0
     /// My hand as it was the instant I played a move, captured SYNCHRONOUSLY in
     /// `play` — before `controller.apply`, so before the view can publish. Any
     /// card in my hand that is not in here is one this move just gave me
@@ -364,7 +381,7 @@ public struct MessageTableView: View {
             // its pre-move state forever. Only safe when there is nothing to
             // replay — when there is, that onChange is the very thing driving
             // it, and lifting the veil here would be the flash we are avoiding.
-            if controller.openReplayEvents.isEmpty { settled = true }
+            if controller.openReplayEvents.isEmpty { controller.consumeReplayPending() }
             // Genesis where I can't act (I dealt but I'm not the first attacker):
             // stage the deal immediately so I can send it on. When I CAN act,
             // canStage is false until I play, so this is a no-op then.
@@ -916,24 +933,32 @@ public struct MessageTableView: View {
         let isAttacker = showsSword(seat: mySeat, isOut: isOut, view)
         return Group {
             if !isOut {
-                // Round-5 m4 ("make sword and shield larger and darker") —
-                // sized up at this call site specifically (check 19->22,
-                // shield 22->26, sword 19->23); FSeatBadge's opponent-facing
-                // copies are another agent's file and were dictated the same
-                // target sizes separately.
+                // ONE size table for both role rows: `FRoleMark.size`. This
+                // call site and FSeatBadge's `roleRow` used to carry their own
+                // numbers with a comment on each asking the other to keep in
+                // step, which is not a mechanism - my own role must not read
+                // bigger than an opponent's just because it is mine.
                 HStack(spacing: FSpace.xs) {
-                    if saidGood { FCheck(size: 22) }
-                    if isDefender { FShield(size: 26) }
-                    // Larger than the shield, not equal to it (owner, on device:
-                    // "make the sword icon larger"). FSword draws on a 24-grid
-                    // and then rotates 45°, so its blade only spans ~70% of the
-                    // box it is given — a sword and a shield at the SAME nominal
-                    // size do not read the same size on screen.
-                    else if isAttacker { FSword(size: 32) }
+                    if saidGood { FCheck(size: FRoleMark.check) }
+                    if isDefender { FShield(size: FRoleMark.shield) }
+                    else if isAttacker { FSword(size: FRoleMark.sword) }
                 }
             }
         }
     }
+
+    #if DEBUG
+    private static var lastGridTrace = ""
+    static func traceGrid(sweeping: Bool, shown: [BattleView], hidden: Set<String>) {
+        let pairs = shown.filter { $0.defense != nil }.count
+        let visible = shown.reduce(0) { n, b in
+            n + (hidden.contains(b.attack.identity) ? 0 : 1)
+              + ((b.defense.map { hidden.contains($0.identity) ? 0 : 1 }) ?? 0)
+        }
+        let line = "grid sweeping=\(sweeping) cells=\(shown.count) pairs=\(pairs) visible=\(visible) hidden=\(hidden.count)"
+        if line != lastGridTrace { lastGridTrace = line; AnimLog.say(line) }
+    }
+    #endif
 
     private func battlesArea(_ view: GameView) -> some View {
         // ONE grid, never two. A bout-end sequence clears `view.battles` before the
@@ -950,6 +975,15 @@ public struct MessageTableView: View {
         // reappear. A settled empty table (nothing sweeping) renders nothing.
         let sweeping = view.battles.isEmpty && !sweepBattles.isEmpty
         let shown = sweeping ? sweepBattles : view.battles
+        #if DEBUG
+        // What the table is actually PAINTING, logged only when it changes - so
+        // a re-layout mid-sweep shows up as a line instead of having to be read
+        // off a video frame. Added for the round-12 pickup sweep and kept: it is
+        // what caught #11, where a card sat `hidden` on a table nothing was ever
+        // going to un-hide (`visible=0 hidden=1` with no flight after it).
+        Self.traceGrid(sweeping: sweeping, shown: shown,
+                       hidden: sweeping ? sweptFlownIds : veiledCardIds)
+        #endif
         // note 34: a pass preview shows the ghost slot instead of a cover highlight.
         // Never while sweeping (the cards are leaving, not a drop target).
         let passPreview = sweeping ? false : isPassPreview(view)
@@ -1078,7 +1112,16 @@ public struct MessageTableView: View {
     /// non-empty -> empty) and which of MY cards to hide before they fly - both UI
     /// timing, not animation derivation.
     private func flyBoutEndToDiscard(to newView: GameView?) {
-        let prior = lastView
+        // A bubble that ARRIVED while this board was open (the controller
+        // re-adopted rather than being replaced - see MessageTurnController.
+        // adopt). There is no meaningful "board before this move" to diff
+        // against: the chain jumped, possibly by several actions. So the arrival
+        // is played exactly the way a cold open plays one, by dropping `prior`
+        // and letting the `prior == nil` branch below run the kernel's own event
+        // stream for the last move.
+        let arrived = controller.arrivalTick != seenArrivalTick
+        if arrived { seenArrivalTick = controller.arrivalTick }
+        let prior = arrived ? nil : lastView
         lastView = newView
         // Bug 6: remember the last table that actually had cards on it, so the
         // discard sweep below can map each trashed card back to the slot it sat
@@ -1113,7 +1156,7 @@ public struct MessageTableView: View {
         guard let new = newView else { return }
         // Once this returns, `animator.hidden` and the count overrides are the
         // whole truth — so this is exactly where the board stops veiling.
-        defer { settled = true }
+        defer { controller.consumeReplayPending() }
         // …and any path that returns WITHOUT starting a sequence has to hand the
         // counts back, because `play` now freezes them before every move, not
         // just the ones that end a bout. Leaving them frozen after a plain
@@ -1580,9 +1623,30 @@ public struct MessageTableView: View {
     /// for `laidOutHand`, recomputed here for the flight builders). The incoming
     /// card whose flight is playing now is NOT deferred (its slot is open), so it
     /// is included - which is why `handLandingSlot` can find it.
+    ///
+    /// IN DISPLAY ORDER, which is the whole point: `handLandingSlot` turns this
+    /// array into slot rects BY INDEX, so an array in kernel order describes a
+    /// hand nobody is looking at. Round-8 #4 gave the fan a persisted per-game
+    /// arrangement but left these flight builders reading the kernel's order, so
+    /// on a reopen every dealt card flew to the slot it would have had in an
+    /// unsorted hand - the right-hand end - and then snapped into the sorted
+    /// hand a frame later ("the deal animation will give the rearranged card to
+    /// the right regardless, then suddenly jump to the preferred order"). The
+    /// DEBUG SLOTCHECK above already compared against the display order, which
+    /// is why it never flagged this: the check and the flights disagreed about
+    /// which array they were describing.
     private func laidOutHandNow(_ view: GameView) -> [Card] {
-        let deferred = handSlotDeferred
-        return (view.me?.hand ?? []).filter { !deferred.contains($0.identity) }
+        Self.laidOut(hand: view.me?.hand ?? [], deferred: handSlotDeferred,
+                     order: MessageGameStore.shared.handOrder(gameId: controller.gameIdString))
+    }
+
+    /// The pure half, so the ordering contract can be asserted directly (it is
+    /// the whole of round-12's deal-lands-in-the-wrong-slot fix, and a test that
+    /// only exercised `FHandFan.displayOrder` would pass against the bug -
+    /// the bug was never in `displayOrder`, it was in not CALLING it).
+    static func laidOut(hand: [Card], deferred: Set<String>, order: [String]) -> [Card] {
+        FHandFan.displayOrder(cards: hand.filter { !deferred.contains($0.identity) },
+                              order: order)
     }
 
 
@@ -1610,6 +1674,43 @@ public struct MessageTableView: View {
             }
         }
         return (deck, discard, hand)
+    }
+
+    /// The table a replayed pickup/discard should be shown sweeping off.
+    ///
+    /// ROUND 12 ("pickup animation sometimes quickly rearranges into grid before
+    /// moving to hand for many players"). `controller.openReplayPreBattles`
+    /// RECONSTRUCTS the pre-pickup table from the pickup step's own cards, and
+    /// it has to guess the pairing: the kernel hands over one flat list, so the
+    /// reconstruction lays every card in its own uncovered slot. A table that
+    /// really held three attacks with two of them covered comes back as FIVE
+    /// single-card battles - a different grid, with a different cell count and a
+    /// different shape.
+    ///
+    /// On a cold open nobody sees that, because there is no earlier frame to
+    /// compare it against. But a pickup that ARRIVES while the board is up runs
+    /// this same path, and there the player was looking at the real covered
+    /// table a frame ago - so the reconstruction reads as the table shuffling
+    /// itself into a grid before anything flies. The more players, the more
+    /// throw-ins, the more covered pairs get split, and the worse it looks -
+    /// which is exactly the "for many players" in the report.
+    ///
+    /// So: prefer the REAL table when this board has one. `lastBattles` is the
+    /// last table that actually had cards on it (kept by `flyBoutEndToDiscard`),
+    /// and it is the truth the reconstruction is approximating. It is only used
+    /// when it accounts for every card the sweep is about to move; otherwise it
+    /// is a stale table from an earlier bout and the reconstruction - which is at
+    /// least about the right cards - wins.
+    private func sweepTableForReplay() -> [BattleView] {
+        let reconstructed = controller.openReplayPreBattles
+        guard !reconstructed.isEmpty else { return [] }
+        let need = Set(reconstructed.flatMap { b in
+            [b.attack.identity] + (b.defense.map { [$0.identity] } ?? [])
+        })
+        let have = Set(lastBattles.flatMap { b in
+            [b.attack.identity] + (b.defense.map { [$0.identity] } ?? [])
+        })
+        return need.isSubset(of: have) ? lastBattles : reconstructed
     }
 
     /// note 4: an approximate source rect for a pickup/discard flight replayed
@@ -1675,11 +1776,51 @@ public struct MessageTableView: View {
     /// tilt reconstruction, then a staggered centre, only for a card that never
     /// rendered on the table (a cover that ended the bout in the same apply, so its
     /// slot was never laid out).
-    private func tableCardSource(_ card: Card, fallbackIndex i: Int) -> CGRect? {
-        if let rect = lastBattleCardFrames[card.identity] { return rect }
-        if let src = discardSource(for: card) { return src.rect }
+    private func tableCardSource(_ card: Card, fallbackIndex i: Int) -> (rect: CGRect, tilt: Double)? {
+        let tilt = sweptTilt(of: card)
+        if let base = lastBattleCardFrames[card.identity] {
+            return (Self.swungAboutBottom(base, degrees: tilt), tilt)
+        }
+        if let src = discardSource(for: card) { return src }
         guard let center = approximateTableCenter() else { return nil }
-        return center.offsetBy(dx: CGFloat(i) * 6, dy: CGFloat(i) * 4)
+        return (center.offsetBy(dx: CGFloat(i) * 6, dy: CGFloat(i) * 4), 0)
+    }
+
+    /// How far over a card on the swept table is lying: +`coverAngle` for a
+    /// cover, -`coverAngle` for the attack under one, 0 for an uncovered attack.
+    /// Mirrors what `FBattleGrid` actually draws (its attack takes the negative
+    /// tilt, its defense the positive one).
+    private func sweptTilt(of card: Card) -> Double {
+        let table = sweepBattles.isEmpty ? lastBattles : sweepBattles
+        guard let b = table.first(where: { $0.attack == card || $0.defense == card })
+        else { return 0 }
+        if b.defense == card { return FBattleGrid.coverAngle }
+        return b.defense != nil ? -FBattleGrid.coverAngle : 0
+    }
+
+    /// A card's VISUAL rect once it has been rotated about its own bottom edge.
+    ///
+    /// ROUND 12 - this is the "pickup animation quickly rearranges into grid"
+    /// bug, and it is a layout-vs-render mix-up. `FBattleGrid` stacks a battle's
+    /// two cards in a `ZStack(alignment: .bottom)` and separates them ONLY with
+    /// `.rotationEffect(anchor: .bottom)`. Rotation is a render transform: it
+    /// does not move the layout frame, so the rect each card publishes through
+    /// `BattleCardFramesKey` is the SAME rect for the attack and the cover.
+    /// Flying both ghosts from that rect makes the covering card jump onto its
+    /// attack the instant the sweep starts - ten cards collapsing into five
+    /// stacked pairs, which is precisely the "rearrange into a grid" the owner
+    /// saw, and why it is worse the more covered pairs the table holds.
+    ///
+    /// Rotating about the bottom edge swings the centre sideways by
+    /// sin(tilt)*halfHeight and down by (1-cos(tilt))*halfHeight - the same
+    /// correction `discardSource` has always applied to its slot rect. This puts
+    /// it where it belongs, on the per-card rect that supersedes it.
+    static func swungAboutBottom(_ r: CGRect, degrees: Double) -> CGRect {
+        guard degrees != 0 else { return r }
+        let rad = degrees * .pi / 180
+        let half = r.height / 2
+        return r.offsetBy(dx: CGFloat(sin(rad)) * half,
+                          dy: CGFloat(1 - cos(rad)) * half)
     }
 
     /// Round-7 (replay bunch): are the on-table SOURCE slots for these swept
@@ -1792,7 +1933,11 @@ public struct MessageTableView: View {
                     guard let from = tableCardSource(c, fallbackIndex: i) else { return nil }
                     return (handLandingSlot(c, laidOut: laid) ?? handCardFrames[c.identity]
                         ?? handApproxLanding(index: i, of: cards.count)).map {
-                        Flight(id: "openpick-\(c.identity)", card: c, from: from, to: $0) } }
+                        // `fromAngle`: a cover was lying across its attack a
+                        // moment ago, so its ghost lifts off still tilted and
+                        // flattens on the way to the hand.
+                        Flight(id: "openpick-\(c.identity)", card: c, from: from.rect, to: $0,
+                               angle: 0, fromAngle: from.tilt) } }
             }
             guard let badge = seatFrames[ev.seat], badge != .zero else { return nil }
             if cards.isEmpty {
@@ -1808,8 +1953,9 @@ public struct MessageTableView: View {
             if !tableSourceReady(cards) && !lastChance { return nil }
             return cards.enumerated().compactMap { i, c in
                 guard let from = tableCardSource(c, fallbackIndex: i) else { return nil }
-                return Flight(id: "openpick-\(ev.seat)-\(c.identity)", card: c, from: from,
-                              to: badge.offsetBy(dx: CGFloat(i) * 3, dy: 0)) }
+                return Flight(id: "openpick-\(ev.seat)-\(c.identity)", card: c, from: from.rect,
+                              to: badge.offsetBy(dx: CGFloat(i) * 3, dy: 0),
+                              angle: 0, fromAngle: from.tilt) }
 
         case .discard, .cardsToTrash:
             // Table -> discard. Discard cards are public (the kernel does not mask
@@ -1839,17 +1985,10 @@ public struct MessageTableView: View {
             // so its slot was never laid out): the old tilt reconstruction, then a
             // staggered table centre.
             return cards.enumerated().map { i, c in
-                if let rect = lastBattleCardFrames[c.identity] {
-                    return Flight(id: "opendiscard-\(c.identity)", card: c, from: rect, to: discardFrame)
-                }
-                if let src = discardSource(for: c) {
-                    return Flight(id: "opendiscard-\(c.identity)", card: c, from: src.rect,
-                                  to: discardFrame, angle: 0, fromAngle: src.tilt)
-                }
-                let center = approximateTableCenter() ?? discardFrame
-                return Flight(id: "opendiscard-\(c.identity)", card: c,
-                              from: center.offsetBy(dx: CGFloat(i) * 6, dy: CGFloat(i) * 4),
-                              to: discardFrame)
+                let src = tableCardSource(c, fallbackIndex: i)
+                    ?? (rect: approximateTableCenter() ?? discardFrame, tilt: 0)
+                return Flight(id: "opendiscard-\(c.identity)", card: c, from: src.rect,
+                              to: discardFrame, angle: 0, fromAngle: src.tilt)
             }
 
         default:
@@ -1947,7 +2086,7 @@ public struct MessageTableView: View {
         // out on the next paint, in time for the flight to measure and fly from it.
         // Empty for a plain attack/cover replay (those cards are still on the table
         // in `view`).
-        setSweep(controller.openReplayPreBattles)
+        setSweep(sweepTableForReplay())
 
         // The SAME animator the live bout-end uses - one path, the kernel's events.
         // `openReplay: true` opens the fan for a COLD first open so each drawn card
@@ -2380,6 +2519,10 @@ struct SendHintReminder: View {
 /// container's trailing edge (the board is inset 8 from the screen, the lobby
 /// overlay is full-bleed). Purely decorative: it never eats a tap.
 struct StagedSendHint: View {
+    /// Re-render this view when a setting changes (see FPrefs). Only the
+    /// OBSERVATION matters - the strings still come from FStrings.t and the
+    /// table surface still comes from FTextures.
+    @ObservedObject private var prefs = FPrefs.shared
     let staged: Bool
     let visible: Bool
     var centerFromTrailing: CGFloat = MessageTableView.sendHintCenterFromScreenTrailing
@@ -2409,51 +2552,88 @@ struct StagedSendHint: View {
     }
 }
 
+/// THE ink every role mark is drawn in: a WHITE body with a BLACK outline.
+///
+/// The three marks used to be three different colour schemes - a near-black
+/// sword that flipped to steel in dark mode, a mid-gray shield with a darker
+/// edge, a saturated green check - so at a glance the board carried three
+/// unrelated objects, and each one had to fight the weave on its own terms
+/// (the sword's near-black vanished on the walnut wool, which is why it had a
+/// dark-mode special case at all). White-on-black is the one pairing that
+/// carries on BOTH weaves without a per-scheme branch: the white body is the
+/// silhouette, the black outline is what separates it from a light table.
+///
+/// Owner, this round: "Bigger sword and shield and good icons. Maybe unify
+/// them to white fill + black stroke to stand out?"
+enum FRoleInk {
+    static let fill = Color.white
+    static let line = Color(hex: 0x101014)
+    /// Outline weight, in GRID units (each mark draws on the same 24x24 grid and
+    /// scales by `size / 24`), so the outline thickens with the mark instead of
+    /// turning into a hairline at 40pt and a blob at 20pt.
+    static let stroke: CGFloat = 1.6
+    /// The "said good" green. Lives here beside the shared ink so the one mark
+    /// that is NOT white is still declared in the same place as the rest.
+    static let good = Color(hex: 0x2E9E4F)
+}
+
+/// How big each role mark is drawn, everywhere it is drawn (the board's own
+/// `selfRoleIndicator` and every opponent's `FSeatBadge.roleRow`).
+///
+/// Owner, this round: "Bigger sword and shield and good icons" - each up ~25%
+/// on the round-5/7 numbers (check 20/22 -> 26, shield 26 -> 33, sword 32 -> 40).
+/// The SWORD stays the largest of the three on purpose: it draws on the shared
+/// 24x24 grid and is then rotated 45 degrees, so its blade spans only ~70% of
+/// the box it is given, and a sword and a shield at the same nominal size do
+/// not read the same size on screen.
+enum FRoleMark {
+    static let check: CGFloat = 26
+    static let shield: CGFloat = 33
+    static let sword: CGFloat = 40
+    /// A role row must be at least this tall or it clips the sword's corners.
+    static let rowHeight: CGFloat = sword
+}
+
 /// The first-attacker sword — a hand-built UPRIGHT sword on a 24x24 grid that
 /// actually reads as a sword: a pointed blade, a wide crossguard, a grip, and a
-/// round pommel, all filled FLAT dark gray. Marks "you open this bout".
+/// round pommel. Marks "you open this bout".
+///
+/// Drawn as ONE closed outline rather than four filled pieces: overlapping
+/// filled parts each carrying their own stroke would draw internal seams where
+/// the blade meets the guard, which at these sizes reads as a crack down the
+/// middle of the sword.
 struct FSword: View {
-    @Environment(\.colorScheme) private var scheme
     var size: CGFloat = 24
     var body: some View {
-        Canvas { [scheme] ctx, sz in
+        Canvas { ctx, sz in
             let s = sz.width / 24
             func P(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x * s, y: y * s) }
-            func R(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat) -> CGRect {
-                CGRect(x: x * s, y: y * s, width: w * s, height: h * s)
-            }
-            // Round-5 m4 ("make sword and shield larger and darker"): darkened
-            // from 0x3A3A3A so the glyph reads at a glance on the wool instead
-            // of blending into it at the sizes it's actually drawn (m4's own
-            // complaint was "no legibility... at the size they are drawn").
-            //
-            // Dark mode inverts that reasoning rather than repeating it: m4's
-            // near-black is legible BECAUSE the light weave is bright, and on
-            // the walnut weave it is the one glyph on the board that vanishes
-            // completely (the shield's mid-gray fill and the check's saturated
-            // green both still carry). Steel, not black, in dark mode - and it
-            // stays a FLAT fill either way, so the sword still reads as one
-            // solid silhouette and not as a shaded object.
-            let gray = scheme == .dark ? Color(hex: 0xD3D6DC) : Color(hex: 0x26262A)
-
-            // Blade: a pointed spike from the tip (top) down to the guard.
-            var blade = Path()
-            blade.move(to: P(12, 1.5))     // tip
-            blade.addLine(to: P(13.5, 5.5))
-            blade.addLine(to: P(13.5, 14.5))
-            blade.addLine(to: P(10.5, 14.5))
-            blade.addLine(to: P(10.5, 5.5))
-            blade.closeSubpath()
-            ctx.fill(blade, with: .color(gray))
-
-            // Crossguard: a wide bar under the blade.
-            ctx.fill(Path(roundedRect: R(6, 14.3, 12, 2.2), cornerRadius: 0.7 * s), with: .color(gray))
-            // Grip: the handle below the guard.
-            ctx.fill(Path(R(10.9, 16.4, 2.2, 4.6)), with: .color(gray))
-            // Pommel: a round knob at the base.
-            let r = 1.7 * s
-            ctx.fill(Path(ellipseIn: CGRect(x: 12 * s - r, y: 21.2 * s - r, width: 2 * r, height: 2 * r)),
-                     with: .color(gray))
+            var sword = Path()
+            sword.move(to: P(12, 1.2))            // tip
+            sword.addLine(to: P(13.6, 5.5))       // right edge of the blade
+            sword.addLine(to: P(13.6, 14.3))
+            sword.addLine(to: P(18, 14.3))        // right arm of the crossguard
+            sword.addLine(to: P(18, 16.6))
+            sword.addLine(to: P(13.1, 16.6))
+            sword.addLine(to: P(13.1, 19.6))      // grip, right side
+            sword.addLine(to: P(10.9, 19.6))
+            sword.addLine(to: P(10.9, 16.6))      // grip, left side
+            sword.addLine(to: P(6, 16.6))         // left arm of the crossguard
+            sword.addLine(to: P(6, 14.3))
+            sword.addLine(to: P(10.4, 14.3))
+            sword.addLine(to: P(10.4, 5.5))       // left edge of the blade
+            sword.closeSubpath()
+            ctx.fill(sword, with: .color(FRoleInk.fill))
+            ctx.stroke(sword, with: .color(FRoleInk.line),
+                       style: StrokeStyle(lineWidth: FRoleInk.stroke * s, lineJoin: .round))
+            // Pommel: a round knob at the base of the grip, drawn last so its
+            // own outline sits on top of the grip's.
+            let r = 2.0 * s
+            let knob = Path(ellipseIn: CGRect(x: 12 * s - r, y: 20.6 * s - r,
+                                              width: 2 * r, height: 2 * r))
+            ctx.fill(knob, with: .color(FRoleInk.fill))
+            ctx.stroke(knob, with: .color(FRoleInk.line),
+                       style: StrokeStyle(lineWidth: FRoleInk.stroke * s))
         }
         .frame(width: size, height: size)
         .rotationEffect(.degrees(45))   // point it up-and-to-the-right
@@ -2465,32 +2645,20 @@ struct FSword: View {
     }
 }
 
-/// The defender shield — a hand-built heraldic shield, filled flat gray with a
-/// darker edge for definition on the wool. Marks the current defender.
+/// The defender shield — a hand-built heraldic shield in the shared role ink.
 ///
-/// Round-5 m4 ("make sword and shield larger and darker. Make the shield have
-/// like pointed upper corners to make it more obvious"): the old flat-top shape
-/// read as a plain gray plaque at 20pt with no legend (m4's own complaint).
-/// The top is now two points reaching UP with a shallow dip between them — a
-/// heraldic silhouette, not a rounded rectangle — and both fill and edge are
-/// darkened a step from before. The fill stays a distinctly LIGHTER gray than
-/// the sword's near-black (so the two glyphs don't collapse into "two dark
-/// blobs" at a glance); the edge alone goes almost as dark as the sword's fill,
-/// which is what actually reads as "darker" against the wool at 20pt.
+/// Round-5 m4 asked for pointed upper corners; round-7 settled the silhouette on
+/// the heater / crusader shield below (a raised point at the top centre, rounded
+/// shoulders as the widest span, curving to a point at the bottom). This round
+/// only changes what it is PAINTED in: the old mid-gray-on-darker-gray became
+/// white-on-black with the sword and the check (FRoleInk).
 struct FShield: View {
     var size: CGFloat = 24
     var body: some View {
         Canvas { ctx, sz in
             let s = sz.width / 24
             func P(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x * s, y: y * s) }
-            let gray = Color(hex: 0x878E96), edge = Color(hex: 0x2E3338)
             var shield = Path()
-            // Round-7: the heater / crusader shield of the owner's reference - a
-            // raised POINT at the top centre, rounded shoulders as the widest
-            // span, curving to a point at the bottom. (Was round-5 m4's inverse:
-            // raised corners with a dipped centre.) The peak sits at y=1.5, the
-            // shoulders at y=5.5 span the full width, and the sides sweep to the
-            // bottom point at (12,22.5).
             shield.move(to: P(12, 1.5))                                   // top-centre peak
             shield.addQuadCurve(to: P(21, 5.5),  control: P(15.5, 5))     // peak -> right shoulder
             shield.addQuadCurve(to: P(12, 22.5), control: P(21, 15.5))    // right side -> bottom point
@@ -2502,8 +2670,9 @@ struct FShield: View {
             // the line's ~3.5 midpoint), so the edge bows inward/down toward the
             // centre rather than bulging out - the crusader-shield sweep up to
             // the point, not a balloon.
-            ctx.fill(shield, with: .color(gray))
-            ctx.stroke(shield, with: .color(edge), style: StrokeStyle(lineWidth: 1.1 * s, lineJoin: .round))
+            ctx.fill(shield, with: .color(FRoleInk.fill))
+            ctx.stroke(shield, with: .color(FRoleInk.line),
+                       style: StrokeStyle(lineWidth: FRoleInk.stroke * s, lineJoin: .round))
         }
         .frame(width: size, height: size)
         // Round-5 m2: was a hard-coded English literal (see FSword's).
@@ -2511,22 +2680,42 @@ struct FShield: View {
     }
 }
 
-/// The "said good" mark — a hand-built green check stroke on the same 24x24 grid
-/// as FSword/FShield. Hand-built for the same reason: SF Symbols (previously
+/// The "said good" mark — a hand-built check on the same 24x24 grid as
+/// FSword/FShield. Hand-built for the same reason: SF Symbols (previously
 /// `checkmark.seal.fill`) are unreliable under ImageRenderer bubble snapshots.
+///
+/// A check is a STROKE, not a filled body, so "white fill + black stroke" is
+/// drawn here as two passes of the same path: a fat black one, then a thinner
+/// white one on top. That is the same silhouette-plus-outline the other two
+/// marks get, achieved the only way an open path can.
 struct FCheck: View {
     var size: CGFloat = 24
+    /// The check's body colour, GREEN by default.
+    ///
+    /// Deliberately NOT the shared white the sword and shield wear. A round-12
+    /// pass unified all three on white and the owner pulled the check back out:
+    /// "Keep it green but add a distinct stroke like the other type." Which is
+    /// right - the sword and the shield say WHICH ROLE YOU HAVE and want to read
+    /// as one family, while a check says something happened, and green is what
+    /// carries that at a glance. What it takes from the other two is the BLACK
+    /// RIM, so it still looks drawn by the same hand.
+    var tint: Color = FRoleInk.good
     var body: some View {
         Canvas { ctx, sz in
             let s = sz.width / 24
             func P(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x * s, y: y * s) }
-            let green = Color(hex: 0x2E9E4F)
             var check = Path()
-            check.move(to: P(4.5, 12.5))
-            check.addLine(to: P(9.5, 18))
-            check.addLine(to: P(20, 5.5))
-            ctx.stroke(check, with: .color(green),
-                       style: StrokeStyle(lineWidth: 3 * s, lineCap: .round, lineJoin: .round))
+            check.move(to: P(4, 12.5))
+            check.addLine(to: P(9.5, 18.5))
+            check.addLine(to: P(20, 5))
+            // Outline first, body second. The widths differ by 2x the outline
+            // weight so the black shows as an even rim on both sides of the
+            // white, exactly like the closed marks' 1.6-unit stroke.
+            ctx.stroke(check, with: .color(FRoleInk.line),
+                       style: StrokeStyle(lineWidth: (3.4 + 2 * FRoleInk.stroke) * s,
+                                          lineCap: .round, lineJoin: .round))
+            ctx.stroke(check, with: .color(tint),
+                       style: StrokeStyle(lineWidth: 3.4 * s, lineCap: .round, lineJoin: .round))
         }
         .frame(width: size, height: size)
         // Round-5 m2: was a hard-coded English literal (see FSword's). "good"
@@ -2567,7 +2756,7 @@ struct FGameOverList: View {
             // shadow combo it used to carry (that combo was tuned for wood).
             Text(FStrings.t("game_over"))
                 .font(.title2)
-                .onWoolText()
+                .onTableText()
             // ONE continuous wood plank behind the whole ranking (no dividers):
             // WoodFill is a ZStack LAYER (not a .background, which over-drew and
             // made the plank too tall), hard-clipped to exactly rows × rowH so it

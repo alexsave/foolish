@@ -8,14 +8,26 @@
 # simulator's touch state. This rig removes all three.
 #
 #   ios/Tools/msgrig.sh setup        fresh seeded game, board open and EXPANDED
+#   ios/Tools/msgrig.sh fatboard [N] [P] [SEAT]  SEED a dense N-card table
+#                                    (default 10) and open straight onto it - no
+#                                    create/join/start flow at all. DEBUG only.
+#                                    The chain is searched in C (instant), not
+#                                    played on the device; see MessageDevBoard.
+#                                    TWO PLAYERS is enough: every cover puts its
+#                                    own rank on the table, so the lone attacker
+#                                    always has something new to throw.
+#   ios/Tools/msgrig.sh unseed       remove the seed, back to normal flow
 #   ios/Tools/msgrig.sh move         select a card and play it (auto-collapses)
 #   ios/Tools/msgrig.sh film NAME S  record S seconds into NAME.mp4 + frames
 #   ios/Tools/msgrig.sh shot         one screenshot, downscaled to points
 #
 # Requirements (one-time):
 #   brew install facebook/fb/idb-companion
-#   python3.12 -m venv <dir> && <dir>/bin/pip install fb-idb   # 3.14 is broken
-#   pip install pillow numpy   (in that venv or system python3)
+#   python3.12 -m venv ~/.venvs/idb && ~/.venvs/idb/bin/pip install fb-idb
+#   ln -sf ~/.venvs/idb/bin/idb /opt/homebrew/bin/idb    # so `idb` is on PATH
+#   pip install pillow numpy   (system python3)
+# (fb-idb needs python <= 3.12; the system 3.14 cannot build it. Set FOOLISH_IDB
+#  to override the binary; it defaults to whatever `idb` is on PATH.)
 #
 # NEVER use cliclick here: it cannot drag the drawer's grabber, needs window
 # focus, and a lost mouse-up leaves a touch stuck down until the sim reboots.
@@ -30,7 +42,7 @@
 set -euo pipefail
 
 SIM="${FOOLISH_SIM:-EFB2FD39-DD17-4284-9C46-013142226F6F}"
-IDB="${FOOLISH_IDB:?set FOOLISH_IDB to the fb-idb binary, e.g. /path/venv/bin/idb}"
+IDB="${FOOLISH_IDB:-idb}"
 WORK="${FOOLISH_WORK:-/tmp/msgrig}"
 SEED="${FOOLISH_SEED:-3}"          # 3 deals the CREATOR the first attack at 2p
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -84,6 +96,8 @@ cmd_setup() {
   # A reboot wipes the transcript, which is what makes each run identical: the
   # extension finds no game and offers New game instead of resuming one.
   printf '%s' "$SEED" > "$(group_dir)/dev.seed"
+  # A plain `setup` is never quietly running a seeded board.
+  rm -f "$(group_dir)/dev.fatboard"
 
   read -r W H < <(screen)
   read -r cx cy px py ax ay sx sy bx by g1x g1y g2x g2y < <(profile "$W" "$H")
@@ -99,6 +113,39 @@ cmd_setup() {
   tap $((W / 2)) "$(bar_y 0)" 3       # Add player (testing)
   tap $((W / 2)) "$(bar_y 0)" 12      # Start playing -> auto-collapse
   swipe 0.5 "$g1x" "$g1y" "$g2x" "$g2y" 4   # grabber drag back to expanded
+  echo "drawer top: $(drawer_top)   (a small number = expanded)"
+}
+
+# Seed a dense table and open straight onto it. The C searcher prints ONE FMSG
+# envelope as hex; the extension reads that file and opens it as the defender.
+# Boots the sim and opens Messages, but does NOT walk the lobby - that is the
+# entire point (owner: "skip the create game / join game / start game stuff and
+# jump straight to the game state").
+cmd_fatboard() {
+  local cards="${1:-10}" players="${2:-2}" seat="${3:-}"
+  local tool="$HERE/../../c/build/msg_wire_test"
+  [ -x "$tool" ] || { echo "build it first: (cd c && make build/msg_wire_test)" >&2; exit 1; }
+
+  xcrun simctl shutdown "$SIM" 2>/dev/null || true; sleep 3
+  xcrun simctl boot "$SIM"; sleep 8
+  until xcrun simctl list devices booted | grep -q "$SIM"; do sleep 2; done
+  xcrun simctl launch "$SIM" com.apple.MobileSMS >/dev/null; sleep 5
+
+  "$tool" --fatboard "$cards" "$players" > "$(group_dir)/dev.fatboard"
+  # Which chair to sit in. Default (unset) = the defender's, for the pickup
+  # case; pass a seat for the deal case, where an ATTACKER's good closes the
+  # bout and deals.
+  if [ -n "$seat" ]; then printf '%s' "$seat" > "$(group_dir)/dev.seat"
+  else rm -f "$(group_dir)/dev.seat"; fi
+  echo "seeded: $(wc -c < "$(group_dir)/dev.fatboard") hex chars, seat=${seat:-defender}"
+
+  read -r W H < <(screen)
+  read -r cx cy px py ax ay sx sy bx by g1x g1y g2x g2y < <(profile "$W" "$H")
+  tap "$cx" "$cy" 3        # conversation
+  tap "$px" "$py" 2.5      # compose "+"
+  swipe 0.4 $((W / 2)) $((H * 82 / 100)) $((W / 2)) $((H * 45 / 100)) 1.5
+  tap "$ax" "$ay" 5        # Foolish -> straight onto the seeded board
+  swipe 0.5 "$g1x" "$g1y" "$g2x" "$g2y" 4   # grabber drag to expanded
   echo "drawer top: $(drawer_top)   (a small number = expanded)"
 }
 
@@ -130,7 +177,9 @@ import sys,ast; c=ast.literal_eval(sys.stdin.read().split('CARDS ')[1]); print(c
 }
 
 case "${1:-}" in
-  setup) cmd_setup ;;
+  setup) shift; cmd_setup "$@" ;;
+  fatboard) shift; cmd_fatboard "$@" ;;
+  unseed) rm -f "$(group_dir)/dev.fatboard"; echo "seed removed" ;;
   move)  cmd_move ;;
   film)  shift; cmd_film "$@" ;;
   probe) read -r W H < <(screen); echo "screen ${W}x${H}pt"; python3 "$UI" all ;;

@@ -947,6 +947,111 @@ static int poses_the_race(const Game *g) {
     return can_pickup && can_attack;
 }
 
+// ---------- --fatboard: a dense table, as an FMSG payload ------------------
+//
+// Prints one LIVE envelope whose table carries `target` or more cards, with
+// COVERED PAIRS among them, still playable, with the defender to move. Used to
+// seed the iMessage extension for animation work (ios/FoolishKit/Messages/
+// MessageDevBoard.swift): the search belongs here, where a whole game is
+// microseconds, rather than on a device driving a UI.
+//
+// TWO PLAYERS, which is the interesting part. A throw-in needs its rank to be on
+// the table already, so the lone attacker looks stuck after the opening card -
+// but every COVER puts the cover's own rank on the table too, handing the
+// attacker something new to throw at each exchange. Attack, cover, attack,
+// cover: five of each is a ten-card table with the defender on their last card.
+// No extra seats required.
+//
+// The defender always keeps a card in hand, because a cover that empties it
+// discards the table inline (handle_cover) and there would be nothing left to
+// pick up. Nobody says good, so the all-good transition cannot fire either.
+//
+// Usage: msg_wire_test --fatboard [target] [n_players]
+static void print_fatboard(int target, int np) {
+    static unsigned char body[1024];
+    static Game scratch;
+    static LegalMoves ml;
+
+    for (uint32_t s = 1; s < 4000; s++) {
+        uint8_t seed[MSG_SEED_LEN];
+        seed_fill(seed, 20260821u + s * 97u);
+        game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+        Game g;
+        memset(&g, 0, sizeof(g));
+        g.num_players = (int8_t)np;
+        for (int i = 0; i < np; i++) {
+            g.players[i].status = PLAYER_STATUS_READY;
+            g.players[i].strategy_key = 0;
+            snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
+        }
+        start_game(&g);
+
+        // Attack first, cover when stuck. Single-card attacks only, so the table
+        // grows one slot at a time and lands ON the target instead of stepping
+        // over it.
+        for (int step = 0; step < 200; step++) {
+            int on_table = 0;
+            for (int i = 0; i < g.num_battles; i++) {
+                on_table += 1 + (card_is_none(g.table_battles[i].defense) ? 0 : 1);
+            }
+            if (on_table >= target) break;
+            if (g.status != GAME_STATUS_PLAYING) break;
+
+            const int def = g.defender;
+            int acted = 0;
+            for (int seat = 0; seat < np && !acted; seat++) {
+                if (seat == def || g.players[seat].status != PLAYER_STATUS_IN) continue;
+                calculate_legal_moves(&g, seat, &ml);
+                for (int i = 0; i < ml.n; i++) {
+                    if (ml.moves[i].type != MOVE_ATTACK || ml.moves[i].n_cards != 1) continue;
+                    if (handle_attack(&g, seat, ml.moves[i].cards, 1)) acted = 1;
+                    break;
+                }
+            }
+            if (!acted && g.players[def].hand_count > 1) {
+                calculate_legal_moves(&g, def, &ml);
+                for (int i = 0; i < ml.n; i++) {
+                    if (ml.moves[i].type != MOVE_COVER) continue;
+                    if (handle_cover(&g, def, ml.moves[i].cards,
+                                     ml.moves[i].attack_cards, ml.moves[i].n_cards)) acted = 1;
+                    break;
+                }
+            }
+            if (!acted) break;
+        }
+
+        int on_table = 0, covered = 0;
+        for (int i = 0; i < g.num_battles; i++) {
+            on_table += 1;
+            if (!card_is_none(g.table_battles[i].defense)) { on_table++; covered++; }
+        }
+        // Covered pairs are the point, not a bonus: the pickup sweep's
+        // reconstruction lays one card per slot, so it can only diverge from the
+        // real table where a real pair exists to be split.
+        if (on_table < target || covered < 2) continue;
+        if (g.status != GAME_STATUS_PLAYING) continue;
+
+        MsgEnvelope e;
+        env_init(&e, seed, np);
+        e.phase = MSG_PHASE_LIVE;
+        e.last_actor_seat = (uint8_t)g.defender;
+        if (msg_seal(&e, &g, body, sizeof(body), &scratch) != MSG_EOK) continue;
+        unsigned char wire[ENV_CAP];
+        const int n = msg_encode(&e, wire, sizeof(wire));
+        if (n <= 0) continue;
+
+        fprintf(stderr, "fatboard: %dp seed#%u  %d cards on table (%d covered), "
+                        "defender=seat %d holds %d, turn %d round %d, %d bytes\n",
+                np, s, on_table, covered, g.defender,
+                g.players[g.defender].hand_count, e.turn, e.round, n);
+        for (int i = 0; i < n; i++) printf("%02x", wire[i]);
+        printf("\n");
+        return;
+    }
+    fprintf(stderr, "no %dp deal in 4000 tries reached a %d-card table\n", np, target);
+    exit(1);
+}
+
 static void print_fixtures(void) {
     const int pcs[] = { 2, 3, 4 };
     for (int pi = 0; pi < 3; pi++) {
@@ -989,6 +1094,10 @@ static void print_fixtures(void) {
 
 int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1], "--fixture")) { print_fixtures(); return 0; }
+    if (argc > 1 && !strcmp(argv[1], "--fatboard")) {
+        print_fatboard(argc > 2 ? atoi(argv[2]) : 10, argc > 3 ? atoi(argv[3]) : 2);
+        return 0;
+    }
     const int games = argc > 1 ? atoi(argv[1]) : 20;
     const uint32_t seed0 = argc > 2 ? (uint32_t)strtoul(argv[2], 0, 10) : 20260716u;
 

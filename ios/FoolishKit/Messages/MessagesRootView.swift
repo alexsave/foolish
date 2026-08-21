@@ -35,6 +35,10 @@ public final class CollapseSignal: ObservableObject {
 
 
 public struct MessagesRootView: View {
+    /// Re-render this view when a setting changes (see FPrefs). Only the
+    /// OBSERVATION matters - the strings still come from FStrings.t and the
+    /// table surface still comes from FTextures.
+    @ObservedObject private var prefs = FPrefs.shared
     let payloadURL: URL?
     /// The presentation style of the present() call that BUILT this view. Kept
     /// for host-API symmetry, but round-10 stopped gating any visual on it:
@@ -251,7 +255,7 @@ public struct MessagesRootView: View {
         // so its game state survives a style change; it renders the SAME table in
         // both, just sized to the strip (compact) or full-screen (expanded).
         // The wool is a `.background` on the content — NOT a ZStack sibling. As a
-        // sibling, `WoolBackground().ignoresSafeArea()` expands the stack into the
+        // sibling, `TableBackground().ignoresSafeArea()` expands the stack into the
         // safe areas and `GameSurface` (maxHeight: .infinity) fills THAT taller
         // box, so the hand fan dropped off the bottom edge (cards "barely fit", cut
         // off). As a background the wool extends behind, into the safe area via its
@@ -259,7 +263,7 @@ public struct MessagesRootView: View {
         // content keeps the safe-area height the hand was laid out against and the
         // wool still paints the whole screen. The "wool too short vertically" that
         // remained was the WEAVE IMAGE itself being a fixed size shorter than a
-        // tall expanded surface (WoolWeave), fixed there, not here.
+        // tall expanded surface (TableWeave), fixed there, not here.
         GeometryReader { geo in
             GameSurface(payloadURL: payloadURL, senderIsLocal: senderIsLocal,
                         startNewGame: startNewGame, newGameToken: newGameToken, sentToken: sentToken,
@@ -283,7 +287,7 @@ public struct MessagesRootView: View {
                 // eases down on the host's own curve (see `follow`).
                 .frame(width: geo.size.width,
                        height: boxHeight > 0 ? boxHeight : geo.size.height)
-                .background(WoolBackground())
+                .background(TableBackground())
                 // TOP-anchored through the collapse: the host glues our content
                 // to the drawer's descending top edge, so a box of the drawer's
                 // visible height starting there fills it exactly. Bottom
@@ -491,7 +495,7 @@ private struct GameSurface: View {
     private var diagnosticFailView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Couldn’t open this game").font(FType.title(18)).onWoolText()
+                Text("Couldn’t open this game").font(FType.title(18)).onTableText()
                 FButton(FStrings.t("ios.msg.newgame"), kind: .wood, action: onNewGame)
                 Group {
                     if let e = diagError { Text("ERR: \(e)").foregroundColor(.red) }
@@ -513,13 +517,13 @@ private struct GameSurface: View {
                     }
                 }
                 .font(.system(size: 10, design: .monospaced))
-                .onWoolText()
+                .onTableText()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(WoolBackground().ignoresSafeArea())
+        .background(TableBackground().ignoresSafeArea())
     }
 
     @ViewBuilder private var expandedContent: some View {
@@ -595,9 +599,9 @@ private struct GameSurface: View {
                 // Round-5 M10: full-opacity ink + a LIGHT shadow, not 55%
                 // black — the busy wool weave has no fixed-opacity foreground
                 // that survives it (see the sweep note on DamagedView below).
-                // Round-6 #17 added the weight: `onWoolText` (Tokens.swift).
+                // Round-6 #17 added the weight: `onTableText` (Tokens.swift).
                 Text(FStrings.t("ios.msg.spectating"))
-                    .font(.footnote).onWoolText()
+                    .font(.footnote).onTableText()
                     .multilineTextAlignment(.center).padding(.horizontal).padding(.bottom, 8)
             }
         } else if damaged || diagError != nil {
@@ -611,7 +615,7 @@ private struct GameSurface: View {
             // surface (controller briefly nil), a ProgressView spinner flashed
             // over the wool for a frame or two - the "slight blink". The reload is
             // sub-frame in the common case, so show the steady wool (Color.clear
-            // over GameSurface's WoolBackground) instead of a spinner that
+            // over GameSurface's TableBackground) instead of a spinner that
             // announces the reload. NOTE: the board still tears down and remounts
             // on a live receive (that remount is what drives the incoming-move
             // replay off the view nil->value transition); removing the remount
@@ -677,6 +681,16 @@ private struct GameSurface: View {
     private func load() async {
         AnimLog.say("surface load url=\(payloadURL?.absoluteString.suffix(12) ?? "nil") startNew=\(startNewGame)")
         diagError = nil; diagInfo = ""   // 1.0(6) diagnostic
+        #if DEBUG || SOLO_TESTING
+        // Dev hook (owner: "use build flags to skip the create game / join game /
+        // start game stuff and jump straight to the game state"). With a
+        // `dev.fatboard` file in the App Group, this chain IS the surface: no
+        // setup screen, no lobby, no Start, seated as the DEFENDER so the very
+        // first tap can be Pickup. Compiled out of every Release build; the
+        // chain itself is searched offline by `msg_wire_test --fatboard` — see
+        // MessageDevBoard for why it is a constant and not a search.
+        if await openSeededBoard() { return }
+        #endif
         var incoming: Data?
         if let url = payloadURL {
             do { incoming = try MessageEnvelope.payloadBytes(url: url) }
@@ -716,6 +730,38 @@ private struct GameSurface: View {
             await adopt(winner: payload, env: env)
         }
     }
+
+    #if DEBUG || SOLO_TESTING
+    /// DEV ONLY (`dev.fatboard`): open a canned chain directly, as its defender.
+    /// Returns true when it took over the surface, so `load()` stops.
+    ///
+    /// The seat is the DEFENDER's, resolved from the chain rather than from the
+    /// seat cache or the picker: this board exists to be picked up from, and
+    /// only the defender may do that. That is the "seat yourself as defender"
+    /// half of the owner's instruction, done for you.
+    private func openSeededBoard() async -> Bool {
+        guard let payload = MessageDevBoard.seededPayload else { return false }
+        guard let env = try? await MessageKernel.shared.decode(payload: payload, viewer: -1),
+              let view = await MessageKernel.shared.residentView(viewer: -1),
+              view.defender >= 0 else {
+            AnimLog.say("dev.fatboard present but not a decodable chain - ignoring")
+            return false
+        }
+        // `dev.seat` overrides the chair. Default is the defender's (only they
+        // may pick up); the deal case wants an ATTACKER, since it is an attacker
+        // saying good that closes the bout and deals.
+        let seat = MessageDevBoard.seededSeat.map { max(0, min($0, view.players.count - 1)) }
+            ?? view.defender
+        AnimLog.say("dev.fatboard: seating as \(seat) (defender=\(view.defender)), \(view.battles.count) battles")
+        showSetup = false
+        lobby = nil
+        // `quietOpen`: this is a seeded state, not a move anyone just watched -
+        // opening it must not replay whatever its last action happened to be, or
+        // the film starts with an animation nobody asked for.
+        seatOnBoard(seat: seat, env: env, winner: payload, quietOpen: true)
+        return true
+    }
+    #endif
 
     /// DEV ONLY (HARNESS_AUTOGAME): press the setup/lobby buttons a human would,
     /// so an unattended run can actually reach a board. Lobby v3 put three human
@@ -1103,6 +1149,24 @@ private struct GameSurface: View {
     private func seatOnBoard(seat: Int, env: MessageEnvelope, winner: Data,
                              prevPayload: Data? = nil, quietOpen: Bool = false) {
         cache(seat: seat, env: env, payload: winner)
+        // ROUND 12: same game, same seat, board already up -> hand the new chain
+        // to the LIVE controller instead of replacing it.
+        //
+        // The board is keyed on the controller's identity (`expandedContent`'s
+        // `.id`), so replacing the controller throws the board away and builds a
+        // new one - fresh `@State`, unmeasured geometry, a first paint at
+        // defaults. That teardown is what the owner sees as the board flashing
+        // when a move arrives on an expanded screen. Nothing about an arriving
+        // bubble requires a new board: the seat is the same, the game is the
+        // same, only the chain moved on, and `adopt` moves exactly that.
+        //
+        // A DIFFERENT game (or a different seat in one) still gets a fresh
+        // controller - there the teardown is honest, because it really is a
+        // different board.
+        if let live = controller, live.canAdopt(seat: seat, gameId: env.gameId) {
+            Task { await live.adopt(payload: winner, parent: env, quietOpen: quietOpen) }
+            return
+        }
         controller = MessageTurnController(parentPayload: winner, parent: env, mySeat: seat,
                                            prevPayload: prevPayload,
                                            suppressOpenReplay: quietOpen)
@@ -1194,9 +1258,9 @@ private struct NewGameSetup: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            // Round-6 #17: `onWoolText` (Tokens.swift) is the wool half of
+            // Round-6 #17: `onTableText` (Tokens.swift) is the wool half of
             // the wood/wool text pairing, thickened per the owner's ask.
-            Text(FStrings.t("ios.msg.newgame")).font(.headline).onWoolText()
+            Text(FStrings.t("ios.msg.newgame")).font(.headline).onTableText()
             // Round-7 #1: the "Your name" label is dropped - the field's own
             // "your nickname" placeholder already says what it is, and the two
             // together were redundant. The placeholder carries it alone now.
@@ -1315,6 +1379,10 @@ public enum LobbyControls {
 
 private struct LobbyView: View {
     let env: MessageEnvelope
+    /// Re-render this view when a setting changes (see FPrefs). Only the
+    /// OBSERVATION matters - the strings still come from FStrings.t and the
+    /// table surface still comes from FTextures.
+    @ObservedObject private var prefs = FPrefs.shared
     let mySeat: Int?
     let onJoin: (String) -> Void
     let onStart: () -> Void
@@ -1344,8 +1412,8 @@ private struct LobbyView: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            // Round-6 #17: `onWoolText` (Tokens.swift).
-            Text(FStrings.t("ios.lobby")).font(.headline).onWoolText()
+            // Round-6 #17: `onTableText` (Tokens.swift).
+            Text(FStrings.t("ios.lobby")).font(.headline).onTableText()
             // Joined players only — never env.nPlayers rows: an open lobby has
             // no "open seat" placeholders, because there is no fixed seat count
             // to fill (note 19/25's whole point, unchanged by v3).
@@ -1355,9 +1423,9 @@ private struct LobbyView: View {
                         // Round-5 M10: full-opacity ink + a light shadow, not
                         // 55% black (see DamagedView's sweep note). Round-6
                         // #17 thickened both columns, not just the seat number.
-                        Text("\(j.seat + 1).").onWoolText().monospacedDigit()
+                        Text("\(j.seat + 1).").onTableText().monospacedDigit()
                         Text(j.name + (j.seat == mySeat ? " (\(FStrings.t("ios.you")))" : ""))
-                            .onWoolText()
+                            .onTableText()
                         Spacer()
                     }
                 }
@@ -1414,9 +1482,9 @@ private struct LobbyView: View {
                 // room (M9) — so there is nothing to send, and no Start,
                 // that isn't already mine to wait out. Round-5 M10:
                 // full-opacity ink + a light shadow, not 55% black. Round-6
-                // #17: `onWoolText` (Tokens.swift).
+                // #17: `onTableText` (Tokens.swift).
                 Text(FStrings.t("ios.msg.waiting"))
-                    .font(.footnote).onWoolText()
+                    .font(.footnote).onTableText()
             case .invite:
                     // I'm in, nobody else is yet. This branch used to render
                     // NOTHING — no Start (needs 2), no Join (I'm joined), no
@@ -1432,7 +1500,7 @@ private struct LobbyView: View {
                     // back HERE and only here: re-stage the same WAITING chain
                     // so there is always a way to ask someone to join.
                     Text(FStrings.t("ios.msg.waiting"))    // round-5 M10 / round-6 #17: see .waiting above
-                        .font(.footnote).onWoolText()
+                        .font(.footnote).onTableText()
                     FButton(FStrings.t("ios.msg.invite"), kind: .wood, action: onInvite)
             case .join:
                 // Same width as the buttons below (note 29) — both rely on the
@@ -1459,8 +1527,8 @@ private struct LobbyView: View {
                 }
             case .full:
                 // Round-5 M10: full-opacity ink + a light shadow, not 55%
-                // black. Round-6 #17: `onWoolText` (Tokens.swift).
-                Text(FStrings.t("ios.msg.lobbyfull")).font(.footnote).onWoolText()
+                // black. Round-6 #17: `onTableText` (Tokens.swift).
+                Text(FStrings.t("ios.msg.lobbyfull")).font(.footnote).onTableText()
             }
     }
 
@@ -1512,9 +1580,9 @@ private struct NameGateView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            // Round-6 #17: `onWoolText` (Tokens.swift).
+            // Round-6 #17: `onTableText` (Tokens.swift).
             Text(FStrings.t("ios.msg.nameprompt")).font(.headline)
-                .onWoolText().multilineTextAlignment(.center)
+                .onTableText().multilineTextAlignment(.center)
             // No extra .padding(.horizontal) here — the field and the button below
             // both rely solely on the VStack's outer .padding() so they render the
             // same width (note 29; the field used to be inset twice, making it
@@ -1551,8 +1619,8 @@ private struct SeatPicker: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            // Round-6 #17: `onWoolText` (Tokens.swift).
-            Text(FStrings.t("ios.msg.pickseat")).font(.headline).onWoolText()
+            // Round-6 #17: `onTableText` (Tokens.swift).
+            Text(FStrings.t("ios.msg.pickseat")).font(.headline).onTableText()
             ForEach(0..<nPlayers, id: \.self) { seat in
                 FButton(label(seat), kind: .secondary) { onPick(seat) }
             }
@@ -1614,15 +1682,15 @@ private struct DamagedView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            // Round-6 #17: `onWoolText` (Tokens.swift).
-            Text("Foolish").font(.headline).onWoolText()
+            // Round-6 #17: `onTableText` (Tokens.swift).
+            Text("Foolish").font(.headline).onTableText()
             // Round-5 M10: full-opacity ink + a light shadow, not 55% black —
             // the busy wool weave has no fixed-opacity foreground that
             // survives it (M10's fix, applied throughout this file, mirrors
             // the plank rank column's BONE text on WOOD, which uses a DARK
             // shadow; ink text on the lighter wool needs the inverse, a LIGHT
             // one). Round-6 #17 added the weight both treatments share.
-            Text(FStrings.t("ios.msg.damaged")).font(.footnote).onWoolText()
+            Text(FStrings.t("ios.msg.damaged")).font(.footnote).onTableText()
                 .multilineTextAlignment(.center).padding(.horizontal)
             FButton(FStrings.t("ios.msg.newgame"), kind: .wood, action: onNewGame)
         }
