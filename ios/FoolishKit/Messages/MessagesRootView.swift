@@ -388,6 +388,11 @@ private struct GameSurface: View {
     /// not just the replay code), and the parsed header fields when decode works.
     @State private var diagHex = ""
     @State private var diagInfo = ""
+    /// Round 12: the dump is showing, summoned by a 4-second hold on the gear
+    /// (see `diagnosticPanel`). Deliberately NOT cleared by `reloadForInput`:
+    /// leaving it up across an arriving bubble is the useful case, since the
+    /// fields under it refresh to the message that just landed.
+    @State private var showDiagnostics = false
     /// Round-9: the SURFACE just staged a sendable bubble (create/join/invite/
     /// start) that the human has not sent yet - what the send reminder shows
     /// for on the lobby screens, and (via `alsoStaged`) on the starter's
@@ -415,6 +420,10 @@ private struct GameSurface: View {
         // board's @State + .task survive the expanded<->compact toggle.
         expandedContent
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Round 12: the hold-summoned dump rests on top of whatever is
+            // showing - board, lobby or setup - and nothing underneath it
+            // changes. Above `fToast` so a toast cannot land on top of it.
+            .overlay { if showDiagnostics { diagnosticPanel } }
             .fToast($toast)
             // The setup/lobby Settings + Help squares present these — same
             // sheets as the board's own pair (MessageTableView).
@@ -497,27 +506,7 @@ private struct GameSurface: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Couldn’t open this game").font(FType.title(18)).onTableText()
                 FButton(FStrings.t("ios.msg.newgame"), kind: .wood, action: onNewGame)
-                Group {
-                    if let e = diagError { Text("ERR: \(e)").foregroundColor(.red) }
-                    // The version fields: FMSG format byte (byte 1), flags byte
-                    // (byte 2 - 0x04 = 1.0(3) passing bit), the URL text version,
-                    // and the replay-body ENCODING version (5/6/7 - the real
-                    // cross-version signal).
-                    if !diagHex.isEmpty {
-                        Text("VER msgFmt=0x\(diagHex.dropFirst(2).prefix(2)) flags=0x\(diagHex.dropFirst(4).prefix(2)) urlVer=\(payloadURL?.pathComponents.last?.first.map(String.init) ?? "?")")
-                    }
-                    if !diagInfo.isEmpty { Text("env: \(diagInfo)") }
-                    if !diagHex.isEmpty {
-                        Text("HEX (\(diagHex.count / 2) bytes):")
-                        Text(diagHex).textSelection(.enabled)
-                    }
-                    if let u = payloadURL?.absoluteString {
-                        Text("URL:")
-                        Text(u).textSelection(.enabled)
-                    }
-                }
-                .font(.system(size: 10, design: .monospaced))
-                .onTableText()
+                diagnosticDump
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding()
@@ -526,13 +515,113 @@ private struct GameSurface: View {
         .background(TableBackground().ignoresSafeArea())
     }
 
+    /// The dump itself, with no framing of its own — ONE version of these
+    /// fields, shown both by the failure screen above and by the hold-summoned
+    /// panel below, so the two can never drift into disagreeing about what a
+    /// message contains.
+    @ViewBuilder private var diagnosticDump: some View {
+        let hex = dumpHex
+        let url = dumpURL
+        Group {
+            if let e = diagError { Text("ERR: \(e)").foregroundColor(.red) }
+            // The version fields: FMSG format byte (byte 1), flags byte
+            // (byte 2 - 0x04 = 1.0(3) passing bit), the URL text version,
+            // and the replay-body ENCODING version (5/6/7 - the real
+            // cross-version signal).
+            if !hex.isEmpty {
+                Text("VER msgFmt=0x\(hex.dropFirst(2).prefix(2)) flags=0x\(hex.dropFirst(4).prefix(2)) urlVer=\(url?.pathComponents.last?.first.map(String.init) ?? "?")")
+            }
+            if let c = controller {
+                Text("seat \(c.mySeat) · \(c.pending.count) staged\(c.isGenesis ? " · genesis" : "")")
+            }
+            if !diagInfo.isEmpty { Text("opened: \(diagInfo)") }
+            if !hex.isEmpty {
+                Text("HEX (\(hex.count / 2) bytes):")
+                Text(hex).textSelection(.enabled)
+            }
+            if let u = url?.absoluteString {
+                Text("URL:")
+                Text(u).textSelection(.enabled)
+            }
+        }
+        .font(.system(size: 10, design: .monospaced))
+        .onTableText()
+    }
+
+    /// The chain to dump: the one the board is ACTUALLY on, not the one the
+    /// surface happened to load from.
+    ///
+    /// They diverge routinely. An arrival is folded into the live controller
+    /// without ever becoming `selectedMessage`, so `payloadURL` - and with it
+    /// the `diagHex` captured at load - still describes the bubble the human
+    /// last tapped, possibly several moves ago. A dump that reports that is
+    /// worse than no dump: it answers a question about the wrong message while
+    /// looking authoritative. `basePayload` is the controller's own adopted
+    /// chain, so it moves with every adopt. Falls back to the load-time capture
+    /// when there is no controller, which is exactly the damaged case the
+    /// failure screen covers.
+    private var dumpHex: String {
+        guard let p = controller?.basePayload else { return diagHex }
+        return p.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private var dumpURL: URL? {
+        guard let p = controller?.basePayload else { return payloadURL }
+        return MessageEnvelope.link(payload: p)
+    }
+
+    /// ROUND 12 (owner): "I know we have like a last message diagnostics view
+    /// that is not enabled. How about this though - if you hold the settings
+    /// button for 4 seconds, it pops up. And if you tap again it goes away."
+    ///
+    /// The dump used to be reachable only by FAILING to open a bubble, which is
+    /// exactly when you cannot ask it about a bubble that opened fine. This is
+    /// the same fields, on demand, over whatever is on screen.
+    ///
+    /// Not DEBUG-gated on purpose: its whole value is reading the real bytes of
+    /// a real message on a real phone, in the build that shipped. A four-second
+    /// hold on an unlabelled square is not something a player finds by accident,
+    /// and what it shows is the reader's own game.
+    ///
+    /// It floats OVER the surface rather than replacing it, so summoning it
+    /// never disturbs the board underneath: no reload, no teardown, and the
+    /// staged bubble is exactly where it was when you dismiss.
+    private var diagnosticPanel: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Last message").font(FType.title(16)).onTableText()
+                diagnosticDump
+                if dumpHex.isEmpty && diagInfo.isEmpty && diagError == nil {
+                    // Reached from the setup screen, or after a New game tap:
+                    // there is no message behind this surface to dump. Say so
+                    // rather than showing an empty panel that reads as broken.
+                    Text("no message open").font(.system(size: 10, design: .monospaced))
+                        .onTableText()
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Nearly opaque, not fully: enough of the board shows through to make
+        // it obvious this is a panel resting on top of a game, not a screen the
+        // extension has navigated to.
+        .background(TableBackground().opacity(0.97).ignoresSafeArea())
+        // "Tap again it goes away" - anywhere, since the panel covers the gear
+        // that summoned it. `contentShape` so the gaps between the lines are
+        // dismissible too, not just the text.
+        .contentShape(Rectangle())
+        .onTapGesture { showDiagnostics = false }
+    }
+
     @ViewBuilder private var expandedContent: some View {
         if let controller {
             MessageTableView(controller: controller,
                              onSend: { payload, fromUndo in await onSend(payload, controller.mySeat, fromUndo) },
                              onNewGame: onNewGame,
                              onUnstage: onUnstage,
-                             alsoStaged: surfaceStaged)
+                             alsoStaged: surfaceStaged,
+                             onDiagnostics: { showDiagnostics = true })
                 // 1.0(4) live-receive blink: a received bubble reloads the surface
                 // with a NEW controller. Tying the board's identity to the
                 // controller INSTANCE (not just the `if let` slot) means a reload
@@ -636,7 +725,8 @@ private struct GameSurface: View {
     /// opens, so in practice it read as removed.
     private var settingsHelpCorner: some View {
         SettingsHelpSquares(onSettings: { showSettings = true },
-                            onHelp: { showRules = true })
+                            onHelp: { showRules = true },
+                            onDiagnostics: { showDiagnostics = true })
             .padding(.leading, 4)
             .padding(.bottom, 4)
     }

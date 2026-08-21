@@ -40,6 +40,11 @@ public struct MessageTableView: View {
     /// pending, but the bubble still needs Messages' Send). Feeds the send
     /// reminder alongside `controller.canSend`.
     private let alsoStaged: Bool
+    /// Round 12: hold the gear for 4 seconds to raise the last-message dump.
+    /// The dump's fields live on the SURFACE (it owns the payload bytes and the
+    /// decode result), so the board only reports the gesture; see
+    /// `MessagesRootView.diagnosticPanel`.
+    private let onDiagnostics: () -> Void
 
     @State private var selection: Set<String> = []
     @State private var toast: String?
@@ -250,12 +255,13 @@ public struct MessageTableView: View {
 
     public init(controller: MessageTurnController, onSend: @escaping (Data, Bool) async -> Void,
                 onNewGame: @escaping () -> Void = {}, onUnstage: @escaping () -> Void = {},
-                alsoStaged: Bool = false) {
+                alsoStaged: Bool = false, onDiagnostics: @escaping () -> Void = {}) {
         self.controller = controller
         self.onSend = onSend
         self.onNewGame = onNewGame
         self.onUnstage = onUnstage
         self.alsoStaged = alsoStaged
+        self.onDiagnostics = onDiagnostics
     }
 
     public var body: some View {
@@ -2134,7 +2140,8 @@ public struct MessageTableView: View {
     /// buttons) — Settings and Help are always available while playing.
     private var settingsHelpBar: some View {
         SettingsHelpSquares(onSettings: { showSettings = true },
-                            onHelp: { showRules = true })
+                            onHelp: { showRules = true },
+                            onDiagnostics: onDiagnostics)
     }
 
     private func actionBar(_ view: GameView) -> some View {
