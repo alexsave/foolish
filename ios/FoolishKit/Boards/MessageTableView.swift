@@ -116,11 +116,10 @@ public struct MessageTableView: View {
     /// both places); the table copy must stay VISIBLE until its own flight, which
     /// only this set governs.
     @State private var sweptFlownIds: Set<String> = []
-    /// The board's live collapse fraction (0 expanded, 1 compact), mirrored from
-    /// `boardContent` so a flight builder - which runs OUTSIDE the geometry reader
-    /// - can compute a hand card's final slot at the current crop (see
-    /// `handLandingSlot`). Updated as the drawer height changes.
-    @State private var currentCollapse: CGFloat = 0
+    /// Round-11: there is no live crop any more, and therefore no mirrored
+    /// collapse fraction. The hand's geometry is the SAME at every drawer
+    /// height (see `boardContent`'s `handCrop`), so a flight builder running
+    /// outside the geometry reader can just ask for the one layout.
     /// Round-7 ("buttons should NEVER float"): the hand's reserved height, MIRRORED
     /// out of `boardContent` into plain @State via `.onChange`. The action bar and
     /// self-role mark float a fixed gap above the hand, so their bottom padding is
@@ -313,7 +312,8 @@ public struct MessageTableView: View {
                 let display = FHandFan.displayOrder(
                     cards: hand,
                     order: MessageGameStore.shared.handOrder(gameId: controller.gameIdString))
-                let rects = FHandFan.slotRects(cards: display, width: handFrame.width, crop: currentCollapse)
+                let rects = FHandFan.slotRects(cards: display, width: handFrame.width,
+                                               crop: Self.handCrop)
                 var worst = 0.0, worstId = ""
                 for c in hand {
                     guard let a = rects[c.identity]?.offsetBy(dx: handFrame.minX, dy: handFrame.minY),
@@ -322,7 +322,7 @@ public struct MessageTableView: View {
                     if d > worst { worst = d; worstId = c.identity }
                 }
                 if worst > 2 {
-                    AnimLog.say("SLOTCHECK MISMATCH n=\(hand.count) worst=\(String(format: "%.1f", worst))pt @\(worstId) collapse=\(String(format: "%.2f", currentCollapse))")
+                    AnimLog.say("SLOTCHECK MISMATCH n=\(hand.count) worst=\(String(format: "%.1f", worst))pt @\(worstId)")
                 }
             }
             #endif
@@ -508,17 +508,10 @@ public struct MessageTableView: View {
     /// move" label that ate layout) marks that I must open the bout.
     private func boardContent(_ view: GameView) -> some View {
         GeometryReader { geo in
-            // Round-6 bugs 2/4: what USED to be a binary `geo.size.height < 340`
-            // cliff — every compact-derived quantity flipping in one frame as the
-            // drawer crossed that single height — is now a CONTINUOUS collapse
-            // fraction (0 = fully expanded, 1 = fully compact drawer). The hand's
-            // card crop, the role mark / action bar offsets, and the opponent ring
-            // radius are all smooth functions of THIS, so the self hand descends
-            // gradually and its companions track it as the drawer height changes
-            // (whether the human drags the grabber — bug 4 — or the staged
-            // auto-collapse animates the height down — bug 2). The old single-
-            // instant flip is what "snapped" then; nothing about the RESTING
-            // compact/expanded look changes, only the transit between them.
+            // The board's live collapse fraction (0 = expanded, 1 = fully compact
+            // drawer). Round-11 narrowed what this may drive: it gates the send
+            // hint and widens the opponent ring, and that is ALL. Nothing that
+            // positions the hand or the chrome may read it - see `handCrop`.
             let collapse = Self.collapseFraction(height: geo.size.height)
             let myHand = view.me?.hand ?? []
             // The width FHandFan itself actually lays out in: this reader's
@@ -529,12 +522,9 @@ public struct MessageTableView: View {
             // `handSlotDeferred`). Room is reserved off THIS, so an incoming
             // card's width is not reserved until its own flight opens the slot.
             let deferredSlots = handSlotDeferred
-            // The hand's on-screen height at this collapse fraction (one
-            // cropped/uncropped row, or two once M6 splits it). The self-role
-            // indicator and action bar float a fixed gap ABOVE this, so driving
-            // their offset off it is what makes them descend WITH the hand as it
-            // crops down (bug 4) instead of hanging at a fixed spot the shrinking
-            // hand pulls away from.
+            // The hand's on-screen height (one row, or two once M6 splits it).
+            // The self-role indicator and action bar float a fixed gap ABOVE
+            // this, so a hand that grows to two rows pushes them up with it.
             //
             // Round-7 ("buttons should not move"): measured off the FULL `myHand`,
             // NOT `laidOutHand`. A deal/pickup adds cards that land one at a time
@@ -543,10 +533,9 @@ public struct MessageTableView: View {
             // buttons visibly FLOATED UP as the cards arrived. `myHand` is already
             // the FINAL hand the instant the move applies, so the buttons sit at
             // their final spot from the start and the incoming cards fill UP toward
-            // them - the hand makes room, the buttons hold still. Still a pure
-            // function of crop + the final card count, so the compact-drawer
-            // descent (bug 4) is unchanged.
-            let handHeight = FHandFan.height(cards: myHand, availableWidth: handWidth, crop: collapse)
+            // them - the hand makes room, the buttons hold still.
+            let handHeight = FHandFan.height(cards: myHand, availableWidth: handWidth,
+                                             crop: Self.handCrop)
             // The buttons/role mark ride THIS, mirrored out via `.onChange` below so
             // their movement is a snap, never the board spring (see `buttonLift`).
             // Until the first mirror lands (-1) they read `handHeight` directly, so a
@@ -554,6 +543,16 @@ public struct MessageTableView: View {
             let lift = buttonLift < 0 ? handHeight : buttonLift
             ZStack {
                 // Battles — dead centre of the board (web: absolute, both axes).
+                //
+                // Round-11, filmed on an iPhone SE: in that 262pt drawer the
+                // played card overlaps the chrome, because a board centred in
+                // its whole height has nowhere to put a battle once a deck row,
+                // a chrome row and a full-height hand are in. Centring it in the
+                // free band instead (below the deck, above the chrome) fixes the
+                // small phone but lifts the table ~30pt on every other one, and
+                // the owner's call is that the SE crop is acceptable for now:
+                // "an iPhone SE is so small, collision is fine". Left dead
+                // centre deliberately, not by omission.
                 battlesArea(view)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -668,7 +667,7 @@ public struct MessageTableView: View {
 
                 // My hand hugs the bottom (web: bottom max(10, safe-area)); the
                 // outer .padding(12) is the safe-area inset that keeps it unclipped.
-                hand(view, crop: collapse, reserveNoSlot: deferredSlots)
+                hand(view, crop: Self.handCrop, reserveNoSlot: deferredSlots)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
 
                 // Round-8 #3 / round-9: the staged-but-unsent reminder - a blue
@@ -715,18 +714,16 @@ public struct MessageTableView: View {
                     dragHint(view).position(x: at.x, y: at.y)
                 }
             }
-            // Mirror the live collapse fraction out to a flight builder, which runs
-            // outside this reader and needs it to compute a hand card's final slot.
-            .onChange(of: collapse) { currentCollapse = $0 }
             // Mirror the hand height out to `buttonLift` so the buttons SNAP to it
             // (this callback runs in its own no-animation transaction) instead of
-            // floating on the board spring. Logged so a device trace shows exactly
-            // when and why the reserved height moves - the "button floats up" report.
+            // floating on the board spring. Since round-11 this only ever fires on
+            // a ROW-COUNT change - the drawer height no longer enters it - so the
+            // log line is now the whole story of why the chrome ever moves.
             .onChange(of: handHeight) {
-                AnimLog.say("handHeight \(Int(buttonLift))->\(Int($0)) cards=\(myHand.count) rows=\(FHandFan.rowCount(cards: myHand, availableWidth: handWidth)) collapse=\(String(format: "%.2f", collapse))")
+                AnimLog.say("handHeight \(Int(buttonLift))->\(Int($0)) cards=\(myHand.count) rows=\(FHandFan.rowCount(cards: myHand, availableWidth: handWidth))")
                 buttonLift = $0
             }
-            .onAppear { currentCollapse = collapse; buttonLift = handHeight }
+            .onAppear { buttonLift = handHeight }
         }
     }
 
@@ -775,19 +772,50 @@ public struct MessageTableView: View {
                        y: y - dragHintLift >= dragHintMinY ? y - dragHintLift : y + dragHintLift)
     }
 
+    /// How much of each hand card the board hides off the bottom. A CONSTANT,
+    /// and the reason it is one is round-11.
+    ///
+    /// This used to be the live `collapseFraction`: the compact drawer showed
+    /// the top half of every card (crop 1), the expanded board the whole card
+    /// (crop 0). That is a 36pt change in the hand's reserved height, and it
+    /// bought the compact drawer 36pt of table - but it is ALSO, measurably,
+    /// every vertical defect the owner reported in the collapse:
+    ///
+    /// * The hand LANDED SOMEWHERE ELSE. A cropped card is drawn full height,
+    ///   top-aligned in a half-height slot, so cropping slides the cards down
+    ///   past their own container. Filmed: the hand's top edge rested at y=760
+    ///   expanded and y=791 compact.
+    /// * The chrome landed somewhere else too, in the other direction. The
+    ///   buttons float `handHeight` above the board's bottom, so a hand that
+    ///   reserves 36pt less pulls them down 36pt - reading as the buttons and
+    ///   the hand drifting APART across the transition.
+    /// * The BOUNCE. The host does not hand us a monotone height ramp; it
+    ///   re-lays the board out at whatever intermediate (and out-of-order)
+    ///   sizes the drawer animation passes through - one filmed collapse
+    ///   reported 748, 315, 307, 778, 758, 253, 315. Every one of those was a
+    ///   different crop, so the hand and the chrome chased the noise, under the
+    ///   card spring, and rang: the hand's top edge went 807, 763, 767, 776,
+    ///   790, 793, 787, 790 before settling.
+    ///
+    /// Pinning the crop makes all three impossible rather than smaller: the
+    /// hand and the chrome now have geometry that does not mention the drawer
+    /// height at all, so there is nothing to interpolate, nothing to ring, and
+    /// the resting expanded and compact layouts are the same layout. The
+    /// compact drawer pays 36pt of table for it. `FHandFan` keeps the crop
+    /// parameter (it is tested, and a short drawer is exactly the case it was
+    /// built for) - this board simply no longer drives it from live geometry.
+    static let handCrop: CGFloat = 0
+
     /// The board's CONTINUOUS collapse fraction from its own height: 0 at/above
     /// `expandedAnchor` (the resting expanded board), 1 at/below `compactAnchor`
-    /// (the resting compact drawer), linearly ramped between. Every compact-
-    /// derived quantity in `boardContent`/`ringPoint` reads THIS instead of the
-    /// old `height < 340` cliff, so each is a smooth function of the drawer
-    /// height — the fix for round-6 bugs 2 and 4 (a manual grabber-drag OR the
-    /// staged auto-collapse now TWEENS the layout down as the height animates
-    /// instead of every quantity flipping in one frame at a single height). The
-    /// anchors are chosen so BOTH resting states saturate: `compactAnchor` is the
-    /// old 340 cliff, which that binary test proved the compact drawer always
-    /// sits below (so it -> 1 at rest), and the near-full-screen expanded board
-    /// is always well above 440 (so it -> 0 at rest). Only the transit between
-    /// the two is now a ramp; neither resting look changes.
+    /// (the resting compact drawer), linearly ramped between. What may read it
+    /// is now deliberately small - the send hint's visibility and the opponent
+    /// ring's radius - because anything that POSITIONS something off the live
+    /// drawer height inherits the noise described on `handCrop`. The anchors are
+    /// chosen so both resting states saturate: `compactAnchor` is the old
+    /// `height < 340` cliff, which that binary test proved the compact drawer
+    /// always sits below (so it -> 1 at rest), and the near-full-screen expanded
+    /// board is always well above 440 (so it -> 0 at rest).
     static func collapseFraction(height: CGFloat) -> CGFloat {
         let compactAnchor: CGFloat = 340
         let expandedAnchor: CGFloat = 440
@@ -1542,7 +1570,7 @@ public struct MessageTableView: View {
     /// live frame / a rough spread).
     private func handLandingSlot(_ card: Card, laidOut: [Card]) -> CGRect? {
         guard handFrame != .zero else { return nil }
-        let rects = FHandFan.slotRects(cards: laidOut, width: handFrame.width, crop: currentCollapse)
+        let rects = FHandFan.slotRects(cards: laidOut, width: handFrame.width, crop: Self.handCrop)
         guard let local = rects[card.identity] else { return nil }
         return local.offsetBy(dx: handFrame.minX, dy: handFrame.minY)
     }
