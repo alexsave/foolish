@@ -592,54 +592,84 @@ public struct MessageTableView: View {
                     .offset(y: -3)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 
-                // Round-10f (owner: "can you make the action buttons and
-                // settings rulebook boxes move similar to the self player
-                // cards"): the role mark, the control row and the hand are now
-                // ONE bottom-anchored stack, so the two button groups are
-                // glued directly above the hand and inherit its motion exactly
-                // - no mirrored `lift`, no padding arithmetic, no animation
-                // overrides. Every previous round positioned them by floating
-                // them `lift + n` above the board's bottom, which is why they
-                // could travel differently from the cards during a collapse:
-                // `lift` is a MIRRORED @State (updated by an onChange, so a
-                // frame behind) and the overrides made them snap to it while
-                // the hand animated smoothly. Filmed: the hand held its line
-                // while the row swung ~220pt. Stacked, they cannot.
-                //
-                // The role mark sits centred BETWEEN the two 96-wide groups
-                // (the squares span 40 + 16 + 40 = 96, one action-button
-                // width, which is what makes the left group the mirror of the
-                // right); the action column is given that same width so the
-                // mark stays centred even when no action pill is showing.
-                VStack(spacing: 4) {
-                    HStack(alignment: .bottom, spacing: 0) {
-                        settingsHelpBar
-                        Spacer(minLength: 0)
-                        actionBar(view)
-                    }
-                    .padding(.horizontal, 4)
-                    // The role mark is an OVERLAY, not a stack child, so it
-                    // stays centred on the BOARD however wide the two groups
-                    // are (as a child between two Spacers it drifted ~48pt
-                    // right of centre whenever the action column was empty).
-                    .overlay { selfRoleIndicator(view) }
-                    // Nothing inside the row may be interpolated. A pill that
-                    // appears (Attack -> Undo at the staging frame) must simply
-                    // BE there: filmed without this, the Undo pill flew into
-                    // the row from ~240pt above over ~7 frames while the row
-                    // itself sat still. FActionBar's own `.transaction` sits
-                    // below the row's layout, so it cannot stop that; this can.
-                    // Scoped to the row alone, so the hand below keeps its own
-                    // motion - which is what the row now inherits by being
-                    // stacked on top of it.
+                // Self role indicator: the local seat never got a role mark before
+                // (note 3) — only opponents (FSeatBadge) did. Same spot the old
+                // first-attacker-only sword used: just above my hand.
+                selfRoleIndicator(view)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .padding(.bottom, lift + 6)
+                    // Round-7 ("buttons should NEVER move / float"): isolate this
+                    // from the board's card spring. The ancestor animates on
+                    // `.animation(cardMotion, value: controller.view)`; the correct
+                    // override is a NESTED `.animation(nil, value: controller.view)`
+                    // - same trigger value, innermost wins - NOT a `.transaction`
+                    // (which does not reliably beat a scoped value-animation, the
+                    // reason the earlier transaction fix let the role mark still
+                    // drift) and NOT keying on `handHeight` (the wrong value - the
+                    // change rides controller.view). Position now also snaps because
+                    // it reads the mirrored `lift`, not the springy `handHeight`.
+                    .animation(nil, value: controller.view)
+
+                // Action buttons float bottom-right, above the hand (web absolute
+                // bottom:90/right:20). They only appear when a flag enables them.
+                actionBar(view)
+                    // A CONSTANT, always-present, fixed-size container (owner:
+                    // "the action column CONTAINER could be a constant always
+                    // present fixed size view... just reserve enough height for
+                    // two"): the column's own geometry then never changes as
+                    // pills come and go, so it has nothing to interpolate and
+                    // behaves like the settings squares. Two pills is the
+                    // deepest the board can ever show - a defender holding a
+                    // selection that is both a legal cover and a legal pass -
+                    // so 40 + 8 + 40 = 88, bottom-anchored, and a second pill
+                    // grows upward into reserved space instead of moving the
+                    // first one.
+                    .frame(width: 128, height: 88, alignment: .bottomTrailing)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .padding(.trailing, 4).padding(.bottom, lift + 4)
+                    .animation(nil, value: controller.view)   // never float the buttons — see the role mark above
+                    // Round-10g, and the ONLY change to a collapse the owner
+                    // otherwise signed off on ("make it like that but JUST fix
+                    // the undo button"): the pill must not be INTERPOLATED.
+                    // This column is the one piece of chrome whose CONTENT
+                    // changes at the staging frame (Attack -> Undo), and a
+                    // newly-inserted pill had its position animated by whatever
+                    // transaction was in flight - the collapse's own
+                    // `withAnimation`. Measured off the film: Undo appeared
+                    // ~295pt above its slot and flew down over ~7 frames while
+                    // the settings squares - a CONSTANT view, nothing to insert
+                    // - sat still. `.animation(nil, value:)` above cannot stop
+                    // that (it only covers changes driven by `controller.view`)
+                    // and FActionBar's own `.transaction` sits BELOW this
+                    // placement, so it cannot either. Here it can, and it
+                    // touches nothing else: the squares, the role mark, the
+                    // hand and the board's collapse are exactly as they were.
                     .transaction { $0.animation = nil }
 
-                    // My hand hugs the bottom (web: bottom max(10, safe-area));
-                    // the outer .padding(12) is the safe-area inset that keeps
-                    // it unclipped.
-                    hand(view, crop: collapse, reserveNoSlot: deferredSlots)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                // 1.0(4): Settings + Rulebook squares, MIRRORING the action
+                // column on the LEFT. Same 40pt height as the action pills,
+                // square, at the same bottom line (lift + 4) and the SAME 16pt
+                // edge inset (4 outer + FSpace.m inner, exactly like actionBar's
+                // trailing). The two squares + their gap span one action-button
+                // width (40 + 16 + 40 = 96), so the left group is the mirror of
+                // the right one. Round-9 (owner: "we need to bring them back"):
+                // ALWAYS visible - the old collapse fade hid them in the compact
+                // drawer, which is where most play happens, so in practice the
+                // pair read as removed. The board spring never floats them.
+                undoSlot
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .padding(.trailing, 20).padding(.bottom, lift + 4)
+                    .animation(nil, value: controller.view)
+
+                settingsHelpBar
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                    .padding(.leading, 4).padding(.bottom, lift + 4)
+                    .animation(nil, value: controller.view)
+
+                // My hand hugs the bottom (web: bottom max(10, safe-area)); the
+                // outer .padding(12) is the safe-area inset that keeps it unclipped.
+                hand(view, crop: collapse, reserveNoSlot: deferredSlots)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
 
                 // Round-8 #3 / round-9: the staged-but-unsent reminder - a blue
                 // arrow bobbing under Messages' own Send button (in the compose
@@ -1973,26 +2003,59 @@ public struct MessageTableView: View {
             canPickup: defending && !view.battles.isEmpty && cards.isEmpty
                 && !(view.me?.isOut ?? false) && !controller.canSend,
             canDone: acting && CardPlay.canSayGood(battles: view.battles, legal: controller.legal) && cards.isEmpty,
-            canUndo: controller.canSend,
+            canUndo: false,   // the board draws its own - see `undoSlot`
             onAttack: { playAt(.table, cards, view) },
             onCover: { playCover(cards, view) },
             onPass: { playAt(.table, cards, view) },
             onPickup: { play(.pickup) },
             onDone: { play(.good) },
-            onUndo: { Task {
-                await controller.undo()
-                // Undo that still has staged moves re-stages the shorter chain
-                // (replaces the input bubble). Undo that empties `pending` must
-                // CANCEL the staged move: Apple offers no API to remove an
-                // inserted bubble, so on a continuation we overwrite it with the
-                // base (received) state — the undone move can then no longer be
-                // sent. A genesis with no move left is not sealable, so there we
-                // can only retract our own bookkeeping (`onUnstage`).
-                if controller.canStage { await stageNow() }
-                else if controller.isContinuation { await stageBaseNow() }
-                else { onUnstage() }
-            } }
+            onUndo: { undoAction() }
         )
+    }
+
+    /// Un-stage the staged move. Shared by the Undo pill (below) and, for the
+    /// offline board, FActionBar's own Undo.
+    ///
+    /// Undo that still has staged moves re-stages the shorter chain (replaces
+    /// the input bubble). Undo that empties `pending` must CANCEL the staged
+    /// move: Apple offers no API to remove an inserted bubble, so on a
+    /// continuation we overwrite it with the base (received) state - the undone
+    /// move can then no longer be sent. A genesis with no move left is not
+    /// sealable, so there we can only retract our own bookkeeping (`onUnstage`).
+    private func undoAction() {
+        Task {
+            await controller.undo()
+            if controller.canStage { await stageNow() }
+            else if controller.isContinuation { await stageBaseNow() }
+            else { onUnstage() }
+        }
+    }
+
+    /// The Undo pill, built and placed EXACTLY like `settingsHelpBar`: a
+    /// constant, always-present, fixed-size slot that the button merely appears
+    /// INSIDE of.
+    ///
+    /// Round-10g (owner: "literally just take whatever you do to the settings
+    /// button and do it to the undo button"). Undo used to live in FActionBar's
+    /// VStack, whose height and membership change the instant a move is staged
+    /// (Attack disappears, Undo appears) - so the pill was INSERTED into a
+    /// column that was itself resizing, and SwiftUI animated its position from
+    /// wherever the old layout put it. Filmed repeatedly: Undo appearing ~280pt
+    /// above its slot and flying down over ~7 frames while the settings squares
+    /// - which are always there, at a fixed size - never moved a pixel.
+    /// Neither `.animation(nil, value:)`, nor `.transaction { animation = nil }`
+    /// on the placement, nor a fixed box around the whole column stopped it;
+    /// not inserting anything does. Undo and the play buttons are mutually
+    /// exclusive by construction (every play button is gated on `!canSend`,
+    /// Undo on `canSend`), so hoisting it out of the column changes no layout.
+    private var undoSlot: some View {
+        ZStack {
+            if controller.canSend {
+                FButton(FStrings.t("ios.msg.undo"), kind: .wood, compact: true,
+                        fixedWidth: 96, action: undoAction)
+            }
+        }
+        .frame(width: 96, height: 40)
     }
 
     /// - `crop` (round-5 M5b, made continuous in round-6): how much of each hand
