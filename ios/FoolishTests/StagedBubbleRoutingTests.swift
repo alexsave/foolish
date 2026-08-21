@@ -96,4 +96,37 @@ final class StagedBubbleRoutingTests: XCTestCase {
                                                    lastSentPayload: mine),
             theirs, "a bubble I did not send is a real new selection")
     }
+
+    /// ROUND 12 #11 (owner: "sometimes animation replays when the bubble is
+    /// sent - I saw this for an attack"). An ARRIVAL can be mine too: the
+    /// simulator loops a sent bubble back to its sender, and a second device on
+    /// the same iCloud account does it for real. Threaded on as new, the surface
+    /// adopts it and arms the open-replay for MY OWN last move - filmed at
+    /// 30fps, the card the player just played vanishes from the table the
+    /// instant Send lands, and the attack animates again when the arming runs.
+    ///
+    /// `isMine` is what `didReceive` asks before threading anything on. It must
+    /// recognise BOTH windows - staged-but-unsent, and already-sent - and must
+    /// not swallow a genuine arrival, which would freeze the game.
+    func testMyOwnChainIsRecognisedAsMineInBothWindows() {
+        let staged = Data([9, 8, 7])
+        let sent = Data([4, 4, 4, 4])
+        let theirs = Data([1, 2, 3])
+
+        XCTAssertTrue(StagedBubbleRouting.isMine(staged, pendingStage: staged,
+                                                 lastSentPayload: nil),
+                      "the bubble still in the input field is mine")
+        XCTAssertTrue(StagedBubbleRouting.isMine(sent, pendingStage: nil,
+                                                 lastSentPayload: sent),
+                      "the bubble I already sent is mine")
+        XCTAssertFalse(StagedBubbleRouting.isMine(theirs, pendingStage: staged,
+                                                  lastSentPayload: sent),
+                       "an opponent's move must still arrive, or the game freezes")
+        XCTAssertFalse(StagedBubbleRouting.isMine(nil, pendingStage: staged,
+                                                  lastSentPayload: sent),
+                       "an undecodable arrival is nobody's chain, least of all mine")
+        XCTAssertFalse(StagedBubbleRouting.isMine(theirs, pendingStage: nil,
+                                                  lastSentPayload: nil),
+                       "with nothing staged or sent, nothing is mine")
+    }
 }

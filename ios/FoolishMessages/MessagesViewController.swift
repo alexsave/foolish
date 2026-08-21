@@ -78,6 +78,18 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// and GameSurface adopts it only if it strictly out-ranks what is showing.
     /// A fresh receive cancels any half-started New game.
     override func didReceive(_ message: MSMessage, conversation: MSConversation) {
+        // ROUND 12 #11: an arrival that IS my own chain is not an arrival.
+        // Messages delivers a sent bubble back to its sender on the simulator,
+        // and to a second device on the same iCloud account for real. Threaded
+        // on as new, the surface adopts it and arms the open-replay for the move
+        // I just made - so the card I played vanishes under the veil and the
+        // attack animates again. The live board already holds this exact chain
+        // (these are the bytes it sealed), so there is nothing to fold in:
+        // dropping it is not a shortcut, it is the whole of the correct action.
+        // See StagedBubbleRouting.isMine.
+        if StagedBubbleRouting.isMine(Self.payload(of: message),
+                                      pendingStage: pendingStage?.payload,
+                                      lastSentPayload: lastSentPayload) { return }
         startingNewGame = false
         incomingURL = message.url
         incomingToken += 1
@@ -89,8 +101,16 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// a chain was actually sent — insert alone is not a commit.
     override func didStartSending(_ message: MSMessage, conversation: MSConversation) {
         startingNewGame = false
-        lastSentPayload = pendingStage?.payload
-        commitPendingStage(chatKey: ChatKey.make(
+        // ROUND 12 #11: the chain being sent comes from the MESSAGE Messages
+        // hands us, not from our own `pendingStage` bookkeeping. They are
+        // normally the same bytes, but `pendingStage` can be gone by now (an
+        // extension torn down between insert and send; a cancel report for a
+        // bubble we already replaced), and when it is, the quiet-open marker
+        // below was never written - so reopening my own sent chain replayed the
+        // move I had just watched. The message is always authoritative.
+        let sent = Self.payload(of: message) ?? pendingStage?.payload
+        lastSentPayload = sent
+        commitPendingStage(sent: sent, chatKey: ChatKey.make(
             local: conversation.localParticipantIdentifier.uuidString,
             remotes: conversation.remoteParticipantIdentifiers.map(\.uuidString)))
         // Round-6 bug 4: signal the live board that its staged move is now sent, so
@@ -115,6 +135,14 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// so the cache never claims a chain nobody will see (§17.2). ROUND 9: the
     /// durable pending ledger this used to clear is gone entirely (owner call).
     override func didCancelSending(_ message: MSMessage, conversation: MSConversation) {
+        // ROUND 12 #11: clear the staging only if THIS is the bubble that was
+        // cancelled. Staging a second move (a throw-in, a re-stage after Undo)
+        // replaces the input-field bubble, and Messages reports the replaced one
+        // as cancelled - after we have already recorded its successor. Clearing
+        // unconditionally threw away a live staging, and with it the quiet-open
+        // marker its send would have written.
+        if let p = pendingStage,
+           let cancelled = Self.payload(of: message), cancelled != p.payload { return }
         pendingStage = nil
         // Round-9: tell the surface nothing awaits Send any more, so the send
         // reminder (which now also covers lobby join/invite/start bubbles)
@@ -420,6 +448,14 @@ final class MessagesViewController: MSMessagesAppViewController {
         conversation.insert(msg) { _ in }
     }
 
+    /// The chain a message Messages reports actually carries. The message is the
+    /// authority on its own bytes; our `pendingStage` bookkeeping is not (round
+    /// 12 #11).
+    private static func payload(of message: MSMessage) -> Data? {
+        guard let u = message.url else { return nil }
+        return try? MessageEnvelope.payloadBytes(url: u)
+    }
+
     /// Commit a sent chain to the App Group cache (§6.1/§7.6): our seat becomes
     /// durable and this chain is the preferred one for the game. `chatKey` comes
     /// from `didStartSending`'s own conversation, not a stored property, because
@@ -434,8 +470,17 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// them against a chain that already contains those moves, and every send
     /// ended in a "move superseded" toast + a replay of my own move. Three
     /// UserDefaults writes need no Task and cannot lose the race.
-    private func commitPendingStage(chatKey: String) {
-        guard let (payload, mySeat, gameId) = pendingStage else { return }
+    ///
+    /// ROUND 12 #11: `sent` is the chain the MESSAGE carries. The seat write
+    /// still needs `pendingStage` (only it knows which seat and game we staged
+    /// as), but the quiet-open marker does not - and it is the one that must
+    /// never be skipped, so it is written from `sent` outside the guard.
+    private func commitPendingStage(sent: Data?, chatKey: String) {
+        // The durable half of `lastSentPayload` (round-9 #5): if the send tears
+        // this VC down, the reopen consumes this and opens my own chain QUIETLY
+        // (no self-replay) instead of treating it as a new arrival.
+        if let sent { MessageGameStore.shared.markJustSent(payload: sent) }
+        guard let (_, mySeat, gameId) = pendingStage else { return }
         pendingStage = nil
         if !gameId.isEmpty {
             // Round 7: the preferred-chain cache is gone — commit only the durable
@@ -444,14 +489,10 @@ final class MessagesViewController: MSMessagesAppViewController {
             // ledger this also used to clear is gone entirely - owner call.)
             MessageGameStore.shared.setSeat(gameId: gameId, chatKey: chatKey, seat: mySeat)
         }
-        // The durable half of `lastSentPayload` (round-9 #5): if the send tears
-        // this VC down, the reopen consumes this and opens my own chain QUIETLY
-        // (no self-replay) instead of treating it as a new arrival.
-        MessageGameStore.shared.markJustSent(payload: payload)
     }
 
     /// Round-7 (background gap): a scheme-adaptive wool FALLBACK colour (the same
-    /// hexes `WoolBackground` averages to) painted on the host view behind the
+    /// hexes `TableBackground` averages to) painted on the host view behind the
     /// SwiftUI content, so if the wool ever fails to reach an edge for a frame -
     /// e.g. the post-send reopen with the keyboard up - the exposed strip reads as
     /// a duller patch of the SAME board, never a system-black void.

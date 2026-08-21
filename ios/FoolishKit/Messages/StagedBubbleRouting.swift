@@ -46,9 +46,33 @@ public enum StagedBubbleRouting {
         }
         // Mine, still in the input field — or mine, already SENT. Both keep the
         // board exactly as it is.
-        if incoming == pendingStage?.payload || incoming == lastSentPayload {
+        if isMine(incoming, pendingStage: pendingStage?.payload, lastSentPayload: lastSentPayload) {
             return lastPayloadURL
         }
         return selectedURL
+    }
+
+    /// ROUND 12 #11 ("sometimes animation replays when the bubble is sent - I
+    /// saw this for an attack"): is this chain one THIS DEVICE authored?
+    ///
+    /// The same question `resolvedPayloadURL` asks of the SELECTED bubble, asked
+    /// of an ARRIVING one - because an arrival can be mine too. The simulator
+    /// loops a sent message straight back to the sender, and an iCloud account
+    /// signed in on two devices does the same thing for real; either way
+    /// `didReceive` hands us the bytes we just sealed. Threaded on as an arrival,
+    /// the surface adopts it, `MessageTurnController.begin` arms the open-replay
+    /// for its last move - MY move, the one I just watched - and the board veils
+    /// the cards that are "about to fly". Filmed at 30fps: the card the player
+    /// played disappears from the table the instant Send lands, and when the
+    /// arming later runs, the attack animates a second time.
+    ///
+    /// Byte equality is the whole test, and it is safe: a staged/sent payload is
+    /// a hash chain THIS device sealed, so no other device's bubble can collide
+    /// with it. `pendingStage` covers the moment between insert and send;
+    /// `lastSentPayload` the window after.
+    public static func isMine(_ payload: Data?, pendingStage: Data?,
+                              lastSentPayload: Data?) -> Bool {
+        guard let payload else { return false }
+        return payload == pendingStage || payload == lastSentPayload
     }
 }

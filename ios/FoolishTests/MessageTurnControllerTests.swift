@@ -232,21 +232,27 @@ final class MessageTurnControllerTests: XCTestCase {
 
     // MARK: round-9 #5 — the send that replayed itself
 
-    /// The durable just-sent marker is one-shot and exact-match: the reopen
-    /// right after a send consumes it; any other adopt consumes it WITHOUT
-    /// matching, so a stale marker can never silence a later real replay.
-    func testJustSentMarkerIsOneShotAndExactMatch() {
+    /// The durable just-sent marker is exact-match, and survives a MISS.
+    ///
+    /// ROUND 12 #11 changed this contract. It used to be consumed on every
+    /// adopt, match or not, so that a stale marker could never silence a later
+    /// real replay - but the marker is byte-exact, so it could only ever silence
+    /// the one chain this device sealed, and that is precisely the move its
+    /// owner must not be shown again. Clearing on a miss protected nothing and
+    /// made the marker a one-shot anybody could spend: one unrelated adopt
+    /// between the send and the reopen (a loopback delivery of my own bubble, an
+    /// opponent's reply) burned it, and the reopen replayed my own move. It is
+    /// now superseded only by the next send, which overwrites it.
+    func testJustSentMarkerSurvivesAMissAndClearsOnAMatch() {
         let store = MessageGameStore(defaults: UserDefaults(suiteName: "test.js.\(UUID().uuidString)")!)
         let mine = Data([1, 2, 3]), other = Data([9, 9])
 
         XCTAssertFalse(store.consumeJustSent(matching: mine), "no marker yet")
         store.markJustSent(payload: mine)
         XCTAssertFalse(store.consumeJustSent(matching: other), "a different chain never matches")
-        XCTAssertFalse(store.consumeJustSent(matching: mine),
-                       "…and the mismatching adopt still consumed the marker")
-        store.markJustSent(payload: mine)
-        XCTAssertTrue(store.consumeJustSent(matching: mine), "the post-send reopen matches")
-        XCTAssertFalse(store.consumeJustSent(matching: mine), "one-shot: gone after use")
+        XCTAssertTrue(store.consumeJustSent(matching: mine),
+                      "…and that miss must NOT have spent the marker")
+        XCTAssertFalse(store.consumeJustSent(matching: mine), "a match clears it: one send, one quiet open")
     }
 
     /// A quiet open (my own just-sent chain) must produce NO open-replay - the

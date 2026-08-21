@@ -277,13 +277,22 @@ public final class MessageGameStore {
     /// Record the chain the human just pressed Send on (didStartSending, §7.6).
     public func markJustSent(payload: Data) { defaults?.set(payload, forKey: justSentKey) }
 
-    /// One-shot check at adopt: true iff `payload` is byte-identical to the
-    /// marked chain. Always clears the marker - the marker describes exactly
-    /// one send, and whichever adopt comes first is the reopen it was for.
+    /// Check at adopt: true iff `payload` is byte-identical to the marked chain,
+    /// clearing the marker when it is.
+    ///
+    /// ROUND 12 #11: it used to clear on EVERY adopt, match or not, to stop a
+    /// stale marker silencing a later genuine replay. But the marker is already
+    /// byte-exact - it can only ever silence the one chain this device sealed,
+    /// which is the one move its owner does not need played back at them - so
+    /// clearing on a MISS bought nothing and cost the guarantee: any unrelated
+    /// adopt between the send and the reopen (an opponent's bubble, a
+    /// loopback delivery of my own send) burned the marker, and the reopen of my
+    /// own chain replayed my own move. Superseded instead by the next send,
+    /// which overwrites it.
     public func consumeJustSent(matching payload: Data) -> Bool {
-        guard let d = defaults?.data(forKey: justSentKey) else { return false }
+        guard let d = defaults?.data(forKey: justSentKey), d == payload else { return false }
         defaults?.removeObject(forKey: justSentKey)
-        return d == payload
+        return true
     }
 
     // MARK: hand order (round-8 #4) — the sticky arrangement memory, per game
