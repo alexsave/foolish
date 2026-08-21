@@ -18,7 +18,7 @@ public struct FSquareButton: View {
     ///
     /// A long press ENDS while the finger is still down (that is what makes it
     /// feel like a hold), but the Button's own action fires later, on release -
-    /// so without this a 4-second hold on the gear both opened the diagnostics
+    /// so without this a hold on the gear both opened the diagnostics
     /// AND opened Settings on top of them. The alternative, replacing the Button
     /// with raw tap/press gestures, would cost the button's press styling and
     /// accessibility traits for a one-line problem.
@@ -33,7 +33,7 @@ public struct FSquareButton: View {
     /// it drives today is the diagnostics dump (round 12), which is for the
     /// owner and not for players.
     public init(systemImage: String, side: CGFloat = 40, accessibility: String = "",
-                holdSeconds: Double = 4, onHold: (() -> Void)? = nil,
+                holdSeconds: Double = 5, onHold: (() -> Void)? = nil,
                 action: @escaping () -> Void) {
         self.systemImage = systemImage
         self.side = side

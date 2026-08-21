@@ -40,7 +40,7 @@ public struct MessageTableView: View {
     /// pending, but the bubble still needs Messages' Send). Feeds the send
     /// reminder alongside `controller.canSend`.
     private let alsoStaged: Bool
-    /// Round 12: hold the gear for 4 seconds to raise the last-message dump.
+    /// Round 12: hold the gear for 5 seconds to raise the last-message dump.
     /// The dump's fields live on the SURFACE (it owns the payload bytes and the
     /// decode result), so the board only reports the gesture; see
     /// `MessagesRootView.diagnosticPanel`.

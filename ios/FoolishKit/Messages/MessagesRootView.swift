@@ -573,13 +573,15 @@ private struct GameSurface: View {
     /// ROUND 12 (owner): "I know we have like a last message diagnostics view
     /// that is not enabled. How about this though - if you hold the settings
     /// button for 4 seconds, it pops up. And if you tap again it goes away."
+    /// Five, on a second pass - the owner's call, and it reads as an easter egg
+    /// rather than a slow tap.
     ///
     /// The dump used to be reachable only by FAILING to open a bubble, which is
     /// exactly when you cannot ask it about a bubble that opened fine. This is
     /// the same fields, on demand, over whatever is on screen.
     ///
     /// Not DEBUG-gated on purpose: its whole value is reading the real bytes of
-    /// a real message on a real phone, in the build that shipped. A four-second
+    /// a real message on a real phone, in the build that shipped. A five-second
     /// hold on an unlabelled square is not something a player finds by accident,
     /// and what it shows is the reader's own game.
     ///
