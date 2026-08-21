@@ -27,7 +27,7 @@ final class ComponentSnapshotTests: XCTestCase {
         // PINNED to light, and that pin is what keeps these references stable
         // now that the board has a dark mode (round-7). Every component below
         // reads `@Environment(\.colorScheme)` somewhere - FCard inverts its
-        // face, WoodFill loads a different bake, `onWoolText` flips its ink -
+        // face, WoodFill loads a different bake, `onTableText` flips its ink -
         // and an unpinned UIHostingController inherits the SIMULATOR's current
         // appearance, so `simctl ui <udid> appearance dark` would silently
         // fail every image here without a line of code having changed.
@@ -70,6 +70,52 @@ final class ComponentSnapshotTests: XCTestCase {
                                            onPass: {}, onPickup: {}, onDone: {}),
                                 width: 340, height: 80),
                        as: .image, record: record)
+    }
+
+    /// ROUND 12: the three role marks together, at the sizes the board draws
+    /// them (`FRoleMark`), on the wool they have to survive.
+    ///
+    /// Together on purpose, and at real size on purpose. Each one alone proves
+    /// nothing about the thing that was actually wrong: they were three
+    /// unrelated colour schemes (a near-black sword that flipped to steel in
+    /// dark mode, a mid-grey shield, a bare green check) at three sizes chosen
+    /// in three different rounds, so at a glance the board carried three
+    /// unrelated objects. The sword and shield now share one white-on-black ink;
+    /// the check keeps its green — a check says something HAPPENED where the
+    /// other two say which role you hold — and takes the black rim so it still
+    /// belongs to the family.
+    func testRoleMarksReadAsOneFamily() {
+        let marks = HStack(spacing: 18) {
+            FSword(size: FRoleMark.sword)
+            FShield(size: FRoleMark.shield)
+            FCheck(size: FRoleMark.check)
+        }
+        .frame(height: FRoleMark.rowHeight)
+        .padding(20)
+        .background(TableBackground())
+        assertSnapshot(of: host(marks, width: 260, height: 100), as: .image, record: record)
+    }
+
+    /// ROUND 12: the bare trump glyph beside the same suit on a card face.
+    ///
+    /// When the stock and the flipped card are both gone, `FDeckWell` draws the
+    /// trump suit as a lone glyph — the only suit on the whole board that is NOT
+    /// drawn by `FCard`. It was in the SYSTEM font while every card is Georgia,
+    /// and the two typefaces do not draw the same shape (SF's heart is narrow
+    /// and straight-shouldered, Georgia's round and full), so the trump mark and
+    /// the trump cards under it read as two different suits: "upper right trump
+    /// suit icon should match shape of card suits icon. Currently like hearts
+    /// look different for example".
+    ///
+    /// Rendered TOGETHER on purpose. A snapshot of the glyph alone would pin
+    /// whatever font it happens to use; the claim worth pinning is that these
+    /// two agree, and only a picture with both in it can be read that way.
+    func testBareTrumpGlyphMatchesTheCardSuit() {
+        let pair = HStack(spacing: 24) {
+            FDeckWell(deckCount: 0, flipped: nil, hasFlipped: false, trumpSuit: .hearts)
+            FCard(card: Card(s: 1, v: 13), size: CGSize(width: 80, height: 112))
+        }
+        assertSnapshot(of: host(pair, width: 320, height: 140), as: .image, record: record)
     }
 
     // The iMessage expanded-bubble board (read-only public view). A mid-game 2p

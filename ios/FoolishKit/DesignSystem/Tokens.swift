@@ -102,7 +102,7 @@ extension Color {
 // Thicker black text over wool though." The "ranks" are the game-over rank
 // column (MessageTableView.FGameOverList): `.heavy` weight, flat white, a
 // dark drop shadow. `onWoodText` lifts that treatment out to every wood
-// surface; `onWoolText` is its wool mirror — round-5 M10 already worked out
+// surface; `onTableText` is its wool mirror — round-5 M10 already worked out
 // that dark ink on the lighter wool weave wants a LIGHT shadow, the inverse
 // of wood's dark one, or the shadow adds nothing. Round-6 only asked for more
 // WEIGHT on top of that pairing, so weight is the one thing both share.
@@ -127,10 +127,10 @@ public extension View {
             .shadow(color: .black.opacity(dimmed ? 0.3 : 0.5), radius: 1, y: 1)
     }
 
-    /// Text sitting directly on the wool weave (`WoolBackground` / `WoolWeave`
+    /// Text sitting directly on the wool weave (`TableBackground` / `TableWeave`
     /// / the bubble snapshot's own wool crop) — labels, headlines, captions.
     /// `dimmed` mirrors `onWoodText`'s disabled case.
-    func onWoolText(dimmed: Bool = false) -> some View {
+    func onTableText(dimmed: Bool = false) -> some View {
         modifier(OnWoolText(dimmed: dimmed))
     }
 }

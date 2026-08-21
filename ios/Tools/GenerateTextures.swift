@@ -92,6 +92,25 @@ static func main() {
         report(bake.name, url, cropped, seconds: Date().timeIntervalSince(t0))
     }
 
+    // ---- felt -------------------------------------------------------------
+    // The green baize alternative (round 12). No crop: unlike the wool, whose
+    // generator is written in the pixels of the web's landscape canvas, felt has
+    // no inherited constants and is rendered at exactly the size that ships.
+    for bake in FeltTexture.bakes {
+        let t0 = Date()
+        guard let felt = FeltTexture.renderCGImage(w: FeltTexture.renderCanvas.w,
+                                                   h: FeltTexture.renderCanvas.h,
+                                                   palette: bake.palette) else {
+            FileHandle.standardError.write(Data("felt render failed: \(bake.name)\n".utf8)); exit(1)
+        }
+        let url = outDir.appendingPathComponent("\(bake.name).jpg")
+        // Quality 0.9, a step above the wool's 0.85: baize is a LOW-contrast
+        // field, which is the case where JPEG's chroma subsampling shows as
+        // blotching rather than as the ringing a high-frequency weave hides.
+        writeJPEG(felt, to: url, quality: 0.9)
+        report(bake.name, url, felt, seconds: Date().timeIntervalSince(t0))
+    }
+
     // ---- wood -------------------------------------------------------------
     // No crop: the canvas IS the swatch, sized so the largest wood surface in the
     // app is a sub-rectangle of it and nothing ever tiles.

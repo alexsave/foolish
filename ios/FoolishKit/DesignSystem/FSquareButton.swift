@@ -46,6 +46,10 @@ public struct FSquareButton: View {
 /// lands on the same edge line on every screen. Round-9 (owner): the help "?"
 /// became a little book - it opens the rulebook, so it looks like one.
 public struct SettingsHelpSquares: View {
+    /// Re-render this view when a setting changes (see FPrefs). Only the
+    /// OBSERVATION matters - the strings still come from FStrings.t and the
+    /// table surface still comes from FTextures.
+    @ObservedObject private var prefs = FPrefs.shared
     private let onSettings: () -> Void
     private let onHelp: () -> Void
 

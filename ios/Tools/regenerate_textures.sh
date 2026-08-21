@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# regenerate_textures.sh — re-bake every entry of WoolTexture.bakes and
-# WoodTexture.bakes into FoolishKit/Resources/, from the generators in
+# regenerate_textures.sh — re-bake every entry of WoolTexture.bakes,
+# FeltTexture.bakes and WoodTexture.bakes into FoolishKit/Resources/, from the generators in
 # FoolishKit/DesignSystem/. Today that is five files:
 #
-#   wool-classic.jpg  wool-dark-green.jpg  wool-dark-navy.jpg
+#   wool-classic.jpg  wool-dark.jpg
+#   felt-classic.jpg  felt-dark.jpg
 #   wood-classic.jpg  wood-dark.jpg
 #
 # Run this after changing WoolTexture.render / WoodTexture.render or any
@@ -34,6 +35,7 @@ trap 'rm -rf "$BUILD"' EXIT
 swiftc -Ounchecked -whole-module-optimization \
   -o "$BUILD/gentex" \
   "$IOS/FoolishKit/DesignSystem/WoolTexture.swift" \
+  "$IOS/FoolishKit/DesignSystem/FeltTexture.swift" \
   "$IOS/FoolishKit/DesignSystem/WoodTexture.swift" \
   "$IOS/FoolishKit/DesignSystem/FernCardBack.swift" \
   "$HERE/GenerateTextures.swift"

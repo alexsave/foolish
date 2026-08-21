@@ -7,6 +7,9 @@ import FoolishKit
 import FoolishNet
 
 struct RootView: View {
+    /// Re-render when a setting changes (see FPrefs). Only the OBSERVATION
+    /// matters - the strings still come from FStrings.t.
+    @ObservedObject private var prefs = FPrefs.shared
     @StateObject private var coordinator = AppCoordinator()
     @EnvironmentObject private var auth: AuthService
     @State private var lastConfig: OfflineConfig?

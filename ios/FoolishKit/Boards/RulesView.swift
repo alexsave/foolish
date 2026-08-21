@@ -16,6 +16,10 @@
 import SwiftUI
 
 public struct RulesView: View {
+    /// Re-render this view when a setting changes (see FPrefs). Only the
+    /// OBSERVATION matters - the strings still come from FStrings.t and the
+    /// table surface still comes from FTextures.
+    @ObservedObject private var prefs = FPrefs.shared
     /// Round-9 (owner): which page the rulebook opens as.
     /// - `.full`: the complete how-to-play, opened from the board.
     /// - `.lobby`: the simpler page the setup/lobby screens open - just how
@@ -86,13 +90,13 @@ public struct RulesView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(WoolBackground().ignoresSafeArea())
+        .background(TableBackground().ignoresSafeArea())
     }
 
     private var header: some View {
         // No Done button: swiping the sheet down dismisses it (owner). Centered.
         Text(FStrings.t("ios.rules.title"))
-            .font(FType.title(22)).onWoolText()
+            .font(FType.title(22)).onTableText()
             .frame(maxWidth: .infinity, alignment: .center)
             .padding(.horizontal, FSpace.xl)
             .padding(.vertical, FSpace.l)
@@ -104,8 +108,8 @@ public struct RulesView: View {
     private func section(_ headKey: String, _ bodyKey: String,
                          @ViewBuilder visual: () -> some View = { EmptyView() }) -> some View {
         VStack(alignment: .leading, spacing: FSpace.s) {
-            Text(FStrings.t(headKey)).font(FType.title(18)).onWoolText()
-            Text(FStrings.t(bodyKey)).font(FType.body(15)).onWoolText()
+            Text(FStrings.t(headKey)).font(FType.title(18)).onTableText()
+            Text(FStrings.t(bodyKey)).font(FType.body(15)).onTableText()
                 .fixedSize(horizontal: false, vertical: true)
             visual()
         }
@@ -142,8 +146,11 @@ public struct RulesView: View {
     /// verdicts on it (the Queen alone / both Kings / never the 7 with the 10).
     private var attackSection: some View {
         section("ios.rules.attack.h", "ios.rules.attack.b") {
-            legend("ios.rules.sword") { FSword(size: 30) }
-            legend("ios.rules.shield") { FShield(size: 24) }
+            // The legend draws the marks at the size the BOARD draws them
+            // (FRoleMark), so what the rules teach is what the player then
+            // looks for - a shrunken legend copy is a different icon.
+            legend("ios.rules.sword") { FSword(size: FRoleMark.sword) }
+            legend("ios.rules.shield") { FShield(size: FRoleMark.shield) }
             cardRow([Self.c("6", .clubs), Self.c("7", .diamonds), Self.c("10", .spades),
                      Self.c("Q", .diamonds), Self.c("K", .spades), Self.c("K", .clubs)])
             example(ok: true, "ios.rules.attack.ok1")
@@ -236,7 +243,7 @@ public struct RulesView: View {
     private static let exSize = CGSize(width: 46, height: 64)
 
     private func caption(_ key: String) -> some View {
-        Text(FStrings.t(key)).font(FType.body(14)).onWoolText()
+        Text(FStrings.t(key)).font(FType.body(14)).onTableText()
             .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -258,8 +265,11 @@ public struct RulesView: View {
         .padding(.top, FSpace.xs)
     }
 
+    /// The yes/no marks beside each example: the same green check the board
+    /// uses, against a red cross. Both wear the black rim the role marks do, so
+    /// the two families look drawn by the same hand.
     @ViewBuilder private func verdict(_ ok: Bool) -> some View {
-        if ok { FCheck(size: 20) } else { FCross(size: 20) }
+        if ok { FCheck(size: 22) } else { FCross(size: 22) }
     }
 
     private func cardRow(_ cards: [Card]) -> some View {
@@ -309,7 +319,7 @@ public struct RulesView: View {
     /// throwing-in and passing scenes.
     private func group(_ labelKey: String, @ViewBuilder cards: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: FSpace.xs) {
-            Text(FStrings.t(labelKey)).font(FType.body(11)).onWoolText(dimmed: true)
+            Text(FStrings.t(labelKey)).font(FType.body(11)).onTableText(dimmed: true)
             HStack(alignment: .top, spacing: FSpace.s) { cards() }
         }
     }
@@ -361,8 +371,11 @@ struct FCross: View {
             cross.addLine(to: P(18.5, 18.5))
             cross.move(to: P(18.5, 5.5))
             cross.addLine(to: P(5.5, 18.5))
+            // Outline first, body second - the same two-pass rim FCheck uses.
+            ctx.stroke(cross, with: .color(FRoleInk.line),
+                       style: StrokeStyle(lineWidth: (3.4 + 2 * FRoleInk.stroke) * s, lineCap: .round))
             ctx.stroke(cross, with: .color(red),
-                       style: StrokeStyle(lineWidth: 3 * s, lineCap: .round))
+                       style: StrokeStyle(lineWidth: 3.4 * s, lineCap: .round))
         }
         .frame(width: size, height: size)
         .accessibilityLabel(Text(FStrings.t("ios.reject")))

@@ -11,6 +11,9 @@ import SwiftUI
 import FoolishKit
 
 struct TutorialView: View {
+    /// Re-render when a setting changes (see FPrefs). Only the OBSERVATION
+    /// matters - the strings still come from FStrings.t.
+    @ObservedObject private var prefs = FPrefs.shared
     @Environment(\.dismiss) private var dismiss
 
     // Fixed seed so the tutorial deal is stable. Opponent = handwritten (roster

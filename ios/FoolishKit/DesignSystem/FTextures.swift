@@ -29,24 +29,44 @@ import UIKit
 
 public enum FTextures {
 
-    /// Which baked palette to load. Kept as a type rather than a bool so a third
-    /// look (a seasonal table, say) is an added case and not a second flag.
+    /// Which baked look to load: a colour scheme crossed with a table material.
+    /// Kept as a type rather than a pair of bools so a third look (a seasonal
+    /// table, say) is an added case and not a third flag.
     public enum Variant: String {
         case classic
         case dark
+        case felt
+        case feltDark
 
-        /// THE mapping from SwiftUI's colour scheme to a baked look, and the
-        /// only one. Views read `@Environment(\.colorScheme)` and pass it here;
-        /// anything else (a UIKit trait, a stored preference) would be a second
-        /// answer to the same question.
+        /// THE mapping from the environment to a baked look, and the only one.
+        /// Views read `@Environment(\.colorScheme)` and pass it here; anything
+        /// else (a UIKit trait, a second read of the preference) would be a
+        /// second answer to the same question.
         ///
-        /// Unknown future schemes fall to `classic` on purpose: the light look
-        /// is the one every surface's text treatments were tuned against, so an
-        /// unrecognised scheme lands somewhere legible rather than somewhere
-        /// half-dark.
+        /// The MATERIAL is folded in here rather than at the call sites, and
+        /// that is deliberate: every table surface in the app already funnels
+        /// through this initializer, so felt reaches the board, the compact
+        /// drawer, the lobby, the settings sheet and the message-bubble preview
+        /// without one of those being able to forget. Views re-render on the
+        /// change because they observe `FPrefs` (see FPrefs.swift); this is just
+        /// where the current answer is read.
+        ///
+        /// Unknown future schemes fall to the light look on purpose: it is the
+        /// one every surface's text treatments were tuned against, so an
+        /// unrecognised scheme lands somewhere legible rather than half-dark.
         public init(_ scheme: ColorScheme) {
-            self = (scheme == .dark) ? .dark : .classic
+            let dark = scheme == .dark
+            switch FPrefs.storedTable {
+            case .wool: self = dark ? .dark : .classic
+            case .felt: self = dark ? .feltDark : .felt
+            }
         }
+
+        /// Is this look a felt table? The wood and the fern do not change with
+        /// the material - only the table does - so the two accessors below split
+        /// on this rather than on the case list.
+        var isFelt: Bool { self == .felt || self == .feltDark }
+        var isDark: Bool { self == .dark || self == .feltDark }
     }
 
     // MARK: - Palettes
@@ -57,42 +77,57 @@ public enum FTextures {
     // cannot see `Variant`. Keeping the mapping on this side of that line is
     // what lets the generators stay one file each, shared by both.
 
-    /// The wool palette a variant wears (the dark one is `WoolTexture.dark`).
-    public static func woolPalette(_ variant: Variant) -> WoolTexture.Palette {
+    /// The flat colour a TABLE surface sits on before its texture is drawn, and
+    /// all it shows if the resource is ever missing.
+    ///
+    /// A colour rather than a palette, because the two materials have different
+    /// `Palette` TYPES (a weave is described by fibre passes, a baize by cloud
+    /// and grain — see FeltTexture's header for why one cannot be a palette of
+    /// the other) and `fallbackHex` is the only thing any caller wanted.
+    public static func tableFallbackHex(_ variant: Variant) -> UInt32 {
         switch variant {
-        case .classic: return .classic
-        case .dark:    return WoolTexture.darkPalette
+        case .classic:  return WoolTexture.Palette.classic.fallbackHex
+        case .dark:     return WoolTexture.darkPalette.fallbackHex
+        case .felt:     return FeltTexture.Palette.classic.fallbackHex
+        case .feltDark: return FeltTexture.Palette.dark.fallbackHex
         }
     }
 
-    /// The wood palette a variant wears.
+    /// The wood palette a variant wears. The controls are wood on both tables —
+    /// only the table changes material — so this splits on scheme alone.
     public static func woodPalette(_ variant: Variant) -> WoodTexture.Palette {
-        switch variant {
-        case .classic: return .classic
-        case .dark:    return .dark
-        }
+        variant.isDark ? .dark : .classic
     }
 
     // MARK: - The images
 
-    /// The woven wool, at 1 texel = 1 point of the image's own coordinate space
-    /// (see `WoolTexture.pointsPerTexel` for the one magnification every wool
-    /// surface then applies). Nil only if the resource is missing from the
-    /// bundle, in which case every wool surface shows the variant's flat
-    /// fallback colour.
-    public static func wool(_ variant: Variant) -> UIImage? {
+    /// THE table surface — the wool weave or the green baize, whichever the
+    /// player chose — at 1 texel = 1 point of the image's own coordinate space
+    /// (see `WoolTexture.pointsPerTexel` for the one magnification every table
+    /// surface then applies; the felt shares it by construction, so switching
+    /// material cannot change the scale). Nil only if the resource is missing
+    /// from the bundle, in which case the surface shows `tableFallbackHex`.
+    public static func table(_ variant: Variant) -> UIImage? {
+        #if DEBUG
+        // DEV ONLY: a `dev.felt` file in the App Group names a JPEG beside it,
+        // which stands in for the baked baize. It exists so a set of candidate
+        // felts can be judged AT REAL DEVICE SCALE on a phone - the only scale
+        // that settles a question like "this looks pixelated" - without a
+        // rebuild per candidate. Never compiled into Release, and it only ever
+        // affects the felt (the wool has no override).
+        if variant.isFelt, let img = devFeltOverride() { return img }
+        #endif
         switch variant {
-        case .classic: return Cache.woolClassic
-        case .dark:    return Cache.woolDark
+        case .classic:  return Cache.woolClassic
+        case .dark:     return Cache.woolDark
+        case .felt:     return Cache.feltClassic
+        case .feltDark: return Cache.feltDark
         }
     }
 
     /// The wood grain, same contract (`WoodTexture.pointsPerTexel`).
     public static func wood(_ variant: Variant) -> UIImage? {
-        switch variant {
-        case .classic: return Cache.woodClassic
-        case .dark:    return Cache.woodDark
-        }
+        variant.isDark ? Cache.woodDark : Cache.woodClassic
     }
 
     /// The fern card back (FernCardBack) - one image, scheme-independent (the
@@ -107,6 +142,8 @@ public enum FTextures {
     private enum Cache {
         static let woolClassic = load(WoolTexture.classicResourceName)
         static let woolDark    = load(WoolTexture.darkResourceName)
+        static let feltClassic = load(FeltTexture.classicResourceName)
+        static let feltDark    = load(FeltTexture.darkResourceName)
         static let woodClassic = load(WoodTexture.classicResourceName)
         static let woodDark    = load(WoodTexture.darkResourceName)
         static let fernBack    = load(FernCardBack.resourceName)
@@ -127,6 +164,21 @@ public enum FTextures {
               let data = try? Data(contentsOf: url) else { return nil }
         return UIImage(data: data, scale: 1)
     }
+
+    #if DEBUG
+    /// The dev felt override, re-read every call (deliberately uncached - the
+    /// whole point is to swap it under a running extension).
+    private static func devFeltOverride() -> UIImage? {
+        guard let dir = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: "group.cards.foolish.msg"),
+              let name = try? String(contentsOf: dir.appendingPathComponent("dev.felt"),
+                                     encoding: .utf8)
+        else { return nil }
+        let file = dir.appendingPathComponent(name.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard let data = try? Data(contentsOf: file) else { return nil }
+        return UIImage(data: data, scale: 1)
+    }
+    #endif
 
     /// Anchors `Bundle(for:)` to FoolishKit rather than the host app — the
     /// extension, the standalone iMessage app and the harness all load the same

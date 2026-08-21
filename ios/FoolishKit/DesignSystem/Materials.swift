@@ -1,8 +1,14 @@
-// Materials.swift — SwiftUI surfaces over the BAKED wool/wood textures
+// Materials.swift — SwiftUI surfaces over the BAKED table/wood textures
 // (§IOS_PHONE_LAYOUT §4). The generators still live in WoolTexture.swift /
-// WoodTexture.swift as the source of truth, but they run at build time now
-// (ios/Tools/regenerate_textures.sh); these views just load an image through
-// FTextures and draw it at ONE fixed magnification.
+// FeltTexture.swift / WoodTexture.swift as the source of truth, but they run at
+// build time now (ios/Tools/regenerate_textures.sh); these views just load an
+// image through FTextures and draw it at ONE fixed magnification.
+//
+// NOTE the table views are named for the SURFACE, not the material: since round
+// 12 the player picks wool or green baize in Settings (FPrefs.table), and
+// `TableWeave` draws whichever one `FTextures.Variant` resolves to. Nothing here
+// knows which it got, which is the point — a material is a palette, a bake and a
+// case in that enum, and no layout, vignette or text treatment changes with it.
 //
 // That is why nothing here has a @State image, a `.task`, or a fade-in any
 // more: there is no cold cache to fade over. The texture is present on the
@@ -13,26 +19,35 @@
 import SwiftUI
 import UIKit
 
-/// The weave itself, at THE magnification (`WoolTexture.pointsPerTexel`), with
-/// no clipping and no vignette. EVERY wool surface draws this and then decides
-/// how big a window it wants onto it — which is round-6 #14 in one sentence:
-/// "keep the threads the same size visually no matter the view".
+/// The table surface itself, at THE magnification (`WoolTexture.pointsPerTexel`,
+/// which the felt shares by construction), with no clipping and no vignette.
+/// EVERY table surface draws this and then decides how big a window it wants
+/// onto it — which is round-6 #14 in one sentence: "keep the threads the same
+/// size visually no matter the view".
 ///
 /// It is a fixed-size view on purpose. Callers wrap it in their own frame and
 /// `.clipped()`; a smaller surface shows LESS weave, never smaller weave.
-public struct WoolWeave: View {
-    /// Dark mode is chosen HERE, once per surface, and never below: every wool
-    /// view in the app draws this one, so a board cannot end up half-dark. The
+public struct TableWeave: View {
+    /// Dark mode — and, since round 12, the MATERIAL — is chosen HERE, once per
+    /// surface, and never below: every table view in the app draws this one, so
+    /// a board cannot end up half-dark or half-felt. The
     /// message bubble pins `.light` on its whole ImageRenderer content
     /// (BubbleSnapshot), which is what keeps a sender's dark board out of a
     /// recipient's light transcript - it works because this reads the
     /// environment rather than a global.
     @Environment(\.colorScheme) private var scheme
+    /// Re-render when the table MATERIAL changes (FPrefs). Without this the
+    /// switch does not reach the board: these views have no stored properties,
+    /// so a parent re-render hands SwiftUI a structurally identical value and it
+    /// skips the body - the setting was stored, the checkmark moved, and the
+    /// wool stayed. `FTextures.Variant` reads the preference; this is what makes
+    /// anyone ASK it again.
+    @ObservedObject private var prefs = FPrefs.shared
 
     public init() {}
 
     public var body: some View {
-        if let img = FTextures.wool(FTextures.Variant(scheme)) {
+        if let img = FTextures.table(FTextures.Variant(scheme)) {
             Image(uiImage: img)
                 // The weave is magnified ~2.3x on a 3x screen (0.775pt/texel x
                 // 3), so the interpolation is doing real work smoothing threads
@@ -45,22 +60,29 @@ public struct WoolWeave: View {
     }
 }
 
-/// The woven-wool table background plus the one allowed gradient — a subtle
-/// centre-out vignette (§5.1).
-public struct WoolBackground: View {
+/// The table background plus the one allowed gradient — a subtle centre-out
+/// vignette (§5.1).
+public struct TableBackground: View {
     @Environment(\.colorScheme) private var scheme
+    /// Re-render when the table MATERIAL changes (FPrefs). Without this the
+    /// switch does not reach the board: these views have no stored properties,
+    /// so a parent re-render hands SwiftUI a structurally identical value and it
+    /// skips the body - the setting was stored, the checkmark moved, and the
+    /// wool stayed. `FTextures.Variant` reads the preference; this is what makes
+    /// anyone ASK it again.
+    @ObservedObject private var prefs = FPrefs.shared
 
     public init() {}
 
     public var body: some View {
         ZStack {
-            // The flat colour behind the weave - the web's beige in light mode,
-            // the dark walnut in dark mode. It comes off the PALETTE, not off
-            // `FColor.fallback`, because it has exactly one job: be the colour
-            // the weave itself averages to, so a missing resource or an
-            // uncovered edge reads as a duller board rather than as a beige
-            // slab under a dark one.
-            Color(hex: FTextures.woolPalette(FTextures.Variant(scheme)).fallbackHex)
+            // The flat colour behind the texture - the web's beige in light
+            // mode, the dark walnut in dark mode, the baize green on felt. It
+            // comes off the MATERIAL's own palette, not off `FColor.fallback`,
+            // because it has exactly one job: be the colour that texture
+            // averages to, so a missing resource or an uncovered edge reads as
+            // a duller board rather than as a beige slab under a dark one.
+            Color(hex: FTextures.tableFallbackHex(FTextures.Variant(scheme)))
 
             // Bottom-anchored, and that is load-bearing for the extension: the
             // drawer's bottom edge is pinned to the screen while its top edge
@@ -75,7 +97,7 @@ public struct WoolBackground: View {
             // extension's box changes height by 2.5x between expanded and
             // compact — so the wool was drawn at 0.62 scale expanded and 0.24
             // compact, i.e. the background visibly ZOOMED on every collapse.
-            WoolWeave()
+            TableWeave()
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 .clipped()
 

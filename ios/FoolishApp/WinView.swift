@@ -8,6 +8,9 @@ import UIKit
 import FoolishKit
 
 struct WinView<Session: GameSession>: View {
+    /// Re-render when a setting changes (see FPrefs). Only the OBSERVATION
+    /// matters - the strings still come from FStrings.t.
+    @ObservedObject private var prefs = FPrefs.shared
     @ObservedObject var game: Session
     let foolSeat: Int
     let humanSeat: Int

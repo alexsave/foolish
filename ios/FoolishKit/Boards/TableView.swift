@@ -12,6 +12,10 @@ import SwiftUI
 
 public struct TableView<Session: GameSession>: View {
     @ObservedObject var game: Session
+    /// Re-render this view when a setting changes (see FPrefs). Only the
+    /// OBSERVATION matters - the strings still come from FStrings.t and the
+    /// table surface still comes from FTextures.
+    @ObservedObject private var prefs = FPrefs.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selection: Set<String> = []
     @State private var toast: String?
@@ -109,8 +113,8 @@ public struct TableView<Session: GameSession>: View {
 
     private var tableBackground: some View {
         // Woven wool — the website's table material (§IOS_PHONE_LAYOUT §4) — with
-        // the subtle vignette baked into WoolBackground.
-        WoolBackground()
+        // the subtle vignette baked into TableBackground.
+        TableBackground()
     }
 
     // The ring geometry (fractions of the table). The hub sits a little above

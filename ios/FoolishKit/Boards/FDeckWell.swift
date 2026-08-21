@@ -108,8 +108,16 @@ public struct FDeckWell: View {
                 // plus a dark shadow so a light suit colour still holds on
                 // the wool weave behind it (the same contrast problem M10
                 // names for text applies to a lone glyph too).
+                // GEORGIA, like every suit on a card face (FCard.centerGlyph /
+                // corner / thinCenter). This was the board's one suit drawn in
+                // the SYSTEM font, and the two typefaces do not draw the same
+                // shape - SF's heart is narrow and straight-shouldered where
+                // Georgia's is round and full - so the trump mark and the trump
+                // cards under it read as two different suits ("upper right trump
+                // suit icon should match shape of card suits icon"). Same size
+                // as before; only the face changes.
                 Text(trumpSuit.glyph)
-                    .font(.system(size: 60))
+                    .font(.custom("Georgia", size: 60).weight(.bold))
                     .foregroundColor(FColor.suitColor(trumpSuit, scheme: scheme))
                     .shadow(color: .black.opacity(0.6), radius: 2, x: 0, y: 1)
                     .offset(x: inset, y: inset)

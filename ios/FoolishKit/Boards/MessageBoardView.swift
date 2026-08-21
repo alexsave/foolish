@@ -82,14 +82,14 @@ public struct MessageBoardView: View {
                     // without a reduced-opacity color; the missing half of the
                     // known fix (real shadow) was missing here too. Round-6 #17:
                     // this is plain text on the wool weave (no wood behind it),
-                    // so it takes `onWoolText` (Tokens.swift) - thick black ink,
+                    // so it takes `onTableText` (Tokens.swift) - thick black ink,
                     // not the bone-on-dark-shadow combo, which is wood's half of
                     // the pairing (MessageTableView's plank uses that one).
                     Text(view.gameOver >= 0
                         ? FStrings.t("ios.msg.isfool", ["name": name(view.gameOver)])
                         : FStrings.t("game_over"))
                         .font(.subheadline)
-                        .onWoolText()
+                        .onTableText()
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                         .padding(.bottom, 6)
                 }

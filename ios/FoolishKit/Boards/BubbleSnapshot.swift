@@ -15,7 +15,7 @@ public enum BubbleSnapshot {
     public static let size = CGSize(width: 300, height: 195)
 
     /// The bubble's wool: a CROP of the weave at the board's own magnification,
-    /// bottom-anchored exactly like `WoolBackground`.
+    /// bottom-anchored exactly like `TableBackground`.
     ///
     /// Round-6 #14, verbatim: "wool is too zoomed out in the bubble preview -
     /// basically, try to keep the threads the same size visually no matter the
@@ -24,7 +24,7 @@ public enum BubbleSnapshot {
     /// max(300/1920, 195/1080) = 0.181 pt/texel where the live board draws it
     /// at 0.775, so the bubble showed the ENTIRE picture shrunk instead of a
     /// WINDOW onto it - 14.5pt plaid blocks against the board's 62pt, four
-    /// times too small. Drawing `WoolWeave` (which is pinned to
+    /// times too small. Drawing `TableWeave` (which is pinned to
     /// `WoolTexture.pointsPerTexel`) and clipping it to the balloon makes the
     /// two literally the same pixels at the same size; there is no second scale
     /// left to disagree with.
@@ -33,10 +33,10 @@ public enum BubbleSnapshot {
     /// background renders unreliably inside ImageRenderer. Nothing here is
     /// async either: `FTextures.wool` is a loaded image, so it is available on
     /// the synchronous pass ImageRenderer makes (the old procedural path had to
-    /// call the generator inline because `WoolBackground`'s `.task` never runs
+    /// call the generator inline because `TableBackground`'s `.task` never runs
     /// under ImageRenderer).
     private static var wool: some View {
-        WoolWeave()
+        TableWeave()
             .frame(width: size.width, height: size.height, alignment: .bottom)
             .clipped()
     }
@@ -85,14 +85,14 @@ public enum BubbleSnapshot {
             FColor.fallback
             Self.wool
             VStack(spacing: 6) {
-                // Round-6 #17: `onWoolText` (Tokens.swift) - thick ink, since
+                // Round-6 #17: `onTableText` (Tokens.swift) - thick ink, since
                 // this whole card is drawn straight on `Self.wool` above.
                 Text(FStrings.t("ios.lobby"))
-                    .font(.headline).onWoolText()
+                    .font(.headline).onTableText()
                 VStack(spacing: 3) {
                     ForEach(Array(joinedNames.enumerated()), id: \.offset) { i, name in
                         Text("\(i + 1). \(name)")
-                            .font(.subheadline).onWoolText()
+                            .font(.subheadline).onTableText()
                             .lineLimit(1)
                     }
                 }
@@ -102,9 +102,9 @@ public enum BubbleSnapshot {
                 // shadow) not yet applied here. Full-opacity FColor.ink (dark
                 // text) takes a LIGHT shadow, not a dark one — a dark shadow
                 // under dark text on a light-ish weave adds nothing. Round-6
-                // #17 added the weight `onWoolText` now carries.
+                // #17 added the weight `onTableText` now carries.
                 Text(FStrings.t("ios.msg.joininvite"))
-                    .font(.caption).onWoolText()
+                    .font(.caption).onTableText()
                     .padding(.top, 2)
             }
             .padding()

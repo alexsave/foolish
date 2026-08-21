@@ -608,7 +608,7 @@ private struct ExtensionStage: View {
         // used to draw itself. `.clipped()` is NOT optional, though: the
         // outer frame's clipShape only clips at the SE box's own OUTER edge —
         // it does nothing to stop one VStack row from painting over its
-        // siblings INSIDE that box. And WoolBackground's `.ignoresSafeArea()`
+        // siblings INSIDE that box. And TableBackground's `.ignoresSafeArea()`
         // (deep inside MessagesRootView, several SwiftUI layers below
         // HostedStage's UIHostingController) does exactly that if left
         // unclipped: it ignores the height this view was actually given and
@@ -700,7 +700,7 @@ private struct ExtensionStage: View {
 /// chrome. The harness used to embed `MessagesRootView` as a plain SwiftUI
 /// child of `HarnessRootView`'s own hierarchy — a `.frame(width:height:)`-boxed
 /// ZStack child, nowhere near a physical screen edge. That still worked for
-/// everything EXCEPT `WoolBackground`'s `.ignoresSafeArea()` (needed so the
+/// everything EXCEPT `TableBackground`'s `.ignoresSafeArea()` (needed so the
 /// wool bleeds edge-to-edge in the real, edge-to-edge extension): nested that
 /// many SwiftUI layers deep, `.ignoresSafeArea()` expanded the wool's internal
 /// aspect-fill proposal against the HARNESS APP's own ambient safe area, not
@@ -721,7 +721,7 @@ private struct HostedStage<Content: View>: UIViewControllerRepresentable {
         // container (requirement 4 — the WHOLE simulated Messages app, not
         // just the extension, now lives inside one fixed 375x667 box)
         // reintroduced a variant of the exact bug this type's doc already
-        // describes once: WoolBackground's `.ignoresSafeArea()`, several
+        // describes once: TableBackground's `.ignoresSafeArea()`, several
         // SwiftUI layers below this hosting controller, was aspect-filling
         // against the wrong (much larger) ambient safe area instead of this
         // controller's own small given frame — not a black gap this time,

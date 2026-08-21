@@ -8,6 +8,10 @@
 import SwiftUI
 
 public struct FActionBar: View {
+    /// Re-render this view when a setting changes (see FPrefs). Only the
+    /// OBSERVATION matters - the strings still come from FStrings.t and the
+    /// table surface still comes from FTextures.
+    @ObservedObject private var prefs = FPrefs.shared
     /// Shared fixed width for every wooden action button (equal-width column).
     private static let w: CGFloat = 96
     public let canAttack: Bool     // attacker: the selection is a legal attack

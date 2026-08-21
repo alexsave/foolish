@@ -118,31 +118,21 @@ public struct FSeatBadge: View {
     }
 
     private var roleRow: some View {
-        // Round-5 m4: sizes raised to match the twin redesign in
-        // MessageTableView (darker colors, pointed shield corners) — the icons
-        // were unreadable at their old size on the weave, per the finding's
-        // "no legibility ... on this background". FCheck 17→20, FShield 22→26.
-        // The sword then went 23→32 on the owner's device review ("make the
-        // sword icon larger"): it rotates 45° inside its box, so it needs a
-        // bigger box than the shield to read the same size. Kept in step with
-        // MessageTableView's selfRoleIndicator — one seat's role must not look
-        // bigger than another's just because it is mine.
+        // Sizes come from `FRoleMark` - the ONE table both role rows read, so a
+        // seat's mark cannot end up a different size from mine. The marks are
+        // hand-built (not SF Symbols, which are unreliable under ImageRenderer
+        // bubble snapshots) and painted in the shared `FRoleInk`.
         HStack(spacing: FSpace.xs) {
             if thinking { ThinkingDots() }
-            if saidGood {
-                // Hand-built (not SF Symbols — unreliable under ImageRenderer bubble
-                // snapshots, same reason FShield/FSword are hand-built).
-                FCheck(size: 20)
-            }
+            if saidGood { FCheck(size: FRoleMark.check) }
             if isDefender {
-                FShield(size: 26)   // hand-built light-gray shield (larger)
+                FShield(size: FRoleMark.shield)
             } else if isAttacker {
-                FSword(size: 32)    // hand-built sword (rotated — needs the bigger box)
+                FSword(size: FRoleMark.sword)
             }
         }
-        // Tall enough for the largest glyph in the row (the 32pt sword), or it
-        // clips the blade's corners.
-        .frame(height: 32)
+        // Tall enough for the largest glyph in the row, or it clips the blade.
+        .frame(height: FRoleMark.rowHeight)
     }
 
     private var a11y: String {

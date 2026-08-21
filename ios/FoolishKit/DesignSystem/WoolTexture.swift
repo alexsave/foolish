@@ -1,6 +1,6 @@
 // WoolTexture.swift — the woven-wool table surface (§IOS_PHONE_LAYOUT §4:
 // "the phone app should lean on what the website does — wool/wood/fern").
-// A faithful CPU port of the web's WoolBackground generator (the CPU-fallback
+// A faithful CPU port of the web's TableBackground generator (the CPU-fallback
 // path, which writes a flat RGBA buffer — the same shape as our UInt8 buffer):
 // a brown base woven by a horizontal fiber phase then a vertical one, with a
 // tan-XOR plaid modulating the colour. The math is ported, not the WebGL.
@@ -123,7 +123,7 @@ public enum WoolTexture {
 
     // MARK: - The shipped swatch
 
-    /// THE canvas the web generates wool on (src/components/WoolBackground.tsx:
+    /// THE canvas the web generates wool on (src/components/TableBackground.tsx:
     /// both the WebGL path and the CPU fallback, and the fallback says 1920x1080
     /// literally). Landscape, and that matters: the generator's fibre phases and
     /// its iteration budget are both written in pixels of THIS shape, so a
