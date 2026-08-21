@@ -483,6 +483,56 @@ More worked examples, including 3–4 player races, in §14.
 | `didCancelSending` fires | user deleted the staged bubble | roll cache/ledger back to pre-stage snapshot (§17.2) |
 | FINISHED chain adopted while we had pending moves | game over won the race | all pending discarded; show result card |
 
+### 7.7 Merging forks (Rule M): CONSIDERED AND REJECTED, round 12
+
+The open complaint that prompted this: two attackers say good against the same
+parent, Rule P's digest tiebreak picks one, and the other good is gone.
+The bout does not close, and a third player holding both bubbles has no way to
+tell that two people are done.
+
+The reconciliation that would fix it is a merge - `merge(A, B)` = common atom
+prefix, then the loser's remaining atoms folded on through Rule R's round guard.
+It was written and tested against the kernel (two goods both survive, the §7.5
+throw-in still drops, `merge(A,B)` byte-identical to `merge(B,A)`), and then
+**reverted**, because of what its INPUTS have to be.
+
+A merge is a function of the set of chains a device happens to hold.
+`MSConversation` exposes exactly one message - `selectedMessage` - plus whatever
+`didReceiveMessage` delivers while the extension is open.
+There is no transcript, no history, no query; that is the whole API.
+So "the chains this device holds" is not a property of the conversation, it is a
+property of *which messages that device was awake for*.
+
+That is fatal, and the owner's argument is the clearest statement of why.
+Four players; one has their phone off.
+The two others both send good at the same moment.
+The awake device receives both, merges, and shows a board where both players are
+good - possibly a board a whole ROUND ahead, since the second good can close the
+bout and deal the next one.
+The phone that was off wakes up, can only see the newest bubble, and shows one
+good and the previous round.
+Both devices are behaving correctly, and they are now looking at different games
+- not "one good missing", but different hands, different round, different table.
+Their next moves branch from different bases.
+
+Rule P alone does not have this failure mode, and the reason is worth stating
+precisely: **every state a device can be in under Rule P is a chain some human
+actually sent.**
+Devices can be behind, never sideways.
+A merged chain exists in no bubble anywhere, so a merging device can hold a state
+no one else can reach or verify until that device happens to send.
+
+So the rule stands: state is what the newest bubble you can see says it is.
+The cost is real and accepted - a good that loses the digest tiebreak is
+dropped, and that player taps Good again.
+One lost tempo beats two players in two different games.
+
+**This would become correct the moment a device can see the fork from the thread
+itself rather than from its own receive history.** If Apple ever exposes message
+history, or if a bubble is ever made to carry the sibling tips it witnessed,
+revisit this - the kernel-side merge is straightforward and was proven to work.
+It is the input, not the algorithm, that is missing.
+
 ---
 
 ## 8. Native engine
