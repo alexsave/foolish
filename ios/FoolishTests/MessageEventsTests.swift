@@ -413,6 +413,67 @@ final class MessageEventsTests: XCTestCase {
         XCTFail("no 2p deal in 120 tries produced attack -> cover -> good closing the bout")
     }
 
+    /// ROUND 12 (owner): "multiple cover does not result in full text
+    /// explanation in bubble text, only one cover". A bubble carries the whole
+    /// trailing run of steps its sender staged, so a defender who covers TWO
+    /// cards before pressing Send sends one bubble describing two covers - and
+    /// the caption named only the first.
+    ///
+    /// Built through the real seal path (attacker stages two same-rank cards in
+    /// ONE bubble, defender covers both in ONE bubble) so the events under test
+    /// are the ones a real double cover produces, not a hand-built stream.
+    func testDoubleCoverCaptionNamesBothCovers() async throws {
+        let k = MessageKernel.shared
+        for salt in UInt8(1)...UInt8(120) {
+            let a = MessageTurnController(genesisSeed: freshSeed(salt), players: 2,
+                                          gameId: 96, myNickname: "Alex")
+            await a.begin()
+            guard let atk = a.legal.first(where: { $0.type == .attack }) else { continue }
+            await a.apply(atk)
+            // A second attack in the SAME bubble - a throw-in of the matching
+            // rank. Only some deals allow it; that is what the seed loop is for.
+            guard let atk2 = a.legal.first(where: { $0.type == .attack }) else { continue }
+            await a.apply(atk2)
+            let p0 = try await a.stagedPayload()
+            let e0 = try await MessageEnvelope.decode(payload: p0, viewer: -1)
+
+            let defender = 1 - a.mySeat
+            let b = MessageTurnController(parentPayload: p0, parent: e0, mySeat: defender)
+            await b.begin()
+            guard let c1 = b.legal.first(where: { $0.type == .cover }) else { continue }
+            await b.apply(c1)
+            guard let c2 = b.legal.first(where: { $0.type == .cover }) else { continue }
+            await b.apply(c2)
+            let p1 = try await b.stagedPayload()
+            let e1 = try await MessageEnvelope.decode(payload: p1, viewer: -1)
+
+            let events = await k.lastMoveEvents(viewer: -1)
+            let v = await k.residentView(viewer: -1)
+            let s = MessageSummary.move(events: events, names: names, view: v,
+                                        actor: e1.lastActorSeat)
+
+            // Both covers are in the sentence: all four cards it moved, named.
+            let covers = events.filter { $0.msg == 4 }
+            XCTAssertEqual(covers.count, 2, "the bubble must carry two cover events")
+            for e in covers {
+                if let t = e.target {
+                    XCTAssertTrue(s.contains(MessageSummary.card(t)),
+                                  "the beaten card \(MessageSummary.card(t)) is missing: \(s)")
+                }
+                if let d = e.cards.compactMap({ $0 }).first {
+                    XCTAssertTrue(s.contains(MessageSummary.card(d)),
+                                  "the covering card \(MessageSummary.card(d)) is missing: \(s)")
+                }
+            }
+            // ONE sentence, not two: the defender is named once, and the pairs
+            // are listed inside that one clause.
+            XCTAssertEqual(s.components(separatedBy: names[defender]!).count - 1, 1,
+                           "a merged double cover names its player once: \(s)")
+            return
+        }
+        XCTFail("no 2p deal in 120 tries produced a double attack answered by a double cover")
+    }
+
     /// The synthesis must be CONDITIONAL: a move with a real headline (an
     /// attack) may never also claim its actor said good.
     func testAttackCaptionDoesNotSynthesizeGood() async throws {

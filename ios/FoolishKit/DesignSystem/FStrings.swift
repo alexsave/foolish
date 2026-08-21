@@ -178,7 +178,12 @@ public enum FStrings {
             "ios.msg.seatn": "Seat {n}",
             "ios.msg.mv.attack": "{name} attacks with {cards}",
             "ios.msg.mv.pass": "{name} passes {cards}",
-            "ios.msg.mv.cover": "{name} covers {target} with {card}",
+            // Round 12: {pairs} is a LIST, not one pair - a bubble can carry a
+            // double (or triple) cover, and the caption used to name only the
+            // first. `ios.msg.mv.coverpair` is one "beaten with beater"; they
+            // join with ", ". A single cover reads exactly as it did before.
+            "ios.msg.mv.cover": "{name} covers {pairs}",
+            "ios.msg.mv.coverpair": "{target} with {card}",
             "ios.msg.mv.pickup": "{name} took the cards",
             "ios.msg.mv.out": "{name} is out!",
             "ios.msg.mv.good": "{name} says good",
@@ -209,6 +214,12 @@ public enum FStrings {
             "ios.done": "Done",
             "ios.settings.title": "Settings",
             "ios.settings.language": "Language",
+            // Round 12: the table material. "Table" heads the section; the two
+            // choices name the MATERIAL, not the colour, so a third one later
+            // (a red baize, say) reads as a sibling rather than a contradiction.
+            "ios.settings.table": "Table",
+            "ios.settings.table.wool": "Wool",
+            "ios.settings.table.felt": "Green felt",
             "ios.rules.title": "How to play",
             "ios.rules.goal.h": "The goal",
             "ios.rules.goal.b": "The ultimate goal of the game is to get rid of all your cards as soon as possible. Whoever is left with cards at the end is the дурак, or the fool in Russian.",
@@ -356,7 +367,8 @@ public enum FStrings {
             "ios.msg.seatn": "Игрок {n}",
             "ios.msg.mv.attack": "{name} атакует: {cards}",
             "ios.msg.mv.pass": "{name} переводит: {cards}",
-            "ios.msg.mv.cover": "{name} кроет {target}: {card}",
+            "ios.msg.mv.cover": "{name} кроет {pairs}",
+            "ios.msg.mv.coverpair": "{target}: {card}",
             "ios.msg.mv.pickup": "{name} забирает карты",
             "ios.msg.mv.out": "{name} вышел!",
             "ios.msg.mv.good": "{name} говорит: бито",
@@ -379,6 +391,9 @@ public enum FStrings {
             "ios.done": "Готово",
             "ios.settings.title": "Настройки",
             "ios.settings.language": "Язык",
+            "ios.settings.table": "Стол",
+            "ios.settings.table.wool": "Шерсть",
+            "ios.settings.table.felt": "Зелёное сукно",
             "ios.rules.title": "Как играть",
             "ios.rules.goal.h": "Цель игры",
             "ios.rules.goal.b": "Главная цель - как можно скорее избавиться от всех своих карт. Кто остался с картами в конце, тот и есть дурак.",
@@ -520,7 +535,8 @@ public enum FStrings {
             "ios.msg.seatn": "{n}번 자리",
             "ios.msg.mv.attack": "{name} 공격: {cards}",
             "ios.msg.mv.pass": "{name} 넘김: {cards}",
-            "ios.msg.mv.cover": "{name}, {target} 방어: {card}",
+            "ios.msg.mv.cover": "{name} 방어: {pairs}",
+            "ios.msg.mv.coverpair": "{target}→{card}",
             "ios.msg.mv.pickup": "{name} 카드 가져감",
             "ios.msg.mv.out": "{name} 탈락!",
             "ios.msg.mv.good": "{name} 완료 선언",
@@ -543,6 +559,9 @@ public enum FStrings {
             "ios.done": "완료",
             "ios.settings.title": "설정",
             "ios.settings.language": "언어",
+            "ios.settings.table": "테이블",
+            "ios.settings.table.wool": "울",
+            "ios.settings.table.felt": "그린 펠트",
             "ios.rules.title": "게임 방법",
             "ios.rules.goal.h": "게임의 목표",
             "ios.rules.goal.b": "궁극의 목표는 손의 카드를 최대한 빨리 없애는 것입니다. 끝까지 카드를 들고 있는 사람이 дурак - 러시아어로 ‘바보’입니다.",

@@ -27,12 +27,33 @@ public enum MessageSummary {
         return FStrings.t("ios.msg.cardfmt", ["rank": CardRank.label(c.v), "suit": s.glyph])
     }
 
-    private static func cardList(_ cs: [Card?]) -> String {
-        cs.compactMap { $0 }.map(card).joined(separator: ", ")
+    private static func cardList(_ cs: [Card]) -> String {
+        cs.map(card).joined(separator: ", ")
     }
 
     private static func name(_ seat: Int, _ names: [Int: String]) -> String {
         names[seat] ?? FStrings.t("ios.msg.seatn", ["n": "\(seat + 1)"])
+    }
+
+    /// One headline action, kept as FACTS rather than a finished sentence, so
+    /// that consecutive actions of the same kind by the same seat can be merged
+    /// into ONE line at render time (round 12).
+    ///
+    /// A bubble is not one action: it carries the whole trailing run of steps
+    /// its sender produced (see `MessageKernel.lastMoveEvents` - "a staged
+    /// double cover replays both"). The old caption kept only the FIRST
+    /// headline and dropped the rest, so a defender who covered two cards
+    /// before sending was announced as covering one, and an attacker who threw
+    /// in a second card was announced with the first (owner, round 12:
+    /// "multiple cover does not result in full text explanation in bubble
+    /// text, only one cover").
+    private struct Beat {
+        var seat: Int
+        var kind: Int
+        /// attack / pass: every card played across the merged actions.
+        var cards: [Card] = []
+        /// cover: one (beaten, beater) pair per merged action.
+        var pairs: [(target: Card?, with: Card?)] = []
     }
 
     /// The summary for a staged LIVE move (phase 2, turn > 0). `events` is
@@ -43,34 +64,36 @@ public enum MessageSummary {
     /// generic tap line if the stream yields no headline.
     public static func move(events: [GameEvent], names: [Int: String], view: GameView?,
                             actor: Int = -1) -> String {
-        var primary: String?
-        var primarySeat = -1
+        var beats: [Beat] = []
         var outParts: [String] = []
         var roundOver = false
 
-        // First headline wins for `primary`; OUT and the round transition are
-        // consequences appended after it (a defender who covers the last card
-        // and thereby ends the bout reads "… covers … · Round over - X attacks").
-        func headline(_ seat: Int, _ text: String) {
-            guard primary == nil else { return }
-            primary = text; primarySeat = seat
+        /// Append to the running beat when it is the same seat doing the same
+        /// kind of thing; otherwise start a new one. Merging is only ever
+        /// within a contiguous run, so "attack, cover, attack" could never
+        /// collapse into one attack sentence.
+        func headline(_ seat: Int, _ kind: Int, _ mutate: (inout Beat) -> Void) {
+            if var last = beats.last, last.seat == seat, last.kind == kind {
+                mutate(&last)
+                beats[beats.count - 1] = last
+            } else {
+                var b = Beat(seat: seat, kind: kind)
+                mutate(&b)
+                beats.append(b)
+            }
         }
         for e in events {
             switch e.msg {
             case Msg.attacked:
-                headline(e.seat, FStrings.t("ios.msg.mv.attack",
-                    ["name": name(e.seat, names), "cards": cardList(e.cards)]))
+                headline(e.seat, Msg.attacked) { $0.cards += e.cards.compactMap { $0 } }
             case Msg.passed:
-                headline(e.seat, FStrings.t("ios.msg.mv.pass",
-                    ["name": name(e.seat, names), "cards": cardList(e.cards)]))
+                headline(e.seat, Msg.passed) { $0.cards += e.cards.compactMap { $0 } }
             case Msg.covered:
-                let def = e.cards.compactMap { $0 }.first
-                headline(e.seat, FStrings.t("ios.msg.mv.cover", [
-                    "name": name(e.seat, names),
-                    "target": e.target.map(card) ?? "",
-                    "card": def.map(card) ?? ""]))
+                headline(e.seat, Msg.covered) {
+                    $0.pairs.append((e.target, e.cards.compactMap { $0 }.first))
+                }
             case Msg.pickup:
-                headline(e.seat, FStrings.t("ios.msg.mv.pickup", ["name": name(e.seat, names)]))
+                headline(e.seat, Msg.pickup) { _ in }
             case Msg.out:
                 if e.seat >= 0 { outParts.append(FStrings.t("ios.msg.mv.out", ["name": name(e.seat, names)])) }
             case Msg.goodTransition:
@@ -79,6 +102,28 @@ public enum MessageSummary {
                 break
             }
         }
+
+        func sentence(_ b: Beat) -> String {
+            switch b.kind {
+            case Msg.attacked:
+                return FStrings.t("ios.msg.mv.attack",
+                    ["name": name(b.seat, names), "cards": cardList(b.cards)])
+            case Msg.passed:
+                return FStrings.t("ios.msg.mv.pass",
+                    ["name": name(b.seat, names), "cards": cardList(b.cards)])
+            case Msg.covered:
+                let pairs = b.pairs.map {
+                    FStrings.t("ios.msg.mv.coverpair", [
+                        "target": $0.target.map(card) ?? "",
+                        "card": $0.with.map(card) ?? ""])
+                }.joined(separator: ", ")
+                return FStrings.t("ios.msg.mv.cover",
+                    ["name": name(b.seat, names), "pairs": pairs])
+            default:
+                return FStrings.t("ios.msg.mv.pickup", ["name": name(b.seat, names)])
+            }
+        }
+        var primary: String? = beats.isEmpty ? nil : beats.map(sentence).joined(separator: " · ")
 
         // "Says good" is the ONE silent move: every other live action leaves a
         // headline event naming its seat (attack/pass/cover/pickup all emit
@@ -91,11 +136,14 @@ public enum MessageSummary {
         //    the PREVIOUS actor's step - the headline says the other seat's
         //    cover (already captioned on its own bubble) and never that this
         //    bubble's sender said good.
-        // Both give themselves away the same way: the headline's seat is not
-        // the envelope's own lastActorSeat. The actor's action was the silent
+        // Both give themselves away the same way: NO headline belongs to the
+        // envelope's own lastActorSeat. The actor's action was the silent
         // good, so it takes the headline; the consequences (outs, the round
         // transition) still follow. All kernel facts, nothing re-derived.
-        if actor >= 0, primarySeat != actor {
+        // (Round 12: asked of EVERY beat, not just the first - now that a
+        // bubble can carry several, "the actor is in here somewhere" is the
+        // question, and one merged run is still one seat's work.)
+        if actor >= 0, !beats.contains(where: { $0.seat == actor }) {
             primary = FStrings.t("ios.msg.mv.good", ["name": name(actor, names)])
         }
 
