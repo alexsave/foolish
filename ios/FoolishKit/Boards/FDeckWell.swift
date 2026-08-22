@@ -73,6 +73,47 @@ public struct FDeckWell: View {
     /// moves, so a shrinking deck drains toward this corner instead of sliding.
     public static let bottomCardOrigin = CGPoint(x: FSpace.s, y: FSpace.s)
 
+    /// The bare trump mark's glyph size (round-5 m1 raised it from 44).
+    static let markSize: CGFloat = 60
+
+    /// Where `suit`'s INK begins inside its own text box, at `size`.
+    ///
+    /// Round 16 ("the trump indicator is a bit low; the distance from top and
+    /// the distance from left should be equal; play around with this for
+    /// different suits as they can be funny"). A `Text` lays out a LINE, not a
+    /// glyph: its box carries the font's whole ascent above the ink and the
+    /// glyph's left side bearing beside it. Offsetting that box by the shared
+    /// inset therefore left the mark 9.7pt from the left and 27.7pt from the
+    /// top - and since Georgia gives each suit its own ink height and bearing,
+    /// each of the four was wrong by its own amount (measured: ♠ 9.67/27.67,
+    /// ♥ 10.00/27.00, ♣ 9.67/27.00, ♦ 10.00/27.33). Subtracting this puts the
+    /// INK on the inset, so all four sit square in the corner.
+    ///
+    /// Read off the real font rather than baked as four constants, so the mark
+    /// stays square if the size or the typeface ever changes; the numbers it
+    /// produces are pinned against the rendered pixels in TrumpGlyphTests.
+    static func markInkOrigin(_ suit: Suit, size: CGFloat = markSize) -> CGPoint {
+        let base = UIFont(name: "Georgia", size: size) ?? .systemFont(ofSize: size)
+        let bold = base.fontDescriptor.withSymbolicTraits(.traitBold) ?? base.fontDescriptor
+        let asked = UIFont(descriptor: bold, size: size)
+        // Georgia has no suit glyphs of its own, so what actually DRAWS here is
+        // whatever CoreText substitutes for the character. Measuring the asked-
+        // for font instead simply fails (no glyph), which is how the first cut
+        // of this silently changed nothing at all.
+        var chars = Array(suit.glyph.utf16)
+        let font = CTFontCreateForString(asked, suit.glyph as CFString,
+                                         CFRange(location: 0, length: chars.count))
+        var glyphs = [CGGlyph](repeating: 0, count: chars.count)
+        guard CTFontGetGlyphsForCharacters(font, &chars, &glyphs, chars.count) else { return .zero }
+        let ink = CTFontGetBoundingRectsForGlyphs(font, .horizontal, &glyphs, nil, glyphs.count)
+        // CoreText measures ink from the baseline, y UP; a Text box measures
+        // from its top, y DOWN, with the baseline one ascent below that top.
+        // The line's ascent is the ASKED-FOR font's (Georgia sets the line box;
+        // the substitute only fills it), which is why this pairs `asked` with
+        // the substitute's ink rather than taking both from one of them.
+        return CGPoint(x: ink.minX, y: asked.ascender - ink.maxY)
+    }
+
     public var body: some View {
         ZStack(alignment: .topLeading) {
             // The flipped trump: tucked under the stack (peeking out below) when
@@ -116,11 +157,15 @@ public struct FDeckWell: View {
                 // cards under it read as two different suits ("upper right trump
                 // suit icon should match shape of card suits icon"). Same size
                 // as before; only the face changes.
+                let ink = Self.markInkOrigin(trumpSuit)
                 Text(trumpSuit.glyph)
-                    .font(.custom("Georgia", size: 60).weight(.bold))
+                    .font(.custom("Georgia", size: Self.markSize).weight(.bold))
                     .foregroundColor(FColor.suitColor(trumpSuit, scheme: scheme))
                     .shadow(color: .black.opacity(0.6), radius: 2, x: 0, y: 1)
-                    .offset(x: inset, y: inset)
+                    // Round 16: inset the glyph's INK, not its text box - see
+                    // `markInkOrigin`. Everything else in this corner already
+                    // anchors on the ink/edge it looks like it anchors on.
+                    .offset(x: inset - ink.x, y: inset - ink.y)
             }
         }
         .frame(width: 92, height: 108, alignment: .topLeading)
