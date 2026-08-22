@@ -1278,6 +1278,18 @@ public struct MessageTableView: View {
         let run = AnimLog.on ? AnimLog.nextRun() : 0
         AnimLog.say("stream#\(run) begin n=\(events.count) [\(events.map { "\($0.kind.map(String.init(describing:)) ?? "?")@\($0.seat)x\($0.cards.count)" }.joined(separator: " "))] depth=\(BoardAnimator.sequenceDepth)")
         guard !events.isEmpty else {
+            // ROUND 16: HAND THE COUNTS BACK. Every caller freezes them to the
+            // pre-move board SYNCHRONOUSLY (`play`, then `flyBoutEndToDiscard`)
+            // and relies on this function's teardown to release them - but that
+            // teardown is installed below, past this guard, so a stream that
+            // came back empty left every badge and the deck pinned to the board
+            // before the move, for as long as it took the next move to arrive
+            // and re-freeze them. An opponent stuck a card too high until they
+            // played again is the owner's "briefly bumped, then they play a
+            // single card and it goes back down".
+            deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
+            animator.clearPreHidden()
+            clearSweep()
             if view.isOver { settleResults() }
             return
         }
@@ -1790,20 +1802,42 @@ public struct MessageTableView: View {
     }
 
 
-    /// Deck/discard/every-seat's hand count as of BEFORE the open-replay's
-    /// `events`, walked backward from the FINAL view's counts by undoing each
-    /// event's card movement. This freezes the on-screen counts to their pre-move
-    /// values before the sequence starts; every step then jumps forward to its
-    /// OWN board (GameEvent.state) as its flight lands, so this only sets the
-    /// starting frame, not the per-step values. Card COUNTS are all we need here
-    /// (real identities the events already carry): a deal/refill takes n out of
-    /// the deck into the acting seat; a discard adds to the pile; a pickup takes
-    /// the table into a hand; an attack/cover/pass puts a card onto the table.
-    private static func preCounts(_ events: [GameEvent], finalView: GameView)
+    /// Deck/discard/every-seat's hand count as of BEFORE this stream's `events`.
+    /// This freezes the on-screen counts to their pre-move values before the
+    /// sequence starts; every step then jumps forward to its OWN board
+    /// (GameEvent.state) as its flight lands, so this only sets the starting
+    /// frame, not the per-step values.
+    ///
+    /// ANCHOR ON THE FIRST EVENT AND UNDO EXACTLY ONE. Every event carries the
+    /// board it produced, so `events[0].state` IS the board one event in - and
+    /// getting from there to the board before it is a single undo. This is not a
+    /// shortcut for undoing all of them; it is the only version that is right.
+    ///
+    /// ROUND 16, the owner: "I sometimes saw the deck suddenly go to 5 cards,
+    /// then deal, and now I have 6 cards? Is it a problem with the flipped
+    /// card?" It was the flipped card. Undoing a REFILL means putting its cards
+    /// back in the deck, and at the end of a game that is wrong: the trump lies
+    /// under the deck and is handed out LAST, but `deck_count` never counted it,
+    /// so a refill of two off a deck of one is real and the walk-back put two
+    /// back. The deck badge then opened one too high and corrected itself as the
+    /// draw landed - which is exactly the report, and exactly why it only ever
+    /// happened near the end of a game. Proven and pinned in
+    /// MessageCountWindingTests against the kernel's own boards.
+    ///
+    /// A refill can never be the FIRST event of a stream - it is always some
+    /// bout end's consequence, so a pickup, a trash or a magic transition
+    /// precedes it - which is what makes one undo safe where n were not. The
+    /// full walk remains as the fallback for a stream with no snapshots at all,
+    /// which the packed evwire does not produce (every event carries one).
+    static func preCounts(_ events: [GameEvent], finalView: GameView)
         -> (deck: Int, discard: Int, hand: [Int: Int]) {
-        var deck = finalView.deckCount, discard = finalView.discardCount
-        var hand = Dictionary(uniqueKeysWithValues: finalView.players.map { ($0.seat, $0.handCount) })
-        for ev in events.reversed() {
+        let anchor = events.first?.state
+        var deck = anchor?.deckCount ?? finalView.deckCount
+        var discard = anchor?.discardCount ?? finalView.discardCount
+        var hand = Dictionary(uniqueKeysWithValues:
+            (anchor?.players ?? finalView.players).map { ($0.seat, $0.handCount) })
+        let undo = anchor == nil ? Array(events.reversed()) : Array(events.prefix(1))
+        for ev in undo {
             let n = ev.cards.count
             switch ev.kind {
             case .deal, .refill: deck += n; if let s = ev.actorSeat { hand[s, default: 0] -= n }

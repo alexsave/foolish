@@ -283,17 +283,15 @@ public final class MessageTurnController: ObservableObject {
         // surface when I sent — fixed where it happens (HarnessModel.boardEpoch;
         // StagedBubbleRouting in the extension), so there is no second load to
         // replay from in the first place.
-        openReplayEvents = suppressOpenReplay ? []
+        let replay = suppressOpenReplay ? []
             : await kernel.lastMoveEvents(viewer: mySeat, atomsBefore: baseAtomsBefore)
-        // Raise the veil BEFORE `refresh()` publishes the board: the paint that
-        // first shows this chain must already know which cards are still to fly.
-        replayPending = !openReplayEvents.isEmpty
         // ROUND 9 (owner): the durable pending ledger - and the Rule R rebase
         // that replayed its survivors here as `preStaged` - is REMOVED. Staged
         // moves live only in memory; the staged input-field bubble itself still
         // carries them as a sealed chain.
         pending = []
-        await refresh()
+        // The veil and the board it describes go up TOGETHER - see `publish`.
+        await publish(openReplay: replay)
         // Round-8 #4: opening a FINISHED chain is one of the two moments a game
         // provably ends on this device (the other is committing my own final
         // move, markSent below) - drop its stored hand arrangement, the cache
@@ -399,9 +397,42 @@ public final class MessageTurnController: ObservableObject {
     public var animAtomsBefore: Int { pending.isEmpty ? baseAtomsBefore : baseTurn }
 
     public func refresh() async {
-        view = await kernel.residentView(viewer: mySeat)
-        legal = await kernel.residentLegal(seat: mySeat)
-        await refreshPickupHold()
+        await publish(openReplay: nil)
+    }
+
+    /// Read the board and PUBLISH IT IN ONE GO - view, legal moves, the pickup
+    /// hold and (on `begin`) the open-replay stream, assigned back to back with
+    /// no `await` between them.
+    ///
+    /// ROUND 16, and the reason this is not just tidiness. These are separate
+    /// `@Published` properties and every `await` here is a chance for SwiftUI to
+    /// paint what has been assigned so far. Assigned one at a time, the board
+    /// gets painted with the NEW open-replay events against the OLD view - and
+    /// `MessageTableView.pendingOpen` reads exactly that pair, freezing every
+    /// badge to "the old board, minus a move that has not landed in it yet".
+    /// That is a count too high for one paint, corrected the moment the view
+    /// catches up: the owner's "briefly have their card count bumped". The same
+    /// window let `legal` describe a board that was already gone, which is a
+    /// button offering a move the kernel would refuse.
+    ///
+    /// `openReplay` nil means "leave the replay stream alone" (an ordinary
+    /// refresh after a move); a value replaces it, which only `begin` does.
+    private func publish(openReplay: [GameEvent]?) async {
+        let v = await kernel.residentView(viewer: mySeat)
+        let l = await kernel.residentLegal(seat: mySeat)
+        let held = baseSentAt == 0 ? 0
+                 : await kernel.pickupHold(seat: mySeat, sentAt: baseSentAt)
+        if let evs = openReplay {
+            openReplayEvents = evs
+            // Raised in the same breath as the view it describes: the paint that
+            // first shows this chain must already know which cards are still to
+            // fly, and must never see one without the other.
+            replayPending = !evs.isEmpty
+        }
+        view = v
+        legal = l
+        if held != pickupHold { pickupHold = held }
+        armHoldTicker(held)
     }
 
     /// Re-ask the kernel for the hold and, if one stands, keep asking once a
@@ -410,10 +441,7 @@ public final class MessageTurnController: ObservableObject {
     /// staging a cover makes the last action a cover, which ends the hold on the
     /// next read (owner: "if the player chooses a card in the mean time, this
     /// shouldn't cause any issues - the timer should just not do anything").
-    private func refreshPickupHold() async {
-        let held = baseSentAt == 0 ? 0
-                 : await kernel.pickupHold(seat: mySeat, sentAt: baseSentAt)
-        if held != pickupHold { pickupHold = held }
+    private func armHoldTicker(_ held: Int) {
         holdTicker?.cancel()
         guard held > 0 else { holdTicker = nil; return }
         holdTicker = Task { [weak self] in
