@@ -100,8 +100,18 @@ public final class MessageTurnController: ObservableObject {
     ///    pickup, so every viewer gets real identities); lay each in its own
     ///    uncovered slot. This is exactly how the web reconstructs a pickup's
     ///    table for the same animation (AnimationContext: one battle per card).
-    public var openReplayPreBattles: [BattleView] {
-        let evs = openReplayEvents
+    public var openReplayPreBattles: [BattleView] { Self.preBoutTable(openReplayEvents) }
+
+    /// The rule above, as a pure function of ANY event stream.
+    ///
+    /// ROUND 16 lifted it out of the property because the LIVE bout-end needs
+    /// the same answer: when a cover ends the bout in the same kernel apply, the
+    /// board's own prior view is the table WITHOUT that cover on it (the view
+    /// went straight from "uncovered attack" to "empty"), so a sweep built from
+    /// it shows a table missing the card the player just played. The kernel's
+    /// stream is the only place the covered table exists, live or on open, and
+    /// there must be exactly one reading of it.
+    public static func preBoutTable(_ evs: [GameEvent]) -> [BattleView] {
         guard let bi = evs.firstIndex(where: {
             $0.kind == .discard || $0.kind == .cardsToTrash || $0.kind == .pickup
         }) else { return [] }

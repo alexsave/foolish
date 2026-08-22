@@ -26,6 +26,21 @@ public var flightTime: Double {
 }
 public let flightGap: Double = 0.025       // web inter-event queue gap = 25ms
 
+/// ROUND 16: the HOLD between a cover that ENDED THE BOUT and the sweep that
+/// clears the table (owner: "when you cover and cause the deck to discard (last
+/// defense), it should give some time to let people see what you covered with").
+///
+/// Every other beat in a sequence is a card moving, so `flightGap`'s 25ms is
+/// enough - the eye is following the motion, not reading the board. This one is
+/// different: the cover lands and the very next beat takes it away again, so the
+/// card that decided the bout is on the table for about a frame. The hold is a
+/// beat of NOTHING moving, which is the only thing that makes a board readable.
+///
+/// Expressed against `flightTime` rather than as a bare 0.45 so it scales with
+/// HARNESS_SLOWMO like every other duration here - a filmed sequence keeps its
+/// proportions instead of the hold shrinking to nothing as the flights stretch.
+public var boutEndHold: Double { flightTime * 0.9 }
+
 /// The deck pile's rect in `boardSpace` (draw source / flip source).
 public struct DeckFrameKey: PreferenceKey {
     public static let defaultValue: CGRect = .zero
@@ -134,7 +149,8 @@ public final class BoardAnimator: ObservableObject {
     /// bounds the wait: an unbalanced `sequenceDepth` increment (a bug, not a
     /// real long sequence) must never wedge the caller forever. 8s is
     /// comfortably above the longest sequence today (an 8-seat bout end: one
-    /// discard/pickup step + up to 7 draw steps, each ≈0.55s, is under 4.5s).
+    /// discard/pickup step + up to 7 draw steps, each ≈0.55s, plus round 16's
+    /// one `boutEndHold`, is under 5s).
     public static func waitForSettle(pollInterval: UInt64 = 100_000_000,
                                      timeout: TimeInterval = 8.0) async {
         let deadline = Date().addingTimeInterval(timeout)

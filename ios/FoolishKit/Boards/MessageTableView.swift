@@ -1235,13 +1235,34 @@ public struct MessageTableView: View {
 
         AnimLog.say("-> boutEnd preHide=\(myNewIds.count)")
         Task {
+            // Fetched BEFORE the cover's landing flight, not after: the swept
+            // table has to change the instant that flight ends (see below), and
+            // a kernel round-trip in between is a paint the cover spends
+            // nowhere. Nothing is visible during the fetch either way - the
+            // held ghost from `playAt` is already resting at the card's source.
+            let events = await MessageKernel.shared.lastMoveEvents(viewer: controller.mySeat,
+                                                                   atomsBefore: controller.animAtomsBefore)
             if let pc = matchedCover {
                 BoardAnimator.sequenceDepth += 1
                 await playStep { _ in self.pendingCoverLandingFlights(pc) }
+                // ROUND 16: the cover has LANDED, and the next beat is the sweep
+                // that carries the whole table off. Swap the swept table for the
+                // kernel's own COVERED one now, in the same MainActor tick the
+                // ghost is removed in (no await between, so SwiftUI paints them
+                // together and there is no blink), so the card takes the ghost's
+                // place on the table instead of vanishing with it.
+                //
+                // Without this the hold in `runEventStream` would hold on a table
+                // with a hole in it: `setSweep(old.battles)` above is the board
+                // BEFORE this apply, which is the attack still uncovered. The
+                // card also now sweeps from its OWN rendered slot rather than the
+                // centre fallback `tableCardSource` documents for exactly this
+                // case - it finally has a slot, because it is finally on a table.
+                if let covered = Self.coveredSweep(events, current: sweepBattles) {
+                    setSweep(covered)
+                }
                 BoardAnimator.sequenceDepth -= 1
             }
-            let events = await MessageKernel.shared.lastMoveEvents(viewer: controller.mySeat,
-                                                                   atomsBefore: controller.animAtomsBefore)
             await runEventStream(events, finalView: new)
         }
     }
@@ -1333,7 +1354,8 @@ public struct MessageTableView: View {
         // wait so its discard ghost covers the fading table card at once (#2).
         try? await Task.sleep(nanoseconds: openReplay ? 100_000_000 : 16_000_000)
 
-        for group in Self.parallelGroups(events) {
+        let groups = Self.parallelGroups(events)
+        for (gi, group) in groups.enumerated() {
             // Every step below is written against ONE event; a group of several
             // is a MULTI-CARD COVER, whose cards must fly together (see
             // `parallelGroups`). `ev` leads the group for everything that reads
@@ -1411,6 +1433,17 @@ public struct MessageTableView: View {
                 deckCountOverride = s.deckCount
                 discardCountOverride = s.discardCount
                 for p in s.players where p.seat != controller.mySeat { seatCountOverride[p.seat] = p.handCount }
+            }
+            // ROUND 16: a cover that ended the bout HOLDS before the sweep takes
+            // the table away. See `boutEndHold` for why this one beat is unlike
+            // every other gap in a sequence. Placed here rather than at either
+            // call site because both sides reach it: the defender's own board
+            // arrives with the landing flight already flown (its cover step is a
+            // no-op - the card is not in the final view to fly to), and every
+            // receiver replays the same stream from the top.
+            if Self.holdsAfter(groups, gi) {
+                AnimLog.say("stream#\(run) hold \(Int(boutEndHold * 1000))ms - bout-ending cover")
+                try? await Task.sleep(nanoseconds: UInt64(boutEndHold * 1_000_000_000))
             }
         }
         AnimLog.say("stream#\(run) end")
@@ -1514,6 +1547,36 @@ public struct MessageTableView: View {
             }
         }
         return out
+    }
+
+    /// ROUND 16: does the sequence HOLD after group `i`? True only for a COVER
+    /// that ended its bout - the case the owner named, "when you cover and cause
+    /// the deck to discard (last defense)".
+    ///
+    /// The bout end is the DISCARD, so this looks forward for one. Not merely at
+    /// the next group: a bout that ends because the defender's last card went
+    /// down puts their OUT (and, at the end of a game, a magic transition)
+    /// between the cover and the trash, and those carry no flight of their own -
+    /// they are notices, not movements, so they neither separate the cover from
+    /// its consequence nor deserve a hold of their own. Anything that DOES move a
+    /// card ends the scan: a refill or a pickup after a cover means the table did
+    /// not close on it, and holding there would be a stall in the middle of a
+    /// sequence that is still going somewhere.
+    ///
+    /// The far commoner bout end - defender covers, an ATTACKER then says good -
+    /// is two bubbles, so the discard arrives in a stream with no cover in it at
+    /// all and nothing here fires. That is right: nobody covered in that beat,
+    /// and the table has been sitting there readable since the last one.
+    static func holdsAfter(_ groups: [[GameEvent]], _ i: Int) -> Bool {
+        guard i >= 0, i < groups.count, groups[i].first?.kind == .cover else { return false }
+        for j in (i + 1)..<groups.count {
+            switch groups[j].first?.kind {
+            case .discard, .cardsToTrash: return true
+            case .out, .magicTransition, .flipped: continue
+            default: return false
+            }
+        }
+        return false
     }
 
     private func playStep(_ build: (_ lastChance: Bool) -> [Flight]?) async {
@@ -1922,6 +1985,25 @@ public struct MessageTableView: View {
         sweepTableIds = Set(battles.flatMap { b -> [String] in
             [b.attack.identity] + (b.defense.map { [$0.identity] } ?? [])
         })
+    }
+
+    /// ROUND 16: the table a bout-ending COVER should be swept off - the kernel's
+    /// covered table (`preBoutTable`), the same one a receiver's open-replay lays
+    /// out, so both sides sweep the identical board.
+    ///
+    /// nil unless it ACCOUNTS FOR everything the current sweep already holds. The
+    /// live sweep is the real prior view and is never wrong about which cards were
+    /// on the table; this only ever earns the swap by ADDING the cover to it. A
+    /// stream that came back short (or with the flattened one-slot-per-card shape
+    /// `preBoutTable` reconstructs for a pickup) is refused rather than allowed to
+    /// drop a covered pair off the table mid-sequence.
+    static func coveredSweep(_ events: [GameEvent], current: [BattleView]) -> [BattleView]? {
+        func ids(_ bs: [BattleView]) -> Set<String> {
+            Set(bs.flatMap { [$0.attack.identity] + ($0.defense.map { [$0.identity] } ?? []) })
+        }
+        let table = MessageTurnController.preBoutTable(events)
+        guard !table.isEmpty, ids(current).isSubset(of: ids(table)) else { return nil }
+        return table
     }
 
     /// Drop the pre-bout table. Called on any view change that empties the table

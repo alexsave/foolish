@@ -1833,6 +1833,118 @@ static void print_endgame(int np) {
     fprintf(stderr, "no %dp endgame found\n", np);
 }
 
+// ---------- --lastdefense: the cover that ENDS the bout --------------------
+//
+// Round 16, the owner: "when you cover and cause the deck to discard (last
+// defense), it should give some time to let people see what you covered with."
+//
+// Prints a LIVE envelope one tap short of that: the defender is on move and
+// holds a cover which, applied, sweeps the table in the SAME kernel step - no
+// attacker gets to say good, because the defender's last card just went down
+// and there is nothing left to throw at them. Sit as the defender (dev.seat is
+// written by the rig) and play the card; what follows is the sequence under
+// test - cover lands, HOLD, then the discard and the deals.
+//
+// It cannot be posed from a deal, which is why it is searched: the shape needs
+// a defender down to their last coverable card, i.e. an endgame. The playout is
+// the same random one --endgame uses, stopped at the first state that poses it
+// rather than run to the finish.
+static int cover_ends_the_bout(const Game *g, int def, const LegalMove *m) {
+    Game c = *g;                      // the kernel is pure over a Game; try it
+    if (!handle_cover(&c, def, m->cards, m->attack_cards, m->n_cards)) return 0;
+    return c.num_battles == 0;        // the table went with the cover
+}
+
+static void print_lastdefense(int np) {
+    static unsigned char body[1024];
+    static Game scratch;
+    static LegalMoves ml;
+
+    for (uint32_t s = 1; s < 8000; s++) {
+        uint8_t seed[MSG_SEED_LEN];
+        seed_fill(seed, 20260822u + s * 89u);
+        game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+        g_rng = 17u + s;
+        random_strategy_set_seed(g_rng);
+
+        Game g;
+        memset(&g, 0, sizeof(g));
+        g.num_players = (int8_t)np;
+        for (int i = 0; i < np; i++) {
+            g.players[i].status = PLAYER_STATUS_READY;
+            g.players[i].strategy_key = 0;
+            snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
+        }
+        start_game(&g);
+
+        int last_actor = g.first_attacker;
+        for (int step = 0; step < 400; step++) {
+            if (game_done(&g) >= 0 || g.status != GAME_STATUS_PLAYING) break;
+
+            // Does THIS state pose it? Ask before moving, so what gets sealed
+            // is the board the human will be handed.
+            const int def = g.defender;
+            if (def >= 0 && def < np && g.players[def].status == PLAYER_STATUS_IN
+                && last_actor != def) {
+                calculate_legal_moves(&g, def, &ml);
+                for (int i = 0; i < ml.n; i++) {
+                    if (ml.moves[i].type != MOVE_COVER) continue;
+                    if (!cover_ends_the_bout(&g, def, &ml.moves[i])) continue;
+
+                    MsgEnvelope e;
+                    env_init(&e, seed, np);
+                    e.phase = MSG_PHASE_LIVE;
+                    e.last_actor_seat = (uint8_t)last_actor;
+                    // A human opens this one, so stamp it now (same reasoning
+                    // as --fatboard: not a byte-reproducible fixture).
+                    e.sent_at = (uint16_t)(time(NULL) & 0xffff);
+                    if (msg_seal(&e, &g, MSG_NO_BASE, body, sizeof(body), &scratch) != MSG_EOK) break;
+                    unsigned char wire[ENV_CAP];
+                    const int n = msg_encode(&e, wire, sizeof(wire));
+                    if (n <= 0) break;
+
+                    int uncovered = 0;
+                    for (int b = 0; b < g.num_battles; b++)
+                        if (card_is_none(g.table_battles[b].defense)) uncovered++;
+                    fprintf(stderr, "lastdefense: %dp seed#%u defender=seat %d holds %d, "
+                                    "%d battles (%d uncovered), the closer is %d/%d, "
+                                    "deck %d, turn %d (%d bytes)\n",
+                            np, s, def, g.players[def].hand_count, g.num_battles, uncovered,
+                            ml.moves[i].cards[0].suit, ml.moves[i].cards[0].value,
+                            g.deck_count, e.turn, n);
+                    for (int k = 0; k < n; k++) printf("%02x", wire[k]);
+                    printf("\n");
+                    return;
+                }
+            }
+
+            int seat = -1, pick = -1;
+            const int start = (int)(rnd() % (uint32_t)np);
+            for (int t = 0; t < np && seat < 0; t++) {
+                const int c = (start + t) % np;
+                if (g.players[c].status != PLAYER_STATUS_IN) continue;
+                calculate_legal_moves(&g, c, &ml);
+                for (int i = 0; i < ml.n; i++)
+                    if (ml.moves[i].type != MOVE_WAIT) { seat = c; pick = i; break; }
+            }
+            if (seat < 0 || pick < 0) break;
+            AwireAction a;
+            move_to_awire(&ml.moves[pick], &a);
+            bool ok;
+            switch (a.kind) {
+                case AWIRE_ATTACK: ok = handle_attack(&g, seat, a.cards, a.n); break;
+                case AWIRE_COVER:  ok = handle_cover(&g, seat, a.cards, a.attacks, a.n); break;
+                case AWIRE_PASS:   ok = handle_pass(&g, seat, a.cards, a.n); break;
+                case AWIRE_PICKUP: ok = handle_pickup(&g, seat); break;
+                default:           ok = handle_good(&g, seat); break;
+            }
+            if (!ok) break;
+            last_actor = seat;
+        }
+    }
+    fprintf(stderr, "no %dp game in 8000 posed a bout-ending cover\n", np);
+}
+
 static void print_fatboard(int target, int np) {
     static unsigned char body[1024];
     static Game scratch;
@@ -2159,6 +2271,10 @@ int main(int argc, char **argv) {
         return 0;
     }
     if (argc > 2 && !strcmp(argv[1], "--holdcheck")) { print_holdcheck(argv[2]); return 0; }
+    if (argc > 1 && !strcmp(argv[1], "--lastdefense")) {
+        print_lastdefense(argc > 2 ? atoi(argv[2]) : 2);
+        return 0;
+    }
     if (argc > 1 && !strcmp(argv[1], "--fatboard")) {
         print_fatboard(argc > 2 ? atoi(argv[2]) : 10, argc > 3 ? atoi(argv[3]) : 2);
         return 0;
