@@ -2467,49 +2467,92 @@ struct SendHintReminder: View {
                         : Color(red: 0x00 / 255, green: 0x7A / 255, blue: 0xFF / 255)
     }
 
+    // ROUND 16 (owner): "make the send button hint arrow more obvious. Make the
+    // arrow taller, a bit more width, and make it move faster and in a larger
+    // range. It should be pretty clear that you aren't meant to hit the hint
+    // arrow, but the actual iMessage send arrow (that is above the collapsed
+    // view)." The four numbers below are that sentence.
+    //
+    // The arrow is drawn RESIZABLE at an explicit width x height rather than at
+    // a font size, because "taller AND a bit wider" are two numbers and a font
+    // size is one - the glyph is deliberately stretched ~20% taller than the
+    // symbol's own proportions, which also makes it read as an arrow POINTING
+    // somewhere rather than as a button you press.
+    static let arrowSize = CGSize(width: 21, height: 29)   // was ~15 x 17 (font 16 bold)
+    /// Peak-to-trough travel. Nearly 3x the old 5pt: the whole point is that the
+    /// eye follows it UP, off this view and onto Messages' own Send button.
+    static let bobTravel: CGFloat = 14
+    /// Seconds per bob. Was 1.5 - slow enough to read as decoration.
+    static let bobPeriod: Double = 0.85
+    /// Where the hint RESTS, measured down from the top of the container it is
+    /// laid into (the board's own top inset). NEGATIVE: round 16 lifts the whole
+    /// hint out of the board and into the drawer's top margin - owner: "take the
+    /// entire send hint div and just move it up".
+    ///
+    /// It is also smaller than `bobTravel`, so the crest rides higher still.
+    /// Raising the REST position is the only way to get closer to Messages' Send
+    /// button: growing the travel alone just pushes the rest position down,
+    /// since the crest is pinned by whatever headroom is left above it.
+    ///
+    /// The only thing in that margin is the grabber, which is CENTRED while this
+    /// hint hugs the trailing edge, so there is nothing up there to collide
+    /// with; the drawer's rounded corner is the real ceiling and the crest still
+    /// clears it (measured on device: the tip stops ~8pt short of the edge).
+    static let crestRoom: CGFloat = -9
+
     var body: some View {
-        VStack(alignment: .sendAxis, spacing: 3) {
-            // Round-9: the bob is a TimelineView-driven pure sine of wall-clock
-            // time, not a `repeatForever` @State animation - the stateful kind
-            // is silently CANCELLED whenever an ancestor re-renders inside a
-            // no-animation transaction (this board carries several), which is
-            // why "sometimes the send arrow doesn't go up and down". A value
-            // computed fresh every frame cannot be cancelled.
-            TimelineView(.animation(minimumInterval: nil, paused: paused)) { ctx in
-                let t = ctx.date.timeIntervalSinceReferenceDate
-                // Rest at 0, crest at -5, period 1.5s: (1-cos) starts the wave
-                // at the caption and only ever lifts away from it.
-                let lift = 2.5 * (1 - cos(t * 2 * .pi / 1.5))
-                let arrow = Image(systemName: "arrow.up")
-                    .font(.system(size: 16, weight: .bold))
+        // Round-9: the bob is a TimelineView-driven pure sine of wall-clock
+        // time, not a `repeatForever` @State animation - the stateful kind is
+        // silently CANCELLED whenever an ancestor re-renders inside a
+        // no-animation transaction (this board carries several), which is why
+        // "sometimes the send arrow doesn't go up and down". A value computed
+        // fresh every frame cannot be cancelled.
+        //
+        // ROUND 16: the WHOLE hint rides the wave, caption included (owner:
+        // "lets make the text move up and down so it looks less like a button
+        // and more like an arrow to the imessage button"). With the caption
+        // pinned and only the arrow moving, the pair read as a label with a
+        // fidgeting icon - a control. Moving together, they read as one object
+        // travelling toward the Send button above, which is the whole message.
+        TimelineView(.animation(minimumInterval: nil, paused: paused)) { ctx in
+            let t = ctx.date.timeIntervalSinceReferenceDate
+            // Rest at 0, crest at -bobTravel: (1-cos) starts the wave at rest
+            // and only ever lifts away from it.
+            let lift = Self.bobTravel / 2 * (1 - cos(t * 2 * .pi / Self.bobPeriod))
+            let arrow = Image(systemName: "arrow.up")
+                .resizable()
+                .frame(width: Self.arrowSize.width, height: Self.arrowSize.height)
+            VStack(alignment: .sendAxis, spacing: 3) {
                 // Round-10 #3 (owner): a WHITE stroke around the blue arrow so
                 // it carries on the wool. SF Symbols have no outline mode, so
                 // the stroke is the same glyph stamped in white at 8 compass
-                // offsets under the blue one - a solid ~1.3pt ring.
+                // offsets under the blue one - a solid ring. Round 16: 1.6, up
+                // with the glyph, so the bigger arrow keeps the same ratio of
+                // outline to body rather than wearing a hairline.
                 ZStack {
                     ForEach(0..<8, id: \.self) { i in
                         let a = CGFloat(i) * .pi / 4
                         arrow.foregroundColor(.white)
-                            .offset(x: 1.3 * cos(a), y: 1.3 * sin(a))
+                            .offset(x: 1.6 * cos(a), y: 1.6 * sin(a))
                     }
                     arrow
                 }
-                .offset(y: -lift)
+                .alignmentGuide(.sendAxis) { d in d[HorizontalAlignment.center] }
+                Text(FStrings.t("ios.msg.sendhint"))
+                    .font(FType.title(15)).fontWeight(.heavy)
+                    .fixedSize()
+                    // Centred on the arrow, CLAMPED to the screen: the axis sits
+                    // `sendHintCenterFromScreenTrailing` (42) from the screen's
+                    // right edge, so the caption may extend at most 38pt right of
+                    // it (a 4pt screen margin). A caption wider than centring
+                    // allows shifts left to hug the edge instead of running off it
+                    // (the ru caption did exactly that).
+                    .alignmentGuide(.sendAxis) { d in
+                        max(d[HorizontalAlignment.center],
+                            d.width - (MessageTableView.sendHintCenterFromScreenTrailing - 4))
+                    }
             }
-            .alignmentGuide(.sendAxis) { d in d[HorizontalAlignment.center] }
-            Text(FStrings.t("ios.msg.sendhint"))
-                .font(FType.title(15)).fontWeight(.heavy)
-                .fixedSize()
-                // Centred on the arrow, CLAMPED to the screen: the axis sits
-                // `sendHintCenterFromScreenTrailing` (42) from the screen's
-                // right edge, so the caption may extend at most 38pt right of
-                // it (a 4pt screen margin). A caption wider than centring
-                // allows shifts left to hug the edge instead of running off it
-                // (the ru caption did exactly that).
-                .alignmentGuide(.sendAxis) { d in
-                    max(d[HorizontalAlignment.center],
-                        d.width - (MessageTableView.sendHintCenterFromScreenTrailing - 4))
-                }
+            .offset(y: -lift)
         }
         .foregroundColor(sendBlue)
         .accessibilityHidden(true)   // decorative; the staged state already reads via Undo
@@ -2541,9 +2584,11 @@ struct StagedSendHint: View {
             .alignmentGuide(.trailing) { d in
                 d[HorizontalAlignment.sendAxis] + centerFromTrailing
             }
-            // Room for the crest of the bob, so the arrow never clips against
-            // the container's top edge (seen on device at the drawer's corner).
-            .padding(.top, 6)
+            // Where the arrow rests, and so how high the crest reaches: round 16
+            // pulls the crest up out of this container and into the drawer's top
+            // margin, toward Messages' own Send button. See
+            // SendHintReminder.crestRoom for why it is smaller than the travel.
+            .padding(.top, SendHintReminder.crestRoom)
             .opacity(on ? 1 : 0)
             // Round-10 #2 ("fade it out"): BOTH directions animate - the old
             // one-way withAnimation faded it in but let a style change snap it
