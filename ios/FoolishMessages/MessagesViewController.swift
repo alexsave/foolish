@@ -26,6 +26,10 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// explicit New game resets the session, while a compact<->expanded style
     /// toggle (same token) preserves the in-progress game.
     private var newGameToken = 0
+    /// The name of the player whose LEAVE is about to be staged (round 16), or
+    /// nil. Set by the lobby's Exit and consumed by the very next `stage` -
+    /// one bubble, one announcement.
+    private var pendingLeftName: String?
     /// Incremented on each real SEND (didStartSending). Threaded into
     /// MessagesRootView so the live board can drop the just-sent move from its
     /// pending list (`markSent`) - otherwise the Undo button lingered in the
@@ -276,6 +280,11 @@ final class MessagesViewController: MSMessagesAppViewController {
             // game it grew out of (see the session note in `stage`). Cleared by
             // didStartSending/didReceive, exactly like the New game tap's.
             onFreshChain: { [weak self] in self?.startingNewGame = true },
+            // Round 16: who just walked out of the lobby. Only the leaver's own
+            // device knows - the join that carried the name is what the leave
+            // removed - so it says so here, and `stage` puts it in the
+            // transcript line before clearing it.
+            onAnnounceLeave: { [weak self] name in self?.pendingLeftName = name },
             onSend: { [weak self] payload, mySeat, fromUndo in
                 await self?.stage(payload: payload, mySeat: mySeat, fromUndo: fromUndo)
             },
@@ -345,10 +354,27 @@ final class MessagesViewController: MSMessagesAppViewController {
         } else if env?.phase == 0 {
             // A WAITING lobby (§5.2): the creator's bubble invites the thread to
             // join; a later join re-seals with the joiner as last actor.
+            //
+            // Round 16 - a LEAVE reseals a lobby too, and reads nothing like a
+            // join. Two things separate them, and both are needed: this device
+            // set `pendingLeftName` if the leave was MINE (only the leaver knows
+            // the name, since the join carrying it is what was removed), and a
+            // leave's `lastActorSeat` points at a free slot rather than a
+            // seated player, which is how a RECEIVER tells the two apart with
+            // no name to go on.
             let joinCount = env?.joins.count ?? 0
-            summary = joinCount > 1
-                ? FStrings.t("ios.msg.joined", ["name": seatName(env?.lastActorSeat ?? -1)])
-                : FStrings.t("ios.msg.joininvite")
+            let actor = env?.lastActorSeat ?? -1
+            let actorIsSeated = env?.joins.contains { $0.seat == actor } ?? false
+            if let left = pendingLeftName {
+                summary = FStrings.t("ios.msg.left", ["name": left])
+            } else if !actorIsSeated && joinCount >= 1 {
+                summary = FStrings.t("ios.msg.leftanon")
+            } else {
+                summary = joinCount > 1
+                    ? FStrings.t("ios.msg.joined", ["name": seatName(actor)])
+                    : FStrings.t("ios.msg.joininvite")
+            }
+            pendingLeftName = nil
         } else if env?.phase == 2, env?.turn == 0 {
             // The last-joiner LIVE handoff carries no move yet - the game just
             // started; name who started it.

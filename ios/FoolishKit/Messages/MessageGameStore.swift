@@ -167,6 +167,18 @@ public final class MessageGameStore {
         defaults?.set(data, forKey: seatsKey)
     }
 
+    /// Drop this device's seat in `gameId` - the LEAVE half of `setSeat`
+    /// (round 16). Unscoped by chatKey on purpose, mirroring `seatForBubble`:
+    /// the caller is holding the bubble it just resealed, so the gameId is
+    /// itself the proof, and a group-membership change that re-keyed the chat
+    /// must not leave a row behind that seats me in a lobby I walked out of.
+    public func forgetSeat(gameId: String) {
+        var map = allSeats()
+        guard map.removeValue(forKey: gameId) != nil else { return }
+        guard let data = try? JSONEncoder().encode(map) else { return }
+        defaults?.set(data, forKey: seatsKey)
+    }
+
     private func allSeats() -> [String: SeatRow] {
         guard let data = defaults?.data(forKey: seatsKey),
               let map = try? JSONDecoder().decode([String: SeatRow].self, from: data)

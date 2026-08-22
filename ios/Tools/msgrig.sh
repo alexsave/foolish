@@ -8,6 +8,7 @@
 # simulator's touch state. This rig removes all three.
 #
 #   ios/Tools/msgrig.sh setup        fresh seeded game, board open and EXPANDED
+#   ios/Tools/msgrig.sh lobby [N]                a LOBBY with N seated, left open
 #   ios/Tools/msgrig.sh endgame [P] [SEAT]       SEED a FINISHED game, to verify
 #                                                what "New game" does at the end
 #   ios/Tools/msgrig.sh fatboard [N] [P] [SEAT]  SEED a dense N-card table
@@ -118,6 +119,39 @@ cmd_setup() {
   tap $((W / 2)) "$(bar_y 0)" 12      # Start playing -> auto-collapse
   swipe 0.5 "$g1x" "$g1y" "$g2x" "$g2y" 4   # grabber drag back to expanded
   echo "drawer top: $(drawer_top)   (a small number = expanded)"
+}
+
+# A LOBBY with N players seated, left OPEN - the surface round 16's Exit button
+# lives on. `setup` walks straight past this into a dealt game; this stops at
+# the lobby so the Start/Exit row can be filmed with 2, 3 or 8 seated.
+#
+# Seats are filled with the DEBUG "Add player (testing)" control, the same one
+# `setup` uses, so one device can stand in for a whole table.
+cmd_lobby() {
+  local seats="${1:-3}"
+  xcrun simctl shutdown "$SIM" 2>/dev/null || true; sleep 3
+  xcrun simctl boot "$SIM"; sleep 8
+  until xcrun simctl list devices booted | grep -q "$SIM"; do sleep 2; done
+  xcrun simctl launch "$SIM" com.apple.MobileSMS >/dev/null; sleep 5
+  printf '%s' "$SEED" > "$(group_dir)/dev.seed"
+  rm -f "$(group_dir)/dev.fatboard" "$(group_dir)/dev.replay" "$(group_dir)/dev.seat"
+
+  read -r W H < <(screen)
+  read -r cx cy px py ax ay sx sy bx by g1x g1y g2x g2y < <(profile "$W" "$H")
+  tap "$cx" "$cy" 3        # conversation
+  tap "$px" "$py" 2.5      # compose "+"
+  swipe 0.4 $((W / 2)) $((H * 82 / 100)) $((W / 2)) $((H * 45 / 100)) 1.5
+  tap "$ax" "$ay" 4.5      # Foolish
+  tap $((W / 2)) "$(bar_y 0)" 4.5     # Create game
+  tap "$sx" "$sy" 1.5; tap "$sx" $((sy + 17)) 3.5   # send circle
+  tap "$bx" "$by" 5        # open the sent bubble -> EXPANDED lobby
+  # Seat the rest. "Add player" is always the TOP bar while the lobby has room.
+  local i=1
+  while [ "$i" -lt "$seats" ]; do
+    tap $((W / 2)) "$(bar_y 0)" 3
+    i=$((i + 1))
+  done
+  echo "lobby with $seats seated; bars at: $(python3 "$UI" bars | tail -1)"
 }
 
 # Seed a dense table and open straight onto it. The C searcher prints ONE FMSG
@@ -261,6 +295,7 @@ case "${1:-}" in
   setup) shift; cmd_setup "$@" ;;
   fatboard) shift; cmd_fatboard "$@" ;;
   endgame) shift; cmd_endgame "$@" ;;
+  lobby) shift; cmd_lobby "$@" ;;
   twocover) shift; cmd_twocover "$@" ;;
   reopen) shift; cmd_reopen "$@" ;;
   unseed) rm -f "$(group_dir)/dev.fatboard" "$(group_dir)/dev.replay"; echo "seed removed" ;;

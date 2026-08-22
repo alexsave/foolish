@@ -86,6 +86,11 @@ public struct MessagesRootView: View {
     /// MessagesViewController's session note), but it has no name to ask for
     /// and no surface to rebuild.
     let onFreshChain: () -> Void
+    /// Name the player who just left, for the bubble about to be staged. The
+    /// envelope cannot say it - the join carrying the name is exactly what the
+    /// leave removed - so the one device that still knows tells the host, which
+    /// writes it into the transcript line. Cleared once staged.
+    let onAnnounceLeave: (String) -> Void
     let onSend: (Data, Int, Bool) async -> Void
     /// Retract a previously-staged bubble (§10 undo). No-op by default so every
     /// existing caller keeps compiling; the real extension has no API to remove an
@@ -118,6 +123,7 @@ public struct MessagesRootView: View {
                 collapseSignal: CollapseSignal = CollapseSignal(),
                 requestExpand: @escaping () -> Void, onNewGame: @escaping () -> Void,
                 onFreshChain: @escaping () -> Void = {},
+                onAnnounceLeave: @escaping (String) -> Void = { _ in },
                 onSend: @escaping (Data, Int, Bool) async -> Void,
                 onUnstage: @escaping () -> Void = {}) {
         self.payloadURL = payloadURL; self.style = style; self.senderIsLocal = senderIsLocal
@@ -126,7 +132,8 @@ public struct MessagesRootView: View {
         self.incomingURL = incomingURL; self.incomingToken = incomingToken
         self.cancelToken = cancelToken; self.collapseSignal = collapseSignal
         self.requestExpand = requestExpand; self.onNewGame = onNewGame
-        self.onFreshChain = onFreshChain; self.onSend = onSend
+        self.onFreshChain = onFreshChain; self.onAnnounceLeave = onAnnounceLeave
+        self.onSend = onSend
         self.onUnstage = onUnstage
     }
 
@@ -279,7 +286,8 @@ public struct MessagesRootView: View {
                         incomingURL: incomingURL, incomingToken: incomingToken,
                         cancelToken: cancelToken,
                         requestExpand: requestExpand, onNewGame: onNewGame,
-                        onFreshChain: onFreshChain, onSend: onSend,
+                        onFreshChain: onFreshChain, onAnnounceLeave: onAnnounceLeave,
+                        onSend: onSend,
                         onUnstage: onUnstage)
                 // Round-10 #1: lay the surface out against the SMOOTHED height,
                 // bottom-anchored - the drawer's bottom edge is the one edge
@@ -363,6 +371,11 @@ private struct GameSurface: View {
     /// MessagesViewController's session note), but it has no name to ask for
     /// and no surface to rebuild.
     let onFreshChain: () -> Void
+    /// Name the player who just left, for the bubble about to be staged. The
+    /// envelope cannot say it - the join carrying the name is exactly what the
+    /// leave removed - so the one device that still knows tells the host, which
+    /// writes it into the transcript line. Cleared once staged.
+    let onAnnounceLeave: (String) -> Void
     let onSend: (Data, Int, Bool) async -> Void
     let onUnstage: () -> Void
 
@@ -666,6 +679,7 @@ private struct GameSurface: View {
                       nickname: MessageGameStore.shared.nickname,
                       onJoin: { name in Task { await joinLobby(lob, nickname: name) } },
                       onStart: { Task { await startGame(lob) } },
+                      onExit: { Task { await leaveLobby(lob) } },
                       onInvite: { Task {
                           await onSend(lob.payload, lobbySeat(lob.env) ?? 0, false)
                           surfaceStaged = true   // round-9: the invite awaits Send
@@ -1161,6 +1175,67 @@ private struct GameSurface: View {
         }
     }
 
+    /// Leave the lobby (round 16): reseal it WITHOUT me and stage that, so the
+    /// thread's newest bubble is a table I am no longer at.
+    ///
+    /// SEATS ARE COMPACTED, not holed. Start deals at `joins.count` and the
+    /// kernel seats 0..<n contiguously (`fio_reseat_game`), an invariant the
+    /// whole lobby rests on - "seats are claimed lowest-first, so it is always
+    /// a contiguous 0..<n". A hole would seal a join whose seat is >= the
+    /// dealt player count and simply not replay. Compacting preserves the
+    /// CYCLE, which is all the seat numbers ever meant; everyone finds
+    /// themselves again by name (SeatIdentity.seatClaimedByName), and the
+    /// numbers were never identity.
+    ///
+    /// WHAT `lastActorSeat` BECOMES. It has to be a seat, and mine no longer
+    /// exists - so it points at the first FREE slot, which after a compaction
+    /// is always in range and is never a seated player. That matters twice:
+    /// nobody left behind is wrongly read as "you sent the newest bubble" and
+    /// withheld from Start (M9), and "the actor is not in the joins" is exactly
+    /// how a reader tells a leave from a join.
+    ///
+    /// THE RACE, ACCEPTED (owner's call). If someone taps Start off the lobby
+    /// that still lists me at the same moment I leave, one of the two is
+    /// silently dropped: Messages hands every device whichever bubble arrives
+    /// last, there is no way to read past it, and Rule P ranks the fuller
+    /// roster higher - so a device already sitting on the lobby keeps showing
+    /// me until it reopens the newer bubble. No priority scheme is layered on
+    /// top of that; it would only be a second opinion about an order the
+    /// platform has already decided.
+    private func leaveLobby(_ lob: Lobby) async {
+        let env = lob.env
+        guard let me = lobbySeat(env), let gid = UInt64(env.gameId) else { return }
+        guard LobbyControls.canExit(mySeat: me, joined: env.joins.count) else { return }
+        let myName = env.joins.first { $0.seat == me }?.name ?? ""
+
+        let remaining = env.joins.filter { $0.seat != me }.sorted { $0.seat < $1.seat }
+        let joins = remaining.enumerated().map { MessageJoin(seat: $0.offset, name: $0.element.name) }
+        guard !joins.isEmpty else { return }
+
+        do {
+            // Re-adopt so the LOCKED seed and the open capacity are resident.
+            _ = try await MessageKernel.shared.decode(payload: lob.payload, viewer: -1)
+            let parent = MessageTurnController.firstEight(hex: env.digest)
+            let payload = try await MessageKernel.shared.seal(
+                phase: 0, lastActorSeat: joins.count, gameId: gid,
+                parent8: parent, joins: joins)
+            let newEnv = try await MessageEnvelope.decode(payload: payload, viewer: -1)
+            // Forget the seat I no longer hold, or the next open of this game
+            // would resolve me back into a lobby I left.
+            MessageGameStore.shared.forgetSeat(gameId: env.gameId)
+            AnimLog.say("lobby exit: \(myName) left, \(joins.count) remain")
+            // The sender names the leaver in the transcript line; the envelope
+            // cannot (the join that carried the name is exactly what was
+            // removed), so the one device that still knows says it.
+            onAnnounceLeave(myName)
+            await onSend(payload, joins.count, false)
+            surfaceStaged = true
+            lobby = Lobby(env: newEnv, payload: payload)
+        } catch {
+            damaged = true
+        }
+    }
+
     /// The lobby's "Add player" action, or nil when solo seating is not
     /// compiled in — one `#if` here instead of one at the call site, so the
     /// view code above reads the same in every configuration.
@@ -1580,6 +1655,25 @@ public enum LobbyControls {
         }
         return joined < capacity ? .join : .full
     }
+
+    /// May I LEAVE this lobby? A seated player may, once somebody else is
+    /// seated too.
+    ///
+    /// Orthogonal to `offered` on purpose, rather than a sixth case of it:
+    /// leaving is available alongside Start (both, side by side) and alongside
+    /// Waiting (exit alone), and folding two independent answers into one enum
+    /// would need a case per combination. The owner's shape is exactly this -
+    /// "start game and the exit game buttons side by side WHEN BOTH ARE
+    /// POSSIBLE. Currently start game is not possible for the last player that
+    /// joined. Thus they can only exit."
+    ///
+    /// THE 2+ FLOOR is the wire's, not a preference: a WAITING envelope must
+    /// carry at least one join (MSG_EJOINS), so the last player standing has no
+    /// bubble to leave INTO. A lone creator's exit is New game, which replaces
+    /// the invite outright.
+    public static func canExit(mySeat: Int?, joined: Int) -> Bool {
+        mySeat != nil && joined >= 2
+    }
 }
 
 private struct LobbyView: View {
@@ -1591,6 +1685,8 @@ private struct LobbyView: View {
     let mySeat: Int?
     let onJoin: (String) -> Void
     let onStart: () -> Void
+    /// Leave the lobby: reseal it without me and stage that. Round 16.
+    let onExit: () -> Void
     /// Re-stage this same WAITING chain so the human can send the invite again
     /// — the recovery path for a lobby whose auto-staged bubble is gone (see
     /// the `mySeat != nil, joins < 2` branch in `body`).
@@ -1615,10 +1711,12 @@ private struct LobbyView: View {
     init(env: MessageEnvelope, mySeat: Int?, nickname: String,
          onJoin: @escaping (String) -> Void,
          onStart: @escaping () -> Void,
+         onExit: @escaping () -> Void = {},
          onInvite: @escaping () -> Void,
          onAddSoloSeat: (() -> Void)? = nil) {
         self.env = env; self.mySeat = mySeat
-        self.onJoin = onJoin; self.onStart = onStart; self.onInvite = onInvite
+        self.onJoin = onJoin; self.onStart = onStart; self.onExit = onExit
+        self.onInvite = onInvite
         self.onAddSoloSeat = onAddSoloSeat
         _nickname = State(initialValue: nickname == "Me" ? "" : nickname)
     }
@@ -1698,6 +1796,31 @@ private struct LobbyView: View {
             FButton("Add player (testing)", kind: .wood, action: addSeat)
         }
         if env.joins.count >= 2 {
+            // The SAME row the shipping lobby renders, not a lookalike: this is
+            // the path a seeded simulator run actually films, and a dev control
+            // that drifted from the real one would verify the wrong pixels.
+            startExitRow(canExit: LobbyControls.canExit(mySeat: mySeat,
+                                                        joined: env.joins.count))
+        }
+    }
+
+    /// Start, and Exit beside it when both are possible.
+    ///
+    /// The pair spans exactly the width Start spans on its own (owner: "the
+    /// distance between the left edge of the left one and the right edge of the
+    /// right one should be the same as the current width"). That falls out
+    /// rather than being computed: a non-compact FButton is `maxWidth
+    /// .infinity`, so two of them share the padded row and `FSpace.m` of
+    /// daylight sits between them - true on every device, in every locale, at
+    /// every accessibility size, with no arithmetic to drift.
+    @ViewBuilder
+    private func startExitRow(canExit: Bool) -> some View {
+        if canExit {
+            HStack(spacing: FSpace.m) {
+                FButton(FStrings.t("ios.msg.startgame"), kind: .wood, action: onStart)
+                FButton(FStrings.t("ios.msg.exitgame"), kind: .wood, action: onExit)
+            }
+        } else {
             FButton(FStrings.t("ios.msg.startgame"), kind: .wood, action: onStart)
         }
     }
@@ -1708,11 +1831,12 @@ private struct LobbyView: View {
             // the joined list above already says exactly that, and the owner's
             // read was "the lobby is too tight" for a second line saying the
             // same thing.
+            let canExit = LobbyControls.canExit(mySeat: mySeat, joined: env.joins.count)
             switch LobbyControls.offered(mySeat: mySeat, joined: env.joins.count,
                                          capacity: env.nPlayers,
                                          iSentTheInvite: env.lastActorSeat == mySeat) {
             case .start:
-                FButton(FStrings.t("ios.msg.startgame"), kind: .wood, action: onStart)
+                startExitRow(canExit: canExit)
             case .waiting:
                 // Round-4 note 1 / round-5 M9: the newest thing on this chain
                 // is mine — either my own invite (nobody else has joined yet)
@@ -1721,8 +1845,18 @@ private struct LobbyView: View {
                 // that isn't already mine to wait out. Round-5 M10:
                 // full-opacity ink + a light shadow, not 55% black. Round-6
                 // #17: `onTableText` (Tokens.swift).
+                //
+                // Round 16: waiting is no longer a DEAD END. This is exactly
+                // the owner's "start game is not possible for the last player
+                // that joined, thus they can only exit" - the M9 gate withholds
+                // Start from whoever sent the newest bubble, and until now that
+                // left them with no action at all. Exit alone, full width:
+                // there is no second button to share the row with.
                 Text(FStrings.t("ios.msg.waiting"))
                     .font(.footnote).onTableText()
+                if canExit {
+                    FButton(FStrings.t("ios.msg.exitgame"), kind: .wood, action: onExit)
+                }
             case .invite:
                     // I'm in, nobody else is yet. This branch used to render
                     // NOTHING — no Start (needs 2), no Join (I'm joined), no
