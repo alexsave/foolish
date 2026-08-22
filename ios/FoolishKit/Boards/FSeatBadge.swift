@@ -10,6 +10,10 @@ import SwiftUI
 import Foundation   // sin(_:) for the thinking-dots pulse
 
 public struct FSeatBadge: View {
+    /// Read once here rather than at each colour, for the same reason FCard
+    /// does: the ink and the shadow behind it have to agree about which weave
+    /// this badge is sitting on.
+    @Environment(\.colorScheme) private var scheme
     public let name: String
     public let handCount: Int
     public let isDefender: Bool
@@ -71,9 +75,9 @@ public struct FSeatBadge: View {
             Text(name)
                 .font(FType.body(12))
                 .fontWeight(.semibold)
-                .foregroundColor(isOut ? (onLight ? .black.opacity(0.4) : FColor.textDim)
-                                       : (onLight ? .black.opacity(0.85) : FColor.textPrimary))
-                .shadow(color: onLight ? .clear : .black.opacity(0.85), radius: onLight ? 0 : 2, y: onLight ? 0 : 1)
+                .foregroundColor(nameInk)
+                .shadow(color: nameShadow, radius: nameShadow == .clear ? 0 : 2,
+                        y: nameShadow == .clear ? 0 : 1)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: 96)
@@ -95,10 +99,51 @@ public struct FSeatBadge: View {
 
             roleRow
         }
-        .opacity(isOut ? 0.45 : 1)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(a11y)
     }
+
+    /// Is this badge sitting on a LIGHT ground? The beige message bubble always
+    /// is; the wool board is in light mode and is not in dark (the weave is a
+    /// beige/red plaid one way and a dark grey one the other - see WoolTexture).
+    /// Both the ink and the shadow hang off this one question.
+    static func onLightGround(onLight: Bool, scheme: ColorScheme) -> Bool {
+        onLight || scheme != .dark
+    }
+
+    /// ROUND 16, the owner: "players text that are out are invisible against the
+    /// wool background light mode. Make them just dark gray instead of
+    /// decreasing opacity."
+    ///
+    /// They were invisible twice over: a dim SAGE (`textDim`, picked for a dark
+    /// board) and then the whole badge at 0.45 opacity on top of it, which on
+    /// the light-mode weave left roughly nothing. Being out is now said with
+    /// INK, not with transparency - the badge draws at full strength and an out
+    /// player's name simply goes dark grey on a light ground. The container
+    /// `.opacity` is gone entirely rather than reduced: dimming a whole view is
+    /// what made a legible colour unreadable, and it would do the same to any
+    /// colour picked to replace it.
+    ///
+    /// Dark mode is unchanged (`textDim` on the dark weave already reads, and
+    /// the report is light-mode); a dark grey there would be the same mistake
+    /// pointing the other way.
+    static func nameInk(isOut: Bool, onLight: Bool, scheme: ColorScheme) -> Color {
+        if isOut {
+            return onLightGround(onLight: onLight, scheme: scheme)
+                 ? FColor.textOut : FColor.textDim
+        }
+        return onLight ? .black.opacity(0.85) : FColor.textPrimary
+    }
+    private var nameInk: Color { Self.nameInk(isOut: isOut, onLight: onLight, scheme: scheme) }
+
+    /// The bone names are carried by a hard black shadow, which is what lets
+    /// light-on-light work on the pale weave. Dark ink on a light ground needs
+    /// no such help and is muddied by it, so an out name drops it.
+    static func nameShadow(isOut: Bool, onLight: Bool, scheme: ColorScheme) -> Color {
+        let onLightGround = onLightGround(onLight: onLight, scheme: scheme)
+        return (onLight || (isOut && onLightGround)) ? .clear : .black.opacity(0.85)
+    }
+    private var nameShadow: Color { Self.nameShadow(isOut: isOut, onLight: onLight, scheme: scheme) }
 
     /// The overlapping mini card backs, centred (web spreads by index - mid).
     private var miniFan: some View {

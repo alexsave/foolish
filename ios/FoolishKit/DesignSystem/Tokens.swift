@@ -24,6 +24,15 @@ public enum FColor {
     public static let accent  = Color(hex: 0xC82B24)   // Soviet red
     public static let textPrimary = Color(hex: 0xEDE9DF)
     public static let textDim     = Color(hex: 0x9AA69E)
+    /// A label on a LIGHT ground that must read as subdued without disappearing
+    /// - today, the name of a player who is out, on the light-mode wool or on
+    /// the beige message bubble. Round 16, the owner: "players text that are out
+    /// are invisible against the wool background light mode. Make them just dark
+    /// gray instead of decreasing opacity." Dark enough to carry on beige with
+    /// no shadow behind it, and plainly not the bone `textPrimary` a player who
+    /// is still in the game gets - the state still reads at a glance, by ink
+    /// rather than by fading out.
+    public static let textOut     = Color(hex: 0x3F3F3F)
     public static let win     = Color(hex: 0xD8B24A)   // brass — victories, streaks
 
     /// Suit ink on a bone card: red suits use the accent red, black suits the ink.
