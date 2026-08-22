@@ -122,10 +122,28 @@ public struct FCard: View {
     }
 
     // Big centre suit glyph — 32/50 of the width (web parity).
+    //
+    // `.fixedSize()`, for the same reason `corner` has one, and it is not
+    // cosmetic. A Text lays itself out against the size it is PROPOSED; without
+    // this it will accept a box shorter than its own line height and resolve
+    // against its baseline instead of its centre, which reads as the glyph
+    // riding up the card. That never happens at rest - it happens during the
+    // drawer's collapse, because the host does not hand the board a monotone
+    // height ramp but a stream of intermediate and out-of-order sizes (one
+    // filmed collapse reported 748, 315, 307, 778, 758, 253, 315 - see
+    // MessageTableView.handCrop). Every one of those is a fresh proposal to
+    // this glyph, and the short ones are the frames the owner saw: the corner
+    // indices held station through the whole transition while the centre suit
+    // climbed toward the top of the card.
+    //
+    // Fixing the SIZE is what locks the glyph to the card: it now always takes
+    // its ideal size and is then centred in whatever the card's frame is, so
+    // the only thing that can move it is the card moving.
     private func centerGlyph(_ suit: Suit, color: Color) -> some View {
         Text(suit.glyph)
             .font(.custom("Georgia", size: size.width * 0.62).weight(.bold))
             .foregroundColor(color)
+            .fixedSize()
     }
 
     // Corner index: rank (20/50 w) over suit (14/50 w), Georgia bold (web parity).
@@ -156,6 +174,10 @@ public struct FCard: View {
             Text((card.suit ?? .spades).glyph).font(.custom("Georgia", size: size.width * 0.56).weight(.bold))
         }
         .foregroundColor(color)
+        // Same reason as `centerGlyph`: a centred stack that accepts a short
+        // proposal stops being centred. This is the narrow-card path, so it is
+        // if anything MORE exposed to a squeezed proposal, not less.
+        .fixedSize()
     }
 
     // The outline. Selection still recolors it red in BOTH schemes: red on a
