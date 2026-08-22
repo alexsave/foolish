@@ -35,10 +35,14 @@ public enum BubbleSnapshot {
     /// the synchronous pass ImageRenderer makes (the old procedural path had to
     /// call the generator inline because `TableBackground`'s `.task` never runs
     /// under ImageRenderer).
+    /// The frame is what SIZES the weave now (round 16: TableWeave fills its
+    /// container and clips itself). The balloon is far smaller than the bake in
+    /// both axes, so the magnification it draws at is still exactly
+    /// `pointsPerTexel` — the cover floor never engages here, and these are
+    /// still literally the board's pixels.
     private static var wool: some View {
         TableWeave()
-            .frame(width: size.width, height: size.height, alignment: .bottom)
-            .clipped()
+            .frame(width: size.width, height: size.height)
     }
 
     /// Render `publicView` (which MUST be a viewer:-1 / no-hand view) into a

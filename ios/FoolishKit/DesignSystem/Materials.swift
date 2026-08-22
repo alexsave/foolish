@@ -20,13 +20,31 @@ import SwiftUI
 import UIKit
 
 /// The table surface itself, at THE magnification (`WoolTexture.pointsPerTexel`,
-/// which the felt shares by construction), with no clipping and no vignette.
-/// EVERY table surface draws this and then decides how big a window it wants
-/// onto it — which is round-6 #14 in one sentence: "keep the threads the same
-/// size visually no matter the view".
+/// which the felt shares by construction), and no vignette. EVERY table surface
+/// draws this and then decides how big a window it wants onto it — which is
+/// round-6 #14 in one sentence: "keep the threads the same size visually no
+/// matter the view".
 ///
-/// It is a fixed-size view on purpose. Callers wrap it in their own frame and
-/// `.clipped()`; a smaller surface shows LESS weave, never smaller weave.
+/// It FILLS its container and clips itself, bottom-anchored: a smaller surface
+/// shows LESS weave, never smaller weave. (It used to be a fixed-size view that
+/// callers framed and clipped themselves; filling is the same picture at the
+/// same magnification for every surface that fits inside the bake, and it is
+/// what lets the cover floor below exist at all — a fixed-size view cannot know
+/// it is too small.)
+///
+/// ROUND 16 #1, the cover floor: the bake is 592x1280 texels, i.e. 458.6 x
+/// 991.6pt, and a surface BIGGER than that in either axis used to show the flat
+/// fallback colour where the picture ran out ("the wool simply does not cover
+/// the entire screen - the bottom was just some flat solid color"). The margin
+/// was thin enough to be a coin flip on hardware that ships today: a 440pt-wide
+/// Pro Max had 18pt of width to spare, and any future taller phone, an iPad, or
+/// a surface that momentarily overshoots during a transition has none. So when
+/// the container does not fit inside the bake, the weave is magnified by the
+/// SMALLEST factor that covers it, rather than leaving a slab of flat colour.
+/// Every surface in the app today fits, so this is a no-op on all of them —
+/// threads stay exactly the same size everywhere, which is what round-6 #14
+/// asked for; it is strictly a floor under the failure case, and it degrades to
+/// slightly-larger threads instead of to a bare rectangle.
 public struct TableWeave: View {
     /// Dark mode — and, since round 12, the MATERIAL — is chosen HERE, once per
     /// surface, and never below: every table view in the app draws this one, so
@@ -47,15 +65,27 @@ public struct TableWeave: View {
     public init() {}
 
     public var body: some View {
-        if let img = FTextures.table(FTextures.Variant(scheme)) {
-            Image(uiImage: img)
-                // The weave is magnified ~2.3x on a 3x screen (0.775pt/texel x
-                // 3), so the interpolation is doing real work smoothing threads
-                // rather than anti-aliasing a downscale.
-                .interpolation(.high)
-                .resizable()
-                .frame(width: img.size.width * WoolTexture.pointsPerTexel,
-                       height: img.size.height * WoolTexture.pointsPerTexel)
+        GeometryReader { geo in
+            if let img = FTextures.table(FTextures.Variant(scheme)) {
+                let w = img.size.width * WoolTexture.pointsPerTexel
+                let h = img.size.height * WoolTexture.pointsPerTexel
+                // 1 = THE magnification. Above 1 only when the surface is
+                // bigger than the bake (see the type's doc) — never below, so
+                // no surface can ever shrink the threads.
+                let cover = max(1, geo.size.width / w, geo.size.height / h)
+                Image(uiImage: img)
+                    // The weave is magnified ~2.3x on a 3x screen (0.775pt/texel
+                    // x 3), so the interpolation is doing real work smoothing
+                    // threads rather than anti-aliasing a downscale.
+                    .interpolation(.high)
+                    .resizable()
+                    .frame(width: w * cover, height: h * cover)
+                    // Bottom-anchored, and that is load-bearing for the
+                    // extension — see TableBackground, which used to own this
+                    // frame. The clip is here too, so no caller can forget it.
+                    .frame(width: geo.size.width, height: geo.size.height, alignment: .bottom)
+                    .clipped()
+            }
         }
     }
 }
@@ -84,22 +114,22 @@ public struct TableBackground: View {
             // a duller board rather than as a beige slab under a dark one.
             Color(hex: FTextures.tableFallbackHex(FTextures.Variant(scheme)))
 
-            // Bottom-anchored, and that is load-bearing for the extension: the
-            // drawer's bottom edge is pinned to the screen while its top edge
-            // moves, so bottom-anchoring keeps the visible weave STILL as the
-            // surface grows and shrinks. Compact then shows a vertical slice of
-            // the very same picture at the very same magnification, which is
-            // what "the expanded view is the correct zoom, use it for the
-            // collapsed view as well" means.
+            // Bottom-anchored (inside TableWeave now), and that is load-bearing
+            // for the extension: the drawer's bottom edge is pinned to the
+            // screen while its top edge moves, so bottom-anchoring keeps the
+            // visible weave STILL as the surface grows and shrinks. Compact then
+            // shows a vertical slice of the very same picture at the very same
+            // magnification, which is what "the expanded view is the correct
+            // zoom, use it for the collapsed view as well" means.
             //
             // Note there is no `.aspectRatio(.fill)` anywhere near this. Fill
             // sizes the texture to cover whatever box it is in, and the
             // extension's box changes height by 2.5x between expanded and
             // compact — so the wool was drawn at 0.62 scale expanded and 0.24
             // compact, i.e. the background visibly ZOOMED on every collapse.
+            // TableWeave's round-16 cover floor is NOT that: it never scales a
+            // surface the bake already covers, so it cannot move with the box.
             TableWeave()
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                .clipped()
 
             // The vignette scales with the SURFACE, not in absolute points. The
             // old fixed 80/700 radii were tuned against a full-screen phone
