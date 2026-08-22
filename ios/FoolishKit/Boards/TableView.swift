@@ -291,10 +291,13 @@ public struct TableView<Session: GameSession>: View {
         game.play(move); selection.removeAll()
     }
 
-    /// Cover button: cover the first uncovered attack the selection can beat.
+    /// Cover button: cover the BIGGEST uncovered attack the selection can beat
+    /// (round 16 - see `CardPlay.bestCoverTarget`; the drag path names its own
+    /// target and is untouched).
     private func playCover(_ cards: [Card], _ view: GameView) {
-        guard let i = CardPlay.coverableBattles(cards: cards, battles: view.battles,
-                                                legal: game.humanLegal).sorted().first else {
+        guard let i = CardPlay.bestCoverTarget(cards: cards, battles: view.battles,
+                                               legal: game.humanLegal,
+                                               trumpSuit: view.trumpSuit) else {
             Haptics.fire(.reject); return
         }
         playAt(.battle(i), cards, view)
