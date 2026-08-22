@@ -28,9 +28,12 @@
 //   17   1     round      completed-round counter (Rule R's guard input)
 //   18   8     parent8    first 8 bytes of SHA-256(previous envelope), 0 at creation
 //   26   32    seed       -> game_set_deal_seed_bytes(seed, 32)
-//   58   2     sent_at    FORMAT 3 ONLY: unix seconds mod 65536 (0 = none)
-//   60   1     n_new      FORMAT 3 ONLY: atoms THIS bubble added (0 = unknown)
-//   58   1     n_joins    (61 on format 3)
+//   58   2     sent_at    FORMAT 3+ ONLY: unix seconds mod 65536 (0 = none)
+//   60   1     n_new      FORMAT 3+ ONLY: atoms THIS bubble added (0 = unknown)
+//   62   1     opening    FORMAT 4 ONLY: the seat this deal opens on (0xFF = derive)
+//   63   4     carry_key  FORMAT 4 ONLY: u32 LE roster key of the game before (0 = none)
+//   67   1     carry_fool FORMAT 4 ONLY: the fool's canonical index (0xFF = none)
+//   58   1     n_joins    (61 on format 3, 68 on format 4)
 //   59   var   joins      n_joins x { u8 seat, u8 name_len<=64, name utf8 }
 //   var  2     n_actions  u16, the action count the body must yield
 //   var  var   body       the v6 replay code — see THE BODY
@@ -171,6 +174,59 @@
 // boundary is worse than an honest missing one.
 #define MSG_FORMAT_CLOCK 3
 
+// Format 4 = format 3 plus THE FOOL'S PENALTY, the durak-ism this wire could
+// not express: a rematch played by the same people, in the same cycle, does not
+// open on the lowest trump - it opens on the seat to the RIGHT of the last
+// game's fool, so the fool is the first player attacked. (Right, not left:
+// attacks travel to the attacker's left, so the seat on the fool's right is the
+// one whose attack lands on them.)
+//
+// THE RULE CANNOT BE RE-DERIVED BY A RECEIVER, which is why it needs the wire.
+// A device that opens a rematch bubble may never have held the game before it -
+// reinstalled, joined the chat late, or simply looking at a chain whose parent
+// scrolled away - so "who was the fool" is not a fact every device has. It is
+// also not a fact any device may DECIDE alone: the opening seat changes the
+// deal's whole shape, and two devices that disagree about it have forked the
+// game. So the chain states it.
+//
+// THREE FIELDS, in two phases that never overlap:
+//
+//   `opening` is the ANSWER, and it rides every LIVE and FINISHED bubble of a
+//   game the rule touched. It is the seat game_open_at_seat pins before the
+//   deal (game.h), so every device re-deals the identical board from the seed.
+//   0xFF (MSG_NO_OPENING) is an ordinary game: derive from the lowest trump,
+//   exactly as before this format existed. It rides EVERY bubble rather than
+//   just the first because a chain is replayed from its seed on every open -
+//   there is no "first bubble" a later reader can consult - and because the
+//   turn-0 LIVE handoff carries no body at all, so the body's own recorded
+//   opener (v8, replay.h) cannot answer at the one moment it matters most.
+//
+//   `carry_key` + `carry_fool` are the QUESTION, and they ride only the WAITING
+//   lobby a "New game" creates. carry_key fingerprints the roster that lobby
+//   was born with; carry_fool names, within it, who the fool was. Whoever taps
+//   Start re-fingerprints the roster it is actually starting and compares: same
+//   people in the same cycle, the rule applies; anyone joined, left or was
+//   renamed, it does not, and the game opens on the lowest trump like any
+//   other. That is the guard the owner specified - "if the players do not
+//   change at all between the lobby and the start" - and it lives here, in C,
+//   because it decides a deal.
+//
+// ROTATION-CANONICAL, deliberately. The lobby a rematch creates seats whoever
+// tapped New game at 0, so the same table in the same cyclic order comes back
+// ROTATED: Alex/Bob/Cindy becomes Bob/Cindy/Alex. That is the same table and
+// must fingerprint equal, while Alex/Cindy/Bob - an order no rotation
+// produces - must not. msg_roster_key hashes the rotation whose bytes are
+// smallest, so every rotation of one table yields one key, and carry_fool is an
+// index into THAT rotation rather than into a seating that moves.
+//
+// SIX BYTES, and only on a game the rule touched. seal_format writes format 3
+// (or 2) whenever all three fields are empty, so an ordinary game pays nothing
+// at all; a rematch pays ~10 base32 chars on a ~240-char bubble. The
+// alternative - splitting the answer and the question into two formats to save
+// five bytes on live bubbles - buys less than it costs in a wire that then has
+// four live formats instead of three.
+#define MSG_FORMAT_REMATCH 4
+
 // The hold itself, in seconds (owner: "you cannot pickup within 15 seconds of
 // the attack").
 #define MSG_PICKUP_HOLD_S 15
@@ -204,6 +260,17 @@
 #define MSG_CLOCK_OFF    58
 #define MSG_NEW_OFF      60
 #define MSG_HEADER_LEN_CLOCK 62
+// Format 4 appends its three rematch fields after format 3's, on the same
+// principle: every earlier offset is untouched and the decoders share one
+// prefix. n_joins lands at 68.
+#define MSG_OPEN_OFF     62
+#define MSG_CARRY_OFF    63
+#define MSG_FOOL_OFF     67
+#define MSG_HEADER_LEN_REMATCH 69
+// "Derive the opening seat from the lowest trump" - an ordinary game.
+#define MSG_NO_OPENING   0xFF
+// "This lobby carries no fool to punish" - an ordinary lobby.
+#define MSG_NO_FOOL      0xFF
 // The delta's ceiling; past it a seal writes 0 ("does not say") rather than a
 // clamp - see the MSG_FORMAT_CLOCK note.
 #define MSG_MAX_NEW      255
@@ -293,6 +360,23 @@ typedef struct {
     // could write it freely could emit a bubble that animates a move it did not
     // carry. Bounded by `turn` for the same reason (validate_fields).
     uint8_t  n_new;
+
+    // THE FOOL'S PENALTY, format 4 (see MSG_FORMAT_REMATCH for the rule).
+    //
+    // `opening` is the seat this deal opens on, or MSG_NO_OPENING to derive it
+    // from the lowest trump. Unlike turn/round/n_new this IS a caller's field:
+    // it is not a claim about the body but a term of the deal, settled at Start
+    // by msg_rematch_opening and then simply repeated by every later seal, the
+    // way `seed` is. msg_replay checks it against the body's own recorded
+    // opener, so a chain that lies about it does not replay.
+    uint8_t  opening;
+
+    // The rematch carry, meaningful only on a WAITING lobby. `carry_key` is the
+    // roster key (msg_roster_key) of the roster this lobby was created with; 0
+    // means "no carry", an ordinary lobby. `carry_fool` is the fool's index
+    // within that key's canonical rotation, or MSG_NO_FOOL.
+    uint32_t carry_key;
+    uint8_t  carry_fool;
 
     int      n_joins;
     MsgJoin  joins[MSG_MAX_JOINS];
@@ -513,5 +597,69 @@ void msg_digest(const unsigned char *envelope, int len, uint8_t out[SHA256_DIGES
 // delta and so releases the hold rather than maxing it — the safe direction, and
 // the only one that cannot wedge a defender behind a stranger's bad clock.
 int msg_pickup_hold_remaining(const Game *g, int seat, uint16_t sent_at, uint16_t now);
+
+// Zero an envelope to its EMPTY state, which is not all-zero: `opening` and
+// `carry_fool` mean "seat 0" when zeroed and "absent" at their sentinels, so a
+// memset alone would quietly claim seat 0 opens every game.
+//
+// Producers must use this instead of memset. Forgetting to is caught the moment
+// anything is encoded rather than at the table: an all-zero envelope carries a
+// rematch claim its format cannot hold, and validate_fields refuses it
+// (MSG_EFORMAT). msg_decode fills the sentinels itself, so a decoded envelope
+// never needs this.
+void msg_envelope_init(MsgEnvelope *e);
+
+// ---------- Rule F: the fool's penalty -----------------------------------
+//
+// The two calls that decide who opens a rematch. Both are pure functions of a
+// join list, and both live here rather than in a client for the reason every
+// other rule in this file does: a phone and a browser that disagree have dealt
+// two different games.
+//
+// THE ROSTER KEY. A fingerprint of `joins` as an ORDERED CYCLE - the same
+// people in the same rotation hash equal, a different order does not. Seats are
+// read in ascending order and the rotation whose (name_len, name) byte sequence
+// compares smallest is the one hashed, with the player count folded in.
+//
+//   hash   receives the key. Never 0 for a valid roster (a computed 0 is bumped
+//          to 1), because 0 is the wire's "no carry" sentinel.
+//   rot    receives the rotation offset: canonical[k] == joins[(k + *rot) % n].
+//          Pass NULL if you only want the key.
+//
+// Returns MSG_EOK, or MSG_EJOINS if `n` is outside 2..MSG_MAX_JOINS.
+//
+// A key collision costs one game opened on the wrong seat - a legal game, just
+// not the punishment that was due - so 32 bits is ample; nothing here is a
+// security boundary, since a device that wanted to lie would simply write the
+// `opening` byte it liked.
+//
+// Duplicate names are the one genuinely ambiguous input: a table with two
+// players called "Sam" has rotations that are byte-identical, so which "Sam"
+// carry_fool names cannot be recovered. The rule then punishes one of them,
+// arbitrarily but deterministically (every device picks the same one). This is
+// judged acceptable: the alternative is putting stable player ids on a wire
+// that has deliberately never carried them (§4.1).
+int msg_roster_key(const MsgJoin *joins, int n, uint32_t *hash, int *rot);
+
+// THE VERDICT. Given a lobby's carry (`carry_key`/`carry_fool`, straight off
+// the WAITING envelope) and the roster that is about to start, returns the seat
+// that must open the new game, or -1 when the rule does not apply and the deal
+// should derive its opener from the lowest trump as usual.
+//
+// It applies when, and only when, `carry_key` is non-zero, `carry_fool` names a
+// real index, and the starting roster keys EQUAL to the carry - which is the
+// owner's "if the players do not change at all" guard, read through the
+// rotation tolerance above. The answer is then the seat to the RIGHT of the
+// fool, `(fool_seat - 1 + n) % n`, where fool_seat is carry_fool mapped through
+// the starting roster's own rotation.
+int msg_rematch_opening(const MsgJoin *joins, int n,
+                        uint32_t carry_key, uint8_t carry_fool);
+
+// The seat the penalty falls ON - the fool, and therefore the new game's first
+// DEFENDER. Same guard and same inputs as msg_rematch_opening, and derived from
+// its answer so the two can never disagree; -1 when the rule does not apply.
+// This is what a lobby shows: "if nobody else joins, <name> is attacked first".
+int msg_rematch_fool_seat(const MsgJoin *joins, int n,
+                          uint32_t carry_key, uint8_t carry_fool);
 
 #endif

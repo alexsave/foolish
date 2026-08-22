@@ -269,6 +269,13 @@ final class MessagesViewController: MSMessagesAppViewController {
                     self.requestPresentationStyle(.expanded)
                 }
             },
+            // A REMATCH starts a new game without a teardown: it builds its
+            // lobby in place from the finished board. All it needs from here is
+            // the session half of `onNewGame` - a FRESH MSSession, so the
+            // rematch's first bubble does not collapse the result card of the
+            // game it grew out of (see the session note in `stage`). Cleared by
+            // didStartSending/didReceive, exactly like the New game tap's.
+            onFreshChain: { [weak self] in self?.startingNewGame = true },
             onSend: { [weak self] payload, mySeat, fromUndo in
                 await self?.stage(payload: payload, mySeat: mySeat, fromUndo: fromUndo)
             },

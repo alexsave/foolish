@@ -12,6 +12,12 @@
 
 static uint16_t rd16(const unsigned char *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
 
+static uint32_t rd32(const unsigned char *p) {
+    uint32_t v = 0;
+    for (int i = 3; i >= 0; i--) v = (v << 8) | p[i];
+    return v;
+}
+
 static uint64_t rd64(const unsigned char *p) {
     uint64_t v = 0;
     for (int i = 7; i >= 0; i--) v = (v << 8) | p[i];
@@ -21,6 +27,10 @@ static uint64_t rd64(const unsigned char *p) {
 static void wr16(unsigned char *p, uint16_t v) {
     p[0] = (unsigned char)(v & 0xff);
     p[1] = (unsigned char)(v >> 8);
+}
+
+static void wr32(unsigned char *p, uint32_t v) {
+    for (int i = 0; i < 4; i++) p[i] = (unsigned char)(v >> (8 * i));
 }
 
 static void wr64(unsigned char *p, uint64_t v) {
@@ -64,7 +74,8 @@ static int name_is_clean(const char *s, int len) {
 int msg_last_body_version = -1;
 
 static int validate_fields(const MsgEnvelope *e) {
-    if (e->format != MSG_FORMAT_V6 && e->format != MSG_FORMAT_CLOCK) return MSG_EFORMAT;
+    if (e->format != MSG_FORMAT_V6 && e->format != MSG_FORMAT_CLOCK
+        && e->format != MSG_FORMAT_REMATCH) return MSG_EFORMAT;
     // The clock is what format 3 IS, so the two must agree in both directions:
     // a format-2 envelope carrying a stamp would encode to bytes that decode
     // back without it, and the wire must round-trip to itself.
@@ -123,7 +134,33 @@ static int validate_fields(const MsgEnvelope *e) {
     // before the deal, so it is refused here rather than clamped at read time:
     // this is the layer that decides whether bytes are an envelope at all.
     if ((int)e->n_new > e->n_actions) return MSG_ETURN;
+
+    // The fool's penalty rides format 4 and nothing earlier: a format-2/3
+    // header has nowhere to put these, so an envelope that claims one and
+    // cannot carry it is not an envelope. (Same shape as the clock/delta rule
+    // above - the format byte and the fields it implies must agree in both
+    // directions, or a re-encode would silently drop a term of the deal.)
+    if (e->format != MSG_FORMAT_REMATCH) {
+        if (e->opening != MSG_NO_OPENING) return MSG_EFORMAT;
+        if (e->carry_key != 0 || e->carry_fool != MSG_NO_FOOL) return MSG_EFORMAT;
+    }
+    if (e->opening != MSG_NO_OPENING && e->opening >= e->n_players) return MSG_ESEAT;
+    if (e->carry_fool != MSG_NO_FOOL && e->carry_fool >= e->n_players) return MSG_ESEAT;
+    // The carry is a lobby's question and the opening is a live game's answer;
+    // a chain that carries both has confused the two phases.
+    if (e->carry_key != 0 && e->opening != MSG_NO_OPENING) return MSG_EFORMAT;
+    // Half a carry decides nothing and would read as an ordinary lobby on one
+    // device and a penalty on another, so it is refused rather than ignored.
+    if ((e->carry_key != 0) != (e->carry_fool != MSG_NO_FOOL)) return MSG_EFORMAT;
     return MSG_EOK;
+}
+
+// How long a format's fixed header is. Every format shares one prefix and
+// appends; n_joins is always the last byte of it.
+static int hdr_len_for(uint8_t format) {
+    if (format == MSG_FORMAT_REMATCH) return MSG_HEADER_LEN_REMATCH;
+    if (format == MSG_FORMAT_CLOCK)   return MSG_HEADER_LEN_CLOCK;
+    return MSG_HEADER_LEN;
 }
 
 // ---------- decode -------------------------------------------------------
@@ -131,11 +168,14 @@ static int validate_fields(const MsgEnvelope *e) {
 int msg_decode(const unsigned char *in, int in_len, MsgEnvelope *out) {
     if (in_len < MSG_HEADER_LEN) return MSG_ESHORT;
     if (in[0] != MSG_MAGIC) return MSG_EMAGIC;
-    if (in[1] != MSG_FORMAT_V6 && in[1] != MSG_FORMAT_CLOCK) return MSG_EFORMAT;
-    // Format 3 is format 2 with two more header bytes at MSG_CLOCK_OFF, so the
-    // whole prefix below is read the same way and only n_joins onward shifts.
-    const int has_clock = (in[1] == MSG_FORMAT_CLOCK);
-    const int hdr_len   = has_clock ? MSG_HEADER_LEN_CLOCK : MSG_HEADER_LEN;
+    if (in[1] != MSG_FORMAT_V6 && in[1] != MSG_FORMAT_CLOCK
+        && in[1] != MSG_FORMAT_REMATCH) return MSG_EFORMAT;
+    // Format 3 is format 2 with two more header bytes at MSG_CLOCK_OFF, and
+    // format 4 is format 3 with three more after those, so the whole prefix
+    // below is read the same way and only n_joins onward shifts.
+    const int has_clock   = (in[1] == MSG_FORMAT_CLOCK || in[1] == MSG_FORMAT_REMATCH);
+    const int has_rematch = (in[1] == MSG_FORMAT_REMATCH);
+    const int hdr_len     = hdr_len_for(in[1]);
     if (in_len < hdr_len) return MSG_ESHORT;
 
     memset(out, 0, sizeof(*out));
@@ -154,7 +194,13 @@ int msg_decode(const unsigned char *in, int in_len, MsgEnvelope *out) {
     out->sent_at = has_clock ? rd16(in + MSG_CLOCK_OFF) : 0;
     out->n_new   = has_clock ? in[MSG_NEW_OFF] : 0;
 
-    const int n_joins = in[has_clock ? MSG_HEADER_LEN_CLOCK - 1 : MSG_HEADER_LEN - 1];
+    // A format that cannot carry the rematch block decodes to the "no penalty"
+    // sentinels, which is what every chain sealed before this format means.
+    out->opening    = has_rematch ? in[MSG_OPEN_OFF] : MSG_NO_OPENING;
+    out->carry_key  = has_rematch ? rd32(in + MSG_CARRY_OFF) : 0u;
+    out->carry_fool = has_rematch ? in[MSG_FOOL_OFF] : MSG_NO_FOOL;
+
+    const int n_joins = in[hdr_len - 1];
     // Bound the count BEFORE the loop writes: n_joins is attacker-controlled
     // and joins[] is fixed at MSG_MAX_JOINS.
     if (n_joins < 1 || n_joins > MSG_MAX_JOINS) return MSG_EJOINS;
@@ -205,8 +251,9 @@ int msg_encode(const MsgEnvelope *e, unsigned char *out, int out_cap) {
 
     if (e->actions_len > 0 && !e->actions) return MSG_EACTION;
 
-    const int has_clock = (e->format == MSG_FORMAT_CLOCK);
-    const int hdr_len   = has_clock ? MSG_HEADER_LEN_CLOCK : MSG_HEADER_LEN;
+    const int has_clock   = (e->format == MSG_FORMAT_CLOCK || e->format == MSG_FORMAT_REMATCH);
+    const int has_rematch = (e->format == MSG_FORMAT_REMATCH);
+    const int hdr_len     = hdr_len_for(e->format);
 
     int need = hdr_len;
     for (int i = 0; i < e->n_joins; i++) need += 2 + e->joins[i].name_len;
@@ -229,7 +276,12 @@ int msg_encode(const MsgEnvelope *e, unsigned char *out, int out_cap) {
         wr16(out + MSG_CLOCK_OFF, e->sent_at);
         out[MSG_NEW_OFF] = e->n_new;
     }
-    out[has_clock ? MSG_HEADER_LEN_CLOCK - 1 : MSG_HEADER_LEN - 1] = (unsigned char)e->n_joins;
+    if (has_rematch) {
+        out[MSG_OPEN_OFF] = e->opening;
+        wr32(out + MSG_CARRY_OFF, e->carry_key);
+        out[MSG_FOOL_OFF] = e->carry_fool;
+    }
+    out[hdr_len - 1] = (unsigned char)e->n_joins;
 
     int off = hdr_len;
     for (int i = 0; i < e->n_joins; i++) {
@@ -262,7 +314,13 @@ static void deal_from_envelope(const MsgEnvelope *e, Game *g) {
         g->players[i].player_id[1] = (char)('0' + i);
         g->players[i].player_id[2] = '\0';
     }
+    // The fool's penalty travels with the chain, so re-dealing it is the whole
+    // of honouring it: every device that holds these bytes deals the identical
+    // board. Cleared immediately after - the override is a property of THIS
+    // envelope, not of the process.
+    if (e->opening != MSG_NO_OPENING) game_open_at_seat((int)e->opening);
     start_game(g);
+    game_open_at_seat(-1);
 }
 
 // Applies one action, counting round closures.
@@ -371,6 +429,9 @@ static void msg_atom(void *ctx, const ReplayAtom *a) {
 
 int msg_replay(const MsgEnvelope *e, Game *g) {
     deal_from_envelope(e, g);
+    // Read the opening seat NOW: g->first_attacker is reassigned every bout, so
+    // by the end of the chain it holds the LAST round's attacker.
+    const int opened_on = g->first_attacker;
 
     MsgApply m;
     m.g = g; m.n_players = e->n_players;
@@ -389,6 +450,14 @@ int msg_replay(const MsgEnvelope *e, Game *g) {
         if (m.err != MSG_EOK) return m.err;
         // The code's own header must describe the table the envelope claims.
         if (hdr.n != e->n_players) return MSG_EBODY;
+        // …including who opened it. The body records the opener independently
+        // (replay.h's v8 header), so this is the header's `opening` byte being
+        // checked against the game it claims to describe rather than trusted:
+        // a chain that names one opening seat and plays another does not
+        // replay. It also catches the reverse - a rematch chain stripped of its
+        // format-4 block by a re-encode would deal the lowest trump here and
+        // disagree with its own body.
+        if (hdr.first_attacker != opened_on) return MSG_EBODY;
     }
 
     const int rounds = m.rounds, applied = m.applied;
@@ -417,6 +486,8 @@ int msg_replay(const MsgEnvelope *e, Game *g) {
 // both directions, so a caller that got it wrong would only find out at encode
 // time.
 static uint8_t seal_format(const MsgEnvelope *e) {
+    if (e->opening != MSG_NO_OPENING || e->carry_key != 0
+        || e->carry_fool != MSG_NO_FOOL) return MSG_FORMAT_REMATCH;
     return (e->sent_at != 0 || e->n_new != 0) ? MSG_FORMAT_CLOCK : MSG_FORMAT_V6;
 }
 
@@ -602,4 +673,98 @@ int msg_pickup_hold_remaining(const Game *g, int seat, uint16_t sent_at, uint16_
     const uint16_t elapsed = (uint16_t)(now - sent_at);
     if (elapsed >= MSG_PICKUP_HOLD_S) return 0;
     return MSG_PICKUP_HOLD_S - (int)elapsed;
+}
+
+// ---------- Rule F: the fool's penalty -----------------------------------
+
+void msg_envelope_init(MsgEnvelope *e) {
+    if (!e) return;
+    memset(e, 0, sizeof(*e));
+    e->opening    = MSG_NO_OPENING;
+    e->carry_fool = MSG_NO_FOOL;
+}
+
+// One seat's contribution to the roster key, as the bytes that identify it:
+// the name length then the name. Seat NUMBERS are deliberately absent - the
+// key is about who is at the table and in what cycle, and the numbers are what
+// rotates.
+static int roster_cmp_at(const MsgJoin *joins, int n, int a, int b) {
+    for (int k = 0; k < n; k++) {
+        const MsgJoin *x = &joins[(a + k) % n];
+        const MsgJoin *y = &joins[(b + k) % n];
+        if (x->name_len != y->name_len) return x->name_len < y->name_len ? -1 : 1;
+        for (int i = 0; i < x->name_len; i++) {
+            const unsigned char cx = (unsigned char)x->name[i];
+            const unsigned char cy = (unsigned char)y->name[i];
+            if (cx != cy) return cx < cy ? -1 : 1;
+        }
+    }
+    return 0;
+}
+
+int msg_roster_key(const MsgJoin *joins, int n, uint32_t *hash, int *rot) {
+    if (!joins || !hash || n < 2 || n > MSG_MAX_JOINS) return MSG_EJOINS;
+
+    // Sort the joins into SEAT order first. The array arrives in whatever order
+    // the joins were appended, and "the cycle" is the seating, not the arrival
+    // order - two devices that appended the same people differently must key
+    // the same.
+    MsgJoin seated[MSG_MAX_JOINS];
+    for (int s = 0; s < n; s++) seated[s].name_len = 0xFF;   // "seat empty"
+    for (int i = 0; i < n; i++) {
+        if (joins[i].seat >= n) return MSG_ESEAT;
+        if (seated[joins[i].seat].name_len != 0xFF) return MSG_ESEAT;  // duplicate
+        seated[joins[i].seat] = joins[i];
+    }
+    for (int s = 0; s < n; s++) if (seated[s].name_len == 0xFF) return MSG_EJOINS;
+
+    // The canonical rotation: the one whose byte sequence compares smallest.
+    int best = 0;
+    for (int r = 1; r < n; r++)
+        if (roster_cmp_at(seated, n, r, best) < 0) best = r;
+
+    // FNV-1a over the player count and then the canonical rotation's names.
+    uint32_t h = 2166136261u;
+    #define FNV_BYTE(b) do { h ^= (uint32_t)(unsigned char)(b); h *= 16777619u; } while (0)
+    FNV_BYTE(n);
+    for (int k = 0; k < n; k++) {
+        const MsgJoin *j = &seated[(best + k) % n];
+        FNV_BYTE(j->name_len);
+        for (int i = 0; i < j->name_len; i++) FNV_BYTE(j->name[i]);
+    }
+    #undef FNV_BYTE
+
+    *hash = h ? h : 1u;   // 0 is the wire's "no carry" sentinel
+    if (rot) *rot = best;
+    return MSG_EOK;
+}
+
+int msg_rematch_opening(const MsgJoin *joins, int n,
+                        uint32_t carry_key, uint8_t carry_fool) {
+    if (carry_key == 0 || carry_fool == MSG_NO_FOOL) return -1;
+    if (n < 2 || n > MSG_MAX_JOINS || carry_fool >= n) return -1;
+
+    uint32_t key = 0;
+    int rot = 0;
+    if (msg_roster_key(joins, n, &key, &rot) != MSG_EOK) return -1;
+    // The owner's guard: the same people, in the same cycle, as the lobby was
+    // born with. Anyone joined, left or renamed and this is simply a new game.
+    if (key != carry_key) return -1;
+
+    // carry_fool indexes the CANONICAL rotation; the seating in front of us is
+    // rotated by `rot` against it (canonical[k] == seated[(k + rot) % n]).
+    const int fool_seat = ((int)carry_fool + rot) % n;
+    // The seat to the fool's RIGHT - the one whose attack lands on the fool,
+    // because attacks travel to the attacker's left.
+    return (fool_seat - 1 + n) % n;
+}
+
+int msg_rematch_fool_seat(const MsgJoin *joins, int n,
+                          uint32_t carry_key, uint8_t carry_fool) {
+    const int opening = msg_rematch_opening(joins, n, carry_key, carry_fool);
+    if (opening < 0) return -1;
+    // The fool is the opener's LEFT-hand neighbour, which is what makes them
+    // the first defender. Derived from the opener rather than recomputed, so
+    // the two answers cannot drift apart.
+    return (opening + 1) % n;
 }

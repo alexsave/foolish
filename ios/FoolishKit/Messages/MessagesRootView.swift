@@ -80,6 +80,12 @@ public struct MessagesRootView: View {
     let chatPlayers: Int
     let requestExpand: () -> Void
     let onNewGame: () -> Void
+    /// Start a NEW MSSession for whatever is staged next, WITHOUT the teardown
+    /// `onNewGame` does. The rematch path needs exactly this half: its first
+    /// bubble must not collapse the finished game's result card (see
+    /// MessagesViewController's session note), but it has no name to ask for
+    /// and no surface to rebuild.
+    let onFreshChain: () -> Void
     let onSend: (Data, Int, Bool) async -> Void
     /// Retract a previously-staged bubble (§10 undo). No-op by default so every
     /// existing caller keeps compiling; the real extension has no API to remove an
@@ -111,6 +117,7 @@ public struct MessagesRootView: View {
                 incomingURL: URL? = nil, incomingToken: Int = 0, cancelToken: Int = 0,
                 collapseSignal: CollapseSignal = CollapseSignal(),
                 requestExpand: @escaping () -> Void, onNewGame: @escaping () -> Void,
+                onFreshChain: @escaping () -> Void = {},
                 onSend: @escaping (Data, Int, Bool) async -> Void,
                 onUnstage: @escaping () -> Void = {}) {
         self.payloadURL = payloadURL; self.style = style; self.senderIsLocal = senderIsLocal
@@ -118,7 +125,8 @@ public struct MessagesRootView: View {
         self.chatKey = chatKey; self.chatIsDM = chatIsDM; self.chatPlayers = chatPlayers
         self.incomingURL = incomingURL; self.incomingToken = incomingToken
         self.cancelToken = cancelToken; self.collapseSignal = collapseSignal
-        self.requestExpand = requestExpand; self.onNewGame = onNewGame; self.onSend = onSend
+        self.requestExpand = requestExpand; self.onNewGame = onNewGame
+        self.onFreshChain = onFreshChain; self.onSend = onSend
         self.onUnstage = onUnstage
     }
 
@@ -270,7 +278,8 @@ public struct MessagesRootView: View {
                         chatKey: chatKey, chatIsDM: chatIsDM, chatPlayers: chatPlayers,
                         incomingURL: incomingURL, incomingToken: incomingToken,
                         cancelToken: cancelToken,
-                        requestExpand: requestExpand, onNewGame: onNewGame, onSend: onSend,
+                        requestExpand: requestExpand, onNewGame: onNewGame,
+                        onFreshChain: onFreshChain, onSend: onSend,
                         onUnstage: onUnstage)
                 // Round-10 #1: lay the surface out against the SMOOTHED height,
                 // bottom-anchored - the drawer's bottom edge is the one edge
@@ -348,6 +357,12 @@ private struct GameSurface: View {
     let cancelToken: Int
     let requestExpand: () -> Void
     let onNewGame: () -> Void
+    /// Start a NEW MSSession for whatever is staged next, WITHOUT the teardown
+    /// `onNewGame` does. The rematch path needs exactly this half: its first
+    /// bubble must not collapse the finished game's result card (see
+    /// MessagesViewController's session note), but it has no name to ask for
+    /// and no surface to rebuild.
+    let onFreshChain: () -> Void
     let onSend: (Data, Int, Bool) async -> Void
     let onUnstage: () -> Void
 
@@ -620,7 +635,19 @@ private struct GameSurface: View {
         if let controller {
             MessageTableView(controller: controller,
                              onSend: { payload, fromUndo in await onSend(payload, controller.mySeat, fromUndo) },
-                             onNewGame: onNewGame,
+                             // A finished game's New game is a REMATCH: same
+                             // table, built right here from the board still on
+                             // screen. Anything else - a mid-game board, a
+                             // roster with an unnamed seat - is an ordinary new
+                             // game and punishes nobody.
+                             onNewGame: {
+                                 guard let r = rematchRoster(from: controller) else {
+                                     onNewGame(); return
+                                 }
+                                 onFreshChain()
+                                 Task { await createRematchLobby(joins: r.joins,
+                                                                 foolSeat: r.foolSeat) }
+                             },
                              onUnstage: onUnstage,
                              alsoStaged: surfaceStaged,
                              onDiagnostics: { showDiagnostics = true })
@@ -835,15 +862,17 @@ private struct GameSurface: View {
         guard let payload = MessageDevBoard.seededPayload else { return false }
         guard let env = try? await MessageKernel.shared.decode(payload: payload, viewer: -1),
               let view = await MessageKernel.shared.residentView(viewer: -1),
-              view.defender >= 0 else {
+              view.defender >= 0 || view.isOver else {
             AnimLog.say("dev.fatboard present but not a decodable chain - ignoring")
             return false
         }
         // `dev.seat` overrides the chair. Default is the defender's (only they
         // may pick up); the deal case wants an ATTACKER, since it is an attacker
         // saying good that closes the bout and deals.
+        // A FINISHED chain (the `endgame` board, for verifying the fool's
+        // penalty) has no defender to sit at, so it defaults to seat 0.
         let seat = MessageDevBoard.seededSeat.map { max(0, min($0, view.players.count - 1)) }
-            ?? view.defender
+            ?? (view.defender >= 0 ? view.defender : 0)
         AnimLog.say("dev.fatboard: seating as \(seat) (defender=\(view.defender)), \(view.battles.count) battles")
         showSetup = false
         lobby = nil
@@ -902,6 +931,87 @@ private struct GameSurface: View {
             await startGame(lob)
         }
         #endif
+    }
+
+    // MARK: the fool's penalty (Rule F)
+
+    /// The rematch roster, read STRAIGHT OFF the finished board: the same table,
+    /// in the same cycle, rotated so this device sits at seat 0. nil when this
+    /// is not a game a rematch can be built from.
+    ///
+    /// Rotated because seat 0 is the creator's by construction (`createWaiting`)
+    /// and whoever taps New game is the creator. Preserving the CYCLE is what
+    /// matters, not the numbers - the wire keys a roster rotation-canonically
+    /// for exactly this reason - so the same table comes back as the same
+    /// table however it is spun.
+    ///
+    /// My own name comes from the store, not from the old game's join: this
+    /// device may have been renamed since, and the name it seals now is the one
+    /// its seat will be recognised by.
+    private func rematchRoster(from controller: MessageTurnController)
+        -> (joins: [MessageJoin], foolSeat: Int)? {
+        guard let v = controller.view, v.isOver, v.gameOver >= 0 else { return nil }
+        let n = v.players.count
+        let me = controller.mySeat
+        guard n >= 2, me >= 0, me < n, v.gameOver < n else { return nil }
+
+        // Names BY SEAT. A seat with no name cannot be recognised by its owner
+        // on the other device (SeatIdentity.seatClaimedByName is what lets a
+        // prefilled lobby seat people who never tapped Join), so a roster
+        // missing one is not a rematch roster at all - the tap falls back to an
+        // ordinary new game rather than seating somebody as a blank.
+        var joins: [MessageJoin] = []
+        for s in 0..<n {
+            let old = (s + me) % n
+            let name = old == me ? MessageGameStore.shared.nickname : (controller.names[old] ?? "")
+            guard !name.isEmpty else { return nil }
+            joins.append(MessageJoin(seat: s, name: name))
+        }
+        return (joins, (v.gameOver - me + n) % n)
+    }
+
+    /// "New game" on a FINISHED board: create the rematch lobby HERE, from the
+    /// game still on screen, and stage it. No intent is written down and
+    /// nothing is read back - the roster, the fool and my seat are all in hand
+    /// at the moment of the tap, and a cache of them would only be a second
+    /// place for them to be wrong.
+    ///
+    /// It also means no teardown: the ordinary New game path bumps
+    /// `newGameToken`, which re-ids this whole view and routes through the name
+    /// prompt. A rematch has nothing to ask - this device just played a game
+    /// under its name - so it goes straight to a lobby. `onFreshChain` is the
+    /// one thing it still needs from the host: start a NEW MSSession, so the
+    /// rematch's first bubble does not collapse the result card of the game it
+    /// came from.
+    ///
+    /// The lobby stays OPEN at the usual capacity, deliberately: someone else
+    /// in the chat may join a rematch, and if they do, the wire's guard sees a
+    /// roster that no longer keys equal and the penalty does not fire. That is
+    /// the owner's "if the players do not change at all".
+    private func createRematchLobby(joins: [MessageJoin], foolSeat: Int) async {
+        var seed = Data(count: 32)
+        for i in 0..<32 { seed[i] = UInt8.random(in: 0...UInt8.max) }
+        let gameId = UInt64.random(in: 1...UInt64.max)
+        let capacity = max(chatIsDM ? 2 : 8, joins.count)
+        do {
+            try await MessageKernel.shared.newGame(seed: seed, players: capacity)
+            let armed = await MessageKernel.shared.armRematchCarry(joins: joins,
+                                                                   foolSeat: foolSeat)
+            AnimLog.say("rematch lobby: n=\(joins.count) fool@\(foolSeat) armed=\(armed)")
+            let payload = try await MessageKernel.shared.seal(
+                phase: 0, lastActorSeat: 0, gameId: gameId,
+                parent8: Data(repeating: 0, count: 8), joins: joins)
+            let env = try await MessageEnvelope.decode(payload: payload, viewer: -1)
+            controller = nil
+            showSetup = false
+            damaged = false
+            cache(seat: 0, env: env, payload: payload)
+            lobby = Lobby(env: env, payload: payload)
+            await onSend(payload, 0, false)
+            surfaceStaged = true
+        } catch {
+            damaged = true
+        }
     }
 
     // MARK: creation + lobby (§5.2)
@@ -1494,6 +1604,14 @@ private struct LobbyView: View {
     /// stored nickname, blank if it's the neutral default.
     @State private var nickname: String
 
+    /// Whose penalty this lobby carries, if the rule would fire on the roster
+    /// as it stands. Resolved by the KERNEL (`penaltyFoolSeat`) rather than
+    /// worked out here: which seat is "right of the fool" and whether the
+    /// roster still matches are both rules questions, and a lobby that guessed
+    /// them would announce a punishment the deal then did not deliver. Re-asked
+    /// whenever the roster changes, because a joiner cancels it.
+    @State private var penaltyName: String?
+
     init(env: MessageEnvelope, mySeat: Int?, nickname: String,
          onJoin: @escaping (String) -> Void,
          onStart: @escaping () -> Void,
@@ -1527,6 +1645,19 @@ private struct LobbyView: View {
             }
             .padding(.horizontal)
 
+            // THE FOOL'S PENALTY, announced where it is decided. A lobby that
+            // carries one says whose it is, because the rule changes who opens
+            // and a player who was not told would read the first attack as the
+            // game getting the lowest trump wrong. It says "if" rather than
+            // "will": the guard is re-checked at Start against the roster that
+            // actually starts, so a joiner between here and there cancels it.
+            if env.carriesPenalty, let fool = penaltyName {
+                Text(FStrings.t("ios.lobby.penalty", ["name": fool]))
+                    .font(.footnote).onTableText()
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+            }
+
             // Testing-only solo controls REPLACE the normal ones when they are
             // live, rather than sitting alongside them: the shipping lobby can
             // legitimately be offering "waiting" at the same moment solo play
@@ -1540,6 +1671,18 @@ private struct LobbyView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
+        // Keyed on the roster, so a join re-asks: the guard that cancels the
+        // penalty is exactly "someone else showed up", and the line must go
+        // away the moment they do.
+        .task(id: env.joins.map { "\($0.seat):\($0.name)" }.joined(separator: "|")) {
+            guard let key = env.carryKey, let fool = env.carryFool else {
+                penaltyName = nil; return
+            }
+            let seat = await MessageKernel.shared.penaltyFoolSeat(joins: env.joins,
+                                                                  carryKey: key,
+                                                                  carryFool: fool)
+            penaltyName = seat.flatMap { s in env.joins.first { $0.seat == s }?.name }
+        }
     }
 
     /// Testing-only (SOLO_TESTING / DEBUG): "Add player" until the lobby has

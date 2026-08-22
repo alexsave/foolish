@@ -245,15 +245,30 @@ static int rs_play(const unsigned char *code, int code_len, int viewer,
     // the code recorded; on every other deal this is not consulted and the
     // check below keeps its teeth.
     game_force_first_attacker(hdr.first_attacker);
+    // The fool's penalty (replay.h v8): this code's opener was IMPOSED, so the
+    // deal must not derive one. Unconditional, unlike the line above.
+    if (hdr.forced_opening) game_open_at_seat(hdr.first_attacker);
     start_game_with_deck(gp, deck, n_deck);
     game_force_first_attacker(-1);
+    game_open_at_seat(-1);
     step(gp, viewer, u);
 
     // The rebuilt deal must be the one the code describes. first_attacker is
     // the check with teeth: the engine derives it from the lowest trump
     // (determine_lowest_power_index) while the header carries what was
     // recorded, so agreement means the hands really came back.
-    if (gp->first_attacker != (int8_t)hdr.first_attacker) {
+    //
+    // A forced opening would fail that check for an innocent reason, so v8
+    // moves the teeth rather than pulling them: the code carries the seat the
+    // deal DERIVES, and that is what the rebuilt hands must still produce.
+    // Either way one recorded seat is proven against the rebuild.
+    if (hdr.forced_opening) {
+        if (game_derived_opening() != hdr.derived_opening
+            || gp->first_attacker != (int8_t)hdr.first_attacker) {
+            engine_snap_hook = saved_hook;
+            return -REPLAY_EHEADER;
+        }
+    } else if (gp->first_attacker != (int8_t)hdr.first_attacker) {
         engine_snap_hook = saved_hook;
         return -REPLAY_EHEADER;
     }

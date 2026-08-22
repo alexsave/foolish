@@ -70,11 +70,22 @@ public struct RulesView: View {
                         // The pre-game page: how this lobby works, then the
                         // goal section as the quick what-is-this-game.
                         section("ios.rules.lobby.h", "ios.rules.lobby.b")
+                        // The fool's penalty belongs on the LOBBY page too, and
+                        // not only in the full rulebook: the lobby is where a
+                        // rematch is sitting when the rule is about to change
+                        // who opens, so it is the one moment a player needs to
+                        // be told (owner: "this should also go into the rule
+                        // book for the lobby").
+                        section("ios.rules.fool.h", "ios.rules.fool.b")
                         section("ios.rules.goal.h", "ios.rules.goal.b")
                     } else {
                         section("ios.rules.goal.h", "ios.rules.goal.b")
                         setupSection
                         section("ios.rules.start.h", "ios.rules.start.b")
+                        // …and directly after "Game start" in the full book,
+                        // because it is the exception to the rule that section
+                        // just stated.
+                        section("ios.rules.fool.h", "ios.rules.fool.b")
                         attackSection
                         section("ios.rules.defend.h", "ios.rules.defend.b")
                         coverSection

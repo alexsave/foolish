@@ -110,7 +110,7 @@ static void seed_fill(uint8_t *seed, uint32_t s) {
 }
 
 static void env_init(MsgEnvelope *e, const uint8_t *seed, int n_players) {
-    memset(e, 0, sizeof(*e));
+    msg_envelope_init(e);   // NOT memset: the rematch fields have sentinels
     e->format = MSG_FORMAT_V6;
     e->flags = 0;
     e->phase = MSG_PHASE_LIVE;
@@ -659,9 +659,9 @@ static void test_tamper(void) {
     // (d) Field-level rejects, one per rule.
     struct { const char *what; int off; unsigned char val; int want; } cases[] = {
         { "magic",        0,  0xF6, MSG_EMAGIC },
-        // Round 16: 3 is the CLOCK format and is legal now, so the first
-        // unknown byte above it is 4. (2 and 3 are the whole of the wire.)
-        { "format",       1,  MSG_FORMAT_CLOCK + 1, MSG_EFORMAT },
+        // Round 16: 3 is the CLOCK format and 4 the REMATCH format, so the
+        // first unknown byte above them is 5. (2, 3 and 4 are the whole wire.)
+        { "format",       1,  MSG_FORMAT_REMATCH + 1, MSG_EFORMAT },
         { "format:raw",   1,  1,    MSG_EFORMAT },
         { "flags:fair",   2,  MSG_FLAG_FAIR_DEAL, MSG_EFLAGS },
         { "flags:gzip",   2,  MSG_FLAG_GZIP, MSG_EFLAGS },
@@ -964,6 +964,320 @@ static void test_bubble_delta(void) {
     unsigned char w[ENV_CAP];
     e.n_new = (uint8_t)(e.turn + 1);
     CHECK(msg_encode(&e, w, sizeof(w)) == MSG_ETURN, "a delta past the chain encoded");
+}
+
+// ---------- Rule F: the fool's penalty ------------------------------------
+
+// Build a joins array from a list of names, seated 0..n-1 in the order given.
+static void joins_of(MsgJoin *j, const char *const *names, int n) {
+    for (int i = 0; i < n; i++) {
+        j[i].seat = (uint8_t)i;
+        int k = 0;
+        while (names[i][k] && k < MSG_MAX_NAME) { j[i].name[k] = names[i][k]; k++; }
+        j[i].name_len = (uint8_t)k;
+    }
+}
+
+static uint32_t key_of(const char *const *names, int n) {
+    MsgJoin j[MSG_MAX_JOINS];
+    joins_of(j, names, n);
+    uint32_t k = 0;
+    CHECK(msg_roster_key(j, n, &k, 0) == MSG_EOK, "roster key failed");
+    return k;
+}
+
+// The key is a property of the CYCLE, not of the seating: every rotation of one
+// table keys the same, and any order a rotation cannot produce keys different.
+static void test_roster_key(void) {
+    const char *abc[] = { "Alex", "Bob", "Cindy" };
+    const char *bca[] = { "Bob", "Cindy", "Alex" };
+    const char *cab[] = { "Cindy", "Alex", "Bob" };
+    const char *acb[] = { "Alex", "Cindy", "Bob" };   // NOT a rotation of abc
+
+    const uint32_t k = key_of(abc, 3);
+    CHECK(k != 0, "a roster key may never be 0 (the wire's 'no carry')");
+    CHECK(key_of(bca, 3) == k, "a rotation changed the key");
+    CHECK(key_of(cab, 3) == k, "a rotation changed the key");
+    CHECK(key_of(acb, 3) != k, "a reordering kept the key");
+
+    // A different table, and a different size, are different rosters.
+    const char *abd[] = { "Alex", "Bob", "Dina" };
+    const char *abcd[] = { "Alex", "Bob", "Cindy", "Dina" };
+    CHECK(key_of(abd, 3) != k, "a renamed player kept the key");
+    CHECK(key_of(abcd, 4) != k, "a joiner kept the key");
+
+    // Arrival order is not seating order: joins may be appended in any order
+    // and must still key by where people SIT.
+    MsgJoin shuffled[3];
+    joins_of(shuffled, abc, 3);
+    MsgJoin tmp = shuffled[0]; shuffled[0] = shuffled[2]; shuffled[2] = tmp;
+    uint32_t ks = 0;
+    CHECK(msg_roster_key(shuffled, 3, &ks, 0) == MSG_EOK, "shuffled joins failed");
+    CHECK(ks == k, "arrival order changed the key");
+
+    // The rotation offset is the mapping the carry rides on:
+    // canonical[k] == seated[(k + rot) % n]. What has to hold is that ONE
+    // PERSON lands on ONE canonical index no matter how the table is rotated -
+    // that invariant, not any particular ordering of names, is what lets
+    // carry_fool name the same human across a re-seating.
+    MsgJoin j[MSG_MAX_JOINS];
+    int rot_abc = -1, rot_bca = -1;
+    uint32_t ignore = 0;
+    joins_of(j, abc, 3); msg_roster_key(j, 3, &ignore, &rot_abc);
+    joins_of(j, bca, 3); msg_roster_key(j, 3, &ignore, &rot_bca);
+    CHECK(rot_abc >= 0 && rot_bca >= 0, "no rotation reported");
+    for (int seat = 0; seat < 3; seat++) {
+        // The same person, found by name in each seating.
+        const char *who = abc[seat];
+        int seat_in_bca = -1;
+        for (int t = 0; t < 3; t++) if (!strcmp(bca[t], who)) seat_in_bca = t;
+        CHECK(seat_in_bca >= 0, "%s vanished from the rotated roster", who);
+        const int idx_abc = ((seat - rot_abc) % 3 + 3) % 3;
+        const int idx_bca = ((seat_in_bca - rot_bca) % 3 + 3) % 3;
+        CHECK(idx_abc == idx_bca,
+              "%s is canonical %d seated one way and %d the other", who, idx_abc, idx_bca);
+    }
+}
+
+// The verdict: right of the fool, through any rotation, and off entirely the
+// moment the table is not the same table.
+static void test_rematch_opening(void) {
+    const char *abc[] = { "Alex", "Bob", "Cindy" };
+    MsgJoin j[MSG_MAX_JOINS];
+    joins_of(j, abc, 3);
+
+    uint32_t key = 0;
+    int rot = 0;
+    msg_roster_key(j, 3, &key, &rot);
+
+    // Bob (seat 1) was the fool. Canonical index of seat 1 is 1 - rot.
+    for (int fool_seat = 0; fool_seat < 3; fool_seat++) {
+        const uint8_t fool_idx = (uint8_t)(((fool_seat - rot) % 3 + 3) % 3);
+        const int want = (fool_seat - 1 + 3) % 3;
+        const int got = msg_rematch_opening(j, 3, key, fool_idx);
+        CHECK(got == want, "fool at %d: opened %d, want %d (right of the fool)",
+              fool_seat, got, want);
+        // …and the fool is therefore the first DEFENDER, which is the whole
+        // point of the rule.
+        CHECK((got + 1) % 3 == fool_seat, "the fool is not the first defender");
+    }
+
+    // The same cycle, rotated (Bob's device created the lobby, so Bob sits 0):
+    // the same person must still be punished.
+    const char *bca[] = { "Bob", "Cindy", "Alex" };
+    MsgJoin jr[MSG_MAX_JOINS];
+    joins_of(jr, bca, 3);
+    {
+        // Bob was the fool; in the ORIGINAL seating that was seat 1.
+        const uint8_t fool_idx = (uint8_t)(((1 - rot) % 3 + 3) % 3);
+        const int got = msg_rematch_opening(jr, 3, key, fool_idx);
+        CHECK(got >= 0, "a rotated roster lost the penalty");
+        // Bob now sits at 0, so the opener must be seat 2 (Alex), and Bob is
+        // the defender.
+        CHECK(got == 2, "rotated: opened %d, want 2", got);
+        CHECK((got + 1) % 3 == 0, "rotated: the fool is not the first defender");
+    }
+
+    // The guard. Each of these is "the players changed", and each must switch
+    // the rule off rather than punish the wrong person.
+    {
+        const char *acb[] = { "Alex", "Cindy", "Bob" };      // reordered
+        const char *abd[] = { "Alex", "Bob", "Dina" };       // renamed / replaced
+        const char *abcd[] = { "Alex", "Bob", "Cindy", "D" };// joined
+        MsgJoin t[MSG_MAX_JOINS];
+        joins_of(t, acb, 3);
+        CHECK(msg_rematch_opening(t, 3, key, 0) == -1, "a reorder kept the penalty");
+        joins_of(t, abd, 3);
+        CHECK(msg_rematch_opening(t, 3, key, 0) == -1, "a rename kept the penalty");
+        joins_of(t, abcd, 4);
+        CHECK(msg_rematch_opening(t, 4, key, 0) == -1, "a joiner kept the penalty");
+    }
+
+    // No carry is no penalty, in both of its shapes.
+    CHECK(msg_rematch_opening(j, 3, 0, 0) == -1, "key 0 applied a penalty");
+    CHECK(msg_rematch_opening(j, 3, key, MSG_NO_FOOL) == -1, "no fool applied a penalty");
+}
+
+// The wire half: a pinned opening survives seal -> bytes -> decode -> re-deal,
+// and a chain that lies about it does not replay.
+static void test_fool_penalty_wire(void) {
+    for (int np = 2; np <= 5; np++) {
+        for (int fool = 0; fool < np; fool++) {
+            const int opening = (fool - 1 + np) % np;
+
+            uint8_t seed[MSG_SEED_LEN];
+            seed_fill(seed, 7700u + (uint32_t)(np * 31 + fool));
+
+            // Deal the rematch the way msg_replay will: pinned.
+            game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+            Game g;
+            memset(&g, 0, sizeof(g));
+            g.num_players = (int8_t)np;
+            for (int i = 0; i < np; i++) {
+                g.players[i].status = PLAYER_STATUS_READY;
+                g.players[i].strategy_key = 0;
+                snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
+            }
+            game_open_at_seat(opening);
+            start_game(&g);
+            game_open_at_seat(-1);
+
+            CHECK(g.first_attacker == (int8_t)opening,
+                  "np=%d: the pin did not take (%d, want %d)",
+                  np, g.first_attacker, opening);
+            CHECK(g.defender == (int8_t)fool,
+                  "np=%d: the fool is not the first defender (%d, want %d)",
+                  np, g.defender, fool);
+
+            // One real move, so the chain has a body to check the opener
+            // against, and it must come from the SEAT THE PENALTY NAMED.
+            static LegalMoves ml;
+            calculate_legal_moves(&g, opening, &ml);
+            int pick = -1;
+            for (int i = 0; i < ml.n && pick < 0; i++)
+                if (ml.moves[i].type == MOVE_ATTACK) pick = i;
+            CHECK(pick >= 0, "np=%d: the pinned opener has no attack", np);
+            if (pick < 0) continue;
+            AwireAction a;
+            move_to_awire(&ml.moves[pick], &a);
+            CHECK(handle_attack(&g, opening, a.cards, a.n), "np=%d: opener refused", np);
+
+            MsgEnvelope e;
+            env_init(&e, seed, np);
+            e.last_actor_seat = (uint8_t)opening;
+            e.phase = MSG_PHASE_LIVE;
+            e.opening = (uint8_t)opening;
+            static unsigned char body[1024];
+            static Game scratch;
+            CHECK(msg_seal(&e, &g, 0, body, sizeof(body), &scratch) == MSG_EOK,
+                  "np=%d: rematch seal failed", np);
+            CHECK(e.format == MSG_FORMAT_REMATCH,
+                  "np=%d: a pinned opening did not seal format 4 (got %d)", np, e.format);
+
+            unsigned char wire[ENV_CAP];
+            const int n = msg_encode(&e, wire, sizeof(wire));
+            CHECK(n > 0, "np=%d: rematch encode failed (%d)", np, n);
+            if (n <= 0) continue;
+
+            MsgEnvelope d;
+            CHECK(msg_decode(wire, n, &d) == MSG_EOK, "np=%d: rematch decode failed", np);
+            CHECK(d.opening == (uint8_t)opening,
+                  "np=%d: the opening seat did not survive the wire (%d)", np, d.opening);
+            CHECK(d.carry_key == 0 && d.carry_fool == MSG_NO_FOOL,
+                  "np=%d: a live bubble carried a lobby's question", np);
+
+            Game rebuilt;
+            CHECK(msg_replay(&d, &rebuilt) == MSG_EOK, "np=%d: rematch replay failed", np);
+
+            // THE POINT: a device holding only these bytes deals the same board.
+            for (int s = 0; s < np; s++)
+                CHECK(rebuilt.players[s].hand_count == g.players[s].hand_count,
+                      "np=%d seat %d: the re-dealt hand differs", np, s);
+
+            // A chain that drops the penalty deals a DIFFERENT game, and its own
+            // body no longer fits. Only meaningful when the lowest trump would
+            // have opened somewhere else, which is the interesting case anyway.
+            {
+                MsgEnvelope t = d;
+                t.opening = MSG_NO_OPENING;
+                t.format  = MSG_FORMAT_CLOCK;
+                Game junk;
+                const int rc = msg_replay(&t, &junk);
+                Game probe;
+                game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+                memset(&probe, 0, sizeof(probe));
+                probe.num_players = (int8_t)np;
+                for (int i = 0; i < np; i++) probe.players[i].status = PLAYER_STATUS_READY;
+                start_game(&probe);
+                if (probe.first_attacker != (int8_t)opening) {
+                    CHECK(rc != MSG_EOK,
+                          "np=%d: a chain stripped of its penalty still replayed", np);
+                }
+            }
+        }
+    }
+}
+
+// A v8 code carries its own forced opening, so a SHARED replay (no envelope, no
+// seed - just the code) rebuilds the same opening seat.
+static void test_forced_opening_replay(void) {
+    for (int np = 2; np <= 4; np++) {
+        uint8_t seed[MSG_SEED_LEN];
+        seed_fill(seed, 8800u + (uint32_t)np);
+        game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+        g_rng = 4242u + (uint32_t)np;
+        random_strategy_set_seed(g_rng);
+
+        Game g;
+        memset(&g, 0, sizeof(g));
+        g.num_players = (int8_t)np;
+        for (int i = 0; i < np; i++) {
+            g.players[i].status = PLAYER_STATUS_READY;
+            g.players[i].strategy_key = 0;
+            snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
+        }
+        // Derive first, so the test only runs where the penalty really differs
+        // from the ordinary rule (otherwise there is no override to prove).
+        start_game(&g);
+        const int derived = g.first_attacker;
+        const int opening = (derived + 1) % np;
+
+        game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+        memset(&g, 0, sizeof(g));
+        g.num_players = (int8_t)np;
+        for (int i = 0; i < np; i++) {
+            g.players[i].status = PLAYER_STATUS_READY;
+            g.players[i].strategy_key = 0;
+            snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
+        }
+        game_open_at_seat(opening);
+        start_game(&g);
+        game_open_at_seat(-1);
+        CHECK(game_derived_opening() == derived,
+              "np=%d: the derive was not recorded under a pin (%d want %d)",
+              np, game_derived_opening(), derived);
+
+        // Play a handful of legal moves so there is a real chain to encode.
+        static LegalMoves ml;
+        for (int step = 0; step < 24; step++) {
+            if (game_done(&g) >= 0 || g.status != GAME_STATUS_PLAYING) break;
+            int seat = -1, pick = -1;
+            for (int s = 0; s < np && seat < 0; s++) {
+                if (g.players[s].status != PLAYER_STATUS_IN) continue;
+                calculate_legal_moves(&g, s, &ml);
+                for (int i = 0; i < ml.n; i++)
+                    if (ml.moves[i].type != MOVE_WAIT) { seat = s; pick = i; break; }
+            }
+            if (seat < 0 || pick < 0) break;
+            AwireAction a;
+            move_to_awire(&ml.moves[pick], &a);
+            bool ok;
+            switch (a.kind) {
+                case AWIRE_ATTACK: ok = handle_attack(&g, seat, a.cards, a.n); break;
+                case AWIRE_COVER:  ok = handle_cover(&g, seat, a.cards, a.attacks, a.n); break;
+                case AWIRE_PASS:   ok = handle_pass(&g, seat, a.cards, a.n); break;
+                case AWIRE_PICKUP: ok = handle_pickup(&g, seat); break;
+                default:           ok = handle_good(&g, seat); break;
+            }
+            if (!ok) break;
+        }
+
+        static unsigned char code[2048];
+        const int cn = replay_encode_v6_from_game(&g, seed, MSG_SEED_LEN, 1 << 30,
+                                                  code, sizeof(code));
+        CHECK(cn > 0, "np=%d: forced-game encode failed (%d)", np, cn);
+        if (cn <= 0) continue;
+
+        ReplayHeader hdr;
+        const int d = replay_decode_atoms_v6(code, cn, &hdr, 0, 0);
+        CHECK(d >= 0, "np=%d: forced-game decode failed (%d)", np, d);
+        CHECK(hdr.version == REPLAY_FORMAT_VERSION_V8, "np=%d: not v8 (%d)", np, hdr.version);
+        CHECK(hdr.forced_opening == 1, "np=%d: the forced bit was not set", np);
+        CHECK(hdr.first_attacker == opening,
+              "np=%d: the code recorded opener %d, want %d", np, hdr.first_attacker, opening);
+        CHECK(hdr.derived_opening == derived,
+              "np=%d: the code recorded derive %d, want %d", np, hdr.derived_opening, derived);
+    }
 }
 
 static void test_clock_wire(void) {
@@ -1442,6 +1756,83 @@ static int poses_the_race(const Game *g) {
 // pick up. Nobody says good, so the all-good transition cannot fire either.
 //
 // Usage: msg_wire_test --fatboard [target] [n_players]
+// --endgame [np]: a FINISHED chain, as one FMSG envelope in hex - the dev board
+// for verifying what "New game" does at the end of a game (the fool's penalty).
+//
+// Same discipline as --fatboard: the state is searched here, in C, in
+// microseconds, and the device just opens it. Reaching a finished 3-player game
+// by tapping is minutes of work per attempt and the fool would differ every
+// run, which is exactly what makes a filmed comparison worthless.
+static void print_endgame(int np) {
+    static unsigned char body[1024];
+    static Game scratch;
+    static LegalMoves ml;
+
+    for (uint32_t s = 1; s < 4000; s++) {
+        uint8_t seed[MSG_SEED_LEN];
+        seed_fill(seed, 20260822u + s * 89u);
+        game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+        g_rng = 17u + s;
+        random_strategy_set_seed(g_rng);
+
+        Game g;
+        memset(&g, 0, sizeof(g));
+        g.num_players = (int8_t)np;
+        for (int i = 0; i < np; i++) {
+            g.players[i].status = PLAYER_STATUS_READY;
+            g.players[i].strategy_key = 0;
+            snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
+        }
+        start_game(&g);
+
+        int last_actor = g.first_attacker;
+        for (int step = 0; step < 400; step++) {
+            if (game_done(&g) >= 0 || g.status != GAME_STATUS_PLAYING) break;
+            int seat = -1, pick = -1;
+            const int start = (int)(rnd() % (uint32_t)np);
+            for (int t = 0; t < np && seat < 0; t++) {
+                const int c = (start + t) % np;
+                if (g.players[c].status != PLAYER_STATUS_IN) continue;
+                calculate_legal_moves(&g, c, &ml);
+                for (int i = 0; i < ml.n; i++)
+                    if (ml.moves[i].type != MOVE_WAIT) { seat = c; pick = i; break; }
+            }
+            if (seat < 0 || pick < 0) break;
+            AwireAction a;
+            move_to_awire(&ml.moves[pick], &a);
+            bool ok;
+            switch (a.kind) {
+                case AWIRE_ATTACK: ok = handle_attack(&g, seat, a.cards, a.n); break;
+                case AWIRE_COVER:  ok = handle_cover(&g, seat, a.cards, a.attacks, a.n); break;
+                case AWIRE_PASS:   ok = handle_pass(&g, seat, a.cards, a.n); break;
+                case AWIRE_PICKUP: ok = handle_pickup(&g, seat); break;
+                default:           ok = handle_good(&g, seat); break;
+            }
+            if (!ok) break;
+            last_actor = seat;
+        }
+        game_settle_status(&g);
+        const int fool = game_done(&g);
+        if (fool < 0) continue;
+
+        MsgEnvelope e;
+        env_init(&e, seed, np);
+        e.phase = MSG_PHASE_FINISHED;
+        e.last_actor_seat = (uint8_t)last_actor;
+        if (msg_seal(&e, &g, MSG_NO_BASE, body, sizeof(body), &scratch) != MSG_EOK) continue;
+        unsigned char wire[ENV_CAP];
+        const int n = msg_encode(&e, wire, sizeof(wire));
+        if (n <= 0) continue;
+
+        for (int i = 0; i < n; i++) printf("%02x", wire[i]);
+        printf("\n");
+        fprintf(stderr, "endgame: np=%d fool=seat %d turn=%d round=%d (%d bytes)\n",
+                np, fool, e.turn, e.round, n);
+        return;
+    }
+    fprintf(stderr, "no %dp endgame found\n", np);
+}
+
 static void print_fatboard(int target, int np) {
     static unsigned char body[1024];
     static Game scratch;
@@ -1630,6 +2021,107 @@ static void print_fixtures(void) {
     }
 }
 
+// --fixture4: the same job for the FOOL'S PENALTY, one line per player count.
+// A format-4 envelope cannot come out of print_fixtures because it needs a deal
+// that was PINNED - the whole point is an opening seat the deal would not
+// derive - so it gets its own generator rather than a flag on that one.
+//
+// What the cross-engine fixture buys, and print_fixtures cannot: the wasm
+// kernel must re-deal from the seed with the SAME pin, or the body's atoms land
+// on a board where they are not legal and the decode fails outright. So a
+// passing fixture proves both halves at once - that the web reads the six new
+// header bytes where the phone wrote them, and that it honours what they say.
+static void print_fixtures4(void) {
+    const int pcs[] = { 2, 3, 4 };
+    for (int pi = 0; pi < 3; pi++) {
+        const int np = pcs[pi];
+        int emitted = 0;
+        for (uint32_t s = 0; s < 400 && !emitted; s++) {
+            uint8_t seed[MSG_SEED_LEN];
+            seed_fill(seed, 5150u + s * 97u + (uint32_t)np);
+
+            // What the deal WOULD do on its own, so the fixture is only emitted
+            // where the penalty genuinely overrides it.
+            game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+            Game probe;
+            memset(&probe, 0, sizeof(probe));
+            probe.num_players = (int8_t)np;
+            for (int i = 0; i < np; i++) probe.players[i].status = PLAYER_STATUS_READY;
+            start_game(&probe);
+            const int derived = probe.first_attacker;
+
+            // Cast the DERIVED opener as the fool. That is what makes the
+            // fixture worth having: the penalty then opens on the seat to their
+            // right, which is never the seat the deal would have chosen, at any
+            // player count. (Casting the fool as the player they would have
+            // attacked collapses to the derived seat at 2 players.)
+            const int opening = (derived - 1 + np) % np;
+            if (opening == derived) continue;
+
+            game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+            Game g;
+            memset(&g, 0, sizeof(g));
+            g.num_players = (int8_t)np;
+            for (int i = 0; i < np; i++) {
+                g.players[i].status = PLAYER_STATUS_READY;
+                g.players[i].strategy_key = 0;
+                snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
+            }
+            game_open_at_seat(opening);
+            start_game(&g);
+            game_open_at_seat(-1);
+            if (g.first_attacker != (int8_t)opening) continue;
+
+            // A short real chain, so the body is worth replaying.
+            static LegalMoves ml;
+            int last_actor = opening, played = 0;
+            for (int step = 0; step < 10; step++) {
+                if (game_done(&g) >= 0 || g.status != GAME_STATUS_PLAYING) break;
+                int seat = -1, pick = -1;
+                for (int t = 0; t < np && seat < 0; t++) {
+                    if (g.players[t].status != PLAYER_STATUS_IN) continue;
+                    calculate_legal_moves(&g, t, &ml);
+                    for (int i = 0; i < ml.n; i++)
+                        if (ml.moves[i].type != MOVE_WAIT) { seat = t; pick = i; break; }
+                }
+                if (seat < 0 || pick < 0) break;
+                AwireAction a;
+                move_to_awire(&ml.moves[pick], &a);
+                bool ok;
+                switch (a.kind) {
+                    case AWIRE_ATTACK: ok = handle_attack(&g, seat, a.cards, a.n); break;
+                    case AWIRE_COVER:  ok = handle_cover(&g, seat, a.cards, a.attacks, a.n); break;
+                    case AWIRE_PASS:   ok = handle_pass(&g, seat, a.cards, a.n); break;
+                    case AWIRE_PICKUP: ok = handle_pickup(&g, seat); break;
+                    default:           ok = handle_good(&g, seat); break;
+                }
+                if (!ok) break;
+                last_actor = seat;
+                played++;
+            }
+            if (played < 3 || g.status != GAME_STATUS_PLAYING) continue;
+
+            MsgEnvelope e;
+            env_init(&e, seed, np);
+            e.phase = MSG_PHASE_LIVE;
+            e.last_actor_seat = (uint8_t)last_actor;
+            e.sent_at = 0x1234;
+            e.opening = (uint8_t)opening;
+            static unsigned char body[1024];
+            static Game scratch;
+            if (msg_seal(&e, &g, MSG_NO_BASE, body, sizeof(body), &scratch) != MSG_EOK) continue;
+            unsigned char wire[ENV_CAP];
+            const int n = msg_encode(&e, wire, sizeof(wire));
+            if (n <= 0) continue;
+            printf("%d %d %d %d %d %u ", np, e.turn, e.round, opening, derived, e.sent_at);
+            for (int i = 0; i < n; i++) printf("%02x", wire[i]);
+            printf("\n");
+            emitted = 1;
+        }
+        if (!emitted) fprintf(stderr, "no %dp penalty fixture found\n", np);
+    }
+}
+
 // --holdcheck <hex>: decode a payload exactly as a device does and print the
 // pickup hold for every seat. The one tool that can say whether a board showing
 // the Pickup pill is the WIRE's fault or the app's.
@@ -1661,6 +2153,11 @@ static void print_holdcheck(const char *hex) {
 
 int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1], "--fixture")) { print_fixtures(); return 0; }
+    if (argc > 1 && !strcmp(argv[1], "--fixture4")) { print_fixtures4(); return 0; }
+    if (argc > 1 && !strcmp(argv[1], "--endgame")) {
+        print_endgame(argc > 2 ? atoi(argv[2]) : 3);
+        return 0;
+    }
     if (argc > 2 && !strcmp(argv[1], "--holdcheck")) { print_holdcheck(argv[2]); return 0; }
     if (argc > 1 && !strcmp(argv[1], "--fatboard")) {
         print_fatboard(argc > 2 ? atoi(argv[2]) : 10, argc > 3 ? atoi(argv[3]) : 2);
@@ -1686,6 +2183,10 @@ int main(int argc, char **argv) {
     test_pickup_hold();
     test_clock_wire();
     test_bubble_delta();
+    test_roster_key();
+    test_rematch_opening();
+    test_fool_penalty_wire();
+    test_forced_opening_replay();
     test_size_budget(games * 4, seed0);
     { const int rb = bot_roster_find("robusta");
       probe_v6_midgame(seed0, 2, rb);

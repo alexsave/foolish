@@ -414,7 +414,31 @@ static int g_forced_first_attacker = -1;
 
 void game_force_first_attacker(int seat) { g_forced_first_attacker = seat; }
 
-static int determine_lowest_power_index(Game *g) {
+// The fool's-penalty override (the "teach the last fool a lesson" rule): a
+// rematch among the SAME players, in the same cycle, opens on the seat to the
+// right of the previous game's fool instead of on the lowest trump. Unlike
+// g_forced_first_attacker above this is UNCONDITIONAL - it beats a derived
+// seat, which is the whole point - and it is set from the wire (msg_wire.c's
+// `opening` byte, replay.c's v8 forced bit), never guessed by a host.
+//
+// The derive still RUNS when this is set, and its result is kept in
+// g_derived_opening. Two reasons, both load-bearing:
+//   * the no-trump branch rolls (deal_index), and the roll must stay in the
+//     RNG stream whether or not the override fires, or the same seed would
+//     deal one deck for a rematch and another for a fresh game; and
+//   * a v8 replay code records the derived seat so replay_steps can still
+//     prove the hands came back right - the check the override would
+//     otherwise cost us (see replay_steps.c).
+static int g_open_seat = -1;
+static int g_derived_opening = -1;
+
+void game_open_at_seat(int seat) { g_open_seat = seat; }
+int  game_derived_opening(void) { return g_derived_opening; }
+
+// The lowest-trump seat, or -1 when NOBODY was dealt a trump. Raw: the
+// no-trump fallback is applied by the caller, so this can report the "there is
+// nothing to derive from" case honestly to the recorders above.
+static int derive_lowest_power_index(const Game *g) {
     int lowest_v = ACE_VALUE + 1;
     int lowest_p = -1;
     for (int i = 0; i < g->num_players; i++) {
@@ -426,11 +450,18 @@ static int determine_lowest_power_index(Game *g) {
             }
         }
     }
+    return lowest_p;
+}
+
+static int determine_lowest_power_index(Game *g) {
+    int lowest_p = derive_lowest_power_index(g);
+    g_derived_opening = lowest_p;
     if (lowest_p == -1) {
         lowest_p = (g_forced_first_attacker >= 0 && g_forced_first_attacker < g->num_players)
                  ? g_forced_first_attacker
                  : deal_index(g->num_players);
     }
+    if (g_open_seat >= 0 && g_open_seat < g->num_players) lowest_p = g_open_seat;
     return lowest_p;
 }
 

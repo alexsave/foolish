@@ -710,8 +710,10 @@ export function kernelReplayEncodeV6FromGame(
 
 // The unpacked header — the private ABI msg_blob_write/msg_blob_read define in
 // c/wasm/wasm_api.c. Fixed offsets, fixed-size join slots.
-// Round 16 added the two send-clock bytes at 90, so the joins start at 92.
-const MSG_BLOB_HDR = 93;
+// Round 16 added the two send-clock bytes at 90, the bubble delta at 92, and
+// the fool's-penalty trio (opening at 93, carry_key at 94, carry_fool at 98),
+// so the joins start at 99.
+const MSG_BLOB_HDR = 99;
 // 2 + the wire's MSG_MAX_NAME: was 14 (2 + 12) before round-5 B1 raised the
 // name cap to 64 bytes (docs/APP_REVIEW_NOTES.md, c/src/msg_wire.h) — must
 // match wasm_api.c's MSG_BLOB_JOIN or this bridge mis-parses every join.
@@ -744,8 +746,21 @@ export interface MsgEnvelope {
     /// derives it at seal time from the chain it decoded, so anything written
     /// here is ignored (see wasm_api.c's blob layout).
     n_new: number;
+    /// THE FOOL'S PENALTY (c/src/msg_wire.h format 4). `opening` is the seat
+    /// this deal opens on, or 0xFF (MSG_NO_OPENING) for the ordinary
+    /// lowest-trump rule; `carry_key`/`carry_fool` are a WAITING lobby's
+    /// rematch carry, 0 / 0xFF when there is none. All three go BOTH ways -
+    /// they are terms of the deal, not claims about the body, so a caller that
+    /// writes them seals a format-4 envelope.
+    opening: number;
+    carry_key: number;
+    carry_fool: number;
     joins: MsgJoin[];
 }
+
+/// The wire's "no penalty" sentinels, so callers never spell 0xFF themselves.
+export const MSG_NO_OPENING = 0xff;
+export const MSG_NO_FOOL = 0xff;
 
 function msgError(code: number): Error {
     switch (code) {
@@ -794,6 +809,9 @@ function readBlob(buf: Uint8Array, base: number, len: number): MsgEnvelope {
         digest: b.slice(58, 90),
         sent_at: dv.getUint16(90, true),
         n_new: b[92],
+        opening: b[93],
+        carry_key: dv.getUint32(94, true),
+        carry_fool: b[98],
         joins,
     };
 }
@@ -812,6 +830,11 @@ function writeBlob(e: MsgEnvelope): Uint8Array {
     dv.setUint16(90, e.sent_at & 0xffff, true);
     // 92 is n_new: decode-only too (msg_seal derives the delta, see bots.ts's
     // MsgEnvelope.n_new), so it is left 0 here rather than echoed back.
+    // 93..99 IS written back: unlike the digest and the delta, the fool's
+    // penalty is a term of the deal the caller states.
+    out[93] = e.opening;
+    dv.setUint32(94, e.carry_key >>> 0, true);
+    out[98] = e.carry_fool;
     e.joins.forEach((j, i) => {
         const o = MSG_BLOB_HDR + i * MSG_BLOB_JOIN;
         const name = new TextEncoder().encode(j.name);
@@ -1077,8 +1100,9 @@ export function kernelMsgPickupHold(seat: number, sentAt: number, now: number): 
 }
 
 export function kernelMsgSeal(
-    header: Omit<MsgEnvelope, 'digest' | 'turn' | 'round' | 'format' | 'sent_at' | 'n_new'>
-          & { sent_at?: number },
+    header: Omit<MsgEnvelope, 'digest' | 'turn' | 'round' | 'format' | 'sent_at' | 'n_new'
+                              | 'opening' | 'carry_key' | 'carry_fool'>
+          & { sent_at?: number; opening?: number; carry_key?: number; carry_fool?: number },
 ): Uint8Array {
     const ex = bots();
     if (!ex.wasm_msg_seal) throw new Error('kernelMsgSeal: module has no FMSG support');
@@ -1087,6 +1111,9 @@ export function kernelMsgSeal(
     // the caller never states it twice. n_new is 0 for the same reason the
     // digest is: the kernel derives it, from the chain wasm_msg_decode adopted.
     const blob = writeBlob({ ...header, sent_at: header.sent_at ?? 0, n_new: 0,
+                             opening: header.opening ?? MSG_NO_OPENING,
+                             carry_key: header.carry_key ?? 0,
+                             carry_fool: header.carry_fool ?? MSG_NO_FOOL,
                              format: 2, turn: 0, round: 0, digest: new Uint8Array(32) });
     const base = ex.wasm_replay_io_ptr();
     __mem(ex).set(blob, base);

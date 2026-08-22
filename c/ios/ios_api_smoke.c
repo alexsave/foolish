@@ -132,9 +132,10 @@ static int replay_sweep(void) {
                 return 1;
             }
             // Since 1.0(4) the seeded encoder stamps v7 (v6 + the pass-mode
-            // bit, byte-identical play — replay.h's REPLAY_FORMAT_VERSION_V7
-            // note). Old v6 codes still decode; fresh encodes must be v7.
-            if ((unsigned char)buf[0] != 7) {   // version is byte[0]
+            // bit), and round 16 stamps v8 (v7 + the forced-opening bit, for
+            // the fool's penalty - replay.h). Both are byte-identical play.
+            // Old v6/v7 codes still decode; fresh encodes must be v8.
+            if ((unsigned char)buf[0] != 8) {   // version is byte[0]
                 printf("FAIL sweep v6 version p=%d seed=%d got=%d\n", players, s,
                        (unsigned char)buf[0]);
                 return 1;
@@ -227,7 +228,8 @@ static int fmsg_check(void) {
     // Decode ADOPTS: the payload's game becomes the resident one. The metadata
     // comes back as the PACKED blob (fio_msg_decode_packed layout): phase(1)
     // n_players(1) last_actor_seat(1) round(1) turn(u16) game_id(u64) parent8(8)
-    // digest(32) sent_at(u16) n_new(1) n_joins(1) then joins {seat(1) len(1) name[]}.
+    // digest(32) sent_at(u16) n_new(1) opening(1) carry_key(u32) carry_fool(1)
+    // n_joins(1) then joins {seat(1) len(1) name[]}.
     unsigned char *mb = (unsigned char *)buf;
     if (fio_msg_decode_packed(pay, n, mb, sizeof(buf)) <= 0) {
         printf("FAIL fmsg decode: msg_err=%d\n", fio_last_msg_error()); return 1;
@@ -237,10 +239,10 @@ static int fmsg_check(void) {
     if (mb[0] != 2 /* phase LIVE */ || mb[1] != 4 /* n_players */ || gid != 81985529216486895ULL) {
         printf("FAIL fmsg decode packed shape: phase=%d n=%d gid=%llu\n", mb[0], mb[1], gid); return 1;
     }
-    // Seat 0's join is "Sveta" - the first record after the 58-byte header
-    // (round 16 added the two send-clock bytes and the bubble delta ahead of
-    // n_joins).
-    if (!(mb[58] == 0 && mb[59] == 5 && memcmp(mb + 60, "Sveta", 5) == 0)) {
+    // Seat 0's join is "Sveta" - the first record after the 64-byte header
+    // (round 16 added the two send-clock bytes, the bubble delta, and the
+    // fool's-penalty trio ahead of n_joins).
+    if (!(mb[64] == 0 && mb[65] == 5 && memcmp(mb + 66, "Sveta", 5) == 0)) {
         printf("FAIL fmsg decode: seat-0 join not Sveta\n"); return 1;
     }
     // The digest (Rule P's tiebreak) is present and not all-zero.

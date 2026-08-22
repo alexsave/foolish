@@ -734,8 +734,17 @@ int wasm_replay_error_detail(void) { return replay_last_error_detail(); }
 //                  and deliberately: msg_seal derives the delta from the base
 //                  turn this host tracks, so a caller cannot claim a boundary
 //                  its body does not have. Whatever is written here is ignored.
-//   93 n_joins x 66 { u8 seat, u8 name_len, 64 B name }
-#define MSG_BLOB_HDR   93
+//   93  1 opening - THE FOOL'S PENALTY (msg_wire.h format 4): the seat this
+//                  deal opens on, 0xFF for the ordinary lowest-trump
+//                  derivation. BOTH WAYS, like sent_at: a caller that writes a
+//                  seat here seals a format-4 envelope, and the rematch it
+//                  starts deals from that seat on every device.
+//   94  4 carry_key  - a WAITING lobby's rematch carry, u32 LE; 0 = none.
+//   98  1 carry_fool - the fool's canonical index in that carry; 0xFF = none.
+//                  Both ways as well: the lobby a "New game" creates is sealed
+//                  with them, and every join re-seal carries them forward.
+//   99 n_joins x 66 { u8 seat, u8 name_len, 64 B name }
+#define MSG_BLOB_HDR   99
 // 2 + MSG_MAX_NAME: was 14 (2 + 12) before round-5 B1 raised the name cap to
 // 64 (docs/APP_REVIEW_NOTES.md, msg_wire.h). Unlike the wire encoding (which
 // is length-prefixed per join and needs no slack), this TS bridge blob uses a
@@ -760,6 +769,9 @@ static void msg_blob_write(const MsgEnvelope *e, const uint8_t *digest, unsigned
     o[90] = (unsigned char)(e->sent_at & 0xff);
     o[91] = (unsigned char)(e->sent_at >> 8);
     o[92] = e->n_new;
+    o[93] = e->opening;
+    for (int i = 0; i < 4; i++) o[94 + i] = (unsigned char)(e->carry_key >> (8 * i));
+    o[98] = e->carry_fool;
     for (int i = 0; i < e->n_joins; i++) {
         unsigned char *j = o + MSG_BLOB_HDR + i * MSG_BLOB_JOIN;
         j[0] = e->joins[i].seat;
@@ -771,7 +783,7 @@ static void msg_blob_write(const MsgEnvelope *e, const uint8_t *digest, unsigned
 
 static int msg_blob_read(const unsigned char *b, int len, MsgEnvelope *e) {
     if (len < MSG_BLOB_HDR) return MSG_ESHORT;
-    memset(e, 0, sizeof(*e));
+    msg_envelope_init(e);   // NOT memset: the rematch fields have sentinels
     e->format = b[0]; e->flags = b[1]; e->phase = b[2]; e->n_players = b[3];
     e->variant = b[4]; e->round = b[5]; e->last_actor_seat = b[6];
     e->n_joins = b[7];
@@ -786,6 +798,10 @@ static int msg_blob_read(const unsigned char *b, int len, MsgEnvelope *e) {
     e->sent_at = (uint16_t)(b[90] | (b[91] << 8));
     // b[92] (n_new) is NOT read back: msg_seal derives the delta, see the
     // layout note above.
+    e->opening    = b[93];
+    e->carry_key  = (uint32_t)b[94] | ((uint32_t)b[95] << 8)
+                  | ((uint32_t)b[96] << 16) | ((uint32_t)b[97] << 24);
+    e->carry_fool = b[98];
     for (int i = 0; i < e->n_joins; i++) {
         const unsigned char *j = b + MSG_BLOB_HDR + i * MSG_BLOB_JOIN;
         e->joins[i].seat = j[0];

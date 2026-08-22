@@ -1602,6 +1602,31 @@ int replay_encode(const unsigned char *in, int in_len,
     return len;
 }
 
+// The lowest-trump seat of the DEALT hands, read straight off the reveal
+// stream (whose first n*CARDS_PER_PLAYER entries are the deal, seat-major), or
+// -1 when nobody was dealt a trump. This is game.c's derive_lowest_power_index
+// answered from the wire instead of from a Game: the encoder needs it to tell
+// an ordinary opener from an imposed one, and it must agree with the kernel
+// exactly - same scan order, same strict `<`, so the FIRST seat holding the
+// minimum trump wins a tie.
+static int reveal_lowest_trump_seat(const unsigned char *reveals, int n_reveals,
+                                    int n, int trump_id) {
+    const int suit = trump_id / 13;
+    const int dealt = n * CARDS_PER_PLAYER;
+    if (!reveals || n_reveals < dealt) return -1;
+    int lowest_v = 14, lowest_p = -1;
+    for (int seat = 0; seat < n; seat++) {
+        for (int k = 0; k < CARDS_PER_PLAYER; k++) {
+            const unsigned char w = reveals[seat * CARDS_PER_PLAYER + k];
+            if (w > 51) continue;
+            if ((int)(w / 13) != suit) continue;
+            const int v = (int)(w % 13) + 1;
+            if (v < lowest_v) { lowest_v = v; lowest_p = seat; }
+        }
+    }
+    return lowest_p;
+}
+
 // The v6 header + run, shared by both producers. Everything above this differs
 // only in where the actions and the reveals came from; from here down there is
 // one v6 encoder, so the two entry points cannot drift on the wire format.
@@ -1612,7 +1637,16 @@ static int encode_v6_run(int n, int trump_id, int fa, int n_actions,
     memset(&c, 0, sizeof c);
     c.encode = true;
 
-    coder_uniform(&c, REPLAY_VERSION_ALPHABET, REPLAY_FORMAT_VERSION_V7);
+    // v8's forced-opening bit is decided HERE, from the deal itself, not from a
+    // caller's claim: an opener that is not the seat the reveals derive was
+    // imposed (the fool's penalty), and one that is, was not. A deal with no
+    // trump at all derives nothing, so nothing was overridden as far as a
+    // replay can tell - that case stays on v6's existing no-trump path, where
+    // replay_steps already hands the recorded seat back to the engine.
+    const int derived = reveal_lowest_trump_seat(reveals, n_reveals, n, trump_id);
+    const int forced  = (derived >= 0 && derived != fa) ? 1 : 0;
+
+    coder_uniform(&c, REPLAY_VERSION_ALPHABET, REPLAY_FORMAT_VERSION_V8);
     // v7 pass-mode bit, right after the version symbol. Always 1 (perevodnoy)
     // for now — see replay.h's TODO(podkidnoy). The decoder reads it back below.
     coder_uniform(&c, 2, 1);
@@ -1625,12 +1659,14 @@ static int encode_v6_run(int n, int trump_id, int fa, int n_actions,
     if (t < 0) return -REPLAY_EHEADER;  // trump not in alphabet (incl. aces)
     coder_uniform(&c, alen, t);
     coder_uniform(&c, n, fa);
+    coder_uniform(&c, 2, forced);
+    if (forced) coder_uniform(&c, n, derived);
     uint32_t atoms = (uint32_t)n_actions;
     code_varint(&c, &atoms);
     if (c.err) return -c.err;
 
     RModel *m = &g_model;
-    model_init(m, n, trump_id, fa, 0, 0, 0, REPLAY_FORMAT_VERSION_V7);
+    model_init(m, n, trump_id, fa, 0, 0, 0, REPLAY_FORMAT_VERSION_V8);
     m->pass_allowed = 1;   // perevodnoy (always, for now)
     m->rev = reveals;
     m->rev_n = n_reveals;
@@ -1806,14 +1842,14 @@ static int decode_impl(const unsigned char *in, int in_len,
 
     int version = coder_uniform(&c, REPLAY_VERSION_ALPHABET, -1);
     if (version != REPLAY_FORMAT_VERSION && version != REPLAY_FORMAT_VERSION_V6
-        && version != REPLAY_FORMAT_VERSION_V7) {
+        && version != REPLAY_FORMAT_VERSION_V7 && version != REPLAY_FORMAT_VERSION_V8) {
         g_err_detail = version;
         return -REPLAY_EVERSION;
     }
     // v7 carries a pass-mode bit right after the version symbol; v5/v6 carry no
     // bit and are perevodnoy by definition (existing games decode unchanged).
     int pass_allowed = 1;
-    if (version == REPLAY_FORMAT_VERSION_V7) {
+    if (version == REPLAY_FORMAT_VERSION_V7 || version == REPLAY_FORMAT_VERSION_V8) {
         pass_allowed = coder_uniform(&c, 2, -1);
         if (c.err) return -c.err;
     }
@@ -1823,12 +1859,24 @@ static int decode_impl(const unsigned char *in, int in_len,
     int trump_id = alpha[coder_uniform(&c, alen, -1)];
     int first_attacker = coder_uniform(&c, n, -1);
     if (c.err) return -c.err;
+    // v8's forced-opening bit, and the derived seat that comes with it when set
+    // (replay.h). Pre-v8 codes carry neither and are never forced.
+    int forced_opening = 0, derived_opening = -1;
+    if (version == REPLAY_FORMAT_VERSION_V8) {
+        forced_opening = coder_uniform(&c, 2, -1);
+        if (c.err) return -c.err;
+        if (forced_opening) {
+            derived_opening = coder_uniform(&c, n, -1);
+            if (c.err) return -c.err;
+        }
+    }
 
     RModel *m = &g_model;
     model_init(m, n, trump_id, first_attacker, out, REPLAY_DEC_HDR,
                out ? out_cap : 0, version);
     m->pass_allowed = pass_allowed;
-    if (version == REPLAY_FORMAT_VERSION_V6 || version == REPLAY_FORMAT_VERSION_V7) {
+    if (version == REPLAY_FORMAT_VERSION_V6 || version == REPLAY_FORMAT_VERSION_V7
+        || version == REPLAY_FORMAT_VERSION_V8) {
         uint32_t atoms = 0;
         code_varint(&c, &atoms);
         if (c.err) return -c.err;
@@ -1854,6 +1902,8 @@ static int decode_impl(const unsigned char *in, int in_len,
         hdr->n = n;
         hdr->trump_id = trump_id;
         hdr->first_attacker = first_attacker;
+        hdr->forced_opening = forced_opening;
+        hdr->derived_opening = derived_opening;
         hdr->fool = fool;
         hdr->discard_count = m->discard;
         hdr->num_eliminated = m->num_elim;
@@ -1898,8 +1948,10 @@ int replay_decode_atoms_v6(const unsigned char *in, int in_len,
     g_atom_ctx  = 0;
     if (r < 0) return r;
     // v5 hides the deal, so its atoms are not a deck and cannot rebuild a Game.
-    // v6 and v7 both carry the real deal (v7 == v6 + the perevodnoy bit).
-    if (hdr->version != REPLAY_FORMAT_VERSION_V6 && hdr->version != REPLAY_FORMAT_VERSION_V7) {
+    // v6, v7 and v8 all carry the real deal (v7 == v6 + the perevodnoy bit,
+    // v8 == v7 + the forced-opening bit).
+    if (hdr->version != REPLAY_FORMAT_VERSION_V6 && hdr->version != REPLAY_FORMAT_VERSION_V7
+        && hdr->version != REPLAY_FORMAT_VERSION_V8) {
         g_err_detail = hdr->version;
         return -REPLAY_EVERSION;
     }

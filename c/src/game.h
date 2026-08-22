@@ -353,6 +353,27 @@ void start_game_with_deck(Game *g, const Card *deck, int n_deck);
 // determine_lowest_power_index. Set it before start_game*, clear it after.
 void game_force_first_attacker(int seat);
 
+// THE FOOL'S PENALTY. A rematch played by the SAME people in the SAME cycle
+// does not open on the lowest trump: it opens on the seat to the RIGHT of the
+// previous game's fool, so the fool is the first player attacked. (Right, not
+// left: attacks travel to the attacker's left - see the rulebook's Attacking
+// section - so the seat to the fool's right is the one whose attack lands on
+// the fool.) This pins that seat for the next deal; -1 (the default) restores
+// the ordinary lowest-trump derivation.
+//
+// UNCONDITIONAL, unlike game_force_first_attacker: it overrides a seat the
+// deal could perfectly well derive. Set it before start_game*, clear it after.
+// Who is entitled to it is NOT decided here - msg_wire.c owns that rule
+// (msg_rematch_opening) and the answer travels on the wire, so every device
+// deals the same board.
+void game_open_at_seat(int seat);
+
+// What the last deal DERIVED for its opening seat, before any override: the
+// lowest-trump seat, or -1 when no player was dealt a trump. A v8 replay code
+// records this so a rebuilt deal can still be checked against it even when the
+// override decided the actual opener.
+int game_derived_opening(void);
+
 // The lobby a finished game resets to on "continue"/rematch — the one
 // definition of that transition (docs/C_CORE_CONSOLIDATION.md F6). Three hosts
 // hand-zeroed this list independently: the server (handleContinue), the web

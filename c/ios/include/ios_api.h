@@ -338,6 +338,44 @@ int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
 // body codes each action as an index into that menu, so a menu that changed
 // with the clock would re-point every replay code ever written.
 int fio_msg_pickup_hold(int seat, int sent_at, int now);
+
+// ---------- Rule F: the fool's penalty -------------------------------------
+//
+// A rematch among the SAME players, in the same cycle, opens on the seat to the
+// RIGHT of the last game's fool rather than on the lowest trump - the fool is
+// the first player attacked. The rule and its guard live in msg_wire.c
+// (msg_roster_key / msg_rematch_opening); these two entries are the phone's
+// access to them, and neither lets Swift decide anything.
+
+// CREATING the rematch lobby: turn the lobby's roster and the fool's seat WITHIN
+// it into the carry a WAITING envelope hands forward. `*key_out` is the roster
+// key (never 0) and `*fool_index_out` the fool's index in that key's canonical
+// rotation. Seal them as the envelope's carry_key/carry_fool.
+int fio_msg_carry(const char *joins_json, int fool_seat,
+                  uint32_t *key_out, int *fool_index_out);
+
+// Arm the resident game's carry, so the next fio_msg_encode seals a WAITING
+// lobby that carries the question forward. Pass the pair fio_msg_carry
+// produced; pass key 0 (or a negative index) to disarm. A fresh fio_new_game
+// disarms it too, so an ordinary lobby never carries one by accident.
+int fio_msg_set_carry(uint32_t key, int fool_index);
+
+// SHOWING it: the seat a lobby's pending penalty would fall on - the fool, who
+// becomes the first defender - or -1 if the rule would not apply to this
+// roster. Read-only; it deals nothing and changes nothing, so a lobby can call
+// it on every render.
+int fio_msg_penalty_fool_seat(const char *joins_json, uint32_t carry_key, int carry_fool);
+
+// STARTING it: deal the resident locked seed at the joins' count, applying the
+// penalty if - and only if - the roster still keys equal to the carry. Replaces
+// fio_reseat_game on the rematch path and does everything it does.
+//
+// `*opening_out` receives the seat the game opens on, or -1 when the rule did
+// not apply (anyone joined, left or was renamed) and the deal derived its
+// opener normally. Either way the resident game is dealt and every later
+// fio_msg_encode repeats the term, so the caller does not carry it.
+int fio_msg_start_rematch(const char *joins_json, uint32_t carry_key,
+                          int carry_fool, int *opening_out);
 // This one entry seals every phase. A 0-action game — a WAITING lobby (§5.2) or
 // the last-joiner LIVE handoff that "applies nothing" — seals to an empty body:
 // msg_seal detects "no opening attack logged" and emits no v6 body, since the v6

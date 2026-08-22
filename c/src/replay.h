@@ -53,6 +53,25 @@
 // has already been removed from the FMSG message format (msg_wire.h, 1.0(4)),
 // now that the mode lives here.
 #define REPLAY_FORMAT_VERSION_V7 7
+// Format 8: v7 plus a FORCED-OPENING bit, written right after the header's
+// first_attacker symbol. It exists for the fool's penalty (game.h
+// game_open_at_seat): a rematch among the same players opens on the seat to
+// the right of the last game's fool, which is NOT the seat the deal derives.
+//
+// Why the code has to say so, rather than the header's first_attacker alone
+// carrying it: replay_steps.c rebuilds the deal from the code's own reveals and
+// then CHECKS that the rebuilt hands derive the recorded opener. That check is
+// what catches a mis-rebuilt deal (A4), and an overridden opener fails it for
+// an entirely innocent reason. The bit says "this opener was imposed, do not
+// derive it" - and when it is set the code ALSO carries the seat the deal
+// derives (uniform over n), so the check keeps every bit of its teeth rather
+// than being switched off for rematch games.
+//
+// Cost when the bit is 0 (every ordinary game): one binary symbol, which the
+// arithmetic coder prices at ~1 bit and which usually does not change the
+// base32 length at all. v5/v6/v7 codes carry no bit and are never forced, so
+// every game made before this decodes unchanged.
+#define REPLAY_FORMAT_VERSION_V8 8
 #define REPLAY_VERSION_ALPHABET 16
 // Hard guard: a malformed integer must never hang (mirrors core.ts MAX_ATOMS).
 #define REPLAY_MAX_ATOMS 20000
@@ -252,6 +271,12 @@ typedef void (*ReplayAtomSink)(void *ctx, const ReplayAtom *a);
 typedef struct {
     int version, n, trump_id, first_attacker;
     int pass_allowed;    // v7: 1 perevodnoy / 0 podkidnoy. Always 1 for v5/v6 (no bit).
+    // v8's forced opening (the fool's penalty). `forced_opening` = 1 when
+    // first_attacker was IMPOSED rather than derived, and then
+    // `derived_opening` is the lowest-trump seat the deal produces, kept so a
+    // rebuilt deal can still be checked. 0 / -1 on every pre-v8 code.
+    int forced_opening;
+    int derived_opening;
     int fool;            // -1 when the stream is a mid-game cut
     int discard_count;
     int num_eliminated;

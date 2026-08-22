@@ -47,6 +47,23 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
     /// kernel takes. See c/src/msg_wire.h's n_new.
     public let newAtoms: Int
 
+    /// THE FOOL'S PENALTY (c/src/msg_wire.h format 4). `opening` is the seat
+    /// this game was DEALT to open on, or nil for the ordinary lowest-trump
+    /// rule - non-nil means a rematch punished the last game's fool, and that
+    /// seat's left-hand neighbour (the fool) is the first defender.
+    public let opening: Int?
+    /// A WAITING lobby's rematch carry: the roster key of the table this lobby
+    /// was created for, and the fool's canonical index within it. Both nil on
+    /// an ordinary lobby. They are the QUESTION the kernel answers at Start -
+    /// Swift never reads them apart, only hands the pair back.
+    public let carryKey: UInt32?
+    public let carryFool: Int?
+
+    /// Does this lobby owe someone a penalty? Purely for the lobby's own copy -
+    /// whether the rule actually FIRES is decided at Start, in C, against the
+    /// roster that is really starting.
+    public var carriesPenalty: Bool { carryKey != nil && carryFool != nil }
+
     /// How many atoms sat on this chain BEFORE this bubble - the boundary
     /// `MessageKernel.lastMoveEvents` groups on, and -1 when the bubble does
     /// not say (the kernel then falls back to its own guess).
@@ -57,6 +74,7 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
         case phase, turn, round, joins, digest, parent8
         case sentAt = "sent_at"
         case newAtoms = "n_new"
+        case opening, carryKey, carryFool
         case nPlayers = "n_players"
         case lastActorSeat = "last_actor_seat"
         case gameId = "game_id"
@@ -109,14 +127,15 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
     /// Parse the kernel's packed envelope-metadata blob (fio_msg_decode_packed).
     /// Fixed layout: phase(1) n_players(1) last_actor_seat(1) round(1) turn(u16
     /// LE) game_id(u64 LE) parent8(8) digest(32) sent_at(u16 LE) n_new(1)
-    /// n_joins(1) then joins of {seat(1) name_len(1) name[]}. Returns nil if a
-    /// field runs past the end.
+    /// opening(1) carry_key(u32 LE) carry_fool(1) n_joins(1) then joins of
+    /// {seat(1) name_len(1) name[]}. Returns nil if a field runs past the end.
     ///
-    /// ROUND 16 grew this by the two sent_at bytes and the n_new byte, which
-    /// land AFTER the digest so every offset above is the one it always was.
+    /// ROUND 16 grew this by the two sent_at bytes and the n_new byte, then by
+    /// the fool's-penalty trio, all of which land AFTER the digest so every
+    /// offset above is the one it always was.
     static func decode(packed d: Data) -> MessageEnvelope? {
         let b = [UInt8](d)
-        let HDR = 58
+        let HDR = 64
         guard b.count >= HDR else { return nil }
         let phase = Int(b[0]); let nPlayers = Int(b[1]); let last = Int(b[2]); let round = Int(b[3])
         let turn = Int(b[4]) | (Int(b[5]) << 8)
@@ -127,7 +146,14 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
         let digest = hex(22..<54)
         let sentAt = Int(b[54]) | (Int(b[55]) << 8)
         let newAtoms = Int(b[56])
-        let nJoins = Int(b[57])
+        // 0xFF is the wire's "no penalty here" on both of these (MSG_NO_OPENING
+        // / MSG_NO_FOOL), and a 0 key is "no carry".
+        let opening: Int? = b[57] == 0xFF ? nil : Int(b[57])
+        var rawKey: UInt32 = 0
+        for i in 0..<4 { rawKey |= UInt32(b[58 + i]) << (8 * i) }
+        let carryKey: UInt32? = rawKey == 0 ? nil : rawKey
+        let carryFool: Int? = b[62] == 0xFF ? nil : Int(b[62])
+        let nJoins = Int(b[63])
         var joins: [MessageJoin] = []
         var q = HDR
         for _ in 0..<nJoins {
@@ -140,7 +166,8 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
         return MessageEnvelope(phase: phase, turn: turn, round: round, nPlayers: nPlayers,
                                lastActorSeat: last, gameId: String(gid),
                                parent8: parent8, digest: digest, sentAt: sentAt,
-                               newAtoms: newAtoms, joins: joins)
+                               newAtoms: newAtoms, opening: opening,
+                               carryKey: carryKey, carryFool: carryFool, joins: joins)
     }
 }
 
@@ -237,6 +264,65 @@ public actor MessageKernel {
         guard rc == 0 else { throw MessageEnvelope.Failure.damaged(code: Int(rc)) }
     }
 
+    // ---------- Rule F: the fool's penalty ---------------------------------
+    //
+    // A rematch among the SAME players, in the same cycle, opens on the seat to
+    // the RIGHT of the last game's fool - so the fool is the first player
+    // attacked. Both halves are C (msg_wire.c's msg_roster_key /
+    // msg_rematch_opening); these three relay, and decide nothing. In
+    // particular Swift never compares two rosters and never works out which
+    // seat is "right of" anyone: get either wrong on one device and that device
+    // has dealt a different game.
+
+    /// CREATING the rematch lobby: turn its roster and the fool's seat WITHIN
+    /// that roster into the carry a WAITING envelope hands forward, and arm the
+    /// resident game with it so the next `seal` writes it. Returns false if the
+    /// kernel would not take the pair (which simply means no penalty rides).
+    @discardableResult
+    public func armRematchCarry(joins: [MessageJoin], foolSeat: Int) -> Bool {
+        let joinsJSON = (try? JSONEncoder().encode(joins))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        var key: UInt32 = 0
+        var idx: Int32 = 0
+        let rc = joinsJSON.withCString { jp in fio_msg_carry(jp, Int32(foolSeat), &key, &idx) }
+        guard rc == 0, key != 0 else { fio_msg_set_carry(0, -1); return false }
+        return fio_msg_set_carry(key, idx) == 0
+    }
+
+    /// SHOWING it: which seat a lobby's pending penalty would fall on - the
+    /// fool, who becomes the new game's first defender - or nil if the rule
+    /// would not apply to this roster. Read-only: it deals nothing, so a lobby
+    /// may ask on every render.
+    public func penaltyFoolSeat(joins: [MessageJoin],
+                                carryKey: UInt32, carryFool: Int) -> Int? {
+        let joinsJSON = (try? JSONEncoder().encode(joins))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        let s = joinsJSON.withCString { jp in
+            fio_msg_penalty_fool_seat(jp, carryKey, Int32(carryFool))
+        }
+        return s >= 0 ? Int(s) : nil
+    }
+
+    /// STARTING it: deal the resident locked seed at `joins.count`, applying the
+    /// penalty if - and only if - that roster still keys equal to the carry the
+    /// lobby was created with. Returns the seat the game opens on, or nil when
+    /// the rule did not apply and the deal derived its opener as usual.
+    ///
+    /// Replaces `reseatResidentGame` on the rematch path and does everything it
+    /// does, so the two Start routes stay one primitive.
+    @discardableResult
+    public func startRematchDeal(joins: [MessageJoin],
+                                 carryKey: UInt32, carryFool: Int) throws -> Int? {
+        let joinsJSON = (try? JSONEncoder().encode(joins))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        var opening: Int32 = -1
+        let rc = joinsJSON.withCString { jp in
+            fio_msg_start_rematch(jp, carryKey, Int32(carryFool), &opening)
+        }
+        guard rc == 0 else { throw MessageEnvelope.Failure.damaged(code: Int(rc)) }
+        return opening >= 0 ? Int(opening) : nil
+    }
+
     /// Reseat the LOCKED seed at `joins.count` and seal a LIVE handoff — the
     /// one primitive lobby v3's two Start routes share (docs note 2): any
     /// already-joined player tapping Start after a plain Join, or a fresh
@@ -254,8 +340,18 @@ public actor MessageKernel {
     public func startFromLobby(lobbyPayload: Data, gameId: UInt64, actingSeat: Int,
                                parent8: Data, joins: [MessageJoin],
                                sentAt: Int = MessageKernel.clockNow()) throws -> Data {
-        _ = try decode(payload: lobbyPayload, viewer: -1)
-        try reseatResidentGame(players: joins.count)
+        let lobby = try decode(payload: lobbyPayload, viewer: -1)
+        // THE FOOL'S PENALTY rides the lobby, so honouring it is part of Start
+        // rather than a separate route: a lobby that carries one deals through
+        // the kernel's rematch entry (which applies the rule or declines it,
+        // against the roster REALLY starting), and one that does not deals
+        // exactly as it always has. Both Start routes inherit this for free,
+        // which is the point of them sharing this primitive.
+        if let key = lobby.carryKey, let fool = lobby.carryFool {
+            _ = try startRematchDeal(joins: joins, carryKey: key, carryFool: fool)
+        } else {
+            try reseatResidentGame(players: joins.count)
+        }
         return try seal(phase: 2, lastActorSeat: actingSeat, gameId: gameId,
                         parent8: parent8, joins: joins, sentAt: sentAt)
     }

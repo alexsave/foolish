@@ -54,11 +54,11 @@ test('the envelope is rejected before it can be replayed: magic, format, seed', 
     };
     bad(b => { b[0] = 0xf6; }, /not an FMSG envelope/);
     bad(b => { b[1] = 1; }, /unsupported format/);      // the raw format was cut
-    // 3 is the CLOCK format since round 16 and decodes, so the first byte above
-    // the wire is 4. (Flipping this buffer to 3 shifts n_joins by two bytes, so
-    // it fails as a bad-joins payload rather than as an unknown format - which
-    // is what the truncation test below already covers.)
-    bad(b => { b[1] = 4; }, /unsupported format/);
+    // 3 is the CLOCK format and 4 the REMATCH format since round 16, and both
+    // decode, so the first byte above the wire is 5. (Flipping this buffer to 3
+    // or 4 shifts n_joins along, so those fail as bad-joins/truncated payloads
+    // rather than as unknown formats - which the truncation test below covers.)
+    bad(b => { b[1] = 5; }, /unsupported format/);
     bad(b => { b[2] = 0x01; }, /unsupported flags/);    // fair-deal: spec'd, unbuilt
     bad(b => { b[2] = 0x08; }, /unsupported flags/);    // reserved bit (0x04 = legacy passing-allowed, tolerated for 1.0(3) msgs)
     bad(b => { b[15] = 1; }, /bad player count/);
@@ -90,6 +90,26 @@ const FIXTURES3 = [
       'f7030002efcdab89674523010a0000030001000000000000000079d87206410d37d302c19dfb6cacbc8bebf879d242622082315709cc0f183788341202030004416e6e300104416e6e310204416e6e320a00025969f9cd597c5374ba15b5c314cd69fb8ff7' },
     { n_players: 4, turn: 5, round: 1, n_new: 2, sent_at: 0x1234, hex:
       'f7030002efcdab89674523010500000400010000000000000000449bbad52d5dfb1bdb68d87a09fe591b9419f9f39b0ec35e9f2b75c5a359a138341202040004416e6e300104416e6e310204416e6e320304416e6e330500076fbb87df1144c9596a307f7c827497' },
+];
+
+// THE FOOL'S PENALTY (c/src/msg_wire.h format 4), sealed by the native kernel
+// off a deal that was PINNED to a seat the lowest-trump rule would not choose.
+// `opening` is the seat the penalty imposed and `derived` the one the deal
+// would otherwise have produced; they differ in every row, which is what makes
+// the row worth having.
+//
+// This is the strongest cross-engine check in the file. The wasm kernel does
+// not merely have to READ the six new header bytes at the right offsets - it
+// has to re-deal from the seed with the same pin, or the body's atoms land on a
+// board where they are not legal and the decode throws outright. Regenerate
+// with `./build/msg_wire_test --fixture4`.
+const FIXTURES4 = [
+    { n_players: 2, turn: 8, round: 1, opening: 1, derived: 0, sent_at: 0x1234, hex:
+      'f7040002efcdab89674523010800010200010000000000000000a5c70f6c592443dfe1944f71313133e2dd4ce13f3c125c7d892adc1dfd54e8c7341200000100000000ff020004416e6e300104416e6e31080006a02599350e83da1f57276ad8' },
+    { n_players: 3, turn: 7, round: 0, opening: 0, derived: 1, sent_at: 0x1234, hex:
+      'f7040002efcdab89674523010700000300000000000000000000708a573c45740727bb3c8aefcd83d072866d616095beff5af7fe481591965177341200000000000000ff030004416e6e300104416e6e310204416e6e3207000214e866d4c520b973a6d192a6dcb8' },
+    { n_players: 4, turn: 5, round: 1, opening: 2, derived: 3, sent_at: 0x1234, hex:
+      'f7040002efcdab896745230105000004000100000000000000003c4da00b32c4ca6f94e3c56e6ad66d022f8ee180ee6ba23665d2b40d26d7bb28341200000200000000ff040004416e6e300104416e6e310204416e6e320304416e6e330500a0acd23870d94d3d5f1f4a12d84494db98' },
 ];
 
 // THE cross-engine check (design §8.2). The native kernel sealed these; the wasm
@@ -133,6 +153,26 @@ for (const f of FIXTURES3) {
         // …and the delta names a real suffix: a bubble cannot have added more
         // atoms than the chain holds.
         assert.ok(env.n_new > 0 && env.n_new <= env.turn, 'delta within the chain');
+    });
+}
+
+for (const f of FIXTURES4) {
+    test(`wasm honours the fool's penalty native sealed (${f.n_players}p)`, () => {
+        const env = kernelMsgDecode(hexToBytes(f.hex));
+        assert.equal(env.format, 4);
+        assert.equal(env.opening, f.opening, 'the opening seat the penalty imposed');
+        assert.notEqual(f.opening, f.derived,
+            'the fixture is worthless if the penalty agreed with the deal');
+        assert.equal(env.carry_key, 0, 'a live chain carries no lobby question');
+        assert.equal(env.carry_fool, 0xff);
+        // A decode that returned at all already re-dealt with the pin: the body
+        // is coded against that board's menus and would not decode otherwise.
+        // turn/round agreeing means it replayed the identical chain.
+        assert.equal(env.turn, f.turn, 'atom count');
+        assert.equal(env.round, f.round, 'completed bouts');
+        assert.equal(env.sent_at, f.sent_at);
+        assert.equal(env.joins.length, f.n_players);
+        assert.deepEqual(env.joins.map(j => j.seat), [...Array(f.n_players).keys()]);
     });
 }
 
