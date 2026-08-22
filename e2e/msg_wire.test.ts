@@ -76,6 +76,22 @@ test('a truncated envelope never crashes the kernel', () => {
     }
 });
 
+// ROUND 16's header, sealed by the same native producer from the same states:
+// format 3, a send clock, and a BUBBLE DELTA (n_new) saying the last two atoms
+// are the ones this bubble added. The web and the phone parse this header in
+// different languages, so a fixture is the only thing that keeps them honest -
+// a silent disagreement about where n_joins starts would put a browser and a
+// phone on different games, and the delta decides what a bubble ANIMATES.
+// Regenerate with `c/build/msg_wire_test --fixture` (the odd lines).
+const FIXTURES3 = [
+    { n_players: 2, turn: 7, round: 1, n_new: 2, sent_at: 0x1234, hex:
+      'f7030002efcdab89674523010700000200010000000000000000ae15293755bd748b2919627cd0591ffb42d7f9b2e9b57da5c2839ed47bd7ced7341202020004416e6e300104416e6e310700075398f2a23142d53dba51aa37' },
+    { n_players: 3, turn: 10, round: 1, n_new: 2, sent_at: 0x1234, hex:
+      'f7030002efcdab89674523010a0000030001000000000000000079d87206410d37d302c19dfb6cacbc8bebf879d242622082315709cc0f183788341202030004416e6e300104416e6e310204416e6e320a00025969f9cd597c5374ba15b5c314cd69fb8ff7' },
+    { n_players: 4, turn: 5, round: 1, n_new: 2, sent_at: 0x1234, hex:
+      'f7030002efcdab89674523010500000400010000000000000000449bbad52d5dfb1bdb68d87a09fe591b9419f9f39b0ec35e9f2b75c5a359a138341202040004416e6e300104416e6e310204416e6e320304416e6e330500076fbb87df1144c9596a307f7c827497' },
+];
+
 // THE cross-engine check (design §8.2). The native kernel sealed these; the wasm
 // kernel must read back the same game. Divergence is a release blocker: the two
 // hosts would deal or replay the same payload differently, and an iMessage game
@@ -97,6 +113,26 @@ for (const f of FIXTURES) {
         // The digest is what Rule P breaks ties on; it must be over the bytes.
         assert.equal(env.digest.length, 32);
         assert.ok(env.digest.some(b => b !== 0), 'digest computed');
+    });
+}
+
+for (const f of FIXTURES3) {
+    test(`wasm reads the round-16 header native wrote (${f.n_players}p)`, () => {
+        const env = kernelMsgDecode(hexToBytes(f.hex));
+        assert.equal(env.format, 3);
+        assert.equal(env.sent_at, f.sent_at, 'send clock');
+        assert.equal(env.n_new, f.n_new, 'bubble delta');
+        // The three extra header bytes sit BEFORE n_joins, so reading them
+        // wrong shifts every join. That the joins still come back whole is the
+        // real proof the two decoders agree on the layout.
+        assert.equal(env.turn, f.turn, 'atom count');
+        assert.equal(env.round, f.round, 'completed bouts');
+        assert.equal(env.joins.length, f.n_players);
+        assert.deepEqual(env.joins.map(j => j.seat), [...Array(f.n_players).keys()]);
+        assert.ok(env.joins.every(j => /^Ann\d$/.test(j.name)), 'join names intact');
+        // …and the delta names a real suffix: a bubble cannot have added more
+        // atoms than the chain holds.
+        assert.ok(env.n_new > 0 && env.n_new <= env.turn, 'delta within the chain');
     });
 }
 

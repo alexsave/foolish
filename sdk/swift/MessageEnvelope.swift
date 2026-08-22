@@ -38,11 +38,25 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
     /// `MessageKernel.pickupHold`, the 15-second wait a defender owes a fresh
     /// attack. 0 means no wait, which is exactly what makes an old bubble play.
     public let sentAt: Int
+    /// ROUND 16 - the BUBBLE DELTA: how many atoms this bubble added to the
+    /// chain, or 0 for a chain that does not say (format 2, or a delta that did
+    /// not fit its byte). It is what makes "replay the move I just opened"
+    /// exact: without it the kernel can only guess where the previous bubble
+    /// ended, and the guess replays a cover twice when its sender sent one
+    /// cover per bubble. Read through `atomsBefore`, which is the form the
+    /// kernel takes. See c/src/msg_wire.h's n_new.
+    public let newAtoms: Int
+
+    /// How many atoms sat on this chain BEFORE this bubble - the boundary
+    /// `MessageKernel.lastMoveEvents` groups on, and -1 when the bubble does
+    /// not say (the kernel then falls back to its own guess).
+    public var atomsBefore: Int { newAtoms > 0 ? turn - newAtoms : -1 }
     public let joins: [MessageJoin]
 
     enum CodingKeys: String, CodingKey {
         case phase, turn, round, joins, digest, parent8
         case sentAt = "sent_at"
+        case newAtoms = "n_new"
         case nPlayers = "n_players"
         case lastActorSeat = "last_actor_seat"
         case gameId = "game_id"
@@ -94,15 +108,15 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
 
     /// Parse the kernel's packed envelope-metadata blob (fio_msg_decode_packed).
     /// Fixed layout: phase(1) n_players(1) last_actor_seat(1) round(1) turn(u16
-    /// LE) game_id(u64 LE) parent8(8) digest(32) sent_at(u16 LE) n_joins(1) then
-    /// joins of {seat(1) name_len(1) name[]}. Returns nil if a field runs past
-    /// the end.
+    /// LE) game_id(u64 LE) parent8(8) digest(32) sent_at(u16 LE) n_new(1)
+    /// n_joins(1) then joins of {seat(1) name_len(1) name[]}. Returns nil if a
+    /// field runs past the end.
     ///
-    /// ROUND 16 grew this by the two sent_at bytes, which land AFTER the digest
-    /// so every offset above is the one it always was.
+    /// ROUND 16 grew this by the two sent_at bytes and the n_new byte, which
+    /// land AFTER the digest so every offset above is the one it always was.
     static func decode(packed d: Data) -> MessageEnvelope? {
         let b = [UInt8](d)
-        let HDR = 57
+        let HDR = 58
         guard b.count >= HDR else { return nil }
         let phase = Int(b[0]); let nPlayers = Int(b[1]); let last = Int(b[2]); let round = Int(b[3])
         let turn = Int(b[4]) | (Int(b[5]) << 8)
@@ -112,7 +126,8 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
         let parent8 = hex(14..<22)
         let digest = hex(22..<54)
         let sentAt = Int(b[54]) | (Int(b[55]) << 8)
-        let nJoins = Int(b[56])
+        let newAtoms = Int(b[56])
+        let nJoins = Int(b[57])
         var joins: [MessageJoin] = []
         var q = HDR
         for _ in 0..<nJoins {
@@ -124,7 +139,8 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
         }
         return MessageEnvelope(phase: phase, turn: turn, round: round, nPlayers: nPlayers,
                                lastActorSeat: last, gameId: String(gid),
-                               parent8: parent8, digest: digest, sentAt: sentAt, joins: joins)
+                               parent8: parent8, digest: digest, sentAt: sentAt,
+                               newAtoms: newAtoms, joins: joins)
     }
 }
 
@@ -343,25 +359,39 @@ public actor MessageKernel {
         return DecodedReplay.decode(packed: packed)
     }
 
-    /// The animations of the resident game's LAST TURN, masked for `viewer` —
+    /// The animations of the resident game's LAST BUBBLE, masked for `viewer` -
     /// the kernel's evwire event stream, the SAME one live play and the website
-    /// emit. THE KERNEL decides what "the last turn" is (the trailing run of
-    /// replay steps by one acting seat — what a single bubble carries, so a
-    /// staged double cover replays both, each step still bundling its move with
-    /// its refill/discard/defender-change consequences); we hand it only the
-    /// encoded chain, never
-    /// "where I last looked". The viewer's own drawn/picked-up cards come back
-    /// with real identities, everyone else's are hidden - so a reopened bubble
+    /// emit. Each step bundles its move with its refill/discard/defender-change
+    /// consequences, and the viewer's own drawn/picked-up cards come back with
+    /// real identities while everyone else's are hidden - so a reopened bubble
     /// animates through the kernel, not a client-side GameView diff (which could
     /// never recover the viewer's own drawn card and so silently dropped it, the
-    /// "my refill never animated on reopen" bug). [] if there is no game, it is
-    /// not v6-encodable, or the last step produced nothing to animate.
-    public func lastMoveEvents(viewer: Int) -> [GameEvent] {
+    /// "my refill never animated on reopen" bug).
+    ///
+    /// `atomsBefore` is where this bubble starts: the number of atoms already
+    /// on the chain when it was sealed, so the kernel replays what came after
+    /// them and not the move before them as well. A receiver reads it off the
+    /// envelope it opened (`MessageEnvelope.atomsBefore`); a board animating its
+    /// OWN just-played move passes the turn of the chain it adopted, which is
+    /// the same boundary from the other side - and, unlike a count of staged
+    /// moves, is exact, because the codec is not 1:1 with actions (it folds a
+    /// bout's closing goods into one atom and can expand a closing good into
+    /// two). Pass -1 and it falls back to its pre-round-16 guess - the trailing
+    /// run of steps by one acting seat - which is right for a bubble whose
+    /// sender staged everything at once (a double cover replays both covers)
+    /// and wrong for one who covered, sent, covered and sent again. What is
+    /// NEVER an input is "where I last looked": the boundary is a property of
+    /// the bubble, so a wiped store or a new phone must not change what
+    /// animates.
+    ///
+    /// [] if there is no game, it is not v6-encodable, or the group produced
+    /// nothing to animate.
+    public func lastMoveEvents(viewer: Int, atomsBefore: Int = -1) -> [GameEvent] {
         guard let code = residentReplayCode() else { return [] }
         let packed = code.withCString { (cstr: UnsafePointer<CChar>) -> Data? in
             packedCall { out, cap in
                 out.withMemoryRebound(to: UInt8.self, capacity: Int(cap)) { u8 in
-                    fio_replay_last_events_packed(cstr, Int32(viewer), u8, cap)
+                    fio_replay_last_events_packed(cstr, Int32(viewer), Int32(atomsBefore), u8, cap)
                 }
             }
         }

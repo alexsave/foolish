@@ -49,6 +49,20 @@ static int   g_last_replay_error = 0;
 static uint8_t g_deal_seed[FOOLISH_SEED_LEN];
 static int     g_has_deal_seed = 0;
 
+// ROUND 16 - the atom count of the chain the RESIDENT game was established
+// from: a decoded envelope's `turn`, or 0 for a fresh deal. Everything played
+// since is what this device is about to send, so `fio_msg_encode` hands the
+// difference to msg_seal as the bubble delta (msg_wire.h's n_new), which is how
+// a receiver knows to animate this move and not the one before it as well.
+//
+// -1 = unknown, and every path that makes a game resident without a chain to
+// measure from must say so, because a stale base would name the WRONG suffix.
+// It is a static for the same reason g_msg_round is: the two facts belong to
+// the adopted chain, this file is the one place that adopts one, and asking
+// Swift to carry them back down at seal time would put a rules input in app
+// code (and in every other host's app code) for nothing.
+static int g_msg_base_turn = -1;
+
 // ---------- strategy roster (offline bots, §7.2) --------------------------
 //
 // The roster itself lives in the kernel (src/bot_roster.c) — one table shared
@@ -524,6 +538,7 @@ int fio_new_game(const uint8_t *seed, int seed_len, int n_players) {
     game_seat_and_deal(&g_game, strategies, n_players);
     g_has_game = 1;
     g_last_reject = 0;
+    g_msg_base_turn = 0;   // a fresh deal continues nothing: every atom is new
     return FIO_EOK;
 }
 
@@ -904,9 +919,20 @@ int fio_replay_events_json(const char *code, int viewer, char *out, int cap) {
 // evwire the website renders and live play broadcasts (no JSON crosses this
 // boundary, §zero-JSON); Swift reads it with EvWire.decodeFrames.
 //
-// THE KERNEL decides the group; the client passes only the encoded chain, never
-// "where I last looked" (there was no server to emit events at move time, and
-// the boundary is a rules question, so it stays in C).
+// THE KERNEL decides the group; the client passes the encoded chain and the one
+// fact the chain cannot hold - `atoms_before`, how many atoms were on it BEFORE
+// this bubble (-1 for "cannot say"). That is a property of the BUBBLE (its
+// `turn` minus the delta it carries, msg_wire.h's n_new), never "where I last
+// looked": a device's cache must not decide what animates.
+//
+// Why the count BEFORE rather than the count added, when the wire carries the
+// latter: because the two are equivalent for a receiver and only this one is
+// answerable by a SENDER. A device animating its own just-played move knows
+// exactly what it adopted (the parent's turn) but not how many atoms its moves
+// became - the codec is not 1:1 with actions, it folds a bout's closing goods
+// into one round_end atom and can expand a closing good into two. Taking the
+// base lets the kernel do that arithmetic against its own step count, so
+// neither side has to guess.
 //
 // A turn is not an action. This used to hand back the final step alone, on the
 // reasoning that a v6 replay is the deal (step 0) then exactly one step per
@@ -920,32 +946,28 @@ int fio_replay_events_json(const char *code, int viewer, char *out, int cap) {
 // and rotated, while the second flew in — "if it's a double cover, the first
 // cover will just already be there, and only the second one will play."
 //
-// The group is therefore the trailing run of steps by ONE acting seat: walk
-// back from the end over the seatless tail (ROUND_END belongs to whoever caused
-// it), then back over every immediately preceding step by that same seat.
+// So the group is a SUFFIX of the step stream, and `atoms_before` says where it
+// starts. A v6 replay is the deal then exactly one step per atom (replay_steps.c's
+// rs_collect keeps every atom but DEAL/DRAW, which is precisely the set
+// msg_replay counts into `turn`), so a chain with B atoms behind it opens its
+// bubble at step B+1 and runs to the end - the atoms this bubble put on the
+// chain, and nothing that was already there. B == the atom count means the
+// bubble added nothing and nothing animates, which is the honest answer for the
+// one bubble that can do it (an undo-to-empty re-seal, §10).
 //
-// KNOWN LIMIT, accepted deliberately (owner's call). That run is the last
-// BUBBLE only when the sender staged its actions together and sent once. A
-// player who covers, sends, covers, sends, covers, sends puts three cover steps
-// on the chain that are indistinguishable from three staged at once — so
-// opening the third bubble replays all three. Nothing in the payload can tell
-// them apart: the envelope carries `turn` (total actions) and `parent8` (the
-// parent's DIGEST), but not the parent's turn, so a receiver cannot subtract.
-//
-// Two ways out were considered:
-//
-//   1. Diff against the previous chain this device held. Rejected: it makes the
-//      animation a property of one device's CACHE rather than of the bubble, so
-//      a wiped store, a reinstall or a new phone silently changes what replays.
-//   2. Bump the FMSG format and add a u8 "actions in this bubble", written at
-//      seal time from the pending count. This is the correct fix and the one to
-//      reach for if the case ever stops being rare — it is exact, it is a
-//      property of the bubble, and it costs one byte. It was not done now only
-//      because it invalidates every format-2 payload already in a thread, which
-//      is a poor trade against how seldom anyone sends one cover at a time.
-//
-// So this stays a heuristic on purpose, and it is the RIGHT one for the common
-// case (a staged double cover, which used to replay only its last cover).
+// WITHOUT a base (-1: a format-2 chain sealed before round 16, or a chain whose
+// delta did not fit) it falls back to the guess that shipped before the field
+// existed: the trailing run of steps by ONE acting seat - walk back
+// over the seatless tail (ROUND_END belongs to whoever caused it), then back
+// over every immediately preceding step by that same seat. That is right only
+// when the sender staged its whole run and sent once, and the owner hit both
+// ways it is wrong: covering, sending, covering, sending replays BOTH covers on
+// the second bubble; and a cover that ends the bout with no ROUND_END atom (the
+// defender's last card - handle_cover discards inline) sits directly before
+// that same seat's opening attack of the next bout, so replaying the attack
+// replays the cover with it. Both are exact with a base, which is why the wire
+// field was added rather than the heuristic sharpened - no walk over the steps
+// can separate two bubbles that a single bubble could have produced.
 //
 // Every frame is masked for `viewer` exactly like live play: the viewer's own
 // drawn/picked-up cards carry real identities (fixing "my own refill never
@@ -954,7 +976,7 @@ int fio_replay_events_json(const char *code, int viewer, char *out, int cap) {
 // Frames come back in the shape replay_steps_frames_v6 writes them — each
 // preceded by a u16 LE length, in play order. v6 only. Returns bytes written
 // (0 if the turn produced nothing to animate), or a negative error.
-int fio_replay_last_events_packed(const char *code, int viewer,
+int fio_replay_last_events_packed(const char *code, int viewer, int atoms_before,
                                   unsigned char *out, int cap) {
     if (!code || !out) return FIO_EBADARG;
     g_last_replay_error = 0;
@@ -977,16 +999,29 @@ int fio_replay_last_events_packed(const char *code, int viewer,
 
     const int last = n - 1;
     int from = last;
-    // Back over the seatless tail (ROUND_END) to the acting step that caused it.
-    int a = last;
-    while (a > 0 && idx[a * RS_INDEX_STRIDE + 1] == RS_SEAT_NONE) a--;
-    const unsigned char actor = idx[a * RS_INDEX_STRIDE + 1];
-    if (actor != RS_SEAT_NONE) {
-        from = a;
-        // …then back over every step that seat played immediately before it.
-        // Never across another seatless step: that is a closed bout, and the
-        // run on its far side is a different turn.
-        while (from > 1 && idx[(from - 1) * RS_INDEX_STRIDE + 1] == actor) from--;
+    if (atoms_before >= 0) {
+        // The bubble told us where it starts: step 0 is the DEAL, which no
+        // bubble adds, so B atoms behind it means step B+1 onward…
+        from = atoms_before + 1;
+        if (from < 1) from = 1;
+        if (from > n) from = n;          // added nothing: animate nothing
+        // …except on a chain that IS only the deal (a genesis or the lobby's
+        // LIVE handoff, n == 1), where the deal is the one thing to show.
+        if (n == 1) from = 0;
+    } else {
+        // No delta: the pre-round-16 guess. See the note above for what it
+        // cannot separate.
+        // Back over the seatless tail (ROUND_END) to the acting step that caused it.
+        int a = last;
+        while (a > 0 && idx[a * RS_INDEX_STRIDE + 1] == RS_SEAT_NONE) a--;
+        const unsigned char actor = idx[a * RS_INDEX_STRIDE + 1];
+        if (actor != RS_SEAT_NONE) {
+            from = a;
+            // …then back over every step that seat played immediately before it.
+            // Never across another seatless step: that is a closed bout, and the
+            // run on its far side is a different turn.
+            while (from > 1 && idx[(from - 1) * RS_INDEX_STRIDE + 1] == actor) from--;
+        }
     }
 
     // The group runs to the end of the stream, so asking for [from, ...) is
@@ -1044,13 +1079,15 @@ int fio_last_msg_error(void) { return g_last_msg_error; }
 // no embedded state/moves (the phone
 // reads those through fio_state_packed / fio_legal_packed in the same actor).
 // Layout: phase(1) n_players(1) last_actor_seat(1) round(1) turn(u16 LE)
-//   game_id(u64 LE) parent8(8) digest(32) sent_at(u16 LE) n_joins(1)
+//   game_id(u64 LE) parent8(8) digest(32) sent_at(u16 LE) n_new(1) n_joins(1)
 //   then n_joins * { seat(1) name_len(1) name[name_len] }.
 // ROUND 16: sent_at is the envelope's send clock (unix seconds mod 65536, 0 on
-// a format-2 chain that carries none). It sits at the END of the fixed header,
-// after the digest, so every offset the Swift parser already knew is unchanged
-// and only n_joins moves - this blob is a private ABI between two files in one
-// repo, but keeping the prefix stable is what makes the diff readable.
+// a format-2 chain that carries none), and n_new is the bubble delta - how many
+// atoms THIS bubble added (0 = the chain does not say; see msg_wire.h). Both
+// sit at the END of the fixed header, after the digest, so every offset the
+// Swift parser already knew is unchanged and only n_joins moves - this blob is
+// a private ABI between two files in one repo, but keeping the prefix stable is
+// what makes the diff readable.
 // 1.0(6) DIAGNOSTIC: the replay codec version (5/6/7) of the body the last
 // fio_msg_decode_packed replayed, or -1 for an empty-body message. Set through
 // msg_last_body_version (msg_wire.c).
@@ -1075,11 +1112,13 @@ int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, i
 
     g_has_game = 1;
     g_msg_round = e.round;
+    // This chain is now the base every later seal measures its bubble against.
+    g_msg_base_turn = (int)e.turn;
     memcpy(g_deal_seed, e.seed, FOOLISH_SEED_LEN);
     g_has_deal_seed = 1;
     for (int i = 0; i < e.n_players; i++) g_seat_roster[i] = (int8_t)bot_roster_find("random");
 
-    int need = 4 + 2 + 8 + MSG_PARENT_LEN + SHA256_DIGEST_LEN + 2 + 1;
+    int need = 4 + 2 + 8 + MSG_PARENT_LEN + SHA256_DIGEST_LEN + 2 + 1 + 1;
     for (int i = 0; i < e.n_joins; i++) need += 2 + e.joins[i].name_len;
     if (cap < need) return FIO_ECAP;
 
@@ -1095,6 +1134,7 @@ int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, i
     memcpy(q, digest, SHA256_DIGEST_LEN); q += SHA256_DIGEST_LEN;
     *q++ = (unsigned char)(e.sent_at & 0xff);
     *q++ = (unsigned char)((e.sent_at >> 8) & 0xff);
+    *q++ = e.n_new;
     *q++ = (unsigned char)e.n_joins;
     for (int i = 0; i < e.n_joins; i++) {
         *q++ = e.joins[i].seat;
@@ -1165,7 +1205,9 @@ int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
 
     static unsigned char body[1024];   // a v6 body measures ~68 B at 8 players
     static Game scratch;
-    const int rc = msg_seal(&e, &g_game, body, (int)sizeof body, &scratch);
+    // ROUND 16: everything played since the resident game was established is
+    // what this bubble adds, so the base is the delta msg_seal writes as n_new.
+    const int rc = msg_seal(&e, &g_game, g_msg_base_turn, body, (int)sizeof body, &scratch);
     if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
     const int n = msg_encode(&e, out, cap);
     if (n < 0) { g_last_msg_error = n; return n == MSG_ECAP ? FIO_ECAP : FIO_EMSG; }

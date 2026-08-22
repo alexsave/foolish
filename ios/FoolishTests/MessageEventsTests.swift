@@ -480,6 +480,188 @@ final class MessageEventsTests: XCTestCase {
         XCTFail("no 2p deal in 120 tries produced a double attack answered by a double cover")
     }
 
+
+    // MARK: round 16 - one bubble, one move
+
+    /// The owner's report: "a defender covers a single card, sends it, then
+    /// covers a second card, and sends that. If anyone opens the bubble for the
+    /// second cover, they will see BOTH covers animate. This is not ideal. We
+    /// should only see the most recent move."
+    ///
+    /// Two covers by one seat, SENT SEPARATELY, look exactly like two covers
+    /// staged together once they are on the chain - so no walk over the replay
+    /// steps can tell them apart, and the old grouping (the trailing run by one
+    /// acting seat) replayed both. The bubble now states its own boundary
+    /// (msg_wire.h's n_new -> MessageEnvelope.atomsBefore), which is what this
+    /// pins, end to end through the controller the extension actually runs.
+    func testTwoCoversSentSeparatelyReplayOnlyTheSecond() async throws {
+        for salt in UInt8(1)...UInt8(120) {
+            // A deal where the attacker can throw TWO cards the defender can
+            // then beat one at a time.
+            var creator: MessageTurnController?
+            for s2 in UInt8(0)...UInt8(40) {
+                let c = MessageTurnController(genesisSeed: freshSeed(salt &+ s2), players: 2,
+                                              gameId: 160, myNickname: "A")
+                await c.begin()
+                if c.legal.contains(where: { $0.type == .attack }) { creator = c; break }
+            }
+            guard let a = creator, let atk1 = a.legal.first(where: { $0.type == .attack })
+            else { continue }
+            await a.apply(atk1)
+            guard let atk2 = a.legal.first(where: { $0.type == .attack }) else { continue }
+            await a.apply(atk2)
+            let p0 = try await a.stagedPayload(sentAt: MessageKernel.clockNow() - 30)
+            let e0 = try await MessageEnvelope.decode(payload: p0, viewer: -1)
+
+            // Cover ONE, and send.
+            let b1 = MessageTurnController(parentPayload: p0, parent: e0, mySeat: 1)
+            await b1.begin()
+            guard let c1 = b1.legal.first(where: { $0.type == .cover }) else { continue }
+            let firstCover = try XCTUnwrap(c1.cards.first)
+            await b1.apply(c1)
+            let p1 = try await b1.stagedPayload(sentAt: MessageKernel.clockNow() - 30)
+            let e1 = try await MessageEnvelope.decode(payload: p1, viewer: -1)
+
+            // Re-open that same chain and cover the OTHER one, and send that.
+            let b2 = MessageTurnController(parentPayload: p1, parent: e1, mySeat: 1)
+            await b2.begin()
+            guard let c2 = b2.legal.first(where: { $0.type == .cover }) else { continue }
+            let secondCover = try XCTUnwrap(c2.cards.first)
+            XCTAssertNotEqual(firstCover, secondCover, "fixture: the same card twice")
+            await b2.apply(c2)
+            let p2 = try await b2.stagedPayload(sentAt: MessageKernel.clockNow() - 30)
+            let e2 = try await MessageEnvelope.decode(payload: p2, viewer: -1)
+
+            // The attacker opens the SECOND bubble.
+            let opened = MessageTurnController(parentPayload: p2, parent: e2, mySeat: 0)
+            await opened.begin()
+            let covers = opened.openReplayEvents.filter { $0.kind == .cover }
+            let moved = Set(covers.flatMap { $0.cards.compactMap { $0?.identity } })
+
+            XCTAssertEqual(covers.count, 1,
+                           "opening the second cover's bubble replayed \(covers.count) covers")
+            XCTAssertTrue(moved.contains(secondCover.identity),
+                          "the cover this bubble carries must be the one that animates")
+            XCTAssertFalse(moved.contains(firstCover.identity),
+                           "the cover sent in the PREVIOUS bubble animated again")
+            return
+        }
+        XCTFail("no 2p deal in 120 tries produced a double attack covered one at a time")
+    }
+
+    /// …and the boundary is the BUBBLE's, not the sender's: two covers staged
+    /// together and sent ONCE still replay both. Same two covers, same chain
+    /// shape - only the send in the middle differs - so this is the control for
+    /// the test above, and the pair together say the rule is "one bubble, one
+    /// animation" rather than "one action, one animation".
+    func testTwoCoversStagedTogetherStillReplayBoth() async throws {
+        for salt in UInt8(1)...UInt8(120) {
+            var creator: MessageTurnController?
+            for s2 in UInt8(0)...UInt8(40) {
+                let c = MessageTurnController(genesisSeed: freshSeed(salt &+ s2), players: 2,
+                                              gameId: 161, myNickname: "A")
+                await c.begin()
+                if c.legal.contains(where: { $0.type == .attack }) { creator = c; break }
+            }
+            guard let a = creator, let atk1 = a.legal.first(where: { $0.type == .attack })
+            else { continue }
+            await a.apply(atk1)
+            guard let atk2 = a.legal.first(where: { $0.type == .attack }) else { continue }
+            await a.apply(atk2)
+            let p0 = try await a.stagedPayload(sentAt: MessageKernel.clockNow() - 30)
+            let e0 = try await MessageEnvelope.decode(payload: p0, viewer: -1)
+
+            let b = MessageTurnController(parentPayload: p0, parent: e0, mySeat: 1)
+            await b.begin()
+            guard let c1 = b.legal.first(where: { $0.type == .cover }) else { continue }
+            await b.apply(c1)
+            guard let c2 = b.legal.first(where: { $0.type == .cover }) else { continue }
+            await b.apply(c2)
+            let p1 = try await b.stagedPayload(sentAt: MessageKernel.clockNow() - 30)
+            let e1 = try await MessageEnvelope.decode(payload: p1, viewer: -1)
+
+            let opened = MessageTurnController(parentPayload: p1, parent: e1, mySeat: 0)
+            await opened.begin()
+            XCTAssertEqual(opened.openReplayEvents.filter { $0.kind == .cover }.count, 2,
+                           "a bubble that carries two covers must animate two covers")
+            return
+        }
+        XCTFail("no 2p deal in 120 tries produced a double attack answered by a double cover")
+    }
+
+    /// The general rule, swept rather than staged: play whole games ONE ACTION
+    /// PER BUBBLE and open every one of them. A bubble that carries one action
+    /// may animate at most one PRIMARY event (an attack/pass, a cover, a
+    /// pickup) - the rest of a group is that action's own consequences, its
+    /// refills and its discard. Two primaries means the group reached back into
+    /// the bubble before it, which is the whole defect.
+    ///
+    /// This is where the owner's second case lives: "a cover leading to a round
+    /// transition ... will get combined with the next attack by that defender if
+    /// you replay their next attack." A cover that empties the defender's hand
+    /// ends the bout with NO round-end atom to separate it from that same
+    /// seat's opening attack of the next bout, so the old walk-back ran straight
+    /// through it. Rather than pin that one hard-to-reach state, the sweep plays
+    /// enough real Durak to meet it and every other shape the walk-back could
+    /// mis-join - a good that closes a bout, a pickup that refills, a pass.
+    func testEveryBubbleReplaysOnlyItsOwnMove() async throws {
+        let primaries: Set<EventType> = [.attackPass, .cover, .pickup]
+        var bubbles = 0
+        for salt in UInt8(1)...UInt8(6) {
+            for players in [2, 3] {
+                var payload: Data?
+                var env: MessageEnvelope?
+                // Seat 0 deals; whoever can act plays exactly one action and sends.
+                let genesis = MessageTurnController(genesisSeed: freshSeed(salt &* 7 &+ UInt8(players)),
+                                                    players: players, gameId: 162, myNickname: "A")
+                await genesis.begin()
+                if let open = genesis.legal.first(where: { $0.type != .wait }) {
+                    await genesis.apply(open)
+                    payload = try await genesis.stagedPayload(sentAt: MessageKernel.clockNow() - 30)
+                    env = try await MessageEnvelope.decode(payload: payload!, viewer: -1)
+                }
+                guard var chain = payload, var parent = env else { continue }
+
+                for _ in 0..<40 {
+                    if parent.phase == 3 { break }
+                    // Whoever can move, moves - one action, one bubble.
+                    var acted = false
+                    for seat in 0..<players {
+                        let c = MessageTurnController(parentPayload: chain, parent: parent, mySeat: seat)
+                        await c.begin()
+                        guard let mv = CardPlay.humanMoves(battles: c.view?.battles ?? [],
+                                                           legal: c.legal).first
+                        else { continue }
+                        await c.apply(mv)
+                        guard c.canSend else { continue }
+                        chain = try await c.stagedPayload(sentAt: MessageKernel.clockNow() - 30)
+                        parent = try await MessageEnvelope.decode(payload: chain, viewer: -1)
+                        acted = true
+                        break
+                    }
+                    if !acted { break }
+
+                    // …and every OTHER seat opens it and sees only that move.
+                    for viewer in 0..<players where viewer != parent.lastActorSeat {
+                        let opened = MessageTurnController(parentPayload: chain, parent: parent,
+                                                           mySeat: viewer)
+                        await opened.begin()
+                        let n = opened.openReplayEvents.filter { primaries.contains($0.kind ?? .deal) }.count
+                        XCTAssertLessThanOrEqual(
+                            n, 1,
+                            "turn \(parent.turn) (seat \(parent.lastActorSeat), one action) replayed "
+                            + "\(n) moves to seat \(viewer): "
+                            + opened.openReplayEvents.map { "\($0.kind.map(String.init(describing:)) ?? "?")" }
+                                .joined(separator: ","))
+                        bubbles += 1
+                    }
+                }
+            }
+        }
+        // A sweep that stopped finding bubbles would pass while pinning nothing.
+        XCTAssertGreaterThan(bubbles, 150, "the sweep only opened \(bubbles) bubbles")
+    }
+
     /// The synthesis must be CONDITIONAL: a move with a real headline (an
     /// attack) may never also claim its actor said good.
     func testAttackCaptionDoesNotSynthesizeGood() async throws {

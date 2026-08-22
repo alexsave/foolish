@@ -227,7 +227,7 @@ static int fmsg_check(void) {
     // Decode ADOPTS: the payload's game becomes the resident one. The metadata
     // comes back as the PACKED blob (fio_msg_decode_packed layout): phase(1)
     // n_players(1) last_actor_seat(1) round(1) turn(u16) game_id(u64) parent8(8)
-    // digest(32) sent_at(u16) n_joins(1) then joins {seat(1) len(1) name[]}.
+    // digest(32) sent_at(u16) n_new(1) n_joins(1) then joins {seat(1) len(1) name[]}.
     unsigned char *mb = (unsigned char *)buf;
     if (fio_msg_decode_packed(pay, n, mb, sizeof(buf)) <= 0) {
         printf("FAIL fmsg decode: msg_err=%d\n", fio_last_msg_error()); return 1;
@@ -237,9 +237,10 @@ static int fmsg_check(void) {
     if (mb[0] != 2 /* phase LIVE */ || mb[1] != 4 /* n_players */ || gid != 81985529216486895ULL) {
         printf("FAIL fmsg decode packed shape: phase=%d n=%d gid=%llu\n", mb[0], mb[1], gid); return 1;
     }
-    // Seat 0's join is "Sveta" — the first record after the 57-byte header
-    // (round 16 added the two send-clock bytes ahead of n_joins).
-    if (!(mb[57] == 0 && mb[58] == 5 && memcmp(mb + 59, "Sveta", 5) == 0)) {
+    // Seat 0's join is "Sveta" - the first record after the 58-byte header
+    // (round 16 added the two send-clock bytes and the bubble delta ahead of
+    // n_joins).
+    if (!(mb[58] == 0 && mb[59] == 5 && memcmp(mb + 60, "Sveta", 5) == 0)) {
         printf("FAIL fmsg decode: seat-0 join not Sveta\n"); return 1;
     }
     // The digest (Rule P's tiebreak) is present and not all-zero.

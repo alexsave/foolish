@@ -849,8 +849,11 @@ private struct GameSurface: View {
         lobby = nil
         // `quietOpen`: this is a seeded state, not a move anyone just watched -
         // opening it must not replay whatever its last action happened to be, or
-        // the film starts with an animation nobody asked for.
-        seatOnBoard(seat: seat, env: env, winner: payload, quietOpen: true)
+        // the film starts with an animation nobody asked for. Unless the REPLAY
+        // is the point (round 16's bubble delta: `dev.replay`), in which case
+        // this opens exactly as a tapped bubble does.
+        seatOnBoard(seat: seat, env: env, winner: payload,
+                    quietOpen: !MessageDevBoard.seededReplays)
         return true
     }
     #endif

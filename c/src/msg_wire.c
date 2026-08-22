@@ -69,6 +69,9 @@ static int validate_fields(const MsgEnvelope *e) {
     // a format-2 envelope carrying a stamp would encode to bytes that decode
     // back without it, and the wire must round-trip to itself.
     if (e->format == MSG_FORMAT_V6 && e->sent_at != 0) return MSG_EFORMAT;
+    // Same both-directions rule for the bubble delta: format 2 has nowhere to
+    // put it, so an envelope claiming one is not a format-2 envelope.
+    if (e->format == MSG_FORMAT_V6 && e->n_new != 0) return MSG_EFORMAT;
     // bit2 (0x04) is the LEGACY passing-allowed marker 1.0(3) briefly set on
     // every seal. The pass/perevod mode now lives in the replay code (the v7
     // bit, replay.h), so this build no longer sets or reads it - but bit2 is
@@ -115,6 +118,11 @@ static int validate_fields(const MsgEnvelope *e) {
     // `turn` is a claim the chain must back: Rule P orders on it before anyone
     // replays, so a header that inflates it would jump the queue for free.
     if (e->turn != (uint16_t)e->n_actions) return MSG_ETURN;
+    // …and the bubble cannot have added more atoms than the whole chain holds.
+    // A delta that overran `turn` would point the animation group at steps
+    // before the deal, so it is refused here rather than clamped at read time:
+    // this is the layer that decides whether bytes are an envelope at all.
+    if ((int)e->n_new > e->n_actions) return MSG_ETURN;
     return MSG_EOK;
 }
 
@@ -144,8 +152,9 @@ int msg_decode(const unsigned char *in, int in_len, MsgEnvelope *out) {
     memcpy(out->seed, in + 26, MSG_SEED_LEN);
 
     out->sent_at = has_clock ? rd16(in + MSG_CLOCK_OFF) : 0;
+    out->n_new   = has_clock ? in[MSG_NEW_OFF] : 0;
 
-    const int n_joins = in[has_clock ? MSG_CLOCK_OFF + 2 : MSG_CLOCK_OFF];
+    const int n_joins = in[has_clock ? MSG_HEADER_LEN_CLOCK - 1 : MSG_HEADER_LEN - 1];
     // Bound the count BEFORE the loop writes: n_joins is attacker-controlled
     // and joins[] is fixed at MSG_MAX_JOINS.
     if (n_joins < 1 || n_joins > MSG_MAX_JOINS) return MSG_EJOINS;
@@ -216,8 +225,11 @@ int msg_encode(const MsgEnvelope *e, unsigned char *out, int out_cap) {
     out[17] = e->round;
     memcpy(out + 18, e->parent8, MSG_PARENT_LEN);
     memcpy(out + 26, e->seed, MSG_SEED_LEN);
-    if (has_clock) wr16(out + MSG_CLOCK_OFF, e->sent_at);
-    out[has_clock ? MSG_CLOCK_OFF + 2 : MSG_CLOCK_OFF] = (unsigned char)e->n_joins;
+    if (has_clock) {
+        wr16(out + MSG_CLOCK_OFF, e->sent_at);
+        out[MSG_NEW_OFF] = e->n_new;
+    }
+    out[has_clock ? MSG_HEADER_LEN_CLOCK - 1 : MSG_HEADER_LEN - 1] = (unsigned char)e->n_joins;
 
     int off = hdr_len;
     for (int i = 0; i < e->n_joins; i++) {
@@ -396,18 +408,20 @@ int msg_replay(const MsgEnvelope *e, Game *g) {
     return MSG_EOK;
 }
 
-// Which format a seal writes: the CLOCK decides, not the caller. A host that
-// stamped `sent_at` wants format 3 by definition, and one that did not (a test,
+// Which format a seal writes: what it has to SAY decides, not the caller. A
+// host that stamped `sent_at`, or that knows how much of the chain this bubble
+// added, needs the format-3 header to carry it; one that knows neither (a test,
 // a lobby handoff, the harness) keeps writing the format every shipped build can
 // read. That keeps the pairing in one place instead of asking every caller to
-// set two fields consistently - and validate_fields rejects the mismatch, so a
-// caller that got it wrong would only find out at encode time.
+// set the fields consistently - and validate_fields rejects the mismatch in
+// both directions, so a caller that got it wrong would only find out at encode
+// time.
 static uint8_t seal_format(const MsgEnvelope *e) {
-    return e->sent_at != 0 ? MSG_FORMAT_CLOCK : MSG_FORMAT_V6;
+    return (e->sent_at != 0 || e->n_new != 0) ? MSG_FORMAT_CLOCK : MSG_FORMAT_V6;
 }
 
-int msg_seal(MsgEnvelope *e, const Game *g, unsigned char *body, int body_cap,
-             Game *scratch) {
+int msg_seal(MsgEnvelope *e, const Game *g, int base_turn,
+             unsigned char *body, int body_cap, Game *scratch) {
     // A 0-action game seals to an EMPTY body: a WAITING lobby, or the last-joiner
     // LIVE handoff that "applies nothing" (§5.2). The v6 producer is an action-run
     // codec keyed on the logged opening attack — it has nothing to encode and no
@@ -415,13 +429,14 @@ int msg_seal(MsgEnvelope *e, const Game *g, unsigned char *body, int body_cap,
     // state; emit no body and let msg_replay's 0-action path rebuild from the seed.
     // "No opening attack logged" is the same fact the encoder keys on.
     if (replay_first_attacker_from_logs(g->logs, g->num_logs) < 0) {
-        (void)scratch; (void)body_cap;
-        e->format      = seal_format(e);
+        (void)scratch; (void)body_cap; (void)base_turn;
         e->actions     = body;   // unused (len 0), but a valid non-null buffer
         e->actions_len = 0;
         e->n_actions   = 0;
         e->turn        = 0;
         e->round       = 0;
+        e->n_new       = 0;      // nothing was added; there is nothing to animate
+        e->format      = seal_format(e);
         return MSG_EOK;
     }
 
@@ -431,7 +446,6 @@ int msg_seal(MsgEnvelope *e, const Game *g, unsigned char *body, int body_cap,
                                              1 << 30, body, body_cap);
     if (n < 0) return MSG_EBODY;
 
-    e->format      = seal_format(e);
     e->actions     = body;
     e->actions_len = n;
 
@@ -450,6 +464,49 @@ int msg_seal(MsgEnvelope *e, const Game *g, unsigned char *body, int body_cap,
     e->n_actions = m.applied;
     e->turn      = (uint16_t)m.applied;
     e->round     = (uint8_t)m.rounds;
+
+    // The bubble delta, from the atom count the body just yielded and the base
+    // the caller continues. Three ways to end up saying nothing (0), and all
+    // three degrade to the same documented fallback - the receiver guesses the
+    // boundary, exactly as builds before this field did:
+    //
+    //   - a negative base_turn: this host cannot say where the parent ended.
+    //   - a base at or AHEAD of the body: nothing was added, or this seal lost
+    //     actions the parent had, which is not a delta at all.
+    //   - a delta past MSG_MAX_NEW: it will not fit the byte. Deliberately 0
+    //     rather than a clamp - 255 would name a suffix that STARTS inside the
+    //     bubble, which is a confident wrong answer, where 0 is an honest one.
+    //     Unreachable in play: one bubble is one seat's staged turn, and the
+    //     36-card deck caps how many atoms that can be even when a fat pickup
+    //     leaves the defender covering a dozen attacks. The number of atoms in
+    //     the GAME is not this field's problem - that is `turn`, a u16
+    //     (MSG_MAX_ACTIONS 1024), and a 300-move game is 300 bubbles of delta
+    //     1, not one delta of 300.
+    int newly = 0;
+    if (base_turn >= 0 && m.applied > 0) {
+        newly = m.applied - base_turn;
+        // A chain that did not GROW still moved: the codec folds a bout's
+        // closing goods into the ONE round_end atom that replaces them, so a
+        // seal whose action closed the bout can come back with the same atom
+        // count as its parent, or fewer. Its move is real and is inside the
+        // trailing atom, so the bubble carries exactly that one - measured at
+        // 22% of one-action bubbles in test_bubble_delta, which is far too
+        // common to leave to the fallback guess (that guess reaches back past
+        // the round end and replays the previous bubble's cover with it).
+        //
+        // The one seal this over-claims is the re-seal that staged NOTHING (an
+        // undo back to empty, §10), which is indistinguishable from a fold at
+        // this layer - both hand back the parent's atom count. It then names
+        // the parent's last atom, which is what the fallback would have shown
+        // anyway, so the corner is no worse than it was.
+        if (newly < 1) newly = 1;
+    }
+    if (newly > MSG_MAX_NEW) newly = 0;
+    e->n_new  = (uint8_t)newly;
+
+    // Format LAST: it is decided by what the header ends up carrying, and n_new
+    // is only known here.
+    e->format = seal_format(e);
     return MSG_EOK;
 }
 

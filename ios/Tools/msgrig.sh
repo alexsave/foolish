@@ -9,6 +9,8 @@
 #
 #   ios/Tools/msgrig.sh setup        fresh seeded game, board open and EXPANDED
 #   ios/Tools/msgrig.sh fatboard [N] [P] [SEAT]  SEED a dense N-card table
+#   ios/Tools/msgrig.sh twocover [P] [SEAT] [one]  SEED two covers as two bubbles
+#                                                (or as ONE, the control)
 #                                    (default 10) and open straight onto it - no
 #                                    create/join/start flow at all. DEBUG only.
 #                                    The chain is searched in C (instant), not
@@ -137,6 +139,7 @@ cmd_fatboard() {
   # bout and deals.
   if [ -n "$seat" ]; then printf '%s' "$seat" > "$(group_dir)/dev.seat"
   else rm -f "$(group_dir)/dev.seat"; fi
+  rm -f "$(group_dir)/dev.replay"   # a fatboard opens quiet; see cmd_twocover
   echo "seeded: $(wc -c < "$(group_dir)/dev.fatboard") hex chars, seat=${seat:-defender}"
 
   read -r W H < <(screen)
@@ -147,6 +150,53 @@ cmd_fatboard() {
   tap "$ax" "$ay" 5        # Foolish -> straight onto the seeded board
   swipe 0.5 "$g1x" "$g1y" "$g2x" "$g2y" 4   # grabber drag to expanded
   echo "drawer top: $(drawer_top)   (a small number = expanded)"
+}
+
+# Round 16: two covers SENT AS TWO BUBBLES, opened on the second one. The C
+# searcher plays the whole thing and prints the last bubble; the extension opens
+# it as the ATTACKER (seat 0 by default), because the covers are then somebody
+# else's move - which is the case that animates on open. Exactly one cover
+# should fly; the earlier one must already be sitting on the table, landed.
+# Owner: "If anyone opens the bubble for the second cover, they will see BOTH
+# covers animate. This is not ideal. We should only see the most recent move."
+cmd_twocover() {
+  local players="${1:-2}" seat="${2:-0}" one="${3:-}"
+  local tool="$HERE/../../c/build/msg_wire_test"
+  [ -x "$tool" ] || { echo "build it first: (cd c && make build/msg_wire_test)" >&2; exit 1; }
+
+  xcrun simctl shutdown "$SIM" 2>/dev/null || true; sleep 3
+  xcrun simctl boot "$SIM"; sleep 8
+  until xcrun simctl list devices booted | grep -q "$SIM"; do sleep 2; done
+  xcrun simctl launch "$SIM" com.apple.MobileSMS >/dev/null; sleep 5
+
+  "$tool" --twocover "$players" $one > "$(group_dir)/dev.fatboard"
+  printf '%s' "$seat" > "$(group_dir)/dev.seat"
+  # The REPLAY is the subject here, so this seeded open is not a quiet one.
+  : > "$(group_dir)/dev.replay"
+  echo "seeded: $(wc -c < "$(group_dir)/dev.fatboard") hex chars, seat=$seat, replay on"
+
+  read -r W H < <(screen)
+  read -r cx cy px py ax ay sx sy bx by g1x g1y g2x g2y < <(profile "$W" "$H")
+  tap "$cx" "$cy" 3        # conversation
+  tap "$px" "$py" 2.5      # compose "+"
+  swipe 0.4 $((W / 2)) $((H * 82 / 100)) $((W / 2)) $((H * 45 / 100)) 1.5
+  tap "$ax" "$ay" 5        # Foolish -> straight onto the seeded board
+}
+
+# Re-open the extension onto whatever is already seeded, WITHOUT rebooting or
+# re-seeding - so an open-replay can be filmed on demand. Killing Messages is
+# what makes it a real cold open: re-entering from the app strip alone can find
+# the board still resident and replay nothing.
+cmd_reopen() {
+  xcrun simctl terminate "$SIM" com.apple.MobileSMS >/dev/null 2>&1 || true
+  sleep 2
+  xcrun simctl launch "$SIM" com.apple.MobileSMS >/dev/null; sleep 4
+  read -r W H < <(screen)
+  read -r cx cy px py ax ay sx sy bx by g1x g1y g2x g2y < <(profile "$W" "$H")
+  tap "$cx" "$cy" 3        # conversation
+  tap "$px" "$py" 2.5      # compose "+"
+  swipe 0.4 $((W / 2)) $((H * 82 / 100)) $((W / 2)) $((H * 45 / 100)) 1.5
+  tap "$ax" "$ay" 5        # Foolish -> the seeded board, replaying its bubble
 }
 
 cmd_film() {
@@ -179,7 +229,9 @@ import sys,ast; c=ast.literal_eval(sys.stdin.read().split('CARDS ')[1]); print(c
 case "${1:-}" in
   setup) shift; cmd_setup "$@" ;;
   fatboard) shift; cmd_fatboard "$@" ;;
-  unseed) rm -f "$(group_dir)/dev.fatboard"; echo "seed removed" ;;
+  twocover) shift; cmd_twocover "$@" ;;
+  reopen) shift; cmd_reopen "$@" ;;
+  unseed) rm -f "$(group_dir)/dev.fatboard" "$(group_dir)/dev.replay"; echo "seed removed" ;;
   move)  cmd_move ;;
   film)  shift; cmd_film "$@" ;;
   probe) read -r W H < <(screen); echo "screen ${W}x${H}pt"; python3 "$UI" all ;;

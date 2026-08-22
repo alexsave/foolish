@@ -31,6 +31,7 @@
 #include "../src/msg_wire.h"
 #include "../src/sha256.h"
 #include "../src/replay.h"
+#include "../src/replay_steps.h"
 #include "../wasm/wire.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -246,7 +247,7 @@ static void test_roundtrip(int games, uint32_t seed0) {
             e.phase = over ? MSG_PHASE_FINISHED : MSG_PHASE_LIVE;
             static unsigned char body[1024];
             static Game scratch;
-            const int src = msg_seal(&e, &played, body, sizeof(body), &scratch);
+            const int src = msg_seal(&e, &played, MSG_NO_BASE, body, sizeof(body), &scratch);
             CHECK(src == MSG_EOK, "np=%d game=%d seal failed: %d (num_logs %d/%d, moves %d, replay_detail %d)", np, gi, src, played.num_logs, MAX_LOGS, ch.n, replay_last_error_detail());
             if (src != MSG_EOK) continue;
             // The codec folds a bout's closing goods into one round_end atom, so
@@ -352,7 +353,7 @@ static void test_name_length_boundary(void) {
 
         static unsigned char body[1024];
         static Game scratch;
-        CHECK(msg_seal(&e, &played, body, sizeof(body), &scratch) == MSG_EOK,
+        CHECK(msg_seal(&e, &played, MSG_NO_BASE, body, sizeof(body), &scratch) == MSG_EOK,
               "name_len=%d seal failed", len);
 
         unsigned char wire[ENV_CAP];
@@ -398,7 +399,7 @@ static void test_name_length_boundary(void) {
         e.joins[0].name_len = MSG_MAX_NAME;
         static unsigned char body[1024];
         static Game scratch;
-        CHECK(msg_seal(&e, &played, body, sizeof(body), &scratch) == MSG_EOK,
+        CHECK(msg_seal(&e, &played, MSG_NO_BASE, body, sizeof(body), &scratch) == MSG_EOK,
               "name boundary tamper fixture seal failed");
         unsigned char wire[ENV_CAP];
         const int n = msg_encode(&e, wire, sizeof(wire));
@@ -565,7 +566,7 @@ static void test_tamper(void) {
     static unsigned char body[1024];
     static Game scratch;
     (void)rounds;
-    CHECK(msg_seal(&e, &played, body, sizeof(body), &scratch) == MSG_EOK, "tamper seal failed");
+    CHECK(msg_seal(&e, &played, MSG_NO_BASE, body, sizeof(body), &scratch) == MSG_EOK, "tamper seal failed");
 
     unsigned char wire[ENV_CAP];
     const int n = msg_encode(&e, wire, sizeof(wire));
@@ -815,6 +816,156 @@ static void test_pickup_hold(void) {
     }
 }
 
+// ---------- round 16: the bubble delta -------------------------------------
+//
+// n_new (msg_wire.h) is how many atoms ONE bubble added to the chain, and it is
+// the whole reason a receiver can animate the move it just opened instead of
+// that move plus the one before it. The owner's report: "a defender covers a
+// single card, sends it, then covers a second card, and sends that. If anyone
+// opens the bubble for the second cover, they will see BOTH covers animate."
+//
+// This plays a game ONE ACTION PER BUBBLE - the exact shape that used to be
+// indistinguishable from one bubble holding the lot - and pins three things per
+// bubble: the delta counts what THIS seal added and nothing earlier, it
+// survives the wire, and the step stream it indexes into really is "the deal,
+// then one step per atom" (`replay_steps_count_v6 == turn + 1`). That last one
+// is load-bearing and invisible: the reader takes the last n_new STEPS, so if
+// steps ever stopped being 1:1 with atoms the group would silently slide onto
+// the wrong moves.
+static void test_bubble_delta(void) {
+    int bubbles = 0, folded = 0, expanded = 0;
+    for (int np = 2; np <= 4; np++) {
+        for (int gi = 0; gi < 8; gi++) {
+            uint8_t seed[MSG_SEED_LEN];
+            seed_fill(seed, 4100u + (uint32_t)(gi * 733 + np * 17));
+            g_rng = 991u + (uint32_t)(gi * 37 + np);
+            random_strategy_set_seed(g_rng);
+            game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+
+            Game g;
+            memset(&g, 0, sizeof(g));
+            g.num_players = (int8_t)np;
+            for (int i = 0; i < np; i++) {
+                g.players[i].status = PLAYER_STATUS_READY;
+                g.players[i].strategy_key = 0;
+                snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
+            }
+            start_game(&g);
+
+            // A genesis continues nothing, so its base is 0 - not MSG_NO_BASE,
+            // which means "cannot say".
+            int base_turn = 0;
+            static LegalMoves ml;
+            for (int step = 0; step < 60; step++) {
+                if (game_done(&g) >= 0 || g.status != GAME_STATUS_PLAYING) break;
+
+                int seat = -1;
+                const int start = (int)(rnd() % (uint32_t)np);
+                for (int t = 0; t < np && seat < 0; t++) {
+                    const int s = (start + t) % np;
+                    if (g.players[s].status != PLAYER_STATUS_IN) continue;
+                    calculate_legal_moves(&g, s, &ml);
+                    for (int i = 0; i < ml.n; i++)
+                        if (ml.moves[i].type != MOVE_WAIT) { seat = s; break; }
+                }
+                if (seat < 0) break;
+                calculate_legal_moves(&g, seat, &ml);
+                int pick = -1;
+                for (int t = 0; t < ml.n && pick < 0; t++) {
+                    const int i = (int)((rnd() + (uint32_t)t) % (uint32_t)ml.n);
+                    if (ml.moves[i].type != MOVE_WAIT) pick = i;
+                }
+                if (pick < 0) break;
+
+                AwireAction a;
+                move_to_awire(&ml.moves[pick], &a);
+                bool ok;
+                switch (a.kind) {
+                    case AWIRE_ATTACK: ok = handle_attack(&g, seat, a.cards, a.n); break;
+                    case AWIRE_COVER:  ok = handle_cover(&g, seat, a.cards, a.attacks, a.n); break;
+                    case AWIRE_PASS:   ok = handle_pass(&g, seat, a.cards, a.n); break;
+                    case AWIRE_PICKUP: ok = handle_pickup(&g, seat); break;
+                    default:           ok = handle_good(&g, seat); break;
+                }
+                if (!ok) continue;
+
+                // …and SEND. One action, one bubble.
+                MsgEnvelope e;
+                env_init(&e, seed, np);
+                e.last_actor_seat = (uint8_t)seat;
+                const int over = game_done(&g) >= 0 || g.status == GAME_STATUS_GAME_OVER;
+                e.phase = over ? MSG_PHASE_FINISHED : MSG_PHASE_LIVE;
+                static unsigned char body[1024];
+                static Game scratch;
+                if (msg_seal(&e, &g, base_turn, body, sizeof(body), &scratch) != MSG_EOK) break;
+                if (e.n_actions == 0) continue;   // nothing sealed yet (pre-opening)
+
+                bubbles++;
+                CHECK((int)e.n_new == (e.turn > base_turn ? e.turn - base_turn : 1),
+                      "np=%d game=%d: delta %d does not match turn %d - base %d",
+                      np, gi, e.n_new, e.turn, base_turn);
+                // Every bubble on a known base claims SOMETHING: a bubble that
+                // said nothing would be animated by the fallback guess, which
+                // is what this whole field exists to stop doing.
+                CHECK(e.n_new >= 1, "np=%d game=%d: a real move sealed no delta", np, gi);
+                // ONE action was staged, and the delta is whatever the CODEC
+                // made of it - which is not 1:1 and is exactly why the delta is
+                // derived from the body rather than counted from the moves. A
+                // closing good FOLDS into the round_end atom that replaces it,
+                // so the chain does not grow and the bubble claims the trailing
+                // atom (its own round end); at 4p a bout-closing action can
+                // EXPAND into two atoms instead. Both are correct groups and
+                // neither is countable from the client's side, which is the
+                // finding that put the BASE rather than the count into the
+                // kernel's hands.
+                if (e.turn <= base_turn) folded++;
+                if (e.n_new > 1) expanded++;
+                // A delta alone is enough to need the format-3 header.
+                CHECK(e.n_new == 0 || e.format == MSG_FORMAT_CLOCK,
+                      "np=%d game=%d: a delta sealed as format %d", np, gi, e.format);
+
+                // THE INVARIANT the reader indexes on: deal + one step per atom.
+                const int steps = replay_steps_count_v6(e.actions, e.actions_len, NULL);
+                CHECK(steps == (int)e.turn + 1,
+                      "np=%d game=%d: %d steps for %d atoms (the group would slide)",
+                      np, gi, steps, e.turn);
+
+                unsigned char wire[ENV_CAP];
+                const int n = msg_encode(&e, wire, sizeof(wire));
+                CHECK(n > 0, "np=%d game=%d: delta encode failed %d", np, gi, n);
+                MsgEnvelope d;
+                CHECK(msg_decode(wire, n, &d) == MSG_EOK, "np=%d game=%d: delta decode failed", np, gi);
+                CHECK(d.n_new == e.n_new, "np=%d game=%d: the delta did not survive the wire (%d -> %d)",
+                      np, gi, e.n_new, d.n_new);
+
+                base_turn = (int)e.turn;
+            }
+        }
+    }
+    CHECK(bubbles > 100, "only %d one-action bubbles built; this pinned little", bubbles);
+    printf("  bubble delta: %d one-action bubbles, %d whose chain did not grow (codec fold), "
+           "%d sealed two atoms for one action\n", bubbles, folded, expanded);
+
+    // A delta the chain cannot back is not an envelope: it would point the
+    // animation group at steps before the deal.
+    uint8_t seed[MSG_SEED_LEN];
+    seed_fill(seed, 4242);
+    Chain ch; memset(&ch, 0, sizeof(ch));
+    Game played;
+    g_rng = 4242;
+    play_game(seed, 2, 30, &ch, &played, -1);
+    MsgEnvelope e;
+    env_init(&e, seed, 2);
+    static unsigned char body[1024];
+    static Game scratch;
+    CHECK(msg_seal(&e, &played, 0, body, sizeof(body), &scratch) == MSG_EOK, "delta-cap seal failed");
+    CHECK(e.n_new == (uint8_t)e.turn || e.turn > MSG_MAX_NEW,
+          "a genesis seal did not claim the whole chain");
+    unsigned char w[ENV_CAP];
+    e.n_new = (uint8_t)(e.turn + 1);
+    CHECK(msg_encode(&e, w, sizeof(w)) == MSG_ETURN, "a delta past the chain encoded");
+}
+
 static void test_clock_wire(void) {
     uint8_t seed[MSG_SEED_LEN];
     seed_fill(seed, 77);
@@ -830,22 +981,25 @@ static void test_clock_wire(void) {
     // build reads.
     MsgEnvelope plain;
     env_init(&plain, seed, 2);
-    CHECK(msg_seal(&plain, &played, body, sizeof(body), &scratch) == MSG_EOK, "plain seal failed");
+    CHECK(msg_seal(&plain, &played, MSG_NO_BASE, body, sizeof(body), &scratch) == MSG_EOK, "plain seal failed");
     CHECK(plain.format == MSG_FORMAT_V6, "an unstamped seal picked the clock format");
     unsigned char w2[ENV_CAP];
     const int n2 = msg_encode(&plain, w2, sizeof(w2));
     CHECK(n2 > 0, "plain encode failed: %d", n2);
 
-    // Sealed WITH one: format 3, exactly two bytes longer, and the stamp
-    // survives the round trip.
+    // Sealed WITH one: format 3, exactly THREE bytes longer (two of clock and
+    // the round-16 bubble-delta byte, which format 3 always carries even when
+    // this seal has no base to measure and leaves it 0), and the stamp survives
+    // the round trip.
     MsgEnvelope stamped;
     env_init(&stamped, seed, 2);
     stamped.sent_at = 0xBEEF;
-    CHECK(msg_seal(&stamped, &played, body, sizeof(body), &scratch) == MSG_EOK, "stamped seal failed");
+    CHECK(msg_seal(&stamped, &played, MSG_NO_BASE, body, sizeof(body), &scratch) == MSG_EOK, "stamped seal failed");
     CHECK(stamped.format == MSG_FORMAT_CLOCK, "a stamped seal stayed on format 2");
     unsigned char w3[ENV_CAP];
     const int n3 = msg_encode(&stamped, w3, sizeof(w3));
-    CHECK(n3 == n2 + 2, "the clock cost %d bytes, not 2", n3 - n2);
+    CHECK(n3 == n2 + 3, "format 3 cost %d bytes over format 2, not 3", n3 - n2);
+    CHECK(stamped.n_new == 0, "a seal with no base claimed a bubble delta");
 
     MsgEnvelope d;
     CHECK(msg_decode(w3, n3, &d) == MSG_EOK, "format 3 did not decode");
@@ -866,12 +1020,18 @@ static void test_clock_wire(void) {
     MsgEnvelope d2;
     CHECK(msg_decode(w2, n2, &d2) == MSG_EOK, "format 2 stopped decoding");
     CHECK(d2.sent_at == 0, "a clockless chain decoded to a clock");
+    CHECK(d2.n_new == 0, "a format-2 chain decoded to a bubble delta");
 
     // The pairing is enforced in both directions: format 2 cannot carry a stamp.
     MsgEnvelope liar = stamped;
     liar.format = MSG_FORMAT_V6;
     unsigned char wl[ENV_CAP];
     CHECK(msg_encode(&liar, wl, sizeof(wl)) == MSG_EFORMAT, "format 2 encoded a clock");
+    // …and it cannot carry a bubble delta either, for the same reason: there is
+    // nowhere in a 59-byte header to put one.
+    MsgEnvelope liar2 = plain;
+    liar2.n_new = 1;
+    CHECK(msg_encode(&liar2, wl, sizeof(wl)) == MSG_EFORMAT, "format 2 encoded a delta");
 }
 
 // ---------- 5. hostile bodies are rejected (validation = replay) ----------
@@ -894,7 +1054,7 @@ static void test_hostile_body(void) {
     env_init(&e, seed, 4);
     static unsigned char body[1024];
     static Game scratch;
-    CHECK(msg_seal(&e, &played, body, sizeof(body), &scratch) == MSG_EOK, "seal failed");
+    CHECK(msg_seal(&e, &played, MSG_NO_BASE, body, sizeof(body), &scratch) == MSG_EOK, "seal failed");
 
     unsigned char wire[ENV_CAP];
     const int n = msg_encode(&e, wire, sizeof(wire));
@@ -930,7 +1090,7 @@ static void test_hostile_body(void) {
     MsgEnvelope e2;
     env_init(&e2, other, 4);
     static unsigned char body2[1024];
-    if (msg_seal(&e2, &played2, body2, sizeof(body2), &scratch) == MSG_EOK) {
+    if (msg_seal(&e2, &played2, MSG_NO_BASE, body2, sizeof(body2), &scratch) == MSG_EOK) {
         MsgEnvelope mix = e;              // this game's seed + header
         mix.actions = body2;              // the OTHER game's code
         mix.actions_len = e2.actions_len;
@@ -972,7 +1132,7 @@ static int measure(int games, uint32_t seed0, int np, int bot, const char *label
         (void)rounds;
         static unsigned char body[1024];
         static Game scratch;
-        if (msg_seal(&e, &played, body, sizeof(body), &scratch) != MSG_EOK) continue;
+        if (msg_seal(&e, &played, MSG_NO_BASE, body, sizeof(body), &scratch) != MSG_EOK) continue;
         unsigned char wire[ENV_CAP];
         const int w = msg_encode(&e, wire, sizeof(wire));
         if (w > 0) { acts[n] = ch.n; sizes[n] = w; n++; }
@@ -1100,6 +1260,144 @@ static void test_size_budget(int games, uint32_t seed0) {
                   p95, b32_chars(p95), budget_bytes);
         }
     }
+}
+
+// ---------- --twocover: two covers, sent as TWO bubbles --------------------
+//
+// Prints the SECOND of two bubbles that each carry ONE cover by the same seat -
+// the owner's round-16 report, as a payload you can open in the simulator:
+// "a defender covers a single card, sends it, then covers a second card, and
+// sends that. If anyone opens the bubble for the second cover, they will see
+// BOTH covers animate."
+//
+// The point is the two SENDS. On the chain, two covers sent separately are
+// byte-for-byte what two covers staged together would be, so nothing in the
+// replay steps can tell them apart - only the bubble delta each seal writes
+// (msg_wire.h's n_new) can, which is exactly what this fixture exercises. Each
+// seal here is given the PREVIOUS envelope's turn as its base, the same way
+// fio_msg_encode gives it the chain it decoded.
+//
+// It prints the second bubble's hex on stdout (for dev.fatboard) and, on
+// stderr, the two covering cards and the delta the bubble claims - so a filmed
+// run can be checked against what the wire actually said. Sit as the ATTACKER
+// (dev.seat 0): the covers are then somebody else's move, which is the case
+// that animates on open.
+//
+// `one_bubble` seals both covers into ONE bubble instead - the CONTROL. Same
+// deal, same two cards, same chain bytes: only the send in the middle differs,
+// and a staged double cover must still animate BOTH. Without it a run that
+// shows one flight proves nothing, since a fixture that could never show two
+// would look identical.
+//
+// Usage: msg_wire_test --twocover [n_players] [one]
+static void print_twocover(int np, int one_bubble) {
+    static unsigned char body[1024];
+    static Game scratch;
+    static LegalMoves ml;
+
+    for (uint32_t s = 1; s < 4000; s++) {
+        uint8_t seed[MSG_SEED_LEN];
+        seed_fill(seed, 20260822u + s * 89u);
+        game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+        Game g;
+        memset(&g, 0, sizeof(g));
+        g.num_players = (int8_t)np;
+        for (int i = 0; i < np; i++) {
+            g.players[i].status = PLAYER_STATUS_READY;
+            g.players[i].strategy_key = 0;
+            snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
+        }
+        start_game(&g);
+
+        // Two single-card attacks, so there are two slots to cover one at a
+        // time. A throw-in needs its rank on the table already, so this only
+        // works on deals where the attacker holds a pair.
+        int thrown = 0;
+        for (int step = 0; step < 8 && thrown < 2; step++) {
+            const int def = g.defender;
+            int acted = 0;
+            for (int seat = 0; seat < np && !acted; seat++) {
+                if (seat == def || g.players[seat].status != PLAYER_STATUS_IN) continue;
+                calculate_legal_moves(&g, seat, &ml);
+                for (int i = 0; i < ml.n; i++) {
+                    if (ml.moves[i].type != MOVE_ATTACK || ml.moves[i].n_cards != 1) continue;
+                    if (handle_attack(&g, seat, ml.moves[i].cards, 1)) { acted = 1; thrown++; }
+                    break;
+                }
+            }
+            if (!acted) break;
+        }
+        if (thrown < 2) continue;
+
+        // Bubble 1: the attacker's throw-ins. Base 0 - a genesis chain adds all
+        // of itself.
+        MsgEnvelope a;
+        env_init(&a, seed, np);
+        a.phase = MSG_PHASE_LIVE;
+        a.last_actor_seat = (uint8_t)g.logs[g.num_logs - 1].player_idx;
+        a.sent_at = (uint16_t)((time(NULL) - 60) & 0xffff);
+        if (msg_seal(&a, &g, 0, body, sizeof(body), &scratch) != MSG_EOK) continue;
+        const int turn_a = a.turn;
+
+        // Cover ONE, and send: bubble 2, based on bubble 1.
+        const int def = g.defender;
+        if (g.players[def].hand_count < 3) continue;   // keep a card after both covers
+        Card cov1 = { 0 }, cov2 = { 0 };
+        calculate_legal_moves(&g, def, &ml);
+        int did = 0;
+        for (int i = 0; i < ml.n; i++) {
+            if (ml.moves[i].type != MOVE_COVER || ml.moves[i].n_cards != 1) continue;
+            cov1 = ml.moves[i].cards[0];
+            if (handle_cover(&g, def, ml.moves[i].cards, ml.moves[i].attack_cards, 1)) did = 1;
+            break;
+        }
+        if (!did) continue;
+        int turn_b = turn_a;
+        if (!one_bubble) {
+            static unsigned char body_b[1024];
+            MsgEnvelope b;
+            env_init(&b, seed, np);
+            b.phase = MSG_PHASE_LIVE;
+            b.last_actor_seat = (uint8_t)def;
+            b.sent_at = (uint16_t)((time(NULL) - 30) & 0xffff);
+            if (msg_seal(&b, &g, turn_a, body_b, sizeof(body_b), &scratch) != MSG_EOK) continue;
+            turn_b = b.turn;
+        }
+
+        // Cover the OTHER, and send: bubble 3, based on bubble 2. This is the
+        // one to open.
+        calculate_legal_moves(&g, def, &ml);
+        did = 0;
+        for (int i = 0; i < ml.n; i++) {
+            if (ml.moves[i].type != MOVE_COVER || ml.moves[i].n_cards != 1) continue;
+            cov2 = ml.moves[i].cards[0];
+            if (handle_cover(&g, def, ml.moves[i].cards, ml.moves[i].attack_cards, 1)) did = 1;
+            break;
+        }
+        if (!did) continue;
+        if (g.status != GAME_STATUS_PLAYING) continue;   // a bout that ended has nothing left to open
+        static unsigned char body_c[1024];
+        MsgEnvelope c;
+        env_init(&c, seed, np);
+        c.phase = MSG_PHASE_LIVE;
+        c.last_actor_seat = (uint8_t)def;
+        c.sent_at = (uint16_t)(time(NULL) & 0xffff);
+        if (msg_seal(&c, &g, turn_b, body_c, sizeof(body_c), &scratch) != MSG_EOK) continue;
+        unsigned char wire[ENV_CAP];
+        const int n = msg_encode(&c, wire, sizeof(wire));
+        if (n <= 0) continue;
+
+        fprintf(stderr, "twocover: defender seat %d covered %d/%d then %d/%d\n",
+                def, cov1.suit, cov1.value, cov2.suit, cov2.value);
+        fprintf(stderr, "twocover: %s, turns %d -> %d -> %d, bubble claims delta %d\n",
+                one_bubble ? "ONE bubble (control: BOTH covers must animate)"
+                           : "TWO bubbles (only the second cover may animate)",
+                turn_a, turn_b, c.turn, c.n_new);
+        for (int i = 0; i < n; i++) printf("%02x", wire[i]);
+        printf("\n");
+        return;
+    }
+    fprintf(stderr, "no %dp deal posed two coverable throw-ins\n", np);
 }
 
 // `msg_wire_test --fixture` prints sealed envelopes as hex, one per line:
@@ -1249,7 +1547,7 @@ static void print_fatboard(int target, int np) {
         // entry that prints a payload for a HUMAN to open, not a fixture that
         // has to reproduce byte for byte.
         e.sent_at = (uint16_t)(time(NULL) & 0xffff);
-        if (msg_seal(&e, &g, body, sizeof(body), &scratch) != MSG_EOK) continue;
+        if (msg_seal(&e, &g, MSG_NO_BASE, body, sizeof(body), &scratch) != MSG_EOK) continue;
         unsigned char wire[ENV_CAP];
         const int n = msg_encode(&e, wire, sizeof(wire));
         if (n <= 0) continue;
@@ -1298,12 +1596,32 @@ static void print_fixtures(void) {
                 e.phase = MSG_PHASE_LIVE;
                 static unsigned char body[1024];
                 static Game scratch;
-                if (msg_seal(&e, &played, body, sizeof(body), &scratch) != MSG_EOK) continue;
+                if (msg_seal(&e, &played, MSG_NO_BASE, body, sizeof(body), &scratch) != MSG_EOK) continue;
                 unsigned char wire[ENV_CAP];
                 const int n = msg_encode(&e, wire, sizeof(wire));
                 if (n <= 0) continue;
-                printf("%d %d %d ", np, e.turn, e.round);
+                printf("%d %d %d %d %u ", np, e.turn, e.round, e.n_new, e.sent_at);
                 for (int i = 0; i < n; i++) printf("%02x", wire[i]);
+                printf("\n");
+
+                // …and the SAME state sealed as format 3, so the goldens cover
+                // the round-16 header too: a clock, and a bubble delta that says
+                // the last two atoms are this bubble's. A cross-engine fixture
+                // is the only thing that proves the web reads the new bytes the
+                // way the phone wrote them - the two parse the header in
+                // different languages, and a silent disagreement would put a
+                // browser and a phone on different games.
+                MsgEnvelope f;
+                env_init(&f, seed, np);
+                f.phase = MSG_PHASE_LIVE;
+                f.sent_at = 0x1234;
+                static unsigned char body3[1024];
+                if (msg_seal(&f, &played, e.turn - 2, body3, sizeof(body3), &scratch) != MSG_EOK) continue;
+                unsigned char wire3[ENV_CAP];
+                const int n3 = msg_encode(&f, wire3, sizeof(wire3));
+                if (n3 <= 0) continue;
+                printf("%d %d %d %d %u ", np, f.turn, f.round, f.n_new, f.sent_at);
+                for (int i = 0; i < n3; i++) printf("%02x", wire3[i]);
                 printf("\n");
                 emitted = 1;
             }
@@ -1348,6 +1666,11 @@ int main(int argc, char **argv) {
         print_fatboard(argc > 2 ? atoi(argv[2]) : 10, argc > 3 ? atoi(argv[3]) : 2);
         return 0;
     }
+    if (argc > 1 && !strcmp(argv[1], "--twocover")) {
+        print_twocover(argc > 2 ? atoi(argv[2]) : 2,
+                       argc > 3 && !strcmp(argv[3], "one"));
+        return 0;
+    }
     const int games = argc > 1 ? atoi(argv[1]) : 20;
     const uint32_t seed0 = argc > 2 ? (uint32_t)strtoul(argv[2], 0, 10) : 20260716u;
 
@@ -1362,6 +1685,7 @@ int main(int argc, char **argv) {
     test_hostile_body();
     test_pickup_hold();
     test_clock_wire();
+    test_bubble_delta();
     test_size_budget(games * 4, seed0);
     { const int rb = bot_roster_find("robusta");
       probe_v6_midgame(seed0, 2, rb);

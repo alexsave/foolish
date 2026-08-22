@@ -53,6 +53,7 @@ public enum MessageDevBoard {
     private static let appGroup = "group.cards.foolish.msg"
     private static let flagFile = "dev.fatboard"
     private static let seatFile = "dev.seat"
+    private static let replayFile = "dev.replay"
 
     /// The seeded chain, or nil when the flag file is absent - which is the
     /// normal case, including every ordinary DEBUG run.
@@ -83,6 +84,24 @@ public enum MessageDevBoard {
               let n = Int(raw.trimmingCharacters(in: .whitespacesAndNewlines))
         else { return nil }
         return n
+    }
+
+    /// Should a seeded open REPLAY the bubble it opens (round 16)?
+    ///
+    /// Normally no, and that is the older and commoner case: a seeded board is
+    /// a state to act on, not a move anyone just watched, so opening it must not
+    /// animate whatever its last action happened to be (the film would start
+    /// with an animation nobody asked for). The animation IS the subject for the
+    /// bubble-delta work, though - "open the bubble for the second cover and you
+    /// should see only that cover" is a claim about exactly this replay - so the
+    /// presence of `dev.replay` turns it back on for a run that means to film it.
+    ///
+    /// A file, like every other flag here, for the reasons in the header note.
+    public static var seededReplays: Bool {
+        guard let dir = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroup)
+        else { return false }
+        return FileManager.default.fileExists(atPath: dir.appendingPathComponent(replayFile).path)
     }
 
     /// Even-length hex to bytes; nil on anything malformed, so a truncated or

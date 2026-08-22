@@ -729,14 +729,19 @@ int wasm_replay_error_detail(void) { return replay_last_error_detail(); }
 //                  format-3 envelope (msg_wire.c picks the format off the
 //                  clock), and one that leaves it 0 seals format 2 exactly as
 //                  every shipped build does today.
-//   92 n_joins x 66 { u8 seat, u8 name_len, 64 B name }
-#define MSG_BLOB_HDR   92
+//   92  1 n_new  - ROUND 16's bubble delta: how many atoms THIS bubble added,
+//                  0 for a chain that does not say (msg_wire.h). DECODE-ONLY,
+//                  and deliberately: msg_seal derives the delta from the base
+//                  turn this host tracks, so a caller cannot claim a boundary
+//                  its body does not have. Whatever is written here is ignored.
+//   93 n_joins x 66 { u8 seat, u8 name_len, 64 B name }
+#define MSG_BLOB_HDR   93
 // 2 + MSG_MAX_NAME: was 14 (2 + 12) before round-5 B1 raised the name cap to
 // 64 (docs/APP_REVIEW_NOTES.md, msg_wire.h). Unlike the wire encoding (which
 // is length-prefixed per join and needs no slack), this TS bridge blob uses a
 // FIXED-SIZE join slot, so the slot itself must grow with the cap.
 #define MSG_BLOB_JOIN  (2 + MSG_MAX_NAME)
-// 92 + 8 x 66 = 620 B, well inside REPLAY_IO_CAP (32,768 B on the wasm builds
+// 93 + 8 x 66 = 621 B, well inside REPLAY_IO_CAP (32,768 B on the wasm builds
 // that export FMSG) — see wasm_msg_decode/wasm_msg_seal below, which write
 // this blob into g_replay_io.
 #define MSG_BLOB_MAX   (MSG_BLOB_HDR + MSG_MAX_JOINS * MSG_BLOB_JOIN)
@@ -754,6 +759,7 @@ static void msg_blob_write(const MsgEnvelope *e, const uint8_t *digest, unsigned
     else memset(o + 58, 0, SHA256_DIGEST_LEN);
     o[90] = (unsigned char)(e->sent_at & 0xff);
     o[91] = (unsigned char)(e->sent_at >> 8);
+    o[92] = e->n_new;
     for (int i = 0; i < e->n_joins; i++) {
         unsigned char *j = o + MSG_BLOB_HDR + i * MSG_BLOB_JOIN;
         j[0] = e->joins[i].seat;
@@ -778,6 +784,8 @@ static int msg_blob_read(const unsigned char *b, int len, MsgEnvelope *e) {
     memcpy(e->parent8, b + 18, MSG_PARENT_LEN);
     memcpy(e->seed, b + 26, MSG_SEED_LEN);
     e->sent_at = (uint16_t)(b[90] | (b[91] << 8));
+    // b[92] (n_new) is NOT read back: msg_seal derives the delta, see the
+    // layout note above.
     for (int i = 0; i < e->n_joins; i++) {
         const unsigned char *j = b + MSG_BLOB_HDR + i * MSG_BLOB_JOIN;
         e->joins[i].seat = j[0];
@@ -792,6 +800,14 @@ static int msg_blob_read(const unsigned char *b, int len, MsgEnvelope *e) {
 // Rule R's guard input, and the one thing a rebase needs that the resident Game
 // does not carry (a Game has no bout counter; msg_replay derives it).
 static int g_msg_round = -1;
+
+// ROUND 16 - the atom count of the chain the resident game was decoded from, so
+// a seal can say how much of it THIS bubble added (msg_wire.h's n_new). -1 =
+// this host cannot say, which seals the delta as 0 and leaves the receiver to
+// guess the animation boundary exactly as builds before round 16 did. Same
+// shape as g_msg_round above and as ios_api.c's g_msg_base_turn: the fact
+// belongs to the adopted chain, and this is the file that adopts one.
+static int g_msg_base_turn = -1;
 
 // in:  g_replay_io[0 .. in_len) = the envelope bytes
 // out: the unpacked header blob, written back over g_replay_io
@@ -813,6 +829,7 @@ int wasm_msg_decode(int in_len) {
 
     // Safe now: replay is done with the borrowed body.
     g_msg_round = e.round;   // Rule R's guard reads this against a pending move
+    g_msg_base_turn = (int)e.turn;   // what a later seal measures its bubble against
     msg_blob_write(&e, digest, g_replay_io);
     return MSG_BLOB_HDR + e.n_joins * MSG_BLOB_JOIN;
 }
@@ -861,7 +878,7 @@ int wasm_msg_seal(int in_len) {
     // A v6 body is tens of bytes; 512 is far above any measured game (8p ~68 B).
     static unsigned char body[512];
     static Game scratch;
-    const int src = msg_seal(&e, &g_game, body, (int)sizeof body, &scratch);
+    const int src = msg_seal(&e, &g_game, g_msg_base_turn, body, (int)sizeof body, &scratch);
     if (src != MSG_EOK) return src;
     return msg_encode(&e, g_replay_io, REPLAY_IO_CAP);
 }

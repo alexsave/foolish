@@ -348,7 +348,11 @@ final class MessagesViewController: MSMessagesAppViewController {
             summary = FStrings.t("ios.msg.started", ["name": seatName(env?.lastActorSeat ?? -1)])
         } else {
             // An ordinary live move: describe it from the kernel's event stream.
-            let events = await MessageKernel.shared.lastMoveEvents(viewer: -1)
+            // …the move THIS bubble carries, by its own delta (round 16): a
+            // sender who covers one card per bubble gets one cover per caption,
+            // where the kernel's fallback guess would describe both.
+            let events = await MessageKernel.shared.lastMoveEvents(viewer: -1,
+                                                                   atomsBefore: env?.atomsBefore ?? -1)
             summary = MessageSummary.move(events: events, names: names, view: publicView,
                                           actor: env?.lastActorSeat ?? -1)
         }

@@ -1240,7 +1240,8 @@ public struct MessageTableView: View {
                 await playStep { _ in self.pendingCoverLandingFlights(pc) }
                 BoardAnimator.sequenceDepth -= 1
             }
-            let events = await MessageKernel.shared.lastMoveEvents(viewer: controller.mySeat)
+            let events = await MessageKernel.shared.lastMoveEvents(viewer: controller.mySeat,
+                                                                   atomsBefore: controller.animAtomsBefore)
             await runEventStream(events, finalView: new)
         }
     }

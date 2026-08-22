@@ -49,10 +49,11 @@ public final class MessageTurnController: ObservableObject {
     public private(set) var lastChangeWasUndo = false
 
     /// notes 6/12 + round-2 #9: the animations to play when this bubble opens -
-    /// the LAST move on the adopted chain, as the KERNEL's own viewer-aware
-    /// evwire stream (MessageKernel.lastMoveEvents -> fio_replay_last_events_
-    /// packed). Resolved HERE in `begin()`, synchronously before the board's
-    /// first paint, so the view can pre-hide every card this open will move.
+    /// the move THIS BUBBLE carries (its own atoms, by the round-16 bubble
+    /// delta: `baseAtomsBefore`), as the KERNEL's own viewer-aware evwire stream
+    /// (MessageKernel.lastMoveEvents -> fio_replay_last_events_packed).
+    /// Resolved HERE in `begin()`, synchronously before the board's first
+    /// paint, so the view can pre-hide every card this open will move.
     ///
     /// This REPLACES the old GameView-diff reconstruction (openReplayNewHandCards
     /// / openReplayFromLog / ReplayDelta's LOG_* slicing). That diff could not
@@ -272,7 +273,8 @@ public final class MessageTurnController: ObservableObject {
         // surface when I sent — fixed where it happens (HarnessModel.boardEpoch;
         // StagedBubbleRouting in the extension), so there is no second load to
         // replay from in the first place.
-        openReplayEvents = suppressOpenReplay ? [] : await kernel.lastMoveEvents(viewer: mySeat)
+        openReplayEvents = suppressOpenReplay ? []
+            : await kernel.lastMoveEvents(viewer: mySeat, atomsBefore: baseAtomsBefore)
         // Raise the veil BEFORE `refresh()` publishes the board: the paint that
         // first shows this chain must already know which cards are still to fly.
         replayPending = !openReplayEvents.isEmpty
@@ -336,12 +338,17 @@ public final class MessageTurnController: ObservableObject {
     private func rebuildBase() async {
         switch base {
         case .continuation(let payload):
-            // The envelope's own clock comes back with the decode - it is the
-            // one thing the pickup hold measures from, and it belongs to the
-            // CHAIN, not to this device.
-            baseSentAt = (try? await kernel.decode(payload: payload, viewer: mySeat))?.sentAt ?? 0
+            // The envelope's own clock and bubble delta come back with the
+            // decode - the hold measures from the one, the open-replay groups
+            // on the other, and both belong to the CHAIN, not to this device.
+            let env = try? await kernel.decode(payload: payload, viewer: mySeat)
+            baseSentAt = env?.sentAt ?? 0
+            baseTurn = env?.turn ?? 0
+            baseAtomsBefore = env?.atomsBefore ?? -1
         case .genesis(let seed, let players):
-            baseSentAt = 0   // nothing was sent yet, so nothing to wait on
+            baseSentAt = 0        // nothing was sent yet, so nothing to wait on
+            baseTurn = 0          // …and nothing on the chain before my moves
+            baseAtomsBefore = -1  // …and no bubble whose boundary to honour
             try? await kernel.newGame(seed: seed, players: players)
         }
     }
@@ -357,6 +364,29 @@ public final class MessageTurnController: ObservableObject {
     /// pickup hold measures from it; see MessageEnvelope.sentAt.
     private var baseSentAt = 0
     private var holdTicker: Task<Void, Never>?
+
+    /// The atom count of the chain this controller adopted, and the boundary
+    /// the bubble it came in carried (`MessageEnvelope.atomsBefore`; -1 on a
+    /// format-2 chain or a genesis, which means "the kernel guesses").
+    private var baseTurn = 0
+    private var baseAtomsBefore = -1
+
+    /// Where the animation now on screen STARTS, for
+    /// `MessageKernel.lastMoveEvents`: the number of atoms that were on the
+    /// chain before it.
+    ///
+    /// Two things get animated on this board and they have different answers.
+    /// With nothing staged, what is on screen is the bubble I opened, and that
+    /// bubble states its own boundary. Once I have staged moves the resident
+    /// game is that bubble PLUS my actions, so the boundary is the whole chain
+    /// I adopted - everything past it is mine, however many atoms the codec
+    /// made of it (which is exactly why this is a base and not a count: a
+    /// staged action is not reliably one atom).
+    ///
+    /// Getting it wrong is not a crash, it is a re-run: too high a base drops
+    /// the front of my own turn, too low a one replays the move before it -
+    /// which is the very bug the delta exists to kill.
+    public var animAtomsBefore: Int { pending.isEmpty ? baseAtomsBefore : baseTurn }
 
     public func refresh() async {
         view = await kernel.residentView(viewer: mySeat)

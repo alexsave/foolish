@@ -14,8 +14,8 @@
 //
 //   off  size  field
 //   0    1     magic      0xF7
-//   1    1     format     2, or 3 for the same thing plus a send clock
-//                          (1 was cut before shipping; see THE BODY below)
+//   1    1     format     2, or 3 for the same thing plus a send clock and a
+//                          bubble delta (1 was cut before shipping; see THE BODY)
 //   2    1     flags      bit0 fair_deal, bit1 gzip-body,
 //                          bit2 = legacy (was passing_allowed in 1.0(3); tolerated
 //                          on decode, never set now), bits3-7 reserved=0
@@ -29,12 +29,18 @@
 //   18   8     parent8    first 8 bytes of SHA-256(previous envelope), 0 at creation
 //   26   32    seed       -> game_set_deal_seed_bytes(seed, 32)
 //   58   2     sent_at    FORMAT 3 ONLY: unix seconds mod 65536 (0 = none)
-//   58   1     n_joins    (60 on format 3)
+//   60   1     n_new      FORMAT 3 ONLY: atoms THIS bubble added (0 = unknown)
+//   58   1     n_joins    (61 on format 3)
 //   59   var   joins      n_joins x { u8 seat, u8 name_len<=64, name utf8 }
 //   var  2     n_actions  u16, the action count the body must yield
 //   var  var   body       the v6 replay code — see THE BODY
 //
-// THE BODY is a v6 replay code (replay.h) — the codec that already ships. It
+// THE BODY is a v6-family replay code (replay.h) - the codec that already
+// ships. "v6" here is the DECODER FAMILY, not the version byte the producer
+// writes: today's encoder stamps v7 (REPLAY_FORMAT_VERSION_V7), which is v6
+// plus a pass-mode bit and is otherwise byte-for-byte v6, and every entry point
+// that reads one is still named _v6 because it accepts both. What this file
+// counts - atoms - is the same in either. It
 // entropy-codes each action as an index into that state's legal-move menu, so an
 // action costs ~1-2 bits instead of the ~34 a raw frame spends. Measured over
 // 240 full games per size: 34 B at 2p, 45 B at 4p, 68 B at 8p — 8x to 18x
@@ -103,7 +109,12 @@
 // size budget by 1.33x at 4 players, permanently. The version byte keeps its
 // grave so nothing re-uses the number. See docs/IMESSAGE_BODY_CODEC.md.
 #define MSG_FORMAT_V6    2   // body = a v6 replay code, no clock
-// Format 3 = format 2 plus a two-byte SEND CLOCK, and nothing else. Round 16:
+// Format 3 = format 2 plus a two-byte SEND CLOCK and a one-byte BUBBLE DELTA,
+// the two things round 16 found this wire could not answer. Both are additions
+// to the header, and both are 0 on a format-2 chain, which is exactly what
+// "this bubble does not say" means for each of them.
+//
+// THE CLOCK. Round 16:
 // the defender may not pick up within MSG_PICKUP_HOLD_S seconds of an attack,
 // so that the attackers get a fair chance to throw more in — and answering
 // "how long ago was this attack sent" needs a time this wire never carried.
@@ -122,6 +133,42 @@
 // bubble outright (MSG_EFORMAT). The other direction is preserved on purpose —
 // this build reads format 2 fine, as a chain with no clock, which by
 // `msg_pickup_hold_remaining`'s contract means no hold at all.
+//
+// THE BUBBLE DELTA (`n_new`) is how many atoms THIS bubble added to the chain -
+// `turn` minus the turn of the bubble it replies to. A chain only ever appends,
+// so that names a suffix, and "the last n_new atoms" is the move this bubble
+// carries. Without it a receiver can only GUESS the boundary, and the guess it
+// used to make (the trailing run of steps by one seat) is wrong in two ways the
+// owner hit in play: a defender who covers, sends, covers, sends puts two cover
+// atoms on the chain that are indistinguishable from two staged at once, so
+// opening the second bubble replays both; and a cover that ends the bout
+// without a ROUND_END atom (the defender's last card - handle_cover discards
+// inline) sits directly before that same seat's opening attack of the next
+// bout, so replaying the attack replays the cover with it.
+//
+// ONE BYTE, and a DELTA rather than an index. The alternative considered was a
+// per-atom boundary marker inside the v6 body, which is cumulative (the body
+// carries the whole game, so it grows ~1 bit per atom per bubble, 15-30% on a
+// measured body by the end of a game) and would re-point every v6 code the
+// website, the share links and the Oracle already read. An absolute parent-turn
+// index would need two bytes to match `turn`; the delta fits in one.
+//
+// WHY A WHOLE BYTE for a number that small, when flags has five reserved bits.
+// Because the number is not that small. A staged turn is not bounded by six
+// table slots - the attack limit is the DEFENDER'S HAND (MAX_BATTLES 32, 64 on
+// wasm: "a defender holding 33+ cards can legally face 33+ simultaneous
+// attacks"), so a defender who just picked up a fat pile can legitimately stage
+// ten or twenty covers into one bubble. A nibble would truncate real play and
+// five bits would sit right against it; the deck's 36 cards are the true
+// ceiling and a byte clears them with room. What the byte costs is ~1.6 base32
+// chars on a ~240-char bubble against a 1,000-char budget - less than the
+// header's remaining reserve is worth (owner's call, round 16).
+//
+// Note it does not bound the GAME: a 300-atom game is 300 bubbles of delta 1,
+// and the total stays in `turn`, a u16. A delta that would not fit the byte
+// seals as 0 - "this bubble does not say" - rather than as a clamp, because 255
+// would name a suffix starting INSIDE the bubble, and a confident wrong
+// boundary is worse than an honest missing one.
 #define MSG_FORMAT_CLOCK 3
 
 // The hold itself, in seconds (owner: "you cannot pickup within 15 seconds of
@@ -151,11 +198,20 @@
 #define MSG_SEED_LEN     FOOLISH_SEED_LEN   // 32 — the ChaCha key width
 #define MSG_PARENT_LEN   8
 #define MSG_HEADER_LEN   59                 // format 2: through n_joins
-// Format 3 puts its two clock bytes at 58, AFTER the seed and BEFORE n_joins,
-// so every offset a format-2 reader knows is unchanged and the two decoders
-// share one prefix. n_joins lands at 60.
+// Format 3 puts its two clock bytes at 58 and its delta byte at 60, AFTER the
+// seed and BEFORE n_joins, so every offset a format-2 reader knows is unchanged
+// and the two decoders share one prefix. n_joins lands at 61.
 #define MSG_CLOCK_OFF    58
-#define MSG_HEADER_LEN_CLOCK 61
+#define MSG_NEW_OFF      60
+#define MSG_HEADER_LEN_CLOCK 62
+// The delta's ceiling; past it a seal writes 0 ("does not say") rather than a
+// clamp - see the MSG_FORMAT_CLOCK note.
+#define MSG_MAX_NEW      255
+// msg_seal's `base_turn` for a host that cannot say where the parent chain
+// ended - the seal then writes no delta and the receiver guesses, exactly as
+// every build before round 16 did. A GENESIS is not this: it passes 0, because
+// a chain with no parent really did add all of itself.
+#define MSG_NO_BASE      (-1)
 
 // A full game is ~60-90 actions at 2 players (spec §4.4); 8-player games run
 // longer. 1024 is far above any reachable game and bounds the decode walk.
@@ -225,6 +281,19 @@ typedef struct {
     // against a wire whose whole design is bytes-per-bubble.
     uint16_t sent_at;
 
+    // How many atoms THIS bubble added to the chain - `turn` minus the turn of
+    // the envelope it continues. 0 means the bubble does not say: a format-2
+    // chain, a genesis/lobby seal with nothing in it, or a re-seal that staged
+    // no new action. Readers treat 0 as "guess" (see
+    // fio_replay_last_events_packed), which is what every build did before this
+    // field existed, so an old chain animates exactly as it always did.
+    //
+    // Set by msg_seal from the base turn it is handed, never by a caller: like
+    // `turn` and `round` it is a claim about the body, and a producer that
+    // could write it freely could emit a bubble that animates a move it did not
+    // carry. Bounded by `turn` for the same reason (validate_fields).
+    uint8_t  n_new;
+
     int      n_joins;
     MsgJoin  joins[MSG_MAX_JOINS];
 
@@ -236,12 +305,21 @@ typedef struct {
     const unsigned char *actions;
 } MsgEnvelope;
 
-// THE PRODUCER. Fills in `e`'s body and the three header fields that describe
-// it — `n_actions`, `turn`, `round` — for `g`, a game dealt from `e->seed` and
-// played. The caller sets the rest (game_id, phase, seed, joins, parent8,
-// last_actor_seat). Returns MSG_EOK or a negative MSG_E*; `body` (>= 512 B is
-// ample; a full 8p game measures ~68) receives the code and `e->actions` is left
-// borrowing it, so it must outlive `e`.
+// THE PRODUCER. Fills in `e`'s body and the four header fields that describe
+// it - `n_actions`, `turn`, `round`, `n_new` - for `g`, a game dealt from
+// `e->seed` and played. The caller sets the rest (game_id, phase, seed, joins,
+// parent8, last_actor_seat). Returns MSG_EOK or a negative MSG_E*; `body`
+// (>= 512 B is ample; a full 8p game measures ~68) receives the code and
+// `e->actions` is left borrowing it, so it must outlive `e`.
+//
+// `base_turn` is the `turn` of the envelope this seal CONTINUES - the parent
+// chain's atom count - or a negative for "this host cannot say", which seals
+// n_new = 0 and leaves the receiver to guess the boundary as it always did. A
+// genesis passes 0: everything on the chain is new. It is an input rather than
+// something derived here because it is the one fact the body cannot tell us -
+// the body is the whole game, and where the PREVIOUS bubble ended is not in it.
+// The delta itself is still derived (turn - base_turn), so the same rule holds
+// as for turn/round: a host cannot claim a boundary its body does not have.
 //
 // It derives those fields by DECODING THE BODY IT JUST WROTE and replaying it
 // into `scratch`, rather than by counting what the caller thinks it played.
@@ -262,8 +340,8 @@ typedef struct {
 // MSG_EBODY means the v6 producer refused — it rejects a game whose log buffer
 // overflowed (num_logs >= MAX_LOGS), which was measured on ~10% of full 8-player
 // games and never at 2-4p. See docs/IMESSAGE_BODY_CODEC.md §4.
-int msg_seal(MsgEnvelope *e, const Game *g, unsigned char *body, int body_cap,
-             Game *scratch);
+int msg_seal(MsgEnvelope *e, const Game *g, int base_turn,
+             unsigned char *body, int body_cap, Game *scratch);
 
 // Parse + bounds-check `in` into `out`. Returns MSG_EOK or a negative MSG_E*.
 // Never reads past `in_len`, never allocates, never builds a Game. On success

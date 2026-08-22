@@ -238,13 +238,21 @@ int fio_replay_decode_packed(const char *code, unsigned char *out, int cap);
 // Delete once the last JSON consumer is off it.
 int fio_replay_events_json(const char *code, int viewer, char *out, int cap);
 
-// The animations of the chain's LAST TURN, as PACKED evwire frames (each
+// The animations of the chain's LAST BUBBLE, as PACKED evwire frames (each
 // preceded by a u16 LE length, in play order), masked for `viewer` - what an
-// iMessage receiver sees on opening a bubble. THE KERNEL decides the group: the
-// trailing run of replay steps by ONE acting seat, which is what a bubble
-// carries (a player may stage several actions before sending, and a double
-// cover must replay BOTH). The client passes only the encoded chain, never
-// "where I last looked". The viewer's own drawn/picked-up cards carry real
+// iMessage receiver sees on opening a bubble. THE KERNEL decides the group from
+// `atoms_before`: how many atoms sat on the chain BEFORE this bubble, so the
+// group is every step after them. A receiver reads it off the envelope (`turn`
+// minus the round-16 bubble delta, msg_wire.h's n_new); a sender animating its
+// own move passes the turn of the chain it adopted, which is the same boundary
+// from the other side and needs no count of what its moves became. A player may
+// stage several actions before sending, so a double cover replays BOTH - and a
+// cover SENT SEPARATELY from the next one does not. Pass -1 for a chain that
+// cannot say (format 2, sealed before round 16) and the kernel falls back to
+// its old guess, the trailing run of steps by one acting seat. Never "where I
+// last looked": a device's cache is not a property of the bubble, so a wipe or
+// a reinstall must not change what animates. The viewer's own
+// drawn/picked-up cards carry real
 // identities, everyone else's are hidden - the same packed evwire live play
 // broadcasts and the website renders, so a reopen animates through the kernel,
 // not a client-side view diff. No JSON (§zero-JSON): Swift reads them with
@@ -252,7 +260,7 @@ int fio_replay_events_json(const char *code, int viewer, char *out, int cap);
 // negative - including when `cap` could not hold the whole turn, which is an
 // error rather than a silently truncated animation. v6 only (v5 hides the
 // deal); see fio_last_replay_error.
-int fio_replay_last_events_packed(const char *code, int viewer,
+int fio_replay_last_events_packed(const char *code, int viewer, int atoms_before,
                                   unsigned char *out, int cap);
 
 // Detail of the last replay error (a REPLAY_E* code from replay.h), else 0.

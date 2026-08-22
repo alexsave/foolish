@@ -711,7 +711,7 @@ export function kernelReplayEncodeV6FromGame(
 // The unpacked header — the private ABI msg_blob_write/msg_blob_read define in
 // c/wasm/wasm_api.c. Fixed offsets, fixed-size join slots.
 // Round 16 added the two send-clock bytes at 90, so the joins start at 92.
-const MSG_BLOB_HDR = 92;
+const MSG_BLOB_HDR = 93;
 // 2 + the wire's MSG_MAX_NAME: was 14 (2 + 12) before round-5 B1 raised the
 // name cap to 64 bytes (docs/APP_REVIEW_NOTES.md, c/src/msg_wire.h) — must
 // match wasm_api.c's MSG_BLOB_JOIN or this bridge mis-parses every join.
@@ -737,6 +737,13 @@ export interface MsgEnvelope {
     /// carries none (format 2). Written as well as read: sealing with a
     /// non-zero clock is what makes an envelope format 3.
     sent_at: number;
+    /// ROUND 16: the bubble delta - how many atoms THIS bubble added to the
+    /// chain, or 0 for a chain that does not say (c/src/msg_wire.h). It is what
+    /// tells a client to animate only the move it just opened instead of that
+    /// move plus the one before it. READ-ONLY across this bridge: the kernel
+    /// derives it at seal time from the chain it decoded, so anything written
+    /// here is ignored (see wasm_api.c's blob layout).
+    n_new: number;
     joins: MsgJoin[];
 }
 
@@ -786,6 +793,7 @@ function readBlob(buf: Uint8Array, base: number, len: number): MsgEnvelope {
         seed: b.slice(26, 58),
         digest: b.slice(58, 90),
         sent_at: dv.getUint16(90, true),
+        n_new: b[92],
         joins,
     };
 }
@@ -802,6 +810,8 @@ function writeBlob(e: MsgEnvelope): Uint8Array {
     out.set(e.seed.subarray(0, 32), 26);
     // 58..90 is the digest: decode-only (an envelope cannot carry its own).
     dv.setUint16(90, e.sent_at & 0xffff, true);
+    // 92 is n_new: decode-only too (msg_seal derives the delta, see bots.ts's
+    // MsgEnvelope.n_new), so it is left 0 here rather than echoed back.
     e.joins.forEach((j, i) => {
         const o = MSG_BLOB_HDR + i * MSG_BLOB_JOIN;
         const name = new TextEncoder().encode(j.name);
@@ -1067,14 +1077,16 @@ export function kernelMsgPickupHold(seat: number, sentAt: number, now: number): 
 }
 
 export function kernelMsgSeal(
-    header: Omit<MsgEnvelope, 'digest' | 'turn' | 'round' | 'format' | 'sent_at'>
+    header: Omit<MsgEnvelope, 'digest' | 'turn' | 'round' | 'format' | 'sent_at' | 'n_new'>
           & { sent_at?: number },
 ): Uint8Array {
     const ex = bots();
     if (!ex.wasm_msg_seal) throw new Error('kernelMsgSeal: module has no FMSG support');
-    // format 2 here is a placeholder: msg_seal picks the real one off the clock
-    // (a non-zero sent_at seals format 3), so the caller never states it twice.
-    const blob = writeBlob({ ...header, sent_at: header.sent_at ?? 0,
+    // format 2 here is a placeholder: msg_seal picks the real one off what the
+    // header ends up carrying (a clock, or a bubble delta, seals format 3), so
+    // the caller never states it twice. n_new is 0 for the same reason the
+    // digest is: the kernel derives it, from the chain wasm_msg_decode adopted.
+    const blob = writeBlob({ ...header, sent_at: header.sent_at ?? 0, n_new: 0,
                              format: 2, turn: 0, round: 0, digest: new Uint8Array(32) });
     const base = ex.wasm_replay_io_ptr();
     __mem(ex).set(blob, base);
