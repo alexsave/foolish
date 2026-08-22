@@ -1333,7 +1333,14 @@ public struct MessageTableView: View {
         // wait so its discard ghost covers the fading table card at once (#2).
         try? await Task.sleep(nanoseconds: openReplay ? 100_000_000 : 16_000_000)
 
-        for ev in events {
+        for group in Self.parallelGroups(events) {
+            // Every step below is written against ONE event; a group of several
+            // is a MULTI-CARD COVER, whose cards must fly together (see
+            // `parallelGroups`). `ev` leads the group for everything that reads
+            // one event - the make-room, the deck override, the sweep marks -
+            // and only the FLIGHTS are built from all of them, which is exactly
+            // the difference between "at the same time" and "one after another".
+            let ev = group[0]
             // Bug 9: a newer sequence has taken over (a live bout-end played on
             // top of a replay still in flight). Stop stepping the stale one
             // rather than interleaving two sets of flights through one animator
@@ -1384,11 +1391,23 @@ public struct MessageTableView: View {
             default: break
             }
             await playStep { lastChance in
-                let f = self.openReplayFlights(ev, view: view, lastChance: lastChance)
-                if let f { AnimLog.say("stream#\(run) step \(ev.kind.map(String.init(describing:)) ?? "?")@\(ev.seat) flights=\(f.count) [\(f.map(\.id).joined(separator: ","))]") }
+                // One builder call per event, one flight list for the group: the
+                // animator runs a list in PARALLEL, so a two-card cover leaves
+                // the hand as one movement. A builder that cannot resolve yet
+                // returns nil for the whole group, so the step retries as a
+                // unit and the pair can never split across two beats.
+                var f: [Flight] = []
+                for e in group {
+                    guard let part = self.openReplayFlights(e, view: view, lastChance: lastChance)
+                    else { return nil }
+                    f.append(contentsOf: part)
+                }
+                AnimLog.say("stream#\(run) step \(ev.kind.map(String.init(describing:)) ?? "?")@\(ev.seat) n=\(group.count) flights=\(f.count) [\(f.map(\.id).joined(separator: ","))]")
                 return f
             }
-            if let s = ev.state {
+            // The board settles to the LAST event of the group: the intermediate
+            // states inside one move are boards nobody was ever shown.
+            if let s = group.last?.state ?? ev.state {
                 deckCountOverride = s.deckCount
                 discardCountOverride = s.discardCount
                 for p in s.players where p.seat != controller.mySeat { seatCountOverride[p.seat] = p.handCount }
@@ -1446,6 +1465,57 @@ public struct MessageTableView: View {
     /// Poll (up to ~1.2s) for a step's frames to be ready, then play it and await
     /// the animation. `build` returns nil (frames not ready — retry), [] (nothing to
     /// animate), or the flights.
+    /// Split a turn's events into the steps that PLAY, which is not the same as
+    /// the events that happened.
+    ///
+    /// One step, one beat of animation. Almost every event is its own step, and
+    /// there is exactly one exception: a defender covering SEVERAL CARDS IN ONE
+    /// MOVE. The kernel emits a COVER event per card (one engine hook per pair,
+    /// each carrying its own board snapshot), so a two-card cover arrives as two
+    /// events - and played as two steps, the receiver watches the cards leave
+    /// the hand one after the other, while the player who made the move saw them
+    /// go together. Same move, two different animations, which is the defect.
+    ///
+    /// WHAT THE CHAIN CANNOT SAY, and why this groups by adjacency. The obvious
+    /// rule would be "group the covers that came from one MOVE" - but the move
+    /// boundary is not on the chain to group by. A v6 body records atoms, and
+    /// the codec spends one COVER atom per card, so a defender who covered two
+    /// cards at once and a defender who covered twice produce the same atoms in
+    /// the same order, byte for byte. (This is the same blindness round 16 met
+    /// at the bubble boundary, one level down, and it is why that one had to be
+    /// answered by a new header field rather than by reading the body harder.)
+    ///
+    /// So the boundary this uses is THE BUBBLE, which the chain does say: these
+    /// events are one bubble's (`lastMoveEvents` returns exactly what this
+    /// bubble added), and consecutive covers by one seat inside it fly together.
+    /// Two covers sent as two bubbles are two separate replays and never meet
+    /// here, which is the case the owner cared about - "that is ok if they are
+    /// in fact in the same bubble, but if they are not in the same bubble..."
+    /// The residual is a defender who staged two covers and sent them as one
+    /// bubble: those now fly together, having arrived together. Reading it any
+    /// other way would need a move marker in every replay code ever written.
+    ///
+    /// CONSECUTIVE, so a bout boundary still splits: a cover that closed a bout
+    /// puts a DISCARD between it and the next cover, which ends the run.
+    ///
+    /// Only COVER groups. Attacks and passes already carry every card of the
+    /// move in one event; deals and refills are per seat; and a bout's closing
+    /// DISCARD/REFILL are the cover's consequences, not part of the same
+    /// movement - they keep their own beats, which is what makes the counts
+    /// settle in the right order.
+    static func parallelGroups(_ events: [GameEvent]) -> [[GameEvent]] {
+        var out: [[GameEvent]] = []
+        for ev in events {
+            if ev.kind == .cover, let head = out.last?.first,
+               head.kind == .cover, head.seat == ev.seat {
+                out[out.count - 1].append(ev)
+            } else {
+                out.append([ev])
+            }
+        }
+        return out
+    }
+
     private func playStep(_ build: (_ lastChance: Bool) -> [Flight]?) async {
         for i in 0..<26 {
             // Round-7 #1: the final poll passes `lastChance` so a builder that
