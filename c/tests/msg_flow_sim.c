@@ -207,7 +207,7 @@ static void open_surface(int d, const uint8_t *tapped, int tlen, int sender, int
             if (free_ < 0) return;
             if (name_taken(&we, dname[d])) return;            // the join gate
             uint8_t out[PLEN];
-            int n = fio_msg_encode(0, free_, GID, we.digest, jjson(&we, free_, dname[d]), out, PLEN);
+            int n = fio_msg_encode(0, free_, GID, we.digest, jjson(&we, free_, dname[d]), 0 /* no send clock in this harness */, out, PLEN);
             if (n <= 0) { printf("trial %d: join seal err=%d\n", trial, fio_last_msg_error()); fails++; return; }
             put_row(d, free_, dname[d], out, n);
             if (!evaporate) deliver(out, n, d);
@@ -217,7 +217,7 @@ static void open_surface(int d, const uint8_t *tapped, int tlen, int sender, int
             if (dec(win, wlen, &we) <= 0) return;
             if (fio_reseat_game(we.n_joins) != 0) { fails++; return; }
             uint8_t out[PLEN];
-            int n = fio_msg_encode(2, seat, GID, we.digest, jjson(&we, -1, ""), out, PLEN);
+            int n = fio_msg_encode(2, seat, GID, we.digest, jjson(&we, -1, ""), 0 /* no send clock in this harness */, out, PLEN);
             if (n <= 0) { printf("trial %d: start seal err=%d\n", trial, fio_last_msg_error()); fails++; return; }
             Env le; if (dec(out, n, &le) <= 0) { fails++; return; }
             put_row(d, seat, dname[d], out, n);
@@ -261,7 +261,7 @@ static void act_maybe(int d) {
     if (type == 1) for (int i = 0; i < ncards; i++) aw[an++] = q[2 + ncards + i];
     if (fio_apply_awire(ui[d].viewer, aw, an) != 0) return;
     uint8_t out[PLEN];
-    int len = fio_msg_encode(2, ui[d].viewer, GID, e.digest, jjson(&e, -1, ""), out, PLEN);
+    int len = fio_msg_encode(2, ui[d].viewer, GID, e.digest, jjson(&e, -1, ""), 0 /* no send clock in this harness */, out, PLEN);
     if (len <= 0) return;
     Env ne; if (dec(out, len, &ne) <= 0) return;
     put_row(d, ui[d].viewer, dname[d], out, len);
@@ -286,7 +286,7 @@ int main(int argc, char **argv) {
         if (fio_new_game(seed, 32, CAP) != 0) return 1;
         uint8_t zeros[8] = {0}, w0[PLEN];
         char j0[64]; snprintf(j0, sizeof j0, "[{\"seat\":0,\"name\":\"%s\"}]", dname[0]);
-        int l0 = fio_msg_encode(0, 0, GID, zeros, j0, w0, PLEN);
+        int l0 = fio_msg_encode(0, 0, GID, zeros, j0, 0 /* no send clock in this harness */, w0, PLEN);
         if (l0 <= 0) return 1;
         put_row(0, 0, dname[0], w0, l0);
         deliver(w0, l0, 0);

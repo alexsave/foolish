@@ -723,14 +723,20 @@ int wasm_replay_error_detail(void) { return replay_last_error_detail(); }
 //                  these lexicographically, and parent8 is a parent's first 8.
 //                  Decode-only: msg_seal ignores it (an envelope cannot contain
 //                  its own digest).
-//   90 n_joins x 66 { u8 seat, u8 name_len, 64 B name }
-#define MSG_BLOB_HDR   90
+//   90  2 sent_at — ROUND 16's send clock, unix seconds mod 65536; 0 on a
+//                  format-2 chain, which carries none. Unlike the digest this
+//                  one goes BOTH ways: a caller that writes it here seals a
+//                  format-3 envelope (msg_wire.c picks the format off the
+//                  clock), and one that leaves it 0 seals format 2 exactly as
+//                  every shipped build does today.
+//   92 n_joins x 66 { u8 seat, u8 name_len, 64 B name }
+#define MSG_BLOB_HDR   92
 // 2 + MSG_MAX_NAME: was 14 (2 + 12) before round-5 B1 raised the name cap to
 // 64 (docs/APP_REVIEW_NOTES.md, msg_wire.h). Unlike the wire encoding (which
 // is length-prefixed per join and needs no slack), this TS bridge blob uses a
 // FIXED-SIZE join slot, so the slot itself must grow with the cap.
 #define MSG_BLOB_JOIN  (2 + MSG_MAX_NAME)
-// 90 + 8 x 66 = 618 B, well inside REPLAY_IO_CAP (32,768 B on the wasm builds
+// 92 + 8 x 66 = 620 B, well inside REPLAY_IO_CAP (32,768 B on the wasm builds
 // that export FMSG) — see wasm_msg_decode/wasm_msg_seal below, which write
 // this blob into g_replay_io.
 #define MSG_BLOB_MAX   (MSG_BLOB_HDR + MSG_MAX_JOINS * MSG_BLOB_JOIN)
@@ -746,6 +752,8 @@ static void msg_blob_write(const MsgEnvelope *e, const uint8_t *digest, unsigned
     memcpy(o + 26, e->seed, MSG_SEED_LEN);
     if (digest) memcpy(o + 58, digest, SHA256_DIGEST_LEN);
     else memset(o + 58, 0, SHA256_DIGEST_LEN);
+    o[90] = (unsigned char)(e->sent_at & 0xff);
+    o[91] = (unsigned char)(e->sent_at >> 8);
     for (int i = 0; i < e->n_joins; i++) {
         unsigned char *j = o + MSG_BLOB_HDR + i * MSG_BLOB_JOIN;
         j[0] = e->joins[i].seat;
@@ -769,6 +777,7 @@ static int msg_blob_read(const unsigned char *b, int len, MsgEnvelope *e) {
     e->turn = (uint16_t)(b[16] | (b[17] << 8));
     memcpy(e->parent8, b + 18, MSG_PARENT_LEN);
     memcpy(e->seed, b + 26, MSG_SEED_LEN);
+    e->sent_at = (uint16_t)(b[90] | (b[91] << 8));
     for (int i = 0; i < e->n_joins; i++) {
         const unsigned char *j = b + MSG_BLOB_HDR + i * MSG_BLOB_JOIN;
         e->joins[i].seat = j[0];
@@ -855,6 +864,16 @@ int wasm_msg_seal(int in_len) {
     const int src = msg_seal(&e, &g_game, body, (int)sizeof body, &scratch);
     if (src != MSG_EOK) return src;
     return msg_encode(&e, g_replay_io, REPLAY_IO_CAP);
+}
+
+// ROUND 16 — the pickup hold, on the resident game (the one wasm_msg_decode
+// replayed). Seconds `seat` must still wait before it may pick up; 0 = now.
+// Pure relay of msg_pickup_hold_remaining, exported so the web asks the same
+// rule the phone does rather than re-deriving it in TS.
+int wasm_msg_pickup_hold(int seat, int sent_at, int now) {
+    return msg_pickup_hold_remaining(&g_game, seat,
+                                     (uint16_t)(sent_at & 0xffff),
+                                     (uint16_t)(now & 0xffff));
 }
 
 // ---------- animation core (anim_plan.h) --------------------------------------

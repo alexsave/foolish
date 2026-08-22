@@ -287,7 +287,10 @@ int fio_last_replay_error(void);
 // parses it with MessageEnvelope.decode) — no JSON, no embedded state / moves
 // (read those via fio_state_packed / fio_legal_packed). Layout:
 //   phase(1) n_players(1) last_actor_seat(1) round(1) turn(u16 LE) game_id(u64 LE)
-//   parent8(8) digest(32) n_joins(1) then n_joins*{seat(1) name_len(1) name[]}.
+//   parent8(8) digest(32) sent_at(u16 LE) n_joins(1)
+//   then n_joins*{seat(1) name_len(1) name[]}.
+// ROUND 16: sent_at is the envelope's send clock (unix seconds mod 65536); 0
+// when the chain is format 2 and carries none, which means no pickup hold.
 // Bytes written or negative (FIO_EMSG → fio_last_msg_error).
 int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, int cap);
 
@@ -305,11 +308,28 @@ int fio_msg_last_body_version(void);
 // Cyrillic name) and are the only identity a payload carries (no participant
 // UUID ever goes in — they do not transfer across devices, §6).
 //
+// `sent_at` is the SEND CLOCK: this device's unix seconds mod 65536, which seals
+// a format-3 envelope, or 0 to seal format 2 exactly as before. It is a
+// parameter and not a time() call because the kernel must answer the same for
+// the same bytes on every device (round 16; see msg_wire.h).
+//
 // Returns bytes written to `out`, or negative. FIO_ENOSEED if this game was not
 // dealt from a wide seed (a serverless game cannot be rebuilt without one).
 int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
                    const uint8_t parent8[8], const char *joins_json,
-                   uint8_t *out, int cap);
+                   int sent_at, uint8_t *out, int cap);
+
+// ROUND 16 — the pickup hold, asked of the RESIDENT game (the one the last
+// fio_msg_decode_packed replayed). Seconds `seat` must still wait before it may
+// pick up: 0 when it may pick up now. `sent_at` is the clock that came back in
+// the packed blob, `now` the caller's own unix seconds mod 65536.
+//
+// The UI hides the Pickup button while this is non-zero AND the stage path
+// refuses the move, so the rule lives in one place (msg_wire.c) and neither
+// half can drift. It is deliberately NOT part of the legal-move menu: the v6
+// body codes each action as an index into that menu, so a menu that changed
+// with the clock would re-point every replay code ever written.
+int fio_msg_pickup_hold(int seat, int sent_at, int now);
 // This one entry seals every phase. A 0-action game — a WAITING lobby (§5.2) or
 // the last-joiner LIVE handoff that "applies nothing" — seals to an empty body:
 // msg_seal detects "no opening attack logged" and emits no v6 body, since the v6

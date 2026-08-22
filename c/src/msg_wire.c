@@ -64,7 +64,11 @@ static int name_is_clean(const char *s, int len) {
 int msg_last_body_version = -1;
 
 static int validate_fields(const MsgEnvelope *e) {
-    if (e->format != MSG_FORMAT_V6) return MSG_EFORMAT;
+    if (e->format != MSG_FORMAT_V6 && e->format != MSG_FORMAT_CLOCK) return MSG_EFORMAT;
+    // The clock is what format 3 IS, so the two must agree in both directions:
+    // a format-2 envelope carrying a stamp would encode to bytes that decode
+    // back without it, and the wire must round-trip to itself.
+    if (e->format == MSG_FORMAT_V6 && e->sent_at != 0) return MSG_EFORMAT;
     // bit2 (0x04) is the LEGACY passing-allowed marker 1.0(3) briefly set on
     // every seal. The pass/perevod mode now lives in the replay code (the v7
     // bit, replay.h), so this build no longer sets or reads it - but bit2 is
@@ -119,7 +123,12 @@ static int validate_fields(const MsgEnvelope *e) {
 int msg_decode(const unsigned char *in, int in_len, MsgEnvelope *out) {
     if (in_len < MSG_HEADER_LEN) return MSG_ESHORT;
     if (in[0] != MSG_MAGIC) return MSG_EMAGIC;
-    if (in[1] != MSG_FORMAT_V6) return MSG_EFORMAT;
+    if (in[1] != MSG_FORMAT_V6 && in[1] != MSG_FORMAT_CLOCK) return MSG_EFORMAT;
+    // Format 3 is format 2 with two more header bytes at MSG_CLOCK_OFF, so the
+    // whole prefix below is read the same way and only n_joins onward shifts.
+    const int has_clock = (in[1] == MSG_FORMAT_CLOCK);
+    const int hdr_len   = has_clock ? MSG_HEADER_LEN_CLOCK : MSG_HEADER_LEN;
+    if (in_len < hdr_len) return MSG_ESHORT;
 
     memset(out, 0, sizeof(*out));
     out->format          = in[1];
@@ -134,13 +143,15 @@ int msg_decode(const unsigned char *in, int in_len, MsgEnvelope *out) {
     memcpy(out->parent8, in + 18, MSG_PARENT_LEN);
     memcpy(out->seed, in + 26, MSG_SEED_LEN);
 
-    const int n_joins = in[58];
+    out->sent_at = has_clock ? rd16(in + MSG_CLOCK_OFF) : 0;
+
+    const int n_joins = in[has_clock ? MSG_CLOCK_OFF + 2 : MSG_CLOCK_OFF];
     // Bound the count BEFORE the loop writes: n_joins is attacker-controlled
     // and joins[] is fixed at MSG_MAX_JOINS.
     if (n_joins < 1 || n_joins > MSG_MAX_JOINS) return MSG_EJOINS;
     out->n_joins = n_joins;
 
-    int off = MSG_HEADER_LEN;
+    int off = hdr_len;
     for (int i = 0; i < n_joins; i++) {
         if (off + 2 > in_len) return MSG_ESHORT;
         const int seat = in[off];
@@ -185,7 +196,10 @@ int msg_encode(const MsgEnvelope *e, unsigned char *out, int out_cap) {
 
     if (e->actions_len > 0 && !e->actions) return MSG_EACTION;
 
-    int need = MSG_HEADER_LEN;
+    const int has_clock = (e->format == MSG_FORMAT_CLOCK);
+    const int hdr_len   = has_clock ? MSG_HEADER_LEN_CLOCK : MSG_HEADER_LEN;
+
+    int need = hdr_len;
     for (int i = 0; i < e->n_joins; i++) need += 2 + e->joins[i].name_len;
     need += 2 + e->actions_len;
     if (need > out_cap) return MSG_ECAP;
@@ -202,9 +216,10 @@ int msg_encode(const MsgEnvelope *e, unsigned char *out, int out_cap) {
     out[17] = e->round;
     memcpy(out + 18, e->parent8, MSG_PARENT_LEN);
     memcpy(out + 26, e->seed, MSG_SEED_LEN);
-    out[58] = (unsigned char)e->n_joins;
+    if (has_clock) wr16(out + MSG_CLOCK_OFF, e->sent_at);
+    out[has_clock ? MSG_CLOCK_OFF + 2 : MSG_CLOCK_OFF] = (unsigned char)e->n_joins;
 
-    int off = MSG_HEADER_LEN;
+    int off = hdr_len;
     for (int i = 0; i < e->n_joins; i++) {
         out[off++] = e->joins[i].seat;
         out[off++] = e->joins[i].name_len;
@@ -381,6 +396,16 @@ int msg_replay(const MsgEnvelope *e, Game *g) {
     return MSG_EOK;
 }
 
+// Which format a seal writes: the CLOCK decides, not the caller. A host that
+// stamped `sent_at` wants format 3 by definition, and one that did not (a test,
+// a lobby handoff, the harness) keeps writing the format every shipped build can
+// read. That keeps the pairing in one place instead of asking every caller to
+// set two fields consistently - and validate_fields rejects the mismatch, so a
+// caller that got it wrong would only find out at encode time.
+static uint8_t seal_format(const MsgEnvelope *e) {
+    return e->sent_at != 0 ? MSG_FORMAT_CLOCK : MSG_FORMAT_V6;
+}
+
 int msg_seal(MsgEnvelope *e, const Game *g, unsigned char *body, int body_cap,
              Game *scratch) {
     // A 0-action game seals to an EMPTY body: a WAITING lobby, or the last-joiner
@@ -391,7 +416,7 @@ int msg_seal(MsgEnvelope *e, const Game *g, unsigned char *body, int body_cap,
     // "No opening attack logged" is the same fact the encoder keys on.
     if (replay_first_attacker_from_logs(g->logs, g->num_logs) < 0) {
         (void)scratch; (void)body_cap;
-        e->format      = MSG_FORMAT_V6;
+        e->format      = seal_format(e);
         e->actions     = body;   // unused (len 0), but a valid non-null buffer
         e->actions_len = 0;
         e->n_actions   = 0;
@@ -406,7 +431,7 @@ int msg_seal(MsgEnvelope *e, const Game *g, unsigned char *body, int body_cap,
                                              1 << 30, body, body_cap);
     if (n < 0) return MSG_EBODY;
 
-    e->format      = MSG_FORMAT_V6;
+    e->format      = seal_format(e);
     e->actions     = body;
     e->actions_len = n;
 
@@ -487,4 +512,37 @@ int msg_rebase_one(Game *adopted, int adopted_round, int pending_round,
 
 void msg_digest(const unsigned char *envelope, int len, uint8_t out[SHA256_DIGEST_LEN]) {
     sha256(envelope, (size_t)(len < 0 ? 0 : len), out);
+}
+
+// ---------- the pickup hold (round 16) -----------------------------------
+
+// Is a hold owed to this seat as a matter of STATE alone - before any clock is
+// consulted? See msg_wire.h for each clause and why it is there.
+static int pickup_is_held_by_state(const Game *g, int seat) {
+    if (!g || seat < 0 || seat >= g->num_players) return 0;
+    if (g->defender != seat) return 0;
+    if (g->num_logs <= 0) return 0;
+
+    // The LAST logged action, not "an attack happened this bout": a defender who
+    // has already covered is not sitting in front of anything new.
+    const int last = g->logs[g->num_logs - 1].log_type;
+    if (last != LOG_ATTACK && last != LOG_PASS) return 0;
+
+    // Spare capacity, or nothing can be thrown in anyway.
+    int uncovered = 0;
+    for (int i = 0; i < g->num_battles; i++) {
+        if (card_is_none(g->table_battles[i].defense)) uncovered++;
+    }
+    return uncovered < g->players[seat].hand_count;
+}
+
+int msg_pickup_hold_remaining(const Game *g, int seat, uint16_t sent_at, uint16_t now) {
+    if (sent_at == 0) return 0;                       // no clock: nothing to measure
+    if (!pickup_is_held_by_state(g, seat)) return 0;
+    // Unsigned 16-bit on purpose: a rollover between the two clocks cancels, and
+    // a stamp that reads as being in the future becomes a large delta, which
+    // releases the hold rather than maxing it (msg_wire.h).
+    const uint16_t elapsed = (uint16_t)(now - sent_at);
+    if (elapsed >= MSG_PICKUP_HOLD_S) return 0;
+    return MSG_PICKUP_HOLD_S - (int)elapsed;
 }

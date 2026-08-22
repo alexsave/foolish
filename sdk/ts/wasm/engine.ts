@@ -86,6 +86,8 @@ interface EngineExports {
     wasm_msg_seal?(len: number): number;
     wasm_msg_rule_p?(aLen: number, bLen: number): number;
     wasm_msg_rebase?(pendingRound: number, seat: number, wireLen: number): number;
+    // ROUND 16: seconds this seat must still wait before it may pick up.
+    wasm_msg_pickup_hold?(seat: number, sentAt: number, now: number): number;
     // Packed wire pipeline (docs/PACKED_WIRE_CUTOVER.md)
     wasm_export_logs_masked(): number;
     wasm_apply_action(seat: number, wireLen: number): number;

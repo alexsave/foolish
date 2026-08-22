@@ -35,6 +35,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define ENV_CAP 8192
 
@@ -235,6 +236,12 @@ static void test_roundtrip(int games, uint32_t seed0) {
 
             MsgEnvelope e;
             env_init(&e, seed, np);
+        // ROUND 16: stamp the seed bubble with THIS MACHINE's clock, so a board
+        // opened from it is a board whose last attack just happened - which is
+        // the only way a seeded fixture can exercise the 15-second pickup hold.
+        // A 0 here (what every other seal in this file uses) is a format-2
+        // chain, and a format-2 chain holds nobody.
+        e.sent_at = (uint16_t)(time(NULL) & 0xffff);
             const int over = game_done(&played) >= 0 || played.status == GAME_STATUS_GAME_OVER;
             e.phase = over ? MSG_PHASE_FINISHED : MSG_PHASE_LIVE;
             static unsigned char body[1024];
@@ -651,7 +658,9 @@ static void test_tamper(void) {
     // (d) Field-level rejects, one per rule.
     struct { const char *what; int off; unsigned char val; int want; } cases[] = {
         { "magic",        0,  0xF6, MSG_EMAGIC },
-        { "format",       1,  MSG_FORMAT_V6 + 1, MSG_EFORMAT },
+        // Round 16: 3 is the CLOCK format and is legal now, so the first
+        // unknown byte above it is 4. (2 and 3 are the whole of the wire.)
+        { "format",       1,  MSG_FORMAT_CLOCK + 1, MSG_EFORMAT },
         { "format:raw",   1,  1,    MSG_EFORMAT },
         { "flags:fair",   2,  MSG_FLAG_FAIR_DEAL, MSG_EFLAGS },
         { "flags:gzip",   2,  MSG_FLAG_GZIP, MSG_EFLAGS },
@@ -695,6 +704,174 @@ static void test_tamper(void) {
         MsgEnvelope d;
         CHECK(msg_decode(t, n, &d) == MSG_ENAME, "control byte in name accepted");
     }
+}
+
+// ---------- 8. the send clock and the pickup hold (round 16) -------------
+//
+// The wire half (format 3 carries two bytes and format 2 still does not) and
+// the rule half (who is held, for how long, and every way the hold is waived).
+// One section because the two only mean anything together: a clock nothing
+// reads is dead weight, and a rule with no clock can never fire.
+
+// Drive a game to a state whose LAST log is `want`, so the hold has something
+// to hold (LOG_ATTACK) or deliberately nothing (LOG_COVER). Returns 0 if no
+// seed in the search produced one, which would itself be a bug worth failing on.
+static int drive_to_last_log(uint32_t seed0, int np, int want, Game *end) {
+    for (uint32_t gi = 0; gi < 300; gi++) {
+        uint8_t seed[MSG_SEED_LEN];
+        seed_fill(seed, seed0 + gi * 131u);
+        for (int cut = 1; cut <= 24; cut++) {
+            Chain ch; memset(&ch, 0, sizeof(ch));
+            g_rng = seed0 + gi;
+            play_game(seed, np, cut, &ch, end, -1);
+            if (end->num_logs > 0 && end->logs[end->num_logs - 1].log_type == want) return 1;
+        }
+    }
+    return 0;
+}
+
+static int uncovered_count(const Game *g) {
+    int n = 0;
+    for (int i = 0; i < g->num_battles; i++) {
+        if (card_is_none(g->table_battles[i].defense)) n++;
+    }
+    return n;
+}
+
+static void test_pickup_hold(void) {
+    Game g;
+    if (!drive_to_last_log(9001u, 4, LOG_ATTACK, &g)) {
+        CHECK(0, "no seed in the search reached a fresh attack");
+        return;
+    }
+    const int def = g.defender;
+    // The search can land on a table the defender cannot be thrown at (the
+    // capacity waiver's own case); give it room so the timing cases below are
+    // testing the timing and not the waiver.
+    if (g.players[def].hand_count <= uncovered_count(&g)) {
+        g.players[def].hand_count = (int8_t)(uncovered_count(&g) + 1);
+    }
+
+    // (a) The clock runs. 15 seconds owed at the instant it was sent, one
+    //     second at 14, and nothing from 15 on - including long after.
+    CHECK(msg_pickup_hold_remaining(&g, def, 1000, 1000) == MSG_PICKUP_HOLD_S,
+          "no hold at the moment of the attack");
+    CHECK(msg_pickup_hold_remaining(&g, def, 1000, 1001) == MSG_PICKUP_HOLD_S - 1,
+          "hold did not tick down");
+    CHECK(msg_pickup_hold_remaining(&g, def, 1000, 1014) == 1, "hold ended early");
+    CHECK(msg_pickup_hold_remaining(&g, def, 1000, 1015) == 0, "hold outlasted 15s");
+    CHECK(msg_pickup_hold_remaining(&g, def, 1000, 9999) == 0, "hold outlasted the bout");
+
+    // (b) NO CLOCK, NO HOLD. This is the whole of backward compatibility: a
+    //     format-2 chain from a shipped build decodes to sent_at 0, and a
+    //     defender reading it may pick up exactly as they always could.
+    // `now` is deliberately SMALL here: a stale clock of 0 against a clock of
+    // 1000 is 1000 seconds elapsed, which the timing arithmetic would release
+    // on its own, so that pair proves nothing about the guard. Three seconds
+    // after a zero stamp is the case where only the guard can answer.
+    CHECK(msg_pickup_hold_remaining(&g, def, 0, 3) == 0, "a clockless chain held");
+    CHECK(msg_pickup_hold_remaining(&g, def, 0, 1000) == 0, "a clockless chain held");
+
+    // (c) Only the defender is held - nobody else can pick up at all.
+    for (int s = 0; s < g.num_players; s++) {
+        if (s == def) continue;
+        CHECK(msg_pickup_hold_remaining(&g, s, 1000, 1000) == 0, "seat %d held, not defending", s);
+    }
+    CHECK(msg_pickup_hold_remaining(&g, -1, 1000, 1000) == 0, "a bogus seat was held");
+    CHECK(msg_pickup_hold_remaining(&g, g.num_players, 1000, 1000) == 0, "an out-of-range seat was held");
+
+    // (d) THE CAPACITY WAIVER (owner): as many uncovered cards on the table as
+    //     the defender has cards, and no throw-in is possible from anyone - so
+    //     holding the defender protects nothing.
+    {
+        Game c = g;
+        c.players[def].hand_count = (int8_t)uncovered_count(&c);
+        CHECK(msg_pickup_hold_remaining(&c, def, 1000, 1000) == 0,
+              "held a defender at capacity (%d uncovered, %d in hand)",
+              uncovered_count(&c), c.players[def].hand_count);
+        // One card of slack is the boundary: now a throw-in IS possible.
+        c.players[def].hand_count = (int8_t)(uncovered_count(&c) + 1);
+        CHECK(msg_pickup_hold_remaining(&c, def, 1000, 1000) == MSG_PICKUP_HOLD_S,
+              "no hold with a card of capacity to spare");
+    }
+
+    // (e) THE CLOCK WRAPS, and unsigned subtraction is why that costs nothing.
+    //     65534 -> 1 is three seconds across the rollover, not 65,533 backwards.
+    CHECK(msg_pickup_hold_remaining(&g, def, 65534, 1) == MSG_PICKUP_HOLD_S - 3,
+          "the hold did not survive a clock rollover");
+
+    // (f) A stamp from the FUTURE (a sender whose clock runs fast) releases the
+    //     hold instead of maxing it - the safe direction, and the only one that
+    //     cannot wedge a defender behind a stranger's bad clock.
+    CHECK(msg_pickup_hold_remaining(&g, def, 1000, 995) == 0, "a future stamp held the defender");
+
+    // (g) A defender who has already COVERED is not facing anything new.
+    {
+        Game c;
+        if (drive_to_last_log(4242u, 4, LOG_COVER, &c)) {
+            CHECK(msg_pickup_hold_remaining(&c, c.defender, 1000, 1000) == 0,
+                  "held after a cover, with no new attack to wait on");
+        }
+    }
+}
+
+static void test_clock_wire(void) {
+    uint8_t seed[MSG_SEED_LEN];
+    seed_fill(seed, 77);
+    Chain ch; memset(&ch, 0, sizeof(ch));
+    Game played;
+    g_rng = 77;
+    play_game(seed, 2, 30, &ch, &played, -1);
+
+    static unsigned char body[1024];
+    static Game scratch;
+
+    // Sealed WITHOUT a stamp: still format 2, still the bytes every shipped
+    // build reads.
+    MsgEnvelope plain;
+    env_init(&plain, seed, 2);
+    CHECK(msg_seal(&plain, &played, body, sizeof(body), &scratch) == MSG_EOK, "plain seal failed");
+    CHECK(plain.format == MSG_FORMAT_V6, "an unstamped seal picked the clock format");
+    unsigned char w2[ENV_CAP];
+    const int n2 = msg_encode(&plain, w2, sizeof(w2));
+    CHECK(n2 > 0, "plain encode failed: %d", n2);
+
+    // Sealed WITH one: format 3, exactly two bytes longer, and the stamp
+    // survives the round trip.
+    MsgEnvelope stamped;
+    env_init(&stamped, seed, 2);
+    stamped.sent_at = 0xBEEF;
+    CHECK(msg_seal(&stamped, &played, body, sizeof(body), &scratch) == MSG_EOK, "stamped seal failed");
+    CHECK(stamped.format == MSG_FORMAT_CLOCK, "a stamped seal stayed on format 2");
+    unsigned char w3[ENV_CAP];
+    const int n3 = msg_encode(&stamped, w3, sizeof(w3));
+    CHECK(n3 == n2 + 2, "the clock cost %d bytes, not 2", n3 - n2);
+
+    MsgEnvelope d;
+    CHECK(msg_decode(w3, n3, &d) == MSG_EOK, "format 3 did not decode");
+    CHECK(d.format == MSG_FORMAT_CLOCK && d.sent_at == 0xBEEF, "the clock did not survive decode");
+    CHECK(d.n_actions == stamped.n_actions && d.turn == stamped.turn &&
+          d.round == stamped.round && d.n_players == stamped.n_players,
+          "format 3 lost a field the clock sits between");
+    CHECK(d.n_joins == stamped.n_joins && d.joins[1].name_len == stamped.joins[1].name_len,
+          "the joins shifted under the clock");
+
+    // Re-encode byte-identical, exactly as format 2 must be: parent8 chains off
+    // these bytes for everyone downstream.
+    unsigned char again[ENV_CAP];
+    const int na = msg_encode(&d, again, sizeof(again));
+    CHECK(na == n3 && !memcmp(w3, again, (size_t)n3), "format 3 did not re-encode to itself");
+
+    // A format-2 chain decodes to NO clock rather than to a garbage one.
+    MsgEnvelope d2;
+    CHECK(msg_decode(w2, n2, &d2) == MSG_EOK, "format 2 stopped decoding");
+    CHECK(d2.sent_at == 0, "a clockless chain decoded to a clock");
+
+    // The pairing is enforced in both directions: format 2 cannot carry a stamp.
+    MsgEnvelope liar = stamped;
+    liar.format = MSG_FORMAT_V6;
+    unsigned char wl[ENV_CAP];
+    CHECK(msg_encode(&liar, wl, sizeof(wl)) == MSG_EFORMAT, "format 2 encoded a clock");
 }
 
 // ---------- 5. hostile bodies are rejected (validation = replay) ----------
@@ -1031,15 +1208,58 @@ static void print_fatboard(int target, int np) {
         if (on_table < target || covered < 2) continue;
         if (g.status != GAME_STATUS_PLAYING) continue;
 
+        // ROUND 16: END ON AN ATTACK. The search above stops as soon as the
+        // table is dense enough, and it covers as it goes, so it almost always
+        // lands on a COVER - a state in which the defender is not facing
+        // anything new and the 15-second pickup hold correctly does not apply.
+        // A seeded board is the only way to put that hold on screen, so lay one
+        // more attack on top, and require that the defender keeps spare capacity
+        // (otherwise the capacity waiver lifts the hold for its own good
+        // reasons). Fixtures that cannot do both are skipped rather than sealed
+        // silently unheld.
+        {
+            int threw = 0;
+            for (int seat = 0; seat < np && !threw; seat++) {
+                if (seat == g.defender || g.players[seat].status != PLAYER_STATUS_IN) continue;
+                calculate_legal_moves(&g, seat, &ml);
+                for (int i = 0; i < ml.n; i++) {
+                    if (ml.moves[i].type != MOVE_ATTACK || ml.moves[i].n_cards != 1) continue;
+                    if (handle_attack(&g, seat, ml.moves[i].cards, 1)) threw = 1;
+                    break;
+                }
+            }
+            if (!threw) continue;
+            int uncovered = 0;
+            for (int i = 0; i < g.num_battles; i++) {
+                if (card_is_none(g.table_battles[i].defense)) uncovered++;
+            }
+            if (uncovered >= g.players[g.defender].hand_count) continue;
+        }
+
         MsgEnvelope e;
         env_init(&e, seed, np);
         e.phase = MSG_PHASE_LIVE;
-        e.last_actor_seat = (uint8_t)g.defender;
+        // The attacker sealed this one now (see the throw-in above), which is
+        // what a defender opening it is meant to be reacting to.
+        e.last_actor_seat = (uint8_t)(g.logs[g.num_logs - 1].player_idx);
+        // ROUND 16: stamp the seeded bubble with THIS MACHINE's clock, so a
+        // board opened from it is one whose last attack JUST happened - the only
+        // way a seeded fixture can put the 15-second pickup hold on screen. The
+        // clock is fine here and nowhere else in this file: this is the one
+        // entry that prints a payload for a HUMAN to open, not a fixture that
+        // has to reproduce byte for byte.
+        e.sent_at = (uint16_t)(time(NULL) & 0xffff);
         if (msg_seal(&e, &g, body, sizeof(body), &scratch) != MSG_EOK) continue;
         unsigned char wire[ENV_CAP];
         const int n = msg_encode(&e, wire, sizeof(wire));
         if (n <= 0) continue;
 
+        // ROUND 16: say whether this fixture actually poses the pickup hold, so a
+        // run that shows the Pickup pill immediately is read as "this seed ends
+        // on a cover" and not as "the hold is broken".
+        fprintf(stderr, "fatboard: last log %d, hold %ds\n",
+                g.num_logs ? g.logs[g.num_logs - 1].log_type : -1,
+                msg_pickup_hold_remaining(&g, g.defender, e.sent_at, e.sent_at));
         fprintf(stderr, "fatboard: %dp seed#%u  %d cards on table (%d covered), "
                         "defender=seat %d holds %d, turn %d round %d, %d bytes\n",
                 np, s, on_table, covered, g.defender,
@@ -1092,8 +1312,38 @@ static void print_fixtures(void) {
     }
 }
 
+// --holdcheck <hex>: decode a payload exactly as a device does and print the
+// pickup hold for every seat. The one tool that can say whether a board showing
+// the Pickup pill is the WIRE's fault or the app's.
+static void print_holdcheck(const char *hex) {
+    unsigned char wire[ENV_CAP];
+    int n = 0;
+    for (const char *p = hex; p[0] && p[1] && n < (int)sizeof(wire); p += 2) {
+        unsigned v = 0;
+        if (sscanf(p, "%2x", &v) != 1) break;
+        wire[n++] = (unsigned char)v;
+    }
+    MsgEnvelope e;
+    const int rc = msg_decode(wire, n, &e);
+    printf("holdcheck: %d bytes, decode %d, format %d, sent_at %u\n", n, rc, e.format, e.sent_at);
+    if (rc != MSG_EOK) return;
+    Game g;
+    const int rrc = msg_replay(&e, &g);
+    printf("holdcheck: replay %d, defender %d, battles %d, last log %d\n",
+           rrc, g.defender, g.num_battles, g.num_logs ? g.logs[g.num_logs - 1].log_type : -1);
+    if (rrc != MSG_EOK) return;
+    for (int s = 0; s < g.num_players; s++) {
+        printf("holdcheck: seat %d hand %d  hold(now=sent_at) %ds  hold(now=sent_at+20) %ds\n",
+               s, g.players[s].hand_count,
+               msg_pickup_hold_remaining(&g, s, e.sent_at, e.sent_at),
+               msg_pickup_hold_remaining(&g, s, e.sent_at, (uint16_t)(e.sent_at + 20)));
+    }
+    printf("holdcheck: this machine's clock is %u\n", (unsigned)(time(NULL) & 0xffff));
+}
+
 int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1], "--fixture")) { print_fixtures(); return 0; }
+    if (argc > 2 && !strcmp(argv[1], "--holdcheck")) { print_holdcheck(argv[2]); return 0; }
     if (argc > 1 && !strcmp(argv[1], "--fatboard")) {
         print_fatboard(argc > 2 ? atoi(argv[2]) : 10, argc > 3 ? atoi(argv[3]) : 2);
         return 0;
@@ -1110,6 +1360,8 @@ int main(int argc, char **argv) {
     test_rule_p_fuller_start_wins();
     test_tamper();
     test_hostile_body();
+    test_pickup_hold();
+    test_clock_wire();
     test_size_budget(games * 4, seed0);
     { const int rb = bot_roster_find("robusta");
       probe_v6_midgame(seed0, 2, rb);

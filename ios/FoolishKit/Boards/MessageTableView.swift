@@ -2174,8 +2174,17 @@ public struct MessageTableView: View {
             // floating above Undo"). The owner chose the clean swap over keeping
             // Take through a staged cover: to take your own covered table now, Undo
             // first, then Take. (The kernel still accepts the move, so no reject.)
+            // ROUND 16 (owner): "you cannot pickup within 15 seconds of the
+            // attack ... this is to give attackers a fair chance to throw in
+            // additional cards". While that hold stands the pill is simply not
+            // there - no greyed-out button, no countdown, nothing to press -
+            // and it appears on its own when the hold lapses (the controller
+            // ticks it down). The same number refuses the move in
+            // `MessageTurnController.apply`, so this is the polite half of the
+            // rule, not the rule.
             canPickup: defending && !view.battles.isEmpty && cards.isEmpty
-                && !(view.me?.isOut ?? false) && !controller.canSend,
+                && !(view.me?.isOut ?? false) && !controller.canSend
+                && controller.pickupHold == 0,
             canDone: acting && CardPlay.canSayGood(battles: view.battles, legal: controller.legal) && cards.isEmpty,
             canUndo: false,   // the board draws its own - see `undoSlot`
             onAttack: { playAt(.table, cards, view) },

@@ -513,27 +513,35 @@ final class HarnessFlowTests: XCTestCase {
     private func incidentChains(seedByte: UInt8, gid: UInt64) async throws
         -> (live2: Data, live4: Data, env2: MessageEnvelope, env4: MessageEnvelope,
             bubbles: [(Data, Int)]) {
+    // EVERY seal in this builder is CLOCKLESS (sentAt: 0). Round 16 put a send
+    // clock in the envelope, so a seal's bytes move with the second it happened
+    // - and each envelope's digest is the next one's parent8, so ONE clocked
+    // seal re-rolls every digest downstream of it. This fixture exists to pose
+    // one specific digest coin-flip (see its caller), which a moving byte would
+    // re-roll on every run. Clockless reproduces the exact bytes it was built
+    // against, and costs nothing: the clock drives only the pickup hold, and no
+    // chain here has an attack to hold anyone on.
         let k = MessageKernel.shared
         let seed = Data(repeating: seedByte, count: 32)
         try await k.newGame(seed: seed, players: 8)
         var joins = [MessageJoin(seat: 0, name: "Vera")]
         var bubbles: [(Data, Int)] = []
         let lobby1 = try await k.seal(phase: 0, lastActorSeat: 0, gameId: gid,
-                                      parent8: Data(repeating: 0, count: 8), joins: joins)
+                                      parent8: Data(repeating: 0, count: 8), joins: joins, sentAt: 0)
         bubbles.append((lobby1, 0))
         var env = try await MessageEnvelope.decode(payload: lobby1, viewer: -1)
         _ = try? await k.decode(payload: lobby1, viewer: -1)
         joins.append(MessageJoin(seat: 1, name: "Alex"))
         let lobby2 = try await k.seal(phase: 0, lastActorSeat: 1, gameId: gid,
                                       parent8: MessageTurnController.firstEight(hex: env.digest),
-                                      joins: joins)
+                                      joins: joins, sentAt: 0)
         bubbles.append((lobby2, 1))
 
         // "Vera started the game" - off the 2-join state she was looking at.
         env = try await MessageEnvelope.decode(payload: lobby2, viewer: -1)
         let live2 = try await k.startFromLobby(
             lobbyPayload: lobby2, gameId: gid, actingSeat: 0,
-            parent8: MessageTurnController.firstEight(hex: env.digest), joins: joins)
+            parent8: MessageTurnController.firstEight(hex: env.digest), joins: joins, sentAt: 0)
         bubbles.append((live2, 0))
         let env2 = try await MessageEnvelope.decode(payload: live2, viewer: -1)
 
@@ -546,7 +554,7 @@ final class HarnessFlowTests: XCTestCase {
             joins.append(MessageJoin(seat: seat, name: name))
             staleLobby = try await k.seal(phase: 0, lastActorSeat: seat, gameId: gid,
                                           parent8: MessageTurnController.firstEight(hex: env.digest),
-                                          joins: joins)
+                                          joins: joins, sentAt: 0)
             bubbles.append((staleLobby, seat))
         }
 
@@ -554,7 +562,7 @@ final class HarnessFlowTests: XCTestCase {
         env = try await MessageEnvelope.decode(payload: staleLobby, viewer: -1)
         let live4 = try await k.startFromLobby(
             lobbyPayload: staleLobby, gameId: gid, actingSeat: 0,
-            parent8: MessageTurnController.firstEight(hex: env.digest), joins: joins)
+            parent8: MessageTurnController.firstEight(hex: env.digest), joins: joins, sentAt: 0)
         bubbles.append((live4, 0))
         let env4 = try await MessageEnvelope.decode(payload: live4, viewer: -1)
         return (live2, live4, env2, env4, bubbles)

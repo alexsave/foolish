@@ -54,7 +54,11 @@ test('the envelope is rejected before it can be replayed: magic, format, seed', 
     };
     bad(b => { b[0] = 0xf6; }, /not an FMSG envelope/);
     bad(b => { b[1] = 1; }, /unsupported format/);      // the raw format was cut
-    bad(b => { b[1] = 3; }, /unsupported format/);
+    // 3 is the CLOCK format since round 16 and decodes, so the first byte above
+    // the wire is 4. (Flipping this buffer to 3 shifts n_joins by two bytes, so
+    // it fails as a bad-joins payload rather than as an unknown format - which
+    // is what the truncation test below already covers.)
+    bad(b => { b[1] = 4; }, /unsupported format/);
     bad(b => { b[2] = 0x01; }, /unsupported flags/);    // fair-deal: spec'd, unbuilt
     bad(b => { b[2] = 0x08; }, /unsupported flags/);    // reserved bit (0x04 = legacy passing-allowed, tolerated for 1.0(3) msgs)
     bad(b => { b[15] = 1; }, /bad player count/);

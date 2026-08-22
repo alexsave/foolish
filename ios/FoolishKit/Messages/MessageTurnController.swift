@@ -24,6 +24,14 @@ import SwiftUI
 public final class MessageTurnController: ObservableObject {
     @Published public private(set) var view: GameView?
     @Published public private(set) var legal: [Move] = []
+    /// ROUND 16 — seconds this seat must still wait before it may pick up; 0
+    /// means now. The board hides Take while it is non-zero and `apply` refuses
+    /// a pickup, so the owner's "guarded by the kernel, as well as by the UI"
+    /// is one number read in two places. Counted down by `holdTicker`, which
+    /// exists so the button can APPEAR on its own — a defender who is waiting is
+    /// looking straight at it, and a UI that only updated on the next kernel
+    /// call would leave them looking at nothing.
+    @Published public private(set) var pickupHold: Int = 0
     @Published public private(set) var pending: [Move] = []
     @Published public private(set) var rejectTick = 0
     /// The reason the LAST move was rejected — an ENGINE_REJECT_* code
@@ -328,8 +336,12 @@ public final class MessageTurnController: ObservableObject {
     private func rebuildBase() async {
         switch base {
         case .continuation(let payload):
-            _ = try? await kernel.decode(payload: payload, viewer: mySeat)
+            // The envelope's own clock comes back with the decode - it is the
+            // one thing the pickup hold measures from, and it belongs to the
+            // CHAIN, not to this device.
+            baseSentAt = (try? await kernel.decode(payload: payload, viewer: mySeat))?.sentAt ?? 0
         case .genesis(let seed, let players):
+            baseSentAt = 0   // nothing was sent yet, so nothing to wait on
             try? await kernel.newGame(seed: seed, players: players)
         }
     }
@@ -340,15 +352,55 @@ public final class MessageTurnController: ObservableObject {
         if replayPending { replayPending = false }
     }
 
+    /// The SEND CLOCK of the chain this controller is playing on (0 for a
+    /// genesis, or for a format-2 chain from a build older than round 16). The
+    /// pickup hold measures from it; see MessageEnvelope.sentAt.
+    private var baseSentAt = 0
+    private var holdTicker: Task<Void, Never>?
+
     public func refresh() async {
         view = await kernel.residentView(viewer: mySeat)
         legal = await kernel.residentLegal(seat: mySeat)
+        await refreshPickupHold()
+    }
+
+    /// Re-ask the kernel for the hold and, if one stands, keep asking once a
+    /// second until it lapses. Every path that changes the game runs through
+    /// `refresh()`, so the hold cannot outlive the state it was computed from:
+    /// staging a cover makes the last action a cover, which ends the hold on the
+    /// next read (owner: "if the player chooses a card in the mean time, this
+    /// shouldn't cause any issues - the timer should just not do anything").
+    private func refreshPickupHold() async {
+        let held = baseSentAt == 0 ? 0
+                 : await kernel.pickupHold(seat: mySeat, sentAt: baseSentAt)
+        if held != pickupHold { pickupHold = held }
+        holdTicker?.cancel()
+        guard held > 0 else { holdTicker = nil; return }
+        holdTicker = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard let self, !Task.isCancelled else { return }
+                let now = self.baseSentAt == 0 ? 0
+                        : await self.kernel.pickupHold(seat: self.mySeat, sentAt: self.baseSentAt)
+                if now != self.pickupHold { self.pickupHold = now }
+                if now == 0 { return }
+            }
+        }
     }
 
     // MARK: turn actions
 
     public func apply(_ move: Move) async {
         lastChangeWasUndo = false
+        // ROUND 16: the hold, enforced and not merely displayed. The button is
+        // already hidden while `pickupHold` stands, so this only fires on a path
+        // the UI does not draw (a drop gesture, the dev harness, a future
+        // shortcut) - which is exactly why it is here and not only there.
+        if move.type == .pickup, pickupHold > 0 {
+            lastRejectReason = 0
+            rejectTick += 1
+            return
+        }
         do {
             try await kernel.apply(seat: mySeat, move: move)
             pending.append(move)
@@ -415,12 +467,18 @@ public final class MessageTurnController: ObservableObject {
     /// turn/round from the body it writes, so a device cannot emit a chain it
     /// would itself reject. Phase is FINISHED if my move ended the game, else LIVE.
     /// Throws if nothing is staged on a genesis game (see `isGenesis`).
-    public func stagedPayload() async throws -> Data {
+    ///
+    /// `sentAt` is the round-16 send clock and defaults to this device's own -
+    /// the receiving defender's 15-second pickup hold measures from it. The
+    /// only caller that passes anything else is the test that pins what a
+    /// CLOCKLESS (pre-round-16, format 2) bubble does, which is nothing.
+    public func stagedPayload(sentAt: Int = MessageKernel.clockNow()) async throws -> Data {
         try await kernel.seal(phase: isOver ? 3 : 2,
                               lastActorSeat: mySeat,
                               gameId: gameId,
                               parent8: parent8,
-                              joins: sealJoins)
+                              joins: sealJoins,
+                              sentAt: sentAt)
     }
 
     /// First 8 bytes of a hex digest, zero-padded - the parent-pointer tag (§7.4).

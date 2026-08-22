@@ -1044,8 +1044,13 @@ int fio_last_msg_error(void) { return g_last_msg_error; }
 // no embedded state/moves (the phone
 // reads those through fio_state_packed / fio_legal_packed in the same actor).
 // Layout: phase(1) n_players(1) last_actor_seat(1) round(1) turn(u16 LE)
-//   game_id(u64 LE) parent8(8) digest(32) n_joins(1)
+//   game_id(u64 LE) parent8(8) digest(32) sent_at(u16 LE) n_joins(1)
 //   then n_joins * { seat(1) name_len(1) name[name_len] }.
+// ROUND 16: sent_at is the envelope's send clock (unix seconds mod 65536, 0 on
+// a format-2 chain that carries none). It sits at the END of the fixed header,
+// after the digest, so every offset the Swift parser already knew is unchanged
+// and only n_joins moves - this blob is a private ABI between two files in one
+// repo, but keeping the prefix stable is what makes the diff readable.
 // 1.0(6) DIAGNOSTIC: the replay codec version (5/6/7) of the body the last
 // fio_msg_decode_packed replayed, or -1 for an empty-body message. Set through
 // msg_last_body_version (msg_wire.c).
@@ -1074,7 +1079,7 @@ int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, i
     g_has_deal_seed = 1;
     for (int i = 0; i < e.n_players; i++) g_seat_roster[i] = (int8_t)bot_roster_find("random");
 
-    int need = 4 + 2 + 8 + MSG_PARENT_LEN + SHA256_DIGEST_LEN + 1;
+    int need = 4 + 2 + 8 + MSG_PARENT_LEN + SHA256_DIGEST_LEN + 2 + 1;
     for (int i = 0; i < e.n_joins; i++) need += 2 + e.joins[i].name_len;
     if (cap < need) return FIO_ECAP;
 
@@ -1088,6 +1093,8 @@ int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, i
     for (int i = 0; i < 8; i++) *q++ = (unsigned char)((e.game_id >> (8 * i)) & 0xff);
     memcpy(q, e.parent8, MSG_PARENT_LEN); q += MSG_PARENT_LEN;
     memcpy(q, digest, SHA256_DIGEST_LEN); q += SHA256_DIGEST_LEN;
+    *q++ = (unsigned char)(e.sent_at & 0xff);
+    *q++ = (unsigned char)((e.sent_at >> 8) & 0xff);
     *q++ = (unsigned char)e.n_joins;
     for (int i = 0; i < e.n_joins; i++) {
         *q++ = e.joins[i].seat;
@@ -1130,7 +1137,7 @@ static int fio_parse_joins(const char *joins_json, MsgEnvelope *e) {
 
 int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
                    const uint8_t parent8[8], const char *joins_json,
-                   uint8_t *out, int cap) {
+                   int sent_at, uint8_t *out, int cap) {
     if (!g_has_game) return FIO_ENOGAME;
     if (!out || cap <= 0 || !joins_json) return FIO_EBADARG;
     if (!g_has_deal_seed) return FIO_ENOSEED;   // no seed, no serverless game
@@ -1145,6 +1152,11 @@ int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
     e.last_actor_seat = (uint8_t)last_actor_seat;
     e.n_players = (uint8_t)g_game.num_players;
     e.variant = 0;
+    // ROUND 16: the caller's clock, unix seconds mod 65536, or 0 for "do not
+    // stamp this one" - which seals a format-2 envelope exactly as before. The
+    // time is passed IN rather than read here on purpose: a kernel that called
+    // time() would answer differently on two devices holding the same bytes.
+    e.sent_at = (uint16_t)(sent_at & 0xffff);
     if (parent8) memcpy(e.parent8, parent8, MSG_PARENT_LEN);
     memcpy(e.seed, g_deal_seed, FOOLISH_SEED_LEN);
 
@@ -1160,6 +1172,15 @@ int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
     return n;
 }
 
+
+// ROUND 16 — the pickup hold, on the resident game. Pure relay: the rule is
+// msg_pickup_hold_remaining (msg_wire.c) and this only supplies the game.
+int fio_msg_pickup_hold(int seat, int sent_at, int now) {
+    if (!g_has_game) return FIO_ENOGAME;
+    return msg_pickup_hold_remaining(&g_game, seat,
+                                     (uint16_t)(sent_at & 0xffff),
+                                     (uint16_t)(now & 0xffff));
+}
 
 int fio_msg_rule_p(const uint8_t *a, int a_len, const uint8_t *b, int b_len) {
     if (!a || !b) return FIO_EBADARG;

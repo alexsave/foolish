@@ -14,7 +14,8 @@
 //
 //   off  size  field
 //   0    1     magic      0xF7
-//   1    1     format     2 (see THE BODY below; 1 was cut before shipping)
+//   1    1     format     2, or 3 for the same thing plus a send clock
+//                          (1 was cut before shipping; see THE BODY below)
 //   2    1     flags      bit0 fair_deal, bit1 gzip-body,
 //                          bit2 = legacy (was passing_allowed in 1.0(3); tolerated
 //                          on decode, never set now), bits3-7 reserved=0
@@ -27,7 +28,8 @@
 //   17   1     round      completed-round counter (Rule R's guard input)
 //   18   8     parent8    first 8 bytes of SHA-256(previous envelope), 0 at creation
 //   26   32    seed       -> game_set_deal_seed_bytes(seed, 32)
-//   58   1     n_joins
+//   58   2     sent_at    FORMAT 3 ONLY: unix seconds mod 65536 (0 = none)
+//   58   1     n_joins    (60 on format 3)
 //   59   var   joins      n_joins x { u8 seat, u8 name_len<=64, name utf8 }
 //   var  2     n_actions  u16, the action count the body must yield
 //   var  var   body       the v6 replay code — see THE BODY
@@ -100,7 +102,31 @@
 // and never shipped: it costs ~34 bits for an action worth ~1-2 and missed the
 // size budget by 1.33x at 4 players, permanently. The version byte keeps its
 // grave so nothing re-uses the number. See docs/IMESSAGE_BODY_CODEC.md.
-#define MSG_FORMAT_V6    2   // body = a v6 replay code — the only format
+#define MSG_FORMAT_V6    2   // body = a v6 replay code, no clock
+// Format 3 = format 2 plus a two-byte SEND CLOCK, and nothing else. Round 16:
+// the defender may not pick up within MSG_PICKUP_HOLD_S seconds of an attack,
+// so that the attackers get a fair chance to throw more in — and answering
+// "how long ago was this attack sent" needs a time this wire never carried.
+//
+// Nothing on the platform could answer it instead. MSMessage's whole public
+// surface is session/pending/senderParticipantIdentifier/layout/URL/
+// shouldExpire/accessibilityLabel/summaryText/error: no date. The times a user
+// reads in the transcript come from the message database, which an app
+// extension cannot see.
+//
+// A NEW FORMAT was unavoidable rather than chosen. Trailing bytes cannot carry
+// it (msg_decode takes the body as everything to the end of the buffer, so an
+// appended field lands inside the v6 code and corrupts it), and the header has
+// no hole (`variant` is one byte and must be 0). The cost is exact and was
+// accepted by the owner: a build that only knows format 2 rejects a format-3
+// bubble outright (MSG_EFORMAT). The other direction is preserved on purpose —
+// this build reads format 2 fine, as a chain with no clock, which by
+// `msg_pickup_hold_remaining`'s contract means no hold at all.
+#define MSG_FORMAT_CLOCK 3
+
+// The hold itself, in seconds (owner: "you cannot pickup within 15 seconds of
+// the attack").
+#define MSG_PICKUP_HOLD_S 15
 
 #define MSG_PHASE_WAITING  0
 #define MSG_PHASE_ACCEPT   1
@@ -124,7 +150,12 @@
 #define MSG_MAX_JOINS    MAX_PLAYERS
 #define MSG_SEED_LEN     FOOLISH_SEED_LEN   // 32 — the ChaCha key width
 #define MSG_PARENT_LEN   8
-#define MSG_HEADER_LEN   59                 // through n_joins
+#define MSG_HEADER_LEN   59                 // format 2: through n_joins
+// Format 3 puts its two clock bytes at 58, AFTER the seed and BEFORE n_joins,
+// so every offset a format-2 reader knows is unchanged and the two decoders
+// share one prefix. n_joins lands at 60.
+#define MSG_CLOCK_OFF    58
+#define MSG_HEADER_LEN_CLOCK 61
 
 // A full game is ~60-90 actions at 2 players (spec §4.4); 8-player games run
 // longer. 1024 is far above any reachable game and bounds the decode walk.
@@ -165,7 +196,7 @@ typedef struct {
 } MsgJoin;
 
 typedef struct {
-    uint8_t  format;   // always MSG_FORMAT_V6
+    uint8_t  format;   // MSG_FORMAT_V6 or MSG_FORMAT_CLOCK
     uint8_t  flags;
     uint8_t  phase;
     uint64_t game_id;
@@ -176,6 +207,24 @@ typedef struct {
     uint8_t  round;
     uint8_t  parent8[MSG_PARENT_LEN];
     uint8_t  seed[MSG_SEED_LEN];
+
+    // Unix seconds MOD 65536, as the sending device's clock read them when it
+    // sealed this envelope. 0 means NO CLOCK — a format-2 chain, or a host that
+    // did not stamp one — and every rule that reads it treats 0 as "no hold".
+    // (A real stamp lands on 0 one second in every 65,536; the cost of that
+    // collision is one skipped 15-second hold, which is why 0 is allowed to be
+    // the sentinel.)
+    //
+    // TWO BYTES, and the wrap is deliberate. Nothing ever needs the absolute
+    // time — only `now - sent_at` against 15 — and unsigned modular subtraction
+    // gets that right across a rollover with no special case. What the wrap
+    // costs is DISTINGUISHABILITY: a chain sent 3 seconds ago and one sent
+    // 18h12m+3s ago produce the same delta, so roughly one stale open in 4,400
+    // draws a 15-second hold it did not earn. One wait, self-clearing. A u32
+    // would buy that back for two more bytes; it was judged the wrong trade
+    // against a wire whose whole design is bytes-per-bubble.
+    uint16_t sent_at;
+
     int      n_joins;
     MsgJoin  joins[MSG_MAX_JOINS];
 
@@ -347,5 +396,44 @@ int msg_rebase_one(Game *adopted, int adopted_round, int pending_round,
 // lexicographically. Thin wrapper, but it names the one hash the protocol means
 // so no caller has to re-decide what "the digest of a chain" is.
 void msg_digest(const unsigned char *envelope, int len, uint8_t out[SHA256_DIGEST_LEN]);
+
+// ---------- the pickup hold (round 16) -----------------------------------
+//
+// How many more seconds `seat` must wait before it may pick up: 0 when it may
+// pick up now, 1..MSG_PICKUP_HOLD_S while the hold stands. Owner: "make it so
+// that you cannot pickup within 15 seconds of the attack ... this is to give
+// attackers a fair chance to throw in additional cards".
+//
+// `g` is the game the chain replayed to, `sent_at` its envelope's clock, `now`
+// the reader's own unix seconds mod 65536. Pure: no clock is read here, because
+// a kernel that read the time would answer differently on two devices holding
+// the same bytes, and every other rule in this tree is a function of the bytes.
+//
+// THE HOLD STANDS only when all of these are true, and each one is a way the
+// answer is already decided by the state:
+//
+//   - `sent_at` is non-zero. A format-2 chain has no clock, so there is nothing
+//     to measure and nothing is held (this is the whole of backward
+//     compatibility: an old bubble simply never holds).
+//   - `seat` is the defender. Nobody else can pick up.
+//   - the last thing in the log is an ATTACK or a PASS — the two actions that
+//     leave a defender facing a fresh uncovered card. After a cover or a good,
+//     the defender is not sitting in front of anything new, and a hold would
+//     just be a delay. (A pass counts because the seat it lands on is in
+//     exactly the attacked position, facing throw-ins, and it is a different
+//     seat than the one that acted.)
+//   - the defender still has SPARE CAPACITY: strictly fewer uncovered cards on
+//     the table than cards in hand. Owner: "if the last attack caused the number
+//     of uncovered cards to equal the number of cards remaining in the
+//     defenders hand, we need no such timer, because if the defender has no more
+//     capacity, no one can throw in anything regardless." Holding a defender who
+//     cannot be thrown at protects nothing and costs 15 seconds.
+//
+// The wait itself is `MSG_PICKUP_HOLD_S - (uint16_t)(now - sent_at)`, computed
+// in unsigned 16-bit so a clock rollover cancels on both sides. A stamp that
+// reads as being in the FUTURE (a sender whose clock runs fast) wraps to a large
+// delta and so releases the hold rather than maxing it — the safe direction, and
+// the only one that cannot wedge a defender behind a stranger's bad clock.
+int msg_pickup_hold_remaining(const Game *g, int seat, uint16_t sent_at, uint16_t now);
 
 #endif

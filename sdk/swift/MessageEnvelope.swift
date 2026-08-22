@@ -32,10 +32,17 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
     public let gameId: String          // a u64: a String because JSON numbers are doubles
     public let parent8: String         // hex
     public let digest: String          // hex — SHA-256 of the payload; Rule P's tiebreak
+    /// ROUND 16 — the SEND CLOCK: unix seconds mod 65536 as the sending device
+    /// read them, or 0 for a chain that carries none (format 2, i.e. anything
+    /// sealed by 1.0(15) or earlier). Feeds one rule and only one:
+    /// `MessageKernel.pickupHold`, the 15-second wait a defender owes a fresh
+    /// attack. 0 means no wait, which is exactly what makes an old bubble play.
+    public let sentAt: Int
     public let joins: [MessageJoin]
 
     enum CodingKeys: String, CodingKey {
         case phase, turn, round, joins, digest, parent8
+        case sentAt = "sent_at"
         case nPlayers = "n_players"
         case lastActorSeat = "last_actor_seat"
         case gameId = "game_id"
@@ -87,11 +94,15 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
 
     /// Parse the kernel's packed envelope-metadata blob (fio_msg_decode_packed).
     /// Fixed layout: phase(1) n_players(1) last_actor_seat(1) round(1) turn(u16
-    /// LE) game_id(u64 LE) parent8(8) digest(32) n_joins(1) then joins of
-    /// {seat(1) name_len(1) name[]}. Returns nil if a field runs past the end.
+    /// LE) game_id(u64 LE) parent8(8) digest(32) sent_at(u16 LE) n_joins(1) then
+    /// joins of {seat(1) name_len(1) name[]}. Returns nil if a field runs past
+    /// the end.
+    ///
+    /// ROUND 16 grew this by the two sent_at bytes, which land AFTER the digest
+    /// so every offset above is the one it always was.
     static func decode(packed d: Data) -> MessageEnvelope? {
         let b = [UInt8](d)
-        let HDR = 55
+        let HDR = 57
         guard b.count >= HDR else { return nil }
         let phase = Int(b[0]); let nPlayers = Int(b[1]); let last = Int(b[2]); let round = Int(b[3])
         let turn = Int(b[4]) | (Int(b[5]) << 8)
@@ -100,7 +111,8 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
         let hex = { (r: Range<Int>) in b[r].map { String(format: "%02x", $0) }.joined() }
         let parent8 = hex(14..<22)
         let digest = hex(22..<54)
-        let nJoins = Int(b[54])
+        let sentAt = Int(b[54]) | (Int(b[55]) << 8)
+        let nJoins = Int(b[56])
         var joins: [MessageJoin] = []
         var q = HDR
         for _ in 0..<nJoins {
@@ -112,7 +124,7 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
         }
         return MessageEnvelope(phase: phase, turn: turn, round: round, nPlayers: nPlayers,
                                lastActorSeat: last, gameId: String(gid),
-                               parent8: parent8, digest: digest, joins: joins)
+                               parent8: parent8, digest: digest, sentAt: sentAt, joins: joins)
     }
 }
 
@@ -218,12 +230,18 @@ public actor MessageKernel {
     /// only on the seed already resident on `lobbyPayload` and `joins.count`,
     /// never on which UI path assembled `joins` or when it was sealed as its
     /// own WAITING bubble (MessageLobbyTests proves both routes agree).
+    ///
+    /// `sentAt` is round 16's send clock, defaulting to this device's; a fixture
+    /// that needs REPRODUCIBLE BYTES passes a constant, because a clock in the
+    /// envelope means the digest (Rule P's tiebreak) moves with the second the
+    /// seal happened.
     public func startFromLobby(lobbyPayload: Data, gameId: UInt64, actingSeat: Int,
-                               parent8: Data, joins: [MessageJoin]) throws -> Data {
+                               parent8: Data, joins: [MessageJoin],
+                               sentAt: Int = MessageKernel.clockNow()) throws -> Data {
         _ = try decode(payload: lobbyPayload, viewer: -1)
         try reseatResidentGame(players: joins.count)
         return try seal(phase: 2, lastActorSeat: actingSeat, gameId: gameId,
-                        parent8: parent8, joins: joins)
+                        parent8: parent8, joins: joins, sentAt: sentAt)
     }
 
     /// Apply one action by `seat` to the resident (adopted) game — the LOCAL half
@@ -252,18 +270,51 @@ public actor MessageKernel {
     /// WAITING lobby, or the last-joiner LIVE handoff, §5.2) seals to an empty body
     /// - the deal alone is the state - which msg_seal handles, so lobby creation
     /// and joins use this same entry.
+    ///
+    /// ROUND 16: every seal STAMPS the send clock (`Self.clockNow`), which is
+    /// what makes it a format-3 envelope and what the receiving defender's
+    /// 15-second pickup hold measures from. Passing 0 would seal the old
+    /// format; nothing does, because a bubble with no clock silently disables
+    /// the hold for whoever receives it.
     public func seal(phase: Int, lastActorSeat: Int, gameId: UInt64,
-                    parent8: Data, joins: [MessageJoin]) throws -> Data {
+                    parent8: Data, joins: [MessageJoin],
+                    sentAt: Int = MessageKernel.clockNow()) throws -> Data {
         let joinsJSON = String(data: try JSONEncoder().encode(joins), encoding: .utf8) ?? "[]"
         var parent = [UInt8](repeating: 0, count: 8)
         parent.replaceSubrange(0..<min(8, parent8.count), with: parent8.prefix(8))
         var out = [UInt8](repeating: 0, count: 8 * 1024)
         let n = joinsJSON.withCString { jp in
             fio_msg_encode(Int32(phase), Int32(lastActorSeat), gameId, parent, jp,
-                           &out, Int32(out.count))
+                           Int32(sentAt & 0xffff), &out, Int32(out.count))
         }
         guard n > 0 else { throw MessageEnvelope.Failure.damaged(code: Int(fio_last_msg_error())) }
         return Data(bytes: out, count: Int(n))
+    }
+
+    /// THE CLOCK, in the one unit the wire speaks: unix seconds mod 65536.
+    ///
+    /// Two bytes, and the wrap is deliberate — nothing ever needs the absolute
+    /// time, only `now - sent_at` against 15, and unsigned subtraction gets that
+    /// right across a rollover (see c/src/msg_wire.h for the full argument and
+    /// what the wrap costs).
+    ///
+    /// nonisolated: a clock read touches no kernel state, and the send path
+    /// stamps it as a default argument, which cannot await.
+    public nonisolated static func clockNow() -> Int {
+        Int(Date().timeIntervalSince1970.rounded(.down)) & 0xffff
+    }
+
+    /// ROUND 16 — how many seconds `seat` must still wait before it may pick up,
+    /// against the game the last `decode` left resident. 0 = it may pick up now.
+    ///
+    /// The RULE is `msg_pickup_hold_remaining` in C, not here: the defender, a
+    /// last action that is an attack or a pass, and spare capacity on the table
+    /// are all questions about the game, and this file marshals. Deliberately
+    /// separate from `residentLegal` — the v6 body codes each action as an index
+    /// into the legal-move menu, so a hold that removed `pickup` from that menu
+    /// would re-point every replay code ever written.
+    public func pickupHold(seat: Int, sentAt: Int, now: Int = MessageKernel.clockNow()) -> Int {
+        Int(fio_msg_pickup_hold(Int32(seat), Int32(sentAt & 0xffff), Int32(now & 0xffff)))
     }
 
     /// The best shareable REPLAY code for the resident (finished) game — the §12

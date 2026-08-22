@@ -217,7 +217,7 @@ static int fmsg_check(void) {
                         "{\"seat\":2,\"name\":\"Bo\"},{\"seat\":3,\"name\":\"Cy\"}]";
     unsigned char pay[2048];
     const uint8_t zero8[8] = {0};
-    const int n = fio_msg_encode(2 /* LIVE */, 0, 0x0123456789abcdefULL, zero8, joins, pay, sizeof(pay));
+    const int n = fio_msg_encode(2 /* LIVE */, 0, 0x0123456789abcdefULL, zero8, joins, 0 /* no send clock in this smoke */, pay, sizeof(pay));
     if (n <= 0) { printf("FAIL fmsg encode: %d (msg_err=%d)\n", n, fio_last_msg_error()); return 1; }
 
     // The size claim the whole design rests on (§4.4): base32 is 8 chars/5 bytes.
@@ -227,7 +227,7 @@ static int fmsg_check(void) {
     // Decode ADOPTS: the payload's game becomes the resident one. The metadata
     // comes back as the PACKED blob (fio_msg_decode_packed layout): phase(1)
     // n_players(1) last_actor_seat(1) round(1) turn(u16) game_id(u64) parent8(8)
-    // digest(32) n_joins(1) then joins {seat(1) len(1) name[]}.
+    // digest(32) sent_at(u16) n_joins(1) then joins {seat(1) len(1) name[]}.
     unsigned char *mb = (unsigned char *)buf;
     if (fio_msg_decode_packed(pay, n, mb, sizeof(buf)) <= 0) {
         printf("FAIL fmsg decode: msg_err=%d\n", fio_last_msg_error()); return 1;
@@ -237,8 +237,9 @@ static int fmsg_check(void) {
     if (mb[0] != 2 /* phase LIVE */ || mb[1] != 4 /* n_players */ || gid != 81985529216486895ULL) {
         printf("FAIL fmsg decode packed shape: phase=%d n=%d gid=%llu\n", mb[0], mb[1], gid); return 1;
     }
-    // Seat 0's join is "Sveta" — the first record after the 55-byte header.
-    if (!(mb[55] == 0 && mb[56] == 5 && memcmp(mb + 57, "Sveta", 5) == 0)) {
+    // Seat 0's join is "Sveta" — the first record after the 57-byte header
+    // (round 16 added the two send-clock bytes ahead of n_joins).
+    if (!(mb[57] == 0 && mb[58] == 5 && memcmp(mb + 59, "Sveta", 5) == 0)) {
         printf("FAIL fmsg decode: seat-0 join not Sveta\n"); return 1;
     }
     // The digest (Rule P's tiebreak) is present and not all-zero.
@@ -275,7 +276,7 @@ static int fmsg_check(void) {
         }
         if (v == FIO_REBASE_REAPPLY) {
             unsigned char child[2048];
-            const int cn = fio_msg_encode(2, seat, 0x0123456789abcdefULL, zero8, joins, child, sizeof(child));
+            const int cn = fio_msg_encode(2, seat, 0x0123456789abcdefULL, zero8, joins, 0 /* no send clock in this smoke */, child, sizeof(child));
             if (cn <= 0) { printf("FAIL fmsg child encode %d\n", cn); return 1; }
             if (fio_msg_rule_p(child, cn, pay, n) >= 0) {
                 printf("FAIL rule_p: the child chain must win\n"); return 1;
@@ -330,7 +331,7 @@ static int lobby_v2_reseat_check(void) {
     const uint8_t zero8[8] = {0};
     const char *joins1 = "[{\"seat\":0,\"name\":\"Alex\"}]";
     unsigned char waiting[2048];
-    const int wn = fio_msg_encode(0 /* WAITING */, 0, 0xF001ULL, zero8, joins1, waiting, sizeof(waiting));
+    const int wn = fio_msg_encode(0 /* WAITING */, 0, 0xF001ULL, zero8, joins1, 0 /* no send clock in this smoke */, waiting, sizeof(waiting));
     if (wn <= 0) { printf("FAIL lobby waiting encode: %d (msg_err=%d)\n", wn, fio_last_msg_error()); return 1; }
 
     // Two joins land (seats 1, 2) — mechanically identical to today's join
@@ -342,7 +343,7 @@ static int lobby_v2_reseat_check(void) {
     const char *joins3 = "[{\"seat\":0,\"name\":\"Alex\"},{\"seat\":1,\"name\":\"Sveta\"},"
                         "{\"seat\":2,\"name\":\"Boris\"}]";
     unsigned char waiting3[2048];
-    const int wn3 = fio_msg_encode(0, 2, 0xF001ULL, zero8, joins3, waiting3, sizeof(waiting3));
+    const int wn3 = fio_msg_encode(0, 2, 0xF001ULL, zero8, joins3, 0 /* no send clock in this smoke */, waiting3, sizeof(waiting3));
     if (wn3 <= 0) { printf("FAIL lobby waiting3 encode: %d\n", wn3); return 1; }
     if (fio_msg_decode_packed(waiting3, wn3, mb, sizeof(mb)) <= 0) {
         printf("FAIL lobby waiting3 decode: msg_err=%d\n", fio_last_msg_error()); return 1;
@@ -356,7 +357,7 @@ static int lobby_v2_reseat_check(void) {
     // at the actual joined count (3) from the SAME locked seed, then seal LIVE.
     if (fio_reseat_game(3) != FIO_EOK) { printf("FAIL lobby reseat(3)\n"); return 1; }
     unsigned char live[2048];
-    const int ln = fio_msg_encode(2 /* LIVE */, 0, 0xF001ULL, zero8, joins3, live, sizeof(live));
+    const int ln = fio_msg_encode(2 /* LIVE */, 0, 0xF001ULL, zero8, joins3, 0 /* no send clock in this smoke */, live, sizeof(live));
     if (ln <= 0) { printf("FAIL lobby live encode: %d (msg_err=%d)\n", ln, fio_last_msg_error()); return 1; }
 
     // THE claim: the wire accepts a LIVE child whose n_players (3) differs
@@ -399,7 +400,7 @@ static int nine_player_cap_check(void) {
         off += snprintf(joins8 + off, sizeof(joins8) - off,
                         "%s{\"seat\":%d,\"name\":\"P%d\"}", s ? "," : "", s, s);
     snprintf(joins8 + off, sizeof(joins8) - off, "]");
-    if (fio_msg_encode(0, 7, 0xF002ULL, zero8, joins8, out, sizeof(out)) <= 0) {
+    if (fio_msg_encode(0, 7, 0xF002ULL, zero8, joins8, 0 /* no send clock in this smoke */, out, sizeof(out)) <= 0) {
         printf("FAIL cap: a full 8-join lobby refused to seal (msg_err=%d)\n",
                fio_last_msg_error());
         return 1;
@@ -409,13 +410,13 @@ static int nine_player_cap_check(void) {
     char joins9[600];
     snprintf(joins9, sizeof(joins9), "%.*s,{\"seat\":8,\"name\":\"P8\"}]",
              (int)strlen(joins8) - 1, joins8);
-    if (fio_msg_encode(0, 7, 0xF002ULL, zero8, joins9, out, sizeof(out)) > 0) {
+    if (fio_msg_encode(0, 7, 0xF002ULL, zero8, joins9, 0 /* no send clock in this smoke */, out, sizeof(out)) > 0) {
         printf("FAIL cap: a 9-join lobby sealed\n"); return 1;
     }
 
     // …a claim on seat 8 (outside the 0..7 wire range) does not…
     if (fio_msg_encode(0, 0, 0xF002ULL, zero8,
-                       "[{\"seat\":0,\"name\":\"A\"},{\"seat\":8,\"name\":\"I\"}]",
+                       "[{\"seat\":0,\"name\":\"A\"},{\"seat\":8,\"name\":\"I\"}]", 0 /* no send clock in this smoke */,
                        out, sizeof(out)) > 0) {
         printf("FAIL cap: a seat-8 claim sealed\n"); return 1;
     }

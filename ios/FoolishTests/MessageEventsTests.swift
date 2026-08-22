@@ -234,7 +234,13 @@ final class MessageEventsTests: XCTestCase {
             guard let a = creator, let atk = a.legal.first(where: { $0.type == .attack })
             else { continue }
             await a.apply(atk)
-            let p0 = try await a.stagedPayload()
+            // ROUND 16: stamped THIRTY SECONDS AGO, so seat 1 may pick up
+            // straight away. A bubble sealed at this instant would hold the
+            // defender for 15 seconds (msg_pickup_hold_remaining) and the
+            // pickup below would be refused - correctly - leaving this test
+            // measuring nothing. The age is the fixture, not a workaround: what
+            // is being pinned here is what a REOPENED pickup animates.
+            let p0 = try await a.stagedPayload(sentAt: MessageKernel.clockNow() - 30)
             let e0 = try await MessageEnvelope.decode(payload: p0, viewer: -1)
 
             let b = MessageTurnController(parentPayload: p0, parent: e0, mySeat: 1)

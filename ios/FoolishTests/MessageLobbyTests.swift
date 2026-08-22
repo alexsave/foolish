@@ -427,22 +427,31 @@ final class MessageLobbyTests: XCTestCase {
         try await k.newGame(seed: freshSeed(1), players: 8)   // open lobby, cap 8
         var payload = try await k.seal(phase: 0, lastActorSeat: 0, gameId: gid,
                                        parent8: Data(repeating: 0, count: 8),
-                                       joins: [MessageJoin(seat: 0, name: "Alex")])
+                                       joins: [MessageJoin(seat: 0, name: "Alex")], sentAt: 0)
         var stale3: Data?          // the 3-join lobby a stale Start races from
         for (seat, name) in [(1, "Sveta"), (2, "Boris"), (3, "Dima")] {
             let env = try await MessageEnvelope.decode(payload: payload, viewer: -1)
             let joins = (env.joins + [MessageJoin(seat: seat, name: name)]).sorted { $0.seat < $1.seat }
             payload = try await k.seal(phase: 0, lastActorSeat: seat, gameId: gid,
                                        parent8: MessageTurnController.firstEight(hex: env.digest),
-                                       joins: joins)
+                                       joins: joins, sentAt: 0)
             if joins.count == 3 { stale3 = payload }
         }
 
         // Alex starts from the full 4-join lobby…
         let fullLobby = try await MessageEnvelope.decode(payload: payload, viewer: -1)
+        // sentAt: 0 on BOTH starts below. Round 16 put a send clock in the
+        // envelope, so a seal's bytes - and therefore its digest, which is Rule
+        // P's tiebreak and the whole subject of this test - move with the second
+        // it happened. A fixture that must pose one specific coin-flip cannot
+        // have a moving byte in it. Sealing clockless reproduces exactly the
+        // bytes this fixture was built against, and costs nothing: the clock
+        // drives one rule (the pickup hold) and a turn-0 start has no attack to
+        // hold anyone on.
         let live4 = try await k.startFromLobby(
             lobbyPayload: payload, gameId: gid, actingSeat: 0,
-            parent8: MessageTurnController.firstEight(hex: fullLobby.digest), joins: fullLobby.joins)
+            parent8: MessageTurnController.firstEight(hex: fullLobby.digest),
+            joins: fullLobby.joins, sentAt: 0)
         let env4 = try await MessageEnvelope.decode(payload: live4, viewer: -1)
         let fa4 = await k.residentView(viewer: -1)?.firstAttacker ?? -1
 
@@ -451,7 +460,8 @@ final class MessageLobbyTests: XCTestCase {
         let staleEnv = try await MessageEnvelope.decode(payload: stale3!, viewer: -1)
         let live3 = try await k.startFromLobby(
             lobbyPayload: stale3!, gameId: gid, actingSeat: 1,
-            parent8: MessageTurnController.firstEight(hex: staleEnv.digest), joins: staleEnv.joins)
+            parent8: MessageTurnController.firstEight(hex: staleEnv.digest),
+            joins: staleEnv.joins, sentAt: 0)
         let env3 = try await MessageEnvelope.decode(payload: live3, viewer: -1)
         let fa3 = await k.residentView(viewer: -1)?.firstAttacker ?? -1
 

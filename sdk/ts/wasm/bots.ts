@@ -710,7 +710,8 @@ export function kernelReplayEncodeV6FromGame(
 
 // The unpacked header — the private ABI msg_blob_write/msg_blob_read define in
 // c/wasm/wasm_api.c. Fixed offsets, fixed-size join slots.
-const MSG_BLOB_HDR = 90;
+// Round 16 added the two send-clock bytes at 90, so the joins start at 92.
+const MSG_BLOB_HDR = 92;
 // 2 + the wire's MSG_MAX_NAME: was 14 (2 + 12) before round-5 B1 raised the
 // name cap to 64 bytes (docs/APP_REVIEW_NOTES.md, c/src/msg_wire.h) — must
 // match wasm_api.c's MSG_BLOB_JOIN or this bridge mis-parses every join.
@@ -732,6 +733,10 @@ export interface MsgEnvelope {
     parent8: Uint8Array;    // first 8 bytes of SHA-256(parent envelope)
     seed: Uint8Array;       // 32
     digest: Uint8Array;     // SHA-256 of THIS envelope — Rule P's tiebreak
+    /// ROUND 16: the send clock, unix seconds mod 65536, or 0 for a chain that
+    /// carries none (format 2). Written as well as read: sealing with a
+    /// non-zero clock is what makes an envelope format 3.
+    sent_at: number;
     joins: MsgJoin[];
 }
 
@@ -780,6 +785,7 @@ function readBlob(buf: Uint8Array, base: number, len: number): MsgEnvelope {
         parent8: b.slice(18, 26),
         seed: b.slice(26, 58),
         digest: b.slice(58, 90),
+        sent_at: dv.getUint16(90, true),
         joins,
     };
 }
@@ -795,6 +801,7 @@ function writeBlob(e: MsgEnvelope): Uint8Array {
     out.set(e.parent8.subarray(0, 8), 18);
     out.set(e.seed.subarray(0, 32), 26);
     // 58..90 is the digest: decode-only (an envelope cannot carry its own).
+    dv.setUint16(90, e.sent_at & 0xffff, true);
     e.joins.forEach((j, i) => {
         const o = MSG_BLOB_HDR + i * MSG_BLOB_JOIN;
         const name = new TextEncoder().encode(j.name);
@@ -1045,10 +1052,30 @@ export function kernelEventsFromPacked(bytes: Uint8Array): KernelSequence {
                       ex => ex.wasm_events_json(bytes.length)) as KernelSequence;
 }
 
-export function kernelMsgSeal(header: Omit<MsgEnvelope, 'digest' | 'turn' | 'round' | 'format'>): Uint8Array {
+/**
+ * ROUND 16 - how many seconds this seat must still wait before it may pick up,
+ * against the game the last `kernelMsgDecode` left resident. 0 means now.
+ *
+ * `sentAt` is the decoded envelope's `sent_at` and `now` the caller's own unix
+ * seconds mod 65536; a chain with no clock (format 2) always answers 0, which
+ * is what keeps every bubble sealed by a shipped build playable.
+ */
+export function kernelMsgPickupHold(seat: number, sentAt: number, now: number): number {
+    const ex = bots();
+    if (!ex.wasm_msg_pickup_hold) throw new Error('kernelMsgPickupHold: module has no FMSG support');
+    return ex.wasm_msg_pickup_hold(seat, sentAt & 0xffff, now & 0xffff);
+}
+
+export function kernelMsgSeal(
+    header: Omit<MsgEnvelope, 'digest' | 'turn' | 'round' | 'format' | 'sent_at'>
+          & { sent_at?: number },
+): Uint8Array {
     const ex = bots();
     if (!ex.wasm_msg_seal) throw new Error('kernelMsgSeal: module has no FMSG support');
-    const blob = writeBlob({ ...header, format: 2, turn: 0, round: 0, digest: new Uint8Array(32) });
+    // format 2 here is a placeholder: msg_seal picks the real one off the clock
+    // (a non-zero sent_at seals format 3), so the caller never states it twice.
+    const blob = writeBlob({ ...header, sent_at: header.sent_at ?? 0,
+                             format: 2, turn: 0, round: 0, digest: new Uint8Array(32) });
     const base = ex.wasm_replay_io_ptr();
     __mem(ex).set(blob, base);
     const r = ex.wasm_msg_seal(blob.length);
