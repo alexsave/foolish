@@ -173,7 +173,16 @@ public struct MessageTableView: View {
     /// (and always cleared) by the very next `flyBoutEndToDiscard` call.
     private struct PendingCover {
         let cards: [Card]
-        let battleRect: CGRect
+        /// The battle slot EACH covering card lands on, keyed by card identity.
+        ///
+        /// One rect PER CARD, because a cover can answer several attacks at once
+        /// (the kernel's `calc_cover_moves_greedy` emits exactly one such move,
+        /// and the Cover button plays it): `move.cards[i]` covers
+        /// `move.attackCards[i]`, positionally. This was a single `battleRect`
+        /// - the slot the GESTURE named - and every card of a multicover flew at
+        /// that one slot, which is what the owner saw as "all three cards
+        /// animate towards a single attack card".
+        let landing: [String: CGRect]
         let fromRects: [String: CGRect]   // card.identity -> hand rect AT PLAY TIME
     }
     @State private var pendingCover: PendingCover?
@@ -1219,7 +1228,12 @@ public struct MessageTableView: View {
         // from. Its battle rect must have been part of the table we just cleared.
         let boutFrames = lastBattleFrames
         var matchedCover: PendingCover?
-        if let pc = cover, boutFrames.values.contains(pc.battleRect) { matchedCover = pc }
+        // ANY of its landing slots being part of the table we just cleared is
+        // enough - a multicover's slots all belong to the same bout, so they
+        // stand or fall together.
+        if let pc = cover, pc.landing.values.contains(where: { boutFrames.values.contains($0) }) {
+            matchedCover = pc
+        }
 
         // Pre-hide the cards about to land in MY hand so they fly from the deck
         // rather than popping in. This is the ONE view diff that remains, and only
@@ -1631,11 +1645,52 @@ public struct MessageTableView: View {
     /// battle they covered. A pure snapshot, so no retry: what was measured
     /// is what there is.
     private func pendingCoverLandingFlights(_ pc: PendingCover) -> [Flight]? {
-        pc.cards.enumerated().compactMap { i, c in
-            pc.fromRects[c.identity].map {
-                Flight(id: "coverland-\(c.identity)", card: c, from: $0,
-                      to: pc.battleRect.offsetBy(dx: CGFloat(i) * 8, dy: CGFloat(i) * 6))
-            }
+        Self.coverLandingFlights(cards: pc.cards, landing: pc.landing, fromRects: pc.fromRects)
+    }
+
+    /// Where each card of a cover is going to LAND, measured before the apply
+    /// (the table it lands on is about to be swept away, so there is nothing to
+    /// measure afterwards).
+    ///
+    /// A cover pairs its cards with its targets POSITIONALLY - `cards[i]`
+    /// answers `attackCards[i]` - which is the shape `PackedAction.encode`
+    /// writes to the wire and `calc_cover_moves_greedy` builds. So a three-card
+    /// cover has three landing slots, one per attack it answers, and this walks
+    /// that pairing rather than reusing the slot the gesture happened to name.
+    ///
+    /// `frames` is the live measurement and `fallback` the last non-empty one,
+    /// the same pair the single-rect version used. A card whose battle cannot be
+    /// located is dropped, not defaulted: a wrong rect is a card flying to the
+    /// wrong place, which is worse than the sweep carrying it off from rest.
+    static func coverLandingRects(move: Move, battles: [BattleView],
+                                  frames: [Int: CGRect],
+                                  fallback: [Int: CGRect]) -> [String: CGRect] {
+        guard move.type == .cover else { return [:] }
+        let targets = move.attackCards ?? []
+        guard targets.count == move.cards.count else { return [:] }
+        var out: [String: CGRect] = [:]
+        for (card, attack) in zip(move.cards, targets) {
+            guard let idx = battles.firstIndex(where: { $0.attack == attack }),
+                  let rect = frames[idx] ?? fallback[idx] else { continue }
+            out[card.identity] = rect
+        }
+        return out
+    }
+
+    /// note 17's landing step: each covering card from its hand rect AT PLAY
+    /// TIME to its own battle. A pure snapshot, so no retry - what was measured
+    /// is what there is.
+    ///
+    /// `angle` is set here for the same reason `placementFlights` and
+    /// `openReplayFlights` set it: a cover lies across, so its ghost rotates
+    /// into the tilt over the flight instead of arriving flat and snapping the
+    /// instant the real card takes its place.
+    static func coverLandingFlights(cards: [Card], landing: [String: CGRect],
+                                    fromRects: [String: CGRect]) -> [Flight] {
+        cards.compactMap { c in
+            guard let from = fromRects[c.identity], let to = landing[c.identity] else { return nil }
+            return Flight(id: "coverland-\(c.identity)", card: c, from: from, to: to,
+                          angle: FBattleGrid.coverAngle)
         }
     }
 
@@ -2580,12 +2635,17 @@ public struct MessageTableView: View {
         // cover itself (the defender's hand empties) — stash enough, BEFORE
         // applying, for flyBoutEndToDiscard to synthesize the landing step it
         // would otherwise have no rendered state to animate from.
-        if move.type == .cover, case .battle(let i) = target, i >= 0, i < view.battles.count,
-           let rect = battleFrames[i] ?? lastBattleFrames[i] {
-            pendingCover = PendingCover(cards: cards, battleRect: rect, fromRects: fromRects)
-        } else {
-            pendingCover = nil
-        }
+        //
+        // Read off the MOVE, not off `target`: the move is the kernel's own
+        // answer for which attack each card covers, and it is the only one that
+        // holds for a multicover (where the gesture names one slot but the play
+        // lands on several). It also covers the cover a `.table` drop resolves
+        // to, which the old `case .battle` guard silently skipped - that one
+        // reached a bout end with no landing flight at all.
+        let landing = Self.coverLandingRects(move: move, battles: view.battles,
+                                             frames: battleFrames, fallback: lastBattleFrames)
+        pendingCover = landing.isEmpty ? nil
+            : PendingCover(cards: cards, landing: landing, fromRects: fromRects)
         // Bug 13: hand the placement to `flyBoutEndToDiscard`, and hide the cards
         // NOW - synchronously, before `apply` can publish a view with them
         // already sitting on the table. This is the same veil trick as
