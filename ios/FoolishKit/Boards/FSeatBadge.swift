@@ -24,10 +24,19 @@ public struct FSeatBadge: View {
     /// Dark name text (no shadow) for a LIGHT background — the beige message
     /// bubble. The wool board keeps bone text + a shadow (onLight = false).
     public let onLight: Bool
+    /// Which seat this badge is, when the board wants its role mark to be a
+    /// take-off or landing pad for a flight (round 16). nil on the boards that
+    /// only ever draw a seat - the bubble snapshot, the gallery, the rules -
+    /// where there is no `boardSpace` to publish into and nothing flies.
+    public let seat: Int?
+    /// This seat's mark is in the air right now as a flight ghost, so the badge
+    /// must not draw its own copy (FRoleMotion).
+    public let markFlying: Bool
 
     public init(name: String, handCount: Int, isDefender: Bool = false,
                 isAttacker: Bool = false, saidGood: Bool = false,
-                thinking: Bool = false, isOut: Bool = false, onLight: Bool = false) {
+                thinking: Bool = false, isOut: Bool = false, onLight: Bool = false,
+                seat: Int? = nil, markFlying: Bool = false) {
         self.name = name
         self.handCount = handCount
         self.isDefender = isDefender
@@ -36,6 +45,8 @@ public struct FSeatBadge: View {
         self.thinking = thinking
         self.isOut = isOut
         self.onLight = onLight
+        self.seat = seat
+        self.markFlying = markFlying
     }
 
     // Mini back geometry (web CardsVisual: 25pt wide, spread 10pt/card, count
@@ -162,6 +173,18 @@ public struct FSeatBadge: View {
         }
     }
 
+    /// The ONE mark this seat wears. Never two: the kernel rejects a defender's
+    /// `good` (game.c handle_good), and `showsSword` already stands the sword
+    /// down for a seat that has said it - so shield, sword and check are
+    /// mutually exclusive in every state the engine can produce, which is what
+    /// lets them be one coin with three faces (FRoleMotion).
+    var mark: RoleMarkKind? {
+        if saidGood { return .check }
+        if isDefender { return .shield }
+        if isAttacker { return .sword }
+        return nil
+    }
+
     private var roleRow: some View {
         // Sizes come from `FRoleMark` - the ONE table both role rows read, so a
         // seat's mark cannot end up a different size from mine. The marks are
@@ -169,12 +192,12 @@ public struct FSeatBadge: View {
         // bubble snapshots) and painted in the shared `FRoleInk`.
         HStack(spacing: FSpace.xs) {
             if thinking { ThinkingDots() }
-            if saidGood { FCheck(size: FRoleMark.check) }
-            if isDefender {
-                FShield(size: FRoleMark.shield)
-            } else if isAttacker {
-                FSword(size: FRoleMark.sword)
-            }
+            FRoleCoin(kind: mark, flying: markFlying)
+                .background(GeometryReader { g in
+                    Color.clear.preference(
+                        key: RoleMarkFramesKey.self,
+                        value: seat.map { [$0: g.frame(in: .named(boardSpace))] } ?? [:])
+                })
         }
         // Tall enough for the largest glyph in the row, or it clips the blade.
         .frame(height: FRoleMark.rowHeight)

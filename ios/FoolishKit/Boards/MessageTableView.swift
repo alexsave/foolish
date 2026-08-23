@@ -158,6 +158,26 @@ public struct MessageTableView: View {
     @State private var seatCountOverride: [Int: Int] = [:]
     @State private var deckCountOverride: Int?
     @State private var discardCountOverride: Int?
+    // ROUND 16: the ROLES lag the game state the same way the counts do, and for
+    // the same reason. A bout end publishes one view in which the table is
+    // already clear, the hands already refilled AND the roles already rotated;
+    // the counts have been unpicked from that for rounds, but the marks still
+    // teleported - the shield was simply somewhere else on the first paint of a
+    // sequence whose cards had not begun to move. Now the badges wear
+    // `roleShown` until the sequence that earns the change has played, and the
+    // change itself is a flight (FRoleMotion).
+    @State private var roleShown: RoleState?
+    @State private var roleFlights: [RoleFlight] = []
+    @State private var roleProgress: Double = 0
+    /// Seats whose own mark is in the air (both ends of every live flight).
+    @State private var roleFlyingSeats: Set<Int> = []
+    /// Where each seat's mark sits, published by the badges and by my own
+    /// indicator - the take-off and landing pads.
+    @State private var roleMarkFrames: [Int: CGRect] = [:]
+    /// Claims the overlay, exactly like `animSequenceToken` claims the animator:
+    /// a newer hand-off must not have its ghosts cleared by an older one's
+    /// teardown.
+    @State private var roleFlightToken = 0
     /// note 39: the board keeps its stage until whatever's animating (a
     /// bout-end sequence, or an open-delta replay) visibly finishes — the
     /// end screen only swaps in once this flips. Starts false; `.task` resets
@@ -321,6 +341,11 @@ public struct MessageTableView: View {
         .padding(.horizontal, 8).padding(.top, 14).padding(.bottom, 4)   // top margin so the ring isn't clipped in the compact drawer
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay { FlyingCardsLayer(animator: animator) }
+        // Above the cards: a role changing hands IS the thing being read at that
+        // moment (it happens after the sweep and the deal, when nothing else is
+        // moving), and a shield disappearing behind a badge would read as a
+        // glitch rather than as depth.
+        .overlay { RoleFlightsLayer(flights: roleFlights, progress: roleProgress) }
         .coordinateSpace(name: boardSpace)
         .onPreferenceChange(BattleFramesKey.self) { fr in
             battleFrames = fr
@@ -333,6 +358,13 @@ public struct MessageTableView: View {
         .onPreferenceChange(DiscardFrameKey.self) { discardFrame = $0 }
         .onPreferenceChange(DeckFrameKey.self) { deckFrame = $0 }
         .onPreferenceChange(SeatFramesKey.self) { seatFrames = $0 }
+        .onPreferenceChange(RoleMarkFramesKey.self) { fr in
+            // Merged, never replaced: my own indicator and the opponent badges
+            // publish into the same key from different branches of the tree, and
+            // a seat that has gone out stops publishing entirely - but the mark
+            // it last wore may still be mid-flight from that pad.
+            roleMarkFrames.merge(fr) { _, new in new }
+        }
         .onPreferenceChange(HandCardFramesKey.self) {
             handCardFrames = $0
             #if DEBUG
@@ -366,7 +398,14 @@ public struct MessageTableView: View {
             }
             #endif
         }
-        .onChange(of: controller.view) { flyBoutEndToDiscard(to: $0) }
+        .onChange(of: controller.view) { v in
+            let sequenced = flyBoutEndToDiscard(to: v)
+            // Round 16: a move with no sequence of its own still moves the
+            // roles - a PASS hands the shield along mid-bout, and that is the
+            // one hand-off nothing else here would animate. A sequence syncs
+            // its own roles at the end, once its cards have landed.
+            if !sequenced, let v { syncRoles(to: RoleState(v), in: v, animated: true) }
+        }
         .fFlash($toast)
         .onChange(of: controller.rejectTick) { _ in
             // 1.0(4): say WHY, from the kernel's reason code, as a plain white
@@ -379,6 +418,11 @@ public struct MessageTableView: View {
             // happened, so give it all straight back.
             handBeforeMyMove = nil
             deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
+            // Round 16: and the roles `play` froze on the way in. Nothing
+            // happened, so there is nothing to hand over - this is the same
+            // board it was frozen from, which is why it is a plain release and
+            // not a sync.
+            roleShown = nil
             // Round-6 bug 13: the same applies to a card `playAt` hid on its way
             // to the table. A rejected move publishes no view change, so nothing
             // will ever fly it and nothing else would take that veil down - the
@@ -895,8 +939,14 @@ public struct MessageTableView: View {
     /// attacker gets the sword. Everyone else has no icon." Once the bout is
     /// open, throw-ins make the others attackers for real, and they get one.
     private func showsSword(seat: Int, isOut: Bool, _ view: GameView) -> Bool {
-        guard seat != view.defender, !isOut, !view.hasSaidGood(seat) else { return false }
-        return view.battles.isEmpty ? seat == view.firstAttacker : true
+        // Round 16: asked of the roles the board is SHOWING, not the ones the
+        // kernel has moved on to - so a bout end does not re-cast every sword on
+        // the table a beat before the sequence that earns it has played. The
+        // battles are read live because they are already animated: the table
+        // clears through the sweep, not through this.
+        let roles = shownRoles(view)
+        guard seat != roles.defender, !isOut, (roles.goodMask & (1 << seat)) == 0 else { return false }
+        return view.battles.isEmpty && sweepBattles.isEmpty ? seat == roles.firstAttacker : true
     }
 
     /// One opponent seat badge, publishing its frame in `boardSpace` so bout-end
@@ -904,10 +954,16 @@ public struct MessageTableView: View {
     private func opponentSeat(_ p: PlayerView, _ view: GameView) -> some View {
         FSeatBadge(name: name(p.seat),
                    handCount: shownHandCount(p),
-                   isDefender: p.seat == view.defender,
+                   // Round 16: the ROLE the board is currently showing, which
+                   // during a bout-end sequence is still the one from before the
+                   // move - the marks change when their flight plays, not when
+                   // the view carrying the new roles arrives.
+                   isDefender: shownIsDefender(p.seat, view),
                    isAttacker: showsSword(seat: p.seat, isOut: p.isOut, view),
-                   saidGood: view.hasSaidGood(p.seat),
-                   isOut: p.isOut)
+                   saidGood: shownSaidGood(p.seat, view),
+                   isOut: p.isOut,
+                   seat: p.seat,
+                   markFlying: roleFlyingSeats.contains(p.seat))
             .background(GeometryReader { g in
                 Color.clear.preference(key: SeatFramesKey.self,
                                        value: [p.seat: g.frame(in: .named(boardSpace))])
@@ -950,23 +1006,25 @@ public struct MessageTableView: View {
     private func selfRoleIndicator(_ view: GameView) -> some View {
         let mySeat = controller.mySeat
         let isOut = view.me?.isOut ?? false
-        let isDefender = view.defender == mySeat
-        let saidGood = view.hasSaidGood(mySeat)
+        let isDefender = shownIsDefender(mySeat, view)
+        let saidGood = shownSaidGood(mySeat, view)
         let isAttacker = showsSword(seat: mySeat, isOut: isOut, view)
-        return Group {
-            if !isOut {
-                // ONE size table for both role rows: `FRoleMark.size`. This
-                // call site and FSeatBadge's `roleRow` used to carry their own
-                // numbers with a comment on each asking the other to keep in
-                // step, which is not a mechanism - my own role must not read
-                // bigger than an opponent's just because it is mine.
-                HStack(spacing: FSpace.xs) {
-                    if saidGood { FCheck(size: FRoleMark.check) }
-                    if isDefender { FShield(size: FRoleMark.shield) }
-                    else if isAttacker { FSword(size: FRoleMark.sword) }
-                }
-            }
-        }
+        // ONE size table for both role rows: `FRoleMark.size`. This call site
+        // and FSeatBadge's `roleRow` used to carry their own numbers with a
+        // comment on each asking the other to keep in step, which is not a
+        // mechanism - my own role must not read bigger than an opponent's just
+        // because it is mine. Round 16 goes further and shares the whole MARK
+        // (FRoleCoin), so my shield flips, fades and flies exactly as theirs do,
+        // and my own seat is a landing pad like any other.
+        let mark: RoleMarkKind? = isOut ? nil
+            : saidGood ? .check
+            : isDefender ? .shield
+            : isAttacker ? .sword : nil
+        return FRoleCoin(kind: mark, flying: roleFlyingSeats.contains(mySeat))
+            .background(GeometryReader { g in
+                Color.clear.preference(key: RoleMarkFramesKey.self,
+                                       value: [mySeat: g.frame(in: .named(boardSpace))])
+            })
     }
 
     #if DEBUG
@@ -1133,7 +1191,12 @@ public struct MessageTableView: View {
     /// The one thing still read off old/new is the TRIGGER (did battles go
     /// non-empty -> empty) and which of MY cards to hide before they fly - both UI
     /// timing, not animation derivation.
-    private func flyBoutEndToDiscard(to newView: GameView?) {
+    /// Returns true when it handed the change to an ANIMATED SEQUENCE (an
+    /// open-replay or a bout end). Round 16: the caller needs to know, because a
+    /// sequence owns the role hand-off too - it plays it as its closing beat -
+    /// while everything else has to have the roles released for it on the spot.
+    @discardableResult
+    private func flyBoutEndToDiscard(to newView: GameView?) -> Bool {
         // A bubble that ARRIVED while this board was open (the controller
         // re-adopted rather than being replaced - see MessageTurnController.
         // adopt). There is no meaningful "board before this move" to diff
@@ -1187,7 +1250,7 @@ public struct MessageTableView: View {
         // returns) or has nothing of mine to hide, so there is no paint between
         // dropping it and the animator picking it up.
         handBeforeMyMove = nil
-        guard let new = newView else { return }
+        guard let new = newView else { return false }
         // Once this returns, `animator.hidden` and the count overrides are the
         // whole truth — so this is exactly where the board stops veiling.
         defer { controller.consumeReplayPending() }
@@ -1201,7 +1264,7 @@ public struct MessageTableView: View {
         if reduceMotion {
             releaseCounts(); clearSweep()
             if new.isOver { showResults = true }   // note 39b
-            return
+            return false
         }
         // note 10: undo can legally take battles -> empty; never a bout end.
         // Round-8: an undo is the EXACT REVERSE of the play it undoes - the card
@@ -1212,11 +1275,11 @@ public struct MessageTableView: View {
         // e.g. undoing a pickup, or someone else's move) falls through to the snap.
         if controller.lastChangeWasUndo {
             releaseCounts()
-            if let old = prior, flyUndoReturn(old: old, new: new) { return }
-            clearSweep(); return
+            if let old = prior, flyUndoReturn(old: old, new: new) { return false }
+            clearSweep(); return false
         }
         // First appear with a delivered game: the open-replay (same event path).
-        if prior == nil { AnimLog.say("-> openReplay"); replayLastMoveOnOpen(new); return }
+        if prior == nil { AnimLog.say("-> openReplay"); replayLastMoveOnOpen(new); return true }
         // Send released the bout end this board had been withholding. `prior` is
         // the pre-settlement board the player has been looking at since they
         // staged the move, which is exactly the "board before this move" the
@@ -1224,7 +1287,7 @@ public struct MessageTableView: View {
         if let released {
             AnimLog.say("-> settlement released n=\(released.count)")
             playBoutEnd(events: released, old: prior!, new: new, cover: nil)
-            return
+            return true
         }
         guard let old = prior, !old.battles.isEmpty, new.battles.isEmpty else {
             // The table did not just clear, so this is an ordinary placement (or
@@ -1240,7 +1303,7 @@ public struct MessageTableView: View {
                 flyPlacement(pp, to: new)
             }
             if new.isOver { settleResults() }
-            return
+            return false
         }
 
         // note 17: a cover that ended the bout in the SAME apply still needs its
@@ -1256,6 +1319,7 @@ public struct MessageTableView: View {
             matchedCover = pc
         }
         playBoutEnd(events: staged, old: old, new: new, cover: matchedCover)
+        return true
     }
 
     /// The bout end, as one sequence: pre-hide what is about to land in my hand,
@@ -1360,6 +1424,10 @@ public struct MessageTableView: View {
             deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
             animator.clearPreHidden()
             clearSweep()
+            // Round 16: and the roles, which were frozen by the same caller. A
+            // stream with no steps still animates the hand-off - there is
+            // nothing else moving, so it is the only thing to watch.
+            syncRoles(to: RoleState(view), in: view, animated: true)
             if view.isOver { settleResults() }
             return
         }
@@ -1382,6 +1450,17 @@ public struct MessageTableView: View {
         // does exactly this for a live placement; these two open/bout-end
         // teardowns were the ones still relying on clearPreHidden alone).
         var openedThisSeq = Set<String>()
+        // ROUND 16, and the case a live board does not have: a COLD OPEN. Tapping
+        // a bubble mounts a fresh board, so there is no "roles before this move"
+        // in `@State` for the hand-off to start from (`freezeCounts` only runs
+        // when this board was already watching). The stream itself carries it -
+        // its FIRST event's state is the board as that turn began, roles and
+        // goods included - so a receiver opening a bout-ending bubble watches
+        // the shield cross the table exactly like the player who was already
+        // looking at it. Only ever seeds; a frozen board keeps what it froze.
+        if roleShown == nil, let first = events.first?.state {
+            roleShown = RoleState(first)
+        }
         defer {
             BoardAnimator.sequenceDepth -= 1
             // ONLY the newest sequence may hand the veil and the counts back. A
@@ -1528,6 +1607,31 @@ public struct MessageTableView: View {
                 try? await Task.sleep(nanoseconds: UInt64(boutEndHold * 1_000_000_000))
             }
         }
+        // ROUND 16: THE CLOSING BEAT. The roles were frozen for the whole
+        // sequence (`freezeCounts`), so the marks have been sitting on the seats
+        // that held them while the table was swept and the hands refilled. NOW
+        // they change hands, with nothing else moving - the shield sails to the
+        // next defender and the sword is handed to whoever opens next.
+        //
+        // Awaited rather than fired and forgotten, so it happens INSIDE the
+        // sequence: `sequenceDepth` still covers it (the staged-send flow waits
+        // on that), and the results screen cannot cut in over a shield in mid
+        // air. A stale sequence skips it - the one that replaced it owns the
+        // roles now, exactly as it owns the veil and the counts.
+        if mySeq == animSequenceToken {
+            // Take the swept table down FIRST. `showsSword` asks whether there
+            // are cards on the table, and it has to count the pre-bout grid
+            // (that is what keeps every attacker's sword up while the sweep
+            // plays) - so if the grid were still standing when the roles change,
+            // the seats that just said good would each flash a sword for the
+            // length of the hand-off before the empty table took it away again.
+            // Every card in it has landed by now; the teardown below repeats
+            // this harmlessly for the paths that never reach here.
+            sweepBattles = []; sweepTableIds = []; sweptFlownIds = []
+            if syncRoles(to: RoleState(view), in: view, animated: true) {
+                try? await Task.sleep(nanoseconds: UInt64((roleFlightTime + 0.05) * 1_000_000_000))
+            }
+        }
         AnimLog.say("stream#\(run) end")
         // Bug 9: a stale sequence must not settle the results screen either —
         // the sequence that replaced it owns when the board gives way.
@@ -1563,6 +1667,165 @@ public struct MessageTableView: View {
         var counts: [Int: Int] = [:]
         for p in v.players where p.seat != controller.mySeat { counts[p.seat] = p.handCount }
         seatCountOverride = counts
+        // ROUND 16: and the roles with them, at the same synchronous moment and
+        // for the same reason - by the time an onChange could do it the board
+        // has already drawn the marks at their new seats and there is nothing
+        // left to fly.
+        //
+        // A SEED, not an override. `roleShown` is "what the badges are wearing",
+        // and once it exists it is only ever advanced by `syncRoles` - which
+        // knows what changed and flies it. Writing the current view over it here
+        // would erase exactly that: a move played while a sequence is still
+        // animating (an impatient tap, the harness's auto-move) would freeze the
+        // roles to a board that has ALREADY rotated, and the hand-off the
+        // sequence was about to play would find nothing to hand over.
+        if roleShown == nil { roleShown = RoleState(v) }
+    }
+
+    // MARK: - the roles, and the marks that carry them (round 16)
+
+    /// What the badges are wearing, as a value. Not a GameView: this is only the
+    /// three facts a role mark is drawn from, so comparing two of them answers
+    /// "did anything about the roles change" without a whole board diff.
+    struct RoleState: Equatable {
+        let defender: Int
+        let firstAttacker: Int
+        let goodMask: Int
+        init(_ v: GameView) {
+            defender = v.defender
+            firstAttacker = v.firstAttacker
+            goodMask = v.goodMask
+        }
+        init(defender: Int, firstAttacker: Int, goodMask: Int = 0) {
+            self.defender = defender
+            self.firstAttacker = firstAttacker
+            self.goodMask = goodMask
+        }
+    }
+
+    /// The roles the board should DRAW right now - the frozen ones during a
+    /// sequence, the live ones at rest.
+    private func shownRoles(_ view: GameView) -> RoleState { roleShown ?? RoleState(view) }
+
+    private func shownIsDefender(_ seat: Int, _ view: GameView) -> Bool {
+        shownRoles(view).defender == seat
+    }
+    private func shownSaidGood(_ seat: Int, _ view: GameView) -> Bool {
+        (shownRoles(view).goodMask & (1 << seat)) != 0
+    }
+
+    /// Hand the roles over to `target`, flying whatever actually moved.
+    ///
+    /// THE TWO THAT TRAVEL. A defender's shield and the first attacker's sword
+    /// are the only marks that BELONG to a seat and then belong to another one -
+    /// so they are the only two that fly, and every other change (a sword
+    /// becoming a check, a check clearing at the end of a bout) is a gesture the
+    /// mark makes where it stands. That is the owner's "most swords can fade":
+    /// an attacker who simply may not attack any more did not give their sword
+    /// to anyone.
+    ///
+    /// A flight needs BOTH pads to have published; when one has not (a cold
+    /// first layout, a seat that just went out) the mark still changes, it just
+    /// changes in place. Never a reason to withhold the state.
+    /// Returns true when a mark actually took off - the caller inside a
+    /// sequence awaits that, so the hand-off is a beat of the sequence rather
+    /// than something still in the air after it ends.
+    @discardableResult
+    private func syncRoles(to target: RoleState, in view: GameView, animated: Bool) -> Bool {
+        let old = roleShown
+        roleShown = target
+        guard animated, !reduceMotion, let old, old != target, !view.isOver else {
+            // Only when something actually moved and did NOT fly: a cold board
+            // with nothing to hand over from, a Reduce Motion snap, a game that
+            // just ended. The silent case (nothing changed at all) is most view
+            // changes and would drown the trace.
+            if old != target {
+                AnimLog.say("roles -> d\(target.defender) fa\(target.firstAttacker) g\(target.goodMask) (no hand-off: from=\(old.map { "d\($0.defender) fa\($0.firstAttacker) g\($0.goodMask)" } ?? "nil") animated=\(animated) over=\(view.isOver))")
+            }
+            return false
+        }
+        let flights = Self.roleFlights(from: old, to: target, pads: roleMarkFrames)
+        AnimLog.say("roles d\(old.defender) fa\(old.firstAttacker) -> d\(target.defender) fa\(target.firstAttacker) pads=\(roleMarkFrames.keys.sorted()) flying=\(flights.count)")
+        guard !flights.isEmpty else { return false }
+        Task { await runRoleFlights(flights) }
+        return true
+    }
+
+    /// WHICH MARKS TRAVEL between two role states, and from where to where.
+    ///
+    /// A defender's shield and the first attacker's sword are the only marks
+    /// that BELONG to a seat and then belong to another one, so they are the
+    /// only two that fly. Everything else a role change does - a sword becoming
+    /// a check, a check clearing at the end of a bout, an attacker who may no
+    /// longer attack - is a gesture the mark makes where it stands, which is the
+    /// owner's "most swords can fade": a mark that flies is a mark that went
+    /// somewhere, and nobody took those.
+    ///
+    /// The SWORD leaves the seat that opened the bout that just ended, even when
+    /// that seat is currently wearing a check for having said good. What travels
+    /// is the right to open, not the glyph that happened to be on screen.
+    ///
+    /// A flight needs BOTH pads to have published. When one has not - a cold
+    /// first layout, a seat that just went out and stopped drawing a mark - that
+    /// mark simply changes in place. Never a reason to withhold the state; the
+    /// board's roles are already committed by the time this is asked.
+    ///
+    /// Static and pure so the rule can be read (and tested) without a board.
+    static func roleFlights(from old: RoleState, to target: RoleState,
+                            pads: [Int: CGRect]) -> [RoleFlight] {
+        func pad(_ seat: Int) -> CGPoint? {
+            guard let r = pads[seat], r != .zero else { return nil }
+            return CGPoint(x: r.midX, y: r.midY)
+        }
+        var flights: [RoleFlight] = []
+        // The shield goes to whoever is defending now - including a PASS
+        // (perevod), which is the same hand-off happening inside a bout.
+        if old.defender != target.defender,
+           let from = pad(old.defender), let to = pad(target.defender) {
+            flights.append(RoleFlight(id: "shield-\(old.defender)-\(target.defender)",
+                                      kind: .shield, from: from, to: to,
+                                      fromSeat: old.defender, toSeat: target.defender,
+                                      // The shield keeps its face to the room and
+                                      // only leans into the throw.
+                                      spin: 24))
+        }
+        if old.firstAttacker != target.firstAttacker,
+           let from = pad(old.firstAttacker), let to = pad(target.firstAttacker) {
+            flights.append(RoleFlight(id: "sword-\(old.firstAttacker)-\(target.firstAttacker)",
+                                      kind: .sword, from: from, to: to,
+                                      fromSeat: old.firstAttacker, toSeat: target.firstAttacker,
+                                      // A full turn: it is being thrown to the
+                                      // next player to swing.
+                                      spin: 360))
+        }
+        return flights
+    }
+
+    /// Carry the marks across, then hand the badges back their own copies. The
+    /// endpoints are blank for the duration, so there is exactly one of each
+    /// mark on screen at every instant of the hand-off.
+    @MainActor
+    private func runRoleFlights(_ f: [RoleFlight]) async {
+        roleFlightToken += 1
+        let mine = roleFlightToken
+        AnimLog.say("role flight [\(f.map { "\($0.kind):\($0.fromSeat)->\($0.toSeat)" }.joined(separator: " "))]")
+        roleFlyingSeats = Set(f.flatMap { [$0.fromSeat, $0.toSeat] })
+        roleFlights = f
+        roleProgress = 0
+        // One paint at the take-off pad before the tween starts - the same beat
+        // BoardAnimator.play gives a card, and for the same reason: an animation
+        // that starts in the frame its view is created in has nothing to
+        // interpolate from.
+        try? await Task.sleep(nanoseconds: 25_000_000)
+        guard mine == roleFlightToken else { return }
+        withAnimation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: roleFlightTime)) {
+            roleProgress = 1
+        }
+        try? await Task.sleep(nanoseconds: UInt64(roleFlightTime * 1_000_000_000))
+        guard mine == roleFlightToken else { return }
+        roleFlights = []
+        roleFlyingSeats = []
+        roleProgress = 0
     }
 
     /// note 39: hold the board on-screen a beat after whatever's animating
