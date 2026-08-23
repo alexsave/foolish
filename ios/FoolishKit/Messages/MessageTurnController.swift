@@ -243,6 +243,15 @@ public final class MessageTurnController: ObservableObject {
     public var canStage: Bool { canSend || (isGenesis && !iCanAct) }
     public var iCanAct: Bool { !legal.contains { $0.type == .wait } && !legal.isEmpty }
     public var isOver: Bool { view?.isOver ?? false }
+    /// The finished game's shareable REPLAY code (§12), captured the moment the
+    /// game ends - see `publish`. nil while a game is running, and nil for a
+    /// finished one the kernel cannot encode.
+    @Published public private(set) var replayCode: String?
+    /// …as the web replay URL, `foolish.cards/<code>`: a long path segment is
+    /// classified as a self-contained replay payload by the site itself
+    /// (src/app/[game_id]/page.tsx), so this lands on the replay screen and
+    /// needs no lookup and no account.
+    public var replayURL: URL? { replayCode.map { MessageEnvelope.replayLink(code: $0) } }
     /// A genesis game with no move yet is not sealable (a 0-action opening is not
     /// a valid FMSG body, MSG_EBODY); continuations always are.
     public var isGenesis: Bool { if case .genesis = base { return true }; return false }
@@ -436,6 +445,13 @@ public final class MessageTurnController: ObservableObject {
         let l = await kernel.residentLegal(seat: mySeat)
         let held = baseSentAt == 0 ? 0
                  : await kernel.pickupHold(seat: mySeat, sentAt: baseSentAt)
+        // The replay code is READ HERE, not at the moment the link is tapped,
+        // because it is a question about the RESIDENT game and the resident game
+        // does not stay put: every bubble snapshot and every Rule-P comparison
+        // decodes into the same kernel and re-points it. Asked here it is asked
+        // in the same breath as the view it belongs to; asked on tap it would be
+        // whatever game the engine happened to be holding by then.
+        let code = v?.isOver == true ? await kernel.residentReplayCode() : nil
         if let evs = openReplay {
             openReplayEvents = evs
             // Raised in the same breath as the view it describes: the paint that
@@ -445,6 +461,7 @@ public final class MessageTurnController: ObservableObject {
         }
         view = v
         legal = l
+        if code != replayCode { replayCode = code }
         if held != pickupHold { pickupHold = held }
         armHoldTicker(held)
     }

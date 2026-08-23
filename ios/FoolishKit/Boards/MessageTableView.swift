@@ -45,6 +45,10 @@ public struct MessageTableView: View {
     /// decode result), so the board only reports the gesture; see
     /// `MessagesRootView.diagnosticPanel`.
     private let onDiagnostics: () -> Void
+    /// Leave the extension for a URL. An app extension has no `UIApplication`,
+    /// so the only way out is the host's `extensionContext.open` - which is why
+    /// this is a closure from above rather than an `@Environment(\.openURL)`.
+    private let onOpenURL: (URL) -> Void
 
     @State private var selection: Set<String> = []
     @State private var toast: String?
@@ -255,7 +259,9 @@ public struct MessageTableView: View {
 
     public init(controller: MessageTurnController, onSend: @escaping (Data, Bool) async -> Void,
                 onNewGame: @escaping () -> Void = {}, onUnstage: @escaping () -> Void = {},
-                alsoStaged: Bool = false, onDiagnostics: @escaping () -> Void = {}) {
+                alsoStaged: Bool = false, onDiagnostics: @escaping () -> Void = {},
+                onOpenURL: @escaping (URL) -> Void = { _ in }) {
+        self.onOpenURL = onOpenURL
         self.controller = controller
         self.onSend = onSend
         self.onNewGame = onNewGame
@@ -274,7 +280,8 @@ public struct MessageTableView: View {
                 // open-delta replay of someone else's final move) has visibly
                 // landed, so the end screen never just cuts in mid-animation.
                 if controller.isOver && showResults {
-                    FGameOverList(rows: finishRows(view), onNewGame: onNewGame)
+                    FGameOverList(rows: finishRows(view), onNewGame: onNewGame,
+                                  replayURL: controller.replayURL, onOpenURL: onOpenURL)
                 } else {
                     // The card-motion spring is scoped to the LIVE board only (note
                     // 18/40): it used to sit on this whole VStack, so the swap TO
@@ -3013,6 +3020,14 @@ struct FGameOverList: View {
     private static let rowH: CGFloat = 34   // fixed per-row height (plank scales with player count)
     let rows: [FinishRow]
     let onNewGame: () -> Void
+    /// The finished game on the website (`foolish.cards/<code>`), or nil when
+    /// the kernel could not encode one - in which case no link is offered at
+    /// all, rather than one that lands on a broken page.
+    var replayURL: URL? = nil
+    /// How to leave the extension with it. An iMessage extension has no
+    /// `UIApplication`, so the host hands its `extensionContext.open` down; the
+    /// default no-op keeps every other caller (previews, snapshots) compiling.
+    var onOpenURL: (URL) -> Void = { _ in }
 
     private var plankHeight: CGFloat { CGFloat(rows.count) * Self.rowH }
 
@@ -3026,6 +3041,48 @@ struct FGameOverList: View {
             Text(FStrings.t("game_over"))
                 .font(.title2)
                 .onTableText()
+            // THE RANKING SCROLLS; the title and New game do not.
+            //
+            // The plank is 34pt per player, so eight of them is 272pt before
+            // the title, the link and the button are counted - more than the
+            // expanded surface has, and far more than the compact drawer's. It
+            // already did not fit (rendered at 420pt, an 8-player result had
+            // its title clipped off the top AND its New game button pushed off
+            // the bottom; at a compact 230pt even a 3-player one lost the
+            // button), which is a results screen you cannot leave. Round-16's
+            // Replay Link makes the same overflow worse, so it is fixed here
+            // rather than added to.
+            //
+            // A ScrollView with the button OUTSIDE it means the two things a
+            // player must always be able to reach - who the fool was, and the
+            // way out - are both reachable at every count and every height.
+            // When it all fits this is invisible: the content still hugs the
+            // top and the button still sits on the bottom edge, exactly as the
+            // Spacer used to leave them.
+            //
+            // Indicators are left ON deliberately. The plank is one block with
+            // its own border, so a clipped ranking looks like a COMPLETE one -
+            // at eight players the visible last row would read as the fool when
+            // the real fool is below the fold. The indicator is what says
+            // otherwise. The link travels with the ranking rather than being
+            // pinned beside New game because it is about the game just played,
+            // and pinned it floated alone in the middle of the wool.
+            ScrollView(.vertical) {
+                VStack(spacing: 14) {
+                    ranking
+                    if let replayURL { replayLink(replayURL) }
+                }
+            }
+            .modifier(BounceOnlyWhenTooTall())
+            FButton(FStrings.t("ios.msg.newgame"), kind: .wood, action: onNewGame)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
+    }
+
+    /// The wood plank and the finishing order on it.
+    private var ranking: some View {
+        Group {
             // ONE continuous wood plank behind the whole ranking (no dividers):
             // WoodFill is a ZStack LAYER (not a .background, which over-drew and
             // made the plank too tall), hard-clipped to exactly rows × rowH so it
@@ -3090,10 +3147,60 @@ struct FGameOverList: View {
             // the two wooden blocks on this screen were 4pt out of alignment on
             // each side — enough to read as a mistake once both are full width.
             // Both now rely on the VStack's outer .padding() alone.
-            Spacer(minLength: 0)
-            FButton(FStrings.t("ios.msg.newgame"), kind: .wood, action: onNewGame)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding()
+    }
+
+    /// "Replay Link ↗" - this game on foolish.cards, for watching it back
+    /// outside Messages.
+    ///
+    /// Named, not spelled out (owner: "don't put the entire long url in the
+    /// screen"). It could not be spelled out anyway: the replay code IS the
+    /// game - a self-contained base32 payload the site decodes with the same
+    /// kernel - so the URL runs to hundreds of characters and carries nothing a
+    /// human would read. The glyph is the standard leaves-this-app arrow, which
+    /// is the honest promise: a tap really does close the extension and hand
+    /// the conversation over to Safari.
+    @ViewBuilder
+    private func replayLink(_ url: URL) -> some View {
+        Button { onOpenURL(url) } label: {
+            // The glyph is part of the LINE, not a sibling in a stack: written
+            // as concatenated `Text` it rides the same baseline as the words
+            // and takes the font's own spacing, where an HStack had to guess at
+            // a gap and then fight the symbol's side bearing (6pt read as
+            // nearly twice that on device). The underline is applied to the
+            // words alone, so it stops where they do.
+            (Text(FStrings.t("ios.msg.replaylink")).underline()
+             + Text(" ")
+             + Text(Image(systemName: "arrow.up.forward.app")))
+            .font(.subheadline)
+            // It sits on the plain wool, below the plank, so it takes the wool
+            // half of the text-on-a-surface pairing - the same ink as the title
+            // above it, not the bone/shadow combo tuned for wood.
+            .onTableText()
+            // The row is the target, not the glyph: at a subheadline size the
+            // text and arrow together are ~18pt tall, so the padding is what
+            // clears Apple's 44pt minimum. `contentShape` first, or the gaps
+            // between the two labels would not take a tap.
+            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(.isLink)
+    }
+}
+
+/// `scrollBounceBehavior(.basedOnSize)` behind an availability check - a
+/// results screen that fits should feel like a fixed screen, not a scroll view
+/// that rubber-bands when you brush it. The project still deploys to iOS 16.0,
+/// where the modifier does not exist yet (16.4); there it simply bounces, which
+/// is the pre-round-16 ScrollView-less screen's only visible difference.
+private struct BounceOnlyWhenTooTall: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 16.4, *) {
+            content.scrollBounceBehavior(.basedOnSize)
+        } else {
+            content
+        }
     }
 }

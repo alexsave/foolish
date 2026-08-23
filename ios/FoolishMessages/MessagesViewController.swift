@@ -353,6 +353,18 @@ final class MessagesViewController: MSMessagesAppViewController {
                 // resumed undo-to-empty doesn't later commit a stale chain on send.
                 // (ROUND 9: the durable ledger this also used to clear is gone.)
                 self?.pendingStage = nil
+            },
+            // The result screen's Replay Link. `extensionContext.open` is the
+            // ONLY way out of an iMessage extension - there is no
+            // `UIApplication.shared` to ask (this target is built
+            // extension-API-only, so reaching for one would not even compile),
+            // and SwiftUI's `openURL` has no host to fall back on here. The
+            // extension is torn down as Safari comes up, which is why the code
+            // behind the link is captured when the game ends rather than read
+            // on the way out (MessageTurnController.publish).
+            onOpenURL: { [weak self] url in
+                FlightRecorder.note("open-url", url.host ?? "?")
+                self?.extensionContext?.open(url, completionHandler: nil)
             })
         setRoot(root)
     }

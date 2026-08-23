@@ -102,6 +102,11 @@ public struct MessagesRootView: View {
     /// existing caller keeps compiling; the real extension has no API to remove an
     /// inserted input-field bubble, so it can only drop its own pending-stage record.
     let onUnstage: () -> Void
+    /// Leave the extension for a URL (the finished game's Replay Link). An app
+    /// extension has no `UIApplication`, so the host passes its
+    /// `extensionContext.open` down; the no-op default keeps the harness and
+    /// previews, which have nowhere to go, compiling and inert.
+    let onOpenURL: (URL) -> Void
 
     /// Round-9: bumped by the host (didCancelSending) when the human deletes
     /// the staged bubble from the input field - the surface drops its own
@@ -132,7 +137,8 @@ public struct MessagesRootView: View {
                 onFreshChain: @escaping () -> Void = {},
                 onAnnounceLeave: @escaping (String) -> Void = { _ in },
                 onSend: @escaping (Data, Int, Bool) async -> Void,
-                onUnstage: @escaping () -> Void = {}) {
+                onUnstage: @escaping () -> Void = {},
+                onOpenURL: @escaping (URL) -> Void = { _ in }) {
         self.payloadURL = payloadURL; self.style = style; self.senderIsLocal = senderIsLocal
         self.startNewGame = startNewGame; self.newGameToken = newGameToken; self.sentToken = sentToken
         self.sentPayload = sentPayload
@@ -143,6 +149,7 @@ public struct MessagesRootView: View {
         self.onFreshChain = onFreshChain; self.onAnnounceLeave = onAnnounceLeave
         self.onSend = onSend
         self.onUnstage = onUnstage
+        self.onOpenURL = onOpenURL
     }
 
     /// Round-10 #1: the height the surface is actually LAID OUT against.
@@ -296,7 +303,7 @@ public struct MessagesRootView: View {
                         requestExpand: requestExpand, onNewGame: onNewGame,
                         onFreshChain: onFreshChain, onAnnounceLeave: onAnnounceLeave,
                         onSend: onSend,
-                        onUnstage: onUnstage)
+                        onUnstage: onUnstage, onOpenURL: onOpenURL)
                 // Round-10 #1: lay the surface out against the SMOOTHED height,
                 // bottom-anchored - the drawer's bottom edge is the one edge
                 // that never moves, so the hand stays glued to it while
@@ -387,6 +394,7 @@ private struct GameSurface: View {
     let onAnnounceLeave: (String) -> Void
     let onSend: (Data, Int, Bool) async -> Void
     let onUnstage: () -> Void
+    let onOpenURL: (URL) -> Void
 
     /// A phase-0/handoff lobby the extension shows instead of the board (§5.2).
     private struct Lobby { let env: MessageEnvelope; let payload: Data }
@@ -763,7 +771,8 @@ private struct GameSurface: View {
                              },
                              onUnstage: onUnstage,
                              alsoStaged: surfaceStaged,
-                             onDiagnostics: { showDiagnostics = true })
+                             onDiagnostics: { showDiagnostics = true },
+                             onOpenURL: onOpenURL)
                 // 1.0(4) live-receive blink: a received bubble reloads the surface
                 // with a NEW controller. Tying the board's identity to the
                 // controller INSTANCE (not just the `if let` slot) means a reload
