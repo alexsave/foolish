@@ -272,8 +272,9 @@ public final class MessageGameStore {
 
     // MARK: just sent (round-9 #5) — the chain this device just committed to Send
     //
-    // Pressing Send can tear the extension down (didStartSending's dismiss(); a
-    // VC swap on the auto-reopen), so the in-memory `lastSentPayload` that
+    // Pressing Send can tear the extension down (didStartSending's dismiss(),
+    // which round 16 narrowed to sends made while EXPANDED; a VC swap on the
+    // auto-reopen), so the in-memory `lastSentPayload` that
     // keeps StagedBubbleRouting from reloading my own bubble does not always
     // survive to the reopen. When it doesn't, the reopen rebuilds the surface
     // from my own just-sent chain and the open-replay played MY OWN move back

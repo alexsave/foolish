@@ -62,6 +62,12 @@ public struct MessagesRootView: View {
     /// NOT change loadKey: a send re-presents the SAME game, so the board is
     /// signalled (via .onChange) rather than reloaded.
     let sentToken: Int
+    /// …and the BYTES that went out with it. ROUND 16: a send no longer closes
+    /// the compact drawer, so the live controller has to be rebased onto its own
+    /// just-sent chain (`markSent(payload:)`) instead of being rebuilt from it by
+    /// a teardown. nil only where a host cannot name them (the harness, an older
+    /// call site), which degrades to the pre-round-16 signal.
+    let sentPayload: Data?
     /// The bubble that just ARRIVED while the extension is open (`didReceive`),
     /// with `incomingToken` bumped per arrival. Apple does not move
     /// `selectedMessage` for an arrival, so without this the surface sat on its
@@ -117,7 +123,8 @@ public struct MessagesRootView: View {
     @ObservedObject var collapseSignal: CollapseSignal
 
     public init(payloadURL: URL?, style: MsgPresentation, senderIsLocal: Bool,
-                startNewGame: Bool, newGameToken: Int = 0, sentToken: Int = 0, chatKey: String,
+                startNewGame: Bool, newGameToken: Int = 0, sentToken: Int = 0,
+                sentPayload: Data? = nil, chatKey: String,
                 chatIsDM: Bool, chatPlayers: Int,
                 incomingURL: URL? = nil, incomingToken: Int = 0, cancelToken: Int = 0,
                 collapseSignal: CollapseSignal = CollapseSignal(),
@@ -128,6 +135,7 @@ public struct MessagesRootView: View {
                 onUnstage: @escaping () -> Void = {}) {
         self.payloadURL = payloadURL; self.style = style; self.senderIsLocal = senderIsLocal
         self.startNewGame = startNewGame; self.newGameToken = newGameToken; self.sentToken = sentToken
+        self.sentPayload = sentPayload
         self.chatKey = chatKey; self.chatIsDM = chatIsDM; self.chatPlayers = chatPlayers
         self.incomingURL = incomingURL; self.incomingToken = incomingToken
         self.cancelToken = cancelToken; self.collapseSignal = collapseSignal
@@ -282,7 +290,7 @@ public struct MessagesRootView: View {
         GeometryReader { geo in
             GameSurface(payloadURL: payloadURL, senderIsLocal: senderIsLocal,
                         startNewGame: startNewGame, newGameToken: newGameToken, sentToken: sentToken,
-                        chatKey: chatKey, chatIsDM: chatIsDM, chatPlayers: chatPlayers,
+                        sentPayload: sentPayload, chatKey: chatKey, chatIsDM: chatIsDM, chatPlayers: chatPlayers,
                         incomingURL: incomingURL, incomingToken: incomingToken,
                         cancelToken: cancelToken,
                         requestExpand: requestExpand, onNewGame: onNewGame,
@@ -357,6 +365,7 @@ private struct GameSurface: View {
     let startNewGame: Bool
     let newGameToken: Int
     let sentToken: Int
+    let sentPayload: Data?
     let chatKey: String
     let chatIsDM: Bool
     let chatPlayers: Int
@@ -477,9 +486,16 @@ private struct GameSurface: View {
             // `sentToken` is deliberately absent from loadKey, so this fires WITHOUT
             // reloading the surface (the game is unchanged, only its staged move is
             // no longer pending).
+            //
+            // ROUND 16: it also carries the sent BYTES now, which rebase the
+            // controller onto its own bubble. That used to happen by itself,
+            // because the send tore the extension down and the next move was
+            // played by a controller rebuilt from those bytes; the drawer stays
+            // open now (owner: "just keep it collapsed so they can keep
+            // playing"), so this signal is the only thing left that does it.
             .onChange(of: sentToken) { _ in
                 surfaceStaged = false   // round-9: the staged bubble is sent
-                Task { await controller?.markSent() }
+                Task { await controller?.markSent(payload: sentPayload) }
             }
             // Round-9: the human deleted the staged bubble from the input field
             // (didCancelSending) - nothing is awaiting Send any more.

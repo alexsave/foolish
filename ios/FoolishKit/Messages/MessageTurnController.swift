@@ -349,16 +349,23 @@ public final class MessageTurnController: ObservableObject {
             // The envelope's own clock and bubble delta come back with the
             // decode - the hold measures from the one, the open-replay groups
             // on the other, and both belong to the CHAIN, not to this device.
-            let env = try? await kernel.decode(payload: payload, viewer: mySeat)
-            baseSentAt = env?.sentAt ?? 0
-            baseTurn = env?.turn ?? 0
-            baseAtomsBefore = env?.atomsBefore ?? -1
+            adoptBaseFacts(try? await kernel.decode(payload: payload, viewer: mySeat))
         case .genesis(let seed, let players):
-            baseSentAt = 0        // nothing was sent yet, so nothing to wait on
-            baseTurn = 0          // …and nothing on the chain before my moves
-            baseAtomsBefore = -1  // …and no bubble whose boundary to honour
+            adoptBaseFacts(nil)   // nothing sent, nothing before my moves, no boundary
             try? await kernel.newGame(seed: seed, players: players)
         }
+    }
+
+    /// The three things this controller knows about the chain UNDERNEATH its
+    /// staged moves. They are set together, from one decode, by everything that
+    /// changes WHICH chain that is: an undo (`rebuildBase`) and - since round 16
+    /// stopped closing the drawer on Send - my own bubble becoming it
+    /// (`markSent`). Kept in one place because a half-updated base is not a
+    /// visible bug on this device, it is a wrong boundary on somebody else's.
+    private func adoptBaseFacts(_ env: MessageEnvelope?) {
+        baseSentAt = env?.sentAt ?? 0
+        baseTurn = env?.turn ?? 0
+        baseAtomsBefore = env?.atomsBefore ?? -1
     }
 
     /// The board has taken the pending animations over (or there were none):
@@ -489,14 +496,43 @@ public final class MessageTurnController: ObservableObject {
     ///
     /// Round-6 bug 4: without this, sending left `pending` populated, so the Undo
     /// button lingered in the compact drawer and tapping it re-staged (and let the
-    /// human re-send) a move already in the thread. Deliberately does NOT
-    /// rebuild the base: the sent move stays applied to the resident game, so the
-    /// board keeps showing the state I just sent, only without a pending move to
-    /// undo or re-send. No-op when nothing is staged (e.g. a genesis with no move).
-    public func markSent() async {
+    /// human re-send) a move already in the thread. The sent move stays applied to
+    /// the resident game, so the board keeps showing the state I just sent, only
+    /// without a pending move to undo or re-send. No-op when nothing is staged
+    /// (e.g. a genesis with no move).
+    ///
+    /// ROUND 16 - `payload` is the chain that actually went out, and passing it
+    /// REBASES this controller onto it. Until this round the send closed the
+    /// drawer (didStartSending's `dismiss()`), so the next move was always played
+    /// by a controller rebuilt from the sent bubble; now that the drawer stays
+    /// open, the same controller plays it, and everything that rebuild used to
+    /// refresh has to be refreshed here instead. Without it the next bubble is
+    /// measured against the chain this drawer ADOPTED - one bubble stale - so it
+    /// claims BOTH moves as its own and replays the one its recipient just
+    /// watched (pinned in MessageSendStaysOpenTests; it is the same doubled cover
+    /// n_new exists to prevent, arriving by a different road), and it points its
+    /// parent tag past the bubble it was actually sent after.
+    ///
+    /// The decode replaces the resident game with a game identical to the one
+    /// already there - the sent chain IS the base plus my moves - so nothing on
+    /// screen moves. `nil` (or a payload that will not decode) keeps the old
+    /// behaviour: forget the staged move and leave the base alone.
+    public func markSent(payload: Data? = nil) async {
         guard !pending.isEmpty else { return }
         pending = []
         lastChangeWasUndo = false
+        if let sent = payload,
+           let env = try? await kernel.decode(payload: sent, viewer: mySeat) {
+            base = .continuation(payload: sent)
+            parent8 = Self.firstEight(hex: env.digest)
+            // My own seal appended my nickname if the parent had not named me
+            // yet (`sealJoins`), so the roster comes back from the wire rather
+            // than being patched here - the same way `adopt` takes it.
+            joins = env.joins
+            names = Dictionary(env.joins.map { ($0.seat, $0.name) },
+                               uniquingKeysWith: { a, _ in a })
+            adoptBaseFacts(env)
+        }
         await refresh()
         // Round-8 #4: the final move is committed to the thread (no undo left),
         // so this game's stored hand arrangement has nothing left to order.

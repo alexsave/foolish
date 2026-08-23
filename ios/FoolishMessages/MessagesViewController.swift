@@ -125,14 +125,27 @@ final class MessagesViewController: MSMessagesAppViewController {
         // `lastSentPayload`, so the board is SIGNALLED, not torn down and reloaded.
         sentToken += 1
         present(conversation, style: presentationStyle)
-        // Round-6 bug 5 ("sending should completely close, if possible"). This is
-        // the closest Messages offers: dismiss() asks it to tear the extension down
-        // and return to the conversation transcript. It is NOT guaranteed to fully
-        // close in every host state (Messages may keep the app in the compact
-        // drawer), which is exactly why the markSent signal above exists as the
-        // belt-and-braces fix for bug 4 - if the drawer stays open, the Undo button
-        // is already gone. There is no API for a harder close than this.
-        dismiss()
+        // ROUND 16 (owner): "if it's collapsed, then sending shouldn't close the
+        // extension and go to the keyboard. Just keep it collapsed so they can
+        // keep playing without having to tap and reopen anything."
+        //
+        // Round-6 bug 5 asked for the opposite ("sending should completely
+        // close, if possible") and `dismiss()` is the closest Messages offers -
+        // it tears the extension down and returns to the transcript, which is
+        // also what raises the keyboard. That was the right answer for a send
+        // made from the EXPANDED board, where the drawer is covering the thread
+        // and the human is done. It is the wrong one from the compact drawer:
+        // the ordinary move flow already ends there (a staged move collapses to
+        // reach Messages' Send), so every send was closing a strip the player
+        // was still using and charging them a tap to get back into the game.
+        //
+        // So the close is now scoped to the style it was asked for. Nothing
+        // else about a send changes: `sentToken` above already tells the live
+        // board its move is in the thread (markSent -> `canSend` false), which
+        // is what clears the Undo button and the send hint - written as
+        // belt-and-braces for the case where Messages kept the drawer open
+        // anyway, and now the case that always happens.
+        if presentationStyle != .compact { dismiss() }
     }
 
     /// The user deleted the staged bubble before sending: drop the pending record
@@ -252,6 +265,11 @@ final class MessagesViewController: MSMessagesAppViewController {
             startNewGame: startingNewGame,
             newGameToken: newGameToken,
             sentToken: sentToken,
+            // ROUND 16: the chain that went out, so the live controller can
+            // rebase onto it. It used to be rebuilt from these same bytes by the
+            // teardown a send caused; the drawer survives now, so the bytes have
+            // to travel instead of the teardown.
+            sentPayload: lastSentPayload,
             chatKey: chatKey,
             chatIsDM: isDM,
             chatPlayers: participants,
