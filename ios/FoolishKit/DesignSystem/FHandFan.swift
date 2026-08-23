@@ -13,6 +13,12 @@
 // instead of the fingertip. `rowCount`/`height` are static and pure specifically
 // so MessageTableView can reserve the SAME room this view will actually use,
 // rather than carrying a second hard-coded constant that can drift out of sync.
+//
+// Round-16: the cards are placed ABSOLUTELY from `slotFrames` instead of by a
+// VStack of HStacks, and the in-hand reorder is no longer confined to the row
+// the card started in. The two go together - dragging a card into the other row
+// bumps one card the other way, and a card cannot be seen to travel between two
+// containers, only within one.
 
 import SwiftUI
 
@@ -161,15 +167,22 @@ public struct FHandFan: View {
     /// below), which is exact and, unlike a preference, cannot lag a frame
     /// behind the finger.
     @State private var handCardFramesSelf: [String: CGRect] = [:]
-    /// Round-6 bug 5: the vector from the finger to the dragged card's visual
-    /// CENTRE, captured once when the gesture claims a card (translation is
+    /// Round-6 bug 5: the vector from the finger to the dragged card's SLOT
+    /// centre, captured once when the gesture claims a card (translation is
     /// still ~0 then, so the published frame above is still the honest resting
     /// slot). The card tracks the finger rigidly for the rest of the drag, so
-    /// `finger + grabDelta` IS the card's centre at every later moment — no
+    /// `finger + grabSlot` IS the card's slot centre at every later moment — no
     /// double counting, no preference lag. Zero when the card's frame has not
-    /// published yet, which degrades to "the hint rides the finger", the
+    /// published yet, which degrades to "the card rides the finger", the
     /// pre-round-5 behavior.
-    @State private var grabDelta: CGSize = .zero
+    ///
+    /// Round-16: the slot centre rather than the VISIBLE centre, because two
+    /// callers now want it and they want different things - the reorder compares
+    /// it against slots, the verb-hint pill wants the card you can see, and
+    /// under `crop` those differ by half the hidden part. Storing the slot and
+    /// adding the crop drop at the one use that wants it keeps the stored value
+    /// honest while `crop` itself changes mid-drag (the drawer collapsing).
+    @State private var grabSlot: CGSize = .zero
     /// Round-5 M6: this view's own proposed width, measured once via a
     /// preference round-trip (see `HandWidthKey`'s doc) so the row-split
     /// height below can react to it. A plain `GeometryReader` has no notion of
@@ -177,11 +190,16 @@ public struct FHandFan: View {
     /// `.fixedSize` escape hatch for it — so this is the standard two-step fix:
     /// measure width, THEN size height from it.
     @State private var measuredWidth: CGFloat = 0
-    /// Cumulative x-compensation from in-flight reorders, subtracted from
+    /// Cumulative compensation from in-flight reorders, subtracted from
     /// `dragOffset` so the DRAGGED card's own `.offset` doesn't jump when its
     /// slot in `order` moves out from under it (only the OTHER cards should
-    /// visibly slide — the dragged one keeps tracking the finger).
-    @State private var reorderShift: CGFloat = 0
+    /// visibly slide — the dragged one keeps tracking the finger). It is exactly
+    /// `slot(now) - slot(at grab)`, which is why it telescopes: each splice adds
+    /// the step it just took.
+    ///
+    /// Round-16: two-dimensional, now that a splice can move a card's slot down
+    /// a row as well as along one.
+    @State private var reorderShift: CGSize = .zero
 
     private static let cardH: CGFloat = 72   // CONSTANT height — a skinny (many-card) hand stays this tall
 
@@ -233,21 +251,35 @@ public struct FHandFan: View {
     /// single-row math above would put a card below `twoRowThreshold`, else
     /// one — except a 0/1-card hand is ALWAYS one row no matter what the width
     /// math says, so a degenerate (zero or negative) `availableWidth` can
-    /// never report a split there is nothing to actually split (`rowGroups`
+    /// never report a split there is nothing to actually split (`rowSizes`
     /// relies on that: it needs more than one card before it will ever hand
-    /// back two arrays).
+    /// back two rows).
     public static func rowCount(cards: [Card], availableWidth: CGFloat) -> Int {
-        guard cards.count > 1 else { return 1 }
-        return Self.singleRowCardWidth(count: cards.count, availableWidth: availableWidth) < Self.twoRowThreshold ? 2 : 1
+        Self.rowCount(count: cards.count, availableWidth: availableWidth)
     }
 
-    /// Split `cards` into 1 or 2 display rows for `availableWidth`. The FIRST
-    /// row gets the extra card on an odd count. Row membership is also what
-    /// constrains the in-hand reorder to "within a row" — see `reorder`.
-    private static func rowGroups(_ cards: [Card], availableWidth: CGFloat) -> [[Card]] {
-        guard Self.rowCount(cards: cards, availableWidth: availableWidth) == 2 else { return [cards] }
-        let firstCount = (cards.count + 1) / 2   // ceil: extra card up top on odd counts
-        return [Array(cards.prefix(firstCount)), Array(cards.suffix(from: firstCount))]
+    /// Count-only form of `rowCount` - every layout question below is about
+    /// POSITIONS, not identities, so the split is expressed in card COUNTS.
+    public static func rowCount(count: Int, availableWidth: CGFloat) -> Int {
+        guard count > 1 else { return 1 }
+        return Self.singleRowCardWidth(count: count, availableWidth: availableWidth) < Self.twoRowThreshold ? 2 : 1
+    }
+
+    /// How many cards each display row holds at `availableWidth`. The FIRST row
+    /// gets the extra card on an odd count.
+    ///
+    /// Round-16: this split is what makes the cross-row drag work at all. Rows
+    /// are DERIVED from a flat order by cutting it at `ceil(n/2)`, they are not
+    /// storage - so moving a card across the boundary is an ordinary splice into
+    /// the flat array, and the cut then falls in a different place. Sliding a
+    /// bottom card up to slot 1 pushes everything from 1 onward right by one, and
+    /// the card that was last in the top row lands first in the bottom row. The
+    /// "bump" the owner asked for is not a special case; it is what a fixed cut
+    /// through a shifted array already does.
+    public static func rowSizes(count: Int, availableWidth: CGFloat) -> [Int] {
+        guard Self.rowCount(count: count, availableWidth: availableWidth) == 2 else { return [count] }
+        let first = (count + 1) / 2   // ceil: extra card up top on odd counts
+        return [first, count - first]
     }
 
     /// The fan's total on-screen height at `availableWidth` — one row (full
@@ -256,8 +288,13 @@ public struct FHandFan: View {
     /// and static so MessageTableView can reserve exactly this much room above
     /// the hand (see its `handLift`) instead of guessing at a second constant.
     public static func height(cards: [Card], availableWidth: CGFloat, crop: CGFloat) -> CGFloat {
+        Self.height(count: cards.count, availableWidth: availableWidth, crop: crop)
+    }
+
+    /// Count-only form, for the same reason as `rowCount(count:)`.
+    public static func height(count: Int, availableWidth: CGFloat, crop: CGFloat) -> CGFloat {
         let oneRow = Self.shownCardHeight(crop: crop) + 8
-        return Self.rowCount(cards: cards, availableWidth: availableWidth) == 2 ? oneRow * 2 + Self.rowGap : oneRow
+        return Self.rowCount(count: count, availableWidth: availableWidth) == 2 ? oneRow * 2 + Self.rowGap : oneRow
     }
 
     /// `topHalfOnly` convenience overload — the pre-round-6 spelling, kept so
@@ -269,8 +306,8 @@ public struct FHandFan: View {
     }
 
     /// The resting SLOT rect of every card in a hand of `cards`, laid out in a
-    /// container `width` wide at collapse `crop` — the SAME geometry `body`
-    /// renders, expressed as a PURE function.
+    /// container `width` wide at collapse `crop` — the geometry `body` renders,
+    /// keyed by card.
     ///
     /// Round-7 ("fix this once and for all"): an overlay flight into the hand
     /// needs the card's FINAL slot as its landing target. Reading it off the live
@@ -281,8 +318,8 @@ public struct FHandFan: View {
     /// hated) or SETTLE before flying (the "make-room THEN flight, not together"
     /// the owner also hated). Computing the final slot here instead lets the
     /// make-room animate AND the card fly to its true resting place at the SAME
-    /// time. It mirrors `body` exactly: `rowGroups` split, `singleRowCardWidth`,
-    /// the row centred in `width`, the VStack centred in `height(...)`.
+    /// time. Round-16: it no longer MIRRORS `body`, it IS what `body` lays out
+    /// from (see `slotFrames`), so the two cannot drift apart.
     ///
     /// Rects are in the container's LOCAL space (origin at its top-leading); the
     /// caller offsets by the hand's own frame origin in `boardSpace`. `cards` is
@@ -291,25 +328,73 @@ public struct FHandFan: View {
     /// fan puts a freshly dealt card, so its slot matches even if the player has
     /// cosmetically reordered the cards already in hand.
     public static func slotRects(cards: [Card], width: CGFloat, crop: CGFloat) -> [String: CGRect] {
-        guard width > 0, !cards.isEmpty else { return [:] }
-        let rows = Self.rowGroups(cards, availableWidth: width)
-        let cardW = Self.singleRowCardWidth(count: rows[0].count, availableWidth: width)
-        let cardH = Self.shownCardHeight(crop: crop)
-        let containerH = Self.height(cards: cards, availableWidth: width, crop: crop)
-        let rowN = rows.count
-        let vstackH = CGFloat(rowN) * cardH + CGFloat(max(0, rowN - 1)) * Self.rowGap
-        let vTop = (containerH - vstackH) / 2
+        let frames = Self.slotFrames(count: cards.count, width: width, crop: crop)
+        guard frames.count == cards.count else { return [:] }
         var out: [String: CGRect] = [:]
-        for (r, row) in rows.enumerated() {
-            let rowW = CGFloat(row.count) * cardW + CGFloat(max(0, row.count - 1)) * Self.gap
+        for (i, card) in cards.enumerated() { out[card.identity] = frames[i] }
+        return out
+    }
+
+    /// The same geometry indexed by SLOT rather than by card - slot 0 is the
+    /// leftmost of the top row, and the array runs left-to-right, top row then
+    /// bottom.
+    ///
+    /// Round-16: this is now the layout ITSELF, not a mirror of it. `body` used
+    /// to render a VStack of HStacks and this function re-derived the same
+    /// numbers alongside it, with a comment ("it mirrors `body` exactly")
+    /// admitting the drift hazard that arrangement carries. It also could not
+    /// give the owner what they asked for: a card that changes row changes which
+    /// HStack it belongs to, and SwiftUI has no way to read that as a MOVE - it
+    /// is a removal from one container and an insertion into another, so the
+    /// bumped card popped rather than travelled. Placing every card absolutely
+    /// from these rects makes a row change an ordinary change of offset, which
+    /// animates like every other slide in the fan, and leaves exactly one copy of
+    /// the arithmetic for the flight targeting and the layout to share.
+    public static func slotFrames(count: Int, width: CGFloat, crop: CGFloat) -> [CGRect] {
+        guard width > 0, count > 0 else { return [] }
+        let rows = Self.rowSizes(count: count, availableWidth: width)
+        // ONE card width for BOTH rows, sized by the fuller first row (it gets
+        // the ceil on odd counts) - sizing each row by its own count made the
+        // shorter bottom row's cards visibly WIDER than the top row's, which
+        // read as two different decks rather than one hand that wrapped.
+        let cardW = Self.singleRowCardWidth(count: rows[0], availableWidth: width)
+        let cardH = Self.shownCardHeight(crop: crop)
+        let containerH = Self.height(count: count, availableWidth: width, crop: crop)
+        let stackH = CGFloat(rows.count) * cardH + CGFloat(rows.count - 1) * Self.rowGap
+        let vTop = (containerH - stackH) / 2
+        var out: [CGRect] = []
+        out.reserveCapacity(count)
+        for (r, n) in rows.enumerated() {
+            let rowW = CGFloat(n) * cardW + CGFloat(max(0, n - 1)) * Self.gap
             let rowLeft = (width - rowW) / 2
             let y = vTop + CGFloat(r) * (cardH + Self.rowGap)
-            for (c, card) in row.enumerated() {
-                out[card.identity] = CGRect(x: rowLeft + CGFloat(c) * (cardW + Self.gap),
-                                            y: y, width: cardW, height: cardH)
+            for c in 0..<n {
+                out.append(CGRect(x: rowLeft + CGFloat(c) * (cardW + Self.gap),
+                                  y: y, width: cardW, height: cardH))
             }
         }
         return out
+    }
+
+    /// The slot a dragged card is asking for: the one whose CENTRE is nearest
+    /// the card's own centre, in two dimensions.
+    ///
+    /// Round-16. Two dimensions is the whole change - the row-local version this
+    /// replaces compared x only, because a card could not leave its row anyway.
+    /// Plain Euclidean distance needs no per-axis weighting to feel right here:
+    /// row centres sit ~78pt apart while neighbouring slots sit ~38pt apart, so a
+    /// row change asks for a deliberate half-card lift while sliding sideways
+    /// stays as light as it always was. Ties break to the LOWER slot so the
+    /// result is total (the same lesson as `BoardDrop.target`: an arbitrary
+    /// winner is a bug that only shows up as flicker).
+    public static func slotIndex(at centre: CGPoint, slots: [CGRect]) -> Int? {
+        var best: Int?
+        var bestDistance = CGFloat.greatestFiniteMagnitude
+        for (i, r) in slots.enumerated() {
+            let d = hypot(centre.x - r.midX, centre.y - r.midY)
+            if d < bestDistance { bestDistance = d; best = i }
+        }
+        return best
     }
 
     /// `cards` reordered by the local `order` state: identities still present
@@ -340,65 +425,92 @@ public struct FHandFan: View {
         return result
     }
 
-    /// In-hand reorder (note 5): turn the drag's x (within this view's own
-    /// width) into a slot index and, if it differs from the dragged card's
-    /// current slot, splice `order` there under a spring — the other cards
-    /// slide apart, mirroring the web's live reorder feel. `cardW` is this
-    /// row's per-evaluation slot width (depends on the row's own width/count).
-    ///
-    /// Round-5 M6: `rowStart`/`rowCount` locate the dragged card's OWN row
-    /// within the flat `order` array, and `to` is clamped to stay inside it —
-    /// once a hand splits into two rows, letting a card cross the boundary
-    /// would read as it randomly resorting which cards sit on top vs bottom.
-    /// For a one-row hand `rowStart` is always 0 and `rowCount` the whole hand,
-    /// so this is a strict superset of the pre-M6 behavior (nothing changes
-    /// there). This is a deliberate simplification, not an oversight — a
-    /// cross-row drag still WORKS as a play-drag once it leaves `handFrameSelf`
-    /// entirely; it just can't reorder while still hovering the other row.
-    private func reorder(_ card: Card, at point: CGPoint, cardW: CGFloat,
-                         rowStart: Int, rowCount: Int) {
-        let current = displayCards.map(\.identity)
-        guard let from = current.firstIndex(of: card.identity) else { return }
-        let slot = cardW + Self.gap
-        guard slot > 0, rowCount > 0 else { return }
-
-        // Target slot by HIT-TESTING the row's real card frames, not by
-        // recomputing geometry from the hand's left edge. The arithmetic
-        // version ("(x - gap) / slot, rounded") silently assumed the cards
-        // start at the container's leading edge — but the row is CENTRED in
-        // it, so any hand narrow enough not to fill the width (cardW is capped
-        // at maxCardW) sits inset by an amount the formula never subtracted.
-        // Every slot it computed was shifted, which is how a plain tap on card
-        // 3 could resolve to slot 2 and swap two cards under your finger.
-        // The published frames are the layout's own answer and cannot drift
-        // from it.
-        let rowIds = current[rowStart..<min(rowStart + rowCount, current.count)]
-        var to = from
-        var bestDistance = CGFloat.greatestFiniteMagnitude
-        for (offset, id) in rowIds.enumerated() {
-            guard let frame = handCardFramesSelf[id] else { continue }
-            let distance = abs(frame.midX - point.x)
-            if distance < bestDistance {
-                bestDistance = distance
-                to = rowStart + offset
-            }
+    /// The result of an in-hand reorder: the display order after the move, plus
+    /// the slots the card left and landed in (the view needs those to keep the
+    /// dragged card pinned to the finger - see `reorderShift`).
+    public struct HandSplice: Equatable {
+        public let order: [String]
+        public let from: Int
+        public let to: Int
+        public init(order: [String], from: Int, to: Int) {
+            self.order = order; self.from = from; self.to = to
         }
-        guard bestDistance < .greatestFiniteMagnitude else { return }
-        guard to != from else { return }
-        var next = current
-        next.remove(at: from)
-        next.insert(card.identity, at: min(to, next.count))
+    }
+
+    /// THE WHOLE REORDER DECISION, pure: where does `dragged` belong now that its
+    /// centre is at `centre` (this container's local space), and what does the
+    /// order look like once it goes there? `nil` when nothing should move.
+    ///
+    /// It lives out here rather than inside the gesture because it is the only
+    /// part worth asserting, and a test that drove the arithmetic alongside the
+    /// view would be green against a view that clamps differently. Everything
+    /// the gesture still does - spring, compensation, persist - is bookkeeping
+    /// on top of this answer.
+    ///
+    /// Round-16 (the owner: "if there are two rows, you can't drag to rearrange
+    /// between them"). There is deliberately NO row constraint here. Round-5
+    /// clamped the target into the dragged card's own row, on the theory that
+    /// crossing would "read as it randomly resorting which cards sit on top vs
+    /// bottom" - but the rows are a cut through one flat order, so a cross is
+    /// the plainest possible splice and the resulting bump is legible: drag up
+    /// and the top row's rightmost card comes down to the head of the bottom
+    /// row; drag down and the bottom row's leftmost goes up to the tail of the
+    /// top. Exactly one card ever moves besides yours.
+    ///
+    /// `deferred` are cards holding no slot yet (round-6 bug 10, a deal whose
+    /// flight has not started). They are invisible to the hit test - they have
+    /// no slot to hit - and are stitched back into the positions they held, so a
+    /// reorder mid-deal cannot quietly relocate a card that is not on screen.
+    public static func splice(order: [String], deferred: Set<String> = [],
+                              dragged: String, centre: CGPoint,
+                              slots: [CGRect]) -> HandSplice? {
+        let laid = deferred.isEmpty ? order : order.filter { !deferred.contains($0) }
+        guard laid.count == slots.count,
+              let from = laid.firstIndex(of: dragged),
+              let to = Self.slotIndex(at: centre, slots: slots),
+              to != from else { return nil }
+        var moved = laid
+        moved.remove(at: from)
+        moved.insert(dragged, at: min(to, moved.count))
+        if moved.count == order.count { return HandSplice(order: moved, from: from, to: to) }
+        // Stitch: walk the full order handing out the reordered ids in sequence
+        // wherever a laid-out card stood, so the deferred ids keep their places.
+        var it = moved.makeIterator()
+        let full = order.map { deferred.contains($0) ? $0 : (it.next() ?? $0) }
+        return HandSplice(order: full, from: from, to: to)
+    }
+
+    /// In-hand reorder (note 5): ask `splice` where the dragged card belongs
+    /// now, and if that is somewhere new, take it there under a spring - the
+    /// other cards slide apart, mirroring the web's live reorder feel.
+    ///
+    /// `centre` is the dragged card's own live slot centre in `boardSpace`, not
+    /// the fingertip. That distinction is what makes this stable: the card ends
+    /// up AT the slot it asked for, so the very next evaluation asks for that
+    /// same slot again and nothing moves. Hit-testing the finger instead let the
+    /// answer depend on where inside the card you happened to grab.
+    private func reorder(_ card: Card, centre: CGPoint, slots: [CGRect]) {
+        guard let s = Self.splice(order: displayCards.map(\.identity),
+                                  deferred: reserveNoSlot,
+                                  dragged: card.identity,
+                                  centre: CGPoint(x: centre.x - handFrameSelf.minX,
+                                                  y: centre.y - handFrameSelf.minY),
+                                  slots: slots) else { return }
         // Both mutations animate together (same spring, same transaction) so
         // the compensation tracks the layout's own transition instead of
-        // stepping instantly while the slide is still mid-spring.
+        // stepping instantly while the slide is still mid-spring. In two
+        // dimensions now: a card that changes row moves down a whole row as
+        // well as across, and a compensation that only knew about x would let
+        // the card jump a row out from under the finger.
         withAnimation(FMotion.card) {
-            order = next
-            reorderShift += CGFloat(to - from) * slot
+            order = s.order
+            reorderShift.width += slots[s.to].minX - slots[s.from].minX
+            reorderShift.height += slots[s.to].minY - slots[s.from].minY
         }
         // Round-8 #4: report the arrangement OUTSIDE the animation transaction
-        // (persisting is not a visual change). `next` is the full display
-        // order, sticky ids included, exactly what a later seed restores.
-        onOrderChanged(next)
+        // (persisting is not a visual change). It is the full display order,
+        // sticky ids included, exactly what a later seed restores.
+        onOrderChanged(s.order)
     }
 
     /// Round-6 bug 10: the cards this fan actually lays out — `displayCards`
@@ -413,28 +525,36 @@ public struct FHandFan: View {
     public var body: some View {
         GeometryReader { geo in
             let width = geo.size.width
-            let rows = Self.rowGroups(laidOutCards, availableWidth: width)
-            // ONE card width for BOTH rows, sized by the fuller first row (it
-            // gets the ceil on odd counts) — sizing each row by its own count
-            // made the shorter bottom row's cards visibly WIDER than the top
-            // row's, which read as two different decks rather than one hand
-            // that wrapped.
-            let cardW = Self.singleRowCardWidth(count: rows[0].count, availableWidth: width)
-            VStack(spacing: Self.rowGap) {
-                ForEach(Array(rows.enumerated()), id: \.offset) { rowIdx, rowCards in
-                    let rowStart = rows.prefix(rowIdx).reduce(0) { $0 + $1.count }
-                    HStack(spacing: Self.gap) {
-                        ForEach(rowCards, id: \.identity) { card in
-                            cardView(card, cardW: cardW, rowStart: rowStart, rowCount: rowCards.count)
-                        }
+            let laid = laidOutCards
+            // Round-16: absolute placement from the shared slot geometry, in
+            // place of the VStack-of-HStacks this used to be. See `slotFrames`
+            // for why - in short, a card that changes row has to be able to
+            // TRAVEL there, and a card cannot travel between two containers.
+            // `dy` re-centres the block in whatever height the outer frame
+            // actually handed us, which matters only on the first paint (before
+            // the width probe lands, that frame still assumes one row); at rest
+            // it is zero and these are exactly the rects `slotRects` publishes
+            // for flights to aim at.
+            let dy = (geo.size.height - Self.height(count: laid.count,
+                                                    availableWidth: width, crop: crop)) / 2
+            let slots = Self.slotFrames(count: laid.count, width: width, crop: crop)
+                .map { $0.offsetBy(dx: 0, dy: dy) }
+            ZStack(alignment: .topLeading) {
+                // A bed, so the stack fills the container even when the hand is
+                // empty and the cards below are placed against a stable origin.
+                Color.clear
+                ForEach(Array(laid.enumerated()), id: \.element.identity) { idx, card in
+                    if idx < slots.count {
+                        cardView(card, slot: slots[idx], slots: slots)
+                            .offset(x: slots[idx].minX, y: slots[idx].minY)
                     }
                 }
             }
-            .frame(width: width, height: geo.size.height, alignment: .center)
+            .frame(width: width, height: geo.size.height, alignment: .topLeading)
             // Round-8: animate the fan's own re-layout when the laid-out SET
             // changes, so present cards SLIDE to their new slots as one is
             // added/removed (a deal makes room, a play closes the gap) instead of
-            // snapping. INSIDE the GeometryReader and ON the row VStack on purpose:
+            // snapping. INSIDE the GeometryReader and ON the card stack on purpose:
             // the outer frame is below the reader, and a value-animation there does
             // not reliably propagate through GeometryReader to the row reflow it is
             // meant to drive (the cards just jumped). Keyed on the SET, not its
@@ -477,15 +597,16 @@ public struct FHandFan: View {
         .onPreferenceChange(HandCardFramesKey.self) { handCardFramesSelf = $0 }
     }
 
-    /// One hand card, wired for tap/drag/reorder within its OWN row (see
-    /// `reorder`'s doc for why row membership constrains it).
+    /// One hand card, wired for tap/drag/reorder. `slot` is this card's own
+    /// resting rect in the container; `slots` is every slot, which is what the
+    /// reorder hit-tests against.
     @ViewBuilder
-    private func cardView(_ card: Card, cardW: CGFloat, rowStart: Int, rowCount: Int) -> some View {
+    private func cardView(_ card: Card, slot: CGRect, slots: [CGRect]) -> some View {
         FCard(card: card,
               selected: selection.contains(card.identity),
               disabled: disabled.contains(card.identity),
               trump: trumpSuit != nil && card.suit == trumpSuit,
-              size: CGSize(width: cardW, height: Self.cardH))
+              size: CGSize(width: slot.width, height: Self.cardH))
             // Round-5 M5b: the compact drawer shows only the TOP HALF of each
             // hand card. The card is drawn WHOLE and pushed DOWN so its lower
             // half falls past the drawer's own bottom edge — it is NOT cut in
@@ -501,7 +622,11 @@ public struct FHandFan: View {
             // The touch target follows the RESERVED half (`.contentShape`
             // below sizes to this frame), which is exactly the part you can
             // see and therefore the only part you could sensibly aim at.
-            .frame(height: Self.shownCardHeight(crop: crop), alignment: .top)
+            // Round-16: the width is pinned as well as the height, so this
+            // card's layout rect IS its slot - the stack places it absolutely
+            // now, and the frame it publishes through `HandCardFramesKey` is
+            // what the board's slot self-check compares against.
+            .frame(width: slot.width, height: slot.height, alignment: .top)
             .opacity(hidden.contains(card.identity) ? 0 : 1)
             // Round-8: the veil SNAPS - opacity never animates (belt to the exit
             // transition below), so a card cannot half-fade under the fan's own
@@ -525,7 +650,8 @@ public struct FHandFan: View {
             })
             .contentShape(Rectangle())
             .offset(dragId == card.identity
-                    ? CGSize(width: dragOffset.width - reorderShift, height: dragOffset.height)
+                    ? CGSize(width: dragOffset.width - reorderShift.width,
+                             height: dragOffset.height - reorderShift.height)
                     : .zero)
             .zIndex(dragId == card.identity ? 1000 : 0)
             .gesture(
@@ -541,21 +667,14 @@ public struct FHandFan: View {
                     .onChanged { g in
                         guard !disabled.contains(card.identity) else { return }
                         if dragId != card.identity {
-                            dragId = card.identity; reorderShift = 0
-                            // Round-6 bug 5: capture finger -> card-centre ONCE,
-                            // while the published frame is still the resting slot
-                            // (see `grabDelta` / `handCardFramesSelf`). `crop`
-                            // matters here: the reserved frame is
-                            // `shownCardHeight` tall while the card is drawn full
-                            // `cardH` tall and TOP-aligned in it, so the visible
-                            // middle sits half the cropped-away part lower.
-                            if let rest = handCardFramesSelf[card.identity] {
-                                let cropDrop = (Self.cardH - Self.shownCardHeight(crop: crop)) / 2
-                                grabDelta = CGSize(width: rest.midX - g.startLocation.x,
-                                                   height: rest.midY + cropDrop - g.startLocation.y)
-                            } else {
-                                grabDelta = .zero
-                            }
+                            dragId = card.identity; reorderShift = .zero
+                            // Round-6 bug 5: capture finger -> card ONCE, while
+                            // the published frame is still the resting slot (see
+                            // `grabSlot` / `handCardFramesSelf`).
+                            grabSlot = handCardFramesSelf[card.identity].map {
+                                CGSize(width: $0.midX - g.startLocation.x,
+                                       height: $0.midY - g.startLocation.y)
+                            } ?? .zero
                         }
                         dragOffset = g.translation
                         // Only tell the consumer a DRAG is happening once the finger
@@ -577,22 +696,34 @@ public struct FHandFan: View {
                         if dragMoved || hypot(g.translation.width, g.translation.height) >= Self.tapThreshold {
                             onDragChanged(card, g.location)
                         }
-                        // The dragged card's live visual CENTRE, for the board's
-                        // verb-hint pill (round-5 finding 5) and for the flight
-                        // that now starts where the finger let go (round-6 bug
-                        // 13). Straight off the gesture: the card is rigidly
-                        // pinned to the finger by `grabDelta`, so this is exact
-                        // at every frame. `reorderShift` is the one thing that
-                        // moves the card RELATIVE to the finger — the same
-                        // compensation the `.offset` above applies when the
-                        // dragged card's slot in `order` moves out from under
-                        // it — so it comes off the x here too.
+                        // The dragged card's live SLOT centre, and from it the
+                        // two things that want it.
+                        //
+                        // Straight off the gesture: the card is pinned rigidly to
+                        // the finger by `grabSlot`, and `reorderShift` cancels
+                        // whatever the splice did to its slot, so at every frame
+                        // the card sits exactly where it started plus the
+                        // translation - `location + grabSlot`, with no
+                        // `reorderShift` term of its own. (Round-16 correction:
+                        // this used to subtract `reorderShift` here as well as in
+                        // the `.offset`, which counted the compensation twice and
+                        // walked the verb hint off the card by one slot for every
+                        // reorder made on the way out of the hand.)
                         //
                         // Deliberately NOT `restingFrame + dragOffset` any more:
                         // that double-counted the drag (see
                         // `handCardFramesSelf`), which is round-6 bug 5.
-                        onDragCardMoved(CGPoint(x: g.location.x + grabDelta.width - reorderShift,
-                                                y: g.location.y + grabDelta.height))
+                        let centre = CGPoint(x: g.location.x + grabSlot.width,
+                                             y: g.location.y + grabSlot.height)
+                        // `crop` matters for the HINT: the slot is
+                        // `shownCardHeight` tall while the card is drawn full
+                        // `cardH` tall and TOP-aligned in it, so the card's
+                        // visible middle sits half the cropped-away part lower
+                        // than the slot's. The reorder wants the slot centre, the
+                        // pill wants the visible one (round-5 finding 5, round-6
+                        // bug 13 - the flight starts where the finger let go).
+                        let cropDrop = (Self.cardH - Self.shownCardHeight(crop: crop)) / 2
+                        onDragCardMoved(CGPoint(x: centre.x, y: centre.y + cropDrop))
                         // A TAP MUST NEVER REORDER. `minimumDistance: 0` means
                         // onChanged fires the instant a finger lands, before it
                         // has moved at all, so an ungated reorder ran on every
@@ -608,8 +739,7 @@ public struct FHandFan: View {
                         // inside the hand's own frame — once it leaves, this is
                         // a play-drag and today's behavior is untouched.
                         if dragMoved, handFrameSelf.contains(g.location) {
-                            reorder(card, at: g.location, cardW: cardW,
-                                    rowStart: rowStart, rowCount: rowCount)
+                            reorder(card, centre: centre, slots: slots)
                         }
                     }
                     .onEnded { g in
@@ -628,7 +758,7 @@ public struct FHandFan: View {
                         // `dragOffset`, so animating only one of them still
                         // snaps.
                         withAnimation(FMotion.card) {
-                            dragId = nil; dragOffset = .zero; reorderShift = 0
+                            dragId = nil; dragOffset = .zero; reorderShift = .zero
                         }
                         dragMoved = false
                         if hypot(g.translation.width, g.translation.height) < Self.tapThreshold {
