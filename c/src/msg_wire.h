@@ -138,10 +138,21 @@
 // this build reads format 2 fine, as a chain with no clock, which by
 // `msg_pickup_hold_remaining`'s contract means no hold at all.
 //
-// THE BUBBLE DELTA (`n_new`) is how many atoms THIS bubble added to the chain -
-// `turn` minus the turn of the bubble it replies to. A chain only ever appends,
-// so that names a suffix, and "the last n_new atoms" is the move this bubble
-// carries. Without it a receiver can only GUESS the boundary, and the guess it
+// THE BUBBLE DELTA (`n_new`) is how many atoms of this body belong to THIS
+// bubble's turn: the last n_new atoms are the move it carries, and everything
+// before them is history its recipient has already seen.
+//
+// It is NOT the difference of two `turn`s, though it was at first. A chain
+// appends LOGS, but its atom stream is re-derived from all of them every time
+// it is encoded, and a good stops being an atom the moment anything follows it
+// (replay.c's log_atom_kind) - so the same history can encode to fewer atoms
+// than the parent claimed, and the subtraction loses exactly one per superseded
+// good. What that cost is the FRONT of a turn: a defender who covered twice
+// into one bubble sealed a delta of 1, and both the caption on the bubble and
+// the animation its recipient played dropped the first cover. The seal measures
+// from the LOG MARK instead (msg_seal), which only ever grows.
+//
+// Without the delta at all a receiver can only GUESS the boundary, and the guess it
 // used to make (the trailing run of steps by one seat) is wrong in two ways the
 // owner hit in play: a defender who covers, sends, covers, sends puts two cover
 // atoms on the chain that are indistinguishable from two staged at once, so
@@ -426,16 +437,25 @@ typedef struct {
 // (>= 512 B is ample; a full 8p game measures ~68) receives the code and
 // `e->actions` is left borrowing it, so it must outlive `e`.
 //
-// `base_turn` is the `turn` of the envelope this seal CONTINUES - the parent
-// chain's atom count - or MSG_NO_BASE for "this host cannot say", which seals
-// n_new = 0 and leaves the receiver to guess the boundary as it always did, or
-// MSG_BASE_NOTHING for "this bubble adds nothing", which seals
-// n_new = MSG_NEW_NOTHING so the receiver animates nothing at all. A
-// genesis passes 0: everything on the chain is new. It is an input rather than
+// `base_logs` is g->num_logs AT THE MOMENT THIS HOST ADOPTED THE CHAIN it is
+// continuing - the log mark - or MSG_NO_BASE for "this host cannot say", which
+// seals n_new = 0 and leaves the receiver to guess the boundary as it always
+// did, or MSG_BASE_NOTHING for "this bubble adds nothing", which seals
+// n_new = MSG_NEW_NOTHING so the receiver animates nothing at all. A genesis
+// passes 0: everything on the chain is new. It is an input rather than
 // something derived here because it is the one fact the body cannot tell us -
 // the body is the whole game, and where the PREVIOUS bubble ended is not in it.
-// The delta itself is still derived (turn - base_turn), so the same rule holds
-// as for turn/round: a host cannot claim a boundary its body does not have.
+// The delta itself is still derived (the atoms after that mark,
+// replay_atoms_before_log), so the same rule holds as for turn/round: a host
+// cannot claim a boundary its body does not have.
+//
+// A LOG MARK and not the parent's atom count, which is what round 16 first
+// used: a chain appends logs, but its atom stream is re-derived from all of
+// them every time, and a good that was an atom while it was pending stops
+// being one as soon as anything follows it. Subtracting the parent's `turn`
+// therefore lost one atom per superseded good, and a turn of several actions
+// sealed as fewer - so its recipient animated, and its sender captioned, only
+// the tail of it.
 //
 // It derives those fields by DECODING THE BODY IT JUST WROTE and replaying it
 // into `scratch`, rather than by counting what the caller thinks it played.
@@ -456,13 +476,13 @@ typedef struct {
 // MSG_EBODY means the v6 producer refused — it rejects a game whose log buffer
 // overflowed (num_logs >= MAX_LOGS), which was measured on ~10% of full 8-player
 // games and never at 2-4p. See docs/IMESSAGE_BODY_CODEC.md §4.
-int msg_seal(MsgEnvelope *e, const Game *g, int base_turn,
+int msg_seal(MsgEnvelope *e, const Game *g, int base_logs,
              unsigned char *body, int body_cap, Game *scratch);
 
-// THE BASE A HOST SHOULD SEAL WITH, from the two things it remembers about the
-// chain it adopted: that chain's atom count (`base_turn`, MSG_NO_BASE if it has
-// none) and `g->num_logs` AT THE MOMENT IT ADOPTED IT (`base_logs`, negative if
-// it did not look). Returns base_turn, MSG_NO_BASE, or MSG_BASE_NOTHING.
+// THE BASE A HOST SHOULD SEAL WITH, from the one thing it remembers about the
+// chain it adopted: `g->num_logs` AT THE MOMENT IT ADOPTED IT (`base_logs`,
+// negative if it did not look). Returns base_logs, MSG_NO_BASE, or
+// MSG_BASE_NOTHING.
 //
 // The question it answers is "has this game moved since I adopted the chain",
 // and it answers it by OBSERVING THE GAME rather than by counting applies,
@@ -475,7 +495,7 @@ int msg_seal(MsgEnvelope *e, const Game *g, int base_turn,
 //
 // It lives here rather than in each host so that the two that seal FMSG - the
 // phone and the browser twin - cannot disagree about what an empty bubble is.
-int msg_seal_base(const Game *g, int base_turn, int base_logs);
+int msg_seal_base(const Game *g, int base_logs);
 
 // Parse + bounds-check `in` into `out`. Returns MSG_EOK or a negative MSG_E*.
 // Never reads past `in_len`, never allocates, never builds a Game. On success

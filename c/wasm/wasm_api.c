@@ -120,12 +120,13 @@ static unsigned char g_io[IO_CAP];
 static Game g_game;
 
 // ROUND 16 - g_game's log count at the moment the last FMSG decode adopted a
-// chain into it, or -1 for "no mark". It is how a seal tells "this bubble adds
-// NOTHING" (the re-seal that cancels a staged move) from "this bubble adds a
-// move the codec folded into an existing atom" - see msg_seal_base and
-// g_msg_base_turn, which it is otherwise the twin of. It sits up here, away
-// from the rest of the FMSG statics, only because every path that REPLACES
-// g_game has to clear it, and the first of those appears above them.
+// chain into it, or -1 for "no mark". THE base a seal measures its bubble
+// against: how much of the atom stream is mine (msg_seal), and whether any of
+// it is - "this bubble adds NOTHING" (the re-seal that cancels a staged move)
+// as against "this bubble adds a move the codec folded into an existing atom"
+// (msg_seal_base). It sits up here, away from the rest of the FMSG statics,
+// only because every path that REPLACES g_game has to clear it, and the first
+// of those appears above them.
 static int g_msg_base_logs = -1;
 
 // Snapshots never carry logs (animation game_states are log-stripped
@@ -834,20 +835,20 @@ static int msg_blob_read(const unsigned char *b, int len, MsgEnvelope *e) {
 // does not carry (a Game has no bout counter; msg_replay derives it).
 static int g_msg_round = -1;
 
-// ROUND 16 - the atom count of the chain the resident game was decoded from, so
-// a seal can say how much of it THIS bubble added (msg_wire.h's n_new). -1 =
-// this host cannot say, which seals the delta as 0 and leaves the receiver to
-// guess the animation boundary exactly as builds before round 16 did. Same
-// shape as g_msg_round above and as ios_api.c's g_msg_base_turn: the fact
-// belongs to the adopted chain, and this is the file that adopts one.
-static int g_msg_base_turn = -1;
-// …paired with g_msg_base_logs (declared beside g_game), which is what lets a
-// seal say "I added NOTHING" - the bubble that cancels a staged move by
-// re-sealing the board the chain was already in (msg_wire.h's
-// MSG_NEW_NOTHING). The web does not stage-and-undo today; the twin carries the
-// rule anyway, because what an empty bubble IS belongs to the wire and not to
-// one host, and a twin that answered differently would put a different byte on
-// the same chain.
+// ROUND 16 - where the chain the resident game was decoded from ENDED, as a
+// mark in the log (g_msg_base_logs, declared beside g_game), so a seal can say
+// how much of the atom stream THIS bubble added (msg_wire.h's n_new). -1 = this
+// host cannot say, which seals the delta as 0 and leaves the receiver to guess
+// the animation boundary exactly as builds before round 16 did. Same shape as
+// g_msg_round above: the fact belongs to the adopted chain, and this is the
+// file that adopts one.
+//
+// The same mark is what lets a seal say "I added NOTHING" - the bubble that
+// cancels a staged move by re-sealing the board the chain was already in
+// (msg_wire.h's MSG_NEW_NOTHING). The web does not stage-and-undo today; the
+// twin carries the rule anyway, because what an empty bubble IS belongs to the
+// wire and not to one host, and a twin that answered differently would put a
+// different byte on the same chain.
 
 // in:  g_replay_io[0 .. in_len) = the envelope bytes
 // out: the unpacked header blob, written back over g_replay_io
@@ -869,8 +870,8 @@ int wasm_msg_decode(int in_len) {
 
     // Safe now: replay is done with the borrowed body.
     g_msg_round = e.round;   // Rule R's guard reads this against a pending move
-    g_msg_base_turn = (int)e.turn;   // what a later seal measures its bubble against
-    g_msg_base_logs = g_game.num_logs;   // …and the mark that says it has not moved
+    // …and the log mark a later seal measures its bubble against.
+    g_msg_base_logs = g_game.num_logs;
     msg_blob_write(&e, digest, g_replay_io);
     return MSG_BLOB_HDR + e.n_joins * MSG_BLOB_JOIN;
 }
@@ -919,8 +920,7 @@ int wasm_msg_seal(int in_len) {
     // A v6 body is tens of bytes; 512 is far above any measured game (8p ~68 B).
     static unsigned char body[512];
     static Game scratch;
-    const int src = msg_seal(&e, &g_game,
-                             msg_seal_base(&g_game, g_msg_base_turn, g_msg_base_logs),
+    const int src = msg_seal(&e, &g_game, msg_seal_base(&g_game, g_msg_base_logs),
                              body, (int)sizeof body, &scratch);
     if (src != MSG_EOK) return src;
     return msg_encode(&e, g_replay_io, REPLAY_IO_CAP);

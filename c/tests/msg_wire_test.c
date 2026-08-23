@@ -832,8 +832,28 @@ static void test_pickup_hold(void) {
 // is load-bearing and invisible: the reader takes the last n_new STEPS, so if
 // steps ever stopped being 1:1 with atoms the group would silently slide onto
 // the wrong moves.
+// One bubble's atoms, as (kind, seat) pairs - enough to say WHICH action each
+// one is without re-implementing the codec.
+typedef struct { int kind, seat; } DAtom;
+typedef struct { DAtom a[MSG_MAX_ACTIONS]; int n; } DAtoms;
+
+static void datom_sink(void *ctx, const ReplayAtom *a) {
+    DAtoms *d = (DAtoms *)ctx;
+    if (a->kind == REPLAY_ATOM_DEAL || a->kind == REPLAY_ATOM_DRAW) return;
+    if (d->n >= MSG_MAX_ACTIONS) return;
+    d->a[d->n].kind = a->kind;
+    d->a[d->n].seat = a->seat;
+    d->n++;
+}
+
+static int datoms_of(const unsigned char *body, int len, DAtoms *out) {
+    out->n = 0;
+    ReplayHeader hdr;
+    return replay_decode_atoms_v6(body, len, &hdr, datom_sink, out);
+}
+
 static void test_bubble_delta(void) {
-    int bubbles = 0, folded = 0, expanded = 0;
+    int bubbles = 0, multi = 0, superseded = 0, expanded = 0;
     for (int np = 2; np <= 4; np++) {
         for (int gi = 0; gi < 8; gi++) {
             uint8_t seed[MSG_SEED_LEN];
@@ -852,76 +872,79 @@ static void test_bubble_delta(void) {
             }
             start_game(&g);
 
-            // A genesis continues nothing, so its base is 0 - not MSG_NO_BASE,
-            // which means "cannot say".
-            int base_turn = 0;
+            // A genesis continues nothing, so its mark is its own log count -
+            // not MSG_NO_BASE, which means "cannot say".
+            int base_logs = g.num_logs;
+            DAtoms parent;   // the atoms the bubble before this one carried
+            parent.n = 0;
+            int have_parent = 0;
             static LegalMoves ml;
             for (int step = 0; step < 60; step++) {
                 if (game_done(&g) >= 0 || g.status != GAME_STATUS_PLAYING) break;
 
-                int seat = -1;
-                const int start = (int)(rnd() % (uint32_t)np);
-                for (int t = 0; t < np && seat < 0; t++) {
-                    const int s = (start + t) % np;
-                    if (g.players[s].status != PLAYER_STATUS_IN) continue;
-                    calculate_legal_moves(&g, s, &ml);
-                    for (int i = 0; i < ml.n; i++)
-                        if (ml.moves[i].type != MOVE_WAIT) { seat = s; break; }
-                }
-                if (seat < 0) break;
-                calculate_legal_moves(&g, seat, &ml);
-                int pick = -1;
-                for (int t = 0; t < ml.n && pick < 0; t++) {
-                    const int i = (int)((rnd() + (uint32_t)t) % (uint32_t)ml.n);
-                    if (ml.moves[i].type != MOVE_WAIT) pick = i;
-                }
-                if (pick < 0) break;
+                // ONE TO THREE actions, then SEND: a turn is what one human
+                // staged before pressing send, which is not always one action
+                // (a defender covers twice; an attacker throws in and says
+                // good). The single-action bubble is the shape that first
+                // needed a delta at all, and the multi-action one is the shape
+                // that says whether the delta is MEASURED or merely subtracted.
+                const int want_actions = 1 + (int)(rnd() % 3u);
+                int staged = 0;
+                for (int k = 0; k < want_actions; k++) {
+                    if (game_done(&g) >= 0 || g.status != GAME_STATUS_PLAYING) break;
+                    int seat = -1;
+                    const int start = (int)(rnd() % (uint32_t)np);
+                    for (int t = 0; t < np && seat < 0; t++) {
+                        const int s = (start + t) % np;
+                        if (g.players[s].status != PLAYER_STATUS_IN) continue;
+                        calculate_legal_moves(&g, s, &ml);
+                        for (int i = 0; i < ml.n; i++)
+                            if (ml.moves[i].type != MOVE_WAIT) { seat = s; break; }
+                    }
+                    if (seat < 0) break;
+                    calculate_legal_moves(&g, seat, &ml);
+                    int pick = -1;
+                    for (int t = 0; t < ml.n && pick < 0; t++) {
+                        const int i = (int)((rnd() + (uint32_t)t) % (uint32_t)ml.n);
+                        if (ml.moves[i].type != MOVE_WAIT) pick = i;
+                    }
+                    if (pick < 0) break;
 
-                AwireAction a;
-                move_to_awire(&ml.moves[pick], &a);
-                bool ok;
-                switch (a.kind) {
-                    case AWIRE_ATTACK: ok = handle_attack(&g, seat, a.cards, a.n); break;
-                    case AWIRE_COVER:  ok = handle_cover(&g, seat, a.cards, a.attacks, a.n); break;
-                    case AWIRE_PASS:   ok = handle_pass(&g, seat, a.cards, a.n); break;
-                    case AWIRE_PICKUP: ok = handle_pickup(&g, seat); break;
-                    default:           ok = handle_good(&g, seat); break;
+                    AwireAction a;
+                    move_to_awire(&ml.moves[pick], &a);
+                    bool ok;
+                    switch (a.kind) {
+                        case AWIRE_ATTACK: ok = handle_attack(&g, seat, a.cards, a.n); break;
+                        case AWIRE_COVER:  ok = handle_cover(&g, seat, a.cards, a.attacks, a.n); break;
+                        case AWIRE_PASS:   ok = handle_pass(&g, seat, a.cards, a.n); break;
+                        case AWIRE_PICKUP: ok = handle_pickup(&g, seat); break;
+                        default:           ok = handle_good(&g, seat); break;
+                    }
+                    if (ok) staged++;
                 }
-                if (!ok) continue;
+                if (staged == 0) break;
 
-                // …and SEND. One action, one bubble.
+                // …and SEND.
                 MsgEnvelope e;
                 env_init(&e, seed, np);
-                e.last_actor_seat = (uint8_t)seat;
                 const int over = game_done(&g) >= 0 || g.status == GAME_STATUS_GAME_OVER;
                 e.phase = over ? MSG_PHASE_FINISHED : MSG_PHASE_LIVE;
                 static unsigned char body[1024];
                 static Game scratch;
-                if (msg_seal(&e, &g, base_turn, body, sizeof(body), &scratch) != MSG_EOK) break;
+                if (msg_seal(&e, &g, msg_seal_base(&g, base_logs),
+                             body, sizeof(body), &scratch) != MSG_EOK) break;
                 if (e.n_actions == 0) continue;   // nothing sealed yet (pre-opening)
 
                 bubbles++;
-                CHECK((int)e.n_new == (e.turn > base_turn ? e.turn - base_turn : 1),
-                      "np=%d game=%d: delta %d does not match turn %d - base %d",
-                      np, gi, e.n_new, e.turn, base_turn);
+                if (staged > 1) multi++;
+                if (e.n_new > staged) expanded++;
                 // Every bubble on a known base claims SOMETHING: a bubble that
                 // said nothing would be animated by the fallback guess, which
                 // is what this whole field exists to stop doing.
-                CHECK(e.n_new >= 1, "np=%d game=%d: a real move sealed no delta", np, gi);
-                // ONE action was staged, and the delta is whatever the CODEC
-                // made of it - which is not 1:1 and is exactly why the delta is
-                // derived from the body rather than counted from the moves. A
-                // closing good FOLDS into the round_end atom that replaces it,
-                // so the chain does not grow and the bubble claims the trailing
-                // atom (its own round end); at 4p a bout-closing action can
-                // EXPAND into two atoms instead. Both are correct groups and
-                // neither is countable from the client's side, which is the
-                // finding that put the BASE rather than the count into the
-                // kernel's hands.
-                if (e.turn <= base_turn) folded++;
-                if (e.n_new > 1) expanded++;
+                CHECK(e.n_new >= 1 && e.n_new != MSG_NEW_NOTHING,
+                      "np=%d game=%d: a real move sealed a delta of %d", np, gi, e.n_new);
                 // A delta alone is enough to need the format-3 header.
-                CHECK(e.n_new == 0 || e.format == MSG_FORMAT_CLOCK,
+                CHECK(e.format == MSG_FORMAT_CLOCK,
                       "np=%d game=%d: a delta sealed as format %d", np, gi, e.format);
 
                 // THE INVARIANT the reader indexes on: deal + one step per atom.
@@ -929,6 +952,50 @@ static void test_bubble_delta(void) {
                 CHECK(steps == (int)e.turn + 1,
                       "np=%d game=%d: %d steps for %d atoms (the group would slide)",
                       np, gi, steps, e.turn);
+
+                // AND WHAT THE DELTA MEANS. `atoms_before` is where the reader
+                // opens the animation, so everything before it must be history
+                // the PARENT bubble already carried, and everything from it on
+                // must be this turn. The two are pinned against the parent's
+                // own atoms rather than against arithmetic:
+                //
+                //   - the shared prefix is IDENTICAL (a chain re-encodes its
+                //     past the same way), and
+                //   - the only atoms of the parent that may fall outside the
+                //     prefix are GOODs, which stop being atoms as soon as
+                //     anything follows them (replay_atoms_before_log). An
+                //     attack, cover, pickup or round_end that fell off the
+                //     front would be a move nobody ever animates.
+                DAtoms child;
+                CHECK(datoms_of(e.actions, e.actions_len, &child) >= 0,
+                      "np=%d game=%d: the sealed body did not decode", np, gi);
+                CHECK(child.n == (int)e.turn,
+                      "np=%d game=%d: %d atoms for turn %d", np, gi, child.n, e.turn);
+                const int atoms_before = (int)e.turn - (int)e.n_new;
+                CHECK(atoms_before >= 0,
+                      "np=%d game=%d: a delta of %d past turn %d", np, gi, e.n_new, e.turn);
+                if (have_parent) {
+                    CHECK(atoms_before <= parent.n,
+                          "np=%d game=%d: the bubble starts at %d, past the parent's %d atoms",
+                          np, gi, atoms_before, parent.n);
+                    for (int i = 0; i < atoms_before; i++)
+                        CHECK(child.a[i].kind == parent.a[i].kind
+                              && child.a[i].seat == parent.a[i].seat,
+                              "np=%d game=%d: atom %d of the history changed (%d/%d -> %d/%d)",
+                              np, gi, i, parent.a[i].kind, parent.a[i].seat,
+                              child.a[i].kind, child.a[i].seat);
+                    for (int i = atoms_before; i < parent.n; i++) {
+                        CHECK(parent.a[i].kind == REPLAY_ATOM_GOOD,
+                              "np=%d game=%d: this bubble claims the parent's atom %d, "
+                              "a %d - only a superseded good may be re-claimed",
+                              np, gi, i, parent.a[i].kind);
+                        superseded++;
+                    }
+                } else {
+                    CHECK(atoms_before == 0,
+                          "np=%d game=%d: the first bubble of a chain disowned %d atoms",
+                          np, gi, atoms_before);
+                }
 
                 unsigned char wire[ENV_CAP];
                 const int n = msg_encode(&e, wire, sizeof(wire));
@@ -938,13 +1005,21 @@ static void test_bubble_delta(void) {
                 CHECK(d.n_new == e.n_new, "np=%d game=%d: the delta did not survive the wire (%d -> %d)",
                       np, gi, e.n_new, d.n_new);
 
-                base_turn = (int)e.turn;
+                parent = child;
+                have_parent = 1;
+                base_logs = g.num_logs;   // what adopting my own bubble leaves
             }
         }
     }
-    CHECK(bubbles > 100, "only %d one-action bubbles built; this pinned little", bubbles);
-    printf("  bubble delta: %d one-action bubbles, %d whose chain did not grow (codec fold), "
-           "%d sealed two atoms for one action\n", bubbles, folded, expanded);
+    CHECK(bubbles > 100, "only %d bubbles built; this pinned little", bubbles);
+    CHECK(multi > 20, "only %d bubbles staged more than one action", multi);
+    // The case the log mark exists for: a bubble whose turn superseded a good
+    // the parent had counted as an atom. Subtracting atom counts loses exactly
+    // these, and the front of the turn goes with them.
+    CHECK(superseded > 0,
+          "no bubble ever superseded a pending good - the case the mark exists for never happened");
+    printf("  bubble delta: %d bubbles (%d multi-action), %d goods superseded, "
+           "%d turns the codec expanded\n", bubbles, multi, superseded, expanded);
 
     // A delta the chain cannot back is not an envelope: it would point the
     // animation group at steps before the deal.
@@ -1013,7 +1088,7 @@ static void test_nothing_bubble(void) {
 
             // …and then the human staged a move and undid it, so nothing was
             // applied. This is the seal that used to lie.
-            CHECK(msg_seal_base(&g, base_turn, base_logs) == MSG_BASE_NOTHING,
+            CHECK(msg_seal_base(&g, base_logs) == MSG_BASE_NOTHING,
                   "np=%d game=%d: an untouched game did not read as empty", np, gi);
             MsgEnvelope z;
             env_init(&z, seed, np);
@@ -1083,14 +1158,14 @@ static void test_nothing_bubble(void) {
                 default:           ok = handle_good(&g, seat); break;
             }
             if (!ok) continue;
-            CHECK(msg_seal_base(&g, base_turn, base_logs) == base_turn,
+            CHECK(msg_seal_base(&g, base_logs) == base_logs,
                   "np=%d game=%d: a played move still read as empty", np, gi);
             MsgEnvelope m2;
             env_init(&m2, seed, np);
             const int over = game_done(&g) >= 0 || g.status == GAME_STATUS_GAME_OVER;
             m2.phase = over ? MSG_PHASE_FINISHED : MSG_PHASE_LIVE;
             m2.last_actor_seat = (uint8_t)seat;
-            if (msg_seal(&m2, &g, msg_seal_base(&g, base_turn, base_logs),
+            if (msg_seal(&m2, &g, msg_seal_base(&g, base_logs),
                          body, sizeof(body), &scratch) != MSG_EOK) continue;
             CHECK(m2.n_new >= 1 && m2.n_new != MSG_NEW_NOTHING,
                   "np=%d game=%d: a real move sealed as %d", np, gi, m2.n_new);
@@ -1115,10 +1190,9 @@ static void test_nothing_bubble(void) {
     Game g;
     g_rng = 8801;
     play_game(seed, 2, 20, &ch, &g, -1);
-    CHECK(msg_seal_base(&g, 7, -1) == 7, "a game with no log mark claimed to be empty");
-    CHECK(msg_seal_base(&g, MSG_NO_BASE, g.num_logs) == MSG_NO_BASE,
-          "a game with no base claimed to be empty");
-    CHECK(msg_seal_base(&g, 7, g.num_logs - 1) == 7,
+    CHECK(msg_seal_base(&g, MSG_NO_BASE) == MSG_NO_BASE,
+          "a game with no mark claimed to be empty");
+    CHECK(msg_seal_base(&g, g.num_logs - 1) == g.num_logs - 1,
           "a game that moved past its mark claimed to be empty");
 }
 

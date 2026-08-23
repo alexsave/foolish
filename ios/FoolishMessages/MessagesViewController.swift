@@ -375,13 +375,15 @@ final class MessagesViewController: MSMessagesAppViewController {
     @MainActor
     private func stage(payload: Data, mySeat: Int, fromUndo: Bool = false) async {
         guard let conversation = activeConversation else { return }
-        // Re-decode (idempotent — re-adopts the same state) for the joins/summary.
-        let env = try? await MessageEnvelope.decode(payload: payload, viewer: -1)
-        let names = Dictionary((env?.joins ?? []).map { ($0.seat, $0.name) },
-                               uniquingKeysWith: { a, _ in a })
-        // The board the seal produced, spectator view (no hand) — bubble-safe,
-        // and (below) the fool announcement's source.
-        let publicView = await MessageKernel.shared.residentView(viewer: -1)
+        // READ the bubble and describe it, in one kit call (MessageSummary.
+        // forStagedBubble): the read must not ADOPT - see there - and keeping
+        // it beside the caption is what lets a test walk this exact path. The
+        // leave name is this device's alone (round 16), and is spent here.
+        let (env, summary) = await MessageSummary.forStagedBubble(payload: payload,
+                                                                  leftName: pendingLeftName)
+        // Spent only by the bubble that can say it - a lobby re-seal. Any other
+        // bubble leaves it standing for the one that follows.
+        if env?.phase == 0 { pendingLeftName = nil }
         // The picture is BubbleSnapshot's call, not this file's: a WAITING lobby
         // previews as its roster, everything else as the public table. Shared
         // with the harness's transcript so a preview can never disagree with the
@@ -407,58 +409,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         // MessageEnvelope.swift) still exist and are still exercised by
         // MessageTurnControllerTests (the underlying kernel capability the web
         // page's replay derivation mirrors), just no longer called from here.
-        // 1.0(4): the summary describes the move this bubble carries, from the
-        // kernel's own evwire (the same stream the board animates), so the
-        // transcript/notification reads "Alex attacks with K of ♠". Public view
-        // (viewer -1) so no hand leaks into the notification line.
-        func seatName(_ seat: Int) -> String {
-            names[seat] ?? FStrings.t("ios.msg.seatn", ["n": "\(seat + 1)"])
-        }
         let url = MessageEnvelope.link(payload: payload)
-        let summary: String
-        if env?.phase == 3 {
-            let fool = publicView?.gameOver ?? -1
-            summary = fool >= 0
-                ? FStrings.t("ios.msg.fool", ["name": seatName(fool)])
-                : FStrings.t("ios.msg.tap")
-        } else if env?.phase == 0 {
-            // A WAITING lobby (§5.2): the creator's bubble invites the thread to
-            // join; a later join re-seals with the joiner as last actor.
-            //
-            // Round 16 - a LEAVE reseals a lobby too, and reads nothing like a
-            // join. Two things separate them, and both are needed: this device
-            // set `pendingLeftName` if the leave was MINE (only the leaver knows
-            // the name, since the join carrying it is what was removed), and a
-            // leave's `lastActorSeat` points at a free slot rather than a
-            // seated player, which is how a RECEIVER tells the two apart with
-            // no name to go on.
-            let joinCount = env?.joins.count ?? 0
-            let actor = env?.lastActorSeat ?? -1
-            let actorIsSeated = env?.joins.contains { $0.seat == actor } ?? false
-            if let left = pendingLeftName {
-                summary = FStrings.t("ios.msg.left", ["name": left])
-            } else if !actorIsSeated && joinCount >= 1 {
-                summary = FStrings.t("ios.msg.leftanon")
-            } else {
-                summary = joinCount > 1
-                    ? FStrings.t("ios.msg.joined", ["name": seatName(actor)])
-                    : FStrings.t("ios.msg.joininvite")
-            }
-            pendingLeftName = nil
-        } else if env?.phase == 2, env?.turn == 0 {
-            // The last-joiner LIVE handoff carries no move yet - the game just
-            // started; name who started it.
-            summary = FStrings.t("ios.msg.started", ["name": seatName(env?.lastActorSeat ?? -1)])
-        } else {
-            // An ordinary live move: describe it from the kernel's event stream.
-            // …the move THIS bubble carries, by its own delta (round 16): a
-            // sender who covers one card per bubble gets one cover per caption,
-            // where the kernel's fallback guess would describe both.
-            let events = await MessageKernel.shared.lastMoveEvents(viewer: -1,
-                                                                   atomsBefore: env?.atomsBefore ?? -1)
-            summary = MessageSummary.move(events: events, names: names, view: publicView,
-                                          actor: env?.lastActorSeat ?? -1)
-        }
 
         // §11.3/note 21: ONE session per game, and a NEW game must never collapse
         // the PREVIOUS game's final bubble. Messages collapses every older bubble

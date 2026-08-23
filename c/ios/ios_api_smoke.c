@@ -313,6 +313,114 @@ static int fmsg_check(void) {
     return 0;
 }
 
+// ---------- the bubble delta survives being READ (round 16) ----------------
+//
+// A bubble states how many atoms it added (msg_wire.h's n_new), and its
+// recipient animates - and its sender captions - exactly that many. The count
+// is taken against the chain this device ADOPTED, which the kernel remembers.
+//
+// So READING a payload must not move that memory, and a decode does: it
+// replays the chain and re-bases on it. The composer reads its own outgoing
+// bubble (for the joins and the summary line) between one staged action and
+// the next, and that read used to tell the kernel the staged half was somebody
+// else's history - so a turn of two actions sealed as a delta of one, and
+// everything downstream described only its tail.
+//
+// fio_msg_peek_packed is the read that changes nothing; this is the proof.
+// The turn itself: two actions on the chain `parent`, sealed after each, with
+// the composer's read of its own staged bubble in between when `with_read`.
+// Hands back what the FINAL bubble says about itself.
+static int delta_stage_two(const unsigned char *parent, int pn, const char *joins,
+                           int with_read, int *turn_out, int *delta_out) {
+    const uint8_t zero8[8] = {0};
+    unsigned char mb[1 << 14];
+    if (fio_msg_decode_packed(parent, pn, mb, sizeof(mb)) <= 0) return -1;
+
+    int applied = 0, bn = 0;
+    unsigned char bubble[2048];
+    for (int i = 0; i < 2; i++) {
+        const int mask = fio_actor_mask();
+        int seat = -1;
+        for (int s = 0; s < 4; s++) if (mask & (1 << s)) { seat = s; break; }
+        if (seat < 0) break;
+        const int lrc = fio_legal_packed(seat, buf, sizeof(buf));
+        if (lrc < 0) break;
+        unsigned char aw[64];
+        const int al = pick_move_awire((const unsigned char *)buf, lrc, aw);
+        if (al == 0 || fio_apply_awire(seat, aw, al) != FIO_EOK) break;
+        applied++;
+        bn = fio_msg_encode(2, seat, 0xD00DULL, zero8, joins, 0, bubble, sizeof(bubble));
+        if (bn <= 0) return -1;
+        // THE READ: what the composer does with the bubble it has just staged,
+        // before the human plays the rest of the turn.
+        if (with_read && fio_msg_peek_packed(bubble, bn, mb, sizeof(mb)) <= 0) return -1;
+    }
+    if (applied != 2) return -1;
+    if (fio_msg_peek_packed(bubble, bn, mb, sizeof(mb)) <= 0) return -1;
+    *turn_out = mb[4] | (mb[5] << 8);
+    *delta_out = mb[56];
+
+    // The peek says the same about these bytes as a decode does - same blob,
+    // one adopts and one does not. (Last, because it re-adopts.)
+    unsigned char decoded[1 << 14];
+    if (fio_msg_decode_packed(bubble, bn, decoded, sizeof(decoded)) <= 0) return -1;
+    if (memcmp(mb, decoded, (size_t)64) != 0) return -2;
+    return 0;
+}
+
+static int bubble_delta_check(void) {
+    unsigned char seed[32];
+    for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(i * 7 + 5);
+    const char *joins = "[{\"seat\":0,\"name\":\"Sveta\"},{\"seat\":1,\"name\":\"Ann\"},"
+                        "{\"seat\":2,\"name\":\"Bo\"},{\"seat\":3,\"name\":\"Cy\"}]";
+    const uint8_t zero8[8] = {0};
+
+    // A turn of two actions that really is two ATOMS wide - not one the codec
+    // folded back down to one, where a lost base would be invisible. Deal,
+    // play a prelude of n moves, seal that as the parent, and take the first
+    // parent whose silent run comes back with a delta of 2.
+    unsigned char parent[2048];
+    int pn = 0, silent_turn = 0, silent_delta = 0, prelude = -1;
+    for (int n_pre = 1; n_pre <= 24; n_pre++) {
+        if (fio_new_game(seed, 32, 4) != FIO_EOK) { printf("FAIL delta new_game\n"); return 1; }
+        int played = 0;
+        for (; played < n_pre && fio_game_over() < 0; played++) {
+            const int mask = fio_actor_mask();
+            int seat = -1;
+            for (int s = 0; s < 4; s++) if (mask & (1 << s)) { seat = s; break; }
+            if (seat < 0) break;
+            const int lrc = fio_legal_packed(seat, buf, sizeof(buf));
+            if (lrc < 0) break;
+            unsigned char aw[64];
+            const int al = pick_move_awire((const unsigned char *)buf, lrc, aw);
+            if (al == 0 || fio_apply_awire(seat, aw, al) != FIO_EOK) break;
+        }
+        if (played != n_pre) break;
+        pn = fio_msg_encode(2, 0, 0xD00DULL, zero8, joins, 0, parent, sizeof(parent));
+        if (pn <= 0) { printf("FAIL delta parent encode %d\n", pn); return 1; }
+        if (delta_stage_two(parent, pn, joins, 0, &silent_turn, &silent_delta) != 0) continue;
+        if (silent_delta == 2) { prelude = n_pre; break; }
+    }
+    if (prelude < 0) { printf("FAIL delta: no two-atom turn found to test\n"); return 1; }
+
+    // The SAME turn again, this time with the read in between. What the bubble
+    // says about itself must not depend on who looked at it.
+    int read_turn = 0, read_delta = 0;
+    const int rc = delta_stage_two(parent, pn, joins, 1, &read_turn, &read_delta);
+    if (rc == -2) { printf("FAIL delta: peek and decode disagree about the same bytes\n"); return 1; }
+    if (rc != 0) { printf("FAIL delta: the read run did not stage its turn\n"); return 1; }
+
+    if (read_turn != silent_turn || read_delta != silent_delta) {
+        printf("FAIL delta: reading the staged bubble changed it - "
+               "silent turn=%d n_new=%d, read turn=%d n_new=%d\n",
+               silent_turn, silent_delta, read_turn, read_delta);
+        return 1;
+    }
+    printf("bubble delta OK (2 actions after %d, read in between, n_new=%d unchanged)\n",
+           prelude, read_delta);
+    return 0;
+}
+
 // ---------- Lobby v2: open-count WAITING -> Start reseat -> LIVE -----------
 //
 // Proves the mechanism batch 6 / item C picked for the iMessage group lobby
@@ -532,6 +640,7 @@ int main(void) {
 
     if (replay_sweep() != 0) return 1;
     if (fmsg_check() != 0) return 1;
+    if (bubble_delta_check() != 0) return 1;
     if (lobby_v2_reseat_check() != 0) return 1;
     if (nine_player_cap_check() != 0) return 1;
 

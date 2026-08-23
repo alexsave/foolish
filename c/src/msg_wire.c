@@ -494,19 +494,19 @@ static uint8_t seal_format(const MsgEnvelope *e) {
     return (e->sent_at != 0 || e->n_new != 0) ? MSG_FORMAT_CLOCK : MSG_FORMAT_V6;
 }
 
-int msg_seal_base(const Game *g, int base_turn, int base_logs) {
-    if (base_turn < 0) return MSG_NO_BASE;
+int msg_seal_base(const Game *g, int base_logs) {
+    if (base_logs < 0) return MSG_NO_BASE;
     // A saturated log buffer stops growing while the game keeps moving, so "the
     // count is unchanged" would stop meaning "nothing happened". The seal of
     // such a game fails anyway (the v6 producer refuses at MAX_LOGS, see
     // msg_seal's MSG_EBODY note), but this must not be the thing that decides
     // what it says on the way there.
-    if (base_logs >= 0 && base_logs < MAX_LOGS && g->num_logs == base_logs)
+    if (base_logs < MAX_LOGS && g->num_logs == base_logs)
         return MSG_BASE_NOTHING;
-    return base_turn;
+    return base_logs;
 }
 
-int msg_seal(MsgEnvelope *e, const Game *g, int base_turn,
+int msg_seal(MsgEnvelope *e, const Game *g, int base_logs,
              unsigned char *body, int body_cap, Game *scratch) {
     // A 0-action game seals to an EMPTY body: a WAITING lobby, or the last-joiner
     // LIVE handoff that "applies nothing" (§5.2). The v6 producer is an action-run
@@ -515,7 +515,7 @@ int msg_seal(MsgEnvelope *e, const Game *g, int base_turn,
     // state; emit no body and let msg_replay's 0-action path rebuild from the seed.
     // "No opening attack logged" is the same fact the encoder keys on.
     if (replay_first_attacker_from_logs(g->logs, g->num_logs) < 0) {
-        (void)scratch; (void)body_cap; (void)base_turn;
+        (void)scratch; (void)body_cap; (void)base_logs;
         e->actions     = body;   // unused (len 0), but a valid non-null buffer
         e->actions_len = 0;
         e->n_actions   = 0;
@@ -551,15 +551,13 @@ int msg_seal(MsgEnvelope *e, const Game *g, int base_turn,
     e->turn      = (uint16_t)m.applied;
     e->round     = (uint8_t)m.rounds;
 
-    // The bubble delta, from the atom count the body just yielded and the base
-    // the caller continues. Three ways to end up saying nothing (0), and all
-    // three degrade to the same documented fallback - the receiver guesses the
-    // boundary, exactly as builds before this field did:
+    // The bubble delta: the atoms this body devotes to what came AFTER the log
+    // mark the caller adopted at. Three ways to end up saying nothing (0), and
+    // all three degrade to the same documented fallback - the receiver guesses
+    // the boundary, exactly as builds before this field did:
     //
     //   - MSG_NO_BASE (or any other negative): this host cannot say where the
     //     parent ended. MSG_BASE_NOTHING is NOT one of these - see below.
-    //   - a base AHEAD of the body: this seal lost actions the parent had,
-    //     which is not a delta at all.
     //   - a delta past MSG_MAX_NEW: it will not fit the byte. Deliberately 0
     //     rather than a clamp - 255 would name a suffix that STARTS inside the
     //     bubble, which is a confident wrong answer, where 0 is an honest one.
@@ -569,8 +567,19 @@ int msg_seal(MsgEnvelope *e, const Game *g, int base_turn,
     //     the GAME is not this field's problem - that is `turn`, a u16
     //     (MSG_MAX_ACTIONS 1024), and a 300-move game is 300 bubbles of delta
     //     1, not one delta of 300.
+    //
+    // MEASURED AGAINST THE LOG, not against the parent's atom count, because
+    // the two subtract differently: a chain APPENDS logs but its atom stream is
+    // re-derived from all of them, and a good that was an atom while it was
+    // pending stops being one the moment anything follows it
+    // (replay_atoms_before_log). Two atom counts subtracted therefore lose one
+    // atom per superseded good - a defender who covered twice into one bubble
+    // sealed a delta of 1, and both the caption on the bubble and the animation
+    // its recipient played dropped the first cover. Asking the encoder where
+    // MY logs begin has no such gap, and needs no clamp: an action that
+    // supersedes more than it adds still contributes its own atom.
     int newly = 0;
-    if (base_turn == MSG_BASE_NOTHING) {
+    if (base_logs == MSG_BASE_NOTHING) {
         // THE THIRD STATE. The caller is not describing a boundary, it is
         // saying there is no move in this bubble at all - the undo-to-empty
         // re-seal that §10 uses to cancel a staged move, whose body is the
@@ -580,17 +589,23 @@ int msg_seal(MsgEnvelope *e, const Game *g, int base_turn,
         // the host knows, because only the host knows whether anything was
         // applied since it adopted the chain.
         newly = MSG_NEW_NOTHING;
-    } else if (base_turn >= 0 && m.applied > 0) {
-        newly = m.applied - base_turn;
+    } else if (base_logs >= 0 && m.applied > 0) {
+        // Where MY logs start, in the atoms of the body just written. The
+        // count comes from the game's own log array rather than from `scratch`
+        // (the read-back) because the log mark is an index into THAT array -
+        // and the two agree by construction, the body having been encoded from
+        // it.
+        const int before = replay_atoms_before_log(g->logs, g->num_logs, base_logs);
+        newly = m.applied - before;
         // A chain that did not GROW still moved: the codec folds a bout's
         // closing goods into the ONE round_end atom that replaces them, so a
         // seal whose action closed the bout can come back with the same atom
-        // count as its parent, or fewer. Its move is real and is inside the
-        // trailing atom, so the bubble carries exactly that one - measured at
-        // 22% of one-action bubbles in test_bubble_delta, which is far too
-        // common to leave to the fallback guess (that guess reaches back past
-        // the round end and replays the previous bubble's cover with it).
-        if (newly < 1) newly = 1;
+        // count as its parent, or fewer - the atom is still this bubble's, and
+        // the count above says so without a clamp. What is left is the
+        // impossible answer: a base past the end of the body describes no
+        // suffix at all, which is the wire's "does not say" rather than a
+        // guess dressed up as a number.
+        if (newly < 1) newly = 0;
         if (newly > MSG_MAX_NEW) newly = 0;
     }
     e->n_new  = (uint8_t)newly;

@@ -140,6 +140,24 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
         try await MessageKernel.shared.decode(payload: payload, viewer: viewer)
     }
 
+    /// READ a payload's header and adopt NOTHING - the engine is left exactly as
+    /// it was, resident game and all.
+    ///
+    /// For a caller that only wants the fields: the composer describing the
+    /// bubble it has just sealed (its joins, its summary line, its game id).
+    /// That read used to be a `decode`, and a decode is an ADOPTION - it told
+    /// the kernel the chain up to and including the staged move was history
+    /// somebody else made, so the next action of the same turn measured its
+    /// delta from the middle of its own bubble. See `atomsBefore`, and
+    /// fio_msg_peek_packed for the whole of it.
+    ///
+    /// Nothing here replays, so nothing here validates: the fields are the
+    /// sender's claims. Peek what you are about to SEND; decode what is about
+    /// to be PLAYED.
+    public static func peek(payload: Data) async throws -> MessageEnvelope {
+        try await MessageKernel.shared.peek(payload: payload)
+    }
+
     /// Parse the kernel's packed envelope-metadata blob (fio_msg_decode_packed).
     /// Fixed layout: phase(1) n_players(1) last_actor_seat(1) round(1) turn(u16
     /// LE) game_id(u64 LE) parent8(8) digest(32) sent_at(u16 LE) n_new(1)
@@ -211,6 +229,22 @@ public actor MessageKernel {
         return env
     }
 
+
+    /// The same packed blob as `decode`, WITHOUT the replay: nothing about the
+    /// resident game moves, the bubble-delta base least of all. See
+    /// `MessageEnvelope.peek`.
+    public func peek(payload: Data) throws -> MessageEnvelope {
+        var out = [UInt8](repeating: 0, count: 4 * 1024)
+        let n: Int32 = payload.withUnsafeBytes { raw in
+            fio_msg_peek_packed(raw.bindMemory(to: UInt8.self).baseAddress,
+                                Int32(payload.count), &out, Int32(out.count))
+        }
+        guard n > 0 else { throw MessageEnvelope.Failure.damaged(code: Int(fio_last_msg_error())) }
+        guard let env = MessageEnvelope.decode(packed: Data(out.prefix(Int(n)))) else {
+            throw MessageEnvelope.Failure.damaged(code: -1)
+        }
+        return env
+    }
 
     /// 1.0(6) DIAGNOSTIC: the replay codec version (5/6/7) of the body the last
     /// `decode` replayed, or -1 for an empty-body (lobby/handoff) message.

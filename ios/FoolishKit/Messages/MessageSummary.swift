@@ -13,6 +13,82 @@
 import Foundation
 
 public enum MessageSummary {
+
+    /// THE COMPOSER'S READ: everything the bubble about to be staged says about
+    /// itself - its header, and the line that goes under it.
+    ///
+    /// It lives here rather than in the extension because of the FIRST half.
+    /// The payload is read with `peek`, which does NOT adopt: a `decode` also
+    /// re-bases the kernel, telling it that the chain up to and including the
+    /// move just staged is history somebody else made - so the next action of
+    /// the same turn measured its delta (msg_wire.h's n_new) from the middle of
+    /// its own bubble, and this caption then described only the tail of it. The
+    /// base belongs to the chain the device ADOPTED (the bubble it opened, or
+    /// its own bubble once sent - MessageTurnController.markSent); composing one
+    /// must not move it. Keeping the read and the caption in one kit function is
+    /// what lets a test walk the path the composer actually walks.
+    ///
+    /// `leftName` is the round-16 lobby case: the name of whoever this device
+    /// just removed from the roster, which only this device can know (the join
+    /// that carried it is what the leave took out).
+    ///
+    /// nil env means the payload would not parse at all - the caller stages the
+    /// bytes anyway (they are its own seal), with the generic tap line.
+    public static func forStagedBubble(payload: Data,
+                                       leftName: String? = nil) async -> (env: MessageEnvelope?,
+                                                                          summary: String) {
+        let env = try? await MessageEnvelope.peek(payload: payload)
+        // The board the seal left resident, spectator view (no hand) - so no
+        // hand can leak into a notification line, and the fool announcement has
+        // a source.
+        let view = await MessageKernel.shared.residentView(viewer: -1)
+        return (env, await line(env: env, view: view, leftName: leftName))
+    }
+
+    /// The line itself, for an already-read envelope. Pure over (env, view,
+    /// leftName) plus the kernel's event stream for the bubble's own atoms.
+    static func line(env: MessageEnvelope?, view: GameView?, leftName: String?) async -> String {
+        let names = Dictionary((env?.joins ?? []).map { ($0.seat, $0.name) },
+                               uniquingKeysWith: { a, _ in a })
+        func seatName(_ seat: Int) -> String {
+            names[seat] ?? FStrings.t("ios.msg.seatn", ["n": "\(seat + 1)"])
+        }
+        if env?.phase == 3 {
+            // §12: the finished bubble announces the fool.
+            let fool = view?.gameOver ?? -1
+            return fool >= 0 ? FStrings.t("ios.msg.fool", ["name": seatName(fool)])
+                             : FStrings.t("ios.msg.tap")
+        }
+        if env?.phase == 0 {
+            // A WAITING lobby (§5.2): the creator's bubble invites the thread to
+            // join; a later join re-seals with the joiner as last actor.
+            //
+            // Round 16 - a LEAVE reseals a lobby too, and reads nothing like a
+            // join. Two things separate them, and both are needed: the leaver's
+            // own device passes `leftName` (only it knows the name, since the
+            // join carrying it is what was removed), and a leave's
+            // `lastActorSeat` points at a free slot rather than a seated player,
+            // which is how a RECEIVER tells the two apart with no name to go on.
+            let joinCount = env?.joins.count ?? 0
+            let actor = env?.lastActorSeat ?? -1
+            let actorIsSeated = env?.joins.contains { $0.seat == actor } ?? false
+            if let leftName { return FStrings.t("ios.msg.left", ["name": leftName]) }
+            if !actorIsSeated && joinCount >= 1 { return FStrings.t("ios.msg.leftanon") }
+            return joinCount > 1 ? FStrings.t("ios.msg.joined", ["name": seatName(actor)])
+                                 : FStrings.t("ios.msg.joininvite")
+        }
+        if env?.phase == 2, env?.turn == 0 {
+            // The last-joiner LIVE handoff carries no move yet - the game just
+            // started; name who started it.
+            return FStrings.t("ios.msg.started", ["name": seatName(env?.lastActorSeat ?? -1)])
+        }
+        // An ordinary live move: describe it from the kernel's event stream, for
+        // the atoms THIS bubble added and no earlier ones (round 16's delta).
+        let events = await MessageKernel.shared.lastMoveEvents(viewer: -1,
+                                                              atomsBefore: env?.atomsBefore ?? -1)
+        return move(events: events, names: names, view: view,
+                    actor: env?.lastActorSeat ?? -1)
+    }
     // EVW_MSG_* (c/src/evwire.h) — the kernel's per-event message tag.
     private enum Msg {
         static let attacked = 1, passed = 2, out = 3, covered = 4

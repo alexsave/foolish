@@ -225,6 +225,23 @@ int replay_encode_v6_from_game(const Game *g, const unsigned char *seed, int see
 // v5 and v6 producers cannot drift on it.
 int replay_first_attacker_from_logs(const GameLog *logs, int num_logs);
 
+// How many ATOMS of this game's encoding come from logs before `cut_log` - the
+// boundary a bubble reports as its own start (msg_wire.h's n_new).
+//
+// It has to be asked of the encoder, because THE ATOM STREAM IS NOT APPEND-ONLY
+// while the log is. A GOOD is an atom only while it is still pending at the end
+// of the stream (see log_atom_kind): play anything after it and it stops being
+// one - it is dead state the decoder reconstructs for free - so the SAME log
+// prefix encodes to one atom FEWER than it did before the next action landed.
+// Subtracting two atom counts therefore under-measures a turn by exactly the
+// goods it superseded, and a bubble that measured itself that way described
+// only its own tail.
+//
+// `num_logs` is the WHOLE log, not `cut_log`: which logs are atoms is a
+// question about the finished stream, and answering it from the prefix alone
+// would count the very goods this exists to drop.
+int replay_atoms_before_log(const GameLog *logs, int num_logs, int cut_log);
+
 // Parameter of the last error (version for EVERSION, log_type<<16|menu size
 // for ENOTINMENU, 0 otherwise).
 int replay_last_error_detail(void);

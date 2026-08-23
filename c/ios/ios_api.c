@@ -49,25 +49,25 @@ static int   g_last_replay_error = 0;
 static uint8_t g_deal_seed[FOOLISH_SEED_LEN];
 static int     g_has_deal_seed = 0;
 
-// ROUND 16 - the atom count of the chain the RESIDENT game was established
-// from: a decoded envelope's `turn`, or 0 for a fresh deal. Everything played
-// since is what this device is about to send, so `fio_msg_encode` hands the
-// difference to msg_seal as the bubble delta (msg_wire.h's n_new), which is how
-// a receiver knows to animate this move and not the one before it as well.
+// ROUND 16 - THE LOG MARK: g_game's log count at the moment the RESIDENT game
+// was established from a chain (a decode), or from a fresh deal. Everything
+// logged since is what this device is about to send, so `fio_msg_encode` hands
+// the mark to msg_seal, which asks the encoder how many atoms of the body come
+// after it - the bubble delta (msg_wire.h's n_new), which is how a receiver
+// knows to animate this move and not the one before it as well.
+//
+// A LOG mark rather than the parent's atom count (which is what this was until
+// the same round): the atom stream is re-derived from the whole log every time
+// it is encoded, so a pending good stops being an atom the moment anything
+// follows it, and two atom counts subtracted lose exactly those. The log only
+// ever grows, so a mark into it is stable.
 //
 // -1 = unknown, and every path that makes a game resident without a chain to
 // measure from must say so, because a stale base would name the WRONG suffix.
-// It is a static for the same reason g_msg_round is: the two facts belong to
-// the adopted chain, this file is the one place that adopts one, and asking
-// Swift to carry them back down at seal time would put a rules input in app
-// code (and in every other host's app code) for nothing.
-static int g_msg_base_turn = -1;
-
-// …and the resident game's log count at that same moment, which is how a seal
-// tells "I added nothing" from "I added a move the codec folded away" - see
-// msg_seal_base. -1 = never looked, which reads as "something may have
-// happened" and keeps the ordinary delta. Reset together with g_msg_base_turn,
-// always: a base turn without its log mark would call every seal empty.
+// It is a static for the same reason g_msg_round is: the fact belongs to the
+// adopted chain, this file is the one place that adopts one, and asking Swift
+// to carry it back down at seal time would put a rules input in app code (and
+// in every other host's app code) for nothing.
 static int g_msg_base_logs = -1;
 
 // The send clock of the adopted chain (msg_wire.h's sent_at). A bubble that
@@ -569,8 +569,8 @@ int fio_new_game(const uint8_t *seed, int seed_len, int n_players) {
     game_seat_and_deal(&g_game, strategies, n_players);
     g_has_game = 1;
     g_last_reject = 0;
-    g_msg_base_turn = 0;   // a fresh deal continues nothing: every atom is new
-    g_msg_base_logs = g_game.num_logs;   // …and it has not moved since
+    g_msg_base_logs = g_game.num_logs;   // a fresh deal continues nothing:
+                                         // every atom after this is new
     g_msg_base_sent_at = 0;              // …and nobody has sent it anywhere
     // The pin is consumed by the deal above, never left standing: a later
     // ordinary game must not inherit a penalty that was owed to someone else.
@@ -1139,6 +1139,72 @@ int fio_last_msg_error(void) { return g_last_msg_error; }
 // msg_last_body_version (msg_wire.c).
 int fio_msg_last_body_version(void) { return msg_last_body_version; }
 
+// The packed blob itself, written from an already-decoded envelope + its
+// digest. Shared by the ADOPTING decode below and by the non-adopting peek, so
+// the two can never come to describe a payload differently.
+static int fio_msg_pack(const MsgEnvelope *e, const uint8_t *digest,
+                        unsigned char *out, int cap) {
+    int need = 4 + 2 + 8 + MSG_PARENT_LEN + SHA256_DIGEST_LEN + 2 + 1 + 1 + 4 + 1 + 1;
+    for (int i = 0; i < e->n_joins; i++) need += 2 + e->joins[i].name_len;
+    if (cap < need) return FIO_ECAP;
+
+    unsigned char *q = out;
+    *q++ = e->phase;
+    *q++ = e->n_players;
+    *q++ = e->last_actor_seat;
+    *q++ = e->round;
+    *q++ = (unsigned char)(e->turn & 0xff);
+    *q++ = (unsigned char)((e->turn >> 8) & 0xff);
+    for (int i = 0; i < 8; i++) *q++ = (unsigned char)((e->game_id >> (8 * i)) & 0xff);
+    memcpy(q, e->parent8, MSG_PARENT_LEN); q += MSG_PARENT_LEN;
+    memcpy(q, digest, SHA256_DIGEST_LEN); q += SHA256_DIGEST_LEN;
+    *q++ = (unsigned char)(e->sent_at & 0xff);
+    *q++ = (unsigned char)((e->sent_at >> 8) & 0xff);
+    *q++ = e->n_new;
+    *q++ = e->opening;
+    for (int i = 0; i < 4; i++) *q++ = (unsigned char)((e->carry_key >> (8 * i)) & 0xff);
+    *q++ = e->carry_fool;
+    *q++ = (unsigned char)e->n_joins;
+    for (int i = 0; i < e->n_joins; i++) {
+        *q++ = e->joins[i].seat;
+        *q++ = e->joins[i].name_len;
+        memcpy(q, e->joins[i].name, e->joins[i].name_len); q += e->joins[i].name_len;
+    }
+    return (int)(q - out);
+}
+
+// READ a payload's header and CHANGE NOTHING: the same packed blob as
+// fio_msg_decode_packed, without the replay and without touching one byte of
+// the resident game or of the base a later seal measures its bubble against.
+//
+// ROUND 16 - because a decode is not a read. The composer decodes the payload
+// it has just sealed, purely to read the joins and the summary out of it, and
+// that decode used to ADOPT: it told the kernel "the chain up to and including
+// my staged move is history somebody else made", so the NEXT action of the
+// same turn measured its delta from the middle of its own bubble. A bubble
+// carrying two actions then claimed one, and its caption and its recipient's
+// animation both dropped everything but the last (owner: the bubble caption
+// naming the wrong span of a turn). The base belongs to the chain this device
+// ADOPTED - the bubble it opened, or its own bubble once sent - so composing
+// one must not move it, and now it cannot.
+//
+// A peek can be asked of ANY payload, including one this device could not
+// replay: nothing here validates the body, so the fields are the sender's
+// claims. Use `fio_msg_decode_packed` for a chain that is about to be PLAYED -
+// there validation is the replay, and the replay is the point.
+int fio_msg_peek_packed(const uint8_t *payload, int len, unsigned char *out, int cap) {
+    if (!payload || !out || cap <= 0) return FIO_EBADARG;
+    g_last_msg_error = 0;
+
+    MsgEnvelope e;
+    const int rc = msg_decode(payload, len, &e);
+    if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
+
+    uint8_t digest[SHA256_DIGEST_LEN];
+    msg_digest(payload, len, digest);
+    return fio_msg_pack(&e, digest, out, cap);
+}
+
 int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, int cap) {
     if (!payload || !out || cap <= 0) return FIO_EBADARG;
     g_last_msg_error = 0;
@@ -1159,9 +1225,8 @@ int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, i
     g_has_game = 1;
     g_msg_round = e.round;
     // This chain is now the base every later seal measures its bubble against -
-    // its atom count, the log mark that says the game has not moved past it
-    // yet, and the clock a bubble that adds nothing must repeat.
-    g_msg_base_turn = (int)e.turn;
+    // the log mark it ends at (which is also what says the game has not moved
+    // past it yet) and the clock a bubble that adds nothing must repeat.
     g_msg_base_logs = g_game.num_logs;
     g_msg_base_sent_at = e.sent_at;
     // …and this chain's opening seat is now the resident game's, so every seal
@@ -1173,33 +1238,7 @@ int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, i
     g_has_deal_seed = 1;
     for (int i = 0; i < e.n_players; i++) g_seat_roster[i] = (int8_t)bot_roster_find("random");
 
-    int need = 4 + 2 + 8 + MSG_PARENT_LEN + SHA256_DIGEST_LEN + 2 + 1 + 1 + 4 + 1 + 1;
-    for (int i = 0; i < e.n_joins; i++) need += 2 + e.joins[i].name_len;
-    if (cap < need) return FIO_ECAP;
-
-    unsigned char *q = out;
-    *q++ = e.phase;
-    *q++ = e.n_players;
-    *q++ = e.last_actor_seat;
-    *q++ = e.round;
-    *q++ = (unsigned char)(e.turn & 0xff);
-    *q++ = (unsigned char)((e.turn >> 8) & 0xff);
-    for (int i = 0; i < 8; i++) *q++ = (unsigned char)((e.game_id >> (8 * i)) & 0xff);
-    memcpy(q, e.parent8, MSG_PARENT_LEN); q += MSG_PARENT_LEN;
-    memcpy(q, digest, SHA256_DIGEST_LEN); q += SHA256_DIGEST_LEN;
-    *q++ = (unsigned char)(e.sent_at & 0xff);
-    *q++ = (unsigned char)((e.sent_at >> 8) & 0xff);
-    *q++ = e.n_new;
-    *q++ = e.opening;
-    for (int i = 0; i < 4; i++) *q++ = (unsigned char)((e.carry_key >> (8 * i)) & 0xff);
-    *q++ = e.carry_fool;
-    *q++ = (unsigned char)e.n_joins;
-    for (int i = 0; i < e.n_joins; i++) {
-        *q++ = e.joins[i].seat;
-        *q++ = e.joins[i].name_len;
-        memcpy(q, e.joins[i].name, e.joins[i].name_len); q += e.joins[i].name_len;
-    }
-    return (int)(q - out);
+    return fio_msg_pack(&e, digest, out, cap);
 }
 
 // joins: [{"seat":0,"name":"Sveta"},...] → e->joins / e->n_joins. Shared by the
@@ -1261,7 +1300,7 @@ int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
     // bubble carries no move: stamping now would restart the defender's pickup
     // hold on an attack that was sent minutes ago, every time somebody changed
     // their mind. See g_msg_base_sent_at.
-    const int seal_base = msg_seal_base(&g_game, g_msg_base_turn, g_msg_base_logs);
+    const int seal_base = msg_seal_base(&g_game, g_msg_base_logs);
     if (seal_base == MSG_BASE_NOTHING) e.sent_at = g_msg_base_sent_at;
     // The resident game's opening seat, repeated (see g_msg_opening). Not a
     // caller's argument: a host that could choose it per bubble could re-point

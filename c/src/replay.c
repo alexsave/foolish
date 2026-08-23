@@ -1053,6 +1053,18 @@ int replay_first_attacker_from_logs(const GameLog *logs, int num_logs) {
     return -1;
 }
 
+// replay.h: the atoms this game's encoding devotes to the logs BEFORE
+// `cut_log`. Read from the whole log, so a good that a later action superseded
+// is counted the way the encoder will actually treat it - as nothing.
+int replay_atoms_before_log(const GameLog *logs, int num_logs, int cut_log) {
+    if (!logs || cut_log <= 0 || num_logs <= 0) return 0;
+    if (cut_log > num_logs) cut_log = num_logs;
+    int n = 0;
+    for (int i = 0; i < cut_log; i++)
+        if (log_atom_kind(logs, num_logs, i)) n++;
+    return n;
+}
+
 // Atoms a game's logs would produce, capped at max_atoms. v6 codes the count
 // into the header before the stream runs, so it must be known up front.
 static int count_atoms_from_logs(const GameLog *logs, int num_logs, int max_atoms) {

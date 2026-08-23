@@ -523,7 +523,7 @@ public final class MessageTurnController: ObservableObject {
     /// human re-send) a move already in the thread. The sent move stays applied to
     /// the resident game, so the board keeps showing the state I just sent, only
     /// without a pending move to undo or re-send. No-op when nothing is staged
-    /// (e.g. a genesis with no move).
+    /// AND no bytes are handed over (e.g. a genesis with no move).
     ///
     /// ROUND 16 - `payload` is the chain that actually went out, and passing it
     /// REBASES this controller onto it. Until this round the send closed the
@@ -541,8 +541,18 @@ public final class MessageTurnController: ObservableObject {
     /// already there - the sent chain IS the base plus my moves - so nothing on
     /// screen moves. `nil` (or a payload that will not decode) keeps the old
     /// behaviour: forget the staged move and leave the base alone.
+    ///
+    /// The rebase does NOT depend on there being a staged move to clear. It
+    /// used to: an empty `pending` returned before the decode, so a send that
+    /// carried nothing of this controller's own (an undo-to-empty re-seal, a
+    /// lobby bubble, a second signal for the same send) left the base pointing
+    /// at the chain this drawer opened, one bubble behind the thread. The
+    /// bubble after it then claimed BOTH moves - the very doubling this rebase
+    /// exists to prevent. Being handed the bytes that went out is the whole
+    /// signal; what was pending is only what to forget.
     public func markSent(payload: Data? = nil) async {
-        guard !pending.isEmpty else { return }
+        let hadPending = !pending.isEmpty
+        guard hadPending || payload != nil else { return }
         pending = []
         lastChangeWasUndo = false
         if let sent = payload,

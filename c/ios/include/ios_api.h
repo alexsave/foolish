@@ -302,6 +302,24 @@ int fio_last_replay_error(void);
 // Bytes written or negative (FIO_EMSG → fio_last_msg_error).
 int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, int cap);
 
+// READ the same blob and ADOPT NOTHING: no replay, and not one byte of the
+// resident game - nor of the base a later seal measures its bubble against -
+// changes. For a caller that only wants the header (the composer reading the
+// joins and the summary out of the bubble it has just sealed).
+//
+// ROUND 16, and the reason it exists: a decode is not a read. The composer's
+// "idempotent re-decode" of its own outgoing payload told the kernel that the
+// chain up to and including the staged move was history somebody else made, so
+// the NEXT action of the same turn measured its delta from the middle of its
+// own bubble - a bubble carrying two actions claimed one, and its caption and
+// its recipient's animation both lost everything but the last.
+//
+// Nothing here validates the body, so the fields are the sender's claims: peek
+// what you are about to SEND or merely describe, decode what is about to be
+// PLAYED (there, validation is the replay and the replay is the point).
+// Bytes written or negative (FIO_EMSG → fio_last_msg_error).
+int fio_msg_peek_packed(const uint8_t *payload, int len, unsigned char *out, int cap);
+
 // 1.0(6) DIAGNOSTIC: replay codec version (5/6/7) of the body the last
 // fio_msg_decode_packed replayed, or -1 for an empty-body message.
 int fio_msg_last_body_version(void);
