@@ -119,6 +119,15 @@ static unsigned char g_io[IO_CAP];
 #endif
 static Game g_game;
 
+// ROUND 16 - g_game's log count at the moment the last FMSG decode adopted a
+// chain into it, or -1 for "no mark". It is how a seal tells "this bubble adds
+// NOTHING" (the re-seal that cancels a staged move) from "this bubble adds a
+// move the codec folded into an existing atom" - see msg_seal_base and
+// g_msg_base_turn, which it is otherwise the twin of. It sits up here, away
+// from the rest of the FMSG statics, only because every path that REPLACES
+// g_game has to clear it, and the first of those appears above them.
+static int g_msg_base_logs = -1;
+
 // Snapshots never carry logs (animation game_states are log-stripped
 // downstream), so each slot stores only the Game prefix up to num_logs —
 // ~2.5 KB instead of the full log-laden struct.
@@ -230,7 +239,15 @@ static void get_state(Game *g, const unsigned char *p) {
 // caller re-asserts the flag right after (wasm_set_deterministic_deck) for a
 // seed-dealt game — otherwise the bot path (which imports rather than
 // deserializes) would draw at random mid-game and diverge from the deal seed.
-void wasm_import_state(void) { get_state(&g_game, g_io); g_game.deterministic_deck = false; }
+void wasm_import_state(void) {
+    get_state(&g_game, g_io);
+    g_game.deterministic_deck = false;
+    // A game swapped in wholesale is not the one the last FMSG decode adopted,
+    // so its log count says nothing about whether that chain has moved. Forget
+    // the mark (see g_msg_base_logs); a seal then behaves exactly as it did
+    // before the mark existed.
+    g_msg_base_logs = -1;
+}
 
 // Re-assert the deterministic-deck flag after wasm_import_state. Seed-dealt
 // games carry it in the durable blob (wasm_state_deserialize restores it), but
@@ -824,6 +841,13 @@ static int g_msg_round = -1;
 // shape as g_msg_round above and as ios_api.c's g_msg_base_turn: the fact
 // belongs to the adopted chain, and this is the file that adopts one.
 static int g_msg_base_turn = -1;
+// …paired with g_msg_base_logs (declared beside g_game), which is what lets a
+// seal say "I added NOTHING" - the bubble that cancels a staged move by
+// re-sealing the board the chain was already in (msg_wire.h's
+// MSG_NEW_NOTHING). The web does not stage-and-undo today; the twin carries the
+// rule anyway, because what an empty bubble IS belongs to the wire and not to
+// one host, and a twin that answered differently would put a different byte on
+// the same chain.
 
 // in:  g_replay_io[0 .. in_len) = the envelope bytes
 // out: the unpacked header blob, written back over g_replay_io
@@ -846,6 +870,7 @@ int wasm_msg_decode(int in_len) {
     // Safe now: replay is done with the borrowed body.
     g_msg_round = e.round;   // Rule R's guard reads this against a pending move
     g_msg_base_turn = (int)e.turn;   // what a later seal measures its bubble against
+    g_msg_base_logs = g_game.num_logs;   // …and the mark that says it has not moved
     msg_blob_write(&e, digest, g_replay_io);
     return MSG_BLOB_HDR + e.n_joins * MSG_BLOB_JOIN;
 }
@@ -894,7 +919,9 @@ int wasm_msg_seal(int in_len) {
     // A v6 body is tens of bytes; 512 is far above any measured game (8p ~68 B).
     static unsigned char body[512];
     static Game scratch;
-    const int src = msg_seal(&e, &g_game, g_msg_base_turn, body, (int)sizeof body, &scratch);
+    const int src = msg_seal(&e, &g_game,
+                             msg_seal_base(&g_game, g_msg_base_turn, g_msg_base_logs),
+                             body, (int)sizeof body, &scratch);
     if (src != MSG_EOK) return src;
     return msg_encode(&e, g_replay_io, REPLAY_IO_CAP);
 }

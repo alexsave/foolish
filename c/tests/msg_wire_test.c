@@ -966,6 +966,162 @@ static void test_bubble_delta(void) {
     CHECK(msg_encode(&e, w, sizeof(w)) == MSG_ETURN, "a delta past the chain encoded");
 }
 
+// ---------- round 16: the bubble that adds NOTHING -------------------------
+//
+// The owner: "if you stage a move then undo, you can still send a message and
+// it will look weird for the other players. Sometimes even play a weird undo
+// animation I think." Messages has no API to REMOVE a staged bubble, so §10
+// cancels a staged move by overwriting it with a re-seal of the board the chain
+// was already in. That bubble is real, it is sendable, and it carries no move -
+// and until now it claimed a delta of 1, so every recipient replayed the
+// PREVIOUS player's move as if it had just arrived.
+//
+// What makes it hard is that "the chain did not grow" is NOT the tell: 311 of
+// the 1440 bubbles above are real moves the codec folded into a round_end atom,
+// and they hand back their parent's atom count too. So the fact comes from the
+// host, through msg_seal_base, which reads it off the GAME (its log count is
+// where adoption left it), and lands on the wire as its own value.
+//
+// Pinned here: the three-way discrimination (a move, a folded move, nothing),
+// that the sentinel survives the wire, and - the part that is the actual bug -
+// that the suffix a receiver animates from such a bubble is EMPTY.
+static void test_nothing_bubble(void) {
+    int nothings = 0, folds_kept = 0;
+    for (int np = 2; np <= 4; np++) {
+        for (int gi = 0; gi < 6; gi++) {
+            uint8_t seed[MSG_SEED_LEN];
+            seed_fill(seed, 7700u + (uint32_t)(gi * 911 + np * 23));
+            Chain ch; memset(&ch, 0, sizeof(ch));
+            Game g;
+            g_rng = 313u + (uint32_t)(gi * 41 + np);
+            play_game(seed, np, 12 + gi * 5, &ch, &g, -1);
+
+            MsgEnvelope e;
+            env_init(&e, seed, np);
+            static unsigned char body[1024];
+            static Game scratch;
+            if (msg_seal(&e, &g, MSG_NO_BASE, body, sizeof(body), &scratch) != MSG_EOK) continue;
+            if (e.n_actions == 0) continue;
+
+            // THE ADOPTION. A receiver replayed this chain into its own game;
+            // the atom count and the log count are what it remembers of that
+            // moment. (Here the game IS the one that was played, which is the
+            // same thing a replay would produce - msg_replay is how the phone
+            // gets one.)
+            const int base_turn = (int)e.turn;
+            const int base_logs = g.num_logs;
+
+            // …and then the human staged a move and undid it, so nothing was
+            // applied. This is the seal that used to lie.
+            CHECK(msg_seal_base(&g, base_turn, base_logs) == MSG_BASE_NOTHING,
+                  "np=%d game=%d: an untouched game did not read as empty", np, gi);
+            MsgEnvelope z;
+            env_init(&z, seed, np);
+            z.sent_at = 0x1111;
+            CHECK(msg_seal(&z, &g, MSG_BASE_NOTHING, body, sizeof(body), &scratch) == MSG_EOK,
+                  "np=%d game=%d: the empty re-seal failed", np, gi);
+            CHECK(z.n_new == MSG_NEW_NOTHING,
+                  "np=%d game=%d: an empty bubble claimed a delta of %d", np, gi, z.n_new);
+            CHECK(z.turn == (uint16_t)base_turn,
+                  "np=%d game=%d: an empty bubble moved the chain (%d -> %d)",
+                  np, gi, base_turn, z.turn);
+            nothings++;
+
+            // IT IS AN ENVELOPE. The sentinel is above `turn` on any short
+            // chain, so the bound `turn` puts on a real delta has to exempt it
+            // or the bubble would not decode at all - which would be a worse
+            // bug than the one being fixed.
+            unsigned char wire[ENV_CAP];
+            const int n = msg_encode(&z, wire, sizeof(wire));
+            CHECK(n > 0, "np=%d game=%d: an empty bubble did not encode (%d)", np, gi, n);
+            MsgEnvelope d;
+            CHECK(msg_decode(wire, n, &d) == MSG_EOK,
+                  "np=%d game=%d: an empty bubble did not decode", np, gi);
+            CHECK(d.n_new == MSG_NEW_NOTHING,
+                  "np=%d game=%d: the sentinel did not survive the wire (%d)", np, gi, d.n_new);
+
+            // THE POINT OF ALL OF IT: nothing animates. The reader opens the
+            // step stream at `atoms_before + 1` (fio_replay_last_events_packed),
+            // and for this bubble atoms_before IS the atom count - one past the
+            // last step, so the suffix is empty. Asked the way the phone asks
+            // it, against the frame writer itself, rather than by re-deriving
+            // the arithmetic and agreeing with myself.
+            const int steps = replay_steps_count_v6(d.actions, d.actions_len, NULL);
+            CHECK(steps == (int)d.turn + 1,
+                  "np=%d game=%d: %d steps for %d atoms", np, gi, steps, d.turn);
+            const int atoms_before = (int)d.turn;   // what MessageEnvelope.atomsBefore yields
+            static unsigned char frames[65536];
+            int n_frames = -1, next_step = 0;
+            const int fr = replay_steps_frames_v6(d.actions, d.actions_len, -1,
+                                                  atoms_before + 1, 0,
+                                                  frames, sizeof(frames), &n_frames, &next_step);
+            CHECK(fr >= 0, "np=%d game=%d: the empty suffix errored (%d)", np, gi, fr);
+            CHECK(n_frames == 0,
+                  "np=%d game=%d: an empty bubble animated %d frames", np, gi, n_frames);
+
+            // AND THE OTHER SIDE OF THE DISCRIMINATION. Play ONE more action
+            // and the same host reads the same game as having moved - including
+            // when the codec folds it and the atom count does not change, which
+            // is the case that makes this fact unmeasurable from the wire.
+            static LegalMoves ml;
+            int seat = -1, pick = -1;
+            for (int s = 0; s < np && seat < 0; s++) {
+                if (g.players[s].status != PLAYER_STATUS_IN) continue;
+                calculate_legal_moves(&g, s, &ml);
+                for (int i = 0; i < ml.n; i++)
+                    if (ml.moves[i].type != MOVE_WAIT) { seat = s; pick = i; break; }
+            }
+            if (seat < 0) continue;
+            AwireAction a;
+            move_to_awire(&ml.moves[pick], &a);
+            bool ok;
+            switch (a.kind) {
+                case AWIRE_ATTACK: ok = handle_attack(&g, seat, a.cards, a.n); break;
+                case AWIRE_COVER:  ok = handle_cover(&g, seat, a.cards, a.attacks, a.n); break;
+                case AWIRE_PASS:   ok = handle_pass(&g, seat, a.cards, a.n); break;
+                case AWIRE_PICKUP: ok = handle_pickup(&g, seat); break;
+                default:           ok = handle_good(&g, seat); break;
+            }
+            if (!ok) continue;
+            CHECK(msg_seal_base(&g, base_turn, base_logs) == base_turn,
+                  "np=%d game=%d: a played move still read as empty", np, gi);
+            MsgEnvelope m2;
+            env_init(&m2, seed, np);
+            const int over = game_done(&g) >= 0 || g.status == GAME_STATUS_GAME_OVER;
+            m2.phase = over ? MSG_PHASE_FINISHED : MSG_PHASE_LIVE;
+            m2.last_actor_seat = (uint8_t)seat;
+            if (msg_seal(&m2, &g, msg_seal_base(&g, base_turn, base_logs),
+                         body, sizeof(body), &scratch) != MSG_EOK) continue;
+            CHECK(m2.n_new >= 1 && m2.n_new != MSG_NEW_NOTHING,
+                  "np=%d game=%d: a real move sealed as %d", np, gi, m2.n_new);
+            if (m2.turn <= (uint16_t)base_turn) folds_kept++;
+        }
+    }
+    CHECK(nothings >= 10, "only %d empty bubbles built; this pinned little", nothings);
+    // The discrimination is only worth anything if the ambiguous case actually
+    // occurred: a real move whose chain did not grow, still claiming its atom.
+    CHECK(folds_kept >= 1,
+          "no folded move was ever sealed - the case this fix has to tell apart never happened");
+    printf("  nothing bubble: %d empty re-seals, %d folded real moves kept their delta\n",
+           nothings, folds_kept);
+
+    // A HOST THAT NEVER LOOKED cannot claim emptiness: no log mark (-1) means
+    // the ordinary base, and no base at all still means "cannot say". Both
+    // matter because every path that makes a game resident without adopting a
+    // chain leaves one of them unset.
+    uint8_t seed[MSG_SEED_LEN];
+    seed_fill(seed, 8801);
+    Chain ch; memset(&ch, 0, sizeof(ch));
+    Game g;
+    g_rng = 8801;
+    play_game(seed, 2, 20, &ch, &g, -1);
+    CHECK(msg_seal_base(&g, 7, -1) == 7, "a game with no log mark claimed to be empty");
+    CHECK(msg_seal_base(&g, MSG_NO_BASE, g.num_logs) == MSG_NO_BASE,
+          "a game with no base claimed to be empty");
+    CHECK(msg_seal_base(&g, 7, g.num_logs - 1) == 7,
+          "a game that moved past its mark claimed to be empty");
+}
+
 // ---------- Rule F: the fool's penalty ------------------------------------
 
 // Build a joins array from a list of names, seated 0..n-1 in the order given.
@@ -2299,6 +2455,7 @@ int main(int argc, char **argv) {
     test_pickup_hold();
     test_clock_wire();
     test_bubble_delta();
+    test_nothing_bubble();
     test_roster_key();
     test_rematch_opening();
     test_fool_penalty_wire();

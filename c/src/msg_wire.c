@@ -133,7 +133,10 @@ static int validate_fields(const MsgEnvelope *e) {
     // A delta that overran `turn` would point the animation group at steps
     // before the deal, so it is refused here rather than clamped at read time:
     // this is the layer that decides whether bytes are an envelope at all.
-    if ((int)e->n_new > e->n_actions) return MSG_ETURN;
+    // MSG_NEW_NOTHING is exempt: it is not a count, it is the statement that
+    // there is no count, and it is legal on a chain of any length (an
+    // undo-to-empty re-seal can happen on turn 3 or turn 300).
+    if (e->n_new != MSG_NEW_NOTHING && (int)e->n_new > e->n_actions) return MSG_ETURN;
 
     // The fool's penalty rides format 4 and nothing earlier: a format-2/3
     // header has nowhere to put these, so an envelope that claims one and
@@ -491,6 +494,18 @@ static uint8_t seal_format(const MsgEnvelope *e) {
     return (e->sent_at != 0 || e->n_new != 0) ? MSG_FORMAT_CLOCK : MSG_FORMAT_V6;
 }
 
+int msg_seal_base(const Game *g, int base_turn, int base_logs) {
+    if (base_turn < 0) return MSG_NO_BASE;
+    // A saturated log buffer stops growing while the game keeps moving, so "the
+    // count is unchanged" would stop meaning "nothing happened". The seal of
+    // such a game fails anyway (the v6 producer refuses at MAX_LOGS, see
+    // msg_seal's MSG_EBODY note), but this must not be the thing that decides
+    // what it says on the way there.
+    if (base_logs >= 0 && base_logs < MAX_LOGS && g->num_logs == base_logs)
+        return MSG_BASE_NOTHING;
+    return base_turn;
+}
+
 int msg_seal(MsgEnvelope *e, const Game *g, int base_turn,
              unsigned char *body, int body_cap, Game *scratch) {
     // A 0-action game seals to an EMPTY body: a WAITING lobby, or the last-joiner
@@ -541,9 +556,10 @@ int msg_seal(MsgEnvelope *e, const Game *g, int base_turn,
     // three degrade to the same documented fallback - the receiver guesses the
     // boundary, exactly as builds before this field did:
     //
-    //   - a negative base_turn: this host cannot say where the parent ended.
-    //   - a base at or AHEAD of the body: nothing was added, or this seal lost
-    //     actions the parent had, which is not a delta at all.
+    //   - MSG_NO_BASE (or any other negative): this host cannot say where the
+    //     parent ended. MSG_BASE_NOTHING is NOT one of these - see below.
+    //   - a base AHEAD of the body: this seal lost actions the parent had,
+    //     which is not a delta at all.
     //   - a delta past MSG_MAX_NEW: it will not fit the byte. Deliberately 0
     //     rather than a clamp - 255 would name a suffix that STARTS inside the
     //     bubble, which is a confident wrong answer, where 0 is an honest one.
@@ -554,7 +570,17 @@ int msg_seal(MsgEnvelope *e, const Game *g, int base_turn,
     //     (MSG_MAX_ACTIONS 1024), and a 300-move game is 300 bubbles of delta
     //     1, not one delta of 300.
     int newly = 0;
-    if (base_turn >= 0 && m.applied > 0) {
+    if (base_turn == MSG_BASE_NOTHING) {
+        // THE THIRD STATE. The caller is not describing a boundary, it is
+        // saying there is no move in this bubble at all - the undo-to-empty
+        // re-seal that §10 uses to cancel a staged move, whose body is the
+        // board the chain was already in. This cannot be derived here: a fold
+        // (below) hands back the parent's atom count too, so a seal that
+        // measured instead of listening would call one of them the other. Only
+        // the host knows, because only the host knows whether anything was
+        // applied since it adopted the chain.
+        newly = MSG_NEW_NOTHING;
+    } else if (base_turn >= 0 && m.applied > 0) {
         newly = m.applied - base_turn;
         // A chain that did not GROW still moved: the codec folds a bout's
         // closing goods into the ONE round_end atom that replaces them, so a
@@ -564,15 +590,9 @@ int msg_seal(MsgEnvelope *e, const Game *g, int base_turn,
         // 22% of one-action bubbles in test_bubble_delta, which is far too
         // common to leave to the fallback guess (that guess reaches back past
         // the round end and replays the previous bubble's cover with it).
-        //
-        // The one seal this over-claims is the re-seal that staged NOTHING (an
-        // undo back to empty, §10), which is indistinguishable from a fold at
-        // this layer - both hand back the parent's atom count. It then names
-        // the parent's last atom, which is what the fallback would have shown
-        // anyway, so the corner is no worse than it was.
         if (newly < 1) newly = 1;
+        if (newly > MSG_MAX_NEW) newly = 0;
     }
-    if (newly > MSG_MAX_NEW) newly = 0;
     e->n_new  = (uint8_t)newly;
 
     // Format LAST: it is decided by what the header ends up carrying, and n_new

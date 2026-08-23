@@ -45,7 +45,13 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
     /// ended, and the guess replays a cover twice when its sender sent one
     /// cover per bubble. Read through `atomsBefore`, which is the form the
     /// kernel takes. See c/src/msg_wire.h's n_new.
+    ///
+    /// `newAtomsNothing` is the third state: this bubble added NO atoms. It is
+    /// not 0 because 0 asks the reader to guess, and there is nothing here to
+    /// guess at - see `atomsBefore`.
     public let newAtoms: Int
+    /// c/src/msg_wire.h's MSG_NEW_NOTHING.
+    public static let newAtomsNothing = 255
 
     /// THE FOOL'S PENALTY (c/src/msg_wire.h format 4). `opening` is the seat
     /// this game was DEALT to open on, or nil for the ordinary lowest-trump
@@ -67,7 +73,17 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
     /// How many atoms sat on this chain BEFORE this bubble - the boundary
     /// `MessageKernel.lastMoveEvents` groups on, and -1 when the bubble does
     /// not say (the kernel then falls back to its own guess).
-    public var atomsBefore: Int { newAtoms > 0 ? turn - newAtoms : -1 }
+    ///
+    /// A bubble that added NOTHING answers `turn`: the chain already ended
+    /// where this body ends, so the suffix to animate is empty and the kernel
+    /// says so rather than guessing (fio_replay_last_events_packed clamps the
+    /// start to the atom count and returns no events). That is the whole of
+    /// round 16's undo-then-send report - cancelling a staged move used to hand
+    /// every recipient the PREVIOUS player's move to replay again.
+    public var atomsBefore: Int {
+        if newAtoms == Self.newAtomsNothing { return turn }
+        return newAtoms > 0 ? turn - newAtoms : -1
+    }
     public let joins: [MessageJoin]
 
     enum CodingKeys: String, CodingKey {

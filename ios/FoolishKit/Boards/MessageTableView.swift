@@ -2508,6 +2508,14 @@ public struct MessageTableView: View {
     /// the closest to "cancel the staged move" the Messages API allows — there is
     /// no call to remove an inserted bubble, so the move is overwritten with a
     /// bubble that carries nothing new (sending it just re-shares the same board).
+    ///
+    /// ROUND 16: and it now SAYS SO. The kernel sees that nothing was applied
+    /// since it adopted the chain and seals msg_wire.h's MSG_NEW_NOTHING, so a
+    /// recipient who opens this bubble animates nothing and its clock does not
+    /// restart the pickup hold. Before that it claimed a delta of one and every
+    /// recipient replayed the PREVIOUS player's move - the owner's "you can
+    /// still send a message and it will look weird for the other players.
+    /// Sometimes even play a weird undo animation."
     private func stageBaseNow() async {
         guard controller.isContinuation else { return }
         // Always a consequence of undo-to-empty (the only caller is onUndo), so keep

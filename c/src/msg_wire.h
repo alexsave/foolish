@@ -29,7 +29,8 @@
 //   18   8     parent8    first 8 bytes of SHA-256(previous envelope), 0 at creation
 //   26   32    seed       -> game_set_deal_seed_bytes(seed, 32)
 //   58   2     sent_at    FORMAT 3+ ONLY: unix seconds mod 65536 (0 = none)
-//   60   1     n_new      FORMAT 3+ ONLY: atoms THIS bubble added (0 = unknown)
+//   60   1     n_new      FORMAT 3+ ONLY: atoms THIS bubble added
+//                          (0 = unknown, 255 = none - see MSG_NEW_NOTHING)
 //   62   1     opening    FORMAT 4 ONLY: the seat this deal opens on (0xFF = derive)
 //   63   4     carry_key  FORMAT 4 ONLY: u32 LE roster key of the game before (0 = none)
 //   67   1     carry_fool FORMAT 4 ONLY: the fool's canonical index (0xFF = none)
@@ -169,9 +170,20 @@
 //
 // Note it does not bound the GAME: a 300-atom game is 300 bubbles of delta 1,
 // and the total stays in `turn`, a u16. A delta that would not fit the byte
-// seals as 0 - "this bubble does not say" - rather than as a clamp, because 255
-// would name a suffix starting INSIDE the bubble, and a confident wrong
-// boundary is worse than an honest missing one.
+// seals as 0 - "this bubble does not say" - rather than as a clamp, because a
+// too-large delta would name a suffix starting INSIDE the bubble, and a
+// confident wrong boundary is worse than an honest missing one.
+//
+// AND A BUBBLE CAN ADD NOTHING (MSG_NEW_NOTHING). Undo-to-empty is a real move
+// in this UI: Messages offers no API to REMOVE a staged bubble, so §10 cancels
+// one by overwriting it with a re-seal of the state the chain was already in.
+// That bubble is sendable, and what it carries is a board every recipient has
+// already seen. "0 atoms added" is not 0 on this wire - 0 is "does not say",
+// whose fallback GUESS animates the previous player's move again (owner, round
+// 16: "if you stage a move then undo, you can still send a message and it will
+// look weird for the other players"). So the count and the absence of a count
+// are separate values, and the third state gets the one byte value a real delta
+// can never take.
 #define MSG_FORMAT_CLOCK 3
 
 // Format 4 = format 3 plus THE FOOL'S PENALTY, the durak-ism this wire could
@@ -272,13 +284,30 @@
 // "This lobby carries no fool to punish" - an ordinary lobby.
 #define MSG_NO_FOOL      0xFF
 // The delta's ceiling; past it a seal writes 0 ("does not say") rather than a
-// clamp - see the MSG_FORMAT_CLOCK note.
-#define MSG_MAX_NEW      255
+// clamp - see the MSG_FORMAT_CLOCK note. 254 rather than 255 because the top
+// value is spoken for: it is the third state, below.
+#define MSG_MAX_NEW      254
+// "THIS BUBBLE ADDED NOTHING" - the undo-to-empty re-seal (§10). Distinct from
+// 0 ("does not say") because the two want opposite things from a reader: 0 asks
+// it to guess a boundary, and this one states that there IS no move here, so
+// nothing animates. 255 carries it because it is the one byte value no honest
+// delta can hold (MSG_MAX_NEW caps a real one at 254), which keeps the field a
+// plain count everywhere else.
+#define MSG_NEW_NOTHING  255
 // msg_seal's `base_turn` for a host that cannot say where the parent chain
 // ended - the seal then writes no delta and the receiver guesses, exactly as
 // every build before round 16 did. A GENESIS is not this: it passes 0, because
 // a chain with no parent really did add all of itself.
 #define MSG_NO_BASE      (-1)
+// msg_seal's `base_turn` for the re-seal that adds NOTHING: the chain ends
+// exactly where this body ends. It is its own value rather than "pass the base
+// and let the subtraction come out 0" because at seal time a zero difference is
+// AMBIGUOUS - the codec folds a bout's closing goods into the round_end atom
+// that replaces them, so a real move can seal to its parent's atom count too
+// (measured at 22% of one-action bubbles). The two are told apart by the one
+// host that knows, and it knows because nothing was applied to the resident
+// game since it adopted the chain - see fio_msg_encode.
+#define MSG_BASE_NOTHING (-2)
 
 // A full game is ~60-90 actions at 2 players (spec §4.4); 8-player games run
 // longer. 1024 is far above any reachable game and bounds the decode walk.
@@ -350,10 +379,11 @@ typedef struct {
 
     // How many atoms THIS bubble added to the chain - `turn` minus the turn of
     // the envelope it continues. 0 means the bubble does not say: a format-2
-    // chain, a genesis/lobby seal with nothing in it, or a re-seal that staged
-    // no new action. Readers treat 0 as "guess" (see
-    // fio_replay_last_events_packed), which is what every build did before this
-    // field existed, so an old chain animates exactly as it always did.
+    // chain, or a genesis/lobby seal with nothing in it. Readers treat 0 as
+    // "guess" (see fio_replay_last_events_packed), which is what every build did
+    // before this field existed, so an old chain animates exactly as it always
+    // did. MSG_NEW_NOTHING means the opposite of a guess: this bubble added no
+    // atoms at all (the undo-to-empty re-seal), so a reader animates NOTHING.
     //
     // Set by msg_seal from the base turn it is handed, never by a caller: like
     // `turn` and `round` it is a claim about the body, and a producer that
@@ -397,8 +427,10 @@ typedef struct {
 // `e->actions` is left borrowing it, so it must outlive `e`.
 //
 // `base_turn` is the `turn` of the envelope this seal CONTINUES - the parent
-// chain's atom count - or a negative for "this host cannot say", which seals
-// n_new = 0 and leaves the receiver to guess the boundary as it always did. A
+// chain's atom count - or MSG_NO_BASE for "this host cannot say", which seals
+// n_new = 0 and leaves the receiver to guess the boundary as it always did, or
+// MSG_BASE_NOTHING for "this bubble adds nothing", which seals
+// n_new = MSG_NEW_NOTHING so the receiver animates nothing at all. A
 // genesis passes 0: everything on the chain is new. It is an input rather than
 // something derived here because it is the one fact the body cannot tell us -
 // the body is the whole game, and where the PREVIOUS bubble ended is not in it.
@@ -426,6 +458,24 @@ typedef struct {
 // games and never at 2-4p. See docs/IMESSAGE_BODY_CODEC.md §4.
 int msg_seal(MsgEnvelope *e, const Game *g, int base_turn,
              unsigned char *body, int body_cap, Game *scratch);
+
+// THE BASE A HOST SHOULD SEAL WITH, from the two things it remembers about the
+// chain it adopted: that chain's atom count (`base_turn`, MSG_NO_BASE if it has
+// none) and `g->num_logs` AT THE MOMENT IT ADOPTED IT (`base_logs`, negative if
+// it did not look). Returns base_turn, MSG_NO_BASE, or MSG_BASE_NOTHING.
+//
+// The question it answers is "has this game moved since I adopted the chain",
+// and it answers it by OBSERVING THE GAME rather than by counting applies,
+// because the log array is what the body is encoded from: a game whose log
+// count is where adoption left it encodes to the same body the parent carried,
+// so that bubble demonstrably adds nothing. A counter incremented at each apply
+// would have to be found and bumped by every path that can move a game (an
+// apply, a rebase, a bot drive), and the one that got missed would seal a real
+// move as "nothing" and animate it nowhere.
+//
+// It lives here rather than in each host so that the two that seal FMSG - the
+// phone and the browser twin - cannot disagree about what an empty bubble is.
+int msg_seal_base(const Game *g, int base_turn, int base_logs);
 
 // Parse + bounds-check `in` into `out`. Returns MSG_EOK or a negative MSG_E*.
 // Never reads past `in_len`, never allocates, never builds a Game. On success

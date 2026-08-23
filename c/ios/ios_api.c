@@ -63,6 +63,20 @@ static int     g_has_deal_seed = 0;
 // code (and in every other host's app code) for nothing.
 static int g_msg_base_turn = -1;
 
+// …and the resident game's log count at that same moment, which is how a seal
+// tells "I added nothing" from "I added a move the codec folded away" - see
+// msg_seal_base. -1 = never looked, which reads as "something may have
+// happened" and keeps the ordinary delta. Reset together with g_msg_base_turn,
+// always: a base turn without its log mark would call every seal empty.
+static int g_msg_base_logs = -1;
+
+// The send clock of the adopted chain (msg_wire.h's sent_at). A bubble that
+// adds NOTHING repeats it rather than stamping now: the defender's pickup hold
+// measures from when the attack was actually sent, and an undo-to-empty re-seal
+// did not re-send that attack. Without this, cancelling a staged move handed
+// every recipient a fresh 15 seconds of hold on a board nobody touched.
+static uint16_t g_msg_base_sent_at = 0;
+
 // THE FOOL'S PENALTY, on the resident game: the seat this game OPENED on, or
 // MSG_NO_OPENING for the ordinary lowest-trump derivation. It belongs to the
 // resident game exactly as `g_deal_seed` does - it is a term of the deal, not
@@ -556,6 +570,8 @@ int fio_new_game(const uint8_t *seed, int seed_len, int n_players) {
     g_has_game = 1;
     g_last_reject = 0;
     g_msg_base_turn = 0;   // a fresh deal continues nothing: every atom is new
+    g_msg_base_logs = g_game.num_logs;   // …and it has not moved since
+    g_msg_base_sent_at = 0;              // …and nobody has sent it anywhere
     // The pin is consumed by the deal above, never left standing: a later
     // ordinary game must not inherit a penalty that was owed to someone else.
     // fio_msg_start_rematch is the one caller that sets both, in that order.
@@ -1142,8 +1158,12 @@ int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, i
 
     g_has_game = 1;
     g_msg_round = e.round;
-    // This chain is now the base every later seal measures its bubble against.
+    // This chain is now the base every later seal measures its bubble against -
+    // its atom count, the log mark that says the game has not moved past it
+    // yet, and the clock a bubble that adds nothing must repeat.
     g_msg_base_turn = (int)e.turn;
+    g_msg_base_logs = g_game.num_logs;
+    g_msg_base_sent_at = e.sent_at;
     // …and this chain's opening seat is now the resident game's, so every seal
     // of it repeats the term of the deal the chain arrived with.
     g_msg_opening = e.opening;
@@ -1235,6 +1255,14 @@ int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
     // time is passed IN rather than read here on purpose: a kernel that called
     // time() would answer differently on two devices holding the same bytes.
     e.sent_at = (uint16_t)(sent_at & 0xffff);
+    // …EXCEPT on the bubble that adds nothing (§10's undo-to-empty re-seal),
+    // which repeats the adopted chain's stamp instead. `sent_at` is not "when
+    // these bytes were made", it is when the move in them was played, and this
+    // bubble carries no move: stamping now would restart the defender's pickup
+    // hold on an attack that was sent minutes ago, every time somebody changed
+    // their mind. See g_msg_base_sent_at.
+    const int seal_base = msg_seal_base(&g_game, g_msg_base_turn, g_msg_base_logs);
+    if (seal_base == MSG_BASE_NOTHING) e.sent_at = g_msg_base_sent_at;
     // The resident game's opening seat, repeated (see g_msg_opening). Not a
     // caller's argument: a host that could choose it per bubble could re-point
     // the deal mid-chain, and msg_replay would reject the result anyway.
@@ -1250,8 +1278,9 @@ int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
     static unsigned char body[1024];   // a v6 body measures ~68 B at 8 players
     static Game scratch;
     // ROUND 16: everything played since the resident game was established is
-    // what this bubble adds, so the base is the delta msg_seal writes as n_new.
-    const int rc = msg_seal(&e, &g_game, g_msg_base_turn, body, (int)sizeof body, &scratch);
+    // what this bubble adds, so the base is the delta msg_seal writes as n_new
+    // - or MSG_BASE_NOTHING when nothing was played at all (msg_seal_base).
+    const int rc = msg_seal(&e, &g_game, seal_base, body, (int)sizeof body, &scratch);
     if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
     const int n = msg_encode(&e, out, cap);
     if (n < 0) { g_last_msg_error = n; return n == MSG_ECAP ? FIO_ECAP : FIO_EMSG; }
