@@ -437,6 +437,10 @@ private struct GameSurface: View {
     /// when the bubble is sent (sentToken), cancelled (cancelToken), or a new
     /// input reloads the surface.
     @State private var surfaceStaged = false
+    /// ROUND 16: the previous session ended badly and the owner has not looked
+    /// at it yet. Drives the one-line banner (`healthBanner`); cleared by
+    /// tapping it (which opens the dump) or by dismissing it.
+    @State private var healthAlarm: FlightSession?
 
     /// A style toggle keeps this key stable, so the session is NOT reloaded and
     /// the in-progress game survives. A new bubble (payloadURL) or a New game tap
@@ -460,6 +464,17 @@ private struct GameSurface: View {
             // Round 12: the hold-summoned dump rests on top of whatever is
             // showing - board, lobby or setup - and nothing underneath it
             // changes. Above `fToast` so a toast cannot land on top of it.
+            // ROUND 16, the owner: "make it appear as a diagnostic dump in the
+            // UI so I can check next time it happens." The dump itself already
+            // existed behind a five-second hold on the gear, which is fine for
+            // asking a question and useless for being TOLD something - so when
+            // the previous session ended in a way it should not have, the
+            // surface says so on its own, in one line, and that line opens the
+            // dump. Only for an ALARMING end (FlightRecorder.isAlarming): an
+            // ordinary abrupt teardown is something Messages does routinely, and
+            // a banner that cries wolf on those would train the owner to ignore
+            // the one that matters.
+            .overlay(alignment: .top) { healthBanner }
             .overlay { if showDiagnostics { diagnosticPanel } }
             .fToast($toast)
             // The setup/lobby Settings + Help squares present these — same
@@ -504,6 +519,41 @@ private struct GameSurface: View {
             // does not move `selectedMessage` for an arrival, so loadKey does
             // not change and the .task above will not re-run - this one does.
             .task(id: incomingToken) { await maybeAdoptIncoming() }
+            // Read once, on the first paint of this surface. Deliberately not in
+            // `loadKey`'s task: the question "how did last time end" is answered
+            // once per launch, not once per bubble.
+            .task {
+                guard healthAlarm == nil, let p = FlightRecorder.previousSession(),
+                      FlightRecorder.isAlarming(p) else { return }
+                healthAlarm = p
+            }
+    }
+
+    /// The banner. One line, at the top, tappable - and gone for good once it
+    /// has been acted on, because its job is to be noticed once and not to
+    /// decorate the board.
+    @ViewBuilder private var healthBanner: some View {
+        if let alarm = healthAlarm, !showDiagnostics {
+            HStack(spacing: 6) {
+                Text(FlightRecorder.verdict(alarm))
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.white)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.7)
+                Spacer(minLength: 4)
+                Text("✕").font(.system(size: 12, weight: .bold)).foregroundColor(.white)
+                    .onTapGesture { healthAlarm = nil }
+            }
+            .padding(.horizontal, FSpace.s)
+            .padding(.vertical, 5)
+            .background(FColor.accent.opacity(0.94))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .padding(.horizontal, FSpace.s)
+            .padding(.top, 4)
+            .contentShape(Rectangle())
+            .onTapGesture { showDiagnostics = true; healthAlarm = nil }
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
     }
 
     /// Fold an ARRIVING bubble into the live surface, Rule P deciding (§7.2).
@@ -635,6 +685,7 @@ private struct GameSurface: View {
     private var diagnosticPanel: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 6) {
+                healthDump
                 Text("Last message").font(FType.title(16)).onTableText()
                 diagnosticDump
                 if dumpHex.isEmpty && diagInfo.isEmpty && diagError == nil {
@@ -658,6 +709,39 @@ private struct GameSurface: View {
         // dismissible too, not just the text.
         .contentShape(Rectangle())
         .onTapGesture { showDiagnostics = false }
+    }
+
+    /// ROUND 16 (owner): "sometimes it just hangs. Even on newer devices. Can't
+    /// tell why... if there's a crash or something make it appear as a
+    /// diagnostic dump in the UI so I can check next time it happens."
+    ///
+    /// The trail the PREVIOUS session left, plus this one so far, plus the live
+    /// footprint - see FlightRecorder for why a trail is the only possible
+    /// evidence (the failure being chased kills the process outright, so nothing
+    /// survives to report itself). Rendered above the message dump because when
+    /// this section has something to say it is the more urgent of the two.
+    @ViewBuilder private var healthDump: some View {
+        let previous = FlightRecorder.previousSession()
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Health").font(FType.title(16)).onTableText()
+            if let p = previous, FlightRecorder.isAlarming(p) {
+                // The one line the owner is looking for, in the accent, so it is
+                // not something to be found in a wall of monospace.
+                Text(FlightRecorder.verdict(p))
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundColor(FColor.accent)
+            }
+            Text(FlightRecorder.report(previous: previous,
+                                       current: FlightRecorder.currentSession()))
+                .font(.system(size: 9, design: .monospaced))
+                .onTableText()
+                .textSelection(.enabled)
+            FButton("Clear", kind: .wood, compact: true) {
+                FlightRecorder.reset()
+                showDiagnostics = false
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder private var expandedContent: some View {

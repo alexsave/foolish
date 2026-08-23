@@ -290,6 +290,13 @@ public final class MessageTurnController: ObservableObject {
         // moves live only in memory; the staged input-field bubble itself still
         // carries them as a sealed chain.
         pending = []
+        // ROUND 16: the two breadcrumbs the flight recorder wants from this
+        // file. Adopting a chain is the biggest single piece of work the
+        // extension does (a full replay of every atom, then a view and a legal
+        // menu) and it grows with the game, so if the drawer dies late in a long
+        // match this is the line the trail will end on. The atom count rides
+        // along because "how far into the game" is the question being asked.
+        FlightRecorder.note("adopt", "turn \(baseTurn), \(replay.count) to animate")
         // The veil and the board it describes go up TOGETHER - see `publish`.
         await publish(openReplay: replay)
         // Round-8 #4: opening a FINISHED chain is one of the two moments a game
@@ -577,7 +584,8 @@ public final class MessageTurnController: ObservableObject {
     /// only caller that passes anything else is the test that pins what a
     /// CLOCKLESS (pre-round-16, format 2) bubble does, which is nothing.
     public func stagedPayload(sentAt: Int = MessageKernel.clockNow()) async throws -> Data {
-        try await kernel.seal(phase: isOver ? 3 : 2,
+        FlightRecorder.note("seal", "\(pending.count) staged")
+        return try await kernel.seal(phase: isOver ? 3 : 2,
                               lastActorSeat: mySeat,
                               gameId: gameId,
                               parent8: parent8,

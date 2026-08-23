@@ -1243,7 +1243,18 @@ public struct MessageTableView: View {
             let events = await MessageKernel.shared.lastMoveEvents(viewer: controller.mySeat,
                                                                    atomsBefore: controller.animAtomsBefore)
             if let pc = matchedCover {
+                // BALANCED BY `defer`, like every other sequence claim in this
+                // file. It was a bare `+= 1` / `-= 1` pair when round 16 added
+                // it, and an early return or a cancellation between them would
+                // have leaked the counter PERMANENTLY - after which
+                // `BoardAnimator.waitForSettle` (which the extension awaits
+                // before staging a bubble) spends its full 8-second timeout on
+                // every send for the rest of the process. That is indis-
+                // tinguishable from "sometimes it just hangs", so it is not
+                // something to leave resting on this function having no other
+                // way out.
                 BoardAnimator.sequenceDepth += 1
+                defer { BoardAnimator.sequenceDepth -= 1 }
                 await playStep { _ in self.pendingCoverLandingFlights(pc) }
                 // ROUND 16: the cover has LANDED, and the next beat is the sweep
                 // that carries the whole table off. Swap the swept table for the
@@ -1261,7 +1272,6 @@ public struct MessageTableView: View {
                 if let covered = Self.coveredSweep(events, current: sweepBattles) {
                     setSweep(covered)
                 }
-                BoardAnimator.sequenceDepth -= 1
             }
             await runEventStream(events, finalView: new)
         }

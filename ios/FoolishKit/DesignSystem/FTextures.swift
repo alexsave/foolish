@@ -117,36 +117,100 @@ public enum FTextures {
         // affects the felt (the wool has no override).
         if variant.isFelt, let img = devFeltOverride() { return img }
         #endif
-        switch variant {
-        case .classic:  return Cache.woolClassic
-        case .dark:     return Cache.woolDark
-        case .felt:     return Cache.feltClassic
-        case .feltDark: return Cache.feltDark
-        }
+        return Cache.image(tableResourceName(variant))
     }
 
     /// The wood grain, same contract (`WoodTexture.pointsPerTexel`).
     public static func wood(_ variant: Variant) -> UIImage? {
-        variant.isDark ? Cache.woodDark : Cache.woodClassic
+        Cache.image(variant.isDark ? WoodTexture.darkResourceName
+                                   : WoodTexture.classicResourceName)
     }
 
     /// The fern card back (FernCardBack) - one image, scheme-independent (the
     /// back is always the black fern in both light and dark). Nil only if the
     /// resource is missing, in which case FCard.back falls back to flat black.
-    public static var fernBack: UIImage? { Cache.fernBack }
+    public static var fernBack: UIImage? { Cache.image(FernCardBack.resourceName) }
 
-    /// One `static let` per baked image IS the cache: lazy, thread-safe, once
-    /// per process, and — the part that matters on an extension's memory
-    /// budget — a variant nobody looks at is never opened at all. A dictionary
-    /// built up front would decode both looks on the first draw of either.
+    /// The cache: lazy, thread-safe, and — the part that matters on an
+    /// extension's memory budget — a variant nobody looks at is never opened at
+    /// all. A dictionary built up front would decode both looks on the first
+    /// draw of either.
+    ///
+    /// ROUND 16 made it PURGEABLE, which is the whole reason it is a dictionary
+    /// behind a lock rather than the seven `static let`s it used to be. Measured
+    /// (FoolishTests/MemoryProfileTests): every bake resident is ~17.9 MB of
+    /// decoded bitmap, and a session that only ever draws one table wears ~7.5
+    /// of it — but a player who toggles scheme or material in Settings pays for
+    /// every variant they have looked at, for the life of the process, on a
+    /// memory budget an iMessage extension cannot grow. A `static let` cannot be
+    /// given back; this can, and `purge(keeping:)` does exactly that when iOS
+    /// says it needs the room.
+    ///
+    /// Giving one back costs almost nothing to undo: `load` is "open a file,
+    /// hand ~600KB of JPEG to UIImage", the same work the first draw did, and
+    /// the accessors below call it again on the next body evaluation. That is
+    /// the trade this makes — a hitch under memory pressure instead of a kill.
     private enum Cache {
-        static let woolClassic = load(WoolTexture.classicResourceName)
-        static let woolDark    = load(WoolTexture.darkResourceName)
-        static let feltClassic = load(FeltTexture.classicResourceName)
-        static let feltDark    = load(FeltTexture.darkResourceName)
-        static let woodClassic = load(WoodTexture.classicResourceName)
-        static let woodDark    = load(WoodTexture.darkResourceName)
-        static let fernBack    = load(FernCardBack.resourceName)
+        private static let lock = NSLock()
+        private static var images: [String: UIImage] = [:]
+
+        static func image(_ name: String) -> UIImage? {
+            lock.lock()
+            if let hit = images[name] { lock.unlock(); return hit }
+            lock.unlock()
+            // Loaded OUTSIDE the lock: a decode is slow enough that holding a
+            // global lock across it would serialise every surface on screen.
+            // Two threads racing the same first draw both load it and the
+            // second's copy is dropped, which is cheaper than the contention.
+            let img = load(name)
+            lock.lock()
+            if let hit = images[name] { lock.unlock(); return hit }
+            images[name] = img
+            lock.unlock()
+            return img
+        }
+
+        static func purge(keeping keep: Set<String>) {
+            lock.lock()
+            images = images.filter { keep.contains($0.key) }
+            lock.unlock()
+        }
+
+        static var loadedNames: Set<String> {
+            lock.lock(); defer { lock.unlock() }
+            return Set(images.keys)
+        }
+    }
+
+    /// Give back every baked texture EXCEPT the ones `variant` is drawing right
+    /// now. Called from the extension's memory warning — the one moment iOS
+    /// tells us it is about to start killing things, and (before round 16) the
+    /// one the app ignored entirely.
+    ///
+    /// The current variant is kept rather than dropping everything, because the
+    /// board is on screen: re-reading the file it is already drawing would be a
+    /// visible hitch bought for nothing, while the variants being dropped are by
+    /// definition ones nobody is looking at.
+    @discardableResult
+    public static func purgeUnusedTextures(keeping variant: Variant) -> Int {
+        let before = Cache.loadedNames
+        Cache.purge(keeping: [tableResourceName(variant),
+                              variant.isDark ? WoodTexture.darkResourceName
+                                             : WoodTexture.classicResourceName,
+                              FernCardBack.resourceName])
+        return before.subtracting(Cache.loadedNames).count
+    }
+
+    /// Which baked file a variant's TABLE is. Split out because both the
+    /// accessor and the purge have to agree about it, and a purge that named a
+    /// different file from the one being drawn would drop the live texture.
+    private static func tableResourceName(_ variant: Variant) -> String {
+        switch variant {
+        case .classic:  return WoolTexture.classicResourceName
+        case .dark:     return WoolTexture.darkResourceName
+        case .felt:     return FeltTexture.classicResourceName
+        case .feltDark: return FeltTexture.darkResourceName
+        }
     }
 
     /// Load a baked texture out of FoolishKit's own bundle.

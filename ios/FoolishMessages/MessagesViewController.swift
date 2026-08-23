@@ -70,9 +70,46 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     // MARK: - Lifecycle (§11.1)
 
+    /// ROUND 16, the flight recorder. Opened as the very first thing this
+    /// extension does, because everything before it is invisible to the trail -
+    /// and the failure being chased (the drawer freezing, "even on newer
+    /// devices") leaves no other evidence: a memory kill is a SIGKILL, so
+    /// nothing runs afterwards to report it. See FlightRecorder.
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        FlightRecorder.begin("style \(presentationStyle == .compact ? "compact" : "expanded")")
+    }
+
     override func willBecomeActive(with conversation: MSConversation) {
         super.willBecomeActive(with: conversation)
+        FlightRecorder.note("active", "\(conversation.remoteParticipantIdentifiers.count + 1)p chat")
         present(conversation, style: presentationStyle)
+    }
+
+    /// The extension is going away in an orderly fashion. This is the goodbye
+    /// line whose ABSENCE is how the next launch knows the previous session was
+    /// killed rather than closed.
+    override func didResignActive(with conversation: MSConversation) {
+        super.didResignActive(with: conversation)
+        FlightRecorder.end("resigned")
+    }
+
+    /// The one warning iOS gives before it starts killing extensions - and until
+    /// round 16 this app did not implement it at all, so the warning arrived,
+    /// nothing was given back, and the next allocation was fatal.
+    ///
+    /// Two things happen. The trail records it, which is what turns a later
+    /// "ended abruptly" from a shrug into a diagnosis (FlightRecorder.verdict
+    /// keys on exactly this). And the baked textures that are NOT on screen are
+    /// handed back: measured at ~17.9 MB with every variant resident, of which a
+    /// session only ever draws one table's worth - see
+    /// FoolishTests/MemoryProfileTests, and FTextures.purgeUnusedTextures for
+    /// what it costs to reload one (a file read; the reason it is safe to drop).
+    override func didReceiveMemoryWarning() {
+        super.didReceiveMemoryWarning()
+        let scheme: ColorScheme = traitCollection.userInterfaceStyle == .dark ? .dark : .light
+        let dropped = FTextures.purgeUnusedTextures(keeping: FTextures.Variant(scheme))
+        FlightRecorder.note("memory-warning", "dropped \(dropped) textures")
     }
 
     /// A message arrived while we are on screen — an opponent may be live-playing.
@@ -95,6 +132,7 @@ final class MessagesViewController: MSMessagesAppViewController {
                                       pendingStage: pendingStage?.payload,
                                       lastSentPayload: lastSentPayload) { return }
         startingNewGame = false
+        FlightRecorder.note("receive")
         incomingURL = message.url
         incomingToken += 1
         present(conversation, style: presentationStyle)
@@ -105,6 +143,7 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// a chain was actually sent — insert alone is not a commit.
     override func didStartSending(_ message: MSMessage, conversation: MSConversation) {
         startingNewGame = false
+        FlightRecorder.note("send")
         // ROUND 12 #11: the chain being sent comes from the MESSAGE Messages
         // hands us, not from our own `pendingStage` bookkeeping. They are
         // normally the same bytes, but `pendingStage` can be gone by now (an
@@ -198,6 +237,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func didTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
         super.didTransition(to: presentationStyle)
+        FlightRecorder.note("style", presentationStyle == .compact ? "compact" : "expanded")
         let waiters = transitionWaiters
         transitionWaiters.removeAll()
         waiters.values.forEach { $0.resume() }
