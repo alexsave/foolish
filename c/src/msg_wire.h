@@ -41,10 +41,10 @@
 //
 // THE BODY is a v6-family replay code (replay.h) - the codec that already
 // ships. "v6" here is the DECODER FAMILY, not the version byte the producer
-// writes: today's encoder stamps v7 (REPLAY_FORMAT_VERSION_V7), which is v6
-// plus a pass-mode bit and is otherwise byte-for-byte v6, and every entry point
-// that reads one is still named _v6 because it accepts both. What this file
-// counts - atoms - is the same in either. It
+// writes: today's encoder stamps 10 (REPLAY_FORMAT_VERSION_V10), which is v6
+// plus a pass-mode bit, a forced-opening bit and the corrected deal order, and
+// every entry point that reads one is still named _v6 because it accepts the
+// whole line. What this file counts - atoms - is the same in any of them. It
 // entropy-codes each action as an index into that state's legal-move menu, so an
 // action costs ~1-2 bits instead of the ~34 a raw frame spends. Measured over
 // 240 full games per size: 34 B at 2p, 45 B at 4p, 68 B at 8p — 8x to 18x
@@ -502,7 +502,7 @@ int msg_seal_base(const Game *g, int base_logs);
 // `out->actions` points into `in`.
 int msg_decode(const unsigned char *in, int in_len, MsgEnvelope *out);
 
-// 1.0(6) DIAGNOSTIC: replay codec version (5/6/7) of the last body msg_replay
+// 1.0(6) DIAGNOSTIC: replay codec version (9 or 10) of the last body msg_replay
 // decoded, or -1 for an empty-body message. Set by msg_replay.
 extern int msg_last_body_version;
 

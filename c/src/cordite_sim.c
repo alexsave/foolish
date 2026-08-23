@@ -223,7 +223,18 @@ static void sim_eliminate(SimState *s, int p) {
     s->elim_order[s->num_eliminated++] = (int8_t)p;
 }
 
-// refill_player_hands port.
+static void sim_draw_up_to_six(SimState *s, int seat) {
+    while (sim_hand_count(s, seat) < CARDS_PER_PLAYER) {
+        int c;
+        if (!sim_draw(s, &c)) break;
+        s->hand[seat] |= (1ull << c);
+    }
+    if (sim_hand_count(s, seat) == 0 && (s->in_mask >> seat & 1u))
+        sim_eliminate(s, seat);
+}
+
+// refill_player_hands port, deal order included: first attacker, clockwise
+// past the defender, defender last.
 static void sim_refill(SimState *s) {
     if (sim_no_cards_left(s)) {
         for (int i = 0; i < s->num_players; i++) {
@@ -232,28 +243,17 @@ static void sim_refill(SimState *s) {
         }
         return;
     }
-    int defender = s->defender;
-    if (sim_hand_count(s, defender) == 0) {
-        while (sim_hand_count(s, defender) < CARDS_PER_PLAYER) {
-            int c;
-            if (!sim_draw(s, &c)) break;
-            s->hand[defender] |= (1ull << c);
-        }
-    }
+    const int defender = s->defender;
     int p_idx = s->first_attacker;
     int visited = 0;
     do {
         if (visited & (1 << p_idx)) break;
         visited |= (1 << p_idx);
-        while (sim_hand_count(s, p_idx) < CARDS_PER_PLAYER) {
-            int c;
-            if (!sim_draw(s, &c)) break;
-            s->hand[p_idx] |= (1ull << c);
-        }
-        if (sim_hand_count(s, p_idx) == 0 && (s->in_mask >> p_idx & 1u))
-            sim_eliminate(s, p_idx);
+        if (p_idx != defender) sim_draw_up_to_six(s, p_idx);
         p_idx = sim_next_player(s, p_idx);
     } while (p_idx != s->first_attacker);
+
+    sim_draw_up_to_six(s, defender);   // the defender draws last, always
 }
 
 // ---------- action handlers (bitboard) ---------------------------------

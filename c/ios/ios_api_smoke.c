@@ -5,6 +5,7 @@
 //   clang -O2 -Isrc -Iios/include -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 \
 //         -DMAX_MOVE_CARDS=28 ios/ios_api_smoke.c ios/ios_api.c <CORE_SRC> -lm
 #include "ios_api.h"
+#include "replay.h"   // the codec version this build stamps (-Isrc)
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -131,11 +132,12 @@ static int replay_sweep(void) {
                        fio_last_replay_error());
                 return 1;
             }
-            // Since 1.0(4) the seeded encoder stamps v7 (v6 + the pass-mode
-            // bit), and round 16 stamps v8 (v7 + the forced-opening bit, for
-            // the fool's penalty - replay.h). Both are byte-identical play.
-            // Old v6/v7 codes still decode; fresh encodes must be v8.
-            if ((unsigned char)buf[0] != 8) {   // version is byte[0]
+            // The seeded encoder's version has moved with the codec: v7 added
+            // the pass-mode bit, v8 the forced-opening bit, and 10 is the same
+            // wire again under the corrected deal order (replay.h). That last
+            // one is not additive - it retired 5 through 8 outright - so a
+            // fresh encode must be 10 and nothing else.
+            if ((unsigned char)buf[0] != REPLAY_FORMAT_VERSION_V10) {   // version is byte[0]
                 printf("FAIL sweep v6 version p=%d seed=%d got=%d\n", players, s,
                        (unsigned char)buf[0]);
                 return 1;

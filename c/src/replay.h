@@ -72,6 +72,32 @@
 // base32 length at all. v5/v6/v7 codes carry no bit and are never forced, so
 // every game made before this decodes unchanged.
 #define REPLAY_FORMAT_VERSION_V8 8
+// Formats 9 and 10: THE DEAL ORDER CHANGED. Versions 5 through 8 were cut by a
+// kernel that dealt the refill wrong - it gave the defender the top of the
+// talon when a clean cover had emptied their hand, and otherwise took the
+// defender in their natural rotation slot instead of last (game.c
+// refill_player_hands). Real Durak deals the first attacker, then the table
+// clockwise, then the defender.
+//
+// This is a RULES change, not a wire change, and the two versions below carry
+// byte-identical wires to the two they replace. They exist because a replay
+// code is a game, not a document: the same bytes under the fixed rules deal
+// different cards to different seats, so a v5..v8 code re-read by this kernel
+// would silently become a game that never happened. Both lines are therefore
+// renumbered together and every older version is REJECTED at decode
+// (REPLAY_EVERSION, detail = the version), which is the whole point - a loud
+// "this was played under older rules" beats a quiet fiction. Nothing bridges
+// them: the fix is to play a new game, and for the tutorial's frozen code, to
+// re-cut it (npx tsx tests/gen_tutorial_game.ts).
+//
+//   9  = the format-5 line (public DRAW logs, hands retrodicted from the fool)
+//   10 = the format-8 line (inline reveals, pass-mode bit, forced-opening bit)
+//
+// The numbers are NOT ordered by family any more, so the "is this the
+// inline-reveal line" test is an explicit membership check (fmt_inline_reveals)
+// and never `format >= 6`.
+#define REPLAY_FORMAT_VERSION_V9  9
+#define REPLAY_FORMAT_VERSION_V10 10
 #define REPLAY_VERSION_ALPHABET 16
 // Hard guard: a malformed integer must never hang (mirrors core.ts MAX_ATOMS).
 #define REPLAY_MAX_ATOMS 20000

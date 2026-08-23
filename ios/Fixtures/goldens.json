@@ -86,9 +86,9 @@
       "seedByte0": 161,
       "dealHash": "ad2e562981c3242d",
       "seat0LegalHash": "315446a086a23133",
-      "steps": 203,
-      "fool": 0,
-      "playHash": "aedbbb252bff9966"
+      "steps": 200,
+      "fool": 3,
+      "playHash": "b3c602667dbf4e7e"
     },
     {
       "seedByte0": 36,

@@ -1,7 +1,10 @@
-// Whole-game replay codec, format v5 — see replay.h. This is a bit-exact
-// port of the TS reference (frozen as e2e/replay_ts_oracle.ts): the menus,
-// weights, and probability model are WIRE FORMAT — never change them without
-// bumping REPLAY_FORMAT_VERSION and keeping the old code path.
+// Whole-game replay codec - see replay.h for the two format lines it carries
+// (9, the retrodiction line; 10, the inline-reveal line). This is a bit-exact
+// port of the TS reference: the menus, weights, and probability model are WIRE
+// FORMAT - never change them without bumping the version and keeping the old
+// code path. The RULES the projection replays are wire format too, for the same
+// reason and with less warning: the deal order was fixed in August 2026 and
+// that alone retired versions 5 through 8 (docs/DEAL_ORDER.md).
 //
 // Everything the projection shares with the real rules comes from the
 // kernel: can_cover (game.c), the deck-size boundary min_value_for and
@@ -30,6 +33,17 @@
 
 static int g_err_detail = 0;
 int replay_last_error_detail(void) { return g_err_detail; }
+
+// Which of the two format lines a version belongs to. Membership, not a
+// threshold: the deal-order fix renumbered both lines at once, so the
+// inline-reveal line is now 10 while the retrodiction line it outranks is 9
+// (replay.h). Retired versions are listed so this reads as the family it is.
+static int fmt_inline_reveals(int format) {
+    return format == REPLAY_FORMAT_VERSION_V10
+        || format == REPLAY_FORMAT_VERSION_V6      // retired: pre-fix deal order
+        || format == REPLAY_FORMAT_VERSION_V7      // retired
+        || format == REPLAY_FORMAT_VERSION_V8;     // retired
+}
 
 /* =============================== bignum ================================== */
 // Little-endian u32 limbs. rANS only ever multiplies-accumulates by, and
@@ -251,7 +265,7 @@ static uint64_t comb64(int n, int k) {
 }
 
 /* ============================ weight profile ============================= */
-// FROZEN wire format (core.ts V1) — bump REPLAY_FORMAT_VERSION to change.
+// FROZEN wire format (core.ts V1) - bump the format version to change.
 
 #define V1_COVER             6
 #define V1_COVER_FRESH       3
@@ -508,8 +522,8 @@ static void draw_for(RModel *m, int seat) {
     while (hand_len(m, seat) < CARDS_PER_PLAYER) {
         if (m->deck_count > 0) {
             m->deck_count--;
-            if (m->format >= 6) {
-                // v6/v7: reveal the real drawn card inline (unseen now == stock).
+            if (fmt_inline_reveals(m->format)) {
+                // reveal the real drawn card inline (unseen now == stock).
                 int id = code_reveal(m, m->rev_coder, seat);
                 if (m->err) return;
                 pairs[nd][0] = (unsigned char)id;
@@ -550,21 +564,34 @@ static void refill(RModel *m) {
         return;
     }
 
-    // defender draws first when a clean cover emptied their hand
-    if (hand_len(m, m->defender) == 0) draw_for(m, m->defender);
-
+    // First attacker, then clockwise SKIPPING the defender, then the defender
+    // last (game.c refill_player_hands carries the why). The order is load
+    // bearing here in a way it is nowhere else: v6 reveals each drawn card
+    // inline at the moment it is dealt, so a decoder that walks the table in a
+    // different order hands the right cards to the wrong seats and desyncs the
+    // whole arithmetic stream from there on. This is the reason pre-v9 codes
+    // are rejected instead of re-read.
+    const int defender = m->defender;
     int p = m->first_attacker;
     bool visited[MAX_PLAYERS] = { false };
     do {
         if (visited[p]) break;
         visited[p] = true;
-        draw_for(m, p);
-        if (hand_len(m, p) == 0 && m->status[p]) {
-            m->status[p] = false;
-            m->elim[m->num_elim++] = p;
+        if (p != defender) {
+            draw_for(m, p);
+            if (hand_len(m, p) == 0 && m->status[p]) {
+                m->status[p] = false;
+                m->elim[m->num_elim++] = p;
+            }
         }
         p = next_in(m, p);
     } while (p != m->first_attacker);
+
+    draw_for(m, defender);
+    if (hand_len(m, defender) == 0 && m->status[defender]) {
+        m->status[defender] = false;
+        m->elim[m->num_elim++] = defender;
+    }
 }
 
 // Shared discard+refill+rotation used by the good-transition — and, with a
@@ -1395,9 +1422,10 @@ static void model_init(RModel *m, int n, int trump_id, int first_attacker,
     int deck_size = 4 * (ACE_VALUE - min_v + 1);
     for (int s = 0; s < n; s++) {
         m->status[s] = true;
-        // v6/v7 deal the initial hands explicitly (code_reveal), so they start
-        // empty and are filled before the first atom; v5 leaves them hidden.
-        m->unknown[s] = (format >= 6) ? 0 : CARDS_PER_PLAYER;
+        // The inline-reveal line deals the initial hands explicitly
+        // (code_reveal), so they start empty and are filled before the first
+        // atom; the retrodiction line leaves them hidden.
+        m->unknown[s] = fmt_inline_reveals(format) ? 0 : CARDS_PER_PLAYER;
     }
     m->deck_count = deck_size - n * CARDS_PER_PLAYER - 1;
     m->flipped_held = true;
@@ -1590,7 +1618,7 @@ int replay_encode(const unsigned char *in, int in_len,
     memset(&c, 0, sizeof c);
     c.encode = true;
 
-    coder_uniform(&c, REPLAY_VERSION_ALPHABET, REPLAY_FORMAT_VERSION);
+    coder_uniform(&c, REPLAY_VERSION_ALPHABET, REPLAY_FORMAT_VERSION_V9);
     coder_uniform(&c, 7, n - 2);
     int8_t alpha[48];
     int alen = trump_alphabet(n, alpha);
@@ -1603,7 +1631,7 @@ int replay_encode(const unsigned char *in, int in_len,
     if (c.err) return -c.err;
 
     RModel *m = &g_model;
-    model_init(m, n, trump_id, fa, 0, 0, 0, REPLAY_FORMAT_VERSION);
+    model_init(m, n, trump_id, fa, 0, 0, 0, REPLAY_FORMAT_VERSION_V9);
     run_replay(m, &c, &s);
     if (m->err) return -m->err;
     if (c.err) return -c.err;
@@ -1658,7 +1686,7 @@ static int encode_v6_run(int n, int trump_id, int fa, int n_actions,
     const int derived = reveal_lowest_trump_seat(reveals, n_reveals, n, trump_id);
     const int forced  = (derived >= 0 && derived != fa) ? 1 : 0;
 
-    coder_uniform(&c, REPLAY_VERSION_ALPHABET, REPLAY_FORMAT_VERSION_V8);
+    coder_uniform(&c, REPLAY_VERSION_ALPHABET, REPLAY_FORMAT_VERSION_V10);
     // v7 pass-mode bit, right after the version symbol. Always 1 (perevodnoy)
     // for now — see replay.h's TODO(podkidnoy). The decoder reads it back below.
     coder_uniform(&c, 2, 1);
@@ -1678,7 +1706,7 @@ static int encode_v6_run(int n, int trump_id, int fa, int n_actions,
     if (c.err) return -c.err;
 
     RModel *m = &g_model;
-    model_init(m, n, trump_id, fa, 0, 0, 0, REPLAY_FORMAT_VERSION_V8);
+    model_init(m, n, trump_id, fa, 0, 0, 0, REPLAY_FORMAT_VERSION_V10);
     m->pass_allowed = 1;   // perevodnoy (always, for now)
     m->rev = reveals;
     m->rev_n = n_reveals;
@@ -1852,16 +1880,19 @@ static int decode_impl(const unsigned char *in, int in_len,
     c.encode = false;
     c.x = &g_bn;
 
+    // Exactly two versions decode: the deal-order fix retired 5, 6, 7 and 8
+    // wholesale (replay.h), and a retired code is refused rather than re-read
+    // because the game it describes is not the game this kernel would play.
     int version = coder_uniform(&c, REPLAY_VERSION_ALPHABET, -1);
-    if (version != REPLAY_FORMAT_VERSION && version != REPLAY_FORMAT_VERSION_V6
-        && version != REPLAY_FORMAT_VERSION_V7 && version != REPLAY_FORMAT_VERSION_V8) {
+    if (version != REPLAY_FORMAT_VERSION_V9 && version != REPLAY_FORMAT_VERSION_V10) {
         g_err_detail = version;
         return -REPLAY_EVERSION;
     }
-    // v7 carries a pass-mode bit right after the version symbol; v5/v6 carry no
-    // bit and are perevodnoy by definition (existing games decode unchanged).
+    // The inline-reveal line carries a pass-mode bit right after the version
+    // symbol; the retrodiction line carries none and is perevodnoy by
+    // definition.
     int pass_allowed = 1;
-    if (version == REPLAY_FORMAT_VERSION_V7 || version == REPLAY_FORMAT_VERSION_V8) {
+    if (version == REPLAY_FORMAT_VERSION_V10) {
         pass_allowed = coder_uniform(&c, 2, -1);
         if (c.err) return -c.err;
     }
@@ -1871,10 +1902,10 @@ static int decode_impl(const unsigned char *in, int in_len,
     int trump_id = alpha[coder_uniform(&c, alen, -1)];
     int first_attacker = coder_uniform(&c, n, -1);
     if (c.err) return -c.err;
-    // v8's forced-opening bit, and the derived seat that comes with it when set
-    // (replay.h). Pre-v8 codes carry neither and are never forced.
+    // The forced-opening bit, and the derived seat that comes with it when set
+    // (replay.h). The retrodiction line carries neither and is never forced.
     int forced_opening = 0, derived_opening = -1;
-    if (version == REPLAY_FORMAT_VERSION_V8) {
+    if (version == REPLAY_FORMAT_VERSION_V10) {
         forced_opening = coder_uniform(&c, 2, -1);
         if (c.err) return -c.err;
         if (forced_opening) {
@@ -1887,8 +1918,7 @@ static int decode_impl(const unsigned char *in, int in_len,
     model_init(m, n, trump_id, first_attacker, out, REPLAY_DEC_HDR,
                out ? out_cap : 0, version);
     m->pass_allowed = pass_allowed;
-    if (version == REPLAY_FORMAT_VERSION_V6 || version == REPLAY_FORMAT_VERSION_V7
-        || version == REPLAY_FORMAT_VERSION_V8) {
+    if (fmt_inline_reveals(version)) {
         uint32_t atoms = 0;
         code_varint(&c, &atoms);
         if (c.err) return -c.err;
@@ -1898,13 +1928,14 @@ static int decode_impl(const unsigned char *in, int in_len,
     }
     if (m->err) return -m->err;
     if (!bn_is_zero(&g_bn)) return -REPLAY_ELEFTOVER;
-    // v5 requires a single fool; v6 may legitimately be a mid-game cut where
-    // >1 players are still IN — then there is no fool yet (out[4] = 0xFF).
+    // The retrodiction line requires a single fool; an inline-reveal code may
+    // legitimately be a mid-game cut where >1 players are still IN - then there
+    // is no fool yet (out[4] = 0xFF).
     int fool = -1;
     if (in_count(m) == 1) {
         for (int seat = 0; seat < n; seat++)
             if (m->status[seat]) fool = seat;
-    } else if (version == REPLAY_FORMAT_VERSION) {
+    } else if (version == REPLAY_FORMAT_VERSION_V9) {
         return -REPLAY_ENOFOOL;
     }
 
@@ -1959,11 +1990,9 @@ int replay_decode_atoms_v6(const unsigned char *in, int in_len,
     g_atom_sink = 0;
     g_atom_ctx  = 0;
     if (r < 0) return r;
-    // v5 hides the deal, so its atoms are not a deck and cannot rebuild a Game.
-    // v6, v7 and v8 all carry the real deal (v7 == v6 + the perevodnoy bit,
-    // v8 == v7 + the forced-opening bit).
-    if (hdr->version != REPLAY_FORMAT_VERSION_V6 && hdr->version != REPLAY_FORMAT_VERSION_V7
-        && hdr->version != REPLAY_FORMAT_VERSION_V8) {
+    // The retrodiction line hides the deal, so its atoms are not a deck and
+    // cannot rebuild a Game. Only the inline-reveal line carries the real deal.
+    if (!fmt_inline_reveals(hdr->version)) {
         g_err_detail = hdr->version;
         return -REPLAY_EVERSION;
     }

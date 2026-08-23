@@ -33,7 +33,7 @@ function toWire(m: { type: string; cards?: any[]; attack_cards?: any[] }): Uint8
 }
 
 // A native-sealed mid-game 2p turn bubble (shared with e2e/msg_wire.test.ts).
-const START_2P = 'f7020002efcdab89674523010700000200010000000000000000ae15293755bd748b2919627cd0591ffb42d7f9b2e9b57da5c2839ed47bd7ced7020004416e6e300104416e6e31070003a9cc795118a16a9edd28d516';
+const START_2P = 'f7020002efcdab89674523010800000200020000000000000000ae15293755bd748b2919627cd0591ffb42d7f9b2e9b57da5c2839ed47bd7ced7020004416e6e300104416e6e310800f72719e90cb7ee031bd6af74a3a23a';
 
 // A priority that always drives a round to a close: cover/attack while cards
 // remain, then good/pass shut the round, pickup only when nothing else is legal.

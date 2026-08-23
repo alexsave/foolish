@@ -187,7 +187,7 @@ static void run_one(int np, int strat, uint32_t seed) {
     CHECK(dec_len > 0, "decode failed: %d (detail %d)", dec_len, replay_last_error_detail());
 
     // header: fool / elimination / discard
-    CHECK(g_dec_out[0] == REPLAY_FORMAT_VERSION, "version");
+    CHECK(g_dec_out[0] == REPLAY_FORMAT_VERSION_V9, "version");
     CHECK(g_dec_out[1] == np, "player count");
     CHECK(g_dec_out[3] == fa, "first attacker");
     CHECK(g_dec_out[4] == game_done(&g), "fool: decoded %d engine %d",

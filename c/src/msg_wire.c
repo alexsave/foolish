@@ -69,7 +69,7 @@ static int name_is_clean(const char *s, int len) {
     return 1;
 }
 
-// 1.0(6) DIAGNOSTIC: the replay codec version (5/6/7) of the last body decoded
+// 1.0(6) DIAGNOSTIC: the replay codec version (9 or 10) of the last body decoded
 // by msg_replay; -1 if the last message had no body (an empty lobby/handoff).
 int msg_last_body_version = -1;
 

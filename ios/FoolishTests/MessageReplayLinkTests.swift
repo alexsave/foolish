@@ -17,7 +17,7 @@ final class MessageReplayLinkTests: XCTestCase {
 
     // The §8.2 gate fixture: 2p, turn 7, round 1 - a game still in progress.
     private let fixtureHex =
-        "f7020002efcdab89674523010700000200010000000000000000ae15293755bd748b2919627cd0591ffb42d7f9b2e9b57da5c2839ed47bd7ced7020004416e6e300104416e6e31070003a9cc795118a16a9edd28d516"
+        "f7020002efcdab89674523010800000200020000000000000000ae15293755bd748b2919627cd0591ffb42d7f9b2e9b57da5c2839ed47bd7ced7020004416e6e300104416e6e310800f72719e90cb7ee031bd6af74a3a23a"
 
     private func bytes(_ hex: String) -> Data {
         var d = Data(); var i = hex.startIndex

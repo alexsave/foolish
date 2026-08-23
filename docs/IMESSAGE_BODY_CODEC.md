@@ -15,6 +15,12 @@ actually face), not estimated.*
 > below p99 for 6-8 player games; it is 1024 now and 8p seals 320/320 (§4). Read
 > §1-3 as the record of why the body is what it is.
 
+> **VERSION NUMBERS, 2026-08-23.** "v6" throughout this document means the
+> DECODER FAMILY, and that family's version byte has moved: 6 -> 7 (pass-mode
+> bit) -> 8 (forced-opening bit) -> **10**, where the deal-order fix retired
+> every earlier number outright. The body's shape and every measurement below
+> are unchanged. See `docs/DEAL_ORDER.md`.
+
 ---
 
 ## 0. TL;DR

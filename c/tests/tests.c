@@ -511,6 +511,144 @@ static void fill_deck(Game *g, int count) {
     g->has_flipped = false;
 }
 
+// ---------------------------------------------------------------------------
+// THE DEAL ORDER (game.c refill_player_hands): the first attacker draws first,
+// then the table clockwise SKIPPING the defender, then the defender last.
+// Always - deep stock or shallow, empty defender hand or full.
+//
+// Nothing else in this suite pins it, and nothing else can: a full game only
+// ever sees the order through the cards it happens to receive, so the wrong
+// order plays a perfectly legal game and every round-trip test stays green
+// (they did - this order shipped wrong for a year). It needs a stocked deck and
+// named cards.
+// ---------------------------------------------------------------------------
+static void setup_playing_np(Game *g, int np) {
+    memset(g, 0, sizeof(*g));
+    g->num_players = (int8_t)np;
+    g->status = GAME_STATUS_PLAYING;
+    g->power_suit = SUIT_DIAMONDS;
+    g->first_attacker = 0;
+    g->defender = 1;
+    g->deterministic_deck = true;   // draw_index pops deck[0], so the deck is a queue
+    for (int i = 0; i < np; i++) {
+        g->players[i].status = PLAYER_STATUS_IN;
+        snprintf(g->players[i].player_id, sizeof(g->players[i].player_id), "p%d", i);
+    }
+}
+
+// deck[i] is the (i+1)'th card drawn, and its value says so: 5, 6, 7, ...
+static void stock_countable_deck(Game *g, int count) {
+    for (int i = 0; i < count; i++) {
+        g->deck[i].suit  = (int8_t)(i % NUM_SUITS);
+        g->deck[i].value = (int8_t)(MIN_VALUE_SMALL + i);
+    }
+    g->deck_count = (int16_t)count;
+    g->has_flipped = false;
+}
+
+// The seats, in the order they were logged as drawing.
+static int draw_log_order(const Game *g, int *seats, int cap) {
+    int n = 0;
+    for (int i = 0; i < g->num_logs && n < cap; i++)
+        if (g->logs[i].log_type == LOG_DRAW) seats[n++] = g->logs[i].player_idx;
+    return n;
+}
+
+// CHECK takes a plain string, and every assertion here wants to name what it
+// actually saw, so this formats one first.
+static char g_deal_msg[192];
+#define DCHECK(cond, ...) do { \
+    snprintf(g_deal_msg, sizeof g_deal_msg, __VA_ARGS__); \
+    CHECK(cond, g_deal_msg); \
+} while (0)
+
+static void test_deal_order(void) {
+    int seats[MAX_PLAYERS];
+
+    // 4 players, everyone one card short, stock deep enough for all of them.
+    {
+        Game g; setup_playing_np(&g, 4);
+        stock_countable_deck(&g, 20);
+        for (int s = 0; s < 4; s++) {
+            for (int i = 0; i < CARDS_PER_PLAYER - 1; i++)
+                g.players[s].hand[i] = (Card){ SUIT_SPADES, ACE_VALUE };
+            g.players[s].hand_count = CARDS_PER_PLAYER - 1;
+        }
+        engine_run_refill(&g);
+
+        int n = draw_log_order(&g, seats, MAX_PLAYERS);
+        DCHECK(n == 4, "deal order: four seats drew, got %d", n);
+        DCHECK(seats[0] == 0 && seats[1] == 2 && seats[2] == 3 && seats[3] == 1,
+              "deal order: want 0,2,3,1 (attacker, clockwise past the defender, "
+              "defender last), got %d,%d,%d,%d",
+              seats[0], seats[1], seats[2], seats[3]);
+        // and the cards prove it: the top of the talon went to the attacker,
+        // the fourth card to the defender.
+        DCHECK(g.players[0].hand[5].value == MIN_VALUE_SMALL,
+              "deal order: the first attacker got the top card");
+        DCHECK(g.players[1].hand[5].value == MIN_VALUE_SMALL + 3,
+              "deal order: the defender got the fourth card, got %d",
+              g.players[1].hand[5].value);
+    }
+
+    // The point of the rule: a talon too short to go round leaves the DEFENDER
+    // empty-handed, not whoever sits before the first attacker.
+    {
+        Game g; setup_playing_np(&g, 4);
+        stock_countable_deck(&g, 2);
+        for (int s = 0; s < 4; s++) {
+            for (int i = 0; i < CARDS_PER_PLAYER - 1; i++)
+                g.players[s].hand[i] = (Card){ SUIT_SPADES, ACE_VALUE };
+            g.players[s].hand_count = CARDS_PER_PLAYER - 1;
+        }
+        engine_run_refill(&g);
+        DCHECK(g.players[0].hand_count == 6 && g.players[2].hand_count == 6,
+              "short talon: the attacker and the next seat filled");
+        DCHECK(g.players[3].hand_count == 5 && g.players[1].hand_count == 5,
+              "short talon: it ran out on the last two, defender included");
+    }
+
+    // The special case that used to exist in its own right: a clean cover left
+    // the defender with no cards. They used to draw FIRST. They draw last.
+    {
+        Game g; setup_playing_np(&g, 3);
+        stock_countable_deck(&g, 12);
+        for (int s = 0; s < 3; s++) {
+            for (int i = 0; i < CARDS_PER_PLAYER - 2; i++)
+                g.players[s].hand[i] = (Card){ SUIT_SPADES, ACE_VALUE };
+            g.players[s].hand_count = CARDS_PER_PLAYER - 2;
+        }
+        g.players[1].hand_count = 0;   // the defender covered with their last card
+        engine_run_refill(&g);
+
+        int n = draw_log_order(&g, seats, MAX_PLAYERS);
+        DCHECK(n == 3, "empty defender: three seats drew, got %d", n);
+        DCHECK(seats[0] == 0 && seats[1] == 2 && seats[2] == 1,
+              "empty defender: they draw LAST, got %d,%d,%d", seats[0], seats[1], seats[2]);
+        DCHECK(g.players[1].hand[0].value == MIN_VALUE_SMALL + 4,
+              "empty defender: their six start at the fifth card, got %d",
+              g.players[1].hand[0].value);
+    }
+
+    // Two players: the defender is the only other seat, so the order reads the
+    // same either way. Pinned so the two-player game cannot quietly regress.
+    {
+        Game g; setup_playing_np(&g, 2);
+        stock_countable_deck(&g, 3);   // both are two short, so it runs out
+        for (int s = 0; s < 2; s++) {
+            for (int i = 0; i < CARDS_PER_PLAYER - 2; i++)
+                g.players[s].hand[i] = (Card){ SUIT_SPADES, ACE_VALUE };
+            g.players[s].hand_count = CARDS_PER_PLAYER - 2;
+        }
+        engine_run_refill(&g);
+        int n = draw_log_order(&g, seats, MAX_PLAYERS);
+        DCHECK(n == 2 && seats[0] == 0 && seats[1] == 1, "2p deal order: attacker then defender");
+        DCHECK(g.players[0].hand_count == 6 && g.players[1].hand_count == 5,
+              "2p short talon: the defender is the one left short, got %d and %d",
+              g.players[0].hand_count, g.players[1].hand_count);
+    }
+}
+
 #define CHECK_REJECT(call, code, msg) do { \
     bool _r = (call); \
     CHECK(!(_r) && engine_last_reject == (code), msg); \
@@ -2552,6 +2690,7 @@ int main(void) {
     test_full_game_3p_handwritten();
 
     // Reject-matrix & edge-path coverage.
+    test_deal_order();
     test_attack_rejects();
     test_cover_rejects_and_success();
     test_cover_clears_hand_round_advance();

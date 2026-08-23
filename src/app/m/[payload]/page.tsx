@@ -114,7 +114,8 @@ export default function MessagePayloadPage() {
                 // Never attempt partial recovery: a chain either replays or it
                 // does not (§7.3). One sentence for a stranger; the reason goes
                 // to the console.
-                setError('This game link is damaged.');
+                setError('This game can\'t be opened. The link is damaged, or the '
+                    + 'game was started under an older version of the rules.');
                 // eslint-disable-next-line no-console
                 console.error('[m] payload rejected:', e);
             }

@@ -576,8 +576,27 @@ void start_game_with_deck(Game *g, const Card *deck, int n_deck) {
     start_game_dealt(g);
 }
 
-// Refill phase: defender first if their hand is empty, then around starting
-// from first_attacker, mirroring refillPlayerHandsWithEvents.
+// Refill phase. THE DEAL ORDER, and it is a rule, not an implementation
+// detail: the bout's first attacker draws first, then the rest of the table
+// clockwise SKIPPING THE DEFENDER, and the defender draws LAST. Always - even
+// when the stock is deep, and even when the defender ended the bout with an
+// empty hand.
+//
+// It matters because the talon runs out: the seat that draws last is the seat
+// that gets nothing, and under the old order that was whoever happened to sit
+// before the first attacker. Standard Durak (pagat.com/beating/podkidnoy_durak)
+// puts the defender there, and the face-up trump at the bottom of the talon is
+// therefore the last card dealt in the game.
+//
+// Two things this replaced. The first was a special case that dealt to the
+// defender BEFORE everyone else when a clean cover had emptied their hand -
+// exactly backwards, and worth its own mention because it decided who wins a
+// tight endgame. The second was subtler: the walk simply started at
+// first_attacker and took the defender in their natural rotation slot, which is
+// right only in the two-player game and at no other table size.
+//
+// Changing this changed every game the kernel plays, which is why the replay
+// codes cut before it are rejected rather than re-read (replay.h).
 static bool no_cards_left(const Game *g) {
     return g->deck_count == 0 && !g->has_flipped;
 }
@@ -591,6 +610,33 @@ static bool no_cards_left(const Game *g) {
 // post-mutation PASS_OVERFLOW reject stay byte-for-byte identical to the server.)
 static void refill_player_hands(Game *g) { (void)g; }
 #else
+// One seat's turn at the talon: draw to six, log it as one DRAW, and drop a
+// seat that came out of it with nothing while the stock still had cards for
+// someone else. The OUT check sits AFTER the hook on purpose - TS pushed the
+// refill event (and its snapshot) before the zero-hand check, and that ordering
+// is a parity contract.
+static void draw_up_to_six(Game *g, int seat) {
+    Card drawn[CARDS_PER_PLAYER];
+    int n_drawn = 0;
+    while (g->players[seat].hand_count < CARDS_PER_PLAYER) {
+        Card c;
+        if (!draw_card(g, &c)) break;
+        g->players[seat].hand[g->players[seat].hand_count++] = c;
+        drawn[n_drawn++] = c;
+    }
+    if (n_drawn > 0) {
+        GameLog *l = log_alloc(g, LOG_DRAW, seat);
+        for (int i = 0; i < n_drawn; i++) log_add_card(l, drawn[i]);
+        SNAP(g, ENGINE_HOOK_DRAW, seat);
+    }
+    if (g->players[seat].hand_count == 0
+        && g->players[seat].status == PLAYER_STATUS_IN) {
+        g->players[seat].status = PLAYER_STATUS_OUT;
+        g->players[seat].awaiting_attack = false;
+        g->elimination_order[g->num_eliminated++] = (int8_t)seat;
+    }
+}
+
 static void refill_player_hands(Game *g) {
     if (no_cards_left(g)) {
         for (int i = 0; i < g->num_players; i++) {
@@ -603,52 +649,19 @@ static void refill_player_hands(Game *g) {
         return;
     }
 
-    // Defender draws first if their hand is empty.
-    int defender = g->defender;
-    if (g->players[defender].hand_count == 0) {
-        Card drawn[CARDS_PER_PLAYER];
-        int n_drawn = 0;
-        while (g->players[defender].hand_count < CARDS_PER_PLAYER) {
-            Card c;
-            if (!draw_card(g, &c)) break;
-            g->players[defender].hand[g->players[defender].hand_count++] = c;
-            drawn[n_drawn++] = c;
-        }
-        if (n_drawn > 0) {
-            GameLog *l = log_alloc(g, LOG_DRAW, defender);
-            for (int i = 0; i < n_drawn; i++) log_add_card(l, drawn[i]);
-            SNAP(g, ENGINE_HOOK_DRAW, defender);
-        }
-    }
+    const int defender = g->defender;
 
     int p_idx = g->first_attacker;
     bool visited[MAX_PLAYERS] = { false };
     do {
         if (visited[p_idx]) break;
         visited[p_idx] = true;
-        Card drawn[CARDS_PER_PLAYER];
-        int n_drawn = 0;
-        while (g->players[p_idx].hand_count < CARDS_PER_PLAYER) {
-            Card c;
-            if (!draw_card(g, &c)) break;
-            g->players[p_idx].hand[g->players[p_idx].hand_count++] = c;
-            drawn[n_drawn++] = c;
-        }
-        if (n_drawn > 0) {
-            GameLog *l = log_alloc(g, LOG_DRAW, p_idx);
-            for (int i = 0; i < n_drawn; i++) log_add_card(l, drawn[i]);
-            // TS pushes the refill event (and its snapshot) BEFORE the
-            // zero-hand OUT check below, so the hook fires here.
-            SNAP(g, ENGINE_HOOK_DRAW, p_idx);
-        }
-        if (g->players[p_idx].hand_count == 0
-            && g->players[p_idx].status == PLAYER_STATUS_IN) {
-            g->players[p_idx].status = PLAYER_STATUS_OUT;
-            g->players[p_idx].awaiting_attack = false;
-            g->elimination_order[g->num_eliminated++] = (int8_t)p_idx;
-        }
+        if (p_idx != defender) draw_up_to_six(g, p_idx);
         p_idx = get_next_player_index(g, p_idx);
     } while (p_idx != g->first_attacker);
+
+    // Last, always.
+    draw_up_to_six(g, defender);
 }
 #endif  // GUARDS_VALIDATE_ONLY
 

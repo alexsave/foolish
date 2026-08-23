@@ -1501,7 +1501,7 @@ static void test_forced_opening_replay(void) {
         ReplayHeader hdr;
         const int d = replay_decode_atoms_v6(code, cn, &hdr, 0, 0);
         CHECK(d >= 0, "np=%d: forced-game decode failed (%d)", np, d);
-        CHECK(hdr.version == REPLAY_FORMAT_VERSION_V8, "np=%d: not v8 (%d)", np, hdr.version);
+        CHECK(hdr.version == REPLAY_FORMAT_VERSION_V10, "np=%d: not v10 (%d)", np, hdr.version);
         CHECK(hdr.forced_opening == 1, "np=%d: the forced bit was not set", np);
         CHECK(hdr.first_attacker == opening,
               "np=%d: the code recorded opener %d, want %d", np, hdr.first_attacker, opening);

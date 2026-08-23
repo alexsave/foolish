@@ -228,7 +228,7 @@ static void run_one(int np, int strat, uint32_t seed) {
 
     int dec = replay_decode(g_enc, enc, g_dec, DEC_CAP);
     CHECK(dec > 0, "v6 decode failed: %d (detail %d)", dec, replay_last_error_detail());
-    CHECK(g_dec[0] == REPLAY_FORMAT_VERSION_V8, "version %d", g_dec[0]);
+    CHECK(g_dec[0] == REPLAY_FORMAT_VERSION_V10, "version %d", g_dec[0]);
     CHECK(g_dec[4] == game_done(&g), "fool: decoded %d engine %d", g_dec[4], game_done(&g));
 
     // --- losslessness: the leading n LOG_DRAWs are the true initial hands ---
@@ -351,7 +351,7 @@ static void run_one(int np, int strat, uint32_t seed) {
         CHECK(me > 0, "mid-game encode failed: %d (detail %d)", me, replay_last_error_detail());
         int md = replay_decode(g_enc2, me, g_dec, DEC_CAP);
         CHECK(md > 0, "mid-game decode failed: %d (detail %d)", md, replay_last_error_detail());
-        CHECK(g_dec[0] == REPLAY_FORMAT_VERSION_V8, "mid version");
+        CHECK(g_dec[0] == REPLAY_FORMAT_VERSION_V10, "mid version");
         // A mid-game cut generally still has >1 player IN -> no fool (0xFF).
         // (Occasionally half the atoms already finishes a 2p game; allow both.)
         CHECK(g_dec[4] == 0xFF || g_dec[4] == game_done(&g), "mid fool byte %d", g_dec[4]);
@@ -448,7 +448,7 @@ static void run_one_from_game(int np, int strat, uint32_t seed) {
     // it really is v6, and it really decodes to this game
     int dec = replay_decode(g_enc, enc, g_dec, DEC_CAP);
     CHECK(dec > 0, "from_game decode failed: %d (detail %d)", dec, replay_last_error_detail());
-    CHECK(g_dec[0] == REPLAY_FORMAT_VERSION_V8, "version %d", g_dec[0]);
+    CHECK(g_dec[0] == REPLAY_FORMAT_VERSION_V10, "version %d", g_dec[0]);
     CHECK(g_dec[4] == game_done(&g), "fool: decoded %d engine %d", g_dec[4], game_done(&g));
 
     // --- the decoded deal is the REAL deal (no retrodiction) ---
@@ -477,7 +477,7 @@ static void run_one_from_game(int np, int strat, uint32_t seed) {
               mid, replay_last_error_detail());
         int mdec = replay_decode(g_enc3, mid, g_dec, DEC_CAP);
         CHECK(mdec > 0, "mid-game decode failed: %d", mdec);
-        CHECK(g_dec[0] == REPLAY_FORMAT_VERSION_V8, "mid version %d", g_dec[0]);
+        CHECK(g_dec[0] == REPLAY_FORMAT_VERSION_V10, "mid version %d", g_dec[0]);
         CHECK(g_dec[4] == 0xFF, "mid-game stream named a fool: %d", g_dec[4]);
     }
 
