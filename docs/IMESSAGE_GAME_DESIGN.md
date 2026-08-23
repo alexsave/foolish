@@ -720,6 +720,29 @@ activeConversation?.insert(message) { error in … }   // STAGES it; user must t
 - The extension gets NO background execution and NO push — the message *is*
   the notification. Do not attempt timers, polling, or silent updates.
 
+### 11.5 The held settlement (round 16)
+
+**A staged move must tell its player nothing they could act on.**
+It sits in the input field until the human presses Send, and until then it can be undone — or the bubble can simply be deleted, which no amount of hiding the Undo button prevents.
+
+Three moves close a bout, and every one of them deals from the stock in the same `handle_*`: the last good owed, a cover that empties the defender's hand, and a pickup (which refills the picker too whenever the table left them short of six).
+Applied whole at staging time, each one hands its player a look at their new hand with the move still retractable: say good, read the deal, undo, throw in another card instead.
+Four same-rank covers over four same-rank attacks is the cover case, not a rule of its own — the kernel has no separate four-of-a-kind transition, and a table nobody can add to still ends on an explicit good.
+
+So a staged turn is cut in two at the kernel's own boundary (`evw_is_settlement`, exposed as `[GameEvent].settlementStart`):
+
+- the **action** half plays as it is staged — the cover lands, the table is taken, the good mark appears;
+- the **settlement** half — discard, deal, roles — is withheld, with the board showing the kernel's own pre-settlement snapshot, until `didStartSending`.
+
+Nothing durable is involved: the hold is an in-memory fact about a move this controller applied and has not seen sent.
+`legal` is emptied while it stands, so the defender whose sweep makes them the next first attacker cannot play out of a hand they have not been shown.
+
+**The wire does not change.** The bubble carries the whole turn, deal included — it has to, since the drawn cards are not derivable from the code — and a recipient animates all of it on arrival, because a recipient was never in a position to take the move back.
+
+This is an iMessage-only rule: the web and the app commit a move the moment it is played, so there is nothing to withhold.
+It is also **not** a defence against a determined cheat — the envelope carries the deal seed (§4), so anyone willing to decode their own bubble can compute the whole stock.
+What it removes is the one-tap version, where the game itself shows you the deal and then offers you the Undo button.
+
 ---
 
 ## 12. Game end

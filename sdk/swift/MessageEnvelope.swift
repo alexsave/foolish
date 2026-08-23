@@ -479,6 +479,16 @@ public actor MessageKernel {
         Int(fio_msg_pickup_hold(Int32(seat), Int32(sentAt & 0xffff), Int32(now & 0xffff)))
     }
 
+    /// Where the moves THIS DEVICE has staged begin, as an atom count on the
+    /// resident game (fio_msg_staged_atoms_before): the `atomsBefore` a board
+    /// passes to `lastMoveEvents` to animate its OWN turn.
+    ///
+    /// Measured from the kernel's log mark, which is the only fold-proof answer
+    /// — the atom count of the adopted chain can exceed what the same history
+    /// re-encodes to, and a boundary past the end of the stream animates
+    /// nothing at all. -1 when no chain has been adopted.
+    public func stagedAtomsBefore() -> Int { Int(fio_msg_staged_atoms_before()) }
+
     /// The best shareable REPLAY code for the resident (finished) game — the §12
     /// funnel code behind `replayLink`. v6 when the deal is re-derivable, else v5;
     /// the kernel chooses, not app code. nil if no game or it cannot encode.

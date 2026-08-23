@@ -8,6 +8,7 @@
 // Net/ for online play (§8); this file is the offline/engine-facing view.
 
 import Foundation
+import CFoolish
 
 // MARK: - Card
 
@@ -306,6 +307,29 @@ public struct GameEvent: Codable, Equatable, Sendable {
     public var toLoc: EventLoc { EventLoc(rawValue: to) ?? .none }
     /// nil seat for the "no particular player" events (discard, magic).
     public var actorSeat: Int? { seat >= 0 ? seat : nil }
+    /// Is this step one of a bout end's CONSEQUENCES (the transition, the
+    /// discard, the refill, the trash sweep) rather than the acting seat's own
+    /// play? The kernel's answer - c/src/evwire.c's evw_is_settlement.
+    public var isSettlement: Bool { fio_evw_is_settlement(Int32(type)) != 0 }
+}
+
+public extension Array where Element == GameEvent {
+    /// THE SETTLEMENT BOUNDARY: the index of the first step that belongs to the
+    /// bout end rather than to the move that caused it, or nil for a turn that
+    /// ended no bout.
+    ///
+    /// Three moves close a bout - the last good owed, a cover that empties the
+    /// defender's hand, a pickup - and each one deals from the stock in the same
+    /// breath. In iMessage a move is STAGED before it is sent, and staging is
+    /// undoable (and a bubble sitting in the input field can simply be deleted),
+    /// so a board that showed the deal at staging time would let its player read
+    /// their new hand and then choose again. Everything from here on is
+    /// therefore withheld until the human presses Send - see
+    /// MessageTurnController's held settlement.
+    ///
+    /// The cut is at the FIRST settlement step, so the trailing OUT and
+    /// defender-change steps ride along with it: they are the same bout end.
+    var settlementStart: Int? { firstIndex(where: \.isSettlement) }
 }
 
 /// One turn of the kernel's bot cycle (fio_bot_drive_packed).

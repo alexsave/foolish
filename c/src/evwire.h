@@ -103,6 +103,31 @@ typedef struct {
 
 typedef void (*EvwSink)(void *ctx, const EvwEvent *ev);
 
+// THE SETTLEMENT: is this step a CONSEQUENCE of the action rather than the
+// action itself?
+//
+// Three moves close a bout - a good that was the last one owed, a cover that
+// empties the defender's hand, a pickup - and each of them runs, inside the
+// same handle_*, the discard, the refill and the rotation that follow
+// (game.c's execute_round_transition, apply_cover's clean sweep,
+// handle_pickup). Those steps are what this names. Everything before the
+// first of them is the acting seat's own play: the card they laid down, the
+// table they took, the good they declared.
+//
+// It is a rules question, so it is answered here rather than by each client
+// re-listing the types: a settlement is the transition marker, the discard,
+// the refill, and the trash sweep. The OUT and DEFENDER_MOVE steps are NOT
+// listed - they occur without a settlement too (a pass moves the defender; an
+// attack can put its attacker out) - but they always trail one when there is
+// one, and a caller that cuts at the FIRST settlement step keeps them on the
+// settlement's side, which is where they belong.
+//
+// Why the kernel is asked at all: an iMessage move is staged before it is
+// sent, and a staged bout-ender that dealt its sender a new hand on the spot
+// would let them read the deal and then undo (or delete the bubble) - so the
+// extension plays the action, holds the settlement, and releases it on Send.
+int evw_is_settlement(int type);
+
 // Derive the event sequence for `viewer` from the hook snapshots + this
 // action's logs, handing each event to `sink`. THE one derivation; both
 // evwire_serialize (packed, for the web) and the iOS JSON emitter drive it.

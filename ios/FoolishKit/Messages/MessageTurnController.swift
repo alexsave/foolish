@@ -233,6 +233,105 @@ public final class MessageTurnController: ObservableObject {
         self.suppressOpenReplay = false
     }
 
+    // MARK: THE HELD SETTLEMENT
+    //
+    // A staged move is not a move. It sits in the input field until the human
+    // presses Send, and until then it can be undone - or the bubble can simply
+    // be deleted, which no amount of hiding the Undo button prevents. So a
+    // staged move must never TELL its player anything they could act on.
+    //
+    // Three moves close a bout, and every one of them deals: the last good
+    // owed, a cover that empties the defender's hand (four same-rank covers on
+    // four same-rank attacks included - that is this case, not a rule of its
+    // own), and a pickup, which refills the picker too when the table left them
+    // short of six. Applied whole at staging time, each one hands its player a
+    // look at the new hand with the move still retractable: say good, see the
+    // deal, undo, throw in another card instead.
+    //
+    // So the turn is cut in two at the kernel's own boundary
+    // (`[GameEvent].settlementStart`). The ACTION half plays as it is staged -
+    // the cover lands, the table is taken, the good is declared. The
+    // SETTLEMENT half - discard, deal, roles - is held here, with the board
+    // showing the state before it, until `markSent` says the bytes went out.
+    // Recipients need none of this: their bubble carries the whole turn and
+    // they were never in a position to take it back, so they animate all of it
+    // the moment it arrives.
+    //
+    // What is NOT involved: the App Group cache, or any other durable state.
+    // The hold is an in-memory fact about a move this controller applied and
+    // has not yet seen sent, which is exactly as long as it needs to live.
+    private var heldSettlement: [GameEvent] = []
+    /// The board as of the last step BEFORE the held settlement, masked for my
+    /// seat - the kernel's own per-step snapshot, not a state assembled here.
+    /// Published as `view` while the hold stands.
+    private var heldView: GameView?
+    /// The un-held truth, for the questions that are about the GAME rather than
+    /// about what this device is currently showing (sealing, and whether this
+    /// game is finished).
+    private var residentOver = false
+
+    /// Is a staged bout end waiting on Send? The board reads it to explain the
+    /// wait; `legal` is already empty, so nothing can be played into it.
+    public var settlementHeld: Bool { !heldSettlement.isEmpty }
+
+    /// The half of a staged turn to animate NOW (everything before the
+    /// settlement). nil when this move needs no special handling and the board
+    /// should work the animation out the way it always has. Consumed by the
+    /// board on the very next view change, like `pendingCover`.
+    private var stagedAnimation: [GameEvent]?
+    /// The held half, handed over the moment Send lands. Same one-shot
+    /// contract; a value here means "play this, whatever the view diff looks
+    /// like" - a released pickup goes from an empty table to an empty table and
+    /// there is no diff to read.
+    private var releasedSettlement: [GameEvent]?
+
+    public func takeStagedAnimation() -> [GameEvent]? {
+        defer { stagedAnimation = nil }
+        return stagedAnimation
+    }
+    public func takeReleasedSettlement() -> [GameEvent]? {
+        defer { releasedSettlement = nil }
+        return releasedSettlement
+    }
+
+    /// Drop a hold without releasing it: the staged move it belonged to is
+    /// gone (undone, or overtaken by a chain that arrived). The resident game
+    /// has already been rebuilt without it, so there is nothing to animate and
+    /// nothing to withhold.
+    private func dropHold() {
+        heldSettlement = []
+        heldView = nil
+        stagedAnimation = nil
+        releasedSettlement = nil
+    }
+
+    /// Split the turn just staged at its settlement boundary, if it has one.
+    /// Called after every `apply`, before the board is published, so the view
+    /// that reaches the first paint is already the withheld one.
+    private func captureSettlement() async {
+        // Asked of the kernel here rather than read off `animAtomsBefore`: this
+        // runs BEFORE `publish`, so the stored one still describes the board
+        // before this move.
+        let before = await kernel.stagedAtomsBefore()
+        let evs = await kernel.lastMoveEvents(viewer: mySeat, atomsBefore: before)
+        guard let cut = evs.settlementStart else { dropHold(); return }
+        // The board to show while the rest is withheld. For a good the cut is
+        // at index 0 - a good emits no step of its own - and the transition
+        // step it lands on carries the PRE-discard board (game.c's
+        // ENGINE_HOOK_MAGIC_TRANSITION fires before anything moves), which is
+        // exactly the state being asked for. Otherwise it is the state the
+        // acting step committed: the cover on the table, the table taken.
+        let held = cut > 0 ? evs[cut - 1].state : evs[cut].state
+        // No snapshot to hold on means no honest way to show a half-applied
+        // turn, so don't: a whole animation is a far smaller problem than a
+        // board rendered from a state nobody vouched for.
+        guard let held else { dropHold(); return }
+        heldSettlement = Array(evs[cut...])
+        heldView = held
+        stagedAnimation = Array(evs[..<cut])
+        releasedSettlement = nil
+    }
+
     public var canSend: Bool { !pending.isEmpty }
     /// Is there a sendable bubble right now? Either I've staged a move
     /// (`canSend`), OR it's a fresh genesis where I have no legal move — i.e. I
@@ -242,7 +341,11 @@ public final class MessageTurnController: ObservableObject {
     /// no move and no send (B4 bug: "Start game" left you unable to send).
     public var canStage: Bool { canSend || (isGenesis && !iCanAct) }
     public var iCanAct: Bool { !legal.contains { $0.type == .wait } && !legal.isEmpty }
-    public var isOver: Bool { view?.isOver ?? false }
+    /// Is the GAME over - not "does the board show a finished game". They differ
+    /// while a settlement is held: a cover that put me out has been applied and
+    /// must be SEALED as a finished game (phase 3), while the board is still
+    /// showing the bout that ended it.
+    public var isOver: Bool { residentOver }
     /// The finished game's shareable REPLAY code (§12), captured the moment the
     /// game ends - see `publish`. nil while a game is running, and nil for a
     /// finished one the kernel cannot encode.
@@ -277,6 +380,10 @@ public final class MessageTurnController: ObservableObject {
     /// `.task`.
     public func begin() async {
         lastChangeWasUndo = false
+        // Whatever this board was withholding belonged to a staged move on the
+        // chain being replaced. `pending` is dropped just below for the same
+        // reason; a hold is the animation half of the same fact.
+        dropHold()
         await rebuildBase()
         // The open animations: the kernel's viewer-aware evwire for the LAST move
         // on the adopted chain (notes 6/12/#9), resolved after rebuildBase puts
@@ -417,7 +524,17 @@ public final class MessageTurnController: ObservableObject {
     /// Getting it wrong is not a crash, it is a re-run: too high a base drops
     /// the front of my own turn, too low a one replays the move before it -
     /// which is the very bug the delta exists to kill.
-    public var animAtomsBefore: Int { pending.isEmpty ? baseAtomsBefore : baseTurn }
+    ///
+    /// The staged answer is the KERNEL's (`stagedAtomsBefore`, measured from its
+    /// log mark), not `baseTurn` as it was until this round. The chain I adopted
+    /// states its atom count, but the atom stream is re-derived from the whole
+    /// log on every encode, so the same history can re-encode to FEWER atoms
+    /// than that count once my move supersedes a pending good. Handed on as a
+    /// starting point it lands past the end of the stream and the kernel
+    /// correctly reports that this turn added nothing - so my own bout end
+    /// animated not at all, and (round 16) was not recognised as a settlement to
+    /// withhold. 22 of 848 staged turns in the sweep, all of them silent.
+    public private(set) var animAtomsBefore: Int = -1
 
     public func refresh() async {
         await publish(openReplay: nil)
@@ -443,6 +560,10 @@ public final class MessageTurnController: ObservableObject {
     private func publish(openReplay: [GameEvent]?) async {
         let v = await kernel.residentView(viewer: mySeat)
         let l = await kernel.residentLegal(seat: mySeat)
+        // Read in the same breath as the board it describes, for the same
+        // reason everything else here is: the boundary and the state it cuts
+        // must never disagree by a paint.
+        let staged = await kernel.stagedAtomsBefore()
         let held = baseSentAt == 0 ? 0
                  : await kernel.pickupHold(seat: mySeat, sentAt: baseSentAt)
         // The replay code is READ HERE, not at the moment the link is tapped,
@@ -459,8 +580,17 @@ public final class MessageTurnController: ObservableObject {
             // fly, and must never see one without the other.
             replayPending = !evs.isEmpty
         }
-        view = v
-        legal = l
+        residentOver = v?.isOver ?? false
+        animAtomsBefore = pending.isEmpty ? baseAtomsBefore : staged
+        // THE HELD SETTLEMENT: while one stands, the board a staged move
+        // produced is the kernel's pre-settlement snapshot, and NOTHING is
+        // legal. Both halves matter. The view is what keeps the deal out of
+        // sight; the empty menu is what stops the same player from acting on
+        // it anyway - a defender whose last cover swept the table becomes the
+        // next first attacker, so without this they could pick that attack out
+        // of a hand they are not supposed to have seen yet, all still staged.
+        view = heldView ?? v
+        legal = heldSettlement.isEmpty ? l : []
         if code != replayCode { replayCode = code }
         if held != pickupHold { pickupHold = held }
         armHoldTicker(held)
@@ -503,6 +633,10 @@ public final class MessageTurnController: ObservableObject {
         do {
             try await kernel.apply(seat: mySeat, move: move)
             pending.append(move)
+            // Before `refresh`, never after: `captureSettlement` decides what
+            // this board is allowed to show, and publishing the resident view
+            // first would put the deal on screen for a paint.
+            await captureSettlement()
             await refresh()
         } catch MessageEnvelope.Failure.rejected(let reason) {
             lastRejectReason = reason
@@ -567,6 +701,16 @@ public final class MessageTurnController: ObservableObject {
                                uniquingKeysWith: { a, _ in a })
             adoptBaseFacts(env)
         }
+        // THE HELD SETTLEMENT IS RELEASED HERE, and only here. The move is in
+        // the thread now: there is no undo left and no bubble left to delete,
+        // so the deal it dealt is finally the player's to see. The board picks
+        // these up on the view change the `refresh` below publishes.
+        if !heldSettlement.isEmpty {
+            releasedSettlement = heldSettlement
+            heldSettlement = []
+            heldView = nil
+            stagedAnimation = nil
+        }
         await refresh()
         // Round-8 #4: the final move is committed to the thread (no undo left),
         // so this game's stored hand arrangement has nothing left to order.
@@ -579,11 +723,19 @@ public final class MessageTurnController: ObservableObject {
         guard !pending.isEmpty else { return }
         let keep = Array(pending.dropLast())
         pending = []
+        // The undone move may be the one whose settlement is being held. The
+        // base is about to be rebuilt without it, so the hold has nothing left
+        // to describe - dropped, not released.
+        dropHold()
         await rebuildBase()
         for m in keep {
             try? await kernel.apply(seat: mySeat, move: m)
             pending.append(m)
         }
+        // An earlier staged move can END A BOUT just as well as the undone one
+        // did (cover, cover-that-swept, undo the throw-in that followed): what
+        // survives the undo is held on exactly the same terms.
+        if !keep.isEmpty { await captureSettlement() }
         // note 10: set BEFORE refresh() — the state may legally go
         // battles→empty here (undoing the move that opened a bout), and
         // flyBoutEndToDiscard must not mistake that for a real bout end and

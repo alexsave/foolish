@@ -1165,6 +1165,18 @@ public struct MessageTableView: View {
         let placement = pendingPlacement
         pendingPlacement = nil
         var placementFlown = false
+        // THE HELD SETTLEMENT (MessageTurnController). Same one-shot contract as
+        // `cover` and `placement` above - consumed on EVERY view change, so a
+        // half-turn can never be replayed against a later, unrelated one.
+        //  - `staged` is the half of a staged bout-ender that may be shown now:
+        //    the cover landing, the table being taken. Empty for a good, which
+        //    has no step of its own.
+        //  - `released` is the half Send just let go of: the discard, the deal,
+        //    the roles. It is played whatever the diff below would have said,
+        //    because for a released pickup there is no diff to read - the table
+        //    was already empty on the board being replaced.
+        let staged = controller.takeStagedAnimation()
+        let released = controller.takeReleasedSettlement()
         defer {
             if !placementFlown, let p = placement {
                 animator.reveal(Set(p.cards.map(\.identity)))
@@ -1205,6 +1217,15 @@ public struct MessageTableView: View {
         }
         // First appear with a delivered game: the open-replay (same event path).
         if prior == nil { AnimLog.say("-> openReplay"); replayLastMoveOnOpen(new); return }
+        // Send released the bout end this board had been withholding. `prior` is
+        // the pre-settlement board the player has been looking at since they
+        // staged the move, which is exactly the "board before this move" the
+        // sweep, the pre-hide and the frozen counts all want.
+        if let released {
+            AnimLog.say("-> settlement released n=\(released.count)")
+            playBoutEnd(events: released, old: prior!, new: new, cover: nil)
+            return
+        }
         guard let old = prior, !old.battles.isEmpty, new.battles.isEmpty else {
             // The table did not just clear, so this is an ordinary placement (or
             // someone else's move arriving). Round-6 bug 13: a card I placed
@@ -1234,7 +1255,21 @@ public struct MessageTableView: View {
         if let pc = cover, pc.landing.values.contains(where: { boutFrames.values.contains($0) }) {
             matchedCover = pc
         }
+        playBoutEnd(events: staged, old: old, new: new, cover: matchedCover)
+    }
 
+    /// The bout end, as one sequence: pre-hide what is about to land in my hand,
+    /// keep the swept table on screen, freeze every count to the board before it,
+    /// then play the kernel's steps.
+    ///
+    /// `events` nil means "ask the kernel for this turn's stream" - the ordinary
+    /// case, where the whole turn animates at once. A value is a HALF of a turn
+    /// that was split at its settlement (MessageTurnController): the action half
+    /// as it is staged, the settlement half when Send releases it. One
+    /// implementation for all three, because they differ only in which steps are
+    /// being played, never in how.
+    private func playBoutEnd(events: [GameEvent]?, old: GameView, new: GameView,
+                             cover matchedCover: PendingCover?) {
         // Pre-hide the cards about to land in MY hand so they fly from the deck
         // rather than popping in. This is the ONE view diff that remains, and only
         // to choose which of my cards to hide before the first paint - the events
@@ -1261,8 +1296,12 @@ public struct MessageTableView: View {
             // a kernel round-trip in between is a paint the cover spends
             // nowhere. Nothing is visible during the fetch either way - the
             // held ghost from `playAt` is already resting at the card's source.
-            let events = await MessageKernel.shared.lastMoveEvents(viewer: controller.mySeat,
-                                                                   atomsBefore: controller.animAtomsBefore)
+            var events = events
+            if events == nil {
+                events = await MessageKernel.shared.lastMoveEvents(
+                    viewer: controller.mySeat, atomsBefore: controller.animAtomsBefore)
+            }
+            let stream = events ?? []
             if let pc = matchedCover {
                 // BALANCED BY `defer`, like every other sequence claim in this
                 // file. It was a bare `+= 1` / `-= 1` pair when round 16 added
@@ -1290,11 +1329,11 @@ public struct MessageTableView: View {
                 // card also now sweeps from its OWN rendered slot rather than the
                 // centre fallback `tableCardSource` documents for exactly this
                 // case - it finally has a slot, because it is finally on a table.
-                if let covered = Self.coveredSweep(events, current: sweepBattles) {
+                if let covered = Self.coveredSweep(stream, current: sweepBattles) {
                     setSweep(covered)
                 }
             }
-            await runEventStream(events, finalView: new)
+            await runEventStream(stream, finalView: new)
         }
     }
 

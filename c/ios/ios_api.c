@@ -1100,6 +1100,27 @@ int fio_replay_decode_packed(const char *code, unsigned char *out, int cap) {
 
 int fio_last_replay_error(void) { return g_last_replay_error; }
 
+// Straight through to the rule in evwire.c - see ios_api.h for why the
+// extension asks the kernel rather than switching on the type itself.
+int fio_evw_is_settlement(int type) { return evw_is_settlement(type); }
+
+// Where THIS DEVICE's own staged run starts in the resident game's atom stream
+// - the same question msg_seal answers for the bubble delta, asked for the
+// animation instead of for the wire, and answered from the same log mark.
+//
+// It has to be the mark. A board animating its own move used to pass the atom
+// count of the chain it ADOPTED, on the reasoning that everything past it is
+// mine; but the atom stream is re-derived from the whole log on every encode
+// (see g_msg_base_logs above), so that count can be HIGHER than the number of
+// atoms the same history now encodes to. Passed as a starting point it lands
+// past the end of the stream, and the kernel dutifully reports that this turn
+// added nothing - the sender's own bout end animating not at all, and (round
+// 16) its settlement not being recognised as one to withhold.
+int fio_msg_staged_atoms_before(void) {
+    if (g_msg_base_logs < 0) return -1;
+    return replay_atoms_before_log(g_game.logs, g_game.num_logs, g_msg_base_logs);
+}
+
 // ---------- FMSG: the iMessage envelope (src/msg_wire.h) -------------------
 //
 // The phone's door onto the SAME envelope the web reads. Nothing here decides

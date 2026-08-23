@@ -266,6 +266,30 @@ int fio_replay_last_events_packed(const char *code, int viewer, int atoms_before
 // Detail of the last replay error (a REPLAY_E* code from replay.h), else 0.
 int fio_last_replay_error(void);
 
+// THE SETTLEMENT (src/evwire.h's evw_is_settlement): is this event type
+// (`GameEvent.type`) one of the consequences a bout-ender runs - the
+// transition, the discard, the refill, the trash sweep - rather than the
+// acting seat's own play?
+//
+// The extension cuts a staged turn's animation at the FIRST step this answers
+// yes for, and holds everything from there until the human presses Send. That
+// is the whole of the "staged good deals me a hand I can look at, then undo"
+// hole: the cards a bout end deals are secret, and a staged move is not a move
+// until it is sent. Asked of the kernel rather than re-listed per client
+// because which steps a bout end owns is a rules fact.
+int fio_evw_is_settlement(int type);
+
+// Where the moves THIS DEVICE has staged begin, as an atom count on the
+// resident game - the `atoms_before` a board passes to
+// fio_replay_last_events_packed to animate its own turn, and the same number
+// msg_seal measures the bubble delta with. -1 when no chain has been adopted.
+//
+// The alternative - the atom count of the chain that was adopted - is wrong for
+// the same reason subtracting two atom counts was: the stream is re-derived
+// from the whole log every time, so it can shrink under a history that only
+// grew. See the implementation.
+int fio_msg_staged_atoms_before(void);
+
 // ---------- FMSG: the iMessage envelope (src/msg_wire.h) -------------------
 //
 // An iMessage game has no server. The whole game is one MSMessage URL —
