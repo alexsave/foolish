@@ -765,8 +765,15 @@ private struct GameSurface: View {
                                      onNewGame(); return
                                  }
                                  onFreshChain()
+                                 // The table's RULES carry over with the table.
+                                 // A rematch is the same people playing again,
+                                 // so it starts as the game they were just
+                                 // playing - and the checkbox is still there to
+                                 // change it before anyone starts.
+                                 let passing = controller.passingAllowed
                                  Task { await createRematchLobby(joins: r.joins,
-                                                                 foolSeat: r.foolSeat) }
+                                                                 foolSeat: r.foolSeat,
+                                                                 passing: passing) }
                              },
                              onUnstage: onUnstage,
                              alsoStaged: surfaceStaged,
@@ -797,6 +804,10 @@ private struct GameSurface: View {
                       // nil in every shipping build: the closure only exists
                       // where `addSoloSeat` is compiled at all.
                       onAddSoloSeat: soloSeatAction(lob))
+                // Keep the corner pair's own footprint clear - the lobby is
+                // centred in whatever height it is given and the pair is an
+                // overlay, so a tall lobby lays out straight through it.
+                .padding(.bottom, SettingsHelpSquares.reservedHeight)
                 .overlay(alignment: .bottomLeading) { settingsHelpCorner }
                 // Round-9: the send reminder covers EVERY staged bubble, not
                 // just board moves - a join/invite/start left unsent stalls the
@@ -828,6 +839,7 @@ private struct GameSurface: View {
                          isDM: chatIsDM, chatPlayers: chatPlayers) { name in
                 Task { await start(nickname: name) }
             }
+            .padding(.bottom, SettingsHelpSquares.reservedHeight)
             .overlay(alignment: .bottomLeading) { settingsHelpCorner }
         } else if let a = ambiguous {
             SeatPicker(nPlayers: a.env.nPlayers, joins: a.env.joins) { seat in
@@ -984,7 +996,7 @@ private struct GameSurface: View {
     /// only the defender may do that. That is the "seat yourself as defender"
     /// half of the owner's instruction, done for you.
     private func openSeededBoard() async -> Bool {
-        guard let payload = MessageDevBoard.seededPayload else { return false }
+        guard let payload = MessageDevBoard.claimSeededPayload() else { return false }
         guard let env = try? await MessageKernel.shared.decode(payload: payload, viewer: -1),
               let view = await MessageKernel.shared.residentView(viewer: -1),
               view.defender >= 0 || view.isOver else {
@@ -1113,13 +1125,21 @@ private struct GameSurface: View {
     /// in the chat may join a rematch, and if they do, the wire's guard sees a
     /// roster that no longer keys equal and the penalty does not fire. That is
     /// the owner's "if the players do not change at all".
-    private func createRematchLobby(joins: [MessageJoin], foolSeat: Int) async {
+    ///
+    /// `passing` is the finished game's own rule, carried across: `newGame`
+    /// resets the kernel's rules to the classic transfer game, so a rematch of a
+    /// podkidnoy table would otherwise silently deal a perevodnoy one. The
+    /// lobby's checkbox is still live - this sets where it STARTS, not what it
+    /// must be.
+    private func createRematchLobby(joins: [MessageJoin], foolSeat: Int,
+                                    passing: Bool) async {
         var seed = Data(count: 32)
         for i in 0..<32 { seed[i] = UInt8.random(in: 0...UInt8.max) }
         let gameId = UInt64.random(in: 1...UInt64.max)
         let capacity = max(chatIsDM ? 2 : 8, joins.count)
         do {
             try await MessageKernel.shared.newGame(seed: seed, players: capacity)
+            await MessageKernel.shared.setPassing(passing)
             let armed = await MessageKernel.shared.armRematchCarry(joins: joins,
                                                                    foolSeat: foolSeat)
             AnimLog.say("rematch lobby: n=\(joins.count) fool@\(foolSeat) armed=\(armed)")
@@ -1923,14 +1943,6 @@ private struct LobbyView: View {
     /// stored nickname, blank if it's the neutral default.
     @State private var nickname: String
 
-    /// Whose penalty this lobby carries, if the rule would fire on the roster
-    /// as it stands. Resolved by the KERNEL (`penaltyFoolSeat`) rather than
-    /// worked out here: which seat is "right of the fool" and whether the
-    /// roster still matches are both rules questions, and a lobby that guessed
-    /// them would announce a punishment the deal then did not deliver. Re-asked
-    /// whenever the roster changes, because a joiner cancels it.
-    @State private var penaltyName: String?
-
     init(env: MessageEnvelope, mySeat: Int?, nickname: String,
          onJoin: @escaping (String) -> Void,
          onStart: @escaping () -> Void,
@@ -1955,7 +1967,31 @@ private struct LobbyView: View {
                                    mine: env.lastActorSeat == mySeat)
     }
 
+    /// The lobby SCROLLS when it does not fit, and is centred when it does.
+    ///
+    /// It is shown in whatever height the drawer happens to have, and the tall
+    /// case is real: a rematch at three or more players carries a roster, the
+    /// fool's penalty in two lines and the rules checkbox, which together do not
+    /// fit the COMPACT drawer - and the extension opens compact. Left to lay out
+    /// unbounded it ran through the settings squares in the corner; simply
+    /// clipping it instead truncated the penalty sentence to "Ann1 was the fool,
+    /// so Ann1 gets attacked first -…", which is the half that matters. Both
+    /// found on the simulator, 1.0(17).
+    ///
+    /// `minHeight: geo.size.height` is what keeps the SHORT lobby exactly where
+    /// it was: the content is centred in a frame at least as tall as the drawer,
+    /// so nothing moves until there is genuinely more content than room.
     var body: some View {
+        GeometryReader { geo in
+            ScrollView {
+                content
+                    .frame(maxWidth: .infinity, minHeight: geo.size.height)
+            }
+            .modifier(BounceOnlyWhenTooTall())
+        }
+    }
+
+    private var content: some View {
         VStack(spacing: 12) {
             // Round-6 #17: `onTableText` (Tokens.swift).
             Text(FStrings.t("ios.lobby")).font(.headline).onTableText()
@@ -1977,35 +2013,6 @@ private struct LobbyView: View {
             }
             .padding(.horizontal)
 
-            // THE FOOL'S PENALTY, announced where it is decided. A lobby that
-            // carries one says whose it is, because the rule changes who opens
-            // and a player who was not told would read the first attack as the
-            // game getting the lowest trump wrong. It says "if" rather than
-            // "will": the guard is re-checked at Start against the roster that
-            // actually starts, so a joiner between here and there cancels it.
-            if env.carriesPenalty, let fool = penaltyName {
-                Text(FStrings.t("ios.lobby.penalty", ["name": fool]))
-                    .font(.footnote).onTableText()
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-            }
-
-            // THE TABLE'S RULES, chosen here because here is the only place
-            // they CAN be chosen: the game is dealt at Start, and after that
-            // the rules are a term of a chain everyone is already playing.
-            //
-            // A spectator sees the box but cannot move it - the rules are as
-            // much a part of "what game is this" as the player list, and
-            // hiding them from the person deciding whether to join would be
-            // the wrong half to keep. Moving it takes a seat, because a reseal
-            // has to be sent by somebody who is at the table.
-            FCheckbox(FStrings.t("ios.lobby.passing"),
-                      isOn: env.passingAllowed,
-                      offCaption: FStrings.t("ios.lobby.passing.off"),
-                      enabled: mySeat != nil,
-                      action: onSetPassing)
-                .padding(.horizontal)
-
             // Testing-only solo controls REPLACE the normal ones when they are
             // live, rather than sitting alongside them: the shipping lobby can
             // legitimately be offering "waiting" at the same moment solo play
@@ -2016,21 +2023,29 @@ private struct LobbyView: View {
             } else {
                 standardControls
             }
+
+            // THE TABLE'S RULES, chosen here because here is the only place
+            // they CAN be chosen: the game is dealt at Start, and after that
+            // the rules are a term of a chain everyone is already playing.
+            //
+            // BELOW the controls (owner, 1.0(17)). It is not a step on the way
+            // to starting - it is a standing fact about the table that anyone
+            // may change while the lobby is open, so it sits under the buttons
+            // rather than between the roster and them.
+            //
+            // A spectator sees the box but cannot move it - the rules are as
+            // much a part of "what game is this" as the player list, and
+            // hiding them from the person deciding whether to join would be
+            // the wrong half to keep. Moving it takes a seat, because a reseal
+            // has to be sent by somebody who is at the table.
+            FCheckbox(FStrings.t("ios.lobby.passing"),
+                      isOn: env.passingAllowed,
+                      enabled: mySeat != nil,
+                      action: onSetPassing)
+                .padding(.horizontal)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity)
         .padding()
-        // Keyed on the roster, so a join re-asks: the guard that cancels the
-        // penalty is exactly "someone else showed up", and the line must go
-        // away the moment they do.
-        .task(id: env.joins.map { "\($0.seat):\($0.name)" }.joined(separator: "|")) {
-            guard let key = env.carryKey, let fool = env.carryFool else {
-                penaltyName = nil; return
-            }
-            let seat = await MessageKernel.shared.penaltyFoolSeat(joins: env.joins,
-                                                                  carryKey: key,
-                                                                  carryFool: fool)
-            penaltyName = seat.flatMap { s in env.joins.first { $0.seat == s }?.name }
-        }
     }
 
     /// Testing-only (SOLO_TESTING / DEBUG): "Add player" until the lobby has
@@ -2104,13 +2119,11 @@ private struct LobbyView: View {
                 // left them with no action at all. Exit alone, full width:
                 // there is no second button to share the row with.
                 //
-                // …and when it is the RULES I changed, the line SAYS so instead.
-                // "Waiting for the others" is true but unhelpful there: the
-                // player has just tapped something and watched Start disappear,
-                // and a control that vanishes without a word reads as a bug
-                // rather than as the rule it is.
-                Text(FStrings.t(iChangedTheRules ? "ios.lobby.rulechanged"
-                                                 : "ios.msg.waiting"))
+                // ONE line, whichever gate is holding Start back (owner,
+                // 1.0(17)): a rules change said so in its own words for a
+                // moment, and it read as an error message about something the
+                // player had just chosen on purpose.
+                Text(FStrings.t("ios.msg.waiting"))
                     .font(.footnote).onTableText()
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)

@@ -809,21 +809,32 @@ static int build_top_menu(RModel *m, Opt *opts, uint32_t *weights) {
             // PODKIDNOY CUTS THIS BLOCK OUT WHERE IT STANDS, and the earlier plan
             // to move it to the END of the menu first (replay.h's old
             // TODO(podkidnoy)) is deliberately NOT taken. That plan was written
-            // to keep every non-pass index identical ACROSS the two modes, which
-            // buys nothing real - a code names its own mode in its header, so
-            // encoder and decoder always build the same menu - and it costs the
-            // one thing that matters: reordering the menu re-points every
-            // perevodnoy code ever written, which would mean renumbering the
-            // format a second time in a week (the deal-order fix already spent
-            // that break, docs/DEAL_ORDER.md) or, far worse, silently decoding
-            // old codes as different moves.
+            // to keep every non-pass index identical ACROSS the two modes.
             //
-            // Splicing instead makes the podkidnoy menu a strict SUBSET of the
-            // perevodnoy one, in the same relative order, which is what lets the
-            // retrodiction line (v9, no mode bit) still encode a podkidnoy game
-            // faithfully: every atom such a game can play is in the perevodnoy
-            // menu too. A podkidnoy code is also slightly SMALLER, since the
-            // options it never needs are not in the model.
+            // THAT PROPERTY IS NOT OBSERVABLE IN THE BYTES. There are no indices
+            // on the wire: a code is one mixed-radix rANS integer and each step
+            // decodes as `x mod M` over the menu's TOTAL WEIGHT (coder_code /
+            // coder_finish). A decoder holding the wrong mode reads a different M
+            // at the first state that could offer a pass and scrambles everything
+            // after it - with the block at the back exactly as with it here. So
+            // the append cannot even make a mode mix-up fail more gently, which
+            // is the last argument it had; and nothing in this tree ever compares
+            // an index across the two modes, because the mode is read out of the
+            // code itself before the first atom.
+            //
+            // It costs plenty, though. The FRESH option below is offered whenever
+            // the defender holds an unknown card of a matching rank, so this
+            // block is non-empty at very nearly every first defender decision of
+            // every bout - and moving it re-points pickup, every later seat's
+            // attacks and every good in all of those states. That is a second
+            // format renumber inside a week (the deal-order fix already spent
+            // that break, docs/DEAL_ORDER.md) or, far worse, old codes decoding
+            // silently as different moves.
+            //
+            // Splicing also keeps this menu's convention the same as legal.c's,
+            // which gates the pass inside calc_pass_moves rather than reordering
+            // around it. A podkidnoy code comes out slightly SMALLER either way,
+            // because the options it never needs are not in the model at all.
             if (m->pass_allowed && uncovered == m->num_battles) {
                 int v = id_value(m->battles[0].attack);
                 bool one_rank = true;

@@ -54,6 +54,7 @@ public enum MessageDevBoard {
     private static let flagFile = "dev.fatboard"
     private static let seatFile = "dev.seat"
     private static let replayFile = "dev.replay"
+    private static let slowmoFile = "dev.slowmo"
 
     /// The seeded chain, or nil when the flag file is absent - which is the
     /// normal case, including every ordinary DEBUG run.
@@ -69,6 +70,21 @@ public enum MessageDevBoard {
         else { return nil }
         return hex(raw.trimmingCharacters(in: .whitespacesAndNewlines))
     }
+
+    /// ONCE PER PROCESS. The seed answers "what does the extension open ONTO",
+    /// and after that the surface belongs to whatever the run does next - which
+    /// for a finished board is New game, whose rematch lobby a second reading
+    /// would throw away and re-open the finished game over the top of. A film of
+    /// what happens AFTER the seeded state was impossible until this.
+    ///
+    /// Per PROCESS, not per file: `msgrig.sh reopen` kills Messages precisely so
+    /// the seeded state can be opened cold again, and that still works.
+    public static func claimSeededPayload() -> Data? {
+        guard !claimed, let p = seededPayload else { return nil }
+        claimed = true
+        return p
+    }
+    private static var claimed = false
 
     /// Which seat to sit at, or nil to sit at the defender's.
     ///
@@ -103,6 +119,25 @@ public enum MessageDevBoard {
         else { return false }
         return FileManager.default.fileExists(atPath: dir.appendingPathComponent(replayFile).path)
     }
+
+    /// How far to stretch every animation, or 0 for real time.
+    ///
+    /// `HARNESS_SLOWMO` cannot reach here: an app extension is spawned by the
+    /// system, not by Messages, so `SIMCTL_CHILD_` never lands in its
+    /// environment and the one knob that makes a filmed flight readable is
+    /// exactly the one the real surface could not have. A file can, like every
+    /// other flag on this rig. Read ONCE - the value is asked for on every
+    /// flight, and a per-flight file read is a stutter in the thing being
+    /// filmed.
+    public static let slowmo: Double = {
+        guard let dir = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroup),
+              let raw = try? String(contentsOf: dir.appendingPathComponent(slowmoFile),
+                                    encoding: .utf8),
+              let n = Double(raw.trimmingCharacters(in: .whitespacesAndNewlines)), n > 0
+        else { return 0 }
+        return n
+    }()
 
     /// Even-length hex to bytes; nil on anything malformed, so a truncated or
     /// half-written file reads as "no seed" rather than as a damaged game.

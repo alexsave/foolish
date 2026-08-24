@@ -82,6 +82,14 @@ public struct RulesView: View {
                         // The pre-game page: how this lobby works, then the
                         // goal section as the quick what-is-this-game.
                         section("ios.rules.lobby.h", "ios.rules.lobby.b")
+                        // WHAT THE CHECKBOX MEANS. It used to explain itself
+                        // with a line under the label; the owner took that out
+                        // (1.0(17)) and this is where the explanation went - a
+                        // lobby has its rulebook one tap away, and a control
+                        // that has to be captioned is a control in the wrong
+                        // place. Both games are described, because the reader
+                        // is choosing between them.
+                        section("ios.rules.variant.h", "ios.rules.variant.b")
                         // The fool's penalty belongs on the LOBBY page too, and
                         // not only in the full rulebook: the lobby is where a
                         // rematch is sitting when the rule is about to change

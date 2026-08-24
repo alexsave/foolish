@@ -85,6 +85,39 @@ final class PodkidnoyTests: XCTestCase {
         XCTAssertFalse(liveEnv.passingAllowed, "Start dealt the classic game instead")
     }
 
+    /// …which is why a REMATCH has to say so again. Owner: "if you end a
+    /// throw-in game, then hit new game, it should be set to throw-in."
+    ///
+    /// The rematch lobby is built by `createRematchLobby` out of the finished
+    /// board still on screen, and its `newGame` resets the kernel to the classic
+    /// game (the test above). So the rule has to be carried across by hand, from
+    /// the one place that still knows it - the finished game's own controller.
+    /// This walks that path: a podkidnoy game's controller, then a lobby sealed
+    /// the way a rematch seals one.
+    func testARematchInheritsTheRulesOfTheGameItCameFrom() async throws {
+        let joins = roster(["Alex", "Dima"])
+        let (payload, env) = try await lobby(seed: freshSeed(6), gameId: 6005,
+                                             joins: joins, passing: false, capacity: 2)
+        let live = try await MessageKernel.shared.startFromLobby(
+            lobbyPayload: payload, gameId: 6005, actingSeat: 1,
+            parent8: MessageTurnController.firstEight(hex: env.digest),
+            joins: joins, sentAt: 0x1234)
+
+        // What the board hands the rematch: the rule as the CONTROLLER read it
+        // off the chain, not a flag anybody remembered to keep.
+        let liveEnv = try await MessageEnvelope.decode(payload: live, viewer: -1)
+        let controller = MessageTurnController(parentPayload: live, parent: liveEnv, mySeat: 0)
+        await controller.begin()
+        XCTAssertFalse(controller.passingAllowed,
+                       "the board lost the rule the chain it is showing was dealt under")
+
+        let (_, rematch) = try await lobby(seed: freshSeed(7), gameId: 6006,
+                                           joins: joins, passing: controller.passingAllowed,
+                                           capacity: 2)
+        XCTAssertFalse(rematch.passingAllowed,
+                       "the rematch dealt the classic game after a podkidnoy one")
+    }
+
     // MARK: the board follows, without being told
 
     /// The defender's menu in a podkidnoy game has no transfer in it - and the

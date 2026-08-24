@@ -84,7 +84,8 @@ public enum BubbleSnapshot {
     /// lobby while its own staged preview showed a played game. This draws what
     /// the human is actually looking at: the lobby roster, on the same wool.
     @MainActor
-    public static func renderLobby(joinedNames: [String], scheme: ColorScheme = .light) -> UIImage? {
+    public static func renderLobby(joinedNames: [String], passing: Bool = true,
+                                   scheme: ColorScheme = .light) -> UIImage? {
         let content = ZStack {
             FColor.fallback
             Self.wool
@@ -109,6 +110,16 @@ public enum BubbleSnapshot {
                 // #17 added the weight `onTableText` now carries.
                 Text(FStrings.t("ios.msg.joininvite"))
                     .font(.caption).onTableText()
+                    .padding(.top, 2)
+                // WHICH GAME this table is playing, in the bubble (owner,
+                // 1.0(17)). The rules ride the lobby's header, so until now the
+                // only way to learn them was to open the invite - and the one
+                // moment they matter most is while somebody is deciding whether
+                // to join. The SAME box the lobby draws, so the two read as one
+                // control seen twice rather than as a picture of a control.
+                FCheckbox(FStrings.t("ios.lobby.passing"), isOn: passing) { _ in }
+                    .fixedSize()
+                    .allowsHitTesting(false)
                     .padding(.top, 2)
             }
             .padding()
@@ -141,7 +152,7 @@ public enum BubbleSnapshot {
     public static func render(env: MessageEnvelope, scheme: ColorScheme = .light) async -> UIImage? {
         if env.phase == 0 {
             return renderLobby(joinedNames: env.joins.sorted { $0.seat < $1.seat }.map(\.name),
-                               scheme: scheme)
+                               passing: env.passingAllowed, scheme: scheme)
         }
         guard let publicView = await MessageKernel.shared.residentView(viewer: -1) else { return nil }
         let names = Dictionary(env.joins.map { ($0.seat, $0.name) }, uniquingKeysWith: { a, _ in a })

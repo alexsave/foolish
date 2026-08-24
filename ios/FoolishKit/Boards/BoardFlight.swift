@@ -15,12 +15,15 @@
 import SwiftUI
 
 // web ANIMATION_TIME = 500ms; HARNESS_SLOWMO=N (dev) scales it up so flights are
-// catchable in screenshots / easy to eyeball.
+// catchable in screenshots / easy to eyeball. The harness reads it from its
+// environment; the iMessage extension cannot (it is spawned by the system, so
+// SIMCTL_CHILD_ never reaches it) and reads the `dev.slowmo` file instead.
 public var flightTime: Double {
     #if DEBUG
     if let s = ProcessInfo.processInfo.environment["HARNESS_SLOWMO"], let n = Double(s), n > 0 {
         return 0.5 * n
     }
+    if MessageDevBoard.slowmo > 0 { return 0.5 * MessageDevBoard.slowmo }
     #endif
     return 0.5
 }

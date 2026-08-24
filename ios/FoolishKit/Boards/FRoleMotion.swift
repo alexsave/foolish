@@ -179,6 +179,9 @@ public enum RoleGesture: Equatable, Sendable {
     case fadeOut
     /// A role arrived at a seat that was bare: fade in.
     case fadeIn
+    /// The mark came back to the one it was already wearing while a gesture was
+    /// still playing: take that gesture back and stand the mark up where it is.
+    case restore
     /// Nothing to say.
     case none
 
@@ -192,6 +195,27 @@ public enum RoleGesture: Equatable, Sendable {
         case (.none, .some): return .fadeIn
         case (.none, .none): return .none
         }
+    }
+
+    /// WHICH gesture to make, including the case `between` cannot see.
+    ///
+    /// A mark can go away and come straight BACK to what it was, within one
+    /// paint: a bout end empties the live table before the sweep grid stands up
+    /// in its place, and for that single frame every attacker's sword has no
+    /// reason to exist. Asking `between` alone answers `.none` both times - so
+    /// the fade-out started by the first change was never taken back, and its
+    /// own task then blanked a seat that had never stopped wearing its mark.
+    /// (That is the sword that vanished instead of landing on the next opener:
+    /// the shield survived the same blink only because its kind changed again
+    /// afterwards, which gave it a `.fadeIn`.)
+    ///
+    /// `settled` is "this view is at rest showing `shown`" - no half-played
+    /// fade or flip. Same mark and settled is genuinely nothing to do; same
+    /// mark and UNsettled is the blink, and the answer is to put it back.
+    public static func resolve(shown: RoleMarkKind?, next: RoleMarkKind?,
+                               settled: Bool) -> RoleGesture {
+        if shown == next { return settled ? .none : .restore }
+        return between(shown, next)
     }
 }
 
@@ -248,12 +272,25 @@ public struct FRoleCoin: View {
         .onChange(of: kind) { next in advance(to: next) }
     }
 
+    /// At rest showing `shown`: no half-played fade or flip to take back.
+    private var settled: Bool { fade == (shown == nil ? 0 : 1) && flip == 1 }
+
     private func advance(to next: RoleMarkKind?) {
-        guard shown != next else { return }
+        let gest = RoleGesture.resolve(shown: shown, next: next, settled: settled)
+        guard gest != .none else { return }
+        // Claims whatever was in flight, so a fade-out's task cannot wake up and
+        // blank the mark this call just decided to keep.
         gesture += 1
         let mine = gesture
         guard !reduceMotion else { shown = next; fade = next == nil ? 0 : 1; flip = 1; return }
-        switch RoleGesture.between(shown, next) {
+        switch gest {
+        case .restore:
+            // Never animated: the mark was already there and nothing about it
+            // changed - the only thing that moved was a gesture that turned out
+            // to be wrong. Easing it back would be a fade nobody asked for.
+            shown = next
+            fade = next == nil ? 0 : 1
+            flip = 1
         case .flip:
             // Both faces of one coin: collapse, swap at the edge, open out.
             withAnimation(.easeIn(duration: roleFlipHalf)) { flip = 0.001 }

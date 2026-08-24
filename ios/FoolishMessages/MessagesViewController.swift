@@ -22,6 +22,16 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// Set when the user taps New game so the next expanded present deals a
     /// genesis game rather than routing a selected bubble.
     private var startingNewGame = false
+    /// The next bubble opens a NEW MSSession, rather than collapsing into the
+    /// card of the game it came from.
+    ///
+    /// Separate from `startingNewGame`, which is a claim about the SURFACE ("the
+    /// user asked for the New game screen") and routes straight to setup. A
+    /// REMATCH needs the session half and not the surface half: it has already
+    /// built its lobby out of the finished board, and asking for setup threw
+    /// that lobby away - the rematch bubble staged correctly and the extension
+    /// showed New game / Create game behind it. Found on the simulator, 1.0(17).
+    private var freshSession = false
     /// Incremented on each New game tap. Threaded into MessagesRootView so an
     /// explicit New game resets the session, while a compact<->expanded style
     /// toggle (same token) preserves the in-progress game.
@@ -132,6 +142,7 @@ final class MessagesViewController: MSMessagesAppViewController {
                                       pendingStage: pendingStage?.payload,
                                       lastSentPayload: lastSentPayload) { return }
         startingNewGame = false
+        freshSession = false
         FlightRecorder.note("receive")
         incomingURL = message.url
         incomingToken += 1
@@ -143,6 +154,7 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// a chain was actually sent — insert alone is not a commit.
     override func didStartSending(_ message: MSMessage, conversation: MSConversation) {
         startingNewGame = false
+        freshSession = false
         FlightRecorder.note("send")
         // ROUND 12 #11: the chain being sent comes from the MESSAGE Messages
         // hands us, not from our own `pendingStage` bookkeeping. They are
@@ -321,6 +333,7 @@ final class MessagesViewController: MSMessagesAppViewController {
             onNewGame: { [weak self] in
                 guard let self else { return }
                 self.startingNewGame = true
+                self.freshSession = true
                 self.newGameToken += 1
                 // If already expanded, requesting .expanded fires no transition, so
                 // present now; otherwise expand and let willTransition present with
@@ -337,7 +350,7 @@ final class MessagesViewController: MSMessagesAppViewController {
             // rematch's first bubble does not collapse the result card of the
             // game it grew out of (see the session note in `stage`). Cleared by
             // didStartSending/didReceive, exactly like the New game tap's.
-            onFreshChain: { [weak self] in self?.startingNewGame = true },
+            onFreshChain: { [weak self] in self?.freshSession = true },
             // Round 16: who just walked out of the lobby. Only the leaver's own
             // device knows - the join that carried the name is what the leave
             // removed - so it says so here, and `stage` puts it in the
@@ -431,7 +444,7 @@ final class MessagesViewController: MSMessagesAppViewController {
             snapshot: image,
             caption: "Foolish",
             summary: summary,
-            session: startingNewGame ? nil : conversation.selectedMessage?.session)
+            session: freshSession ? nil : conversation.selectedMessage?.session)
 
         // gameId comes from the same decode above so didStartSending's commit
         // can persist the seat without re-decoding. "" only if the payload

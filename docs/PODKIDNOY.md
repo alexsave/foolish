@@ -66,24 +66,66 @@ decoder reads it before a single atom is decoded.
 An earlier note in `replay.h` planned to move the PASS block to the END of the
 menu first, so that every non-pass index would be identical across the two
 modes.
-That was reversed when the variant was actually built.
-The property it protects buys nothing - a code names its own mode in its
-header, so encoder and decoder always build the same menu - while reordering
-the menu re-points every perevodnoy code ever written, which would mean either
-renumbering the format a second time within a week (the deal-order fix already
-spent that break, `docs/DEAL_ORDER.md`) or, far worse, old codes decoding
-silently as different moves.
-Cutting the block out where it stands costs nothing and leaves the podkidnoy
-menu a strict SUBSET of the perevodnoy one, in the same order.
+That was reversed when the variant was built, and re-examined in 1.0(17) when
+the owner asked whether the append was the more elegant answer after all.
 
-Two things fall out of that subset property:
+It is not, and the reason is that **index identity is not an observable property
+of this format**.
+A code is a single mixed-radix rANS integer: each decision multiplies it by that
+state's TOTAL menu weight `M` and adds a digit derived from the chosen option's
+`cum` and `w` (`coder_code` / `coder_finish`).
+`M` is a sum, so permuting a menu cannot change it, and the code's LENGTH is
+`sum of log2(M/w)` - in which `cum`, the index, does not appear at all.
+Two orderings of the same menu therefore produce a different integer of the same
+size that decodes to the same game.
+
+Worked on one decision, a defender picking up out of a menu of
+`[cover 6, cover 3, pass 16, pickup 2, attack 2, good 1]`:
+
+| | `cum` of pickup | code | bits |
+| --- | --- | --- | --- |
+| perevodnoy, spliced | 25 | 55 | 6 |
+| perevodnoy, appended | 9 | 39 | 6 |
+| podkidnoy (either) | 9 | 23 | 5 |
+
+The append saves nothing (55 and 39 are the same length), changes nothing for
+podkidnoy (23 either way - the saving comes from `M` dropping 30 to 14, i.e.
+from the block being ABSENT, not from where it used to sit), and re-points every
+perevodnoy code ever written (55 becomes 39 for the same game).
+The fresh-pass option is offered whenever the defender holds an unknown card of
+a matching rank, so the block is non-empty at very nearly every first defender
+decision of every bout - which is how many states shift.
+That is a second format renumber within a week (the deal-order fix already spent
+that break, `docs/DEAL_ORDER.md`) or, far worse, old codes decoding silently as
+different moves.
+
+It does not buy a better failure mode either, which was the last argument for
+it.
+Feed a podkidnoy code to a decoder that wrongly built the perevodnoy menu and
+both orderings read a PASS that never happened, silently: the divisor `M` is the
+same 30 in both, and the remainder lands in a pass range either way.
+Append merely tends to diverge a few moves later, which puts the damage further
+from its cause.
+In practice neither can happen: the mode bit rides inside the same integer,
+written before any atom and read before any atom, and a corrupt header fails
+`msg_replay`'s header-vs-body cross-check first.
+
+Two smaller things follow from splicing:
 
 * A podkidnoy code is slightly **smaller** - the transfers it never had are not
   in the model either. `c/tests/msg_wire_test.c` asserts exactly this, and it
   is what would catch the mode being stored and then ignored.
-* The **retrodiction line** (v9, which carries no bit) can still encode a
-  podkidnoy game faithfully: every atom such a game can play is in the
-  perevodnoy menu too. That is why the iOS replay share link needed no change.
+* This menu keeps the same convention as `legal.c`, which gates the pass inside
+  `calc_pass_moves` rather than reordering around it, so the codec's menu and
+  the one the bots and buttons read cannot drift apart in shape.
+
+The **retrodiction line** (v9, which carries no bit) can still encode a
+podkidnoy game faithfully, because every atom such a game can play is in the
+perevodnoy menu too - which is why the iOS replay share link needed no change.
+Note that this is true under EITHER scheme; it is a consequence of the podkidnoy
+menu being a sub-selection of the perevodnoy one, not of where the pass block
+sits. An earlier draft of this doc claimed it as a benefit of splicing, and that
+was an overclaim.
 
 ## Why the wire needed a new format
 

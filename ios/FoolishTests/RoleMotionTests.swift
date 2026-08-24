@@ -170,6 +170,32 @@ final class RoleMotionTests: XCTestCase {
     func testNothingHappeningIsNotAGesture() {
         XCTAssertEqual(RoleGesture.between(.sword, .sword), .none)
         XCTAssertEqual(RoleGesture.between(nil, nil), .none)
+        XCTAssertEqual(RoleGesture.resolve(shown: .sword, next: .sword, settled: true), .none)
+        XCTAssertEqual(RoleGesture.resolve(shown: nil, next: nil, settled: true), .none)
+    }
+
+    /// THE SWORD THAT NEVER LANDED (found on the simulator, 1.0(17)): the new
+    /// first attacker's badge came up bare after a bout end, while the board's
+    /// own trace insisted the seat was wearing a sword.
+    ///
+    /// A bout end empties the live table one paint BEFORE the sweep grid stands
+    /// up in its place, and in that single frame no attacker has any reason to
+    /// wear a sword. So the mark went `sword -> nil -> sword` across two paints.
+    /// The old guard compared the incoming kind against the mark still DRAWN -
+    /// which was still the sword, because the fade-out had only just started -
+    /// answered "nothing to do", and left the fade running; its task then blanked
+    /// the seat for good. The seat that had a DIFFERENT mark afterwards (the new
+    /// defender's shield) survived the same blink, which is exactly why only the
+    /// sword was ever missing.
+    func testAMarkThatBlinksOffAndBackIsPutBack() {
+        XCTAssertEqual(RoleGesture.resolve(shown: .sword, next: .sword, settled: false), .restore,
+                       "a mark that came back mid-fade must cancel it, not ignore it")
+        XCTAssertEqual(RoleGesture.resolve(shown: .shield, next: .shield, settled: false), .restore)
+        // A mark that is genuinely still going somewhere is not a restore - the
+        // gesture it asks for is the one it would have asked for anyway.
+        XCTAssertEqual(RoleGesture.resolve(shown: .sword, next: .check, settled: false), .flip)
+        XCTAssertEqual(RoleGesture.resolve(shown: .sword, next: nil, settled: false), .fadeOut)
+        XCTAssertEqual(RoleGesture.resolve(shown: nil, next: .sword, settled: false), .fadeIn)
     }
 }
 

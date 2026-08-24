@@ -9,9 +9,15 @@
 #
 #   ios/Tools/msgrig.sh setup        fresh seeded game, board open and EXPANDED
 #   ios/Tools/msgrig.sh lobby [N]                a LOBBY with N seated, left open
-#   ios/Tools/msgrig.sh endgame [P] [SEAT]       SEED a FINISHED game, to verify
-#                                                what "New game" does at the end
+#   ios/Tools/msgrig.sh endgame [P] [SEAT] [nopass]  SEED a FINISHED game, to
+#                                                verify what "New game" does at
+#                                                the end; `nopass` finishes a
+#                                                PODKIDNOY one, which is what a
+#                                                rematch must inherit
 #   ios/Tools/msgrig.sh fatboard [N] [P] [SEAT]  SEED a dense N-card table
+#   ios/Tools/msgrig.sh lastdefense [P] [SEAT]   SEED the bout-ENDING cover,
+#                                                seated as the defender who
+#                                                must play it
 #   ios/Tools/msgrig.sh twocover [P] [SEAT] [one]  SEED two covers as two bubbles
 #                                                (or as ONE, the control)
 #                                    (default 10) and open straight onto it - no
@@ -22,6 +28,8 @@
 #                                    own rank on the table, so the lone attacker
 #                                    always has something new to throw.
 #   ios/Tools/msgrig.sh unseed       remove the seed, back to normal flow
+#   ios/Tools/msgrig.sh slowmo N     stretch every flight by N (0 = off); set it
+#                                    BEFORE the scenario that opens the board
 #   ios/Tools/msgrig.sh move         select a card and play it (auto-collapses)
 #   ios/Tools/msgrig.sh film NAME S  record S seconds into NAME.mp4 + frames
 #   ios/Tools/msgrig.sh shot         one screenshot, downscaled to points
@@ -164,7 +172,7 @@ cmd_lobby() {
 # state is searched in C and the device just opens it - so the fool is the same
 # seat on every run and a filmed comparison actually compares.
 cmd_endgame() {
-  local players="${1:-3}" seat="${2:-0}"
+  local players="${1:-3}" seat="${2:-0}" variant="${3:-}"
   local tool="$HERE/../../c/build/msg_wire_test"
   [ -x "$tool" ] || { echo "build it first: (cd c && make build/msg_wire_test)" >&2; exit 1; }
 
@@ -173,7 +181,7 @@ cmd_endgame() {
   until xcrun simctl list devices booted | grep -q "$SIM"; do sleep 2; done
   xcrun simctl launch "$SIM" com.apple.MobileSMS >/dev/null; sleep 5
 
-  "$tool" --endgame "$players" > "$(group_dir)/dev.fatboard"
+  "$tool" --endgame "$players" $variant > "$(group_dir)/dev.fatboard"
   printf '%s' "$seat" > "$(group_dir)/dev.seat"
   rm -f "$(group_dir)/dev.replay"
   echo "seeded endgame: $(wc -c < "$(group_dir)/dev.fatboard") hex chars, seat=$seat"
@@ -206,6 +214,41 @@ cmd_fatboard() {
   else rm -f "$(group_dir)/dev.seat"; fi
   rm -f "$(group_dir)/dev.replay"   # a fatboard opens quiet; see cmd_twocover
   echo "seeded: $(wc -c < "$(group_dir)/dev.fatboard") hex chars, seat=${seat:-defender}"
+
+  read -r W H < <(screen)
+  read -r cx cy px py ax ay sx sy bx by g1x g1y g2x g2y < <(profile "$W" "$H")
+  tap "$cx" "$cy" 3        # conversation
+  tap "$px" "$py" 2.5      # compose "+"
+  swipe 0.4 $((W / 2)) $((H * 82 / 100)) $((W / 2)) $((H * 45 / 100)) 1.5
+  tap "$ax" "$ay" 5        # Foolish -> straight onto the seeded board
+  swipe 0.5 "$g1x" "$g1y" "$g2x" "$g2y" 4   # grabber drag to expanded
+  echo "drawer top: $(drawer_top)   (a small number = expanded)"
+}
+
+# The BOUT-ENDING COVER, seated as the defender about to play it. The C
+# searcher (--lastdefense) finds a deal where the defender's whole remaining
+# hand covers every uncovered attack, which is the one state that exercises
+# six of build 16's changes at once: the Cover button's greedy full cover, a
+# multicover's per-card flights, the hold before the sweep, the withheld
+# settlement while the move is only staged, the count lag, and the role
+# hand-off that closes it. No deal can be arranged into this by hand.
+cmd_lastdefense() {
+  local players="${1:-4}" seat="${2:-}"
+  local tool="$HERE/../../c/build/msg_wire_test"
+  [ -x "$tool" ] || { echo "build it first: (cd c && make build/msg_wire_test)" >&2; exit 1; }
+
+  xcrun simctl shutdown "$SIM" 2>/dev/null || true; sleep 3
+  xcrun simctl boot "$SIM"; sleep 8
+  until xcrun simctl list devices booted | grep -q "$SIM"; do sleep 2; done
+  xcrun simctl launch "$SIM" com.apple.MobileSMS >/dev/null; sleep 5
+
+  # The first line is the human-readable description; the hex is the second.
+  "$tool" --lastdefense "$players" | tail -1 > "$(group_dir)/dev.fatboard"
+  if [ -n "$seat" ]; then printf '%s' "$seat" > "$(group_dir)/dev.seat"
+  else rm -f "$(group_dir)/dev.seat"; fi
+  rm -f "$(group_dir)/dev.replay"
+  echo "seeded: $(wc -c < "$(group_dir)/dev.fatboard") hex chars, seat=${seat:-defender}"
+  "$tool" --lastdefense "$players" | head -1
 
   read -r W H < <(screen)
   read -r cx cy px py ax ay sx sy bx by g1x g1y g2x g2y < <(profile "$W" "$H")
@@ -294,11 +337,16 @@ import sys,ast; c=ast.literal_eval(sys.stdin.read().split('CARDS ')[1]); print(c
 case "${1:-}" in
   setup) shift; cmd_setup "$@" ;;
   fatboard) shift; cmd_fatboard "$@" ;;
+  lastdefense) shift; cmd_lastdefense "$@" ;;
   endgame) shift; cmd_endgame "$@" ;;
   lobby) shift; cmd_lobby "$@" ;;
   twocover) shift; cmd_twocover "$@" ;;
   reopen) shift; cmd_reopen "$@" ;;
   unseed) rm -f "$(group_dir)/dev.fatboard" "$(group_dir)/dev.replay"; echo "seed removed" ;;
+  # Stretch every flight by N (0 = off). Read once at first use, so this must be
+  # set BEFORE the extension launches - i.e. before setup/fatboard/lastdefense.
+  slowmo) if [ "${2:-0}" = "0" ]; then rm -f "$(group_dir)/dev.slowmo"; echo "slowmo off"
+          else printf '%s' "$2" > "$(group_dir)/dev.slowmo"; echo "slowmo x$2"; fi ;;
   move)  cmd_move ;;
   film)  shift; cmd_film "$@" ;;
   probe) read -r W H < <(screen); echo "screen ${W}x${H}pt"; python3 "$UI" all ;;

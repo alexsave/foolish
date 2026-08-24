@@ -16,25 +16,25 @@
 // The whole row is the target, label included: a 24pt box is under the
 // 44pt-touch minimum on its own, and reaching for the words is what everyone
 // does anyway.
+//
+// ONE WORD, and the box centred on it (owner, 1.0(17)). The label carried a
+// parenthetical and, when clear, a second line explaining the other rule; both
+// are gone. A checkbox in a lobby names the thing it turns on and nothing else -
+// what the two games ARE is the rulebook's job, and the lobby has a rulebook
+// button two inches away.
 
 import SwiftUI
 
 public struct FCheckbox: View {
     private let title: String
-    /// The line under the label, shown only when the box is CLEAR. A checkbox
-    /// that changes the rules should say what the other rule is, and it should
-    /// say it where the change happened rather than in a help screen nobody
-    /// opens mid-lobby. nil for a box that needs no such gloss.
-    private let offCaption: String?
     private let isOn: Bool
     private let enabled: Bool
     private let action: (Bool) -> Void
 
-    public init(_ title: String, isOn: Bool, offCaption: String? = nil,
+    public init(_ title: String, isOn: Bool,
                 enabled: Bool = true, action: @escaping (Bool) -> Void) {
         self.title = title
         self.isOn = isOn
-        self.offCaption = offCaption
         self.enabled = enabled
         self.action = action
     }
@@ -43,22 +43,15 @@ public struct FCheckbox: View {
 
     public var body: some View {
         Button(action: { Haptics.fire(.drop); action(!isOn) }) {
-            HStack(alignment: .firstTextBaseline, spacing: FSpace.s) {
+            // CENTRES, not baselines: the label is one word, so there is no
+            // block of text for a baseline to belong to - the box and the word
+            // are two objects of a size, and the eye lines up their middles.
+            HStack(alignment: .center, spacing: FSpace.s) {
                 plank
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(FType.body(15))
-                        .onTableText(dimmed: !enabled)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                    if !isOn, let offCaption {
-                        Text(offCaption)
-                            .font(FType.body(12))
-                            .onTableText(dimmed: true)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
-                    }
-                }
+                Text(title)
+                    .font(FType.body(15))
+                    .onTableText(dimmed: !enabled)
+                    .lineLimit(1)
                 Spacer(minLength: 0)
             }
             // The row, not the box, is what a finger has to find.
@@ -87,8 +80,5 @@ public struct FCheckbox: View {
             if isOn { FCheck(size: box - 6) }
         }
         .frame(width: box, height: box)
-        // Baseline-aligned rows put the box's TOP near the label's cap height;
-        // nudge it down so the tick sits level with the words next to it.
-        .alignmentGuide(.firstTextBaseline) { d in d[.bottom] - 5 }
     }
 }

@@ -104,6 +104,18 @@ public struct SettingsHelpSquares: View {
         self.onDiagnostics = onDiagnostics
     }
 
+    /// How much room a screen that FLOATS this pair in its corner has to keep
+    /// clear at the bottom: the squares themselves plus the 4pt inset every
+    /// caller gives them.
+    ///
+    /// The pair is an overlay, so nothing above it is laid out against it, and
+    /// a screen tall enough to reach the corner simply runs underneath: the
+    /// rematch lobby - the tallest one there is, with a roster, the fool's
+    /// penalty and the rules checkbox - had the gear sitting on top of Start
+    /// playing (found on the simulator, 1.0(17)). One number, here, so a screen
+    /// cannot reserve a different amount from what the pair actually takes.
+    public static let reservedHeight: CGFloat = 44
+
     public var body: some View {
         HStack(spacing: FSpace.l) {   // 40 + 16 + 40 = 96 = FActionBar width
             FSquareButton(systemImage: "gearshape.fill", side: 40,

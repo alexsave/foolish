@@ -47,14 +47,24 @@
 // SPLICED, NOT APPENDED. An earlier plan recorded here was to move the PASS
 // block to the BACK of the menu first, so that every non-pass index stayed
 // identical across the two modes. That was reversed when the variant was
-// actually built: the property it protects buys nothing (a code names its own
-// mode in its header, so encoder and decoder always agree on which menu they
-// are in), while reordering the menu re-points every perevodnoy code ever
-// written — a second format renumber inside a week, or worse, old codes
-// decoding silently as different moves. Cutting the block out where it stands
-// leaves the podkidnoy menu a strict SUBSET of the perevodnoy one in the same
-// order, which costs nothing and buys the retrodiction line (which has no bit)
-// the ability to encode a podkidnoy game faithfully anyway.
+// actually built, and re-examined in 1.0(17) when the owner asked whether the
+// append was the more elegant answer after all. It is not, and the reason is
+// that INDEX IDENTITY IS NOT AN OBSERVABLE PROPERTY OF THIS FORMAT: a code is
+// one mixed-radix rANS integer, and every step of a decode is `x mod M` where M
+// is the menu's TOTAL WEIGHT, so a decoder that had the mode wrong would read a
+// different divisor at the first state that could offer a pass and scramble the
+// remainder of the stream — under an appended menu exactly as under a spliced
+// one. The append cannot make a wrong mode fail more softly OR more loudly; it
+// buys nothing, and nothing in this tree ever compares an index across modes.
+//
+// What it costs is real: the FRESH pass option is offered whenever the defender
+// holds any unknown card of a matching rank, so the block is non-empty at very
+// nearly every first defender decision of every bout, and moving it re-points
+// pickup, every later seat's attacks and every good in all of those states — a
+// second format renumber inside a week, or worse, old codes decoding silently
+// as different moves. Cutting the block out where it stands costs nothing, and
+// keeps this menu's convention the same as `legal.c`'s, which gates the pass
+// inside calc_pass_moves for the same reason.
 //
 // The redundant MSG_FLAG_PASSING_ALLOWED bit was removed from the FMSG message
 // format in 1.0(4) once the mode lived here; the envelope's `variant` byte says

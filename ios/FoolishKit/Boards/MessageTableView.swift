@@ -954,7 +954,20 @@ public struct MessageTableView: View {
     /// One opponent seat badge, publishing its frame in `boardSpace` so bout-end
     /// flights can target it. Placed on the ring by `ringPoint`.
     private func opponentSeat(_ p: PlayerView, _ view: GameView) -> some View {
-        FSeatBadge(name: name(p.seat),
+        #if DEBUG
+        // Which mark this seat is WEARING, and what it was derived from. The
+        // counterpart to `traceGrid`, and there for the same reason: a role mark
+        // that fails to appear is "which of these four inputs said no", and the
+        // board is the only thing that can answer. Deduped per seat, so a board
+        // at rest is silent.
+        Self.traceMark(seat: p.seat, defender: shownIsDefender(p.seat, view),
+                       attacker: showsSword(seat: p.seat, isOut: p.isOut, view),
+                       good: shownSaidGood(p.seat, view), out: p.isOut,
+                       flying: roleFlyingSeats.contains(p.seat),
+                       roles: shownRoles(view),
+                       battles: view.battles.count, sweep: sweepBattles.count)
+        #endif
+        return FSeatBadge(name: name(p.seat),
                    handCount: shownHandCount(p),
                    // Round 16: the ROLE the board is currently showing, which
                    // during a bout-end sequence is still the one from before the
@@ -1039,6 +1052,18 @@ public struct MessageTableView: View {
         }
         let line = "grid sweeping=\(sweeping) cells=\(shown.count) pairs=\(pairs) visible=\(visible) hidden=\(hidden.count)"
         if line != lastGridTrace { lastGridTrace = line; AnimLog.say(line) }
+    }
+
+    private static var lastMarkTrace: [Int: String] = [:]
+    static func traceMark(seat: Int, defender: Bool, attacker: Bool, good: Bool,
+                          out: Bool, flying: Bool, roles: RoleState,
+                          battles: Int, sweep: Int) {
+        let mark = good ? "check" : defender ? "shield" : attacker ? "sword" : "-"
+        let line = "mark s\(seat)=\(mark)\(flying ? " (flying)" : "")"
+            + " [def=\(defender) atk=\(attacker) good=\(good) out=\(out)]"
+            + " roles=d\(roles.defender) fa\(roles.firstAttacker) g\(roles.goodMask)"
+            + " battles=\(battles) sweep=\(sweep)"
+        if line != lastMarkTrace[seat] { lastMarkTrace[seat] = line; AnimLog.say(line) }
     }
     #endif
 
@@ -3556,10 +3581,11 @@ struct FGameOverList: View {
 
 /// `scrollBounceBehavior(.basedOnSize)` behind an availability check - a
 /// results screen that fits should feel like a fixed screen, not a scroll view
-/// that rubber-bands when you brush it. The project still deploys to iOS 16.0,
+/// that rubber-bands when you brush it. Shared with the LOBBY, which scrolls for
+/// the same reason and must feel the same when it does not have to. The project still deploys to iOS 16.0,
 /// where the modifier does not exist yet (16.4); there it simply bounces, which
 /// is the pre-round-16 ScrollView-less screen's only visible difference.
-private struct BounceOnlyWhenTooTall: ViewModifier {
+struct BounceOnlyWhenTooTall: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 16.4, *) {
             content.scrollBounceBehavior(.basedOnSize)

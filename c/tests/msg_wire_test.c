@@ -2213,7 +2213,10 @@ static int poses_the_race(const Game *g) {
 // microseconds, and the device just opens it. Reaching a finished 3-player game
 // by tapping is minutes of work per attempt and the fool would differ every
 // run, which is exactly what makes a filmed comparison worthless.
-static void print_endgame(int np) {
+// `passing` chooses the VARIANT the game is played (and sealed) under, so the
+// rig can pose "a podkidnoy game that has just ended" - the state a rematch has
+// to carry its rules out of.
+static void print_endgame(int np, int passing) {
     static unsigned char body[1024];
     static Game scratch;
     static LegalMoves ml;
@@ -2228,6 +2231,7 @@ static void print_endgame(int np) {
         Game g;
         memset(&g, 0, sizeof(g));
         g.num_players = (int8_t)np;
+        if (!passing) g.rules |= GAME_RULE_NO_PASS;
         for (int i = 0; i < np; i++) {
             g.players[i].status = PLAYER_STATUS_READY;
             g.players[i].strategy_key = 0;
@@ -2276,8 +2280,8 @@ static void print_endgame(int np) {
 
         for (int i = 0; i < n; i++) printf("%02x", wire[i]);
         printf("\n");
-        fprintf(stderr, "endgame: np=%d fool=seat %d turn=%d round=%d (%d bytes)\n",
-                np, fool, e.turn, e.round, n);
+        fprintf(stderr, "endgame: np=%d %s fool=seat %d turn=%d round=%d (%d bytes)\n",
+                np, passing ? "perevodnoy" : "podkidnoy", fool, e.turn, e.round, n);
         return;
     }
     fprintf(stderr, "no %dp endgame found\n", np);
@@ -2763,7 +2767,8 @@ int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1], "--fixture4")) { print_fixtures4(); return 0; }
     if (argc > 1 && !strcmp(argv[1], "--fixture5")) { print_fixtures5(); return 0; }
     if (argc > 1 && !strcmp(argv[1], "--endgame")) {
-        print_endgame(argc > 2 ? atoi(argv[2]) : 3);
+        print_endgame(argc > 2 ? atoi(argv[2]) : 3,
+                      !(argc > 3 && !strcmp(argv[3], "nopass")));
         return 0;
     }
     if (argc > 2 && !strcmp(argv[1], "--holdcheck")) { print_holdcheck(argv[2]); return 0; }
