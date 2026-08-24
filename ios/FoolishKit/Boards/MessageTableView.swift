@@ -285,6 +285,46 @@ public struct MessageTableView: View {
     /// no longer belongs to it. Bumped by `runEventStream` (and the genesis deal
     /// fallback) as each claims the animator.
     @State private var animSequenceToken = 0
+    /// Cards a SUPERSEDED sequence had already opened a hand slot for and never
+    /// got to fly - laid out, opacity 0, and belonging to nobody.
+    ///
+    /// `openSlots` moves a card OUT of `preHidden` and leaves it in `hidden`, so
+    /// `clearPreHidden` - the blanket net every teardown runs - cannot reach it;
+    /// only the teardown's own `openedThisSeq` rescue can, and that teardown is
+    /// skipped when a newer sequence has taken the animator. So an arrival that
+    /// lands mid-flight used to strand every card the running sequence had
+    /// opened, invisibly, for the life of the board: a deal that "just doesn't
+    /// animate" and leaves five cards showing against a full deck, a cover that
+    /// flies and then vanishes, and - because FBattleGrid reads
+    /// `hidden \ preHidden` as "in flight right now" - the attack it covered
+    /// left sitting untilted, as though never covered at all. Worst on the moves
+    /// with the longest sequences to interrupt, which is a round transition.
+    /// (Owner, testing 1.0(17), on a live compact drawer.)
+    ///
+    /// Handed FORWARD instead of released on the spot, because the sequence that
+    /// took over may have pre-hidden cards of its own that it has not flown yet -
+    /// revealing those is the bug-9 double animation. Whoever finishes last
+    /// rescues whatever is still hidden.
+    @State private var orphanedOpens: Set<String> = []
+
+    /// WHAT A FINISHING SEQUENCE OWES THE BOARD: which opened-but-unflown cards
+    /// to reveal now, and which to leave for whoever is still running.
+    ///
+    /// The newest sequence is the last one standing, so anything still hidden
+    /// when it ends is hidden for good - it reveals its own opens and every
+    /// orphan handed to it. A SUPERSEDED one reveals nothing (the sequence that
+    /// replaced it has pre-hidden cards of its own that it has not flown yet,
+    /// and revealing those is the bug-9 double animation) but must still pass
+    /// its opens ON. Dropping them there is the defect: `openSlots` takes a card
+    /// out of `preHidden` and leaves it in `hidden`, so `clearPreHidden` - the
+    /// blanket net - can no longer reach it, and nothing else ever would.
+    ///
+    /// Static and pure so the rule can be read and tested without a board.
+    static func sequenceTeardown(opened: Set<String>, orphaned: Set<String>,
+                                 isNewest: Bool) -> (reveal: Set<String>, carry: Set<String>) {
+        isNewest ? (reveal: opened.union(orphaned), carry: [])
+                 : (reveal: [], carry: orphaned.union(opened))
+    }
 
     public init(controller: MessageTurnController, onSend: @escaping (Data, Bool) async -> Void,
                 onNewGame: @escaping () -> Void = {}, onUnstage: @escaping () -> Void = {},
@@ -578,7 +618,15 @@ public struct MessageTableView: View {
         return p.handCount
     }
     private func shownDeckCount(_ view: GameView) -> Int {
-        deckCountOverride ?? pendingOpen?.counts.deck ?? view.deckCount
+        let n = deckCountOverride ?? pendingOpen?.counts.deck ?? view.deckCount
+        #if DEBUG
+        // Where a displayed count COMES FROM. "The board is a bit behind" is
+        // always one of three sources disagreeing with the kernel, and only the
+        // board knows which one it used.
+        Self.traceCount(shown: n, override: deckCountOverride,
+                        veil: pendingOpen?.counts.deck, truth: view.deckCount)
+        #endif
+        return n
     }
     private func shownDiscardCount(_ view: GameView) -> Int {
         discardCountOverride ?? pendingOpen?.counts.discard ?? view.discardCount
@@ -1044,14 +1092,79 @@ public struct MessageTableView: View {
 
     #if DEBUG
     private static var lastGridTrace = ""
-    static func traceGrid(sweeping: Bool, shown: [BattleView], hidden: Set<String>) {
+    static func traceGrid(sweeping: Bool, shown: [BattleView], hidden: Set<String>,
+                          atRest: Bool = false, preHidden: Set<String> = [],
+                          veil: Set<String> = []) {
         let pairs = shown.filter { $0.defense != nil }.count
         let visible = shown.reduce(0) { n, b in
             n + (hidden.contains(b.attack.identity) ? 0 : 1)
               + ((b.defense.map { hidden.contains($0.identity) ? 0 : 1 }) ?? 0)
         }
+        // A CARD ON THE TABLE THAT IS NOT DRAWN, with nothing animating: the
+        // owner's "it animates that card moving, but it just doesn't land on
+        // the table - the card just vanishes". Veiling is legitimate mid-flight
+        // and never at rest, exactly like the count lag.
+        let veiled = shown.reduce(0) { n, b in
+            n + (hidden.contains(b.attack.identity) ? 1 : 0)
+              + ((b.defense.map { hidden.contains($0.identity) ? 1 : 0 }) ?? 0)
+        }
+        // AT REST means more than "no sequence running": a board that has a
+        // replay pending but has not started it yet is legitimately holding the
+        // whole move back (`pendingOpen`), and every FIRST paint looks like that.
+        if atRest && veiled > 0 {
+            vanishedAtRest += 1
+            let stuck = shown.flatMap { b in
+                [b.attack.identity, b.defense?.identity].compactMap { $0 }
+            }.filter { hidden.contains($0) }
+            AnimLog.say("VANISHED [\(stuck.sorted().joined(separator: ","))] "
+                + "preHidden=\(stuck.filter { preHidden.contains($0) }.count) "
+                + "veilOnly=\(stuck.filter { veil.contains($0) && !preHidden.contains($0) }.count)")
+        }
         let line = "grid sweeping=\(sweeping) cells=\(shown.count) pairs=\(pairs) visible=\(visible) hidden=\(hidden.count)"
+            + (atRest && veiled > 0 ? "  <-- \(veiled) VANISHED AT REST" : "")
         if line != lastGridTrace { lastGridTrace = line; AnimLog.say(line) }
+    }
+
+    /// How many times a paint has shown a count that disagreed with the kernel
+    /// WHILE NOTHING WAS ANIMATING.
+    ///
+    /// Mid-sequence disagreement is the whole point of the overrides - the board
+    /// deliberately lags so a badge does not jump to its final value before the
+    /// cards that earn it have flown. AT REST there is no such licence: the
+    /// board is simply wrong, and the human has to close the bubble and reopen
+    /// it. That is the invariant, and it is the one the arrival rig checks.
+    public private(set) static var staleAtRest = 0
+    public static func resetStaleAtRest() { staleAtRest = 0 }
+
+    /// How many times a displayed count moved AWAY from a truth that had not
+    /// changed - the board going backwards.
+    ///
+    /// The lag is allowed to trail the kernel; that is what it is for. Within
+    /// one unchanged truth it may only ever CONVERGE on it, because the states
+    /// it walks are the steps of the move that produced that truth. A shown
+    /// value that retreats is a stream writing a board older than the one on
+    /// screen, which is the defect itself - filmed as the deck badge going
+    /// 9 -> 12 -> 9 with nothing about the deck happening.
+    public private(set) static var backwardsPaints = 0
+    /// Cards sitting on the table that the board is not drawing, at rest.
+    public private(set) static var vanishedAtRest = 0
+    private static var lastShown: Int?
+    private static var lastTruth: Int?
+
+    private static var lastCountTrace = ""
+    static func traceCount(shown: Int, override: Int?, veil: Int?, truth: Int) {
+        let atRest = BoardAnimator.sequenceDepth == 0
+        if atRest && shown != truth { staleAtRest += 1 }
+        if let ls = lastShown, let lt = lastTruth, lt == truth, shown != ls,
+           abs(shown - truth) > abs(ls - truth) {
+            backwardsPaints += 1
+            AnimLog.say("deck WENT BACKWARDS \(ls) -> \(shown) with truth \(truth)")
+        }
+        lastShown = shown; lastTruth = truth
+        let line = "deck shown=\(shown) override=\(override.map(String.init) ?? "-")"
+            + " veil=\(veil.map(String.init) ?? "-") truth=\(truth)"
+            + (shown == truth ? "" : atRest ? "  <-- STALE AT REST" : "  <-- lagging (animating)")
+        if line != lastCountTrace { lastCountTrace = line; AnimLog.say(line) }
     }
 
     private static var lastMarkTrace: [Int: String] = [:]
@@ -1089,7 +1202,9 @@ public struct MessageTableView: View {
         // what caught #11, where a card sat `hidden` on a table nothing was ever
         // going to un-hide (`visible=0 hidden=1` with no flight after it).
         Self.traceGrid(sweeping: sweeping, shown: shown,
-                       hidden: sweeping ? sweptFlownIds : veiledCardIds)
+                       hidden: sweeping ? sweptFlownIds : veiledCardIds,
+                       atRest: BoardAnimator.sequenceDepth == 0 && settled,
+                       preHidden: animator.preHidden, veil: animator.hidden)
         #endif
         // note 34: a pass preview shows the ghost slot instead of a cover highlight.
         // Never while sweeping (the cards are leaving, not a drop target).
@@ -1450,6 +1565,15 @@ public struct MessageTableView: View {
             // single card and it goes back down".
             deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
             animator.clearPreHidden()
+            // Nothing is in flight and nothing is going to be, so an orphan
+            // handed on by a superseded sequence ends here (clearPreHidden
+            // cannot reach one - see `orphanedOpens`).
+            let orphans = orphanedOpens.filter { animator.isHidden($0) }
+            if !orphans.isEmpty {
+                AnimLog.say("stream#\(run) rescue-reveal \(orphans.count) orphaned opens")
+                animator.reveal(orphans)
+            }
+            orphanedOpens = []
             clearSweep()
             // Round 16: and the roles, which were frozen by the same caller. A
             // stream with no steps still animates the hand-off - there is
@@ -1502,13 +1626,19 @@ public struct MessageTableView: View {
                 // grid (its cards now live in a hand / the discard / a badge). Both
                 // paths - a live bout-end and an open-replay - lay it out now.
                 sweepBattles = []; sweepTableIds = []; sweptFlownIds = []
-                let stuck = openedThisSeq.filter { animator.isHidden($0) }
+                let owed = Self.sequenceTeardown(opened: openedThisSeq,
+                                                 orphaned: orphanedOpens, isNewest: true)
+                let stuck = owed.reveal.filter { animator.isHidden($0) }
                 if !stuck.isEmpty {
                     AnimLog.say("stream#\(run) rescue-reveal \(stuck.count) opened-but-unflown [\(stuck.sorted().joined(separator: ","))]")
                     animator.reveal(stuck)
                 }
+                orphanedOpens = owed.carry
             } else {
-                AnimLog.say("stream#\(run) superseded by seq \(animSequenceToken) - teardown skipped")
+                let owed = Self.sequenceTeardown(opened: openedThisSeq,
+                                                 orphaned: orphanedOpens, isNewest: false)
+                orphanedOpens = owed.carry
+                AnimLog.say("stream#\(run) superseded by seq \(animSequenceToken) - teardown skipped, \(openedThisSeq.count) opens handed on")
             }
         }
         // The counts are ALREADY frozen to the pre-move board by the caller —
@@ -1614,6 +1744,27 @@ public struct MessageTableView: View {
                 }
                 AnimLog.say("stream#\(run) step \(ev.kind.map(String.init(describing:)) ?? "?")@\(ev.seat) n=\(group.count) flights=\(f.count) [\(f.map(\.id).joined(separator: ","))]")
                 return f
+            }
+            // ROUND 17: A NEWER SEQUENCE MAY HAVE TAKEN OVER WHILE THAT FLIGHT
+            // PLAYED, and the counts below belong to whoever is newest.
+            //
+            // The loop already checks this at its TOP, which is enough while a
+            // board only ever animates its own moves: nothing arrives mid-flight
+            // on a board that is driving itself. A bubble arriving on an OPEN
+            // board does exactly that (the extension hands it to the live
+            // controller rather than rebuilding - MessagesRootView.seatOnBoard),
+            // and the supersede then lands in the middle of an iteration, past
+            // the guard. This stream would write its own pre-move counts on top
+            // of the newer stream's, and they can be two moves old: the owner's
+            // "it seems to be a bit behind", seen as the deck badge thrashing
+            // 9 -> 12 -> 9 while nothing about the deck changed.
+            //
+            // Filmed and traced with HARNESS_SCENARIO=arrival, which is the rig
+            // this needed and did not have - every other way a chain reaches
+            // this board rebuilds it, so the live path had never been driven.
+            guard mySeq == animSequenceToken else {
+                AnimLog.say("stream#\(run) abandoned mid-step - seq \(animSequenceToken) owns the counts now")
+                return
             }
             // The board settles to the LAST event of the group: the intermediate
             // states inside one move are boards nobody was ever shown.
@@ -2624,11 +2775,14 @@ public struct MessageTableView: View {
                             // clearPreHidden can't reveal it if myDrawFlights
                             // never built (frames not ready). Force it visible so
                             // a genesis deal can never end as invisible cards.
-                            let stuck = ids.filter { animator.isHidden($0) }
+                            let stuck = ids.union(orphanedOpens).filter { animator.isHidden($0) }
                             if !stuck.isEmpty {
                                 AnimLog.say("genesis rescue-reveal \(stuck.count) opened-but-unflown")
                                 animator.reveal(stuck)
                             }
+                            orphanedOpens = []
+                        } else {
+                            orphanedOpens.formUnion(ids)
                         }
                     }
                     // Bug 10: the opening hand has no present cards to pre-shift,

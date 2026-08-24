@@ -595,6 +595,10 @@ private struct ExtensionStage: View {
                 chatKey: model.chatKey,
                 chatIsDM: model.chatIsDM,
                 chatPlayers: model.playerCount,
+                // The live-arrival path, threaded exactly as the extension
+                // threads it (see HarnessModel.arrive).
+                incomingURL: model.incomingURL,
+                incomingToken: model.incomingToken,
                 requestExpand: { model.expand() },
                 onNewGame: { model.newGame() },
                 onSend: { payload, seat, fromUndo in await model.stage(payload, seat: seat, fromUndo: fromUndo) },

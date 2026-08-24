@@ -91,6 +91,31 @@ final class RoleMotionTests: XCTestCase {
         XCTAssertTrue(f.isEmpty)
     }
 
+    /// …AND BACK AGAIN. Owner, 1.0(17): "when we tap good, sword rotates to
+    /// checkmarks. But they should also rotate back to swords in the case that
+    /// someone plays a card (all goods are cleared)."
+    ///
+    /// A throw-in genuinely clears every good - `handle_attack` sets
+    /// `good_players_mask = 0` (c/src/game.c) - so the mark a seat wears goes
+    /// check -> sword, which is one mark BECOMING another at the same seat and
+    /// therefore the coin flip, not a fade and not a flight. Pinned in both
+    /// directions because the pair is the gesture: a sword that turns into a
+    /// check and never turns back is a board that stops telling you who may
+    /// still attack.
+    func testTheCheckTurnsBackIntoASwordWhenAThrowInClearsTheGoods() {
+        let saidGood = MessageTableView.RoleState(defender: 1, firstAttacker: 0,
+                                                  goodMask: (1 << 0) | (1 << 2))
+        let thrownIn = MessageTableView.RoleState(defender: 1, firstAttacker: 0, goodMask: 0)
+
+        // Nothing changed hands, so nothing flies - in EITHER direction.
+        XCTAssertTrue(MessageTableView.roleFlights(from: saidGood, to: thrownIn,
+                                                   pads: pads(ring)).isEmpty,
+                      "clearing the goods threw a mark across the table")
+        // And the gesture each seat makes is the flip back.
+        XCTAssertEqual(RoleGesture.between(.check, .sword), .flip)
+        XCTAssertEqual(RoleGesture.between(.sword, .check), .flip)
+    }
+
     func testAMarkWithNowhereToTakeOffFromDoesNotFly() {
         // A seat that just went out stops drawing a mark, so its pad never
         // publishes. The roles still change; the mark just changes in place.

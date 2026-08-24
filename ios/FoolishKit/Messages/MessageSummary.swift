@@ -87,7 +87,8 @@ public enum MessageSummary {
         let events = await MessageKernel.shared.lastMoveEvents(viewer: -1,
                                                               atomsBefore: env?.atomsBefore ?? -1)
         return move(events: events, names: names, view: view,
-                    actor: env?.lastActorSeat ?? -1)
+                    actor: env?.lastActorSeat ?? -1,
+                    addedNothing: env?.addedNothing ?? false)
     }
     // EVW_MSG_* (c/src/evwire.h) — the kernel's per-event message tag.
     private enum Msg {
@@ -139,7 +140,7 @@ public enum MessageSummary {
     /// envelope's own lastActorSeat (who sealed this bubble). Falls back to the
     /// generic tap line if the stream yields no headline.
     public static func move(events: [GameEvent], names: [Int: String], view: GameView?,
-                            actor: Int = -1) -> String {
+                            actor: Int = -1, addedNothing: Bool = false) -> String {
         var beats: [Beat] = []
         var outParts: [String] = []
         var roundOver = false
@@ -219,8 +220,23 @@ public enum MessageSummary {
         // (Round 12: asked of EVERY beat, not just the first - now that a
         // bubble can carry several, "the actor is in here somewhere" is the
         // question, and one merged run is still one seat's work.)
+        //
+        // ROUND 17: and only when the bubble carries a move AT ALL. A cancelled
+        // stage re-seals the board unchanged (`addedNothing`, MSG_NEW_NOTHING),
+        // which has no headline for the same reason a good has none - and this
+        // inference read that silence as a good and announced one. The bubble
+        // that animated nothing said "X declared done", and when X was the
+        // DEFENDER it claimed a move the kernel refuses outright. Reported by
+        // the owner in Korean, where "완료 선언" under a still board is exactly
+        // as puzzling as it sounds.
         if actor >= 0, !beats.contains(where: { $0.seat == actor }) {
-            primary = FStrings.t("ios.msg.mv.good", ["name": name(actor, names)])
+            // A cancelled stage says so in as many words (owner: "kinda funny
+            // but there's no way to prevent nothing bubbles while keeping undo
+            // functionality"). Naming it is better than the generic tap line:
+            // the bubble IS somebody's turn in the transcript, and "did nothing"
+            // is the true and complete account of it.
+            primary = FStrings.t(addedNothing ? "ios.msg.mv.nothing" : "ios.msg.mv.good",
+                                 ["name": name(actor, names)])
         }
 
         var parts: [String] = []

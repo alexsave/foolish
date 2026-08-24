@@ -95,6 +95,17 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
         if newAtoms == Self.newAtomsNothing { return turn }
         return newAtoms > 0 ? turn - newAtoms : -1
     }
+
+    /// This bubble carries NO move of its own - the re-seal a cancelled stage
+    /// leaves behind (§10: Messages has no API to withdraw a bubble already in
+    /// the input field, so an undo overwrites it with the board as it stands).
+    ///
+    /// The animation already reads this through `atomsBefore`. The CAPTION has
+    /// to ask it separately, because "no events" is ambiguous on its own: a bare
+    /// `good` produces an empty stream too, and telling the two apart by the
+    /// stream alone is how a defender - who may never say good at all - was
+    /// announced as having declared done.
+    public var addedNothing: Bool { newAtoms == Self.newAtomsNothing }
     public let joins: [MessageJoin]
 
     enum CodingKeys: String, CodingKey {

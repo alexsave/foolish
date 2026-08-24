@@ -196,6 +196,25 @@ final class HarnessModel: ObservableObject {
     /// as the selection is recognised rather than adopted.
     private var lastSentPayload: Data?
 
+    /// A BUBBLE THAT ARRIVES WHILE THE BOARD STAYS OPEN - the real extension's
+    /// `didReceive`, which nothing in this harness could produce until now.
+    ///
+    /// This is the one lifecycle the rig was blind to, and the blindness was
+    /// total: every other way a chain reaches the board here REBUILDS it (a
+    /// tapped bubble, a `become`, a New game all move `viewKey`), so the harness
+    /// only ever exercised the COLD path - mount, decode, replay. The extension
+    /// does the opposite for an arrival on a board that is already up: same
+    /// game, same seat, so `seatOnBoard` hands the new chain to the LIVE
+    /// controller and keeps the board (round 12, to stop the board flashing).
+    /// That live path had no rig at all, which is why "the attack animates and
+    /// then the card just vanishes" survived every run.
+    ///
+    /// Threaded to MessagesRootView exactly as MessagesViewController threads
+    /// it: the arrival is NOT the selection (Apple does not make it one), so
+    /// `payloadURL` must not move and `viewKey` must not change.
+    @Published private(set) var incomingURL: URL?
+    @Published private(set) var incomingToken = 0
+
     /// Re-point `presentedURL` at whatever is selected now. Called by the
     /// actions that really do change the chain on screen (a tapped bubble, a
     /// different player, a different chat, New game) — never by `deliver`.
@@ -567,6 +586,34 @@ final class HarnessModel: ObservableObject {
         // gone with the ledger itself (owner call); the just-sent marker is what
         // keeps a reload of my OWN chain from replaying my move back at me.
         MessageGameStore.shared.markJustSent(payload: payload)
+    }
+
+    /// Deliver `payload` as an ARRIVAL from another seat: it lands in the
+    /// transcript and is handed to the open board as an incoming chain, without
+    /// re-selecting anything and without rebuilding the surface.
+    ///
+    /// `presentedURL` is pinned to what is on screen first, for the same reason
+    /// `deliver()` never re-points it: the board must keep showing the chain it
+    /// is showing, and adopt the new one through the live controller.
+    func arrive(_ payload: Data, senderIndex: Int) {
+        let url = MessageEnvelope.link(payload: payload)
+        presentedURL = payloadURL
+        // AN ARRIVAL IS NOT THE SELECTION. Apple does not re-select a message
+        // that merely arrived, which is the whole reason the extension needs
+        // `incomingURL` at all - and it is what keeps `payloadURL` still, so no
+        // surface reload happens and the LIVE controller is the thing that
+        // adopts. Pinning the selection to whatever was open is how this rig
+        // reproduces that; leaving it nil means "the newest bubble", which
+        // reloaded the surface and quietly put the cold path back under test.
+        let keep = selectedMsg?.id ?? chats[currentChat].transcript.last?.id
+        let who = participants[min(max(senderIndex, 0), participants.count - 1)]
+        chats[currentChat].transcript.append(Msg(url: url, senderId: who.id,
+                                                 senderName: who.name, preview: nil))
+        chats[currentChat].selected = keep
+        chats[currentChat].startNewGame = false
+        AnimLog.say("host arrive from \(who.name)")
+        incomingURL = url
+        incomingToken += 1
     }
 
     /// REVIEW RIG (HarnessScenario.swift): drop a bubble into the open

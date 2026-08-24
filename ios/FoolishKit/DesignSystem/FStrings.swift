@@ -196,6 +196,7 @@ public enum FStrings {
             "ios.msg.mv.pickup": "{name} took the cards",
             "ios.msg.mv.out": "{name} is out!",
             "ios.msg.mv.good": "{name} says good",
+            "ios.msg.mv.nothing": "{name} did nothing",
             "ios.msg.mv.roundover": "Round over - {name} attacks next",
             // The staged-but-unsent reminder under Messages' own Send button
             // (the bobbing blue arrow, MessageTableView.sendHint). ONE short
@@ -396,6 +397,7 @@ public enum FStrings {
             "ios.msg.mv.pickup": "{name} забирает карты",
             "ios.msg.mv.out": "{name} вышел!",
             "ios.msg.mv.good": "{name} говорит: бито",
+            "ios.msg.mv.nothing": "{name} ничего не сделал",
             "ios.msg.mv.roundover": "Раунд окончен - атакует {name}",
             "ios.msg.sendhint": "Отправь",
             "ios.msg.started": "{name} начал игру - нажмите, чтобы играть",
@@ -575,6 +577,7 @@ public enum FStrings {
             "ios.msg.mv.pickup": "{name} 카드 가져감",
             "ios.msg.mv.out": "{name} 탈락!",
             "ios.msg.mv.good": "{name} 완료 선언",
+            "ios.msg.mv.nothing": "{name} 아무것도 하지 않았습니다",
             "ios.msg.mv.roundover": "라운드 종료 - 다음 공격: {name}",
             "ios.msg.sendhint": "보내기",
             "ios.msg.started": "{name} 게임 시작 - 탭하여 플레이",

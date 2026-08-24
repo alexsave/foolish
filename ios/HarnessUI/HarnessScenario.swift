@@ -122,6 +122,10 @@ extension HarnessModel {
             // layout AND for "what do I do now" legibility.
             await dealDriven(players: playersEnv, only: [.attack], steps: 12, viewAs: .defender)
 
+        case "arrival":
+            // A move arriving on a board that is already open (round 17).
+            await arrivalOnOpenBoard(players: playersEnv)
+
         case "endgame":
             // Deck exhausted, no trump card left to reveal, hands short. The
             // deck well and the flipped-trump slot both have to say something
@@ -359,5 +363,119 @@ extension HarnessModel {
             become(seat)
             expand()
         } catch {}
+    }
+
+    /// A MOVE ARRIVES ON THE OPEN BOARD - the lifecycle nothing here could pose
+    /// until `HarnessModel.arrive` existed, and the one the owner's report is
+    /// about ("the attack comes in, it animates that card moving, but it just
+    /// doesn't land on the table - the card just vanishes").
+    ///
+    /// Built in two halves on purpose. The first is an ordinary chain, opened
+    /// the way any board is opened, so the board is warm and measured before
+    /// anything arrives - a cold mount is the case that already worked. The
+    /// second plays ONE further move from another seat against the resident
+    /// kernel, seals it, and hands it to the live surface as an arrival.
+    ///
+    /// `HARNESS_ARRIVE_KIND` picks what arrives (default an attack, which is the
+    /// smallest thing that can go wrong: one card, one new battle).
+    private func arrivalOnOpenBoard(players n: Int) async {
+        setCount(n)
+        let seed = Data(repeating: 42, count: 32)
+        let joins = (0..<n).map { MessageJoin(seat: $0, name: Self.nameFor($0)) }
+        guard (try? await MessageKernel.shared.newGame(seed: seed, players: n)) != nil
+        else { return }
+        // Enough play that the board is a real mid-game one, stopping short of
+        // the move that will ARRIVE.
+        var lastSeat = 0
+        for _ in 0..<6 {
+            var acted = false
+            for s in 0..<n {
+                let legal = await MessageKernel.shared.residentLegal(seat: s)
+                if let m = legal.first(where: { $0.type != .wait }) {
+                    try? await MessageKernel.shared.apply(seat: s, move: m)
+                    lastSeat = s; acted = true; break
+                }
+            }
+            if !acted { break }
+        }
+        guard let view = await MessageKernel.shared.residentView(viewer: -1),
+              let opened = try? await MessageKernel.shared.seal(
+                phase: 2, lastActorSeat: lastSeat, gameId: 0xF00D,
+                parent8: Data(repeating: 0, count: 8), joins: joins)
+        else { return }
+        _ = try? await MessageKernel.shared.decode(payload: opened, viewer: -1)
+
+        // Watch as somebody who is NOT about to move, so what arrives is
+        // unambiguously somebody else's move landing on my open board.
+        let kind = ProcessInfo.processInfo.environment["HARNESS_ARRIVE_KIND"] ?? "attack"
+        let want: MoveType = kind == "cover" ? .cover : .attack
+        var mover = -1
+        for s in 0..<n where mover < 0 {
+            if (await MessageKernel.shared.residentLegal(seat: s)).contains(where: { $0.type == want }) {
+                mover = s
+            }
+        }
+        guard mover >= 0 else { return }
+        let watcher = (0..<n).first { $0 != mover && $0 != view.defender } ?? ((mover + 1) % n)
+
+        await deliverSealed(opened, senderSeat: lastSeat)
+        become(watcher)
+        MessageGameStore.shared.nickname = Self.nameFor(watcher)
+        become(watcher)
+        expand()
+        // Let the board mount, decode and settle - the arrival must land on a
+        // board that is already up, which is the whole point.
+        try? await Task.sleep(nanoseconds: 2_500_000_000)
+
+        // …now the other seats play, and each ARRIVES. `HARNESS_ARRIVE_N` (with
+        // `HARNESS_ARRIVE_GAP` in milliseconds) is the case the owner reports:
+        // bubbles landing one after another on a board that is still animating
+        // the last one, which is what a real table does when two people are
+        // playing at once. A gap SHORTER than a flight is the point.
+        let n_arrivals = Int(ProcessInfo.processInfo.environment["HARNESS_ARRIVE_N"] ?? "1") ?? 1
+        let gapMs = Int(ProcessInfo.processInfo.environment["HARNESS_ARRIVE_GAP"] ?? "250") ?? 250
+        for i in 0..<max(1, n_arrivals) {
+            var acted: (seat: Int, move: Move)?
+            for s in 0..<n where acted == nil {
+                guard s != watcher else { continue }
+                let legal = await MessageKernel.shared.residentLegal(seat: s)
+                // The first arrival is the KIND asked for; the rest are whatever
+                // that seat can legally do next, which is what a real thread
+                // delivers.
+                if let m = legal.first(where: { i == 0 ? $0.type == want : $0.type != .wait }) {
+                    acted = (s, m)
+                }
+            }
+            guard let a = acted,
+                  (try? await MessageKernel.shared.apply(seat: a.seat, move: a.move)) != nil,
+                  let next = try? await MessageKernel.shared.seal(
+                    phase: 2, lastActorSeat: a.seat, gameId: 0xF00D,
+                    parent8: Data(repeating: 0, count: 8), joins: joins)
+            else { return }
+            AnimLog.say("scenario: arrival \(i + 1) - \(Self.nameFor(a.seat)) plays \(a.move.type), watcher=\(watcher)")
+            arrive(next, senderIndex: a.seat)
+            if i + 1 < n_arrivals {
+                try? await Task.sleep(nanoseconds: UInt64(gapMs) * 1_000_000)
+            }
+        }
+        // THE ORACLE. Everything above is what the thread did; this is what the
+        // board must be showing once it settles, read from the kernel that just
+        // played it. A rig that only takes a screenshot cannot tell "a bit
+        // behind" from "correct" without a human who remembers the moves.
+        try? await Task.sleep(nanoseconds: 6_000_000_000)
+        if let truth = await MessageKernel.shared.residentView(viewer: watcher) {
+            AnimLog.say("TRUTH battles=\(truth.battles.count) "
+                + "table=[\(truth.battles.map { b in "\(b.attack.identity)/\(b.defense?.identity ?? "-")" }.joined(separator: " "))] "
+                + "deck=\(truth.deckCount) discard=\(truth.discardCount) "
+                + "myhand=\(truth.me?.handCount ?? -1) "
+                + "hands=[\(truth.players.map { "\($0.seat):\($0.handCount)" }.joined(separator: " "))] "
+                + "def=\(truth.defender) fa=\(truth.firstAttacker)")
+        }
+        // THE ASSERTION. A board at rest that disagrees with the kernel is the
+        // whole report; counting the paints is what turns "it seems to be a bit
+        // behind" into a number that can be driven to zero.
+        AnimLog.say("STALE-AT-REST paints: \(MessageTableView.staleAtRest) "
+            + "BACKWARDS paints: \(MessageTableView.backwardsPaints) "
+            + "VANISHED paints: \(MessageTableView.vanishedAtRest)")
     }
 }

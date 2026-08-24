@@ -255,6 +255,72 @@ final class MessageCaptionBoundaryTests: XCTestCase {
         XCTAssertFalse(text.isEmpty)
     }
 
+    /// A BUBBLE THAT CARRIES NOTHING MUST NOT CLAIM A MOVE. Owner, testing
+    /// 1.0(17): "the defender sent a (korean) wanryo seoneon. that's what the
+    /// bubble text said. no animation."
+    ///
+    /// The still board was RIGHT - an undo-to-empty re-seals the chain
+    /// unchanged (§10: Messages will not let a staged bubble be withdrawn, so
+    /// it is overwritten instead), and MSG_NEW_NOTHING tells every recipient to
+    /// animate nothing. The CAPTION was wrong. It inferred a good from the
+    /// absence of a headline belonging to the sender - sound for a real good,
+    /// which is genuinely the one silent move - and a bubble with no move at
+    /// all is silent the same way. So it announced "declared done" over a board
+    /// that had not moved, and when the sender was the DEFENDER it announced a
+    /// move the kernel refuses outright (handle_good rejects the defender).
+    ///
+    /// Driven through the real path: apply, undo, seal - which is what
+    /// `stageBaseNow` does on the board.
+    func testACancelledMoveIsNotCaptionedAsAGood() async throws {
+        let (p0, e0, def) = try await twoAttackChain(gameId: 4823)
+
+        let c = MessageTurnController(parentPayload: p0, parent: e0, mySeat: def)
+        await c.begin()
+        guard let cover = c.legal.first(where: { $0.type == .cover && $0.cards.count == 1 }) else {
+            throw XCTSkip("fixture: no cover available")
+        }
+        await c.apply(cover)
+        await c.undo()
+        XCTAssertTrue(c.pending.isEmpty, "fixture: the undo did not empty the stage")
+
+        let sealed = try await c.stagedPayload(sentAt: MessageKernel.clockNow())
+        let (text, events, env) = try await caption(for: sealed)
+
+        XCTAssertTrue(env.addedNothing,
+                      "fixture: a cancelled stage must seal as MSG_NEW_NOTHING, not \(env.newAtoms)")
+        XCTAssertTrue(events.isEmpty, "a bubble that added nothing has nothing to animate")
+
+        // The defender is the sender, and a defender can never say good - so the
+        // good sentence naming them is impossible, in any language.
+        // Whatever the summary would call this seat, off the roster the SEAL
+        // carries (the sender's own join is added at seal time, so it is not
+        // always on the parent).
+        let defenderName = env.joins.first { $0.seat == def }?.name
+            ?? FStrings.t("ios.msg.seatn", ["n": "\(def + 1)"])
+        let was = FStrings.override
+        defer { FStrings.override = was }
+        for language in [AppLanguage.en, .ru, .ko] {
+            FStrings.override = language
+            let line = MessageSummary.move(events: [], names: [def: defenderName],
+                                           view: nil, actor: def, addedNothing: true)
+            XCTAssertEqual(line, FStrings.t("ios.msg.mv.nothing", ["name": defenderName]),
+                           "\(language): a bubble with no move said \(line)")
+            // The one thing it must never say is that a move was made - and the
+            // good sentence is the one it used to say.
+            XCTAssertNotEqual(line, FStrings.t("ios.msg.mv.good", ["name": defenderName]),
+                              "\(language): a still board claimed a good")
+        }
+        FStrings.override = was
+        XCTAssertEqual(text, FStrings.t("ios.msg.mv.nothing", ["name": defenderName]),
+                       "the composer's own line: \(text)")
+
+        // …and the inference itself is intact for the case it exists for: a real
+        // good IS silent, and must still be announced.
+        let good = MessageSummary.move(events: [], names: [0: "Ann"], view: nil,
+                                       actor: 0, addedNothing: false)
+        XCTAssertTrue(good.contains("Ann"), "a real good stopped being captioned: \(good)")
+    }
+
     /// Being told what went out is the whole signal a rebase needs - whether or
     /// not this controller is the one that staged it.
     ///
