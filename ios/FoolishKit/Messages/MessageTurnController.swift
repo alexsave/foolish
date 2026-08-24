@@ -472,6 +472,20 @@ public final class MessageTurnController: ObservableObject {
     }
 
     public func adopt(payload: Data, parent: MessageEnvelope, quietOpen: Bool = false) async {
+        // A DUPLICATE DELIVERY IS NOT AN ARRIVAL. Messages can hand the same
+        // bubble over twice (a re-delivered didReceive; two racing
+        // maybeAdoptIncoming tasks whose "same chain" pre-check both read the
+        // base this adopt had not written yet), and re-adopting the chain this
+        // controller is already on re-armed the open-replay veil against a view
+        // that was NOT going to change - `publish` guards that now, but there
+        // is also no work here to redo: the chain is resident and the board is
+        // showing it. Skipped only with nothing staged: with pending moves the
+        // resident game is base+pending, and the conservative rebuild below is
+        // the behaviour every duplicate got before this guard existed.
+        if ready, pending.isEmpty, basePayload == payload {
+            AnimLog.say("adopt skipped - already on this chain")
+            return
+        }
         base = .continuation(payload: payload)
         parent8 = Self.firstEight(hex: parent.digest)
         joins = parent.joins
@@ -606,7 +620,19 @@ public final class MessageTurnController: ObservableObject {
             // Raised in the same breath as the view it describes: the paint that
             // first shows this chain must already know which cards are still to
             // fly, and must never see one without the other.
-            replayPending = !evs.isEmpty
+            //
+            // …and ONLY when that view is actually about to change. The one
+            // thing that takes this veil down is the board's
+            // `.onChange(of: controller.view)` (flyBoutEndToDiscard's defer), and
+            // SwiftUI does not fire onChange for an assignment of an EQUAL
+            // value. So arming it while publishing an unchanged board - a
+            // duplicate delivery of the chain already on screen was the
+            // reproduced case - stranded every card in `openReplayTouchedCardIds`
+            // behind `pendingOpen` forever: laid out in its slot, opacity 0, on
+            // a board whose state was otherwise correct ("the attack flies,
+            // lands, then disappears", 1.0(19) on device). A veil nothing will
+            // consume must never go up.
+            replayPending = !evs.isEmpty && (heldView ?? v) != view
         }
         residentOver = v?.isOver ?? false
         animAtomsBefore = pending.isEmpty ? baseAtomsBefore : staged

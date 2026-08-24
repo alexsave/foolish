@@ -615,6 +615,17 @@ private struct GameSurface: View {
             AnimLog.say("arrival ignored - decode failed")
             return
         }
+        // This runs under `.task(id: incomingToken)`, so a NEWER arrival CANCELS
+        // this one - but cancellation only lands at an await, and nothing above
+        // rethrows it (`try?` + do/catch swallow it), so a superseded task used
+        // to sail on and adopt with facts read BEFORE the newer arrival moved
+        // the base: at best a duplicate adopt of the same chain (the stranded
+        // open-replay veil this file's round-18 fix is about), at worst an OLDER
+        // chain adopted over the newer one. The newer task owns the surface now.
+        guard !Task.isCancelled else {
+            AnimLog.say("arrival ignored - superseded by a newer arrival")
+            return
+        }
         AnimLog.say("surface adopts arrival phase=\(env.phase) joins=\(env.joins.count) turn=\(env.turn)")
         await adopt(winner: bytes, env: env)
     }

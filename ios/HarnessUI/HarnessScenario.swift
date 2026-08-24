@@ -426,10 +426,16 @@ extension HarnessModel {
         // keep stepping until the wanted arrival is on somebody's menu. The cap
         // only guards a kind this seed can never produce; every kind above
         // shows up within a bout or two.
+        //
+        // HARNESS_ARRIVE_WARMUP=0 is the FIRST-MOVE case (two devices, 1.0(19)):
+        // the opened chain is the untouched deal, zero goods ever played, and
+        // the arrival is the game's very first attack landing on the open warm
+        // board. Default 4 keeps every existing run identical.
+        let minWarmup = Int(ProcessInfo.processInfo.environment["HARNESS_ARRIVE_WARMUP"] ?? "4") ?? 4
         var lastSeat = 0
         var steps = 0
         while steps < 40 {
-            if steps >= 4, await wantReady() != nil { break }
+            if steps >= minWarmup, await wantReady() != nil { break }
             var acted = false
             for s in 0..<n {
                 let legal = await MessageKernel.shared.residentLegal(seat: s)
@@ -521,6 +527,19 @@ extension HarnessModel {
             else { break }
             AnimLog.say("scenario: arrival \(i + 1) - \(Self.nameFor(a.seat)) plays \(a.move.type), watcher=\(watcher)")
             arrive(next, senderIndex: a.seat)
+            // HARNESS_ARRIVE_DUP=<ms>: deliver the SAME bubble a second time
+            // that many milliseconds later - a duplicate didReceive. The
+            // maybeAdoptIncoming "same chain" guard reads controller.basePayload,
+            // which the first adopt only updates once its detached Task runs, so
+            // a tight duplicate races past it and adopts the same chain twice.
+            // The second begin() re-arms replayPending, publishes an UNCHANGED
+            // view, and no onChange ever consumes the veil - the landed card
+            // sits laid out at opacity 0 (the owner's vanish).
+            if let dupMs = Int(ProcessInfo.processInfo.environment["HARNESS_ARRIVE_DUP"] ?? "") {
+                try? await Task.sleep(nanoseconds: UInt64(max(dupMs, 0)) * 1_000_000)
+                AnimLog.say("scenario: duplicate delivery of arrival \(i + 1)")
+                arrive(next, senderIndex: a.seat)
+            }
             lastPayload = next
             if i + 1 < n_arrivals {
                 try? await Task.sleep(nanoseconds: UInt64(gapMs) * 1_000_000)
