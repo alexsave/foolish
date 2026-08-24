@@ -161,6 +161,17 @@ public final class MessageTurnController: ObservableObject {
     private let kernel = MessageKernel.shared
     private let store: MessageGameStore
 
+    #if DEBUG
+    /// THE RIG'S ORACLE (HarnessScenario `arrival`). The harness drives the
+    /// thread from outside the surface, so it can say what the board OUGHT to
+    /// show but could never read what the board's controller actually publishes
+    /// - and "the published view is behind the kernel" is exactly the defect
+    /// the arrival rig exists to catch. Weak, so the rig never extends a
+    /// torn-down controller's life; DEBUG-only, so shipping code cannot grow a
+    /// dependency on it.
+    public private(set) static weak var debugLatest: MessageTurnController?
+    #endif
+
     /// The re-establishable base — the bytes the whole game derives from.
     private enum Base {
         case continuation(payload: Data)          // re-adopt this chain
@@ -208,6 +219,9 @@ public final class MessageTurnController: ObservableObject {
                                 uniquingKeysWith: { a, _ in a })
         self.prevPayload = prevPayload
         self.suppressOpenReplay = suppressOpenReplay
+        #if DEBUG
+        Self.debugLatest = self
+        #endif
     }
 
     /// Start a brand-new game as seat 0. TEST/HARNESS ONLY since lobby v3:
@@ -231,6 +245,9 @@ public final class MessageTurnController: ObservableObject {
         self.names = [0: myNickname]
         self.prevPayload = nil
         self.suppressOpenReplay = false
+        #if DEBUG
+        Self.debugLatest = self
+        #endif
     }
 
     // MARK: THE HELD SETTLEMENT

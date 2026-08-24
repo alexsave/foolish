@@ -388,6 +388,12 @@ computes the same winner regardless of message delivery order:
 
 ```
 Rule P (total preference order):
+  ancestry first: a chain's own DIRECT CHILD beats the parent it names
+                                      (msg_wire.h rule 4 - `turn` counts
+                                       re-derived atoms, and a pending good
+                                       stops being one when anything follows
+                                       it, so a child can tie with, or even
+                                       seal BELOW, its parent's turn)
   0. a STARTED chain (phase >= LIVE) beats a pre-game one   (msg_wire.h rule 0)
   1. higher round wins                (a closed round is settled history)
   2. else higher turn wins            (more accepted actions)

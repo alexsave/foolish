@@ -620,6 +620,29 @@ int msg_replay(const MsgEnvelope *e, Game *g);
 // turn on purpose: a chain someone has actually played on must never be
 // clobbered by a stale wider Start sealed after the fact.
 //
+// Rule 4 ranks ABOVE all of that: a chain's own DIRECT CHILD outranks it,
+// whatever the other fields say. Between a parent and its descendant the other
+// rules can lie about which came later, because `turn` counts ATOMS and the
+// atom stream is re-derived from the whole log on every seal - a pending good
+// is an atom only until a non-good follows it (replay.c log_atom_kind). So
+// "parent + good" and "parent + good + cover" seal to the SAME turn (the old
+// digest tiebreak then kept the PARENT half the time), and "parent + good +
+// good" seals one turn ABOVE the cover that follows and supersedes both goods
+// (the turn rule then kept the parent every time). A device that kept the
+// parent silently refused the very move that had just been played on it: the
+// 1.0(17) live-drawer report of a board "a bit behind" until the bubble is
+// closed and re-tapped (the tapped-bubble path adopts without consulting Rule
+// P, which is why re-tapping always recovered). The same flip in the other
+// direction adopted a parent DELIVERED AFTER its child, sending the board
+// backwards - a cover that flew, landed and then vanished while the attack
+// under it stood back upright. The parent link every envelope already carries
+// decides this exactly: the child names its parent's digest, the parent cannot
+// name its child's, and a child's phase, round and joins are always >= its
+// parent's, so ranking descent first can never misorder the rules it
+// overrules. Two SIBLINGS (same parent, neither an ancestor of the other) name
+// neither and fall through to rules 0..3 and the digest, which for a genuine
+// concurrency fork is the designed answer.
+//
 // Delivery order is never an input. Two devices can transiently disagree about
 // which message is "newest", so the rule needs no clocks and no ordering
 // guarantee from Messages — that is the whole point.
@@ -631,6 +654,7 @@ typedef struct {
     uint8_t  round;
     uint16_t turn;
     uint8_t  n_joins;                      // rule 3: the fuller roster wins the turn-0 tie
+    uint8_t  parent8[MSG_PARENT_LEN];      // rule 4: a child outranks the parent it names
     uint8_t  digest[SHA256_DIGEST_LEN];
 } MsgChainKey;
 

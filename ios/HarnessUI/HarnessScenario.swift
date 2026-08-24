@@ -376,18 +376,60 @@ extension HarnessModel {
     /// second plays ONE further move from another seat against the resident
     /// kernel, seals it, and hands it to the live surface as an arrival.
     ///
-    /// `HARNESS_ARRIVE_KIND` picks what arrives (default an attack, which is the
-    /// smallest thing that can go wrong: one card, one new battle).
+    /// `HARNESS_ARRIVE_KIND` picks what arrives:
+    ///  - `attack` (default): the smallest thing that can go wrong - one card,
+    ///    one new battle.
+    ///  - `cover`: the receiver watches a cover land on an attack (the owner's
+    ///    "shows the card moving... then just vanishes and the attack card it
+    ///    covered rotates back to 0 degrees").
+    ///  - `pickup`: the arriving move ends the bout by taking the table - a
+    ///    round transition with a sweep and refills.
+    ///  - `goodend`: the arriving move is the closing GOOD over a fully covered
+    ///    table - discard sweep, refills, role hand-off, the longest stream an
+    ///    arrival can interrupt (run with HARNESS_PLAYERS=2 so one good closes).
+    /// The kinds beyond `attack` exist because the first cut of this scenario
+    /// bailed out silently when the fixed six-step warmup happened not to leave
+    /// the wanted move legal - so the cover and round-transition arrivals (the
+    /// owner's symptoms 3 and 4) were never actually posed. The warmup now
+    /// DRIVES until the wanted move is available instead of hoping.
     private func arrivalOnOpenBoard(players n: Int) async {
         setCount(n)
         let seed = Data(repeating: 42, count: 32)
         let joins = (0..<n).map { MessageJoin(seat: $0, name: Self.nameFor($0)) }
         guard (try? await MessageKernel.shared.newGame(seed: seed, players: n)) != nil
         else { return }
-        // Enough play that the board is a real mid-game one, stopping short of
-        // the move that will ARRIVE.
+
+        let kind = ProcessInfo.processInfo.environment["HARNESS_ARRIVE_KIND"] ?? "attack"
+        let want: MoveType = switch kind {
+        case "cover": .cover
+        case "pickup": .pickup
+        case "goodend": .good
+        default: .attack
+        }
+        // Is the wanted ARRIVAL playable right now? For `goodend` the good must
+        // actually CLOSE the bout, which means a non-empty, fully covered table
+        // - a good over open attacks merely passes priority and animates
+        // nothing, which is not the arrival being posed.
+        func wantReady() async -> Int? {
+            guard let v = await MessageKernel.shared.residentView(viewer: -1) else { return nil }
+            if kind == "goodend" {
+                guard !v.battles.isEmpty, v.battles.allSatisfy({ $0.defense != nil })
+                else { return nil }
+            }
+            for s in 0..<n {
+                if (await MessageKernel.shared.residentLegal(seat: s))
+                    .contains(where: { $0.type == want }) { return s }
+            }
+            return nil
+        }
+        // Warm the game up to a real mid-game board (at least 4 moves), then
+        // keep stepping until the wanted arrival is on somebody's menu. The cap
+        // only guards a kind this seed can never produce; every kind above
+        // shows up within a bout or two.
         var lastSeat = 0
-        for _ in 0..<6 {
+        var steps = 0
+        while steps < 40 {
+            if steps >= 4, await wantReady() != nil { break }
             var acted = false
             for s in 0..<n {
                 let legal = await MessageKernel.shared.residentLegal(seat: s)
@@ -397,6 +439,7 @@ extension HarnessModel {
                 }
             }
             if !acted { break }
+            steps += 1
         }
         guard let view = await MessageKernel.shared.residentView(viewer: -1),
               let opened = try? await MessageKernel.shared.seal(
@@ -407,15 +450,10 @@ extension HarnessModel {
 
         // Watch as somebody who is NOT about to move, so what arrives is
         // unambiguously somebody else's move landing on my open board.
-        let kind = ProcessInfo.processInfo.environment["HARNESS_ARRIVE_KIND"] ?? "attack"
-        let want: MoveType = kind == "cover" ? .cover : .attack
-        var mover = -1
-        for s in 0..<n where mover < 0 {
-            if (await MessageKernel.shared.residentLegal(seat: s)).contains(where: { $0.type == want }) {
-                mover = s
-            }
+        guard let mover = await wantReady() else {
+            AnimLog.say("scenario: no seat can play \(kind) after \(steps) steps - rig bug")
+            return
         }
-        guard mover >= 0 else { return }
         let watcher = (0..<n).first { $0 != mover && $0 != view.defender } ?? ((mover + 1) % n)
 
         await deliverSealed(opened, senderSeat: lastSeat)
@@ -434,7 +472,32 @@ extension HarnessModel {
         // playing at once. A gap SHORTER than a flight is the point.
         let n_arrivals = Int(ProcessInfo.processInfo.environment["HARNESS_ARRIVE_N"] ?? "1") ?? 1
         let gapMs = Int(ProcessInfo.processInfo.environment["HARNESS_ARRIVE_GAP"] ?? "250") ?? 250
+        var lastPayload = opened
         for i in 0..<max(1, n_arrivals) {
+            // WAIT FOR THE LIVE CONTROLLER TO FINISH FOLDING THE PREVIOUS CHAIN
+            // IN, then re-point the resident at it before composing the next
+            // move. The rig shares ONE resident kernel between the "sender"
+            // (this scenario) and the receiver's board, which no real thread
+            // does - two phones each hold their own. Without this handshake the
+            // controller's in-flight adopt (it decodes the chain up to three
+            // times) re-pointed the resident AFTER this loop had applied the
+            // next move, so the seal read a game the move had been WIPED from
+            // and emitted a bubble carrying nothing new - a thread no real pair
+            // of phones can produce, failing the oracle against a rig bug.
+            let deadline = Date().addingTimeInterval(4)
+            while Date() < deadline,
+                  MessageTurnController.debugLatest?.basePayload != lastPayload {
+                try? await Task.sleep(nanoseconds: 30_000_000)
+            }
+            _ = try? await MessageKernel.shared.decode(payload: lastPayload, viewer: -1)
+            // The child bubble names its parent's digest, exactly as
+            // MessageTurnController.stagedPayload does on a phone - Rule P's
+            // rule 4 (a child outranks the parent it names) needs the link, so
+            // a rig that sealed zeros would keep hitting the digest coin flip
+            // the real extension no longer plays.
+            let parent8 = (try? await MessageKernel.shared.peek(payload: lastPayload))
+                .map { MessageTurnController.firstEight(hex: $0.digest) }
+                ?? Data(repeating: 0, count: 8)
             var acted: (seat: Int, move: Move)?
             for s in 0..<n where acted == nil {
                 guard s != watcher else { continue }
@@ -446,14 +509,19 @@ extension HarnessModel {
                     acted = (s, m)
                 }
             }
+            // Nobody but the watcher can act (a 2p goodend hands the next bout
+            // to the very seat that is watching): the thread has delivered all
+            // it can, so stop ARRIVING - but never skip the oracle below, which
+            // is the entire point of the run.
             guard let a = acted,
                   (try? await MessageKernel.shared.apply(seat: a.seat, move: a.move)) != nil,
                   let next = try? await MessageKernel.shared.seal(
                     phase: 2, lastActorSeat: a.seat, gameId: 0xF00D,
-                    parent8: Data(repeating: 0, count: 8), joins: joins)
-            else { return }
+                    parent8: parent8, joins: joins)
+            else { break }
             AnimLog.say("scenario: arrival \(i + 1) - \(Self.nameFor(a.seat)) plays \(a.move.type), watcher=\(watcher)")
             arrive(next, senderIndex: a.seat)
+            lastPayload = next
             if i + 1 < n_arrivals {
                 try? await Task.sleep(nanoseconds: UInt64(gapMs) * 1_000_000)
             }
@@ -477,5 +545,31 @@ extension HarnessModel {
         AnimLog.say("STALE-AT-REST paints: \(MessageTableView.staleAtRest) "
             + "BACKWARDS paints: \(MessageTableView.backwardsPaints) "
             + "VANISHED paints: \(MessageTableView.vanishedAtRest)")
+        // THE CONTROLLER ORACLE. The paint counters above can only see what the
+        // board happened to draw while something was still repainting; a board
+        // that settles WRONG and then draws nothing (no repaints at rest)
+        // slips past all three. So ask the source the board renders from: the
+        // live controller's published view must EQUAL the kernel's truth, and
+        // its veil (`replayPending`) must be down. `replayPending` still up
+        // this long after the last arrival is a veil nothing will ever take
+        // down - the board is hiding cards and freezing counts at rest, which
+        // is the owner's vanished cover / stale deck, as a number.
+        if let c = MessageTurnController.debugLatest {
+            let shown = c.view
+            let truth = await MessageKernel.shared.residentView(viewer: watcher)
+            let behind: Bool = {
+                guard let s = shown, let t = truth else { return true }
+                return s.battles != t.battles || s.deckCount != t.deckCount
+                    || s.discardCount != t.discardCount
+                    || s.players.map(\.handCount) != t.players.map(\.handCount)
+            }()
+            AnimLog.say("ORACLE stuckVeil=\(c.replayPending) viewBehind=\(behind) "
+                + "shown=[battles=\(shown?.battles.count ?? -1) deck=\(shown?.deckCount ?? -1) "
+                + "discard=\(shown?.discardCount ?? -1) "
+                + "hands=\(shown?.players.map(\.handCount) ?? [])]")
+            AnimLog.say("BOARD-STUCK: \((c.replayPending ? 1 : 0) + (behind ? 1 : 0))")
+        } else {
+            AnimLog.say("ORACLE no controller - rig bug")
+        }
     }
 }

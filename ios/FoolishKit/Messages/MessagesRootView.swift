@@ -588,10 +588,33 @@ private struct GameSurface: View {
         guard let url = incomingURL, !showSetup, !startNewGame,
               let bytes = try? MessageEnvelope.payloadBytes(url: url) else { return }
         let current = controller?.basePayload ?? lobby?.payload
-        if bytes == current { return }
-        if let current,
-           ((try? await MessageKernel.shared.preferred(current, bytes)) ?? -1) <= 0 { return }
-        guard let env = try? await MessageEnvelope.decode(payload: bytes, viewer: -1) else { return }
+        if bytes == current { AnimLog.say("arrival ignored - same chain"); return }
+        if let current {
+            // A refusal here is SILENT to the player, and that is what made the
+            // rule-4 hole (a chain tying with its own child on round/turn, see
+            // msg_wire.c msg_rule_p) so hard to see: the board just sat one
+            // move behind until the bubble was re-tapped. So a refusal now says
+            // which chains it weighed - `peek` reads the headers without
+            // touching the resident game, and the whole block is skipped when
+            // the trace is off.
+            var pref = -999
+            do { pref = try await MessageKernel.shared.preferred(current, bytes) }
+            catch { AnimLog.say("arrival Rule P threw \(error)") }
+            if pref <= 0 {
+                if AnimLog.on {
+                    let ce = try? await MessageKernel.shared.peek(payload: current)
+                    let be = try? await MessageKernel.shared.peek(payload: bytes)
+                    AnimLog.say("arrival ignored - Rule P pref=\(pref) "
+                        + "cur=[t\(ce?.turn ?? -1) r\(ce?.round ?? -1) actor\(ce?.lastActorSeat ?? -1)] "
+                        + "new=[t\(be?.turn ?? -1) r\(be?.round ?? -1) actor\(be?.lastActorSeat ?? -1)]")
+                }
+                return
+            }
+        }
+        guard let env = try? await MessageEnvelope.decode(payload: bytes, viewer: -1) else {
+            AnimLog.say("arrival ignored - decode failed")
+            return
+        }
         AnimLog.say("surface adopts arrival phase=\(env.phase) joins=\(env.joins.count) turn=\(env.turn)")
         await adopt(winner: bytes, env: env)
     }

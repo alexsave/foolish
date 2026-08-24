@@ -688,11 +688,57 @@ int msg_chain_key(const unsigned char *envelope, int len, MsgChainKey *out) {
     out->round = e.round;
     out->turn  = e.turn;
     out->n_joins = (uint8_t)e.n_joins;
+    memcpy(out->parent8, e.parent8, MSG_PARENT_LEN);   // rule 4's ancestry input
     msg_digest(envelope, len, out->digest);
     return MSG_EOK;
 }
 
+// Does `parent8` name `digest`? A plain byte walk rather than memcmp, because
+// this file is compiled into rules.wasm as well as the phone kernel, and that
+// build is freestanding: wasm/include/string.h deliberately declares only the
+// memcpy/memset clang lowers struct copies to. Widening the shim for one
+// eight-byte comparison would trade a real invariant ("the kernel needs no
+// libc") for nothing. Caught by the wasm build, which is the whole reason the
+// cross-engine gate exists - two engines that disagree about Rule P is a worse
+// bug than the one it fixes.
+static int names_parent(const uint8_t *parent8, const uint8_t *digest) {
+    for (int i = 0; i < MSG_PARENT_LEN; i++)
+        if (parent8[i] != digest[i]) return 0;
+    return 1;
+}
+
 int msg_rule_p(const MsgChainKey *a, const MsgChainKey *b) {
+    // Rule 4, and it ranks FIRST: a chain's own DIRECT CHILD outranks it,
+    // whatever the other fields say. For a parent and its descendant every
+    // other comparison here can lie about which came later, because `turn`
+    // counts ATOMS and the atom stream is re-derived on every seal:
+    //
+    //   * a pending good stops being an atom the moment anything follows it
+    //     (replay.c log_atom_kind), so "parent + good" and "parent + good +
+    //     cover" seal to the SAME turn - the old digest tiebreak then kept the
+    //     parent half the time, and a live drawer silently refused the very
+    //     move that had just been played on it (the 1.0(17) "board is a bit
+    //     behind until I close and re-tap the bubble" report, reproduced end
+    //     to end by the FoolishHarness `arrival` rig);
+    //   * TWO pending goods are two atoms, and the cover that follows them
+    //     supersedes both - the child seals to a turn LOWER than its parent's,
+    //     and the turn comparison preferred the parent deterministically, no
+    //     coin flip needed.
+    //
+    // The child names its parent's digest in `parent8`, so the comparison is
+    // exact and needs no replay. It cannot misorder the fields it outranks: a
+    // child's phase, round and joins are always >= its parent's, so the only
+    // comparisons it can overrule are the ones the atom fold already broke. A
+    // fork of two SIBLINGS (same parent, neither an ancestor of the other)
+    // names neither and falls through to the rules below, which for a genuine
+    // concurrency fork is the designed answer. What this cannot see is descent
+    // at TWO removes ("parent + good" vs "parent + good + good + cover", equal
+    // turns again) - that needs the bubbles to arrive out of order to matter,
+    // and the next in-order bubble resolves it; walking the whole chain from
+    // two fixed-size keys cannot decide it exactly.
+    const int a_is_child = names_parent(a->parent8, b->digest);
+    const int b_is_child = names_parent(b->parent8, a->digest);
+    if (a_is_child != b_is_child) return a_is_child ? -1 : 1;
     // A dealt game outranks the invite it grew out of, whatever the digests say
     // — see the header's rule 0 for the fork this closes. Only the boundary is
     // compared (started vs not), never FINISHED > LIVE: round/turn already order

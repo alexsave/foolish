@@ -572,6 +572,269 @@ static void test_rule_p_fuller_start_wins(void) {
     }
 }
 
+// Rule P, rule 4: a chain's own CHILD outranks it at an equal (round, turn).
+//
+// The tie is manufactured exactly the way live play manufactures it: an
+// attacker says GOOD while the bout cannot close yet (a pending good — one
+// more atom on the chain), and the next player acts on top of it. The atom
+// stream is re-derived on every seal and a pending good stops being an atom
+// the moment anything follows it, so the child seals back to its parent's own
+// turn — and before rule 4 the comparison fell through to the digest coin
+// flip. Half of those flips kept the PARENT: a live drawer silently refusing
+// the very move that had just been played on it (the 1.0(17) "board is a bit
+// behind until I close and re-tap the bubble" report, reproduced end-to-end by
+// the FoolishHarness `arrival` scenario before this rule existed).
+//
+// Like the other two rule-P regression tests, this one counts the fixtures the
+// OLD rule got wrong (parent digest sorting first) and fails if the sweep
+// produced none — a run without them would pass against the broken rule too.
+static void test_rule_p_child_beats_parent(void) {
+    int cases = 0, parent_digest_first = 0, posed_ties = 0;
+    static Game gm, parent_g, scratch;
+    static LegalMoves ml;
+    static unsigned char body[2048];
+
+    for (uint32_t g = 1; g <= 400 && cases < 40; g++) {
+        uint8_t seed[MSG_SEED_LEN];
+        seed_fill(seed, g * 4801u);
+        random_strategy_set_seed(g * 97u + 1u);
+        game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+        memset(&gm, 0, sizeof(gm));
+        gm.num_players = 4;
+        for (int i = 0; i < 4; i++) {
+            gm.players[i].status = PLAYER_STATUS_READY;
+            gm.players[i].strategy_key = 0;
+            snprintf(gm.players[i].player_id, sizeof(gm.players[i].player_id), "p%d", i);
+        }
+        start_game(&gm);
+
+        // Random play until a NON-CLOSING good lands: the pending good whose
+        // atom the follow-up will fold.
+        int have_parent = 0;
+        for (int step = 0; step < 200 && !have_parent; step++) {
+            if (game_done(&gm) >= 0 || gm.status != GAME_STATUS_PLAYING) break;
+            int seat = -1;
+            const int start = (int)(rnd() % 4u);
+            for (int t = 0; t < 4 && seat < 0; t++) {
+                const int s = (start + t) % 4;
+                if (gm.players[s].status != PLAYER_STATUS_IN) continue;
+                calculate_legal_moves(&gm, s, &ml);
+                for (int i = 0; i < ml.n; i++)
+                    if (ml.moves[i].type != MOVE_WAIT) { seat = s; break; }
+            }
+            if (seat < 0) break;
+            calculate_legal_moves(&gm, seat, &ml);
+            const int pick = (int)(rnd() % (uint32_t)ml.n);
+            const LegalMove *m = &ml.moves[pick];
+            if (m->type == MOVE_WAIT) continue;
+            AwireAction a;
+            move_to_awire(m, &a);
+            bool ok;
+            switch (a.kind) {
+                case AWIRE_ATTACK: ok = handle_attack(&gm, seat, a.cards, a.n); break;
+                case AWIRE_COVER:  ok = handle_cover(&gm, seat, a.cards, a.attacks, a.n); break;
+                case AWIRE_PASS:   ok = handle_pass(&gm, seat, a.cards, a.n); break;
+                case AWIRE_PICKUP: ok = handle_pickup(&gm, seat); break;
+                default:           ok = handle_good(&gm, seat); break;
+            }
+            if (!ok) continue;
+            if (a.kind == AWIRE_GOOD && gm.num_battles > 0) have_parent = 1;
+        }
+        if (!have_parent) continue;
+        game_clone(&parent_g, &gm);
+
+        // A follower that keeps the bout open (attack / cover / pass), so the
+        // child stays in the parent's round. A pickup would close the bout and
+        // bump `round`, which rules 1..3 already order correctly.
+        int fs = -1, fp = -1;
+        for (int s = 0; s < 4 && fs < 0; s++) {
+            if (gm.players[s].status != PLAYER_STATUS_IN) continue;
+            calculate_legal_moves(&gm, s, &ml);
+            for (int i = 0; i < ml.n; i++) {
+                const int t = ml.moves[i].type;
+                if (t == MOVE_ATTACK || t == MOVE_COVER || t == MOVE_PASS) {
+                    fs = s; fp = i; break;
+                }
+            }
+        }
+        if (fs < 0) continue;
+        calculate_legal_moves(&gm, fs, &ml);
+        AwireAction fa;
+        move_to_awire(&ml.moves[fp], &fa);
+        bool fok;
+        switch (fa.kind) {
+            case AWIRE_ATTACK: fok = handle_attack(&gm, fs, fa.cards, fa.n); break;
+            case AWIRE_COVER:  fok = handle_cover(&gm, fs, fa.cards, fa.attacks, fa.n); break;
+            default:           fok = handle_pass(&gm, fs, fa.cards, fa.n); break;
+        }
+        if (!fok) continue;
+
+        // Seal parent and child; the child's parent8 names the parent's digest,
+        // exactly as MessageTurnController.seal does on a phone.
+        MsgEnvelope ea;
+        env_init(&ea, seed, 4);
+        ea.game_id = 0x4000ULL + g;
+        if (msg_seal(&ea, &parent_g, MSG_NO_BASE, body, sizeof(body), &scratch) != MSG_EOK)
+            continue;
+        unsigned char wa[ENV_CAP];
+        const int na = msg_encode(&ea, wa, sizeof(wa));
+        if (na <= 0) continue;
+        uint8_t da[SHA256_DIGEST_LEN];
+        msg_digest(wa, na, da);
+
+        MsgEnvelope eb;
+        env_init(&eb, seed, 4);
+        eb.game_id = ea.game_id;
+        eb.last_actor_seat = (uint8_t)fs;
+        memcpy(eb.parent8, da, MSG_PARENT_LEN);
+        if (msg_seal(&eb, &gm, MSG_NO_BASE, body, sizeof(body), &scratch) != MSG_EOK)
+            continue;
+        unsigned char wb[ENV_CAP];
+        const int nb = msg_encode(&eb, wb, sizeof(wb));
+        if (nb <= 0) continue;
+
+        MsgChainKey ka, kb;
+        CHECK(msg_chain_key(wa, na, &ka) == MSG_EOK, "game %u: parent chain key failed", g);
+        CHECK(msg_chain_key(wb, nb, &kb) == MSG_EOK, "game %u: child chain key failed", g);
+        // The premise itself: the pending good folded, so the child re-encoded
+        // to the parent's own (round, turn) - the tie rules 1..3 cannot break.
+        if (ka.round != kb.round || ka.turn != kb.turn) continue;
+        posed_ties++;
+
+        cases++;
+        if (memcmp(ka.digest, kb.digest, SHA256_DIGEST_LEN) < 0) parent_digest_first++;
+        CHECK(msg_rule_p(&ka, &kb) > 0, "game %u: the parent beat its own child", g);
+        CHECK(msg_rule_p(&kb, &ka) < 0, "game %u: rule P is not symmetric", g);
+    }
+    CHECK(cases > 0, "rule P child/parent fixture built nothing");
+    CHECK(parent_digest_first > 0,
+          "no fixture had the parent digest sorting first — this run could not "
+          "have caught the digest-coin-flip bug");
+    printf("  rule_p child-vs-parent: %d posed ties, %d the old rule would have "
+           "refused\n", posed_ties, parent_digest_first);
+
+    // The INVERSION: TWO pending goods are two atoms, and the non-good that
+    // follows supersedes both, so the child seals to a turn LOWER than its
+    // parent's. Here the old rule did not even need the coin flip - the turn
+    // comparison preferred the parent every time, so the arriving move was
+    // refused deterministically. This is why rule 4 ranks ABOVE round/turn
+    // rather than sitting at the digest tiebreak.
+    int inv_cases = 0;
+    for (uint32_t g = 1; g <= 600 && inv_cases < 10; g++) {
+        uint8_t seed[MSG_SEED_LEN];
+        seed_fill(seed, g * 9013u);
+        random_strategy_set_seed(g * 53u + 7u);
+        game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+        memset(&gm, 0, sizeof(gm));
+        gm.num_players = 4;
+        for (int i = 0; i < 4; i++) {
+            gm.players[i].status = PLAYER_STATUS_READY;
+            gm.players[i].strategy_key = 0;
+            snprintf(gm.players[i].player_id, sizeof(gm.players[i].player_id), "p%d", i);
+        }
+        start_game(&gm);
+
+        // Random play until TWO goods are pending back to back (the second
+        // good's log directly follows the first's, bout still open).
+        int goods_run = 0, have_parent = 0;
+        for (int step = 0; step < 240 && !have_parent; step++) {
+            if (game_done(&gm) >= 0 || gm.status != GAME_STATUS_PLAYING) break;
+            int seat = -1;
+            const int start = (int)(rnd() % 4u);
+            for (int t = 0; t < 4 && seat < 0; t++) {
+                const int s = (start + t) % 4;
+                if (gm.players[s].status != PLAYER_STATUS_IN) continue;
+                calculate_legal_moves(&gm, s, &ml);
+                for (int i = 0; i < ml.n; i++)
+                    if (ml.moves[i].type != MOVE_WAIT) { seat = s; break; }
+            }
+            if (seat < 0) break;
+            calculate_legal_moves(&gm, seat, &ml);
+            const int pick = (int)(rnd() % (uint32_t)ml.n);
+            const LegalMove *m = &ml.moves[pick];
+            if (m->type == MOVE_WAIT) continue;
+            AwireAction a;
+            move_to_awire(m, &a);
+            bool ok;
+            switch (a.kind) {
+                case AWIRE_ATTACK: ok = handle_attack(&gm, seat, a.cards, a.n); break;
+                case AWIRE_COVER:  ok = handle_cover(&gm, seat, a.cards, a.attacks, a.n); break;
+                case AWIRE_PASS:   ok = handle_pass(&gm, seat, a.cards, a.n); break;
+                case AWIRE_PICKUP: ok = handle_pickup(&gm, seat); break;
+                default:           ok = handle_good(&gm, seat); break;
+            }
+            if (!ok) continue;
+            if (a.kind == AWIRE_GOOD && gm.num_battles > 0) {
+                if (++goods_run >= 2) have_parent = 1;
+            } else {
+                goods_run = 0;
+            }
+        }
+        if (!have_parent) continue;
+        game_clone(&parent_g, &gm);
+
+        int fs = -1, fp = -1;
+        for (int s = 0; s < 4 && fs < 0; s++) {
+            if (gm.players[s].status != PLAYER_STATUS_IN) continue;
+            calculate_legal_moves(&gm, s, &ml);
+            for (int i = 0; i < ml.n; i++) {
+                const int t = ml.moves[i].type;
+                if (t == MOVE_ATTACK || t == MOVE_COVER || t == MOVE_PASS) {
+                    fs = s; fp = i; break;
+                }
+            }
+        }
+        if (fs < 0) continue;
+        calculate_legal_moves(&gm, fs, &ml);
+        AwireAction fa;
+        move_to_awire(&ml.moves[fp], &fa);
+        bool fok;
+        switch (fa.kind) {
+            case AWIRE_ATTACK: fok = handle_attack(&gm, fs, fa.cards, fa.n); break;
+            case AWIRE_COVER:  fok = handle_cover(&gm, fs, fa.cards, fa.attacks, fa.n); break;
+            default:           fok = handle_pass(&gm, fs, fa.cards, fa.n); break;
+        }
+        if (!fok) continue;
+
+        MsgEnvelope ea;
+        env_init(&ea, seed, 4);
+        ea.game_id = 0x5000ULL + g;
+        if (msg_seal(&ea, &parent_g, MSG_NO_BASE, body, sizeof(body), &scratch) != MSG_EOK)
+            continue;
+        unsigned char wa[ENV_CAP];
+        const int na = msg_encode(&ea, wa, sizeof(wa));
+        if (na <= 0) continue;
+        uint8_t da[SHA256_DIGEST_LEN];
+        msg_digest(wa, na, da);
+
+        MsgEnvelope eb;
+        env_init(&eb, seed, 4);
+        eb.game_id = ea.game_id;
+        eb.last_actor_seat = (uint8_t)fs;
+        memcpy(eb.parent8, da, MSG_PARENT_LEN);
+        if (msg_seal(&eb, &gm, MSG_NO_BASE, body, sizeof(body), &scratch) != MSG_EOK)
+            continue;
+        unsigned char wb[ENV_CAP];
+        const int nb = msg_encode(&eb, wb, sizeof(wb));
+        if (nb <= 0) continue;
+
+        MsgChainKey ka, kb;
+        CHECK(msg_chain_key(wa, na, &ka) == MSG_EOK, "inv %u: parent chain key failed", g);
+        CHECK(msg_chain_key(wb, nb, &kb) == MSG_EOK, "inv %u: child chain key failed", g);
+        // The premise: same round, child turn strictly BELOW the parent's (the
+        // two folded goods minus the one follower atom).
+        if (ka.round != kb.round || kb.turn >= ka.turn) continue;
+        inv_cases++;
+        CHECK(msg_rule_p(&ka, &kb) > 0,
+              "inv %u: the parent (t%u) beat its own lower-turn child (t%u)",
+              g, ka.turn, kb.turn);
+        CHECK(msg_rule_p(&kb, &ka) < 0, "inv %u: rule P is not symmetric", g);
+    }
+    CHECK(inv_cases > 0, "rule P turn-inversion fixture built nothing");
+    printf("  rule_p turn-inversion: %d posed inversions, all won by the child\n",
+           inv_cases);
+}
+
 // ---------- 4. tamper matrix ---------------------------------------------
 
 static void test_tamper(void) {
@@ -2795,6 +3058,7 @@ int main(int argc, char **argv) {
     test_name_length_boundary();
     test_rule_p_started_beats_lobby();
     test_rule_p_fuller_start_wins();
+    test_rule_p_child_beats_parent();
     test_tamper();
     test_hostile_body();
     test_pickup_hold();
