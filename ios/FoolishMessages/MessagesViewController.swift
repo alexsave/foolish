@@ -375,9 +375,19 @@ final class MessagesViewController: MSMessagesAppViewController {
             // extension is torn down as Safari comes up, which is why the code
             // behind the link is captured when the game ends rather than read
             // on the way out (MessageTurnController.publish).
+            //
+            // ROUND 20 stopped throwing the ANSWER away. The completion handler
+            // was `nil`, so a system that declined to open the URL - which is
+            // what iOS does with an arbitrary https link from an extension, see
+            // FGameOverList.onOpenURL - was indistinguishable from one that
+            // opened it, and the tap did nothing with nothing to say. It is
+            // reported up now, and the board falls back to the pasteboard.
             onOpenURL: { [weak self] url in
                 FlightRecorder.note("open-url", url.host ?? "?")
-                self?.extensionContext?.open(url, completionHandler: nil)
+                guard let ctx = self?.extensionContext else { return false }
+                return await withCheckedContinuation { k in
+                    ctx.open(url) { ok in k.resume(returning: ok) }
+                }
             })
         setRoot(root)
     }
@@ -559,6 +569,14 @@ final class MessagesViewController: MSMessagesAppViewController {
             // reopening it re-renders it from its own bytes. (ROUND 9: the pending
             // ledger this also used to clear is gone entirely - owner call.)
             MessageGameStore.shared.setSeat(gameId: gameId, chatKey: chatKey, seat: mySeat)
+            // ROUND 20: and it is the newest chain this device has seen, by
+            // construction - it was built ON the board that was open, which had
+            // already been ranked against whatever was on file (GameSurface
+            // .rankAgainstHighWater). Without this, tapping back to an older
+            // bubble in the same session would not be recognised as a branch
+            // until the next bubble arrived. No Rule P call: nothing this device
+            // can hold beats a chain it just extended.
+            if let sent { MessageGameStore.shared.setLatestChain(gameId: gameId, chatKey: chatKey, payload: sent) }
         }
     }
 

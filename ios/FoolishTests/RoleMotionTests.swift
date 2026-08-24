@@ -32,6 +32,13 @@ final class RoleMotionTests: XCTestCase {
         // the only combinations reachable - and each has one answer.
         XCTAssertEqual(FSeatBadge(name: "a", handCount: 6, isDefender: true).mark, .shield)
         XCTAssertEqual(FSeatBadge(name: "a", handCount: 6, isAttacker: true).mark, .sword)
+        // Round 20: and the seat that OPENS the bout wears the tinted one.
+        XCTAssertEqual(FSeatBadge(name: "a", handCount: 6, isAttacker: true,
+                                  opensBout: true).mark, .leadSword)
+        // The tint is an attacker's business only: a defender who happens to
+        // have opened the last bout is wearing a shield, not a red sword.
+        XCTAssertEqual(FSeatBadge(name: "a", handCount: 6, isDefender: true,
+                                  opensBout: true).mark, .shield)
         XCTAssertEqual(FSeatBadge(name: "a", handCount: 6, saidGood: true).mark, .check)
         XCTAssertNil(FSeatBadge(name: "a", handCount: 6).mark)
         // A seat that said good is wearing the check, whatever else is set - the
@@ -61,8 +68,8 @@ final class RoleMotionTests: XCTestCase {
             to:   .init(defender: 2, firstAttacker: 1),
             pads: pads(ring))
         XCTAssertEqual(f.count, 2, "a bout end moves both")
-        XCTAssertEqual(Set(f.map(\.kind)), [.shield, .sword])
-        let sword = f.first { $0.kind == .sword }
+        XCTAssertEqual(Set(f.map(\.kind)), [.shield, .leadSword])
+        let sword = f.first { $0.kind == .leadSword }
         XCTAssertEqual(sword?.fromSeat, 0)
         XCTAssertEqual(sword?.toSeat, 1)
     }
@@ -75,7 +82,7 @@ final class RoleMotionTests: XCTestCase {
             from: .init(defender: 1, firstAttacker: 0, goodMask: 1 << 0),
             to:   .init(defender: 2, firstAttacker: 1, goodMask: 0),
             pads: pads(ring))
-        let sword = f.first { $0.kind == .sword }
+        let sword = f.first { $0.kind == .leadSword }
         XCTAssertNotNil(sword)
         XCTAssertEqual(sword?.fromSeat, 0)
     }
@@ -141,7 +148,7 @@ final class RoleMotionTests: XCTestCase {
             from: .init(defender: 1, firstAttacker: 0),
             to:   .init(defender: 2, firstAttacker: 1),
             pads: pads(ring))
-        XCTAssertEqual(f.first { $0.kind == .sword }?.spin, 360)
+        XCTAssertEqual(f.first { $0.kind == .leadSword }?.spin, 360)
         XCTAssertLessThan(f.first { $0.kind == .shield }?.spin ?? 999, 90)
     }
 
@@ -186,10 +193,56 @@ final class RoleMotionTests: XCTestCase {
         XCTAssertEqual(RoleGesture.between(.shield, .sword), .flip)
     }
 
-    func testARoleThatSimplyEndsFades() {
-        XCTAssertEqual(RoleGesture.between(.sword, nil), .fadeOut)
-        XCTAssertEqual(RoleGesture.between(.check, nil), .fadeOut)
-        XCTAssertEqual(RoleGesture.between(nil, .sword), .fadeIn)
+    /// ROUND 20, the owner: "instead of fading the sword in or out when
+    /// attackers become eligible or ineligible, make it spin but go to width
+    /// zero." A role that simply begins or ends now makes HALF the coin flip,
+    /// which is what makes every gesture in the file one gesture.
+    func testARoleThatSimplyEndsTurnsEdgeOnRatherThanFading() {
+        XCTAssertEqual(RoleGesture.between(.sword, nil), .rotateOut)
+        XCTAssertEqual(RoleGesture.between(.check, nil), .rotateOut)
+        XCTAssertEqual(RoleGesture.between(nil, .sword), .rotateIn)
+        // The throw-in attacker the owner described by name: "all other
+        // attackers rotate in", then rotate out again when the bout closes.
+        XCTAssertEqual(RoleGesture.between(nil, .leadSword), .rotateIn)
+        XCTAssertEqual(RoleGesture.between(.leadSword, nil), .rotateOut)
+    }
+
+    /// The opener's sword and a throw-in attacker's sword are DIFFERENT marks,
+    /// so the board can tint one of them - and so a seat that gains the opening
+    /// move turns its plain sword over into the tinted one rather than sitting
+    /// there looking unchanged.
+    func testTheOpenersSwordIsItsOwnMark() {
+        XCTAssertNotEqual(RoleMarkKind.sword, .leadSword)
+        XCTAssertEqual(RoleGesture.between(.sword, .leadSword), .flip)
+        XCTAssertEqual(RoleGesture.between(.leadSword, .check), .flip)
+        // Same drawn size, though: the tint is the only difference, or the row
+        // would jump as the opening move changed hands.
+        XCTAssertEqual(RoleMarkKind.leadSword.size, RoleMarkKind.sword.size)
+    }
+
+    /// What flies at a round end is the OPENER's sword, tinted - that is the
+    /// whole reason the tint exists ("the first attack sword flies to next first
+    /// attacker"), and a plain sword crossing the table would say the wrong
+    /// thing about which seat it came from.
+    func testTheSwordThatFliesIsTheOpenersOwn() {
+        let f = MessageTableView.roleFlights(
+            from: .init(defender: 1, firstAttacker: 0),
+            to:   .init(defender: 2, firstAttacker: 1),
+            pads: pads(ring))
+        XCTAssertEqual(f.filter { $0.kind == .leadSword }.count, 1)
+        XCTAssertTrue(f.allSatisfy { $0.kind != .sword }, "the plain sword never travels")
+    }
+
+    /// A seat expecting a mark turns its own away so the arriving one lands ON
+    /// it - the owner's "they should rotate out AND the sword will land on
+    /// them" / "the shield flies onto their sword". Both sentences are this one
+    /// number: the make-way collapse has to FINISH as the ghost touches down,
+    /// which means starting it a half-flip before the flight ends, not at the
+    /// moment it begins.
+    func testASeatMakesWayJustAsTheGhostArrives() {
+        XCTAssertEqual(roleMakeWayDelay + roleFlipHalf, roleFlightTime, accuracy: 0.0001,
+                       "the make-way turn must land on the same frame the ghost does")
+        XCTAssertGreaterThan(roleMakeWayDelay, 0, "it waits; it does not blank on take-off")
     }
 
     func testNothingHappeningIsNotAGesture() {
@@ -219,8 +272,8 @@ final class RoleMotionTests: XCTestCase {
         // A mark that is genuinely still going somewhere is not a restore - the
         // gesture it asks for is the one it would have asked for anyway.
         XCTAssertEqual(RoleGesture.resolve(shown: .sword, next: .check, settled: false), .flip)
-        XCTAssertEqual(RoleGesture.resolve(shown: .sword, next: nil, settled: false), .fadeOut)
-        XCTAssertEqual(RoleGesture.resolve(shown: nil, next: .sword, settled: false), .fadeIn)
+        XCTAssertEqual(RoleGesture.resolve(shown: .sword, next: nil, settled: false), .rotateOut)
+        XCTAssertEqual(RoleGesture.resolve(shown: nil, next: .sword, settled: false), .rotateIn)
     }
 }
 

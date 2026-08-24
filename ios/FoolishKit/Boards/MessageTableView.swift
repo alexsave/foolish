@@ -10,6 +10,7 @@
 
 import SwiftUI
 import Foundation   // sin/cos for the ring placement
+import UIKit        // UIPasteboard, for the replay link's refused-to-open fallback
 
 public struct MessageTableView: View {
     @ObservedObject private var controller: MessageTurnController
@@ -48,7 +49,7 @@ public struct MessageTableView: View {
     /// Leave the extension for a URL. An app extension has no `UIApplication`,
     /// so the only way out is the host's `extensionContext.open` - which is why
     /// this is a closure from above rather than an `@Environment(\.openURL)`.
-    private let onOpenURL: (URL) -> Void
+    private let onOpenURL: (URL) async -> Bool
 
     @State private var selection: Set<String> = []
     @State private var toast: String?
@@ -129,6 +130,32 @@ public struct MessageTableView: View {
     /// both places); the table copy must stay VISIBLE until its own flight, which
     /// only this set governs.
     @State private var sweptFlownIds: Set<String> = []
+    /// ROUND 20: cards that are ON the pre-bout grid but have NOT ARRIVED YET -
+    /// the mirror image of `sweptFlownIds`, hidden for the same reason at the
+    /// other end of the sequence.
+    ///
+    /// The case is a cover that ENDED the bout, watched by anyone but the player
+    /// who made it (owner: "on the last cover for a set, you need to show the
+    /// cover animation, then pause then sweep. I wasn't seeing the cover
+    /// animation on a replay. In the replay, the cards just showed as covered,
+    /// then went to discard"). The final board has no table at all - it was
+    /// swept - so the replay's table IS the pre-bout grid, and that grid comes
+    /// out of the kernel with the cover already lying on it. Rendering it
+    /// straight away is exactly the report: the covered pair is simply THERE on
+    /// the first paint, and the only motion left to watch is the sweep.
+    ///
+    /// So the cover starts absent from the grid, flies to its slot on the grid
+    /// (`openReplayFlights` falls back to the sweep table when the final view
+    /// has no battles), lands, holds for `boutEndHold`, and only then sweeps.
+    /// Kept apart from `sweptFlownIds` because the two mean opposite things and
+    /// the debug trace is worth being able to tell them apart.
+    @State private var sweepUnplaced: Set<String> = []
+    /// The subset of `sweepUnplaced` whose flight is in the air THIS INSTANT, so
+    /// the attack underneath a cover tilts in lockstep with the card coming down
+    /// on it (`FBattleGrid.coverTilted` reads exactly this pair of sets). The
+    /// sweep grid otherwise passes an empty `flyingNow` - during the sweep every
+    /// card is leaving, and there is nothing left to tilt onto.
+    @State private var sweepArriving: Set<String> = []
     /// Round-11: there is no live crop any more, and therefore no mirrored
     /// collapse fraction. The hand's geometry is the SAME at every drawer
     /// height (see `boardContent`'s `handCrop`), so a flight builder running
@@ -169,8 +196,14 @@ public struct MessageTableView: View {
     @State private var roleShown: RoleState?
     @State private var roleFlights: [RoleFlight] = []
     @State private var roleProgress: Double = 0
-    /// Seats whose own mark is in the air (both ends of every live flight).
-    @State private var roleFlyingSeats: Set<Int> = []
+    /// Seats whose own mark is in the air - the take-off ends. They blank
+    /// instantly: the ghost IS that mark now (round 20 split what used to be one
+    /// `roleFlyingSeats` set, because the two ends of a flight no longer behave
+    /// the same - see `FRoleCoin`).
+    @State private var roleDepartingSeats: Set<Int> = []
+    /// Seats a mark is flying TO. They turn their own mark away as the ghost
+    /// arrives, so it lands ON something rather than into a gap.
+    @State private var roleArrivingSeats: Set<Int> = []
     /// Where each seat's mark sits, published by the badges and by my own
     /// indicator - the take-off and landing pads.
     @State private var roleMarkFrames: [Int: CGRect] = [:]
@@ -329,7 +362,7 @@ public struct MessageTableView: View {
     public init(controller: MessageTurnController, onSend: @escaping (Data, Bool) async -> Void,
                 onNewGame: @escaping () -> Void = {}, onUnstage: @escaping () -> Void = {},
                 alsoStaged: Bool = false, onDiagnostics: @escaping () -> Void = {},
-                onOpenURL: @escaping (URL) -> Void = { _ in }) {
+                onOpenURL: @escaping (URL) async -> Bool = { _ in false }) {
         self.onOpenURL = onOpenURL
         self.controller = controller
         self.onSend = onSend
@@ -1011,7 +1044,8 @@ public struct MessageTableView: View {
         Self.traceMark(seat: p.seat, defender: shownIsDefender(p.seat, view),
                        attacker: showsSword(seat: p.seat, isOut: p.isOut, view),
                        good: shownSaidGood(p.seat, view), out: p.isOut,
-                       flying: roleFlyingSeats.contains(p.seat),
+                       flying: roleDepartingSeats.contains(p.seat)
+                            || roleArrivingSeats.contains(p.seat),
                        roles: shownRoles(view),
                        battles: view.battles.count, sweep: sweepBattles.count)
         #endif
@@ -1026,7 +1060,13 @@ public struct MessageTableView: View {
                    saidGood: shownSaidGood(p.seat, view),
                    isOut: p.isOut,
                    seat: p.seat,
-                   markFlying: roleFlyingSeats.contains(p.seat))
+                   // Round 20: the seat that opens the bout wears the tinted
+                   // sword. Asked of the SHOWN roles like every other mark on
+                   // this badge, so the tint moves with the hand-off rather than
+                   // a beat before it.
+                   opensBout: shownRoles(view).firstAttacker == p.seat,
+                   markDeparting: roleDepartingSeats.contains(p.seat),
+                   markArriving: roleArrivingSeats.contains(p.seat))
             .background(GeometryReader { g in
                 Color.clear.preference(key: SeatFramesKey.self,
                                        value: [p.seat: g.frame(in: .named(boardSpace))])
@@ -1082,8 +1122,11 @@ public struct MessageTableView: View {
         let mark: RoleMarkKind? = isOut ? nil
             : saidGood ? .check
             : isDefender ? .shield
-            : isAttacker ? .sword : nil
-        return FRoleCoin(kind: mark, flying: roleFlyingSeats.contains(mySeat))
+            : isAttacker ? (shownRoles(view).firstAttacker == mySeat ? .leadSword : .sword)
+            : nil
+        return FRoleCoin(kind: mark,
+                         departing: roleDepartingSeats.contains(mySeat),
+                         arriving: roleArrivingSeats.contains(mySeat))
             .background(GeometryReader { g in
                 Color.clear.preference(key: RoleMarkFramesKey.self,
                                        value: [mySeat: g.frame(in: .named(boardSpace))])
@@ -1195,6 +1238,10 @@ public struct MessageTableView: View {
         // reappear. A settled empty table (nothing sweeping) renders nothing.
         let sweeping = view.battles.isEmpty && !sweepBattles.isEmpty
         let shown = sweeping ? sweepBattles : view.battles
+        // ROUND 20: the sweep grid hides BOTH ends of the sequence - what has
+        // already flown off it, and what has not yet flown onto it (a
+        // bout-ending cover being replayed; see `sweepUnplaced`).
+        let sweepHidden = sweptFlownIds.union(sweepUnplaced)
         #if DEBUG
         // What the table is actually PAINTING, logged only when it changes - so
         // a re-layout mid-sweep shows up as a line instead of having to be read
@@ -1202,7 +1249,7 @@ public struct MessageTableView: View {
         // what caught #11, where a card sat `hidden` on a table nothing was ever
         // going to un-hide (`visible=0 hidden=1` with no flight after it).
         Self.traceGrid(sweeping: sweeping, shown: shown,
-                       hidden: sweeping ? sweptFlownIds : veiledCardIds,
+                       hidden: sweeping ? sweepHidden : veiledCardIds,
                        atRest: BoardAnimator.sequenceDepth == 0 && settled,
                        preHidden: animator.preHidden, veil: animator.hidden)
         #endif
@@ -1219,12 +1266,20 @@ public struct MessageTableView: View {
                             // NOT by the hand veil (`veiledCardIds`, which also hides
                             // a picked-up card's HAND copy) - the table copy must
                             // stay up until its own flight lifts it.
-                            hidden: sweeping ? sweptFlownIds : veiledCardIds,
+                            hidden: sweeping ? sweepHidden : veiledCardIds,
                             showGhostSlot: sweeping ? false : passPreview,
                             // Round-7 #7: the covers whose flight is playing this
                             // instant, so the attack beneath one tilts WITH it (same
                             // set that drives `handSlotDeferred`'s "flying now").
-                            flyingNow: sweeping ? [] : animator.hidden.subtracting(animator.preHidden))
+                            // ROUND 20: on the sweep grid the only thing that can
+                            // be flying ONTO the table is a bout-ending cover
+                            // being replayed (`sweepArriving`), and that is
+                            // exactly when the attack under it should start
+                            // rotating. Everything else a sweep flies is leaving,
+                            // with nothing left to tilt onto - hence the empty
+                            // set this used to pass unconditionally.
+                            flyingNow: sweeping ? sweepArriving
+                                                : animator.hidden.subtracting(animator.preHidden))
             } else {
                 // Empty table: render nothing (web parity). A "no battle" label
                 // just tells the player what they can already see (owner's call).
@@ -1625,7 +1680,7 @@ public struct MessageTableView: View {
                 // The swept table has finished flying, so take down the pre-bout
                 // grid (its cards now live in a hand / the discard / a badge). Both
                 // paths - a live bout-end and an open-replay - lay it out now.
-                sweepBattles = []; sweepTableIds = []; sweptFlownIds = []
+                dropSweep()
                 let owed = Self.sequenceTeardown(opened: openedThisSeq,
                                                  orphaned: orphanedOpens, isNewest: true)
                 let stuck = owed.reveal.filter { animator.isHidden($0) }
@@ -1743,7 +1798,24 @@ public struct MessageTableView: View {
                     f.append(contentsOf: part)
                 }
                 AnimLog.say("stream#\(run) step \(ev.kind.map(String.init(describing:)) ?? "?")@\(ev.seat) n=\(group.count) flights=\(f.count) [\(f.map(\.id).joined(separator: ","))]")
+                // ROUND 20: a card arriving onto the SWEEP grid is in the air
+                // from this instant, so the attack under it starts rotating now
+                // rather than snapping once the cover lands (`sweepArriving`).
+                // Set here, in the builder, and not before the poll: the poll
+                // may run for up to a second waiting on a frame, and a tilt
+                // that started then would finish long before the card did.
+                let onSweep = Set(f.compactMap { $0.card?.identity }).intersection(self.sweepUnplaced)
+                if !onSweep.isEmpty { self.sweepArriving.formUnion(onSweep) }
                 return f
+            }
+            // ROUND 20: whatever this step just flew ONTO the pre-bout grid has
+            // arrived - hand it to the grid to draw, in the same tick the ghost
+            // is taken down. It keeps the tilt it flew in with: it is no longer
+            // hidden, which is `coverTilted`'s other way of being true.
+            if !sweepUnplaced.isEmpty {
+                let placed = Self.placedOnTable(group)
+                sweepUnplaced.subtract(placed)
+                sweepArriving.subtract(placed)
             }
             // ROUND 17: A NEWER SEQUENCE MAY HAVE TAKEN OVER WHILE THAT FLIGHT
             // PLAYED, and the counts below belong to whoever is newest.
@@ -1805,7 +1877,7 @@ public struct MessageTableView: View {
             // length of the hand-off before the empty table took it away again.
             // Every card in it has landed by now; the teardown below repeats
             // this harmlessly for the paths that never reach here.
-            sweepBattles = []; sweepTableIds = []; sweptFlownIds = []
+            dropSweep()
             if syncRoles(to: RoleState(view), in: view, animated: true) {
                 try? await Task.sleep(nanoseconds: UInt64((roleFlightTime + 0.05) * 1_000_000_000))
             }
@@ -1970,7 +2042,12 @@ public struct MessageTableView: View {
         if old.firstAttacker != target.firstAttacker,
            let from = pad(old.firstAttacker), let to = pad(target.firstAttacker) {
             flights.append(RoleFlight(id: "sword-\(old.firstAttacker)-\(target.firstAttacker)",
-                                      kind: .sword, from: from, to: to,
+                                      // Round 20: what flies is the OPENER's
+                                      // sword, so the ghost wears the opener's
+                                      // tint - the whole point of the tint is
+                                      // that you can follow this one across the
+                                      // table and see which seat it settles on.
+                                      kind: .leadSword, from: from, to: to,
                                       fromSeat: old.firstAttacker, toSeat: target.firstAttacker,
                                       // A full turn: it is being thrown to the
                                       // next player to swing.
@@ -1987,7 +2064,8 @@ public struct MessageTableView: View {
         roleFlightToken += 1
         let mine = roleFlightToken
         AnimLog.say("role flight [\(f.map { "\($0.kind):\($0.fromSeat)->\($0.toSeat)" }.joined(separator: " "))]")
-        roleFlyingSeats = Set(f.flatMap { [$0.fromSeat, $0.toSeat] })
+        roleDepartingSeats = Set(f.map(\.fromSeat))
+        roleArrivingSeats = Set(f.map(\.toSeat))
         roleFlights = f
         roleProgress = 0
         // One paint at the take-off pad before the tween starts - the same beat
@@ -2002,7 +2080,8 @@ public struct MessageTableView: View {
         try? await Task.sleep(nanoseconds: UInt64(roleFlightTime * 1_000_000_000))
         guard mine == roleFlightToken else { return }
         roleFlights = []
-        roleFlyingSeats = []
+        roleDepartingSeats = []
+        roleArrivingSeats = []
         roleProgress = 0
     }
 
@@ -2090,6 +2169,27 @@ public struct MessageTableView: View {
     /// is two bubbles, so the discard arrives in a stream with no cover in it at
     /// all and nothing here fires. That is right: nobody covered in that beat,
     /// and the table has been sitting there readable since the last one.
+    /// ROUND 20: every card a stream PUTS DOWN on the table - the cards whose
+    /// arrival is a thing to watch, as opposed to the ones that were already
+    /// lying there when the bubble was sealed.
+    ///
+    /// Static and pure so the rule can be read and tested without a board. Only
+    /// interesting when the same stream then sweeps the table (`setSweep`
+    /// intersects this with the grid's own slots and keeps nothing else): that
+    /// is the bout-ending cover, the one placement whose battle is missing from
+    /// the final view because the final view has no battles at all.
+    static func placedOnTable(_ events: [GameEvent]) -> Set<String> {
+        var out = Set<String>()
+        for ev in events {
+            switch ev.kind {
+            case .attackPass, .defenderMove, .cover:
+                for case let c? in ev.cards { out.insert(c.identity) }
+            default: break
+            }
+        }
+        return out
+    }
+
     static func holdsAfter(_ groups: [[GameEvent]], _ i: Int) -> Bool {
         guard i >= 0, i < groups.count, groups[i].first?.kind == .cover else { return false }
         for j in (i + 1)..<groups.count {
@@ -2230,7 +2330,7 @@ public struct MessageTableView: View {
                 BoardAnimator.sequenceDepth -= 1
                 if mySeq == animSequenceToken {
                     animator.clearPreHidden()
-                    sweepBattles = []; sweepTableIds = []; sweptFlownIds = []
+                    dropSweep()
                     let stuck = ids.filter { animator.isHidden($0) }
                     if !stuck.isEmpty { animator.reveal(stuck) }
                 }
@@ -2512,6 +2612,22 @@ public struct MessageTableView: View {
         return (center.offsetBy(dx: CGFloat(i) * 6, dy: CGFloat(i) * 4), 0)
     }
 
+    /// ROUND 20: where a card ARRIVING onto the pre-bout grid is going to land,
+    /// and at what tilt - the destination half of `tableCardSource`.
+    ///
+    /// Only ever answers for a card the grid is actually holding a slot for
+    /// (`sweepTableIds`), and only once that slot has published its rect, so a
+    /// caller polling through `playStep` waits for a real measurement instead of
+    /// flying to a guess. The rect is the RAW slot: unlike a card lifting OFF the
+    /// table, a card flying onto it rotates into its tilt over the flight
+    /// (`Flight.angle`), so the ghost and the slot agree at the moment it lands
+    /// and no bottom-edge swing correction belongs here.
+    private func sweepLandingRect(_ card: Card) -> (rect: CGRect, angle: Double)? {
+        guard sweepTableIds.contains(card.identity),
+              let rect = lastBattleCardFrames[card.identity] else { return nil }
+        return (rect, sweptTilt(of: card))
+    }
+
     /// How far over a card on the swept table is lying: +`coverAngle` for a
     /// cover, -`coverAngle` for the attack under one, 0 for an uncovered attack.
     /// Mirrors what `FBattleGrid` actually draws (its attack takes the negative
@@ -2565,12 +2681,27 @@ public struct MessageTableView: View {
     /// cards sit VISIBLE on the table (via `battlesArea`) until each flies. One
     /// setter for both the live bout-end (prior view's battles) and the open-replay
     /// (reconstructed). Resets `sweptFlownIds` so nothing is pre-hidden.
-    private func setSweep(_ battles: [BattleView]) {
+    /// `unplaced` are cards this grid holds that have not ARRIVED yet - a
+    /// bout-ending cover being replayed, which has to be seen landing before the
+    /// table it landed on is carried off (see `sweepUnplaced`). Empty for every
+    /// other sweep, where the whole table was already on screen.
+    /// Take the pre-bout grid down, marks and all. One function rather than the
+    /// four hand-repeated assignments it replaces: round 20 added two more sets
+    /// to the group (`sweepUnplaced` / `sweepArriving`), and a grid left standing
+    /// with a card marked un-arrived is a card that never comes back.
+    private func dropSweep() {
+        sweepBattles = []; sweepTableIds = []; sweptFlownIds = []
+        sweepUnplaced = []; sweepArriving = []
+    }
+
+    private func setSweep(_ battles: [BattleView], unplaced: Set<String> = []) {
         sweepBattles = battles
         sweptFlownIds = []
         sweepTableIds = Set(battles.flatMap { b -> [String] in
             [b.attack.identity] + (b.defense.map { [$0.identity] } ?? [])
         })
+        sweepUnplaced = unplaced.intersection(sweepTableIds)
+        sweepArriving = []
     }
 
     /// ROUND 16: the table a bout-ending COVER should be swept off - the kernel's
@@ -2598,7 +2729,7 @@ public struct MessageTableView: View {
     /// table that isn't actually mid-animation. A no-op when nothing is swept.
     private func clearSweep() {
         guard !sweepBattles.isEmpty else { return }
-        sweepBattles = []; sweepTableIds = []; sweptFlownIds = []
+        dropSweep()
     }
 
     /// One open-replay event's flights, straight from the KERNEL's evwire stream
@@ -2616,17 +2747,51 @@ public struct MessageTableView: View {
             // A card placed on the table (hand -> its battle). Best-effort, no
             // retry: a card already swept onward to a discard/pickup later in
             // this same open is simply skipped (that event flies it).
+            //
+            // ROUND 20: except the one card that is not "swept onward" but
+            // swept BY THIS SAME STREAM - the cover that ended the bout. Its
+            // battle is missing from `view` for the same reason the whole table
+            // is (there is no table any more), so the lookup above found
+            // nothing and the cover simply never animated: the owner's "I wasn't
+            // seeing the cover animation on a replay". The pre-bout grid IS on
+            // screen at that moment and knows exactly where the card goes, so
+            // ask it (`sweepLandingRect`) before giving up.
             let source = mine ? handFrame : (seatFrames[ev.seat] ?? .zero)
             var out: [Flight] = []
             for case let card? in ev.cards {
-                guard let idx = view.battles.firstIndex(where: { $0.attack == card || $0.defense == card }),
-                      let rect = battleFrames[idx] else { continue }
-                let from = source != .zero ? source : rect.offsetBy(dx: 0, dy: -220)
+                var landed: (rect: CGRect, angle: Double)?
+                if let idx = view.battles.firstIndex(where: { $0.attack == card || $0.defense == card }),
+                   let rect = battleFrames[idx] {
+                    // Bug 1: a card that lands as the DEFENSE (cover) lies across
+                    // at +coverAngle - see the angle note below.
+                    landed = (rect, view.battles[idx].defense == card ? FBattleGrid.coverAngle : 0)
+                } else if sweepUnplaced.contains(card.identity) {
+                    // Onto the pre-bout grid. `sweepUnplaced` is the whole gate:
+                    // it is seeded ONLY by the open-replay path, so the player
+                    // who MADE this cover - whose board already flew it, from
+                    // the hand rects it measured before the apply
+                    // (`pendingCoverLandingFlights`) - falls through to the
+                    // `continue` below and does not fly it a second time.
+                    guard let onSweep = sweepLandingRect(card) else {
+                        // The grid may simply not have measured yet on a cold
+                        // open. Worth polling for: this card has nowhere else
+                        // to come from, and a `lastChance` build still beats a
+                        // cover that never animates.
+                        if lastChance { continue }
+                        return nil
+                    }
+                    landed = onSweep
+                } else {
+                    continue
+                }
+                guard let dst = landed else { continue }
+                let rect = dst.rect
+                let landedAngle = dst.angle
                 // Bug 1: a card that lands as the DEFENSE (cover) lies across at
                 // +coverAngle, so its ghost rotates into that tilt as it flies. An
                 // attack lands upright (0); its own later tilt, once ITS cover
                 // lands, is the battle grid's job, not this flight's.
-                let landedAngle = view.battles[idx].defense == card ? FBattleGrid.coverAngle : 0
+                let from = source != .zero ? source : rect.offsetBy(dx: 0, dy: -220)
                 out.append(Flight(id: "open-\(card.identity)-\(ev.type)", card: card,
                                   from: from, to: rect, angle: landedAngle))
             }
@@ -2834,7 +2999,12 @@ public struct MessageTableView: View {
         // out on the next paint, in time for the flight to measure and fly from it.
         // Empty for a plain attack/cover replay (those cards are still on the table
         // in `view`).
-        setSweep(sweepTableForReplay())
+        // ROUND 20: whatever this stream PLACES onto that table has not been seen
+        // arriving yet, so it starts absent from the grid and flies in - see
+        // `sweepUnplaced`. For all but a bout-ending cover this set is empty
+        // (nothing is placed and swept in one bubble), and `setSweep` drops
+        // anything the grid does not hold a slot for.
+        setSweep(sweepTableForReplay(), unplaced: Self.placedOnTable(events))
 
         // The SAME animator the live bout-end uses - one path, the kernel's events.
         // `openReplay: true` opens the fan for a COLD first open so each drawn card
@@ -2924,9 +3094,13 @@ public struct MessageTableView: View {
             // ticks it down). The same number refuses the move in
             // `MessageTurnController.apply`, so this is the polite half of the
             // rule, not the rule.
+            // ROUND 20: `!superseded` explicitly, because this pill is the one
+            // that deliberately does NOT read the kernel's legal menu (see
+            // above) - so standing `iCanAct` down does not reach it, and a
+            // read-only board would keep offering Take.
             canPickup: defending && !view.battles.isEmpty && cards.isEmpty
                 && !(view.me?.isOut ?? false) && !controller.canSend
-                && controller.pickupHold == 0,
+                && controller.pickupHold == 0 && !controller.superseded,
             canDone: acting && CardPlay.canSayGood(battles: view.battles, legal: controller.legal) && cards.isEmpty,
             canUndo: false,   // the board draws its own - see `undoSlot`
             onAttack: { playAt(.table, cards, view) },
@@ -3012,6 +3186,15 @@ public struct MessageTableView: View {
     // MARK: interaction (mirrors TableView — every branch reads the kernel menu)
 
     private func play(_ move: Move) {
+        // ROUND 20: nothing is played on a board branching off an old bubble.
+        // The buttons are already gone (`acting` reads `iCanAct`, which stands
+        // down), and `MessageTurnController.apply` refuses too - this is the
+        // middle of the three, and the one that matters for a DRAG, which
+        // reaches the kernel without ever asking a button whether it was
+        // enabled. Silent, deliberately: the bar above the board has already
+        // said why, and a "move not allowed" toast on top of it would read as a
+        // rule about the move rather than about the bubble.
+        guard !controller.superseded else { return }
         selection.removeAll()
         // The veil, live half (round-4 note 5). Both of these are the state as
         // it is RIGHT NOW, captured before `apply` can publish a new view —
@@ -3103,6 +3286,7 @@ public struct MessageTableView: View {
     /// for a tap/button play, which starts from the hand slot as it always has.
     private func playAt(_ target: PlayTarget, _ cards: [Card], _ view: GameView,
                         released: (card: Card, centre: CGPoint)? = nil) {
+        guard !controller.superseded else { return }   // round 20 - see `play`
         guard let move = CardPlay.resolve(cards: cards, target: target,
                                           isDefender: view.defender == controller.mySeat,
                                           battles: view.battles, legal: controller.legal) else {
@@ -3394,6 +3578,14 @@ enum FRoleInk {
     /// The "said good" green. Lives here beside the shared ink so the one mark
     /// that is NOT white is still declared in the same place as the rest.
     static let good = Color(hex: 0x2E9E4F)
+    /// ROUND 20, the FIRST ATTACKER's sword: "maybe make the first attacker
+    /// sword have a slight dark red tint to make it a bit special." White pulled
+    /// 30% of the way toward the card edge's `deepRed` (0x8B1A1A) - far enough
+    /// that the seat opening the bout is obviously not wearing the same sword as
+    /// the throw-in attackers, and not so far that it stops reading as a light
+    /// glyph against the wool. It keeps `line` as its outline, so the two swords
+    /// are one drawing with two fills.
+    static let lead = Color(hex: 0xDCBABA)
 }
 
 /// How big each role mark is drawn, everywhere it is drawn (the board's own
@@ -3423,6 +3615,10 @@ enum FRoleMark {
 /// middle of the sword.
 struct FSword: View {
     var size: CGFloat = 24
+    /// Round 20: the first attacker's sword is this same drawing in a tint
+    /// (`FRoleInk.lead`). A parameter rather than a second view, so the blade
+    /// geometry can never drift between the two.
+    var fill: Color = FRoleInk.fill
     var body: some View {
         Canvas { ctx, sz in
             let s = sz.width / 24
@@ -3442,7 +3638,7 @@ struct FSword: View {
             sword.addLine(to: P(10.4, 14.3))
             sword.addLine(to: P(10.4, 5.5))       // left edge of the blade
             sword.closeSubpath()
-            ctx.fill(sword, with: .color(FRoleInk.fill))
+            ctx.fill(sword, with: .color(fill))
             ctx.stroke(sword, with: .color(FRoleInk.line),
                        style: StrokeStyle(lineWidth: FRoleInk.stroke * s, lineJoin: .round))
             // Pommel: a round knob at the base of the grip, drawn last so its
@@ -3450,7 +3646,7 @@ struct FSword: View {
             let r = 2.0 * s
             let knob = Path(ellipseIn: CGRect(x: 12 * s - r, y: 20.6 * s - r,
                                               width: 2 * r, height: 2 * r))
-            ctx.fill(knob, with: .color(FRoleInk.fill))
+            ctx.fill(knob, with: .color(fill))
             ctx.stroke(knob, with: .color(FRoleInk.line),
                        style: StrokeStyle(lineWidth: FRoleInk.stroke * s))
         }
@@ -3568,9 +3764,28 @@ struct FGameOverList: View {
     /// all, rather than one that lands on a broken page.
     var replayURL: URL? = nil
     /// How to leave the extension with it. An iMessage extension has no
-    /// `UIApplication`, so the host hands its `extensionContext.open` down; the
-    /// default no-op keeps every other caller (previews, snapshots) compiling.
-    var onOpenURL: (URL) -> Void = { _ in }
+    /// `UIApplication`, so the host hands its `extensionContext.open` down.
+    ///
+    /// ROUND 20 made it ANSWER (owner: "tapping reply code on end screen doesn't
+    /// do anything at all. NOTHING"). `NSExtensionContext.open` is documented as
+    /// available to iMessage apps, but what it will actually open is the
+    /// CONTAINING APP's own URL scheme - opening an arbitrary https link from an
+    /// extension has been refused by the system since iOS 10 beta 5, and was
+    /// tightened again in iOS 13 as a side effect of the keyboard-extension
+    /// crackdown. The documented workaround is "hand the URL to your parent app
+    /// and let IT open Safari", which this product cannot use: the iMessage app
+    /// ships as its own App Store record with a CODELESS container (see the §9.1
+    /// reversal), so there is no parent app to hand anything to.
+    ///
+    /// So the call is still made - it costs nothing, and on any OS where it
+    /// works the tap does exactly what the arrow promises - but its answer is
+    /// now believed, and a refusal falls back to putting the link on the
+    /// pasteboard where the player can use it. The one thing a tap may not do
+    /// is nothing.
+    var onOpenURL: (URL) async -> Bool = { _ in false }
+    /// Set when the system refused and the link went to the pasteboard instead,
+    /// so the row can say so where the player is already looking.
+    @State private var linkCopied = false
 
     private var plankHeight: CGFloat { CGFloat(rows.count) * Self.rowH }
 
@@ -3700,21 +3915,46 @@ struct FGameOverList: View {
     /// screen"). It could not be spelled out anyway: the replay code IS the
     /// game - a self-contained base32 payload the site decodes with the same
     /// kernel - so the URL runs to hundreds of characters and carries nothing a
-    /// human would read. The glyph is the standard leaves-this-app arrow, which
-    /// is the honest promise: a tap really does close the extension and hand
-    /// the conversation over to Safari.
+    /// human would read. The glyph is the standard leaves-this-app arrow, and
+    /// round 20 made it honest again: where the system lets an extension out, a
+    /// tap really does hand the conversation over to Safari, and where it does
+    /// not, both the words and the glyph change to say the link is on the
+    /// pasteboard instead. See `onOpenURL` for why there are two outcomes.
     @ViewBuilder
     private func replayLink(_ url: URL) -> some View {
-        Button { onOpenURL(url) } label: {
+        Button {
+            Task { @MainActor in
+                // Ask first, copy only if refused - see `onOpenURL`. Both
+                // outcomes are recorded, because "which of the two happened on
+                // your phone" is the one thing a bug report about this row
+                // cannot otherwise tell us.
+                if await onOpenURL(url) {
+                    FlightRecorder.note("replay-link", "opened")
+                    return
+                }
+                UIPasteboard.general.string = url.absoluteString
+                FlightRecorder.note("replay-link", "copied")
+                Haptics.fire(.drop)
+                withAnimation(.easeOut(duration: 0.18)) { linkCopied = true }
+            }
+        } label: {
             // The glyph is part of the LINE, not a sibling in a stack: written
             // as concatenated `Text` it rides the same baseline as the words
             // and takes the font's own spacing, where an HStack had to guess at
             // a gap and then fight the symbol's side bearing (6pt read as
             // nearly twice that on device). The underline is applied to the
             // words alone, so it stops where they do.
-            (Text(FStrings.t("ios.msg.replaylink")).underline()
+            //
+            // Once the link has been COPIED the row stops promising to leave the
+            // app and says what it actually did - same row, same place, no
+            // toast sliding over the ranking. The glyph changes with the words
+            // for the same reason: an outward arrow over "Link copied" would be
+            // the old promise with new text under it.
+            (Text(FStrings.t(linkCopied ? "ios.msg.replaylink.copied"
+                                        : "ios.msg.replaylink")).underline(!linkCopied)
              + Text(" ")
-             + Text(Image(systemName: "arrow.up.forward.app")))
+             + Text(Image(systemName: linkCopied ? "doc.on.clipboard"
+                                                 : "arrow.up.forward.app")))
             .font(.subheadline)
             // It sits on the plain wool, below the plank, so it takes the wool
             // half of the text-on-a-surface pairing - the same ink as the title

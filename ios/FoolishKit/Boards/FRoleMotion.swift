@@ -6,11 +6,26 @@
 // fade, but maybe the first attacker sword could fly to the next first
 // attacker."
 //
-// Until now a role mark was a fact printed under a seat: the shield was simply
-// somewhere else on the next paint, and a sword became a check between two
-// frames. Nothing carried the eye from the seat that had the role to the seat
-// that has it now, which at eight seats is the difference between reading the
-// board and hunting for it.
+// ROUND 20 took the fade out of it entirely, and spelled the whole choreography
+// out: "instead of fading the sword in or out when attackers become eligible or
+// ineligible, make it spin but go to width zero. First attacker sword and
+// defense shield should still fly across the table. So I want to see this:
+// first attacker starts with sword, defender starts with shield. First attacker
+// attacks. All other attackers 'rotate in'. Do their attacks. Rotate to good as
+// necessary. Then at round end, the first attack sword flies to next first
+// attacker. Shield flies to next defender. For everyone else, the sword
+// 'rotates out'. You might be asking what about the next first attacker? Well
+// they should rotate out AND the sword will land on them. Maybe make the first
+// attacker sword have a slight dark red tint to make it a bit special. What if
+// we have a pass? What to do with the shield? For the next defender, the shield
+// flies onto their sword. For the previous defender, the shield flies away and
+// their sword rotates in."
+//
+// Until round 16 a role mark was a fact printed under a seat: the shield was
+// simply somewhere else on the next paint, and a sword became a check between
+// two frames. Nothing carried the eye from the seat that had the role to the
+// seat that has it now, which at eight seats is the difference between reading
+// the board and hunting for it.
 //
 // THREE MOTIONS, and each says a different thing:
 //
@@ -21,29 +36,38 @@
 //   about the centre rather than a cross-fade (a cross-fade is two things
 //   dissolving; a flip is one thing with two faces).
 //
+//   THE HALF FLIP - a role simply BEGINS or ENDS where it stands (an attacker
+//   who becomes eligible when the bout opens, whose sword then ends when it
+//   closes). Same coin, one half of it: it turns edge-on and is gone, or comes
+//   round from edge-on and is there. Round 20 replaced a cross-fade here, and
+//   the reason is the same one that made the full flip a flip - a mark that
+//   fades is a mark dissolving into the board, where a mark that turns away is
+//   the same object leaving. It also means every gesture in this file is now
+//   the same gesture, which is what makes them read as one language.
+//
 //   THE FLIGHT - a role LEAVES one seat for another. The shield sails across
 //   the table to the next defender; the sword hands the opening move to the
-//   next first attacker. Both endpoints hide their mark for the duration, so
-//   the ghost in the overlay is the only one of it on screen and the landing is
-//   a hand-off, not a second copy appearing.
+//   next first attacker. The seat it left blanks INSTANTLY (the ghost in the
+//   overlay is that mark now, and two of it on screen is a glitch), while the
+//   seat it is going to turns its own mark away in the last moments of the
+//   flight, so the arriving mark lands ON it rather than into a gap that has
+//   been sitting empty. That last beat is the owner's two hardest sentences -
+//   "they should rotate out AND the sword will land on them", and "the shield
+//   flies onto their sword" - and it is one rule, not two.
 //
-//   THE FADE - a role simply ENDS (an attacker's sword when the bout closes,
-//   a check when the goods are cleared). Nothing travels, so nothing should
-//   pretend to: it fades. The owner's "most swords can fade" is a rule about
-//   meaning, not about cost - a mark that flies is a mark that went somewhere.
-//
-// Reduce Motion turns all three into an instant swap.
+// Reduce Motion turns all of them into an instant swap.
 
 import SwiftUI
 
-/// The three role marks, as a value - so one view can hold "whichever mark this
-/// seat is wearing" and animate between them. The board decides which is
-/// primary (a seat is never two of these at once: the kernel rejects a
-/// defender's `good`, and `showsSword` already stands down for both).
+/// The role marks, as a value - so one view can hold "whichever mark this seat
+/// is wearing" and animate between them. The board decides which is primary (a
+/// seat is never two of these at once: the kernel rejects a defender's `good`,
+/// and `showsSword` already stands down for both).
 public enum RoleMarkKind: Equatable, Sendable {
-    case shield   // defending
-    case sword    // may attack / opens the bout
-    case check    // said good
+    case shield      // defending
+    case sword       // may attack
+    case leadSword   // opens the bout - the same sword, tinted (round 20)
+    case check       // said good
 
     /// Each mark's own drawn size (FRoleMark), which differ because a sword on
     /// the shared 24x24 grid is rotated 45 degrees and needs a bigger box to
@@ -51,7 +75,7 @@ public enum RoleMarkKind: Equatable, Sendable {
     var size: CGFloat {
         switch self {
         case .shield: return FRoleMark.shield
-        case .sword:  return FRoleMark.sword
+        case .sword, .leadSword: return FRoleMark.sword
         case .check:  return FRoleMark.check
         }
     }
@@ -67,6 +91,12 @@ public struct RoleMarkView: View {
         switch kind {
         case .shield: FShield(size: FRoleMark.shield)
         case .sword:  FSword(size: FRoleMark.sword)
+        // ROUND 20 ("maybe make the first attacker sword have a slight dark red
+        // tint to make it a bit special"): the SAME sword, drawn by the same
+        // path, with the fill tinted. Not a second glyph - the seat that opens
+        // the bout is wearing the same object as everyone else, and a different
+        // shape would say it was a different role.
+        case .leadSword: FSword(size: FRoleMark.sword, fill: FRoleInk.lead)
         case .check:  FCheck(size: FRoleMark.check)
         }
     }
@@ -89,15 +119,17 @@ public struct RoleMarkFramesKey: PreferenceKey {
 /// every other duration, via `flightTime`.
 public var roleFlightTime: Double { flightTime * 0.8 }
 
-/// Half a coin flip: collapse, swap, open. Two of these back to back is the
-/// whole gesture, and the pair deliberately comes in under a card's motion -
-/// the mark is a caption on the move, not the move.
+/// Half a coin flip: collapse, swap, open. Two of these back to back is a full
+/// turn, one on its own is a mark arriving or leaving, and the pair deliberately
+/// comes in under a card's motion - the mark is a caption on the move, not the
+/// move.
 public var roleFlipHalf: Double { flightTime * 0.22 }
 
-/// A role that simply ended, going. Slower than half a flip and faster than a
-/// whole one: it should read as "that is over" without competing with whatever
-/// is flying at the same moment.
-public var roleFadeTime: Double { flightTime * 0.3 }
+/// How long a seat expecting an arrival waits before turning its own mark away,
+/// so the collapse FINISHES as the ghost touches down (owner: "the shield flies
+/// onto their sword"). Clamped at zero for the degenerate case where a flight is
+/// shorter than half a flip.
+public var roleMakeWayDelay: Double { max(0, roleFlightTime - roleFlipHalf) }
 
 /// A role mark in flight between two seats, in `boardSpace`.
 public struct RoleFlight: Identifiable, Equatable {
@@ -105,8 +137,8 @@ public struct RoleFlight: Identifiable, Equatable {
     public let kind: RoleMarkKind
     public let from: CGPoint
     public let to: CGPoint
-    /// Seats whose own mark must stay hidden while this is in the air (both
-    /// ends: the one it left and the one it is going to).
+    /// The seat it LEFT (blanks instantly - the ghost is that mark now) and the
+    /// seat it is GOING TO (turns its own mark away as the ghost arrives).
     public let fromSeat: Int
     public let toSeat: Int
     /// Total degrees turned over the flight. The sword takes a full turn - it is
@@ -173,12 +205,15 @@ public struct RoleFlightsLayer: View {
 /// WHICH MOTION a mark makes when it changes, as a value - the rule on its own,
 /// away from the `@State` that plays it.
 public enum RoleGesture: Equatable, Sendable {
-    /// One mark becomes another at the same seat: the coin flip.
+    /// One mark becomes another at the same seat: the whole coin, both halves.
     case flip
-    /// The role ended and nothing took it over: fade where it stood.
-    case fadeOut
-    /// A role arrived at a seat that was bare: fade in.
-    case fadeIn
+    /// The role ended and nothing took it over: turn edge-on and be gone.
+    /// ROUND 20 - this was a cross-fade until the owner asked for "spin but go
+    /// to width zero", which is the flip's first half on its own.
+    case rotateOut
+    /// A role arrived at a seat that was bare: come round from edge-on. The
+    /// flip's SECOND half, and the mirror of `rotateOut`.
+    case rotateIn
     /// The mark came back to the one it was already wearing while a gesture was
     /// still playing: take that gesture back and stand the mark up where it is.
     case restore
@@ -186,13 +221,13 @@ public enum RoleGesture: Equatable, Sendable {
     case none
 
     /// A mark that TRAVELS is not a gesture this view makes at all - the board
-    /// hides both endpoints and the ghost carries it (see `FRoleCoin.flying`),
-    /// so a flight never reaches here.
+    /// blanks the seat it left and the ghost carries it (see `FRoleCoin`), so a
+    /// flight never reaches here.
     public static func between(_ shown: RoleMarkKind?, _ next: RoleMarkKind?) -> RoleGesture {
         switch (shown, next) {
         case let (a?, b?): return a == b ? .none : .flip
-        case (.some, .none): return .fadeOut
-        case (.none, .some): return .fadeIn
+        case (.some, .none): return .rotateOut
+        case (.none, .some): return .rotateIn
         case (.none, .none): return .none
         }
     }
@@ -203,15 +238,16 @@ public enum RoleGesture: Equatable, Sendable {
     /// paint: a bout end empties the live table before the sweep grid stands up
     /// in its place, and for that single frame every attacker's sword has no
     /// reason to exist. Asking `between` alone answers `.none` both times - so
-    /// the fade-out started by the first change was never taken back, and its
-    /// own task then blanked a seat that had never stopped wearing its mark.
+    /// the exit started by the first change was never taken back, and its own
+    /// task then blanked a seat that had never stopped wearing its mark.
     /// (That is the sword that vanished instead of landing on the next opener:
     /// the shield survived the same blink only because its kind changed again
-    /// afterwards, which gave it a `.fadeIn`.)
+    /// afterwards, which gave it a `.rotateIn`.)
     ///
     /// `settled` is "this view is at rest showing `shown`" - no half-played
-    /// fade or flip. Same mark and settled is genuinely nothing to do; same
-    /// mark and UNsettled is the blink, and the answer is to put it back.
+    /// gesture, and none scheduled. Same mark and settled is genuinely nothing
+    /// to do; same mark and UNsettled is the blink, and the answer is to put it
+    /// back.
     public static func resolve(shown: RoleMarkKind?, next: RoleMarkKind?,
                                settled: Bool) -> RoleGesture {
         if shown == next { return settled ? .none : .restore }
@@ -230,14 +266,22 @@ public enum RoleGesture: Equatable, Sendable {
 /// waited for `onAppear` would be missing from every snapshot.
 public struct FRoleCoin: View {
     public let kind: RoleMarkKind?
-    /// This seat's mark is currently in the air as a flight ghost - draw
-    /// nothing, and do not fade, or the hand-off would show two of it.
-    public let flying: Bool
+    /// This seat's mark is IN THE AIR as a flight ghost. Draw nothing where it
+    /// stood, and do not animate it away - the ghost already is that motion, and
+    /// a rotate-out here would show the mark leaving twice.
+    public let departing: Bool
+    /// A mark is flying TO this seat. Whatever is worn here turns away in the
+    /// last moments of the flight, and the arriving mark is stood up the instant
+    /// the ghost lands (`RoleFlightsLayer` is what the eye is following, so the
+    /// hand-over must be a swap, not a second animation).
+    public let arriving: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var shown: RoleMarkKind?
     @State private var flip: CGFloat = 1
-    @State private var fade: Double = 1
+    /// A gesture is scheduled but has not started (the make-way delay). Counts
+    /// as UNsettled - see `RoleGesture.resolve`.
+    @State private var waiting = false
     /// Claims the half-finished gesture. A mark can change again mid-flip (a
     /// bout that ends on the beat after a good), and the older Task must not
     /// wake up and finish INTO the mark the newer one already swapped past -
@@ -245,12 +289,29 @@ public struct FRoleCoin: View {
     /// A token rather than re-reading `kind`, because the Task captured this
     /// view's value and its `kind` is frozen at the moment it was made.
     @State private var gesture = 0
+    /// The inputs as of the last `advance`. All three are read together, because
+    /// which gesture to make depends on which of them MOVED - and SwiftUI
+    /// delivers one `onChange` per property in an order this view must not
+    /// depend on (the board sets the roles and the flying seats in the same
+    /// tick, so a per-property reaction would see half a hand-off).
+    @State private var last: Input
 
-    public init(kind: RoleMarkKind?, flying: Bool = false) {
+    private struct Input: Equatable {
+        var kind: RoleMarkKind?
+        var departing: Bool
+        var arriving: Bool
+        /// What the seat should be WEARING for this input: nothing while a mark
+        /// is on its way here, since the ghost is that mark until it lands.
+        var target: RoleMarkKind? { arriving ? nil : kind }
+    }
+
+    public init(kind: RoleMarkKind?, departing: Bool = false, arriving: Bool = false) {
         self.kind = kind
-        self.flying = flying
-        _shown = State(initialValue: kind)
-        _fade = State(initialValue: kind == nil ? 0 : 1)
+        self.departing = departing
+        self.arriving = arriving
+        let seed = Input(kind: kind, departing: departing, arriving: arriving)
+        _shown = State(initialValue: seed.departing ? nil : seed.target)
+        _last = State(initialValue: seed)
     }
 
     public var body: some View {
@@ -264,32 +325,82 @@ public struct FRoleCoin: View {
         // seat that is not currently wearing anything.
         .frame(width: FRoleMark.rowHeight, height: FRoleMark.rowHeight)
         .scaleEffect(x: flip, y: 1, anchor: .center)
-        .opacity(flying ? 0 : fade)
-        // The hand-off is a swap of one drawn thing for another at the same
-        // instant; interpolating it would show the mark ghosting back in under
-        // the one that just landed.
-        .animation(nil, value: flying)
-        .onChange(of: kind) { next in advance(to: next) }
+        .onChange(of: Input(kind: kind, departing: departing, arriving: arriving)) { now in
+            advance(to: now)
+        }
     }
 
-    /// At rest showing `shown`: no half-played fade or flip to take back.
-    private var settled: Bool { fade == (shown == nil ? 0 : 1) && flip == 1 }
+    /// At rest showing `shown`: no half-played gesture, and none waiting to start.
+    private var settled: Bool { flip == 1 && !waiting }
 
-    private func advance(to next: RoleMarkKind?) {
-        let gest = RoleGesture.resolve(shown: shown, next: next, settled: settled)
-        guard gest != .none else { return }
-        // Claims whatever was in flight, so a fade-out's task cannot wake up and
-        // blank the mark this call just decided to keep.
+    /// Claim whatever gesture is in flight, so an older task cannot wake up and
+    /// blank a mark this call has decided to keep.
+    private func claim() -> Int {
         gesture += 1
-        let mine = gesture
-        guard !reduceMotion else { shown = next; fade = next == nil ? 0 : 1; flip = 1; return }
+        waiting = false
+        return gesture
+    }
+
+    private func advance(to now: Input) {
+        let was = last
+        last = now
+        guard !reduceMotion else {
+            _ = claim()
+            shown = now.departing ? nil : now.target
+            flip = 1
+            return
+        }
+
+        // THE GHOST TOOK IT. Instant, never animated: the mark this seat was
+        // wearing is now the one sailing across the table, and easing it away
+        // here would be the same object leaving twice at two different speeds.
+        // A seat that is losing one mark and gaining another in the same beat
+        // (2p: the defender becomes the opener and the opener becomes the
+        // defender) blanks here and stays blank, because `target` is nil while
+        // `arriving` holds.
+        if now.departing && !was.departing {
+            let mine = claim()
+            shown = nil
+            flip = 1
+            // A pass's PREVIOUS defender: the shield flies away and a sword
+            // rotates in behind it, in the same beat. The owner asked for these
+            // two to happen together, and they read as cause and effect.
+            if let t = now.target { rotateIn(t, mine) }
+            return
+        }
+
+        // THE GHOST LANDED. Also instant, and for the mirror reason: the flight
+        // layer has just put this mark down on this pad, so the real one stands
+        // up in the same frame the ghost is taken away in.
+        if was.arriving && !now.arriving {
+            _ = claim()
+            shown = now.departing ? nil : now.target
+            flip = 1
+            return
+        }
+
+        // SOMETHING IS ON ITS WAY HERE. Turn what we are wearing away, timed so
+        // the collapse finishes as the ghost touches down - the owner's "they
+        // should rotate out AND the sword will land on them". Nothing to turn
+        // away (a bare seat receiving a mark) simply waits.
+        if now.arriving && !was.arriving {
+            let mine = claim()
+            guard shown != nil else { return }
+            waiting = true
+            rotateOut(mine, after: roleMakeWayDelay)
+            return
+        }
+
+        // Nothing is flying: the ordinary gesture between two marks.
+        let gest = RoleGesture.resolve(shown: shown, next: now.target, settled: settled)
+        guard gest != .none else { return }
+        let mine = claim()
         switch gest {
         case .restore:
             // Never animated: the mark was already there and nothing about it
             // changed - the only thing that moved was a gesture that turned out
-            // to be wrong. Easing it back would be a fade nobody asked for.
-            shown = next
-            fade = next == nil ? 0 : 1
+            // to be wrong. Easing it back would be a motion nobody asked for.
+            shown = now.target
             flip = 1
         case .flip:
             // Both faces of one coin: collapse, swap at the edge, open out.
@@ -297,25 +408,47 @@ public struct FRoleCoin: View {
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: UInt64(roleFlipHalf * 1_000_000_000))
                 guard mine == gesture else { return }
-                shown = next
-                fade = 1
+                shown = now.target
                 withAnimation(.easeOut(duration: roleFlipHalf)) { flip = 1 }
             }
-        case .fadeOut:
-            // The role ended. Nothing travelled, so it fades where it stood.
-            withAnimation(.easeOut(duration: roleFadeTime)) { fade = 0 }
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: UInt64(roleFadeTime * 1_000_000_000))
-                guard mine == gesture else { return }
-                shown = nil
-            }
-        case .fadeIn:
-            shown = next
-            flip = 1
-            fade = 0
-            withAnimation(.easeOut(duration: roleFadeTime)) { fade = 1 }
+        case .rotateOut:
+            rotateOut(mine, after: 0)
+        case .rotateIn:
+            if let t = now.target { rotateIn(t, mine) }
         case .none:
             break
+        }
+    }
+
+    /// Half a coin, turning edge-on and gone. `delay` is the make-way pause a
+    /// seat expecting an arrival takes first; zero for a role that simply ended.
+    private func rotateOut(_ mine: Int, after delay: Double) {
+        Task { @MainActor in
+            if delay > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                guard mine == gesture else { return }
+                waiting = false
+            }
+            withAnimation(.easeIn(duration: roleFlipHalf)) { flip = 0.001 }
+            try? await Task.sleep(nanoseconds: UInt64(roleFlipHalf * 1_000_000_000))
+            guard mine == gesture else { return }
+            // Reset the scale as the mark goes, not with it: `flip` is how this
+            // view says "mid-gesture", and a seat left at width zero with
+            // nothing in it would read as unsettled forever.
+            shown = nil
+            flip = 1
+        }
+    }
+
+    /// The other half, coming round from edge-on.
+    private func rotateIn(_ mark: RoleMarkKind, _ mine: Int) {
+        shown = mark
+        flip = 0.001
+        withAnimation(.easeOut(duration: roleFlipHalf)) { flip = 1 }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(roleFlipHalf * 1_000_000_000))
+            guard mine == gesture else { return }
+            flip = 1
         }
     }
 }

@@ -39,10 +39,19 @@ public let flightGap: Double = 0.025       // web inter-event queue gap = 25ms
 /// card that decided the bout is on the table for about a frame. The hold is a
 /// beat of NOTHING moving, which is the only thing that makes a board readable.
 ///
-/// Expressed against `flightTime` rather than as a bare 0.45 so it scales with
+/// Expressed against `flightTime` rather than as a bare 1.5 so it scales with
 /// HARNESS_SLOWMO like every other duration here - a filmed sequence keeps its
 /// proportions instead of the hold shrinking to nothing as the flights stretch.
-public var boutEndHold: Double { flightTime * 0.9 }
+///
+/// ROUND 20 took it from 0.9x to 3x a flight - 1.5 seconds at the shipping
+/// `flightTime` (owner: "for last defense, still not enough of a pause in
+/// animation when they cover. Both for finish and for the other one. Make it
+/// like 1.5 second"). "Both" is the two ends `holdsAfter` scans for: the bout
+/// that closes into the DISCARD, and the last one of a game, which closes into
+/// the TRASH. Three flights' worth is deliberately longer than anything else on
+/// this board: the point is that the eye STOPS, and half a flight was still
+/// being read as part of the motion around it.
+public var boutEndHold: Double { flightTime * 3 }
 
 /// The deck pile's rect in `boardSpace` (draw source / flip source).
 public struct DeckFrameKey: PreferenceKey {

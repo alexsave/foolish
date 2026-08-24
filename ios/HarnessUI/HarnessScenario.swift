@@ -387,6 +387,14 @@ extension HarnessModel {
     ///  - `goodend`: the arriving move is the closing GOOD over a fully covered
     ///    table - discard sweep, refills, role hand-off, the longest stream an
     ///    arrival can interrupt (run with HARNESS_PLAYERS=2 so one good closes).
+    ///  - `coverend` (round 20): the arriving move is the COVER THAT CLOSES ITS
+    ///    OWN BOUT - the defender's last cards go down and the table goes with
+    ///    them in one apply. The owner's "on the last cover for a set, you need
+    ///    to show the cover animation, then pause then sweep. I wasn't seeing
+    ///    the cover animation on a replay." It is the only kind that has to be
+    ///    played DEEP into a game to reach (see the warmup below), because the
+    ///    kernel closes a bout on a cover for exactly one reason: the defender
+    ///    has run out of cards.
     /// The kinds beyond `attack` exist because the first cut of this scenario
     /// bailed out silently when the fixed six-step warmup happened not to leave
     /// the wanted move legal - so the cover and round-transition arrivals (the
@@ -401,7 +409,7 @@ extension HarnessModel {
 
         let kind = ProcessInfo.processInfo.environment["HARNESS_ARRIVE_KIND"] ?? "attack"
         let want: MoveType = switch kind {
-        case "cover": .cover
+        case "cover", "coverend": .cover
         case "pickup": .pickup
         case "goodend": .good
         default: .attack
@@ -417,8 +425,33 @@ extension HarnessModel {
                 else { return nil }
             }
             for s in 0..<n {
-                if (await MessageKernel.shared.residentLegal(seat: s))
-                    .contains(where: { $0.type == want }) { return s }
+                let legal = await MessageKernel.shared.residentLegal(seat: s)
+                // ROUND 20, `coverend`: the cover must CLOSE the bout, which the
+                // kernel decides on exactly one condition - the defender's hand
+                // is empty afterwards (game.c handle_cover, `def->hand_count ==
+                // 0`). So the move being waited for is a cover that spends the
+                // defender's LAST cards, and any other cover is merely a cover.
+                if kind == "coverend" {
+                    // …and the DECK must still hold something. The same branch
+                    // that discards the table refills the hands right after it
+                    // (game.c `refill_player_hands`), so with an empty deck the
+                    // defender simply goes out - which in a 2p game is the game
+                    // ending, not a bout ending, and seals as a FINISHED chain
+                    // the live surface refuses to decode as a board. The move
+                    // being posed is a round transition, so it needs a round to
+                    // transition into.
+                    //
+                    // With an empty deck it still works at 3+ seats, where one
+                    // player going out leaves a game to carry on - which is the
+                    // commoner shape by far, since a defender only runs out at
+                    // all once the deck has.
+                    let held = v.players.first { $0.seat == s }?.handCount ?? -1
+                    let stillIn = v.players.filter { !$0.isOut }.count
+                    if v.deckCount > 0 || stillIn > 2,
+                       legal.contains(where: { $0.type == .cover && $0.cards.count == held }) { return s }
+                    continue
+                }
+                if legal.contains(where: { $0.type == want }) { return s }
             }
             return nil
         }
@@ -434,18 +467,41 @@ extension HarnessModel {
         let minWarmup = Int(ProcessInfo.processInfo.environment["HARNESS_ARRIVE_WARMUP"] ?? "4") ?? 4
         var lastSeat = 0
         var steps = 0
-        while steps < 40 {
-            if steps >= minWarmup, await wantReady() != nil { break }
-            var acted = false
-            for s in 0..<n {
-                let legal = await MessageKernel.shared.residentLegal(seat: s)
-                if let m = legal.first(where: { $0.type != .wait }) {
-                    try? await MessageKernel.shared.apply(seat: s, move: m)
-                    lastSeat = s; acted = true; break
-                }
+        // ROUND 20: a bout-ending COVER is an ENDGAME shape - it needs a
+        // defender down to their last cards - so `coverend` drives far deeper
+        // than the other kinds, and PREFERS covering all the way there (the same
+        // two tricks MessageBoutEndHoldTests.findClosingCover uses to reach the
+        // same board offline: round after round of pickups never gets there).
+        let cap = kind == "coverend" ? 400 : 40
+        // …and if one whole game goes by without producing the board, RE-DEAL.
+        // Not every deal contains a bout-ending cover at all (the defender has
+        // to run out on a table they can fully answer), so a single game is a
+        // coin toss - the offline finder loops 40 seeds for the same reason. Any
+        // other kind takes exactly one pass, as it always has.
+        let deals = kind == "coverend" ? 40 : 1
+        deal: for salt in 0..<deals {
+            if salt > 0 {
+                let reseed = Data((0..<32).map { UInt8(truncatingIfNeeded: $0 &* 29 &+ salt) | 1 })
+                guard (try? await MessageKernel.shared.newGame(seed: reseed, players: n)) != nil
+                else { break }
+                steps = 0
             }
-            if !acted { break }
-            steps += 1
+            while steps < cap {
+                if steps >= minWarmup, await wantReady() != nil { break deal }
+                var acted = false
+                for s in 0..<n {
+                    let legal = await MessageKernel.shared.residentLegal(seat: s)
+                    let pick = kind == "coverend"
+                        ? (legal.first { $0.type == .cover } ?? legal.first { $0.type != .wait })
+                        : legal.first { $0.type != .wait }
+                    if let m = pick {
+                        try? await MessageKernel.shared.apply(seat: s, move: m)
+                        lastSeat = s; acted = true; break
+                    }
+                }
+                if !acted { break }
+                steps += 1
+            }
         }
         guard let view = await MessageKernel.shared.residentView(viewer: -1),
               let opened = try? await MessageKernel.shared.seal(
@@ -505,15 +561,21 @@ extension HarnessModel {
                 .map { MessageTurnController.firstEight(hex: $0.digest) }
                 ?? Data(repeating: 0, count: 8)
             var acted: (seat: Int, move: Move)?
+            let held = await MessageKernel.shared.residentView(viewer: -1)
             for s in 0..<n where acted == nil {
                 guard s != watcher else { continue }
                 let legal = await MessageKernel.shared.residentLegal(seat: s)
                 // The first arrival is the KIND asked for; the rest are whatever
                 // that seat can legally do next, which is what a real thread
-                // delivers.
-                if let m = legal.first(where: { i == 0 ? $0.type == want : $0.type != .wait }) {
-                    acted = (s, m)
-                }
+                // delivers. Round 20: `coverend` picks the cover that spends the
+                // defender's LAST cards, since any other cover leaves the table
+                // standing and poses a different arrival entirely.
+                let mine = held?.players.first { $0.seat == s }?.handCount ?? -1
+                let m = i > 0 ? legal.first { $0.type != .wait }
+                    : kind == "coverend"
+                        ? legal.first { $0.type == .cover && $0.cards.count == mine }
+                        : legal.first { $0.type == want }
+                if let m { acted = (s, m) }
             }
             // Nobody but the watcher can act (a 2p goodend hands the next bout
             // to the very seat that is watching): the thread has delivered all

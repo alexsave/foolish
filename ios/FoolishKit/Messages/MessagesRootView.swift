@@ -106,7 +106,7 @@ public struct MessagesRootView: View {
     /// extension has no `UIApplication`, so the host passes its
     /// `extensionContext.open` down; the no-op default keeps the harness and
     /// previews, which have nowhere to go, compiling and inert.
-    let onOpenURL: (URL) -> Void
+    let onOpenURL: (URL) async -> Bool
 
     /// Round-9: bumped by the host (didCancelSending) when the human deletes
     /// the staged bubble from the input field - the surface drops its own
@@ -138,7 +138,7 @@ public struct MessagesRootView: View {
                 onAnnounceLeave: @escaping (String) -> Void = { _ in },
                 onSend: @escaping (Data, Int, Bool) async -> Void,
                 onUnstage: @escaping () -> Void = {},
-                onOpenURL: @escaping (URL) -> Void = { _ in }) {
+                onOpenURL: @escaping (URL) async -> Bool = { _ in false }) {
         self.payloadURL = payloadURL; self.style = style; self.senderIsLocal = senderIsLocal
         self.startNewGame = startNewGame; self.newGameToken = newGameToken; self.sentToken = sentToken
         self.sentPayload = sentPayload
@@ -393,7 +393,7 @@ private struct GameSurface: View {
     let onAnnounceLeave: (String) -> Void
     let onSend: (Data, Int, Bool) async -> Void
     let onUnstage: () -> Void
-    let onOpenURL: (URL) -> Void
+    let onOpenURL: (URL) async -> Bool
 
     /// A phase-0/handoff lobby the extension shows instead of the board (§5.2).
     private struct Lobby { let env: MessageEnvelope; let payload: Data }
@@ -561,6 +561,92 @@ private struct GameSurface: View {
             .onTapGesture { showDiagnostics = true; healthAlarm = nil }
             .transition(.move(edge: .top).combined(with: .opacity))
         }
+    }
+
+    // MARK: - the stale-branch gate (round 20)
+
+    /// The newer chain this board was found to be behind, kept so the bar below
+    /// has something to open. Cleared whenever an adopt comes back live.
+    @State private var supersededBy: Data?
+    /// The verdict from the last `adopt`, spent by `seatOnBoard` - which is
+    /// where the controller finally exists, and is reached from the name gate
+    /// and the DEBUG seat picker as well as straight from `adopt`.
+    @State private var staleBranch = false
+
+    /// THE BAR OVER A READ-ONLY BOARD. Says why nothing can be tapped, and
+    /// offers the one thing that fixes it.
+    ///
+    /// Offering the newer chain by BUTTON rather than adopting it silently is
+    /// the whole difference between this and the round-7 payload cache the owner
+    /// removed: the extension still renders exactly the bubble you tapped, until
+    /// you ask it not to.
+    @ViewBuilder private func supersededBar(_ c: MessageTurnController) -> some View {
+        if c.superseded {
+            HStack(spacing: 8) {
+                Text(FStrings.t("ios.msg.stale"))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.7)
+                Spacer(minLength: 4)
+                if supersededBy != nil {
+                    FButton(FStrings.t("ios.msg.opennewest"), kind: .wood, compact: true) {
+                        Task { await openNewest() }
+                    }
+                }
+            }
+            .padding(.horizontal, FSpace.s)
+            .padding(.vertical, 5)
+            .background(FColor.accent.opacity(0.94))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .padding(.horizontal, FSpace.s)
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+
+    /// Take the newer chain, through the SAME `adopt` a tap or an arrival goes
+    /// through - so seat identity, the phase-0 lobby route and the open-replay
+    /// all behave exactly as they would have if this bubble had been tapped.
+    private func openNewest() async {
+        guard let bytes = supersededBy,
+              let env = try? await MessageEnvelope.decode(payload: bytes, viewer: -1) else { return }
+        AnimLog.say("surface opens the newest chain by request")
+        await adopt(winner: bytes, env: env)
+    }
+
+    /// IS THIS BOARD A BRANCH OFF AN OLD BUBBLE, and record it if it is not.
+    ///
+    /// One question asked of one authority: the kernel's Rule P, against the
+    /// newest chain this device has already seen for the same game
+    /// (`MessageGameStore.latestChain`). A strictly-preferred chain on file
+    /// means the table has moved past what is being opened, which is the owner's
+    /// cheat and also the ordinary accident of tapping an old bubble.
+    ///
+    /// FAILS OPEN, everywhere. Nothing on file, a store with no App Group, a
+    /// kernel call that threw - all answer "not superseded" and record what they
+    /// can. A false positive here is a game that cannot be played, which is a
+    /// far worse defect than the one this prevents.
+    @discardableResult
+    private func rankAgainstHighWater(_ payload: Data, env: MessageEnvelope) async -> Bool {
+        let store = MessageGameStore.shared
+        guard let known = store.latestChain(gameId: env.gameId, chatKey: chatKey),
+              known != payload else {
+            store.setLatestChain(gameId: env.gameId, chatKey: chatKey, payload: payload)
+            supersededBy = nil
+            return false
+        }
+        // > 0 means the SECOND argument wins, so this asks "does what I already
+        // have beat what is being opened?" - the same call `maybeAdoptIncoming`
+        // makes, in the other direction.
+        let pref = (try? await MessageKernel.shared.preferred(payload, known)) ?? -1
+        if pref > 0 {
+            AnimLog.say("board is behind - a newer chain for game \(env.gameId) is on file")
+            supersededBy = known
+            return true
+        }
+        store.setLatestChain(gameId: env.gameId, chatKey: chatKey, payload: payload)
+        supersededBy = nil
+        return false
     }
 
     /// Fold an ARRIVING bubble into the live surface, Rule P deciding (§7.2).
@@ -823,6 +909,12 @@ private struct GameSurface: View {
                 // instance, so the id is stable and the in-progress board survives
                 // (same guarantee as before). See reloadForInput / load.
                 .id(ObjectIdentifier(controller))
+                // ROUND 20: the board is read-only because a newer chain for this
+                // game has already been through this device. An overlay rather
+                // than a row in the stack, so the bar appearing does not
+                // re-lay-out the board underneath it - a stale board is still a
+                // board, and the cards must not move because it grew a caption.
+                .overlay(alignment: .top) { supersededBar(controller) }
         } else if let lob = lobby {
             LobbyView(env: lob.env, mySeat: lobbySeat(lob.env),
                       nickname: MessageGameStore.shared.nickname,
@@ -1567,6 +1659,12 @@ private struct GameSurface: View {
         // (cleared) whether it matches or not, so a stale marker can never
         // silence a later genuine replay.
         let justSent = MessageGameStore.shared.consumeJustSent(matching: winner)
+        // ROUND 20: is this bubble the latest this device has seen of this game,
+        // or a branch off something older? Asked BEFORE any early return below,
+        // so every route to a board carries the same answer, and stored in
+        // `@State` because `seatOnBoard` is where the controller finally exists
+        // (and is reached from the name gate and the seat picker too).
+        staleBranch = await rankAgainstHighWater(winner, env: env)
         // Round 7: `prevPayload` (the previously-cached chain) is gone - the
         // open-replay was already resolved purely from the adopted chain by the
         // kernel (MessageTurnController.begin -> lastMoveEvents), never from a
@@ -1677,12 +1775,18 @@ private struct GameSurface: View {
         // controller - there the teardown is honest, because it really is a
         // different board.
         if let live = controller, live.canAdopt(seat: seat, gameId: env.gameId) {
+            // Round 20: re-asked on every adopt, in BOTH directions - the newest
+            // bubble arriving on a stale board is what hands it the right to
+            // play again, and it must not have to be re-tapped for that.
+            live.setSuperseded(staleBranch)
             Task { await live.adopt(payload: winner, parent: env, quietOpen: quietOpen) }
             return
         }
-        controller = MessageTurnController(parentPayload: winner, parent: env, mySeat: seat,
-                                           prevPayload: prevPayload,
-                                           suppressOpenReplay: quietOpen)
+        let fresh = MessageTurnController(parentPayload: winner, parent: env, mySeat: seat,
+                                          prevPayload: prevPayload,
+                                          suppressOpenReplay: quietOpen)
+        fresh.setSuperseded(staleBranch)
+        controller = fresh
     }
 
     /// The human answered the name gate: persist the name, then seat them. The
@@ -1713,7 +1817,9 @@ private struct GameSurface: View {
     /// dev aid.
     private func choose(seat: Int, from a: (env: MessageEnvelope, payload: Data)) async {
         cache(seat: seat, env: a.env, payload: a.payload)
-        controller = MessageTurnController(parentPayload: a.payload, parent: a.env, mySeat: seat)
+        let c = MessageTurnController(parentPayload: a.payload, parent: a.env, mySeat: seat)
+        c.setSuperseded(staleBranch)   // round 20 - see seatOnBoard
+        controller = c
         ambiguous = nil
     }
 

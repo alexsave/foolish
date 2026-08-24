@@ -47,7 +47,27 @@ public struct FCard: View {
     private static let faceWhite = Color.white
     private static let redSuit = Color(hex: 0xDC2626)
     private static let blackSuit = Color(hex: 0x0A0A0A)
-    private static let selRed = Color(hex: 0xE0201C)
+    /// ROUND 20, the owner: "make card select highlight more obvious. Brighter
+    /// and slightly wider, without messing with card position. So once selected,
+    /// the card should be in the exact same spot as before only with a larger
+    /// thickness. Border thickness should not affect position."
+    ///
+    /// #FF2A22 over the old #E0201C - a step brighter, and still the same red at
+    /// a glance, so the affordance did not change identity between builds. The
+    /// width goes 2.5 -> `selWidth` at the same time, and between them that is
+    /// the whole highlight: see `edge` for why there is no halo behind it.
+    private static let selRed = Color(hex: 0xFF2A22)
+    /// THE two widths, side by side, because the whole point of the ask is the
+    /// relationship between them.
+    ///
+    /// POSITION IS SAFE BY CONSTRUCTION, not by being careful: both are drawn
+    /// with `strokeBorder`, which strokes INSIDE the shape's own bounds (a
+    /// plain `stroke` would straddle the edge and spill half its width outward).
+    /// The card's frame is fixed by `.frame(width:height:)` above either way, so
+    /// widening this eats a little more of the face and moves nothing. The glow
+    /// is a `shadow`, which never takes part in layout at all.
+    static let selWidth: CGFloat = 4
+    static let restWidth: CGFloat = 2
     /// Round-7 #3: the dark-mode outline. The owner's round-6 spec said white;
     /// round-7 revised it to "dark gray". Deliberately darker than the dark
     /// wool field (~0x5D5D62) so a black card still has a visible edge against
@@ -187,9 +207,24 @@ public struct FCard: View {
     // hunts for during a drag does not change identity when they toggle
     // appearance mid-game.
     private var border: some View {
+        Self.edge(selected: selected, radius: radius, resting: ink.border)
+    }
+
+    /// THE card edge, selected or at rest - one builder, so the face and the
+    /// fern back cannot end up wearing two different rings (they did drift once
+    /// already, which is why `back` reaches for this too).
+    /// NO GLOW (owner, on seeing the first cut: "no glowing selection please").
+    /// A lit halo was tried and is not what this wants: rendered, the soft pass
+    /// bled INWARD across the white face - a `strokeBorder`'s interior is
+    /// transparent, so its own shadow shows straight through it - and a card
+    /// with a pink wash inside its edge reads as a smudged card, not a picked
+    /// one. The ring alone does the whole job: brighter, and half again as
+    /// thick as the one it replaced.
+    @ViewBuilder
+    fileprivate static func edge(selected: Bool, radius: CGFloat, resting: Color) -> some View {
         RoundedRectangle(cornerRadius: radius)
-            .strokeBorder(selected ? Self.selRed : ink.border,
-                          lineWidth: selected ? 2.5 : 2)
+            .strokeBorder(selected ? selRed : resting,
+                          lineWidth: selected ? selWidth : restWidth)
     }
 
     // MARK: back — the baked fern on black, framed by the SAME edge the face
@@ -221,8 +256,7 @@ public struct FCard: View {
             .overlay(
                 // Same edge as a face-up card (`ink.border`): deep red in light,
                 // gray in dark - so the deck / opponent fans match the hand.
-                RoundedRectangle(cornerRadius: radius)
-                    .strokeBorder(selected ? Self.selRed : ink.border, lineWidth: selected ? 2.5 : 2)
+                Self.edge(selected: selected, radius: radius, resting: ink.border)
             )
     }
 

@@ -29,14 +29,22 @@ public struct FSeatBadge: View {
     /// only ever draw a seat - the bubble snapshot, the gallery, the rules -
     /// where there is no `boardSpace` to publish into and nothing flies.
     public let seat: Int?
+    /// This seat OPENS the bout - it wears the tinted sword rather than the
+    /// plain one (round 20; see `RoleMarkKind.leadSword`). Only meaningful with
+    /// `isAttacker`, and ignored while defending or after saying good.
+    public let opensBout: Bool
     /// This seat's mark is in the air right now as a flight ghost, so the badge
     /// must not draw its own copy (FRoleMotion).
-    public let markFlying: Bool
+    public let markDeparting: Bool
+    /// A mark is flying TO this seat: whatever it wears turns away as the ghost
+    /// arrives, and the new mark stands up when it lands (FRoleMotion).
+    public let markArriving: Bool
 
     public init(name: String, handCount: Int, isDefender: Bool = false,
                 isAttacker: Bool = false, saidGood: Bool = false,
                 thinking: Bool = false, isOut: Bool = false, onLight: Bool = false,
-                seat: Int? = nil, markFlying: Bool = false) {
+                seat: Int? = nil, opensBout: Bool = false,
+                markDeparting: Bool = false, markArriving: Bool = false) {
         self.name = name
         self.handCount = handCount
         self.isDefender = isDefender
@@ -46,7 +54,9 @@ public struct FSeatBadge: View {
         self.isOut = isOut
         self.onLight = onLight
         self.seat = seat
-        self.markFlying = markFlying
+        self.opensBout = opensBout
+        self.markDeparting = markDeparting
+        self.markArriving = markArriving
     }
 
     // Mini back geometry (web CardsVisual: 25pt wide, spread 10pt/card, count
@@ -181,7 +191,7 @@ public struct FSeatBadge: View {
     var mark: RoleMarkKind? {
         if saidGood { return .check }
         if isDefender { return .shield }
-        if isAttacker { return .sword }
+        if isAttacker { return opensBout ? .leadSword : .sword }
         return nil
     }
 
@@ -192,7 +202,7 @@ public struct FSeatBadge: View {
         // bubble snapshots) and painted in the shared `FRoleInk`.
         HStack(spacing: FSpace.xs) {
             if thinking { ThinkingDots() }
-            FRoleCoin(kind: mark, flying: markFlying)
+            FRoleCoin(kind: mark, departing: markDeparting, arriving: markArriving)
                 .background(GeometryReader { g in
                     Color.clear.preference(
                         key: RoleMarkFramesKey.self,

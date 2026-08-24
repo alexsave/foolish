@@ -201,6 +201,52 @@ public final class MessageGameStore {
     /// row to the current chatKey, so one tap heals the scoped read too.
     public func seatForBubble(gameId: String) -> Int? { allSeats()[gameId]?.seat }
 
+    // MARK: the high-water chain (round 20)
+
+    /// ROUND 20, the owner: "prevent offline players from staging moves. They
+    /// might be trying to cheat by holding an older state and branching from it
+    /// instead of live game."
+    ///
+    /// THE NEWEST CHAIN THIS DEVICE HAS SEEN for a game - the mark a freshly
+    /// opened bubble is weighed against, so a board built on an OLD bubble can
+    /// be recognised as a branch and made read-only (GameSurface.rankAgainst
+    /// HighWater). Messages offers no way to enumerate a transcript, so
+    /// "is this the latest?" has no answer at all without a note of what has
+    /// already been through this device.
+    ///
+    /// NOT the round-7 payload cache coming back. That one decided WHAT TO
+    /// RENDER, and the owner removed it because the extension has to show
+    /// exactly the bubble you tapped. This one never renders anything: it
+    /// gates staging, and offers a button. Everything §6/§7 promises still
+    /// holds if it is lost - a device with no note simply trusts every bubble
+    /// it opens, which is precisely the behaviour before this round.
+    ///
+    /// Keyed by game AND chat, like `seat(gameId:chatKey:)`, and stored as the
+    /// raw payload because Rule P is a comparison of whole chains.
+    private let latestKey = "fmsg.latest.v1"
+
+    public func latestChain(gameId: String, chatKey: String) -> Data? {
+        guard let row = allLatest()["\(chatKey)|\(gameId)"] else { return nil }
+        return Data(base64Encoded: row)
+    }
+
+    /// Record `payload` as the newest chain seen for this game. THE CALLER has
+    /// already decided it wins (Rule P lives in the kernel, and this type does
+    /// no async work) - this only writes what it is told.
+    public func setLatestChain(gameId: String, chatKey: String, payload: Data) {
+        var map = allLatest()
+        map["\(chatKey)|\(gameId)"] = payload.base64EncodedString()
+        guard let data = try? JSONEncoder().encode(map) else { return }
+        defaults?.set(data, forKey: latestKey)
+    }
+
+    private func allLatest() -> [String: String] {
+        guard let data = defaults?.data(forKey: latestKey),
+              let map = try? JSONDecoder().decode([String: String].self, from: data)
+        else { return [:] }
+        return map
+    }
+
     /// ROUND 7: the preferred-chain record is gone; nothing is stored per game but
     /// the seat (`seat(gameId:chatKey:)`). Retained as a no-op returning nil so the
     /// §5/§6/§7 call sites compile and behave as "nothing cached".

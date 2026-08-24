@@ -356,8 +356,36 @@ public final class MessageTurnController: ObservableObject {
     /// progresses is to send the deal to whoever IS the first attacker. Without
     /// this, a creator who doesn't hold the lowest trump is stuck on a board with
     /// no move and no send (B4 bug: "Start game" left you unable to send).
-    public var canStage: Bool { canSend || (isGenesis && !iCanAct) }
-    public var iCanAct: Bool { !legal.contains { $0.type == .wait } && !legal.isEmpty }
+    public var canStage: Bool { !superseded && (canSend || (isGenesis && !iCanAct)) }
+    public var iCanAct: Bool {
+        !superseded && !legal.contains { $0.type == .wait } && !legal.isEmpty
+    }
+
+    /// ROUND 20: this board is a BRANCH OFF AN OLD BUBBLE. A chain that beats it
+    /// under Rule P has already been through this device, so whatever is played
+    /// here is played onto a state the table has moved past (owner: "prevent
+    /// offline players from staging moves. They might be trying to cheat by
+    /// holding an older state and branching from it instead of live game").
+    ///
+    /// READ-ONLY, not hidden: the board still renders, because looking back at
+    /// an old bubble is a legitimate thing to do and always has been. What it
+    /// stops is ACTING - `iCanAct` and `canStage` are the two questions the
+    /// whole board is built out of, so standing them down takes the action bar,
+    /// the cover highlights, the drop targets and the Send path with them, in
+    /// one place rather than five.
+    ///
+    /// Set from outside (GameSurface owns the comparison; the kernel owns Rule
+    /// P) and re-asked on every adopt, so the newest bubble arriving on a stale
+    /// board hands it back the right to play. Defaults to FALSE and every path
+    /// that cannot answer leaves it there: a device with nothing on file, or a
+    /// kernel call that threw, must never be the reason a game cannot be played.
+    @Published public private(set) var superseded = false
+
+    public func setSuperseded(_ v: Bool) {
+        guard superseded != v else { return }
+        superseded = v
+        AnimLog.say("board \(v ? "SUPERSEDED - read only" : "is live again")")
+    }
     /// Is the GAME over - not "does the board show a finished game". They differ
     /// while a settlement is held: a cover that put me out has been applied and
     /// must be SEALED as a finished game (phase 3), while the board is still
@@ -675,6 +703,16 @@ public final class MessageTurnController: ObservableObject {
 
     public func apply(_ move: Move) async {
         lastChangeWasUndo = false
+        // ROUND 20: a board branching off an old bubble may not be played on.
+        // Enforced here as well as displayed (`superseded` stands `iCanAct`
+        // down, which is what takes the buttons and the drop targets away) for
+        // the same reason the pickup hold below is: this is the one door every
+        // gesture, every dev path and every future shortcut has to come through.
+        if superseded {
+            lastRejectReason = 0
+            rejectTick += 1
+            return
+        }
         // ROUND 16: the hold, enforced and not merely displayed. The button is
         // already hidden while `pickupHold` stands, so this only fires on a path
         // the UI does not draw (a drop gesture, the dev harness, a future
