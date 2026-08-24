@@ -94,6 +94,16 @@ static uint8_t g_msg_opening = MSG_NO_OPENING;
 static uint32_t g_msg_carry_key  = 0;
 static uint8_t  g_msg_carry_fool = MSG_NO_FOOL;
 
+// THE RULES THE RESIDENT GAME IS PLAYED UNDER, kept beside the seed for the same
+// reason: a re-deal (fio_reseat_game, the rematch Start) rebuilds the Game from
+// the locked seed and would otherwise drop them, and the lobby that CHOSE them
+// is several bubbles back by then. Set by decoding a chain (which states them),
+// or by fio_set_passing before a lobby's first seal; repeated by every seal of
+// that game. A fresh deal restores the default, which is the classic passing
+// game (game.h GAME_RULE_NO_PASS is what a variant costs, not what a default
+// does).
+static int8_t g_msg_rules = 0;
+
 // ---------- strategy roster (offline bots, §7.2) --------------------------
 //
 // The roster itself lives in the kernel (src/bot_roster.c) — one table shared
@@ -567,6 +577,13 @@ int fio_new_game(const uint8_t *seed, int seed_len, int n_players) {
         snprintf(g_game.players[i].player_id, sizeof(g_game.players[i].player_id), "p%d", i);
     }
     game_seat_and_deal(&g_game, strategies, n_players);
+    // A GENUINELY fresh game is the classic one: a variant is chosen for a
+    // table, and this deal is not that table (fio_reseat_game, which re-derives
+    // the SAME locked seed when a lobby starts, carries the rules across
+    // itself). Without this a lobby played podkidnoy would leave the next local
+    // game podkidnoy too, in a process that never restarts.
+    g_msg_rules = 0;
+    g_game.rules = g_msg_rules;
     g_has_game = 1;
     g_last_reject = 0;
     g_msg_base_logs = g_game.num_logs;   // a fresh deal continues nothing:
@@ -603,7 +620,35 @@ int fio_reseat_game(int n_players) {
     if (!g_has_deal_seed) return FIO_ENOSEED;
     uint8_t seed[FOOLISH_SEED_LEN];
     memcpy(seed, g_deal_seed, FOOLISH_SEED_LEN);   // copy out first: fio_new_game
-    return fio_new_game(seed, FOOLISH_SEED_LEN, n_players);  // will overwrite g_deal_seed
+    // …and the same for the RULES. This is the same table dealt again, not a new
+    // one, so the variant the lobby chose crosses the re-deal (fio_new_game
+    // clears it, deliberately, for the fresh-game case it also serves).
+    const int8_t rules = g_msg_rules;
+    const int rc = fio_new_game(seed, FOOLISH_SEED_LEN, n_players);  // overwrites g_deal_seed
+    if (rc == FIO_EOK) { g_msg_rules = rules; g_game.rules = rules; }
+    return rc;
+}
+
+// SET THE TABLE'S RULES before a lobby is sealed - the iMessage lobby's passing
+// checkbox, and the only way this variant is ever chosen. `passing` is 1 for
+// perevodnoy (the transfer, the default) and 0 for podkidnoy.
+//
+// It writes both the resident game and the sticky copy, because the two answer
+// different questions: the game's own rules decide what is LEGAL right now (and
+// what the body of the next seal is coded against), and the sticky copy is what
+// survives the re-deal Start performs. A caller sets this AFTER adopting the
+// lobby it is changing, and the very next seal states it on the wire.
+int fio_set_passing(int passing) {
+    g_msg_rules = passing ? 0 : (int8_t)GAME_RULE_NO_PASS;
+    if (g_has_game) g_game.rules = g_msg_rules;
+    return FIO_EOK;
+}
+
+// The resident game's rules, as the same 1/0 fio_set_passing takes. 1 with no
+// game resident: nothing has said otherwise, and the classic game is what a
+// fresh one would be.
+int fio_passing_allowed(void) {
+    return (g_msg_rules & GAME_RULE_NO_PASS) ? 0 : 1;
 }
 
 int fio_set_seat_strategy(int seat, int strategy_id) {
@@ -1141,7 +1186,7 @@ int fio_last_msg_error(void) { return g_last_msg_error; }
 // reads those through fio_state_packed / fio_legal_packed in the same actor).
 // Layout: phase(1) n_players(1) last_actor_seat(1) round(1) turn(u16 LE)
 //   game_id(u64 LE) parent8(8) digest(32) sent_at(u16 LE) n_new(1)
-//   opening(1) carry_key(u32 LE) carry_fool(1) n_joins(1)
+//   opening(1) carry_key(u32 LE) carry_fool(1) passing(1) n_joins(1)
 //   then n_joins * { seat(1) name_len(1) name[name_len] }.
 // ROUND 16: sent_at is the envelope's send clock (unix seconds mod 65536, 0 on
 // a format-2 chain that carries none), and n_new is the bubble delta - how many
@@ -1155,6 +1200,10 @@ int fio_last_msg_error(void) { return g_last_msg_error; }
 // carry_key/carry_fool are a WAITING lobby's rematch carry (0 / 0xFF = none).
 // The phone needs all three - it shows whose penalty is pending in the lobby,
 // and it hands the carry back to the kernel at Start.
+// THE RULES (format 5/6) append after them: `passing` is 1 when the defender may
+// transfer and 0 for podkidnoy. The lobby draws its checkbox from it, and every
+// later bubble repeats it - already resolved against the envelope's format, so
+// there is nothing here for Swift to interpret.
 // 1.0(6) DIAGNOSTIC: the replay codec version (5/6/7) of the body the last
 // fio_msg_decode_packed replayed, or -1 for an empty-body message. Set through
 // msg_last_body_version (msg_wire.c).
@@ -1165,7 +1214,7 @@ int fio_msg_last_body_version(void) { return msg_last_body_version; }
 // the two can never come to describe a payload differently.
 static int fio_msg_pack(const MsgEnvelope *e, const uint8_t *digest,
                         unsigned char *out, int cap) {
-    int need = 4 + 2 + 8 + MSG_PARENT_LEN + SHA256_DIGEST_LEN + 2 + 1 + 1 + 4 + 1 + 1;
+    int need = 4 + 2 + 8 + MSG_PARENT_LEN + SHA256_DIGEST_LEN + 2 + 1 + 1 + 4 + 1 + 1 + 1;
     for (int i = 0; i < e->n_joins; i++) need += 2 + e->joins[i].name_len;
     if (cap < need) return FIO_ECAP;
 
@@ -1185,6 +1234,11 @@ static int fio_msg_pack(const MsgEnvelope *e, const uint8_t *digest,
     *q++ = e->opening;
     for (int i = 0; i < 4; i++) *q++ = (unsigned char)((e->carry_key >> (8 * i)) & 0xff);
     *q++ = e->carry_fool;
+    // THE RULES, as the one question a UI ever asks of them: may the defender
+    // transfer (1) or not (0). Derived here rather than handed over raw, so
+    // Swift never has to know which envelope formats carry a variant byte and
+    // which are the passing game by definition (msg_pass_allowed).
+    *q++ = (unsigned char)(msg_pass_allowed(e) ? 1 : 0);
     *q++ = (unsigned char)e->n_joins;
     for (int i = 0; i < e->n_joins; i++) {
         *q++ = e->joins[i].seat;
@@ -1255,6 +1309,9 @@ int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, i
     g_msg_opening = e.opening;
     g_msg_carry_key = e.carry_key;
     g_msg_carry_fool = e.carry_fool;
+    // …and so are its RULES: msg_replay has already stamped them onto the game
+    // it dealt, and this is the copy that survives the re-deal at Start.
+    g_msg_rules = msg_pass_allowed(&e) ? 0 : (int8_t)GAME_RULE_NO_PASS;
     memcpy(g_deal_seed, e.seed, FOOLISH_SEED_LEN);
     g_has_deal_seed = 1;
     for (int i = 0; i < e.n_players; i++) g_seat_roster[i] = (int8_t)bot_roster_find("random");
@@ -1309,7 +1366,8 @@ int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
     e.game_id = game_id;
     e.last_actor_seat = (uint8_t)last_actor_seat;
     e.n_players = (uint8_t)g_game.num_players;
-    e.variant = 0;
+    // The rules are stamped by msg_seal, off the game itself - a host does not
+    // get to state them independently of what it is sealing.
     // ROUND 16: the caller's clock, unix seconds mod 65536, or 0 for "do not
     // stamp this one" - which seals a format-2 envelope exactly as before. The
     // time is passed IN rather than read here on purpose: a kernel that called

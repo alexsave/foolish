@@ -65,6 +65,17 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
     public let carryKey: UInt32?
     public let carryFool: Int?
 
+    /// THE TABLE'S RULES: may the defender transfer the attack on (perevodnoy,
+    /// true - the default and what every game before this variant played), or
+    /// is this the throw-in game with no transfer at all (podkidnoy, false)?
+    ///
+    /// Chosen in the LOBBY, carried by every bubble of the game that follows,
+    /// and enforced in the kernel: a podkidnoy defender's legal moves simply do
+    /// not include a transfer, so nothing on a board has to remember to hide
+    /// one. Read it to draw the lobby's checkbox and the rules a player is
+    /// shown - never to decide what is legal.
+    public let passingAllowed: Bool
+
     /// Does this lobby owe someone a penalty? Purely for the lobby's own copy -
     /// whether the rule actually FIRES is decided at Start, in C, against the
     /// roster that is really starting.
@@ -87,7 +98,7 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
     public let joins: [MessageJoin]
 
     enum CodingKeys: String, CodingKey {
-        case phase, turn, round, joins, digest, parent8
+        case phase, turn, round, joins, digest, parent8, passingAllowed
         case sentAt = "sent_at"
         case newAtoms = "n_new"
         case opening, carryKey, carryFool
@@ -161,15 +172,16 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
     /// Parse the kernel's packed envelope-metadata blob (fio_msg_decode_packed).
     /// Fixed layout: phase(1) n_players(1) last_actor_seat(1) round(1) turn(u16
     /// LE) game_id(u64 LE) parent8(8) digest(32) sent_at(u16 LE) n_new(1)
-    /// opening(1) carry_key(u32 LE) carry_fool(1) n_joins(1) then joins of
-    /// {seat(1) name_len(1) name[]}. Returns nil if a field runs past the end.
+    /// opening(1) carry_key(u32 LE) carry_fool(1) passing(1) n_joins(1) then
+    /// joins of {seat(1) name_len(1) name[]}. Returns nil if a field runs past
+    /// the end.
     ///
     /// ROUND 16 grew this by the two sent_at bytes and the n_new byte, then by
-    /// the fool's-penalty trio, all of which land AFTER the digest so every
-    /// offset above is the one it always was.
+    /// the fool's-penalty trio; the rules byte followed. All of them land AFTER
+    /// the digest, so every offset above is the one it always was.
     static func decode(packed d: Data) -> MessageEnvelope? {
         let b = [UInt8](d)
-        let HDR = 64
+        let HDR = 65
         guard b.count >= HDR else { return nil }
         let phase = Int(b[0]); let nPlayers = Int(b[1]); let last = Int(b[2]); let round = Int(b[3])
         let turn = Int(b[4]) | (Int(b[5]) << 8)
@@ -187,7 +199,11 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
         for i in 0..<4 { rawKey |= UInt32(b[58 + i]) << (8 * i) }
         let carryKey: UInt32? = rawKey == 0 ? nil : rawKey
         let carryFool: Int? = b[62] == 0xFF ? nil : Int(b[62])
-        let nJoins = Int(b[63])
+        // The rules, already resolved against the envelope's format by the
+        // kernel (msg_pass_allowed): Swift never learns which formats carry a
+        // variant byte.
+        let passing = b[63] != 0
+        let nJoins = Int(b[64])
         var joins: [MessageJoin] = []
         var q = HDR
         for _ in 0..<nJoins {
@@ -201,7 +217,8 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
                                lastActorSeat: last, gameId: String(gid),
                                parent8: parent8, digest: digest, sentAt: sentAt,
                                newAtoms: newAtoms, opening: opening,
-                               carryKey: carryKey, carryFool: carryFool, joins: joins)
+                               carryKey: carryKey, carryFool: carryFool,
+                               passingAllowed: passing, joins: joins)
     }
 }
 
@@ -313,6 +330,25 @@ public actor MessageKernel {
         let rc = fio_reseat_game(Int32(players))
         guard rc == 0 else { throw MessageEnvelope.Failure.damaged(code: Int(rc)) }
     }
+
+    // ---------- the table's rules ------------------------------------------
+
+    /// Set whether the defender may TRANSFER (perevodnoy, the default) or not
+    /// (podkidnoy) - the lobby's passing checkbox, and the only place this is
+    /// ever chosen.
+    ///
+    /// Call it on the resident game and then seal: the WAITING bubble states
+    /// the rules for everyone else (a lobby has no body to carry them in), and
+    /// the Start that re-derives the locked seed carries them across. It is a
+    /// term of the TABLE, not a display option - the kernel stops offering a
+    /// transfer at all - so it belongs to a lobby and never to a live board.
+    public func setPassing(_ allowed: Bool) {
+        _ = fio_set_passing(allowed ? 1 : 0)
+    }
+
+    /// The resident game's rules, the same way round. True when nothing has
+    /// said otherwise.
+    public func passingAllowed() -> Bool { fio_passing_allowed() != 0 }
 
     // ---------- Rule F: the fool's penalty ---------------------------------
     //

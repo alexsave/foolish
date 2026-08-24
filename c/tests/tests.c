@@ -839,6 +839,86 @@ static void test_pass_rejects_and_success(void) {
     CHECK(g.num_battles == 2, "pass: passed card joins the table");
 }
 
+// ---------------------------------------------------------------------------
+// PODKIDNOY (GAME_RULE_NO_PASS): the throw-in game, where the defender covers
+// or picks up and there is no transfer at all.
+//
+// The one position is played BOTH WAYS, from the same setup, because that is
+// what makes each half of the assertion mean something: the transfer is legal
+// here under the classic rules, so "no transfer" is the variant talking and not
+// a defective fixture. And the MENU is checked beside the validator - a bot
+// searching a move the engine refuses is how a phantom "invalid move" reaches a
+// board, and the two live in different files.
+// ---------------------------------------------------------------------------
+static void setup_transferable(Game *g) {
+    setup_playing_2p(g);
+    g->num_battles = 1;
+    g->table_battles[0].attack  = (Card){ SUIT_SPADES, 7 };
+    g->table_battles[0].defense = CARD_NONE;
+    g->players[1].hand[0] = (Card){ SUIT_HEARTS, 7 };   // same rank: the transfer
+    g->players[1].hand[1] = (Card){ SUIT_SPADES, 9 };   // …and a cover, so the
+    g->players[1].hand_count = 2;                       //    defender has a move
+    g->players[0].hand_count = 6;
+}
+
+static int menu_has(const Game *g, int seat, int type) {
+    LegalMoves ml;
+    calculate_legal_moves(g, seat, &ml);
+    for (int i = 0; i < ml.n; i++) if (ml.moves[i].type == type) return 1;
+    return 0;
+}
+
+static int menu_lite_has(const Game *g, int seat, int type) {
+    LegalMoves ml;
+    calculate_legal_moves_lite(g, seat, &ml);
+    for (int i = 0; i < ml.n; i++) if (ml.moves[i].type == type) return 1;
+    return 0;
+}
+
+static void test_podkidnoy(void) {
+    Card p7h = { SUIT_HEARTS, 7 };
+
+    // The classic game: the transfer is on the menu and it applies.
+    {
+        Game g; setup_transferable(&g);
+        CHECK(game_pass_allowed(&g), "a zeroed game is the classic passing game");
+        CHECK(menu_has(&g, 1, MOVE_PASS), "perevodnoy: the transfer is in the menu");
+        CHECK(menu_lite_has(&g, 1, MOVE_PASS), "perevodnoy: …and in the lite menu");
+        CHECK(handle_pass(&g, 1, &p7h, 1), "perevodnoy: the transfer applies");
+        CHECK(g.defender == 0, "perevodnoy: the transfer moved the defence on");
+    }
+
+    // The same position, podkidnoy.
+    {
+        Game g; setup_transferable(&g);
+        g.rules |= GAME_RULE_NO_PASS;
+        CHECK(!game_pass_allowed(&g), "podkidnoy: the rule reads back");
+        CHECK(!menu_has(&g, 1, MOVE_PASS), "podkidnoy: the menu offers no transfer");
+        CHECK(!menu_lite_has(&g, 1, MOVE_PASS), "podkidnoy: nor does the lite menu");
+        CHECK_REJECT(handle_pass(&g, 1, &p7h, 1), ENGINE_REJECT_PASS_DISABLED,
+                     "podkidnoy: the transfer is refused, and says why");
+        CHECK(g.defender == 1 && g.num_battles == 1,
+              "podkidnoy: a refused transfer changed nothing");
+
+        // What is LEFT is the whole point: covering and picking up are
+        // untouched, so a podkidnoy defender is never stuck.
+        CHECK(menu_has(&g, 1, MOVE_COVER), "podkidnoy: covers remain");
+        CHECK(menu_has(&g, 1, MOVE_PICKUP), "podkidnoy: pickup remains");
+        CHECK(handle_pickup(&g, 1), "podkidnoy: the defender can still pick up");
+    }
+
+    // The reason it is a REJECT and not a "wrong cards" answer: the refusal is
+    // about the game, not about the hand, so it holds for a transfer that would
+    // otherwise be perfect and for one that would not.
+    {
+        Game g; setup_transferable(&g);
+        g.rules |= GAME_RULE_NO_PASS;
+        Card wrong = { SUIT_SPADES, 9 };   // in hand, wrong rank for a transfer
+        CHECK_REJECT(handle_pass(&g, 1, &wrong, 1), ENGINE_REJECT_PASS_DISABLED,
+                     "podkidnoy: the variant answers before the card rules do");
+    }
+}
+
 static void test_pickup_rejects_and_success(void) {
     Game g; setup_playing_2p(&g);
     fill_deck(&g, 12);
@@ -2696,6 +2776,7 @@ int main(void) {
     test_cover_clears_hand_round_advance();
     test_cover_clears_hand_wins();
     test_pass_rejects_and_success();
+    test_podkidnoy();
     test_pickup_rejects_and_success();
     test_good_rejects_and_success();
     test_good_round_transition();

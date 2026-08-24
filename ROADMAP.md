@@ -140,8 +140,12 @@ textures, with a mute toggle. No assets, fits the PWA offline story.
 
 ### 8. Rules variants
 The engine hardcodes what could be options: deck size is derived from player
-count (36 for ≤4, 52 for 5+; no 24-card), `CARDS_PER_PLAYER = 6`, transfer
-(perevodnoy) is always on, attack ceiling is only the defender's hand size.
+count (36 for ≤4, 52 for 5+; no 24-card), `CARDS_PER_PLAYER = 6`, attack ceiling
+is only the defender's hand size. The TRANSFER is no longer one of them:
+podkidnoy (no perevod) is a real variant, chosen in the iMessage lobby and
+carried by the wire and the replay codec - see docs/PODKIDNOY.md. Online games
+are still perevodnoy only, because their rules would have to survive
+`games.state`.
 A `variant` config on `games` threaded through `refill_deck` and the handlers
 is straightforward — **but the replay wire format is version-frozen (v2–v5)
 and encodes none of this**, so variants need a v6 header field. Do the codec

@@ -14,8 +14,9 @@
 //
 //   off  size  field
 //   0    1     magic      0xF7
-//   1    1     format     2, or 3 for the same thing plus a send clock and a
-//                          bubble delta (1 was cut before shipping; see THE BODY)
+//   1    1     format     2; 3 adds a send clock + a bubble delta; 4 adds the
+//                          fool's penalty; 5 and 6 are 3 and 4 with the variant
+//                          byte spent on the RULES (1 was cut before shipping)
 //   2    1     flags      bit0 fair_deal, bit1 gzip-body,
 //                          bit2 = legacy (was passing_allowed in 1.0(3); tolerated
 //                          on decode, never set now), bits3-7 reserved=0
@@ -24,7 +25,9 @@
 //   12   2     turn       u16, count of kernel actions applied
 //   14   1     last_actor_seat
 //   15   1     n_players  2..8
-//   16   1     variant    reserved rules-variant byte, =0
+//   16   1     variant    FORMAT 5/6: the table's RULES - bit0 MSG_VARIANT_PASS
+//                          (0 podkidnoy, 1 perevodnoy). Reserved =0 on 2/3/4,
+//                          which are the passing game by definition. See below.
 //   17   1     round      completed-round counter (Rule R's guard input)
 //   18   8     parent8    first 8 bytes of SHA-256(previous envelope), 0 at creation
 //   26   32    seed       -> game_set_deal_seed_bytes(seed, 32)
@@ -254,6 +257,40 @@
 // the attack").
 #define MSG_PICKUP_HOLD_S 15
 
+// Formats 5 and 6 = formats 3 and 4 with THE VARIANT BYTE SPENT: it is now the
+// table's RULES, and bit 0 is PASSING (perevodnoy, the transfer). 0 is
+// podkidnoy, the throw-in game with no transfer at all (game.h
+// GAME_RULE_NO_PASS). Every other bit stays reserved and must be 0.
+//
+// WHY THE HEADER CARRIES THE RULES WHEN THE BODY ALREADY DOES. A v10 code names
+// its own pass mode (replay.h), and for a LIVE bubble that would be enough. A
+// WAITING lobby has no body at all - the deal alone is the state - so the one
+// place a lobby's rules can live is the header, and the lobby is exactly where
+// they are chosen. Carrying it on every phase keeps one answer rather than two:
+// a receiver reads the rules the same way whether it is looking at a lobby or
+// at the twentieth bubble of a game, and msg_replay checks the header against
+// the body's bit, so a chain cannot say one thing and play the other.
+//
+// WHY A NEW FORMAT RATHER THAN A NEW MEANING FOR AN OLD BYTE. Under formats
+// 2-4 the variant byte is reserved and must be 0, and 0 meant the only game
+// this engine played: with the transfer. The owner's call is that the byte
+// reads 0 = podkidnoy / 1 = passing from here on - which is the opposite
+// reading of the same byte, so every bubble already sitting in a transcript
+// would flip its rules under it. A version number is exactly the instrument for
+// that: formats 2-4 keep the old reading (variant 0, passing), formats 5-6
+// carry the new one, and a build that predates them refuses a format it does
+// not know (MSG_EFORMAT) instead of quietly dealing a different game. Every
+// seal this build makes writes 5 or 6, because the rules must never again be a
+// byte whose meaning depends on who is reading.
+//
+// The header does not grow: 5 is 3's 62 bytes and 6 is 4's 69, so an ordinary
+// game pays nothing for saying what it is.
+#define MSG_FORMAT_RULES         5
+#define MSG_FORMAT_RULES_REMATCH 6
+
+#define MSG_VARIANT_PASS  0x01
+#define MSG_VARIANT_KNOWN (MSG_VARIANT_PASS)
+
 #define MSG_PHASE_WAITING  0
 #define MSG_PHASE_ACCEPT   1
 #define MSG_PHASE_LIVE     2
@@ -339,7 +376,7 @@
 #define MSG_EFLAGS      -4   // reserved bit set, or a flag this build can't honor
 #define MSG_EPHASE      -5   // phase out of range, or inconsistent with the chain
 #define MSG_EPLAYERS    -6   // n_players outside 2..8
-#define MSG_EVARIANT    -7   // non-zero variant (no variant is defined yet)
+#define MSG_EVARIANT    -7   // a variant bit this build does not implement
 #define MSG_ESEAT       -8   // a seat >= n_players, or a duplicate join
 #define MSG_ENAME       -9   // name too long, or non-printable bytes
 #define MSG_ESEED      -10   // all-zero seed outside fair-deal
@@ -359,13 +396,17 @@ typedef struct {
 } MsgJoin;
 
 typedef struct {
-    uint8_t  format;   // MSG_FORMAT_V6 or MSG_FORMAT_CLOCK
+    uint8_t  format;   // one of MSG_FORMAT_*
     uint8_t  flags;
     uint8_t  phase;
     uint64_t game_id;
     uint16_t turn;
     uint8_t  last_actor_seat;
     uint8_t  n_players;
+    // The RULES byte, raw: bit0 MSG_VARIANT_PASS on format 5/6, and 0 (=the
+    // passing game, which is all those formats could describe) on 2/3/4. Read
+    // it through `msg_pass_allowed` rather than testing the bit, so no caller
+    // has to remember which formats predate it.
     uint8_t  variant;
     uint8_t  round;
     uint8_t  parent8[MSG_PARENT_LEN];
@@ -429,6 +470,12 @@ typedef struct {
     int                  actions_len;
     const unsigned char *actions;
 } MsgEnvelope;
+
+// May the defender transfer, in the game these bytes describe? THE reader for
+// the variant byte: it knows that formats 2-4 predate the rules byte and are
+// the passing game by definition, so no caller has to remember which formats
+// say what. Safe on any decoded envelope.
+int msg_pass_allowed(const MsgEnvelope *e);
 
 // THE PRODUCER. Fills in `e`'s body and the four header fields that describe
 // it - `n_actions`, `turn`, `round`, `n_new` - for `g`, a game dealt from

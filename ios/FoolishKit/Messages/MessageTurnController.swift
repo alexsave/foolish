@@ -489,7 +489,18 @@ public final class MessageTurnController: ObservableObject {
         baseSentAt = env?.sentAt ?? 0
         baseTurn = env?.turn ?? 0
         baseAtomsBefore = env?.atomsBefore ?? -1
+        passingAllowed = env?.passingAllowed ?? true
     }
+
+    /// THE TABLE'S RULES, as the chain states them: may the defender transfer?
+    ///
+    /// The board never asks this to decide what a player may DO - the kernel
+    /// simply stops offering a transfer, so the Pass button and the drag-to-pass
+    /// disappear on their own (CardPlay reads `legal` for both). It is here for
+    /// the one thing the legal menu cannot say: which RULES to teach. A
+    /// podkidnoy player opening How to play must not be shown a page about
+    /// passing.
+    @Published public private(set) var passingAllowed = true
 
     /// The board has taken the pending animations over (or there were none):
     /// drop the veil. Idempotent - every view change calls it.

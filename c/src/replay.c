@@ -326,9 +326,13 @@ typedef struct {
     int err;
     // ---- Format 6/7 only (0 / NULL for v5) ----
     int format;                // 5 (default), 6, or 7
-    int pass_allowed;          // v7 pass-mode bit: 1 perevodnoy (default), 0 podkidnoy.
-                               // Stored but not yet branched on — see replay.h's
-                               // TODO(podkidnoy). 1 for every v5/v6 code.
+    int pass_allowed;          // the pass-mode bit: 1 perevodnoy, 0 podkidnoy. It
+                               // GATES THE MENU (build_top_menu), which is the
+                               // coder's probability model - so it must be read
+                               // off the code before a single atom is decoded,
+                               // and a code decoded under the wrong mode is not
+                               // the same game. 1 for the retrodiction line,
+                               // which carries no bit.
     Coder *rev_coder;          // coder reached from draw_for to code reveals
     const unsigned char *rev;  // encode: real hidden card ids (deal + draws)
     int rev_n, rev_pos;        // reveal stream length / cursor
@@ -801,13 +805,26 @@ static int build_top_menu(RModel *m, Opt *opts, uint32_t *weights) {
             }
             // pass / perevod (validatePass: nothing covered, one rank on the
             // table, next player must cover everything incl. the passed card).
-            // TODO(podkidnoy) — replay.h: this block sits MID-menu today. The
-            // owner's chosen fix is to APPEND it at the very end of this menu and
-            // gate it on `m->pass_allowed`, so a podkidnoy menu is this menu minus
-            // a trailing block (every other index/weight unchanged), not a splice
-            // out of the middle. `m->pass_allowed` is already threaded (always 1
-            // for now), so only the reorder + gate remain.
-            if (uncovered == m->num_battles) {
+            //
+            // PODKIDNOY CUTS THIS BLOCK OUT WHERE IT STANDS, and the earlier plan
+            // to move it to the END of the menu first (replay.h's old
+            // TODO(podkidnoy)) is deliberately NOT taken. That plan was written
+            // to keep every non-pass index identical ACROSS the two modes, which
+            // buys nothing real - a code names its own mode in its header, so
+            // encoder and decoder always build the same menu - and it costs the
+            // one thing that matters: reordering the menu re-points every
+            // perevodnoy code ever written, which would mean renumbering the
+            // format a second time in a week (the deal-order fix already spent
+            // that break, docs/DEAL_ORDER.md) or, far worse, silently decoding
+            // old codes as different moves.
+            //
+            // Splicing instead makes the podkidnoy menu a strict SUBSET of the
+            // perevodnoy one, in the same relative order, which is what lets the
+            // retrodiction line (v9, no mode bit) still encode a podkidnoy game
+            // faithfully: every atom such a game can play is in the perevodnoy
+            // menu too. A podkidnoy code is also slightly SMALLER, since the
+            // options it never needs are not in the model.
+            if (m->pass_allowed && uncovered == m->num_battles) {
                 int v = id_value(m->battles[0].attack);
                 bool one_rank = true;
                 for (int i = 0; i < m->num_battles; i++)
@@ -1671,6 +1688,7 @@ static int reveal_lowest_trump_seat(const unsigned char *reveals, int n_reveals,
 // only in where the actions and the reveals came from; from here down there is
 // one v6 encoder, so the two entry points cannot drift on the wire format.
 static int encode_v6_run(int n, int trump_id, int fa, int n_actions,
+                         int pass_allowed,
                          const unsigned char *reveals, int n_reveals,
                          Src *s, unsigned char *out, int out_cap) {
     Coder c;
@@ -1687,9 +1705,11 @@ static int encode_v6_run(int n, int trump_id, int fa, int n_actions,
     const int forced  = (derived >= 0 && derived != fa) ? 1 : 0;
 
     coder_uniform(&c, REPLAY_VERSION_ALPHABET, REPLAY_FORMAT_VERSION_V10);
-    // v7 pass-mode bit, right after the version symbol. Always 1 (perevodnoy)
-    // for now — see replay.h's TODO(podkidnoy). The decoder reads it back below.
-    coder_uniform(&c, 2, 1);
+    // THE PASS-MODE BIT, right after the version symbol: 1 perevodnoy, 0
+    // podkidnoy. It has to come before anything else the model touches, because
+    // it decides the MENU every later symbol is an index into. The decoder reads
+    // it back below and hands it to the same model_init.
+    coder_uniform(&c, 2, pass_allowed ? 1 : 0);
     coder_uniform(&c, 7, n - 2);
     int8_t alpha[48];
     int alen = trump_alphabet(n, alpha);
@@ -1707,7 +1727,7 @@ static int encode_v6_run(int n, int trump_id, int fa, int n_actions,
 
     RModel *m = &g_model;
     model_init(m, n, trump_id, fa, 0, 0, 0, REPLAY_FORMAT_VERSION_V10);
-    m->pass_allowed = 1;   // perevodnoy (always, for now)
+    m->pass_allowed = pass_allowed ? 1 : 0;
     m->rev = reveals;
     m->rev_n = n_reveals;
     m->rev_pos = 0;
@@ -1744,7 +1764,12 @@ int replay_encode_v6(const unsigned char *in, int in_len,
     s.pos = rev_off + n_reveals;
     s.count = n_actions;
 
-    return encode_v6_run(n, trump_id, fa, n_actions,
+    // PEREVODNOY, always: this entry takes a flat byte blob (the TS oracle's
+    // shape) that has nowhere to name a variant. Production encodes through
+    // replay_encode_v6_from_game, which reads the mode off the Game it is
+    // handed; this one stays the classic game so its input format - and every
+    // fixture built on it - means exactly what it always meant.
+    return encode_v6_run(n, trump_id, fa, n_actions, 1,
                          in + rev_off, n_reveals, &s, out, out_cap);
 }
 
@@ -1857,7 +1882,11 @@ int replay_encode_v6_from_game(const Game *g, const unsigned char *seed, int see
     s.num_logs = g->num_logs;
     s.count = n_actions;
 
-    return encode_v6_run(n, trump_id, fa, n_actions,
+    // The mode comes off the GAME, never off a caller's argument: this code is
+    // the thing every device will re-derive the table's rules from, and a host
+    // that could state them independently of the game it is encoding could seal
+    // a chain nobody (itself included) can replay.
+    return encode_v6_run(n, trump_id, fa, n_actions, game_pass_allowed(g),
                          reveals, n_reveals, &s, out, out_cap);
 }
 

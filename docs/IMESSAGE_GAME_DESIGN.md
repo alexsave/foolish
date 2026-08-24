@@ -169,7 +169,9 @@ offset  size  field            notes
 12      2     turn       u16, count of kernel actions applied (0 = fresh deal)
 14      1     last_actor_seat  seat (0-based) of the player who SENT this message
 15      1     n_players  2..8 on the wire (creator fixes it at creation; UI caps 4 in v1)
-16      1     variant    reserved rules-variant byte, =0 (36-card podkidnoy defaults)
+16      1     variant    the table's RULES. Reserved (=0) on formats 2-4;
+                         on formats 5/6 it is bit0 = passing/perevodnoy,
+                         so 0 is podkidnoy. See docs/PODKIDNOY.md
 17      1     round      u8, count of completed rounds in the chain (== number of
                          discard/pickup round-closures; used by the rebase guard, §7.4)
 18      8     parent8    first 8 bytes of SHA-256 of the previous envelope's

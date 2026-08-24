@@ -30,8 +30,20 @@ public struct RulesView: View {
 
     private let onClose: () -> Void
     private let scope: Scope
-    public init(scope: Scope = .full, onClose: @escaping () -> Void = {}) {
+    /// Does THIS game allow the transfer (perevodnoy)? A podkidnoy table's
+    /// rulebook does not mention passing anywhere - not a section about it, not
+    /// an "(if allowed)" aside in the defending section (owner: "simply don't
+    /// mention passing if passing is not enabled"). A rule you cannot use is
+    /// not a rule of your game, and half-telling it is worse than either.
+    ///
+    /// It is passed IN rather than read from the kernel here because this page
+    /// is also opened where there is no game at all (the setup screen), and
+    /// because a static illustration page should not depend on engine state.
+    private let passing: Bool
+    public init(scope: Scope = .full, passing: Bool = true,
+                onClose: @escaping () -> Void = {}) {
         self.scope = scope
+        self.passing = passing
         self.onClose = onClose
     }
 
@@ -87,12 +99,16 @@ public struct RulesView: View {
                         // just stated.
                         section("ios.rules.fool.h", "ios.rules.fool.b")
                         attackSection
-                        section("ios.rules.defend.h", "ios.rules.defend.b")
+                        section("ios.rules.defend.h",
+                                passing ? "ios.rules.defend.b" : "ios.rules.defend.b.nopass")
                         coverSection
                         throwSection
                         pickupSection
                         section("ios.rules.round.h", "ios.rules.round.b")
-                        passSection
+                        // Podkidnoy: no passing section, and nothing in its
+                        // place. The page simply teaches the game this table is
+                        // playing.
+                        if passing { passSection }
                         section("ios.rules.end.h", "ios.rules.end.b")
                     }
                 }

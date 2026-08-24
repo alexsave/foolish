@@ -232,6 +232,12 @@ static int rs_play(const unsigned char *code, int code_len, int viewer,
 
     memset(gp, 0, sizeof *gp);
     gp->num_players = (int8_t)n;
+    // The rebuilt game is played under the rules the CODE was cut under, not
+    // under this host's default: a replay re-runs the real engine over the
+    // rebuilt deal, and a podkidnoy chain applied by a perevodnoy engine would
+    // be legal (its moves are a subset) but would render a board offering a
+    // transfer no step of it can contain.
+    if (!hdr.pass_allowed) gp->rules |= GAME_RULE_NO_PASS;
 
     // The deal and the opening flip are events too — a replay opens with the
     // same deal animation live play does, for free, because it IS the deal.

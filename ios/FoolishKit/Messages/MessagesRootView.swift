@@ -793,6 +793,8 @@ private struct GameSurface: View {
                           await onSend(lob.payload, lobbySeat(lob.env) ?? 0, false)
                           surfaceStaged = true   // round-9: the invite awaits Send
                       } },
+                      onSetPassing: { on in Task { await setLobbyPassing(lob, passing: on) } },
+                      passingBaseline: passingBaseline[lob.env.gameId],
                       // nil in every shipping build: the closure only exists
                       // where `addSoloSeat` is compiled at all.
                       onAddSoloSeat: soloSeatAction(lob))
@@ -963,6 +965,7 @@ private struct GameSurface: View {
                 damaged = true
                 return
             }
+            noteRulesBaseline(env)
             lobby = Lobby(env: env, payload: payload)
         case .board(let payload):
             let env: MessageEnvelope; let bodyVer: Int
@@ -1345,6 +1348,69 @@ private struct GameSurface: View {
         }
     }
 
+    /// THE RULES THE TABLE HAS AGREED, per lobby (keyed by game id): the
+    /// passing value on the newest bubble that somebody ELSE put on the chain.
+    /// `LobbyControls.rulesChanged` compares it with what the lobby says now to
+    /// answer "have I just changed this", which is what withholds Start from
+    /// whoever moved the checkbox.
+    ///
+    /// A dictionary rather than one value because a chat can hold more than one
+    /// lobby, and this view is reused across them; it is small (one Bool per
+    /// game this device has looked at) and dies with the extension.
+    @State private var passingBaseline: [String: Bool] = [:]
+
+    /// Adopt a lobby bubble's rules as the agreed baseline - unless it is MINE,
+    /// in which case it may be the change itself and the older agreement still
+    /// stands. Called wherever a lobby arrives from the chain.
+    private func noteRulesBaseline(_ env: MessageEnvelope) {
+        guard env.lastActorSeat != lobbySeat(env) else { return }
+        passingBaseline[env.gameId] = env.passingAllowed
+    }
+
+    /// CHANGE THE TABLE'S RULES: reseal this lobby with the passing checkbox
+    /// moved, and stage that, so the change reaches everyone the same way a
+    /// join does - as a bubble on the chain.
+    ///
+    /// It is `joinLobby` with the roster left alone: re-adopt the lobby (the
+    /// locked seed and the open capacity have to be resident to seal), tell the
+    /// kernel the rule, seal, stage. `lastActorSeat` is mine, which is what
+    /// takes Start away from me until somebody else acts - the owner's rule,
+    /// and the reason the reseal is a real bubble rather than a local flag: the
+    /// others must be able to see the rules they are about to play under before
+    /// anyone can start.
+    ///
+    /// A no-op if I hold no seat (the checkbox is disabled there anyway - a
+    /// reseal has to name an actor seat) or if the rule is already what was
+    /// asked for, so a double tap cannot stage a bubble that changes nothing.
+    private func setLobbyPassing(_ lob: Lobby, passing: Bool) async {
+        let env = lob.env
+        guard let me = lobbySeat(env), let gid = UInt64(env.gameId) else { return }
+        guard env.passingAllowed != passing else { return }
+        do {
+            // Remember what the table had agreed BEFORE this change, unless
+            // this device has already staged one on this lobby (then the
+            // baseline is still the older, agreed value - see
+            // LobbyControls.rulesChanged, and note that ticking the box back
+            // must clear the gate rather than double it).
+            if passingBaseline[env.gameId] == nil {
+                passingBaseline[env.gameId] = env.passingAllowed
+            }
+            _ = try await MessageKernel.shared.decode(payload: lob.payload, viewer: -1)
+            await MessageKernel.shared.setPassing(passing)
+            let parent = MessageTurnController.firstEight(hex: env.digest)
+            let payload = try await MessageKernel.shared.seal(
+                phase: 0, lastActorSeat: me, gameId: gid, parent8: parent, joins: env.joins)
+            let newEnv = try await MessageEnvelope.decode(payload: payload, viewer: -1)
+            AnimLog.say("lobby rules: passing=\(passing) by seat \(me)")
+            cache(seat: me, env: newEnv, payload: payload)
+            await onSend(payload, me, false)
+            surfaceStaged = true
+            lobby = Lobby(env: newEnv, payload: payload)
+        } catch {
+            damaged = true
+        }
+    }
+
     /// The lobby's "Add player" action, or nil when solo seating is not
     /// compiled in — one `#if` here instead of one at the call site, so the
     /// view code above reads the same in every configuration.
@@ -1435,7 +1501,12 @@ private struct GameSurface: View {
         // (msg_rule_p rule 0), so nothing should reach here at phase 0 any more;
         // this is the structural guarantee behind that, not a second opinion
         // about which chain wins.
-        if env.phase == 0 { controller = nil; lobby = Lobby(env: env, payload: winner); return }
+        if env.phase == 0 {
+            controller = nil
+            noteRulesBaseline(env)
+            lobby = Lobby(env: env, payload: winner)
+            return
+        }
         // Round-9 #5: is this the chain THIS DEVICE just pressed Send on? The
         // send can tear the extension down (dismiss / VC swap), so the reopen
         // arrives here as a cold load of my own bubble - without this it
@@ -1753,16 +1824,51 @@ public enum LobbyControls {
     /// an extra, pointless round-trip into every single game: the joiner
     /// filling the last seat immediately starting is the designed "join and
     /// start" flow (note 2), not the lockout M9 is guarding against.
+    /// `iChangedTheRules`: the newest bubble on this chain is MINE and it moved
+    /// the passing checkbox (see `rulesChanged`). The owner's rule for the
+    /// variant, in their words: "whoever changes the checkbox value cannot
+    /// start the game, similar to how last joined cannot start the game."
+    ///
+    /// It is the M9 gate WITHOUT the full-lobby exemption, and the exemption's
+    /// own reasoning is why. That exemption exists so a full lobby is never
+    /// stranded: nobody else could join, so withholding Start from its last
+    /// joiner would leave a table with no way forward. A rules change strands
+    /// nothing - the reseal is sendable, and whoever opens it can start
+    /// immediately - so the exemption has no work to do here, while the thing
+    /// it would allow is exactly what the rule forbids: in a two-player DM
+    /// (capacity 2, full the moment both are in) the changer could otherwise
+    /// flip the rules and start in the same breath, and their opponent would
+    /// first learn of it from a board that will not let them pass.
     public static func offered(mySeat: Int?, joined: Int, capacity: Int,
-                               iSentTheInvite: Bool = false) -> LobbyControls {
+                               iSentTheInvite: Bool = false,
+                               iChangedTheRules: Bool = false) -> LobbyControls {
         if mySeat != nil {
             if joined >= 2 {
+                if iChangedTheRules { return .waiting }
                 if iSentTheInvite && joined < capacity { return .waiting }
                 return .start
             }
             return iSentTheInvite ? .waiting : .invite
         }
         return joined < capacity ? .join : .full
+    }
+
+    /// Did THIS device change the rules on the lobby it is showing?
+    ///
+    /// `baseline` is the passing rule as of the last bubble somebody ELSE put
+    /// on this chain (nil if there has been none - a lobby this device
+    /// created), `current` is what the lobby says now, and `mine` is whether
+    /// the newest bubble is this device's.
+    ///
+    /// Asked this way, and not as a "I tapped the box" flag, for two reasons.
+    /// It is SELF-CANCELLING: a player who ticks the box and thinks better of
+    /// it lands back on the rules everyone else already has, and there is
+    /// nothing left to withhold Start for. And it is answered by the CHAIN
+    /// rather than by a memory of a tap, so it survives the extension being
+    /// closed and reopened mid-lobby, which a flag would not.
+    public static func rulesChanged(baseline: Bool?, current: Bool, mine: Bool) -> Bool {
+        guard mine, let baseline else { return false }
+        return baseline != current
     }
 
     /// May I LEAVE this lobby? A seated player may, once somebody else is
@@ -1800,6 +1906,15 @@ private struct LobbyView: View {
     /// — the recovery path for a lobby whose auto-staged bubble is gone (see
     /// the `mySeat != nil, joins < 2` branch in `body`).
     let onInvite: () -> Void
+    /// Change the table's rules: reseal this lobby with the passing checkbox
+    /// moved, and stage that. Whoever does it cannot then start the game (see
+    /// `LobbyControls.rulesChanged`).
+    let onSetPassing: (Bool) -> Void
+    /// The passing rule as of the last bubble somebody ELSE put on this chain,
+    /// or nil if there has been none. The lobby needs it to tell "the rules are
+    /// what the table agreed" from "I have just changed them and not sent it
+    /// yet" - see `LobbyControls.rulesChanged`.
+    let passingBaseline: Bool?
     /// Testing-only (MessageDebugFlags.soloSeats): seat a puppet player from
     /// this device. nil in every shipping build — see `soloControls`.
     var onAddSoloSeat: (() -> Void)?
@@ -1822,12 +1937,23 @@ private struct LobbyView: View {
          onStart: @escaping () -> Void,
          onExit: @escaping () -> Void = {},
          onInvite: @escaping () -> Void,
+         onSetPassing: @escaping (Bool) -> Void = { _ in },
+         passingBaseline: Bool? = nil,
          onAddSoloSeat: (() -> Void)? = nil) {
         self.env = env; self.mySeat = mySeat
         self.onJoin = onJoin; self.onStart = onStart; self.onExit = onExit
         self.onInvite = onInvite
+        self.onSetPassing = onSetPassing
+        self.passingBaseline = passingBaseline
         self.onAddSoloSeat = onAddSoloSeat
         _nickname = State(initialValue: nickname == "Me" ? "" : nickname)
+    }
+
+    /// Have I moved the checkbox on the bubble now at the head of this chain?
+    private var iChangedTheRules: Bool {
+        LobbyControls.rulesChanged(baseline: passingBaseline,
+                                   current: env.passingAllowed,
+                                   mine: env.lastActorSeat == mySeat)
     }
 
     var body: some View {
@@ -1864,6 +1990,22 @@ private struct LobbyView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)
             }
+
+            // THE TABLE'S RULES, chosen here because here is the only place
+            // they CAN be chosen: the game is dealt at Start, and after that
+            // the rules are a term of a chain everyone is already playing.
+            //
+            // A spectator sees the box but cannot move it - the rules are as
+            // much a part of "what game is this" as the player list, and
+            // hiding them from the person deciding whether to join would be
+            // the wrong half to keep. Moving it takes a seat, because a reseal
+            // has to be sent by somebody who is at the table.
+            FCheckbox(FStrings.t("ios.lobby.passing"),
+                      isOn: env.passingAllowed,
+                      offCaption: FStrings.t("ios.lobby.passing.off"),
+                      enabled: mySeat != nil,
+                      action: onSetPassing)
+                .padding(.horizontal)
 
             // Testing-only solo controls REPLACE the normal ones when they are
             // live, rather than sitting alongside them: the shipping lobby can
@@ -1943,7 +2085,8 @@ private struct LobbyView: View {
             let canExit = LobbyControls.canExit(mySeat: mySeat, joined: env.joins.count)
             switch LobbyControls.offered(mySeat: mySeat, joined: env.joins.count,
                                          capacity: env.nPlayers,
-                                         iSentTheInvite: env.lastActorSeat == mySeat) {
+                                         iSentTheInvite: env.lastActorSeat == mySeat,
+                                         iChangedTheRules: iChangedTheRules) {
             case .start:
                 startExitRow(canExit: canExit)
             case .waiting:
@@ -1961,8 +2104,17 @@ private struct LobbyView: View {
                 // Start from whoever sent the newest bubble, and until now that
                 // left them with no action at all. Exit alone, full width:
                 // there is no second button to share the row with.
-                Text(FStrings.t("ios.msg.waiting"))
+                //
+                // …and when it is the RULES I changed, the line SAYS so instead.
+                // "Waiting for the others" is true but unhelpful there: the
+                // player has just tapped something and watched Start disappear,
+                // and a control that vanishes without a word reads as a bug
+                // rather than as the rule it is.
+                Text(FStrings.t(iChangedTheRules ? "ios.lobby.rulechanged"
+                                                 : "ios.msg.waiting"))
                     .font(.footnote).onTableText()
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
                 if canExit {
                     FButton(FStrings.t("ios.msg.exitgame"), kind: .wood, action: onExit)
                 }

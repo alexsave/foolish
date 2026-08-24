@@ -68,6 +68,25 @@ int fio_new_game(const uint8_t *seed, int seed_len, int n_players);
 // the seed" discipline fio_replay_encode_v6_b32 already relies on.
 int fio_reseat_game(int n_players);
 
+// THE TABLE'S RULES: `passing` = 1 for perevodnoy (the defender may transfer -
+// the default, and what every game before this variant played) and 0 for
+// podkidnoy (throw-in, no transfer at all).
+//
+// Chosen in the iMessage LOBBY and nowhere else, which is why this is a setter
+// on the resident game rather than an argument to fio_new_game: a lobby is
+// created before anyone has decided anything, and the checkbox that changes it
+// re-seals a chain that already exists. Call it after adopting the lobby being
+// changed (fio_msg_decode_packed) and before sealing; the seal states it on the
+// wire, and the Start that re-deals the locked seed carries it across.
+//
+// It changes what is LEGAL - a podkidnoy defender's menu has no transfer in it
+// (fio_legal_packed) and fio_apply_awire refuses one - so a host must not flip
+// it mid-game: it is a term of the table, not a display option.
+int fio_set_passing(int passing);
+
+// The resident game's rules, as the same 1/0. 1 when nothing has said otherwise.
+int fio_passing_allowed(void);
+
 // Assign a strategy to a seat (offline bots). strategy_id is a FIO strategy id
 // (0..fio_strategy_count()-1, see fio_strategy_name). Seat 0 is conventionally
 // the local human but nothing enforces that. Safe to call any time before the
@@ -319,8 +338,11 @@ int fio_msg_staged_atoms_before(void);
 // parses it with MessageEnvelope.decode) — no JSON, no embedded state / moves
 // (read those via fio_state_packed / fio_legal_packed). Layout:
 //   phase(1) n_players(1) last_actor_seat(1) round(1) turn(u16 LE) game_id(u64 LE)
-//   parent8(8) digest(32) sent_at(u16 LE) n_joins(1)
+//   parent8(8) digest(32) sent_at(u16 LE) n_new(1) opening(1) carry_key(u32 LE)
+//   carry_fool(1) passing(1) n_joins(1)
 //   then n_joins*{seat(1) name_len(1) name[]}.
+// `passing` is the table's rules, already resolved against the envelope's
+// format: 1 the defender may transfer, 0 podkidnoy (see fio_set_passing).
 // ROUND 16: sent_at is the envelope's send clock (unix seconds mod 65536); 0
 // when the chain is format 2 and carries none, which means no pickup hold.
 // Bytes written or negative (FIO_EMSG → fio_last_msg_error).

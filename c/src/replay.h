@@ -37,21 +37,29 @@
 // decoded under the wrong variant, so the variant must be pinned by the code
 // itself, never guessed.
 //
-// FOR NOW the bit is ALWAYS written as 1 (perevodnoy) and nothing branches on
-// it beyond storing it: v7 plays byte-for-byte like v6 (same menu). A v5/v6
-// code — every game made before this — carries NO bit and is treated as
-// perevodnoy ENABLED, so existing games decode unchanged.
+// The bit sat unused for its first two releases — always written as 1, nothing
+// branching on it — which is why the whole line up to v8 is perevodnoy whatever
+// it says. It is LIVE as of the podkidnoy variant (docs/PODKIDNOY.md): the mode
+// now gates the PASS block in build_top_menu, and the code's own bit is what
+// tells a decoder which of the two menus to build. A v5/v6 code carries no bit
+// at all and is perevodnoy by definition.
 //
-// TODO(podkidnoy): when the no-pass variant is actually implemented, the owner's
-// DESIGN DECISION is APPEND, not splice: move the PASS block to the BACK of
-// build_top_menu so perevodnoy == the podkidnoy menu + an appended pass block.
-// That keeps every non-pass index AND weight identical across modes, and it is
-// SIZE-NEUTRAL (arithmetic-code cost depends on an option's weight, not its menu
-// position). Gate the appended block on m->pass_allowed. (We do NOT care that
-// this makes v7-perevodnoy differ from v6 byte-for-byte — v6 stays frozen and
-// still decodes via its own path.) The redundant MSG_FLAG_PASSING_ALLOWED bit
-// has already been removed from the FMSG message format (msg_wire.h, 1.0(4)),
-// now that the mode lives here.
+// SPLICED, NOT APPENDED. An earlier plan recorded here was to move the PASS
+// block to the BACK of the menu first, so that every non-pass index stayed
+// identical across the two modes. That was reversed when the variant was
+// actually built: the property it protects buys nothing (a code names its own
+// mode in its header, so encoder and decoder always agree on which menu they
+// are in), while reordering the menu re-points every perevodnoy code ever
+// written — a second format renumber inside a week, or worse, old codes
+// decoding silently as different moves. Cutting the block out where it stands
+// leaves the podkidnoy menu a strict SUBSET of the perevodnoy one in the same
+// order, which costs nothing and buys the retrodiction line (which has no bit)
+// the ability to encode a podkidnoy game faithfully anyway.
+//
+// The redundant MSG_FLAG_PASSING_ALLOWED bit was removed from the FMSG message
+// format in 1.0(4) once the mode lived here; the envelope's `variant` byte says
+// the same thing for a LOBBY, which has no body to carry a bit yet, and
+// msg_replay checks the two against each other.
 #define REPLAY_FORMAT_VERSION_V7 7
 // Format 8: v7 plus a FORCED-OPENING bit, written right after the header's
 // first_attacker symbol. It exists for the fool's penalty (game.h
@@ -313,7 +321,12 @@ typedef void (*ReplayAtomSink)(void *ctx, const ReplayAtom *a);
 // The decode header, as fields instead of the 20 packed bytes.
 typedef struct {
     int version, n, trump_id, first_attacker;
-    int pass_allowed;    // v7: 1 perevodnoy / 0 podkidnoy. Always 1 for v5/v6 (no bit).
+    // 1 perevodnoy / 0 podkidnoy — the rules this code was cut under, and the
+    // menu it was cut against. The inline-reveal line carries the bit; the
+    // retrodiction line carries none and always reads 1. A host rebuilding a
+    // playable game from a code must stamp it onto the Game (GAME_RULE_NO_PASS)
+    // or the board will offer a transfer the chain cannot contain.
+    int pass_allowed;
     // v8's forced opening (the fool's penalty). `forced_opening` = 1 when
     // first_attacker was IMPOSED rather than derived, and then
     // `derived_opening` is the lowest-trump seat the deal produces, kept so a

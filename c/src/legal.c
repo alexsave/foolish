@@ -280,6 +280,14 @@ static void calc_cover_moves(const Game *g, const Player *defender, LegalMoves *
 // ---------- pass moves ------------------------------------------------
 
 static void calc_pass_moves(const Game *g, const Player *defender, LegalMoves *out) {
+    // PODKIDNOY: this table has no transfer, so the defender's menu is covers
+    // and pickup and nothing else. The gate is HERE rather than at the two call
+    // sites (calculate_legal_moves and its lite twin) so that the enumerator a
+    // bot searches with and the one a human's menu is built from cannot come to
+    // disagree - handle_pass rejects the move either way, and a menu offering a
+    // move the validator refuses is how a phantom "invalid move" reaches a
+    // board.
+    if (!game_pass_allowed(g)) return;
     bool any_covered = false;
     for (int i = 0; i < g->num_battles; i++) if (!card_is_none(g->table_battles[i].defense)) any_covered = true;
     if (any_covered) return;

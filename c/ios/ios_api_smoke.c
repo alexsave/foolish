@@ -231,7 +231,7 @@ static int fmsg_check(void) {
     // comes back as the PACKED blob (fio_msg_decode_packed layout): phase(1)
     // n_players(1) last_actor_seat(1) round(1) turn(u16) game_id(u64) parent8(8)
     // digest(32) sent_at(u16) n_new(1) opening(1) carry_key(u32) carry_fool(1)
-    // n_joins(1) then joins {seat(1) len(1) name[]}.
+    // passing(1) n_joins(1) then joins {seat(1) len(1) name[]}.
     unsigned char *mb = (unsigned char *)buf;
     if (fio_msg_decode_packed(pay, n, mb, sizeof(buf)) <= 0) {
         printf("FAIL fmsg decode: msg_err=%d\n", fio_last_msg_error()); return 1;
@@ -241,12 +241,15 @@ static int fmsg_check(void) {
     if (mb[0] != 2 /* phase LIVE */ || mb[1] != 4 /* n_players */ || gid != 81985529216486895ULL) {
         printf("FAIL fmsg decode packed shape: phase=%d n=%d gid=%llu\n", mb[0], mb[1], gid); return 1;
     }
-    // Seat 0's join is "Sveta" - the first record after the 64-byte header
-    // (round 16 added the two send-clock bytes, the bubble delta, and the
-    // fool's-penalty trio ahead of n_joins).
-    if (!(mb[64] == 0 && mb[65] == 5 && memcmp(mb + 66, "Sveta", 5) == 0)) {
+    // Seat 0's join is "Sveta" - the first record after the 65-byte header
+    // (round 16 added the two send-clock bytes, the bubble delta and the
+    // fool's-penalty trio ahead of n_joins; the rules byte follows them).
+    if (!(mb[65] == 0 && mb[66] == 5 && memcmp(mb + 67, "Sveta", 5) == 0)) {
         printf("FAIL fmsg decode: seat-0 join not Sveta\n"); return 1;
     }
+    // …and this chain is the classic game, said by the byte the lobby's
+    // checkbox writes rather than assumed by its absence.
+    if (mb[63] != 1) { printf("FAIL fmsg decode: passing byte = %d\n", mb[63]); return 1; }
     // The digest (Rule P's tiebreak) is present and not all-zero.
     { int allzero = 1; for (int i = 0; i < 32; i++) if (mb[22 + i]) { allzero = 0; break; }
       if (allzero) { printf("FAIL fmsg digest all-zero\n"); return 1; } }
@@ -490,6 +493,68 @@ static int lobby_v2_reseat_check(void) {
     return 0;
 }
 
+// ---------- the lobby's rules checkbox (podkidnoy) --------------------------
+//
+// The same lobby flow, with the transfer turned off - through the API the app
+// really uses, in the order it really uses it: adopt the lobby, set the rule,
+// seal. Two things have to survive that: the WAITING bubble must SAY podkidnoy
+// (a lobby has no body to say it in), and the Start that re-derives the locked
+// seed must not quietly hand the transfer back.
+static int lobby_rules_check(void) {
+    unsigned char seed[32];
+    for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(i * 7 + 3);
+    const uint8_t zero8[8] = {0};
+    unsigned char mb[1 << 16];
+
+    if (fio_new_game(seed, 32, 8) != FIO_EOK) { printf("FAIL rules new_game(8)\n"); return 1; }
+    if (!fio_passing_allowed()) { printf("FAIL rules: a fresh game was not the classic one\n"); return 1; }
+
+    // The checkbox comes OFF: the lobby is resealed, and this is the bubble the
+    // others will open.
+    if (fio_set_passing(0) != FIO_EOK) { printf("FAIL rules set_passing(0)\n"); return 1; }
+    const char *joins2 = "[{\"seat\":0,\"name\":\"Alex\"},{\"seat\":1,\"name\":\"Dima\"}]";
+    unsigned char waiting[2048];
+    const int wn = fio_msg_encode(0 /* WAITING */, 0, 0xF003ULL, zero8, joins2, 0, waiting, sizeof(waiting));
+    if (wn <= 0) { printf("FAIL rules waiting encode: %d (msg_err=%d)\n", wn, fio_last_msg_error()); return 1; }
+    if (fio_msg_decode_packed(waiting, wn, mb, sizeof(mb)) <= 0) {
+        printf("FAIL rules waiting decode: msg_err=%d\n", fio_last_msg_error()); return 1;
+    }
+    if (mb[63] != 0) { printf("FAIL rules: the lobby did not say podkidnoy (%d)\n", mb[63]); return 1; }
+
+    // Start. The deal is re-derived from the locked seed at the joined count,
+    // and the rules ride across it.
+    if (fio_reseat_game(2) != FIO_EOK) { printf("FAIL rules reseat(2)\n"); return 1; }
+    if (fio_passing_allowed()) { printf("FAIL rules: the re-deal restored the transfer\n"); return 1; }
+    unsigned char live[2048];
+    const int ln = fio_msg_encode(2 /* LIVE */, 0, 0xF003ULL, zero8, joins2, 0, live, sizeof(live));
+    if (ln <= 0) { printf("FAIL rules live encode: %d (msg_err=%d)\n", ln, fio_last_msg_error()); return 1; }
+    if (fio_msg_decode_packed(live, ln, mb, sizeof(mb)) <= 0) {
+        printf("FAIL rules live decode: msg_err=%d\n", fio_last_msg_error()); return 1;
+    }
+    if (mb[63] != 0) { printf("FAIL rules: the live game lost the rule (%d)\n", mb[63]); return 1; }
+
+    // And the board this produces offers no transfer - which is the whole point,
+    // and is read through the SAME packed menu the app draws its buttons from.
+    for (int seat = 0; seat < 2; seat++) {
+        char lb[8192];
+        const int n = fio_legal_packed(seat, lb, (int)sizeof lb);
+        if (n < 4) continue;
+        // Layout (MoveWire): u32 count, then per move type(1) n_cards(1)
+        // cards[n] attacks[n]. MOVE_PASS is 2 (legal.h).
+        const unsigned char *p = (const unsigned char *)lb;
+        long count = (long)p[0] | ((long)p[1] << 8) | ((long)p[2] << 16) | ((long)p[3] << 24);
+        int q = 4;
+        for (long m = 0; m < count && q + 1 < n; m++) {
+            const int type = p[q], nc = p[q + 1];
+            if (type == 2) { printf("FAIL rules: seat %d was offered a transfer\n", seat); return 1; }
+            q += 2 + 2 * nc;
+        }
+    }
+
+    printf("lobby rules OK (podkidnoy chosen, sealed, re-dealt at Start, no transfer offered)\n");
+    return 0;
+}
+
 // ---------- The 8-seat cap against a 9th player -----------------------------
 //
 // A 9+-person group chat racing into an open lobby: the 9th join must be
@@ -644,6 +709,7 @@ int main(void) {
     if (fmsg_check() != 0) return 1;
     if (bubble_delta_check() != 0) return 1;
     if (lobby_v2_reseat_check() != 0) return 1;
+    if (lobby_rules_check() != 0) return 1;
     if (nine_player_cap_check() != 0) return 1;
 
     printf("SMOKE OK\n");

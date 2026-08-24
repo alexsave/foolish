@@ -71,6 +71,11 @@ public enum FStrings {
         case 20:           return t("ios.rej.mustattack")// FIRST_MUST_ATTACK
         case 19:           return t("ios.rej.alreadygood")// ALREADY_GOOD
         case 14:           return t("ios.rej.notake")   // NO_TABLE_CARDS
+        // 22 (PASS_DISABLED, the podkidnoy variant) deliberately has no line of
+        // its own: a table without the transfer never offers one, so this is
+        // unreachable from the menu, and a message about passing is the one
+        // thing such a game must not put on screen. It falls to the generic
+        // "that move isn't allowed" with everything else that cannot happen.
         default:           return t("ios.reject")
         }
     }
@@ -241,6 +246,11 @@ public enum FStrings {
             "ios.rules.attack.no1": "They may NOT attack with their 7 and their 10, as they are different values.",
             "ios.rules.defend.h": "Defending",
             "ios.rules.defend.b": "The player currently under attack, indicated by the shield icon, is the defender. There can only be one defender at a time, and all cards placed by other players are cards the defender must deal with. The defender may only cover, pick up, or pass (if allowed). The defender MAY NOT attack themselves. All other players are attackers, and can only attack. Attackers MAY NOT cover any cards on the table.",
+            // The same section for a table playing PODKIDNOY. A game without
+            // the transfer must not mention it at all (owner) - not even as
+            // the "(if allowed)" aside, which only raises a question the rest
+            // of the page then refuses to answer.
+            "ios.rules.defend.b.nopass": "The player currently under attack, indicated by the shield icon, is the defender. There can only be one defender at a time, and all cards placed by other players are cards the defender must deal with. The defender may only cover or pick up. The defender MAY NOT attack themselves. All other players are attackers, and can only attack. Attackers MAY NOT cover any cards on the table.",
             "ios.rules.cover.h": "Covering",
             "ios.rules.cover.b": "The defender can cover cards on the table by covering each card with either a higher valued card of the same suit, or any power card. This is what makes the power suit special. To cover, select a card and tap the cover button. Alternatively, drag a card in your hand to the card you wish to cover on the table. A common mistake is thinking that a card that is already covered can be further covered by a third card. That is not how the game works. You will never see stacks of three on the table. Think of an attack card as a sword, and a cover card as a shield. The attack is blocked, and thus finished. Only new attacks may be made, in separate piles.",
             "ios.rules.cover.ok1": "A higher card of the same suit covers.",
@@ -275,12 +285,16 @@ public enum FStrings {
             "ios.rules.fool.h": "The fool pays for it",
             "ios.rules.fool.b": "Normally the lowest power suit card decides who attacks first. There is one exception, and it is the oldest kind of Durak justice: if you press New game after a game ends and the exact same players line up again, the lowest trump decides nothing. The player sitting to the right of the last fool opens instead, which means the fool is the first one attacked. Lose, and the next game comes straight at you. If anyone joins or leaves before Start, the table has changed and the normal rule comes back.",
             "ios.lobby.penalty": "{name} was the fool, so {name} gets attacked first - unless someone new joins.",
+            "ios.lobby.passing": "Passing (perevodnoy)",
+            "ios.lobby.passing.off": "Podkidnoy: cover it or pick it up.",
+            "ios.lobby.rulechanged": "You changed the rules, so someone else starts.",
             "ios.rules.lbl.table": "on the table",
             "ios.rules.lbl.hand": "your hand",
             "ios.rules.defender": "Defender",
             "ios.rules.nextplayer": "Next player",
             "ios.msg.nametaken": "name taken in this game",
             "ios.a11y.attackfirst": "You attack first",
+            "ios.a11y.on": "on", "ios.a11y.off": "off",
             "ios.a11y.defending": "Defending",
             "ios.a11y.attacking": "attacking",
             "ios.a11y.saidgood": "said good",
@@ -422,6 +436,7 @@ public enum FStrings {
             "ios.rules.attack.no1": "Но не семёрка с десяткой вместе - достоинства разные.",
             "ios.rules.defend.h": "Защита",
             "ios.rules.defend.b": "Защитник всегда один, и все карты, выложенные остальными, - его забота. Защитник может только крыть, взять или перевести (если перевод разрешён) - сам он не атакует. Все остальные - атакующие, и крыть они не могут.",
+            "ios.rules.defend.b.nopass": "Защитник всегда один, и все карты, выложенные остальными, - его забота. Защитник может только крыть или взять - сам он не атакует. Все остальные - атакующие, и крыть они не могут.",
             "ios.rules.cover.h": "Крыть",
             "ios.rules.cover.b": "Защитник кроет каждую карту атаки старшей картой той же масти - или ЛЮБЫМ козырем: в этом и сила козырной масти. Выберите карту и нажмите «Крыть» или перетащите её на карту, которую хотите покрыть. Частая ошибка: уже покрытую карту нельзя покрыть ещё раз - стопок из трёх карт не бывает. Атака - меч, покрытие - щит: отбитая атака кончена. Новые атаки кладутся отдельными стопками.",
             "ios.rules.cover.ok1": "Кроет старшая карта той же масти.",
@@ -453,12 +468,16 @@ public enum FStrings {
             "ios.rules.fool.h": "Дурак платит",
             "ios.rules.fool.b": "Обычно первым ходит тот, у кого младший козырь. Есть одно исключение, и это самая старая дурацкая справедливость: если после конца игры нажать «Новая игра» и за стол сядут ровно те же игроки, младший козырь не решает ничего. Первым ходит сосед справа от прошлого дурака - то есть по дураку и бьют первым. Проиграл - и следующая игра идёт прямо на тебя. Если до старта кто-то войдёт или выйдет, стол уже другой, и обычное правило возвращается.",
             "ios.lobby.penalty": "{name} остался дураком, поэтому по игроку {name} ударят первым - если никто новый не войдёт.",
+            "ios.lobby.passing": "Переводной",
+            "ios.lobby.passing.off": "Подкидной: кроем или забираем.",
+            "ios.lobby.rulechanged": "Вы поменяли правила - начинает кто-то другой.",
             "ios.rules.lbl.table": "на столе",
             "ios.rules.lbl.hand": "ваша рука",
             "ios.rules.defender": "Защитник",
             "ios.rules.nextplayer": "Следующий игрок",
             "ios.msg.nametaken": "ник уже занят в этой игре",
             "ios.a11y.attackfirst": "Вы ходите первым",
+            "ios.a11y.on": "включено", "ios.a11y.off": "выключено",
             "ios.a11y.defending": "Защищается",
             "ios.a11y.attacking": "атакует",
             "ios.a11y.saidgood": "сказал бито",
@@ -597,6 +616,7 @@ public enum FStrings {
             "ios.rules.attack.no1": "7과 10을 같이는 안 됩니다 - 값이 다릅니다.",
             "ios.rules.defend.h": "수비",
             "ios.rules.defend.b": "방어자는 한 번에 한 명뿐이고, 다른 플레이어들이 낸 카드는 전부 방어자의 몫입니다. 방어자는 막기, 가져오기, 넘기기(허용된 경우)만 할 수 있고 - 스스로 공격할 수는 없습니다. 나머지는 모두 공격자이며, 공격자는 막을 수 없습니다.",
+            "ios.rules.defend.b.nopass": "방어자는 한 번에 한 명뿐이고, 다른 플레이어들이 낸 카드는 전부 방어자의 몫입니다. 방어자는 막기와 가져오기만 할 수 있고 - 스스로 공격할 수는 없습니다. 나머지는 모두 공격자이며, 공격자는 막을 수 없습니다.",
             "ios.rules.cover.h": "막기",
             "ios.rules.cover.b": "방어자는 각 공격 카드를 같은 무늬의 더 높은 카드, 또는 아무 으뜸패로나 막습니다 - 이것이 으뜸 무늬의 힘입니다. 카드를 선택하고 방어 버튼을 누르거나, 막고 싶은 카드 위로 끌어다 놓으세요. 흔한 오해 하나: 이미 막힌 카드는 다시 막을 수 없습니다 - 석 장짜리 더미는 없습니다. 공격은 검, 막은 카드는 방패입니다: 막힌 공격은 끝난 것입니다. 새 공격은 새 더미로 놓입니다.",
             "ios.rules.cover.ok1": "같은 무늬의 더 높은 카드로 막습니다.",
@@ -628,12 +648,16 @@ public enum FStrings {
             "ios.rules.fool.h": "바보가 값을 치른다",
             "ios.rules.fool.b": "보통은 가장 낮은 으뜸패를 가진 사람이 먼저 공격합니다. 예외가 하나 있는데, 두라크에서 가장 오래된 방식의 정의입니다. 게임이 끝난 뒤 새 게임을 누르고 똑같은 사람들이 다시 앉으면 낮은 으뜸패는 아무것도 결정하지 않습니다. 지난 판 바보의 오른쪽에 앉은 사람이 먼저 공격하고, 따라서 바보가 가장 먼저 공격을 받습니다. 지면 다음 판이 바로 당신에게 옵니다. 시작 전에 누군가 들어오거나 나가면 판이 달라진 것이므로 원래 규칙으로 돌아갑니다.",
             "ios.lobby.penalty": "{name} 님이 바보였으므로 {name} 님이 먼저 공격받습니다 - 새로운 사람이 들어오지 않는 한.",
+            "ios.lobby.passing": "넘기기 (페레보드노이)",
+            "ios.lobby.passing.off": "포드키드노이: 막거나 가져갑니다.",
+            "ios.lobby.rulechanged": "규칙을 바꿨으니 시작은 다른 사람이 합니다.",
             "ios.rules.lbl.table": "테이블",
             "ios.rules.lbl.hand": "내 손",
             "ios.rules.defender": "방어자",
             "ios.rules.nextplayer": "다음 플레이어",
             "ios.msg.nametaken": "이미 사용 중인 닉네임입니다",
             "ios.a11y.attackfirst": "당신이 먼저 공격합니다",
+            "ios.a11y.on": "켬", "ios.a11y.off": "끔",
             "ios.a11y.defending": "방어 중",
             "ios.a11y.attacking": "공격 중",
             "ios.a11y.saidgood": "완료 선언",

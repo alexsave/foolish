@@ -73,9 +73,35 @@ static int name_is_clean(const char *s, int len) {
 // by msg_replay; -1 if the last message had no body (an empty lobby/handoff).
 int msg_last_body_version = -1;
 
+// WHAT A FORMAT SAYS, in four predicates instead of a chain of == tests
+// repeated in decode, encode and validate. Five live formats is where the ==
+// chains stopped being readable, and the three places that ask must agree
+// exactly or an envelope encodes to bytes that decode back as something else.
+static int fmt_known(uint8_t f) {
+    return f == MSG_FORMAT_V6 || f == MSG_FORMAT_CLOCK || f == MSG_FORMAT_REMATCH
+        || f == MSG_FORMAT_RULES || f == MSG_FORMAT_RULES_REMATCH;
+}
+static int fmt_has_clock(uint8_t f) {
+    return f == MSG_FORMAT_CLOCK || f == MSG_FORMAT_REMATCH
+        || f == MSG_FORMAT_RULES || f == MSG_FORMAT_RULES_REMATCH;
+}
+static int fmt_has_rematch(uint8_t f) {
+    return f == MSG_FORMAT_REMATCH || f == MSG_FORMAT_RULES_REMATCH;
+}
+// Does this format's variant byte carry the RULES? On the formats that predate
+// it the byte is reserved and must be 0 - which is not "no rules", it is the
+// passing game, the only one those formats could describe.
+static int fmt_has_rules(uint8_t f) {
+    return f == MSG_FORMAT_RULES || f == MSG_FORMAT_RULES_REMATCH;
+}
+
+int msg_pass_allowed(const MsgEnvelope *e) {
+    if (!e) return 1;
+    return fmt_has_rules(e->format) ? ((e->variant & MSG_VARIANT_PASS) != 0) : 1;
+}
+
 static int validate_fields(const MsgEnvelope *e) {
-    if (e->format != MSG_FORMAT_V6 && e->format != MSG_FORMAT_CLOCK
-        && e->format != MSG_FORMAT_REMATCH) return MSG_EFORMAT;
+    if (!fmt_known(e->format)) return MSG_EFORMAT;
     // The clock is what format 3 IS, so the two must agree in both directions:
     // a format-2 envelope carrying a stamp would encode to bytes that decode
     // back without it, and the wire must round-trip to itself.
@@ -102,7 +128,14 @@ static int validate_fields(const MsgEnvelope *e) {
     if (e->phase == MSG_PHASE_ACCEPT) return MSG_EPHASE;
 
     if (e->n_players < 2 || e->n_players > MAX_PLAYERS) return MSG_EPLAYERS;
-    if (e->variant != 0) return MSG_EVARIANT;
+    // THE RULES BYTE. On a format that carries it, an unknown bit is refused
+    // rather than masked off: this build would deal a different game from the
+    // sender's, and a wrong game is worse than a rejected bubble. On the formats
+    // that predate it the byte is reserved and must still be 0 - which is how
+    // those chains keep saying what they always said (the passing game), and how
+    // a podkidnoy game cannot masquerade as one of them.
+    if (e->variant & ~(unsigned)(fmt_has_rules(e->format) ? MSG_VARIANT_KNOWN : 0u))
+        return MSG_EVARIANT;
     if (e->last_actor_seat >= e->n_players) return MSG_ESEAT;
 
     // The seed is all-zero ONLY in fair-deal's pre-reveal phases; without that
@@ -143,7 +176,7 @@ static int validate_fields(const MsgEnvelope *e) {
     // cannot carry it is not an envelope. (Same shape as the clock/delta rule
     // above - the format byte and the fields it implies must agree in both
     // directions, or a re-encode would silently drop a term of the deal.)
-    if (e->format != MSG_FORMAT_REMATCH) {
+    if (!fmt_has_rematch(e->format)) {
         if (e->opening != MSG_NO_OPENING) return MSG_EFORMAT;
         if (e->carry_key != 0 || e->carry_fool != MSG_NO_FOOL) return MSG_EFORMAT;
     }
@@ -159,10 +192,11 @@ static int validate_fields(const MsgEnvelope *e) {
 }
 
 // How long a format's fixed header is. Every format shares one prefix and
-// appends; n_joins is always the last byte of it.
+// appends; n_joins is always the last byte of it. Formats 5 and 6 add no bytes
+// to 3 and 4 - they respend one that was already there.
 static int hdr_len_for(uint8_t format) {
-    if (format == MSG_FORMAT_REMATCH) return MSG_HEADER_LEN_REMATCH;
-    if (format == MSG_FORMAT_CLOCK)   return MSG_HEADER_LEN_CLOCK;
+    if (fmt_has_rematch(format)) return MSG_HEADER_LEN_REMATCH;
+    if (fmt_has_clock(format))   return MSG_HEADER_LEN_CLOCK;
     return MSG_HEADER_LEN;
 }
 
@@ -171,13 +205,14 @@ static int hdr_len_for(uint8_t format) {
 int msg_decode(const unsigned char *in, int in_len, MsgEnvelope *out) {
     if (in_len < MSG_HEADER_LEN) return MSG_ESHORT;
     if (in[0] != MSG_MAGIC) return MSG_EMAGIC;
-    if (in[1] != MSG_FORMAT_V6 && in[1] != MSG_FORMAT_CLOCK
-        && in[1] != MSG_FORMAT_REMATCH) return MSG_EFORMAT;
+    if (!fmt_known(in[1])) return MSG_EFORMAT;
     // Format 3 is format 2 with two more header bytes at MSG_CLOCK_OFF, and
     // format 4 is format 3 with three more after those, so the whole prefix
-    // below is read the same way and only n_joins onward shifts.
-    const int has_clock   = (in[1] == MSG_FORMAT_CLOCK || in[1] == MSG_FORMAT_REMATCH);
-    const int has_rematch = (in[1] == MSG_FORMAT_REMATCH);
+    // below is read the same way and only n_joins onward shifts. Formats 5 and
+    // 6 are 3 and 4 byte for byte and differ only in what the variant byte
+    // MEANS, so they share those layouts exactly.
+    const int has_clock   = fmt_has_clock(in[1]);
+    const int has_rematch = fmt_has_rematch(in[1]);
     const int hdr_len     = hdr_len_for(in[1]);
     if (in_len < hdr_len) return MSG_ESHORT;
 
@@ -254,8 +289,8 @@ int msg_encode(const MsgEnvelope *e, unsigned char *out, int out_cap) {
 
     if (e->actions_len > 0 && !e->actions) return MSG_EACTION;
 
-    const int has_clock   = (e->format == MSG_FORMAT_CLOCK || e->format == MSG_FORMAT_REMATCH);
-    const int has_rematch = (e->format == MSG_FORMAT_REMATCH);
+    const int has_clock   = fmt_has_clock(e->format);
+    const int has_rematch = fmt_has_rematch(e->format);
     const int hdr_len     = hdr_len_for(e->format);
 
     int need = hdr_len;
@@ -308,6 +343,10 @@ static void deal_from_envelope(const MsgEnvelope *e, Game *g) {
     game_set_deal_seed_bytes(e->seed, MSG_SEED_LEN);
     memset(g, 0, sizeof(*g));
     g->num_players = (int8_t)e->n_players;
+    // The table's rules ride the header (MSG_VARIANT_PASS), so every device
+    // holding these bytes enumerates the same legal moves - which on this wire
+    // is not a nicety: the body codes each action as an index into that menu.
+    if (!msg_pass_allowed(e)) g->rules |= GAME_RULE_NO_PASS;
     for (int i = 0; i < e->n_players; i++) {
         g->players[i].status = PLAYER_STATUS_READY;
         g->players[i].strategy_key = 0;
@@ -461,6 +500,17 @@ int msg_replay(const MsgEnvelope *e, Game *g) {
         // format-4 block by a re-encode would deal the lowest trump here and
         // disagree with its own body.
         if (hdr.first_attacker != opened_on) return MSG_EBODY;
+        // …and under which RULES. The body was cut against one of two menus and
+        // says which (replay.h's pass-mode bit); the header says which game the
+        // lobby chose. They are two statements of one fact, so they must agree
+        // or this chain means different things to its two layers - and the
+        // header is what a device deals from before it ever decodes a body.
+        //
+        // A podkidnoy chain sealed by a retrodiction-line body would read
+        // pass_allowed = 1 here (that line carries no bit) and is refused: the
+        // FMSG body is always the inline-reveal line, so this only fires on a
+        // hand-made payload.
+        if (hdr.pass_allowed != msg_pass_allowed(e)) return MSG_EBODY;
     }
 
     const int rounds = m.rounds, applied = m.applied;
@@ -489,9 +539,14 @@ int msg_replay(const MsgEnvelope *e, Game *g) {
 // both directions, so a caller that got it wrong would only find out at encode
 // time.
 static uint8_t seal_format(const MsgEnvelope *e) {
+    // EVERY seal states the rules, which is why there is no format-2/3/4 branch
+    // left here: those formats cannot say them, and a bubble whose rules can
+    // only be inferred is exactly what this change is getting rid of. A game
+    // with nothing else to say still writes 5 - same 62 bytes format 3 wrote,
+    // one of them now meaning something.
     if (e->opening != MSG_NO_OPENING || e->carry_key != 0
-        || e->carry_fool != MSG_NO_FOOL) return MSG_FORMAT_REMATCH;
-    return (e->sent_at != 0 || e->n_new != 0) ? MSG_FORMAT_CLOCK : MSG_FORMAT_V6;
+        || e->carry_fool != MSG_NO_FOOL) return MSG_FORMAT_RULES_REMATCH;
+    return MSG_FORMAT_RULES;
 }
 
 int msg_seal_base(const Game *g, int base_logs) {
@@ -508,6 +563,13 @@ int msg_seal_base(const Game *g, int base_logs) {
 
 int msg_seal(MsgEnvelope *e, const Game *g, int base_logs,
              unsigned char *body, int body_cap, Game *scratch) {
+    // THE RULES ARE THE GAME'S, not the caller's - stamped here beside `turn`
+    // and `round` and for the same reason: they are a claim about the body, and
+    // a host that could write them freely could seal a bubble whose header and
+    // body describe different games. Every device deals from this byte before it
+    // has decoded a thing, so it must be the game that was really played.
+    e->variant = (uint8_t)(game_pass_allowed(g) ? MSG_VARIANT_PASS : 0u);
+
     // A 0-action game seals to an EMPTY body: a WAITING lobby, or the last-joiner
     // LIVE handoff that "applies nothing" (§5.2). The v6 producer is an action-run
     // codec keyed on the logged opening attack — it has nothing to encode and no

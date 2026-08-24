@@ -521,7 +521,9 @@ public struct MessageTableView: View {
             MessageSettingsView { showSettings = false }
         }
         .sheet(isPresented: $showRules) {
-            RulesView { showRules = false }
+            // The rulebook teaches THIS table's game: a podkidnoy chain gets a
+            // page with no passing in it (RulesView.passing).
+            RulesView(passing: controller.passingAllowed) { showRules = false }
         }
     }
 

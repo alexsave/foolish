@@ -88,6 +88,7 @@ void cd_sim_from_game(SimState *s, const Game *g) {
     s->flipped_id  = g->has_flipped ? (uint8_t)card_id(g->flipped) : 0;
     s->good_mask   = g->good_players_mask;
     s->num_eliminated = g->num_eliminated;
+    s->rules       = g->rules;
 
     for (int p = 0; p < g->num_players; p++) {
         uint64_t h = 0;
@@ -540,6 +541,9 @@ static int sim_greedy_full_cover(const SimState *s, int p, int power, SimMove *o
 // lowest card. Wait: pass branch iterates all pass moves and picks min summed
 // score. k=1 of the lowest matching card has the smallest sum. We replicate.
 static int sim_pass_move(const SimState *s, int p, int power, SimMove *out) {
+    // PODKIDNOY: no transfer in this world (legal.c calc_pass_moves is the
+    // engine-side twin of this gate).
+    if (s->rules & GAME_RULE_NO_PASS) return 0;
     // require: num_battles>0, none covered, all same attack value
     if (s->num_battles == 0) return 0;
     if (s->covered_mask) return 0;
@@ -713,6 +717,7 @@ int cd_sim_apply_root_move(SimState *s, int p_idx, const LegalMove *m) {
             return 1;
         }
         case MOVE_PASS: {
+            if (s->rules & GAME_RULE_NO_PASS) return 0;   // podkidnoy: no transfer
             if (s->num_battles == 0) return 0;
             if (s->covered_mask) return 0;
             int next = sim_next_player(s, s->defender);
@@ -1191,6 +1196,7 @@ static int sim_gen_regular_attack(const SimState *s, int p, SolMove *buf, int ma
 // next player's capacity (next_cards >= k + num_battles). Mirrors
 // calc_pass_moves (all battles uncovered, all same value).
 static int sim_gen_pass(const SimState *s, int p, SolMove *buf, int max_n) {
+    if (s->rules & GAME_RULE_NO_PASS) return 0;   // podkidnoy: no transfer
     if (s->num_battles == 0) return 0;
     if (s->covered_mask) return 0;
     int v0 = id_value(s->atk[0]);

@@ -885,6 +885,13 @@ bool handle_cover(Game *g, int player_idx,
 bool handle_pass(Game *g, int player_idx, const Card *cards, int n_cards) {
     engine_last_reject = ENGINE_REJECT_NONE;
     if (g->status != GAME_STATUS_PLAYING) REJECT(ENGINE_REJECT_NOT_PLAYING);
+    // PODKIDNOY (GAME_RULE_NO_PASS): this table plays the throw-in game, where
+    // the defender covers or picks up and there is no transfer at all. Checked
+    // FIRST, ahead of every card-shape rule below, because it is not a fact
+    // about these cards - the answer is the same for every hand a defender
+    // could hold, and a "wrong values" reason for a move the game does not have
+    // would send a UI hunting for a better card.
+    if (!game_pass_allowed(g)) REJECT(ENGINE_REJECT_PASS_DISABLED);
     if (n_cards <= 0) REJECT(ENGINE_REJECT_EMPTY);
 
     // TS validatePass priority: same-value → duplicates → defender →

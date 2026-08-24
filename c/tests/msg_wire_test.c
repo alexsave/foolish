@@ -109,6 +109,18 @@ static void seed_fill(uint8_t *seed, uint32_t s) {
     for (int i = 0; i < MSG_SEED_LEN; i++) seed[i] = (uint8_t)(rnd() >> 13);
 }
 
+// How long a format's fixed header is - the test's own copy, so a tamper case
+// can find n_joins on whatever format the seal chose. Deliberately spelled out
+// here rather than exported from msg_wire.c: if the two ever disagree, that is
+// a wire bug this file is supposed to catch, not share.
+static int env_hdr_len(uint8_t format) {
+    if (format == MSG_FORMAT_REMATCH || format == MSG_FORMAT_RULES_REMATCH)
+        return MSG_HEADER_LEN_REMATCH;
+    if (format == MSG_FORMAT_CLOCK || format == MSG_FORMAT_RULES)
+        return MSG_HEADER_LEN_CLOCK;
+    return MSG_HEADER_LEN;
+}
+
 static void env_init(MsgEnvelope *e, const uint8_t *seed, int n_players) {
     msg_envelope_init(e);   // NOT memset: the rematch fields have sentinels
     e->format = MSG_FORMAT_V6;
@@ -150,8 +162,18 @@ static void move_to_awire(const LegalMove *m, AwireAction *a) {
 //
 // Random play is the right driver for the CODEC tests (it reaches shapes a good
 // bot never would), but the wrong one for the size budget — see test_size_budget.
+static int play_game_rules(const uint8_t *seed, int n_players, int max_actions,
+                           Chain *ch, Game *end, int bot, int8_t rules);
+
 static int play_game(const uint8_t *seed, int n_players, int max_actions,
                      Chain *ch, Game *end, int bot) {
+    return play_game_rules(seed, n_players, max_actions, ch, end, bot, 0);
+}
+
+// `rules` is the table's variant (game.h GAME_RULE_*); 0 is the classic game
+// every caller above wants.
+static int play_game_rules(const uint8_t *seed, int n_players, int max_actions,
+                           Chain *ch, Game *end, int bot, int8_t rules) {
     // Pin the strategies' RNG per game: it is process-global, so without this a
     // measurement would depend on what ran before it (the 4p size moved by ~10%
     // just from adding an 8p sample ahead of it).
@@ -161,6 +183,7 @@ static int play_game(const uint8_t *seed, int n_players, int max_actions,
     Game g;
     memset(&g, 0, sizeof(g));
     g.num_players = (int8_t)n_players;
+    g.rules = rules;
     for (int i = 0; i < n_players; i++) {
         g.players[i].status = PLAYER_STATUS_READY;
         g.players[i].strategy_key = 0;
@@ -405,7 +428,7 @@ static void test_name_length_boundary(void) {
         const int n = msg_encode(&e, wire, sizeof(wire));
         CHECK(n > 0, "name boundary tamper fixture encode failed");
         if (n > 0) {
-            wire[MSG_HEADER_LEN + 1] = MSG_MAX_NAME + 1;   // the first join's name_len byte
+            wire[env_hdr_len(e.format) + 1] = MSG_MAX_NAME + 1;   // the first join's name_len byte
             MsgEnvelope d;
             CHECK(msg_decode(wire, n, &d) == MSG_ENAME,
                   "wire name_len=%d should have been refused decoding", MSG_MAX_NAME + 1);
@@ -657,11 +680,18 @@ static void test_tamper(void) {
     }
 
     // (d) Field-level rejects, one per rule.
+    //
+    // The offsets that follow the header are taken from the format this seal
+    // actually wrote, not from a constant: five live formats share one prefix
+    // and differ in length, so a hardcoded n_joins offset would silently start
+    // tampering with a name instead.
+    const int hl = env_hdr_len(e.format);
     struct { const char *what; int off; unsigned char val; int want; } cases[] = {
         { "magic",        0,  0xF6, MSG_EMAGIC },
-        // Round 16: 3 is the CLOCK format and 4 the REMATCH format, so the
-        // first unknown byte above them is 5. (2, 3 and 4 are the whole wire.)
-        { "format",       1,  MSG_FORMAT_REMATCH + 1, MSG_EFORMAT },
+        // 3 is the CLOCK format, 4 the REMATCH format, and 5/6 are those two
+        // with the variant byte spent on the rules - so the first unknown byte
+        // above them is 7. (2 through 6 are the whole wire.)
+        { "format",       1,  MSG_FORMAT_RULES_REMATCH + 1, MSG_EFORMAT },
         { "format:raw",   1,  1,    MSG_EFORMAT },
         { "flags:fair",   2,  MSG_FLAG_FAIR_DEAL, MSG_EFLAGS },
         { "flags:gzip",   2,  MSG_FLAG_GZIP, MSG_EFLAGS },
@@ -674,10 +704,14 @@ static void test_tamper(void) {
         { "phase:accept", 3,  MSG_PHASE_ACCEPT, MSG_EPHASE },
         { "n_players:1",  15, 1,    MSG_EPLAYERS },
         { "n_players:9",  15, 9,    MSG_EPLAYERS },
-        { "variant",      16, 1,    MSG_EVARIANT },
+        // The variant byte's known bit (passing) is legal on this format and
+        // means the game this chain really is; a bit this build does not
+        // implement is refused rather than masked off, because honouring only
+        // the half we understand deals a different game from the sender's.
+        { "variant:rsvd", 16, 0x02, MSG_EVARIANT },
         { "actor seat",   14, 4,    MSG_ESEAT },
-        { "n_joins:0",    58, 0,    MSG_EJOINS },
-        { "n_joins:9",    58, 9,    MSG_EJOINS },
+        { "n_joins:0",    hl - 1, 0, MSG_EJOINS },
+        { "n_joins:9",    hl - 1, 9, MSG_EJOINS },
     };
     for (int i = 0; i < (int)(sizeof(cases) / sizeof(cases[0])); i++) {
         unsigned char t[ENV_CAP];
@@ -701,7 +735,7 @@ static void test_tamper(void) {
     {
         unsigned char t[ENV_CAP];
         memcpy(t, wire, (size_t)n);
-        t[MSG_HEADER_LEN + 2] = 0x01; // first byte of the first join's name
+        t[hl + 2] = 0x01;   // first byte of the first join's name
         MsgEnvelope d;
         CHECK(msg_decode(t, n, &d) == MSG_ENAME, "control byte in name accepted");
     }
@@ -943,8 +977,9 @@ static void test_bubble_delta(void) {
                 // is what this whole field exists to stop doing.
                 CHECK(e.n_new >= 1 && e.n_new != MSG_NEW_NOTHING,
                       "np=%d game=%d: a real move sealed a delta of %d", np, gi, e.n_new);
-                // A delta alone is enough to need the format-3 header.
-                CHECK(e.format == MSG_FORMAT_CLOCK,
+                // A delta alone is enough to need the clock header, and every
+                // seal now writes the RULES format (5), which is that header.
+                CHECK(e.format == MSG_FORMAT_RULES,
                       "np=%d game=%d: a delta sealed as format %d", np, gi, e.format);
 
                 // THE INVARIANT the reader indexes on: deal + one step per atom.
@@ -1381,8 +1416,9 @@ static void test_fool_penalty_wire(void) {
             static Game scratch;
             CHECK(msg_seal(&e, &g, 0, body, sizeof(body), &scratch) == MSG_EOK,
                   "np=%d: rematch seal failed", np);
-            CHECK(e.format == MSG_FORMAT_REMATCH,
-                  "np=%d: a pinned opening did not seal format 4 (got %d)", np, e.format);
+            CHECK(e.format == MSG_FORMAT_RULES_REMATCH,
+                  "np=%d: a pinned opening did not seal the rematch format (got %d)",
+                  np, e.format);
 
             unsigned char wire[ENV_CAP];
             const int n = msg_encode(&e, wire, sizeof(wire));
@@ -1510,6 +1546,165 @@ static void test_forced_opening_replay(void) {
     }
 }
 
+// ---------- the rules ride the chain (podkidnoy) --------------------------
+//
+// A whole podkidnoy game, sealed and replayed on the other side. What is being
+// pinned is that the RULES survive the wire - not as a display flag, but as the
+// thing the body was coded against: a v6 code is a sequence of indices into the
+// legal-move menu, so a receiver that rebuilt the wrong menu would read the
+// same bytes as different moves.
+//
+// The perevodnoy control is played from the SAME seed on purpose. Without it,
+// "the podkidnoy chain contains no transfer" is a claim about one game's luck;
+// with it, the control's transfers are the proof that the position had them to
+// offer.
+static int game_has_pass(const Game *g) {
+    for (int i = 0; i < g->num_logs; i++) if (g->logs[i].log_type == LOG_PASS) return 1;
+    return 0;
+}
+
+static void test_podkidnoy_wire(void) {
+    static unsigned char body[1024];
+    static Game scratch;
+    int passes_seen = 0, podkidnoy_games = 0, shorter = 0;
+
+    for (uint32_t gi = 0; gi < 24; gi++) {
+        const int np = (int)(2 + gi % 3);
+        uint8_t seed[MSG_SEED_LEN];
+        seed_fill(seed, 4100 + gi);
+
+        // The control: the same deal under the classic rules.
+        Chain cc; memset(&cc, 0, sizeof(cc));
+        Game cend;
+        g_rng = 4100 + gi;
+        play_game(seed, np, 80, &cc, &cend, -1);
+        if (game_has_pass(&cend)) passes_seen++;
+
+        Chain ch; memset(&ch, 0, sizeof(ch));
+        Game end;
+        g_rng = 4100 + gi;
+        play_game_rules(seed, np, 80, &ch, &end, -1, GAME_RULE_NO_PASS);
+        CHECK(!game_has_pass(&end), "game %u: a podkidnoy game played a transfer", gi);
+        if (end.num_logs < 2) continue;
+        podkidnoy_games++;
+
+        // THE MODE REACHES THE MENU, and the size is how that shows. This game's
+        // moves are legal under either variant (podkidnoy's are a subset), so
+        // the SAME move stream can be coded both ways - and the podkidnoy code
+        // is the shorter one, because the transfers it never had are not in the
+        // model either. Equal lengths everywhere would mean the mode is being
+        // stored and ignored.
+        {
+            Game as_classic = end;
+            as_classic.rules = 0;
+            unsigned char a[1024], b[1024];
+            const int na = replay_encode_v6_from_game(&end, seed, MSG_SEED_LEN, 1 << 30,
+                                                      a, (int)sizeof a);
+            const int nb = replay_encode_v6_from_game(&as_classic, seed, MSG_SEED_LEN, 1 << 30,
+                                                      b, (int)sizeof b);
+            if (na > 0 && nb > 0) {
+                CHECK(na <= nb, "game %u: the podkidnoy code was the longer one "
+                      "(%d vs %d)", gi, na, nb);
+                if (na < nb) shorter++;
+            }
+        }
+
+        MsgEnvelope e;
+        env_init(&e, seed, np);
+        const int over = game_done(&end) >= 0 || end.status == GAME_STATUS_GAME_OVER;
+        e.phase = over ? MSG_PHASE_FINISHED : MSG_PHASE_LIVE;
+        if (msg_seal(&e, &end, MSG_NO_BASE, body, sizeof(body), &scratch) != MSG_EOK) continue;
+
+        // The seal states the rules off the GAME - the caller never said.
+        CHECK(e.variant == 0, "game %u: a podkidnoy seal wrote variant %d", gi, e.variant);
+        CHECK(msg_pass_allowed(&e) == 0, "game %u: the seal claimed the transfer", gi);
+
+        unsigned char wire[ENV_CAP];
+        const int n = msg_encode(&e, wire, sizeof(wire));
+        CHECK(n > 0, "game %u: podkidnoy encode failed (%d)", gi, n);
+        if (n <= 0) continue;
+
+        MsgEnvelope d;
+        CHECK(msg_decode(wire, n, &d) == MSG_EOK, "game %u: podkidnoy decode failed", gi);
+        CHECK(msg_pass_allowed(&d) == 0, "game %u: the rules did not survive the wire", gi);
+
+        // The REPLAY path rebuilds a game from the code alone (no envelope, no
+        // seed - a share link), and it must rebuild the same table: the code
+        // carries its own pass-mode bit, and replay_steps stamps it back onto
+        // the Game it plays the recorded actions over. Without that the rebuilt
+        // board answers "what is legal here" with a transfer that no step of
+        // the code it is showing could contain.
+        if (d.actions_len > 0) {
+            const int steps = replay_steps_count_v6(d.actions, d.actions_len, NULL);
+            CHECK(steps > 0, "game %u: the podkidnoy code did not rebuild", gi);
+            const Game *rg = replay_steps_last_game();
+            CHECK(rg && !game_pass_allowed(rg),
+                  "game %u: the rebuilt replay got its transfer back", gi);
+        }
+
+        Game g;
+        CHECK(msg_replay(&d, &g) == MSG_EOK, "game %u: the podkidnoy chain did not replay", gi);
+        // …and the game it rebuilt IS podkidnoy, so play continues under the
+        // rules it arrived with rather than under this build's default.
+        CHECK(!game_pass_allowed(&g), "game %u: the replayed game got its transfer back", gi);
+        LegalMoves ml;
+        calculate_legal_moves(&g, g.defender, &ml);
+        for (int i = 0; i < ml.n; i++)
+            CHECK(ml.moves[i].type != MOVE_PASS,
+                  "game %u: the rebuilt board offered a transfer", gi);
+
+        // THE HEADER AND THE BODY MUST AGREE. A chain whose variant byte says one
+        // game and whose body was cut against the other does not replay - which
+        // matters because the header is what a device DEALS from, before it has
+        // decoded a single atom.
+        {
+            unsigned char t[ENV_CAP];
+            memcpy(t, wire, (size_t)n);
+            t[16] = MSG_VARIANT_PASS;
+            MsgEnvelope liar; Game lg;
+            if (msg_decode(t, n, &liar) == MSG_EOK)
+                CHECK(msg_replay(&liar, &lg) == MSG_EBODY,
+                      "game %u: a chain that lied about its rules replayed", gi);
+        }
+    }
+
+    CHECK(podkidnoy_games >= 12, "only %d podkidnoy games sealed", podkidnoy_games);
+    CHECK(shorter > 0,
+          "no podkidnoy code came out shorter than the same game coded against "
+          "the transfer menu - the mode is not reaching build_top_menu");
+    // The control has to have USED the transfer, or none of the above is a test.
+    CHECK(passes_seen >= 3,
+          "the perevodnoy control transferred in only %d games - the podkidnoy "
+          "chains prove nothing", passes_seen);
+
+    // The other direction: a classic chain with its rules bit cleared is just as
+    // dead. (Same fixture shape, one game.)
+    {
+        uint8_t seed[MSG_SEED_LEN];
+        seed_fill(seed, 4242);
+        Chain ch; memset(&ch, 0, sizeof(ch));
+        Game end;
+        g_rng = 4242;
+        play_game(seed, 4, 80, &ch, &end, -1);
+        MsgEnvelope e;
+        env_init(&e, seed, 4);
+        const int over = game_done(&end) >= 0 || end.status == GAME_STATUS_GAME_OVER;
+        e.phase = over ? MSG_PHASE_FINISHED : MSG_PHASE_LIVE;
+        if (msg_seal(&e, &end, MSG_NO_BASE, body, sizeof(body), &scratch) == MSG_EOK) {
+            CHECK(e.variant == MSG_VARIANT_PASS, "a classic seal wrote variant %d", e.variant);
+            unsigned char wire[ENV_CAP];
+            const int n = msg_encode(&e, wire, sizeof(wire));
+            if (n > 0) {
+                wire[16] = 0;
+                MsgEnvelope liar; Game lg;
+                if (msg_decode(wire, n, &liar) == MSG_EOK)
+                    CHECK(msg_replay(&liar, &lg) == MSG_EBODY,
+                          "a classic chain re-labelled podkidnoy replayed anyway");
+            }
+        }
+    }
+}
+
 static void test_clock_wire(void) {
     uint8_t seed[MSG_SEED_LEN];
     seed_fill(seed, 77);
@@ -1521,33 +1716,45 @@ static void test_clock_wire(void) {
     static unsigned char body[1024];
     static Game scratch;
 
-    // Sealed WITHOUT a stamp: still format 2, still the bytes every shipped
-    // build reads.
+    // Sealed WITHOUT a stamp. Every seal now writes the RULES format (5), which
+    // is format 3's 62 bytes with the variant byte spent - so an unstamped seal
+    // still carries the clock FIELD, holding 0, which is the wire's "this bubble
+    // does not say".
     MsgEnvelope plain;
     env_init(&plain, seed, 2);
     CHECK(msg_seal(&plain, &played, MSG_NO_BASE, body, sizeof(body), &scratch) == MSG_EOK, "plain seal failed");
-    CHECK(plain.format == MSG_FORMAT_V6, "an unstamped seal picked the clock format");
-    unsigned char w2[ENV_CAP];
-    const int n2 = msg_encode(&plain, w2, sizeof(w2));
-    CHECK(n2 > 0, "plain encode failed: %d", n2);
+    CHECK(plain.format == MSG_FORMAT_RULES, "an unstamped seal picked format %d", plain.format);
+    CHECK(plain.sent_at == 0, "an unstamped seal invented a clock");
+    unsigned char w5[ENV_CAP];
+    const int n5 = msg_encode(&plain, w5, sizeof(w5));
+    CHECK(n5 > 0, "plain encode failed: %d", n5);
 
-    // Sealed WITH one: format 3, exactly THREE bytes longer (two of clock and
-    // the round-16 bubble-delta byte, which format 3 always carries even when
-    // this seal has no base to measure and leaves it 0), and the stamp survives
-    // the round trip.
+    // THE LEGACY HEADER, hand-built: format 2 is the same envelope minus the two
+    // clock bytes and the delta byte, and it is still what every bubble sealed
+    // before the clock looks like. Three bytes shorter, and this build still
+    // reads it.
+    MsgEnvelope legacy = plain;
+    legacy.format = MSG_FORMAT_V6;
+    legacy.variant = 0;      // the byte is reserved on that format, and passing
+    unsigned char w2[ENV_CAP];
+    const int n2 = msg_encode(&legacy, w2, sizeof(w2));
+    CHECK(n2 == n5 - 3, "format 5 cost %d bytes over format 2, not 3", n5 - n2);
+
+    // Sealed WITH a stamp: the same format and the same length (the field was
+    // always there), and the stamp survives the round trip.
     MsgEnvelope stamped;
     env_init(&stamped, seed, 2);
     stamped.sent_at = 0xBEEF;
     CHECK(msg_seal(&stamped, &played, MSG_NO_BASE, body, sizeof(body), &scratch) == MSG_EOK, "stamped seal failed");
-    CHECK(stamped.format == MSG_FORMAT_CLOCK, "a stamped seal stayed on format 2");
+    CHECK(stamped.format == MSG_FORMAT_RULES, "a stamped seal picked format %d", stamped.format);
     unsigned char w3[ENV_CAP];
     const int n3 = msg_encode(&stamped, w3, sizeof(w3));
-    CHECK(n3 == n2 + 3, "format 3 cost %d bytes over format 2, not 3", n3 - n2);
+    CHECK(n3 == n5, "a clock cost %d bytes on a format that always carried one", n3 - n5);
     CHECK(stamped.n_new == 0, "a seal with no base claimed a bubble delta");
 
     MsgEnvelope d;
-    CHECK(msg_decode(w3, n3, &d) == MSG_EOK, "format 3 did not decode");
-    CHECK(d.format == MSG_FORMAT_CLOCK && d.sent_at == 0xBEEF, "the clock did not survive decode");
+    CHECK(msg_decode(w3, n3, &d) == MSG_EOK, "format 5 did not decode");
+    CHECK(d.format == MSG_FORMAT_RULES && d.sent_at == 0xBEEF, "the clock did not survive decode");
     CHECK(d.n_actions == stamped.n_actions && d.turn == stamped.turn &&
           d.round == stamped.round && d.n_players == stamped.n_players,
           "format 3 lost a field the clock sits between");
@@ -1558,7 +1765,7 @@ static void test_clock_wire(void) {
     // these bytes for everyone downstream.
     unsigned char again[ENV_CAP];
     const int na = msg_encode(&d, again, sizeof(again));
-    CHECK(na == n3 && !memcmp(w3, again, (size_t)n3), "format 3 did not re-encode to itself");
+    CHECK(na == n3 && !memcmp(w3, again, (size_t)n3), "format 5 did not re-encode to itself");
 
     // A format-2 chain decodes to NO clock rather than to a garbage one.
     MsgEnvelope d2;
@@ -1569,13 +1776,26 @@ static void test_clock_wire(void) {
     // The pairing is enforced in both directions: format 2 cannot carry a stamp.
     MsgEnvelope liar = stamped;
     liar.format = MSG_FORMAT_V6;
+    liar.variant = 0;
     unsigned char wl[ENV_CAP];
     CHECK(msg_encode(&liar, wl, sizeof(wl)) == MSG_EFORMAT, "format 2 encoded a clock");
     // …and it cannot carry a bubble delta either, for the same reason: there is
     // nowhere in a 59-byte header to put one.
-    MsgEnvelope liar2 = plain;
+    MsgEnvelope liar2 = legacy;
     liar2.n_new = 1;
     CHECK(msg_encode(&liar2, wl, sizeof(wl)) == MSG_EFORMAT, "format 2 encoded a delta");
+    // …nor the RULES, which is the other half of the same rule: the variant byte
+    // is reserved on a format that predates it, so an envelope claiming the
+    // passing bit on format 2 is not a format-2 envelope. Without this the same
+    // byte would mean two things depending on who read it.
+    MsgEnvelope liar3 = legacy;
+    liar3.variant = MSG_VARIANT_PASS;
+    CHECK(msg_encode(&liar3, wl, sizeof(wl)) == MSG_EVARIANT, "format 2 encoded a rules byte");
+    // A legacy chain reads as the passing game - the only one those formats
+    // could describe - whatever this build's default happens to be.
+    MsgEnvelope dl;
+    CHECK(msg_decode(w2, n2, &dl) == MSG_EOK, "format 2 stopped decoding");
+    CHECK(msg_pass_allowed(&dl) == 1, "a format-2 chain lost the transfer");
 }
 
 // ---------- 5. hostile bodies are rejected (validation = replay) ----------
@@ -2464,6 +2684,51 @@ static void print_fixtures4(void) {
     }
 }
 
+// --fixture5: a PODKIDNOY chain, one line per player count, for the same
+// cross-engine job (docs/PODKIDNOY.md).
+//
+// What this one buys that the others cannot: the wasm kernel has to read a
+// format it did not have yesterday, take the rules off its variant byte, deal a
+// game under them, and build the SAME legal-move menu the phone built - because
+// the body is a sequence of indices into that menu. Read the byte and ignore
+// it, or build the perevodnoy menu anyway, and the atoms land on different
+// moves and the decode fails outright. There is no way to pass this fixture
+// while disagreeing about the rules.
+static void print_fixtures5(void) {
+    const int pcs[] = { 2, 3, 4 };
+    for (int pi = 0; pi < 3; pi++) {
+        const int np = pcs[pi];
+        int emitted = 0;
+        for (uint32_t s = 0; s < 400 && !emitted; s++) {
+            uint8_t seed[MSG_SEED_LEN];
+            seed_fill(seed, 7300u + s * 61u + (uint32_t)np);
+
+            Chain ch; memset(&ch, 0, sizeof(ch));
+            Game g;
+            g_rng = 7300u + s;
+            play_game_rules(seed, np, 12, &ch, &g, -1, GAME_RULE_NO_PASS);
+            if (g.status != GAME_STATUS_PLAYING || g.num_logs < 4) continue;
+
+            MsgEnvelope e;
+            env_init(&e, seed, np);
+            e.phase = MSG_PHASE_LIVE;
+            e.sent_at = 0x1234;
+            static unsigned char body[1024];
+            static Game scratch;
+            if (msg_seal(&e, &g, MSG_NO_BASE, body, sizeof(body), &scratch) != MSG_EOK) continue;
+            if (e.turn < 3) continue;
+            unsigned char wire[ENV_CAP];
+            const int n = msg_encode(&e, wire, sizeof(wire));
+            if (n <= 0) continue;
+            printf("%d %d %d %u ", np, e.turn, e.round, e.sent_at);
+            for (int i = 0; i < n; i++) printf("%02x", wire[i]);
+            printf("\n");
+            emitted = 1;
+        }
+        if (!emitted) fprintf(stderr, "no %dp podkidnoy fixture found\n", np);
+    }
+}
+
 // --holdcheck <hex>: decode a payload exactly as a device does and print the
 // pickup hold for every seat. The one tool that can say whether a board showing
 // the Pickup pill is the WIRE's fault or the app's.
@@ -2496,6 +2761,7 @@ static void print_holdcheck(const char *hex) {
 int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1], "--fixture")) { print_fixtures(); return 0; }
     if (argc > 1 && !strcmp(argv[1], "--fixture4")) { print_fixtures4(); return 0; }
+    if (argc > 1 && !strcmp(argv[1], "--fixture5")) { print_fixtures5(); return 0; }
     if (argc > 1 && !strcmp(argv[1], "--endgame")) {
         print_endgame(argc > 2 ? atoi(argv[2]) : 3);
         return 0;
@@ -2528,6 +2794,7 @@ int main(int argc, char **argv) {
     test_hostile_body();
     test_pickup_hold();
     test_clock_wire();
+    test_podkidnoy_wire();
     test_bubble_delta();
     test_nothing_bubble();
     test_roster_key();

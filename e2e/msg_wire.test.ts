@@ -54,15 +54,20 @@ test('the envelope is rejected before it can be replayed: magic, format, seed', 
     };
     bad(b => { b[0] = 0xf6; }, /not an FMSG envelope/);
     bad(b => { b[1] = 1; }, /unsupported format/);      // the raw format was cut
-    // 3 is the CLOCK format and 4 the REMATCH format since round 16, and both
-    // decode, so the first byte above the wire is 5. (Flipping this buffer to 3
-    // or 4 shifts n_joins along, so those fail as bad-joins/truncated payloads
-    // rather than as unknown formats - which the truncation test below covers.)
-    bad(b => { b[1] = 5; }, /unsupported format/);
+    // 3 is the CLOCK format, 4 the REMATCH format, and 5/6 are those two with
+    // the variant byte spent on the RULES (podkidnoy, docs/PODKIDNOY.md) - all
+    // four decode, so the first byte above the wire is 7. (Flipping this buffer
+    // to any of them shifts n_joins along, so they fail as bad-joins/truncated
+    // payloads rather than as unknown formats - which the truncation test below
+    // covers.)
+    bad(b => { b[1] = 7; }, /unsupported format/);
     bad(b => { b[2] = 0x01; }, /unsupported flags/);    // fair-deal: spec'd, unbuilt
     bad(b => { b[2] = 0x08; }, /unsupported flags/);    // reserved bit (0x04 = legacy passing-allowed, tolerated for 1.0(3) msgs)
     bad(b => { b[15] = 1; }, /bad player count/);
     bad(b => { b[15] = 9; }, /bad player count/);
+    // The variant byte is RESERVED on format 2 (that format predates the rules
+    // and is the passing game by definition), so any bit set in it is refused -
+    // which is what stops a podkidnoy game masquerading as an old chain.
     bad(b => { b[16] = 1; }, /unknown variant/);
     bad(b => { b[26] = 0; }, /dead deal seed/);         // all-zero seed
 });
@@ -173,6 +178,42 @@ for (const f of FIXTURES4) {
         assert.equal(env.sent_at, f.sent_at);
         assert.equal(env.joins.length, f.n_players);
         assert.deepEqual(env.joins.map(j => j.seat), [...Array(f.n_players).keys()]);
+    });
+}
+
+// PODKIDNOY (docs/PODKIDNOY.md), sealed by the native kernel: format 5, whose
+// variant byte is the table's RULES and whose 0 means "no transfer".
+//
+// The strongest cross-engine check in the file, for a reason the fool's-penalty
+// rows do not reach: the body of a v6-family code is a sequence of INDICES into
+// each state's legal-move menu, and this game's menus have no transfer in them.
+// A wasm kernel that read the rules byte and ignored it - or never learned that
+// format 5 carries one - would build the perevodnoy menu, and the same indices
+// would resolve to different moves. It would not "look wrong": the decode fails
+// outright, or replays a chain whose turn/round no longer match the header.
+// Regenerate with `./build/msg_wire_test --fixture5`.
+const FIXTURES5 = [
+    { n_players: 2, turn: 12, round: 2, sent_at: 0x1234, hex:
+      'f7050002efcdab89674523010c000002000200000000000000001e9986e393a186985bc91663988c3c607d4fe2267201f3652ebe7c89db67cc55341200020004416e6e300104416e6e310c001d179167621fb4cab1ae1a25e54fca' },
+    { n_players: 3, turn: 10, round: 0, sent_at: 0x1234, hex:
+      'f7050002efcdab89674523010a00000300000000000000000000e95cceb27ff14ae0347151e234ded9f026706246cbae96429c92e88170a83606341200030004416e6e300104416e6e310204416e6e320a000325ca4087e62c93b74459d94356c58a' },
+    { n_players: 4, turn: 9, round: 1, sent_at: 0x1234, hex:
+      'f7050002efcdab89674523010900000400010000000000000000b41e17816c410d280d188c60d1317680cf91e267235a391e0b66547904ea9fb6341200040004416e6e300104416e6e310204416e6e320304416e6e330900e9f9d02484f96635b8665da7cde4c7f38a' },
+];
+
+for (const f of FIXTURES5) {
+    test(`wasm replays a podkidnoy chain native sealed (${f.n_players}p)`, () => {
+        const env = kernelMsgDecode(hexToBytes(f.hex));
+        assert.equal(env.format, 5, 'the rules format');
+        assert.equal(env.variant, 0, 'variant 0 on format 5 is podkidnoy');
+        // The chain replayed under those rules: turn and round are the header's
+        // claims and the kernel holds the body to them.
+        assert.equal(env.turn, f.turn, 'atom count');
+        assert.equal(env.round, f.round, 'completed bouts');
+        assert.equal(env.sent_at, f.sent_at);
+        assert.equal(env.joins.length, f.n_players);
+        assert.deepEqual(env.joins.map(j => j.seat), [...Array(f.n_players).keys()]);
+        assert.ok(env.joins.every(j => /^Ann\d$/.test(j.name)), 'join names intact');
     });
 }
 
