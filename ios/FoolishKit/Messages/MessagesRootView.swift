@@ -245,7 +245,6 @@ public struct MessagesRootView: View {
     private func follow(height: CGFloat) {
         AnimLog.say("stage follow geo=\(Int(lastGeoHeight))->\(Int(height)) armed=\(armed)")
         if height < Self.compactThreshold { Self.lastCompactHeight = height }
-        let prev = lastGeoHeight
         lastGeoHeight = height
         // The collapse flip: armed by the host right before it requests
         // .compact, and consumed here, so the transition's later noisy reports
