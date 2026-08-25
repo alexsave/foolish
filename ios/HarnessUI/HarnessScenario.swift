@@ -581,14 +581,31 @@ extension HarnessModel {
         }
         let watcher = (0..<n).first { $0 != mover && $0 != view.defender } ?? ((mover + 1) % n)
 
-        await deliverSealed(opened, senderSeat: lastSeat)
+        // ROUND 21: HARNESS_ARRIVE_COLD=1 poses the OTHER half of the same
+        // move - the bubble opened from the transcript rather than landing on a
+        // board that is already up. The owner draws the distinction himself:
+        // "if we just played good and we send it off, we shouldn't show the good
+        // animation… but if we close and open to REPLAY it, then for sure we
+        // should show our own good animation." A live arrival keeps its role
+        // marks in `@State` across the move; a cold open has to be told where
+        // they stood, which is the entire difference being tested.
+        //
+        // Mechanically it is this same rig minus the pre-mount: the parent
+        // chain is never delivered, so the first thing the surface ever sees is
+        // the bubble carrying the move.
+        let cold = ProcessInfo.processInfo.environment["HARNESS_ARRIVE_COLD"] == "1"
+        if !cold {
+            await deliverSealed(opened, senderSeat: lastSeat)
+        }
         become(watcher)
         MessageGameStore.shared.nickname = Self.nameFor(watcher)
         become(watcher)
         expand()
         // Let the board mount, decode and settle - the arrival must land on a
-        // board that is already up, which is the whole point.
-        try? await Task.sleep(nanoseconds: 2_500_000_000)
+        // board that is already up, which is the whole point. A cold open has
+        // nothing to mount yet, so it waits only long enough for the surface
+        // itself to be there.
+        try? await Task.sleep(nanoseconds: cold ? 400_000_000 : 2_500_000_000)
 
         // …now the other seats play, and each ARRIVES. `HARNESS_ARRIVE_N` (with
         // `HARNESS_ARRIVE_GAP` in milliseconds) is the case the owner reports:
@@ -609,8 +626,11 @@ extension HarnessModel {
             // next move, so the seal read a game the move had been WIPED from
             // and emitted a bubble carrying nothing new - a thread no real pair
             // of phones can produce, failing the oracle against a rig bug.
+            // A cold open has no previous chain on the surface to wait for -
+            // the handshake below is about a LIVE controller folding the last
+            // arrival in, and on the first pass of a cold run there is none.
             let deadline = Date().addingTimeInterval(4)
-            while Date() < deadline,
+            while Date() < deadline, !(cold && i == 0),
                   MessageTurnController.debugLatest?.basePayload != lastPayload {
                 try? await Task.sleep(nanoseconds: 30_000_000)
             }

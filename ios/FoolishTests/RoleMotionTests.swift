@@ -141,15 +141,27 @@ final class RoleMotionTests: XCTestCase {
             pads: zeroed).isEmpty)
     }
 
-    func testTheSwordSpinsAndTheShieldDoesNot() {
-        // Not decoration: a full turn says the sword was THROWN to someone, and
-        // the shield's lean says it was carried. Swapping them reads wrong.
+    /// ROUND 21, the owner: "the first attacker sword fully spins around, but
+    /// the shield kinda turns a little bit then turns back. Make the shield spin
+    /// all the way around too."
+    ///
+    /// A WHOLE number of turns for both, and the shield's old 24-degree lean is
+    /// what that clause was describing: the ghost is taken away the moment it
+    /// lands and the receiving badge draws its mark upright, so any final angle
+    /// that is not a multiple of 360 snaps back on the hand-over. Asserted as
+    /// "a multiple of 360, and not zero" rather than "== 360", because the
+    /// property that matters is landing square, not the particular count.
+    func testBothMarksTurnAWholeNumberOfTurns() {
         let f = MessageTableView.roleFlights(
             from: .init(defender: 1, firstAttacker: 0),
             to:   .init(defender: 2, firstAttacker: 1),
             pads: pads(ring))
-        XCTAssertEqual(f.first { $0.kind == .leadSword }?.spin, 360)
-        XCTAssertLessThan(f.first { $0.kind == .shield }?.spin ?? 999, 90)
+        XCTAssertEqual(f.count, 2, "both marks changed seats, so both fly")
+        for flight in f {
+            XCTAssertGreaterThan(flight.spin, 0, "\(flight.kind) does not turn at all")
+            XCTAssertEqual(flight.spin.truncatingRemainder(dividingBy: 360), 0,
+                           "\(flight.kind) lands at \(flight.spin) degrees and snaps upright")
+        }
     }
 
     // MARK: - the path

@@ -459,6 +459,33 @@ public actor MessageKernel {
                         parent8: parent8, joins: joins, sentAt: sentAt)
     }
 
+    /// ROUND 21: MOVE A WAITING LOBBY'S RULES AND RESEAL IT - IN ONE ACTOR CALL.
+    ///
+    /// The passing checkbox used to reach through this actor three separate
+    /// times (`decode`, `setPassing`, `seal`) with the caller suspended between
+    /// each pair. That is the same shape as the phantom-seal bug `resealFromBase`
+    /// exists to close, and for the same reason: decoding IS adopting, so any
+    /// bubble snapshot or Rule-P comparison landing in one of those gaps repoints
+    /// the resident game and the seal below describes IT instead. Two taps on the
+    /// box in quick succession could do it without any help from elsewhere - two
+    /// of these sequences interleaving would decode, decode, set, set, seal,
+    /// seal, and the second seal would carry the first tap's rule.
+    ///
+    /// One call, no suspension point, and the lobby that gets sealed is provably
+    /// the one whose bytes were just decoded. No `expectPlayers` backstop here:
+    /// a lobby seal is the case that guard documents itself as skipping, and
+    /// there is no longer a window for it to catch.
+    ///
+    /// Phase 0 - a lobby stays a lobby; changing a rule is not starting a game.
+    public func resealLobby(_ lobbyPayload: Data, passing: Bool, actingSeat: Int,
+                            gameId: UInt64, parent8: Data, joins: [MessageJoin],
+                            sentAt: Int = MessageKernel.clockNow()) throws -> Data {
+        _ = try decode(payload: lobbyPayload, viewer: -1)
+        setPassing(passing)
+        return try seal(phase: 0, lastActorSeat: actingSeat, gameId: gameId,
+                        parent8: parent8, joins: joins, sentAt: sentAt)
+    }
+
     /// Apply one action by `seat` to the resident (adopted) game — the LOCAL half
     /// of a turn, before `seal`. Same packed awire frame the app and server apply
     /// through, and the kernel is the only judge of legality: an illegal move
@@ -696,6 +723,47 @@ public actor MessageKernel {
         }
         guard let packed, !packed.isEmpty else { return [] }
         return EvWire.decodeFrames(packed)
+    }
+
+    /// THIS BUBBLE'S ANIMATIONS, AND THE BOARD THEY START FROM.
+    ///
+    /// `lastMoveEvents` answers what MOVED; a board opening cold also needs to
+    /// know what the table looked like an instant BEFORE, because that is where
+    /// its role marks have to start. Seeding them from the stream's own first
+    /// frame is off by one move: an event's `state` is the board AS OF that step,
+    /// so a bubble carrying a good opens with the check already printed and the
+    /// sword-to-check flip has nowhere left to happen (round 21, the owner: "it
+    /// started out already in GOOD").
+    ///
+    /// The prior board is the same stream asked for ONE STEP EARLIER. Step 0 is
+    /// the deal and this bubble's own steps begin at `atomsBefore + 1`, so step
+    /// `atomsBefore` is the last step of whatever came before it, and its
+    /// committed state is exactly "the table as this bubble found it".
+    ///
+    /// BOTH READS IN ONE ACTOR CALL, which is the reason this exists as a method
+    /// rather than two calls from the board: between two hops any other decode
+    /// repoints the resident game, and the second read would describe a different
+    /// chain than the first (see `resealFromBase`).
+    ///
+    /// SELF-CHECKING. The extra read must come back as exactly one more step than
+    /// the plain one; anything else means the step/atom mapping is not what is
+    /// assumed here and the prior board is reported as `nil` rather than guessed
+    /// at. A nil prior is not a failure - it is what every caller did before this
+    /// existed, and the board falls back to seeding from the first frame.
+    ///
+    /// `atomsBefore < 1` has no earlier step to ask for (the bubble is the first
+    /// move on a fresh deal, or the deal itself), so it skips the second read.
+    public func lastMoveEventsWithPrior(viewer: Int, atomsBefore: Int)
+        -> (events: [GameEvent], prior: GameView?) {
+        let events = lastMoveEvents(viewer: viewer, atomsBefore: atomsBefore)
+        // An EMPTY stream is worth a prior board too, and is in fact the case
+        // that needs one most: a `good` that does not close the bout emits no
+        // step at all, so the only thing a board can be told about it is the
+        // difference between two role states.
+        guard atomsBefore >= 1 else { return (events, nil) }
+        let withPrior = lastMoveEvents(viewer: viewer, atomsBefore: atomsBefore - 1)
+        guard withPrior.count == events.count + 1 else { return (events, nil) }
+        return (events, withPrior.first?.state)
     }
 
     /// Rule P (§7.2). <0 `a` wins, >0 `b`, 0 the same chain. Delivery order is

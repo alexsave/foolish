@@ -372,6 +372,20 @@ public struct MessageTableView: View {
         self.onDiagnostics = onDiagnostics
     }
 
+    /// NOBODY'S SEAT. Round 21: a spectator watches this board (owner:
+    /// "spectators opening final move goes straight to rank board, no final
+    /// animation. We should show the final move still"), and a spectator holds
+    /// no seat - `mySeat` is -1.
+    ///
+    /// It has to be asked explicitly wherever a SEAT is compared against an
+    /// EVENT's seat, because the kernel spends -1 on "no particular player" too:
+    /// a discard and a bout transition both carry seat -1, so a seatless viewer
+    /// tested with `ev.seat == mySeat` would claim them as their own move and
+    /// route the discard sweep into a hand that does not exist. Comparing
+    /// against a PLAYER's seat is safe either way - no player is seated at -1 -
+    /// and those sites are left alone.
+    private var isSpectating: Bool { controller.mySeat < 0 }
+
     public var body: some View {
         VStack(spacing: 8) {
             if let view = controller.view {
@@ -1091,7 +1105,11 @@ public struct MessageTableView: View {
     /// Percentages resolve against width vs height, which reads as an oval on a
     /// non-square board - exactly the web's trick.
     private func ringPoint(seat: Int, n: Int, in size: CGSize) -> CGPoint {
-        let visual = (seat - controller.mySeat + n) % n
+        // A seatless viewer has no bottom-centre to be at, so the seats are
+        // their own visual order - the same convention the public bubble board
+        // uses (MessageBoardView.ringPoint), which is what a spectator has been
+        // looking at up to this point.
+        let visual = isSpectating ? seat % n : (seat - controller.mySeat + n) % n
         let rad = 2 * Double.pi * Double(visual) / Double(max(n, 1))
         // A compressed board (the compact drawer) pushes the ring a little higher
         // so it and the hand don't crowd the middle - but only a little, or the
@@ -1119,7 +1137,20 @@ public struct MessageTableView: View {
     /// the special-cased first-attacker sword). Nothing shows once I'm out (the
     /// game-over screen replaces the whole board, so "game over" is already
     /// handled by the caller never reaching here then).
+    @ViewBuilder
     private func selfRoleIndicator(_ view: GameView) -> some View {
+        // A SPECTATOR HAS NO ROLE. Round 21: `showsSword` would answer true for
+        // seat -1 on any open table (it is not the defender, it has not said
+        // good, and there are cards down), so a watcher would be shown a sword
+        // of their own under an empty hand.
+        if isSpectating {
+            EmptyView()
+        } else {
+            selfRoleMark(view)
+        }
+    }
+
+    private func selfRoleMark(_ view: GameView) -> some View {
         let mySeat = controller.mySeat
         let isOut = view.me?.isOut ?? false
         let isDefender = shownIsDefender(mySeat, view)
@@ -1621,6 +1652,33 @@ public struct MessageTableView: View {
     private func runEventStream(_ events: [GameEvent], finalView view: GameView, openReplay: Bool = false) async {
         let run = AnimLog.on ? AnimLog.nextRun() : 0
         AnimLog.say("stream#\(run) begin n=\(events.count) [\(events.map { "\($0.kind.map(String.init(describing:)) ?? "?")@\($0.seat)x\($0.cards.count)" }.joined(separator: " "))] depth=\(BoardAnimator.sequenceDepth)")
+        // ROUND 16, and the case a live board does not have: a COLD OPEN. Tapping
+        // a bubble mounts a fresh board, so there is no "roles before this move"
+        // in `@State` for the hand-off to start from (`freezeCounts` only runs
+        // when this board was already watching), and a receiver opening a
+        // bout-ending bubble must still watch the shield cross the table exactly
+        // like the player who was already looking at it. Only ever seeds; a
+        // frozen board keeps what it froze.
+        //
+        // AHEAD OF THE EMPTY-STREAM GUARD, because the stream that needs it most
+        // is the empty one: a `good` that does not close the bout emits no step,
+        // so the difference between these two role states is the ENTIRE move.
+        // Seeded below the guard it never ran for exactly that case.
+        //
+        // ROUND 21 CORRECTED WHERE IT SEEDS FROM. It used to be the stream's own
+        // first event, described here as "the board as that turn began" - which
+        // it is not. An event's `state` is the table AS OF that step, so the
+        // first one is already one move late, and for a move that shows up in
+        // the roles rather than on the table there is then nothing left to
+        // animate: a bubble carrying a `good` opened with the check printed on
+        // the badge (the owner: "it started out already in GOOD"). The kernel
+        // hands over the genuinely prior board now
+        // (`controller.openReplayPriorState`); the first event remains the
+        // fallback for the opens that have no earlier step to ask for - a
+        // genesis deal, the first move on a fresh deal.
+        if roleShown == nil, let prior = controller.openReplayPriorState ?? events.first?.state {
+            roleShown = RoleState(prior)
+        }
         guard !events.isEmpty else {
             // ROUND 16: HAND THE COUNTS BACK. Every caller freezes them to the
             // pre-move board SYNCHRONOUSLY (`play`, then `flyBoutEndToDiscard`)
@@ -1669,17 +1727,6 @@ public struct MessageTableView: View {
         // does exactly this for a live placement; these two open/bout-end
         // teardowns were the ones still relying on clearPreHidden alone).
         var openedThisSeq = Set<String>()
-        // ROUND 16, and the case a live board does not have: a COLD OPEN. Tapping
-        // a bubble mounts a fresh board, so there is no "roles before this move"
-        // in `@State` for the hand-off to start from (`freezeCounts` only runs
-        // when this board was already watching). The stream itself carries it -
-        // its FIRST event's state is the board as that turn began, roles and
-        // goods included - so a receiver opening a bout-ending bubble watches
-        // the shield cross the table exactly like the player who was already
-        // looking at it. Only ever seeds; a frozen board keeps what it froze.
-        if roleShown == nil, let first = events.first?.state {
-            roleShown = RoleState(first)
-        }
         defer {
             BoardAnimator.sequenceDepth -= 1
             // ONLY the newest sequence may hand the veil and the counts back. A
@@ -1739,6 +1786,49 @@ public struct MessageTableView: View {
         // (what a warm reload already does). A live bout-end keeps the near-zero
         // wait so its discard ghost covers the fading table card at once (#2).
         try? await Task.sleep(nanoseconds: openReplay ? 100_000_000 : 16_000_000)
+
+        // ROUND 21: A GOOD IS A MOVE, SO IT PLAYS FIRST.
+        //
+        // The owner, on replaying a round-ending good: "I don't see the sword to
+        // good transition. It started out already in GOOD, then did the discard
+        // animation and role switch animation… if we close and open to REPLAY
+        // it, then for sure we should show our own good animation (rotation)."
+        //
+        // A `good` is the one action that emits no step of its own - the kernel
+        // has no card to move, so the stream a bubble carries opens straight
+        // onto the CONSEQUENCES (the transition, the discard, the refill). The
+        // move itself lives entirely in the goodMask, and until now the only
+        // thing that ever advanced it was the closing beat at the bottom of this
+        // function - which is why it arrived after the discard instead of
+        // causing it.
+        //
+        // ADDED goods only, never cleared ones, and that asymmetry is the whole
+        // rule: a good being SET is somebody's move and belongs at the front,
+        // while a good being taken away is a consequence of the attack that
+        // reopened the bout and belongs with the other consequences at the back.
+        // Flip it early and an attacker's check would snap to a sword before the
+        // card that cleared it had even left their hand.
+        //
+        // It costs nothing on the board that STAGED the good: that board flipped
+        // the mark when the move was staged (the owner: "we shouldn't show the
+        // good animation as staging it should've already shown it"), so by the
+        // time the settlement is released there is no difference left to find.
+        // Every other board - a receiver watching it arrive, a cold open
+        // replaying it - has one.
+        if let opening = Self.goodsOpening(shown: roleShown,
+                                           firstGoodMask: events.first?.state?.goodMask) {
+            AnimLog.say("stream#\(run) good first: g\(roleShown?.goodMask ?? 0) -> g\(opening.goodMask)")
+            // The seats do not change here, only what they are wearing, so
+            // nothing flies: this is the coin flip each badge makes where it
+            // stands, and `syncRoles` finds no hand-off to build.
+            syncRoles(to: opening, in: view, animated: true)
+            // Both halves of the coin, plus the beat the owner asked for between
+            // a move and its consequences ("show the cover animation, then pause
+            // then sweep" - the same shape).
+            if !reduceMotion {
+                try? await Task.sleep(nanoseconds: UInt64(roleFlipHalf * 2 * 1_000_000_000))
+            }
+        }
 
         let groups = Self.parallelGroups(events)
         for (gi, group) in groups.enumerated() {
@@ -1907,7 +1997,7 @@ public struct MessageTableView: View {
     /// are exactly the cards whose fan slot `openSlots` cuts as this step begins,
     /// so the fan opens for them then instead of at the whole sequence's start.
     private func myHandLandingIds(_ ev: GameEvent) -> Set<String> {
-        guard ev.seat == controller.mySeat else { return [] }
+        guard !isSpectating, ev.seat == controller.mySeat else { return [] }
         switch ev.kind {
         case .deal, .refill, .pickup: return Set(ev.cards.compactMap { $0?.identity })
         default: return []
@@ -1966,9 +2056,31 @@ public struct MessageTableView: View {
         }
     }
 
+    /// THE ROLES A COLD OPEN SHOULD DRAW BEFORE IT HAS PLAYED ANYTHING: the ones
+    /// the bubble FOUND. A pure function of the controller, so `body` may read it
+    /// on the very first paint - the same trick, and the same reason, as
+    /// `pendingOpen`, which holds the counts back over the same window.
+    ///
+    /// Round 21, measured on the rig: the first paint of a cold open drew the
+    /// marks from the FINAL view, and the seed inside `runEventStream` did not
+    /// land for another ~50ms. Alex, who is about to be shown attacking, wore a
+    /// shield for three frames and then flipped out of it - a coin flip into a
+    /// role that seat never held, right as the replay began. (Pre-dates this
+    /// round: round 16 seeded from the stream's first event and had the same
+    /// window.) Nil once the marks are being driven properly, and nil for a board
+    /// with nothing to replay - both of those draw the live view, as always.
+    private var pendingRoles: RoleState? {
+        guard !settled, !controller.openReplayEvents.isEmpty,
+              let prior = controller.openReplayPriorState else { return nil }
+        return RoleState(prior)
+    }
+
     /// The roles the board should DRAW right now - the frozen ones during a
-    /// sequence, the live ones at rest.
-    private func shownRoles(_ view: GameView) -> RoleState { roleShown ?? RoleState(view) }
+    /// sequence, the pre-move ones on a cold open that has not started, the live
+    /// ones at rest.
+    private func shownRoles(_ view: GameView) -> RoleState {
+        roleShown ?? pendingRoles ?? RoleState(view)
+    }
 
     private func shownIsDefender(_ seat: Int, _ view: GameView) -> Bool {
         shownRoles(view).defender == seat
@@ -2048,9 +2160,21 @@ public struct MessageTableView: View {
             flights.append(RoleFlight(id: "shield-\(old.defender)-\(target.defender)",
                                       kind: .shield, from: from, to: to,
                                       fromSeat: old.defender, toSeat: target.defender,
-                                      // The shield keeps its face to the room and
-                                      // only leans into the throw.
-                                      spin: 24))
+                                      // ROUND 21, the owner: "the first attacker
+                                      // sword fully spins around, but the shield
+                                      // kinda turns a little bit then turns back.
+                                      // Make the shield spin all the way around
+                                      // too." The lean was 24 degrees, and that
+                                      // last clause is the bug in it: a ghost that
+                                      // ends its flight at 24 degrees is replaced
+                                      // by a real shield drawn upright, so the
+                                      // mark visibly snapped back on landing. A
+                                      // WHOLE turn is the only lean that ends
+                                      // where the badge draws it - the hand-off is
+                                      // seamless because 360 and 0 are the same
+                                      // angle - and it makes both marks speak the
+                                      // one language the rest of this file does.
+                                      spin: 360))
         }
         if old.firstAttacker != target.firstAttacker,
            let from = pad(old.firstAttacker), let to = pad(target.firstAttacker) {
@@ -2067,6 +2191,27 @@ public struct MessageTableView: View {
                                       spin: 360))
         }
         return flights
+    }
+
+    /// ROUND 21: THE ROLE STATE A STREAM SHOULD OPEN ON, or nil for "start
+    /// playing straight away".
+    ///
+    /// The rule, as a value, so it can be read and tested without a board - the
+    /// prose for WHY lives at the call site in `runEventStream`.
+    ///
+    /// Only goods that this move ADDS, and only ever added to what is already
+    /// shown. A good being set is somebody's move and belongs in front of the
+    /// consequences it caused; a good being cleared is a consequence of the
+    /// attack that reopened the bout and belongs at the back with the rest of
+    /// them. The seats are carried over untouched: nothing changes hands here,
+    /// so nothing may fly.
+    static func goodsOpening(shown: RoleState?, firstGoodMask: Int?) -> RoleState? {
+        guard let shown, let firstGoodMask else { return nil }
+        let added = firstGoodMask & ~shown.goodMask
+        guard added != 0 else { return nil }
+        return RoleState(defender: shown.defender,
+                         firstAttacker: shown.firstAttacker,
+                         goodMask: shown.goodMask | added)
     }
 
     /// Carry the marks across, then hand the badges back their own copies. The
@@ -2754,7 +2899,7 @@ public struct MessageTableView: View {
     /// (possibly empty) flight list. `view` is the FINAL board, for locating a
     /// card still on the table.
     private func openReplayFlights(_ ev: GameEvent, view: GameView, lastChance: Bool = false) -> [Flight]? {
-        let mine = ev.seat == controller.mySeat
+        let mine = !isSpectating && ev.seat == controller.mySeat
         switch ev.kind {
         case .attackPass, .defenderMove, .cover:
             // A card placed on the table (hand -> its battle). Best-effort, no
@@ -2981,6 +3126,20 @@ public struct MessageTableView: View {
             }
             if view.isOver { showResults = true }   // note 39c: nothing to animate
             return
+        }
+
+        // ROUND 21: TAKE THE MARKS OFF `pendingRoles` AND ONTO STATE, here and
+        // synchronously - before the Task below is even scheduled.
+        //
+        // `pendingRoles` only answers while the controller says a replay is
+        // outstanding, and `viewChanged` clears that flag on its way out of this
+        // call (`consumeReplayPending`), which is several paints before the
+        // sequence starts. Without this line the marks would fall back to the
+        // FINAL view for that gap and flip twice on their way to being right.
+        // Same reasoning as `freezeCounts`: the freeze has to be synchronous
+        // with the change that needs it, not one onChange behind.
+        if roleShown == nil, let prior = controller.openReplayPriorState {
+            roleShown = RoleState(prior)
         }
 
         // notes 6/12: hand every real card this open moves - onto the table
@@ -3921,18 +4080,28 @@ struct FGameOverList: View {
         }
     }
 
-    /// "Replay Link ↗" - this game on foolish.cards, for watching it back
-    /// outside Messages.
+    /// "Replay Link" + a copy glyph - this game on foolish.cards, for watching
+    /// it back outside Messages.
     ///
     /// Named, not spelled out (owner: "don't put the entire long url in the
     /// screen"). It could not be spelled out anyway: the replay code IS the
     /// game - a self-contained base32 payload the site decodes with the same
     /// kernel - so the URL runs to hundreds of characters and carries nothing a
-    /// human would read. The glyph is the standard leaves-this-app arrow, and
-    /// round 20 made it honest again: where the system lets an extension out, a
-    /// tap really does hand the conversation over to Safari, and where it does
-    /// not, both the words and the glyph change to say the link is on the
-    /// pasteboard instead. See `onOpenURL` for why there are two outcomes.
+    /// human would read.
+    ///
+    /// THE GLYPH SAYS COPY (round 21, the owner: "replay link icon should be
+    /// copy icon not arrow out of box, if we're not going to be opening links
+    /// anyways then whatever"). It was the standard leaves-this-app arrow, which
+    /// is what round 20 could not make true: an iMessage extension may only open
+    /// its OWN container app's scheme, this product's container is codeless, and
+    /// so every tap on a real phone falls through to the pasteboard. An outward
+    /// arrow over a row that always copies is a promise the app cannot keep, and
+    /// the honest fix is the glyph, not the behaviour.
+    ///
+    /// The `onOpenURL` attempt STAYS. It costs one line, it is the correct thing
+    /// to do the day there is somewhere to hand the link to, and a copy glyph
+    /// over a tap that opened Safari would be the smaller of the two lies. See
+    /// `onOpenURL` for why there are two outcomes at all.
     @ViewBuilder
     private func replayLink(_ url: URL) -> some View {
         Button {
@@ -3958,16 +4127,15 @@ struct FGameOverList: View {
             // nearly twice that on device). The underline is applied to the
             // words alone, so it stops where they do.
             //
-            // Once the link has been COPIED the row stops promising to leave the
-            // app and says what it actually did - same row, same place, no
-            // toast sliding over the ranking. The glyph changes with the words
-            // for the same reason: an outward arrow over "Link copied" would be
-            // the old promise with new text under it.
+            // Once the link has been COPIED the row says so - same row, same
+            // place, no toast sliding over the ranking - and the glyph turns
+            // from the offer into the receipt. A tick rather than a second
+            // copy-shaped symbol: the pair has to be legible at a glance in a
+            // subheadline run, and two documents beside two documents is not.
             (Text(FStrings.t(linkCopied ? "ios.msg.replaylink.copied"
                                         : "ios.msg.replaylink")).underline(!linkCopied)
              + Text(" ")
-             + Text(Image(systemName: linkCopied ? "doc.on.clipboard"
-                                                 : "arrow.up.forward.app")))
+             + Text(Image(systemName: linkCopied ? "checkmark" : "doc.on.doc")))
             .font(.subheadline)
             // It sits on the plain wool, below the plank, so it takes the wool
             // half of the text-on-a-surface pairing - the same ink as the title

@@ -422,6 +422,31 @@ private struct GameSurface: View {
     /// Round 20: the finished spectator board's Replay Link, captured with the
     /// board itself - see where it is set. nil unless the game is over.
     @State private var spectatorReplayURL: URL?
+    /// ROUND 21: A WATCHER GETS THE REAL BOARD FOR THE LAST MOVE.
+    ///
+    /// The owner: "spectators opening final move goes straight to rank board, no
+    /// final animation. We should show the final move still." Round 20 gave a
+    /// spectator the RESULT of a finished chain and skipped how it got there,
+    /// because the spectator branch draws `MessageBoardView` - a still picture of
+    /// a `GameView`, with no animator in it.
+    ///
+    /// So a finished chain hands the watcher a `MessageTurnController` instead,
+    /// seated at -1. Everything a player gets then falls out of machinery that
+    /// already exists and is already tested: `begin()` resolves the kernel's
+    /// evwire for the last move, the board replays it, and `settleResults` gives
+    /// way to the same `FGameOverList`. Read-only by construction rather than by
+    /// a flag - the kernel refuses a legal-move query for seat -1, so `legal` is
+    /// empty, so `iCanAct` and `canStage` are both false, and every control on
+    /// the board is gated on one of those two.
+    ///
+    /// PUBLIC-SAFE for the same reason the still picture was: viewer -1 is the
+    /// masked view (§10), so there are no hands in it to leak - the fan simply
+    /// has nothing to draw.
+    ///
+    /// nil while the chain is still running; that case still gets the still
+    /// picture and the "spectating" caption, which is all there is to say about
+    /// a game nobody here is playing.
+    @State private var spectatorBoard: MessageTurnController?
     @State private var lobby: Lobby?
     @State private var nameGate: NameGate?
     @State private var showSetup = false
@@ -991,7 +1016,27 @@ private struct GameSurface: View {
             // New game works from here for the same reason it works anywhere: a
             // spectator watching a table finish is exactly somebody who might
             // want to deal the next one.
-            if s.view.isOver {
+            if let board = spectatorBoard {
+                // ROUND 21: the last move, then the ranks - the same board a
+                // player watches, seated at nobody's seat (see `spectatorBoard`).
+                // `MessageTableView` owns both halves: it replays the chain's
+                // final move and then gives way to `FGameOverList` itself, so
+                // there is no second copy of "when does the result appear" here.
+                //
+                // `onSend` can never fire (nothing is sendable from a seat the
+                // kernel will not compute a move for), and is written as a
+                // no-op rather than a fatalError for the same reason every other
+                // unreachable branch in this file is: a screen a watcher is
+                // looking at must not be the thing that takes the extension down.
+                MessageTableView(controller: board,
+                                 onSend: { _, _ in },
+                                 onNewGame: onNewGame,
+                                 onOpenURL: onOpenURL)
+                    .id(ObjectIdentifier(board))
+            } else if s.view.isOver {
+                // The board could not be built - the ranks alone, as round 20
+                // left them. Never reached in practice; kept because losing the
+                // result screen is a worse failure than losing the animation.
                 FGameOverList(rows: MessageTableView.finishRows(s.view, names: s.names, mySeat: -1),
                               onNewGame: onNewGame,
                               replayURL: spectatorReplayURL,
@@ -1059,7 +1104,8 @@ private struct GameSurface: View {
         // expandedContent gives it fresh @State), or nil in the branches below
         // that show something other than a board.
         lobby = nil; nameGate = nil; showSetup = false
-        ambiguous = nil; spectator = nil; spectatorReplayURL = nil; damaged = false
+        ambiguous = nil; spectator = nil; spectatorReplayURL = nil
+        spectatorBoard = nil; damaged = false
         surfaceStaged = false   // round-9: a new input owes nothing to Send yet
         await load()
         AnimLog.say("surface showing \(showingWhat)")
@@ -1553,7 +1599,37 @@ private struct GameSurface: View {
     /// A no-op if I hold no seat (the checkbox is disabled there anyway - a
     /// reseal has to name an actor seat) or if the rule is already what was
     /// asked for, so a double tap cannot stage a bubble that changes nothing.
+    ///
+    /// ONE AT A TIME (round 21). The checkbox now moves the instant it is
+    /// touched (`LobbyView.passingWish`), which makes it easy to tap twice
+    /// before the first reseal has landed - and two of these running at once
+    /// would interleave through the kernel actor and seal each other's rule.
+    /// `passingStaging` holds the lane and `passingWanted` holds the newest
+    /// request, so taps COLLAPSE: whatever the box says when the lane frees is
+    /// what gets sealed, and every tap in between costs nothing.
     private func setLobbyPassing(_ lob: Lobby, passing: Bool) async {
+        passingWanted = passing
+        guard !passingStaging else { return }
+        passingStaging = true
+        defer { passingStaging = false }
+        // Re-read `lobby` each pass rather than trusting the `lob` this call was
+        // handed: an earlier iteration has already replaced it, and staging
+        // against the payload from before that would fork the chain.
+        while let want = passingWanted {
+            passingWanted = nil
+            guard let current = lobby else { return }
+            await stageLobbyPassing(current, passing: want)
+        }
+    }
+
+    /// True while a rules reseal is in the kernel. See `setLobbyPassing`.
+    @State private var passingStaging = false
+    /// The newest rule asked for while the lane was busy, or nil for none.
+    @State private var passingWanted: Bool?
+
+    /// One rules reseal, start to finish. Always called from the single lane
+    /// `setLobbyPassing` owns.
+    private func stageLobbyPassing(_ lob: Lobby, passing: Bool) async {
         let env = lob.env
         guard let me = lobbySeat(env), let gid = UInt64(env.gameId) else { return }
         guard env.passingAllowed != passing else { return }
@@ -1566,11 +1642,14 @@ private struct GameSurface: View {
             if passingBaseline[env.gameId] == nil {
                 passingBaseline[env.gameId] = env.passingAllowed
             }
-            _ = try await MessageKernel.shared.decode(payload: lob.payload, viewer: -1)
-            await MessageKernel.shared.setPassing(passing)
+            // Decode, set, seal - ONE actor call (round 21). Three separate
+            // hops left two suspension points in which any other decode could
+            // repoint the resident game, which is the phantom-seal shape all
+            // over again; see `MessageKernel.resealLobby`.
             let parent = MessageTurnController.firstEight(hex: env.digest)
-            let payload = try await MessageKernel.shared.seal(
-                phase: 0, lastActorSeat: me, gameId: gid, parent8: parent, joins: env.joins)
+            let payload = try await MessageKernel.shared.resealLobby(
+                lob.payload, passing: passing, actingSeat: me,
+                gameId: gid, parent8: parent, joins: env.joins)
             let newEnv = try await MessageEnvelope.decode(payload: payload, viewer: -1)
             AnimLog.say("lobby rules: passing=\(passing) by seat \(me)")
             cache(seat: me, env: newEnv, payload: payload)
@@ -1785,6 +1864,13 @@ private struct GameSurface: View {
                     ? await MessageKernel.shared.residentReplayCode().map(MessageEnvelope.replayLink(code:))
                     : nil
                 spectator = (view, names)
+                // ROUND 21: a FINISHED chain also gets a real board to watch the
+                // last move on, seated at nobody's seat - see `spectatorBoard`.
+                // The still picture stays behind it as the running-game case and
+                // as the fallback if the board cannot be built.
+                spectatorBoard = view.isOver
+                    ? MessageTurnController(parentPayload: winner, parent: env, mySeat: -1)
+                    : nil
             } else {
                 damaged = true
             }
@@ -2121,6 +2207,24 @@ private struct LobbyView: View {
     /// stored nickname, blank if it's the neutral default.
     @State private var nickname: String
 
+    /// WHERE I JUST PUT THE TICK, ahead of the chain agreeing with me.
+    ///
+    /// Round 21, the owner: "in lobby, Passing checkbox is not very responsive,
+    /// seems to wait for stage before it updates. Make the checkbox UI update
+    /// FIRST, THEN stage the message." The box was drawn straight from
+    /// `env.passingAllowed`, which is a fact about the newest BUBBLE - so the
+    /// tick could not move until `setLobbyPassing` had re-decoded the lobby,
+    /// re-sealed it, decoded that, and handed a new `Lobby` back. Every one of
+    /// those is correct and none of them belongs between a finger and a tick.
+    ///
+    /// nil means "nothing of mine is outstanding - draw what the chain says",
+    /// which is the state the box is in almost all the time. It is cleared the
+    /// moment `env.passingAllowed` moves for ANY reason: my own reseal landing,
+    /// or somebody else's bubble arriving with the other rule on it. So the
+    /// wish can never outlive the truth, and a lost or rejected change heals by
+    /// itself on the next paint rather than leaving the box lying.
+    @State private var passingWish: Bool?
+
     init(env: MessageEnvelope, mySeat: Int?, nickname: String,
          onJoin: @escaping (String) -> Void,
          onStart: @escaping () -> Void,
@@ -2138,11 +2242,23 @@ private struct LobbyView: View {
         _nickname = State(initialValue: nickname == "Me" ? "" : nickname)
     }
 
+    /// What the box should be DRAWN as: my outstanding tap if there is one, the
+    /// chain's answer otherwise.
+    private var passingShown: Bool { passingWish ?? env.passingAllowed }
+
     /// Have I moved the checkbox on the bubble now at the head of this chain?
+    ///
+    /// A wish outstanding counts, and has to: this gate is what stops whoever
+    /// changed the rules from also starting the game before anyone has seen the
+    /// change, and round 21's optimistic tick opens a window where the box has
+    /// moved but the reseal carrying it has not landed yet. Withholding Start
+    /// for those few milliseconds is free; offering it is the exact thing the
+    /// gate exists to prevent.
     private var iChangedTheRules: Bool {
-        LobbyControls.rulesChanged(baseline: passingBaseline,
-                                   current: env.passingAllowed,
-                                   mine: env.lastActorSeat == mySeat)
+        if passingWish != nil { return true }
+        return LobbyControls.rulesChanged(baseline: passingBaseline,
+                                          current: env.passingAllowed,
+                                          mine: env.lastActorSeat == mySeat)
     }
 
     /// The lobby SCROLLS when it does not fit, and is centred when it does.
@@ -2216,14 +2332,35 @@ private struct LobbyView: View {
             // hiding them from the person deciding whether to join would be
             // the wrong half to keep. Moving it takes a seat, because a reseal
             // has to be sent by somebody who is at the table.
+            // The tick moves NOW and the bubble is resealed behind it (round
+            // 21 - see `passingWish`). Writing the wish here rather than inside
+            // `onSetPassing` keeps the staging closure exactly what it was, and
+            // puts the whole of the optimism in the one view that draws the box.
             FCheckbox(FStrings.t("ios.lobby.passing"),
-                      isOn: env.passingAllowed,
+                      isOn: passingShown,
                       enabled: mySeat != nil,
-                      action: onSetPassing)
+                      action: { on in
+                          passingWish = on
+                          onSetPassing(on)
+                      })
                 .padding(.horizontal)
         }
         .frame(maxWidth: .infinity)
         .padding()
+        // THE WISH IS SPENT when the chain agrees with it, or when somebody
+        // ELSE moves the rule out from under it.
+        //
+        // Not simply "on any change", which is the obvious version and flashes:
+        // two taps inside one round trip stage two bubbles, so the box would
+        // snap to the first rule for a frame on its way to the second, even
+        // though the finger only ever asked for the second. My own intermediate
+        // bubble is therefore not an answer to my wish - it is a step on the way
+        // to it - and only a bubble that is not mine can overrule it.
+        .onChange(of: env.passingAllowed) { now in
+            if now == passingWish || env.lastActorSeat != (mySeat ?? -1) {
+                passingWish = nil
+            }
+        }
     }
 
     /// Testing-only (SOLO_TESTING / DEBUG): "Add player" until the lobby has

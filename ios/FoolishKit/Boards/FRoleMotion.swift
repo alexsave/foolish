@@ -47,13 +47,15 @@
 //
 //   THE FLIGHT - a role LEAVES one seat for another. The shield sails across
 //   the table to the next defender; the sword hands the opening move to the
-//   next first attacker. The seat it left blanks INSTANTLY (the ghost in the
-//   overlay is that mark now, and two of it on screen is a glitch), while the
-//   seat it is going to turns its own mark away in the last moments of the
-//   flight, so the arriving mark lands ON it rather than into a gap that has
-//   been sitting empty. That last beat is the owner's two hardest sentences -
-//   "they should rotate out AND the sword will land on them", and "the shield
-//   flies onto their sword" - and it is one rule, not two.
+//   next first attacker. Both turn a whole revolution on the way (round 21 -
+//   see `RoleFlight.spin` for why a part-turn cannot work here). The seat it
+//   left blanks INSTANTLY (the ghost in the overlay is that mark now, and two
+//   of it on screen is a glitch), while the seat it is going to turns its own
+//   mark away in the last moments of the flight, so the arriving mark lands ON
+//   it rather than into a gap that has been sitting empty. That last beat is
+//   the owner's two hardest sentences - "they should rotate out AND the sword
+//   will land on them", and "the shield flies onto their sword" - and it is one
+//   rule, not two.
 //
 // Reduce Motion turns all of them into an instant swap.
 
@@ -141,9 +143,16 @@ public struct RoleFlight: Identifiable, Equatable {
     /// seat it is GOING TO (turns its own mark away as the ghost arrives).
     public let fromSeat: Int
     public let toSeat: Int
-    /// Total degrees turned over the flight. The sword takes a full turn - it is
-    /// being handed to the next player to swing; the shield keeps its face to
-    /// the room and only leans into the throw.
+    /// Total degrees turned over the flight, and in practice a WHOLE number of
+    /// turns.
+    ///
+    /// It reads as "this was thrown to somebody", which is what a hand-off is.
+    /// But the reason it cannot be a fraction of a turn is mechanical: the ghost
+    /// is taken away the instant it lands and the receiving badge draws the real
+    /// mark upright, so any final angle other than a multiple of 360 snaps
+    /// straight on the hand-over. The shield used to lean 24 degrees and did
+    /// exactly that - the owner, round 21: "the shield kinda turns a little bit
+    /// then turns back."
     public let spin: Double
 
     public init(id: String, kind: RoleMarkKind, from: CGPoint, to: CGPoint,

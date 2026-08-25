@@ -65,6 +65,23 @@ public final class MessageTurnController: ObservableObject {
     /// (nil in `GameEvent.cards`). Empty when there is nothing to animate. A
     /// genesis deal's "last move" is the deal itself, so this covers it too.
     @Published public private(set) var openReplayEvents: [GameEvent] = []
+    /// ROUND 21: THE BOARD THIS BUBBLE FOUND - the committed state of the step
+    /// immediately before `openReplayEvents` begins, or nil when there is none
+    /// to be had (a genesis, the first move on a fresh deal, a chain whose step
+    /// index does not line up - see `MessageKernel.lastMoveEventsWithPrior`).
+    ///
+    /// It exists for the ROLE MARKS, which are the one thing a replay cannot
+    /// read off its own stream. Everything else a cold open needs is IN the
+    /// stream: which cards move, where from, where to. But a mark's motion is
+    /// the difference between two boards, and the earliest board the stream
+    /// carries is already one move too late - an event's `state` is the table AS
+    /// OF that step. So a bubble whose move was a `good` opened with the check
+    /// already on the badge and nothing left to animate (the owner: "I don't see
+    /// the sword to good transition. It started out already in GOOD").
+    ///
+    /// Only ever a SEED. Once the board is live its marks are advanced by what
+    /// it watched happen, and this is not consulted again.
+    @Published public private(set) var openReplayPriorState: GameView?
     /// Every REAL card identity `openReplayEvents` moves onto the table or into
     /// my hand this open (attack/cover/pass placements, my own draws/pickups) -
     /// the set `MessageTableView.replayLastMoveOnOpen` pre-hides synchronously
@@ -444,8 +461,14 @@ public final class MessageTurnController: ObservableObject {
         // surface when I sent — fixed where it happens (HarnessModel.boardEpoch;
         // StagedBubbleRouting in the extension), so there is no second load to
         // replay from in the first place.
-        let replay = suppressOpenReplay ? []
-            : await kernel.lastMoveEvents(viewer: mySeat, atomsBefore: baseAtomsBefore)
+        // Round 21: the stream AND the board it starts from, in one actor call
+        // (see `openReplayPriorState`). One call rather than two because a
+        // second hop through the kernel is a second chance for some other decode
+        // to repoint the resident game between them.
+        let opening: (events: [GameEvent], prior: GameView?) = suppressOpenReplay
+            ? ([], nil)
+            : await kernel.lastMoveEventsWithPrior(viewer: mySeat, atomsBefore: baseAtomsBefore)
+        let replay = opening.events
         // ROUND 9 (owner): the durable pending ledger - and the Rule R rebase
         // that replayed its survivors here as `preStaged` - is REMOVED. Staged
         // moves live only in memory; the staged input-field bubble itself still
@@ -459,7 +482,7 @@ public final class MessageTurnController: ObservableObject {
         // along because "how far into the game" is the question being asked.
         FlightRecorder.note("adopt", "turn \(baseTurn), \(replay.count) to animate")
         // The veil and the board it describes go up TOGETHER - see `publish`.
-        await publish(openReplay: replay)
+        await publish(openReplay: replay, priorState: opening.prior)
         // Round-8 #4: opening a FINISHED chain is one of the two moments a game
         // provably ends on this device (the other is committing my own final
         // move, markSent below) - drop its stored hand arrangement, the cache
@@ -627,7 +650,8 @@ public final class MessageTurnController: ObservableObject {
     ///
     /// `openReplay` nil means "leave the replay stream alone" (an ordinary
     /// refresh after a move); a value replaces it, which only `begin` does.
-    private func publish(openReplay: [GameEvent]?) async {
+    /// `priorState` travels with it and is meaningless without it.
+    private func publish(openReplay: [GameEvent]?, priorState: GameView? = nil) async {
         let v = await kernel.residentView(viewer: mySeat)
         let l = await kernel.residentLegal(seat: mySeat)
         // Read in the same breath as the board it describes, for the same
@@ -645,6 +669,7 @@ public final class MessageTurnController: ObservableObject {
         let code = v?.isOver == true ? await kernel.residentReplayCode() : nil
         if let evs = openReplay {
             openReplayEvents = evs
+            openReplayPriorState = priorState
             // Raised in the same breath as the view it describes: the paint that
             // first shows this chain must already know which cards are still to
             // fly, and must never see one without the other.
