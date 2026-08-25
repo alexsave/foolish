@@ -995,15 +995,28 @@ public struct MessageTableView: View {
     /// holds everyone except the fool; the fool is `view.gameOver` (the one seat
     /// still holding cards), given the last place. Mirrors web WinScreen.
     private func finishRows(_ view: GameView) -> [FinishRow] {
+        Self.finishRows(view, names: controller.names, mySeat: controller.mySeat)
+    }
+
+    /// …as a pure function of the view and the roster, so the SPECTATOR screen
+    /// can rank a finished game the same way (round 20: "spectators should still
+    /// be able to see win screen"). A spectator holds no seat, which `mySeat: -1`
+    /// says - no row is theirs, and none is marked "(You)".
+    ///
+    /// Static rather than duplicated at the other call site on purpose: who came
+    /// first and who was the fool is the one thing a result screen exists to say,
+    /// and two readings of `eliminationOrder` could disagree about it.
+    static func finishRows(_ view: GameView, names: [Int: String], mySeat: Int) -> [FinishRow] {
+        func label(_ seat: Int) -> String { names[seat] ?? "Seat \(seat + 1)" }
         let total = view.players.count
         var rows: [FinishRow] = []
         for (i, seat) in view.eliminationOrder.enumerated() {
-            rows.append(FinishRow(place: i + 1, total: total, name: name(seat),
-                                  isYou: seat == controller.mySeat))
+            rows.append(FinishRow(place: i + 1, total: total, name: label(seat),
+                                  isYou: seat == mySeat))
         }
         if view.gameOver >= 0 {
-            rows.append(FinishRow(place: total, total: total, name: name(view.gameOver),
-                                  isYou: view.gameOver == controller.mySeat))
+            rows.append(FinishRow(place: total, total: total, name: label(view.gameOver),
+                                  isYou: view.gameOver == mySeat))
         }
         return rows
     }

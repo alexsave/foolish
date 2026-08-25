@@ -147,6 +147,15 @@ extension HarnessModel {
             await dealDriven(players: playersEnv, only: [.attack, .pickup], steps: 9,
                              viewAs: .biggestHand)
 
+        case "spectator-over":
+            // ROUND 20: the RELEASE spectator screen with a FINISHED game on it -
+            // the one surface no rig could reach (it is `#else` to a `#if DEBUG`,
+            // and every harness build is a debug build), which is how it came to
+            // show a swept empty table and "open the game from your own bubble to
+            // play" to somebody looking at a game that was over.
+            MessageDebugFlags.spectateWhenAmbiguous = true
+            await finishedGameWatchedByAnOnlooker(players: playersEnv)
+
         case "spectator":
             // A group thread where only 2 of the 8 people are in the game. The
             // other 6 open the bubble and are not players.
@@ -237,6 +246,53 @@ extension HarnessModel {
 
     /// Append a sealed payload to the open transcript as if `senderSeat` sent it,
     /// then view it as that seat (the sender's own device).
+    /// ROUND 20: A GAME PLAYED OUT TO THE END, OPENED BY SOMEBODY WHO IS NOT IN IT.
+    ///
+    /// Not `dealDriven`, for two reasons it cannot give: the chat has to hold
+    /// MORE PEOPLE THAN SEATS (`setCount` is the only way to say so, and it
+    /// wipes the transcript, so it has to come first), and the game has to
+    /// genuinely REACH game over rather than run a fixed number of steps. It
+    /// covers by preference to get there, the same trick the offline endgame
+    /// finder uses - rounds of pickups never finish.
+    private func finishedGameWatchedByAnOnlooker(players n: Int) async {
+        setCount(n + 1)                       // …one more person than seats
+        let seed = Data(repeating: 42, count: 32)
+        let joins = (0..<n).map { MessageJoin(seat: $0, name: Self.nameFor($0)) }
+        guard (try? await MessageKernel.shared.newGame(seed: seed, players: n)) != nil
+        else { return }
+        var lastSeat = 0
+        for _ in 0..<800 {
+            guard let v = await MessageKernel.shared.residentView(viewer: -1), !v.isOver
+            else { break }
+            var acted = false
+            for s in 0..<n {
+                let legal = await MessageKernel.shared.residentLegal(seat: s)
+                if let m = legal.first(where: { $0.type == .cover })
+                    ?? legal.first(where: { $0.type != .wait }) {
+                    try? await MessageKernel.shared.apply(seat: s, move: m)
+                    lastSeat = s; acted = true; break
+                }
+            }
+            if !acted { break }
+        }
+        let over = (await MessageKernel.shared.residentView(viewer: -1))?.isOver == true
+        AnimLog.say("scenario: spectator-over - game \(over ? "finished" : "DID NOT FINISH - rig bug")")
+        guard let payload = try? await MessageKernel.shared.seal(
+                phase: over ? 3 : 2, lastActorSeat: lastSeat, gameId: 0xF00D,
+                parent8: Data(repeating: 0, count: 8), joins: joins)
+        else { return }
+        await deliverSealed(payload, senderSeat: lastSeat)
+        // …and now be the ONLOOKER: the participant past the last seat, with
+        // their own empty seat cache and a name that appears in no join. That is
+        // `.ambiguous` (§6.2/§6.3). NOT `becomeUnnamed` - an unnamed device is
+        // sent to the NAME GATE before identity is weighed at all, which is what
+        // the obvious version of this scenario landed on.
+        become(n)
+        MessageGameStore.shared.nickname = Self.nameFor(n)
+        become(n)
+        expand()
+    }
+
     private func deliverSealed(_ payload: Data, senderSeat: Int) async {
         // Be the seat that acted BEFORE staging, or the harness attributes the
         // bubble to whoever is currently "you" while the envelope names another
@@ -409,11 +465,17 @@ extension HarnessModel {
 
         let kind = ProcessInfo.processInfo.environment["HARNESS_ARRIVE_KIND"] ?? "attack"
         let want: MoveType = switch kind {
-        case "cover", "coverend": .cover
+        case "cover", "coverend", "gameover": .cover
         case "pickup": .pickup
         case "goodend": .good
         default: .attack
         }
+        // `gameover` is `coverend` without the survive-the-bout condition: the
+        // defender's last cards go down on an EMPTY deck at two seats, so the
+        // same move that closes the bout closes the game. Owner, round 20:
+        // "replaying a final move doesn't even show the winning move animation.
+        // It should show the final move animation, then the ranks."
+        let deep = kind == "coverend" || kind == "gameover"
         // Is the wanted ARRIVAL playable right now? For `goodend` the good must
         // actually CLOSE the bout, which means a non-empty, fully covered table
         // - a good over open attacks merely passes priority and animates
@@ -431,7 +493,7 @@ extension HarnessModel {
                 // is empty afterwards (game.c handle_cover, `def->hand_count ==
                 // 0`). So the move being waited for is a cover that spends the
                 // defender's LAST cards, and any other cover is merely a cover.
-                if kind == "coverend" {
+                if deep {
                     // …and the DECK must still hold something. The same branch
                     // that discards the table refills the hands right after it
                     // (game.c `refill_player_hands`), so with an empty deck the
@@ -447,7 +509,8 @@ extension HarnessModel {
                     // all once the deck has.
                     let held = v.players.first { $0.seat == s }?.handCount ?? -1
                     let stillIn = v.players.filter { !$0.isOut }.count
-                    if v.deckCount > 0 || stillIn > 2,
+                    let survives = v.deckCount > 0 || stillIn > 2
+                    if kind == "coverend" ? survives : true,
                        legal.contains(where: { $0.type == .cover && $0.cards.count == held }) { return s }
                     continue
                 }
@@ -472,13 +535,13 @@ extension HarnessModel {
         // than the other kinds, and PREFERS covering all the way there (the same
         // two tricks MessageBoutEndHoldTests.findClosingCover uses to reach the
         // same board offline: round after round of pickups never gets there).
-        let cap = kind == "coverend" ? 400 : 40
+        let cap = deep ? 400 : 40
         // …and if one whole game goes by without producing the board, RE-DEAL.
         // Not every deal contains a bout-ending cover at all (the defender has
         // to run out on a table they can fully answer), so a single game is a
         // coin toss - the offline finder loops 40 seeds for the same reason. Any
         // other kind takes exactly one pass, as it always has.
-        let deals = kind == "coverend" ? 40 : 1
+        let deals = deep ? 40 : 1
         deal: for salt in 0..<deals {
             if salt > 0 {
                 let reseed = Data((0..<32).map { UInt8(truncatingIfNeeded: $0 &* 29 &+ salt) | 1 })
@@ -491,7 +554,7 @@ extension HarnessModel {
                 var acted = false
                 for s in 0..<n {
                     let legal = await MessageKernel.shared.residentLegal(seat: s)
-                    let pick = kind == "coverend"
+                    let pick = deep
                         ? (legal.first { $0.type == .cover } ?? legal.first { $0.type != .wait })
                         : legal.first { $0.type != .wait }
                     if let m = pick {
@@ -572,7 +635,7 @@ extension HarnessModel {
                 // standing and poses a different arrival entirely.
                 let mine = held?.players.first { $0.seat == s }?.handCount ?? -1
                 let m = i > 0 ? legal.first { $0.type != .wait }
-                    : kind == "coverend"
+                    : deep
                         ? legal.first { $0.type == .cover && $0.cards.count == mine }
                         : legal.first { $0.type == want }
                 if let m { acted = (s, m) }
@@ -582,9 +645,16 @@ extension HarnessModel {
             // it can, so stop ARRIVING - but never skip the oracle below, which
             // is the entire point of the run.
             guard let a = acted,
-                  (try? await MessageKernel.shared.apply(seat: a.seat, move: a.move)) != nil,
-                  let next = try? await MessageKernel.shared.seal(
-                    phase: 2, lastActorSeat: a.seat, gameId: 0xF00D,
+                  (try? await MessageKernel.shared.apply(seat: a.seat, move: a.move)) != nil
+            else { break }
+            // ROUND 20: a move that ENDED THE GAME seals as FINISHED, which is
+            // what a real phone does - and a rig that sealed LIVE regardless
+            // produced a chain the surface refuses ("arrival ignored - decode
+            // failed"), so the one arrival worth watching most, the winning
+            // move, could not be posed at all.
+            let over = (await MessageKernel.shared.residentView(viewer: -1))?.isOver == true
+            guard let next = try? await MessageKernel.shared.seal(
+                    phase: over ? 3 : 2, lastActorSeat: a.seat, gameId: 0xF00D,
                     parent8: parent8, joins: joins)
             else { break }
             AnimLog.say("scenario: arrival \(i + 1) - \(Self.nameFor(a.seat)) plays \(a.move.type), watcher=\(watcher)")

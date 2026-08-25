@@ -419,6 +419,9 @@ private struct GameSurface: View {
     /// show the same PUBLIC spectator board a delivered bubble's snapshot uses,
     /// instead. DEBUG keeps the real picker (single-simulator testing needs it).
     @State private var spectator: (view: GameView, names: [Int: String])?
+    /// Round 20: the finished spectator board's Replay Link, captured with the
+    /// board itself - see where it is set. nil unless the game is over.
+    @State private var spectatorReplayURL: URL?
     @State private var lobby: Lobby?
     @State private var nameGate: NameGate?
     @State private var showSetup = false
@@ -972,17 +975,40 @@ private struct GameSurface: View {
                 Task { await choose(seat: seat, from: a) }
             }
         } else if let s = spectator {
-            // Release-only §6.3 fallback: read-only, public (no hand), with a
-            // caption explaining why there is nothing to tap (§ release security).
-            VStack(spacing: 4) {
-                MessageBoardView(view: s.view, names: s.names)
-                // Round-5 M10: full-opacity ink + a LIGHT shadow, not 55%
-                // black — the busy wool weave has no fixed-opacity foreground
-                // that survives it (see the sweep note on DamagedView below).
-                // Round-6 #17 added the weight: `onTableText` (Tokens.swift).
-                Text(FStrings.t("ios.msg.spectating"))
-                    .font(.footnote).onTableText()
-                    .multilineTextAlignment(.center).padding(.horizontal).padding(.bottom, 8)
+            // ROUND 20: A FINISHED GAME IS A RESULT, WHATEVER SEAT YOU HOLD -
+            // including none (owner: "spectators should still be able to see win
+            // screen"). Until now this branch drew the public board and the
+            // "spectating" caption at every phase, so the one bubble a spectator
+            // most wants to open - the last one - showed them a swept, empty
+            // table and a line telling them they could not play on it.
+            //
+            // The SAME `FGameOverList` a player gets, ranked by the same
+            // function: who came first and who was the fool is public (§10 - it
+            // is on the bubble's own picture), so there is nothing here a
+            // spectator may not see. `mySeat: -1` is what says "none of these
+            // rows is yours", so no row is tagged (You).
+            //
+            // New game works from here for the same reason it works anywhere: a
+            // spectator watching a table finish is exactly somebody who might
+            // want to deal the next one.
+            if s.view.isOver {
+                FGameOverList(rows: MessageTableView.finishRows(s.view, names: s.names, mySeat: -1),
+                              onNewGame: onNewGame,
+                              replayURL: spectatorReplayURL,
+                              onOpenURL: onOpenURL)
+            } else {
+                // Release-only §6.3 fallback: read-only, public (no hand), with a
+                // caption explaining why there is nothing to tap (§ release security).
+                VStack(spacing: 4) {
+                    MessageBoardView(view: s.view, names: s.names)
+                    // Round-5 M10: full-opacity ink + a LIGHT shadow, not 55%
+                    // black — the busy wool weave has no fixed-opacity foreground
+                    // that survives it (see the sweep note on DamagedView below).
+                    // Round-6 #17 added the weight: `onTableText` (Tokens.swift).
+                    Text(FStrings.t("ios.msg.spectating"))
+                        .font(.footnote).onTableText()
+                        .multilineTextAlignment(.center).padding(.horizontal).padding(.bottom, 8)
+                }
             }
         } else if damaged || diagError != nil {
             // 1.0(6): a message that FAILS to open shows a graceful diagnostic
@@ -1033,7 +1059,7 @@ private struct GameSurface: View {
         // expandedContent gives it fresh @State), or nil in the branches below
         // that show something other than a board.
         lobby = nil; nameGate = nil; showSetup = false
-        ambiguous = nil; spectator = nil; damaged = false
+        ambiguous = nil; spectator = nil; spectatorReplayURL = nil; damaged = false
         surfaceStaged = false   // round-9: a new input owes nothing to Send yet
         await load()
         AnimLog.say("surface showing \(showingWhat)")
@@ -1735,9 +1761,14 @@ private struct GameSurface: View {
             // Single-simulator testing keeps the real picker (see the DEBUG note
             // above in this function) — this branch is unreachable in DEBUG anyway
             // because `pickSeatOnAdopt` already returned above, but stays correct
-            // if that flag is ever turned off.
-            ambiguous = (env, winner)
-            #else
+            // if that flag is ever turned off. Round 20: unless the rig asks for
+            // the Release route, which is the only way that screen can be
+            // reached on a debug build at all - see `spectateWhenAmbiguous`.
+            if !MessageDebugFlags.spectateWhenAmbiguous {
+                ambiguous = (env, winner)
+                return
+            }
+            #endif
             // RELEASE SECURITY: an ambiguous identity must never offer a seat
             // picker — anyone could claim any hand and see it. Show the same
             // PUBLIC spectator board a delivered bubble's snapshot uses instead
@@ -1745,11 +1776,18 @@ private struct GameSurface: View {
             // already decoded/adopted above, so the resident game IS this chain.
             let names = Dictionary(env.joins.map { ($0.seat, $0.name) }, uniquingKeysWith: { a, _ in a })
             if let view = await MessageKernel.shared.residentView(viewer: -1) {
+                // Round 20: the §12 funnel code for a FINISHED chain, read here
+                // rather than from `body` for the same reason
+                // MessageTurnController.publish reads its own - the resident
+                // game is this chain at THIS moment, and by the time anyone taps
+                // the link something else may have been decoded over it.
+                spectatorReplayURL = view.isOver
+                    ? await MessageKernel.shared.residentReplayCode().map(MessageEnvelope.replayLink(code:))
+                    : nil
                 spectator = (view, names)
             } else {
                 damaged = true
             }
-            #endif
         }
     }
 
@@ -2446,6 +2484,21 @@ public enum MessageDebugFlags {
     /// open a bubble the picker asks which seat you are, so one person plays
     /// every hand in one chat.
     public static var soloSeats = true
+
+    /// ROUND 20: take the RELEASE route when seat identity is ambiguous - the
+    /// public spectator board - instead of DEBUG's seat picker.
+    ///
+    /// That screen is `#if DEBUG`/`#else`, so until now it was the one surface
+    /// in the app no rig could reach and no screenshot could be taken of: every
+    /// harness build is a debug build. It had therefore never been looked at
+    /// with a FINISHED game on it, which is exactly how it came to draw a swept
+    /// empty table and the line "spectating - open the game from your own bubble
+    /// to play" over a game that was over (owner: "spectators should still be
+    /// able to see win screen").
+    ///
+    /// Off by default, so nothing about the normal harness changes; the
+    /// `spectator-over` scenario turns it on.
+    public static var spectateWhenAmbiguous = false
 }
 #endif
 
