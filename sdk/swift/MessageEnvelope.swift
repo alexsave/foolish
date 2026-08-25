@@ -124,6 +124,12 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
         case rejected(reason: Int)  // a move the kernel refused; reason is an
                                     // ENGINE_REJECT_* code (fio_last_reject),
                                     // mapped to a human line by FStrings.rejectReason
+        /// ROUND 20: the seal was about to describe a DIFFERENT GAME than the
+        /// caller meant. The kernel keeps ONE resident game and `fio_msg_encode`
+        /// seals whatever is in it, so a seal is only ever as correct as the
+        /// caller's belief about what is resident - and that belief has been
+        /// wrong in the field. See `seal(expectPlayers:)`.
+        case sealMismatch(expected: Int, resident: Int)
     }
 
     /// The URL a bubble carries: https://foolish.cards/m/1<base32>. The leading
@@ -485,9 +491,45 @@ public actor MessageKernel {
     /// 15-second pickup hold measures from. Passing 0 would seal the old
     /// format; nothing does, because a bubble with no clock silently disables
     /// the hold for whoever receives it.
+    /// ROUND 20 - `expectPlayers`: HOW MANY SEATS THE CALLER BELIEVES IT IS
+    /// SEALING. Checked against the resident game before a byte is written, and
+    /// a disagreement throws `sealMismatch` instead of emitting the bubble.
+    ///
+    /// This exists because a seal has no other way to be sure. `fio_msg_encode`
+    /// takes `n_players`, the body, the seed and the carry key from the resident
+    /// statics (`ios_api.c`: `e.n_players = g_game.num_players`), so it will
+    /// faithfully describe whatever game happens to be loaded - and the resident
+    /// game does not stay put. Every bubble snapshot, every Rule-P comparison
+    /// and every tap DECODES into the same kernel and re-points it. A rematch is
+    /// the moment that bites: a WAITING lobby dealt at capacity 8 sits in the
+    /// thread beside a live board, and a stage that seals between the two emits
+    /// the LOBBY'S untouched 8-player deal wearing the BOARD'S roster - eight
+    /// hands of six, deck 4, and every unjoined seat reading "Seat N" on
+    /// everybody's screen. Worse, it names the live chain as its parent, so Rule
+    /// P's child rule makes the phantom outrank the real game on every device.
+    ///
+    /// A player count is a small check and it is the RIGHT one: it is fixed for
+    /// the life of a chain, so it can never false-positive, and it is exactly
+    /// what a foreign deal gets wrong. `nil` skips it, for the lobby seals that
+    /// legitimately have no game of their own to compare against.
+    ///
+    /// It is a backstop, not the fix: `resealFromBase` is what removes the
+    /// window rather than detecting it.
     public func seal(phase: Int, lastActorSeat: Int, gameId: UInt64,
                     parent8: Data, joins: [MessageJoin],
-                    sentAt: Int = MessageKernel.clockNow()) throws -> Data {
+                    sentAt: Int = MessageKernel.clockNow(),
+                    expectPlayers: Int? = nil) throws -> Data {
+        if let expectPlayers {
+            // Read through the ordinary view rather than a new C accessor: a
+            // seal happens once per bubble, so the marshalling costs nothing
+            // that matters, and this keeps the guard inside the Swift layer it
+            // is guarding.
+            let resident = residentView(viewer: -1)?.players.count ?? -1
+            guard resident == expectPlayers else {
+                throw MessageEnvelope.Failure.sealMismatch(expected: expectPlayers,
+                                                           resident: resident)
+            }
+        }
         let joinsJSON = String(data: try JSONEncoder().encode(joins), encoding: .utf8) ?? "[]"
         var parent = [UInt8](repeating: 0, count: 8)
         parent.replaceSubrange(0..<min(8, parent8.count), with: parent8.prefix(8))
@@ -498,6 +540,60 @@ public actor MessageKernel {
         }
         guard n > 0 else { throw MessageEnvelope.Failure.damaged(code: Int(fio_last_msg_error())) }
         return Data(bytes: out, count: Int(n))
+    }
+
+    /// WHAT A CHAIN IS BUILT ON - enough to rebuild it from bytes this device
+    /// already holds, which is the whole reason undo is free (§10) and now also
+    /// the reason a seal can be made honest.
+    public enum SealBase: Sendable {
+        case continuation(payload: Data)        // re-adopt this chain
+        case genesis(seed: Data, players: Int)  // re-deal this game
+    }
+
+    /// ROUND 20: RE-ESTABLISH, REPLAY, AND SEAL - IN ONE ACTOR CALL.
+    ///
+    /// The bug this closes: `MessageTurnController.stagedPayload` used to call
+    /// `seal` on its own, trusting that the resident game was still the one it
+    /// had been playing. Between the move and the seal the board makes four or
+    /// more separate hops through this actor (apply, two settlement captures, a
+    /// publish), and ANY tap, reload or bubble snapshot in that gap decodes a
+    /// different chain into the same kernel - decoding IS adopting. A rematch
+    /// puts a WAITING lobby dealt at capacity 8 in the thread next to a live
+    /// board, so the gap is not theoretical: it sealed the lobby's 8-player deal
+    /// as a LIVE bubble wearing the board's roster, and Rule P's child rule then
+    /// spread that phantom to every device in the chat.
+    ///
+    /// Doing it here makes the whole sequence ONE await from the caller's side,
+    /// so there is no suspension point for a foreign decode to land in. The
+    /// chain is rebuilt from `base` (bytes this device holds), `moves` are
+    /// replayed onto it, and only then is the bubble written - from a game that
+    /// is provably the one those moves were made on, because it was just built
+    /// from them.
+    ///
+    /// The PHASE is decided here too, after the replay, for the same reason: it
+    /// is a fact about the rebuilt game ("did my move end it"), and asking the
+    /// caller to have computed it earlier is asking it to trust a reading taken
+    /// before the rebuild.
+    public func resealFromBase(_ base: SealBase, replaying moves: [Move], seat: Int,
+                               gameId: UInt64, parent8: Data, joins: [MessageJoin],
+                               sentAt: Int = MessageKernel.clockNow()) throws -> Data {
+        let players: Int
+        switch base {
+        case .continuation(let payload):
+            players = try decode(payload: payload, viewer: seat).nPlayers
+        case .genesis(let seed, let n):
+            try newGame(seed: seed, players: n)
+            players = n
+        }
+        for m in moves { try apply(seat: seat, move: m) }
+        let over = residentView(viewer: -1)?.isOver == true
+        return try seal(phase: over ? 3 : 2, lastActorSeat: seat, gameId: gameId,
+                        parent8: parent8, joins: joins, sentAt: sentAt,
+                        // Belt to the brace. Nothing can have moved the resident
+                        // game since the lines above put it there - but this is
+                        // the assertion that says so, and it is what would catch
+                        // a future caller that reintroduces the gap.
+                        expectPlayers: players)
     }
 
     /// THE CLOCK, in the one unit the wire speaks: unix seconds mod 65536.

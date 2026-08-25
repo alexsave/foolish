@@ -854,14 +854,52 @@ public final class MessageTurnController: ObservableObject {
     /// the receiving defender's 15-second pickup hold measures from it. The
     /// only caller that passes anything else is the test that pins what a
     /// CLOCKLESS (pre-round-16, format 2) bubble does, which is nothing.
+    /// ROUND 20 SEALS THE CHAIN THIS CONTROLLER IS PLAYING, not whatever game
+    /// happens to be resident when the send lands.
+    ///
+    /// It used to call `seal` directly, which reads the kernel's ONE resident
+    /// game - and between the move and the send this board makes several
+    /// separate trips through that actor, any of which a tap, a reload or a
+    /// bubble snapshot can decode a different chain into. In a rematch that
+    /// other chain is a WAITING lobby dealt at capacity EIGHT, and the bubble
+    /// that came out was that lobby's untouched deal wearing this board's
+    /// roster: eight hands of six, deck 4, seats 4-8 reading "Seat N" - on every
+    /// screen in the chat, because it named the live chain as its parent and
+    /// Rule P's child rule ranks a child above it.
+    ///
+    /// `resealFromBase` rebuilds from THIS controller's own base and pending
+    /// moves and seals in one uninterruptible actor call, so the game it
+    /// describes is the game those moves were made on by construction. Phase is
+    /// decided in there, after the replay, for the same reason.
     public func stagedPayload(sentAt: Int = MessageKernel.clockNow()) async throws -> Data {
         FlightRecorder.note("seal", "\(pending.count) staged")
-        return try await kernel.seal(phase: isOver ? 3 : 2,
-                              lastActorSeat: mySeat,
-                              gameId: gameId,
-                              parent8: parent8,
-                              joins: sealJoins,
-                              sentAt: sentAt)
+        do {
+            return try await kernel.resealFromBase(sealBase, replaying: pending,
+                                                   seat: mySeat,
+                                                   gameId: gameId,
+                                                   parent8: parent8,
+                                                   joins: sealJoins,
+                                                   sentAt: sentAt)
+        } catch {
+            // The callers stage with `try?`, so a refusal is SILENT - which is
+            // the right behaviour (staging nothing beats staging a bubble that
+            // describes another game) and the wrong diagnostics. Leave a trail:
+            // this is the one place that knows a send was refused and why, and
+            // the flight recorder is the only evidence a field report can carry.
+            FlightRecorder.note("seal-failed", "\(error)")
+            throw error
+        }
+    }
+
+    /// This controller's base, in the form the kernel's atomic reseal takes.
+    /// The same two cases `rebuildBase` switches on - an undo already rebuilds
+    /// from exactly these bytes, which is what makes replaying them at seal time
+    /// a re-derivation rather than a second opinion.
+    private var sealBase: MessageKernel.SealBase {
+        switch base {
+        case .continuation(let payload): return .continuation(payload: payload)
+        case .genesis(let seed, let players): return .genesis(seed: seed, players: players)
+        }
     }
 
     /// First 8 bytes of a hex digest, zero-padded - the parent-pointer tag (§7.4).
