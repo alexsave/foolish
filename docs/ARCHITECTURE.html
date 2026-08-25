@@ -85,6 +85,8 @@ td{background:var(--panel)}
 .note.now{border-left-color:var(--kernel)}
 figure{margin:1.6em 0; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px 14px 10px; box-shadow:var(--shadow)}
 figure svg{display:block; max-width:100%; height:auto; margin:0 auto}
+.figwide{overflow-x:auto; -webkit-overflow-scrolling:touch}
+.figwide svg{min-width:1120px}
 figcaption{color:var(--dim); font-size:.8rem; margin:10px 6px 4px; max-width:none; line-height:1.5}
 svg text{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; fill:var(--text)}
 svg .t2{font-size:10px; fill:var(--dim)}
@@ -194,7 +196,188 @@ footer li{font-size:.78rem; font-family:'JetBrains Mono',ui-monospace,monospace}
   <h2>Three tracks, one kernel</h2>
   <p class="lead">Games flow over three transport tracks that never share state: a Supabase-backed
   authoritative-server track, a fully serverless iMessage track where the message <em>is</em> the game, and a
-  local track where the opponent lives on your own device. Every box on the map runs the same C kernel.</p>
+  local track where the opponent lives on your own device. Every box on the map runs the same C kernel.
+  First, the whole machine on one map — scroll it sideways on a phone:</p>
+
+  <figure>
+    <div class="figwide">
+    <svg viewBox="0 0 1360 920" role="img" aria-label="Master map of the whole system: the web, iOS, iMessage and watch clients with their internal components; the Supabase platform, Apple Messages and replay codes as transports; the shared C kernel band with its compiled artifacts; and the parity test layer underneath.">
+      <defs>
+        <marker id="arM" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L8,4 L0,8 z" fill="var(--faint)"/>
+        </marker>
+      </defs>
+
+      <!-- band labels -->
+      <text class="t3" x="24" y="26">CLIENTS</text>
+      <text class="t3" x="24" y="380">TRANSPORTS</text>
+      <text class="t3" x="24" y="672">THE KERNEL</text>
+      <text class="t3" x="24" y="824">THE PROOF</text>
+
+      <!-- ================= CLIENTS ================= -->
+      <!-- Web client -->
+      <rect class="grp hc" x="20" y="40" width="470" height="300" rx="10"/>
+      <text class="tb" x="36" y="66">Web client — Next.js · React 19</text>
+      <rect class="box" x="36" y="88" width="210" height="48" rx="6"/>
+      <text x="141" y="108" text-anchor="middle" style="font-size:11px">GameBoard</text>
+      <text class="t2" x="141" y="124" text-anchor="middle">one board — live·replay·tutorial·/m/</text>
+      <rect class="box" x="36" y="146" width="210" height="48" rx="6"/>
+      <text x="141" y="166" text-anchor="middle" style="font-size:11px">Optimistic overlay</text>
+      <text class="t2" x="141" y="182" text-anchor="middle">3 verdicts — decided in anim_plan.c</text>
+      <rect class="box" x="36" y="204" width="210" height="48" rx="6"/>
+      <text x="141" y="224" text-anchor="middle" style="font-size:11px">Procedural textures</text>
+      <text class="t2" x="141" y="240" text-anchor="middle">fern · wool · wood → IndexedDB</text>
+      <rect class="box" x="36" y="262" width="210" height="48" rx="6"/>
+      <text x="141" y="282" text-anchor="middle" style="font-size:11px">Replay screen</text>
+      <text class="t2" x="141" y="298" text-anchor="middle">VHS transport · telestrator</text>
+      <rect class="box hw" x="262" y="88" width="210" height="48" rx="6"/>
+      <text x="367" y="108" text-anchor="middle" style="font-size:11px">guards.wasm</text>
+      <text class="t2" x="367" y="124" text-anchor="middle">sync UI gating · 6.4 KB</text>
+      <rect class="box hx" x="262" y="146" width="210" height="48" rx="6"/>
+      <text x="367" y="166" text-anchor="middle" style="font-size:11px">bots.wasm</text>
+      <text class="t2" x="367" y="182" text-anchor="middle">the full kernel · KernelGate</text>
+      <rect class="box hw" x="262" y="204" width="210" height="48" rx="6"/>
+      <text x="367" y="224" text-anchor="middle" style="font-size:11px">Oracle fleet</text>
+      <text class="t2" x="367" y="240" text-anchor="middle">≤8 workers · oracle.wasm</text>
+      <rect class="box" x="262" y="262" width="210" height="48" rx="6"/>
+      <text x="367" y="282" text-anchor="middle" style="font-size:11px">/m/ page</text>
+      <text class="t2" x="367" y="298" text-anchor="middle">iMessage read-only view</text>
+
+      <!-- iOS app -->
+      <rect class="grp ha" x="510" y="40" width="280" height="300" rx="10"/>
+      <text class="tb" x="526" y="66">iOS app — unsubmitted</text>
+      <rect class="box" x="526" y="88" width="248" height="48" rx="6"/>
+      <text x="650" y="108" text-anchor="middle" style="font-size:11px">FoolishNet</text>
+      <text class="t2" x="650" y="124" text-anchor="middle">packed actions · view rows</text>
+      <rect class="box" x="526" y="146" width="248" height="48" rx="6"/>
+      <text x="650" y="166" text-anchor="middle" style="font-size:11px">LocalGame — offline bots</text>
+      <text class="t2" x="650" y="182" text-anchor="middle">full ladder · one bot_drive call</text>
+      <rect class="box" x="526" y="204" width="248" height="48" rx="6"/>
+      <text x="650" y="224" text-anchor="middle" style="font-size:11px">FoolishKit + sdk/swift</text>
+      <text class="t2" x="650" y="240" text-anchor="middle">pure marshalling — no rules</text>
+      <rect class="box ha" x="526" y="262" width="248" height="48" rx="6"/>
+      <text x="650" y="282" text-anchor="middle" style="font-size:11px">Foolish.xcframework</text>
+      <text class="t2" x="650" y="298" text-anchor="middle">native kernel — no wasm</text>
+
+      <!-- iMessage -->
+      <rect class="grp ha" x="810" y="40" width="280" height="300" rx="10"/>
+      <text class="tb" x="826" y="66">Foolish Messages — LIVE · 1.0 (21)</text>
+      <rect class="box" x="826" y="88" width="248" height="48" rx="6"/>
+      <text x="950" y="108" text-anchor="middle" style="font-size:11px">MessagesRootView</text>
+      <text class="t2" x="950" y="124" text-anchor="middle">board · lobby · staged send</text>
+      <rect class="box" x="826" y="146" width="248" height="48" rx="6"/>
+      <text x="950" y="166" text-anchor="middle" style="font-size:11px">MessageKernel</text>
+      <text class="t2" x="950" y="182" text-anchor="middle">seal · decode = replay · Rule P</text>
+      <rect class="box" x="826" y="204" width="248" height="48" rx="6"/>
+      <text x="950" y="224" text-anchor="middle" style="font-size:11px">Seat identity</text>
+      <text class="t2" x="950" y="240" text-anchor="middle">cache → inference → spectator</text>
+      <rect class="box ha" x="826" y="262" width="248" height="48" rx="6"/>
+      <text x="950" y="282" text-anchor="middle" style="font-size:11px">Foolish.xcframework</text>
+      <text class="t2" x="950" y="298" text-anchor="middle">no network — lint-enforced</text>
+
+      <!-- watchOS -->
+      <rect class="grp ha" x="1110" y="40" width="230" height="300" rx="10"/>
+      <text class="tb" x="1126" y="66">watchOS — parked</text>
+      <rect class="box" x="1126" y="88" width="198" height="48" rx="6" stroke-dasharray="4 3"/>
+      <text x="1225" y="108" text-anchor="middle" style="font-size:11px">spec: Option H</text>
+      <text class="t2" x="1225" y="124" text-anchor="middle">crown hand lane · glyph cards</text>
+      <rect class="box" x="1126" y="146" width="198" height="48" rx="6" stroke-dasharray="4 3"/>
+      <text x="1225" y="166" text-anchor="middle" style="font-size:11px">Supabase track (planned)</text>
+      <text class="t2" x="1225" y="182" text-anchor="middle">reuses Net + kernel views</text>
+
+      <!-- ================= TRANSPORTS ================= -->
+      <!-- Supabase -->
+      <rect class="grp hb" x="20" y="392" width="640" height="250" rx="10"/>
+      <text class="tb" x="36" y="418">Supabase — the authoritative track</text>
+      <rect class="box" x="36" y="438" width="290" height="64" rx="6"/>
+      <text x="181" y="460" text-anchor="middle" style="font-size:11px">5 edge functions</text>
+      <text class="t2" x="181" y="476" text-anchor="middle">action (binary) · meta · create</text>
+      <text class="t2" x="181" y="490" text-anchor="middle">bot-heartbeat · delete-account</text>
+      <rect class="box" x="344" y="438" width="290" height="64" rx="6"/>
+      <text x="489" y="460" text-anchor="middle" style="font-size:11px">Realtime</text>
+      <text class="t2" x="489" y="476" text-anchor="middle">per-player + spectator channels</text>
+      <text class="t2" x="489" y="490" text-anchor="middle">{v, s, base64(evwire)}</text>
+      <rect class="box" x="36" y="516" width="290" height="100" rx="6"/>
+      <text x="181" y="538" text-anchor="middle" style="font-size:11px">Postgres</text>
+      <text class="t2" x="181" y="556" text-anchor="middle">games.state blob ~96 B · version CAS</text>
+      <text class="t2" x="181" y="571" text-anchor="middle">round_epoch · bot leases · column grants</text>
+      <text class="t2" x="181" y="586" text-anchor="middle">player_views / spectator_views</text>
+      <text class="t2" x="181" y="601" text-anchor="middle">game_snapshots (replays forever)</text>
+      <rect class="box ho" x="344" y="516" width="290" height="100" rx="6"/>
+      <text x="489" y="538" text-anchor="middle" style="font-size:11px">Leased bot loop</text>
+      <text class="t2" x="489" y="556" text-anchor="middle">bump + pg_cron 10 s scan</text>
+      <text class="t2" x="489" y="571" text-anchor="middle">TTL 25 s · CPU bail 1.7 of 2 s</text>
+      <text class="t2" x="489" y="586" text-anchor="middle">kernel bot_drive · pacing 3000/300 ms</text>
+      <text class="t2" x="489" y="601" text-anchor="middle">commits like a human move</text>
+
+      <!-- /m/ handoff chip -->
+      <rect class="box hc" x="668" y="432" width="130" height="60" rx="6" stroke-dasharray="4 3"/>
+      <text x="733" y="456" text-anchor="middle" style="font-size:11px">URL preview</text>
+      <text class="t2" x="733" y="472" text-anchor="middle">→ /m/ read-only</text>
+
+      <!-- Apple Messages -->
+      <rect class="box hb" x="810" y="432" width="280" height="70" rx="6"/>
+      <text class="tb" x="950" y="458" text-anchor="middle">Apple Messages</text>
+      <text class="t2" x="950" y="476" text-anchor="middle">delivery only · no server, no state</text>
+      <text class="t2" x="950" y="491" text-anchor="middle">envelope P95 ≤ 328 chars (cap 5,000)</text>
+
+      <!-- Replay codes -->
+      <rect class="box hr" x="1110" y="522" width="230" height="110" rx="6"/>
+      <text class="tb" x="1225" y="548" text-anchor="middle">Replay codes</text>
+      <text class="t2" x="1225" y="568" text-anchor="middle">rANS integer → base32 URL / QR</text>
+      <text class="t2" x="1225" y="583" text-anchor="middle">v6 — every hidden card known</text>
+      <text class="t2" x="1225" y="598" text-anchor="middle">decode = replay through the engine</text>
+      <text class="t2" x="1225" y="613" text-anchor="middle">plays in any browser</text>
+
+      <!-- arrows: clients <-> transports -->
+      <line class="ln" x1="210" y1="340" x2="195" y2="392" marker-end="url(#arM)"/>
+      <text class="t2" x="30" y="352">packed awire POST</text>
+      <text class="t2" x="30" y="366">+ intent_version</text>
+      <line class="ln" x1="452" y1="392" x2="432" y2="342" marker-end="url(#arM)"/>
+      <text class="t2" x="462" y="366">evwire + view rows back</text>
+      <line class="ln" x1="600" y1="340" x2="612" y2="392" marker-end="url(#arM)"/>
+      <text class="t2" x="622" y="366">Swift — same bytes</text>
+      <line class="ln" x1="950" y1="340" x2="950" y2="432" marker-end="url(#arM)" marker-start="url(#arM)"/>
+      <text class="t2" x="960" y="390">FMSG sealed envelope</text>
+      <line class="lnd" x1="810" y1="462" x2="802" y2="462" marker-end="url(#arM)"/>
+
+      <!-- arrows: into replay codes -->
+      <line class="ln" x1="662" y1="566" x2="1106" y2="576" marker-end="url(#arM)"/>
+      <text class="t2" x="700" y="556">game_snapshots — share codes</text>
+      <line class="ln" x1="1050" y1="502" x2="1150" y2="520" marker-end="url(#arM)"/>
+      <text class="t2" x="958" y="514">finished bubble</text>
+
+      <!-- ================= KERNEL ================= -->
+      <rect class="box hk" x="20" y="680" width="1320" height="120" rx="8"/>
+      <text class="tb" x="36" y="708">c/src — cnitro · the one C rules kernel (45k LOC)</text>
+      <text class="t2" x="36" y="728">game · legal · view (masking) · replay + replay_steps · awire · evwire · logwire · msg_wire · anim_plan · deal_rng (ChaCha20) · bot_roster + bot_drive · 24 bot brains · bitboard sim · exact solver + leafbook</text>
+      <rect class="box hx" x="36" y="744" width="180" height="34" rx="5"/>
+      <text class="t2" x="126" y="765" text-anchor="middle">bots.wasm · 66 KB gz</text>
+      <rect class="box" x="228" y="744" width="160" height="34" rx="5"/>
+      <text class="t2" x="308" y="765" text-anchor="middle">guards.wasm · 6.4 KB</text>
+      <rect class="box" x="400" y="744" width="150" height="34" rx="5"/>
+      <text class="t2" x="475" y="765" text-anchor="middle">rules.wasm · 37 KB</text>
+      <rect class="box" x="562" y="744" width="180" height="34" rx="5"/>
+      <text class="t2" x="652" y="765" text-anchor="middle">oracle.wasm · 8 MiB TT</text>
+      <rect class="box" x="754" y="744" width="190" height="34" rx="5"/>
+      <text class="t2" x="849" y="765" text-anchor="middle">Foolish.xcframework</text>
+      <rect class="box" x="956" y="744" width="180" height="34" rx="5"/>
+      <text class="t2" x="1046" y="765" text-anchor="middle">native arena tools</text>
+      <line class="ln" x1="340" y1="642" x2="340" y2="680" marker-end="url(#arM)"/>
+      <line class="ln" x1="1220" y1="632" x2="1220" y2="680" marker-end="url(#arM)"/>
+
+      <!-- ================= PROOF ================= -->
+      <rect class="grp ho" x="20" y="834" width="1320" height="70" rx="8"/>
+      <text class="tb" x="36" y="862">The parity lattice</text>
+      <text class="t2" x="36" y="882">e2e on real Postgres · packed-wire byte parity · bot parity vs frozen TS oracles · native difftests · FMSG tamper matrix · fuzz + memory gates · roster parity · md5-reproducible wasm builds</text>
+    </svg>
+    </div>
+    <figcaption>The whole machine on one map. Top: the four clients and what lives inside each — note the
+    kernel artifact at the bottom of every column (wasm on the web, the native xcframework on Apple).
+    Middle: the three transports — Supabase for authoritative multiplayer, Apple Messages carrying the whole
+    game in each bubble, and replay codes as a transport in their own right. Bottom: the one C kernel every
+    box compiles in, and the parity layer that makes a single source of truth safe to bet on.</figcaption>
+  </figure>
 
   <figure>
     <svg viewBox="0 0 940 640" role="img" aria-label="Full network topology: the serverless iMessage track, the Supabase-backed track with web, iOS and watch clients, and the shared C kernel compiled into every node.">
