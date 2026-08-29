@@ -545,6 +545,11 @@ private struct GameSurface: View {
             // playing"), so this signal is the only thing left that does it.
             .onChange(of: sentToken) { _ in
                 surfaceStaged = false   // round-9: the staged bubble is sent
+                // SYNCHRONOUSLY, in this same SwiftUI transaction: the Undo pill
+                // goes now, not after a Task hop and a decode (owner: "should
+                // probably disappear the second you hit send"). `markSent` below
+                // does the rest and clears the flag.
+                controller?.markSending()
                 Task { await controller?.markSent(payload: sentPayload) }
             }
             // Round-9: the human deleted the staged bubble from the input field

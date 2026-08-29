@@ -370,7 +370,23 @@ public final class MessageTurnController: ObservableObject {
         releasedSettlement = nil
     }
 
-    public var canSend: Bool { !pending.isEmpty }
+    /// The host has told us the human TAPPED Send (didStartSending), but the
+    /// rebase that follows is asynchronous - it decodes the bytes that went
+    /// out. Nothing may be sent or undone in that window: the move is already
+    /// on its way into the thread, so an Undo pill surviving into it offers to
+    /// retract something that cannot be retracted, and re-staging from it
+    /// re-sends a move the thread already has.
+    ///
+    /// Owner, 1.0(22): "the undo button disappeared... which should probably
+    /// disappear the second you hit send btw". `markSent` used to be the only
+    /// thing that cleared it, and reaching `markSent` costs a root-view rebuild,
+    /// an onChange and a Task hop before its first line runs.
+    @Published public private(set) var sending = false
+
+    /// Called synchronously from the send signal, ahead of the async rebase.
+    public func markSending() { if !sending { sending = true } }
+
+    public var canSend: Bool { !pending.isEmpty && !sending }
     /// Is there a sendable bubble right now? Either I've staged a move
     /// (`canSend`), OR it's a fresh genesis where I have no legal move — i.e. I
     /// dealt the game but I'm not the first attacker, so the ONLY way the game
@@ -541,6 +557,7 @@ public final class MessageTurnController: ObservableObject {
             return
         }
         base = .continuation(payload: payload)
+        sending = false
         parent8 = Self.firstEight(hex: parent.digest)
         joins = parent.joins
         names = Dictionary(parent.joins.map { ($0.seat, $0.name) },
@@ -774,6 +791,7 @@ public final class MessageTurnController: ObservableObject {
 
     public func apply(_ move: Move) async {
         lastChangeWasUndo = false
+        sending = false
         // ROUND 20: a board branching off an old bubble may not be played on.
         // Enforced here as well as displayed (`superseded` stands `iCanAct`
         // down, which is what takes the buttons and the drop targets away) for
@@ -848,10 +866,42 @@ public final class MessageTurnController: ObservableObject {
     /// exists to prevent. Being handed the bytes that went out is the whole
     /// signal; what was pending is only what to forget.
     public func markSent(payload: Data? = nil) async {
+        // Cleared FIRST and unconditionally, ahead of the guard below: a
+        // `sending` left standing by an early return is an Undo pill that never
+        // comes back and a board that cannot stage.
+        sending = false
         let hadPending = !pending.isEmpty
         guard hadPending || payload != nil else { return }
         pending = []
         lastChangeWasUndo = false
+        // A SEND MAY NEVER MOVE THIS BOARD BACKWARDS.
+        //
+        // Owner, 1.0(22): a throw-in, Send, and then "the 10 of spades... the
+        // card I picked up in the previous bout" flew into their hand, another
+        // seat's count moved, a card dealt to that seat, and the board ended in
+        // the state BEFORE the throw-in - correct again only after closing and
+        // reopening the bubble. That is this rebase running on an OLDER chain:
+        // `base` moves back a bubble, `baseAtomsBefore` with it, and the board
+        // then animates the previous bubble's last move over the previous
+        // bubble's board. The bytes that actually WENT OUT were the right ones,
+        // which is why reopening put it right.
+        //
+        // The path in is `didStartSending`'s `payload(of: message) ??
+        // pendingStage?.payload`: an unserialised `stage()` could leave
+        // `pendingStage` describing an older run than the bubble in the input
+        // field (fixed in MessagesViewController). This is the backstop, and it
+        // is the shape that cannot rot - Rule P is the kernel's own ordering, so
+        // a chain this board has already moved past can never be adopted as the
+        // one it just sent. Only STRICTLY worse is refused: an undo-to-empty
+        // re-seal carries nothing new and ties, and must still rebase (it is a
+        // real bubble with a real digest that the next move must name as parent).
+        if let sent = payload, let current = basePayload,
+           let rank = try? await kernel.preferred(current, sent), rank < 0 {
+            FlightRecorder.note("send-backwards", "refused a rebase onto an older chain")
+            AnimLog.say("markSent refused - the sent chain loses Rule P to the one on screen")
+            await refresh()
+            return
+        }
         if let sent = payload,
            let env = try? await kernel.decode(payload: sent, viewer: mySeat) {
             base = .continuation(payload: sent)
