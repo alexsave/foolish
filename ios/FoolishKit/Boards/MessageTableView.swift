@@ -3575,6 +3575,31 @@ private extension HorizontalAlignment {
 /// treatment (owner: "larger and bulder, like the rest action button texts").
 /// The arrow only travels UP from its resting spot, so its rest position -
 /// directly above the caption - is the bottom of the wave.
+/// A WHITE outline stamped around a glyph or a label, so it carries on the
+/// wool whatever the weave is doing underneath it.
+///
+/// Neither SF Symbols nor text have an outline mode, so the ring is the content
+/// itself drawn in white at 8 compass offsets underneath the coloured original.
+/// At these radii the eight stamps overlap into a solid edge; fewer leave scallops
+/// at the diagonals. `radius` is in points and is deliberately shared by the send
+/// hint's arrow and its caption - two different outline weights on one object
+/// that moves as one reads as a mistake rather than as emphasis.
+struct WhiteRing<Content: View>: View {
+    var radius: CGFloat = 1.6
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        ZStack {
+            ForEach(0..<8, id: \.self) { i in
+                let a = CGFloat(i) * .pi / 4
+                content().foregroundColor(.white)
+                    .offset(x: radius * cos(a), y: radius * sin(a))
+            }
+            content()
+        }
+    }
+}
+
 struct SendHintReminder: View {
     /// True while the reminder is not actually on screen (fuse not elapsed, or
     /// the drawer is expanded): freezes the TimelineView so an invisible arrow
@@ -3647,33 +3672,31 @@ struct SendHintReminder: View {
                 .frame(width: Self.arrowSize.width, height: Self.arrowSize.height)
             VStack(alignment: .sendAxis, spacing: 3) {
                 // Round-10 #3 (owner): a WHITE stroke around the blue arrow so
-                // it carries on the wool. SF Symbols have no outline mode, so
-                // the stroke is the same glyph stamped in white at 8 compass
-                // offsets under the blue one - a solid ring. Round 16: 1.6, up
-                // with the glyph, so the bigger arrow keeps the same ratio of
-                // outline to body rather than wearing a hairline.
-                ZStack {
-                    ForEach(0..<8, id: \.self) { i in
-                        let a = CGFloat(i) * .pi / 4
-                        arrow.foregroundColor(.white)
-                            .offset(x: 1.6 * cos(a), y: 1.6 * sin(a))
-                    }
-                    arrow
+                // it carries on the wool - see `WhiteRing`. ROUND 22 puts the
+                // SAME ring on the caption (owner: "give the moving send text
+                // (with the arrow) a white stroke too"): the two ride one wave
+                // and read as one object, so an outlined arrow over bare blue
+                // text left the pair looking half-drawn - and it was the text,
+                // sitting lower and on busier weave, that needed it more.
+                WhiteRing { arrow }
+                    .alignmentGuide(.sendAxis) { d in d[HorizontalAlignment.center] }
+                WhiteRing {
+                    Text(FStrings.t("ios.msg.sendhint"))
+                        .font(FType.title(15)).fontWeight(.heavy)
+                        .fixedSize()
                 }
-                .alignmentGuide(.sendAxis) { d in d[HorizontalAlignment.center] }
-                Text(FStrings.t("ios.msg.sendhint"))
-                    .font(FType.title(15)).fontWeight(.heavy)
-                    .fixedSize()
-                    // Centred on the arrow, CLAMPED to the screen: the axis sits
-                    // `sendHintCenterFromScreenTrailing` (42) from the screen's
-                    // right edge, so the caption may extend at most 38pt right of
-                    // it (a 4pt screen margin). A caption wider than centring
-                    // allows shifts left to hug the edge instead of running off it
-                    // (the ru caption did exactly that).
-                    .alignmentGuide(.sendAxis) { d in
-                        max(d[HorizontalAlignment.center],
-                            d.width - (MessageTableView.sendHintCenterFromScreenTrailing - 4))
-                    }
+                // Centred on the arrow, CLAMPED to the screen: the axis sits
+                // `sendHintCenterFromScreenTrailing` (42) from the screen's
+                // right edge, so the caption may extend at most 38pt right of
+                // it (a 4pt screen margin). A caption wider than centring
+                // allows shifts left to hug the edge instead of running off it
+                // (the ru caption did exactly that). Measured on the RING, which
+                // is what lays out now - it is the text's own width either way,
+                // since the stamps are offsets, not padding.
+                .alignmentGuide(.sendAxis) { d in
+                    max(d[HorizontalAlignment.center],
+                        d.width - (MessageTableView.sendHintCenterFromScreenTrailing - 4))
+                }
             }
             .offset(y: -lift)
         }

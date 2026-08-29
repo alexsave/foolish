@@ -174,28 +174,21 @@ public struct MessagesRootView: View {
     /// FIRST and inserts the bubble after the transition settles.
     @State private var stageHeight: CGFloat = 0
 
-    /// Round-10c: the last COMPACT drawer height this process has laid out
-    /// (anything under this threshold is the compact strip; the expanded board
-    /// is always far taller). The pre-collapse animation shrinks the box to
-    /// this before the host changes style. The extension almost always opens
-    /// compact first, so it is nearly always known; when it is not (a bubble
-    /// tapped straight into expanded in a fresh process), pre-collapse is
-    /// skipped and the transition behaves as in 1.0(12).
-    private static var lastCompactHeight: CGFloat?
-    private static let compactThreshold: CGFloat = 500
+    /// Round-10c's `lastCompactHeight` and `extentHold` are GONE (round 22):
+    /// both belonged to the pre-collapse pack that round 10d removed, and both
+    /// had been write-only ever since - state that is set on every layout pass
+    /// and read by nothing reads as a live input when the next person changes
+    /// this. The compact threshold moved to `CollapseTween`, which is now where
+    /// the whole rule lives.
 
-    /// Round-10c: the expanded height, held through the pre-collapse and the
-    /// style transition so the wool EXTENT keeps covering the whole (still
-    /// tall) presented drawer while the content box is compact-sized - without
-    /// it the extent collapses with the model at the flip and the region above
-    /// the packed board shows the host's flat fallback colour. Set when the
-    /// pre-collapse begins, cleared after the transition has long settled.
-    @State private var extentHold: CGFloat = 0
     /// Round-10d: the box's height while the collapse tween runs; 0 = follow
     /// the model box exactly (every other moment, including manual drags).
     @State private var boxHeight: CGFloat = 0
     /// The previous geometry height, to spot the collapse flip's down-snap.
     @State private var lastGeoHeight: CGFloat = 0
+    /// Where the collapse tween is currently headed. Meaningless unless
+    /// `collapsing`; a later, taller report re-points it (see `follow`).
+    @State private var collapseTarget: CGFloat = 0
     /// Set by the host right before it requests .compact, consumed by the
     /// first down-snap - see `follow`.
     @State private var armed = false
@@ -242,38 +235,45 @@ public struct MessagesRootView: View {
     /// The EXPAND direction is composited bottom-referenced by the host (the
     /// owner: it "works much better... cards stay at the bottom"), so up-snaps
     /// are followed instantly, exactly as before.
+    /// The DECISION is `CollapseTween.step` - a pure function, so the host's
+    /// noisy transition reports can be replayed as a test rather than re-filmed
+    /// (CollapseTweenTests). This is the part that cannot be pure: the
+    /// animation, and the timer that hands the box back to the model.
     private func follow(height: CGFloat) {
         AnimLog.say("stage follow geo=\(Int(lastGeoHeight))->\(Int(height)) armed=\(armed)")
-        if height < Self.compactThreshold { Self.lastCompactHeight = height }
         lastGeoHeight = height
-        // The collapse flip: armed by the host right before it requests
-        // .compact, and consumed here, so the transition's later noisy reports
-        // (one collapse logged 748->315->307->778->758->253->315) cannot
-        // retrigger it, and a manual grabber drag - never armed - never does.
-        // The collapse flip. Armed by the host right before it requests
-        // .compact and consumed here, on the MODEL SNAP - which is when the
-        // host's own drawer animation begins. (Starting on the arm signal
-        // instead was filmed leading the host by ~3 frames: the box shrank
-        // while the drawer was still full, i.e. the hand rose. Starting later
-        // lagged it. The snap is the phase reference.)
-        if armed, armedFrom > height + 60 {
+        switch CollapseTween.step(height: height, armed: armed, armedFrom: armedFrom,
+                                  collapsing: collapsing, target: collapseTarget) {
+        // Consumed on the MODEL SNAP, which is when the host's own drawer
+        // animation begins. (Starting on the arm signal instead was filmed
+        // leading the host by ~3 frames: the box shrank while the drawer was
+        // still full, i.e. the hand rose. Starting later lagged it. The snap is
+        // the phase reference.) From the height captured at arm time - the true
+        // expanded height, before the transition's noise - down to the snap.
+        case .start(let from, let to):
             armed = false
             collapsing = true
-            // From the height captured at arm time (the true expanded height,
-            // before the transition's noisy intermediate reports) down to the
-            // height the host just snapped to.
-            boxHeight = armedFrom
+            collapseTarget = to
+            boxHeight = from
             withAnimation(.timingCurve(0.165, 0.84, 0.44, 1, duration: 0.38)) {
-                boxHeight = height
+                boxHeight = to
             }
             Task {
                 try? await Task.sleep(nanoseconds: 1_200_000_000)
                 collapsing = false
                 boxHeight = 0
             }
-            return
+        // The host settled TALLER than the snap this tween started on. Ease up
+        // rather than rest short of the drawer and expose the wool under it -
+        // see CollapseTween for why this correction is upward only.
+        case .retarget(let to):
+            collapseTarget = to
+            withAnimation(.easeOut(duration: 0.18)) { boxHeight = to }
+        case .hold:
+            break
+        case .follow:
+            boxHeight = 0
         }
-        if !collapsing { boxHeight = 0 }
     }
 
     public var body: some View {
