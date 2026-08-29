@@ -145,16 +145,26 @@ public enum BubbleSnapshot {
     /// lobby" report, and two call sites branching on `phase` separately is how
     /// that comes back.
     ///
-    /// Reads the RESIDENT game for the board case, so the caller must have just
-    /// sealed or decoded `env`'s payload (both do). Nil if there is nothing to
-    /// render.
+    /// ROUND 22: the board case is drawn from a view the CALLER read out of this
+    /// bubble's own bytes (`MessageKernel.publicRead`), not from whatever game
+    /// the kernel is holding. It used to read the RESIDENT game on the note that
+    /// "the caller must have just sealed or decoded this payload" - true of
+    /// every caller, and still only a promise: the kernel has ONE game and
+    /// decoding ADOPTS, so a Rule-P comparison or a surface reload landing in
+    /// the gap baked ANOTHER chain's table onto this bubble. That picture goes
+    /// out to the whole thread and shows on lock screens.
+    ///
+    /// Taking the view rather than fetching it is also what lets the picture and
+    /// the caption come from ONE decode, so they cannot describe different
+    /// games. Nil if there is nothing to render.
     @MainActor
-    public static func render(env: MessageEnvelope, scheme: ColorScheme = .light) async -> UIImage? {
+    public static func render(env: MessageEnvelope, publicView: GameView?,
+                              scheme: ColorScheme = .light) -> UIImage? {
         if env.phase == 0 {
             return renderLobby(joinedNames: env.joins.sorted { $0.seat < $1.seat }.map(\.name),
                                passing: env.passingAllowed, scheme: scheme)
         }
-        guard let publicView = await MessageKernel.shared.residentView(viewer: -1) else { return nil }
+        guard let publicView else { return nil }
         let names = Dictionary(env.joins.map { ($0.seat, $0.name) }, uniquingKeysWith: { a, _ in a })
         return render(publicView: publicView, names: names, scheme: scheme)
     }

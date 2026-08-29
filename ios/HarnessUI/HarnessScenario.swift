@@ -734,11 +734,23 @@ extension HarnessModel {
                     || s.discardCount != t.discardCount
                     || s.players.map(\.handCount) != t.players.map(\.handCount)
             }()
+            // ROUND 22, and the half this rig could not see: THE BUTTONS. The
+            // owner's "pickup button won't appear if attack arrives while board
+            // is open" leaves the table perfectly correct - `behind` is false -
+            // and only the MENU wrong, because the view and the legal moves
+            // used to be read on two separate trips into a kernel that holds
+            // one game. A board showing an uncovered attack against me with no
+            // pickup on it is not a cosmetic fault; it is a turn I cannot take.
+            let truthMenu = await MessageKernel.shared.residentLegal(seat: watcher)
+            let menuBehind = Set(c.legal.map(\.type)) != Set(truthMenu.map(\.type))
             AnimLog.say("ORACLE stuckVeil=\(c.replayPending) viewBehind=\(behind) "
+                + "menuBehind=\(menuBehind) "
                 + "shown=[battles=\(shown?.battles.count ?? -1) deck=\(shown?.deckCount ?? -1) "
                 + "discard=\(shown?.discardCount ?? -1) "
-                + "hands=\(shown?.players.map(\.handCount) ?? [])]")
-            AnimLog.say("BOARD-STUCK: \((c.replayPending ? 1 : 0) + (behind ? 1 : 0))")
+                + "hands=\(shown?.players.map(\.handCount) ?? [])] "
+                + "menu=\(c.legal.map { "\($0.type)" }.sorted().joined(separator: ",")) "
+                + "truthmenu=\(truthMenu.map { "\($0.type)" }.sorted().joined(separator: ","))")
+            AnimLog.say("BOARD-STUCK: \((c.replayPending ? 1 : 0) + (behind ? 1 : 0) + (menuBehind ? 1 : 0))")
         } else {
             AnimLog.say("ORACLE no controller - rig bug")
         }

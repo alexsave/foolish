@@ -398,12 +398,30 @@ final class MessagesViewController: MSMessagesAppViewController {
     @MainActor
     private func stage(payload: Data, mySeat: Int, fromUndo: Bool = false) async {
         guard let conversation = activeConversation else { return }
+        // NEWEST STAGE WINS, and the losers stop where they stand.
+        //
+        // This function is re-entrant and its expanded tail is over a second
+        // long (a settle wait, a collapse, a transition wait), while a second
+        // move - a throw-in, a re-stage after Undo, a fast double tap - starts
+        // another one immediately. Nothing serialised them, so two runs raced to
+        // `conversation.insert`, and the input field kept whichever landed LAST:
+        // routinely the older bubble, because a run that starts while the drawer
+        // is already collapsing skips the whole tail and inserts at once. That
+        // is not a flicker - `pendingStage` and the inserted message are the
+        // bytes Send actually transmits, so the move the player watched
+        // themselves make would not be the move that went out.
+        //
+        // A generation counter, checked after every suspension: the run that
+        // has been superseded neither records itself nor inserts.
+        stageGeneration += 1
+        let generation = stageGeneration
+        func current() -> Bool { stageGeneration == generation }
         // READ the bubble and describe it, in one kit call (MessageSummary.
         // forStagedBubble): the read must not ADOPT - see there - and keeping
         // it beside the caption is what lets a test walk this exact path. The
         // leave name is this device's alone (round 16), and is spent here.
-        let (env, summary) = await MessageSummary.forStagedBubble(payload: payload,
-                                                                  leftName: pendingLeftName)
+        let (env, publicView, summary) = await MessageSummary.forStagedBubble(
+            payload: payload, leftName: pendingLeftName)
         // Spent only by the bubble that can say it - a lobby re-seal. Any other
         // bubble leaves it standing for the one that follows.
         if env?.phase == 0 { pendingLeftName = nil }
@@ -416,7 +434,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         // appearance; map it onto SwiftUI's ColorScheme for BubbleSnapshot.
         let scheme: ColorScheme = traitCollection.userInterfaceStyle == .dark ? .dark : .light
         var image: UIImage?
-        if let env { image = await BubbleSnapshot.render(env: env, scheme: scheme) }
+        if let env { image = BubbleSnapshot.render(env: env, publicView: publicView, scheme: scheme) }
 
         // §12, revised by batch 6 item B: the FINISHED bubble stays a normal /m/
         // payload link, NOT `MessageEnvelope.replayLink`'s bare foolish.cards/<code>.
@@ -459,6 +477,9 @@ final class MessagesViewController: MSMessagesAppViewController {
         // gameId comes from the same decode above so didStartSending's commit
         // can persist the seat without re-decoding. "" only if the payload
         // failed to decode - the commit then skips the seat write.
+        // Superseded while the picture was being baked: a newer move is already
+        // staged, and this one must not claim the input field back off it.
+        guard current() else { return }
         pendingStage = (payload, mySeat, env?.gameId ?? "")
 
         // An UNDO re-stages only to refresh the input bubble - it is NOT a move the
@@ -496,6 +517,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         try? await Task.sleep(nanoseconds: 250_000_000)
         await BoardAnimator.waitForSettle()
         try? await Task.sleep(nanoseconds: 500_000_000)
+        guard current() else { return }
 
         // Round-10b (the residual "self cards go a bit under the screen"):
         // COLLAPSE FIRST, insert AFTER the transition settles. Inserting while
@@ -526,8 +548,15 @@ final class MessagesViewController: MSMessagesAppViewController {
         collapseSignal.token += 1
         requestPresentationStyle(.compact)
         await awaitTransitionSettled()
+        // The last gate, and the one that matters: the newer run has already
+        // put its own bubble in the field, so inserting here would replace it
+        // with this older one.
+        guard current() else { return }
         conversation.insert(msg) { _ in }
     }
+
+    /// Which `stage` run owns the input field - see the note at the top of it.
+    private var stageGeneration = 0
 
     /// The chain a message Messages reports actually carries. The message is the
     /// authority on its own bytes; our `pendingStage` bookkeeping is not (round

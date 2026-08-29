@@ -36,18 +36,29 @@ public enum MessageSummary {
     /// bytes anyway (they are its own seal), with the generic tap line.
     public static func forStagedBubble(payload: Data,
                                        leftName: String? = nil) async -> (env: MessageEnvelope?,
+                                                                          view: GameView?,
                                                                           summary: String) {
-        let env = try? await MessageEnvelope.peek(payload: payload)
-        // The board the seal left resident, spectator view (no hand) - so no
-        // hand can leak into a notification line, and the fool announcement has
-        // a source.
-        let view = await MessageKernel.shared.residentView(viewer: -1)
-        return (env, await line(env: env, view: view, leftName: leftName))
+        // ROUND 22: ONE decode of THIS payload, and everything the line needs
+        // comes back with it. It used to `peek` the envelope and then read the
+        // RESIDENT game and the resident event stream on two further hops - so a
+        // bubble snapshot or an arriving chain landing between them wrote
+        // somebody else's move into this bubble's caption and its notification.
+        // The view is the spectator's (no hand), which is what keeps a hand out
+        // of a lock screen by construction.
+        guard let read = try? await MessageKernel.shared.publicRead(payload: payload) else {
+            return (nil, nil, line(env: nil, view: nil, events: [], leftName: leftName))
+        }
+        // The view travels back out because the PICTURE is drawn from it too
+        // (BubbleSnapshot), and a second decode to fetch it would be a second
+        // chance for the two to describe different games.
+        return (read.env, read.view, line(env: read.env, view: read.view,
+                                          events: read.events, leftName: leftName))
     }
 
     /// The line itself, for an already-read envelope. Pure over (env, view,
     /// leftName) plus the kernel's event stream for the bubble's own atoms.
-    static func line(env: MessageEnvelope?, view: GameView?, leftName: String?) async -> String {
+    static func line(env: MessageEnvelope?, view: GameView?,
+                     events: [GameEvent], leftName: String?) -> String {
         let names = Dictionary((env?.joins ?? []).map { ($0.seat, $0.name) },
                                uniquingKeysWith: { a, _ in a })
         func seatName(_ seat: Int) -> String {
@@ -83,9 +94,8 @@ public enum MessageSummary {
             return FStrings.t("ios.msg.started", ["name": seatName(env?.lastActorSeat ?? -1)])
         }
         // An ordinary live move: describe it from the kernel's event stream, for
-        // the atoms THIS bubble added and no earlier ones (round 16's delta).
-        let events = await MessageKernel.shared.lastMoveEvents(viewer: -1,
-                                                              atomsBefore: env?.atomsBefore ?? -1)
+        // the atoms THIS bubble added and no earlier ones (round 16's delta) -
+        // read from this payload's own decode by the caller, see above.
         return move(events: events, names: names, view: view,
                     actor: env?.lastActorSeat ?? -1,
                     addedNothing: env?.addedNothing ?? false)

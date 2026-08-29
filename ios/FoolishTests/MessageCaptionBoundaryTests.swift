@@ -71,7 +71,7 @@ final class MessageCaptionBoundaryTests: XCTestCase {
     /// built from, so a caption can be checked move by move rather than by
     /// string matching.
     private func caption(for sealed: Data) async throws -> (String, [GameEvent], MessageEnvelope) {
-        let (env, text) = await MessageSummary.forStagedBubble(payload: sealed)
+        let (env, _, text) = await MessageSummary.forStagedBubble(payload: sealed)
         let e = try XCTUnwrap(env, "the composer could not read its own seal")
         let events = await MessageKernel.shared.lastMoveEvents(viewer: -1, atomsBefore: e.atomsBefore)
         return (text, events, e)

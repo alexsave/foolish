@@ -28,17 +28,24 @@ final class MessageReplayLinkTests: XCTestCase {
         return d
     }
 
-    /// Drive the resident game to game over the way a real table does - lowest
-    /// eligible seat, first legal move - and hand back the controller watching
-    /// it. The controller reads the resident game, so a finish reached through
-    /// the kernel and a finish reached through `c.apply` publish identically;
-    /// this just gets there without needing both seats to be mine.
+    /// Drive the fixture to game over the way a real table does - lowest
+    /// eligible seat, first legal move - SEAL the finished chain, and hand back
+    /// a controller that opened it. Two seats have to move to finish a game and
+    /// only one of them is mine, so the far end is played on the kernel and the
+    /// result reaches the controller the way it reaches a real device: as a
+    /// bubble.
+    ///
+    /// ROUND 22: it used to drive the kernel and then call `c.refresh()`,
+    /// leaning on the controller mirroring whatever game was resident. That is
+    /// the assumption this whole file is about (see the header) and it is now
+    /// gone - a board is rebuilt from its own base and its own staged moves
+    /// before it is read, so moves made behind its back are not its moves. The
+    /// seal is what makes them its moves.
     private func finishedController(seats: Int = 2) async throws -> MessageTurnController {
         let k = MessageKernel.shared
         let parentBytes = bytes(fixtureHex)
         let parent = try await MessageEnvelope.decode(payload: parentBytes, viewer: 0)
-        let c = MessageTurnController(parentPayload: parentBytes, parent: parent, mySeat: 0)
-
+        var last = parent.lastActorSeat
         for _ in 0..<2000 {
             if let v = await k.residentView(viewer: -1), v.isOver { break }
             var applied = false
@@ -47,12 +54,19 @@ final class MessageReplayLinkTests: XCTestCase {
                 if let m = legal.first(where: { $0.type != .wait }) {
                     try await k.apply(seat: seat, move: m)
                     applied = true
+                    last = seat
                     break
                 }
             }
             if !applied { break }
         }
-        await c.refresh()
+        let payload = try await k.seal(phase: 3, lastActorSeat: last,
+                                       gameId: UInt64(parent.gameId) ?? 0,
+                                       parent8: Data(repeating: 0, count: 8),
+                                       joins: parent.joins)
+        let env = try await MessageEnvelope.decode(payload: payload, viewer: 0)
+        let c = MessageTurnController(parentPayload: payload, parent: env, mySeat: 0)
+        await c.begin()
         return c
     }
 

@@ -345,9 +345,13 @@ public final class MessageTurnController: ObservableObject {
     private func captureSettlement() async {
         // Asked of the kernel here rather than read off `animAtomsBefore`: this
         // runs BEFORE `publish`, so the stored one still describes the board
-        // before this move.
-        let before = await kernel.stagedAtomsBefore()
-        let evs = await kernel.lastMoveEvents(viewer: mySeat, atomsBefore: before)
+        // before this move. One call, rebuilt from this controller's own chain,
+        // for the reason `publish` spells out - a stream cut on somebody else's
+        // board would withhold the wrong half of this turn.
+        guard let turn = try? await kernel.stagedTurn(sealBase, replaying: pending,
+                                                      seat: mySeat)
+        else { dropHold(); return }
+        let evs = turn.events
         guard let cut = evs.settlementStart else { dropHold(); return }
         // The board to show while the rest is withheld. For a good the cut is
         // at index 0 - a good emits no step of its own - and the transition
@@ -446,7 +450,7 @@ public final class MessageTurnController: ObservableObject {
         // chain being replaced. `pending` is dropped just below for the same
         // reason; a hold is the animation half of the same fact.
         dropHold()
-        await rebuildBase()
+        let opened = await rebuildBase()
         // The open animations: the kernel's viewer-aware evwire for the LAST move
         // on the adopted chain (notes 6/12/#9), resolved after rebuildBase puts
         // the received chain resident. `prevPayload` is no longer consulted:
@@ -464,10 +468,9 @@ public final class MessageTurnController: ObservableObject {
         // Round 21: the stream AND the board it starts from, in one actor call
         // (see `openReplayPriorState`). One call rather than two because a
         // second hop through the kernel is a second chance for some other decode
-        // to repoint the resident game between them.
-        let opening: (events: [GameEvent], prior: GameView?) = suppressOpenReplay
-            ? ([], nil)
-            : await kernel.lastMoveEventsWithPrior(viewer: mySeat, atomsBefore: baseAtomsBefore)
+        // to repoint the resident game between them - which is why round 22
+        // moved it one step further back still, into the adopt itself.
+        let opening: (events: [GameEvent], prior: GameView?) = suppressOpenReplay ? ([], nil) : opened
         let replay = opening.events
         // ROUND 9 (owner): the durable pending ledger - and the Rule R rebase
         // that replayed its survivors here as `preStaged` - is REMOVED. Staged
@@ -548,16 +551,32 @@ public final class MessageTurnController: ObservableObject {
         await begin()
     }
 
-    private func rebuildBase() async {
+    /// Re-establish the chain underneath this board AND read the animation its
+    /// last bubble asks for - together, in one trip through the kernel.
+    ///
+    /// The stream used to be fetched on a SECOND hop, using the boundary this
+    /// decode had just put down. That gap is where "pickup button won't appear
+    /// if attack arrives while board is open" lives: an arrival adopts here
+    /// while the surface is snapshotting bubbles, and whatever chain wins the
+    /// race is the one the stream gets cut on. Callers that only want the base
+    /// (an undo) simply drop the opening.
+    @discardableResult
+    private func rebuildBase() async -> (events: [GameEvent], prior: GameView?) {
         switch base {
         case .continuation(let payload):
             // The envelope's own clock and bubble delta come back with the
             // decode - the hold measures from the one, the open-replay groups
             // on the other, and both belong to the CHAIN, not to this device.
-            adoptBaseFacts(try? await kernel.decode(payload: payload, viewer: mySeat))
+            guard let opened = try? await kernel.openChain(payload: payload, viewer: mySeat) else {
+                adoptBaseFacts(nil)
+                return ([], nil)
+            }
+            adoptBaseFacts(opened.env)
+            return (opened.events, opened.prior)
         case .genesis(let seed, let players):
             adoptBaseFacts(nil)   // nothing sent, nothing before my moves, no boundary
             try? await kernel.newGame(seed: seed, players: players)
+            return ([], nil)      // nothing was sent, so there is nothing to replay
         }
     }
 
@@ -652,21 +671,34 @@ public final class MessageTurnController: ObservableObject {
     /// refresh after a move); a value replaces it, which only `begin` does.
     /// `priorState` travels with it and is meaningless without it.
     private func publish(openReplay: [GameEvent]?, priorState: GameView? = nil) async {
-        let v = await kernel.residentView(viewer: mySeat)
-        let l = await kernel.residentLegal(seat: mySeat)
-        // Read in the same breath as the board it describes, for the same
-        // reason everything else here is: the boundary and the state it cuts
-        // must never disagree by a paint.
-        let staged = await kernel.stagedAtomsBefore()
-        let held = baseSentAt == 0 ? 0
-                 : await kernel.pickupHold(seat: mySeat, sentAt: baseSentAt)
-        // The replay code is READ HERE, not at the moment the link is tapped,
-        // because it is a question about the RESIDENT game and the resident game
-        // does not stay put: every bubble snapshot and every Rule-P comparison
-        // decodes into the same kernel and re-points it. Asked here it is asked
-        // in the same breath as the view it belongs to; asked on tap it would be
-        // whatever game the engine happened to be holding by then.
-        let code = v?.isOver == true ? await kernel.residentReplayCode() : nil
+        // ONE actor call, and it rebuilds THIS controller's chain before it
+        // reads. These five values used to be five separate trips into the
+        // kernel, which holds one resident game that decoding ADOPTS - so a
+        // bubble snapshot, a Rule-P comparison or a surface reload landing
+        // between two of them handed back a board from one chain and a menu
+        // from another. 1.0(21), twice: "the 6 of diamonds somehow transformed
+        // into a 6 of hearts covered by the 8 of hearts, and the pickup button
+        // popped back up", and "pickup button won't appear if attack arrives
+        // while board is open". See MessageEnvelope.readBoard, and
+        // MessageResidentDriftTests for both halves.
+        //
+        // A rebuild that THROWS leaves everything below untouched: a board that
+        // keeps showing the last state it could vouch for is a far smaller
+        // problem than one blanked by a chain it could not read.
+        guard let read = try? await kernel.readBoard(sealBase, replaying: pending,
+                                                     seat: mySeat, sentAt: baseSentAt)
+        else {
+            FlightRecorder.note("read-failed", "\(pending.count) staged")
+            return
+        }
+        let v = read.view
+        let l = read.legal
+        let staged = read.stagedAtomsBefore
+        let held = read.hold
+        // The replay code comes back with the view rather than being asked for
+        // when the link is tapped: it is a question about a particular game, and
+        // on tap it would be whatever game the engine happened to hold by then.
+        let code = read.replayCode
         if let evs = openReplay {
             openReplayEvents = evs
             openReplayPriorState = priorState

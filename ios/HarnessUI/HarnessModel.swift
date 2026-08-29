@@ -634,14 +634,12 @@ final class HarnessModel: ObservableObject {
 
     /// The bubble picture for a sealed chain — the SAME `BubbleSnapshot` entry
     /// the real extension composes its MSMessage image with, so the harness's
-    /// transcript shows what a real thread would show. Decoding here re-adopts
-    /// the payload into the resident kernel, which is what the real extension's
-    /// `stage` does too and is safe for the same reason: it is the chain the
-    /// board just sealed, so "re-adopt" is a no-op on the state.
+    /// transcript shows what a real thread would show. `peek` rather than
+    /// `decode`: round 22 made the picture a function of the payload bytes, so
+    /// reading the envelope no longer needs to leave that chain resident.
     private static func snapshot(_ payload: Data) async -> UIImage? {
-        guard let env = try? await MessageEnvelope.decode(payload: payload, viewer: -1)
-        else { return nil }
-        return await BubbleSnapshot.render(env: env)
+        guard let read = try? await MessageKernel.shared.publicRead(payload: payload) else { return nil }
+        return BubbleSnapshot.render(env: read.env, publicView: read.view)
     }
 
     // Each participant → its own throwaway cache suite (fresh per app launch via

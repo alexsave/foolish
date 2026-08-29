@@ -577,6 +577,17 @@ public actor MessageKernel {
         case genesis(seed: Data, players: Int)  // re-deal this game
     }
 
+    /// One board, read in one breath - see `readBoard` for why that matters.
+    public struct BoardRead: Sendable {
+        public let view: GameView?
+        public let legal: [Move]
+        public let stagedAtomsBefore: Int
+        /// Seconds the seat must still wait before it may pick up; 0 = now.
+        public let hold: Int
+        /// The §12 replay code, only once the game is over.
+        public let replayCode: String?
+    }
+
     /// ROUND 20: RE-ESTABLISH, REPLAY, AND SEAL - IN ONE ACTOR CALL.
     ///
     /// The bug this closes: `MessageTurnController.stagedPayload` used to call
@@ -604,15 +615,7 @@ public actor MessageKernel {
     public func resealFromBase(_ base: SealBase, replaying moves: [Move], seat: Int,
                                gameId: UInt64, parent8: Data, joins: [MessageJoin],
                                sentAt: Int = MessageKernel.clockNow()) throws -> Data {
-        let players: Int
-        switch base {
-        case .continuation(let payload):
-            players = try decode(payload: payload, viewer: seat).nPlayers
-        case .genesis(let seed, let n):
-            try newGame(seed: seed, players: n)
-            players = n
-        }
-        for m in moves { try apply(seat: seat, move: m) }
+        let players = try rebuild(base, replaying: moves, seat: seat)
         let over = residentView(viewer: -1)?.isOver == true
         return try seal(phase: over ? 3 : 2, lastActorSeat: seat, gameId: gameId,
                         parent8: parent8, joins: joins, sentAt: sentAt,
@@ -621,6 +624,112 @@ public actor MessageKernel {
                         // the assertion that says so, and it is what would catch
                         // a future caller that reintroduces the gap.
                         expectPlayers: players)
+    }
+
+    /// EVERYTHING THE BOARD IS PAINTED FROM, read in one breath.
+    ///
+    /// `MessageTurnController.publish` assigns its `@Published` properties back
+    /// to back so SwiftUI can never paint half of a change (round 16). This is
+    /// the other half of that promise: the values themselves must also come from
+    /// ONE game. They used to be five separate trips into this actor, and the
+    /// kernel holds ONE resident game that decoding ADOPTS - so a bubble
+    /// snapshot, a Rule-P comparison or a surface reload landing between two of
+    /// those trips re-pointed the game underneath the read. What came back was a
+    /// board painted from one chain and a menu computed from another, or a whole
+    /// read taken from a chain this board was not playing.
+    ///
+    /// Reported twice on 1.0(21): "as soon as I hit the send button, the 6 of
+    /// diamonds somehow transformed into a 6 of hearts covered by the 8 of
+    /// hearts, and the pickup button popped back up" (a whole read from the
+    /// previous bout's chain), and "pickup button won't appear if attack arrives
+    /// while board is open" (a menu from a chain where I was not the defender).
+    ///
+    /// So this rebuilds the caller's OWN chain from bytes it holds and reads
+    /// everything off it, with no suspension point anywhere in between - exactly
+    /// what `resealFromBase` above does for a seal, and for exactly the same
+    /// reason. The game described is provably the caller's, because it was just
+    /// built from the caller's base and the caller's moves.
+    ///
+    /// `sentAt` 0 means "no send clock" (a genesis, or a pre-round-16 chain) and
+    /// reports no hold, matching what the controller asked for by hand before.
+    public func readBoard(_ base: SealBase, replaying moves: [Move], seat: Int,
+                          sentAt: Int, now: Int = MessageKernel.clockNow()) throws -> BoardRead {
+        try rebuild(base, replaying: moves, seat: seat)
+        let v = residentView(viewer: seat)
+        return BoardRead(view: v,
+                         legal: residentLegal(seat: seat),
+                         stagedAtomsBefore: stagedAtomsBefore(),
+                         hold: sentAt == 0 ? 0 : pickupHold(seat: seat, sentAt: sentAt, now: now),
+                         replayCode: v?.isOver == true ? residentReplayCode() : nil)
+    }
+
+    /// The event stream for the moves STAGED on `base`, with the boundary they
+    /// were cut at - one actor call, same argument as `readBoard`. The board
+    /// splits this at its settlement to decide what a staged turn may show
+    /// (`MessageTurnController.captureSettlement`), and a stream that described
+    /// somebody else's chain would withhold the wrong half of it.
+    public func stagedTurn(_ base: SealBase, replaying moves: [Move],
+                           seat: Int) throws -> (atomsBefore: Int, events: [GameEvent]) {
+        try rebuild(base, replaying: moves, seat: seat)
+        let before = stagedAtomsBefore()
+        return (before, lastMoveEvents(viewer: seat, atomsBefore: before))
+    }
+
+    /// ADOPT A CHAIN AND READ WHAT IT SHOULD ANIMATE, in one actor call.
+    ///
+    /// `MessageTurnController.begin` decoded the chain and then asked for its
+    /// opening stream on a second hop, using the boundary the decode had put
+    /// down. Two hops is one gap: an arrival landing on an open board runs this
+    /// while the surface is also snapshotting bubbles, and the stream came back
+    /// cut on whatever chain won the race. Same fix as `readBoard` - the decode
+    /// and the reads it justifies happen together or not at all.
+    ///
+    /// `prior` is the board as it stood BEFORE the bubble's move, or nil when
+    /// there is nothing before it (see `lastMoveEventsWithPrior`).
+    public func openChain(payload: Data, viewer: Int)
+        throws -> (env: MessageEnvelope, events: [GameEvent], prior: GameView?) {
+        let env = try decode(payload: payload, viewer: viewer)
+        let opening = lastMoveEventsWithPrior(viewer: viewer, atomsBefore: env.atomsBefore)
+        return (env, opening.events, opening.prior)
+    }
+
+    /// EVERYTHING A BUBBLE SAYS ABOUT ITSELF - decoded once, read together.
+    ///
+    /// The picture (`BubbleSnapshot`) and the caption (`MessageSummary`) are the
+    /// two things a bubble carries to people who are not looking at the board,
+    /// and both are drawn from the chain it names. They used to take the
+    /// envelope from a `peek` and then read the RESIDENT game, on the note that
+    /// "the caller must have just sealed or decoded this payload" - true of
+    /// every caller written so far, and exactly the kind of promise that quietly
+    /// stops being kept. This picture goes out to the whole thread and shows on
+    /// lock screens; it should be the last thing in the app reading a game some
+    /// other task may have swapped in.
+    ///
+    /// One call, so the two can never disagree with each other either. The view
+    /// is the PUBLIC one (viewer -1, no hand), which is what keeps a hand out of
+    /// a notification by construction rather than by care.
+    public func publicRead(payload: Data)
+        throws -> (env: MessageEnvelope, view: GameView?, events: [GameEvent]) {
+        let env = try decode(payload: payload, viewer: -1)
+        return (env, residentView(viewer: -1),
+                lastMoveEvents(viewer: -1, atomsBefore: env.atomsBefore))
+    }
+
+    /// Re-establish `base` and replay `moves` onto it. The shared first half of
+    /// `resealFromBase`, `readBoard` and `stagedTurn`; private because rebuilding
+    /// and THEN reading in a second call would reopen the very gap all three
+    /// exist to close.
+    /// Returns the rebuilt game's player count, which is what `resealFromBase`
+    /// hands to `seal(expectPlayers:)` as its backstop.
+    @discardableResult
+    private func rebuild(_ base: SealBase, replaying moves: [Move], seat: Int) throws -> Int {
+        let players: Int
+        switch base {
+        case .continuation(let payload): players = try decode(payload: payload, viewer: seat).nPlayers
+        case .genesis(let seed, let n): try newGame(seed: seed, players: n); players = n
+        }
+        for m in moves { try apply(seat: seat, move: m) }
+        return players
     }
 
     /// THE CLOCK, in the one unit the wire speaks: unix seconds mod 65536.
