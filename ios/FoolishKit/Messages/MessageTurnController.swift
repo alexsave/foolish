@@ -652,6 +652,20 @@ public final class MessageTurnController: ObservableObject {
         await publish(openReplay: nil)
     }
 
+    /// THIS TURN'S ANIMATION STREAM, from this controller's own chain.
+    ///
+    /// The board asks for it when a bout ends and it has not been handed a half
+    /// (`MessageTableView.playBoutEnd`). It used to ask the kernel directly,
+    /// which meant the discards and refills it flew came from whatever game was
+    /// resident at that instant - and the instant in question is an arrival,
+    /// when Rule P, the surface route and a bubble bake are all decoding at
+    /// once. Same rebuild-then-read as `publish`; the boundary is the one
+    /// `publish` published, so the stream and the board it plays over agree.
+    public func turnEvents() async -> [GameEvent] {
+        (try? await kernel.turnEvents(sealBase, replaying: pending, seat: mySeat,
+                                      atomsBefore: animAtomsBefore)) ?? []
+    }
+
     /// Read the board and PUBLISH IT IN ONE GO - view, legal moves, the pickup
     /// hold and (on `begin`) the open-replay stream, assigned back to back with
     /// no `await` between them.

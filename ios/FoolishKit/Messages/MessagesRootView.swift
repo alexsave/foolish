@@ -1854,15 +1854,19 @@ private struct GameSurface: View {
             // (§10, MessageBoardView is public-safe by construction). `winner` was
             // already decoded/adopted above, so the resident game IS this chain.
             let names = Dictionary(env.joins.map { ($0.seat, $0.name) }, uniquingKeysWith: { a, _ in a })
-            if let view = await MessageKernel.shared.residentView(viewer: -1) {
-                // Round 20: the §12 funnel code for a FINISHED chain, read here
-                // rather than from `body` for the same reason
-                // MessageTurnController.publish reads its own - the resident
-                // game is this chain at THIS moment, and by the time anyone taps
-                // the link something else may have been decoded over it.
-                spectatorReplayURL = view.isOver
-                    ? await MessageKernel.shared.residentReplayCode().map(MessageEnvelope.replayLink(code:))
-                    : nil
+            // Round 20 read the §12 funnel code HERE rather than on the tap,
+            // because the resident game is this chain at THIS moment and by the
+            // time anyone taps the link something else may have been decoded
+            // over it. Round 22 finishes that thought: the board and the code
+            // were still two separate trips into the kernel, so the same
+            // interloper could land BETWEEN them and hand a watcher one game's
+            // table with another game's replay link. `readBoard` rebuilds this
+            // chain and answers both in one call - viewer -1 is the public
+            // table, which is all a watcher may see anyway.
+            if let read = try? await MessageKernel.shared.readBoard(
+                    .continuation(payload: winner), replaying: [], seat: -1, sentAt: 0),
+               let view = read.view {
+                spectatorReplayURL = read.replayCode.map(MessageEnvelope.replayLink(code:))
                 spectator = (view, names)
                 // ROUND 21: a FINISHED chain also gets a real board to watch the
                 // last move on, seated at nobody's seat - see `spectatorBoard`.

@@ -675,6 +675,21 @@ public actor MessageKernel {
         return (before, lastMoveEvents(viewer: seat, atomsBefore: before))
     }
 
+    /// The same stream at a boundary the CALLER already knows (the board's
+    /// `animAtomsBefore`), rebuilt from the caller's chain first. The board
+    /// fetches this to decide what a bout end flies - discards, refills, whose
+    /// card goes where - and it used to read it straight off the resident game.
+    /// An arrival is exactly when that is least safe: Rule P compares two
+    /// chains, the surface routes a third and a bubble bakes a fourth, all
+    /// while this animation is being composed, and the stream that came back
+    /// described whichever one won. The cards then flew the wrong way on a
+    /// board that was otherwise correct.
+    public func turnEvents(_ base: SealBase, replaying moves: [Move], seat: Int,
+                           atomsBefore: Int) throws -> [GameEvent] {
+        try rebuild(base, replaying: moves, seat: seat)
+        return lastMoveEvents(viewer: seat, atomsBefore: atomsBefore)
+    }
+
     /// ADOPT A CHAIN AND READ WHAT IT SHOULD ANIMATE, in one actor call.
     ///
     /// `MessageTurnController.begin` decoded the chain and then asked for its

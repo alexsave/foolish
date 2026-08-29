@@ -1601,12 +1601,13 @@ public struct MessageTableView: View {
             // a kernel round-trip in between is a paint the cover spends
             // nowhere. Nothing is visible during the fetch either way - the
             // held ghost from `playAt` is already resting at the card's source.
-            var events = events
-            if events == nil {
-                events = await MessageKernel.shared.lastMoveEvents(
-                    viewer: controller.mySeat, atomsBefore: controller.animAtomsBefore)
-            }
-            let stream = events ?? []
+            // Asked of the CONTROLLER, not of the kernel: it rebuilds its own
+            // chain before reading, so an arrival decoding underneath this
+            // cannot swap the stream for another game's (round 22 -
+            // MessageTurnController.turnEvents).
+            var fetched = events
+            if fetched == nil { fetched = await controller.turnEvents() }
+            let stream = fetched ?? []
             if let pc = matchedCover {
                 // BALANCED BY `defer`, like every other sequence claim in this
                 // file. It was a bare `+= 1` / `-= 1` pair when round 16 added
