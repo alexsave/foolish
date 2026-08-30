@@ -462,6 +462,12 @@ public final class MessageTurnController: ObservableObject {
     /// `.task`.
     public func begin() async {
         lastChangeWasUndo = false
+        // Ahead of every await below: `base` may already have been moved by
+        // `adopt`, and a controller that says "new chain, old staged moves" is
+        // one the board rebuilds from as written. (The assignment further down
+        // is where this used to live; it is kept there as the no-op it now is
+        // for the paths that reach `begin` without an adopt.)
+        pending = []
         // Whatever this board was withholding belonged to a staged move on the
         // chain being replaced. `pending` is dropped just below for the same
         // reason; a hold is the animation half of the same fact.
@@ -557,6 +563,14 @@ public final class MessageTurnController: ObservableObject {
             return
         }
         base = .continuation(payload: payload)
+        // TOGETHER WITH THE BASE, and before any await. `begin` clears this too,
+        // but only after it has suspended on the rebuild - and in that window
+        // the controller would read as "the NEW chain, with the moves I staged
+        // against the OLD one still on top", which the board rebuilds from
+        // literally: stale moves replayed onto a parent they were never legal
+        // against. They are dropped rather than rebased for the reason `adopt`
+        // gives above - the arriving chain is the thread's truth.
+        pending = []
         sending = false
         parent8 = Self.firstEight(hex: parent.digest)
         joins = parent.joins
@@ -907,15 +921,48 @@ public final class MessageTurnController: ObservableObject {
             AnimLog.say("markSent refused - the sent chain loses Rule P to the one on screen")
             return
         }
-        // Cleared here, past the refusal: a `sending` left standing by an
+        // READ THE NEW CHAIN FIRST, MUTATE AFTERWARDS - and mutate all of it
+        // without an await in between.
+        //
+        // This used to empty `pending`, then suspend on the decode, then move
+        // `base`. Between those two lines the controller said "nothing staged,
+        // still on the OLD chain" - and since round 22 `base` + `pending` is
+        // exactly what the board is rebuilt from, so any publish landing in
+        // that window rendered THE BOARD BEFORE THE MOVE, with
+        // `animAtomsBefore` still pointing at the previous bubble so it
+        // animated that bubble's move to get there. 1.0(23), twice: "i just did
+        // a cover. whwn i sent it strangely animated to the state before the
+        // cover", and a round-ending good that "did some weird animation
+        // sequence that ended up back with the ace of clubs covering the king
+        // of clubs again". Reopening the bubble put it right because a cold
+        // open has no such window.
+        //
+        // It was invisible before round 22 only by luck: `publish` read the
+        // RESIDENT game, which still had the staged moves applied to it, so a
+        // half-updated controller still rendered correctly. Making base+pending
+        // the single source of truth is what turned the window lethal.
+        //
+        // A payload that will not DECODE leaves everything alone rather than
+        // emptying `pending` on the way to a base it never reaches: that is the
+        // same walk backwards, with no race needed to produce it at all.
+        var adopted: MessageEnvelope?
+        if let sent = payload {
+            adopted = try? await kernel.decode(payload: sent, viewer: mySeat)
+            guard adopted != nil else {
+                FlightRecorder.note("send-unreadable", "kept the board on its staged move")
+                AnimLog.say("markSent: the sent bytes will not decode - board unchanged")
+                return
+            }
+        }
+        // ---- NO `await` PAST THIS LINE until the state is whole again ----
+        // `sending` is cleared before the guard below: one left standing by an
         // ordinary early return is an Undo pill that never comes back.
         sending = false
         let hadPending = !pending.isEmpty
         guard hadPending || payload != nil else { return }
         pending = []
         lastChangeWasUndo = false
-        if let sent = payload,
-           let env = try? await kernel.decode(payload: sent, viewer: mySeat) {
+        if let sent = payload, let env = adopted {
             base = .continuation(payload: sent)
             parent8 = Self.firstEight(hex: env.digest)
             // My own seal appended my nickname if the parent had not named me
@@ -946,17 +993,23 @@ public final class MessageTurnController: ObservableObject {
     /// the last pending action (§10). No-op if nothing is pending.
     public func undo() async {
         guard !pending.isEmpty else { return }
+        // ONE assignment, no await, no replay.
+        //
+        // This used to empty `pending`, rebuild the base, and then re-apply the
+        // survivors one at a time - so for the length of that rebuild the
+        // controller said "this chain, nothing staged", and every step of the
+        // replay was another partial state. Since round 22 the board is rebuilt
+        // from `base` + `pending` on every read, which makes all of that both
+        // redundant (nothing depends on what the kernel happens to hold) and
+        // dangerous (each intermediate is a board a publish can land on). The
+        // survivors were legal as a whole list, so they are legal as a prefix
+        // of it - dropping the last one cannot invalidate the ones before it.
         let keep = Array(pending.dropLast())
-        pending = []
+        pending = keep
         // The undone move may be the one whose settlement is being held. The
-        // base is about to be rebuilt without it, so the hold has nothing left
-        // to describe - dropped, not released.
+        // board no longer contains it, so the hold has nothing left to
+        // describe - dropped, not released.
         dropHold()
-        await rebuildBase()
-        for m in keep {
-            try? await kernel.apply(seat: mySeat, move: m)
-            pending.append(m)
-        }
         // An earlier staged move can END A BOUT just as well as the undone one
         // did (cover, cover-that-swept, undo the throw-in that followed): what
         // survives the undo is held on exactly the same terms.
