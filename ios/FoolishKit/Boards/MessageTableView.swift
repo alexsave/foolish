@@ -1203,9 +1203,24 @@ public struct MessageTableView: View {
             let stuck = shown.flatMap { b in
                 [b.attack.identity, b.defense?.identity].compactMap { $0 }
             }.filter { hidden.contains($0) }
+            // ROUND 22, the distinction that makes this number readable. A
+            // PRE-HIDDEN card is one held back so it can fly in rather than pop
+            // in - the flight is already scheduled, and the grid trace right
+            // after shows `visible` climbing as each lands. Every arrival in the
+            // rig produces one or two of those, on every build back to 1.0(22),
+            // so a raw count of 1-2 is the floor rather than a finding, and a
+            // real defect would have been lost in it.
+            //
+            // STRANDED is the defect: hidden with nothing scheduled to reveal
+            // it - the "it animates that card moving, but it just doesn't land
+            // on the table" this counter was added for, and bug #11's
+            // `visible=0 hidden=1` with no flight after it. This one must be 0.
+            let stranded = stuck.filter { !preHidden.contains($0) }
+            if !stranded.isEmpty { strandedAtRest += 1 }
             AnimLog.say("VANISHED [\(stuck.sorted().joined(separator: ","))] "
                 + "preHidden=\(stuck.filter { preHidden.contains($0) }.count) "
-                + "veilOnly=\(stuck.filter { veil.contains($0) && !preHidden.contains($0) }.count)")
+                + "veilOnly=\(stuck.filter { veil.contains($0) && !preHidden.contains($0) }.count) "
+                + "STRANDED=\(stranded.count)")
         }
         let line = "grid sweeping=\(sweeping) cells=\(shown.count) pairs=\(pairs) visible=\(visible) hidden=\(hidden.count)"
             + (atRest && veiled > 0 ? "  <-- \(veiled) VANISHED AT REST" : "")
@@ -1233,14 +1248,30 @@ public struct MessageTableView: View {
     /// screen, which is the defect itself - filmed as the deck badge going
     /// 9 -> 12 -> 9 with nothing about the deck happening.
     public private(set) static var backwardsPaints = 0
-    /// Cards sitting on the table that the board is not drawing, at rest.
+    /// Cards sitting on the table that the board is not drawing, at rest -
+    /// INCLUDING the ones pre-hidden for a flight that is about to land, which
+    /// is most of them. See the note at the counter for why that matters.
     public private(set) static var vanishedAtRest = 0
+    /// The half of `vanishedAtRest` that is a real defect: a card hidden with
+    /// nothing scheduled to reveal it. This one must be zero.
+    public private(set) static var strandedAtRest = 0
     private static var lastShown: Int?
     private static var lastTruth: Int?
 
     private static var lastCountTrace = ""
     static func traceCount(shown: Int, override: Int?, veil: Int?, truth: Int) {
-        let atRest = BoardAnimator.sequenceDepth == 0
+        // AT REST means nothing is pending, and a sequence counter alone does
+        // not say that. An OVERRIDE or a VEIL is the board declaring that it is
+        // deliberately holding this badge until the cards that earn it have
+        // flown - and both go up a beat BEFORE the Task that raises
+        // `sequenceDepth` runs. Counting that window made every bout-ending
+        // arrival report two stale paints on every build back to 1.0(22)
+        // (filmed: `shown=23 veil=23 truth=19`, then `override=23`, then the
+        // same numbers again reading "lagging" once the depth caught up), which
+        // is a floor high enough to hide a real one. The lag is the feature;
+        // what this counter is for is a board that disagrees with the kernel
+        // with NOTHING pending to put it right.
+        let atRest = BoardAnimator.sequenceDepth == 0 && override == nil && veil == nil
         if atRest && shown != truth { staleAtRest += 1 }
         if let ls = lastShown, let lt = lastTruth, lt == truth, shown != ls,
            abs(shown - truth) > abs(ls - truth) {

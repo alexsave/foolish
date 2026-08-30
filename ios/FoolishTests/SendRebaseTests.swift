@@ -81,6 +81,61 @@ final class SendRebaseTests: XCTestCase {
         XCTAssertEqual(c.view, after, "…and must not re-animate the bubble before it")
     }
 
+    /// A REFUSAL MUST CHANGE NOTHING. Declining the rebase but still dropping
+    /// the staged moves would walk the board back by exactly the move the player
+    /// just watched themselves make - a smaller version of the same complaint.
+    /// So the moves stay, and with them the board they draw.
+    ///
+    /// Built two chains deep by hand, because the reported shape needs a board
+    /// that has already moved PAST the chain it is handed: an attack (chain A),
+    /// a cover on top of it (chain B), and then the attacker staging a good on
+    /// B. Handing that board chain A is the send that must be refused.
+    func testARefusedSendLeavesTheStagedMoveOnTheBoard() async throws {
+        let k = MessageKernel.shared
+        var setup: (a: Data, b: Data, attacker: Int)?
+        for salt in UInt8(1)...UInt8(60) {
+            try await k.newGame(seed: Data(repeating: salt, count: 32), players: 2)
+            var opener = -1
+            var first: Move?
+            for s in 0..<2 {
+                if let m = (await k.residentLegal(seat: s)).first(where: { $0.type == .attack }) {
+                    opener = s; first = m; break
+                }
+            }
+            guard let atk = first else { continue }
+            try await k.apply(seat: opener, move: atk)
+            let chainA = try await k.seal(phase: 2, lastActorSeat: opener, gameId: 0xA11,
+                                          parent8: zero8, joins: joins)
+            let def = 1 - opener
+            guard let cov = (await k.residentLegal(seat: def)).first(where: { $0.type == .cover })
+            else { continue }
+            try await k.apply(seat: def, move: cov)
+            let chainB = try await k.seal(phase: 2, lastActorSeat: def, gameId: 0xA11,
+                                          parent8: zero8, joins: joins)
+            setup = (chainA, chainB, opener)
+            break
+        }
+        let (chainA, chainB, attacker) = try XCTUnwrap(setup, "no deal gave attack-then-cover in 60 tries")
+
+        let envB = try await MessageEnvelope.decode(payload: chainB, viewer: -1)
+        let c = MessageTurnController(parentPayload: chainB, parent: envB, mySeat: attacker)
+        await c.begin()
+        let good = try XCTUnwrap(c.legal.first { $0.type == .good },
+                                 "the table is covered, so the attacker may say good")
+        await c.apply(good)
+        let staged = c.pending
+        let shown = try XCTUnwrap(c.view)
+        XCTAssertFalse(staged.isEmpty, "a move is staged")
+
+        c.markSending()
+        await c.markSent(payload: chainA)     // strictly worse than chainB - refused
+
+        XCTAssertEqual(c.basePayload, chainB, "the board stays on the chain it is playing")
+        XCTAssertEqual(c.pending, staged, "the staged move must survive a refusal")
+        XCTAssertEqual(c.view, shown, "…so the board still shows what the player played")
+        XCTAssertTrue(c.sending, "nothing may be undone or re-sent while the send is unresolved")
+    }
+
     /// The ordinary case still works, or the guard is just a way to break Send:
     /// a chain that EXTENDS the current one is adopted, and the board moves on
     /// to it.

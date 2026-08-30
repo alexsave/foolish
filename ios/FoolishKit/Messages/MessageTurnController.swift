@@ -866,14 +866,6 @@ public final class MessageTurnController: ObservableObject {
     /// exists to prevent. Being handed the bytes that went out is the whole
     /// signal; what was pending is only what to forget.
     public func markSent(payload: Data? = nil) async {
-        // Cleared FIRST and unconditionally, ahead of the guard below: a
-        // `sending` left standing by an early return is an Undo pill that never
-        // comes back and a board that cannot stage.
-        sending = false
-        let hadPending = !pending.isEmpty
-        guard hadPending || payload != nil else { return }
-        pending = []
-        lastChangeWasUndo = false
         // A SEND MAY NEVER MOVE THIS BOARD BACKWARDS.
         //
         // Owner, 1.0(22): a throw-in, Send, and then "the 10 of spades... the
@@ -895,13 +887,33 @@ public final class MessageTurnController: ObservableObject {
         // one it just sent. Only STRICTLY worse is refused: an undo-to-empty
         // re-seal carries nothing new and ties, and must still rebase (it is a
         // real bubble with a real digest that the next move must name as parent).
+        // AND A REFUSAL CHANGES NOTHING. Not the base, and not `pending`
+        // either: the staged moves are what the board is DRAWN from, so
+        // dropping them while declining to rebase would walk the board back by
+        // exactly the move the player just watched - a smaller version of the
+        // same complaint. `sending` stays up too, so the move cannot be undone
+        // or re-sent while we do not know what went out. Playing on clears it
+        // (`apply`), as does an arrival.
+        //
+        // The alternative - re-deriving the sent bytes from base + pending -
+        // was rejected: a re-seal stamps a fresh send clock, so it would be a
+        // DIFFERENT chain with a different digest from the one the thread
+        // actually received, and the next move would name a parent nobody has.
+        // The host's message is the only authority on what was sent; when it
+        // disagrees with the board, the board's job is to stand still.
         if let sent = payload, let current = basePayload,
            let rank = try? await kernel.preferred(current, sent), rank < 0 {
             FlightRecorder.note("send-backwards", "refused a rebase onto an older chain")
             AnimLog.say("markSent refused - the sent chain loses Rule P to the one on screen")
-            await refresh()
             return
         }
+        // Cleared here, past the refusal: a `sending` left standing by an
+        // ordinary early return is an Undo pill that never comes back.
+        sending = false
+        let hadPending = !pending.isEmpty
+        guard hadPending || payload != nil else { return }
+        pending = []
+        lastChangeWasUndo = false
         if let sent = payload,
            let env = try? await kernel.decode(payload: sent, viewer: mySeat) {
             base = .continuation(payload: sent)
