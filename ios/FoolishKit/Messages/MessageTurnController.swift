@@ -868,8 +868,9 @@ public final class MessageTurnController: ObservableObject {
     ///
     /// The decode replaces the resident game with a game identical to the one
     /// already there - the sent chain IS the base plus my moves - so nothing on
-    /// screen moves. `nil` (or a payload that will not decode) keeps the old
-    /// behaviour: forget the staged move and leave the base alone.
+    /// screen moves. A payload that will not decode, or none to be had at all,
+    /// leaves BOTH the base and the staged moves alone: half of that pair is a
+    /// board walked backwards (see the 1.0(26) note in the body).
     ///
     /// The rebase does NOT depend on there being a staged move to clear. It
     /// used to: an empty `pending` returned before the decode, so a send that
@@ -880,6 +881,42 @@ public final class MessageTurnController: ObservableObject {
     /// exists to prevent. Being handed the bytes that went out is the whole
     /// signal; what was pending is only what to forget.
     public func markSent(payload: Data? = nil) async {
+        // THE SIGNAL MAY ARRIVE WITHOUT ITS BYTES, AND ON DEVICE IT DOES.
+        //
+        // Owner, 1.0(26), sending an attack: "nothing should animate, right?"
+        // - and it animated the bubble BEFORE it. The trail says exactly what
+        // happened, in three lines: `send` at 43.09s, `anim-live n=2 from=45
+        // seats=0/1 kinds=pick,refi` at 43.13s, and NO `send-rebase` between
+        // them. No `send-foreign` and no `send-unreadable` either, and those
+        // three notes cover every way out of this function - so the payload was
+        // NIL. That is the one path that empties `pending` while leaving `base`
+        // where it stands.
+        //
+        // Both halves of the complaint follow from it. Emptying `pending`
+        // un-plays the staged attack (base+pending is what the board is drawn
+        // from since round 22), so the table drops from one card to none; the
+        // board reads a table that just cleared as a bout ending and asks for
+        // that turn's stream; and `animAtomsBefore` has just fallen back from
+        // the staged boundary to `baseAtomsBefore`, which is the bubble before
+        // mine. Hence `pick,refi from=45` - the arrival's own move, replayed a
+        // second time, to land on the board from BEFORE the move just sent.
+        // Whatever the previous bubble happened to be is what a send appears to
+        // animate: a pickup here, a round-ending good in the 1.0(24) report.
+        //
+        // So the bytes stop being something this function has to be handed.
+        // They travel from `didStartSending` through a root-view rebuild and a
+        // SwiftUI `onChange` to reach it, which is a long way for a value to
+        // survive, and none of it is necessary: `lastSealed` IS the chain this
+        // controller sealed, staging is the only thing that makes one, and a
+        // send signal arriving with moves still pending can only be the send of
+        // that bubble. The host's payload stays preferred - it is what Messages
+        // actually transmitted - and our own is the fallback, the same bytes by
+        // construction and reachable without leaving the object.
+        let sent = payload ?? (pending.isEmpty ? nil : lastSealed)
+        if payload == nil, sent != nil {
+            FlightRecorder.note("send-bytesless", "rebased onto my own sealed chain instead")
+        }
+
         // A SEND MAY NEVER MOVE THIS BOARD BACKWARDS.
         //
         // Owner, 1.0(22): a throw-in, Send, and then "the 10 of spades... the
@@ -914,7 +951,7 @@ public final class MessageTurnController: ObservableObject {
         // build, and the conservative move is to leave the board alone. Nil
         // `lastSealed` means this controller has sealed nothing yet and has no
         // opinion - a reload can legitimately hand it a chain it did not make.
-        if let sent = payload, let mine = lastSealed, sent != mine {
+        if let sent, let mine = lastSealed, sent != mine {
             FlightRecorder.note("send-foreign", "refused a rebase onto bytes I did not seal")
             if AnimLog.on {
                 let ce = try? await kernel.peek(payload: mine)
@@ -963,7 +1000,7 @@ public final class MessageTurnController: ObservableObject {
         // emptying `pending` on the way to a base it never reaches: that is the
         // same walk backwards, with no race needed to produce it at all.
         var adopted: MessageEnvelope?
-        if let sent = payload {
+        if let sent {
             adopted = try? await kernel.decode(payload: sent, viewer: mySeat)
             guard adopted != nil else {
                 FlightRecorder.note("send-unreadable", "kept the board on its staged move")
@@ -976,10 +1013,22 @@ public final class MessageTurnController: ObservableObject {
         // ordinary early return is an Undo pill that never comes back.
         sending = false
         let hadPending = !pending.isEmpty
-        guard hadPending || payload != nil else { return }
+        guard hadPending || sent != nil else { return }
+        // NO BYTES AT ALL, AND MOVES STILL STAGED: keep them. This is the shape
+        // the report above walked in on, and the answer is the same one a
+        // refusal gets - the staged moves are what the board is DRAWN from, so
+        // dropping them without a base to replace them walks the board back by
+        // exactly the move the player just watched. Only reachable now if a
+        // seal never happened (`lastSealed` nil with `pending` full), which the
+        // staging path does not allow; kept as the floor under a value that has
+        // gone missing once already.
+        guard let sent else {
+            FlightRecorder.note("send-blind", "kept the staged move - no chain to rebase onto")
+            return
+        }
         pending = []
         lastChangeWasUndo = false
-        if let sent = payload, let env = adopted {
+        if let env = adopted {
             base = .continuation(payload: sent)
             parent8 = Self.firstEight(hex: env.digest)
             // My own seal appended my nickname if the parent had not named me

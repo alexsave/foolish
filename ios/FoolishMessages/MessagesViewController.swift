@@ -173,7 +173,6 @@ final class MessagesViewController: MSMessagesAppViewController {
     override func didStartSending(_ message: MSMessage, conversation: MSConversation) {
         startingNewGame = false
         freshSession = false
-        FlightRecorder.note("send")
         // ROUND 12 #11: the chain being sent comes from the MESSAGE Messages
         // hands us, not from our own `pendingStage` bookkeeping. They are
         // normally the same bytes, but `pendingStage` can be gone by now (an
@@ -182,6 +181,13 @@ final class MessagesViewController: MSMessagesAppViewController {
         // below was never written - so reopening my own sent chain replayed the
         // move I had just watched. The message is always authoritative.
         let sent = Self.payload(of: message) ?? pendingStage?.payload
+        // WITH THE BYTE COUNT, because a send that reached this function
+        // without its bytes is what walked the board back a bubble in 1.0(26)
+        // (MessageTurnController.markSent). The board no longer depends on them
+        // arriving, but WHERE they go missing - never here, or lost between
+        // here and the surface's `onChange` - is still worth knowing, and the
+        // trail can only say so if this line counts them.
+        FlightRecorder.note("send", sent.map { "\($0.count)b" } ?? "NO PAYLOAD")
         lastSentPayload = sent
         commitPendingStage(sent: sent, chatKey: ChatKey.make(
             local: conversation.localParticipantIdentifier.uuidString,

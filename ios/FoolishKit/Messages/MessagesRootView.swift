@@ -545,6 +545,12 @@ private struct GameSurface: View {
             // playing"), so this signal is the only thing left that does it.
             .onChange(of: sentToken) { _ in
                 AnimLog.say("surface sent token=\(sentToken) bytes=\(sentPayload?.count ?? -1)")
+                // The other end of the host's `send` note: what the bytes look
+                // like AFTER a root-view rebuild and a SwiftUI diff have
+                // carried them here. `send 107b` followed by `send-signal none`
+                // is a value lost in the view layer; both saying none is a host
+                // that never had it.
+                FlightRecorder.note("send-signal", sentPayload.map { "\($0.count)b" } ?? "none")
                 surfaceStaged = false   // round-9: the staged bubble is sent
                 // SYNCHRONOUSLY, in this same SwiftUI transaction: the Undo pill
                 // goes now, not after a Task hop and a decode (owner: "should

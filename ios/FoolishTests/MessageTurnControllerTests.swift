@@ -195,8 +195,16 @@ final class MessageTurnControllerTests: XCTestCase {
     /// Round-6 bug 4: after the human SENDS, the live controller must forget the
     /// staged move (`markSent`), so `canSend`/`canUndo` go false and the collapsed
     /// drawer's Undo button — which otherwise re-staged and re-sent an already-sent
-    /// move — disappears. markSent leaves the move APPLIED (the board still shows
-    /// the sent state), it only drops it from `pending`.
+    /// move — disappears. The board still shows the sent state afterwards.
+    ///
+    /// IT SEALS FIRST, which round 6 did not have to. Back then `pending` was
+    /// bookkeeping and the move stayed applied to the resident game whatever
+    /// happened to it; since round 22 `base` + `pending` IS the board, so a
+    /// `markSent` that empties one without moving the other un-plays the move
+    /// (SendRebaseTests, 1.0(26)). Sealing is what the real flow does before a
+    /// bubble can be sent at all - the staged bubble is a sealed chain - and it
+    /// is what gives `markSent` its own bytes to rebase onto when the signal
+    /// arrives without them.
     func testMarkSentForgetsTheStagedMoveSoUndoAndSendGoAway() async throws {
         let parentBytes = bytes(fixtureHex)
         let parent = try await MessageEnvelope.decode(payload: parentBytes, viewer: 0)
@@ -209,11 +217,13 @@ final class MessageTurnControllerTests: XCTestCase {
         await c.apply(move)
         XCTAssertEqual(c.pending.count, 1, "one action staged")
         XCTAssertTrue(c.canSend, "Undo/Send are live while staged")
+        _ = try await c.stagedPayload()
+        let staged = try XCTUnwrap(c.view, "the board with the staged move on it")
 
         await c.markSent()
         XCTAssertTrue(c.pending.isEmpty, "markSent drops the sent move from pending")
         XCTAssertFalse(c.canSend, "so canSend (and the Undo button gated on it) go false")
-        XCTAssertNotNil(c.view, "the sent move stays applied — the board still renders it")
+        XCTAssertEqual(c.view, staged, "the sent move stays applied — the board still renders it")
 
         // Idempotent / safe when nothing is staged.
         await c.markSent()

@@ -141,6 +141,57 @@ final class SendRebaseTests: XCTestCase {
         XCTAssertTrue(c.sending, "nothing may be undone or re-sent while the send is unresolved")
     }
 
+    /// THE 1.0(26) REPORT: the send signal arrives WITHOUT ITS BYTES.
+    ///
+    /// The trail is unambiguous - `send`, then `anim-live from=45` for the
+    /// previous bubble's move, and no `send-rebase` between them, which is the
+    /// signature of a nil payload reaching `markSent`. Clearing the staged move
+    /// while the base stays put un-plays it: the table empties, the board reads
+    /// a cleared table as a bout ending, and `animAtomsBefore` has already
+    /// fallen back to the bubble before mine - so the send animates whatever
+    /// the PREVIOUS move was (a pickup here, a round-ending good in the
+    /// 1.0(24) report) to arrive at a board from before the move just sent.
+    ///
+    /// The controller sealed those bytes itself and still has them, so a signal
+    /// that forgets them changes nothing about where the board lands.
+    func testASendThatArrivesWithoutItsBytesStillRebases() async throws {
+        let (c, _, _) = try await board()
+        let cover = try XCTUnwrap(c.legal.first { $0.type == .cover })
+        await c.apply(cover)
+        let mine = try await c.stagedPayload()
+        let shown = try XCTUnwrap(c.view, "the board with my cover on it")
+        let boundary = c.animAtomsBefore
+
+        c.markSending()
+        await c.markSent(payload: nil)      // the bytes went missing on the way here
+
+        XCTAssertEqual(c.basePayload, mine, "the board is on the bubble that went out")
+        XCTAssertTrue(c.pending.isEmpty, "…and the move is no longer staged")
+        XCTAssertEqual(c.view, shown, "the card I sent must still be on the table")
+        XCTAssertGreaterThanOrEqual(c.animAtomsBefore, boundary,
+            "the animation boundary may never fall back to the bubble before mine")
+        XCTAssertFalse(c.sending, "the board is playable again")
+    }
+
+    /// …and with no bytes to be had at ALL - nothing sealed, so nothing to fall
+    /// back on - the staged move STAYS. Dropping it would be the same backwards
+    /// walk with nothing gained: the board would stop showing a move that is on
+    /// its way into the thread.
+    func testASendWithNothingToRebaseOntoKeepsTheMoveOnTheBoard() async throws {
+        let (c, opened, _) = try await board()
+        let cover = try XCTUnwrap(c.legal.first { $0.type == .cover })
+        await c.apply(cover)               // played but never sealed
+        let shown = try XCTUnwrap(c.view)
+        let staged = c.pending
+
+        c.markSending()
+        await c.markSent(payload: nil)
+
+        XCTAssertEqual(c.basePayload, opened, "no chain to move to, so it does not move")
+        XCTAssertEqual(c.pending, staged, "the played move stays on the board")
+        XCTAssertEqual(c.view, shown, "…which is the only way the board stays truthful")
+    }
+
     /// The ordinary case still works, or the guard is just a way to break Send:
     /// a chain that EXTENDS the current one is adopted, and the board moves on
     /// to it.
