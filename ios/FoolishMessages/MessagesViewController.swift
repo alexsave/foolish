@@ -111,6 +111,15 @@ final class MessagesViewController: MSMessagesAppViewController {
     override func willBecomeActive(with conversation: MSConversation) {
         super.willBecomeActive(with: conversation)
         FlightRecorder.note("active", "\(conversation.remoteParticipantIdentifiers.count + 1)p chat")
+        // A NEW ACTIVATION IS A NEW AUDIENCE. Any just-sent marker still lying
+        // about belongs to a session that has ended - the player closed the
+        // drawer and came back - and a reopen they chose is a request to watch
+        // the bubble, not to be shown a blank board. See
+        // MessageGameStore.clearJustSent for the owner report and why this sits
+        // on the way IN rather than on the way out.
+        if MessageGameStore.shared.clearJustSent() {
+            FlightRecorder.note("quiet-drop", "a new activation replays the bubble")
+        }
         present(conversation, style: presentationStyle)
     }
 

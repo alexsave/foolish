@@ -354,6 +354,33 @@ public final class MessageGameStore {
         return true
     }
 
+    /// Drop the marker unspent. THE EXTENSION ACTIVATING IS WHAT CALLS THIS, so
+    /// a quiet open is only ever the activation that did the sending.
+    ///
+    /// Owner, 1.0(27): "when I send a move, close it by swiping down, and open
+    /// it up soon after, it doesn't replay the move. I have to then close it
+    /// again, and then pressing it again will replay it... as soon as we close
+    /// it by swiping down, we should get rid of some state we're holding."
+    /// That is this marker exactly - the first reopen spends it, which is why
+    /// the second one replays and every one after that does too.
+    ///
+    /// The marker was made durable in round-9 #5 because a send used to TEAR
+    /// THE EXTENSION DOWN, so the reopen it silenced was the one Messages
+    /// forced on you a heartbeat later. Round 16 took that teardown away for
+    /// the compact drawer ("just keep it collapsed so they can keep playing"),
+    /// and what is left is a reopen the player chose - which is a request to
+    /// see the bubble, and every other bubble answers it by playing its move.
+    /// So the marker keeps its job inside one activation and loses it at the
+    /// edge. Burning it on ACTIVATION rather than on the way out is deliberate:
+    /// an extension that is jetsammed never gets to run its goodbye, and this
+    /// board is jetsammed often enough that the trail has a verdict for it.
+    @discardableResult
+    public func clearJustSent() -> Bool {
+        guard defaults?.data(forKey: justSentKey) != nil else { return false }
+        defaults?.removeObject(forKey: justSentKey)
+        return true
+    }
+
     // MARK: hand order (round-8 #4) — the sticky arrangement memory, per game
     //
     // The web keeps a client-side "arrangement memory" per game

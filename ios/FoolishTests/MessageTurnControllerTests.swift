@@ -265,6 +265,27 @@ final class MessageTurnControllerTests: XCTestCase {
         XCTAssertFalse(store.consumeJustSent(matching: mine), "a match clears it: one send, one quiet open")
     }
 
+    /// …AND THE ACTIVATION OWNS IT. Owner, 1.0(27): "when I send a move, close
+    /// it by swiping down, and open it up soon after, it doesn't replay the
+    /// move. I have to then close it again, and then pressing it again will
+    /// replay it, and each time i re-open it past there." That is the marker
+    /// being spent by the first reopen - exactly what round 9 built it to do,
+    /// back when the reopen was one Messages forced on you the instant a send
+    /// tore the extension down. Round 16 removed that teardown, so a reopen is
+    /// now something the player asked for, and `willBecomeActive` drops the
+    /// marker before anything can adopt against it.
+    func testANewActivationDropsTheJustSentMarkerUnspent() {
+        let store = MessageGameStore(defaults: UserDefaults(suiteName: "test.js2.\(UUID().uuidString)")!)
+        let mine = Data([1, 2, 3])
+
+        XCTAssertFalse(store.clearJustSent(), "nothing to drop, and it says so")
+        store.markJustSent(payload: mine)
+        XCTAssertTrue(store.clearJustSent(), "the activation drops it and reports that it did")
+        XCTAssertFalse(store.consumeJustSent(matching: mine),
+                       "so the reopen after a close replays the bubble like any other")
+        XCTAssertFalse(store.clearJustSent(), "…and dropping twice is not a second event")
+    }
+
     /// A quiet open (my own just-sent chain) must produce NO open-replay - the
     /// last move on it is mine, watched live seconds ago. A normal open of the
     /// same chain still replays it (any other device, or a later revisit).

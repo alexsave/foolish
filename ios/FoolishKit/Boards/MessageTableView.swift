@@ -396,7 +396,23 @@ public struct MessageTableView: View {
                 // open-delta replay of someone else's final move) has visibly
                 // landed, so the end screen never just cuts in mid-animation.
                 if controller.isOver && showResults {
+                    // NEW GAME WAITS FOR THE SEND. Owner, 1.0(27): "i dont think
+                    // you should be able to send the game end move and then have
+                    // the new game button, because that will kinda obscure the
+                    // ranking... if you end the game, do not show the new game
+                    // button until it gets sent."
+                    //
+                    // A rematch opens a fresh chain, and the ending move is
+                    // still sitting unsent in the input field where the next
+                    // stage would REPLACE it - so the bubble that tells everyone
+                    // else the game is over would be swapped out for a lobby,
+                    // and the ranks on this screen would be the only place the
+                    // result ever existed. `pending` rather than `canSend`
+                    // because the send window (`sending`, between the tap and
+                    // the rebase) is still unsent: the button may not blink into
+                    // existence in the middle of it.
                     FGameOverList(rows: finishRows(view), onNewGame: onNewGame,
+                                  showNewGame: controller.pending.isEmpty && !alsoStaged,
                                   replayURL: controller.replayURL, onOpenURL: onOpenURL)
                 } else {
                     // The card-motion spring is scoped to the LIVE board only (note
@@ -424,6 +440,44 @@ public struct MessageTableView: View {
             } else {
                 ProgressView()
             }
+        }
+        // Round-8 #3 / round-9: the staged-but-unsent reminder - a blue arrow
+        // bobbing under Messages' own Send button (in the compose bar directly
+        // above this view's top-right corner), with a caption in the same blue.
+        // COLLAPSED VIEW ONLY (the expanded board is not under the Send button
+        // at all). `alsoStaged` is the surface's own stage (the starter's LIVE
+        // handoff renders a board with nothing pending, but its bubble still
+        // needs sending). Fuse + fade live inside StagedSendHint.
+        //
+        // OUTSIDE THE BRANCH, not inside the board. Owner, 1.0(27): "send hint
+        // arrow needs to pop up for the game ending move too - right now i see
+        // the finishing ranks and no send arrow." The move that ENDS the game
+        // is staged like any other and still has to be sent, but it is also the
+        // move that swaps the board for `FGameOverList` - and the hint lived in
+        // the branch that had just been swapped away, so the one bubble whose
+        // send nobody can guess from the screen was the one bubble with no
+        // arrow over it.
+        //
+        // As an overlay on the VStack it keeps the geometry it had inside the
+        // board's ZStack (same container, same top-trailing corner, hence the
+        // same `sendHintCenterFromTrailing`), and it keeps its IDENTITY across
+        // the board -> results swap, so the 3-second fuse carries on burning
+        // instead of restarting the moment the ranks appear.
+        //
+        // The collapse fraction is measured HERE rather than taken from
+        // `boardContent`'s: that one is a local inside the board's own
+        // GeometryReader, and the whole point is to be outside the branch that
+        // holds it. This reader wraps the same box (the board is the VStack's
+        // only child, and `FGameOverList` fills it too), so it reads the same
+        // height and the hint sits in the same corner either way.
+        .overlay(alignment: .topTrailing) {
+            GeometryReader { geo in
+                StagedSendHint(staged: controller.canSend || alsoStaged,
+                               visible: Self.collapseFraction(height: geo.size.height) > 0.95,
+                               centerFromTrailing: Self.sendHintCenterFromTrailing)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+            }
+            .animation(nil, value: controller.view)   // never ride the board spring
         }
         .padding(.horizontal, 8).padding(.top, 14).padding(.bottom, 4)   // top margin so the ring isn't clipped in the compact drawer
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -805,20 +859,6 @@ public struct MessageTableView: View {
                 // outer .padding(12) is the safe-area inset that keeps it unclipped.
                 hand(view, crop: Self.handCrop, reserveNoSlot: deferredSlots)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-
-                // Round-8 #3 / round-9: the staged-but-unsent reminder - a blue
-                // arrow bobbing under Messages' own Send button (in the compose
-                // bar directly above this view's top-right corner), with a
-                // caption in the same blue. COLLAPSED VIEW ONLY (the expanded
-                // board is not under the Send button at all). `alsoStaged` is
-                // the surface's own stage (the starter's LIVE handoff renders a
-                // board with nothing pending, but its bubble still needs
-                // sending). Fuse + fade live inside StagedSendHint.
-                StagedSendHint(staged: controller.canSend || alsoStaged,
-                               visible: collapse > 0.95,
-                               centerFromTrailing: Self.sendHintCenterFromTrailing)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                    .animation(nil, value: controller.view)   // never ride the board spring
 
                 // note 33 / round-4 note 4 / round-5 finding 5: the verb hint
                 // used to ride above the FINGER on both axes, then above the
@@ -4096,6 +4136,12 @@ struct FGameOverList: View {
     private static let rowH: CGFloat = 34   // fixed per-row height (plank scales with player count)
     let rows: [FinishRow]
     let onNewGame: () -> Void
+    /// Is the way out offered yet? False while THIS player's own game-ending
+    /// move is staged and unsent (MessageTableView) - starting a rematch would
+    /// replace that bubble in the input field with a lobby, and the result the
+    /// ranks describe would never reach anyone else. Everyone who RECEIVED the
+    /// ending move, and the sender once it has gone, gets the button.
+    var showNewGame: Bool = true
     /// The finished game on the website (`foolish.cards/<code>`), or nil when
     /// the kernel could not encode one - in which case no link is offered at
     /// all, rather than one that lands on a broken page.
@@ -4169,7 +4215,9 @@ struct FGameOverList: View {
                 }
             }
             .modifier(BounceOnlyWhenTooTall())
-            FButton(FStrings.t("ios.msg.newgame"), kind: .wood, action: onNewGame)
+            if showNewGame {
+                FButton(FStrings.t("ios.msg.newgame"), kind: .wood, action: onNewGame)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
