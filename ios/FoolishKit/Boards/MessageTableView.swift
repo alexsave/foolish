@@ -2010,6 +2010,19 @@ public struct MessageTableView: View {
                     f.append(contentsOf: part)
                 }
                 AnimLog.say("stream#\(run) step \(ev.kind.map(String.init(describing:)) ?? "?")@\(ev.seat) n=\(group.count) flights=\(f.count) [\(f.map(\.id).joined(separator: ","))]")
+                // ROUND 22: WHERE each card is actually being flown, against the
+                // regions it could legitimately land in. "a deal animation go
+                // from the draw pile TO THE TABLE. To the card I had just picked
+                // up" (owner, 1.0(24)) is a destination rect question, and no
+                // log could answer it - the ids above say WHAT flew, never
+                // WHERE. Deduped to the flights whose target is outside the hand.
+                for fl in f where handFrame != .zero && !handFrame.insetBy(dx: -40, dy: -40).contains(fl.to.origin) {
+                    AnimLog.say("stream#\(run)   OFF-HAND flight \(fl.id) "
+                        + "from=(\(Int(fl.from.midX)),\(Int(fl.from.midY))) "
+                        + "to=(\(Int(fl.to.midX)),\(Int(fl.to.midY))) "
+                        + "hand=(\(Int(handFrame.midX)),\(Int(handFrame.midY))) "
+                        + "deck=(\(Int(deckFrame.midX)),\(Int(deckFrame.midY)))")
+                }
                 // ROUND 20: a card arriving onto the SWEEP grid is in the air
                 // from this instant, so the attack under it starts rotating now
                 // rather than snapping once the cover lands (`sweepArriving`).
