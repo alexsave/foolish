@@ -1156,6 +1156,20 @@ public struct MessageTableView: View {
         let isDefender = shownIsDefender(mySeat, view)
         let saidGood = shownSaidGood(mySeat, view)
         let isAttacker = showsSword(seat: mySeat, isOut: isOut, view)
+        #if DEBUG
+        // ROUND 22: MY OWN mark is traced too. Only the opponent badges were,
+        // so every question about the mark the player is actually looking at -
+        // "I did not see the sword->good rotation" is one - had to be answered
+        // by reasoning about the code instead of by reading the log. The one
+        // seat whose mark is drawn from a different call site is the one seat
+        // whose mark nobody could see.
+        Self.traceMark(seat: mySeat, defender: isDefender, attacker: isAttacker,
+                       good: saidGood, out: isOut,
+                       flying: roleDepartingSeats.contains(mySeat)
+                            || roleArrivingSeats.contains(mySeat),
+                       roles: shownRoles(view),
+                       battles: view.battles.count, sweep: sweepBattles.count)
+        #endif
         // ONE size table for both role rows: `FRoleMark.size`. This call site
         // and FSeatBadge's `roleRow` used to carry their own numbers with a
         // comment on each asking the other to keep in step, which is not a

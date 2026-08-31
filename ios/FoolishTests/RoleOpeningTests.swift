@@ -270,4 +270,73 @@ final class RoleOpeningTests: XCTestCase {
                        "the stream a bubble animates must not depend on whether its "
                        + "starting board was also asked for")
     }
+
+    /// THE OWNER'S OWN CASE, 1.0(23): two players, they are the attacker, the
+    /// table is one covered pair, and their good both closes the bout and ends
+    /// the round. "If i closed and reopened the message, it did play the proper
+    /// animation sequence for the round ending good (albeit I did not see the
+    /// sword->good rotation)."
+    ///
+    /// The three-player test above poses attack/cover/PLAIN good/ending good -
+    /// four legs, with a good that merely passes priority in the middle. Two
+    /// players cannot produce that shape: there is only ever the one good, and
+    /// the v6 codec folds a bout's closing goods into a single atom, so the
+    /// boundary this bubble carries is not obviously the same one. Asked
+    /// through the CONTROLLER rather than the kernel, because round 22 rerouted
+    /// this read into `openChain` and the board only ever sees what `begin`
+    /// publishes.
+    func testATwoPlayerEndingGoodStillOpensWithTheSwordUp() async throws {
+        let k = MessageKernel.shared
+        let joins2 = [MessageJoin(seat: 0, name: "Eva"), MessageJoin(seat: 1, name: "Alex")]
+        var sealed: (payload: Data, attacker: Int)?
+        // ONE BUBBLE PER MOVE, because that is what a real thread is: I attack
+        // and send, they cover and send, I say good and send. Sealing all three
+        // into a single bubble makes `atomsBefore` 0 - the bubble IS the whole
+        // game so far - and a prior board is then legitimately unavailable,
+        // which is a different situation entirely.
+        for salt: UInt8 in 1...80 {
+            try await k.newGame(seed: freshSeed(salt), players: 2)
+            var chain: Data?
+            func leg(_ seat: Int, _ type: MoveType) async throws -> Bool {
+                if let c = chain { _ = try await k.decode(payload: c, viewer: seat) }
+                let moves = await k.residentLegal(seat: seat)
+                guard let m = moves.first(where: { $0.type == type }) else { return false }
+                try await k.apply(seat: seat, move: m)
+                chain = try await k.seal(phase: 2, lastActorSeat: seat, gameId: 9,
+                                         parent8: Data(repeating: 0, count: 8),
+                                         joins: joins2, sentAt: 1)
+                return true
+            }
+            var opener = -1
+            for s in 0..<2 where (await k.residentLegal(seat: s)).contains(where: { $0.type == .attack }) {
+                opener = s; break
+            }
+            guard opener >= 0 else { continue }
+            guard try await leg(opener, .attack) else { continue }
+            guard try await leg(1 - opener, .cover) else { continue }
+            guard try await leg(opener, .good) else { continue }
+            sealed = (try XCTUnwrap(chain), opener)
+            break
+        }
+        let (payload, attacker) = try XCTUnwrap(sealed,
+            "no 2p deal in 80 gave attack/cover/ending-good")
+
+        // Reopened from the transcript, by the seat that said it.
+        let env = try await MessageEnvelope.decode(payload: payload, viewer: -1)
+        let c = MessageTurnController(parentPayload: payload, parent: env, mySeat: attacker)
+        await c.begin()
+
+        let prior = try XCTUnwrap(c.openReplayPriorState,
+            "the board this bubble opens FROM - without it there is nothing to rotate away from")
+        let first = try XCTUnwrap(c.openReplayEvents.first?.state,
+            "a round-ending good opens on its own consequences")
+        XCTAssertFalse(prior.hasSaidGood(attacker),
+                       "before the move I am still holding a sword")
+        XCTAssertTrue(first.hasSaidGood(attacker),
+                      "…and the stream's first frame already has the check on")
+        XCTAssertNotNil(
+            MessageTableView.goodsOpening(shown: MessageTableView.RoleState(prior),
+                                          firstGoodMask: first.goodMask),
+            "so the reopen must play the sword-to-good rotation before anything else")
+    }
 }

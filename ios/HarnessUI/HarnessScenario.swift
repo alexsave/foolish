@@ -579,7 +579,17 @@ extension HarnessModel {
             AnimLog.say("scenario: no seat can play \(kind) after \(steps) steps - rig bug")
             return
         }
-        let watcher = (0..<n).first { $0 != mover && $0 != view.defender } ?? ((mover + 1) % n)
+        // ROUND 22: HARNESS_ARRIVE_SELF=1 watches as the seat that MOVED - "I
+        // close the bubble I just sent and open it again", which is what the
+        // owner did when they reported the missing sword-to-good rotation. Every
+        // other run here deliberately watches somebody who did NOT move, so
+        // reopening one's own move was a case this rig could not pose at all.
+        // Only meaningful with HARNESS_ARRIVE_COLD=1: live, a mover's own board
+        // already holds its role marks in @State and there is nothing to re-seed.
+        let watchSelf = ProcessInfo.processInfo.environment["HARNESS_ARRIVE_SELF"] == "1"
+        let watcher = watchSelf
+            ? mover
+            : ((0..<n).first { $0 != mover && $0 != view.defender } ?? ((mover + 1) % n))
 
         // ROUND 21: HARNESS_ARRIVE_COLD=1 poses the OTHER half of the same
         // move - the bubble opened from the transcript rather than landing on a
@@ -646,7 +656,12 @@ extension HarnessModel {
             var acted: (seat: Int, move: Move)?
             let held = await MessageKernel.shared.residentView(viewer: -1)
             for s in 0..<n where acted == nil {
-                guard s != watcher else { continue }
+                // Ordinarily the watcher must NOT be the one moving - the whole
+                // point is somebody else's move landing on my board. With
+                // HARNESS_ARRIVE_SELF the rule inverts: the bubble to open is my
+                // OWN, so only the watcher may act.
+                if watchSelf { guard s == watcher else { continue } }
+                else { guard s != watcher else { continue } }
                 let legal = await MessageKernel.shared.residentLegal(seat: s)
                 // The first arrival is the KIND asked for; the rest are whatever
                 // that seat can legally do next, which is what a real thread
