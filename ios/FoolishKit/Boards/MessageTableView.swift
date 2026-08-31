@@ -185,6 +185,22 @@ public struct MessageTableView: View {
     @State private var seatCountOverride: [Int: Int] = [:]
     @State private var deckCountOverride: Int?
     @State private var discardCountOverride: Int?
+    /// ROUND 28: WHICH SEATS THE BOARD IS DRAWING AS OUT, which during a
+    /// sequence is not the same question as which seats ARE out.
+    ///
+    /// The badge of a player who goes out collapses edge-on and stays there
+    /// (`FSeatBadge.collapsed`), and the owner's rule for WHEN is "in parallel
+    /// with the card motion" - a player only ever goes out by playing their last
+    /// cards, so the collapse and those flights are one event. The view carrying
+    /// `isOut` arrives before the sequence starts, though, so read straight off
+    /// it every badge would collapse a whole sequence early - the same lag the
+    /// counts and the role marks each already keep, for the same reason.
+    ///
+    /// nil means "no sequence is running, follow the view", which is also what
+    /// draws a seat that was ALREADY out when the board opened as collapsed from
+    /// the first paint with nothing to animate: an out player is a fact about
+    /// the board, and only the MOMENT of going out is an event.
+    @State private var outShown: Set<Int>?
     // ROUND 16: the ROLES lag the game state the same way the counts do, and for
     // the same reason. A bout end publishes one view in which the table is
     // already clear, the hands already refilled AND the roles already rotated;
@@ -1089,7 +1105,11 @@ public struct MessageTableView: View {
                    // a beat before it.
                    opensBout: shownRoles(view).firstAttacker == p.seat,
                    markDeparting: roleDepartingSeats.contains(p.seat),
-                   markArriving: roleArrivingSeats.contains(p.seat))
+                   markArriving: roleArrivingSeats.contains(p.seat),
+                   // Round 28: edge-on once this seat is out - asked of what the
+                   // board is SHOWING, like every other lagging value on this
+                   // badge, so the collapse rides the move that caused it.
+                   collapsed: shownOut(p.seat, view))
             .background(GeometryReader { g in
                 Color.clear.preference(key: SeatFramesKey.self,
                                        value: [p.seat: g.frame(in: .named(boardSpace))])
@@ -1649,6 +1669,7 @@ public struct MessageTableView: View {
         // attack would pin every badge at its pre-move value for good.
         func releaseCounts() {
             deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
+            outShown = nil
         }
         if reduceMotion {
             releaseCounts(); clearSweep()
@@ -1665,6 +1686,11 @@ public struct MessageTableView: View {
         if controller.lastChangeWasUndo {
             releaseCounts()
             if let old = prior, flyUndoReturn(old: old, new: new) { return false }
+            // ROUND 28: and the other direction - undoing a PICKUP sends the
+            // cards back OUT of my hand onto the table. Tried second because the
+            // two are mutually exclusive by construction (one undo moves cards
+            // one way) and `flyUndoReturn` is the commoner shape.
+            if let old = prior, flyUndoRelease(old: old, new: new) { return false }
             clearSweep(); return false
         }
         // First appear with a delivered game: the open-replay (same event path).
@@ -1848,6 +1874,13 @@ public struct MessageTableView: View {
         if roleShown == nil, let prior = controller.openReplayPriorState ?? events.first?.state {
             roleShown = RoleState(prior)
         }
+        // ROUND 28: the same seed for the out badges, and for the same reason -
+        // an open replay has no `freezeCounts` behind it, so without this a
+        // bubble whose move puts somebody out would open with their badge
+        // already collapsed and nothing left to watch.
+        if outShown == nil, let prior = controller.openReplayPriorState ?? events.first?.state {
+            outShown = Set(prior.players.filter(\.isOut).map(\.seat))
+        }
         guard !events.isEmpty else {
             // ROUND 16: HAND THE COUNTS BACK. Every caller freezes them to the
             // pre-move board SYNCHRONOUSLY (`play`, then `flyBoutEndToDiscard`)
@@ -1859,6 +1892,7 @@ public struct MessageTableView: View {
             // played again is the owner's "briefly bumped, then they play a
             // single card and it goes back down".
             deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
+            outShown = nil
             animator.clearPreHidden()
             // Nothing is in flight and nothing is going to be, so an orphan
             // handed on by a superseded sequence ends here (clearPreHidden
@@ -1905,6 +1939,7 @@ public struct MessageTableView: View {
             // are then flown into it a second time.
             if mySeq == animSequenceToken {
                 deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
+                outShown = nil
                 animator.clearPreHidden()
                 // The swept table has finished flying, so take down the pre-bout
                 // grid (its cards now live in a hand / the discard / a badge). Both
@@ -2057,6 +2092,36 @@ public struct MessageTableView: View {
                 sweptFlownIds.formUnion(ev.cards.compactMap { $0?.identity })
             default: break
             }
+            // ROUND 28: AND THE BADGE OF ANYONE THIS GROUP PUTS OUT.
+            //
+            // Fired with the flights, not awaited: the collapse and the card
+            // motion are one event (see `outsWith` for why the `out` notice that
+            // follows a move cannot be the trigger on its own). Idempotent, so
+            // the lookahead here and the fallback when the loop reaches the
+            // `out` group itself cannot collapse a badge twice.
+            let goingOut = Self.outsWith(groups, gi)
+            if !goingOut.isEmpty, !(outShown ?? []).isSuperset(of: goingOut) {
+                AnimLog.say("stream#\(run) out badges collapse \(goingOut.sorted())")
+                withAnimation(reduceMotion ? nil
+                              : .timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime)) {
+                    outShown = (outShown ?? []).union(goingOut)
+                }
+            }
+            // ROUND 28: THE GOODS THIS GROUP CLEARS TURN NOW, WITH ITS CARD.
+            //
+            // Fired here rather than awaited, and deliberately not `await`ed: the
+            // badge flip and the card's flight are one event and start in the
+            // same instant (the flip is the shorter of the two and simply
+            // finishes first). Gated on the group actually PUTTING A CARD DOWN -
+            // a throw-in is the only thing that clears a good this way, and a
+            // goodMask that changes for any other reason still belongs to the
+            // closing beat with the rest of the consequences.
+            if !Self.placedOnTable(group).isEmpty,
+               let cleared = Self.goodsCleared(shown: roleShown,
+                                               stepGoodMask: group.last?.state?.goodMask) {
+                AnimLog.say("stream#\(run) goods clear with the card: g\(roleShown?.goodMask ?? 0) -> g\(cleared.goodMask)")
+                syncRoles(to: cleared, in: view, animated: true)
+            }
             await playStep { lastChance in
                 // One builder call per event, one flight list for the group: the
                 // animator runs a list in PARALLEL, so a two-card cover leaves
@@ -2199,6 +2264,11 @@ public struct MessageTableView: View {
     private func freezeCounts(to v: GameView) {
         deckCountOverride = v.deckCount
         discardCountOverride = v.discardCount
+        // ROUND 28: and who is drawn as out, frozen at the same synchronous
+        // moment and for the same reason as the counts - `isOut` is already true
+        // in the view this move produced, so a badge read straight off it would
+        // be edge-on before the cards that emptied the hand had moved.
+        outShown = Set(v.players.filter(\.isOut).map(\.seat))
         var counts: [Int: Int] = [:]
         for p in v.players where p.seat != controller.mySeat { counts[p.seat] = p.handCount }
         seatCountOverride = counts
@@ -2266,6 +2336,16 @@ public struct MessageTableView: View {
 
     private func shownIsDefender(_ seat: Int, _ view: GameView) -> Bool {
         shownRoles(view).defender == seat
+    }
+
+    /// ROUND 28: is the board DRAWING this seat as out (badge edge-on)?
+    ///
+    /// The frozen answer while a sequence is running, the live one at rest -
+    /// exactly `shownRoles`' shape, and the nil case is what makes a seat that
+    /// was already out when the board opened collapse with no animation.
+    private func shownOut(_ seat: Int, _ view: GameView) -> Bool {
+        if let outShown { return outShown.contains(seat) }
+        return view.players.first { $0.seat == seat }?.isOut ?? false
     }
     private func shownSaidGood(_ seat: Int, _ view: GameView) -> Bool {
         (shownRoles(view).goodMask & (1 << seat)) != 0
@@ -2396,6 +2476,35 @@ public struct MessageTableView: View {
                          goodMask: shown.goodMask | added)
     }
 
+    /// ROUND 28: THE OTHER HALF OF THE SAME RULE - the goods a step CLEARS.
+    ///
+    /// `goodsOpening` puts a good being SET in front of the consequences it
+    /// caused, and until now its mirror image was handled by omission: a good
+    /// being CLEARED fell through to the closing `syncRoles` at the back of the
+    /// sequence, with the discard and the refills. The reasoning was that a
+    /// cleared good is a consequence of the attack that reopened the bout, and
+    /// flipping it early would snap a check to a sword before the card that
+    /// cleared it had left the hand.
+    ///
+    /// The owner's answer on the 1.0(28) walk was the option that reasoning had
+    /// missed: PARALLEL. "Rotate the sword(s) in parallel with the throw in."
+    /// The card and the marks belong to one another - the throw-in is WHY the
+    /// goods cleared - so they move together and neither leads. Early is still
+    /// wrong; late is what we had; together is the answer.
+    ///
+    /// Only ever REMOVES bits, and the seats are carried over untouched - nothing
+    /// changes hands here, so nothing may fly. Pure, so the rule reads and tests
+    /// without a board; the call site in `runEventStream` fires it alongside the
+    /// group's own flight rather than awaiting it.
+    static func goodsCleared(shown: RoleState?, stepGoodMask: Int?) -> RoleState? {
+        guard let shown, let stepGoodMask else { return nil }
+        let removed = shown.goodMask & ~stepGoodMask
+        guard removed != 0 else { return nil }
+        return RoleState(defender: shown.defender,
+                         firstAttacker: shown.firstAttacker,
+                         goodMask: shown.goodMask & ~removed)
+    }
+
     /// Carry the marks across, then hand the badges back their own copies. The
     /// endpoints are blank for the duration, so there is exactly one of each
     /// mark on screen at every instant of the hand-off.
@@ -2429,10 +2538,15 @@ public struct MessageTableView: View {
     /// (a bout-end sequence, or an open-delta replay) has visibly finished,
     /// THEN swap to the results screen. The only place `showResults` is ever
     /// set true. A short guard against re-scheduling once it's already flipped.
+    ///
+    /// ROUND 28: the beat is `gameOverHold` (1.0s) and no longer a bare 500ms.
+    /// See that constant for why the last board of a game earns a longer look
+    /// than any other, and note that it now scales with HARNESS_SLOWMO - a
+    /// filmed game-over used to lose its hold as the flights around it stretched.
     private func settleResults() {
         guard !showResults else { return }
         Task {
-            try? await Task.sleep(nanoseconds: 500_000_000)
+            try? await Task.sleep(nanoseconds: UInt64(gameOverHold * 1_000_000_000))
             withAnimation(.easeOut) { showResults = true }
         }
     }
@@ -2526,6 +2640,41 @@ public struct MessageTableView: View {
                 for case let c? in ev.cards { out.insert(c.identity) }
             default: break
             }
+        }
+        return out
+    }
+
+    /// ROUND 28: WHICH SEATS GO OUT WITH GROUP `i`'S CARD MOTION.
+    ///
+    /// The kernel emits `out` as a NOTICE - it carries no cards, so it has no
+    /// flight and takes no time - which means a badge collapsed when the loop
+    /// reaches the `out` group would collapse just AFTER the move that caused
+    /// it, as a little beat of its own. The owner asked for the opposite: "badge
+    /// collapse in parallel with the card motion (player out move will always
+    /// involve last cards in hand going to table)".
+    ///
+    /// So a group that MOVES CARDS looks ahead over the flightless notices that
+    /// follow it and takes their outs as its own. `out` events in the group
+    /// itself are included too, and the loop still applies any it reaches
+    /// directly - both paths union into the same set, so the lookahead and the
+    /// fallback cannot fight.
+    ///
+    /// Pure, and it stops at the first group that moves a card: an out belongs
+    /// to the move that caused it, never to one two beats later.
+    static func outsWith(_ groups: [[GameEvent]], _ i: Int) -> Set<Int> {
+        guard i >= 0, i < groups.count else { return [] }
+        var out = Set<Int>()
+        for e in groups[i] where e.kind == .out { out.insert(e.seat) }
+        // Only a group that actually moved something may adopt what follows it.
+        let moved = !placedOnTable(groups[i]).isEmpty
+            || groups[i].contains { $0.kind == .pickup || $0.kind == .discard
+                                    || $0.kind == .cardsToTrash || $0.kind == .refill
+                                    || $0.kind == .deal }
+        guard moved else { return out }
+        var j = i + 1
+        while j < groups.count, groups[j].allSatisfy({ $0.kind == .out }) {
+            for e in groups[j] { out.insert(e.seat) }
+            j += 1
         }
         return out
     }
@@ -2698,6 +2847,102 @@ public struct MessageTableView: View {
             }
         }
         return true
+    }
+
+    /// ROUND 28: THE OTHER REVERSE - undoing a PICKUP, where cards leave my hand
+    /// and go back onto the table they came from.
+    ///
+    /// `flyUndoReturn` above only knows the direction that ENDS in my hand, and
+    /// every other undo fell through to a snap. That made a pickup the one
+    /// retraction with no motion at all: the biggest board change in the game -
+    /// a whole table's worth of cards - happening between two frames, with the
+    /// player left to work out from the card count that anything moved. Owner,
+    /// on the 1.0(28) walk: "yes it should fly back out of my hand."
+    ///
+    /// The mirror of `flyUndoReturn` in every part:
+    ///  - the SOURCE is analytical, not measured. The cards are already out of
+    ///    `new`'s hand by the time this runs, so their fan slots are gone from
+    ///    `handCardFrames`; we re-lay the OLD hand out (`FHandFan.slotRects` via
+    ///    `handLandingSlot`) and read the slot each card occupied. Deliberately
+    ///    computed BEFORE the veil goes up, because `handSlotDeferred` excludes
+    ///    pre-hidden cards from the fan and a veiled card would lay out at
+    ///    somebody else's slot.
+    ///  - the DESTINATION is measured, and polled. The table only just came back,
+    ///    so its battle rects publish a paint or two after this apply - the same
+    ///    wait `placementFlights` already handles by returning nil to retry.
+    ///  - the TABLE copies are veiled synchronously (`preHide`, which the live
+    ///    grid honours through `veiledCardIds`) so the cards do not appear on the
+    ///    table a frame before their flight puts them there.
+    ///
+    /// Returns false when nothing left my hand for the table, so an undo of some
+    /// other shape still falls through to the snap.
+    private func flyUndoRelease(old: GameView, new: GameView) -> Bool {
+        let newHand = Set((new.me?.hand ?? []).map(\.identity))
+        let left = (old.me?.hand ?? []).filter { !newHand.contains($0.identity) }
+        let targets = Self.undoReleaseTargets(left, in: new.battles)
+        guard !targets.isEmpty, handFrame != .zero else { return false }
+        // The old hand's own layout, read BEFORE the veil (see above). Nothing is
+        // deferred in it: the board this undo is leaving was settled.
+        let wasLaidOut = Self.laidOut(hand: old.me?.hand ?? [], deferred: [],
+                                      order: MessageGameStore.shared.handOrder(gameId: controller.gameIdString))
+        var sources: [String: CGRect] = [:]
+        for (card, _) in targets {
+            if let r = handLandingSlot(card, laidOut: wasLaidOut) { sources[card.identity] = r }
+        }
+        guard !sources.isEmpty else { return false }
+        let ids = Set(targets.map { $0.0.identity })
+        AnimLog.say("-> undoRelease [\(ids.sorted().joined(separator: ","))]")
+        // Hide the table copies NOW, in the same synchronous breath as the view
+        // change that put them there - the ghost is the only copy in motion.
+        animator.preHide(ids)
+        animSequenceToken += 1
+        let mySeq = animSequenceToken
+        Task {
+            BoardAnimator.sequenceDepth += 1
+            defer {
+                BoardAnimator.sequenceDepth -= 1
+                if mySeq == animSequenceToken {
+                    animator.clearPreHidden()
+                    let stuck = ids.filter { animator.isHidden($0) }
+                    if !stuck.isEmpty { animator.reveal(stuck) }
+                }
+            }
+            // A beat for the restored table to lay out and publish its rects.
+            try? await Task.sleep(nanoseconds: 16_000_000)
+            await playStep { lastChance in
+                var flights: [Flight] = []
+                for (card, idx) in targets {
+                    guard let from = sources[card.identity] else { continue }
+                    guard let to = self.battleFrames[idx] else {
+                        if lastChance { continue }
+                        return nil
+                    }
+                    // A card going back onto a battle it DEFENDED lands tilted,
+                    // exactly as it was lying before the pickup lifted it.
+                    let covering = new.battles[idx].defense == card
+                    flights.append(Flight(id: "undorelease-\(card.identity)", card: card,
+                                          from: from, to: to,
+                                          angle: covering ? FBattleGrid.coverAngle : 0))
+                }
+                return flights.isEmpty ? (lastChance ? [] : nil) : flights
+            }
+        }
+        return true
+    }
+
+    /// Which battle each card leaving my hand is going back to, as indices into
+    /// `battles`. Pure so the pairing can be asserted without a board: a card
+    /// that is not on the restored table at all is dropped rather than flown
+    /// somewhere arbitrary, which is what makes this safe to call for EVERY undo
+    /// and let the empty result mean "not this shape".
+    static func undoReleaseTargets(_ leaving: [Card], in battles: [BattleView]) -> [(Card, Int)] {
+        var out: [(Card, Int)] = []
+        for c in leaving {
+            if let idx = battles.firstIndex(where: { $0.attack == c || $0.defense == c }) {
+                out.append((c, idx))
+            }
+        }
+        return out
     }
 
     /// The flights for one placement: each card from where it left to the battle

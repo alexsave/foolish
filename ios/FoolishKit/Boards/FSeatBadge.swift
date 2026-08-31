@@ -39,12 +39,31 @@ public struct FSeatBadge: View {
     /// A mark is flying TO this seat: whatever it wears turns away as the ghost
     /// arrives, and the new mark stands up when it lands (FRoleMotion).
     public let markArriving: Bool
+    /// ROUND 28: THIS SEAT IS OUT AND ITS BADGE IS EDGE-ON.
+    ///
+    /// Owner, 1.0(24): "if a move puts a player out, their badge should rotate
+    /// out - so squish to width 0 and not expand back out." A rotate, not a
+    /// fade: the badge turns away the way a card does and the way a role mark
+    /// already does (FRoleCoin), and there is no spring back.
+    ///
+    /// Distinct from `isOut`, which is a fact about the game, and this is what
+    /// the board is currently DRAWING - the same split the counts and the role
+    /// marks already make. A live sequence holds this false until the beat that
+    /// puts the player out, so the collapse rides that move's card motion
+    /// instead of arriving with the view a whole sequence early.
+    ///
+    /// The badge keeps its LAYOUT WIDTH while collapsed (owner, 1.0(28): "keep
+    /// reserving width as it currently does, dont shift the table"), which is
+    /// why this is a scale and not a frame: one player going out must not move
+    /// every other seat on the ring.
+    public let collapsed: Bool
 
     public init(name: String, handCount: Int, isDefender: Bool = false,
                 isAttacker: Bool = false, saidGood: Bool = false,
                 thinking: Bool = false, isOut: Bool = false, onLight: Bool = false,
                 seat: Int? = nil, opensBout: Bool = false,
-                markDeparting: Bool = false, markArriving: Bool = false) {
+                markDeparting: Bool = false, markArriving: Bool = false,
+                collapsed: Bool = false) {
         self.name = name
         self.handCount = handCount
         self.isDefender = isDefender
@@ -57,6 +76,7 @@ public struct FSeatBadge: View {
         self.opensBout = opensBout
         self.markDeparting = markDeparting
         self.markArriving = markArriving
+        self.collapsed = collapsed
     }
 
     // Mini back geometry (web CardsVisual: 25pt wide, spread 10pt/card, count
@@ -120,6 +140,13 @@ public struct FSeatBadge: View {
 
             roleRow
         }
+        // ROUND 28: edge-on when this seat is out. A scale, so the seat keeps
+        // the width it reserved on the ring and nobody else moves; anchored
+        // centre, so the badge turns about itself rather than sliding away.
+        // 0.001 rather than 0 for the same reason FRoleCoin uses it - a view
+        // scaled to exactly zero can stop being laid out at all, taking the
+        // reserved width with it.
+        .scaleEffect(x: collapsed ? 0.001 : 1, anchor: .center)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(a11y)
     }

@@ -42,10 +42,15 @@ final class RoleOpeningTests: XCTestCase {
         XCTAssertEqual(o?.firstAttacker, 0)
     }
 
-    /// A good being CLEARED is a consequence of the attack that reopened the
-    /// bout. It belongs at the closing beat, with the discard and the hand-off -
-    /// flip it early and an attacker's check would turn back into a sword before
-    /// the card that cleared it had left anyone's hand.
+    /// A good being CLEARED is not an OPENING beat: flip it at the front and an
+    /// attacker's check would turn back into a sword before the card that
+    /// cleared it had left anyone's hand.
+    ///
+    /// ROUND 28 changed where it goes instead, but not this rule. It used to
+    /// fall through to the closing beat with the discard and the hand-off; it
+    /// now turns alongside the throw-in that cleared it (`goodsCleared`, and
+    /// Round28ShapeTests). Either way `goodsOpening` answers nil, which is what
+    /// this asserts - the two rules read the same mask in opposite directions.
     func testAGoodThisMoveClearedDoesNotOpenTheStream() {
         let all = MessageTableView.RoleState(defender: 1, firstAttacker: 0, goodMask: 0b100)
         XCTAssertNil(MessageTableView.goodsOpening(shown: all, firstGoodMask: 0),

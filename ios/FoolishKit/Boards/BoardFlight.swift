@@ -53,6 +53,20 @@ public let flightGap: Double = 0.025       // web inter-event queue gap = 25ms
 /// being read as part of the motion around it.
 public var boutEndHold: Double { flightTime * 3 }
 
+/// ROUND 28: the HOLD between the last move of a game and the RANKS replacing
+/// the board (owner, on the 1.0(28) walk of the animation catalogue: "hold for 1
+/// second").
+///
+/// Cousin to `boutEndHold` and there for the same reason - the final board is
+/// the one nobody gets a second look at, because the next thing on screen is a
+/// results screen and there is no bubble to reopen that shows the table again.
+/// It was 500ms, hard-coded in `settleResults`, which reads as the board being
+/// taken away from you rather than given to you.
+///
+/// Against `flightTime` like every other duration here, so a filmed game-over
+/// keeps its proportions under HARNESS_SLOWMO: 2x a flight is 1.0s shipping.
+public var gameOverHold: Double { flightTime * 2 }
+
 /// The deck pile's rect in `boardSpace` (draw source / flip source).
 public struct DeckFrameKey: PreferenceKey {
     public static let defaultValue: CGRect = .zero
