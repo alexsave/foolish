@@ -1167,6 +1167,26 @@ public struct MessageTableView: View {
     }
 
 #if DEBUG
+    /// WHICH of the moves a human could make here the rig plays: the first one,
+    /// as it always has, unless `HARNESS_AUTOMOVE_KIND` names a type that is on
+    /// the menu.
+    ///
+    /// ROUND 29 added the knob for the TRANSFER, and it is the only reason it
+    /// exists. A pass is never the only thing a defender may do - it is offered
+    /// beside the covers and the pickup, and the kernel lists the covers first -
+    /// so the auto-player could not stage one, and Channel A of the pass shape
+    /// (the one channel that does NOT replay a kernel stream, see
+    /// `passHandOff`) had no way to be watched at all.
+    static func autoPick(_ moves: [Move]) -> Move? {
+        guard let want = ProcessInfo.processInfo.environment["HARNESS_AUTOMOVE_KIND"],
+              let kind = MoveType(rawValue: want) else { return moves.first }
+        // Falls back to the first move rather than refusing: a rig run that
+        // reached a board where the wanted move is not legal should still play
+        // something, and say so in the trace, instead of standing still and
+        // reading as a hang.
+        return moves.first { $0.type == kind } ?? moves.first
+    }
+
     /// FoolishHarness only: play the first move a HUMAN could make here, through
     /// the same entry points a tap hits.
     ///
@@ -1217,7 +1237,8 @@ public struct MessageTableView: View {
         }
         if asked,
            let view = controller.view,
-           let m = CardPlay.humanMoves(battles: view.battles, legal: controller.legal).first {
+           let m = Self.autoPick(CardPlay.humanMoves(battles: view.battles,
+                                                     legal: controller.legal)) {
             AnimLog.say("automove: playing \(m.type) (hold=\(controller.pickupHold))")
             // Let the incoming replay (the OTHER player's last move flying
             // deck/seat→table on open) finish and rest so it's watchable,
@@ -2122,6 +2143,36 @@ public struct MessageTableView: View {
                 AnimLog.say("stream#\(run) goods clear with the card: g\(roleShown?.goodMask ?? 0) -> g\(cleared.goodMask)")
                 syncRoles(to: cleared, in: view, animated: true)
             }
+            // ROUND 29: AND A TRANSFER HANDS THE SHIELD OVER WITH ITS CARD.
+            //
+            // Owner, 1.0(28): "b both at once. (shield should always fly, my
+            // sword should rotate in, and their next sword should rotate out)."
+            // Fired here rather than awaited, exactly like the cleared goods
+            // above and for the same reason - the shield's flight and the
+            // card's are one event and start in the same instant, the shorter
+            // of the two simply finishing first. The two swords need no line of
+            // their own; `FRoleCoin` turns them for us off the departing /
+            // arriving seats this sync publishes.
+            //
+            // Until now a transfer's hand-off waited for the CLOSING beat at
+            // the bottom of this function, where a BOUT END's hand-off belongs
+            // - so a pass read as two movements, the card and then the shield,
+            // when the owner's whole point is that it is one move. That closing
+            // beat still runs and is still right for everything else: by the
+            // time it does, `roleShown` already holds this state, so it finds
+            // nothing left to hand over and flies nothing twice.
+            //
+            // Channel A never reaches here (a pass does not clear the table, so
+            // a staged one is an ordinary placement and the `!sequenced` branch
+            // of the view's `onChange` syncs its roles in the same tick as
+            // `flyPlacement`). This is the same beat for the two channels that
+            // DO replay a stream - a receiver opening the bubble cold, and an
+            // arrival landing on an open board.
+            if let handOff = Self.passHandOff(shown: roleShown, group: group,
+                                              finalDefender: view.defender) {
+                AnimLog.say("stream#\(run) pass: the shield flies with the card d\(roleShown?.defender ?? -1) -> d\(handOff.defender)")
+                syncRoles(to: handOff, in: view, animated: true)
+            }
             await playStep { lastChance in
                 // One builder call per event, one flight list for the group: the
                 // animator runs a list in PARALLEL, so a two-card cover leaves
@@ -2503,6 +2554,62 @@ public struct MessageTableView: View {
         return RoleState(defender: shown.defender,
                          firstAttacker: shown.firstAttacker,
                          goodMask: shown.goodMask & ~removed)
+    }
+
+    /// ROUND 29: THE DEFENCE ITSELF CHANGING HANDS - a PASS (perevod), which is
+    /// the one hand-off that happens INSIDE a bout rather than at the end of one.
+    ///
+    /// The owner, asked on the 1.0(28) walk whether the shield should fly with
+    /// the transfer card or after it: "b both at once. (shield should always
+    /// fly, my sword should rotate in, and their next sword should rotate out)."
+    /// Four things, one beat - the card flies to the table, the shield flies
+    /// from the passer to the next defender, the passer's own sword rotates IN
+    /// because passing made them an attacker, and the next defender's sword
+    /// rotates OUT because they have stopped being one.
+    ///
+    /// Only the SHIELD is named here because only the shield TRAVELS. The two
+    /// swords are gestures each badge makes where it stands, which is
+    /// `roleFlights`' standing rule - a mark that flies is a mark that went
+    /// somewhere, and nobody took those - and they need no machinery of their
+    /// own: `FRoleCoin` already turns the passer's in behind the departing
+    /// shield and the receiver's out as it arrives. Handing this state to
+    /// `syncRoles` beside the group's flight is the whole implementation.
+    ///
+    /// WHY THE NEW DEFENDER IS AN ARGUMENT INSTEAD OF BEING READ OFF THE STEP,
+    /// which is the trap here and the reason this is not one line. A pass is
+    /// snapshotted BEFORE the hand-over (c/src/game.c handle_pass:
+    /// `SNAP(ENGINE_HOOK_PASS)` runs, and only then `g->defender = next`), and
+    /// unlike a bout end it emits no DEFENDER_MOVE step at all - it writes a
+    /// LOG_DEFENDER_CHANGE, which is not a hook and so never becomes an event.
+    /// So the transfer step's own board still shows the passer defending, and
+    /// so does the OUT notice that follows a pass which put them out. The only
+    /// place in the stream the new defender appears is the bubble's FINAL
+    /// board, which is what the caller hands in.
+    ///
+    /// Only the defender, though - never a whole `RoleState` off that board.
+    /// The seats are otherwise carried over untouched for the same reason
+    /// `goodsCleared` carries its own: a pass never moves the opening sword
+    /// (`handle_pass` does not touch `first_attacker`), so taking the final
+    /// board wholesale would let a stream that ALSO ended a bout hand that
+    /// sword over with the transfer card instead of at its own closing beat.
+    ///
+    /// WHICH STEP IS A TRANSFER, given that the wire cannot say. An attack and
+    /// a pass are the same event type - `EVW_T_ATTACK_PASS` - told apart only
+    /// by a message template the board never renders. So this asks the rules
+    /// instead: a defender may not attack (`handle_attack` rejects
+    /// `player_idx == g->defender` before it looks at a single card), so cards
+    /// laid on the table by the seat currently wearing the shield can only be a
+    /// transfer.
+    ///
+    /// Pure and static, so the rule reads and tests without a board.
+    static func passHandOff(shown: RoleState?, group: [GameEvent],
+                            finalDefender: Int) -> RoleState? {
+        guard let shown, finalDefender != shown.defender,
+              group.contains(where: { $0.kind == .attackPass && $0.seat == shown.defender })
+        else { return nil }
+        return RoleState(defender: finalDefender,
+                         firstAttacker: shown.firstAttacker,
+                         goodMask: shown.goodMask)
     }
 
     /// Carry the marks across, then hand the badges back their own copies. The

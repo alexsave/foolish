@@ -126,6 +126,28 @@ extension HarnessModel {
             // A move arriving on a board that is already open (round 17).
             await arrivalOnOpenBoard(players: playersEnv)
 
+        case "pass":
+            // ROUND 29: CHANNEL A OF THE TRANSFER - MY OWN pass, staged.
+            //
+            // The other two channels a pass can reach are the same replay of a
+            // kernel stream and `HARNESS_SCENARIO=arrival HARNESS_ARRIVE_KIND=pass`
+            // poses both (cold with HARNESS_ARRIVE_COLD=1, live without). A
+            // STAGED pass is the odd one out and needs its own board: a
+            // transfer does not clear the table, so it never becomes a sequence
+            // at all - the card flies through `flyPlacement` and the roles are
+            // handed over by the `!sequenced` branch of the view's `onChange`,
+            // in the same tick. Nothing in the rig could reach that path,
+            // because a pass is only ever offered alongside a cover and a
+            // pickup and the auto-player takes the first move on the menu.
+            //
+            // So: drive until the DEFENDER may transfer, then sit me in that
+            // seat. Pair with SIMCTL_CHILD_HARNESS_AUTOMOVE=1 and
+            // SIMCTL_CHILD_HARNESS_AUTOMOVE_KIND=pass to have the board play it
+            // through the same drag/tap path a finger does, and add
+            // HARNESS_AUTOSEND=1 for Channel B on top.
+            await dealDriven(players: playersEnv, only: nil, steps: 400,
+                             viewAs: .defender, stopWhenCanPass: true)
+
         case "endgame":
             // Deck exhausted, no trump card left to reveal, hands short. The
             // deck well and the flipped-trump slot both have to say something
@@ -351,33 +373,60 @@ extension HarnessModel {
     ///   non-wait, which plays the game out).
     /// - `stopWhenDeckEmpty`: halt as soon as the talon runs dry, which is the
     ///   position the deck well and the trump slot have to survive.
+    /// - `stopWhenCanPass`: halt as soon as the defender may TRANSFER, and keep
+    ///   the transfer off the driver's own menu so it cannot spend the move
+    ///   being hunted for. The only flag that re-deals (round 29).
     /// - `viewAs`: whose eyes the screenshot is taken through.
     private func dealDriven(players n: Int, only: [MoveType]?, steps: Int,
-                            viewAs: ViewAs, stopWhenDeckEmpty: Bool = false) async {
+                            viewAs: ViewAs, stopWhenDeckEmpty: Bool = false,
+                            stopWhenCanPass: Bool = false) async {
         setCount(n)
-        let seed = Data(repeating: 42, count: 32)
         let joins = (0..<n).map { MessageJoin(seat: $0, name: Self.nameFor($0)) }
         do {
-            try await MessageKernel.shared.newGame(seed: seed, players: n)
             var lastSeat = 0
-            for _ in 0..<steps {
-                if stopWhenDeckEmpty,
-                   let v = await MessageKernel.shared.residentView(viewer: -1),
-                   v.deckCount == 0 || v.isOver { break }
-                var acted = false
-                for s in 0..<n {
-                    let legal = await MessageKernel.shared.residentLegal(seat: s)
-                    let pick = legal.first { m in
-                        guard m.type != .wait else { return false }
-                        guard let only else { return true }
-                        return only.contains(m.type)
+            // ROUND 29: RE-DEAL until one deal produces the board being posed.
+            // Only `stopWhenCanPass` asks for it, and it has to: a transfer
+            // needs the defender to be holding the rank that is already on the
+            // table, which a given deal may never offer at all. Every other
+            // scenario keeps the fixed seed 42 - being byte-repeatable is the
+            // point of this rig - so the loop runs exactly once for them.
+            deal: for salt in 0..<(stopWhenCanPass ? 40 : 1) {
+                let seed = salt == 0 ? Data(repeating: 42, count: 32)
+                    : Data((0..<32).map { UInt8(truncatingIfNeeded: $0 &* 31 &+ salt) | 1 })
+                try await MessageKernel.shared.newGame(seed: seed, players: n)
+                lastSeat = 0
+                for _ in 0..<steps {
+                    if stopWhenDeckEmpty,
+                       let v = await MessageKernel.shared.residentView(viewer: -1),
+                       v.deckCount == 0 || v.isOver { break }
+                    // …and stop the moment the DEFENDER may transfer, so the
+                    // board this lands on is one where the move being watched
+                    // is on my own menu (`viewAs: .defender` then seats me
+                    // there).
+                    if stopWhenCanPass,
+                       let v = await MessageKernel.shared.residentView(viewer: -1), !v.isOver,
+                       await MessageKernel.shared.residentLegal(seat: v.defender)
+                           .contains(where: { $0.type == .pass }) { break deal }
+                    var acted = false
+                    for s in 0..<n {
+                        let legal = await MessageKernel.shared.residentLegal(seat: s)
+                        let pick = legal.first { m in
+                            guard m.type != .wait else { return false }
+                            // Never spend the move being hunted for: this driver
+                            // drives the defender too, so without this it plays
+                            // every transfer it finds and the stop above is asked
+                            // the instant after the chance has gone.
+                            if stopWhenCanPass, m.type == .pass { return false }
+                            guard let only else { return true }
+                            return only.contains(m.type)
+                        }
+                        if let m = pick {
+                            try? await MessageKernel.shared.apply(seat: s, move: m)
+                            lastSeat = s; acted = true; break
+                        }
                     }
-                    if let m = pick {
-                        try? await MessageKernel.shared.apply(seat: s, move: m)
-                        lastSeat = s; acted = true; break
-                    }
+                    if !acted { break }
                 }
-                if !acted { break }
             }
             let view = await MessageKernel.shared.residentView(viewer: -1)
             let payload = try await MessageKernel.shared.seal(
@@ -443,6 +492,14 @@ extension HarnessModel {
     ///  - `goodend`: the arriving move is the closing GOOD over a fully covered
     ///    table - discard sweep, refills, role hand-off, the longest stream an
     ///    arrival can interrupt (run with HARNESS_PLAYERS=2 so one good closes).
+    ///  - `pass` (round 29): the arriving move is a TRANSFER - the defender
+    ///    lays the same rank down and the defence moves on. Four things must
+    ///    happen in ONE beat (docs/ANIMATION_CATALOGUE.md): the card flies to
+    ///    the table, the shield flies from the passer to the next defender, the
+    ///    passer's sword rotates in, and the next defender's rotates out. The
+    ///    default watcher is a bystander, who sees the shield cross the whole
+    ///    table; pair it with HARNESS_ARRIVE_SELF=1 to watch as the PASSER, whose
+    ///    own shield leaves and whose sword turns in behind it.
     ///  - `coverend` (round 20): the arriving move is the COVER THAT CLOSES ITS
     ///    OWN BOUT - the defender's last cards go down and the table goes with
     ///    them in one apply. The owner's "on the last cover for a set, you need
@@ -510,6 +567,7 @@ extension HarnessModel {
         case "cover", "coverend", "gameover": .cover
         case "pickup": .pickup
         case "goodend": .good
+        case "pass": .pass
         default: .attack
         }
         // `gameover` is `coverend` without the survive-the-bout condition: the
@@ -518,6 +576,20 @@ extension HarnessModel {
         // "replaying a final move doesn't even show the winning move animation.
         // It should show the final move animation, then the ranks."
         let deep = kind == "coverend" || kind == "gameover"
+        // ROUND 29: `pass` - the TRANSFER, and the shape the catalogue had never
+        // posed in any channel. The owner's four-part beat (the card, the shield
+        // flying to the next defender, the passer's sword rotating in, the next
+        // defender's rotating out) is the one animation on the board that
+        // nothing had ever watched end to end, in the rig or on a phone.
+        //
+        // Unlike every other kind it can be SPENT by the warm-up: a transfer is
+        // only ever on the defender's menu, and the warm-up drives whatever it
+        // finds there, so the seat this rig is waiting for would play the very
+        // move being waited for. Hence `transfer` below, which keeps the pass
+        // off the warm-up's menu, and the re-deal loop `deep` already has - not
+        // every hand contains a transfer at all (the defender has to be holding
+        // the rank that is on the table), so a single deal is a coin toss.
+        let transfer = kind == "pass"
         // Is the wanted ARRIVAL playable right now? For `goodend` the good must
         // actually CLOSE the bout, which means a non-empty, fully covered table
         // - a good over open attacks merely passes priority and animates
@@ -581,9 +653,12 @@ extension HarnessModel {
         // …and if one whole game goes by without producing the board, RE-DEAL.
         // Not every deal contains a bout-ending cover at all (the defender has
         // to run out on a table they can fully answer), so a single game is a
-        // coin toss - the offline finder loops 40 seeds for the same reason. Any
-        // other kind takes exactly one pass, as it always has.
-        let deals = deep ? 40 : 1
+        // coin toss - the offline finder loops 40 seeds for the same reason. A
+        // TRANSFER is the same coin toss for the same kind of reason (the
+        // defender has to be holding the rank that is already on the table), so
+        // it re-deals too. Any other kind takes exactly one pass, as it always
+        // has.
+        let deals = deep || transfer ? 40 : 1
         deal: for salt in 0..<deals {
             if salt > 0 {
                 let reseed = Data((0..<32).map { UInt8(truncatingIfNeeded: $0 &* 29 &+ salt) | 1 })
@@ -598,7 +673,13 @@ extension HarnessModel {
                     let legal = await MessageKernel.shared.residentLegal(seat: s)
                     let pick = deep
                         ? (legal.first { $0.type == .cover } ?? legal.first { $0.type != .wait })
-                        : legal.first { $0.type != .wait }
+                        // ROUND 29: never spend the move being hunted for. A
+                        // transfer only ever appears on the DEFENDER's menu, and
+                        // this loop drives the defender too - so without the
+                        // second clause the warm-up plays every pass it finds
+                        // and `wantReady` is asked the instant after the only
+                        // seat that could transfer has stopped being able to.
+                        : legal.first { $0.type != .wait && !(transfer && $0.type == .pass) }
                     if let m = pick {
                         try? await MessageKernel.shared.apply(seat: s, move: m)
                         lastSeat = s; acted = true; break
@@ -658,6 +739,23 @@ extension HarnessModel {
         // nothing to mount yet, so it waits only long enough for the surface
         // itself to be there.
         try? await Task.sleep(nanoseconds: cold ? 400_000_000 : 2_500_000_000)
+        // ROUND 29: …AND UNTIL IT HAS ACTUALLY STOPPED MOVING.
+        //
+        // The sleep above is a guess at how long a mount takes, and it is not
+        // always enough: opening the parent chain REPLAYS its last turn, and a
+        // turn that folded several actions into one bubble (a pickup, its
+        // refills, the roles) runs for many seconds. The arrival then landed in
+        // the middle of that replay, which supersedes it - so the run posed "a
+        // bubble arrives mid-animation" (a real case, and one HARNESS_ARRIVE_N
+        // poses deliberately) instead of the one asked for, on a board whose
+        // marks and counts were still those of the bubble BEFORE the one on
+        // screen. Round 29 hit this trying to watch a TRANSFER arrive and got a
+        // shield handed over from a defender two moves stale.
+        //
+        // Bounded by `waitForSettle`'s own 8s timeout, so a wedged sequence
+        // still lets the run finish and report. Only the FIRST arrival waits:
+        // the burst cases below are meant to interrupt each other.
+        if !cold { await BoardAnimator.waitForSettle() }
 
         // …now the other seats play, and each ARRIVES. `HARNESS_ARRIVE_N` (with
         // `HARNESS_ARRIVE_GAP` in milliseconds) is the case the owner reports:

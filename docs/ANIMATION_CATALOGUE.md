@@ -13,13 +13,13 @@ A shape with no `Decided` line was not asked about.
 `Decided (change)` means today's behaviour is wrong and the shape is now `spec` regardless of what its tests say - a green test against the old shape is a test that needs rewriting.
 
 The five changes from that pass, in one place.
-Four are built (1.0(29)); the fifth and the conflict model are being taken separately.
+All five are built (1.0(29)); the conflict model is being taken separately.
 
 - **The game-over hold** is one second, not 500ms. BUILT.
 - **Undoing a pickup** flies the cards back out of my hand onto the table, where it used to snap. BUILT.
 - **Goods cleared by a throw-in** turn back into swords WITH the throw-in card, not after it. BUILT.
 - **The out badge** collapses, in parallel with the card motion of the move that ends the player. BUILT (rule and visual; nothing has watched it).
-- **Pass / transfer** is a card and a shield leaving together, plus two swords turning in place. NOT BUILT.
+- **Pass / transfer** is a card and a shield leaving together, plus two swords turning in place. BUILT (1.0(29)).
 
 And one correction to this document rather than to the code: receivers DO get the bout-end hold, and Channel D said they did not.
 
@@ -73,8 +73,14 @@ the shield flies from me to the next defender;
 MY badge turns a sword in, because passing makes me an attacker;
 the next defender's badge turns their sword out, because they are not one any more.
 The shield always FLIES - it went somewhere, so it travels - while both swords are gestures made in place, which is the existing rule in `roleFlights` and needs no new machinery.
-Status: **untested as a shape, and now also unbuilt.**
-The rules are unit-tested (`PodkidnoyTests.testADefenderIsNeverOfferedATransfer`) and the shield flight is unit-tested generically (`RoleMotionTests.testTheShieldFliesToTheNextDefender`), but `pass` is not a rig kind, this shape has never been posed end to end in any channel, and nothing today turns the two swords on a transfer.
+Built at 1.0(29), and the surprise was how little of it was new: `FRoleCoin` already turns the passer's sword in behind a departing shield and the receiver's out as one arrives, so all three channels needed was for the hand-off to happen at the right MOMENT.
+A staged pass (this channel) was already right - a transfer does not clear the table, so it is an ordinary placement and the `!sequenced` branch of the board's `onChange` syncs the roles in the same tick `flyPlacement` flies the card.
+The two channels that replay a kernel stream were not: they handed the shield over at the CLOSING beat, where a bout end's hand-off belongs, so a transfer read as two movements.
+`passHandOff` is the rule that moved it, fired beside the group's own flight exactly as `goodsCleared` is.
+Its one subtlety is that the kernel snapshots a pass BEFORE the hand-over and emits no defender-change step, so the new defender can only be read off the bubble's final board.
+Status: both.
+Unit (`Round28ShapeTests` x5, including a real-kernel transfer that pins the stale-snapshot trap; the rules themselves in `PodkidnoyTests.testADefenderIsNeverOfferedATransfer`, the flight generically in `RoleMotionTests.testTheShieldFliesToTheNextDefender`).
+Rig: `pass` is now a kind (`HARNESS_ARRIVE_KIND=pass`, cold and live) and a scenario (`HARNESS_SCENARIO=pass` with `HARNESS_AUTOMOVE_KIND=pass`, which is Channel A), and all three were watched frame by frame under `HARNESS_SLOWMO=10`.
 
 **Single cover.**
 The card flies from its hand slot to the battle it covers, arriving ALREADY ROTATING into its tilt rather than snapping to it.
@@ -244,7 +250,9 @@ Status: rig (`spectator`), plus a visual check in round 21.
 
 **Any single arrival.**
 The chain folds into the LIVE controller - the board keeps its identity, its measured geometry and its animator - and the move plays as a cold open would.
-Status: rig, thoroughly (18 cases across all six kinds x 2/3/4 players, all `BOARD-STUCK: 0`) plus unit (`ArrivalReadoptTests` x7).
+Status: rig, thoroughly (18 cases across all seven kinds x 2/3/4 players, all `BOARD-STUCK: 0`) plus unit (`ArrivalReadoptTests` x7).
+1.0(29) corrected the rig itself here: the first arrival now waits for `BoardAnimator.waitForSettle` as well as its fixed 2.5s, because opening the parent chain REPLAYS its last turn and a turn of several actions runs far longer than that.
+Every run whose warm-up ended in a big move was really posing the mid-animation case below, on a board whose marks were still those of the bubble before the one on screen.
 
 **The very first move of a game arriving.**
 No prior bubble to diff against, so the board must animate the opening attack rather than assume it.
@@ -317,6 +325,7 @@ Nothing on the phone reverses anything today.
 
 **Defender change (shield).**
 The shield flies from the old defender to the new along an arc, spinning a whole number of turns, and the receiving seat makes way just as the ghost arrives.
+The same flight serves a bout end and a mid-bout transfer; what differs is only WHEN it is fired (see "Pass / transfer").
 Decided (keep), and the spin is confirmed as EXACTLY ONE turn - which is what `roleFlights` already passes (`spin: 360`).
 More than one turn would read as a flourish; a fraction snaps on hand-over, which is round 21's "the shield kinda turns a little bit then turns back".
 Status: unit (`RoleMotionTests` x18 - the best-covered area in the app).
@@ -385,8 +394,6 @@ A refill flight resolving its destination to a table rect instead of a hand slot
 Not yet diagnosed.
 
 ## What nothing covers
-
-`pass`/transfer, in any channel - not a rig kind, never posed end to end, and now carrying a decided four-part shape that nothing implements.
 
 Stage-and-send for a bout-ending COVER, and for the game-ending move; both are the "held settlement releases on Send" path, which is where two of the four 1.0(23)-24 reports landed.
 
