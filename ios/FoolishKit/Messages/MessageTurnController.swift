@@ -989,12 +989,18 @@ public final class MessageTurnController: ObservableObject {
             names = Dictionary(env.joins.map { ($0.seat, $0.name) },
                                uniquingKeysWith: { a, _ in a })
             adoptBaseFacts(env)
+            // The base MOVING is the fact the animation boundary follows, so it
+            // belongs in the trail beside the stream that then runs. A send that
+            // replays the bubble before it is either this note missing (the
+            // rebase never happened) or this note carrying the old boundary.
+            FlightRecorder.note("send-rebase", "turn \(env.turn) atoms \(env.atomsBefore)")
         }
         // THE HELD SETTLEMENT IS RELEASED HERE, and only here. The move is in
         // the thread now: there is no undo left and no bubble left to delete,
         // so the deal it dealt is finally the player's to see. The board picks
         // these up on the view change the `refresh` below publishes.
         if !heldSettlement.isEmpty {
+            FlightRecorder.note("settle-release", "\(heldSettlement.count) steps")
             releasedSettlement = heldSettlement
             heldSettlement = []
             heldView = nil

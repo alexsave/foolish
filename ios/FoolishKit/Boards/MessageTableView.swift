@@ -1761,6 +1761,26 @@ public struct MessageTableView: View {
     private func runEventStream(_ events: [GameEvent], finalView view: GameView, openReplay: Bool = false) async {
         let run = AnimLog.on ? AnimLog.nextRun() : 0
         AnimLog.say("stream#\(run) begin n=\(events.count) [\(events.map { "\($0.kind.map(String.init(describing:)) ?? "?")@\($0.seat)x\($0.cards.count)" }.joined(separator: " "))] depth=\(BoardAnimator.sequenceDepth)")
+        // THE ONE LINE A FIELD REPORT NEEDS, and the one the trail did not have.
+        //
+        // `adopt turn N, K to animate` has been recorded since round 16, so a
+        // trail says what an OPEN armed - and nothing at all about the stream
+        // that runs when a move is SENT. Owner, 1.0(24)-25, twice: sending a
+        // move played the animation belonging to the bubble BEFORE it. Their
+        // trail ruled out a refusal (no `send-backwards`) and a reload (no
+        // `adopt` after `send`), which leaves the board's own view-change path
+        // and a boundary pointing one bubble back - and there was no way to see
+        // which boundary it used.
+        //
+        // So: what kind of stream, how many steps, whose move, and the atom
+        // boundary it was cut at. `animAtomsBefore` is the number that decides
+        // which move gets replayed, so it is the number that has to be in the
+        // trail. Cheap enough to leave in for good - one note per sequence, and
+        // sequences are rare.
+        FlightRecorder.note(openReplay ? "anim-open" : "anim-live",
+                            "n=\(events.count) from=\(controller.animAtomsBefore) "
+                            + "seats=\(Set(events.map(\.seat)).sorted().map(String.init).joined(separator: "/")) "
+                            + "kinds=\(events.compactMap { $0.kind.map { String(describing: $0).prefix(4) } }.joined(separator: ","))")
         // ROUND 16, and the case a live board does not have: a COLD OPEN. Tapping
         // a bubble mounts a fresh board, so there is no "roles before this move"
         // in `@State` for the hand-off to start from (`freezeCounts` only runs
