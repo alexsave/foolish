@@ -1274,6 +1274,26 @@ public struct MessageTableView: View {
                 + "veilOnly=\(stuck.filter { veil.contains($0) && !preHidden.contains($0) }.count) "
                 + "STRANDED=\(stranded.count)")
         }
+        // THE PRE-BOUT GRID, as a LEVEL rather than a count.
+        //
+        // A counter cannot answer this one. Laying the sweep out is synchronous
+        // (`playBoutEnd` sets it before it starts a Task) while the sequence
+        // counter that says "something is animating" is raised inside that
+        // Task, so there is always a paint where the grid is up, fully visible,
+        // and nothing yet claims to be running - filmed at log 43 of a goodend
+        // run, four cards visible, with the stream beginning at 47. Counting
+        // paints reports that as a defect on a board that is working, which is
+        // the same trap `staleAtRest` and `vanishedAtRest` both fell into.
+        //
+        // What IS a defect is a grid still standing once everything has
+        // settled, seconds later: `view.battles` is empty by then, so every
+        // oracle comparing the controller's view against the kernel reads CLEAN
+        // while the screen shows a table that is not there. Owner, 1.0(24): a
+        // round-ending good after Send "caused all the right animations to
+        // play, BUT the attack card that was covered and the card that covered
+        // it remained on the table". So this is the LAST KNOWN state, for a
+        // scenario to read at rest, not a tally of moments.
+        sweepVisibleNow = sweeping ? visible : 0
         let line = "grid sweeping=\(sweeping) cells=\(shown.count) pairs=\(pairs) visible=\(visible) hidden=\(hidden.count)"
             + (atRest && veiled > 0 ? "  <-- \(veiled) VANISHED AT REST" : "")
         if line != lastGridTrace { lastGridTrace = line; AnimLog.say(line) }
@@ -1307,6 +1327,11 @@ public struct MessageTableView: View {
     /// The half of `vanishedAtRest` that is a real defect: a card hidden with
     /// nothing scheduled to reveal it. This one must be zero.
     public private(set) static var strandedAtRest = 0
+    /// How many cards the pre-bout sweep grid is drawing RIGHT NOW (0 when it
+    /// is not sweeping). Read at rest by the harness oracle: nonzero once
+    /// everything has settled means phantom cards on a table the game says is
+    /// empty. A level, not a count - see `traceGrid` for why.
+    public private(set) static var sweepVisibleNow = 0
     private static var lastShown: Int?
     private static var lastTruth: Int?
 

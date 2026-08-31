@@ -783,7 +783,8 @@ extension HarnessModel {
         AnimLog.say("STALE-AT-REST paints: \(MessageTableView.staleAtRest) "
             + "BACKWARDS paints: \(MessageTableView.backwardsPaints) "
             + "VANISHED paints: \(MessageTableView.vanishedAtRest) "
-            + "STRANDED paints: \(MessageTableView.strandedAtRest)")
+            + "STRANDED paints: \(MessageTableView.strandedAtRest) "
+            + "SWEEP-STILL-DRAWN: \(MessageTableView.sweepVisibleNow)")
         // THE CONTROLLER ORACLE. The paint counters above can only see what the
         // board happened to draw while something was still repainting; a board
         // that settles WRONG and then draws nothing (no repaints at rest)
