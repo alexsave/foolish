@@ -11,6 +11,7 @@
 // rule is answered here. Whose move, whether a move is legal, which chain wins,
 // whether a staged move survives — all C (msg_wire.c via MessageKernel). Seat
 // identity is the one non-kernel call, and it is SeatIdentity's pure §6 logic.
+import Combine
 import UIKit
 import Messages
 import SwiftUI
@@ -85,9 +86,26 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// and the failure being chased (the drawer freezing, "even on newer
     /// devices") leaves no other evidence: a memory kill is a SIGKILL, so
     /// nothing runs afterwards to report it. See FlightRecorder.
+    /// Keeps the host's fallback colour in step with the TABLE MATERIAL, which
+    /// is a preference and so cannot ride the trait collection. Without it,
+    /// switching wool<->felt in Settings leaves the old material's colour behind
+    /// the drawer until the next `present()`.
+    private var prefsSink: AnyCancellable?
+
     override func viewDidLoad() {
         super.viewDidLoad()
         FlightRecorder.begin("style \(presentationStyle == .compact ? "compact" : "expanded")")
+        prefsSink = FPrefs.shared.objectWillChange.sink { [weak self] _ in
+            // objectWillChange fires BEFORE the value lands, so read it next turn.
+            DispatchQueue.main.async { self?.applyTableFallback() }
+        }
+    }
+
+    /// Paint the host and its hosting view with the current table's flat colour.
+    private func applyTableFallback() {
+        let colour = Self.tableFallback
+        view.backgroundColor = colour
+        host?.view.backgroundColor = colour
     }
 
     override func willBecomeActive(with conversation: MSConversation) {
@@ -609,24 +627,37 @@ final class MessagesViewController: MSMessagesAppViewController {
         }
     }
 
-    /// Round-7 (background gap): a scheme-adaptive wool FALLBACK colour (the same
-    /// hexes `TableBackground` averages to) painted on the host view behind the
-    /// SwiftUI content, so if the wool ever fails to reach an edge for a frame -
-    /// e.g. the post-send reopen with the keyboard up - the exposed strip reads as
-    /// a duller patch of the SAME board, never a system-black void.
-    private static let woolFallback = UIColor { tc in
-        tc.userInterfaceStyle == .dark
-            ? UIColor(red: 0x3D/255.0, green: 0x28/255.0, blue: 0x18/255.0, alpha: 1)
-            : UIColor(red: 0xF5/255.0, green: 0xE6/255.0, blue: 0xC8/255.0, alpha: 1)
+    /// Round-7 (background gap): a FALLBACK table colour painted on the host view
+    /// behind the SwiftUI content, so if the table ever fails to reach an edge
+    /// for a frame - e.g. the post-send reopen with the keyboard up - the
+    /// exposed strip reads as a duller patch of the SAME board, never a
+    /// system-black void.
+    ///
+    /// ROUND 22: it asks `FTextures`, which is the ONE place that knows what the
+    /// table looks like right now, instead of naming wool's hexes itself.
+    /// FTextures' own header says nothing outside it may name a resource or a
+    /// hex, and this file was the exception - so a player on the FELT table got
+    /// a strip of WOOL BROWN across the top of a green drawer (owner, 1.0(24):
+    /// "little brown in the lobby top"). The material is a preference, not a
+    /// trait, which is why the dynamic provider alone could not have been right:
+    /// it re-resolves on a scheme change and never on a settings change.
+    private static var tableFallback: UIColor {
+        UIColor { tc in
+            let scheme: ColorScheme = tc.userInterfaceStyle == .dark ? .dark : .light
+            let hex = FTextures.tableFallbackHex(FTextures.Variant(scheme))
+            return UIColor(red: CGFloat((hex >> 16) & 0xFF) / 255.0,
+                           green: CGFloat((hex >> 8) & 0xFF) / 255.0,
+                           blue: CGFloat(hex & 0xFF) / 255.0, alpha: 1)
+        }
     }
 
     private func setRoot(_ root: MessagesRootView) {
-        view.backgroundColor = Self.woolFallback
+        applyTableFallback()
         if let host {
             host.rootView = root
         } else {
             let h = UIHostingController(rootView: root)
-            h.view.backgroundColor = Self.woolFallback
+            h.view.backgroundColor = Self.tableFallback
             addChild(h)
             h.view.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(h.view)

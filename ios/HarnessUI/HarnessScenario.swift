@@ -456,6 +456,31 @@ extension HarnessModel {
     /// the wanted move legal - so the cover and round-transition arrivals (the
     /// owner's symptoms 3 and 4) were never actually posed. The warmup now
     /// DRIVES until the wanted move is available instead of hoping.
+    /// HARNESS_AUTOSEND: once a move has been auto-staged, press Send.
+    ///
+    /// Pairs with HARNESS_AUTOMOVE, which plays a legal move through the real
+    /// tap path. Together they are the half of the app the arrival rig never
+    /// touched: STAGE and SEND, which is where both 1.0(23) reports came from
+    /// ("i just did a cover. whwn i sent it strangely animated to the state
+    /// before the cover"). Polls rather than sleeps a fixed time, because the
+    /// stage lands whenever the move's own animation settles.
+    private func autoSendWhenStaged() async {
+        guard ProcessInfo.processInfo.environment["HARNESS_AUTOSEND"] != nil else { return }
+        let deadline = Date().addingTimeInterval(12)
+        while Date() < deadline, stagedPayloadBytes == nil {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        guard stagedPayloadBytes != nil else {
+            AnimLog.say("scenario: nothing staged to send - rig bug")
+            return
+        }
+        // A beat, so the staged board is on screen before the send moves it -
+        // the owner watches this transition, so the rig must too.
+        try? await Task.sleep(nanoseconds: 600_000_000)
+        AnimLog.say("scenario: pressing Send on the staged move")
+        deliver()
+    }
+
     private func arrivalOnOpenBoard(players n: Int) async {
         setCount(n)
         let seed = Data(repeating: 42, count: 32)
@@ -712,6 +737,16 @@ extension HarnessModel {
                 try? await Task.sleep(nanoseconds: UInt64(gapMs) * 1_000_000)
             }
         }
+        // ROUND 22: and now MY OWN half of a turn - stage, then send. Pair
+        // HARNESS_AUTOMOVE (which plays a legal move through the real tap path)
+        // with HARNESS_AUTOSEND and the oracle below measures the board AFTER a
+        // send instead of after an arrival. That is the half of the app both
+        // 1.0(23) reports came from, and until now no rig run touched it: the
+        // harness's Send did not even signal the board (HarnessModel.deliver).
+        // A no-op unless HARNESS_AUTOSEND is set, so every existing run is
+        // unchanged.
+        await autoSendWhenStaged()
+
         // THE ORACLE. Everything above is what the thread did; this is what the
         // board must be showing once it settles, read from the kernel that just
         // played it. A rig that only takes a screenshot cannot tell "a bit

@@ -544,65 +544,21 @@ public struct MessageTableView: View {
             // sheet so it can be captured settled without a tap.
             if ProcessInfo.processInfo.environment["HARNESS_OPEN_SETTINGS"] != nil { showSettings = true }
             if ProcessInfo.processInfo.environment["HARNESS_OPEN_RULES"] != nil { showRules = true }
-            // FoolishHarness screenshotting only: auto-play the first legal move so
-            // the auto-stage flow (move -> staged bubble) is visible without a tap.
-            // The auto-player must only make moves a HUMAN could make here.
-            // `controller.legal` is the raw kernel menu, which always offers
-            // GOOD — the owner's rule that an attacker cannot say good until
-            // the table is fully covered is a UI gate (FActionBar's `canDone`,
-            // via CardPlay.canSayGood), not a kernel one. Picking the first
-            // non-wait move off the raw menu therefore said good over uncovered
-            // attacks constantly, which no player can do, so an auto-run was
-            // exercising a game nobody can play.
-            // Round-10e (owner: "for reproducibility of taps I would suggest a
-            // fixed seed, enabled by some flags - dev build flags only"): the
-            // iMessage extension is launched by Messages, so it never sees our
-            // environment. This DEBUG-only App Group key is the equivalent
-            // switch, settable from the outside with
-            //   xcrun simctl spawn <sim> defaults write \
-            //       group.cards.foolish.msg dev.automove -bool YES
-            // so a verification run can play a legal move without depending on
-            // synthesized drags or which seat the deal handed us. Compiled out
-            // of every Release build with the rest of this block.
-            // A FILE in the App Group container, not a UserDefaults key:
-            // `defaults write` from outside lands in the wrong domain, and
-            // cfprefsd caches group prefs in memory (a write is not seen until
-            // a reboot). A file is read straight off disk, every open.
-            let devAutoMove = FileManager.default
-                .containerURL(forSecurityApplicationGroupIdentifier: "group.cards.foolish.msg")
-                .map { FileManager.default.fileExists(atPath: $0.appendingPathComponent("dev.automove").path) }
-                ?? false
-            if ProcessInfo.processInfo.environment["HARNESS_AUTOMOVE"] != nil || devAutoMove,
-               let view = controller.view,
-               let m = CardPlay.humanMoves(battles: view.battles, legal: controller.legal).first {
-                // Let the incoming replay (the OTHER player's last move flying
-                // deck/seat→table on open) finish and rest so it's watchable,
-                // THEN auto-play our move. Dev pacing only.
-                let pace = Double(ProcessInfo.processInfo.environment["HARNESS_PACE"] ?? "") ?? 1
-                try? await Task.sleep(nanoseconds: UInt64(2.4 * pace * 1_000_000_000))
-                // Route through the SAME entry points a human tap hits (playAt /
-                // playCover), not `play(m)` directly - so an auto-run exercises the
-                // real placement path (preHide + the hand→table flight), which is
-                // where the "ghost card / cards jump" bugs live. `play(m)` skips
-                // all of that, so an auto-run of it can never reproduce them.
-                switch m.type {
-                case .attack, .pass: playAt(.table, m.cards, view)
-                case .cover:         playCover(m.cards, view)
-                case .pickup:        play(.pickup)
-                case .good:          play(.good)
-                default:             play(m)
-                }
-                // HARNESS_AUTOUNDO: after auto-playing, wait for the move to settle
-                // (and the drawer to auto-collapse, if it does), then undo it - so a
-                // run reproduces the "undo double animation / fade" the overlay-less
-                // undo path shows, without a human tapping Undo.
-                if ProcessInfo.processInfo.environment["HARNESS_AUTOUNDO"] != nil {
-                    try? await Task.sleep(nanoseconds: UInt64(3.0 * pace * 1_000_000_000))
-                    await controller.undo()
-                }
-            }
+            // FoolishHarness only: auto-play a move (see the function).
+            await autoPlayIfAsked()
             #endif
         }
+        #if DEBUG
+        // …and again after an ARRIVAL. Folding a chain in keeps this board's
+        // identity (round 12), so the mount `.task` above never fires a second
+        // time - which meant the rig could only ever stage a move on the first
+        // board it mounted, and "somebody moves, then I reply and send" was
+        // unreachable. That is the sequence both 1.0(23) reports describe.
+        .task(id: controller.arrivalTick) {
+            guard controller.arrivalTick > 0 else { return }   // the mount case, handled above
+            await autoPlayIfAsked()
+        }
+        #endif
         // 1.0(4): the left Settings/Help squares present these.
         .sheet(isPresented: $showSettings) {
             MessageSettingsView { showSettings = false }
@@ -1149,6 +1105,68 @@ public struct MessageTableView: View {
             selfRoleMark(view)
         }
     }
+
+#if DEBUG
+    /// FoolishHarness only: play the first move a HUMAN could make here, through
+    /// the same entry points a tap hits.
+    ///
+    /// Round 22 pulled this out of the mount `.task` so it can also be run after
+    /// an ARRIVAL. An arrival folds into the live controller and keeps the
+    /// board's identity - which is the whole point of round 12 - so `.task`
+    /// never fires again, and the rig could stage a move only on the very first
+    /// board it ever mounted. That made "somebody moves, then I reply and send"
+    /// unreachable, which is exactly the sequence both 1.0(23) reports describe.
+    private func autoPlayIfAsked() async {
+            let devAutoMove = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: "group.cards.foolish.msg")
+            .map { FileManager.default.fileExists(atPath: $0.appendingPathComponent("dev.automove").path) }
+            ?? false
+        // WAIT OUT THE PICKUP HOLD rather than working around it. While the
+        // round-16 hold stands the Take pill is not on screen (FActionBar's
+        // `canPickup`) and `apply` refuses the move, so an auto-run that picked
+        // it staged nothing and reported "nothing staged" - which reads as a rig
+        // bug and is really the rig tapping a button that is not there. Skipping
+        // the move instead would be worse: a pickup after somebody attacks me is
+        // one of the commonest turns in the game, and a rig that can never play
+        // it can never test it. So do what a player does - wait, then take.
+        if ProcessInfo.processInfo.environment["HARNESS_AUTOMOVE"] != nil || devAutoMove {
+            let waitUntil = Date().addingTimeInterval(20)
+            while controller.pickupHold > 0, Date() < waitUntil {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+        }
+        if ProcessInfo.processInfo.environment["HARNESS_AUTOMOVE"] != nil || devAutoMove,
+           let view = controller.view,
+           let m = CardPlay.humanMoves(battles: view.battles, legal: controller.legal).first {
+            AnimLog.say("automove: playing \(m.type) (hold=\(controller.pickupHold))")
+            // Let the incoming replay (the OTHER player's last move flying
+            // deck/seat→table on open) finish and rest so it's watchable,
+            // THEN auto-play our move. Dev pacing only.
+            let pace = Double(ProcessInfo.processInfo.environment["HARNESS_PACE"] ?? "") ?? 1
+            try? await Task.sleep(nanoseconds: UInt64(2.4 * pace * 1_000_000_000))
+            // Route through the SAME entry points a human tap hits (playAt /
+            // playCover), not `play(m)` directly - so an auto-run exercises the
+            // real placement path (preHide + the hand→table flight), which is
+            // where the "ghost card / cards jump" bugs live. `play(m)` skips
+            // all of that, so an auto-run of it can never reproduce them.
+            switch m.type {
+            case .attack, .pass: playAt(.table, m.cards, view)
+            case .cover:         playCover(m.cards, view)
+            case .pickup:        play(.pickup)
+            case .good:          play(.good)
+            default:             play(m)
+            }
+            // HARNESS_AUTOUNDO: after auto-playing, wait for the move to settle
+            // (and the drawer to auto-collapse, if it does), then undo it - so a
+            // run reproduces the "undo double animation / fade" the overlay-less
+            // undo path shows, without a human tapping Undo.
+            if ProcessInfo.processInfo.environment["HARNESS_AUTOUNDO"] != nil {
+                try? await Task.sleep(nanoseconds: UInt64(3.0 * pace * 1_000_000_000))
+                await controller.undo()
+            }
+        }
+        }
+#endif
 
     private func selfRoleMark(_ view: GameView) -> some View {
         let mySeat = controller.mySeat

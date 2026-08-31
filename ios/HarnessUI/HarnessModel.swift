@@ -72,6 +72,9 @@ final class HarnessModel: ObservableObject {
     /// delivered. Stands in for the Messages input field: the harness Send button
     /// is the blue send arrow. nil = nothing staged.
     @Published private(set) var staged: Data?
+    /// Read-only alias for the scenario runner, which lives in another file and
+    /// only ever needs to ask "is something waiting to be sent yet".
+    var stagedPayloadBytes: Data? { staged }
     /// The staged bubble's picture, snapshotted at stage time like `Msg.preview`.
     @Published private(set) var stagedPreview: UIImage?
     /// Simulated Messages presentation style. The real extension collapses to the
@@ -559,6 +562,24 @@ final class HarnessModel: ObservableObject {
     }
     #endif
 
+    /// ROUND 22: the extension's `didStartSending` signal, which this rig did
+    /// not have at all.
+    ///
+    /// `MessagesViewController.didStartSending` bumps a token and re-presents,
+    /// and `MessagesRootView` turns that into `markSending()` +
+    /// `markSent(payload:)` - the rebase of the live board onto the bubble that
+    /// just went out. NONE of that was reachable here: `grep sentToken` across
+    /// the whole harness returned nothing, so `markSent` - the one function
+    /// both 1.0(23) send reports turned out to live in - was never executed by
+    /// any rig run. A send in the harness was only ever "append to the
+    /// transcript".
+    @Published private(set) var sentToken = 0
+    /// The bytes that went out, for the board's rebase. The extension reads
+    /// these off the MSMessage itself (`payload(of:)`), which is why it is the
+    /// message and not `staged` that is authoritative there; here the two are
+    /// the same by construction.
+    @Published private(set) var sentPayload: Data?
+
     /// The blue send arrow: deliver the staged bubble into the shared transcript
     /// so the next participant can read it.
     func deliver() {
@@ -586,6 +607,12 @@ final class HarnessModel: ObservableObject {
         // gone with the ledger itself (owner call); the just-sent marker is what
         // keeps a reload of my OWN chain from replaying my move back at me.
         MessageGameStore.shared.markJustSent(payload: payload)
+        // ROUND 22: and the half that was missing - TELL THE BOARD. Same order
+        // the extension uses: the bytes first, then the token that carries them
+        // in, so the surface never sees a bumped token with nothing to rebase
+        // onto.
+        sentPayload = payload
+        sentToken += 1
     }
 
     /// Deliver `payload` as an ARRIVAL from another seat: it lands in the

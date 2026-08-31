@@ -592,6 +592,11 @@ private struct ExtensionStage: View {
                 style: model.presentation,
                 senderIsLocal: model.senderIsLocal,
                 startNewGame: model.startNewGame,
+                // The SEND path, threaded exactly as the extension threads it
+                // from didStartSending (HarnessModel.deliver). Absent until
+                // round 22, which is why no rig run ever reached `markSent`.
+                sentToken: model.sentToken,
+                sentPayload: model.sentPayload,
                 chatKey: model.chatKey,
                 chatIsDM: model.chatIsDM,
                 chatPlayers: model.playerCount,
