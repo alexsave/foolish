@@ -135,10 +135,21 @@ public struct Flight: Identifiable, Equatable {
     /// `angle` = 0) rather than snapping upright the instant it leaves. Defaulted
     /// 0, so a hand/deck flight starts flat exactly as before.
     public let fromAngle: Double
+    /// THE CONFLICT MODEL's red (docs/ANIMATION_CATALOGUE.md, 1.0(28)): true for
+    /// a flight that is a RETRACTION - a card travelling BACK the way it came
+    /// because a newer chain disowned the motion that placed it. A reversal and
+    /// a play are the same motion with the sign flipped, so without a colour the
+    /// player cannot tell "my card went down" from "my card came back"; the web
+    /// settled on red after months of glitch-fixing (AnimationOverlay.tsx draws
+    /// a reverting card with a red border, red shadow and a pink face) and the
+    /// phone does not invent a second vocabulary. The tint lives on the flight
+    /// GHOST only - see FlyingCardsLayer - so a card that lands back in a hand
+    /// is a normal card again the moment it lands.
+    public let revert: Bool
     public init(id: String, card: Card?, from: CGRect, to: CGRect,
-                angle: Double = 0, fromAngle: Double = 0) {
+                angle: Double = 0, fromAngle: Double = 0, revert: Bool = false) {
         self.id = id; self.card = card; self.from = from; self.to = to
-        self.angle = angle; self.fromAngle = fromAngle
+        self.angle = angle; self.fromAngle = fromAngle; self.revert = revert
     }
 }
 
@@ -328,6 +339,12 @@ public final class BoardAnimator: ObservableObject {
 /// card interpolates its centre from `from` to `to` and scales 1.0→1.15 (a lighter
 /// version of the web's 1.5→1.8, which is tuned to the web's smaller cards).
 public struct FlyingCardsLayer: View {
+    /// The web's revert red - rgb(220, 38, 38) - and the pink face wash that
+    /// stands in for its `backgroundColor: rgb(255,150,150)` + warm filter.
+    /// One place, so the retraction colour cannot fork between call sites.
+    public static let revertRed = Color(red: 220 / 255, green: 38 / 255, blue: 38 / 255)
+    public static let revertWash = Color(red: 1.0, green: 150 / 255, blue: 150 / 255)
+
     @ObservedObject var animator: BoardAnimator
     public init(animator: BoardAnimator) { self.animator = animator }
 
@@ -338,6 +355,21 @@ public struct FlyingCardsLayer: View {
                 let cx = f.from.midX + (f.to.midX - f.from.midX) * p
                 let cy = f.from.midY + (f.to.midY - f.from.midY) * p
                 FCard(card: f.card, size: CGSize(width: 50, height: 70))
+                    // THE CONFLICT MODEL's red, on the ghost only - the web's
+                    // exact vocabulary for a superseded optimistic card
+                    // (AnimationOverlay.tsx: border rgb(220,38,38), red drop
+                    // shadow, warmed filter, pink face). A pink wash over the
+                    // face plus the red border reads as "this card is being
+                    // taken back", and because it is drawn HERE rather than in
+                    // FCard, the card that lands back in a hand is untouched.
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(FlyingCardsLayer.revertWash.opacity(f.revert ? 0.35 : 0))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 5)
+                            .strokeBorder(FlyingCardsLayer.revertRed, lineWidth: f.revert ? 2 : 0)
+                    )
                     // Bug 1: rotate INTO the final table angle over the flight,
                     // about the bottom edge (the same pivot FBattleGrid tilts a
                     // laid-across card about), so a cover flies in already
@@ -345,7 +377,9 @@ public struct FlyingCardsLayer: View {
                     // seamless. `angle` is 0 for everything that lands flat.
                     .rotationEffect(.degrees(f.fromAngle + (f.angle - f.fromAngle) * p), anchor: .bottom)
                     .scaleEffect(1.0 + 0.15 * (1 - abs(p - 0.5) * 2))   // bulge mid-flight
-                    .shadow(color: .black.opacity(0.4 * p), radius: 10 * p, y: 8 * p)
+                    .shadow(color: f.revert ? FlyingCardsLayer.revertRed.opacity(0.6 * p)
+                                            : .black.opacity(0.4 * p),
+                            radius: 10 * p, y: 8 * p)
                     .position(x: cx, y: cy)
             }
         }

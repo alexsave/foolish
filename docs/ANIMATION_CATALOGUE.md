@@ -13,7 +13,7 @@ A shape with no `Decided` line was not asked about.
 `Decided (change)` means today's behaviour is wrong and the shape is now `spec` regardless of what its tests say - a green test against the old shape is a test that needs rewriting.
 
 The five changes from that pass, in one place.
-All five are built (1.0(29)); the conflict model is being taken separately.
+All five are built (1.0(29)), and so is the conflict model - see its own section.
 
 - **The game-over hold** is one second, not 500ms. BUILT.
 - **Undoing a pickup** flies the cards back out of my hand onto the table, where it used to snap. BUILT.
@@ -260,14 +260,18 @@ Status: rig (`ARRIVE_WARMUP=0`).
 
 **An arrival landing mid-animation of the previous one.**
 Decided (change), and this is the largest decision of the 1.0(28) pass - see "The conflict model" below.
-Today the newest sequence simply takes over and the old one stops stepping wherever it happened to be, which leaves the board mid-gesture and cuts to a different one.
-It must instead REVERSE what is in flight - animate it back to the parent state, tinted red - and only then play the newest move.
-Status: both for the supersede mechanics (`SequenceTeardownTests.testASupersededSequenceHandsItsOpensOnInsteadOfDroppingThem`; rig burst), **spec** for the reversal.
+It used to be that the newest sequence simply took over and the old one stopped stepping wherever it happened to be, leaving the board mid-gesture and cutting to a different one.
+Now the superseded sequence's in-air step is allowed to LAND (never cut mid-flight), it deposits everything it had already flown, and the arrival resolves that debt by the conflict verdicts - revert / keep / clear - before its own replay plays.
+Status: built.
+Unit (`ConflictModelTests` - the verdicts and the flipped, red, last-motion-first reversal steps); rig (`arrival` at 3 players: the deposit fires and a card the arriving pickup itself sweeps is CLEARed - it never flies home first - with `BOARD-STUCK: 0`).
+The RED reversal of this debt fires only for motion the newest chain disowns, which in a linear thread is nothing - see the conflict model's "what the verdicts mean here" - so no rig run has ever shown it; a fork arrival mid-animation would, and the rig cannot pose one.
 
 **Several arrivals in quick succession.**
 Decided (change), and it follows from the same rule: undo whatever is animating, then play ONLY the last arrival.
 Explicitly NOT a queue - the intermediate boards are not replayed one by one, because the newest chain is the thread's truth and watching three supersedes in a row would be slower than the moves themselves.
-Status: rig (`ARRIVE_N=3 ARRIVE_GAP=120`) and unit (`SequenceTeardownTests` x4), both against the old take-over-immediately shape.
+Status: built.
+The arrival pipeline is claimed by an epoch the way a sequence claims the animator: a superseded pipeline hands its collected debt on and never starts its forward replay, and mid-retraction a newer arrival only replaces the one-slot latch (`ConflictModelTests.testANewerArrivalMidRetractionWinsTheLatch`).
+Rig: `ARRIVE_N=3 ARRIVE_GAP=120` at 2 and 3 players, `BOARD-STUCK: 0`; `SequenceTeardownTests` x4 still pin the veil hand-on underneath.
 
 **A duplicate delivery of the bubble already on screen.**
 Animates nothing, and must not raise a veil that no view change will lower.
@@ -279,11 +283,14 @@ Status: unit (`MessageConcurrencyTests`, `StaleBranchTests` x5).
 
 **An arrival while I have a move staged.**
 Decided (change).
-My staged move is dropped - the arriving chain is the thread's truth - but it must now be VISIBLY retracted first, by the same reversal the conflict model describes, rather than vanishing between two frames.
-This is the commonest conflict on a real table and the one where a silent swap is least defensible: the card I chose is on the table one frame and gone the next, with nothing to say it was mine or why it went.
-The existing invariant stands unchanged - the board must never render new-base-with-old-staged-moves, not even for one frame - because the retraction plays against the OLD base and the new one is adopted after it.
-Status: unit (`SendWindowTests.testAnArrivalClearsStagedMovesBeforeItSuspends`) for the drop; **spec** for the retraction.
-**Not rig-tested**, and a real table produces this constantly.
+My staged move is dropped - the arriving chain is the thread's truth - but it is now VISIBLY retracted first, by the same reversal the conflict model describes, rather than vanishing between two frames.
+This is the commonest conflict on a real table and the one where a silent swap was least defensible: the card I chose was on the table one frame and gone the next, with nothing to say it was mine or why it went.
+The existing invariant stands unchanged - the board must never render new-base-with-old-staged-moves, not even for one frame - because the retraction plays against the OLD base and the new one is adopted after it: the routing layer now OFFERS the arrival (`MessageTurnController.offerArrival`), the controller publishes the old base with the staged moves dropped, the board flies them home in red (`flyUndoReturn`/`flyUndoRelease` in conflict mode), and only when that lands is the latched arrival adopted (`finishConflictAdopt`; a failsafe adopts it if the board dies mid-flight).
+A duplicate delivery of the very chain the staged move is built on is NO conflict and the staged move survives it - before this model a duplicate silently wiped it.
+Status: built, unit and rig both.
+Unit: `ConflictModelTests` (the deferral, the latch, the duplicate, the failsafe, the mid-retraction input freeze); `SendWindowTests.testAnArrivalClearsStagedMovesBeforeItSuspends` still pins adopt's own half of the invariant.
+Rig: `HARNESS_ARRIVE_STAGED=1 HARNESS_AUTOMOVE=1` - the trace shows `conflictRetract` then the red `undoRelease` flying the staged pickup's card back out of the hand, then the arrival playing; the CONFLICT oracle counts the retraction.
+The red TINT itself has still never been eyeballed on a device.
 
 ---
 
@@ -310,14 +317,28 @@ CLEAR (it WAS accepted and this same broadcast swept it off the table, so drop i
 `src/state/optimisticConflicts.ts` is the thin marshalling wrapper and its header comment is the best prose on the subject in the repo.
 Native tests exist (`c/tests/anim_plan_test.c test_optimistic_revert`) and so does an end-to-end one (`e2e/optimistic_revert.test.ts`).
 
-**What is genuinely different on the phone, and must be designed rather than ported.**
+**What is genuinely different on the phone, and was designed rather than ported.**
 The web reverts against a SERVER VERDICT; there is no server here.
 An iMessage conflict has exactly two sources - an arrival that supersedes my staged move, and an arrival that supersedes a sequence still in flight - and in both the "verdict" is simply that a newer chain exists.
-So the C verdict function is the wrong entry point as it stands; what carries over is the trichotomy, the ordering (reverse fully, then play), and the red.
-The CLEAR case in particular has a direct twin here and is the one to get right first: if the arriving chain contains my staged card because the arriving player covered it or picked it up, my card must NOT fly home - their move animates it away, and reverting it first would be the same flicker under a different name.
+So the C verdict function was the wrong entry point as it stood; what carried over is the trichotomy, the ordering (reverse fully, then play), and the red.
+The CLEAR case in particular has a direct twin here and was the one to get right first: if the arriving chain contains my staged card because the arriving player covered it or picked it up, my card must NOT fly home - their move animates it away, and reverting it first would be the same flicker under a different name.
 
-Status: **spec**, in every part.
-Nothing on the phone reverses anything today.
+**What the verdicts mean here (built as `ConflictModel.swift`, pure and board-free).**
+"Accepted" on the phone means "the arriving chain - the thread's truth - stands behind where the doomed motion put the card":
+REVERT is motion the truth disowns (my staged unsent cards, always; a fork loser's motion) - it flies back the way it came, red, last motion first;
+KEEP is motion the arriving chain's own opening board shows at its post spot (MERGE's twin - its confirmation IS the newest chain), and flying it home only for the incoming seed to snap it straight back would be the clear-flicker one board later;
+CLEAR is motion the arriving replay itself moves - the forward replay owns it.
+This is the one refinement to "undo whatever is animating": in a burst that EXTENDS the animating chain, the verdicts resolve to keep/clear and nothing false is theatrically un-played; the red theatre is reserved for the retraction of things that genuinely never happened.
+The commonest conflict - an arrival over my staged move - reverts in full, which is exactly the owner's "yes undo the staged move".
+
+**Where each piece lives.**
+The verdicts and the flipped red reversal steps: `ConflictModel.swift` (Swift by an accepted decision, with a standing lift-to-C note - and when it lifts, IT replaces the web's rule, not the other way around).
+The red vocabulary: `Flight.revert` drawn by `FlyingCardsLayer` (border rgb(220,38,38), red shadow, pink wash) - the tint is on the flight ghost only.
+The staged retraction: `MessageTurnController.offerArrival` / `finishConflictAdopt` plus the conflict mode of `flyUndoReturn` / `flyUndoRelease`.
+The sequence debt: `runEventStream` records what it flies, a superseded teardown deposits it, and the arrival pipeline (epoch-claimed) drains, verdict-filters and reverses it before its own replay.
+
+Status: built, per the three Channel E entries above.
+Not yet seen anywhere: the red tint on a real screen, and a REVERT-verdict sequence reversal (it needs a fork arriving mid-animation, which no rig can pose).
 
 ---
 
@@ -403,4 +424,4 @@ The `out` and game-over visuals as ANIMATIONS - only the rules behind them are t
 
 Quiet-open consumption after a send, in the rig - and now the reopen-replays rule that replaced it.
 
-Every part of the conflict model: no reversal, no red, no ordering.
+Of the conflict model, only its edges now: the red tint as pixels on a device, and the fork-arrival reversal no rig can pose.

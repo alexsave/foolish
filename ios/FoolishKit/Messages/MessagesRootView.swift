@@ -1919,7 +1919,12 @@ private struct GameSurface: View {
             // bubble arriving on a stale board is what hands it the right to
             // play again, and it must not have to be re-tapped for that.
             live.setSuperseded(staleBranch)
-            Task { await live.adopt(payload: winner, parent: env, quietOpen: quietOpen) }
+            // OFFERED, not forced (the conflict model, 1.0(28)): a chain
+            // arriving over a staged move is visibly retracted first - the
+            // staged cards fly home in red against the OLD base - and adopted
+            // only when that lands. With nothing staged this is `adopt` as it
+            // always was.
+            Task { await live.offerArrival(payload: winner, parent: env, quietOpen: quietOpen) }
             return
         }
         let fresh = MessageTurnController(parentPayload: winner, parent: env, mySeat: seat,

@@ -762,7 +762,22 @@ extension HarnessModel {
         // bubbles landing one after another on a board that is still animating
         // the last one, which is what a real table does when two people are
         // playing at once. A gap SHORTER than a flight is the point.
-        let n_arrivals = Int(ProcessInfo.processInfo.environment["HARNESS_ARRIVE_N"] ?? "1") ?? 1
+        //
+        // HARNESS_ARRIVE_STAGED=1 - THE COMMONEST CONFLICT ON A REAL TABLE
+        // (docs/ANIMATION_CATALOGUE.md, "An arrival while I have a move
+        // staged"): an arrival lands on a board with an UNSENT move on it. It
+        // cannot be posed before the first arrival - at two seats the watcher
+        // has nothing legal until somebody moves - so the shape is the natural
+        // one: arrival 1 lands, HARNESS_AUTOMOVE stages the watcher's reply
+        // through the real tap path, and only once that stage is real is the
+        // NEXT arrival composed and delivered onto it. The conflict model must
+        // retract the staged card in RED against the OLD base before the
+        // arriving chain plays; the CONFLICT oracle at the bottom says whether
+        // that machinery actually engaged. Forces at least two arrivals, since
+        // the conflict is between them.
+        let stagedConflict = ProcessInfo.processInfo.environment["HARNESS_ARRIVE_STAGED"] == "1"
+        let n_asked = Int(ProcessInfo.processInfo.environment["HARNESS_ARRIVE_N"] ?? "1") ?? 1
+        let n_arrivals = stagedConflict ? max(n_asked, 2) : n_asked
         let gapMs = Int(ProcessInfo.processInfo.environment["HARNESS_ARRIVE_GAP"] ?? "250") ?? 250
         var lastPayload = opened
         for i in 0..<max(1, n_arrivals) {
@@ -783,6 +798,20 @@ extension HarnessModel {
             while Date() < deadline, !(cold && i == 0),
                   MessageTurnController.debugLatest?.basePayload != lastPayload {
                 try? await Task.sleep(nanoseconds: 30_000_000)
+            }
+            // ARRIVE_STAGED: from the second arrival on, hold delivery until
+            // the watcher's auto-played reply is genuinely STAGED, so this
+            // arrival provably lands on a board with an unsent move. Waiting
+            // AFTER the adopt handshake above, because the stage is automove's
+            // REACTION to the previous arrival.
+            if stagedConflict, i > 0 {
+                let stagedBy = Date().addingTimeInterval(20)
+                while Date() < stagedBy, stagedPayloadBytes == nil {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                AnimLog.say(stagedPayloadBytes == nil
+                    ? "scenario: nothing staged before arrival \(i + 1) - rig bug (set HARNESS_AUTOMOVE=1)"
+                    : "scenario: watcher has a move STAGED - arrival \(i + 1) must retract it in red")
             }
             _ = try? await MessageKernel.shared.decode(payload: lastPayload, viewer: -1)
             // The child bubble names its parent's digest, exactly as
@@ -883,6 +912,19 @@ extension HarnessModel {
             + "VANISHED paints: \(MessageTableView.vanishedAtRest) "
             + "STRANDED paints: \(MessageTableView.strandedAtRest) "
             + "SWEEP-STILL-DRAWN: \(MessageTableView.sweepVisibleNow)")
+        // THE CONFLICT ORACLE (1.0(28)): did the conflict machinery engage?
+        // `retractions` counts staged moves visibly retracted (an ARRIVE_STAGED
+        // run must show >= 1 or the model never fired); `red-flights` counts
+        // red ghosts flown, retractions and sequence reversals both.
+        // `retracting` must be false at rest - a retraction still standing this
+        // long after the last arrival is one that never released its latched
+        // adopt. `stagedLeft` is context, not an assertion: with AUTOMOVE the
+        // watcher legitimately re-stages a reply to the NEWEST board after the
+        // conflict, exactly as a real player would.
+        AnimLog.say("CONFLICT retractions: \(MessageTableView.conflictRetractions) "
+            + "red-flights: \(MessageTableView.redRevertFlights) "
+            + "stagedLeft: \(MessageTurnController.debugLatest?.pending.count ?? -1) "
+            + "retracting: \(MessageTurnController.debugLatest?.conflictRetracting ?? false)")
         // THE CONTROLLER ORACLE. The paint counters above can only see what the
         // board happened to draw while something was still repainting; a board
         // that settles WRONG and then draws nothing (no repaints at rest)
