@@ -137,6 +137,15 @@ final class SendWindowTests: XCTestCase {
     /// and the board merely freeze, which is invisible to an assertion about the
     /// view. The invariant is the thing worth pinning: this controller must
     /// never be suspended in a state that says new base, old staged moves.
+    ///
+    /// THE CONFLICT MODEL (1.0(28)) did not change this invariant - it moved
+    /// WHEN adopt runs. The routing layer now calls `offerArrival`, which
+    /// retracts the staged move visibly (red, against the OLD base) and adopts
+    /// only when that lands (ConflictModelTests); but adopt itself, reached by
+    /// the finish or by any direct caller, must still clear `pending` before
+    /// its first suspension - the retraction guards the frames BEFORE adopt,
+    /// this guards the frames INSIDE it, and dropping either reopens the same
+    /// stale-moves-on-a-new-parent rebuild.
     func testAnArrivalClearsStagedMovesBeforeItSuspends() async throws {
         let (c, _) = try await board()
         let cover = try XCTUnwrap(c.legal.first { $0.type == .cover })

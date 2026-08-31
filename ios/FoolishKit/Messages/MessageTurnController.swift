@@ -547,6 +547,174 @@ public final class MessageTurnController: ObservableObject {
         ready && mySeat == seat && gameIdString == gameId && isContinuation
     }
 
+    // MARK: the conflict model (docs/ANIMATION_CATALOGUE.md, decided 1.0(28))
+
+    /// True while a staged move is being VISIBLY retracted ahead of an arriving
+    /// chain: the base view (staged moves dropped) is what is published, the
+    /// board is flying the staged cards home in red, and the arrival itself is
+    /// latched in `conflictLatch` waiting for `finishConflictAdopt`. Read
+    /// imperatively by the board's view-change handler (no publish needed - the
+    /// retraction's own view change is what wakes the board).
+    public private(set) var conflictRetracting = false
+    /// What the arriving chain will animate and where it opens - the verdict
+    /// inputs (`MessageTableView.conflictVerdict`) for the retraction. Peeked
+    /// from the arriving payload BEFORE the retraction publishes, because the
+    /// board must decide which staged cards fly home while the controller still
+    /// stands on the OLD base. nil outside a retraction; `.unknown` when the
+    /// arriving chain could not be read (then everything staged reverts, which
+    /// is the honest default - an unreadable chain vouches for nothing).
+    public private(set) var conflictFacts: ConflictFacts?
+    /// The ONE latched arrival - newest wins, never a queue (the burst rule:
+    /// "undo whatever is animating and play the last only"). An arrival landing
+    /// while a retraction is already playing simply replaces the latch; the
+    /// retraction is not restarted, because it already returns the board to the
+    /// parent state and nothing new has played forward since.
+    private var conflictLatch: (payload: Data, parent: MessageEnvelope, quietOpen: Bool)?
+    /// The no-board safety net: if nothing calls `finishConflictAdopt` (the
+    /// board died mid-retraction, or a retraction was armed with no board
+    /// mounted after all), the latched arrival must still land - a dropped
+    /// arrival is a board frozen one move in the past for good, which is a far
+    /// worse failure than a skipped animation. Generous, because it must never
+    /// fire while a real retraction flight is still airborne.
+    private var conflictFailsafe: Task<Void, Never>?
+    /// Internal so tests can shrink the wait; 3s is comfortably above one red
+    /// flight (~0.55s) plus scheduling slack.
+    static var conflictFailsafeSeconds: Double = 3.0
+    /// Whether a live board is mounted on this controller (set from the board's
+    /// own lifecycle). Without one there is nobody to fly the retraction, so an
+    /// arrival adopts immediately - the conflict model is about a board that is
+    /// SHOWING something; no board, no theatre.
+    private var boardWatching = false
+
+    public func setBoardWatching(_ on: Bool) {
+        boardWatching = on
+        // A board torn down mid-retraction must not strand the latched arrival
+        // behind the failsafe's full wait - nobody is watching, so land it now.
+        if !on, conflictLatch != nil { Task { await self.finishConflictAdopt() } }
+    }
+
+    /// AN ARRIVAL, OFFERED RATHER THAN FORCED. The routing layer
+    /// (MessagesRootView.seatOnBoard) calls this instead of `adopt` so a chain
+    /// arriving over a STAGED MOVE is visibly retracted first - the staged
+    /// cards fly home tinted red, against the OLD base - and only then adopted.
+    /// This is the commonest conflict on a real table and the one where the old
+    /// silent swap was least defensible: the card I chose was on the table one
+    /// frame and gone the next, with nothing to say it was mine or why it went.
+    ///
+    /// The hard invariant is unchanged and is why the adopt is DEFERRED rather
+    /// than the retraction inserted into it: the board must never render
+    /// new-base-with-old-staged-moves, not even for one frame. The retraction
+    /// publishes the OLD base with the staged moves dropped (an undo-all), the
+    /// red flight plays against that board, and `adopt` - which itself still
+    /// clears `pending` before its first suspension, see the test pinning it -
+    /// runs only when the board reports the reversal landed.
+    public func offerArrival(payload: Data, parent: MessageEnvelope,
+                             quietOpen: Bool = false) async {
+        // A DUPLICATE OF THE CHAIN I AM ALREADY ON is not an arrival, staged
+        // moves or not. `adopt`'s own guard skips duplicates only with nothing
+        // staged (with pending moves it conservatively rebuilt, a shrug from
+        // before the conflict model existed) - but under the conflict model
+        // that shrug would RED-RETRACT my staged move because Messages
+        // re-delivered a bubble, which is a retraction with nothing to retract
+        // for. The staged moves were composed against exactly these bytes;
+        // they stand.
+        if ready, basePayload == payload {
+            AnimLog.say("offerArrival skipped - already on this chain (pending=\(pending.count))")
+            return
+        }
+        // MID-RETRACTION, only the latch moves - newest wins, one retraction
+        // suffices. Checked BEFORE the pending guard below, because the
+        // retraction has already emptied `pending`: without this order a burst's
+        // second arrival would fall through to a plain adopt UNDERNEATH the
+        // retraction, and the finish would then adopt the older latched chain
+        // ON TOP of it - the board walking backwards one bubble
+        // (ConflictModelTests.testANewerArrivalMidRetractionWinsTheLatch caught
+        // exactly that).
+        if conflictRetracting {
+            conflictLatch = (payload, parent, quietOpen)
+            return
+        }
+        // No staged moves, or nobody mounted to fly them home: adopt as ever.
+        // A sequence still in flight is the BOARD's conflict (it reverses it
+        // from its own recorded motions before playing the arrival - see
+        // MessageTableView.replayLastMoveOnOpen); the controller only fronts
+        // the case where the MODEL itself must walk back first.
+        guard boardWatching, !pending.isEmpty else {
+            await adopt(payload: payload, parent: parent, quietOpen: quietOpen)
+            return
+        }
+        conflictLatch = (payload, parent, quietOpen)
+        conflictRetracting = true
+        FlightRecorder.note("conflict", "retract \(pending.count) staged for arrival")
+        // The verdict inputs, peeked from the arriving chain before anything
+        // moves: which cards its replay animates, and the board it opens on.
+        // CLEAR is why this cannot be skipped - if the arriving chain is my own
+        // sent move coming back (a lost send signal, a re-activation), my
+        // staged cards are IN it, and flying them home first only for the
+        // adopt to put them straight back is the flicker the web fixed.
+        // The peek decodes into the resident slot, which is fine: every reader
+        // in this file rebuilds its own chain before reading (round 22).
+        if let peek = try? await kernel.openChain(payload: payload, viewer: mySeat) {
+            conflictFacts = ConflictFacts(events: peek.events, prior: peek.prior)
+        } else {
+            conflictFacts = .unknown
+        }
+        // An even newer arrival may have landed during that await - the latch
+        // already holds it, and `finishConflictAdopt` adopts whatever is
+        // newest. The facts describe the first conflicting chain, which is the
+        // best knowledge the retraction had when it was decided; the burst rule
+        // wants one reversal, not one per bubble.
+        //
+        // THE RETRACTION: drop the staged moves and publish the BASE view - the
+        // undo-all. Same one-assignment discipline as `undo` and `adopt`
+        // (`pending` empties before any suspension), and `lastChangeWasUndo` is
+        // what routes the board's view-change handler into the reverse-flight
+        // machinery it already has.
+        let before = view
+        pending = []
+        dropHold()
+        sending = false
+        lastChangeWasUndo = true
+        await refresh()
+        // A retraction that changed nothing visible has nothing to fly - a
+        // staged good is the real case: no card of its own on the table, and an
+        // EQUAL view publishes no onChange for the board to act on. Waiting on
+        // the failsafe would stall the arrival for nothing.
+        if view == before {
+            await finishConflictAdopt()
+            return
+        }
+        armConflictFailsafe()
+    }
+
+    /// The reversal has landed (or provably never will): take the latched
+    /// arrival and adopt it. Called by the board when its red flight lands, by
+    /// `setBoardWatching(false)` when the board goes away, and by the failsafe.
+    /// Idempotent - the latch is taken exactly once.
+    public func finishConflictAdopt() async {
+        guard let latch = conflictLatch else {
+            conflictRetracting = false
+            conflictFacts = nil
+            return
+        }
+        conflictLatch = nil
+        conflictRetracting = false
+        conflictFacts = nil
+        conflictFailsafe?.cancel()
+        conflictFailsafe = nil
+        await adopt(payload: latch.payload, parent: latch.parent,
+                    quietOpen: latch.quietOpen)
+    }
+
+    private func armConflictFailsafe() {
+        conflictFailsafe?.cancel()
+        conflictFailsafe = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.conflictFailsafeSeconds * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await self?.finishConflictAdopt()
+        }
+    }
+
     public func adopt(payload: Data, parent: MessageEnvelope, quietOpen: Bool = false) async {
         // A DUPLICATE DELIVERY IS NOT AN ARRIVAL. Messages can hand the same
         // bubble over twice (a re-delivered didReceive; two racing
@@ -557,7 +725,10 @@ public final class MessageTurnController: ObservableObject {
         // is also no work here to redo: the chain is resident and the board is
         // showing it. Skipped only with nothing staged: with pending moves the
         // resident game is base+pending, and the conservative rebuild below is
-        // the behaviour every duplicate got before this guard existed.
+        // the behaviour every duplicate got before this guard existed. (The
+        // pending-nonempty duplicate no longer reaches here from the routing
+        // layer at all - `offerArrival` skips it outright, keeping the staged
+        // move - so this guard's narrowness only matters for direct callers.)
         if ready, pending.isEmpty, basePayload == payload {
             AnimLog.say("adopt skipped - already on this chain")
             return
@@ -804,6 +975,12 @@ public final class MessageTurnController: ObservableObject {
     // MARK: turn actions
 
     public func apply(_ move: Move) async {
+        // Mid-retraction the chain on screen is being replaced: a move staged
+        // now would be composed against a base the latched arrival is about to
+        // supersede, and would itself need retracting a breath later. The
+        // window is one red flight long; the tap simply does nothing, exactly
+        // as it would have a frame later when the arrival's board is up.
+        guard !conflictRetracting else { return }
         lastChangeWasUndo = false
         sending = false
         // ROUND 20: a board branching off an old bubble may not be played on.
@@ -1064,6 +1241,10 @@ public final class MessageTurnController: ObservableObject {
     /// Undo the last staged action by rebuilding the base and replaying all but
     /// the last pending action (§10). No-op if nothing is pending.
     public func undo() async {
+        // Same guard as `apply`: the retraction IS an undo of everything
+        // staged, already in flight - a second one racing it would fly cards
+        // that are already flying.
+        guard !conflictRetracting else { return }
         guard !pending.isEmpty else { return }
         // ONE assignment, no await, no replay.
         //

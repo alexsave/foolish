@@ -356,6 +356,35 @@ public struct MessageTableView: View {
     /// rescues whatever is still hidden.
     @State private var orphanedOpens: Set<String> = []
 
+    /// THE CONFLICT MODEL's ledger (docs/ANIMATION_CATALOGUE.md, 1.0(28)): the
+    /// motions a SUPERSEDED sequence had already flown, deposited by its
+    /// teardown for the arrival that superseded it to REVERSE - red, in reverse
+    /// group order, verdict-filtered (see ConflictModel.swift) - before the
+    /// arriving chain animates forward. Deposited only while
+    /// `reversalCollecting` is up, i.e. only when an ARRIVAL is standing by to
+    /// consume it: a live move of my own taking the animator over is not a
+    /// conflict (my move is the newest truth on this device) and its supersede
+    /// keeps today's plain hand-off, so a deposit nobody would consume must not
+    /// sit here going stale until some later arrival flies it back long after
+    /// the board moved on.
+    @State private var reversalDebt: [[FlownMotion]] = []
+    @State private var reversalCollecting = false
+    /// Claims the whole ARRIVAL PIPELINE (drain, reversal, forward replay) the
+    /// way `animSequenceToken` claims the animator: bumped synchronously by
+    /// every arrival, checked between the pipeline's phases. This is what makes
+    /// a burst "undo whatever is animating, then play ONLY the last" - an
+    /// arrival whose epoch has been superseded hands its collected debt on and
+    /// never starts its forward replay, so the intermediate boards are not
+    /// replayed one by one (explicitly NOT a queue - the owner's burst rule).
+    @State private var arrivalEpoch = 0
+
+    /// Rig oracles for the conflict model (HarnessScenario `arrival` prints
+    /// them): how many red retraction/reversal flights have been played, and
+    /// how many staged-move retractions ran. Levels since launch, like the
+    /// stale-paint counters below.
+    public private(set) static var redRevertFlights = 0
+    public private(set) static var conflictRetractions = 0
+
     /// WHAT A FINISHING SEQUENCE OWES THE BOARD: which opened-but-unflown cards
     /// to reveal now, and which to leave for whoever is still running.
     ///
@@ -595,6 +624,12 @@ public struct MessageTableView: View {
         }
         .task {
             AnimLog.say("board .task seat=\(controller.mySeat) ready=\(controller.ready)")
+            // THE CONFLICT MODEL needs to know a board is mounted: an arrival
+            // over a staged move is only DEFERRED behind a red retraction when
+            // there is a board to fly it (offerArrival). Balanced by
+            // .onDisappear below, which also flushes any latched arrival a
+            // teardown would otherwise strand behind the failsafe.
+            controller.setBoardWatching(true)
             // note 39: defensive reset — see `showResults`'s doc.
             showResults = false
             if !controller.ready { await controller.begin() }
@@ -618,6 +653,7 @@ public struct MessageTableView: View {
             await autoPlayIfAsked()
             #endif
         }
+        .onDisappear { controller.setBoardWatching(false) }
         #if DEBUG
         // …and again after an ARRIVAL. Folding a chain in keeps this board's
         // identity (round 12), so the mount `.task` above never fires a second
@@ -1673,6 +1709,12 @@ public struct MessageTableView: View {
         }
         if reduceMotion {
             releaseCounts(); clearSweep()
+            // THE CONFLICT MODEL under reduce-motion: the retraction is a snap
+            // (no flights anywhere on this branch), so the latched arrival must
+            // be released NOW rather than waiting out the failsafe.
+            if controller.conflictRetracting {
+                Task { await controller.finishConflictAdopt() }
+            }
             if new.isOver { showResults = true }   // note 39b
             return false
         }
@@ -1683,15 +1725,33 @@ public struct MessageTableView: View {
         // hand. `flyUndoReturn` runs that reverse flight and returns true when it
         // owns the animation; a non-return undo (nothing came back to MY hand -
         // e.g. undoing a pickup, or someone else's move) falls through to the snap.
+        // THE CONFLICT MODEL rides this same branch: a staged move being
+        // retracted ahead of an arrival IS an undo-all
+        // (MessageTurnController.offerArrival publishes the base view with
+        // `lastChangeWasUndo` up), flown by the same two reverse shapes. The
+        // only differences are the RED on the ghost, the verdict filter (a card
+        // the arriving chain itself animates must not fly home first - see
+        // ConflictModel.swift), and the hand-off: when the flight lands, the
+        // board tells the controller to adopt the latched arrival.
         if controller.lastChangeWasUndo {
             releaseCounts()
-            if let old = prior, flyUndoReturn(old: old, new: new) { return false }
+            let conflict: ConflictFacts? = controller.conflictRetracting
+                ? (controller.conflictFacts ?? .unknown) : nil
+            if conflict != nil {
+                Self.conflictRetractions += 1
+                AnimLog.say("-> conflictRetract (arrival over a staged move)")
+            }
+            if let old = prior, flyUndoReturn(old: old, new: new, conflict: conflict) { return false }
             // ROUND 28: and the other direction - undoing a PICKUP sends the
             // cards back OUT of my hand onto the table. Tried second because the
             // two are mutually exclusive by construction (one undo moves cards
             // one way) and `flyUndoReturn` is the commoner shape.
-            if let old = prior, flyUndoRelease(old: old, new: new) { return false }
-            clearSweep(); return false
+            if let old = prior, flyUndoRelease(old: old, new: new, conflict: conflict) { return false }
+            clearSweep()
+            // Nothing to fly (no prior view, or a shape neither reverse knows):
+            // the retraction is a snap here too, so release the arrival now.
+            if conflict != nil { Task { await controller.finishConflictAdopt() } }
+            return false
         }
         // First appear with a delivered game: the open-replay (same event path).
         if prior == nil { AnimLog.say("-> openReplay"); replayLastMoveOnOpen(new); return true }
@@ -1930,6 +1990,12 @@ public struct MessageTableView: View {
         // does exactly this for a live placement; these two open/bout-end
         // teardowns were the ones still relying on clearPreHidden alone).
         var openedThisSeq = Set<String>()
+        // THE CONFLICT MODEL's record: every motion this sequence actually
+        // flies, group by group, so that if an arrival supersedes it mid-flight
+        // the arrival can REVERSE what had already been shown (reversalDebt).
+        // Only what genuinely flew is recorded - a step whose frames never
+        // resolved moved nothing and owes nothing.
+        var flownThisSeq: [[FlownMotion]] = []
         defer {
             BoardAnimator.sequenceDepth -= 1
             // ONLY the newest sequence may hand the veil and the counts back. A
@@ -1957,7 +2023,17 @@ public struct MessageTableView: View {
                 let owed = Self.sequenceTeardown(opened: openedThisSeq,
                                                  orphaned: orphanedOpens, isNewest: false)
                 orphanedOpens = owed.carry
-                AnimLog.say("stream#\(run) superseded by seq \(animSequenceToken) - teardown skipped, \(openedThisSeq.count) opens handed on")
+                // THE CONFLICT MODEL: hand what this sequence had already flown
+                // to the arrival that superseded it, so it can be reversed (red)
+                // before the arrival plays. Deposited only while an arrival is
+                // collecting - a supersede by a live move of my own is not a
+                // conflict, and a deposit nobody consumes must not sit going
+                // stale until some later arrival flies it back (see
+                // `reversalDebt`).
+                if reversalCollecting, !flownThisSeq.isEmpty {
+                    reversalDebt.append(contentsOf: flownThisSeq)
+                }
+                AnimLog.say("stream#\(run) superseded by seq \(animSequenceToken) - teardown skipped, \(openedThisSeq.count) opens handed on, \(flownThisSeq.count) flown groups \(reversalCollecting ? "deposited for reversal" : "dropped")")
             }
         }
         // The counts are ALREADY frozen to the pre-move board by the caller —
@@ -2122,6 +2198,10 @@ public struct MessageTableView: View {
                 AnimLog.say("stream#\(run) goods clear with the card: g\(roleShown?.goodMask ?? 0) -> g\(cleared.goodMask)")
                 syncRoles(to: cleared, in: view, animated: true)
             }
+            // What this step actually flies, captured out of the builder for
+            // the conflict record below - the builder's last successful answer
+            // is exactly the flight list the animator played.
+            var groupFlights: [Flight] = []
             await playStep { lastChance in
                 // One builder call per event, one flight list for the group: the
                 // animator runs a list in PARALLEL, so a two-card cover leaves
@@ -2134,6 +2214,7 @@ public struct MessageTableView: View {
                     else { return nil }
                     f.append(contentsOf: part)
                 }
+                groupFlights = f
                 AnimLog.say("stream#\(run) step \(ev.kind.map(String.init(describing:)) ?? "?")@\(ev.seat) n=\(group.count) flights=\(f.count) [\(f.map(\.id).joined(separator: ","))]")
                 // ROUND 22: WHERE each card is actually being flown, against the
                 // regions it could legitimately land in. "a deal animation go
@@ -2157,6 +2238,15 @@ public struct MessageTableView: View {
                 let onSweep = Set(f.compactMap { $0.card?.identity }).intersection(self.sweepUnplaced)
                 if !onSweep.isEmpty { self.sweepArriving.formUnion(onSweep) }
                 return f
+            }
+            // THE CONFLICT MODEL's record: this group's motions, now that they
+            // have flown. The dest kind is the verdict's side of the flight
+            // (see `conflictDest`), taken from the group's lead event - a
+            // group is one kernel move, so its cards share a destination kind.
+            if !groupFlights.isEmpty {
+                let dest = Self.conflictDest(of: ev.kind, seat: ev.seat,
+                                             mySeat: controller.mySeat)
+                flownThisSeq.append(groupFlights.map { FlownMotion(flight: $0, dest: dest) })
             }
             // ROUND 20: whatever this step just flew ONTO the pre-bout grid has
             // arrived - hand it to the grid to draw, in the same tick the ghost
@@ -2798,12 +2888,35 @@ public struct MessageTableView: View {
     /// it never fades out on the table and the card never teleports into the hand.
     /// Returns false when nothing came back to my hand (a non-return undo - undoing
     /// a pickup, or someone else's move), so the caller falls back to a plain snap.
-    private func flyUndoReturn(old: GameView, new: GameView) -> Bool {
+    /// `conflict` non-nil makes this the CONFLICT MODEL's retraction (an
+    /// arrival overriding my staged move) instead of a chosen undo: the ghosts
+    /// fly RED, cards the arriving chain itself vouches for do not fly at all
+    /// (the verdict filter - flying those home only for the adopt to put them
+    /// straight back is the web's clear-flicker), and when the flight lands the
+    /// latched arrival is released (`finishConflictAdopt`). The choreography is
+    /// otherwise the chosen undo's, deliberately: a retraction IS an undo, just
+    /// not one the player asked for - which is exactly what the red says.
+    private func flyUndoReturn(old: GameView, new: GameView,
+                               conflict: ConflictFacts? = nil) -> Bool {
         let oldHand = Set((old.me?.hand ?? []).map(\.identity))
         let returned = (new.me?.hand ?? []).filter { !oldHand.contains($0.identity) }
         guard !returned.isEmpty, handFrame != .zero else { return false }
         let ids = Set(returned.map(\.identity))
-        AnimLog.say("-> undoReturn [\(ids.sorted().joined(separator: ","))]")
+        // The verdict split. A chosen undo reverts everything (there is no
+        // arriving chain to defer to). The staged cards went ONTO THE TABLE, so
+        // the dest is `.table`; a CLEAR/KEEP card keeps its sweep-grid copy
+        // rendered where it stands and its hand copy veiled until the adopt
+        // publishes the arriving board - which shows it in the very place the
+        // grid was holding it, so the hand-off is invisible.
+        let flying = conflict.map { facts in
+            returned.filter {
+                Self.conflictVerdict(id: $0.identity, dest: .table, facts: facts) == .revert
+            }
+        } ?? returned
+        let flyIds = Set(flying.map(\.identity))
+        let isConflict = conflict != nil
+        AnimLog.say("-> undoReturn\(isConflict ? " (conflict, red)" : "") "
+            + "[\(ids.sorted().joined(separator: ","))] fly=[\(flyIds.sorted().joined(separator: ","))]")
         // Veil the returning cards in the hand AND defer their fan slots - the hand
         // opens for each only as its flight arrives (the mirror of the play's veil).
         animator.preHide(ids)
@@ -2813,6 +2926,9 @@ public struct MessageTableView: View {
         setSweep(old.battles)
         animSequenceToken += 1
         let mySeq = animSequenceToken
+        #if DEBUG
+        if isConflict { Self.redRevertFlights += flyIds.count }
+        #endif
         Task {
             BoardAnimator.sequenceDepth += 1
             defer {
@@ -2824,27 +2940,44 @@ public struct MessageTableView: View {
                     if !stuck.isEmpty { animator.reveal(stuck) }
                 }
             }
+            // A retraction may land on a staged animation still in the air (I
+            // played the card 300ms ago). The token bump above already stops
+            // that sequence at its next guard; this waits its current flight
+            // out, so the card visibly LANDS and then flies back - two moves in
+            // opposite directions, in order, never two sequences interleaved
+            // through one animator. Its deposit into the reversal ledger (if
+            // any) is discarded unconsumed, and correctly so: THIS flight is
+            // that motion's reversal.
+            if isConflict { await drainOtherSequences() }
             // A beat for the swept table and the (deferred) hand to publish frames.
             try? await Task.sleep(nanoseconds: 16_000_000)
-            // Make room for the returning cards (present cards slide apart),
-            // animated over the flight - the reverse of the play's gap-close.
-            withAnimation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime)) {
-                self.animator.openSlots(ids)
-            }
-            // Lift the table copies: snap them hidden (no fade) as the flight starts.
-            self.sweptFlownIds.formUnion(ids)
-            await playStep { lastChance in
-                let laid = self.laidOutHandNow(new)
-                var flights: [Flight] = []
-                for c in returned {
-                    guard let from = self.lastBattleCardFrames[c.identity]
-                            ?? self.lastBattleFrames.values.first else { continue }
-                    guard let to = self.handLandingSlot(c, laidOut: laid)
-                            ?? (lastChance ? self.handApproxLanding() : nil) else { return nil }
-                    flights.append(Flight(id: "undo-\(c.identity)", card: c, from: from, to: to))
+            if !flying.isEmpty {
+                // Make room for the returning cards (present cards slide apart),
+                // animated over the flight - the reverse of the play's gap-close.
+                withAnimation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime)) {
+                    self.animator.openSlots(flyIds)
                 }
-                return flights.isEmpty ? (lastChance ? [] : nil) : flights
+                // Lift the table copies: snap them hidden (no fade) as the flight starts.
+                self.sweptFlownIds.formUnion(flyIds)
+                await playStep { lastChance in
+                    let laid = self.laidOutHandNow(new)
+                    var flights: [Flight] = []
+                    for c in flying {
+                        guard let from = self.lastBattleCardFrames[c.identity]
+                                ?? self.lastBattleFrames.values.first else { continue }
+                        guard let to = self.handLandingSlot(c, laidOut: laid)
+                                ?? (lastChance ? self.handApproxLanding() : nil) else { return nil }
+                        flights.append(Flight(id: "undo-\(c.identity)", card: c, from: from, to: to,
+                                              revert: isConflict))
+                    }
+                    return flights.isEmpty ? (lastChance ? [] : nil) : flights
+                }
             }
+            // The reversal has landed: the latched arrival may take the board.
+            // Ahead of the defer above on purpose, so the arriving view is
+            // published before the sweep drops and the veil clears - no paint
+            // between them shows the base board with a held card nowhere at all.
+            if isConflict { await controller.finishConflictAdopt() }
         }
         return true
     }
@@ -2876,11 +3009,25 @@ public struct MessageTableView: View {
     ///
     /// Returns false when nothing left my hand for the table, so an undo of some
     /// other shape still falls through to the snap.
-    private func flyUndoRelease(old: GameView, new: GameView) -> Bool {
+    /// `conflict` as in `flyUndoReturn`: an arrival retracting my staged PICKUP
+    /// flies the cards back out of my hand in RED, verdict-filtered - a card
+    /// the arriving chain's own replay moves (the arrival is my own sent pickup
+    /// coming back) stays veiled instead of flying, because the forward replay
+    /// owns its motion - and releases the latched arrival when it lands. The
+    /// picked-up cards were staged INTO MY HAND, so the verdict's dest is
+    /// `.myHand`.
+    private func flyUndoRelease(old: GameView, new: GameView,
+                                conflict: ConflictFacts? = nil) -> Bool {
         let newHand = Set((new.me?.hand ?? []).map(\.identity))
         let left = (old.me?.hand ?? []).filter { !newHand.contains($0.identity) }
-        let targets = Self.undoReleaseTargets(left, in: new.battles)
-        guard !targets.isEmpty, handFrame != .zero else { return false }
+        let allTargets = Self.undoReleaseTargets(left, in: new.battles)
+        guard !allTargets.isEmpty, handFrame != .zero else { return false }
+        let isConflict = conflict != nil
+        let targets = conflict.map { facts in
+            allTargets.filter {
+                Self.conflictVerdict(id: $0.0.identity, dest: .myHand, facts: facts) == .revert
+            }
+        } ?? allTargets
         // The old hand's own layout, read BEFORE the veil (see above). Nothing is
         // deferred in it: the board this undo is leaving was settled.
         let wasLaidOut = Self.laidOut(hand: old.me?.hand ?? [], deferred: [],
@@ -2889,14 +3036,23 @@ public struct MessageTableView: View {
         for (card, _) in targets {
             if let r = handLandingSlot(card, laidOut: wasLaidOut) { sources[card.identity] = r }
         }
-        guard !sources.isEmpty else { return false }
-        let ids = Set(targets.map { $0.0.identity })
-        AnimLog.say("-> undoRelease [\(ids.sorted().joined(separator: ","))]")
+        guard isConflict || !sources.isEmpty else { return false }
+        // ALL the leaving cards' table copies are veiled - including the
+        // held-back CLEAR/KEEP ones, whose motion belongs to the arriving
+        // replay; revealing those on the base board for the retraction's length
+        // would be the very snap this model exists to kill.
+        let ids = Set(allTargets.map { $0.0.identity })
+        let flyIds = Set(targets.map { $0.0.identity })
+        AnimLog.say("-> undoRelease\(isConflict ? " (conflict, red)" : "") "
+            + "[\(ids.sorted().joined(separator: ","))] fly=[\(flyIds.sorted().joined(separator: ","))]")
         // Hide the table copies NOW, in the same synchronous breath as the view
         // change that put them there - the ghost is the only copy in motion.
         animator.preHide(ids)
         animSequenceToken += 1
         let mySeq = animSequenceToken
+        #if DEBUG
+        if isConflict { Self.redRevertFlights += flyIds.count }
+        #endif
         Task {
             BoardAnimator.sequenceDepth += 1
             defer {
@@ -2907,27 +3063,88 @@ public struct MessageTableView: View {
                     if !stuck.isEmpty { animator.reveal(stuck) }
                 }
             }
+            // Same drain as `flyUndoReturn`: a staged pickup's sweep may still
+            // be carrying cards into my hand when the arrival lands.
+            if isConflict { await drainOtherSequences() }
             // A beat for the restored table to lay out and publish its rects.
             try? await Task.sleep(nanoseconds: 16_000_000)
-            await playStep { lastChance in
-                var flights: [Flight] = []
-                for (card, idx) in targets {
-                    guard let from = sources[card.identity] else { continue }
-                    guard let to = self.battleFrames[idx] else {
-                        if lastChance { continue }
-                        return nil
+            if !targets.isEmpty {
+                await playStep { lastChance in
+                    var flights: [Flight] = []
+                    for (card, idx) in targets {
+                        guard let from = sources[card.identity] else { continue }
+                        guard let to = self.battleFrames[idx] else {
+                            if lastChance { continue }
+                            return nil
+                        }
+                        // A card going back onto a battle it DEFENDED lands tilted,
+                        // exactly as it was lying before the pickup lifted it.
+                        let covering = new.battles[idx].defense == card
+                        flights.append(Flight(id: "undorelease-\(card.identity)", card: card,
+                                              from: from, to: to,
+                                              angle: covering ? FBattleGrid.coverAngle : 0,
+                                              revert: isConflict))
                     }
-                    // A card going back onto a battle it DEFENDED lands tilted,
-                    // exactly as it was lying before the pickup lifted it.
-                    let covering = new.battles[idx].defense == card
-                    flights.append(Flight(id: "undorelease-\(card.identity)", card: card,
-                                          from: from, to: to,
-                                          angle: covering ? FBattleGrid.coverAngle : 0))
+                    return flights.isEmpty ? (lastChance ? [] : nil) : flights
                 }
-                return flights.isEmpty ? (lastChance ? [] : nil) : flights
             }
+            // See flyUndoReturn: ahead of the defer, so the arriving view is up
+            // before the veil clears.
+            if isConflict { await controller.finishConflictAdopt() }
         }
         return true
+    }
+
+    /// Wait (bounded) for every OTHER animated sequence to finish the flight it
+    /// already has in the air and exit. The caller has claimed
+    /// `animSequenceToken` first, so the superseded sequence stops at its next
+    /// guard; what this waits out is the one step that was mid-flight when the
+    /// claim landed - a card is never cut down in the air, it lands and is then
+    /// dealt with (reversed, kept, or handed to the arriving replay). `floor`
+    /// is how much of `sequenceDepth` is the caller's own. The deadline covers
+    /// the longest single beat a sequence can be inside (the bout-end hold plus
+    /// a flight) with slack; on timeout we proceed anyway, which is today's
+    /// overlap behaviour and strictly no worse.
+    private func drainOtherSequences(floor: Int = 1) async {
+        let deadline = Date().addingTimeInterval(boutEndHold + flightTime * 2 + 1.0)
+        while BoardAnimator.sequenceDepth > floor, Date() < deadline {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+    }
+
+    /// THE CONFLICT MODEL's collection half for an ARRIVAL: stop whatever
+    /// sequence is animating, wait its in-air step out, and take whatever it
+    /// had already flown as the debt to reverse. `reversalCollecting` is up for
+    /// exactly this window so the superseded teardown knows its motions have a
+    /// consumer (see `reversalDebt`).
+    private func drainSupersededForReversal() async -> [[FlownMotion]] {
+        reversalCollecting = true
+        animSequenceToken += 1
+        await drainOtherSequences(floor: 0)
+        reversalCollecting = false
+        let debt = reversalDebt
+        reversalDebt = []
+        return debt
+    }
+
+    /// Play the red reversal for a superseded sequence's collected motions:
+    /// verdict-filter and flip them (`reversalSteps` - the pure half), then fly
+    /// the result, last motion first, each group as one parallel step. The
+    /// ghosts fly over whatever the board shows; a REVERT card is by definition
+    /// one the arriving board does not hold at its destination, so there is no
+    /// model copy to veil - the ghost lifts from where the card landed and
+    /// vanishes into where it came from, red the whole way.
+    private func playConflictReversal(_ debt: [[FlownMotion]], facts: ConflictFacts) async {
+        let steps = Self.reversalSteps(debt: debt, facts: facts)
+        guard !steps.isEmpty else { return }
+        Self.redRevertFlights += steps.reduce(0) { $0 + $1.count }
+        AnimLog.say("conflict reversal: \(steps.count) step(s) "
+            + "red=[\(steps.flatMap { $0 }.map(\.id).sorted().joined(separator: ","))]")
+        FlightRecorder.note("conflict-reverse", "\(steps.count) steps, "
+            + "\(steps.reduce(0) { $0 + $1.count }) flights")
+        BoardAnimator.sequenceDepth += 1
+        defer { BoardAnimator.sequenceDepth -= 1 }
+        await animator.play(steps)
     }
 
     /// Which battle each card leaving my hand is going back to, as indices into
@@ -3608,7 +3825,33 @@ public struct MessageTableView: View {
         // The SAME animator the live bout-end uses - one path, the kernel's events.
         // `openReplay: true` opens the fan for a COLD first open so each drawn card
         // flies to its correct slot instead of bunching.
-        Task { await runEventStream(events, finalView: view, openReplay: true) }
+        //
+        // THE CONFLICT MODEL (1.0(28)): an arrival landing mid-animation of the
+        // previous one must not cut to its own footage - it REVERSES what was
+        // in flight first (red, verdict-filtered - see ConflictModel.swift) and
+        // only then plays. The pipeline is claimed by `arrivalEpoch` the way a
+        // sequence claims `animSequenceToken`: a burst of arrivals each bump it
+        // synchronously, so a superseded pipeline hands its collected debt on
+        // and never starts its forward replay - "undo whatever is animating,
+        // then play ONLY the last", explicitly not a queue.
+        arrivalEpoch += 1
+        let myEpoch = arrivalEpoch
+        // The verdict inputs, captured synchronously with the seed above: what
+        // this arrival's stream moves, and the board it opens on. Reading them
+        // inside the Task would read whatever a NEWER arrival had published.
+        let facts = ConflictFacts(events: events, prior: controller.openReplayPriorState)
+        Task {
+            let debt = await drainSupersededForReversal()
+            guard myEpoch == arrivalEpoch else {
+                // A newer arrival owns the pipeline: what we collected is its
+                // to reverse, ahead of whatever it collects itself.
+                reversalDebt.insert(contentsOf: debt, at: 0)
+                return
+            }
+            await playConflictReversal(debt, facts: facts)
+            guard myEpoch == arrivalEpoch else { return }
+            await runEventStream(events, finalView: view, openReplay: true)
+        }
     }
 
     /// notes 33/34: FHandFan already delivers the live boardSpace point on
