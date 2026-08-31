@@ -89,7 +89,8 @@ final class SendRebaseTests: XCTestCase {
     /// Built two chains deep by hand, because the reported shape needs a board
     /// that has already moved PAST the chain it is handed: an attack (chain A),
     /// a cover on top of it (chain B), and then the attacker staging a good on
-    /// B. Handing that board chain A is the send that must be refused.
+    /// B and SEALING it. Handing that board chain A - bytes it never sealed -
+    /// is the send that must be refused.
     func testARefusedSendLeavesTheStagedMoveOnTheBoard() async throws {
         let k = MessageKernel.shared
         var setup: (a: Data, b: Data, attacker: Int)?
@@ -123,12 +124,16 @@ final class SendRebaseTests: XCTestCase {
         let good = try XCTUnwrap(c.legal.first { $0.type == .good },
                                  "the table is covered, so the attacker may say good")
         await c.apply(good)
+        // SEAL it, which is what gives this controller an opinion about which
+        // bytes are its own - the guard abstains until it has made a chain,
+        // because a reload can legitimately hand it one it did not build.
+        _ = try await c.stagedPayload()
         let staged = c.pending
         let shown = try XCTUnwrap(c.view)
         XCTAssertFalse(staged.isEmpty, "a move is staged")
 
         c.markSending()
-        await c.markSent(payload: chainA)     // strictly worse than chainB - refused
+        await c.markSent(payload: chainA)     // not the bytes I sealed - refused
 
         XCTAssertEqual(c.basePayload, chainB, "the board stays on the chain it is playing")
         XCTAssertEqual(c.pending, staged, "the staged move must survive a refusal")
@@ -202,5 +207,132 @@ final class SendRebaseTests: XCTestCase {
         await c.apply(cover)
         XCTAssertFalse(c.sending)
         XCTAssertTrue(c.canSend)
+    }
+
+    /// THE FALSE POSITIVE, pinned. 1.0(24) asked Rule P whether the sent chain
+    /// outranked the base and refused when it did not - and a sealed CHILD can
+    /// rank below its own parent. `msg_rule_p`'s comment says so outright: the
+    /// atom fold supersedes pending goods, so "parent + good + cover" can seal
+    /// to a LOWER turn than the parent, and only rule 4's parent-digest link
+    /// orders such a pair. Caught on the arrival rig playing an ordinary
+    /// pickup: base=[t6 r1] sent=[t5 r1], rank=-1, refused - after which the
+    /// board kept its staged move, never released the withheld settlement, and
+    /// sat stuck mid-send.
+    ///
+    /// So: whatever a turn seals to, THE CHAIN THIS CONTROLLER SEALED IS THE
+    /// ONE IT IS SENDING. Swept over many deals and whatever move each offers,
+    /// because the shapes that fold atoms are exactly the ones a hand-built
+    /// fixture is least likely to contain.
+    func testEverySealedChainIsAcceptedByItsOwnSend() async throws {
+        let k = MessageKernel.shared
+        var checked = 0
+        for salt in UInt8(1)...UInt8(40) {
+            try await k.newGame(seed: Data(repeating: salt, count: 32), players: 2)
+            var opener = -1
+            for s in 0..<2 where (await k.residentLegal(seat: s)).contains(where: { $0.type == .attack }) {
+                opener = s; break
+            }
+            guard opener >= 0 else { continue }
+            // Walk a few legal moves onto the kernel so the chain is mid-game,
+            // then hand the next one to a controller and let it seal and send.
+            var chain: Data?
+            var actor = opener
+            for _ in 0..<6 {
+                let legal = await k.residentLegal(seat: actor)
+                guard let m = legal.first(where: { $0.type != .wait }) else {
+                    actor = 1 - actor; continue
+                }
+                try await k.apply(seat: actor, move: m)
+                chain = try? await k.seal(phase: 2, lastActorSeat: actor, gameId: 0xC0DE,
+                                          parent8: zero8, joins: joins)
+                actor = 1 - actor
+            }
+            guard let parentPayload = chain,
+                  let env = try? await MessageEnvelope.decode(payload: parentPayload, viewer: -1)
+            else { continue }
+            for seat in 0..<2 {
+                let c = MessageTurnController(parentPayload: parentPayload, parent: env, mySeat: seat)
+                await c.begin()
+                guard let m = c.legal.first(where: { $0.type != .wait && $0.type != .pickup })
+                else { continue }
+                await c.apply(m)
+                guard c.pending.count == 1, let sealed = try? await c.stagedPayload() else { continue }
+                c.markSending()
+                await c.markSent(payload: sealed)
+                XCTAssertEqual(c.basePayload, sealed,
+                               "salt \(salt) seat \(seat) playing \(m.type): a controller must "
+                               + "always adopt the chain it sealed, whatever it seals to")
+                XCTAssertTrue(c.pending.isEmpty, "…and the move is no longer staged")
+                XCTAssertFalse(c.sending, "…and the board is playable again")
+                checked += 1
+            }
+        }
+        XCTAssertGreaterThan(checked, 20, "the sweep must actually have sent something")
+    }
+
+    /// THE FOLD ITSELF, built on purpose. `msg_rule_p`'s comment names the
+    /// shape: "TWO pending goods are two atoms, and the cover that follows them
+    /// supersedes both - the child seals to a turn LOWER than its parent's".
+    /// Three seats, an attack left uncovered, two goods, then the defender's
+    /// cover. That cover's bubble is a legitimate send whose chain ranks BELOW
+    /// the chain it was built on, and the board must still adopt it.
+    ///
+    /// The random sweep above does not reach this - it plays whatever comes
+    /// first and rarely leaves two goods pending - which is exactly why 1.0(24)
+    /// shipped a guard that broke on it.
+    func testACoverThatSupersedesTwoPendingGoodsIsStillMyOwnSend() async throws {
+        let k = MessageKernel.shared
+        let names3 = (0..<3).map { MessageJoin(seat: $0, name: "P\($0)") }
+        var built: (parent: Data, defender: Int)?
+        for salt in UInt8(1)...UInt8(80) {
+            try await k.newGame(seed: Data(repeating: salt, count: 32), players: 3)
+            var atk = -1
+            for s in 0..<3 where (await k.residentLegal(seat: s)).contains(where: { $0.type == .attack }) {
+                atk = s; break
+            }
+            guard atk >= 0 else { continue }
+            let opening = await k.residentLegal(seat: atk)
+            guard let a = opening.first(where: { $0.type == .attack }) else { continue }
+            try await k.apply(seat: atk, move: a)
+            let def = (atk + 1) % 3, third = (atk + 2) % 3
+            // Two goods over an UNCOVERED table: each is a pending atom, neither
+            // closes the bout.
+            var goods = 0
+            for s in [third, atk] {
+                let legal = await k.residentLegal(seat: s)
+                if let g = legal.first(where: { $0.type == .good }) {
+                    try await k.apply(seat: s, move: g); goods += 1
+                }
+            }
+            guard goods == 2 else { continue }
+            guard let parent = try? await k.seal(phase: 2, lastActorSeat: atk, gameId: 0xF01D,
+                                                 parent8: zero8, joins: names3) else { continue }
+            let canCover = await k.residentLegal(seat: def)
+            guard canCover.contains(where: { $0.type == .cover }) else { continue }
+            built = (parent, def)
+            break
+        }
+        let (parentPayload, defender) = try XCTUnwrap(built,
+            "no 3p deal in 80 gave attack + two pending goods + a coverable table")
+
+        let env = try await MessageEnvelope.decode(payload: parentPayload, viewer: -1)
+        let c = MessageTurnController(parentPayload: parentPayload, parent: env, mySeat: defender)
+        await c.begin()
+        let cover = try XCTUnwrap(c.legal.first { $0.type == .cover }, "the defender covers")
+        await c.apply(cover)
+        let sealed = try await c.stagedPayload()
+
+        // The fold, measured rather than assumed: this child really does rank
+        // at or below its own parent, which is what made Rule P the wrong tool.
+        let parentEnv = try await MessageKernel.shared.peek(payload: parentPayload)
+        let sentEnv = try await MessageKernel.shared.peek(payload: sealed)
+        XCTAssertLessThanOrEqual(sentEnv.turn, parentEnv.turn,
+            "the cover superseded the pending goods, so its turn did not grow")
+
+        c.markSending()
+        await c.markSent(payload: sealed)
+        XCTAssertEqual(c.basePayload, sealed, "my own send must be adopted regardless")
+        XCTAssertTrue(c.pending.isEmpty)
+        XCTAssertFalse(c.sending, "…and the board is not left stuck mid-send")
     }
 }

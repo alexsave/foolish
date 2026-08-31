@@ -544,6 +544,7 @@ private struct GameSurface: View {
             // open now (owner: "just keep it collapsed so they can keep
             // playing"), so this signal is the only thing left that does it.
             .onChange(of: sentToken) { _ in
+                AnimLog.say("surface sent token=\(sentToken) bytes=\(sentPayload?.count ?? -1)")
                 surfaceStaged = false   // round-9: the staged bubble is sent
                 // SYNCHRONOUSLY, in this same SwiftUI transaction: the Undo pill
                 // goes now, not after a Task hop and a decode (owner: "should

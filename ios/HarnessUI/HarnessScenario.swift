@@ -466,11 +466,24 @@ extension HarnessModel {
     /// stage lands whenever the move's own animation settles.
     private func autoSendWhenStaged() async {
         guard ProcessInfo.processInfo.environment["HARNESS_AUTOSEND"] != nil else { return }
-        let deadline = Date().addingTimeInterval(12)
-        while Date() < deadline, stagedPayloadBytes == nil {
+        // Wait for a NEW stage, not just for "something staged". The warm-up
+        // leaves a bubble in the input field from an earlier seat, so a poll for
+        // non-nil returned instantly and Send delivered THAT - a chain from
+        // another player, which `markSent` then rightly refused as bytes this
+        // board never sealed ("markSent REFUSED - not my bytes. mine=[t5 r1
+        // actor0] sent=[t3 r0 actor1]"). The guard was working; the rig was
+        // pressing Send on the wrong bubble.
+        //
+        // Generous, because the auto-player ahead of this one legitimately
+        // waits: for the arriving board to publish a menu at all, and then for
+        // the round-16 pickup hold to lapse - up to fifteen seconds of doing
+        // exactly what a player does.
+        let before = stagedPayloadBytes
+        let deadline = Date().addingTimeInterval(45)
+        while Date() < deadline, stagedPayloadBytes == before {
             try? await Task.sleep(nanoseconds: 50_000_000)
         }
-        guard stagedPayloadBytes != nil else {
+        guard stagedPayloadBytes != nil, stagedPayloadBytes != before else {
             AnimLog.say("scenario: nothing staged to send - rig bug")
             return
         }
@@ -479,6 +492,10 @@ extension HarnessModel {
         try? await Task.sleep(nanoseconds: 600_000_000)
         AnimLog.say("scenario: pressing Send on the staged move")
         deliver()
+        // Let the send land before the oracle reads the board: `markSent`
+        // decodes the sent bytes, rebases, and releases any withheld
+        // settlement, and that is the very transition being measured.
+        try? await Task.sleep(nanoseconds: 2_500_000_000)
     }
 
     private func arrivalOnOpenBoard(players n: Int) async {

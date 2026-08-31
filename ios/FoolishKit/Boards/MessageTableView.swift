@@ -556,7 +556,7 @@ public struct MessageTableView: View {
         // unreachable. That is the sequence both 1.0(23) reports describe.
         .task(id: controller.arrivalTick) {
             guard controller.arrivalTick > 0 else { return }   // the mount case, handled above
-            await autoPlayIfAsked()
+            await autoPlayIfAsked(waitForBoard: true)
         }
         #endif
         // 1.0(4): the left Settings/Help squares present these.
@@ -1116,11 +1116,31 @@ public struct MessageTableView: View {
     /// never fires again, and the rig could stage a move only on the very first
     /// board it ever mounted. That made "somebody moves, then I reply and send"
     /// unreachable, which is exactly the sequence both 1.0(23) reports describe.
-    private func autoPlayIfAsked() async {
-            let devAutoMove = FileManager.default
+    /// `waitForBoard` polls until this board actually has a move to make.
+    /// `adopt` bumps `arrivalTick` BEFORE it awaits `begin()`, so the task keyed
+    /// on that tick runs while the controller is between chains - published
+    /// menu still empty - and a single read there sees nothing to play. The
+    /// mount call does not wait: a board that opens with no move for me is the
+    /// ordinary "your opponent's turn" case, and spinning there would race the
+    /// arrival's own auto-play for the same move.
+    private func autoPlayIfAsked(waitForBoard: Bool = false) async {
+        let devAutoMove = FileManager.default
             .containerURL(forSecurityApplicationGroupIdentifier: "group.cards.foolish.msg")
             .map { FileManager.default.fileExists(atPath: $0.appendingPathComponent("dev.automove").path) }
             ?? false
+        let asked = ProcessInfo.processInfo.environment["HARNESS_AUTOMOVE"] != nil || devAutoMove
+        AnimLog.say("automove enter asked=\(asked) tick=\(controller.arrivalTick) "
+            + "ready=\(controller.ready) hold=\(controller.pickupHold) legal=\(controller.legal.count) "
+            + "human=\(CardPlay.humanMoves(battles: controller.view?.battles ?? [], legal: controller.legal).count)")
+        if asked, waitForBoard {
+            let settle = Date().addingTimeInterval(20)
+            while Date() < settle,
+                  CardPlay.humanMoves(battles: controller.view?.battles ?? [],
+                                      legal: controller.legal).isEmpty {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            AnimLog.say("automove board settled human=\(CardPlay.humanMoves(battles: controller.view?.battles ?? [], legal: controller.legal).count)")
+        }
         // WAIT OUT THE PICKUP HOLD rather than working around it. While the
         // round-16 hold stands the Take pill is not on screen (FActionBar's
         // `canPickup`) and `apply` refuses the move, so an auto-run that picked
@@ -1129,13 +1149,13 @@ public struct MessageTableView: View {
         // the move instead would be worse: a pickup after somebody attacks me is
         // one of the commonest turns in the game, and a rig that can never play
         // it can never test it. So do what a player does - wait, then take.
-        if ProcessInfo.processInfo.environment["HARNESS_AUTOMOVE"] != nil || devAutoMove {
+        if asked {
             let waitUntil = Date().addingTimeInterval(20)
             while controller.pickupHold > 0, Date() < waitUntil {
                 try? await Task.sleep(nanoseconds: 250_000_000)
             }
         }
-        if ProcessInfo.processInfo.environment["HARNESS_AUTOMOVE"] != nil || devAutoMove,
+        if asked,
            let view = controller.view,
            let m = CardPlay.humanMoves(battles: view.battles, legal: controller.legal).first {
             AnimLog.say("automove: playing \(m.type) (hold=\(controller.pickupHold))")

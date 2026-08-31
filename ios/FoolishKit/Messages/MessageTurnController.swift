@@ -890,17 +890,41 @@ public final class MessageTurnController: ObservableObject {
         // `base` moves back a bubble, `baseAtomsBefore` with it, and the board
         // then animates the previous bubble's last move over the previous
         // bubble's board. The bytes that actually WENT OUT were the right ones,
-        // which is why reopening put it right.
+        // which is why reopening put it right. The way in is
+        // `didStartSending`'s `payload(of: message) ?? pendingStage?.payload`
+        // with an unserialised `stage()` behind it (fixed in
+        // MessagesViewController); this is the backstop.
         //
-        // The path in is `didStartSending`'s `payload(of: message) ??
-        // pendingStage?.payload`: an unserialised `stage()` could leave
-        // `pendingStage` describing an older run than the bubble in the input
-        // field (fixed in MessagesViewController). This is the backstop, and it
-        // is the shape that cannot rot - Rule P is the kernel's own ordering, so
-        // a chain this board has already moved past can never be adopted as the
-        // one it just sent. Only STRICTLY worse is refused: an undo-to-empty
-        // re-seal carries nothing new and ties, and must still rebase (it is a
-        // real bubble with a real digest that the next move must name as parent).
+        // THE TEST IS "DID I SEAL THESE BYTES", NOT RULE P.
+        //
+        // Round 22 first asked Rule P whether the sent chain outranked the base
+        // - and that was wrong, because Rule P cannot answer this question.
+        // `msg_rule_p`'s own comment says so: a child can seal to a turn LOWER
+        // than its parent's (the atom fold supersedes pending goods), and only
+        // rule 4's parent-digest link can order such a pair - a link it also
+        // documents as blind to descent at two removes. Measured on the rig,
+        // 1.0(24) refused an ordinary pickup: base=[t6 r1] sent=[t5 r1],
+        // rank=-1. The board then kept its staged move forever, never released
+        // the withheld settlement, and `sending` stood - a board stuck mid-send.
+        // A guard against a rare wrong rebase became a common broken one.
+        //
+        // The exact answer needs no ordering. The chain being sent is the chain
+        // THIS controller sealed; `stagedPayload` is the only thing that makes
+        // one, and it keeps the bytes. Anything else is a payload we did not
+        // build, and the conservative move is to leave the board alone. Nil
+        // `lastSealed` means this controller has sealed nothing yet and has no
+        // opinion - a reload can legitimately hand it a chain it did not make.
+        if let sent = payload, let mine = lastSealed, sent != mine {
+            FlightRecorder.note("send-foreign", "refused a rebase onto bytes I did not seal")
+            if AnimLog.on {
+                let ce = try? await kernel.peek(payload: mine)
+                let se = try? await kernel.peek(payload: sent)
+                AnimLog.say("markSent REFUSED - not my bytes. "
+                    + "mine=[t\(ce?.turn ?? -1) r\(ce?.round ?? -1) actor\(ce?.lastActorSeat ?? -1)] "
+                    + "sent=[t\(se?.turn ?? -1) r\(se?.round ?? -1) actor\(se?.lastActorSeat ?? -1)]")
+            }
+            return
+        }
         // AND A REFUSAL CHANGES NOTHING. Not the base, and not `pending`
         // either: the staged moves are what the board is DRAWN from, so
         // dropping them while declining to rebase would walk the board back by
@@ -909,18 +933,11 @@ public final class MessageTurnController: ObservableObject {
         // or re-sent while we do not know what went out. Playing on clears it
         // (`apply`), as does an arrival.
         //
-        // The alternative - re-deriving the sent bytes from base + pending -
+        // The other alternative - re-deriving the sent bytes from base+pending -
         // was rejected: a re-seal stamps a fresh send clock, so it would be a
         // DIFFERENT chain with a different digest from the one the thread
         // actually received, and the next move would name a parent nobody has.
-        // The host's message is the only authority on what was sent; when it
-        // disagrees with the board, the board's job is to stand still.
-        if let sent = payload, let current = basePayload,
-           let rank = try? await kernel.preferred(current, sent), rank < 0 {
-            FlightRecorder.note("send-backwards", "refused a rebase onto an older chain")
-            AnimLog.say("markSent refused - the sent chain loses Rule P to the one on screen")
-            return
-        }
+
         // READ THE NEW CHAIN FIRST, MUTATE AFTERWARDS - and mutate all of it
         // without an await in between.
         //
@@ -1057,15 +1074,21 @@ public final class MessageTurnController: ObservableObject {
     /// moves and seals in one uninterruptible actor call, so the game it
     /// describes is the game those moves were made on by construction. Phase is
     /// decided in there, after the replay, for the same reason.
+    /// The bytes this controller most recently SEALED - the only chain it can
+    /// vouch for as "the one I am sending". See `markSent`.
+    private var lastSealed: Data?
+
     public func stagedPayload(sentAt: Int = MessageKernel.clockNow()) async throws -> Data {
         FlightRecorder.note("seal", "\(pending.count) staged")
         do {
-            return try await kernel.resealFromBase(sealBase, replaying: pending,
+            let sealed = try await kernel.resealFromBase(sealBase, replaying: pending,
                                                    seat: mySeat,
                                                    gameId: gameId,
                                                    parent8: parent8,
                                                    joins: sealJoins,
                                                    sentAt: sentAt)
+            lastSealed = sealed
+            return sealed
         } catch {
             // The callers stage with `try?`, so a refusal is SILENT - which is
             // the right behaviour (staging nothing beats staging a bubble that
