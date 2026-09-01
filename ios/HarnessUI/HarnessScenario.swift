@@ -757,6 +757,30 @@ extension HarnessModel {
         // the burst cases below are meant to interrupt each other.
         if !cold { await BoardAnimator.waitForSettle() }
 
+        // ROUND 30: pose the arrival against the COMPACT DRAWER, not the
+        // expanded board. Every arrival run so far watched a full-height board,
+        // and the owner's 1.0(29) geometry report is from the other one: "in
+        // the collapsed view ... the animation seemed to go to the table center
+        // rather than their hand". The drawer is where most play actually
+        // happens, and it is a different set of frames - a shorter board moves
+        // every landmark a flight aims at.
+        //
+        // AFTER the settle, so the collapse cannot be what the first replay
+        // races against; the arrival below then lands on a board that has been
+        // compact and still for a beat, which is the owner's case exactly.
+        if ProcessInfo.processInfo.environment["HARNESS_ARRIVE_COMPACT"] == "1" {
+            AnimLog.say("scenario: collapsing to the compact drawer before the arrival")
+            collapseForReview()
+            // HARNESS_ARRIVE_COMPACT_MS: how long after the collapse the
+            // arrival lands. The default waits the tween out; a small value
+            // poses the case the owner actually hit - a sequence starting
+            // WHILE the box is still easing down from the expanded height,
+            // which is when a flight aimed once is aimed at a board that no
+            // longer exists.
+            let ms = Int(ProcessInfo.processInfo.environment["HARNESS_ARRIVE_COMPACT_MS"] ?? "") ?? 1500
+            try? await Task.sleep(nanoseconds: UInt64(max(ms, 0)) * 1_000_000)
+        }
+
         // …now the other seats play, and each ARRIVES. `HARNESS_ARRIVE_N` (with
         // `HARNESS_ARRIVE_GAP` in milliseconds) is the case the owner reports:
         // bubbles landing one after another on a board that is still animating

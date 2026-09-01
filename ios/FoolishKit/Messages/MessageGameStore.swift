@@ -423,9 +423,14 @@ public final class MessageGameStore {
         allHandOrders()[gameId]?.order ?? []
     }
 
-    /// Persist `order` as `gameId`'s arrangement. Empty clears the row (an
-    /// arrangement identical to kernel order is still stored as given — the
-    /// caller only reports real reorders).
+    /// Persist `order` as `gameId`'s arrangement. Empty clears the row.
+    ///
+    /// ROUND 30: the fan reports GROWTH as well as reorders (FHandFan.remembering),
+    /// so a row exists from the first hand drawn rather than only once somebody
+    /// has dragged a card. That is the point - an arrangement nobody has
+    /// rearranged still has to be an arrangement, or the board falls back to
+    /// whatever array order it was handed, and two derivations of the same game
+    /// do not agree about that.
     public func setHandOrder(_ order: [String], gameId: String) {
         var map = allHandOrders()
         if order.isEmpty { guard map.removeValue(forKey: gameId) != nil else { return } }

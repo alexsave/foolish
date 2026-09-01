@@ -179,6 +179,7 @@ public struct MessageTableView: View {
     @State private var deckFrame: CGRect = .zero
     @State private var handCardFrames: [String: CGRect] = [:]
     @State private var seatFrames: [Int: CGRect] = [:]
+
     // Displayed counts LAG the game state during a bout-end sequence: a badge/deck/
     // discard count holds its old value until that card's flight lands, then bumps
     // (so a hand count never jumps before the deck→player draw animation plays).
@@ -2890,6 +2891,20 @@ public struct MessageTableView: View {
 
     private func playStep(_ build: (_ lastChance: Bool) -> [Flight]?) async {
         for i in 0..<26 {
+            // ROUND 30: never AIM at a board that is still moving under the
+            // collapse tween - see `CollapseTween.isTweening` for the whole
+            // finding and the arithmetic. Deliberately inside the existing poll
+            // rather than a sleep of its own: this is the same "not ready yet,
+            // ask again" every builder below already answers with nil, and it
+            // inherits the same bound - `lastChance` still fires on the final
+            // pass, so a tween that never ends degrades to today's behaviour
+            // rather than swallowing the animation. A board at rest never
+            // enters this branch at all, so nothing that was working pays for
+            // it.
+            if CollapseTween.isTweening && i < 25 {
+                try? await Task.sleep(nanoseconds: 45_000_000)
+                continue
+            }
             // Round-7 #1: the final poll passes `lastChance` so a builder that
             // still can't resolve an exact landing frame flies to an APPROXIMATE
             // one instead of returning nil forever, which is what leaves the card

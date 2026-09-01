@@ -133,8 +133,13 @@ public struct FHandFan: View {
     @State private var dragMoved = false
     /// note 5 (hand reordering): the local player's cosmetic display order —
     /// card identities, reconciled against `cards` every body evaluation via
-    /// `displayCards`. This is PURELY a UI convenience (the kernel hand order
-    /// never changes). Round-8 #4: seeded from `initialOrder` at view creation
+    /// `displayCards`. This is PURELY a UI convenience, but it is no longer
+    /// merely a convenience: it is now the ONLY thing that decides where a card
+    /// sits. It used to rest on "the kernel hand order never changes", which
+    /// round 30 found to be false for any board rendering a replay-derived
+    /// snapshot - see `remembering` for the whole finding. Grown from every
+    /// hand this fan draws; reordered only by a drag.
+    /// Round-8 #4: seeded from `initialOrder` at view creation
     /// and reported through `onOrderChanged` on every splice, so a caller can
     /// persist it per game (the message board does, via MessageGameStore) —
     /// a board reload swaps in a fresh view whose seed restores the
@@ -425,6 +430,42 @@ public struct FHandFan: View {
         return result
     }
 
+    /// THE LOCAL ARRANGEMENT AFTER SEEING `cards` — grow-only, and the whole
+    /// answer to "what decides where my cards sit".
+    ///
+    /// Every identity already remembered keeps its place, INCLUDING ones no
+    /// longer in the hand: a card you covered with and then picked back up
+    /// resumes the slot it had, which is what the owner asked for and what a
+    /// sticky memory is for. Anything never seen before is appended at the
+    /// RIGHT, in the order the caller presents it — a pickup or a draw lands
+    /// rightmost. Nothing here ever REORDERS: only a drag does that
+    /// (`splice`), which is the rule stated in full.
+    ///
+    /// ROUND 30, and it exists because the assumption `order` was built on -
+    /// "the kernel hand order never changes" (see `order`'s own doc) - stopped
+    /// being true. Since 368e666 a staged bout end renders a snapshot taken
+    /// from the EVENT STREAM rather than the live game, and that stream is
+    /// produced by replaying the game's v6 code from scratch
+    /// (`lastMoveEvents` -> `fio_replay_last_events_packed`). A replay reaches
+    /// the same position by a different route, so its hand ARRAY comes out in a
+    /// different order than the continuation-decoded live game - same cards,
+    /// shuffled. With an empty `order` the fan renders that array directly, so
+    /// the owner's hand visibly rearranged itself as a pickup flew home and
+    /// snapped back on undo (the hold is what undo drops). A cover that does
+    /// not end the bout has no settlement to withhold, no snapshot to render,
+    /// and never showed the bug - which is exactly how it was found.
+    ///
+    /// Remembering from the FIRST hand we ever see makes the arrangement the
+    /// board's own, so no later disagreement between two derivations of the
+    /// same game can move a card that is already on screen. New cards are the
+    /// only thing either derivation gets to place, and they go at the right.
+    public static func remembering(_ order: [String], cards: [Card]) -> [String] {
+        var out = order
+        var seen = Set(order)
+        for c in cards where seen.insert(c.identity).inserted { out.append(c.identity) }
+        return out
+    }
+
     /// The result of an in-hand reorder: the display order after the move, plus
     /// the slots the card left and landed in (the view needs those to keep the
     /// dragged card pinned to the finger - see `reorderShift`).
@@ -490,8 +531,20 @@ public struct FHandFan: View {
     /// same slot again and nothing moves. Hit-testing the finger instead let the
     /// answer depend on where inside the card you happened to grab.
     private func reorder(_ card: Card, centre: CGPoint, slots: [CGRect]) {
-        guard let s = Self.splice(order: displayCards.map(\.identity),
-                                  deferred: reserveNoSlot,
+        // The FULL remembered order, not just what is in my hand this instant:
+        // a card that is out on the table (I covered with it and it may yet come
+        // back) holds no slot to hit-test, but its PLACE is still mine to keep.
+        // Splicing against the current hand alone dropped those ids from the
+        // order every time you rearranged, so the card came home rightmost
+        // instead of to the slot it left - the owner's "notice that the pickup
+        // does not change the local order of that card you covered with".
+        // `splice` already knows how to stitch slotless ids back where they
+        // were; this just tells it about the second kind.
+        let full = Self.remembering(order, cards: cards)
+        let inHand = Set(cards.map(\.identity))
+        let slotless = Set(full.filter { !inHand.contains($0) }).union(reserveNoSlot)
+        guard let s = Self.splice(order: full,
+                                  deferred: slotless,
                                   dragged: card.identity,
                                   centre: CGPoint(x: centre.x - handFrameSelf.minX,
                                                   y: centre.y - handFrameSelf.minY),
@@ -595,6 +648,33 @@ public struct FHandFan: View {
         // Round-5 finding 5: mirror each card's own resting frame too, the
         // same way — `onDragCardMoved` needs it (see `cardView`).
         .onPreferenceChange(HandCardFramesKey.self) { handCardFramesSelf = $0 }
+        // ROUND 30: the arrangement is remembered from the FIRST hand this fan
+        // ever draws, and grows by every card that arrives after it (see
+        // `remembering`). Before this the memory was opt-in - empty until you
+        // dragged something - so an un-dragged hand rendered whatever array
+        // order the board handed over, and two derivations of the same game do
+        // not agree about that.
+        //
+        // `onAppear` FIRST and on the identities, not the cards: this must land
+        // before anything can hand over a differently-ordered copy of the same
+        // hand, and re-firing on a value change that is not a membership change
+        // would be pure churn.
+        .onAppear { remember() }
+        .onChange(of: cards.map(\.identity)) { _ in remember() }
+    }
+
+    /// Fold the hand on screen into the remembered arrangement, and tell the
+    /// caller only when that actually moved (the message board persists every
+    /// report; a no-op write per paint is not worth making it swallow).
+    private func remember() {
+        let grown = Self.remembering(order, cards: cards)
+        guard grown != order else { return }
+        // NOT animated, and never inside a transaction: this adds ids, it never
+        // reorders one (that is `splice`'s job alone), so there is no motion to
+        // animate - and a card arriving into its slot is the board's flight,
+        // which would fight a spring started here.
+        order = grown
+        onOrderChanged(grown)
     }
 
     /// One hand card, wired for tap/drag/reorder. `slot` is this card's own

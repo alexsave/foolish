@@ -253,6 +253,7 @@ public struct MessagesRootView: View {
         case .start(let from, let to):
             armed = false
             collapsing = true
+            CollapseTween.isTweening = true
             collapseTarget = to
             boxHeight = from
             withAnimation(.timingCurve(0.165, 0.84, 0.44, 1, duration: 0.38)) {
@@ -261,6 +262,7 @@ public struct MessagesRootView: View {
             Task {
                 try? await Task.sleep(nanoseconds: 1_200_000_000)
                 collapsing = false
+                CollapseTween.isTweening = false
                 boxHeight = 0
             }
         // The host settled TALLER than the snap this tween started on. Ease up

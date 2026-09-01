@@ -32,6 +32,32 @@
 import CoreGraphics
 
 public enum CollapseTween {
+    /// IS THE BOARD'S BOX MID-TWEEN RIGHT NOW? Set by the one place that runs
+    /// the tween (MessagesRootView.follow) and read by the one place that aims
+    /// flights (MessageTableView.playStep).
+    ///
+    /// ROUND 30, the geometry half of the 1.0(29) report: "in the collapsed
+    /// view, when I sent it, it then animated the card flying to the other
+    /// players hand ... however the animation seemed to go to the table center
+    /// rather than their hand."
+    ///
+    /// A flight is aimed ONCE, at build time, and then plays for half a second
+    /// against whatever the board has become. On a settled board that is fine.
+    /// During the collapse it is not: the tween deliberately HOLDS the box at
+    /// its expanded height on the style flip and eases it down to the compact
+    /// one (667pt -> 261pt on this device), so every landmark a flight aims at
+    /// is moving. An opponent's badge sits at 15% of the board height, i.e.
+    /// y=100 expanded and y=31 compact, while the table's centre lands at
+    /// y=130 - so a card aimed mid-tween flies to y=100 in a board where that
+    /// is 30pt ABOVE the middle of the table and 70pt BELOW the badge. Which
+    /// is the report, to the pixel.
+    ///
+    /// A static rather than plumbed state for the same reason FHandFan's
+    /// `instantExit` is one: the reader is a view that is rebuilt constantly
+    /// and the writer is its ancestor, and a captured binding between them is
+    /// a race. Exactly one writer, and it is the tween itself.
+    @MainActor public static var isTweening = false
+
     /// Heights under this are the compact strip; an expanded board is far
     /// taller. The transition reports both, and only the compact ones say
     /// anything about where the collapse is going.
