@@ -38,6 +38,13 @@ extension HarnessModel {
             FStrings.override = lang
             AnimLog.say("scenario: language = \(code)")
         }
+        // …and HARNESS_TABLE the same for the table material, so both looks can
+        // be screenshotted without tapping through the settings sheet.
+        if let mat = ProcessInfo.processInfo.environment["HARNESS_TABLE"],
+           let surface = TableSurface(rawValue: mat) {
+            FPrefs.shared.setTable(surface)
+            AnimLog.say("scenario: table = \(mat)")
+        }
         switch name {
 
         // ---- setup / naming ------------------------------------------------

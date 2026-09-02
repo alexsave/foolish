@@ -62,11 +62,29 @@ public struct TableWeave: View {
     /// anyone ASK it again.
     @ObservedObject private var prefs = FPrefs.shared
 
-    public init() {}
+    /// Draw a NAMED material instead of the one the player has chosen.
+    ///
+    /// ROUND 30, and there is exactly one caller: the settings sheet's table
+    /// picker, whose two swatches are each other's alternative - the felt swatch
+    /// has to be felt while the table is still wool, or picking it is a guess.
+    /// Every other surface in the app leaves this nil and gets the preference,
+    /// which is what keeps "one place decides what the table is made of" true:
+    /// this is not a second answer to that question, it is the picker showing
+    /// you the answers.
+    private let material: TableSurface?
+
+    public init(material: TableSurface? = nil) { self.material = material }
+
+    /// The look to draw: the named material crossed with this surface's scheme,
+    /// or the player's own if none was named. Both go through the SAME
+    /// crossing - see `FTextures.Variant.init(_:material:)`.
+    private var variant: FTextures.Variant {
+        material.map { FTextures.Variant(scheme, material: $0) } ?? FTextures.Variant(scheme)
+    }
 
     public var body: some View {
         GeometryReader { geo in
-            if let img = FTextures.table(FTextures.Variant(scheme)) {
+            if let img = FTextures.table(variant) {
                 let w = img.size.width * WoolTexture.pointsPerTexel
                 let h = img.size.height * WoolTexture.pointsPerTexel
                 // 1 = THE magnification. Above 1 only when the surface is

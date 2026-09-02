@@ -55,8 +55,23 @@ public enum FTextures {
         /// one every surface's text treatments were tuned against, so an
         /// unrecognised scheme lands somewhere legible rather than half-dark.
         public init(_ scheme: ColorScheme) {
+            self.init(scheme, material: FPrefs.storedTable)
+        }
+
+        /// The same crossing, for a NAMED material rather than the chosen one.
+        ///
+        /// ROUND 30, and it has exactly one caller: the settings sheet's table
+        /// picker, whose two swatches are each other's alternative - the felt
+        /// swatch has to be felt while the player is still on wool, or picking
+        /// it is a guess. It does NOT weaken the rule above; it is the same
+        /// mapping with the preference read moved out to the caller, which is
+        /// why the initializer everyone else uses now delegates here. Two
+        /// hand-copies of this switch (the swatch and the weave both had one
+        /// for a moment) is precisely how a picker starts lying about what it
+        /// is offering.
+        public init(_ scheme: ColorScheme, material: TableSurface) {
             let dark = scheme == .dark
-            switch FPrefs.storedTable {
+            switch material {
             case .wool: self = dark ? .dark : .classic
             case .felt: self = dark ? .feltDark : .felt
             }
