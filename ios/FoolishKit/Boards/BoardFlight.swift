@@ -29,6 +29,13 @@ public var flightTime: Double {
 }
 public let flightGap: Double = 0.025       // web inter-event queue gap = 25ms
 
+/// ROUND 30: the pause between the sheet arriving and a replay starting, so the
+/// first gesture is watched rather than caught halfway. Against `flightTime`
+/// like every other duration here, so a filmed replay keeps its proportions
+/// under HARNESS_SLOWMO; 0.4 of a flight is 200ms shipping - long enough to read
+/// as "the board is up, now watch", short enough that nobody waits for it.
+public var sheetSettleBeat: Double { flightTime * 0.4 }
+
 /// ROUND 16: the HOLD between a cover that ENDED THE BOUT and the sweep that
 /// clears the table (owner: "when you cover and cause the deck to discard (last
 /// defense), it should give some time to let people see what you covered with").

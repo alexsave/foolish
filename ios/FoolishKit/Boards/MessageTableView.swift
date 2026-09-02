@@ -751,11 +751,15 @@ public struct MessageTableView: View {
     /// move" label that ate layout) marks that I must open the bout.
     private func boardContent(_ view: GameView) -> some View {
         GeometryReader { geo in
-            // The board's live collapse fraction (0 = expanded, 1 = fully compact
-            // drawer). Round-11 narrowed what this may drive: it gates the send
-            // hint and widens the opponent ring, and that is ALL. Nothing that
-            // positions the hand or the chrome may read it - see `handCrop`.
-            let collapse = Self.collapseFraction(height: geo.size.height)
+            // The board's live collapse fraction (0 = expanded, 1 = fully
+            // compact drawer) is NOT bound here. Round-11 narrowed what may
+            // read it to two things - the send hint's visibility and the
+            // opponent ring's radius - and both now ask
+            // `Self.collapseFraction` at their own call site, so a binding here
+            // was left over reading as "the board has a collapse fraction in
+            // hand", which is exactly the invitation round 11 was closing.
+            // Nothing that positions the hand or the chrome may read it at all;
+            // see `handCrop`.
             let myHand = view.me?.hand ?? []
             // The width FHandFan itself actually lays out in: this reader's
             // width minus `hand(_:)`'s own `.padding(.horizontal, FSpace.s)`.
@@ -1907,6 +1911,33 @@ public struct MessageTableView: View {
     /// neither derives what-flies-where from a GameView diff. The caller pre-hides
     /// the moved cards first (synchronously, before the first paint).
     private func runEventStream(_ events: [GameEvent], finalView view: GameView, openReplay: Bool = false) async {
+        // ROUND 30: LET THE SHEET FINISH COMING UP FIRST.
+        //
+        // Tapping a bubble expands the extension, and this board is mounted and
+        // running while Messages is still sliding the sheet into view. The
+        // replay is the entire reason the bubble was tapped, and it was spending
+        // its opening beat behind the edge of the screen. The owner saw it on
+        // the shortest gesture there is - "the rotation of the sword to check
+        // animation started WHILE the view was coming up into view, so we barely
+        // saw the sword" - and suspected it was every replay, not just a good.
+        // It is: the card flights lose the same beat, they are just long enough
+        // to survive it.
+        //
+        // OPEN REPLAYS ONLY. A live sequence is a move made on a board already
+        // on screen, and holding that would put a lag on every tap.
+        //
+        // CLAIMED while it holds. `sequenceDepth` is not taken until further
+        // down, so an unclaimed wait here would have the board answering "not
+        // animating" for the length of the hold - and `BoardAnimator
+        // .waitForSettle`, which the extension awaits before staging a bubble,
+        // would sail straight through it. Balanced by `defer` rather than a
+        // bare pair, for the reason the claim below spells out: a leaked
+        // counter costs every later send its full 8-second timeout.
+        if openReplay {
+            BoardAnimator.sequenceDepth += 1
+            defer { BoardAnimator.sequenceDepth -= 1 }
+            await Self.awaitSheetSettled()
+        }
         let run = AnimLog.on ? AnimLog.nextRun() : 0
         AnimLog.say("stream#\(run) begin n=\(events.count) [\(events.map { "\($0.kind.map(String.init(describing:)) ?? "?")@\($0.seat)x\($0.cards.count)" }.joined(separator: " "))] depth=\(BoardAnimator.sequenceDepth)")
         // THE ONE LINE A FIELD REPORT NEEDS, and the one the trail did not have.
@@ -2929,6 +2960,33 @@ public struct MessageTableView: View {
         return false
     }
 
+    /// Wait for the host to finish moving the sheet, then a beat more.
+    ///
+    /// Two parts, and both earn their place. The FLAG
+    /// (`CollapseTween.isPresenting`) is the honest signal - the extension sets
+    /// it between `willTransition` and `didTransition`, so this waits exactly as
+    /// long as the slide actually takes rather than guessing. The BEAT after it
+    /// is what the owner asked for as the fallback ("let's add a slight pause
+    /// instead"), and it is still wanted with the flag: `didTransition` fires
+    /// when the style change completes, which is the first frame the board is
+    /// fully up - starting a rotation on that exact frame reads as starting
+    /// during the arrival.
+    ///
+    /// Bounded, because a board that never animates is far worse than one that
+    /// animates a beat early: the flag is a static set by a view controller this
+    /// view cannot see, and a build where nothing ever clears it (the harness,
+    /// which fakes presentation, or a future host that skips the callback) must
+    /// degrade to today's timing rather than to silence.
+    private static func awaitSheetSettled() async {
+        let deadline = 12   // x 50ms = 600ms, comfortably past Messages' own slide
+        var waited = 0
+        while CollapseTween.isPresenting && waited < deadline {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            waited += 1
+        }
+        try? await Task.sleep(nanoseconds: UInt64(sheetSettleBeat * 1_000_000_000))
+    }
+
     private func playStep(_ build: (_ lastChance: Bool) -> [Flight]?) async {
         for i in 0..<26 {
             // ROUND 30: never AIM at a board that is still moving under the
@@ -3550,10 +3608,12 @@ public struct MessageTableView: View {
         let tilt: Double = battle.defense == card
             ? FBattleGrid.coverAngle
             : (battle.defense != nil ? -FBattleGrid.coverAngle : 0)
+        // Slot -> CARD: the two cards sit bottom-aligned in a slot that is taller
+        // than they are, so the card's centre is `half` up from the slot's
+        // bottom edge. That conversion is all this does. The TILT is not baked
+        // in - the ghost applies it (see `sweptTilt`).
         let half = 35.0                      // half of FBattleGrid's 70pt card height
-        let r = tilt * .pi / 180
-        let rect = slot.offsetBy(dx: CGFloat(sin(r) * half),
-                                 dy: slot.height / 2 - CGFloat(half) + CGFloat((1 - cos(r)) * half))
+        let rect = slot.offsetBy(dx: 0, dy: slot.height / 2 - CGFloat(half))
         return (rect, tilt)
     }
 
@@ -3567,13 +3627,33 @@ public struct MessageTableView: View {
     /// rendered on the table (a cover that ended the bout in the same apply, so its
     /// slot was never laid out).
     private func tableCardSource(_ card: Card, fallbackIndex i: Int) -> (rect: CGRect, tilt: Double)? {
-        let tilt = sweptTilt(of: card)
-        if let base = lastBattleCardFrames[card.identity] {
-            return (Self.swungAboutBottom(base, degrees: tilt), tilt)
-        }
+        if let src = Self.tableSource(card, battles: sweepBattles.isEmpty ? lastBattles : sweepBattles,
+                                      frames: lastBattleCardFrames) { return src }
         if let src = discardSource(for: card) { return src }
         guard let center = approximateTableCenter() else { return nil }
         return (center.offsetBy(dx: CGFloat(i) * 6, dy: CGFloat(i) * 4), 0)
+    }
+
+    /// WHERE A CARD ON THE TABLE STARTS ITS FLIGHT - as a pure function, because
+    /// this is the whole of the 1.0(33) jump and the whole of the round-12 one,
+    /// and they are opposite mistakes about the same line.
+    ///
+    /// The rect is the card's own published frame, UNCHANGED, and the tilt rides
+    /// beside it for the ghost to rotate by. A battle's two cards publish the
+    /// SAME frame - `FBattleGrid` stacks them bottom-aligned and separates them
+    /// only with `.rotationEffect(anchor: .bottom)`, which is a render transform
+    /// and moves no layout frame - so this returning one rect for both is not a
+    /// bug being tolerated, it is the fact the ghost's own rotation then acts on.
+    /// Rotate once and the ghost lands exactly on the card; rotate twice and the
+    /// pair springs apart the instant it lifts (see `sweptTilt`); rotate never
+    /// and the pair collapses into a stack (round 12).
+    static func tableSource(_ card: Card, battles: [BattleView],
+                            frames: [String: CGRect]) -> (rect: CGRect, tilt: Double)? {
+        guard let rect = frames[card.identity] else { return nil }
+        guard let b = battles.first(where: { $0.attack == card || $0.defense == card })
+        else { return (rect, 0) }
+        if b.defense == card { return (rect, FBattleGrid.coverAngle) }
+        return (rect, b.defense != nil ? -FBattleGrid.coverAngle : 0)
     }
 
     /// ROUND 20: where a card ARRIVING onto the pre-bout grid is going to land,
@@ -3596,37 +3676,30 @@ public struct MessageTableView: View {
     /// cover, -`coverAngle` for the attack under one, 0 for an uncovered attack.
     /// Mirrors what `FBattleGrid` actually draws (its attack takes the negative
     /// tilt, its defense the positive one).
+    ///
+    /// THE TILT IS APPLIED ONCE, BY THE GHOST. Round 12 corrected a source rect
+    /// by the sideways swing a bottom-anchored rotation produces
+    /// (sin(tilt)*halfHeight), because a battle's two cards publish the SAME
+    /// layout rect - rotation is a render transform and moves no frame - and
+    /// flying both ghosts from it collapsed every pair into a stack. Since then
+    /// the ghost rotates itself (`Flight.fromAngle`, about `.bottom`, the same
+    /// pivot the grid uses), so that correction became the SECOND application of
+    /// one swing: the cover started ~7pt right of where it was drawn and the
+    /// attack ~7pt left, then flew to the discard from there. The owner, 1.0(33):
+    /// "the cards very slightly jump, cover card to the right and attack card to
+    /// the left, before then animating to discard."
+    ///
+    /// So sources hand over the RAW rect and the tilt beside it, and the ghost -
+    /// the one thing that actually draws the card - does the rotating. That is
+    /// also what `sweepLandingRect` has always done on the landing side ("no
+    /// bottom-edge swing correction belongs here"); the two sides simply
+    /// disagreed, and the source side was the one that was wrong.
     private func sweptTilt(of card: Card) -> Double {
         let table = sweepBattles.isEmpty ? lastBattles : sweepBattles
         guard let b = table.first(where: { $0.attack == card || $0.defense == card })
         else { return 0 }
         if b.defense == card { return FBattleGrid.coverAngle }
         return b.defense != nil ? -FBattleGrid.coverAngle : 0
-    }
-
-    /// A card's VISUAL rect once it has been rotated about its own bottom edge.
-    ///
-    /// ROUND 12 - this is the "pickup animation quickly rearranges into grid"
-    /// bug, and it is a layout-vs-render mix-up. `FBattleGrid` stacks a battle's
-    /// two cards in a `ZStack(alignment: .bottom)` and separates them ONLY with
-    /// `.rotationEffect(anchor: .bottom)`. Rotation is a render transform: it
-    /// does not move the layout frame, so the rect each card publishes through
-    /// `BattleCardFramesKey` is the SAME rect for the attack and the cover.
-    /// Flying both ghosts from that rect makes the covering card jump onto its
-    /// attack the instant the sweep starts - ten cards collapsing into five
-    /// stacked pairs, which is precisely the "rearrange into a grid" the owner
-    /// saw, and why it is worse the more covered pairs the table holds.
-    ///
-    /// Rotating about the bottom edge swings the centre sideways by
-    /// sin(tilt)*halfHeight and down by (1-cos(tilt))*halfHeight - the same
-    /// correction `discardSource` has always applied to its slot rect. This puts
-    /// it where it belongs, on the per-card rect that supersedes it.
-    static func swungAboutBottom(_ r: CGRect, degrees: Double) -> CGRect {
-        guard degrees != 0 else { return r }
-        let rad = degrees * .pi / 180
-        let half = r.height / 2
-        return r.offsetBy(dx: CGFloat(sin(rad)) * half,
-                          dy: CGFloat(1 - cos(rad)) * half)
     }
 
     /// Round-7 (replay bunch): are the on-table SOURCE slots for these swept
