@@ -1923,6 +1923,11 @@ public struct MessageTableView: View {
         // It is: the card flights lose the same beat, they are just long enough
         // to survive it.
         //
+        // This waits for the HOST's own signal and nothing more (see
+        // `awaitSheetSettled`): the padding beat that shipped alongside it in
+        // 1.0(34) was dead air, because `didTransition` already lands after the
+        // sheet has visibly settled.
+        //
         // OPEN REPLAYS ONLY. A live sequence is a move made on a board already
         // on screen, and holding that would put a lag on every tap.
         //
@@ -2960,23 +2965,27 @@ public struct MessageTableView: View {
         return false
     }
 
-    /// Wait for the host to finish moving the sheet, then a beat more.
+    /// Wait for the host to finish moving the sheet.
     ///
-    /// Two parts, and both earn their place. The FLAG
-    /// (`CollapseTween.isPresenting`) is the honest signal - the extension sets
-    /// it between `willTransition` and `didTransition`, so this waits exactly as
-    /// long as the slide actually takes rather than guessing. The BEAT after it
-    /// is what the owner asked for as the fallback ("let's add a slight pause
-    /// instead"), and it is still wanted with the flag: `didTransition` fires
-    /// when the style change completes, which is the first frame the board is
-    /// fully up - starting a rotation on that exact frame reads as starting
-    /// during the arrival.
+    /// `CollapseTween.isPresenting` is the honest signal - the extension sets it
+    /// between `willTransition` and `didTransition`, so this waits exactly as
+    /// long as the slide actually takes rather than guessing at it.
+    ///
+    /// IT USED TO WAIT A BEAT LONGER, on the theory that `didTransition` fires
+    /// on the first frame the board is fully up and starting a rotation on that
+    /// exact frame would still read as starting during the arrival. Measured on
+    /// device, that theory was wrong in a useful way: `didTransition` lands well
+    /// AFTER the sheet has visibly settled, so the beat was insurance against
+    /// something that was not happening and the owner could see it as dead air -
+    /// "about .5s of empty time between the thing fully opening and the first
+    /// animation". The flag alone already holds long enough; the extra 200ms was
+    /// pure wait.
     ///
     /// Bounded, because a board that never animates is far worse than one that
     /// animates a beat early: the flag is a static set by a view controller this
     /// view cannot see, and a build where nothing ever clears it (the harness,
     /// which fakes presentation, or a future host that skips the callback) must
-    /// degrade to today's timing rather than to silence.
+    /// degrade to starting immediately rather than to silence.
     private static func awaitSheetSettled() async {
         let deadline = 12   // x 50ms = 600ms, comfortably past Messages' own slide
         var waited = 0
@@ -2984,7 +2993,6 @@ public struct MessageTableView: View {
             try? await Task.sleep(nanoseconds: 50_000_000)
             waited += 1
         }
-        try? await Task.sleep(nanoseconds: UInt64(sheetSettleBeat * 1_000_000_000))
     }
 
     private func playStep(_ build: (_ lastChance: Bool) -> [Flight]?) async {

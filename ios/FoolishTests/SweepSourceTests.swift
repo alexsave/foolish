@@ -102,33 +102,39 @@ final class SweepSourceTests: XCTestCase {
     }
 }
 
-// MARK: - ROUND 30: the replay waits for the sheet to arrive
+// MARK: - ROUND 30: the replay waits for the sheet to arrive, and no longer
 //
-// The wait itself is a private static on a SwiftUI view and cannot be driven
-// from here; what CAN be pinned is the two things it rests on - a beat that is
-// actually long enough to read, and a flag that defaults to "not moving" so a
-// build where nothing ever sets it plays immediately instead of hanging.
+// The wait is a private static on a SwiftUI view and cannot be driven from
+// here. What CAN be pinned is the property the whole thing rests on: the board
+// waits for the HOST to say the sheet has stopped moving, and for nothing else.
+//
+// 1.0(34) shipped a padding beat on top of the host's signal, on the theory
+// that `didTransition` fires on the first frame the board is fully up. Measured
+// on device the signal lands well after that, so the beat was insurance against
+// something that was not happening - the owner saw it as "about .5s of empty
+// time between the thing fully opening and the first animation". Removed; if it
+// ever comes back it needs a measurement, not a theory.
 @MainActor
 final class SheetSettleTests: XCTestCase {
 
-    func testTheBeatIsLongEnoughToNoticeAndShortEnoughToNotWaitOn() {
-        XCTAssertGreaterThan(sheetSettleBeat, 0.1, "a beat under ~6 frames is not a beat")
-        XCTAssertLessThan(sheetSettleBeat, 0.35, "any longer and the tap feels unresponsive")
-    }
-
-    /// Scales with `flightTime` like every other duration, so a filmed replay
-    /// keeps its proportions under HARNESS_SLOWMO.
-    func testTheBeatIsAFractionOfAFlightRatherThanAConstant() {
-        XCTAssertEqual(sheetSettleBeat, flightTime * 0.4, accuracy: 1e-9)
-    }
-
     /// THE FAIL-SAFE. `isPresenting` is a static set by a view controller the
     /// board cannot see; a host that never clears it, or a target that never
-    /// sets it (the harness fakes presentation), must get today's behaviour and
-    /// not a board that waits forever. Default false is half of that; the wait's
-    /// own 600ms ceiling is the other half.
+    /// sets it (the harness fakes presentation), must get an immediate replay
+    /// and not a board that waits forever. Default false is half of that; the
+    /// wait's own 600ms ceiling is the other half.
     func testNothingIsPresentingUntilAHostSaysSo() {
         XCTAssertFalse(CollapseTween.isPresenting,
                        "a board with no host must not believe a sheet is sliding")
+    }
+
+    /// And nothing else is left to pad the wait with: a replay that opens on a
+    /// settled board starts on the host's signal alone.
+    func testThereIsNoPaddingBeatLeftToPay() {
+        XCTAssertFalse(CollapseTween.isPresenting)
+        // The constant that used to be added after the flag is gone; this is the
+        // compile-time half of that (`sheetSettleBeat` no longer exists) and the
+        // assertion above is the runtime half.
+        XCTAssertEqual(flightTime, 0.5, accuracy: 1e-9,
+                       "the shipping flight is unchanged - only the added wait went")
     }
 }
