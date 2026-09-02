@@ -246,6 +246,78 @@ At every path by which a chain reaches the surface — a tap
 `adopt` — one relation check against the sent record, then the record is
 cleared if it was resolved either way. It is consulted nowhere else.
 
+## The red retraction fires with the notice
+
+The 1.0(28) conflict model (`ANIMATION_CATALOGUE.md`, "The conflict model")
+is the animation half of exactly this event: a card of mine leaving the board
+because a newer chain disowns it flies home the way it came, tinted red,
+before the newer chain plays forward. Today it has two triggers, and neither
+is the Rule N case:
+
+- `MessageTurnController.offerArrival` retracts STAGED moves only
+  (`guard boardWatching, !pending.isEmpty`). Pressing Send runs `markSent`,
+  which empties `pending` and rebases the controller onto the sent chain — so
+  by the time a sibling arrives the move lives in `base`, and `offerArrival`
+  falls through to the plain `adopt`.
+- The board's reversal debt (`reversalDebt`, `drainSupersededForReversal`)
+  covers motion a sequence had already flown when a newer arrival superseded
+  it MID-ANIMATION. Once the send's own animation has landed the ledger is
+  empty. The catalogue says so itself: the REVERT verdict is meant for "a
+  fork loser's motion", but "no rig run has ever shown it; a fork arrival
+  mid-animation would" — mid-animation is the only road to it.
+
+So for a move that was sent, whose animation has landed, and which a fork
+then supersedes — the ordinary Rule N case — the card today goes back to the
+hand by the plain adopt's diff: a snap, with nothing to say it was mine or
+why it went. That is the same silent swap the conflict model was built to
+end, arriving one bubble later.
+
+Rule N supplies the missing trigger, and this design REQUIRES the two to fire
+together: the sentence explains the red, the red shows the sentence.
+
+- In `offerArrival`, after the duplicate and mid-retraction checks, when
+  `pending` is empty: ask `msg_relation(base, arriving)`. If the arriving
+  chain does not descend from the base AND the base's own delta is mine
+  (`base.lastActorSeat == mySeat`, `n_new > 0`, not `addedNothing`), the
+  base's last `n_new` atoms ARE the retraction. Publish the board BEFORE that
+  delta — `openChain(base).prior`, which the kernel already returns — with
+  `lastChangeWasUndo` up, latch the arrival, arm the failsafe. The board's
+  existing conflict-mode `flyUndoReturn` / `flyUndoRelease` then fly my
+  cards home in red from the frames they have been sitting in, and
+  `finishConflictAdopt` adopts the arrival when the flight lands. Nothing
+  new is choreographed; the retraction is the staged one with a different
+  source of "what to retract".
+- `ConflictFacts` are peeked from the arriving chain exactly as now, so a
+  card the winner covered or picked up is KEEP / CLEAR and never flies home
+  first — the clear-flicker rule holds unchanged. The input freeze during a
+  retraction (`apply` / `undo` refuse while `conflictRetracting`) holds too.
+- The Rule P guard runs before any of this: an arrival the base beats is
+  refused by `maybeAdoptIncoming` and never reaches `offerArrival`.
+- A good, a join, a leave, a Start: no card of mine is on the table, so the
+  retraction changes nothing visible and `offerArrival`'s existing
+  equal-view shortcut adopts immediately (as it does for a staged good
+  today). The sentence stands alone.
+- A cold open (the extension was closed; the human taps the winner's bubble)
+  builds a fresh controller on the winner's chain: my lost card was never on
+  THIS screen, there is nothing to reverse, and the winner's move plays as a
+  cold open would. The sentence stands alone — the reversal is theatre for a
+  card the human is looking at.
+- The notice is raised when the retraction begins (with nothing to retract,
+  at adopt), so it is on screen while the red flight plays, and the sent
+  record is cleared on the same path either way.
+
+The retraction never consults Rule P for anything but the guard, never
+re-applies anything, and renders only states that were real chains: the
+base's parent, then the arrival.
+
+Tests: `ConflictModelTests` gains the sent-then-forked case — a controller
+after `markSent`, a sibling offered: `conflictRetracting` goes up, the
+published view is the pre-delta board, the latched chain is adopted when the
+board reports landing, and a descendant offered the same way retracts
+nothing. The rig gains `HARNESS_ARRIVE_FORK=1` (send, then a sibling of the
+parent arrives), which finally poses the REVERT verdict outside a unit test —
+the catalogue's standing "never seen on a screen" gap.
+
 ## Delivery order and slow connections
 
 The claim, checked case by case: **the notice goes only to the loser, only
@@ -306,6 +378,8 @@ order in which anything was delivered.**
   flight recorder, not consulted for any verdict.
 - **No wire change.** `parent8`, `n_new`, the digest and the body already say
   everything the relation needs.
+- **No new animation vocabulary.** The red reversal is the 1.0(28) one; this
+  design only hands it the trigger it was missing for a SENT move.
 - **No new read-only state.** The notice never makes a board read-only; the
   round-20 stale gate remains the only path that does, untouched.
 
@@ -328,6 +402,7 @@ it restores (the notice is the explanation, not a replacement);
 | `ios/FoolishKit/Messages/MessageGameStore.swift` | the sent record: `recordSent`, `sentChain`, `resolveSent`; LRU |
 | `ios/FoolishMessages/MessagesViewController.swift` | `commitPendingStage` writes the record |
 | `ios/FoolishKit/Messages/LostMove.swift` (new) | `LostMove` (facts) and `LostMoveWording` (pure facts → string) |
+| `ios/FoolishKit/Messages/MessageTurnController.swift` | `offerArrival`: a sent delta the arrival disowns is retracted (red) exactly like a staged one, from `openChain(base).prior` |
 | `ios/FoolishKit/Messages/MessagesRootView.swift` | `adopt` asks the relation, sets `lostMove`; lobby line; board strip |
 | `ios/FoolishKit/DesignSystem/FStrings.swift` | `ios.msg.lost.*`, en/ru/ko |
 
