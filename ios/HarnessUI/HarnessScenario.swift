@@ -28,6 +28,16 @@ extension HarnessModel {
         // (scenarios that specifically test the gate set/clear it themselves after
         // this). Harness-only.
         if MessageGameStore.shared.nickname.isEmpty { MessageGameStore.shared.nickname = localName }
+        // ROUND 30: HARNESS_LANG puts the whole rig in one language, so a board,
+        // a rulebook and a caption can each be LOOKED AT in it. Five languages
+        // is past the point where reading the table proves anything - a string
+        // can be correct and still overflow its button, and the only way to know
+        // is a screenshot.
+        if let code = ProcessInfo.processInfo.environment["HARNESS_LANG"],
+           let lang = AppLanguage(rawValue: code) {
+            FStrings.override = lang
+            AnimLog.say("scenario: language = \(code)")
+        }
         switch name {
 
         // ---- setup / naming ------------------------------------------------

@@ -299,7 +299,7 @@ final class MessageCaptionBoundaryTests: XCTestCase {
             ?? FStrings.t("ios.msg.seatn", ["n": "\(def + 1)"])
         let was = FStrings.override
         defer { FStrings.override = was }
-        for language in [AppLanguage.en, .ru, .ko] {
+        for language in AppLanguage.allCases {
             FStrings.override = language
             let line = MessageSummary.move(events: [], names: [def: defenderName],
                                            view: nil, actor: def, addedNothing: true)

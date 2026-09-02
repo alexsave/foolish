@@ -241,10 +241,13 @@ final class PodkidnoyTests: XCTestCase {
     /// owner's instruction, and the reason the defending section has a second
     /// text rather than an "(if allowed)" aside.
     func testTheNoPassRulesTextNeverMentionsPassing() {
-        let words = ["pass", "перевод", "넘기", "페레보"]
+        // ROUND 30 added 转移 (zh) and chuyển (vi). One word per language, and
+        // the pair below is what makes the list mean anything: the ordinary
+        // defending text must CONTAIN one of these, the no-pass text must not.
+        let words = ["pass", "перевод", "넘기", "페레보", "转移", "chuyển"]
         let was = FStrings.override
         defer { FStrings.override = was }
-        for lang in [AppLanguage.en, .ru, .ko] {
+        for lang in AppLanguage.allCases {
             FStrings.override = lang
             let body = FStrings.t("ios.rules.defend.b.nopass").lowercased()
             XCTAssertFalse(body.isEmpty, "\(lang): the no-pass defending text is missing")
