@@ -9,6 +9,9 @@ import FoolishKit
 import FoolishNet
 
 struct HomeView: View {
+    /// Re-render when a setting changes (see FPrefs). Only the OBSERVATION
+    /// matters - the strings still come from FStrings.t.
+    @ObservedObject private var prefs = FPrefs.shared
     let onStartOffline: (OfflineConfig) -> Void
     /// Called once the user is signed in and wants to quick-match online.
     let onQuickMatch: () -> Void
@@ -35,7 +38,7 @@ struct HomeView: View {
 
     var body: some View {
         ZStack {
-            WoolBackground()
+            TableBackground()
             VStack(spacing: FSpace.xl) {
                 header
                 onlineButton

@@ -98,6 +98,15 @@ static int log_primaries(const GameLog *l, Card *buf) {
     return l->num_pairs;
 }
 
+// See evwire.h - the consequence steps a bout-ender runs inside its own
+// handle_*, as opposed to the acting seat's own play.
+int evw_is_settlement(int type) {
+    return type == EVW_T_MAGIC_TRANSITION
+        || type == EVW_T_DISCARD
+        || type == EVW_T_REFILL
+        || type == EVW_T_CARDS_TO_TRASH;
+}
+
 void evwire_walk(const EvSnap *snaps, int n_snaps,
                  const GameLog *logs, int n_logs, int viewer,
                  EvwSink sink, void *ctx) {

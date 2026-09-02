@@ -84,6 +84,51 @@ public enum CardPlay {
         return out
     }
 
+    /// Which battle the COVER BUTTON should aim a selection at, when more than
+    /// one uncovered attack it could beat is on the table.
+    ///
+    /// Round 16, owner: "when we tap a card then tap cover, if it is ambiguous
+    /// as to which card will be covered, go ahead and cover the highest value
+    /// card that can be covered by that card. Trump is higher than non trump.
+    /// If there are multiple highest value cards that can be covered, just
+    /// choose one." Deliberately NOT the watch's answer, which prompts with a
+    /// picker screen; and deliberately not the DRAG path's answer either - a
+    /// drag names its target by landing on it, so `resolve(.battle(i))` is
+    /// already unambiguous and is left alone.
+    ///
+    /// Why the highest and not the lowest (which is what a plain "first
+    /// coverable index" happened to give, since the table grows left to right):
+    /// spending a card on the biggest thing it can beat is the move that keeps
+    /// the most of your hand useful. The old rule was not a rule at all - it
+    /// was table ORDER, so which attack got covered depended on the sequence
+    /// the attackers happened to throw in.
+    ///
+    /// Ties (two coverable attacks of the same rank and trumpiness, i.e. the
+    /// same value in two off-suits) resolve to the leftmost, so the choice is
+    /// at least repeatable; the owner's rule is explicitly "just choose one".
+    /// nil when the selection covers nothing.
+    public static func bestCoverTarget(cards: [Card], battles: [BattleView],
+                                       legal: [Move], trumpSuit: Suit?) -> Int? {
+        // Sorted, because the source is a Set: an unordered walk would make the
+        // tie-break depend on hashing rather than on the table.
+        let options = coverableBattles(cards: cards, battles: battles, legal: legal).sorted()
+        var best: Int?
+        for i in options {
+            if best == nil || strength(battles[i].attack, trumpSuit) > strength(battles[best!].attack, trumpSuit) {
+                best = i
+            }
+        }
+        return best
+    }
+
+    /// How high a card stands in Durak's own order: every trump outranks every
+    /// non-trump, and within a class the kernel's rank value decides. Values run
+    /// 1...13, so 100 is comfortably clear of any collision between the classes.
+    private static func strength(_ card: Card, _ trumpSuit: Suit?) -> Int {
+        let isTrump = trumpSuit != nil && card.suit == trumpSuit
+        return card.v + (isTrump ? 100 : 0)
+    }
+
     /// The zero-selection control moves available now (pickup / good), read straight
     /// off the menu — the action bar's enable state.
     public static func has(_ type: MoveType, in legal: [Move]) -> Bool {
@@ -97,6 +142,35 @@ public enum CardPlay {
     /// not a re-implemented rule (`.good` legality still comes from the menu).
     public static func canSayGood(battles: [BattleView], legal: [Move]) -> Bool {
         has(.good, in: legal) && !battles.isEmpty && battles.allSatisfy { $0.defense != nil }
+    }
+
+    /// The moves a HUMAN may actually make on this board right now — the kernel
+    /// menu minus `wait`, minus `good` while any attack is still uncovered.
+    ///
+    /// That last exclusion is a UI rule, not a kernel one: the kernel always
+    /// offers GOOD (bots need it, and `fio_actor_mask` has to agree with the
+    /// packed menu), while the owner's rule is that an attacker cannot say good
+    /// until the table is fully covered. `canSayGood` has always encoded that
+    /// for the button; this is the same answer as a SET, for the two places
+    /// that need to ask "can this seat do anything at all" rather than "is this
+    /// one button live".
+    ///
+    /// Both callers are the dev auto-player (see MessageTableView's
+    /// HARNESS_AUTOMOVE and HarnessModel's turn handoff), and they have to
+    /// agree: a handoff that reads the raw kernel menu will pass the game to a
+    /// seat whose only offer is a `good` the board will not let it make, and
+    /// the run stops dead with no button on screen. That is not a deadlock in
+    /// the game — the DEFENDER can always still cover or take — it is the
+    /// auto-player asking the wrong question.
+    public static func humanMoves(battles: [BattleView], legal: [Move]) -> [Move] {
+        let goodAllowed = canSayGood(battles: battles, legal: legal)
+        return legal.filter { m in
+            switch m.type {
+            case .wait: return false
+            case .good: return goodAllowed
+            default:    return true
+            }
+        }
     }
 
     /// Whether the selection can be attacked / passed / covered right now — the

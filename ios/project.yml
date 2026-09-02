@@ -26,7 +26,7 @@ options:
 settings:
   base:
     MARKETING_VERSION: "1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    CURRENT_PROJECT_VERSION: "33"
     SWIFT_VERSION: "5.9"
     # Milestone F: signing enabled. Xcode manages the certificate + provisioning
     # profiles automatically against the registered App IDs (cards.foolish.app,
@@ -131,6 +131,11 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.msg
         INFOPLIST_FILE: FoolishMessagesApp/Info.plist
         TARGETED_DEVICE_FAMILY: "1"
+        # App Store validation requires the container to carry an app icon +
+        # CFBundleIconName even though it is a codeless Messages-only app (no Home
+        # Screen icon). Same 1024 icon as the main Foolish app
+        # (FoolishMessagesApp/Assets.xcassets/AppIcon, copied from FoolishApp).
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
   # ---- The iMessage extension (M1) ---------------------------------------
   # An iMessage game has no server: the whole game is the MSMessage URL, so this
@@ -200,7 +205,7 @@ targets:
         # without an id, so the watch sim refused to install it.
         GENERATE_INFOPLIST_FILE: "YES"
         MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "1"
+        CURRENT_PROJECT_VERSION: "33"
         # The circular watch icon (WatchUI/Assets.xcassets/AppIcon).
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
@@ -243,6 +248,36 @@ targets:
       # The C engine, built by `make ios-lib` in ../c. Static (embed:false).
       - framework: vendor/Foolish.xcframework
         embed: false
+    # THE KERNEL STALENESS GUARD.
+    #
+    # FoolishKit links a PREBUILT static library, so a change to the C kernel
+    # reaches the app only after `make ios-lib`. Nothing used to say so: the app
+    # kept linking the old library, the C's own tests kept passing (they compile
+    # the real sources), and the Swift tests kept passing too — so a kernel fix
+    # could be "verified" twice over and still not be in the product. That is
+    # exactly what happened to Rule P's phase rule: shipped, tested, absent, and
+    # the group-chat lobby fork it was meant to close carried on.
+    #
+    # This turns that silence into a build failure naming the command. It only
+    # stats files, so it costs nothing on a normal build.
+    preBuildScripts:
+      - name: Kernel freshness (vendor/Foolish.xcframework vs c/)
+        basedOnDependencyAnalysis: false
+        script: |
+          FW="$SRCROOT/vendor/Foolish.xcframework"
+          C="$SRCROOT/../c"
+          if [ ! -d "$FW" ]; then
+            echo "error: vendor/Foolish.xcframework is missing. Run: cd c && make ios-lib"
+            exit 1
+          fi
+          STALE=$(find "$C/src" "$C/ios" \( -name '*.c' -o -name '*.h' \) \
+                    -newer "$FW/Info.plist" -print -quit 2>/dev/null)
+          if [ -n "$STALE" ]; then
+            echo "error: the C kernel changed after the linked library was built"
+            echo "error: (e.g. $STALE). The app would link a STALE kernel."
+            echo "error: Run: cd c && make ios-lib"
+            exit 1
+          fi
       # NOTE: no Supabase here. The network stack lives in FoolishNet, which the
       # iMessage extension never links — see that target's comment.
     settings:

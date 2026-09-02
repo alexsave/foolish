@@ -156,31 +156,30 @@ const refillHands = (g: SimGame): void => {
         }
         return;
     }
-    if (g.hands[g.defender].length === 0) {
-        const hand = g.hands[g.defender];
+    // First attacker, then clockwise SKIPPING the defender, then the defender
+    // last (c/src/game.c refill_player_hands, docs/DEAL_ORDER.md).
+    const drawUpToSix = (seat: number): void => {
+        const hand = g.hands[seat];
         while (hand.length < CARDS_PER_PLAYER) {
             const c = drawCard(g);
             if (c === NONE) break;
             hand.push(c);
         }
-    }
+        if (hand.length === 0 && g.pStatus[seat] === ST_IN) {
+            g.pStatus[seat] = ST_OUT;
+            g.elim.push(seat);
+        }
+    };
+    const defender = g.defender;
     let p = g.firstAttacker;
     const visited = new Set<number>();
     do {
         if (visited.has(p)) break;
         visited.add(p);
-        const hand = g.hands[p];
-        while (hand.length < CARDS_PER_PLAYER) {
-            const c = drawCard(g);
-            if (c === NONE) break;
-            hand.push(c);
-        }
-        if (hand.length === 0 && g.pStatus[p] === ST_IN) {
-            g.pStatus[p] = ST_OUT;
-            g.elim.push(p);
-        }
+        if (p !== defender) drawUpToSix(p);
         p = nextPlayer(g, p);
     } while (p !== g.firstAttacker);
+    drawUpToSix(defender);
 };
 
 const countUncovered = (g: SimGame): number => {

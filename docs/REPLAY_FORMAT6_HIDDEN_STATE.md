@@ -1,5 +1,12 @@
 # Replay Format 6 — hidden-state-lossless, partial-game codec
 
+> **The version byte is now 10.** This format's wire is unchanged, but its
+> number has moved twice for additions (7: pass-mode bit, 8: forced-opening bit)
+> and once for a RULES fix (10: the deal order), which retired 5 through 8
+> outright - a code cut before it decodes into a game the kernel would no longer
+> play, so it is refused instead. Read "v6" below as the decoder family, not the
+> byte. See `docs/DEAL_ORDER.md`.
+
 **Status: shipped end to end, including the producer.** C codec + native test,
 wasm exports (rules.wasm + bots.wasm), TS encode/decode bridge, view.ts
 consumption, AND `finalizeEndedGame` now emit v6 for every seeded game. The

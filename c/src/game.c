@@ -414,7 +414,31 @@ static int g_forced_first_attacker = -1;
 
 void game_force_first_attacker(int seat) { g_forced_first_attacker = seat; }
 
-static int determine_lowest_power_index(Game *g) {
+// The fool's-penalty override (the "teach the last fool a lesson" rule): a
+// rematch among the SAME players, in the same cycle, opens on the seat to the
+// right of the previous game's fool instead of on the lowest trump. Unlike
+// g_forced_first_attacker above this is UNCONDITIONAL - it beats a derived
+// seat, which is the whole point - and it is set from the wire (msg_wire.c's
+// `opening` byte, replay.c's v8 forced bit), never guessed by a host.
+//
+// The derive still RUNS when this is set, and its result is kept in
+// g_derived_opening. Two reasons, both load-bearing:
+//   * the no-trump branch rolls (deal_index), and the roll must stay in the
+//     RNG stream whether or not the override fires, or the same seed would
+//     deal one deck for a rematch and another for a fresh game; and
+//   * a v8 replay code records the derived seat so replay_steps can still
+//     prove the hands came back right - the check the override would
+//     otherwise cost us (see replay_steps.c).
+static int g_open_seat = -1;
+static int g_derived_opening = -1;
+
+void game_open_at_seat(int seat) { g_open_seat = seat; }
+int  game_derived_opening(void) { return g_derived_opening; }
+
+// The lowest-trump seat, or -1 when NOBODY was dealt a trump. Raw: the
+// no-trump fallback is applied by the caller, so this can report the "there is
+// nothing to derive from" case honestly to the recorders above.
+static int derive_lowest_power_index(const Game *g) {
     int lowest_v = ACE_VALUE + 1;
     int lowest_p = -1;
     for (int i = 0; i < g->num_players; i++) {
@@ -426,11 +450,18 @@ static int determine_lowest_power_index(Game *g) {
             }
         }
     }
+    return lowest_p;
+}
+
+static int determine_lowest_power_index(Game *g) {
+    int lowest_p = derive_lowest_power_index(g);
+    g_derived_opening = lowest_p;
     if (lowest_p == -1) {
         lowest_p = (g_forced_first_attacker >= 0 && g_forced_first_attacker < g->num_players)
                  ? g_forced_first_attacker
                  : deal_index(g->num_players);
     }
+    if (g_open_seat >= 0 && g_open_seat < g->num_players) lowest_p = g_open_seat;
     return lowest_p;
 }
 
@@ -545,8 +576,27 @@ void start_game_with_deck(Game *g, const Card *deck, int n_deck) {
     start_game_dealt(g);
 }
 
-// Refill phase: defender first if their hand is empty, then around starting
-// from first_attacker, mirroring refillPlayerHandsWithEvents.
+// Refill phase. THE DEAL ORDER, and it is a rule, not an implementation
+// detail: the bout's first attacker draws first, then the rest of the table
+// clockwise SKIPPING THE DEFENDER, and the defender draws LAST. Always - even
+// when the stock is deep, and even when the defender ended the bout with an
+// empty hand.
+//
+// It matters because the talon runs out: the seat that draws last is the seat
+// that gets nothing, and under the old order that was whoever happened to sit
+// before the first attacker. Standard Durak (pagat.com/beating/podkidnoy_durak)
+// puts the defender there, and the face-up trump at the bottom of the talon is
+// therefore the last card dealt in the game.
+//
+// Two things this replaced. The first was a special case that dealt to the
+// defender BEFORE everyone else when a clean cover had emptied their hand -
+// exactly backwards, and worth its own mention because it decided who wins a
+// tight endgame. The second was subtler: the walk simply started at
+// first_attacker and took the defender in their natural rotation slot, which is
+// right only in the two-player game and at no other table size.
+//
+// Changing this changed every game the kernel plays, which is why the replay
+// codes cut before it are rejected rather than re-read (replay.h).
 static bool no_cards_left(const Game *g) {
     return g->deck_count == 0 && !g->has_flipped;
 }
@@ -560,6 +610,33 @@ static bool no_cards_left(const Game *g) {
 // post-mutation PASS_OVERFLOW reject stay byte-for-byte identical to the server.)
 static void refill_player_hands(Game *g) { (void)g; }
 #else
+// One seat's turn at the talon: draw to six, log it as one DRAW, and drop a
+// seat that came out of it with nothing while the stock still had cards for
+// someone else. The OUT check sits AFTER the hook on purpose - TS pushed the
+// refill event (and its snapshot) before the zero-hand check, and that ordering
+// is a parity contract.
+static void draw_up_to_six(Game *g, int seat) {
+    Card drawn[CARDS_PER_PLAYER];
+    int n_drawn = 0;
+    while (g->players[seat].hand_count < CARDS_PER_PLAYER) {
+        Card c;
+        if (!draw_card(g, &c)) break;
+        g->players[seat].hand[g->players[seat].hand_count++] = c;
+        drawn[n_drawn++] = c;
+    }
+    if (n_drawn > 0) {
+        GameLog *l = log_alloc(g, LOG_DRAW, seat);
+        for (int i = 0; i < n_drawn; i++) log_add_card(l, drawn[i]);
+        SNAP(g, ENGINE_HOOK_DRAW, seat);
+    }
+    if (g->players[seat].hand_count == 0
+        && g->players[seat].status == PLAYER_STATUS_IN) {
+        g->players[seat].status = PLAYER_STATUS_OUT;
+        g->players[seat].awaiting_attack = false;
+        g->elimination_order[g->num_eliminated++] = (int8_t)seat;
+    }
+}
+
 static void refill_player_hands(Game *g) {
     if (no_cards_left(g)) {
         for (int i = 0; i < g->num_players; i++) {
@@ -572,52 +649,19 @@ static void refill_player_hands(Game *g) {
         return;
     }
 
-    // Defender draws first if their hand is empty.
-    int defender = g->defender;
-    if (g->players[defender].hand_count == 0) {
-        Card drawn[CARDS_PER_PLAYER];
-        int n_drawn = 0;
-        while (g->players[defender].hand_count < CARDS_PER_PLAYER) {
-            Card c;
-            if (!draw_card(g, &c)) break;
-            g->players[defender].hand[g->players[defender].hand_count++] = c;
-            drawn[n_drawn++] = c;
-        }
-        if (n_drawn > 0) {
-            GameLog *l = log_alloc(g, LOG_DRAW, defender);
-            for (int i = 0; i < n_drawn; i++) log_add_card(l, drawn[i]);
-            SNAP(g, ENGINE_HOOK_DRAW, defender);
-        }
-    }
+    const int defender = g->defender;
 
     int p_idx = g->first_attacker;
     bool visited[MAX_PLAYERS] = { false };
     do {
         if (visited[p_idx]) break;
         visited[p_idx] = true;
-        Card drawn[CARDS_PER_PLAYER];
-        int n_drawn = 0;
-        while (g->players[p_idx].hand_count < CARDS_PER_PLAYER) {
-            Card c;
-            if (!draw_card(g, &c)) break;
-            g->players[p_idx].hand[g->players[p_idx].hand_count++] = c;
-            drawn[n_drawn++] = c;
-        }
-        if (n_drawn > 0) {
-            GameLog *l = log_alloc(g, LOG_DRAW, p_idx);
-            for (int i = 0; i < n_drawn; i++) log_add_card(l, drawn[i]);
-            // TS pushes the refill event (and its snapshot) BEFORE the
-            // zero-hand OUT check below, so the hook fires here.
-            SNAP(g, ENGINE_HOOK_DRAW, p_idx);
-        }
-        if (g->players[p_idx].hand_count == 0
-            && g->players[p_idx].status == PLAYER_STATUS_IN) {
-            g->players[p_idx].status = PLAYER_STATUS_OUT;
-            g->players[p_idx].awaiting_attack = false;
-            g->elimination_order[g->num_eliminated++] = (int8_t)p_idx;
-        }
+        if (p_idx != defender) draw_up_to_six(g, p_idx);
         p_idx = get_next_player_index(g, p_idx);
     } while (p_idx != g->first_attacker);
+
+    // Last, always.
+    draw_up_to_six(g, defender);
 }
 #endif  // GUARDS_VALIDATE_ONLY
 
@@ -841,6 +885,13 @@ bool handle_cover(Game *g, int player_idx,
 bool handle_pass(Game *g, int player_idx, const Card *cards, int n_cards) {
     engine_last_reject = ENGINE_REJECT_NONE;
     if (g->status != GAME_STATUS_PLAYING) REJECT(ENGINE_REJECT_NOT_PLAYING);
+    // PODKIDNOY (GAME_RULE_NO_PASS): this table plays the throw-in game, where
+    // the defender covers or picks up and there is no transfer at all. Checked
+    // FIRST, ahead of every card-shape rule below, because it is not a fact
+    // about these cards - the answer is the same for every hand a defender
+    // could hold, and a "wrong values" reason for a move the game does not have
+    // would send a UI hunting for a better card.
+    if (!game_pass_allowed(g)) REJECT(ENGINE_REJECT_PASS_DISABLED);
     if (n_cards <= 0) REJECT(ENGINE_REJECT_EMPTY);
 
     // TS validatePass priority: same-value → duplicates → defender →

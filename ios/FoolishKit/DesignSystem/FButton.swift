@@ -30,22 +30,53 @@ public struct FButton: View {
 
     public var body: some View {
         Button(action: { Haptics.fire(.drop); action() }) {
-            Text(title)
-                .font(compact ? FType.title(15) : FType.title(17))
-                .padding(.horizontal, compact ? 16 : 0)
+            titleText
+                // A button label is ALWAYS one line (owner, on device: the
+                // Russian "Отменить" wrapped inside the fixed-width wooden
+                // pill). Tighter compact padding buys the longer locales room
+                // first; a label that still cannot fit scales down instead of
+                // wrapping.
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .padding(.horizontal, compact ? 10 : 0)
                 .frame(minWidth: fixedWidth,
                        maxWidth: fixedWidth ?? (compact ? nil : .infinity),
                        minHeight: compact ? 40 : 52)
-                .foregroundColor(foreground)
-                .background(backgroundView)
+                .background(
+                    backgroundView
+                        // Round-6 #19: a disabled button used to be the WHOLE
+                        // view at 40% opacity (`.opacity(enabled ? 1 : 0.4)`
+                        // below it), which made the button translucent and let
+                        // the wool weave behind it show straight through — the
+                        // owner's complaint verbatim ("should not be
+                        // transparent at all, just dimmed"). A black tint
+                        // composited INTO the button's own opaque fill reads as
+                        // a dimmed solid control instead of a ghost: nothing
+                        // behind the BUTTON's outer edge shows through, it is
+                        // just darker inside it.
+                        .overlay(Color.black.opacity(enabled ? 0 : 0.45))
+                )
                 .overlay(
                     RoundedRectangle(cornerRadius: cornerRadius)
-                        .strokeBorder(border, lineWidth: kind == .secondary ? 1.5 : (kind == .wood ? 1 : 0))
+                        .strokeBorder(border.opacity(enabled ? 1 : 0.6),
+                                      lineWidth: kind == .secondary ? 1.5 : (kind == .wood ? 1 : 0))
                 )
                 .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
         }
         .disabled(!enabled)
-        .opacity(enabled ? 1 : 0.4)
+    }
+
+    /// The label itself. Wood buttons get round-6 #17's thick-white-on-wood
+    /// treatment (via `onWoodText`, Tokens.swift) instead of the flat
+    /// `foreground` colour every other kind uses — wood is a textured surface,
+    /// not a flat fill, so it needs the weight+shadow pairing to stay legible.
+    @ViewBuilder private var titleText: some View {
+        let base = Text(title).font(compact ? FType.title(15) : FType.title(17))
+        if kind == .wood {
+            base.onWoodText(dimmed: !enabled)
+        } else {
+            base.foregroundColor(enabled ? foreground : foreground.opacity(0.55))
+        }
     }
 
     // Wooden buttons are RECTANGLES in the web (sharp corners); the red/outline

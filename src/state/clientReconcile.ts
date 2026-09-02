@@ -4,6 +4,7 @@
 // is no second copy.
 
 import { Card, PersonalGame, Battle, GAME_STATUS, PLAYER_STATUS } from '@api/core/types.ts';
+import { animShouldDropStale } from '@sdk/ts/wasm/bots.ts';
 
 export const cardKey = (c: Card): string => `${c.suit}-${c.value}`;
 
@@ -46,10 +47,16 @@ const cardComp = (a: Card, b: Card): boolean => a.suit === b.suit && a.value ===
 // drop any whose version is at or below the newest already applied (it's strictly
 // superseded — each sequence carries the full resulting state). Replay sequences
 // have no version and are never gated.
-export const shouldDropStaleSequence = (lastAppliedVersion: number | null, incomingVersion: number | null): boolean => {
-    if (incomingVersion === null) return false;
-    return lastAppliedVersion !== null && incomingVersion <= lastAppliedVersion;
-};
+// Delegates to the C animation core (c/src/anim_plan.h anim_should_drop_stale)
+// through the wasm bridge, so the gate that decides which broadcast every client
+// applies lives in ONE place — a phone and a browser disagreeing here forks the
+// feed. The C twin is asserted natively (c/tests/anim_plan_test.c test_reconcile)
+// AND exercised end-to-end through this delegation by e2e/reconcile.test.ts.
+// The original TS body is preserved in src/state/__ts_reference.ts and proven
+// byte-identical to this delegation by e2e/anim_core_parity.test.ts, until the
+// deferred TS deletion (docs/ANIMATION_CORE_C.md).
+export const shouldDropStaleSequence = (lastAppliedVersion: number | null, incomingVersion: number | null): boolean =>
+    animShouldDropStale(lastAppliedVersion, incomingVersion);
 
 // ---- Table reconciliation --------------------------------------------------
 // Trust the server's table outright. Ordering is handled by the version gate and
@@ -57,6 +64,12 @@ export const shouldDropStaleSequence = (lastAppliedVersion: number | null, incom
 // for broadcasts, applyOverlayEntries for resync), so appending stale leftover
 // battles is unnecessary and would re-introduce a previous bout's cards when an
 // intermediate clear is skipped.
+//
+// This is the C plan's "trust incoming" merge policy expressed at the JS-null
+// boundary — there is no decision for the kernel to make (no branch, no compute),
+// only a null-coalesce over Battle[] objects the C side never needs to see. It
+// stays here deliberately; the animation-core DECISIONS (the gate above, the
+// optimistic resolver, the plan) all delegate to C.
 export const mergeTableBattles = (existingBattles: Battle[] | undefined, incomingBattles: Battle[] | undefined): Battle[] => {
     return incomingBattles ?? existingBattles ?? [];
 };

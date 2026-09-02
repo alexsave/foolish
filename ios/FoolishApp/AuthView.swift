@@ -8,6 +8,9 @@ import FoolishKit
 import FoolishNet
 
 struct AuthView: View {
+    /// Re-render when a setting changes (see FPrefs). Only the OBSERVATION
+    /// matters - the strings still come from FStrings.t.
+    @ObservedObject private var prefs = FPrefs.shared
     @EnvironmentObject private var auth: AuthService
     @Environment(\.dismiss) private var dismiss
     let onSignedIn: () -> Void

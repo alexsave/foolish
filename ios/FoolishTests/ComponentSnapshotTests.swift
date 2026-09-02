@@ -2,10 +2,22 @@
 // in light/dark, Dynamic Type, and ru/ko strings (§13, §16.A6). Uses
 // pointfreeco/swift-snapshot-testing.
 //
-// FIRST RUN on a Mac records reference images (set `isRecording = true` once,
-// commit the __Snapshots__ folder, then set it back). These cannot be recorded
-// in a headless Linux/CI environment without a simulator — the CI Mac job owns
-// the reference images (§13 "snapshot tests").
+// THE REFERENCES ARE LOCAL TO WHICHEVER MAC RECORDED THEM. `__Snapshots__/` is
+// gitignored (.gitignore:63) and the workflow's Xcode job is still commented
+// out (.github/workflows/ios.yml), so nothing but this machine has ever held
+// them and nothing but this machine has ever checked them. A fresh clone
+// records its own on the first run - which fails once, by design, and passes
+// after.
+//
+// ROUND 30 corrects what this header used to claim ("commit the __Snapshots__
+// folder ... the CI Mac job owns the reference images"). Neither half was true,
+// and believing it is how two of these sat red for six weeks: a picture nobody
+// else can reproduce, failing for a reason nobody read. When a deliberate
+// visual change lands, RE-RECORD - flip `record` (or just the affected case) to
+// true, look at the new image, and flip it back. That is not a workaround, it
+// is the whole maintenance model for a local reference.
+//
+// To record: set `record = true`, run, set it back.
 
 import XCTest
 import SwiftUI
@@ -17,6 +29,30 @@ final class ComponentSnapshotTests: XCTestCase {
     // Flip to true on a Mac to (re)record references, then flip back and commit.
     private let record = false
 
+    /// HOW EXACT A MATCH HAS TO BE, and the reason it is not "exactly".
+    ///
+    /// ROUND 30. Two of these references had been red for six weeks and kept
+    /// being deferred, and when finally read they were two different failures
+    /// wearing the same message. The trump glyph had genuinely MOVED - e61952c
+    /// deliberately sat the bare mark's ink square in its corner, and the
+    /// reference predates it. The board had not moved at all: 0.4% of its
+    /// pixels differed, all of them on anti-aliased edges of the same badges
+    /// and the same shield, at a rasterisation the reference (16 July) and this
+    /// Xcode simply do not agree on down to the last subpixel.
+    ///
+    /// A picture test that fails on the second kind teaches you to ignore it,
+    /// which is exactly what happened - and while it was being ignored it could
+    /// not report the first kind either. So: `perceptualPrecision` lets a pixel
+    /// be a shade off without being wrong (0.98 is about a 2% perceptual
+    /// difference, which covers edge anti-aliasing and nothing structural), and
+    /// `precision` still demands that essentially every pixel clear that bar.
+    ///
+    /// Deliberately NOT loose enough to hide a real change - proven by
+    /// mutation, not by argument: with these numbers, reverting the trump ink
+    /// offset and re-tinting the shield both still fail (see the commit).
+    private static let imagePrecision: Float = 0.999
+    private static let imagePerceptual: Float = 0.98
+
     override func setUp() {
         super.setUp()
         // isRecording is global to the library.
@@ -24,19 +60,39 @@ final class ComponentSnapshotTests: XCTestCase {
     }
 
     private func host<V: View>(_ view: V, width: CGFloat = 320, height: CGFloat = 200) -> UIViewController {
-        let vc = UIHostingController(rootView: view.frame(width: width, height: height).background(FColor.table))
+        // PINNED to light, and that pin is what keeps these references stable
+        // now that the board has a dark mode (round-7). Every component below
+        // reads `@Environment(\.colorScheme)` somewhere - FCard inverts its
+        // face, WoodFill loads a different bake, `onTableText` flips its ink -
+        // and an unpinned UIHostingController inherits the SIMULATOR's current
+        // appearance, so `simctl ui <udid> appearance dark` would silently
+        // fail every image here without a line of code having changed.
+        //
+        // Light specifically, because that is what the committed references
+        // were recorded in: pinning it is a no-op against them, which is the
+        // point. A dark twin of these cases would need its own recorded
+        // references and is deliberately NOT added here (the owner records).
+        let content = view
+            .frame(width: width, height: height)
+            .background(FColor.table)
+            .environment(\.colorScheme, .light)
+        let vc = UIHostingController(rootView: content)
         vc.view.frame = CGRect(x: 0, y: 0, width: width, height: height)
         return vc
     }
 
     func testFCardFace() {
         assertSnapshot(of: host(FCard(card: Card(s: 1, v: 13), trump: true), width: 120, height: 140),
-                       as: .image, record: record)
+                       as: .image(precision: Self.imagePrecision,
+                                  perceptualPrecision: Self.imagePerceptual),
+                       record: record)
     }
 
     func testFCardBack() {
         assertSnapshot(of: host(FCard(card: nil, backSeed: 42), width: 120, height: 140),
-                       as: .image, record: record)
+                       as: .image(precision: Self.imagePrecision,
+                                  perceptualPrecision: Self.imagePerceptual),
+                       record: record)
     }
 
     func testFHandFan() {
@@ -44,16 +100,70 @@ final class ComponentSnapshotTests: XCTestCase {
         assertSnapshot(of: host(FHandFan(cards: cards, trumpSuit: .hearts,
                                          selection: .constant([]), onTap: { _ in }),
                                 width: 320, height: 140),
-                       as: .image, record: record)
+                       as: .image(precision: Self.imagePrecision,
+                                  perceptualPrecision: Self.imagePerceptual),
+                       record: record)
     }
 
     func testFActionBarRu() {
         FStrings.override = .ru
-        defer { FStrings.override = .system }
-        assertSnapshot(of: host(FActionBar(canPickup: true, canDone: true, canTransfer: true,
-                                           onPickup: {}, onDone: {}, onTransfer: {}),
+        defer { FStrings.override = .en }   // no more .system; restore to English default
+        assertSnapshot(of: host(FActionBar(canPass: true, canPickup: true, canDone: true,
+                                           onPass: {}, onPickup: {}, onDone: {}),
                                 width: 340, height: 80),
-                       as: .image, record: record)
+                       as: .image(precision: Self.imagePrecision,
+                                  perceptualPrecision: Self.imagePerceptual),
+                       record: record)
+    }
+
+    /// ROUND 12: the three role marks together, at the sizes the board draws
+    /// them (`FRoleMark`), on the wool they have to survive.
+    ///
+    /// Together on purpose, and at real size on purpose. Each one alone proves
+    /// nothing about the thing that was actually wrong: they were three
+    /// unrelated colour schemes (a near-black sword that flipped to steel in
+    /// dark mode, a mid-grey shield, a bare green check) at three sizes chosen
+    /// in three different rounds, so at a glance the board carried three
+    /// unrelated objects. The sword and shield now share one white-on-black ink;
+    /// the check keeps its green — a check says something HAPPENED where the
+    /// other two say which role you hold — and takes the black rim so it still
+    /// belongs to the family.
+    func testRoleMarksReadAsOneFamily() {
+        let marks = HStack(spacing: 18) {
+            FSword(size: FRoleMark.sword)
+            FShield(size: FRoleMark.shield)
+            FCheck(size: FRoleMark.check)
+        }
+        .frame(height: FRoleMark.rowHeight)
+        .padding(20)
+        .background(TableBackground())
+        assertSnapshot(of: host(marks, width: 260, height: 100), as: .image(precision: Self.imagePrecision,
+                                  perceptualPrecision: Self.imagePerceptual),
+                       record: record)
+    }
+
+    /// ROUND 12: the bare trump glyph beside the same suit on a card face.
+    ///
+    /// When the stock and the flipped card are both gone, `FDeckWell` draws the
+    /// trump suit as a lone glyph — the only suit on the whole board that is NOT
+    /// drawn by `FCard`. It was in the SYSTEM font while every card is Georgia,
+    /// and the two typefaces do not draw the same shape (SF's heart is narrow
+    /// and straight-shouldered, Georgia's round and full), so the trump mark and
+    /// the trump cards under it read as two different suits: "upper right trump
+    /// suit icon should match shape of card suits icon. Currently like hearts
+    /// look different for example".
+    ///
+    /// Rendered TOGETHER on purpose. A snapshot of the glyph alone would pin
+    /// whatever font it happens to use; the claim worth pinning is that these
+    /// two agree, and only a picture with both in it can be read that way.
+    func testBareTrumpGlyphMatchesTheCardSuit() {
+        let pair = HStack(spacing: 24) {
+            FDeckWell(deckCount: 0, flipped: nil, hasFlipped: false, trumpSuit: .hearts)
+            FCard(card: Card(s: 1, v: 13), size: CGSize(width: 80, height: 112))
+        }
+        assertSnapshot(of: host(pair, width: 320, height: 140), as: .image(precision: Self.imagePrecision,
+                                  perceptualPrecision: Self.imagePerceptual),
+                       record: record)
     }
 
     // The iMessage expanded-bubble board (read-only public view). A mid-game 2p
@@ -73,7 +183,9 @@ final class ComponentSnapshotTests: XCTestCase {
             eliminationOrder: [], players: players)
         assertSnapshot(of: host(MessageBoardView(view: view, names: [0: "Sveta", 1: "Alex"]),
                                 width: 360, height: 260),
-                       as: .image, record: record)
+                       as: .image(precision: Self.imagePrecision,
+                                  perceptualPrecision: Self.imagePerceptual),
+                       record: record)
     }
 
     /// The bubble image (§10/§11.3) actually renders headless — ImageRenderer over

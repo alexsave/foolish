@@ -27,6 +27,7 @@ import { decodeReplay } from '../server/api/common/replay/decode.ts';
 import { buildReplayFrames, REPLAY_STEP, ReplayFrame } from '../src/replay/frames.ts';
 import { TUTORIAL_MOVES_CODE, TUTORIAL_NAMES } from '../src/components/tutorialGame.ts';
 import { PLAYER_STATUS } from '../server/api/core/types.ts';
+import { FORMAT_VERSION_V6 } from '../server/api/common/replay/core.ts';
 
 if (!process.env.E2E_VERBOSE) {
     console.log = () => {};
@@ -70,7 +71,8 @@ const load = async () => {
 export function registerTutorialValidation(): void {
 test('the tutorial code still replays on the kernel that ships', async () => {
     const { decoded, frames } = await load();
-    assert.equal(decoded.formatVersion, 6, 'the tutorial is a v6 code (v5 cannot replay)');
+    assert.equal(decoded.formatVersion, FORMAT_VERSION_V6,
+        'the tutorial is an inline-reveal code (the retrodiction line cannot replay)');
     assert.equal(decoded.playerCount, 3, '3-player game');
     assert.ok(frames.length > 10, `replays to ${frames.length} steps`);
     assert.equal(frames[0].kind, REPLAY_STEP.DEAL, 'it opens with the deal');

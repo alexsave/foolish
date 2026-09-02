@@ -26,21 +26,47 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
+	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<!-- Its own binary, so its own export-compliance declaration (the extension
-	     carries a matching one). Standard TLS/crypto only. -->
+	     carries a matching one). Standard TLS/crypto only.
+
+	     Round-5 Q2: the FMSG payload path (chain ordering / parent linkage)
+	     runs the payload through SHA-256 (c/src/sha256.c; swift-crypto is
+	     linked) to get a digest to order and link chains by. That is hashing
+	     for identity/ordering, not encryption — nothing on this path is ever
+	     decrypted, because nothing on it is ever encrypted. `false` stands.
+	     Revisit this key specifically if the FMSG path ever starts encrypting
+	     payload bytes rather than just digesting them. -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<!-- Round-5 Q1: tells the App Store the app presents Russian and Korean,
+	     not just English. The actual localized strings are NOT in .lproj
+	     bundles yet — FStrings.swift is the backing store, an in-code
+	     en/ru/ko table that FStrings switches on at runtime from
+	     Locale.preferredLanguages. Milestone E4's String Catalog will
+	     supersede this in-code table, but this key is what the store listing
+	     needs regardless of where the strings physically live. -->
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>ru</string>
+		<string>ko</string>
+	</array>
 	<!-- Marks the bundle as a Messages-only application: no Home Screen icon,
 	     discoverable in the Messages app drawer. -->
 	<key>LSApplicationLaunchProhibited</key>
 	<true/>
-	<key>UIRequiredDeviceCapabilities</key>
-	<array>
-		<string>armv7</string>
-	</array>
+	<!-- Round-5 B4: UIRequiredDeviceCapabilities = [armv7] used to live here.
+	     It survived only because this container is LSApplicationLaunchProhibited
+	     and never launches, so the wrong capability never bit at runtime — but
+	     App Store Connect validates metadata before anyone runs the binary, and
+	     armv7 (32-bit) on an arm64-only app reads as "requires a device this
+	     binary cannot run on" and fails upload. Deleting the key buys nothing
+	     back (App Store Connect infers the real device capabilities from the
+	     arm64 slice), so per the owner's call it is dropped entirely rather
+	     than corrected to arm64. -->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

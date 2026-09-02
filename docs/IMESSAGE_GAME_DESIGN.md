@@ -169,7 +169,9 @@ offset  size  field            notes
 12      2     turn       u16, count of kernel actions applied (0 = fresh deal)
 14      1     last_actor_seat  seat (0-based) of the player who SENT this message
 15      1     n_players  2..8 on the wire (creator fixes it at creation; UI caps 4 in v1)
-16      1     variant    reserved rules-variant byte, =0 (36-card podkidnoy defaults)
+16      1     variant    the table's RULES. Reserved (=0) on formats 2-4;
+                         on formats 5/6 it is bit0 = passing/perevodnoy,
+                         so 0 is podkidnoy. See docs/PODKIDNOY.md
 17      1     round      u8, count of completed rounds in the chain (== number of
                          discard/pickup round-closures; used by the rebase guard, §7.4)
 18      8     parent8    first 8 bytes of SHA-256 of the previous envelope's
@@ -177,7 +179,7 @@ offset  size  field            notes
 26      16    seed       deal seed → game_set_deal_seed_bytes(seed,16).
                          All zeros only in fair-deal WAITING/ACCEPT (§15)
 42      1     n_joins    seats claimed so far (creator counts: >=1)
-43      var   joins      n_joins × { u8 seat, u8 name_len (<=12), name utf8 }
+43      var   joins      n_joins × { u8 seat, u8 name_len (<=64), name utf8 }
                          ordered by claim time; creator is always seat 0 (§6)
 var     2     n_actions  u16
 var     3×n   actions    packed kernel actions, 3 bytes each (§4.2)
@@ -329,10 +331,16 @@ Rule S1: on opening a bubble,
   if selectedMessage.senderParticipantIdentifier
      == conversation.localParticipantIdentifier
   then mySeat = envelope.last_actor_seat        // exact, any N
-  else if n_players == 2
-  then mySeat = 1 - envelope.last_actor_seat    // exact for 2p
-  else fall through to 6.3                      // N>=3, cache lost, not last actor
+  else if n_players == 2 AND the chat is a DM
+  then mySeat = 1 - envelope.last_actor_seat    // exact ONLY in a DM: two humans total
+  else fall through to 6.3                      // cache lost, no exact signal
 ```
+
+The DM gate on the 2-player branch is load-bearing: in a GROUP chat a
+2-player game's bubble can be tapped by any member, and without the gate a
+cache-less bystander was silently seated as "the other player" — that seat's
+hand face-up, its moves playable. A group-chat 2p game resolves through the
+cache (both players claimed seats in the lobby) or falls to 6.3.
 
 ### 6.3 Tertiary: nickname recovery (N≥3 after reinstall)
 
@@ -380,9 +388,19 @@ computes the same winner regardless of message delivery order:
 
 ```
 Rule P (total preference order):
+  ancestry first: a chain's own DIRECT CHILD beats the parent it names
+                                      (msg_wire.h rule 4 - `turn` counts
+                                       re-derived atoms, and a pending good
+                                       stops being one when anything follows
+                                       it, so a child can tie with, or even
+                                       seal BELOW, its parent's turn)
+  0. a STARTED chain (phase >= LIVE) beats a pre-game one   (msg_wire.h rule 0)
   1. higher round wins                (a closed round is settled history)
   2. else higher turn wins            (more accepted actions)
-  3. else lexicographically smaller SHA-256(envelope bytes) wins  (arbitrary but universal)
+  3. else more joins wins             (the fuller roster is strictly later history;
+                                       orders racing Starts and racing lobbies —
+                                       see msg_wire.h rule 3)
+  4. else lexicographically smaller SHA-256(envelope bytes) wins  (arbitrary but universal)
 ```
 
 The device's cache stores the preferred chain seen so far. On every open
@@ -403,6 +421,18 @@ bytes (`docs/SECURITY_WASM_BOUNDARY.md`); `msg_wire.c` constructs games only
 via public kernel calls, never memcpy into `Game`.
 
 ### 7.4 Rebase: no legal move is silently lost
+
+> **RETIRED ON iOS (round 9, owner call, 1.0(11)).**
+> The durable pending ledger and the adopt-time rebase are removed from the
+> extension: "caching has caused A LOT of problems in the past. The extension
+> is rarely killed, and it's rare that an arriving bubble can happen mid
+> staging."
+> Staged-but-unsent moves now live only in the controller's memory (undo still
+> works), and the staged input-field bubble itself still carries them as a
+> sealed chain - sending it is always valid FMSG.
+> Rule R remains a KERNEL capability (`fio_msg_rebase_awire`), exercised by the
+> wasm bridge and `e2e/msg_concurrency.test.ts`; the section below documents
+> the semantics that kernel entry still implements.
 
 Per `game_id`, the device keeps a small **pending ledger**: the actions *this
 seat* has staged/sent, each tagged with the `(round, turn, parent8)` it was
@@ -461,6 +491,56 @@ More worked examples, including 3–4 player races, in §14.
 | `didCancelSending` fires | user deleted the staged bubble | roll cache/ledger back to pre-stage snapshot (§17.2) |
 | FINISHED chain adopted while we had pending moves | game over won the race | all pending discarded; show result card |
 
+### 7.7 Merging forks (Rule M): CONSIDERED AND REJECTED, round 12
+
+The open complaint that prompted this: two attackers say good against the same
+parent, Rule P's digest tiebreak picks one, and the other good is gone.
+The bout does not close, and a third player holding both bubbles has no way to
+tell that two people are done.
+
+The reconciliation that would fix it is a merge - `merge(A, B)` = common atom
+prefix, then the loser's remaining atoms folded on through Rule R's round guard.
+It was written and tested against the kernel (two goods both survive, the §7.5
+throw-in still drops, `merge(A,B)` byte-identical to `merge(B,A)`), and then
+**reverted**, because of what its INPUTS have to be.
+
+A merge is a function of the set of chains a device happens to hold.
+`MSConversation` exposes exactly one message - `selectedMessage` - plus whatever
+`didReceiveMessage` delivers while the extension is open.
+There is no transcript, no history, no query; that is the whole API.
+So "the chains this device holds" is not a property of the conversation, it is a
+property of *which messages that device was awake for*.
+
+That is fatal, and the owner's argument is the clearest statement of why.
+Four players; one has their phone off.
+The two others both send good at the same moment.
+The awake device receives both, merges, and shows a board where both players are
+good - possibly a board a whole ROUND ahead, since the second good can close the
+bout and deal the next one.
+The phone that was off wakes up, can only see the newest bubble, and shows one
+good and the previous round.
+Both devices are behaving correctly, and they are now looking at different games
+- not "one good missing", but different hands, different round, different table.
+Their next moves branch from different bases.
+
+Rule P alone does not have this failure mode, and the reason is worth stating
+precisely: **every state a device can be in under Rule P is a chain some human
+actually sent.**
+Devices can be behind, never sideways.
+A merged chain exists in no bubble anywhere, so a merging device can hold a state
+no one else can reach or verify until that device happens to send.
+
+So the rule stands: state is what the newest bubble you can see says it is.
+The cost is real and accepted - a good that loses the digest tiebreak is
+dropped, and that player taps Good again.
+One lost tempo beats two players in two different games.
+
+**This would become correct the moment a device can see the fork from the thread
+itself rather than from its own receive history.** If Apple ever exposes message
+history, or if a bubble is ever made to carry the sibling tips it witnessed,
+revisit this - the kernel-side merge is straightforward and was proven to work.
+It is the input, not the algorithm, that is missing.
+
 ---
 
 ## 8. Native engine
@@ -516,6 +596,15 @@ pattern the repo already uses for replay v5 (`e2e/replay_ts_oracle.ts`).
 ## 9. Xcode & host app
 
 ### 9.1 The decision Apple forces (read this before creating the app record)
+
+> **Reversed 2026-07-18 (`e9b9120`).** The "choose the bundled form" decision
+> below was superseded: the iMessage game now ships as its own standalone App
+> Store record (`cards.foolish.msg`, `ios/project.yml`'s `FoolishMessagesApp`
+> target) rather than embedded in the host app. The tradeoff/reasoning
+> section immediately below is kept for the historical record of why bundled
+> was chosen first; `ios/project.yml`'s own comments and
+> `docs/IMESSAGE_APP_STORE_SUBMISSION.md` are ground truth for the current
+> (standalone) submission model.
 
 Apple: an iMessage app is either **standalone** (no visible iOS app) or an
 **extension bundled in an iOS app** — and converting between the two later
@@ -638,6 +727,29 @@ activeConversation?.insert(message) { error in … }   // STAGES it; user must t
 - Never `insert` twice for one logical turn; disable Send-move until resolved.
 - The extension gets NO background execution and NO push — the message *is*
   the notification. Do not attempt timers, polling, or silent updates.
+
+### 11.5 The held settlement (round 16)
+
+**A staged move must tell its player nothing they could act on.**
+It sits in the input field until the human presses Send, and until then it can be undone — or the bubble can simply be deleted, which no amount of hiding the Undo button prevents.
+
+Three moves close a bout, and every one of them deals from the stock in the same `handle_*`: the last good owed, a cover that empties the defender's hand, and a pickup (which refills the picker too whenever the table left them short of six).
+Applied whole at staging time, each one hands its player a look at their new hand with the move still retractable: say good, read the deal, undo, throw in another card instead.
+Four same-rank covers over four same-rank attacks is the cover case, not a rule of its own — the kernel has no separate four-of-a-kind transition, and a table nobody can add to still ends on an explicit good.
+
+So a staged turn is cut in two at the kernel's own boundary (`evw_is_settlement`, exposed as `[GameEvent].settlementStart`):
+
+- the **action** half plays as it is staged — the cover lands, the table is taken, the good mark appears;
+- the **settlement** half — discard, deal, roles — is withheld, with the board showing the kernel's own pre-settlement snapshot, until `didStartSending`.
+
+Nothing durable is involved: the hold is an in-memory fact about a move this controller applied and has not seen sent.
+`legal` is emptied while it stands, so the defender whose sweep makes them the next first attacker cannot play out of a hand they have not been shown.
+
+**The wire does not change.** The bubble carries the whole turn, deal included — it has to, since the drawn cards are not derivable from the code — and a recipient animates all of it on arrival, because a recipient was never in a position to take the move back.
+
+This is an iMessage-only rule: the web and the app commit a move the moment it is played, so there is nothing to withhold.
+It is also **not** a defence against a determined cheat — the envelope carries the deal seed (§4), so anyone willing to decode their own bubble can compute the whole stock.
+What it removes is the one-tap version, where the game itself shows you the deal and then offers you the Undo button.
 
 ---
 

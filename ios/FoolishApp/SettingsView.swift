@@ -12,7 +12,9 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var auth: AuthService
     @AppStorage("ios.haptics") private var hapticsOn = true
-    @State private var language = FStrings.override
+    /// The live settings (FPrefs): observed so THIS screen re-renders, and
+    /// written through so every other open screen does too.
+    @ObservedObject private var prefs = FPrefs.shared
     @State private var flagRefresh = false
     @State private var confirmDelete = false
     @State private var deleting = false
@@ -43,12 +45,12 @@ struct SettingsView: View {
 
     private var languageSection: some View {
         Section("Language") {
-            Picker("Language", selection: $language) {
-                ForEach(AppLanguage.allCases, id: \.self) { lang in
-                    Text(lang.display).tag(lang)
+            Picker("Language", selection: Binding(get: { prefs.language },
+                                                  set: { prefs.setLanguage($0) })) {
+                ForEach(AppLanguage.allCases, id: \.self) { choice in
+                    Text(choice.display).tag(choice)
                 }
             }
-            .onChange(of: language) { FStrings.override = $0 }
         }
     }
 

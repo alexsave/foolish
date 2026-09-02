@@ -1,3 +1,22 @@
+// TODO(podkidnoy): this lobby needs the passing checkbox too.
+//
+// The kernel now carries a rules variant on the Game itself (game.h
+// GAME_RULE_NO_PASS): podkidnoy, the throw-in game where the defender covers or
+// picks up and there is no transfer at all. The iMessage lobby already chooses
+// it - a wooden checkbox that reseals the chain, whose value rides the FMSG
+// header, and whose rule the replay code carries so every device enumerates the
+// same legal moves (docs/PODKIDNOY.md).
+//
+// What is missing here is the SERVER half, which is why this is a note and not
+// a control: an online game's rules would have to survive `games.state`, and
+// that blob has no room for them today (wasm_api.c's durable codec is a
+// version byte plus a flags byte). Until it does, every online game is the
+// classic passing game - unchanged, and correct.
+//
+// When it is built: the checkbox belongs beside the player list, and the
+// iMessage rule that "whoever changes it cannot be the one to start" has no
+// equivalent here yet (any seated player may start an online game), so that
+// question needs answering rather than porting.
 import { useServer } from "../contexts/ServerContext";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useMemo } from "react";

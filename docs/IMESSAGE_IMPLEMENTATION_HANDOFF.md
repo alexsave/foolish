@@ -197,7 +197,7 @@ offset  size  field            (unchanged fields elide their notes — see §4.1
 18      8     parent8    first 8 bytes of SHA-256(previous envelope bytes)
 26      32    seed       -> game_set_deal_seed_bytes(seed, 32)   [was 16]
 58      1     n_joins
-59      var   joins      n_joins × { u8 seat, u8 name_len<=12, name utf8 }
+59      var   joins      n_joins × { u8 seat, u8 name_len<=64, name utf8 }
 var     2     n_actions  u16
 var     var   actions    seat-prefixed awire frames (§3.2)
 ```

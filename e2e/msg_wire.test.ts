@@ -18,12 +18,12 @@ import { kernelMsgDecode } from '../sdk/ts/wasm/bots.ts';
 // Regenerate with that command if the envelope layout ever changes; a diff here
 // is a wire break, and every shipped device would have to agree with it.
 const FIXTURES = [
-    { n_players: 2, turn: 7, round: 1, hex:
-      'f7020002efcdab89674523010700000200010000000000000000ae15293755bd748b2919627cd0591ffb42d7f9b2e9b57da5c2839ed47bd7ced7020004416e6e300104416e6e31070003a9cc795118a16a9edd28d516' },
+    { n_players: 2, turn: 8, round: 2, hex:
+      'f7020002efcdab89674523010800000200020000000000000000ae15293755bd748b2919627cd0591ffb42d7f9b2e9b57da5c2839ed47bd7ced7020004416e6e300104416e6e310800f72719e90cb7ee031bd6af74a3a23a' },
     { n_players: 3, turn: 10, round: 1, hex:
-      'f7020002efcdab89674523010a0000030001000000000000000079d87206410d37d302c19dfb6cacbc8bebf879d242622082315709cc0f183788030004416e6e300104416e6e310204416e6e320a00012cb4fce6acbe29ba5d0adae18a66b4fdc7f6' },
-    { n_players: 4, turn: 5, round: 1, hex:
-      'f7020002efcdab89674523010500000400010000000000000000449bbad52d5dfb1bdb68d87a09fe591b9419f9f39b0ec35e9f2b75c5a359a138040004416e6e300104416e6e310204416e6e320304416e6e33050003b7ddc3ef88a264acb5183fbe413a46' },
+      'f7020002efcdab89674523010a0000030001000000000000000079d87206410d37d302c19dfb6cacbc8bebf879d242622082315709cc0f183788030004416e6e300104416e6e310204416e6e320a00012951da5bef3096f9f7bf2cfb58d013f6d7fa' },
+    { n_players: 4, turn: 7, round: 1, hex:
+      'f7020002efcdab89674523010700000400010000000000000000449bbad52d5dfb1bdb68d87a09fe591b9419f9f39b0ec35e9f2b75c5a359a138040004416e6e300104416e6e310204416e6e320304416e6e33070001c32dd6c13bd1e53963f945fef906649a' },
 ];
 
 function hexToBytes(h: string): Uint8Array {
@@ -54,11 +54,20 @@ test('the envelope is rejected before it can be replayed: magic, format, seed', 
     };
     bad(b => { b[0] = 0xf6; }, /not an FMSG envelope/);
     bad(b => { b[1] = 1; }, /unsupported format/);      // the raw format was cut
-    bad(b => { b[1] = 3; }, /unsupported format/);
+    // 3 is the CLOCK format, 4 the REMATCH format, and 5/6 are those two with
+    // the variant byte spent on the RULES (podkidnoy, docs/PODKIDNOY.md) - all
+    // four decode, so the first byte above the wire is 7. (Flipping this buffer
+    // to any of them shifts n_joins along, so they fail as bad-joins/truncated
+    // payloads rather than as unknown formats - which the truncation test below
+    // covers.)
+    bad(b => { b[1] = 7; }, /unsupported format/);
     bad(b => { b[2] = 0x01; }, /unsupported flags/);    // fair-deal: spec'd, unbuilt
-    bad(b => { b[2] = 0x04; }, /unsupported flags/);    // reserved bit
+    bad(b => { b[2] = 0x08; }, /unsupported flags/);    // reserved bit (0x04 = legacy passing-allowed, tolerated for 1.0(3) msgs)
     bad(b => { b[15] = 1; }, /bad player count/);
     bad(b => { b[15] = 9; }, /bad player count/);
+    // The variant byte is RESERVED on format 2 (that format predates the rules
+    // and is the passing game by definition), so any bit set in it is refused -
+    // which is what stops a podkidnoy game masquerading as an old chain.
     bad(b => { b[16] = 1; }, /unknown variant/);
     bad(b => { b[26] = 0; }, /dead deal seed/);         // all-zero seed
 });
@@ -71,6 +80,42 @@ test('a truncated envelope never crashes the kernel', () => {
         try { kernelMsgDecode(e.subarray(0, cut)); } catch { /* expected */ }
     }
 });
+
+// ROUND 16's header, sealed by the same native producer from the same states:
+// format 3, a send clock, and a BUBBLE DELTA (n_new) saying the last two atoms
+// are the ones this bubble added. The web and the phone parse this header in
+// different languages, so a fixture is the only thing that keeps them honest -
+// a silent disagreement about where n_joins starts would put a browser and a
+// phone on different games, and the delta decides what a bubble ANIMATES.
+// Regenerate with `c/build/msg_wire_test --fixture` (the odd lines).
+const FIXTURES3 = [
+    { n_players: 2, turn: 8, round: 2, n_new: 5, sent_at: 0x1234, hex:
+      'f7030002efcdab89674523010800000200020000000000000000ae15293755bd748b2919627cd0591ffb42d7f9b2e9b57da5c2839ed47bd7ced7341205020004416e6e300104416e6e310800f72719e90cb7ee031bd6af74a3a23a' },
+    { n_players: 3, turn: 10, round: 1, n_new: 4, sent_at: 0x1234, hex:
+      'f7030002efcdab89674523010a0000030001000000000000000079d87206410d37d302c19dfb6cacbc8bebf879d242622082315709cc0f183788341204030004416e6e300104416e6e310204416e6e320a00012951da5bef3096f9f7bf2cfb58d013f6d7fa' },
+    { n_players: 4, turn: 7, round: 1, n_new: 5, sent_at: 0x1234, hex:
+      'f7030002efcdab89674523010700000400010000000000000000449bbad52d5dfb1bdb68d87a09fe591b9419f9f39b0ec35e9f2b75c5a359a138341205040004416e6e300104416e6e310204416e6e320304416e6e33070001c32dd6c13bd1e53963f945fef906649a' },
+];
+
+// THE FOOL'S PENALTY (c/src/msg_wire.h format 4), sealed by the native kernel
+// off a deal that was PINNED to a seat the lowest-trump rule would not choose.
+// `opening` is the seat the penalty imposed and `derived` the one the deal
+// would otherwise have produced; they differ in every row, which is what makes
+// the row worth having.
+//
+// This is the strongest cross-engine check in the file. The wasm kernel does
+// not merely have to READ the six new header bytes at the right offsets - it
+// has to re-deal from the seed with the same pin, or the body's atoms land on a
+// board where they are not legal and the decode throws outright. Regenerate
+// with `./build/msg_wire_test --fixture4`.
+const FIXTURES4 = [
+    { n_players: 2, turn: 8, round: 1, opening: 1, derived: 0, sent_at: 0x1234, hex:
+      'f7040002efcdab89674523010800010200010000000000000000a5c70f6c592443dfe1944f71313133e2dd4ce13f3c125c7d892adc1dfd54e8c7341200000100000000ff020004416e6e300104416e6e31080006a02599350e83da1f57276ada' },
+    { n_players: 3, turn: 7, round: 0, opening: 0, derived: 1, sent_at: 0x1234, hex:
+      'f7040002efcdab89674523010700000300000000000000000000708a573c45740727bb3c8aefcd83d072866d616095beff5af7fe481591965177341200000000000000ff030004416e6e300104416e6e310204416e6e3207000214e866d4c520b973a6d192a6dcba' },
+    { n_players: 4, turn: 5, round: 1, opening: 2, derived: 3, sent_at: 0x1234, hex:
+      'f7040002efcdab896745230105000004000100000000000000003c4da00b32c4ca6f94e3c56e6ad66d022f8ee180ee6ba23665d2b40d26d7bb28341200000200000000ff040004416e6e300104416e6e310204416e6e320304416e6e330500a0acd23870d94d3d5f1f4a12d84494db9a' },
+];
 
 // THE cross-engine check (design §8.2). The native kernel sealed these; the wasm
 // kernel must read back the same game. Divergence is a release blocker: the two
@@ -93,6 +138,82 @@ for (const f of FIXTURES) {
         // The digest is what Rule P breaks ties on; it must be over the bytes.
         assert.equal(env.digest.length, 32);
         assert.ok(env.digest.some(b => b !== 0), 'digest computed');
+    });
+}
+
+for (const f of FIXTURES3) {
+    test(`wasm reads the round-16 header native wrote (${f.n_players}p)`, () => {
+        const env = kernelMsgDecode(hexToBytes(f.hex));
+        assert.equal(env.format, 3);
+        assert.equal(env.sent_at, f.sent_at, 'send clock');
+        assert.equal(env.n_new, f.n_new, 'bubble delta');
+        // The three extra header bytes sit BEFORE n_joins, so reading them
+        // wrong shifts every join. That the joins still come back whole is the
+        // real proof the two decoders agree on the layout.
+        assert.equal(env.turn, f.turn, 'atom count');
+        assert.equal(env.round, f.round, 'completed bouts');
+        assert.equal(env.joins.length, f.n_players);
+        assert.deepEqual(env.joins.map(j => j.seat), [...Array(f.n_players).keys()]);
+        assert.ok(env.joins.every(j => /^Ann\d$/.test(j.name)), 'join names intact');
+        // …and the delta names a real suffix: a bubble cannot have added more
+        // atoms than the chain holds.
+        assert.ok(env.n_new > 0 && env.n_new <= env.turn, 'delta within the chain');
+    });
+}
+
+for (const f of FIXTURES4) {
+    test(`wasm honours the fool's penalty native sealed (${f.n_players}p)`, () => {
+        const env = kernelMsgDecode(hexToBytes(f.hex));
+        assert.equal(env.format, 4);
+        assert.equal(env.opening, f.opening, 'the opening seat the penalty imposed');
+        assert.notEqual(f.opening, f.derived,
+            'the fixture is worthless if the penalty agreed with the deal');
+        assert.equal(env.carry_key, 0, 'a live chain carries no lobby question');
+        assert.equal(env.carry_fool, 0xff);
+        // A decode that returned at all already re-dealt with the pin: the body
+        // is coded against that board's menus and would not decode otherwise.
+        // turn/round agreeing means it replayed the identical chain.
+        assert.equal(env.turn, f.turn, 'atom count');
+        assert.equal(env.round, f.round, 'completed bouts');
+        assert.equal(env.sent_at, f.sent_at);
+        assert.equal(env.joins.length, f.n_players);
+        assert.deepEqual(env.joins.map(j => j.seat), [...Array(f.n_players).keys()]);
+    });
+}
+
+// PODKIDNOY (docs/PODKIDNOY.md), sealed by the native kernel: format 5, whose
+// variant byte is the table's RULES and whose 0 means "no transfer".
+//
+// The strongest cross-engine check in the file, for a reason the fool's-penalty
+// rows do not reach: the body of a v6-family code is a sequence of INDICES into
+// each state's legal-move menu, and this game's menus have no transfer in them.
+// A wasm kernel that read the rules byte and ignored it - or never learned that
+// format 5 carries one - would build the perevodnoy menu, and the same indices
+// would resolve to different moves. It would not "look wrong": the decode fails
+// outright, or replays a chain whose turn/round no longer match the header.
+// Regenerate with `./build/msg_wire_test --fixture5`.
+const FIXTURES5 = [
+    { n_players: 2, turn: 12, round: 2, sent_at: 0x1234, hex:
+      'f7050002efcdab89674523010c000002000200000000000000001e9986e393a186985bc91663988c3c607d4fe2267201f3652ebe7c89db67cc55341200020004416e6e300104416e6e310c001d179167621fb4cab1ae1a25e54fca' },
+    { n_players: 3, turn: 10, round: 0, sent_at: 0x1234, hex:
+      'f7050002efcdab89674523010a00000300000000000000000000e95cceb27ff14ae0347151e234ded9f026706246cbae96429c92e88170a83606341200030004416e6e300104416e6e310204416e6e320a000325ca4087e62c93b74459d94356c58a' },
+    { n_players: 4, turn: 9, round: 1, sent_at: 0x1234, hex:
+      'f7050002efcdab89674523010900000400010000000000000000b41e17816c410d280d188c60d1317680cf91e267235a391e0b66547904ea9fb6341200040004416e6e300104416e6e310204416e6e320304416e6e330900e9f9d02484f96635b8665da7cde4c7f38a' },
+];
+
+for (const f of FIXTURES5) {
+    test(`wasm replays a podkidnoy chain native sealed (${f.n_players}p)`, () => {
+        const env = kernelMsgDecode(hexToBytes(f.hex));
+        assert.equal(env.format, 5, 'the rules format');
+        assert.equal(env.variant, 0, 'variant 0 on format 5 is podkidnoy');
+        // The chain replayed under those rules: turn and round are the header's
+        // claims and the kernel holds the body to them.
+        assert.equal(env.turn, f.turn, 'atom count');
+        assert.equal(env.round, f.round, 'completed bouts');
+        assert.equal(env.sent_at, f.sent_at);
+        assert.equal(env.joins.length, f.n_players);
+        assert.deepEqual(env.joins.map(j => j.seat), [...Array(f.n_players).keys()]);
+        assert.ok(env.joins.every(j => /^Ann\d$/.test(j.name)), 'join names intact');
     });
 }
 

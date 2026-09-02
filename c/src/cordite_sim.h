@@ -39,6 +39,11 @@ typedef struct {
     uint8_t  flipped_id;       // card id of the flipped trump (when has_flipped)
     uint32_t good_mask;        // players that have said good
     uint8_t  num_eliminated;
+    // The world's RULES (Game.rules), carried so a sampled world plays the same
+    // game the root does. A Monte-Carlo bot that searched with the transfer
+    // available on a podkidnoy table would value every defence through a move
+    // it cannot make.
+    int8_t   rules;
 
     uint64_t hand[MAX_PLAYERS];     // card-id bitmask per player
     uint8_t  status_p[MAX_PLAYERS]; // PLAYER_STATUS_*

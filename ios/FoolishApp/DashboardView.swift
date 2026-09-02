@@ -8,6 +8,9 @@ import FoolishKit
 import FoolishNet
 
 struct DashboardView: View {
+    /// Re-render when a setting changes (see FPrefs). Only the OBSERVATION
+    /// matters - the strings still come from FStrings.t.
+    @ObservedObject private var prefs = FPrefs.shared
     @EnvironmentObject private var auth: AuthService
     let onCreate: () -> Void
     let onJoin: (String) -> Void
@@ -18,7 +21,7 @@ struct DashboardView: View {
 
     var body: some View {
         ZStack {
-            WoolBackground()
+            TableBackground()
             VStack(spacing: FSpace.l) {
                 topBar
                 header

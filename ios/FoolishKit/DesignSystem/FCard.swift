@@ -6,10 +6,21 @@
 // dragged source card fades to 0.3. Trump is NOT marked per-card (the web shows
 // trump only at the deck well); the `trump` flag is kept for API compatibility.
 // Back is the procedural fern; VoiceOver reads "seven of spades" etc.
+//
+// DARK MODE inverts the face and nothing else (round-7, the owner's brief:
+// "make cards black with red suit and value for hearts and diamonds, white
+// otherwise. White outline"). Geometry, type, sizes, the thin-card fallback and
+// the selection behaviour are all scheme-independent — only three colours move,
+// and they move as a PAIR of ramps in `Ink` below so a dark card cannot end up
+// with, say, a light-mode border.
 
 import SwiftUI
 
 public struct FCard: View {
+    /// Read once, at the top of the card, and threaded into `ink` — the face,
+    /// the glyphs and the border must agree, and three separate environment
+    /// reads is three chances for them not to.
+    @Environment(\.colorScheme) private var scheme
     public let card: Card?          // nil ⇒ face-down (use `backSeed`)
     public var selected: Bool
     public var disabled: Bool       // dimmed + locked (C1 in-flight affordance)
@@ -36,7 +47,67 @@ public struct FCard: View {
     private static let faceWhite = Color.white
     private static let redSuit = Color(hex: 0xDC2626)
     private static let blackSuit = Color(hex: 0x0A0A0A)
-    private static let selRed = Color(hex: 0xE0201C)
+    /// ROUND 20, the owner: "make card select highlight more obvious. Brighter
+    /// and slightly wider, without messing with card position. So once selected,
+    /// the card should be in the exact same spot as before only with a larger
+    /// thickness. Border thickness should not affect position."
+    ///
+    /// #FF2A22 over the old #E0201C - a step brighter, and still the same red at
+    /// a glance, so the affordance did not change identity between builds. The
+    /// width goes 2.5 -> `selWidth` at the same time, and between them that is
+    /// the whole highlight: see `edge` for why there is no halo behind it.
+    private static let selRed = Color(hex: 0xFF2A22)
+    /// THE two widths, side by side, because the whole point of the ask is the
+    /// relationship between them.
+    ///
+    /// POSITION IS SAFE BY CONSTRUCTION, not by being careful: both are drawn
+    /// with `strokeBorder`, which strokes INSIDE the shape's own bounds (a
+    /// plain `stroke` would straddle the edge and spill half its width outward).
+    /// The card's frame is fixed by `.frame(width:height:)` above either way, so
+    /// widening this eats a little more of the face and moves nothing. The glow
+    /// is a `shadow`, which never takes part in layout at all.
+    static let selWidth: CGFloat = 4
+    static let restWidth: CGFloat = 2
+    /// Round-7 #3: the dark-mode outline. The owner's round-6 spec said white;
+    /// round-7 revised it to "dark gray". Deliberately darker than the dark
+    /// wool field (~0x5D5D62) so a black card still has a visible edge against
+    /// the board, and lighter than the 0x0A0A0A face so the outline reads at
+    /// all - a gray that matched either surface would erase one of the two
+    /// edges. Tunable in one place if it wants nudging.
+    private static let darkBorder = Color(hex: 0x3E3E44)
+    /// THE light-mode card outline (round-7 final): "the deep red color for not
+    /// dark mode". One value for BOTH the face border and the fern back's frame
+    /// so a face-up card in hand and a face-down card in the deck / an
+    /// opponent's fan carry the identical edge - the owner's ask that borders
+    /// "be the same whether they are in the self card view or deck or other
+    /// player view". Deep enough to read on a white face and on the black fern
+    /// alike; the dark-mode counterpart is `darkBorder` gray, applied the same
+    /// two places.
+    static let deepRed = Color(hex: 0x8B1A1A)
+
+    /// The three colours a card face is made of, as ONE value per scheme.
+    ///
+    /// Light is the web's card, unchanged. Dark is its inversion: the ink
+    /// colour becomes the FACE and white stands in for the black suits, which
+    /// is precisely what "black cards, white otherwise, white outline" asks
+    /// for. `red` brightens a step in dark mode (#DC2626 → #EF4444) because
+    /// the web's red was chosen against a white face - on black it is a
+    /// 4.4:1 muddy maroon, where the brighter red is 5.6:1 and still reads as
+    /// the same red at a glance beside a light-mode card in the transcript.
+    private struct Ink {
+        let face: Color
+        let red: Color      // hearts + diamonds
+        let black: Color    // clubs + spades (white, in dark mode)
+        let border: Color
+
+        static let light = Ink(face: FCard.faceWhite, red: FCard.redSuit,
+                               black: FCard.blackSuit, border: FCard.deepRed)
+        static let dark = Ink(face: FCard.blackSuit, red: Color(hex: 0xEF4444),
+                              black: .white, border: FCard.darkBorder)
+    }
+
+    private var ink: Ink { scheme == .dark ? .dark : .light }
+
     private var radius: CGFloat { min(5, size.width * 0.1) }
     private var thin: Bool { size.width < 40 }   // web thin-card fallback (<40px wide)
 
@@ -59,9 +130,9 @@ public struct FCard: View {
 
     @ViewBuilder private func face(_ card: Card) -> some View {
         let suit = card.suit ?? .spades
-        let color = suit.isRed ? Self.redSuit : Self.blackSuit
+        let color = suit.isRed ? ink.red : ink.black
         RoundedRectangle(cornerRadius: radius)
-            .fill(Self.faceWhite)
+            .fill(ink.face)
             .overlay { if thin { thinCenter(card, color: color) } else { centerGlyph(suit, color: color) } }
             .overlay(alignment: .topLeading) { if !thin { corner(card, suit: suit, color: color) } }
             .overlay(alignment: .bottomTrailing) {
@@ -71,15 +142,37 @@ public struct FCard: View {
     }
 
     // Big centre suit glyph — 32/50 of the width (web parity).
+    //
+    // `.fixedSize()`, for the same reason `corner` has one, and it is not
+    // cosmetic. A Text lays itself out against the size it is PROPOSED; without
+    // this it will accept a box shorter than its own line height and resolve
+    // against its baseline instead of its centre, which reads as the glyph
+    // riding up the card. That never happens at rest - it happens during the
+    // drawer's collapse, because the host does not hand the board a monotone
+    // height ramp but a stream of intermediate and out-of-order sizes (one
+    // filmed collapse reported 748, 315, 307, 778, 758, 253, 315 - see
+    // MessageTableView.handCrop). Every one of those is a fresh proposal to
+    // this glyph, and the short ones are the frames the owner saw: the corner
+    // indices held station through the whole transition while the centre suit
+    // climbed toward the top of the card.
+    //
+    // Fixing the SIZE is what locks the glyph to the card: it now always takes
+    // its ideal size and is then centred in whatever the card's frame is, so
+    // the only thing that can move it is the card moving.
     private func centerGlyph(_ suit: Suit, color: Color) -> some View {
         Text(suit.glyph)
             .font(.custom("Georgia", size: size.width * 0.62).weight(.bold))
             .foregroundColor(color)
+            .fixedSize()
     }
 
     // Corner index: rank (20/50 w) over suit (14/50 w), Georgia bold (web parity).
+    // Leading-aligned so the suit's left edge tracks the rank's left edge instead
+    // of centring under it — a wide rank ("10") no longer shifts the suit glyph
+    // sideways (standard card-index behavior). The bottom-right corner mirrors
+    // correctly since it rotates this whole VStack 180°.
     private func corner(_ card: Card, suit: Suit, color: Color) -> some View {
-        VStack(spacing: -size.width * 0.04) {
+        VStack(alignment: .leading, spacing: -size.width * 0.04) {
             Text(CardRank.label(card.v))
                 .font(.custom("Georgia", size: size.width * 0.40).weight(.bold))
             Text(suit.glyph)
@@ -101,31 +194,103 @@ public struct FCard: View {
             Text((card.suit ?? .spades).glyph).font(.custom("Georgia", size: size.width * 0.56).weight(.bold))
         }
         .foregroundColor(color)
+        // Same reason as `centerGlyph`: a centred stack that accepts a short
+        // proposal stops being centred. This is the narrow-card path, so it is
+        // if anything MORE exposed to a squeezed proposal, not less.
+        .fixedSize()
     }
 
+    // The outline. Selection still recolors it red in BOTH schemes: red on a
+    // black face against a walnut board is the only saturated thing on the
+    // card, so it still reads as "this one is picked" - and keeping the
+    // selected colour scheme-independent means the one affordance a player
+    // hunts for during a drag does not change identity when they toggle
+    // appearance mid-game.
     private var border: some View {
-        RoundedRectangle(cornerRadius: radius)
-            .strokeBorder(selected ? Self.selRed : Self.blackSuit,
-                          lineWidth: selected ? 2.5 : 2)
+        Self.edge(selected: selected, radius: radius, resting: ink.border)
     }
 
-    // MARK: back — dark-red fill with a lighter-red border (fern dropped for now;
-    // it kept rendering wrong). A clean placeholder per the owner.
-    private static let backFill = Color(hex: 0x8B0000)     // dark red
-    private static let backEdge = Color(hex: 0xDC2626)     // lighter red
+    /// THE card edge, selected or at rest - one builder, so the face and the
+    /// fern back cannot end up wearing two different rings (they did drift once
+    /// already, which is why `back` reaches for this too).
+    /// NO GLOW (owner, on seeing the first cut: "no glowing selection please").
+    /// A lit halo was tried and is not what this wants: rendered, the soft pass
+    /// bled INWARD across the white face - a `strokeBorder`'s interior is
+    /// transparent, so its own shadow shows straight through it - and a card
+    /// with a pink wash inside its edge reads as a smudged card, not a picked
+    /// one. The ring alone does the whole job: brighter, and half again as
+    /// thick as the one it replaced.
+    @ViewBuilder
+    fileprivate static func edge(selected: Bool, radius: CGFloat, resting: Color) -> some View {
+        RoundedRectangle(cornerRadius: radius)
+            .strokeBorder(selected ? selRed : resting,
+                          lineWidth: selected ? selWidth : restWidth)
+    }
+
+    // MARK: back — the baked fern on black, framed by the SAME edge the face
+    // uses (`ink.border`).
+    //
+    // `fileprivate` (not `private`) so `FCountChip` below — a different type in
+    // this same file — can match these exactly rather than guessing a second
+    // pair of hex values that could drift from the real card back.
+    fileprivate static let backFill = Color(hex: 0x8B0000)     // dark red
+    fileprivate static let backEdge = Color(hex: 0xDC2626)     // lighter red
+    /// The fern card back is now the real thing (FernCardBack, baked and loaded
+    /// through FTextures): the black field with the gold-spine / red-frond /
+    /// bulb-dot fern the web ships. The old flat-red rectangle was a placeholder
+    /// that dropped the owner's tuned fern entirely. Drawn as an image so there
+    /// is no procedural cost at draw time (the bake is a build step), clipped to
+    /// the card's rounded corners with the shared card frame on top. Falls back
+    /// to flat black if the resource is somehow missing (never on a real build).
     private var back: some View {
         RoundedRectangle(cornerRadius: radius)
-            .fill(Self.backFill)
+            .fill(Color.black)
+            .overlay {
+                if let img = FTextures.fernBack {
+                    Image(uiImage: img)
+                        .resizable()
+                        .scaledToFill()
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: radius))
             .overlay(
-                RoundedRectangle(cornerRadius: radius)
-                    .strokeBorder(selected ? Self.selRed : Self.backEdge, lineWidth: selected ? 2.5 : 1.5)
+                // Same edge as a face-up card (`ink.border`): deep red in light,
+                // gray in dark - so the deck / opponent fans match the hand.
+                Self.edge(selected: selected, radius: radius, resting: ink.border)
             )
     }
 
     private var a11yLabel: String {
-        guard let card, !card.isHidden, let suit = card.suit else { return "face down card" }
-        let rank = CardRank.spoken(card.v)
-        let suitName = ["spades", "hearts", "clubs", "diamonds"][suit.rawValue]
-        return "\(rank) of \(suitName)" + (trump ? ", trump" : "")
+        guard let card, !card.isHidden, let suit = card.suit else { return FStrings.t("ios.a11y.facedown") }
+        return FStrings.spokenCard(card.v, suit) + (trump ? ", " + FStrings.t("ios.a11y.trumpmark") : "")
+    }
+}
+
+/// THE deck/hand/discard count numeral — one style, three call sites
+/// (`FDeckWell`, `FSeatBadge`, `FDiscardPile`), so a count can never look like
+/// two different things on one board.
+///
+/// Round-5 m9 first asked for a dark plate behind the digit ("give them black
+/// backgrounds like the cards in hand") because a bare white numeral on the
+/// saturated red backs read like an iOS unread badge. Rendered on device the
+/// plate was worse than the problem — the owner's call on seeing it: "drop the
+/// black background for the card counts, it doesn't look good at all." So the
+/// numeral is bare again, and the badge-y read is answered by WEIGHT and a
+/// hard shadow instead of a plate: heavy white digits carry on the card backs
+/// without borrowing the shape of a notification.
+public struct FCountChip: View {
+    let text: String
+    let font: Font
+    public init(_ text: String, font: Font = .system(size: 15, weight: .bold)) {
+        self.text = text
+        self.font = font
+    }
+    public var body: some View {
+        Text(text)
+            .font(font)
+            .foregroundColor(.white)
+            // A tight, opaque shadow (not a soft glow): it separates the digit
+            // from the red beneath it at every size the three call sites use.
+            .shadow(color: .black.opacity(0.85), radius: 1.5, x: 0, y: 1)
     }
 }

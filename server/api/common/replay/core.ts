@@ -18,10 +18,14 @@ import { Card, LOG_TYPE, LogType, LogCardPair } from "@api/core/types.ts";
 
 // Wire-format constants. The kernel (c/src/replay.h REPLAY_FORMAT_*)
 // is authoritative; these mirrors exist for TS-side pre-checks and tests.
-export const FORMAT_VERSION = 5;
-// Format 6: hidden-state-lossless, partial-game (c/src/replay.h
-// REPLAY_FORMAT_VERSION_V6, docs/REPLAY_FORMAT6_HIDDEN_STATE.md).
-export const FORMAT_VERSION_V6 = 6;
+// The retrodiction line (public DRAW logs, hands recovered once the fool is
+// known). Was 5 until the deal-order fix retired every code cut before it.
+export const FORMAT_VERSION = 9;
+// The inline-reveal line: hidden-state-lossless, partial-game (c/src/replay.h
+// REPLAY_FORMAT_VERSION_V10, docs/REPLAY_FORMAT6_HIDDEN_STATE.md). Was 6, then
+// 7 (pass-mode bit), then 8 (forced-opening bit), and is now 10 for the same
+// reason: the bytes did not change, the rules under them did.
+export const FORMAT_VERSION_V6 = 10;
 export const VERSION_ALPHABET = 16; // room for 15 future versions before a re-think
 
 /* ------------------------------- card ids -------------------------------- */

@@ -1,0 +1,14 @@
+Right instinct, wrong seam. The two users aren't a config you can extend — they're baked into the private Messages app that ships inside the simulator runtime. That's a signed Apple binary hosting your `MSMessagesAppViewController` and handing it an `MSConversation`; there's no plist, flag, or API to add a third participant, and you can't patch the app in any way that survives. Running eight simulators doesn't help either, since they can't iMessage each other. So you can't do "the same" thing Apple does — that door is Apple's.
+
+But the useful move is to stop trying to extend their host and build your own. The reason it feels locked is that Messages owns the host and gives you a conversation object you didn't create. If you want 8 users, you rebuild the host side yourself — and that's very doable on one Mac.
+
+The thing that makes this practical: your entire shared game/group state travels as a URL on `MSMessage` (you build it from query components, the recipient reads it back). So a multi-participant turn flow is really just serializable data passing between instances of your controller. There's nothing magic about "a participant" — it's a string identifier plus a URL payload.
+
+So the harness approach:
+- Factor all your logic out of the view controller into a plain controller/model that takes participant IDs (strings) and message payloads (your own structs, or the URL) — no direct dependency on `MSConversation`.
+- Put a protocol seam where you currently touch `activeConversation`. You can't subclass or instantiate `MSConversation` (no public initializer), so you mock the small slice you use: local participant ID, remote participant IDs, selected message.
+- Build a normal iOS app target that renders your extension's UI inside a fake transcript, with a participant switcher for 2–8 pretend people. Tapping a name swaps the "local" identifier and re-renders; "send" appends the URL to the shared transcript the next participant reads. Runs in the simulator, gives you real N-way group testing.
+
+The honest limit: the harness tests *your* logic and UI, not the Messages host's behavior — presentation-style transitions, real insert vs. send semantics, and receiving a message while the extension is closed. Those you still can't fake, so keep the 2-user simulator for wiring and one second real device/Apple ID for the true end-to-end. But the "8 users" part — the group logic itself — you get by owning the host, not by hacking Apple's.
+
+Is your group feature turn-based (state passed one player to the next) or more of a shared-canvas thing where everyone sees updates? That determines how faithful the harness needs to be.

@@ -154,6 +154,12 @@ export const PlayerRing = () => {
                         height: '80px',
                         transform: 'translate(-50%, -50%)'
                     }}>
+                        {/* TODO(ios-parity): iMessage board shifts the defender shield
+                            the moment a pass is staged (before defender_move lands) —
+                            that immediacy feels good; consider mirroring. (This ring
+                            only derives the first-attacker sword above; the web
+                            defender shield itself is derived from game.defender in
+                            DefenderShield.tsx, rendered as a sibling in GameBoard.) */}
                         {index === game.first_attacker &&
                             game.table_battles.length === 0 &&
                             !(game.deck_length > 0 && game.flipped === null) ? (

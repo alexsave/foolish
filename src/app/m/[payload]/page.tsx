@@ -31,7 +31,7 @@ import type { PersonalGame } from '@api/core/types.ts';
 
 const GAME_ID = 'imessage';
 
-type Loaded = { game: PersonalGame; turn: number; finished: boolean };
+type Loaded = { game: PersonalGame; turn: number; finished: boolean; replayUrl: string | null };
 
 export default function MessagePayloadPage() {
     const segment = useParams<{ payload: string }>().payload || '';
@@ -51,12 +51,12 @@ export default function MessagePayloadPage() {
                 // splitting decode out to dodge that would be a second kernel in
                 // the tree. The browser fetches it as a static asset — one
                 // tracked binary, no base64 twin to drift (see wasm_asset.ts).
-                const { kernelMsgDecode, kernelMsgPublicView, ensureBotsAsync } =
+                const { kernelMsgDecode, kernelMsgPublicView, kernelResidentReplayCodeV6, ensureBotsAsync } =
                     await import('@sdk/ts/wasm/bots.ts');
                 // The bytes arrive over the network here, so the module has to be
                 // ready before any of the synchronous kernel calls below.
                 await ensureBotsAsync();
-                const { base32Decode } = await import('@api/common/replay/codec.ts');
+                const { base32Decode, base32Encode } = await import('@api/common/replay/codec.ts');
                 const { viewToGame } = await import('@sdk/ts/wire/view.ts');
 
                 // The leading char is the TEXT-level format version, so the route
@@ -84,14 +84,38 @@ export default function MessagePayloadPage() {
                 };
                 const game = viewToGame(view, roster, -1, { preGood: [], prevGoodTs: null }) as PersonalGame;
 
+                // §12 / batch 6 item B: a FINISHED payload's bubble now links
+                // HERE (not to a bare replay code — see MessagesViewController.
+                // stage's doc), so the funnel moves one hop out: derive the
+                // replay code from what we just decoded and offer it as this
+                // page's own CTA. kernelMsgDecode already replayed the whole
+                // chain through the ordinary kernel handlers (same as any other
+                // play), so the resident game already carries the session log a
+                // v6 code needs — only the envelope's own seed has to be handed
+                // back in. If derivation is ever impossible for some reason this
+                // build can't foresee, fail soft: the finished board still
+                // renders, just without the replay CTA (a game-over banner and
+                // the install/play CTAs alone still funnel).
+                let replayUrl: string | null = null;
+                if (env.phase === 3) {
+                    try {
+                        const code = kernelResidentReplayCodeV6(env.seed);
+                        replayUrl = `https://foolish.cards/${base32Encode(code)}`;
+                    } catch (e) {
+                        // eslint-disable-next-line no-console
+                        console.error('[m] replay code derivation failed:', e);
+                    }
+                }
+
                 if (cancelled) return;
-                setState({ game, turn: env.turn, finished: env.phase === 3 });
+                setState({ game, turn: env.turn, finished: env.phase === 3, replayUrl });
             } catch (e) {
                 if (cancelled) return;
                 // Never attempt partial recovery: a chain either replays or it
                 // does not (§7.3). One sentence for a stranger; the reason goes
                 // to the console.
-                setError('This game link is damaged.');
+                setError('This game can\'t be opened. The link is damaged, or the '
+                    + 'game was started under an older version of the rules.');
                 // eslint-disable-next-line no-console
                 console.error('[m] payload rejected:', e);
             }
@@ -130,7 +154,7 @@ export default function MessagePayloadPage() {
                                     title={state.finished
                                         ? 'An iMessage Durak game'
                                         : `A live iMessage Durak game — turn ${state.turn}`}
-                                    chrome={<Funnel />}
+                                    chrome={<Funnel finished={state.finished} replayUrl={state.replayUrl} />}
                                 />
                             </DragProvider>
                         </AnimationProvider>
@@ -143,9 +167,25 @@ export default function MessagePayloadPage() {
 
 // The funnel (mockup M7). The host app drives installs — the Messages drawer is
 // buried under "+" and is not a growth plan (handoff §3.5).
-function Funnel() {
+//
+// FINISHED (batch 6 item B): the bubble that sent someone here no longer links
+// straight to a replay code (see MessagesViewController.stage's doc) — this
+// page derived one instead, if it could — so a finished game gets its own
+// prominent "Watch the replay" CTA above the usual install/play ones. If
+// derivation failed (replayUrl is null), fall back to a plain game-over banner
+// so the funnel still reads as "this game ended", just without a broken link.
+function Funnel({ finished, replayUrl }: { finished: boolean; replayUrl: string | null }) {
     return (
         <div className="flex flex-col items-center gap-2 px-4 py-3 text-center">
+            {finished && (
+                replayUrl ? (
+                    <a className="rounded-xl px-5 py-2 font-semibold" href={replayUrl}>
+                        🎬 Watch the replay
+                    </a>
+                ) : (
+                    <p className="text-sm font-medium opacity-90">This game has ended.</p>
+                )
+            )}
             <p className="text-sm opacity-70">Hands stay hidden here. Watching is free.</p>
             <a className="rounded-xl px-5 py-2 font-medium" href="https://apps.apple.com/app/foolish">
                 📲 Get Foolish on the App Store

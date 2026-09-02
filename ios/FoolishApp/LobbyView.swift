@@ -10,6 +10,9 @@ import FoolishKit
 import FoolishNet
 
 struct LobbyView: View {
+    /// Re-render when a setting changes (see FPrefs). Only the OBSERVATION
+    /// matters - the strings still come from FStrings.t.
+    @ObservedObject private var prefs = FPrefs.shared
     @ObservedObject var game: OnlineGame
     let onLeave: () -> Void
 
@@ -17,7 +20,7 @@ struct LobbyView: View {
 
     var body: some View {
         ZStack {
-            WoolBackground()
+            TableBackground()
             if let view = game.view {
                 VStack(spacing: FSpace.l) {
                     header

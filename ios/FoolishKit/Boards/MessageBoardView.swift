@@ -24,7 +24,21 @@ public struct MessageBoardView: View {
 
     private func name(_ seat: Int) -> String { names[seat] ?? "Seat \(seat + 1)" }
 
-    private var attackersActive: Bool { view.battles.contains { $0.defense == nil } || view.battles.isEmpty }
+    /// Round-5 owner note: "attackers shouldn't have swords except for first
+    /// attacker when there are no cards on table" — this bubble view used to
+    /// give EVERY non-defender a sword, which is only right once the bout is
+    /// open. On an EMPTY table only the seat that may actually open it (the
+    /// first attacker) can act at all, so only THAT seat gets the sword; once
+    /// the table has a battle, throw-ins make every other non-defender who
+    /// hasn't said good a real attacker too. Inlined rather than imported
+    /// because `MessageBoardView` can't reach across files for it — this is
+    /// the exact twin of `MessageTableView.showsSword` (`MessageTableView.
+    /// swift:393`), the live board's version of the same rule; keep both in
+    /// sync if the rule ever changes again.
+    private func showsSword(seat: Int, isOut: Bool, _ view: GameView) -> Bool {
+        guard seat != view.defender, !isOut, !view.hasSaidGood(seat) else { return false }
+        return view.battles.isEmpty ? seat == view.firstAttacker : true
+    }
 
     public var body: some View {
         // Same grammar as the live board (MessageTableView): deck pinned top-left,
@@ -43,7 +57,7 @@ public struct MessageBoardView: View {
                     FSeatBadge(name: name(p.seat),
                                handCount: p.handCount,
                                isDefender: p.seat == view.defender,
-                               isAttacker: p.seat != view.defender && !p.isOut && attackersActive,
+                               isAttacker: showsSword(seat: p.seat, isOut: p.isOut, view),
                                saidGood: view.hasSaidGood(p.seat),
                                isOut: p.isOut)   // wool bubble → bone text + shadow (like the board)
                         .position(ringPoint(seat: p.seat, n: view.players.count, in: geo.size))
@@ -52,20 +66,46 @@ public struct MessageBoardView: View {
                 FDeckWell(deckCount: view.deckCount, flipped: view.flipped,
                           hasFlipped: view.hasFlipped, trumpSuit: view.trumpSuit)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                // Note 10 (same fix as MessageTableView, this being the same
+                // FDeckWell/FDiscardPile pair, just this view's public/spectator
+                // rendering of it): -3 puts the discard's own centre on the
+                // draw deck's bottom-card centre — see MessageTableView's
+                // discard placement for the full derivation.
                 discardPile
+                    .offset(y: -3)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 
                 if view.isOver {
+                    // Round-5 M10 sweep: this was full-opacity bone text with NO
+                    // shadow at all, sitting straight on the wool — the finding's
+                    // "no fixed-opacity foreground can survive it" applies even
+                    // without a reduced-opacity color; the missing half of the
+                    // known fix (real shadow) was missing here too. Round-6 #17:
+                    // this is plain text on the wool weave (no wood behind it),
+                    // so it takes `onTableText` (Tokens.swift) - thick black ink,
+                    // not the bone-on-dark-shadow combo, which is wood's half of
+                    // the pairing (MessageTableView's plank uses that one).
                     Text(view.gameOver >= 0
                         ? FStrings.t("ios.msg.isfool", ["name": name(view.gameOver)])
                         : FStrings.t("game_over"))
-                        .font(.subheadline.weight(.semibold)).foregroundStyle(FColor.textPrimary)
+                        .font(.subheadline)
+                        .onTableText()
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                         .padding(.bottom, 6)
                 }
             }
-            .padding(8)
         }
+        // Round-7 #4: the 8pt inset lives OUTSIDE the GeometryReader, not on the
+        // ZStack inside it. With it inside, `geo.size` was the FULL bubble while
+        // the ZStack's content was 16pt narrower, so `ringPoint(in: geo.size)`
+        // placed the seat badges against the full width (centre at width/2) while
+        // FBattleGrid centred inside the padded width (centre at (width-16)/2) -
+        // the badges landed 8pt right of the battle cluster, which is the bubble
+        // card "not centered" report. Padding the GeometryReader instead makes
+        // `geo.size` the padded size, so the ring and the centred battles share
+        // one coordinate space and line up. (MessageTableView never had this: it
+        // centres everything in one unpadded `geo.size`.)
+        .padding(8)
     }
 
     /// Seat centre on the 35% ellipse (web PlayerRing). Public snapshot has no

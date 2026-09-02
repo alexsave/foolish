@@ -99,6 +99,19 @@
 #define GAME_STATUS_PLAYING   1
 #define GAME_STATUS_GAME_OVER 2
 
+// ---------- Rules variants (Game.rules) ---------------------------------
+//
+// PODKIDNOY, the throw-in game with no transfer: the defender may not hand the
+// attack on by playing a card of the same rank (handle_pass / MOVE_PASS), and
+// must cover or pick up. Perevodnoy - the transfer variant, which this engine
+// has always played and still plays by default - is the bit CLEAR.
+//
+// The bit says NO-pass rather than pass-allowed so that a zeroed Game is the
+// game every existing caller, fixture and stored replay already describes. It
+// also matches the wire (msg_wire.h MSG_VARIANT_NO_PASS), which reserved a
+// variant byte whose 0 has always meant "the classic 36-card game".
+#define GAME_RULE_NO_PASS 0x01
+
 typedef struct {
     Card attack;
     Card defense;     // CARD_NONE when uncovered
@@ -153,6 +166,21 @@ typedef struct {
     // every mid-game refill. Legacy (LCG) games leave it false and draw at
     // random exactly as before. Not part of the ephemeral IO marshal.
     bool    deterministic_deck;
+    // THE RULES THIS GAME IS PLAYED UNDER - a bitmask of GAME_RULE_*, 0 for the
+    // classic defaults. A table's variant is a property of the GAME, not of the
+    // process or of whichever host asked, because every device holding the same
+    // chain must enumerate the same legal moves: the v6-family replay codec
+    // codes each action as an INDEX into that state's legal-move menu, so two
+    // devices that disagree about the rules do not merely play differently -
+    // they decode each other's bytes as different moves.
+    //
+    // ZERO IS THE CLASSIC GAME, deliberately: every Game in this tree is born
+    // from a memset, so a rules word whose empty value is the game we have
+    // always played needs no edit at any of the hundreds of construction sites,
+    // and a host that has never heard of a variant cannot accidentally start
+    // one. The sense of each bit is chosen to keep that true (see
+    // GAME_RULE_NO_PASS).
+    int8_t  rules;
     Card    flipped;
     Card    deck[MAX_DECK];
     Battle  table_battles[MAX_BATTLES];
@@ -181,6 +209,13 @@ typedef struct {
     int      num_logs;
     GameLog  logs[MAX_LOGS];
 } Game;
+
+// May the defender transfer in this game? THE question every menu, every
+// validator and the replay codec ask, in one place, so none of them can spell
+// the test differently.
+static inline bool game_pass_allowed(const Game *g) {
+    return (g->rules & GAME_RULE_NO_PASS) == 0;
+}
 
 // ---------- RNG ---------------------------------------------------------
 
@@ -292,6 +327,11 @@ extern void (*engine_snap_hook)(const Game *g, int tag, int aux);
 #define ENGINE_REJECT_ALREADY_GOOD        19
 #define ENGINE_REJECT_FIRST_MUST_ATTACK   20
 #define ENGINE_REJECT_PASS_OVERFLOW       21
+// The transfer is not part of THIS game's rules (GAME_RULE_NO_PASS). Its own
+// reason rather than one of the pass-validity codes above, because it answers a
+// different question: those say "that transfer is illegal", this says "there
+// are no transfers here".
+#define ENGINE_REJECT_PASS_DISABLED       22
 
 extern int engine_last_reject;
 
@@ -352,6 +392,27 @@ void start_game_with_deck(Game *g, const Card *deck, int n_deck);
 // (the default) restores the roll. Consulted only on that branch — see
 // determine_lowest_power_index. Set it before start_game*, clear it after.
 void game_force_first_attacker(int seat);
+
+// THE FOOL'S PENALTY. A rematch played by the SAME people in the SAME cycle
+// does not open on the lowest trump: it opens on the seat to the RIGHT of the
+// previous game's fool, so the fool is the first player attacked. (Right, not
+// left: attacks travel to the attacker's left - see the rulebook's Attacking
+// section - so the seat to the fool's right is the one whose attack lands on
+// the fool.) This pins that seat for the next deal; -1 (the default) restores
+// the ordinary lowest-trump derivation.
+//
+// UNCONDITIONAL, unlike game_force_first_attacker: it overrides a seat the
+// deal could perfectly well derive. Set it before start_game*, clear it after.
+// Who is entitled to it is NOT decided here - msg_wire.c owns that rule
+// (msg_rematch_opening) and the answer travels on the wire, so every device
+// deals the same board.
+void game_open_at_seat(int seat);
+
+// What the last deal DERIVED for its opening seat, before any override: the
+// lowest-trump seat, or -1 when no player was dealt a trump. A v8 replay code
+// records this so a rebuilt deal can still be checked against it even when the
+// override decided the actual opener.
+int game_derived_opening(void);
 
 // The lobby a finished game resets to on "continue"/rematch — the one
 // definition of that transition (docs/C_CORE_CONSOLIDATION.md F6). Three hosts

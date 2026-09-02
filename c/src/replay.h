@@ -28,6 +28,94 @@
 // carried (that is §16's alternative; the seed lives only in the FMSG envelope).
 // v5 stays byte-frozen; v6 is purely additive with its own version byte.
 #define REPLAY_FORMAT_VERSION_V6 6
+// Format 7 (1.0(4)): v6 plus a single PASS-MODE bit written right after the
+// version symbol — 1 = perevodnoy (transfer/pass allowed), 0 = podkidnoy
+// (throw-in, no pass). The bit is needed because the move MENU differs when
+// passing is off: v6/v7 code each move as an INDEX into build_top_menu's
+// fixed-order menu, and the PASS options sit MID-menu, so removing them shifts
+// every later index and desyncs the whole rANS integer — a code cannot be
+// decoded under the wrong variant, so the variant must be pinned by the code
+// itself, never guessed.
+//
+// The bit sat unused for its first two releases — always written as 1, nothing
+// branching on it — which is why the whole line up to v8 is perevodnoy whatever
+// it says. It is LIVE as of the podkidnoy variant (docs/PODKIDNOY.md): the mode
+// now gates the PASS block in build_top_menu, and the code's own bit is what
+// tells a decoder which of the two menus to build. A v5/v6 code carries no bit
+// at all and is perevodnoy by definition.
+//
+// SPLICED, NOT APPENDED. An earlier plan recorded here was to move the PASS
+// block to the BACK of the menu first, so that every non-pass index stayed
+// identical across the two modes. That was reversed when the variant was
+// actually built, and re-examined in 1.0(17) when the owner asked whether the
+// append was the more elegant answer after all. It is not, and the reason is
+// that INDEX IDENTITY IS NOT AN OBSERVABLE PROPERTY OF THIS FORMAT: a code is
+// one mixed-radix rANS integer, and every step of a decode is `x mod M` where M
+// is the menu's TOTAL WEIGHT, so a decoder that had the mode wrong would read a
+// different divisor at the first state that could offer a pass and scramble the
+// remainder of the stream — under an appended menu exactly as under a spliced
+// one. The append cannot make a wrong mode fail more softly OR more loudly; it
+// buys nothing, and nothing in this tree ever compares an index across modes.
+//
+// What it costs is real: the FRESH pass option is offered whenever the defender
+// holds any unknown card of a matching rank, so the block is non-empty at very
+// nearly every first defender decision of every bout, and moving it re-points
+// pickup, every later seat's attacks and every good in all of those states — a
+// second format renumber inside a week, or worse, old codes decoding silently
+// as different moves. Cutting the block out where it stands costs nothing, and
+// keeps this menu's convention the same as `legal.c`'s, which gates the pass
+// inside calc_pass_moves for the same reason.
+//
+// The redundant MSG_FLAG_PASSING_ALLOWED bit was removed from the FMSG message
+// format in 1.0(4) once the mode lived here; the envelope's `variant` byte says
+// the same thing for a LOBBY, which has no body to carry a bit yet, and
+// msg_replay checks the two against each other.
+#define REPLAY_FORMAT_VERSION_V7 7
+// Format 8: v7 plus a FORCED-OPENING bit, written right after the header's
+// first_attacker symbol. It exists for the fool's penalty (game.h
+// game_open_at_seat): a rematch among the same players opens on the seat to
+// the right of the last game's fool, which is NOT the seat the deal derives.
+//
+// Why the code has to say so, rather than the header's first_attacker alone
+// carrying it: replay_steps.c rebuilds the deal from the code's own reveals and
+// then CHECKS that the rebuilt hands derive the recorded opener. That check is
+// what catches a mis-rebuilt deal (A4), and an overridden opener fails it for
+// an entirely innocent reason. The bit says "this opener was imposed, do not
+// derive it" - and when it is set the code ALSO carries the seat the deal
+// derives (uniform over n), so the check keeps every bit of its teeth rather
+// than being switched off for rematch games.
+//
+// Cost when the bit is 0 (every ordinary game): one binary symbol, which the
+// arithmetic coder prices at ~1 bit and which usually does not change the
+// base32 length at all. v5/v6/v7 codes carry no bit and are never forced, so
+// every game made before this decodes unchanged.
+#define REPLAY_FORMAT_VERSION_V8 8
+// Formats 9 and 10: THE DEAL ORDER CHANGED. Versions 5 through 8 were cut by a
+// kernel that dealt the refill wrong - it gave the defender the top of the
+// talon when a clean cover had emptied their hand, and otherwise took the
+// defender in their natural rotation slot instead of last (game.c
+// refill_player_hands). Real Durak deals the first attacker, then the table
+// clockwise, then the defender.
+//
+// This is a RULES change, not a wire change, and the two versions below carry
+// byte-identical wires to the two they replace. They exist because a replay
+// code is a game, not a document: the same bytes under the fixed rules deal
+// different cards to different seats, so a v5..v8 code re-read by this kernel
+// would silently become a game that never happened. Both lines are therefore
+// renumbered together and every older version is REJECTED at decode
+// (REPLAY_EVERSION, detail = the version), which is the whole point - a loud
+// "this was played under older rules" beats a quiet fiction. Nothing bridges
+// them: the fix is to play a new game, and for the tutorial's frozen code, to
+// re-cut it (npx tsx tests/gen_tutorial_game.ts).
+//
+//   9  = the format-5 line (public DRAW logs, hands retrodicted from the fool)
+//   10 = the format-8 line (inline reveals, pass-mode bit, forced-opening bit)
+//
+// The numbers are NOT ordered by family any more, so the "is this the
+// inline-reveal line" test is an explicit membership check (fmt_inline_reveals)
+// and never `format >= 6`.
+#define REPLAY_FORMAT_VERSION_V9  9
+#define REPLAY_FORMAT_VERSION_V10 10
 #define REPLAY_VERSION_ALPHABET 16
 // Hard guard: a malformed integer must never hang (mirrors core.ts MAX_ATOMS).
 #define REPLAY_MAX_ATOMS 20000
@@ -181,6 +269,23 @@ int replay_encode_v6_from_game(const Game *g, const unsigned char *seed, int see
 // v5 and v6 producers cannot drift on it.
 int replay_first_attacker_from_logs(const GameLog *logs, int num_logs);
 
+// How many ATOMS of this game's encoding come from logs before `cut_log` - the
+// boundary a bubble reports as its own start (msg_wire.h's n_new).
+//
+// It has to be asked of the encoder, because THE ATOM STREAM IS NOT APPEND-ONLY
+// while the log is. A GOOD is an atom only while it is still pending at the end
+// of the stream (see log_atom_kind): play anything after it and it stops being
+// one - it is dead state the decoder reconstructs for free - so the SAME log
+// prefix encodes to one atom FEWER than it did before the next action landed.
+// Subtracting two atom counts therefore under-measures a turn by exactly the
+// goods it superseded, and a bubble that measured itself that way described
+// only its own tail.
+//
+// `num_logs` is the WHOLE log, not `cut_log`: which logs are atoms is a
+// question about the finished stream, and answering it from the prefix alone
+// would count the very goods this exists to drop.
+int replay_atoms_before_log(const GameLog *logs, int num_logs, int cut_log);
+
 // Parameter of the last error (version for EVERSION, log_type<<16|menu size
 // for ENOTINMENU, 0 otherwise).
 int replay_last_error_detail(void);
@@ -226,6 +331,18 @@ typedef void (*ReplayAtomSink)(void *ctx, const ReplayAtom *a);
 // The decode header, as fields instead of the 20 packed bytes.
 typedef struct {
     int version, n, trump_id, first_attacker;
+    // 1 perevodnoy / 0 podkidnoy — the rules this code was cut under, and the
+    // menu it was cut against. The inline-reveal line carries the bit; the
+    // retrodiction line carries none and always reads 1. A host rebuilding a
+    // playable game from a code must stamp it onto the Game (GAME_RULE_NO_PASS)
+    // or the board will offer a transfer the chain cannot contain.
+    int pass_allowed;
+    // v8's forced opening (the fool's penalty). `forced_opening` = 1 when
+    // first_attacker was IMPOSED rather than derived, and then
+    // `derived_opening` is the lowest-trump seat the deal produces, kept so a
+    // rebuilt deal can still be checked. 0 / -1 on every pre-v8 code.
+    int forced_opening;
+    int derived_opening;
     int fool;            // -1 when the stream is a mid-game cut
     int discard_count;
     int num_eliminated;

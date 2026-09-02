@@ -88,6 +88,7 @@ void cd_sim_from_game(SimState *s, const Game *g) {
     s->flipped_id  = g->has_flipped ? (uint8_t)card_id(g->flipped) : 0;
     s->good_mask   = g->good_players_mask;
     s->num_eliminated = g->num_eliminated;
+    s->rules       = g->rules;
 
     for (int p = 0; p < g->num_players; p++) {
         uint64_t h = 0;
@@ -223,7 +224,18 @@ static void sim_eliminate(SimState *s, int p) {
     s->elim_order[s->num_eliminated++] = (int8_t)p;
 }
 
-// refill_player_hands port.
+static void sim_draw_up_to_six(SimState *s, int seat) {
+    while (sim_hand_count(s, seat) < CARDS_PER_PLAYER) {
+        int c;
+        if (!sim_draw(s, &c)) break;
+        s->hand[seat] |= (1ull << c);
+    }
+    if (sim_hand_count(s, seat) == 0 && (s->in_mask >> seat & 1u))
+        sim_eliminate(s, seat);
+}
+
+// refill_player_hands port, deal order included: first attacker, clockwise
+// past the defender, defender last.
 static void sim_refill(SimState *s) {
     if (sim_no_cards_left(s)) {
         for (int i = 0; i < s->num_players; i++) {
@@ -232,28 +244,17 @@ static void sim_refill(SimState *s) {
         }
         return;
     }
-    int defender = s->defender;
-    if (sim_hand_count(s, defender) == 0) {
-        while (sim_hand_count(s, defender) < CARDS_PER_PLAYER) {
-            int c;
-            if (!sim_draw(s, &c)) break;
-            s->hand[defender] |= (1ull << c);
-        }
-    }
+    const int defender = s->defender;
     int p_idx = s->first_attacker;
     int visited = 0;
     do {
         if (visited & (1 << p_idx)) break;
         visited |= (1 << p_idx);
-        while (sim_hand_count(s, p_idx) < CARDS_PER_PLAYER) {
-            int c;
-            if (!sim_draw(s, &c)) break;
-            s->hand[p_idx] |= (1ull << c);
-        }
-        if (sim_hand_count(s, p_idx) == 0 && (s->in_mask >> p_idx & 1u))
-            sim_eliminate(s, p_idx);
+        if (p_idx != defender) sim_draw_up_to_six(s, p_idx);
         p_idx = sim_next_player(s, p_idx);
     } while (p_idx != s->first_attacker);
+
+    sim_draw_up_to_six(s, defender);   // the defender draws last, always
 }
 
 // ---------- action handlers (bitboard) ---------------------------------
@@ -540,6 +541,9 @@ static int sim_greedy_full_cover(const SimState *s, int p, int power, SimMove *o
 // lowest card. Wait: pass branch iterates all pass moves and picks min summed
 // score. k=1 of the lowest matching card has the smallest sum. We replicate.
 static int sim_pass_move(const SimState *s, int p, int power, SimMove *out) {
+    // PODKIDNOY: no transfer in this world (legal.c calc_pass_moves is the
+    // engine-side twin of this gate).
+    if (s->rules & GAME_RULE_NO_PASS) return 0;
     // require: num_battles>0, none covered, all same attack value
     if (s->num_battles == 0) return 0;
     if (s->covered_mask) return 0;
@@ -713,6 +717,7 @@ int cd_sim_apply_root_move(SimState *s, int p_idx, const LegalMove *m) {
             return 1;
         }
         case MOVE_PASS: {
+            if (s->rules & GAME_RULE_NO_PASS) return 0;   // podkidnoy: no transfer
             if (s->num_battles == 0) return 0;
             if (s->covered_mask) return 0;
             int next = sim_next_player(s, s->defender);
@@ -1191,6 +1196,7 @@ static int sim_gen_regular_attack(const SimState *s, int p, SolMove *buf, int ma
 // next player's capacity (next_cards >= k + num_battles). Mirrors
 // calc_pass_moves (all battles uncovered, all same value).
 static int sim_gen_pass(const SimState *s, int p, SolMove *buf, int max_n) {
+    if (s->rules & GAME_RULE_NO_PASS) return 0;   // podkidnoy: no transfer
     if (s->num_battles == 0) return 0;
     if (s->covered_mask) return 0;
     int v0 = id_value(s->atk[0]);

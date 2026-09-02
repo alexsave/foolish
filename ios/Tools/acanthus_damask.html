@@ -1,0 +1,606 @@
+<meta charset="utf-8">
+<title>Acanthus Damask — procedural pattern lab</title>
+<style>
+  :root{
+    --bg:#14110f; --panel:#1e1a17; --panel2:#262019; --ink:#efe6d8; --muted:#a99a86;
+    --accent:#c9782e; --line:#3a3129;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg); color:var(--ink);
+    font:13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    display:flex; min-height:100%;
+  }
+  /* -------- layout -------- */
+  #stage{flex:1 1 auto; display:flex; flex-direction:column; min-width:0; padding:14px; gap:12px;}
+  #previewWrap{
+    position:relative; flex:1 1 auto; min-height:0;
+    border:1px solid var(--line); border-radius:10px; overflow:hidden;
+    background:#000; display:flex; align-items:center; justify-content:center;
+  }
+  #preview{width:100%; height:100%; display:block}
+  #cellRow{display:flex; gap:12px; align-items:flex-start}
+  #cellCard{
+    border:1px solid var(--line); border-radius:10px; padding:8px; background:var(--panel);
+    display:flex; flex-direction:column; gap:6px; align-items:center;
+  }
+  #cell{background:#000; border-radius:6px; display:block}
+  #cellCard .cap{color:var(--muted); font-size:11px}
+  #hint{color:var(--muted); font-size:11px; align-self:center; max-width:340px}
+  /* -------- controls -------- */
+  #panel{
+    width:340px; flex:0 0 340px; height:100vh; overflow-y:auto;
+    background:var(--panel); border-left:1px solid var(--line); padding:14px;
+  }
+  h1{font-size:15px; margin:0 0 2px}
+  .sub{color:var(--muted); font-size:11px; margin:0 0 12px}
+  .presets{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px}
+  button{
+    font:inherit; color:var(--ink); background:var(--panel2); border:1px solid var(--line);
+    border-radius:7px; padding:6px 10px; cursor:pointer;
+  }
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent); border-color:var(--accent); color:#1a1206; font-weight:600}
+  .group{border:1px solid var(--line); border-radius:9px; margin-bottom:10px; overflow:hidden}
+  .group>h2{
+    font-size:12px; margin:0; padding:8px 10px; background:var(--panel2);
+    color:var(--muted); text-transform:uppercase; letter-spacing:.06em; cursor:pointer;
+  }
+  .group .body{padding:8px 10px}
+  .ctl{display:grid; grid-template-columns:1fr auto; gap:2px 8px; align-items:center; margin:7px 0}
+  .ctl label{grid-column:1/2}
+  .ctl .val{grid-column:2/3; color:var(--accent); font-variant-numeric:tabular-nums; font-size:12px}
+  .ctl input[type=range]{grid-column:1/3; width:100%; accent-color:var(--accent)}
+  .ctl.row2{grid-template-columns:1fr auto auto}
+  .ctl input[type=color]{width:100%; height:26px; background:none; border:1px solid var(--line); border-radius:6px; padding:0}
+  .ctl.colorctl{grid-template-columns:1fr 44px}
+  .ctl select,.ctl input[type=number]{
+    background:var(--panel2); color:var(--ink); border:1px solid var(--line);
+    border-radius:6px; padding:4px 6px; width:100%;
+  }
+  .toggle{display:flex; align-items:center; gap:8px; margin:8px 0}
+  .actions{display:flex; flex-wrap:wrap; gap:6px; margin-top:6px}
+  textarea{width:100%; height:120px; background:#0d0b09; color:#cde3c8; border:1px solid var(--line);
+    border-radius:7px; font:11px/1.35 ui-monospace,Menlo,monospace; padding:8px; margin-top:8px; display:none}
+  @media (max-width:820px){ body{flex-direction:column} #panel{width:100%;flex:none;height:auto;border-left:none;border-top:1px solid var(--line)} }
+</style>
+
+<div id="stage">
+  <div id="previewWrap"><canvas id="preview"></canvas></div>
+  <div id="cellRow">
+    <div id="cellCard">
+      <canvas id="cell" width="220" height="270"></canvas>
+      <span class="cap">single cell (ogee guide)</span>
+    </div>
+    <div id="hint">Acanthus damask lab. Tune on the right; the field tiles seamlessly (half-drop by default). Grab a look you like with <b>Copy params</b> / <b>Download tile PNG</b> and hand it to the Swift port.</div>
+  </div>
+</div>
+
+<div id="panel">
+  <h1>Acanthus Damask</h1>
+  <p class="sub">procedural card-back / background lab — echoes the app logo</p>
+  <div class="presets" id="presets"></div>
+  <div id="controls"></div>
+  <div class="actions">
+    <button id="copyBtn">Copy params</button>
+    <button id="dlTile" class="primary">Download tile PNG</button>
+    <button id="dlPrev">Download preview</button>
+    <button id="reseed">Reseed</button>
+  </div>
+  <textarea id="jsonOut" readonly></textarea>
+</div>
+
+<script>
+"use strict";
+/* =====================================================================
+   ACANTHUS DAMASK — procedural generator
+   Every visible mark is constructed from math below: leaf blades are
+   integrated (curling) bezier-ish spines with a modulated serrated edge;
+   the flame cell places blades along a central spine, mirrored about the
+   vertical axis; cells tile (straight or half-drop) into a seamless PNG.
+   ---------------------------------------------------------------------
+   ALL tunable parameters live in this one object. Edit defaults here by
+   hand, or drive them live from the sliders — every control writes back
+   into PARAMS and re-renders.
+   ===================================================================== */
+const PARAMS = {
+  // --- tile / repeat ---
+  tileW: 236,          // cell width  (px) — kept tight so half-drop columns interlock
+  tileH: 430,          // cell height (px)  — flames are taller than wide
+  repeat: "halfdrop",  // "straight" | "halfdrop"
+  zoom: 0.62,          // preview magnification of the tiled field
+
+  // --- flame composition ---
+  leafPairs: 5,        // number of mirrored blade pairs along the spine
+  density: 0.6,        // extra small filler blades between the mains (0..2)
+  leafLength: 150,     // blade length (px) at the fattest point of the profile
+  leafWidth: 17,       // blade half-width (px) at its widest
+  leafCurl: 1.5,       // tip roll — extra radians the spine hooks at the very tip
+  curlBias: 1.6,       // where the curl concentrates (higher = only at the tip)
+  baseArc: 0.95,       // overall upward arc of the whole blade (radians) — the frond sweep
+  serrations: 6,       // teeth/lobes per edge
+  serrationDepth: 0.58,// how deep the teeth cut (fraction of blade width)
+  emitBottom: 9,       // emit elevation of the lowest blade (deg above horizontal-out)
+  emitTop: 88,         // emit elevation of the topmost blade (deg)
+  spineSpan: 0.92,     // fraction of cell height the blades spread over
+
+  // --- scrolls / stem ---
+  scrollTurns: 1.4,    // turns in the base companion C-scrolls
+  scrollTight: 0.20,   // spiral tightness of those scrolls
+  stemThickness: 6,    // central stem line width (px)
+  topPalmette: true,   // draw the central upward crest leaf
+
+  // --- ink / paint ---
+  outlineWidth: 1.6,   // blade outline stroke (px) — small=flat damask, big=carved
+  outlineColor: "#5a0a02",
+  leafColor:   "#b02008",
+  midColor:    "#7d1205", // shaded-side tone painted inside each blade for depth
+  veins: true,            // stroke the midrib + lateral veins
+  shadowOffX: 3,          // drop-shadow offset (px)
+  shadowOffY: 4,
+  shadowColor: "#360702",
+  shadowAlpha: 0.3,
+  fieldColor:  "#6d0b02", // background field
+
+  // --- structure ---
+  mirror: true,        // vertical mirror symmetry (the essence of damask)
+  seed: 7,             // integer seed for the small procedural variations
+};
+
+/* -------- palette / preset buttons (colors pulled from the repo art) -------- */
+const PRESETS = {
+  "logo": {           // sampled from IMG_7452 (the logo's oxblood damask)
+    fieldColor:"#6d0b02", leafColor:"#aa1c0a", midColor:"#7d1205",
+    outlineColor:"#5a0a02", outlineWidth:1.3, shadowColor:"#480802",
+    shadowAlpha:0.3, shadowOffX:3, shadowOffY:4, veins:true,
+    leafPairs:5, leafLength:150, leafWidth:17, leafCurl:1.5, curlBias:1.6,
+    baseArc:0.95, serrations:6, serrationDepth:0.58, density:0.6,
+    emitBottom:9, emitTop:88, spineSpan:0.92, repeat:"halfdrop",
+    tileW:236, tileH:430,
+  },
+  "dark-navy": {      // app dark mode: charcoal field, navy motif
+    fieldColor:"#23272e", leafColor:"#3a577f", midColor:"#26374f",
+    outlineColor:"#10141b", outlineWidth:1.5, shadowColor:"#090c12",
+    shadowAlpha:0.4, shadowOffX:3, shadowOffY:4, veins:true,
+    leafPairs:5, leafLength:150, leafWidth:17, leafCurl:1.5, curlBias:1.6,
+    baseArc:0.95, serrations:6, serrationDepth:0.58, density:0.6,
+    emitBottom:9, emitTop:88, spineSpan:0.92, repeat:"halfdrop",
+    tileW:236, tileH:430,
+  },
+  "card-red": {       // deeper, more carved card-back red
+    fieldColor:"#7a1214", leafColor:"#a5211a", midColor:"#6e1210",
+    outlineColor:"#2a0607", outlineWidth:2.4, shadowColor:"#1c0304",
+    shadowAlpha:0.42, shadowOffX:4, shadowOffY:5, veins:true,
+    leafPairs:5, leafLength:150, leafWidth:18, leafCurl:1.5, curlBias:1.6,
+    baseArc:0.95, serrations:6, serrationDepth:0.56, density:0.6,
+    emitBottom:9, emitTop:88, spineSpan:0.92, repeat:"halfdrop",
+    tileW:236, tileH:430,
+  },
+  "icon": {           // matches AppIcon.png foreground: dark field, bold outline
+    fieldColor:"#59140b", leafColor:"#8f1f12", midColor:"#571209",
+    outlineColor:"#160604", outlineWidth:2.8, shadowColor:"#0a0201",
+    shadowAlpha:0.45, shadowOffX:4, shadowOffY:5, veins:true,
+    leafPairs:5, leafLength:150, leafWidth:19, leafCurl:1.55, curlBias:1.6,
+    baseArc:0.92, serrations:6, serrationDepth:0.58, density:0.55,
+    emitBottom:9, emitTop:88, spineSpan:0.92, repeat:"halfdrop",
+    tileW:236, tileH:430,
+  },
+};
+
+/* ===================== math helpers ===================== */
+const TAU = Math.PI*2, D2R = Math.PI/180;
+const lerp=(a,b,t)=>a+(b-a)*t;
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const ease=(t)=>t*t*(3-2*t);
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+
+/* ---------------------------------------------------------------
+   buildBlade — the acanthus leaf, procedurally.
+   Returns polylines in a LOCAL frame: base at (0,0), the blade grows
+   from there. The spine is built by integrating a heading angle that
+   turns gently (baseArc) plus hard near the tip (leafCurl) -> a curl.
+   The edge half-width follows a bell profile, modulated by a scalloped
+   serration function to make pointed acanthus teeth.
+   --------------------------------------------------------------- */
+function buildBlade(len, width, curl, opt){
+  const steps = 46;
+  const baseArc = opt.baseArc, curlBias = opt.curlBias;
+  const nSerr = opt.serrations, sDepth = opt.serrationDepth;
+  const curlSign = opt.curlSign|0 || 1;
+  const spine=[], norms=[], tang=[];
+  let ang = 0, x=0, y=0;           // local heading starts along +x
+  spine.push([0,0]);
+  for(let i=1;i<=steps;i++){
+    const t=i/steps, tp=(i-0.5)/steps;
+    // turn this step: uniform arc + curl weighted toward the tip
+    const dArc  = baseArc/steps;
+    const dCurl = curl * (curlBias+1) * Math.pow(tp,curlBias) / steps;
+    ang += curlSign*(dArc+dCurl);
+    const ds = len/steps;
+    x += Math.cos(ang)*ds; y += Math.sin(ang)*ds;
+    spine.push([x,y]);
+    tang.push([Math.cos(ang),Math.sin(ang)]);
+  }
+  tang.unshift(tang[0]);
+  // width profile + serration -> left / right edges
+  const left=[], right=[], tips=[];
+  for(let i=0;i<=steps;i++){
+    const t=i/steps;
+    // bell: 0 at base, fat around a third up, 0 at the rolled tip
+    const bell = Math.pow(Math.sin(Math.PI*Math.pow(t,0.72)),0.85);
+    let hw = width*bell*(1-0.12*t);
+    // acanthus teeth: asymmetric fingers that grow toward the tip then notch
+    // sharply back — the sawtooth points tip-ward, deep notches between lobes.
+    const phase = t*nSerr;
+    const f = phase-Math.floor(phase);
+    const tooth = Math.pow(f,0.62);                      // 0 -> 1, snaps to 0 (fingertip)
+    const serr = sDepth*width*(1-0.4*t)*(tooth-0.34)*(0.35+0.65*bell);
+    hw = Math.max(0.4, hw + serr);
+    const nx=-tang[i][1], ny=tang[i][0];                 // left normal
+    const sx=spine[i][0], sy=spine[i][1];
+    left.push([sx+nx*hw, sy+ny*hw]);
+    right.push([sx-nx*hw, sy-ny*hw]);
+    // remember lobe-tip locations (peak of a tooth) for lateral veins
+    if(tooth>0.86 && t>0.08 && t<0.9) tips.push([sx+nx*hw, sy+ny*hw, sx, sy]);
+  }
+  return {spine,left,right,tips};
+}
+
+/* draw a blade (shadow + fill + shaded side + veins + outline) already
+   transformed into place by the caller's ctx matrix. */
+function paintBlade(ctx,b,P){
+  const path=new Path2D();
+  path.moveTo(b.left[0][0],b.left[0][1]);
+  for(let i=1;i<b.left.length;i++) path.lineTo(b.left[i][0],b.left[i][1]);
+  for(let i=b.right.length-1;i>=0;i--) path.lineTo(b.right[i][0],b.right[i][1]);
+  path.closePath();
+
+  // drop shadow (offset dark copy behind)
+  if(P.shadowAlpha>0){
+    ctx.save();
+    ctx.globalAlpha=P.shadowAlpha;
+    ctx.translate(P.shadowOffX,P.shadowOffY);
+    ctx.fillStyle=P.shadowColor;
+    ctx.fill(path);
+    ctx.restore();
+  }
+  // body
+  ctx.fillStyle=P.leafColor;
+  ctx.fill(path);
+  // shaded half (spine -> right edge) for a carved, dimensional read
+  const shade=new Path2D();
+  shade.moveTo(b.spine[0][0],b.spine[0][1]);
+  for(let i=1;i<b.spine.length;i++) shade.lineTo(b.spine[i][0],b.spine[i][1]);
+  for(let i=b.right.length-1;i>=0;i--) shade.lineTo(b.right[i][0],b.right[i][1]);
+  shade.closePath();
+  ctx.save(); ctx.globalAlpha=0.34; ctx.fillStyle=P.midColor; ctx.fill(shade); ctx.restore();
+  // veins
+  if(P.veins){
+    ctx.strokeStyle=P.outlineColor; ctx.lineJoin="round"; ctx.lineCap="round";
+    ctx.globalAlpha=0.5; ctx.lineWidth=Math.max(0.6,P.outlineWidth*0.7);
+    ctx.beginPath();
+    ctx.moveTo(b.spine[0][0],b.spine[0][1]);
+    for(let i=1;i<b.spine.length;i++) ctx.lineTo(b.spine[i][0],b.spine[i][1]);
+    ctx.stroke();
+    ctx.lineWidth=Math.max(0.5,P.outlineWidth*0.5);
+    for(const tp of b.tips){
+      ctx.beginPath(); ctx.moveTo(tp[2],tp[3]); ctx.lineTo(lerp(tp[2],tp[0],0.82),lerp(tp[3],tp[1],0.82)); ctx.stroke();
+    }
+    ctx.globalAlpha=1;
+  }
+  // outline
+  if(P.outlineWidth>0){
+    ctx.lineJoin="round"; ctx.lineCap="round";
+    ctx.strokeStyle=P.outlineColor; ctx.lineWidth=P.outlineWidth;
+    ctx.stroke(path);
+  }
+}
+
+/* place one blade: origin (x0,y0) in the current frame, emitted at
+   `elevation` degrees above the outward (+x) horizontal, rolling `curl`. */
+function blade(ctx,P,x0,y0,elevation,len,width,curl,curlSign){
+  const b=buildBlade(len,width,curl,{baseArc:P.baseArc,curlBias:P.curlBias,
+      serrations:P.serrations,serrationDepth:P.serrationDepth,curlSign:curlSign});
+  ctx.save();
+  ctx.translate(x0,y0);
+  ctx.rotate(-elevation*D2R);   // canvas y-down: negative angle tips it upward
+  paintBlade(ctx,b,P);
+  ctx.restore();
+}
+
+/* a small companion C-scroll (log spiral ribbon) to fill negative space */
+function scroll(ctx,P,x0,y0,rot,size,dir){
+  const turns=P.scrollTurns, tight=P.scrollTight;
+  ctx.save(); ctx.translate(x0,y0); ctx.rotate(rot);
+  const pts=[]; const N=40;
+  for(let i=0;i<=N;i++){
+    const th=i/N*turns*TAU;
+    const r=size*Math.exp(-tight*th);
+    pts.push([dir*Math.cos(th)*r, Math.sin(th)*r*dir]);
+  }
+  // ribbon: offset both sides by a tapering width
+  const left=[],right=[];
+  for(let i=0;i<pts.length;i++){
+    const a=pts[Math.max(0,i-1)], c=pts[Math.min(pts.length-1,i+1)];
+    let tx=c[0]-a[0], ty=c[1]-a[1]; const L=Math.hypot(tx,ty)||1; tx/=L; ty/=L;
+    const w=lerp(P.stemThickness*0.9,0.5,i/pts.length);
+    left.push([pts[i][0]-ty*w, pts[i][1]+tx*w]);
+    right.push([pts[i][0]+ty*w, pts[i][1]-tx*w]);
+  }
+  const path=new Path2D(); path.moveTo(left[0][0],left[0][1]);
+  for(let i=1;i<left.length;i++) path.lineTo(left[i][0],left[i][1]);
+  for(let i=right.length-1;i>=0;i--) path.lineTo(right[i][0],right[i][1]);
+  path.closePath();
+  if(P.shadowAlpha>0){ctx.save();ctx.globalAlpha=P.shadowAlpha;ctx.translate(P.shadowOffX,P.shadowOffY);ctx.fillStyle=P.shadowColor;ctx.fill(path);ctx.restore();}
+  ctx.fillStyle=P.leafColor; ctx.fill(path);
+  if(P.outlineWidth>0){ctx.strokeStyle=P.outlineColor;ctx.lineWidth=P.outlineWidth;ctx.lineJoin="round";ctx.stroke(path);}
+  ctx.restore();
+}
+
+/* ---- one flame half (outward = +x). rng gives seeded micro-variation ---- */
+function flameHalf(ctx,P,rng){
+  const H=P.tileH, baseY=H*0.965, span=H*P.spineSpan;
+  const n=Math.max(2,P.leafPairs|0);
+  for(let i=0;i<n;i++){
+    const s=i/(n-1);
+    const yb=baseY - s*span;
+    // fattest fronds in the lower third, tapering to the crest
+    const bell=Math.exp(-Math.pow(s-0.33,2)/(2*0.11));
+    const jL=1+(rng()-0.5)*0.08, jA=(rng()-0.5)*5;
+    const len=P.leafLength*(0.5+0.72*bell)*jL;
+    const wid=P.leafWidth*(0.55+0.75*bell);
+    const elev=lerp(P.emitBottom,P.emitTop,ease(s))+jA;
+    const x0=P.stemThickness*0.6;
+    // curlSign -1 => the blade arcs UP and hooks its tip over (the frond sweep)
+    blade(ctx,P,x0,yb,elev,len,wid,P.leafCurl,-1);
+    // a slim inner leaflet peeling off just below each main frond
+    if(P.density>0 && i<n-1 && s<0.82){
+      const s2=s+0.5/(n-1);
+      const elev2=lerp(P.emitBottom,P.emitTop,ease(s2))-18;
+      const len2=P.leafLength*(0.32+0.4*bell)*(0.7+0.6*P.density)*(0.85+0.3*rng());
+      blade(ctx,P,x0,lerp(yb,baseY-s2*span,0.5),elev2,len2,wid*0.52,P.leafCurl*1.3,-1);
+    }
+    // a tight companion C-scroll tucked at the base of the biggest fronds
+    if(P.density>0 && bell>0.6 && s<0.55){
+      scroll(ctx,P,x0+wid*0.15,yb+4,(elev-30)*D2R,wid*0.42*(0.6+P.density),+1);
+    }
+  }
+  // central stem line
+  ctx.strokeStyle=P.outlineColor; ctx.globalAlpha=0.55;
+  ctx.lineWidth=P.stemThickness*0.5; ctx.lineCap="round";
+  ctx.beginPath(); ctx.moveTo(0,baseY); ctx.lineTo(0,baseY-span*0.96); ctx.stroke();
+  ctx.globalAlpha=1;
+}
+
+/* draw a full cell (both halves + crest) with its local origin at the
+   spine base-top corner; caller translates to place / wrap it. */
+function drawCell(ctx,P,ox,oy){
+  ctx.save();
+  ctx.translate(ox+P.tileW/2, oy);   // spine at local x=0
+  // right half
+  ctx.save(); flameHalf(ctx,P,mulberry32(P.seed)); ctx.restore();
+  // left half (mirror, or independently seeded if symmetry is off)
+  ctx.save(); ctx.scale(-1,1);
+  flameHalf(ctx,P, P.mirror?mulberry32(P.seed):mulberry32(P.seed*2654435761>>>0));
+  ctx.restore();
+  // central upward crest palmette (symmetric on the axis)
+  if(P.topPalmette){
+    const H=P.tileH, baseY=H*0.965, span=H*P.spineSpan;
+    const ty=baseY-span*0.99;
+    blade(ctx,P,0,ty,90,P.leafLength*0.62,P.leafWidth*0.7,P.leafCurl*0.35,+1);
+    blade(ctx,P,0,ty,90,P.leafLength*0.62,P.leafWidth*0.7,P.leafCurl*0.35,-1);
+  }
+  ctx.restore();
+}
+
+/* ---------------------------------------------------------------
+   buildTile — render a seamless, straight-repeating tile.
+   straight : one cell (tileW x tileH) with 8 wrapped neighbours clipped in.
+   halfdrop : a 2-wide tile; the odd column is dropped by tileH/2, so the
+              whole 2*tileW x tileH image repeats straight and seamlessly.
+   --------------------------------------------------------------- */
+function buildTile(P){
+  const W=P.repeat==="halfdrop"?P.tileW*2:P.tileW, H=P.tileH;
+  const cv=document.createElement("canvas"); cv.width=W; cv.height=H;
+  const ctx=cv.getContext("2d");
+  ctx.fillStyle=P.fieldColor; ctx.fillRect(0,0,W,H);
+  ctx.save(); ctx.beginPath(); ctx.rect(0,0,W,H); ctx.clip();
+  if(P.repeat==="halfdrop"){
+    for(let k=-1;k<=2;k++){
+      const drop=(((k%2)+2)%2)===1 ? H/2 : 0;
+      for(let dy=-1;dy<=1;dy++) drawCell(ctx,P,k*P.tileW,dy*H+drop);
+    }
+  }else{
+    for(let dx=-1;dx<=1;dx++) for(let dy=-1;dy<=1;dy++) drawCell(ctx,P,dx*W,dy*H);
+  }
+  ctx.restore();
+  return cv;
+}
+
+/* ===================== render / preview ===================== */
+const preview=document.getElementById("preview");
+const pctx=preview.getContext("2d");
+const cell=document.getElementById("cell");
+const cctx=cell.getContext("2d");
+let tileCanvas=null;
+
+function renderTile(){ tileCanvas=buildTile(PARAMS); }
+
+function renderPreview(){
+  const wrap=document.getElementById("previewWrap");
+  const dpr=Math.min(2,window.devicePixelRatio||1);
+  const w=wrap.clientWidth||800, h=wrap.clientHeight||600;
+  preview.width=w*dpr; preview.height=h*dpr; preview.style.width=w+"px"; preview.style.height=h+"px";
+  pctx.setTransform(dpr,0,0,dpr,0,0);
+  pctx.fillStyle=PARAMS.fieldColor; pctx.fillRect(0,0,w,h);
+  const pat=pctx.createPattern(tileCanvas,"repeat");
+  const z=PARAMS.zoom;
+  pctx.save();
+  pctx.scale(z,z);
+  pctx.fillStyle=pat;
+  pctx.fillRect(0,0,w/z,h/z);
+  pctx.restore();
+}
+
+function renderAll(){ renderTile(); renderPreview(); renderCellSafe(); syncJSON(); }
+function renderCellSafe(){
+  const W=PARAMS.tileW,H=PARAMS.tileH;
+  const scale=Math.min((cell.width-8)/W,(cell.height-8)/H);
+  cctx.setTransform(1,0,0,1,0,0);
+  cctx.fillStyle=PARAMS.fieldColor; cctx.fillRect(0,0,cell.width,cell.height);
+  cctx.save();
+  cctx.translate((cell.width-W*scale)/2,(cell.height-H*scale)/2);
+  cctx.scale(scale,scale);
+  drawCell(cctx,PARAMS,0,0);
+  cctx.restore();
+}
+
+/* ===================== controls (schema-driven) ===================== */
+const SCHEMA=[
+  // Ranges widened well past the "sensible" band (owner: "add a larger range of
+  // values... i think some might look good negative"). Many now go negative or
+  // far past the defaults, so a slider can push the generator into territory
+  // that may break or may be beautiful - the extremes are the whole point.
+  {title:"Tile & repeat",open:true,items:[
+    {k:"tileW",t:"range",min:60,max:1000,step:5,label:"tile width"},
+    {k:"tileH",t:"range",min:80,max:1200,step:5,label:"tile height"},
+    {k:"repeat",t:"select",opts:["halfdrop","straight"],label:"repeat mode"},
+    {k:"zoom",t:"range",min:0.05,max:4,step:0.01,label:"preview zoom"},
+  ]},
+  {title:"Flame & leaves",open:true,items:[
+    {k:"leafPairs",t:"range",min:0,max:24,step:1,label:"leaves per cell"},
+    {k:"density",t:"range",min:-2,max:5,step:0.05,label:"filler density"},
+    {k:"leafLength",t:"range",min:-220,max:420,step:2,label:"leaf length"},
+    {k:"leafWidth",t:"range",min:-100,max:160,step:1,label:"leaf width"},
+    {k:"leafCurl",t:"range",min:-8,max:8,step:0.05,label:"tip curl"},
+    {k:"curlBias",t:"range",min:-4,max:6,step:0.05,label:"curl bias (tip↔whole)"},
+    {k:"baseArc",t:"range",min:-3.2,max:3.2,step:0.02,label:"blade arc"},
+    {k:"serrations",t:"range",min:0,max:30,step:1,label:"serration count"},
+    {k:"serrationDepth",t:"range",min:-1.2,max:1.8,step:0.02,label:"serration depth"},
+    {k:"emitBottom",t:"range",min:-180,max:180,step:1,label:"emit angle (bottom)"},
+    {k:"emitTop",t:"range",min:-90,max:220,step:1,label:"emit angle (top)"},
+    {k:"spineSpan",t:"range",min:-0.5,max:1.8,step:0.01,label:"spine span"},
+  ]},
+  {title:"Scrolls & stem",open:false,items:[
+    {k:"scrollTurns",t:"range",min:-6,max:8,step:0.05,label:"scroll turns"},
+    {k:"scrollTight",t:"range",min:-0.8,max:1.2,step:0.01,label:"scroll tightness"},
+    {k:"stemThickness",t:"range",min:-8,max:48,step:0.5,label:"stem thickness"},
+    {k:"topPalmette",t:"toggle",label:"top crest palmette"},
+  ]},
+  {title:"Ink & paint",open:true,items:[
+    {k:"fieldColor",t:"color",label:"field color"},
+    {k:"leafColor",t:"color",label:"leaf fill"},
+    {k:"midColor",t:"color",label:"shaded tone"},
+    {k:"outlineColor",t:"color",label:"outline color"},
+    {k:"outlineWidth",t:"range",min:0,max:24,step:0.1,label:"outline width"},
+    {k:"shadowColor",t:"color",label:"shadow color"},
+    {k:"shadowAlpha",t:"range",min:0,max:1,step:0.02,label:"shadow opacity"},
+    {k:"shadowOffX",t:"range",min:-48,max:48,step:0.5,label:"shadow offset X"},
+    {k:"shadowOffY",t:"range",min:-48,max:48,step:0.5,label:"shadow offset Y"},
+    {k:"veins",t:"toggle",label:"midrib veins"},
+  ]},
+  {title:"Structure",open:false,items:[
+    {k:"mirror",t:"toggle",label:"mirror symmetry"},
+    {k:"seed",t:"range",min:0,max:999,step:1,label:"random seed"},
+  ]},
+];
+
+function buildControls(){
+  const root=document.getElementById("controls"); root.innerHTML="";
+  for(const g of SCHEMA){
+    const gr=document.createElement("div"); gr.className="group";
+    const h=document.createElement("h2"); h.textContent=g.title;
+    const body=document.createElement("div"); body.className="body";
+    body.style.display=g.open?"block":"none";
+    h.onclick=()=>body.style.display=body.style.display==="none"?"block":"none";
+    gr.appendChild(h); gr.appendChild(body);
+    for(const it of g.items) body.appendChild(makeCtl(it));
+    root.appendChild(gr);
+  }
+}
+function makeCtl(it){
+  const wrap=document.createElement("div"); wrap.className="ctl";
+  if(it.t==="range"){
+    wrap.innerHTML=`<label>${it.label}</label><span class="val" id="v_${it.k}"></span>`;
+    const inp=document.createElement("input"); inp.type="range";
+    inp.min=it.min; inp.max=it.max; inp.step=it.step; inp.value=PARAMS[it.k];
+    inp.oninput=()=>{ PARAMS[it.k]=parseFloat(inp.value); document.getElementById("v_"+it.k).textContent=fmt(PARAMS[it.k]); renderAll(); };
+    wrap.appendChild(inp);
+    setTimeout(()=>document.getElementById("v_"+it.k).textContent=fmt(PARAMS[it.k]),0);
+  } else if(it.t==="select"){
+    wrap.innerHTML=`<label>${it.label}</label><span></span>`;
+    const sel=document.createElement("select");
+    for(const o of it.opts){const op=document.createElement("option");op.value=o;op.textContent=o;if(PARAMS[it.k]===o)op.selected=true;sel.appendChild(op);}
+    sel.onchange=()=>{PARAMS[it.k]=sel.value;renderAll();};
+    sel.style.gridColumn="1/3"; wrap.appendChild(sel);
+  } else if(it.t==="color"){
+    wrap.className="ctl colorctl";
+    wrap.innerHTML=`<label>${it.label}</label>`;
+    const inp=document.createElement("input"); inp.type="color"; inp.value=PARAMS[it.k];
+    inp.oninput=()=>{PARAMS[it.k]=inp.value;renderAll();};
+    inp.id="c_"+it.k; wrap.appendChild(inp);
+  } else if(it.t==="toggle"){
+    wrap.className="toggle";
+    const inp=document.createElement("input"); inp.type="checkbox"; inp.checked=!!PARAMS[it.k]; inp.id="t_"+it.k;
+    inp.onchange=()=>{PARAMS[it.k]=inp.checked;renderAll();};
+    const lab=document.createElement("label"); lab.textContent=it.label; lab.htmlFor=inp.id;
+    wrap.appendChild(inp); wrap.appendChild(lab);
+  }
+  return wrap;
+}
+function fmt(v){return (typeof v==="number" && !Number.isInteger(v))?v.toFixed(2):String(v);}
+
+/* ===================== presets & actions ===================== */
+function buildPresets(){
+  const box=document.getElementById("presets");
+  for(const name of Object.keys(PRESETS)){
+    const b=document.createElement("button"); b.textContent=name;
+    b.onclick=()=>{ Object.assign(PARAMS,PRESETS[name]); buildControls(); renderAll(); };
+    box.appendChild(b);
+  }
+}
+function syncJSON(){ document.getElementById("jsonOut").value=JSON.stringify(PARAMS,null,2); }
+
+document.getElementById("copyBtn").onclick=()=>{
+  const ta=document.getElementById("jsonOut"); ta.style.display="block";
+  ta.value=JSON.stringify(PARAMS,null,2);
+  navigator.clipboard&&navigator.clipboard.writeText(ta.value);
+  const b=document.getElementById("copyBtn"); const o=b.textContent; b.textContent="copied ✓"; setTimeout(()=>b.textContent=o,1200);
+};
+document.getElementById("dlTile").onclick=()=>{
+  const t=buildTile(PARAMS);           // 1x seamless tile
+  const a=document.createElement("a"); a.download="acanthus_tile.png"; a.href=t.toDataURL("image/png"); a.click();
+};
+document.getElementById("dlPrev").onclick=()=>{
+  const a=document.createElement("a"); a.download="acanthus_preview.png"; a.href=preview.toDataURL("image/png"); a.click();
+};
+document.getElementById("reseed").onclick=()=>{ PARAMS.seed=(PARAMS.seed+1)%65; buildControls(); renderAll(); };
+
+/* ===================== headless export hook =====================
+   Loading with ?shot=<preset>&w=&h=  fills the viewport with the tiled
+   field (used to snapshot samples with headless Chrome). */
+function maybeShot(){
+  const q=new URLSearchParams(location.search);
+  const shot=q.get("shot"); if(!shot) return false;
+  if(PRESETS[shot]) Object.assign(PARAMS,PRESETS[shot]);
+  if(q.get("zoom")) PARAMS.zoom=parseFloat(q.get("zoom"));
+  if(q.get("one")){                     // single-cell inspection: 2x2 cells, big
+    PARAMS.zoom = (760/PARAMS.tileW)/1.0;
+  }
+  document.getElementById("panel").style.display="none";
+  document.getElementById("cellRow").style.display="none";
+  document.body.style.margin="0";
+  const wrap=document.getElementById("previewWrap");
+  wrap.style.border="none"; wrap.style.borderRadius="0";
+  renderAll();
+  return true;
+}
+
+/* ===================== boot ===================== */
+buildPresets();
+buildControls();
+renderAll();
+maybeShot();
+window.addEventListener("resize",()=>renderPreview());
+</script>

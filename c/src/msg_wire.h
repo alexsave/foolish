@@ -14,23 +14,40 @@
 //
 //   off  size  field
 //   0    1     magic      0xF7
-//   1    1     format     2 (see THE BODY below; 1 was cut before shipping)
-//   2    1     flags      bit0 fair_deal, bit1 gzip-body, bits2-7 reserved=0
+//   1    1     format     2; 3 adds a send clock + a bubble delta; 4 adds the
+//                          fool's penalty; 5 and 6 are 3 and 4 with the variant
+//                          byte spent on the RULES (1 was cut before shipping)
+//   2    1     flags      bit0 fair_deal, bit1 gzip-body,
+//                          bit2 = legacy (was passing_allowed in 1.0(3); tolerated
+//                          on decode, never set now), bits3-7 reserved=0
 //   3    1     phase      0 WAITING, 1 ACCEPT, 2 LIVE, 3 FINISHED
 //   4    8     game_id    random u64, constant for the game
 //   12   2     turn       u16, count of kernel actions applied
 //   14   1     last_actor_seat
 //   15   1     n_players  2..8
-//   16   1     variant    reserved rules-variant byte, =0
+//   16   1     variant    FORMAT 5/6: the table's RULES - bit0 MSG_VARIANT_PASS
+//                          (0 podkidnoy, 1 perevodnoy). Reserved =0 on 2/3/4,
+//                          which are the passing game by definition. See below.
 //   17   1     round      completed-round counter (Rule R's guard input)
 //   18   8     parent8    first 8 bytes of SHA-256(previous envelope), 0 at creation
 //   26   32    seed       -> game_set_deal_seed_bytes(seed, 32)
-//   58   1     n_joins
-//   59   var   joins      n_joins x { u8 seat, u8 name_len<=12, name utf8 }
+//   58   2     sent_at    FORMAT 3+ ONLY: unix seconds mod 65536 (0 = none)
+//   60   1     n_new      FORMAT 3+ ONLY: atoms THIS bubble added
+//                          (0 = unknown, 255 = none - see MSG_NEW_NOTHING)
+//   62   1     opening    FORMAT 4 ONLY: the seat this deal opens on (0xFF = derive)
+//   63   4     carry_key  FORMAT 4 ONLY: u32 LE roster key of the game before (0 = none)
+//   67   1     carry_fool FORMAT 4 ONLY: the fool's canonical index (0xFF = none)
+//   58   1     n_joins    (61 on format 3, 68 on format 4)
+//   59   var   joins      n_joins x { u8 seat, u8 name_len<=64, name utf8 }
 //   var  2     n_actions  u16, the action count the body must yield
 //   var  var   body       the v6 replay code — see THE BODY
 //
-// THE BODY is a v6 replay code (replay.h) — the codec that already ships. It
+// THE BODY is a v6-family replay code (replay.h) - the codec that already
+// ships. "v6" here is the DECODER FAMILY, not the version byte the producer
+// writes: today's encoder stamps 10 (REPLAY_FORMAT_VERSION_V10), which is v6
+// plus a pass-mode bit, a forced-opening bit and the corrected deal order, and
+// every entry point that reads one is still named _v6 because it accepts the
+// whole line. What this file counts - atoms - is the same in any of them. It
 // entropy-codes each action as an index into that state's legal-move menu, so an
 // action costs ~1-2 bits instead of the ~34 a raw frame spends. Measured over
 // 240 full games per size: 34 B at 2p, 45 B at 4p, 68 B at 8p — 8x to 18x
@@ -98,7 +115,181 @@
 // and never shipped: it costs ~34 bits for an action worth ~1-2 and missed the
 // size budget by 1.33x at 4 players, permanently. The version byte keeps its
 // grave so nothing re-uses the number. See docs/IMESSAGE_BODY_CODEC.md.
-#define MSG_FORMAT_V6    2   // body = a v6 replay code — the only format
+#define MSG_FORMAT_V6    2   // body = a v6 replay code, no clock
+// Format 3 = format 2 plus a two-byte SEND CLOCK and a one-byte BUBBLE DELTA,
+// the two things round 16 found this wire could not answer. Both are additions
+// to the header, and both are 0 on a format-2 chain, which is exactly what
+// "this bubble does not say" means for each of them.
+//
+// THE CLOCK. Round 16:
+// the defender may not pick up within MSG_PICKUP_HOLD_S seconds of an attack,
+// so that the attackers get a fair chance to throw more in — and answering
+// "how long ago was this attack sent" needs a time this wire never carried.
+//
+// Nothing on the platform could answer it instead. MSMessage's whole public
+// surface is session/pending/senderParticipantIdentifier/layout/URL/
+// shouldExpire/accessibilityLabel/summaryText/error: no date. The times a user
+// reads in the transcript come from the message database, which an app
+// extension cannot see.
+//
+// A NEW FORMAT was unavoidable rather than chosen. Trailing bytes cannot carry
+// it (msg_decode takes the body as everything to the end of the buffer, so an
+// appended field lands inside the v6 code and corrupts it), and the header has
+// no hole (`variant` is one byte and must be 0). The cost is exact and was
+// accepted by the owner: a build that only knows format 2 rejects a format-3
+// bubble outright (MSG_EFORMAT). The other direction is preserved on purpose —
+// this build reads format 2 fine, as a chain with no clock, which by
+// `msg_pickup_hold_remaining`'s contract means no hold at all.
+//
+// THE BUBBLE DELTA (`n_new`) is how many atoms of this body belong to THIS
+// bubble's turn: the last n_new atoms are the move it carries, and everything
+// before them is history its recipient has already seen.
+//
+// It is NOT the difference of two `turn`s, though it was at first. A chain
+// appends LOGS, but its atom stream is re-derived from all of them every time
+// it is encoded, and a good stops being an atom the moment anything follows it
+// (replay.c's log_atom_kind) - so the same history can encode to fewer atoms
+// than the parent claimed, and the subtraction loses exactly one per superseded
+// good. What that cost is the FRONT of a turn: a defender who covered twice
+// into one bubble sealed a delta of 1, and both the caption on the bubble and
+// the animation its recipient played dropped the first cover. The seal measures
+// from the LOG MARK instead (msg_seal), which only ever grows.
+//
+// Without the delta at all a receiver can only GUESS the boundary, and the guess it
+// used to make (the trailing run of steps by one seat) is wrong in two ways the
+// owner hit in play: a defender who covers, sends, covers, sends puts two cover
+// atoms on the chain that are indistinguishable from two staged at once, so
+// opening the second bubble replays both; and a cover that ends the bout
+// without a ROUND_END atom (the defender's last card - handle_cover discards
+// inline) sits directly before that same seat's opening attack of the next
+// bout, so replaying the attack replays the cover with it.
+//
+// ONE BYTE, and a DELTA rather than an index. The alternative considered was a
+// per-atom boundary marker inside the v6 body, which is cumulative (the body
+// carries the whole game, so it grows ~1 bit per atom per bubble, 15-30% on a
+// measured body by the end of a game) and would re-point every v6 code the
+// website, the share links and the Oracle already read. An absolute parent-turn
+// index would need two bytes to match `turn`; the delta fits in one.
+//
+// WHY A WHOLE BYTE for a number that small, when flags has five reserved bits.
+// Because the number is not that small. A staged turn is not bounded by six
+// table slots - the attack limit is the DEFENDER'S HAND (MAX_BATTLES 32, 64 on
+// wasm: "a defender holding 33+ cards can legally face 33+ simultaneous
+// attacks"), so a defender who just picked up a fat pile can legitimately stage
+// ten or twenty covers into one bubble. A nibble would truncate real play and
+// five bits would sit right against it; the deck's 36 cards are the true
+// ceiling and a byte clears them with room. What the byte costs is ~1.6 base32
+// chars on a ~240-char bubble against a 1,000-char budget - less than the
+// header's remaining reserve is worth (owner's call, round 16).
+//
+// Note it does not bound the GAME: a 300-atom game is 300 bubbles of delta 1,
+// and the total stays in `turn`, a u16. A delta that would not fit the byte
+// seals as 0 - "this bubble does not say" - rather than as a clamp, because a
+// too-large delta would name a suffix starting INSIDE the bubble, and a
+// confident wrong boundary is worse than an honest missing one.
+//
+// AND A BUBBLE CAN ADD NOTHING (MSG_NEW_NOTHING). Undo-to-empty is a real move
+// in this UI: Messages offers no API to REMOVE a staged bubble, so §10 cancels
+// one by overwriting it with a re-seal of the state the chain was already in.
+// That bubble is sendable, and what it carries is a board every recipient has
+// already seen. "0 atoms added" is not 0 on this wire - 0 is "does not say",
+// whose fallback GUESS animates the previous player's move again (owner, round
+// 16: "if you stage a move then undo, you can still send a message and it will
+// look weird for the other players"). So the count and the absence of a count
+// are separate values, and the third state gets the one byte value a real delta
+// can never take.
+#define MSG_FORMAT_CLOCK 3
+
+// Format 4 = format 3 plus THE FOOL'S PENALTY, the durak-ism this wire could
+// not express: a rematch played by the same people, in the same cycle, does not
+// open on the lowest trump - it opens on the seat to the RIGHT of the last
+// game's fool, so the fool is the first player attacked. (Right, not left:
+// attacks travel to the attacker's left, so the seat on the fool's right is the
+// one whose attack lands on them.)
+//
+// THE RULE CANNOT BE RE-DERIVED BY A RECEIVER, which is why it needs the wire.
+// A device that opens a rematch bubble may never have held the game before it -
+// reinstalled, joined the chat late, or simply looking at a chain whose parent
+// scrolled away - so "who was the fool" is not a fact every device has. It is
+// also not a fact any device may DECIDE alone: the opening seat changes the
+// deal's whole shape, and two devices that disagree about it have forked the
+// game. So the chain states it.
+//
+// THREE FIELDS, in two phases that never overlap:
+//
+//   `opening` is the ANSWER, and it rides every LIVE and FINISHED bubble of a
+//   game the rule touched. It is the seat game_open_at_seat pins before the
+//   deal (game.h), so every device re-deals the identical board from the seed.
+//   0xFF (MSG_NO_OPENING) is an ordinary game: derive from the lowest trump,
+//   exactly as before this format existed. It rides EVERY bubble rather than
+//   just the first because a chain is replayed from its seed on every open -
+//   there is no "first bubble" a later reader can consult - and because the
+//   turn-0 LIVE handoff carries no body at all, so the body's own recorded
+//   opener (v8, replay.h) cannot answer at the one moment it matters most.
+//
+//   `carry_key` + `carry_fool` are the QUESTION, and they ride only the WAITING
+//   lobby a "New game" creates. carry_key fingerprints the roster that lobby
+//   was born with; carry_fool names, within it, who the fool was. Whoever taps
+//   Start re-fingerprints the roster it is actually starting and compares: same
+//   people in the same cycle, the rule applies; anyone joined, left or was
+//   renamed, it does not, and the game opens on the lowest trump like any
+//   other. That is the guard the owner specified - "if the players do not
+//   change at all between the lobby and the start" - and it lives here, in C,
+//   because it decides a deal.
+//
+// ROTATION-CANONICAL, deliberately. The lobby a rematch creates seats whoever
+// tapped New game at 0, so the same table in the same cyclic order comes back
+// ROTATED: Alex/Bob/Cindy becomes Bob/Cindy/Alex. That is the same table and
+// must fingerprint equal, while Alex/Cindy/Bob - an order no rotation
+// produces - must not. msg_roster_key hashes the rotation whose bytes are
+// smallest, so every rotation of one table yields one key, and carry_fool is an
+// index into THAT rotation rather than into a seating that moves.
+//
+// SIX BYTES, and only on a game the rule touched. seal_format writes format 3
+// (or 2) whenever all three fields are empty, so an ordinary game pays nothing
+// at all; a rematch pays ~10 base32 chars on a ~240-char bubble. The
+// alternative - splitting the answer and the question into two formats to save
+// five bytes on live bubbles - buys less than it costs in a wire that then has
+// four live formats instead of three.
+#define MSG_FORMAT_REMATCH 4
+
+// The hold itself, in seconds (owner: "you cannot pickup within 15 seconds of
+// the attack").
+#define MSG_PICKUP_HOLD_S 15
+
+// Formats 5 and 6 = formats 3 and 4 with THE VARIANT BYTE SPENT: it is now the
+// table's RULES, and bit 0 is PASSING (perevodnoy, the transfer). 0 is
+// podkidnoy, the throw-in game with no transfer at all (game.h
+// GAME_RULE_NO_PASS). Every other bit stays reserved and must be 0.
+//
+// WHY THE HEADER CARRIES THE RULES WHEN THE BODY ALREADY DOES. A v10 code names
+// its own pass mode (replay.h), and for a LIVE bubble that would be enough. A
+// WAITING lobby has no body at all - the deal alone is the state - so the one
+// place a lobby's rules can live is the header, and the lobby is exactly where
+// they are chosen. Carrying it on every phase keeps one answer rather than two:
+// a receiver reads the rules the same way whether it is looking at a lobby or
+// at the twentieth bubble of a game, and msg_replay checks the header against
+// the body's bit, so a chain cannot say one thing and play the other.
+//
+// WHY A NEW FORMAT RATHER THAN A NEW MEANING FOR AN OLD BYTE. Under formats
+// 2-4 the variant byte is reserved and must be 0, and 0 meant the only game
+// this engine played: with the transfer. The owner's call is that the byte
+// reads 0 = podkidnoy / 1 = passing from here on - which is the opposite
+// reading of the same byte, so every bubble already sitting in a transcript
+// would flip its rules under it. A version number is exactly the instrument for
+// that: formats 2-4 keep the old reading (variant 0, passing), formats 5-6
+// carry the new one, and a build that predates them refuses a format it does
+// not know (MSG_EFORMAT) instead of quietly dealing a different game. Every
+// seal this build makes writes 5 or 6, because the rules must never again be a
+// byte whose meaning depends on who is reading.
+//
+// The header does not grow: 5 is 3's 62 bytes and 6 is 4's 69, so an ordinary
+// game pays nothing for saying what it is.
+#define MSG_FORMAT_RULES         5
+#define MSG_FORMAT_RULES_REMATCH 6
+
+#define MSG_VARIANT_PASS  0x01
+#define MSG_VARIANT_KNOWN (MSG_VARIANT_PASS)
 
 #define MSG_PHASE_WAITING  0
 #define MSG_PHASE_ACCEPT   1
@@ -107,12 +298,64 @@
 
 #define MSG_FLAG_FAIR_DEAL 0x01
 #define MSG_FLAG_GZIP      0x02
+// bit2 (0x04) was PASSING_ALLOWED, a forward-compat marker 1.0(3) set on every
+// seal. REMOVED (1.0(4)): the pass/perevod mode now lives in the replay code
+// (the v7 pass-mode bit, replay.h), so the message format no longer needs it.
+// This build does not set it, and nothing has a named define for it any more.
+// validate_fields still TOLERATES a stray bit2 (0x04) so a bubble sealed by
+// 1.0(3) still decodes and re-encodes to itself; no new meaning is attached.
 
-#define MSG_MAX_NAME     12
+// Was 12: the App Store review's B1 (docs/APP_REVIEW_NOTES.md) found that cap
+// too tight for a byte-counted UTF-8 name — "Владимир" (8 letters, 16 bytes)
+// silently failed to seal. Owner's round-5 call: allow up to 64 bytes; the
+// Swift UI separately caps at 16 characters (not this layer's job).
+#define MSG_MAX_NAME     64
 #define MSG_MAX_JOINS    MAX_PLAYERS
 #define MSG_SEED_LEN     FOOLISH_SEED_LEN   // 32 — the ChaCha key width
 #define MSG_PARENT_LEN   8
-#define MSG_HEADER_LEN   59                 // through n_joins
+#define MSG_HEADER_LEN   59                 // format 2: through n_joins
+// Format 3 puts its two clock bytes at 58 and its delta byte at 60, AFTER the
+// seed and BEFORE n_joins, so every offset a format-2 reader knows is unchanged
+// and the two decoders share one prefix. n_joins lands at 61.
+#define MSG_CLOCK_OFF    58
+#define MSG_NEW_OFF      60
+#define MSG_HEADER_LEN_CLOCK 62
+// Format 4 appends its three rematch fields after format 3's, on the same
+// principle: every earlier offset is untouched and the decoders share one
+// prefix. n_joins lands at 68.
+#define MSG_OPEN_OFF     62
+#define MSG_CARRY_OFF    63
+#define MSG_FOOL_OFF     67
+#define MSG_HEADER_LEN_REMATCH 69
+// "Derive the opening seat from the lowest trump" - an ordinary game.
+#define MSG_NO_OPENING   0xFF
+// "This lobby carries no fool to punish" - an ordinary lobby.
+#define MSG_NO_FOOL      0xFF
+// The delta's ceiling; past it a seal writes 0 ("does not say") rather than a
+// clamp - see the MSG_FORMAT_CLOCK note. 254 rather than 255 because the top
+// value is spoken for: it is the third state, below.
+#define MSG_MAX_NEW      254
+// "THIS BUBBLE ADDED NOTHING" - the undo-to-empty re-seal (§10). Distinct from
+// 0 ("does not say") because the two want opposite things from a reader: 0 asks
+// it to guess a boundary, and this one states that there IS no move here, so
+// nothing animates. 255 carries it because it is the one byte value no honest
+// delta can hold (MSG_MAX_NEW caps a real one at 254), which keeps the field a
+// plain count everywhere else.
+#define MSG_NEW_NOTHING  255
+// msg_seal's `base_turn` for a host that cannot say where the parent chain
+// ended - the seal then writes no delta and the receiver guesses, exactly as
+// every build before round 16 did. A GENESIS is not this: it passes 0, because
+// a chain with no parent really did add all of itself.
+#define MSG_NO_BASE      (-1)
+// msg_seal's `base_turn` for the re-seal that adds NOTHING: the chain ends
+// exactly where this body ends. It is its own value rather than "pass the base
+// and let the subtraction come out 0" because at seal time a zero difference is
+// AMBIGUOUS - the codec folds a bout's closing goods into the round_end atom
+// that replaces them, so a real move can seal to its parent's atom count too
+// (measured at 22% of one-action bubbles). The two are told apart by the one
+// host that knows, and it knows because nothing was applied to the resident
+// game since it adopted the chain - see fio_msg_encode.
+#define MSG_BASE_NOTHING (-2)
 
 // A full game is ~60-90 actions at 2 players (spec §4.4); 8-player games run
 // longer. 1024 is far above any reachable game and bounds the decode walk.
@@ -133,7 +376,7 @@
 #define MSG_EFLAGS      -4   // reserved bit set, or a flag this build can't honor
 #define MSG_EPHASE      -5   // phase out of range, or inconsistent with the chain
 #define MSG_EPLAYERS    -6   // n_players outside 2..8
-#define MSG_EVARIANT    -7   // non-zero variant (no variant is defined yet)
+#define MSG_EVARIANT    -7   // a variant bit this build does not implement
 #define MSG_ESEAT       -8   // a seat >= n_players, or a duplicate join
 #define MSG_ENAME       -9   // name too long, or non-printable bytes
 #define MSG_ESEED      -10   // all-zero seed outside fair-deal
@@ -153,17 +396,70 @@ typedef struct {
 } MsgJoin;
 
 typedef struct {
-    uint8_t  format;   // always MSG_FORMAT_V6
+    uint8_t  format;   // one of MSG_FORMAT_*
     uint8_t  flags;
     uint8_t  phase;
     uint64_t game_id;
     uint16_t turn;
     uint8_t  last_actor_seat;
     uint8_t  n_players;
+    // The RULES byte, raw: bit0 MSG_VARIANT_PASS on format 5/6, and 0 (=the
+    // passing game, which is all those formats could describe) on 2/3/4. Read
+    // it through `msg_pass_allowed` rather than testing the bit, so no caller
+    // has to remember which formats predate it.
     uint8_t  variant;
     uint8_t  round;
     uint8_t  parent8[MSG_PARENT_LEN];
     uint8_t  seed[MSG_SEED_LEN];
+
+    // Unix seconds MOD 65536, as the sending device's clock read them when it
+    // sealed this envelope. 0 means NO CLOCK — a format-2 chain, or a host that
+    // did not stamp one — and every rule that reads it treats 0 as "no hold".
+    // (A real stamp lands on 0 one second in every 65,536; the cost of that
+    // collision is one skipped 15-second hold, which is why 0 is allowed to be
+    // the sentinel.)
+    //
+    // TWO BYTES, and the wrap is deliberate. Nothing ever needs the absolute
+    // time — only `now - sent_at` against 15 — and unsigned modular subtraction
+    // gets that right across a rollover with no special case. What the wrap
+    // costs is DISTINGUISHABILITY: a chain sent 3 seconds ago and one sent
+    // 18h12m+3s ago produce the same delta, so roughly one stale open in 4,400
+    // draws a 15-second hold it did not earn. One wait, self-clearing. A u32
+    // would buy that back for two more bytes; it was judged the wrong trade
+    // against a wire whose whole design is bytes-per-bubble.
+    uint16_t sent_at;
+
+    // How many atoms THIS bubble added to the chain - `turn` minus the turn of
+    // the envelope it continues. 0 means the bubble does not say: a format-2
+    // chain, or a genesis/lobby seal with nothing in it. Readers treat 0 as
+    // "guess" (see fio_replay_last_events_packed), which is what every build did
+    // before this field existed, so an old chain animates exactly as it always
+    // did. MSG_NEW_NOTHING means the opposite of a guess: this bubble added no
+    // atoms at all (the undo-to-empty re-seal), so a reader animates NOTHING.
+    //
+    // Set by msg_seal from the base turn it is handed, never by a caller: like
+    // `turn` and `round` it is a claim about the body, and a producer that
+    // could write it freely could emit a bubble that animates a move it did not
+    // carry. Bounded by `turn` for the same reason (validate_fields).
+    uint8_t  n_new;
+
+    // THE FOOL'S PENALTY, format 4 (see MSG_FORMAT_REMATCH for the rule).
+    //
+    // `opening` is the seat this deal opens on, or MSG_NO_OPENING to derive it
+    // from the lowest trump. Unlike turn/round/n_new this IS a caller's field:
+    // it is not a claim about the body but a term of the deal, settled at Start
+    // by msg_rematch_opening and then simply repeated by every later seal, the
+    // way `seed` is. msg_replay checks it against the body's own recorded
+    // opener, so a chain that lies about it does not replay.
+    uint8_t  opening;
+
+    // The rematch carry, meaningful only on a WAITING lobby. `carry_key` is the
+    // roster key (msg_roster_key) of the roster this lobby was created with; 0
+    // means "no carry", an ordinary lobby. `carry_fool` is the fool's index
+    // within that key's canonical rotation, or MSG_NO_FOOL.
+    uint32_t carry_key;
+    uint8_t  carry_fool;
+
     int      n_joins;
     MsgJoin  joins[MSG_MAX_JOINS];
 
@@ -175,12 +471,38 @@ typedef struct {
     const unsigned char *actions;
 } MsgEnvelope;
 
-// THE PRODUCER. Fills in `e`'s body and the three header fields that describe
-// it — `n_actions`, `turn`, `round` — for `g`, a game dealt from `e->seed` and
-// played. The caller sets the rest (game_id, phase, seed, joins, parent8,
-// last_actor_seat). Returns MSG_EOK or a negative MSG_E*; `body` (>= 512 B is
-// ample; a full 8p game measures ~68) receives the code and `e->actions` is left
-// borrowing it, so it must outlive `e`.
+// May the defender transfer, in the game these bytes describe? THE reader for
+// the variant byte: it knows that formats 2-4 predate the rules byte and are
+// the passing game by definition, so no caller has to remember which formats
+// say what. Safe on any decoded envelope.
+int msg_pass_allowed(const MsgEnvelope *e);
+
+// THE PRODUCER. Fills in `e`'s body and the four header fields that describe
+// it - `n_actions`, `turn`, `round`, `n_new` - for `g`, a game dealt from
+// `e->seed` and played. The caller sets the rest (game_id, phase, seed, joins,
+// parent8, last_actor_seat). Returns MSG_EOK or a negative MSG_E*; `body`
+// (>= 512 B is ample; a full 8p game measures ~68) receives the code and
+// `e->actions` is left borrowing it, so it must outlive `e`.
+//
+// `base_logs` is g->num_logs AT THE MOMENT THIS HOST ADOPTED THE CHAIN it is
+// continuing - the log mark - or MSG_NO_BASE for "this host cannot say", which
+// seals n_new = 0 and leaves the receiver to guess the boundary as it always
+// did, or MSG_BASE_NOTHING for "this bubble adds nothing", which seals
+// n_new = MSG_NEW_NOTHING so the receiver animates nothing at all. A genesis
+// passes 0: everything on the chain is new. It is an input rather than
+// something derived here because it is the one fact the body cannot tell us -
+// the body is the whole game, and where the PREVIOUS bubble ended is not in it.
+// The delta itself is still derived (the atoms after that mark,
+// replay_atoms_before_log), so the same rule holds as for turn/round: a host
+// cannot claim a boundary its body does not have.
+//
+// A LOG MARK and not the parent's atom count, which is what round 16 first
+// used: a chain appends logs, but its atom stream is re-derived from all of
+// them every time, and a good that was an atom while it was pending stops
+// being one as soon as anything follows it. Subtracting the parent's `turn`
+// therefore lost one atom per superseded good, and a turn of several actions
+// sealed as fewer - so its recipient animated, and its sender captioned, only
+// the tail of it.
 //
 // It derives those fields by DECODING THE BODY IT JUST WROTE and replaying it
 // into `scratch`, rather than by counting what the caller thinks it played.
@@ -201,13 +523,35 @@ typedef struct {
 // MSG_EBODY means the v6 producer refused — it rejects a game whose log buffer
 // overflowed (num_logs >= MAX_LOGS), which was measured on ~10% of full 8-player
 // games and never at 2-4p. See docs/IMESSAGE_BODY_CODEC.md §4.
-int msg_seal(MsgEnvelope *e, const Game *g, unsigned char *body, int body_cap,
-             Game *scratch);
+int msg_seal(MsgEnvelope *e, const Game *g, int base_logs,
+             unsigned char *body, int body_cap, Game *scratch);
+
+// THE BASE A HOST SHOULD SEAL WITH, from the one thing it remembers about the
+// chain it adopted: `g->num_logs` AT THE MOMENT IT ADOPTED IT (`base_logs`,
+// negative if it did not look). Returns base_logs, MSG_NO_BASE, or
+// MSG_BASE_NOTHING.
+//
+// The question it answers is "has this game moved since I adopted the chain",
+// and it answers it by OBSERVING THE GAME rather than by counting applies,
+// because the log array is what the body is encoded from: a game whose log
+// count is where adoption left it encodes to the same body the parent carried,
+// so that bubble demonstrably adds nothing. A counter incremented at each apply
+// would have to be found and bumped by every path that can move a game (an
+// apply, a rebase, a bot drive), and the one that got missed would seal a real
+// move as "nothing" and animate it nowhere.
+//
+// It lives here rather than in each host so that the two that seal FMSG - the
+// phone and the browser twin - cannot disagree about what an empty bubble is.
+int msg_seal_base(const Game *g, int base_logs);
 
 // Parse + bounds-check `in` into `out`. Returns MSG_EOK or a negative MSG_E*.
 // Never reads past `in_len`, never allocates, never builds a Game. On success
 // `out->actions` points into `in`.
 int msg_decode(const unsigned char *in, int in_len, MsgEnvelope *out);
+
+// 1.0(6) DIAGNOSTIC: replay codec version (9 or 10) of the last body msg_replay
+// decoded, or -1 for an empty-body message. Set by msg_replay.
+extern int msg_last_body_version;
 
 // Serialize `e` into `out`. Returns bytes written, or a negative MSG_E*. The
 // same field validation decode applies runs here too, so this host can never
@@ -239,9 +583,65 @@ int msg_replay(const MsgEnvelope *e, Game *g);
 //
 // Two chains for the same game_id are ordered by (§7.2):
 //
+//   0. a STARTED chain beats a pre-game one — phase >= MSG_PHASE_LIVE outranks
+//      WAITING/ACCEPT, always
 //   1. higher round wins        — a closed bout is settled history
 //   2. else higher turn wins    — more accepted actions
-//   3. else smaller SHA-256     — arbitrary, but identical everywhere
+//   3. else more JOINS wins     — the fuller roster is strictly later history
+//   4. else smaller SHA-256     — arbitrary, but identical everywhere
+//
+// Rule 0 is not cosmetic, and it is not subsumed by round/turn: a WAITING lobby
+// and the LIVE handoff that starts it BOTH sit at round 0 / turn 0 (the handoff
+// applies no action — see msg_seal's 0-action path), so without it the two tie
+// all the way down to the digest and the winner is a COIN FLIP. Devices that
+// cached the lobby then kept it, and `adopt` rendered that phase-0 payload as a
+// board — which is dealt at the lobby's CAPACITY (8 for a group), with joins
+// only for whoever had joined. That is the "some players see a 5-player game,
+// others see an 8-player one with seats named 'Seat N'" fork, and because those
+// two deals have different first attackers, the game deadlocks. A started chain
+// is never superseded by the invite it grew out of, so it wins outright.
+//
+// Rule 3 closes the SAME class of fork one layer up, between two STARTED
+// chains. Lobby v3 lets ANY joined player tap Start, and Start deals at the
+// tapped bubble's join count — so two players starting near-simultaneously
+// (or one starting off a stale bubble that predates the last join) seal TWO
+// LIVE handoffs, both at round 0 / turn 0, dealt from the same locked seed at
+// DIFFERENT player counts. Those are different games: different trump,
+// different first attacker. Under the digest tiebreak the 3-player fork beat
+// the real 4-player game half the time (measured 1008/2000 seeds), the two
+// forks disagreed on the first attacker in 2/3 of deals, and when the full
+// game's first attacker was the player stuck on the small fork's board, the
+// whole table deadlocked — everyone waiting on a player whose own screen says
+// someone else must open. Joins-count ordering makes every such fork resolve
+// to the fullest roster, on every device, deterministically. It also orders
+// WAITING chains among themselves (a 3-join lobby beats the 2-join lobby it
+// grew from), which is what lets a device refresh its roster from an incoming
+// join instead of coin-flipping against its own cached invite. It ranks BELOW
+// turn on purpose: a chain someone has actually played on must never be
+// clobbered by a stale wider Start sealed after the fact.
+//
+// Rule 4 ranks ABOVE all of that: a chain's own DIRECT CHILD outranks it,
+// whatever the other fields say. Between a parent and its descendant the other
+// rules can lie about which came later, because `turn` counts ATOMS and the
+// atom stream is re-derived from the whole log on every seal - a pending good
+// is an atom only until a non-good follows it (replay.c log_atom_kind). So
+// "parent + good" and "parent + good + cover" seal to the SAME turn (the old
+// digest tiebreak then kept the PARENT half the time), and "parent + good +
+// good" seals one turn ABOVE the cover that follows and supersedes both goods
+// (the turn rule then kept the parent every time). A device that kept the
+// parent silently refused the very move that had just been played on it: the
+// 1.0(17) live-drawer report of a board "a bit behind" until the bubble is
+// closed and re-tapped (the tapped-bubble path adopts without consulting Rule
+// P, which is why re-tapping always recovered). The same flip in the other
+// direction adopted a parent DELIVERED AFTER its child, sending the board
+// backwards - a cover that flew, landed and then vanished while the attack
+// under it stood back upright. The parent link every envelope already carries
+// decides this exactly: the child names its parent's digest, the parent cannot
+// name its child's, and a child's phase, round and joins are always >= its
+// parent's, so ranking descent first can never misorder the rules it
+// overrules. Two SIBLINGS (same parent, neither an ancestor of the other) name
+// neither and fall through to rules 0..3 and the digest, which for a genuine
+// concurrency fork is the designed answer.
 //
 // Delivery order is never an input. Two devices can transiently disagree about
 // which message is "newest", so the rule needs no clocks and no ordering
@@ -250,8 +650,11 @@ int msg_replay(const MsgEnvelope *e, Game *g);
 // In C, not in each client: this decides which game every player sees, so a
 // phone and a browser disagreeing here forks the game. There is nothing to port.
 typedef struct {
+    uint8_t  phase;                        // MSG_PHASE_*; only "started or not" is compared
     uint8_t  round;
     uint16_t turn;
+    uint8_t  n_joins;                      // rule 3: the fuller roster wins the turn-0 tie
+    uint8_t  parent8[MSG_PARENT_LEN];      // rule 4: a child outranks the parent it names
     uint8_t  digest[SHA256_DIGEST_LEN];
 } MsgChainKey;
 
@@ -296,5 +699,108 @@ int msg_rebase_one(Game *adopted, int adopted_round, int pending_round,
 // lexicographically. Thin wrapper, but it names the one hash the protocol means
 // so no caller has to re-decide what "the digest of a chain" is.
 void msg_digest(const unsigned char *envelope, int len, uint8_t out[SHA256_DIGEST_LEN]);
+
+// ---------- the pickup hold (round 16) -----------------------------------
+//
+// How many more seconds `seat` must wait before it may pick up: 0 when it may
+// pick up now, 1..MSG_PICKUP_HOLD_S while the hold stands. Owner: "make it so
+// that you cannot pickup within 15 seconds of the attack ... this is to give
+// attackers a fair chance to throw in additional cards".
+//
+// `g` is the game the chain replayed to, `sent_at` its envelope's clock, `now`
+// the reader's own unix seconds mod 65536. Pure: no clock is read here, because
+// a kernel that read the time would answer differently on two devices holding
+// the same bytes, and every other rule in this tree is a function of the bytes.
+//
+// THE HOLD STANDS only when all of these are true, and each one is a way the
+// answer is already decided by the state:
+//
+//   - `sent_at` is non-zero. A format-2 chain has no clock, so there is nothing
+//     to measure and nothing is held (this is the whole of backward
+//     compatibility: an old bubble simply never holds).
+//   - `seat` is the defender. Nobody else can pick up.
+//   - the last thing in the log is an ATTACK or a PASS — the two actions that
+//     leave a defender facing a fresh uncovered card. After a cover or a good,
+//     the defender is not sitting in front of anything new, and a hold would
+//     just be a delay. (A pass counts because the seat it lands on is in
+//     exactly the attacked position, facing throw-ins, and it is a different
+//     seat than the one that acted.)
+//   - the defender still has SPARE CAPACITY: strictly fewer uncovered cards on
+//     the table than cards in hand. Owner: "if the last attack caused the number
+//     of uncovered cards to equal the number of cards remaining in the
+//     defenders hand, we need no such timer, because if the defender has no more
+//     capacity, no one can throw in anything regardless." Holding a defender who
+//     cannot be thrown at protects nothing and costs 15 seconds.
+//
+// The wait itself is `MSG_PICKUP_HOLD_S - (uint16_t)(now - sent_at)`, computed
+// in unsigned 16-bit so a clock rollover cancels on both sides. A stamp that
+// reads as being in the FUTURE (a sender whose clock runs fast) wraps to a large
+// delta and so releases the hold rather than maxing it — the safe direction, and
+// the only one that cannot wedge a defender behind a stranger's bad clock.
+int msg_pickup_hold_remaining(const Game *g, int seat, uint16_t sent_at, uint16_t now);
+
+// Zero an envelope to its EMPTY state, which is not all-zero: `opening` and
+// `carry_fool` mean "seat 0" when zeroed and "absent" at their sentinels, so a
+// memset alone would quietly claim seat 0 opens every game.
+//
+// Producers must use this instead of memset. Forgetting to is caught the moment
+// anything is encoded rather than at the table: an all-zero envelope carries a
+// rematch claim its format cannot hold, and validate_fields refuses it
+// (MSG_EFORMAT). msg_decode fills the sentinels itself, so a decoded envelope
+// never needs this.
+void msg_envelope_init(MsgEnvelope *e);
+
+// ---------- Rule F: the fool's penalty -----------------------------------
+//
+// The two calls that decide who opens a rematch. Both are pure functions of a
+// join list, and both live here rather than in a client for the reason every
+// other rule in this file does: a phone and a browser that disagree have dealt
+// two different games.
+//
+// THE ROSTER KEY. A fingerprint of `joins` as an ORDERED CYCLE - the same
+// people in the same rotation hash equal, a different order does not. Seats are
+// read in ascending order and the rotation whose (name_len, name) byte sequence
+// compares smallest is the one hashed, with the player count folded in.
+//
+//   hash   receives the key. Never 0 for a valid roster (a computed 0 is bumped
+//          to 1), because 0 is the wire's "no carry" sentinel.
+//   rot    receives the rotation offset: canonical[k] == joins[(k + *rot) % n].
+//          Pass NULL if you only want the key.
+//
+// Returns MSG_EOK, or MSG_EJOINS if `n` is outside 2..MSG_MAX_JOINS.
+//
+// A key collision costs one game opened on the wrong seat - a legal game, just
+// not the punishment that was due - so 32 bits is ample; nothing here is a
+// security boundary, since a device that wanted to lie would simply write the
+// `opening` byte it liked.
+//
+// Duplicate names are the one genuinely ambiguous input: a table with two
+// players called "Sam" has rotations that are byte-identical, so which "Sam"
+// carry_fool names cannot be recovered. The rule then punishes one of them,
+// arbitrarily but deterministically (every device picks the same one). This is
+// judged acceptable: the alternative is putting stable player ids on a wire
+// that has deliberately never carried them (§4.1).
+int msg_roster_key(const MsgJoin *joins, int n, uint32_t *hash, int *rot);
+
+// THE VERDICT. Given a lobby's carry (`carry_key`/`carry_fool`, straight off
+// the WAITING envelope) and the roster that is about to start, returns the seat
+// that must open the new game, or -1 when the rule does not apply and the deal
+// should derive its opener from the lowest trump as usual.
+//
+// It applies when, and only when, `carry_key` is non-zero, `carry_fool` names a
+// real index, and the starting roster keys EQUAL to the carry - which is the
+// owner's "if the players do not change at all" guard, read through the
+// rotation tolerance above. The answer is then the seat to the RIGHT of the
+// fool, `(fool_seat - 1 + n) % n`, where fool_seat is carry_fool mapped through
+// the starting roster's own rotation.
+int msg_rematch_opening(const MsgJoin *joins, int n,
+                        uint32_t carry_key, uint8_t carry_fool);
+
+// The seat the penalty falls ON - the fool, and therefore the new game's first
+// DEFENDER. Same guard and same inputs as msg_rematch_opening, and derived from
+// its answer so the two can never disagree; -1 when the rule does not apply.
+// This is what a lobby shows: "if nobody else joins, <name> is attacked first".
+int msg_rematch_fool_seat(const MsgJoin *joins, int n,
+                          uint32_t carry_key, uint8_t carry_fool);
 
 #endif

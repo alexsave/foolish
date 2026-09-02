@@ -10,7 +10,7 @@ quick wins worth grabbing while a Mac is open.*
 
 | Part | Needs |
 | --- | --- |
-| 1–3 (build, tests, **two-player simulator game**) | A Mac with Xcode 16+. **No Apple Developer account, no signing, no Apple IDs** — the project ships with signing off and the simulator harness fakes both participants. |
+| 1–3 (build, tests, **two-player simulator game**) | A Mac with Xcode 16+. **No Apple Developer account login needed for the simulator** — Automatic signing is configured project-wide (`8aafbbf`) but simulator builds don't require an active signed-in account, and the simulator harness fakes both participants. |
 | 4 (device pair over real iMessage) | Apple Developer team (signing) + two iPhones signed into two different Apple IDs. |
 | 5 (quick wins) | Same Mac; some items want the account. |
 
@@ -27,7 +27,9 @@ brew install xcodegen
 
 git clone <repo> foolish && cd foolish
 cd c && make ios-lib                  # → ios/vendor/Foolish.xcframework
-make ios-smoke ios-view-test          # sanity: both green (same checks as Linux CI)
+make ios-smoke                        # sanity: green (same check as Linux CI; the old
+                                      # ios-view-test C harness is retired — packed-view
+                                      # decode is covered by PackedViewTests in Part 2)
 cd ../ios && xcodegen generate        # → Foolish.xcodeproj (a build artifact)
 ```
 
@@ -66,15 +68,29 @@ insert → send → receive plumbing is what you're about to exercise.
 
 ### 3.2 Launch the extension
 
-1. In Xcode, select the **FoolishMessages** scheme (auto-generated; if the
-   scheme list hides it: Product ▸ Scheme ▸ Manage Schemes ▸ check Show).
-2. Run on an iPhone simulator. Xcode asks which host app to run in — choose
-   **Messages**.
+**Corrected 2026-07-18** — `e9b9120` made the iMessage game its own standalone
+App Store product (`cards.foolish.msg`), no longer embedded in the `Foolish`
+host-app scheme. The scheme to run is **`FoolishMessagesApp`**, not
+`FoolishMessages` (that's the extension *target*, not a runnable scheme) and
+not `Foolish` (which no longer embeds the extension at all — see
+`ios/project.yml`'s own comments on the `Foolish` target).
+
+1. In Xcode, select the **`FoolishMessagesApp`** scheme (project.yml's own
+   comment: *"Run this scheme to launch Messages in the simulator with the
+   extension installed"*). If the scheme list hides it: Product ▸ Scheme ▸
+   Manage Schemes ▸ check Show.
+2. Run on an iPhone simulator. Because `FoolishMessagesApp` is
+   `LSApplicationLaunchProhibited` (no Home Screen presence by design — a
+   standard Messages-only app), Xcode should launch straight into Messages
+   with the extension installed; if it instead asks which host app to run in,
+   choose **Messages**.
 3. Messages opens in the simulator. Open the first seeded conversation, tap
    the **+ / apps** button next to the text field, and find Foolish in the
    app drawer.
-   - **Expected blemish:** the tile will be blank/generic — the extension has
-     no iMessage icon asset yet (blockers doc B5.1). That's cosmetic here.
+   - The tile should now show the real jester-Д icon (the iMessage app-icon
+     gap from the original blockers doc — B5.1 — closed on `main` since this
+     runbook was first written; if it's still blank/generic on your build,
+     that's a regression worth filing, not expected behavior).
 
 ### 3.3 Play a full 2-player game
 
@@ -180,20 +196,22 @@ they build against a fresh `make ios-lib` (new C symbols): run Part 2 first.
 Only this part needs the team. Simulator results usually hold, but §17.12
 warns real-device timing differs — do this once before shipping the extension.
 
-1. **Signing setup** (edit `ios/project.yml`, not the xcodeproj):
-   - Under `settings.base`: set `DEVELOPMENT_TEAM: <TEAMID>`,
-     `CODE_SIGN_STYLE: Automatic`, and delete the
-     `CODE_SIGNING_REQUIRED/ALLOWED: NO` lines.
-   - `xcodegen generate`, then in Xcode sign in (Settings ▸ Accounts) with a
-     team member Apple ID. Automatic signing will create the two bundle ids
-     (`cards.foolish.app`, `.MessagesExtension`) and the
-     `group.cards.foolish` App Group in the portal on first build.
+1. **Signing** is already configured (`DEVELOPMENT_TEAM: 8N2Z544SB4`,
+   `CODE_SIGN_STYLE: Automatic` in `ios/project.yml`, since `8aafbbf`) —
+   nothing to edit. Just sign in to Xcode (Settings ▸ Accounts) with a team
+   member Apple ID. Automatic signing should create the standalone app's
+   bundle ids (`cards.foolish.msg`, `.MessagesExtension`) and the
+   `group.cards.foolish.msg` App Group in the portal on first device build —
+   confirm they match what's registered (see the submission doc §1a for the
+   one still-open icon question).
 2. **Devices:** two iPhones, each signed into a *different* Apple ID with
    iMessage active, both on the team (or use TestFlight internal testing
    once the App Store Connect record exists).
-3. Build the `Foolish` scheme to each device (the extension embeds
-   automatically). On each phone: Messages ▸ conversation with the other
-   Apple ID ▸ + drawer ▸ Foolish.
+3. Build the **`FoolishMessagesApp`** scheme to each device (this is the
+   standalone container — see the 2026-07-18 correction in §3.2 above; the
+   `Foolish` host-app scheme no longer embeds the extension at all). On each
+   phone: Messages ▸ conversation with the other Apple ID ▸ + drawer ▸
+   Foolish.
 4. Re-run the whole §3.3–3.4 matrix across the pair. Add the real-world
    cases the simulator can't produce: delivery lag (airplane-mode one phone
    mid-turn), lock-screen preview of the bubble (must show only the PUBLIC
@@ -205,15 +223,55 @@ warns real-device timing differs — do this once before shipping the extension.
 
 Each is small and currently gated only on "someone has a Mac":
 
-1. **Render the app icon** (blockers A4):
-   `swift run --package-path ios/Tools/IconGen icongen` → commit the PNG into
-   `FoolishApp/Assets.xcassets/AppIcon.appiconset/`. Upload validation fails
-   without it.
+1. ~~Render the app icon~~ — **done**, both icons (host app + the iMessage
+   4:3 `.stickersiconset`) are committed jester-Д art, Mac-build-verified
+   (`351820e`, `51688c5`). Nothing to do here.
 2. **Record snapshot references** if Part 2 found them missing/drifted.
 3. **`make ios-goldens`** if anything engine-side changed; commit if dirty.
 4. **Enable macOS CI** (B7): uncomment the `xcode` job in
    `.github/workflows/ios.yml` — simulator build+test needs no signing, only
    macOS runner minutes.
-5. With the account: create the App Store Connect record and start the
-   `Compliance.md` TODO(F) checklist (demo account, deletion URL, name
-   availability).
+5. With the account: create the App Store Connect record for **`cards.foolish.msg`**
+   (not `cards.foolish.app` — the iMessage game is its own standalone record
+   now, `e9b9120`) and paste in `docs/IMESSAGE_APP_STORE_SUBMISSION.md`,
+   which has every field drafted (App Privacy, age rating, review notes, a
+   verified demo replay code).
+
+---
+
+## Part 6 — verifying the attacker-bug branch (claude/imessage-game-attacker-bug-r00opj)
+
+Everything Linux could verify on this branch already is: the kernel's Rule P
+rule 3 + the 8-seat cap (msg_wire_test, ios_api_smoke, difftests minus the
+pre-existing issue-#56 solver stage), the rebuilt wasm (full msg/lobby/
+concurrency/fuzz/bot-parity e2e), byte-identical ios goldens, `tsc --noEmit`
+clean, and a Monte-Carlo of the ported Swift layer over the real kernel
+(flow_sim_v3: 300×9-human, 300×8, 300×4 random schedules with races, stale
+taps, double Starts, evaporated sends — 0 safety / exclusion / convergence /
+liveness violations). What is left is exactly the Swift compile + the suites,
+in this order:
+
+1. **`cd c && make ios-lib` FIRST.** The branch changed the kernel
+   (msg_wire rule 3, MsgChainKey.n_joins); against a stale vendored
+   xcframework the new kernel-binding tests FAIL CORRECTLY
+   (`MessageLobbyTests.testFullerStartBeatsAStaleSmallerStart` even says so
+   in its digest-guard message).
+2. `xcodegen && xcodebuild test -scheme FoolishKit` (or run the FoolishTests +
+   HarnessTests plans in Xcode). New/changed suites to expect green:
+   SeatIdentityTests (DM gate, disown/recovery matrix, re-key survival),
+   Round5LobbyTests (name-taken gate, the 9th-player composition),
+   MessageLobbyTests (rule 3 through the xcframework), plus every pre-existing
+   message suite.
+3. **Harness reproduction of the shipped incident** (the fun one):
+   `HARNESS_PLAYERS=4` FoolishHarness — create as You, join Vera+Boris, have
+   Dima join off a STALE bubble path if you want the fork, then Start from two
+   different participants' views in quick succession. Pre-branch this
+   deadlocks ~half the time on the digest coin-flip; post-branch every
+   participant lands on the fuller game and the first attacker can act.
+4. The device pair (Part 4) for the real-Messages behaviors no harness fakes:
+   didReceive adopt-on-arrival (the stranded-starter board converging without
+   a re-tap), session collapse, and the staged-bubble evaporation flows.
+
+Known/expected on Mac: nothing in this branch touches Parts 1–5's steps;
+`solver_difftest` still fails per issue #56; claim tokens
+(IMESSAGE_SEAT_IDENTITY_V2 §3) are DEFERRED — do not build them casually.

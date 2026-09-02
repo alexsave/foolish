@@ -25,7 +25,7 @@ const VIEW_FORMAT_VERSION = 1;
 import {
     EngineExports, PackedRunOk, __LOG_TYPE_TO_INT, __MOVE_TYPE, __adoptEngine,
     __marshalGame, __mem, __pooledCard, __replayError, __setResident,
-    __wireLogCard, __cardFromWire, __residentLegalMoves, applyKernelStateToGame,
+    __wireLogCard, __cardFromWire, __wireStateCard, __residentLegalMoves, applyKernelStateToGame,
     exportPackedDriveProducts, rngBaseFromSeed, WIRE_NONE,
 } from './engine.ts';
 
@@ -56,6 +56,13 @@ interface BotsExports extends EngineExports {
     // Belief probe (observability; off until reset arms it)
     wasm_belief_probe_reset(): void;
     wasm_belief_probe_dump(): number;
+    // Animation core (c/src/anim_plan.h) — the platform-independent animation
+    // policy the web pure modules (src/state/*) delegate to. bots-only.
+    wasm_anim_should_drop_stale(hasLast: number, last: number, hasIncoming: number, incoming: number): number;
+    wasm_anim_stale_optimistic(nOpt: number, nTable: number, nNamed: number): number;
+    wasm_anim_resolve(nPending: number, nServer: number, nEvents: number,
+                      defender: number, defenderHand: number, finalUncovered: number): number;
+    wasm_anim_build_plan(nEvents: number, nPlayers: number, finalDeck: number, finalDiscard: number): number;
 }
 
 // Mirrors STRAT_* in c/src/strategy.h (only the ids the server uses).
@@ -703,8 +710,15 @@ export function kernelReplayEncodeV6FromGame(
 
 // The unpacked header — the private ABI msg_blob_write/msg_blob_read define in
 // c/wasm/wasm_api.c. Fixed offsets, fixed-size join slots.
-const MSG_BLOB_HDR = 90;
-const MSG_BLOB_JOIN = 14;
+// Round 16 added the two send-clock bytes at 90, the bubble delta at 92, and
+// the fool's-penalty trio (opening at 93, carry_key at 94, carry_fool at 98),
+// so the joins start at 99.
+const MSG_BLOB_HDR = 99;
+// 2 + the wire's MSG_MAX_NAME: was 14 (2 + 12) before round-5 B1 raised the
+// name cap to 64 bytes (docs/APP_REVIEW_NOTES.md, c/src/msg_wire.h) — must
+// match wasm_api.c's MSG_BLOB_JOIN or this bridge mis-parses every join.
+const MSG_MAX_NAME = 64;
+const MSG_BLOB_JOIN = 2 + MSG_MAX_NAME;
 
 export interface MsgJoin { seat: number; name: string }
 
@@ -721,8 +735,32 @@ export interface MsgEnvelope {
     parent8: Uint8Array;    // first 8 bytes of SHA-256(parent envelope)
     seed: Uint8Array;       // 32
     digest: Uint8Array;     // SHA-256 of THIS envelope — Rule P's tiebreak
+    /// ROUND 16: the send clock, unix seconds mod 65536, or 0 for a chain that
+    /// carries none (format 2). Written as well as read: sealing with a
+    /// non-zero clock is what makes an envelope format 3.
+    sent_at: number;
+    /// ROUND 16: the bubble delta - how many atoms THIS bubble added to the
+    /// chain, or 0 for a chain that does not say (c/src/msg_wire.h). It is what
+    /// tells a client to animate only the move it just opened instead of that
+    /// move plus the one before it. READ-ONLY across this bridge: the kernel
+    /// derives it at seal time from the chain it decoded, so anything written
+    /// here is ignored (see wasm_api.c's blob layout).
+    n_new: number;
+    /// THE FOOL'S PENALTY (c/src/msg_wire.h format 4). `opening` is the seat
+    /// this deal opens on, or 0xFF (MSG_NO_OPENING) for the ordinary
+    /// lowest-trump rule; `carry_key`/`carry_fool` are a WAITING lobby's
+    /// rematch carry, 0 / 0xFF when there is none. All three go BOTH ways -
+    /// they are terms of the deal, not claims about the body, so a caller that
+    /// writes them seals a format-4 envelope.
+    opening: number;
+    carry_key: number;
+    carry_fool: number;
     joins: MsgJoin[];
 }
+
+/// The wire's "no penalty" sentinels, so callers never spell 0xFF themselves.
+export const MSG_NO_OPENING = 0xff;
+export const MSG_NO_FOOL = 0xff;
 
 function msgError(code: number): Error {
     switch (code) {
@@ -769,6 +807,11 @@ function readBlob(buf: Uint8Array, base: number, len: number): MsgEnvelope {
         parent8: b.slice(18, 26),
         seed: b.slice(26, 58),
         digest: b.slice(58, 90),
+        sent_at: dv.getUint16(90, true),
+        n_new: b[92],
+        opening: b[93],
+        carry_key: dv.getUint32(94, true),
+        carry_fool: b[98],
         joins,
     };
 }
@@ -784,10 +827,18 @@ function writeBlob(e: MsgEnvelope): Uint8Array {
     out.set(e.parent8.subarray(0, 8), 18);
     out.set(e.seed.subarray(0, 32), 26);
     // 58..90 is the digest: decode-only (an envelope cannot carry its own).
+    dv.setUint16(90, e.sent_at & 0xffff, true);
+    // 92 is n_new: decode-only too (msg_seal derives the delta, see bots.ts's
+    // MsgEnvelope.n_new), so it is left 0 here rather than echoed back.
+    // 93..99 IS written back: unlike the digest and the delta, the fool's
+    // penalty is a term of the deal the caller states.
+    out[93] = e.opening;
+    dv.setUint32(94, e.carry_key >>> 0, true);
+    out[98] = e.carry_fool;
     e.joins.forEach((j, i) => {
         const o = MSG_BLOB_HDR + i * MSG_BLOB_JOIN;
         const name = new TextEncoder().encode(j.name);
-        if (name.length > 12) throw new Error(`nickname over 12 bytes: ${j.name}`);
+        if (name.length > MSG_MAX_NAME) throw new Error(`nickname over ${MSG_MAX_NAME} bytes: ${j.name}`);
         out[o] = j.seat;
         out[o + 1] = name.length;
         out.set(name, o + 2);
@@ -1034,15 +1085,70 @@ export function kernelEventsFromPacked(bytes: Uint8Array): KernelSequence {
                       ex => ex.wasm_events_json(bytes.length)) as KernelSequence;
 }
 
-export function kernelMsgSeal(header: Omit<MsgEnvelope, 'digest' | 'turn' | 'round' | 'format'>): Uint8Array {
+/**
+ * ROUND 16 - how many seconds this seat must still wait before it may pick up,
+ * against the game the last `kernelMsgDecode` left resident. 0 means now.
+ *
+ * `sentAt` is the decoded envelope's `sent_at` and `now` the caller's own unix
+ * seconds mod 65536; a chain with no clock (format 2) always answers 0, which
+ * is what keeps every bubble sealed by a shipped build playable.
+ */
+export function kernelMsgPickupHold(seat: number, sentAt: number, now: number): number {
+    const ex = bots();
+    if (!ex.wasm_msg_pickup_hold) throw new Error('kernelMsgPickupHold: module has no FMSG support');
+    return ex.wasm_msg_pickup_hold(seat, sentAt & 0xffff, now & 0xffff);
+}
+
+export function kernelMsgSeal(
+    header: Omit<MsgEnvelope, 'digest' | 'turn' | 'round' | 'format' | 'sent_at' | 'n_new'
+                              | 'opening' | 'carry_key' | 'carry_fool'>
+          & { sent_at?: number; opening?: number; carry_key?: number; carry_fool?: number },
+): Uint8Array {
     const ex = bots();
     if (!ex.wasm_msg_seal) throw new Error('kernelMsgSeal: module has no FMSG support');
-    const blob = writeBlob({ ...header, format: 2, turn: 0, round: 0, digest: new Uint8Array(32) });
+    // format 2 here is a placeholder: msg_seal picks the real one off what the
+    // header ends up carrying (a clock, or a bubble delta, seals format 3), so
+    // the caller never states it twice. n_new is 0 for the same reason the
+    // digest is: the kernel derives it, from the chain wasm_msg_decode adopted.
+    const blob = writeBlob({ ...header, sent_at: header.sent_at ?? 0, n_new: 0,
+                             opening: header.opening ?? MSG_NO_OPENING,
+                             carry_key: header.carry_key ?? 0,
+                             carry_fool: header.carry_fool ?? MSG_NO_FOOL,
+                             format: 2, turn: 0, round: 0, digest: new Uint8Array(32) });
     const base = ex.wasm_replay_io_ptr();
     __mem(ex).set(blob, base);
     const r = ex.wasm_msg_seal(blob.length);
     if (r < 0) throw msgError(r);
     return __mem(ex).slice(base, base + r);
+}
+
+// The best shareable REPLAY code for the game the last kernelMsgDecode
+// adopted — the TS-side twin of MessageKernel.residentReplayCode()
+// (sdk/swift/MessageEnvelope.swift), reached off the same resident g_game
+// instead of Swift's fio_replay_share_code_b32. Used by the /m/ page's
+// FINISHED-bubble funnel (docs/IMESSAGE_LOBBY_V2.md, batch 6 item B): once a
+// payload decodes, msg_replay has already run the whole chain through the
+// ORDINARY kernel handlers (handle_attack etc.), which log exactly like any
+// other play — so the resident game already carries the full session log a
+// v6 code needs. Only the envelope's own seed (env.seed, already decoded — no
+// second kernel round-trip to fetch it) has to be supplied.
+//
+// Deliberately NOT kernelReplayEncodeV6FromGame: that helper re-marshals a
+// `Game` object (__marshalGame -> wasm_import_state), which resets the
+// resident log to 0 and would throw away exactly the log kernelMsgDecode just
+// built. This calls the same C export (wasm_replay_encode_v6_from_game)
+// directly against whatever is already resident, exactly as fio_replay_share_
+// code_b32 does on the native/Swift side.
+export function kernelResidentReplayCodeV6(seed: Uint8Array): Uint8Array {
+    if (seed.length !== 32) {
+        throw new Error(`replay: v6 needs a 32-byte deal seed, got ${seed.length}`);
+    }
+    const ex = bots();
+    const base = ex.wasm_replay_io_ptr();
+    __mem(ex).set(seed, base);
+    const n = ex.wasm_replay_encode_v6_from_game(1 << 30);
+    if (n < 0) throw __replayError(n, ex.wasm_replay_error_detail());
+    return __mem(ex).slice(base, base + n);
 }
 
 // ---------------------------------------------------------------------------
@@ -1141,4 +1247,159 @@ export function replayEventFrames(code: Uint8Array, viewer: number): Uint8Array[
         throw new Error(`replay produced ${frames.length} frames for ${steps} steps`);
     }
     return frames;
+}
+
+// ===========================================================================
+// Animation core (c/src/anim_plan.h)
+// ===========================================================================
+// The bridge the web pure modules (src/state/*) delegate to, so the animation
+// policy the React glitch-fixing hardened lives in C once — the same "one kernel
+// behind every host" argument FMSG makes. bots.wasm is loaded at app boot
+// (providers.tsx awaits ensureBotsAsync), and bots() is synchronous on the
+// server, so these calls are safe synchronously in both.
+
+// ANIM_EVT_* — mirrors anim_plan.h (which mirrors ANIMATION_EVENT_TYPE / EVW_T_*).
+export const ANIM_EVT: Record<string, number> = {
+    magic_transition: 0, deal: 1, flipped: 2, defender_move: 3, attack_pass: 4,
+    cover: 5, pickup: 6, discard: 7, out: 8, refill: 9, cards_to_trash: 10, revert: 11,
+};
+// ANIM_LOC_* — mirrors anim_plan.h.
+export const ANIM_LOC: Record<string, number> = {
+    deck: 0, hand: 1, table: 2, discard: 3, flipped: 4,
+};
+const ANIM_LOC_NONE = 0xff;
+
+/** The event-type string -> ANIM_EVT_* code (0 for an unknown/None type). */
+export function animEventTypeCode(type: string | undefined): number {
+    return (type && type in ANIM_EVT) ? ANIM_EVT[type] : 0;
+}
+
+/** clientReconcile.shouldDropStaleSequence, in C. null models "no version"
+ *  (a replay sequence, never gated). */
+export function animShouldDropStale(last: number | null, incoming: number | null): boolean {
+    const ex = bots();
+    return ex.wasm_anim_should_drop_stale(
+        last === null ? 0 : 1, last ?? 0,
+        incoming === null ? 0 : 1, incoming ?? 0) !== 0;
+}
+
+/** optimisticAnimation.staleOptimisticKeysOnTable, in C. Returns the INDICES
+ *  into `optCards` to release. */
+export function animStaleOptimisticOnTable(optCards: Card[], tableCards: Card[], namedCards: Card[]): number[] {
+    const ex = bots();
+    if (optCards.length > 128 || tableCards.length > 160 || namedCards.length > 160) {
+        throw new Error('anim: card list exceeds ABI cap');
+    }
+    const buf = __mem(ex);
+    const base = ex.wasm_io_ptr();
+    let p = base;
+    for (const c of optCards) buf[p++] = __wireStateCard(c);
+    for (const c of tableCards) buf[p++] = __wireStateCard(c);
+    for (const c of namedCards) buf[p++] = __wireStateCard(c);
+    const n = ex.wasm_anim_stale_optimistic(optCards.length, tableCards.length, namedCards.length);
+    if (n < 0) throw new Error(`anim_stale_optimistic error ${n}`);
+    const out = __mem(ex);
+    const ob = ex.wasm_io_ptr();
+    const rel: number[] = [];
+    for (let i = 0; i < n; i++) rel.push(out[ob + i]);
+    return rel;
+}
+
+/** optimisticConflicts.resolveUnconfirmedAttackCovers, in C. `events` need only
+ *  carry a type code (animEventTypeCode) and the cards each names — the C side
+ *  uses them for the pickup/cards_to_trash sweep set. Returns index lists into
+ *  `pending`. */
+export function animResolveUnconfirmed(
+    pending: { card: Card; isCover: boolean }[],
+    serverTable: Card[],
+    events: { type: number; cards: Card[] }[],
+    fin: { defender: number; defenderHand: number; finalUncovered: number },
+): { revert: number[]; merge: number[]; clear: number[] } {
+    const ex = bots();
+    if (pending.length > 128 || serverTable.length > 160 || events.length > 64) {
+        throw new Error('anim: resolve input exceeds ABI cap');
+    }
+    const buf = __mem(ex);
+    const base = ex.wasm_io_ptr();
+    let p = base;
+    for (const pc of pending) { buf[p++] = __wireStateCard(pc.card); buf[p++] = pc.isCover ? 1 : 0; }
+    for (const c of serverTable) buf[p++] = __wireStateCard(c);
+    for (const e of events) {
+        buf[p++] = e.type & 0xff;
+        buf[p++] = e.cards.length & 0xff;
+        for (const c of e.cards) buf[p++] = __wireStateCard(c);
+    }
+    const rc = ex.wasm_anim_resolve(pending.length, serverTable.length, events.length,
+                                    fin.defender, fin.defenderHand, fin.finalUncovered);
+    if (rc < 0) throw new Error(`anim_resolve error ${rc}`);
+    const out = __mem(ex);
+    let q = ex.wasm_io_ptr();
+    const nRevert = out[q++], nMerge = out[q++], nClear = out[q++];
+    const revert: number[] = [], merge: number[] = [], clear: number[] = [];
+    for (let i = 0; i < nRevert; i++) revert.push(out[q++]);
+    for (let i = 0; i < nMerge; i++) merge.push(out[q++]);
+    for (let i = 0; i < nClear; i++) clear.push(out[q++]);
+    return { revert, merge, clear };
+}
+
+// One built plan step (mirrors AnimPlanStep).
+export interface AnimPlanStep {
+    type: number; seat: number; from: number; to: number; nCards: number;
+    durationMs: number; startMs: number; deck: number; discard: number;
+    inFlightFromDeck: number; inFlightToFlipped: number; hand: number[];
+}
+export interface AnimPlan {
+    nSteps: number; nPlayers: number;
+    pre: { deck: number; discard: number; hand: number[] };
+    totalMs: number; veilIds: number[]; steps: AnimPlanStep[];
+}
+
+/** anim_build_plan, in C: a decoded viewer sequence -> the timed plan (count-
+ *  freeze + veil + durations). Provided for iOS/Steam parity and completeness;
+ *  the web's React queue currently renders its own pacing (a TODO seam — see
+ *  docs/ANIMATION_CORE_C.md). `events[].seat` may be null for a seat-less event. */
+export function animBuildPlan(
+    events: { type: number; seat: number | null; from: number; to: number; mask: boolean; cards: Card[] }[],
+    nPlayers: number, finalDeck: number, finalDiscard: number, finalHand: number[],
+): AnimPlan {
+    const ex = bots();
+    if (events.length > 64) throw new Error('anim: plan exceeds ABI cap');
+    const buf = __mem(ex);
+    const base = ex.wasm_io_ptr();
+    let p = base;
+    for (let s = 0; s < nPlayers; s++) buf[p++] = finalHand[s] & 0xff;
+    for (const e of events) {
+        buf[p++] = e.type & 0xff;
+        buf[p++] = e.seat === null ? ANIM_LOC_NONE : (e.seat & 0xff);
+        buf[p++] = e.from & 0xff;
+        buf[p++] = e.to & 0xff;
+        buf[p++] = e.mask ? 1 : 0;
+        buf[p++] = e.cards.length & 0xff;
+        for (const c of e.cards) buf[p++] = __wireStateCard(c);
+    }
+    const len = ex.wasm_anim_build_plan(events.length, nPlayers, finalDeck, finalDiscard);
+    if (len < 0) throw new Error(`anim_build_plan error ${len}`);
+    const out = __mem(ex);
+    let q = ex.wasm_io_ptr();
+    const rd16 = () => { const v = out[q] | (out[q + 1] << 8); q += 2; return v; };
+    const nSteps = out[q++];
+    const np = out[q++];
+    const preDeck = rd16(), preDiscard = rd16();
+    const preHand: number[] = [];
+    for (let s = 0; s < np; s++) preHand.push(rd16());
+    const totalMs = rd16();
+    const nVeil = out[q++];
+    const veilIds: number[] = [];
+    for (let i = 0; i < nVeil; i++) veilIds.push(out[q++]);
+    const steps: AnimPlanStep[] = [];
+    for (let i = 0; i < nSteps; i++) {
+        const type = out[q++], seat = out[q++], from = out[q++], to = out[q++], nCards = out[q++];
+        const durationMs = rd16(), startMs = rd16(), deck = rd16(), discard = rd16();
+        const inFlightFromDeck = out[q++], inFlightToFlipped = out[q++];
+        const hand: number[] = [];
+        for (let s = 0; s < np; s++) hand.push(rd16());
+        steps.push({ type, seat: seat === 0xff ? -1 : seat, from, to, nCards,
+                     durationMs, startMs, deck, discard, inFlightFromDeck, inFlightToFlipped, hand });
+    }
+    return { nSteps, nPlayers: np, pre: { deck: preDeck, discard: preDiscard, hand: preHand }, totalMs, veilIds, steps };
 }

@@ -24,10 +24,33 @@ public enum FColor {
     public static let accent  = Color(hex: 0xC82B24)   // Soviet red
     public static let textPrimary = Color(hex: 0xEDE9DF)
     public static let textDim     = Color(hex: 0x9AA69E)
+    /// A label on a LIGHT ground that must read as subdued without disappearing
+    /// - today, the name of a player who is out, on the light-mode wool or on
+    /// the beige message bubble. Round 16, the owner: "players text that are out
+    /// are invisible against the wool background light mode. Make them just dark
+    /// gray instead of decreasing opacity." Dark enough to carry on beige with
+    /// no shadow behind it, and plainly not the bone `textPrimary` a player who
+    /// is still in the game gets - the state still reads at a glance, by ink
+    /// rather than by fading out.
+    public static let textOut     = Color(hex: 0x3F3F3F)
     public static let win     = Color(hex: 0xD8B24A)   // brass — victories, streaks
 
     /// Suit ink on a bone card: red suits use the accent red, black suits the ink.
-    public static func suitColor(_ suit: Suit) -> Color { suit.isRed ? accent : ink }
+    public static func suitColor(_ suit: Suit) -> Color { suitColor(suit, scheme: .light) }
+
+    /// The same, for a glyph drawn straight on the BOARD rather than on a card
+    /// (the deck well's bare trump mark is the only such glyph today).
+    ///
+    /// On a dark board the near-black `ink` a spade or a club would take is
+    /// invisible against the walnut weave - and the trump suit is not
+    /// decoration, it is the one piece of rules state that is only ever shown
+    /// as a colour and a shape. So black suits go bone in dark mode, exactly
+    /// like the card faces do; red suits keep the accent red, which carries on
+    /// either weave.
+    public static func suitColor(_ suit: Suit, scheme: ColorScheme) -> Color {
+        if suit.isRed { return accent }
+        return scheme == .dark ? textPrimary : ink
+    }
 }
 
 public enum FRadius {
@@ -78,5 +101,69 @@ extension Color {
         let g = Double((hex >> 8) & 0xFF) / 255
         let b = Double(hex & 0xFF) / 255
         self.init(.sRGB, red: r, green: g, blue: b, opacity: alpha)
+    }
+}
+
+// MARK: - Text on a surface (round-6 #17)
+//
+// Two textures, two treatments — the owner's exact words: "The thicker white
+// text we use for the ranks is good. Use it everywhere we put text on wood.
+// Thicker black text over wool though." The "ranks" are the game-over rank
+// column (MessageTableView.FGameOverList): `.heavy` weight, flat white, a
+// dark drop shadow. `onWoodText` lifts that treatment out to every wood
+// surface; `onTableText` is its wool mirror — round-5 M10 already worked out
+// that dark ink on the lighter wool weave wants a LIGHT shadow, the inverse
+// of wood's dark one, or the shadow adds nothing. Round-6 only asked for more
+// WEIGHT on top of that pairing, so weight is the one thing both share.
+//
+// DARK MODE splits the pair. Wood was ALWAYS the dark surface, so its white
+// ink is right in both schemes and `onWoodText` is unchanged (a darker plank
+// only helps it). Wool was the LIGHT surface, and that is the one assumption
+// dark mode breaks: black ink on a walnut weave is invisible, so the dark
+// wool takes wood's treatment instead — bone ink over a dark shadow. Note
+// what does NOT change: the weight, the shadow radius, and the dimmed ratio.
+// Only which end of the scale the ink sits at flips, which is the whole of
+// "a half-dark board is worse than none" expressed as code.
+public extension View {
+    /// Text sitting directly on `WoodFill` — wooden buttons, the game-over
+    /// plank, any wood-surfaced control. `dimmed` is round-6 #19's disabled
+    /// state: NOT reduced opacity on the whole control (that let the wool
+    /// behind a disabled button show straight through it), just a lighter
+    /// ink on an otherwise fully opaque surface.
+    func onWoodText(dimmed: Bool = false) -> some View {
+        self.fontWeight(.heavy)
+            .foregroundStyle(dimmed ? Color.white.opacity(0.55) : .white)
+            .shadow(color: .black.opacity(dimmed ? 0.3 : 0.5), radius: 1, y: 1)
+    }
+
+    /// Text sitting directly on the wool weave (`TableBackground` / `TableWeave`
+    /// / the bubble snapshot's own wool crop) — labels, headlines, captions.
+    /// `dimmed` mirrors `onWoodText`'s disabled case.
+    func onTableText(dimmed: Bool = false) -> some View {
+        modifier(OnWoolText(dimmed: dimmed))
+    }
+}
+
+/// A ViewModifier, not a plain `some View` chain, for one reason: it has to read
+/// `@Environment(\.colorScheme)`, and a `View` extension method has no
+/// environment of its own to read. Being a modifier also means every call site
+/// picks up the scheme it is actually drawn in — including the bubble snapshot,
+/// which pins `.light` around its whole ImageRenderer content and therefore gets
+/// the light treatment even on a sender's dark phone.
+private struct OnWoolText: ViewModifier {
+    @Environment(\.colorScheme) private var scheme
+    let dimmed: Bool
+
+    func body(content: Content) -> some View {
+        // Bone rather than pure white on the dark weave: it is the same
+        // `textPrimary` every other light-on-dark label in the app uses
+        // (FSeatBadge's names sit two inches away on the same board), and a
+        // second, whiter white beside it would read as two different inks.
+        let ink: Color = scheme == .dark ? FColor.textPrimary : FColor.ink
+        let shadow: Color = scheme == .dark ? .black : .white
+        return content
+            .fontWeight(.heavy)
+            .foregroundStyle(dimmed ? ink.opacity(0.55) : ink)
+            .shadow(color: shadow.opacity(dimmed ? 0.3 : 0.5), radius: 2)
     }
 }
