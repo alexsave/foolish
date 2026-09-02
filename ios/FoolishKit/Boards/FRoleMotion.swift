@@ -127,6 +127,28 @@ public var roleFlightTime: Double { flightTime * 0.8 }
 /// move.
 public var roleFlipHalf: Double { flightTime * 0.22 }
 
+/// ROUND 30, the owner: "for the sword -> check rotation, the width doesn't
+/// QUITE go to zero during rotate out before swapping to the other glyph and
+/// rotating in. We just need to get it to zero width before expanding back
+/// out."
+///
+/// The swap is scheduled on a timer that starts the instant `withAnimation` is
+/// called, but the animation itself does not start until the next display
+/// refresh - so the timer fires about one frame EARLY. That frame is 15% of a
+/// half-flip (110ms shipping), and `easeIn` spends its last frames moving
+/// fastest: the coin is still a quarter of its width across when the face is
+/// swapped, which is exactly the sliver the owner can see.
+///
+/// So the collapse is given a deadline slightly BEFORE the swap, and the
+/// difference is a genuine edge-on beat. Taken out of the collapse rather than
+/// added to the flip, so the gesture's total length - which is tuned against
+/// the card flights it captions - does not change at all. Proportional at the
+/// low end so HARNESS_SLOWMO and a hypothetical short flip cannot invert it.
+public var roleFlipSettle: Double { min(0.03, roleFlipHalf * 0.3) }
+
+/// How long the collapse itself is given: a settle short of the swap.
+public var roleFlipCollapse: Double { max(0.01, roleFlipHalf - roleFlipSettle) }
+
 /// How long a seat expecting an arrival waits before turning its own mark away,
 /// so the collapse FINISHES as the ghost touches down (owner: "the shield flies
 /// onto their sword"). Clamped at zero for the degenerate case where a flight is
@@ -413,7 +435,9 @@ public struct FRoleCoin: View {
             flip = 1
         case .flip:
             // Both faces of one coin: collapse, swap at the edge, open out.
-            withAnimation(.easeIn(duration: roleFlipHalf)) { flip = 0.001 }
+            // The collapse finishes a hair before the swap (roleFlipSettle), so
+            // the face changes on a coin that is genuinely edge-on.
+            withAnimation(.easeIn(duration: roleFlipCollapse)) { flip = 0.001 }
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: UInt64(roleFlipHalf * 1_000_000_000))
                 guard mine == gesture else { return }
@@ -438,7 +462,7 @@ public struct FRoleCoin: View {
                 guard mine == gesture else { return }
                 waiting = false
             }
-            withAnimation(.easeIn(duration: roleFlipHalf)) { flip = 0.001 }
+            withAnimation(.easeIn(duration: roleFlipCollapse)) { flip = 0.001 }
             try? await Task.sleep(nanoseconds: UInt64(roleFlipHalf * 1_000_000_000))
             guard mine == gesture else { return }
             // Reset the scale as the mark goes, not with it: `flip` is how this

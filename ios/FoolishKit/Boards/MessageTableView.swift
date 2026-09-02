@@ -2181,6 +2181,32 @@ public struct MessageTableView: View {
             if let s = ev.state, ev.kind == .deal || ev.kind == .refill {
                 deckCountOverride = s.deckCount
             }
+            // ROUND 30, and the same rule one seat over. The owner: "when the
+            // cards fly out of the hand to cover some cards on the table, the
+            // card count in the player's hand doesn't update until the cards
+            // LAND ... if two are currently flying, it should display 4 cards in
+            // hand, right?" Right - and it is the deck's rule exactly: a count
+            // drops as its cards LEAVE, because a badge reading 6 with two of
+            // that seat's cards visibly in the air is claiming eight.
+            //
+            // ONLY the leaving direction. The other half of the owner's note is
+            // the half already shipped: "if we have some move that puts cards
+            // INTO a player's hand, the card count shouldn't update until the
+            // cards GET TO THE HAND" - which is the per-group advance after the
+            // flight, below, and is why this is a leaving-only rule rather than
+            // a move of that advance.
+            //
+            // Off `group.last`, not `ev`: a multi-card cover flies as ONE group
+            // and the count must land on the board after ALL of them left, not
+            // after the first. My own seat is not a badge (my hand is the fan,
+            // and the veil has already taken the played cards out of it), which
+            // is the same reason `freezeCounts` skips it.
+            if Self.badgeDropsAsCardsLeave(ev.kind),
+               ev.seat != controller.mySeat,
+               let s = group.last?.state,
+               let leaving = s.players.first(where: { $0.seat == ev.seat }) {
+                seatCountOverride[ev.seat] = leaving.handCount
+            }
             // A card leaving the TABLE (pickup / discard) hides its pre-bout grid
             // copy the instant its flight begins, so the overlay ghost is the only
             // copy in motion - no table copy fading beside it, no copy left behind
@@ -2390,6 +2416,20 @@ public struct MessageTableView: View {
         switch ev.kind {
         case .deal, .refill, .pickup: return Set(ev.cards.compactMap { $0?.identity })
         default: return []
+        }
+    }
+
+    /// Does this kind of step take cards OUT of the acting seat's hand?
+    ///
+    /// ROUND 30, and the whole of the count rule as a value so it can be
+    /// asserted directly: a badge drops as its cards LEAVE (they are in the air,
+    /// and a badge still counting them is claiming a hand that big plus the
+    /// flight), and ticks UP only when arriving cards land. `nil` - a step with
+    /// no kind the wire recognises - moves nobody's hand.
+    static func badgeDropsAsCardsLeave(_ kind: EventType?) -> Bool {
+        switch kind {
+        case .attackPass, .cover: return true
+        default: return false
         }
     }
 
