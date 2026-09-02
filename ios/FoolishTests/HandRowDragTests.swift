@@ -22,7 +22,7 @@ import XCTest
 
 final class HandRowDragTests: XCTestCase {
 
-    /// 15 DISTINCT cards - enough to split at 340pt into 8 up top and 7 below.
+    /// 15 DISTINCT cards - enough to split at 340pt into 7 up top and 8 below.
     private func hand(_ n: Int) -> [Card] { (0..<n).map { Card(s: $0 / 13, v: $0 % 13 + 1) } }
     private let width: CGFloat = 340
 
@@ -44,14 +44,35 @@ final class HandRowDragTests: XCTestCase {
 
     // MARK: - the two rows
 
-    /// A 15-card hand really is two rows, 8 over 7 - the premise everything
+    /// A 15-card hand really is two rows, 7 over 8 - the premise everything
     /// below rests on. If this ever stops holding, the tests that follow would
     /// be quietly asserting one-row behavior and passing for the wrong reason.
+    ///
+    /// The odd card sits in the BOTTOM row (owner: "If we have 11 cards, do 5 up
+    /// top and 6 below"), so the cut is at floor(n/2) and index 7 opens the
+    /// second row rather than closing the first.
     func testTheFixtureHandActuallySplits() {
-        XCTAssertEqual(FHandFan.rowSizes(count: 15, availableWidth: width), [8, 7])
+        XCTAssertEqual(FHandFan.rowSizes(count: 15, availableWidth: width), [7, 8])
         XCTAssertEqual(slots(15).count, 15)
-        XCTAssertEqual(slots(15)[0].midY, slots(15)[7].midY, "row 0 is one row")
-        XCTAssertGreaterThan(slots(15)[8].midY, slots(15)[7].midY, "row 1 sits below it")
+        XCTAssertEqual(slots(15)[0].midY, slots(15)[6].midY, "row 0 is one row")
+        XCTAssertGreaterThan(slots(15)[7].midY, slots(15)[6].midY, "row 1 sits below it")
+    }
+
+    /// THE OWNER'S OWN NUMBER, asserted directly rather than only through the
+    /// 15-card fixture: eleven cards are five up top and six below. A test that
+    /// checked only `[7, 8]` would pass just as well against a ceil cut applied
+    /// to an even count somewhere else, so the odd case gets its own line.
+    func testElevenCardsAreFiveOverSix() {
+        XCTAssertEqual(FHandFan.rowSizes(count: 11, availableWidth: width), [5, 6])
+        let s = slots(11)
+        XCTAssertEqual(s[0].midY, s[4].midY, "five cards share the top row")
+        XCTAssertGreaterThan(s[5].midY, s[4].midY, "the sixth opens the bottom row")
+        XCTAssertEqual(s[5].midY, s[10].midY, "six cards share the bottom row")
+        // ONE card width for both rows, sized off the FULLER row - the bottom
+        // one now. Sized off row 0 (five) instead, the six-card row would be
+        // wider than the container.
+        XCTAssertEqual(s[0].width, s[10].width, accuracy: 0.01)
+        XCTAssertLessThanOrEqual(s[10].maxX, width + 0.01, "the fuller row overflowed")
     }
 
     /// THE BUG. A bottom-row card dragged over the top row goes there. Before
@@ -79,13 +100,13 @@ final class HandRowDragTests: XCTestCase {
             FHandFan.splice(order: ids, dragged: ids[9], centre: centre(s[1]), slots: s))
         let after = rowOf(moved.order)
 
-        // ids[7] was the last card of the top row; it is now the first of the bottom.
-        XCTAssertEqual(before[ids[7]], 0)
-        XCTAssertEqual(after[ids[7]], 1, "the top row's rightmost card did not come down")
-        XCTAssertEqual(moved.order.firstIndex(of: ids[7]), 8, "…and it is the head of the bottom row")
+        // ids[6] was the last card of the top row; it is now the first of the bottom.
+        XCTAssertEqual(before[ids[6]], 0)
+        XCTAssertEqual(after[ids[6]], 1, "the top row's rightmost card did not come down")
+        XCTAssertEqual(moved.order.firstIndex(of: ids[6]), 7, "…and it is the head of the bottom row")
 
         let changed = ids.filter { before[$0] != after[$0] }
-        XCTAssertEqual(Set(changed), Set([ids[9], ids[7]]),
+        XCTAssertEqual(Set(changed), Set([ids[9], ids[6]]),
                        "exactly the dragged card and the one it bumped may change row")
     }
 
@@ -100,12 +121,12 @@ final class HandRowDragTests: XCTestCase {
         let after = rowOf(moved.order)
 
         XCTAssertEqual(after[ids[1]], 1, "the dragged card did not reach the bottom row")
-        XCTAssertEqual(before[ids[8]], 1)
-        XCTAssertEqual(after[ids[8]], 0, "the bottom row's leftmost card did not go up")
-        XCTAssertEqual(moved.order.firstIndex(of: ids[8]), 7, "…to the tail of the top row")
+        XCTAssertEqual(before[ids[7]], 1)
+        XCTAssertEqual(after[ids[7]], 0, "the bottom row's leftmost card did not go up")
+        XCTAssertEqual(moved.order.firstIndex(of: ids[7]), 6, "…to the tail of the top row")
 
         let changed = ids.filter { before[$0] != after[$0] }
-        XCTAssertEqual(Set(changed), Set([ids[1], ids[8]]))
+        XCTAssertEqual(Set(changed), Set([ids[1], ids[7]]))
     }
 
     /// NO OSCILLATION. The card lands in the slot it asked for, so asking again
@@ -130,10 +151,10 @@ final class HandRowDragTests: XCTestCase {
     /// not flick up into the top one on the way past.
     func testChangingRowCostsMoreThanSlidingSideways() {
         let s = slots(15)
-        // The bottom row holds one card fewer, so it is centred half a slot to
-        // the right of the top one - which is why this measures the vertical
-        // pitch between the rows rather than assuming a card sits directly
-        // below another.
+        // The TOP row holds one card fewer (the odd card goes below), so it is
+        // centred half a slot to the right of the bottom one - which is why this
+        // measures the vertical pitch between the rows rather than assuming a
+        // card sits directly below another.
         let top = s[3], bottom = s[11]
         XCTAssertEqual(FHandFan.slotIndex(at: centre(top), slots: s), 3)
 

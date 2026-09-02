@@ -87,14 +87,43 @@ public struct FBattleGrid: View {
                             pair(battles[idx], index: idx)
                                 .contentShape(Rectangle())
                                 .onTapGesture { onTapBattle(idx) }
+                                .transition(.identity)
                         } else {
                             ghostSlot()
+                                .transition(.identity)
                         }
                     }
                 }
+                .transition(.identity)
             }
         }
     }
+
+    // A CARD NEVER FADES. NOT ONCE, NOT ANYWHERE.
+    //
+    // Owner, on watching a superseded pickup get retracted: "Those cards then
+    // FADED. We should NEVER fade cards in this game. Real life cards don't
+    // ever fade like that! EVER!" - and again on a bout end, "super annoying
+    // glitch with ghost cards fading halfway in quickly and immediately out".
+    //
+    // The four `.transition(.identity)` above are that rule, applied where the
+    // grid had been silently breaking it. Nothing here ever ASKED for a fade;
+    // SwiftUI's default transition for a view entering or leaving a container
+    // IS `.opacity`, so every place the table's slot count changes was a fade
+    // nobody wrote. The count changes constantly and for reasons that have
+    // nothing to do with a card appearing: a throw-in adds a slot, a sweep
+    // swaps `view.battles` for the flattened `sweepBattles` reconstruction
+    // (which can hold MORE pairs than the covered table it replaces - see
+    // MessageTableView.sweepTableForReplay), the pass-preview ghost slot comes
+    // and goes, and a row wraps at every third battle. Each of those crossfaded
+    // real cards in and out.
+    //
+    // The rest of this file was already careful about it - the veil snaps
+    // (`.animation(nil, value: hidden.contains(...))`) precisely so a swept card
+    // cannot be seen fading beside its own flying ghost. That care stopped at
+    // the OPACITY of a card that stays; it never covered the INSERTION of one
+    // that arrives. Identity transitions close the gap: a card is either on the
+    // table or it is not, and the only thing that ever moves it is a flight.
 
     /// note 34: the pass-preview slot — same 62x84 footprint as a real battle
     /// pair (so the wrap/centering math above doesn't need to treat it

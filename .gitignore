@@ -71,6 +71,10 @@ c/tools/tt_divergence_viz/data/W/
 serve.log
 ios/FoolishTests/__Snapshots__/
 server/impls/supabase/functions/memtest/
+# The supabase CLI's own version-check cache. Written by any `supabase` command,
+# so it appears as untracked the first time you touch the CLI in a session and
+# is exactly the shape of thing that rides along in a `git add -A`.
+supabase/.temp/
 
 # local dev overrides (shadows next.config.mjs if tracked!)
 next.config.js

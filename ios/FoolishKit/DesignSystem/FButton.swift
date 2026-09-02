@@ -63,6 +63,7 @@ public struct FButton: View {
                 )
                 .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
         }
+        .buttonStyle(FPressStyle())
         .disabled(!enabled)
     }
 
@@ -103,5 +104,43 @@ public struct FButton: View {
         case .wood: return .black.opacity(0.35)
         default: return .clear
         }
+    }
+}
+
+/// THE ONE PRESS TREATMENT for every button this app draws, and - more to the
+/// point - the thing that stops the SYSTEM from drawing one.
+///
+/// Owner, Eva's test pass: "for some reason I see a highlight around her wooden
+/// buttons". A `Button` with a custom label and no explicit style gets
+/// `.automatic`, and what `.automatic` resolves to is not ours to decide: it
+/// varies by iOS version, by the container the button lands in, and by the
+/// reader's accessibility settings (Button Shapes and Full Keyboard Access both
+/// add decoration of their own, and Increase Contrast changes how the press
+/// highlight is drawn). Every one of those paints OUTSIDE our wood rectangle,
+/// which is exactly where the highlight was seen. It reproduces on a device
+/// with those settings on and not on one without them, which is why it showed
+/// up on a tester's phone and not the owner's.
+///
+/// A custom `ButtonStyle` replaces that whole layer: SwiftUI hands us the label
+/// and the press state and draws nothing else, so there is no system chrome to
+/// leak past our own border under any setting. The press feedback is then ours
+/// to define, and it is a SCALE, not an opacity: round-6 #19 already settled
+/// that a wood surface must never go translucent ("should not be transparent at
+/// all, just dimmed"), and the same argument applies to a press - the wool
+/// weave showing through a pressed plank is the same wrong picture.
+///
+/// `.plain` was the smaller change and was rejected: it removes the system
+/// decoration but leaves NO press feedback at all, and a wooden button that
+/// does not acknowledge a touch reads as broken on a laggy extension launch.
+public struct FPressStyle: ButtonStyle {
+    public init() {}
+    public func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            // Explicit and value-scoped, so a press cannot be interpolated by
+            // whatever ambient transaction happens to be in flight - the board
+            // runs several, and the action column is nulled out of all of them
+            // (MessageTableView's `.transaction { $0.animation = nil }`).
+            .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
     }
 }

@@ -382,6 +382,19 @@ public struct FlyingCardsLayer: View {
                                             : .black.opacity(0.4 * p),
                             radius: 10 * p, y: 8 * p)
                     .position(x: cx, y: cy)
+                    // A CARD NEVER FADES, AND A GHOST IS A CARD.
+                    //
+                    // FBattleGrid's rule, applied to the overlay it hands off
+                    // to. This ForEach's membership changes at every step
+                    // boundary and again at teardown (`flights = []`), and
+                    // SwiftUI's default for a view leaving a container is
+                    // `.opacity` - so a ghost cleared inside any ambient
+                    // transaction dissolves in mid-air instead of handing over
+                    // to the real card at its destination. Owner, on a
+                    // retracted pickup: "Those cards then FADED. We should
+                    // NEVER fade cards in this game. Real life cards don't ever
+                    // fade like that! EVER!"
+                    .transition(.identity)
             }
         }
         .allowsHitTesting(false)

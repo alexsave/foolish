@@ -270,20 +270,29 @@ public struct FHandFan: View {
         return Self.singleRowCardWidth(count: count, availableWidth: availableWidth) < Self.twoRowThreshold ? 2 : 1
     }
 
-    /// How many cards each display row holds at `availableWidth`. The FIRST row
+    /// How many cards each display row holds at `availableWidth`. The BOTTOM row
     /// gets the extra card on an odd count.
     ///
+    /// WHICH ROW GETS THE ODD CARD is the owner's call, and they reversed it:
+    /// "If we have 11 cards, do 5 up top and 6 below". It used to be `ceil` -
+    /// six up top, five below - which stands the hand on its point. A hand fans
+    /// out from the hand that holds it, so the wider row belongs at the BOTTOM,
+    /// nearest the player; the narrow row reads as sitting behind it. Under the
+    /// collapsed drawer's crop it matters even more, because the bottom row is
+    /// the one whose faces are least occluded.
+    ///
     /// Round-16: this split is what makes the cross-row drag work at all. Rows
-    /// are DERIVED from a flat order by cutting it at `ceil(n/2)`, they are not
+    /// are DERIVED from a flat order by cutting it at `floor(n/2)`, they are not
     /// storage - so moving a card across the boundary is an ordinary splice into
     /// the flat array, and the cut then falls in a different place. Sliding a
     /// bottom card up to slot 1 pushes everything from 1 onward right by one, and
     /// the card that was last in the top row lands first in the bottom row. The
     /// "bump" the owner asked for is not a special case; it is what a fixed cut
-    /// through a shifted array already does.
+    /// through a shifted array already does. Moving the cut from ceil to floor
+    /// changes WHERE it falls, not that it is a cut, so all of that still holds.
     public static func rowSizes(count: Int, availableWidth: CGFloat) -> [Int] {
         guard Self.rowCount(count: count, availableWidth: availableWidth) == 2 else { return [count] }
-        let first = (count + 1) / 2   // ceil: extra card up top on odd counts
+        let first = count / 2   // floor: the extra card goes BELOW on odd counts
         return [first, count - first]
     }
 
@@ -358,11 +367,14 @@ public struct FHandFan: View {
     public static func slotFrames(count: Int, width: CGFloat, crop: CGFloat) -> [CGRect] {
         guard width > 0, count > 0 else { return [] }
         let rows = Self.rowSizes(count: count, availableWidth: width)
-        // ONE card width for BOTH rows, sized by the fuller first row (it gets
-        // the ceil on odd counts) - sizing each row by its own count made the
-        // shorter bottom row's cards visibly WIDER than the top row's, which
-        // read as two different decks rather than one hand that wrapped.
-        let cardW = Self.singleRowCardWidth(count: rows[0], availableWidth: width)
+        // ONE card width for BOTH rows, sized by the FULLER row - sizing each row
+        // by its own count made the shorter row's cards visibly WIDER than the
+        // other's, which read as two different decks rather than one hand that
+        // wrapped. This asks `rows.max()` rather than `rows[0]` because the odd
+        // card now lands in the SECOND row (see `rowSizes`); hard-coding row 0 as
+        // the fuller one was true only while the cut was a ceil, and would have
+        // sized an 11-card hand off 5 and then overflowed the row of 6.
+        let cardW = Self.singleRowCardWidth(count: rows.max() ?? count, availableWidth: width)
         let cardH = Self.shownCardHeight(crop: crop)
         let containerH = Self.height(count: count, availableWidth: width, crop: crop)
         let stackH = CGFloat(rows.count) * cardH + CGFloat(rows.count - 1) * Self.rowGap

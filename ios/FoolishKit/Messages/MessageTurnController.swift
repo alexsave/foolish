@@ -117,7 +117,12 @@ public final class MessageTurnController: ObservableObject {
     ///    pickup, so every viewer gets real identities); lay each in its own
     ///    uncovered slot. This is exactly how the web reconstructs a pickup's
     ///    table for the same animation (AnimationContext: one battle per card).
-    public var openReplayPreBattles: [BattleView] { Self.preBoutTable(openReplayEvents) }
+    public var openReplayPreBattles: [BattleView] {
+        // The prior board goes in too - see `preBoutTable`. A single-action
+        // pickup turn carries no earlier step of its own to read the real table
+        // off, and this is the only place that table still exists.
+        Self.preBoutTable(openReplayEvents, prior: openReplayPriorState)
+    }
 
     /// The rule above, as a pure function of ANY event stream.
     ///
@@ -128,19 +133,68 @@ public final class MessageTurnController: ObservableObject {
     /// it shows a table missing the card the player just played. The kernel's
     /// stream is the only place the covered table exists, live or on open, and
     /// there must be exactly one reading of it.
-    public static func preBoutTable(_ evs: [GameEvent]) -> [BattleView] {
+    public static func preBoutTable(_ evs: [GameEvent], prior: GameView? = nil) -> [BattleView] {
         guard let bi = evs.firstIndex(where: {
             $0.kind == .discard || $0.kind == .cardsToTrash || $0.kind == .pickup
         }) else { return [] }
-        if evs[bi].kind == .pickup {
-            return evs[bi].cards.compactMap { $0 }.map { BattleView(attack: $0, defense: nil) }
+        // Every card this step takes off the table - the only test a candidate
+        // table has to pass. It must account for exactly these; a board that
+        // holds more, or fewer, is describing some other moment.
+        func ids(_ bs: [BattleView]) -> Set<String> {
+            Set(bs.flatMap { [$0.attack.identity] + ($0.defense.map { [$0.identity] } ?? []) })
         }
         // discard / trash: walk back from the trash step to the last board that
         // still had cards on the table - that is the table about to be swept.
+        //
+        // A PICKUP NOW WALKS THE SAME WAY, and the flat one-battle-per-card
+        // list below is its LAST resort rather than its only answer.
+        //
+        // The flat shape is a DIFFERENT GRID: a table that really held two
+        // battles with one of them covered comes back as three single-card
+        // cells. `MessageTableView.battlesArea` renders the sweep grid through
+        // the SAME FBattleGrid the live table used, deliberately keeping card
+        // identity so the cards sit still and then fly - which means handing it
+        // a differently shaped table does not cut to the new one, it ANIMATES
+        // every card into its new cell first. Owner: "when the opponent picked
+        // up 6 of diamonds, k of diamonds, k of hearts, they did not animate
+        // directly from their table positions, but seemed to spread out to an
+        // evenly spaced row, AND THEN fly to the hand. weve been over this".
+        //
+        // "We have been over this" is `MessageTableView.sweepTableForReplay`,
+        // which guards the wrong side of the problem: it prefers the board's
+        // own `lastBattles` only when they account for every picked-up card,
+        // and that is never true on a COLD OPEN (that board has rendered no
+        // table at all) and cannot be true when the arriving stream placed one
+        // of those cards itself. So the reconstruction wins in precisely the
+        // cases that matter, and the only real cure is a reconstruction that is
+        // right. That guard stays where it is - it is still the better answer
+        // when the board has a live table - it simply stops being the only
+        // thing standing between the player and a flattened grid.
         for i in stride(from: bi, through: 0, by: -1) {
-            if let b = evs[i].state?.battles, !b.isEmpty { return b }
+            guard let b = evs[i].state?.battles, !b.isEmpty else { continue }
+            guard evs[bi].kind != .pickup || ids(b) == ids(pickupTable(evs[bi])) else { break }
+            return b
         }
-        return []
+        guard evs[bi].kind == .pickup else { return [] }
+        // ...and the board the kernel says this whole stream OPENED on, for the
+        // single-action pickup turn that carries no earlier step whatsoever.
+        // Same exact-account test: a prior board from before some other move is
+        // not the table being swept, and guessing would be worse than the flat
+        // reading, which is at least about the right cards.
+        if let p = prior, !p.battles.isEmpty, ids(p.battles) == ids(pickupTable(evs[bi])) {
+            return p.battles
+        }
+        return pickupTable(evs[bi])
+    }
+
+    /// The flat one-uncovered-battle-per-card reading of a pickup step: the
+    /// kernel never masks a pickup, so every viewer gets real identities and
+    /// this can always be built. It is what the web does for the same animation
+    /// (AnimationContext: one battle per card) and it is the right SET of cards
+    /// every time - it just does not know the PAIRING, which is why
+    /// `preBoutTable` now reaches for a real table first.
+    private static func pickupTable(_ ev: GameEvent) -> [BattleView] {
+        ev.cards.compactMap { $0 }.map { BattleView(attack: $0, defense: nil) }
     }
 
     public let mySeat: Int
@@ -337,6 +391,37 @@ public final class MessageTurnController: ObservableObject {
         heldView = nil
         stagedAnimation = nil
         releasedSettlement = nil
+    }
+
+    /// THE SEND HAPPENED, WHATEVER WE THEN DECIDE ABOUT THE BYTES.
+    ///
+    /// The hold exists because a staged move can still be undone, or its bubble
+    /// simply deleted out of the input field (see THE HELD SETTLEMENT above).
+    /// Once the host reports Send, neither is true any more - and that fact is
+    /// not in doubt even in the cases where the bytes that came with the signal
+    /// are.
+    ///
+    /// So every exit from `markSent` releases, because `markSent` is the ONLY
+    /// releaser there is: a return that keeps the hold keeps it forever, with
+    /// `legal` forced empty and `view` pinned to `heldView` - a board no tap can
+    /// move and no arrival can unstick. Owner, 1.0(35), on a bout-ending good in
+    /// a two-player game: "it rotated my sword to a check, and the bubble
+    /// preview showed the correct state after the good/discard/draw, but my
+    /// board didn't move. It just stayed stuck in the good checkmark state, and
+    /// didn't move when I sent it. had to close and reopen the extension, which
+    /// is an antipattern." The 1.0(24) note further down this file describes the
+    /// same symptom and fixed only the PREDICATE of the guard that caused it;
+    /// this is the missing half, the CONSEQUENCE.
+    ///
+    /// It is also what makes the game-over screen reachable from a winning move:
+    /// the board only learns the game is over from the released settlement.
+    private func releaseHoldForSend() {
+        guard !heldSettlement.isEmpty else { return }
+        FlightRecorder.note("settle-release", "\(heldSettlement.count) steps")
+        releasedSettlement = heldSettlement
+        heldSettlement = []
+        heldView = nil
+        stagedAnimation = nil
     }
 
     /// Split the turn just staged at its settlement boundary, if it has one.
@@ -639,13 +724,31 @@ public final class MessageTurnController: ObservableObject {
         // from its own recorded motions before playing the arrival - see
         // MessageTableView.replayLastMoveOnOpen); the controller only fronts
         // the case where the MODEL itself must walk back first.
-        guard boardWatching, !pending.isEmpty else {
+        // A MOVE THE HUMAN HAS ALREADY SENT IS NOT A STAGED MOVE.
+        //
+        // `sending` stands from the send signal until `markSent` resolves it,
+        // and it is exactly the window in which the bytes are already gone but
+        // this controller has not caught up. Retracting there offers to take
+        // back a bubble the thread already has - the owner, on a sent pickup
+        // followed by an ordinary one-card throw-in: "Somehow this caused an
+        // UNDO animation of the previous pickup! ... The state shown in the
+        // bubble of the simple one card throw in by my opponent clearly
+        // indicated that my card count was such that I had picked up. My pickup
+        // definitely wasn't superceded."
+        //
+        // Whatever the arriving chain says about my move, its own replay is the
+        // honest account of it; a red flight first is theatre for a retraction
+        // that never happened. This is the floor under the substitution in
+        // `markSent`: that stops `pending` being stranded in the first place,
+        // and this stops the burst that lands DURING the send window from
+        // retracting on the way past.
+        guard boardWatching, !pending.isEmpty, !sending else {
             await adopt(payload: payload, parent: parent, quietOpen: quietOpen)
             return
         }
         conflictLatch = (payload, parent, quietOpen)
         conflictRetracting = true
-        FlightRecorder.note("conflict", "retract \(pending.count) staged for arrival")
+        let staging = pending.count
         // The verdict inputs, peeked from the arriving chain before anything
         // moves: which cards its replay animates, and the board it opens on.
         // CLEAR is why this cannot be skipped - if the arriving chain is my own
@@ -659,6 +762,12 @@ public final class MessageTurnController: ObservableObject {
         } else {
             conflictFacts = .unknown
         }
+        // WHAT THE VERDICT WAS DECIDED ON, not just that a retraction happened.
+        // A `conflict` line appearing after a successful `send-rebase` is itself
+        // the spurious-undo signature; `prior=unknown` is why cards then flew
+        // red rather than staying put, since empty facts make every card revert.
+        FlightRecorder.note("conflict",
+                            "retract \(staging) staged; prior=\(conflictFacts == .unknown ? "unknown" : "ok")")
         // An even newer arrival may have landed during that await - the latch
         // already holds it, and `finishConflictAdopt` adopts whatever is
         // newest. The facts describe the first conflicting chain, which is the
@@ -1089,9 +1198,46 @@ public final class MessageTurnController: ObservableObject {
         // that bubble. The host's payload stays preferred - it is what Messages
         // actually transmitted - and our own is the fallback, the same bytes by
         // construction and reachable without leaving the object.
-        let sent = payload ?? (pending.isEmpty ? nil : lastSealed)
+        // THE TRAIL HAS TO SHOW THIS FUNCTION RAN AT ALL.
+        //
+        // Every note this function writes today is on a PATH through it, so a
+        // `send-signal` with nothing after it is ambiguous between "the Task
+        // never ran", "the controller was gone" and "it ran and fell out of a
+        // branch that says nothing". 1.0(26) had to infer which by elimination
+        // across three separate notes; this settles it in one line, and the
+        // owner can pull it off the device with the gear hold.
+        FlightRecorder.note("send-mark",
+            "\(pending.count) staged, in=\(payload?.count ?? -1)b,"
+          + " sealed=\(lastSealed?.count ?? -1)b, held=\(heldSettlement.count)")
+        var sent = payload ?? (pending.isEmpty ? nil : lastSealed)
         if payload == nil, sent != nil {
             FlightRecorder.note("send-bytesless", "rebased onto my own sealed chain instead")
+        }
+        // ...AND A WRONG VALUE IS THE SAME PROBLEM AS A MISSING ONE.
+        //
+        // 1.0(26) taught this function that the host's bytes may not survive the
+        // trip out to `didStartSending`, through a root-view rebuild and a
+        // SwiftUI `onChange`, and back into a Task - and the answer was
+        // `lastSealed` as a fallback for NIL. A value that arrives STALE rather
+        // than absent takes the refusal below instead, and a refusal is not the
+        // harmless shrug it was when it was written: it strands the withheld
+        // settlement, which only this function releases, and it leaves `pending`
+        // full so the NEXT arrival red-retracts a move the thread already has.
+        // Owner, on a sent pickup followed by an ordinary throw-in: "Somehow
+        // this caused an UNDO animation of the previous pickup! ... My pickup
+        // definitely wasn't superceded."
+        //
+        // With moves STAGED there is exactly one bubble in the input field and
+        // this controller sealed it (`stagedPayload` is the only thing that
+        // makes one), so a send signal can only be that bubble's going out,
+        // whatever bytes came along for the ride. Trust our own. With NOTHING
+        // staged we have no such claim, and the refusal below still stands
+        // untouched - which is the shape a genuinely foreign signal arrives in
+        // anyway (a reload handed a chain this controller did not make).
+        if let host = payload, let mine = lastSealed, host != mine, !pending.isEmpty {
+            FlightRecorder.note("send-substituted",
+                                "host \(host.count)b != sealed \(mine.count)b - using mine")
+            sent = mine
         }
 
         // A SEND MAY NEVER MOVE THIS BOARD BACKWARDS.
@@ -1129,7 +1275,13 @@ public final class MessageTurnController: ObservableObject {
         // `lastSealed` means this controller has sealed nothing yet and has no
         // opinion - a reload can legitimately hand it a chain it did not make.
         if let sent, let mine = lastSealed, sent != mine {
-            FlightRecorder.note("send-foreign", "refused a rebase onto bytes I did not seal")
+            // WHAT differed, not just that something did. Equal lengths with a
+            // differing prefix is a STALE chain (the value-transport hazard the
+            // substitution above covers); different lengths is a different game
+            // or a truncation, which is a different bug entirely.
+            FlightRecorder.note("send-foreign",
+                "in=\(sent.count)b/\(sent.prefix(4).map { String(format: "%02x", $0) }.joined()) "
+              + "mine=\(mine.count)b/\(mine.prefix(4).map { String(format: "%02x", $0) }.joined())")
             if AnimLog.on {
                 let ce = try? await kernel.peek(payload: mine)
                 let se = try? await kernel.peek(payload: sent)
@@ -1137,6 +1289,13 @@ public final class MessageTurnController: ObservableObject {
                     + "mine=[t\(ce?.turn ?? -1) r\(ce?.round ?? -1) actor\(ce?.lastActorSeat ?? -1)] "
                     + "sent=[t\(se?.turn ?? -1) r\(se?.round ?? -1) actor\(se?.lastActorSeat ?? -1)]")
             }
+            // THE REBASE IS REFUSED; THE RELEASE IS NOT. The human pressed Send,
+            // so the move can no longer be undone or its bubble deleted, and
+            // holding its settlement past that point is a board that cannot be
+            // moved by any input at all. See `releaseHoldForSend`.
+            sending = false
+            releaseHoldForSend()
+            await refresh()
             return
         }
         // AND A REFUSAL CHANGES NOTHING. Not the base, and not `pending`
@@ -1182,6 +1341,11 @@ public final class MessageTurnController: ObservableObject {
             guard adopted != nil else {
                 FlightRecorder.note("send-unreadable", "kept the board on its staged move")
                 AnimLog.say("markSent: the sent bytes will not decode - board unchanged")
+                // The board keeps its staged move, but not its held settlement
+                // and not the send window - see `releaseHoldForSend`.
+                sending = false
+                releaseHoldForSend()
+                await refresh()
                 return
             }
         }
@@ -1201,6 +1365,8 @@ public final class MessageTurnController: ObservableObject {
         // gone missing once already.
         guard let sent else {
             FlightRecorder.note("send-blind", "kept the staged move - no chain to rebase onto")
+            releaseHoldForSend()
+            await refresh()
             return
         }
         pending = []
@@ -1225,13 +1391,7 @@ public final class MessageTurnController: ObservableObject {
         // the thread now: there is no undo left and no bubble left to delete,
         // so the deal it dealt is finally the player's to see. The board picks
         // these up on the view change the `refresh` below publishes.
-        if !heldSettlement.isEmpty {
-            FlightRecorder.note("settle-release", "\(heldSettlement.count) steps")
-            releasedSettlement = heldSettlement
-            heldSettlement = []
-            heldView = nil
-            stagedAnimation = nil
-        }
+        releaseHoldForSend()
         await refresh()
         // Round-8 #4: the final move is committed to the thread (no undo left),
         // so this game's stored hand arrangement has nothing left to order.
