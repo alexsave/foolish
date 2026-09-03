@@ -599,6 +599,30 @@ public struct MessageTableView: View {
                 if worst > 2 {
                     AnimLog.say("SLOTCHECK MISMATCH n=\(hand.count) worst=\(String(format: "%.1f", worst))pt @\(worstId)")
                 }
+                // …AND INTO THE DUMP THE OWNER CAN ACTUALLY READ, once it is
+                // past half a card. That threshold is the line between two
+                // completely different facts, and only the magnitude separates
+                // them: a few points is `handCardFrames` being one layout pass
+                // behind something that is still moving, which is harmless and
+                // constant during a drag; a whole board is the hand's per-card
+                // frames NOT RE-PUBLISHING AT ALL when the drawer resizes.
+                //
+                // The second is real and measured. On a 667 board collapsing to
+                // 261, the rig reads `SLOTCHECK MISMATCH n=7 worst=406.0pt` -
+                // and 406 is exactly 667 - 261. `HandFrameKey` re-publishes
+                // across that resize and `HandCardFramesKey` does not, which is
+                // why the analytical route (`handSlotsNow`, off `handFrame`)
+                // reads the new drawer correctly while anything trusting the
+                // per-card frames is still describing the expanded board.
+                //
+                // Everything load-bearing has been moved off them - a takeoff
+                // and a landing are both computed now - so this is a WATCH, not
+                // a live defect. It is here because this check named the bug in
+                // the owner's own Debug build for months and only ever said so
+                // to a log nobody was streaming.
+                if worst > 35 {
+                    FlightRecorder.note("slotcheck", "hand rects \(Int(worst))pt off - stale after a resize?")
+                }
             }
             #endif
         }
@@ -4749,7 +4773,6 @@ public struct MessageTableView: View {
         // seamless, and any path that ends up not flying them reveals them again.
         pendingPlacement = PendingPlacement(cards: cards, fromRects: fromRects,
                                             handFrameAtPlay: handFrame)
-        animator.preHide(Set(cards.map(\.identity)))
         // Round-8 (atomic takeoff): the same instant the hand copy is veiled above,
         // put a resting ghost where each card WAS, so the swap is seamless - no
         // frame where the card is neither in the hand nor in the overlay. The real
@@ -4766,21 +4789,39 @@ public struct MessageTableView: View {
         // of the screen to cover the cards", and the asymmetry between these
         // two lines is the whole of it.
         //
-        // Since `fromRects` is computed rather than read (`handSlotsNow`) there
-        // is a rect for every card the fan lays out, and a card being played is
-        // always one of those - so this should now be unreachable. "Should" is
-        // why it says so out loud instead of being asserted: a silent
-        // disappearance is exactly the bug that took three rounds to name, and
-        // the next one will arrive as a `no-ghost` line in the trail rather than
-        // as a sentence in a notes file.
-        let held = cards.compactMap { c in
-            fromRects[c.identity].map { Flight(id: "place-\(c.identity)", card: c, from: $0, to: $0) }
+        // Computing `fromRects` (`handSlotsNow`) was not enough on its own: the
+        // analytical slots are cut for the cards the fan LAYS OUT, and a card
+        // that is already veiled by an earlier move is not one of them. The rig
+        // reached it inside a minute -
+        //
+        //     held ghost at source [0-10]
+        //     NO GHOST for [0-10] - they will vanish
+        //
+        // the same card played twice, the second time with its slot already
+        // given up. So the veil and the ghost are now decided TOGETHER, from one
+        // list, and a card that cannot be placed is not veiled either. The
+        // fallbacks descend from exact to approximate and only ever run out at
+        // a hand that has never been measured at all, which is a board with
+        // nothing on screen to vanish from.
+        let held: [Flight] = cards.compactMap { c in
+            let at = fromRects[c.identity]
+                ?? handLandingSlot(c, laidOut: laidOutHandNow(view))
+                ?? handCardFrames[c.identity]
+                ?? handApproxLanding()
+            return at.map { Flight(id: "place-\(c.identity)", card: c, from: $0, to: $0) }
         }
-        if held.count != cards.count {
-            let lost = cards.map(\.identity).filter { id in !held.contains { $0.card?.identity == id } }
-            FlightRecorder.note("no-ghost", "veiled with no source rect: \(lost.joined(separator: ","))")
-            AnimLog.say("NO GHOST for [\(lost.joined(separator: ","))] - they will vanish")
+        let placed = Set(held.compactMap { $0.card?.identity })
+        if placed.count != cards.count {
+            let lost = cards.map(\.identity).filter { !placed.contains($0) }
+            FlightRecorder.note("no-ghost", "unplaceable, left visible: \(lost.joined(separator: ","))")
+            AnimLog.say("NO GHOST for [\(lost.joined(separator: ","))] - left in the hand rather than veiled")
         }
+        // ONLY what has somewhere to be. A card veiled with no ghost is gone from
+        // the screen entirely - no hand copy, no overlay - and that is the
+        // owner's "the cards just vanish from my hand". Leaving it visible for a
+        // beat is the strictly better failure: the worst case is a card that
+        // appears twice for one frame, against one that disappears completely.
+        animator.preHide(placed)
         animator.showHeld(held)
         play(move)
     }
