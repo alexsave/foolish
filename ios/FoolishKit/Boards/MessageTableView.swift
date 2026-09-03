@@ -1033,12 +1033,27 @@ public struct MessageTableView: View {
             // Deliberately a `FlightRecorder.note` rather than an `AnimLog.say`:
             // AnimLog is DEBUG-only and this has to survive a shipping build,
             // which is the only kind the report came from.
-            .onChange(of: FHandFan.rowCount(count: laidHandCount, availableWidth: handWidth)) { rows in
-                let line = "\(rows) rows laid=\(laidHandCount) hand=\(myHand.count)"
-                    + " width=\(Int(handWidth)) deferred=\(deferredSlots.count)"
-                    + " veiled=\(veiledCardIds.count) preHidden=\(animator.preHidden.count)"
-                    + " hidden=\(animator.hidden.count) settled=\(settled)"
-                    + " seq=\(BoardAnimator.sequenceDepth)"
+            // Fires on the LAID-OUT COUNT, not on the row count: below the split
+            // threshold the same churn only makes the cards thinner ("normal one
+            // row to skinny card view"), which is the same defect and would not
+            // have tripped a row-count watch at all.
+            .onChange(of: laidHandCount) { _ in
+                // READ LIVE, NOT FROM THE CAPTURED BODY LOCALS. `.onChange`'s
+                // action is the closure from the LATEST body evaluation, which
+                // can be a paint after the change that fired it - so a captured
+                // `laidHandCount` describes a different moment than the trigger
+                // does, and the first version of this line printed "2 rows" next
+                // to a count that needs one. A trace nobody can read is worse
+                // than none, because it invites a wrong conclusion.
+                let hand = controller.view?.me?.hand ?? []
+                let deferred = handSlotDeferred
+                let laid = hand.filter { !deferred.contains($0.identity) }.count
+                let w = handFrame.width
+                let line = "\(FHandFan.rowCount(count: laid, availableWidth: w)) rows"
+                    + " laid=\(laid) hand=\(hand.count) width=\(Int(w))"
+                    + " deferred=\(deferred.count) veiled=\(veiledCardIds.count)"
+                    + " preHidden=\(animator.preHidden.count) hidden=\(animator.hidden.count)"
+                    + " settled=\(settled) seq=\(BoardAnimator.sequenceDepth)"
                 FlightRecorder.note("fan-rows", line)
                 // AnimLog too, so the RIG can read this off the unified log
                 // (`log stream --predicate 'subsystem == "cards.foolish.anim"'`)
