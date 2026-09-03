@@ -158,3 +158,52 @@ final class PreBoutTableTests: XCTestCase {
         XCTAssertEqual(MessageTurnController.preBoutTable(evs), real)
     }
 }
+
+@MainActor
+final class ShownTableTests: XCTestCase {
+
+    private func b(_ v: Int) -> BattleView {
+        BattleView(attack: Card(s: 0, v: v), defense: Card(s: 1, v: v))
+    }
+
+    /// THE BLINK. An arrival publishes its (already cleared) view a paint before
+    /// anything sets the sweep, because the sweep is set inside the `onChange`
+    /// that runs AFTER the body. For that paint the grid had nothing to draw, so
+    /// the table was torn down and put straight back - four cards out and in
+    /// again. The rig caught it as `cells=2` -> `cells=0` -> `cells=2`, and the
+    /// owner as "super annoying glitch with ghost cards fading halfway in
+    /// quickly and immediatley out".
+    func testTheTableNeverGoesEmptyWhileABoutEndIsStillPending() {
+        let pre = [b(9), b(10)]
+        let t = MessageTableView.shownTable(live: [], sweep: [], pending: pre)
+        XCTAssertEqual(t.shown, pre, "the table blinked empty between the arrival and its sweep")
+        XCTAssertTrue(t.sweeping, "…and it is a sweep, so nothing on it is a drop target")
+    }
+
+    /// The live table always wins: a pending replay must never paint over a
+    /// board that still has real cards on it.
+    func testALiveTableOutranksBothReconstructions() {
+        let live = [b(7)]
+        let t = MessageTableView.shownTable(live: live, sweep: [b(9), b(10)], pending: [b(11)])
+        XCTAssertEqual(t.shown, live)
+        XCTAssertFalse(t.sweeping)
+    }
+
+    /// A sweep captured by MY OWN move outranks the open-replay reconstruction -
+    /// it is the real prior view, and the reconstruction is at best a guess at
+    /// the same thing (MessageTurnController.preBoutTable).
+    func testMyOwnSweepOutranksThePendingReconstruction() {
+        let sweep = [b(9), b(10)]
+        let t = MessageTableView.shownTable(live: [], sweep: sweep, pending: [b(11)])
+        XCTAssertEqual(t.shown, sweep)
+        XCTAssertTrue(t.sweeping)
+    }
+
+    /// A settled empty table is still empty, and is NOT a sweep - otherwise the
+    /// grid would refuse taps on a board that is simply waiting for a move.
+    func testASettledEmptyTableIsNotASweep() {
+        let t = MessageTableView.shownTable(live: [], sweep: [], pending: [])
+        XCTAssertTrue(t.shown.isEmpty)
+        XCTAssertFalse(t.sweeping)
+    }
+}

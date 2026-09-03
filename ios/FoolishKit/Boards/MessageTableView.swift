@@ -580,7 +580,18 @@ public struct MessageTableView: View {
                                                crop: Self.handCrop)
                 var worst = 0.0, worstId = ""
                 for c in hand {
-                    guard let a = rects[c.identity]?.offsetBy(dx: handFrame.minX, dy: handFrame.minY),
+                    // Placed by the SAME rule the flights use (`inBoardSpace`,
+                    // anchored on the fan's bottom edge). It used to offset by
+                    // `handFrame.minY`, which made this check disagree with
+                    // every flight it was supposed to be validating - and made
+                    // it report a full row of error (86pt at eleven cards)
+                    // whenever the two preferences were a paint out of step,
+                    // which is noise, not drift. What is worth shouting about
+                    // is the two disagreeing about where the hand IS, and that
+                    // survives this change: the 391pt collapse gap still reads.
+                    guard let a = rects[c.identity].map({
+                              Self.inBoardSpace($0, laidOutCount: display.count,
+                                                handFrame: handFrame, crop: Self.handCrop) }),
                           let m = $0[c.identity] else { continue }
                     let d = max(abs(a.midX - m.midX), abs(a.midY - m.midY))
                     if d > worst { worst = d; worstId = c.identity }
@@ -1023,9 +1034,17 @@ public struct MessageTableView: View {
             // AnimLog is DEBUG-only and this has to survive a shipping build,
             // which is the only kind the report came from.
             .onChange(of: FHandFan.rowCount(count: laidHandCount, availableWidth: handWidth)) { rows in
-                FlightRecorder.note("fan-rows", "\(rows) rows"
-                    + " laid=\(laidHandCount) hand=\(myHand.count)"
-                    + " width=\(Int(handWidth)) deferred=\(deferredSlots.count)")
+                let line = "\(rows) rows laid=\(laidHandCount) hand=\(myHand.count)"
+                    + " width=\(Int(handWidth)) deferred=\(deferredSlots.count)"
+                    + " veiled=\(veiledCardIds.count) preHidden=\(animator.preHidden.count)"
+                    + " hidden=\(animator.hidden.count) settled=\(settled)"
+                    + " seq=\(BoardAnimator.sequenceDepth)"
+                FlightRecorder.note("fan-rows", line)
+                // AnimLog too, so the RIG can read this off the unified log
+                // (`log stream --predicate 'subsystem == "cards.foolish.anim"'`)
+                // without pulling a device trail. The FlightRecorder line is for
+                // the owner's phone; this one is for reproducing it here.
+                AnimLog.say("fan-rows \(line)")
             }
             .onChange(of: handHeight) {
                 let h = $0
@@ -1590,8 +1609,37 @@ public struct MessageTableView: View {
         // when `sweptFlownIds` snaps it hidden (FBattleGrid's `.animation(nil)`) and
         // the overlay ghost carries it the rest of the way - no fade, no gap, no
         // reappear. A settled empty table (nothing sweeping) renders nothing.
-        let sweeping = view.battles.isEmpty && !sweepBattles.isEmpty
-        let shown = sweeping ? sweepBattles : view.battles
+        //
+        // …EXCEPT ON AN ARRIVAL, WHERE IT DID BLINK EMPTY. That guarantee holds
+        // only for a move made HERE: `play` sets the sweep synchronously before
+        // `apply` publishes. A bubble that lands while the board is open takes
+        // the other road - the arriving view is published first, and the sweep
+        // is set inside `replayLastMoveOnOpen`, which runs from the `onChange`
+        // AFTER the body has already been evaluated with an empty table. The rig
+        // catches it in the act on an opponent's bout-ending good:
+        //
+        //     grid sweeping=false cells=2 pairs=2 visible=4 hidden=0
+        //     grid sweeping=false cells=0 pairs=0 visible=0 hidden=4   <-- blink
+        //     grid sweeping=true  cells=2 pairs=2 visible=4 hidden=0
+        //
+        // Four cards torn off the table and put straight back. Until this round
+        // the grid had no explicit transition, so SwiftUI cross-faded both ends
+        // of that: the owner's "super annoying glitch with ghost cards fading
+        // halfway in quickly and immediatley out", and - because the grid wraps
+        // every three battles and its cell count changes with it - the layout
+        // "changed its mind mid transition" too.
+        //
+        // `pendingOpen` is exactly the right window: it is non-nil only between
+        // the arriving view landing and `flyBoutEndToDiscard` consuming it,
+        // which is the same `onChange` that sets the sweep. And the table it
+        // shows is `sweepTableForReplay()` - the one the sweep itself is about
+        // to use - so the cards carry the same identities across the handoff and
+        // nothing is created or destroyed at all.
+        let table = Self.shownTable(live: view.battles, sweep: sweepBattles,
+                                    pending: view.battles.isEmpty && sweepBattles.isEmpty
+                                        && pendingOpen != nil ? sweepTableForReplay() : [])
+        let sweeping = table.sweeping
+        let shown = table.shown
         // ROUND 20: the sweep grid hides BOTH ends of the sequence - what has
         // already flown off it, and what has not yet flown onto it (a
         // bout-ending cover being replayed; see `sweepUnplaced`).
@@ -3641,6 +3689,26 @@ public struct MessageTableView: View {
         return rects.mapValues { $0.offsetBy(dx: dx, dy: dy) }
     }
 
+    /// EVERY hand card's settled rect in `boardSpace`, computed rather than read.
+    ///
+    /// The plural of `handLandingSlot`, and it exists for the takeoff side of a
+    /// flight for the same reason that one exists for the landing side: the
+    /// published `handCardFrames` is a preference, so it lags any change that
+    /// moves the hand by a layout pass, and a drawer collapse moves it by most
+    /// of a screen. Falls back to the published frames only when the hand has
+    /// never been measured at all, which is the one case the analytical route
+    /// cannot answer.
+    private func handSlotsNow(_ view: GameView) -> [String: CGRect] {
+        guard handFrame != .zero else { return handCardFrames }
+        let laid = laidOutHandNow(view)
+        let local = FHandFan.slotRects(cards: laid, width: handFrame.width, crop: Self.handCrop)
+        guard !local.isEmpty else { return handCardFrames }
+        return local.mapValues {
+            Self.inBoardSpace($0, laidOutCount: laid.count, handFrame: handFrame,
+                              crop: Self.handCrop)
+        }
+    }
+
     /// The hand cards the fan actually lays out at this instant: the whole hand
     /// minus any deal still deferring its slot (the same rule `boardContent` uses
     /// for `laidOutHand`, recomputed here for the flight builders). The incoming
@@ -3955,6 +4023,24 @@ public struct MessageTableView: View {
         let table = MessageTurnController.preBoutTable(events)
         guard !table.isEmpty, ids(current).isSubset(of: ids(table)) else { return nil }
         return table
+    }
+
+    /// WHICH TABLE THE GRID PAINTS, and whether it is a sweep - pure and static
+    /// in the house style, because "the table must never be seen empty while a
+    /// bout end is still being animated onto it" is a claim worth asserting
+    /// rather than eyeballing on a device.
+    ///
+    /// Three sources, in falling order of authority: the live table; the sweep a
+    /// move of MY OWN captured synchronously; and the pre-bout table of an
+    /// open-replay this board has not started yet. The last one exists only
+    /// because an arrival publishes its view a paint before anything sets the
+    /// sweep - see the note at the call site.
+    static func shownTable(live: [BattleView], sweep: [BattleView],
+                           pending: [BattleView]) -> (shown: [BattleView], sweeping: Bool) {
+        if !live.isEmpty { return (live, false) }
+        if !sweep.isEmpty { return (sweep, true) }
+        if !pending.isEmpty { return (pending, true) }
+        return ([], false)
     }
 
     /// Drop the pre-bout table. Called on any view change that empties the table
@@ -4577,7 +4663,33 @@ public struct MessageTableView: View {
         // both landing animations below - the ordinary placement flight and note
         // 17's cover-that-ended-the-bout - so a dragged card cannot start from
         // the release point in one and from the hand in the other.
-        let fromRects = Self.playSourceRects(cards: cards, handRects: handCardFrames,
+        // TAKE OFF FROM THE SETTLED SLOT, NOT THE LAST PUBLISHED ONE.
+        //
+        // `handCardFrames` is a PREFERENCE, and a preference is one layout pass
+        // behind whatever moved the view it describes. Collapsing the drawer
+        // moves the whole board, and the rig catches the gap in the act:
+        //
+        //     stage follow geo=667->261 armed=false
+        //     SLOTCHECK MISMATCH n=11 worst=391.0pt @3-12
+        //
+        // 391 is exactly the distance the hand travelled (mid y 580 expanded,
+        // 189 compact). `handFrame` had already re-published; the per-card
+        // frames had not. A cover played in that window snapshots hand rects
+        // from the EXPANDED board, so the ghost is planted ~391pt below a
+        // 261pt drawer - off-screen - and then flies up into the table. Owner:
+        // "the cards just vanish from my hand, and then fly in from the bottom
+        // of the screen to cover the cards. I suspect this is some geometry
+        // coordinate mishap for the collapsed mode. seen this a lot in many
+        // forms."
+        //
+        // The cure is the one round 7 already applied to the LANDING side and
+        // never to this one: compute the slot, do not read it. `handSlotsNow`
+        // derives every card's resting rect from `handFrame` (which is fresh)
+        // and the fan's own pure geometry, so a takeoff is right on the first
+        // frame after any resize instead of one paint later. The release point
+        // of a DRAGGED card still comes from the gesture, which is live by
+        // construction - see `playSourceRects`.
+        let fromRects = Self.playSourceRects(cards: cards, handRects: handSlotsNow(view),
                                              released: released.map { ($0.card.identity, $0.centre) })
         // note 17: a cover might end the bout in the SAME kernel apply as the
         // cover itself (the defender's hand empties) — stash enough, BEFORE
@@ -4612,9 +4724,32 @@ public struct MessageTableView: View {
         // `place-<id>` flight (`placementFlights` -> `animator.play`) reuses these
         // ids and simply starts moving them once the kernel publishes the table
         // slot. `fromRects` is the card's own hand slot (or drag-release point).
-        animator.showHeld(cards.compactMap { c in
+        //
+        // AND EVERY VEILED CARD MUST GET ONE. `preHide` above hides ALL of
+        // them; this plants a ghost only for the ones with a source rect, so a
+        // card that has none is veiled into thin air - no hand copy, no
+        // overlay, nothing. It then flies from whatever `placementFlights`
+        // falls back to, which is the destination itself. That is the owner's
+        // "the cards just vanish from my hand, and then fly in from the bottom
+        // of the screen to cover the cards", and the asymmetry between these
+        // two lines is the whole of it.
+        //
+        // Since `fromRects` is computed rather than read (`handSlotsNow`) there
+        // is a rect for every card the fan lays out, and a card being played is
+        // always one of those - so this should now be unreachable. "Should" is
+        // why it says so out loud instead of being asserted: a silent
+        // disappearance is exactly the bug that took three rounds to name, and
+        // the next one will arrive as a `no-ghost` line in the trail rather than
+        // as a sentence in a notes file.
+        let held = cards.compactMap { c in
             fromRects[c.identity].map { Flight(id: "place-\(c.identity)", card: c, from: $0, to: $0) }
-        })
+        }
+        if held.count != cards.count {
+            let lost = cards.map(\.identity).filter { id in !held.contains { $0.card?.identity == id } }
+            FlightRecorder.note("no-ghost", "veiled with no source rect: \(lost.joined(separator: ","))")
+            AnimLog.say("NO GHOST for [\(lost.joined(separator: ","))] - they will vanish")
+        }
+        animator.showHeld(held)
         play(move)
     }
 

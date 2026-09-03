@@ -607,12 +607,39 @@ extension HarnessModel {
         // every hand contains a transfer at all (the defender has to be holding
         // the rank that is on the table), so a single deal is a coin toss.
         let transfer = kind == "pass"
+        // ROUND 36: HARNESS_ARRIVE_BIGHAND=<n> warms up until somebody is
+        // holding at least `n` cards, which is the only way to pose the owner's
+        // row-split reports at all.
+        //
+        // "I had 10 of diamonds covering 8 of diamonds. The cards were in the
+        // skinny card one row layout. The other player then hit good. Around
+        // the time the check started rotate animating, the cards started to
+        // animate towards the two row layout, then like changed their mind mid
+        // layout transition and went back to the skinny card one row layout.
+        // Why the fuck did that happen? We had ten cards and they said good!"
+        //
+        // FHandFan splits into two rows once a card would be thinner than 34pt,
+        // which at a phone's hand width is somewhere around ten cards - so every
+        // arrival run before this one watched a hand that could not split, and
+        // the whole class was invisible to the rig. The warm-up below therefore
+        // PREFERS pickups while it is under the target, because a pickup is the
+        // only move in Durak that makes a hand bigger by more than one.
+        let bigHand = Int(ProcessInfo.processInfo.environment["HARNESS_ARRIVE_BIGHAND"] ?? "") ?? 0
+        func biggestHand() async -> Int {
+            guard let v = await MessageKernel.shared.residentView(viewer: -1) else { return 0 }
+            return v.players.map(\.handCount).max() ?? 0
+        }
         // Is the wanted ARRIVAL playable right now? For `goodend` the good must
         // actually CLOSE the bout, which means a non-empty, fully covered table
         // - a good over open attacks merely passes priority and animates
         // nothing, which is not the arrival being posed.
         func wantReady() async -> Int? {
             guard let v = await MessageKernel.shared.residentView(viewer: -1) else { return nil }
+            // Not until somebody's hand can actually SPLIT - see `bigHand`. The
+            // arrival is only interesting on a board where the row count is in
+            // play, so a run that posed it over a six-card hand would pass while
+            // testing nothing.
+            if bigHand > 0, (v.players.map(\.handCount).max() ?? 0) < bigHand { return nil }
             if kind == "goodend" {
                 guard !v.battles.isEmpty, v.battles.allSatisfy({ $0.defense != nil })
                 else { return nil }
@@ -666,7 +693,9 @@ extension HarnessModel {
         // than the other kinds, and PREFERS covering all the way there (the same
         // two tricks MessageBoutEndHoldTests.findClosingCover uses to reach the
         // same board offline: round after round of pickups never gets there).
-        let cap = deep ? 400 : 40
+        // …and a bighand run needs room to take several times over, so it gets
+        // the deep cap even for a shallow kind.
+        let cap = deep || bigHand > 0 ? 400 : 40
         // …and if one whole game goes by without producing the board, RE-DEAL.
         // Not every deal contains a bout-ending cover at all (the defender has
         // to run out on a table they can fully answer), so a single game is a
@@ -676,6 +705,14 @@ extension HarnessModel {
         // it re-deals too. Any other kind takes exactly one pass, as it always
         // has.
         let deals = deep || transfer ? 40 : 1
+        // Grow a hand: take the table rather than defend it, and open bouts
+        // rather than end them, until somebody is over the split threshold.
+        // Returns nil once the target is reached, which hands the warm-up back
+        // to its ordinary "first legal move" driver.
+        func bigHandPick(_ legal: [Move], _ biggest: Int) -> Move? {
+            guard bigHand > 0, biggest < bigHand else { return nil }
+            return legal.first { $0.type == .pickup } ?? legal.first { $0.type == .attack }
+        }
         deal: for salt in 0..<deals {
             if salt > 0 {
                 let reseed = Data((0..<32).map { UInt8(truncatingIfNeeded: $0 &* 29 &+ salt) | 1 })
@@ -696,7 +733,8 @@ extension HarnessModel {
                         // second clause the warm-up plays every pass it finds
                         // and `wantReady` is asked the instant after the only
                         // seat that could transfer has stopped being able to.
-                        : legal.first { $0.type != .wait && !(transfer && $0.type == .pass) }
+                        : bigHandPick(legal, await biggestHand())
+                            ?? legal.first { $0.type != .wait && !(transfer && $0.type == .pass) }
                     if let m = pick {
                         try? await MessageKernel.shared.apply(seat: s, move: m)
                         lastSeat = s; acted = true; break
