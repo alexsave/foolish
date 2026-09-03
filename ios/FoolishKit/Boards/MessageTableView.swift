@@ -3671,17 +3671,35 @@ public struct MessageTableView: View {
     /// slot BEFORE the apply, because by the time the flight builds the hand has
     /// closed over the gap and there is nothing left to measure. That snapshot is
     /// only meaningful against the board box it was taken in, and in the compact
-    /// drawer that box can move between the two moments - `MessagesRootView.follow`
+    /// drawer that box can move between the two moments: `MessagesRootView.follow`
     /// holds it at the EXPANDED height for the collapse tween and then hands it
-    /// back to the model box in one turn (flipping top-anchored to
-    /// bottom-anchored), and staging while already compact resizes the compose
-    /// field and with it the drawer, with no tween involved at all. Either way
-    /// the ghost starts a board's worth of points from where the card was and
-    /// flies in from off-screen. Owner, on a double cover of J-hearts and
-    /// 9-hearts: "instead of flying over smoothly, the cards just vanish from my
-    /// hand, and then fly in from the bottom of the screen to cover the cards. I
-    /// suspect this is some geometry coordinate mishap for the collapsed mode.
-    /// seen this a lot in many forms."
+    /// back to the model box in one turn, flipping top-anchored to
+    /// bottom-anchored. The board box is `boxHeight > 0 ? boxHeight :
+    /// geo.size.height`, so the tween is the ONLY thing that can make it taller
+    /// than the drawer, and `playStep`'s own tween gate is what can stall a
+    /// build across the flip.
+    ///
+    /// MEASURED, AND ONE THEORY STRUCK. This used to also claim that "staging
+    /// while already compact resizes the compose field and with it the drawer".
+    /// It does not: driven on a device with a staged bubble inserted while
+    /// compact, the transcript shrinks and the drawer does not move - no `stage
+    /// follow` line fires at all. A multicover played while already compact is
+    /// clean end to end (ghosts at y=288 in a 332pt board, covers landing
+    /// correctly, no `flight-rebase`). What the same run DID show is that the
+    /// host reports real noise even on a plain compact open (854 -> 332 -> 298
+    /// -> 332), which is why this stays.
+    ///
+    /// So its scope is narrow and honest: a play whose flight is built across a
+    /// box change, which is the collapse tween and nothing else. It is a
+    /// mathematical no-op otherwise - `playStep` builds one runloop hop after
+    /// the snapshot with the battle rect already published, so no new preference
+    /// has arrived and both deltas are zero.
+    ///
+    /// IT IS NOT THE CURE FOR THE "VANISH". That half was `showHeld` being
+    /// planted only for cards WITH a source rect while `preHide` veiled them
+    /// all - see `playAt`. Owner, on a double cover of J-hearts and 9-hearts:
+    /// "instead of flying over smoothly, the cards just vanish from my hand, and
+    /// then fly in from the bottom of the screen to cover the cards."
     ///
     /// THIS IS THE SAME RULE AS `inBoardSpace`, on the other side of the flight:
     /// anchor on the hand's BOTTOM edge, the one number neither a row-count
@@ -3690,11 +3708,10 @@ public struct MessageTableView: View {
     /// to one) into the correction and break the case it is meant to fix.
     ///
     /// A no-op on a board that did not move, which is every expanded board and
-    /// most collapsed ones - so nothing that works today pays for this. UNPROVEN
-    /// ON DEVICE: the mechanism is reached by elimination, not by a trace, so it
-    /// leaves a breadcrumb whenever it actually corrects anything. If the next
-    /// report of this still has no `flight-rebase` line beside it, the cause is
-    /// somewhere else and this can come out.
+    /// most collapsed ones - so nothing that works today pays for this. It
+    /// leaves a breadcrumb whenever it actually corrects anything: if a report
+    /// of a mis-aimed flight ever arrives with no `flight-rebase` line beside
+    /// it, the cause is somewhere else and this can come out.
     private func rebased(_ rects: [String: CGRect], measuredIn was: CGRect) -> [String: CGRect] {
         guard was != .zero, handFrame != .zero else { return rects }
         let dx = handFrame.minX - was.minX
