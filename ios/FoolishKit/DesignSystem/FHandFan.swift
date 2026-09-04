@@ -414,6 +414,71 @@ public struct FHandFan: View {
         return best
     }
 
+    /// THE POINT THE BOARD IS TOLD ABOUT - and the whole answer to "a drag that
+    /// ends INSIDE THE HAND must never play a card".
+    ///
+    /// ROUND 40, owner on a real device in the COMPACT DRAWER: "In collapsed
+    /// mode, now I can't rearrange cards. It seems to trigger attack." Sliding a
+    /// card sideways to reorder it threw it onto the table as an attack instead.
+    ///
+    /// WHY it happens. The board resolves a release with `BoardDrop.target`,
+    /// which hit-tests the BATTLE SLOTS BEFORE the hand (deliberately - see
+    /// `MessageTableView.handDropFrame`). In the compact drawer the two regions
+    /// genuinely overlap. Measured on the rig, iPhone 16, a 20-card hand in a
+    /// ~276pt drawer (`board-compact` with the hand two rows deep):
+    ///
+    ///     hand      = (16, 106) 343x166      -> rows centred at y=150 and y=228
+    ///     battle[0] = (156, 101)  62x84      -> y 101...185, x 156...218
+    ///
+    /// The hand's whole TOP ROW lies inside the battle grid. The resting centre
+    /// of hand slot 4, (170,150), is a point the player is holding a card at,
+    /// and `BoardDrop.target` answers `.battle(0)` for it. `CardPlay.resolve`
+    /// then ignores the target entirely for an attacker and returns the plain
+    /// attack - the card is played. That is the owner's "it seems to trigger
+    /// attack", and it is compact-only because that is the only place the two
+    /// regions touch.
+    ///
+    /// WHY THE FIX IS HERE and not in `BoardDrop.target`. Two other cures were
+    /// tried on paper and rejected:
+    ///
+    ///  - ORDERING (hand beats battles). The board does not hand `BoardDrop` the
+    ///    hand's real rect: it hands `handDropFrame`, the CANCEL BAND, which is
+    ///    the hand grown 64pt UPWARD (round-7 #3: in the compact drawer a
+    ///    rearrange whose finger drifts off the thin cropped strip used to land
+    ///    on `.table` and get rejected with "move not allowed"). On the measured
+    ///    board that band is (16,42) 343x254 - it SWALLOWS battle[0] whole, so
+    ///    letting it win first would make every cover in the compact drawer
+    ///    unreachable. `BoardDrop` cannot tell the band from the hand, because it
+    ///    is given one rect and only the band ever reaches it.
+    ///  - GEOMETRY (stop the battle slack reaching down into the hand). The 8pt
+    ///    slack is not the cause: (170,150) is inside battle[0]'s RAW rect, not
+    ///    just its inflated one. Removing the slack changes nothing.
+    ///
+    /// This view is the one place that holds the hand's TRUE frame at the instant
+    /// the finger lifts (`handFrameSelf`), so this is where the rule can be
+    /// stated. Round-7 #3's 64pt widening is left exactly as it was: a release
+    /// ABOVE the hand is not inside it, so it is passed through untouched and
+    /// still falls through battles into the cancel band, exactly as before. All
+    /// that changes is the case that band was never meant to cover - a finger
+    /// still ON the cards.
+    ///
+    /// The projection is onto the hand's own FLOOR, keeping x so the point stays
+    /// over the same card. Reporting nothing at all instead was tried and
+    /// rejected: `onDragEnded` is the ONLY thing that clears the board's
+    /// `dragCard`/`dragPoint`, so swallowing it leaves the verb-hint pill stuck
+    /// on screen and the cover highlights lit after every rearrange. The floor is
+    /// the one line inside the hand that the table cannot be sitting on - the
+    /// battle grid grows DOWNWARD from the top of the board into the hand, so a
+    /// battle reaching the hand's bottom edge would mean the table is drawn over
+    /// the entire hand, at which point no drop is meaningful anyway.
+    public static func boardPoint(_ point: CGPoint, hand: CGRect) -> CGPoint {
+        guard hand.contains(point) else { return point }
+        // `nextDown`, not a whole point: this must stay inside `hand` for a
+        // `contains` test (which excludes maxY) while moving the point as
+        // little as possible - it is still the player's finger.
+        return CGPoint(x: point.x, y: hand.maxY.nextDown)
+    }
+
     /// `cards` reordered by the local `order` state: identities still present
     /// keep their relative order from `order`; any identity in `cards` not yet
     /// in `order` (a fresh hand, or a card just dealt in) is appended in
@@ -786,7 +851,15 @@ public struct FHandFan: View {
                         // start. `dragOffset` above is untouched, so the card still
                         // follows the finger from the first pixel.
                         if dragMoved || hypot(g.translation.width, g.translation.height) >= Self.tapThreshold {
-                            onDragChanged(card, g.location)
+                            // Round 40: through `boardPoint`, the same as the
+                            // release below. The board's live verb hint resolves
+                            // the SAME `BoardDrop.target` the release will (see
+                            // `MessageTableView.dragPreview` - "so neither can
+                            // disagree with what actually happens on release"),
+                            // so reporting the raw point here and the projected
+                            // one there would put an "Attack" pill on screen for
+                            // the whole of a rearrange that then plays nothing.
+                            onDragChanged(card, Self.boardPoint(g.location, hand: handFrameSelf))
                         }
                         // The dragged card's live SLOT centre, and from it the
                         // two things that want it.
@@ -861,7 +934,13 @@ public struct FHandFan: View {
                             onTap(c)
                             return
                         }
-                        if wasDragging { onDragEnded(c, g.location) }
+                        // Round 40: `boardPoint`, not the raw finger - a release
+                        // still on the cards is a rearrange and must never play
+                        // one, whatever the battle grid claims about that spot.
+                        // See `boardPoint` for the measurement and for the two
+                        // cures (reordering `BoardDrop`, shrinking the battle
+                        // slack) that were rejected.
+                        if wasDragging { onDragEnded(c, Self.boardPoint(g.location, hand: handFrameSelf)) }
                     }
             )
     }

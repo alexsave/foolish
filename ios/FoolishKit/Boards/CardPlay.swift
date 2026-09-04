@@ -34,6 +34,22 @@ public enum CardPlay {
         let want = Set(cards.map(\.identity))
         func sameCards(_ m: Move) -> Bool { Set(m.cards.map(\.identity)) == want }
 
+        // A DROP BACK IN THE HAND IS A REARRANGE, NEVER A PLAY - for the
+        // attacker as much as the defender.
+        //
+        // Round 40. This used to live inside the defender's switch alone, so
+        // `resolve(target: .hand, isDefender: false)` came out of the attacker
+        // branch below as a perfectly good attack: the attacker branch reads
+        // only the CARDS and ignores `target` entirely. Nothing was saved by
+        // that - it was only ever the boards' own `if target == .hand { return }`
+        // (TableView.onDragEnded, MessageTableView.onDragEnded) standing between
+        // a rearrange and a played card, and a resolver that answers "attack"
+        // when it was told "the hand" is a loaded gun for the next caller.
+        // `FHandFan.boardPoint` is what makes the compact drawer ASK the right
+        // question; this is the resolver refusing to give the wrong answer if
+        // anything ever asks it again.
+        if target == .hand { return nil }
+
         if !isDefender {
             // Attacker: the only card play is an attack with exactly these cards
             // (one card, or several of the same rank — the kernel enumerates which).
@@ -43,7 +59,7 @@ public enum CardPlay {
         // Defender.
         switch target {
         case .hand:
-            return nil
+            return nil   // unreachable: the guard above answers it for both roles
         case .battle(let i):
             guard i >= 0, i < battles.count, battles[i].defense == nil else { return nil }
             let attack = battles[i].attack
