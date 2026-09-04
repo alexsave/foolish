@@ -176,6 +176,18 @@ public struct MessageTableView: View {
     /// only ever jump instantly to their final spot. `-1` marks "not measured yet"
     /// so the first real height wins immediately (see `boardContent`'s onChange).
     @State private var buttonLift: CGFloat = -1
+    /// `lift` for the promoted status mark (see `statusMarksOnTop`'s overlay),
+    /// which is drawn OUTSIDE `boardContent`'s GeometryReader and so cannot read
+    /// the local. `buttonLift` is the mirror the chrome already rides; before it
+    /// has been measured (-1, the first paint) fall back to the same arithmetic
+    /// it will settle on, off the hand's published width, so the mark does not
+    /// spend a frame at the bottom of the board and then jump up.
+    private var statusMarkLift: CGFloat {
+        if buttonLift >= 0 { return buttonLift }
+        let hand = controller.view?.me?.hand ?? []
+        guard handFrame.width > 0 else { return 0 }
+        return FHandFan.height(cards: hand, availableWidth: handFrame.width, crop: Self.handCrop)
+    }
     @State private var deckFrame: CGRect = .zero
     @State private var handCardFrames: [String: CGRect] = [:]
     @State private var seatFrames: [Int: CGRect] = [:]
@@ -534,6 +546,51 @@ public struct MessageTableView: View {
         .padding(.horizontal, 8).padding(.top, 14).padding(.bottom, 4)   // top margin so the ring isn't clipped in the compact drawer
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay { FlyingCardsLayer(animator: animator) }
+        // A STATUS ICON IS ALWAYS IN FRONT OF A CARD.
+        //
+        // Owner, round 41: "when the cards on the table or hand swap from the
+        // static version to the animated moving version, the z index on screen
+        // changes. As a result this can cause it to go from being under a
+        // checkbox to on top of a checkbox."
+        //
+        // Both halves of that are true and neither is wrong on its own. In the
+        // ZStack a table card is drawn FIRST, so it is behind the role marks; a
+        // flying card is not in the ZStack at all, it is in the overlay above
+        // it, so it is in front of them. Nothing moves the card - the layer it
+        // lives in changes the instant it starts moving, and the mark it was
+        // behind is suddenly behind IT.
+        //
+        // So the marks move above the flight layer, and the ordering stops
+        // depending on which copy of the card is on screen. Wrapped in the SAME
+        // padding the board content carries, so this is a pure change of z: the
+        // mark lands on exactly the pixel it landed on before (an overlay is
+        // sized to the padded frame, the ZStack to that frame minus the
+        // padding, and the difference is what this puts back).
+        //
+        // NOT DONE HERE, and worth knowing: the OPPONENTS' status pips live
+        // inside `FSeatBadge`'s own VStack (`roleRow`), so promoting them means
+        // splitting the badge in two - and the badge publishes `SeatFramesKey`
+        // from inside itself, which is where every draw and pickup flight aims.
+        // The self mark is the one a card actually crosses (it sits 6pt above
+        // the hand, in the takeoff path of every card played), so it is the one
+        // this fixes.
+        .overlay {
+            if let v = controller.view {
+                selfRoleIndicator(v)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .padding(.bottom, statusMarkLift + 6)
+                    // Round-7's rule, carried over with the view: never let the
+                    // board's card spring float this.
+                    .animation(nil, value: controller.view)
+                    .allowsHitTesting(false)
+                    // The board content's own inset, re-applied INSIDE the
+                    // overlay. An overlay is sized to the padded frame and the
+                    // ZStack to that frame minus the padding, so without this
+                    // the mark would sit 4pt lower and 8pt wider than it used
+                    // to. This is a change of z and nothing else.
+                    .padding(.horizontal, 8).padding(.top, 14).padding(.bottom, 4)
+            }
+        }
         // Above the cards: a role changing hands IS the thing being read at that
         // moment (it happens after the sweep and the deal, when nothing else is
         // moving), and a shield disappearing behind a badge would read as a
@@ -876,9 +933,15 @@ public struct MessageTableView: View {
                 // Self role indicator: the local seat never got a role mark before
                 // (note 3) — only opponents (FSeatBadge) did. Same spot the old
                 // first-attacker-only sword used: just above my hand.
-                selfRoleIndicator(view)
+                //
+                // ROUND 41 - IT IS DRAWN FROM `statusMarksOnTop` NOW, not from
+                // here, so that a card crossing it cannot change which of the
+                // two is in front. Left in place as an empty slot so the ZStack
+                // order below (action bar, undo, settings, hand) is unchanged.
+                Color.clear
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                     .padding(.bottom, lift + 6)
+                    .allowsHitTesting(false)
                     // Round-7 ("buttons should NEVER move / float"): isolate this
                     // from the board's card spring. The ancestor animates on
                     // `.animation(cardMotion, value: controller.view)`; the correct
@@ -889,7 +952,6 @@ public struct MessageTableView: View {
                     // drift) and NOT keying on `handHeight` (the wrong value - the
                     // change rides controller.view). Position now also snaps because
                     // it reads the mirrored `lift`, not the springy `handHeight`.
-                    .animation(nil, value: controller.view)
 
                 // Action buttons float bottom-right, above the hand (web absolute
                 // bottom:90/right:20). They only appear when a flag enables them.
