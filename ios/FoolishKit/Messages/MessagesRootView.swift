@@ -668,37 +668,16 @@ private struct GameSurface: View {
 
     /// IS THIS BOARD A BRANCH OFF AN OLD BUBBLE, and record it if it is not.
     ///
-    /// One question asked of one authority: the kernel's Rule P, against the
-    /// newest chain this device has already seen for the same game
-    /// (`MessageGameStore.latestChain`). A strictly-preferred chain on file
-    /// means the table has moved past what is being opened, which is the owner's
-    /// cheat and also the ordinary accident of tapping an old bubble.
-    ///
-    /// FAILS OPEN, everywhere. Nothing on file, a store with no App Group, a
-    /// kernel call that threw - all answer "not superseded" and record what they
-    /// can. A false positive here is a game that cannot be played, which is a
-    /// far worse defect than the one this prevents.
+    /// The decision itself is `StaleBranchGate.rank` - two authorities, Rule P
+    /// and "does the chain on file actually show more of the game", both of
+    /// which must agree before the board goes read-only. It lives there and not
+    /// here because it can be driven from a test with real sealed chains; this
+    /// only spends the answer.
     @discardableResult
     private func rankAgainstHighWater(_ payload: Data, env: MessageEnvelope) async -> Bool {
-        let store = MessageGameStore.shared
-        guard let known = store.latestChain(gameId: env.gameId, chatKey: chatKey),
-              known != payload else {
-            store.setLatestChain(gameId: env.gameId, chatKey: chatKey, payload: payload)
-            supersededBy = nil
-            return false
-        }
-        // > 0 means the SECOND argument wins, so this asks "does what I already
-        // have beat what is being opened?" - the same call `maybeAdoptIncoming`
-        // makes, in the other direction.
-        let pref = (try? await MessageKernel.shared.preferred(payload, known)) ?? -1
-        if pref > 0 {
-            AnimLog.say("board is behind - a newer chain for game \(env.gameId) is on file")
-            supersededBy = known
-            return true
-        }
-        store.setLatestChain(gameId: env.gameId, chatKey: chatKey, payload: payload)
-        supersededBy = nil
-        return false
+        let verdict = await StaleBranchGate.rank(payload: payload, env: env, chatKey: chatKey)
+        supersededBy = verdict.newest
+        return verdict.superseded
     }
 
     /// Fold an ARRIVING bubble into the live surface, Rule P deciding (§7.2).
