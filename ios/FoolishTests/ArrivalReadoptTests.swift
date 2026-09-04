@@ -205,10 +205,23 @@ final class ArrivalReadoptTests: XCTestCase {
 
         XCTAssertEqual(c.basePayload, s2, "the re-sent chain IS adopted - the base moves")
         XCTAssertEqual(c.view, shown, "…but the board it carries is the one already shown")
-        XCTAssertFalse(c.openReplayEvents.isEmpty,
-                       "sanity: the chain does carry a last move - the guard, not vacuity, "
-                       + "must be what keeps the veil down")
         XCTAssertFalse(c.replayPending,
                        "no view change will fire onChange, so an armed veil would stand forever")
+        // THE PREMISE OF THIS TEST CHANGED, and it changed for the better.
+        //
+        // It used to also assert `!c.openReplayEvents.isEmpty`, on the reasoning
+        // that the guard - and not mere vacuity - had to be what kept the veil
+        // down. That assertion described a board which, handed the same turn a
+        // second time, still lined up its move to be animated again and was
+        // saved only by `publish` noticing the view had not moved.
+        //
+        // The REPLAY FLOOR (MessageEnvelope.openChain) now stops that a layer
+        // earlier: a bubble may not ask this board to replay atoms it has
+        // already shown, so a re-seal of the turn already on screen resolves to
+        // an EMPTY stream rather than to a stream the veil guard has to catch.
+        // Both defences stand; the outer one simply gets there first, which is
+        // why this is now the assertion.
+        XCTAssertTrue(c.openReplayEvents.isEmpty,
+                      "a re-seal of the turn already on screen must ask for no replay at all")
     }
 }

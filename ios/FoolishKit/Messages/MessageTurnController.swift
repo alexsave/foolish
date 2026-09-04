@@ -517,11 +517,33 @@ public final class MessageTurnController: ObservableObject {
     /// game ends - see `publish`. nil while a game is running, and nil for a
     /// finished one the kernel cannot encode.
     @Published public private(set) var replayCode: String?
-    /// …as the web replay URL, `foolish.cards/<code>`: a long path segment is
-    /// classified as a self-contained replay payload by the site itself
-    /// (src/app/[game_id]/page.tsx), so this lands on the replay screen and
-    /// needs no lookup and no account.
-    public var replayURL: URL? { replayCode.map { MessageEnvelope.replayLink(code: $0) } }
+    /// …as the web replay URL, `foolish.cards/<code>-<names>`: a long path
+    /// segment is classified as a self-contained replay payload by the site
+    /// itself (src/app/[game_id]/page.tsx), so this lands on the replay screen
+    /// and needs no lookup and no account.
+    ///
+    /// THE NICKNAMES RIDE ALONG (ReplayExtras). The kernel's code is the cards
+    /// and nothing else, so a game between friends used to replay on the web as
+    /// "P1" beating "P2" - the site has read a names channel off the end of the
+    /// code since the channel existed, and this was the one producer never
+    /// writing it. The roster is `names`, the chain's own joins, padded to the
+    /// table's width because the reader counts seats from the moves and expects
+    /// one entry per seat; a seat nobody ever named stays "" and renders as
+    /// "P<n>" exactly as it does today.
+    ///
+    /// `numPlayers` comes from the VIEW rather than the joins for the same
+    /// reason: joins are who introduced themselves, seats are how many are
+    /// playing, and they are not always the same number (a 2p opponent who has
+    /// not moved yet has no join). Without a view there is no seat count to pad
+    /// to, so the link degrades to the bare moves code - the old behaviour, not
+    /// a broken one.
+    public var replayURL: URL? {
+        replayCode.map { code in
+            MessageEnvelope.replayLink(
+                code: code,
+                names: ReplayExtras.seatNames(names, count: view?.numPlayers ?? 0))
+        }
+    }
     /// A genesis game with no move yet is not sealable (a 0-action opening is not
     /// a valid FMSG body, MSG_EBODY); continuations always are.
     public var isGenesis: Bool { if case .genesis = base { return true }; return false }
@@ -878,7 +900,16 @@ public final class MessageTurnController: ObservableObject {
             // The envelope's own clock and bubble delta come back with the
             // decode - the hold measures from the one, the open-replay groups
             // on the other, and both belong to the CHAIN, not to this device.
-            guard let opened = try? await kernel.openChain(payload: payload, viewer: mySeat) else {
+            // THE FLOOR IS WHAT THIS BOARD HAS ALREADY ANIMATED. `baseTurn`
+            // still holds the PREVIOUS chain's atom count at this point -
+            // `adoptBaseFacts` overwrites it just below - so it is exactly "how
+            // far the player has already watched this game get to". A bubble
+            // claiming to start earlier than that is claiming to re-show
+            // something already on screen; see `openChain`. Zero on a cold open
+            // (nothing adopted yet), where no clamp must apply.
+            let alreadyShown = baseTurn
+            guard let opened = try? await kernel.openChain(payload: payload, viewer: mySeat,
+                                                           floor: alreadyShown) else {
                 adoptBaseFacts(nil)
                 return ([], nil)
             }

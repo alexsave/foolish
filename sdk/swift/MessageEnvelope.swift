@@ -158,6 +158,20 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
         URL(string: "https://foolish.cards/" + code)!
     }
 
+    /// …with the table's NICKNAMES attached, so the web replay shows "Sveta" and
+    /// "Misha" instead of "P1" and "P2" (ReplayExtras). `names` is seat-ordered
+    /// and must be exactly as long as the game has players - the reader counts
+    /// seats from the decoded moves, not from this blob.
+    ///
+    /// It is one function and not a mutation of `replayLink` because the names
+    /// are NOT the kernel's to give: the code comes out of
+    /// fio_replay_share_code_b32, which knows the cards and not the people, and
+    /// the roster comes off the FMSG chain's joins. Joining them is a URL
+    /// concern, and the URL layer is the one thing here that is Swift's.
+    public static func replayLink(code: String, names: [String]) -> URL {
+        replayLink(code: ReplayExtras.code(moves: code, names: names))
+    }
+
     /// Decode + validate + ADOPT: the chain is replayed through the kernel, so
     /// afterwards the engine's resident game IS this payload's game.
     public static func decode(url: URL, viewer: Int) async throws -> MessageEnvelope {
@@ -701,10 +715,39 @@ public actor MessageKernel {
     ///
     /// `prior` is the board as it stood BEFORE the bubble's move, or nil when
     /// there is nothing before it (see `lastMoveEventsWithPrior`).
-    public func openChain(payload: Data, viewer: Int)
+    /// `floor` is the number of atoms this board has ALREADY ANIMATED - never
+    /// replay behind it. See the note on the clamp below.
+    public func openChain(payload: Data, viewer: Int, floor: Int = -1)
         throws -> (env: MessageEnvelope, events: [GameEvent], prior: GameView?) {
         let env = try decode(payload: payload, viewer: viewer)
-        let opening = lastMoveEventsWithPrior(viewer: viewer, atomsBefore: env.atomsBefore)
+        // A BUBBLE'S OWN BOUNDARY IS THE SENDER'S CLAIM, NOT A FACT.
+        //
+        // `atomsBefore` is `turn - newAtoms`, and `newAtoms` is stamped by
+        // whoever sealed the bubble - so a sender whose own rebase failed
+        // (every early return in `markSent` used to leave the base a bubble
+        // behind, and an older build still does) stamps a boundary one move too
+        // early, and every recipient dutifully re-animates a move they have
+        // already watched. Owner, on two SEPARATE single-cover bubbles: "when
+        // they sent the J of spades cover, I saw the Q of hearts animate IN
+        // PARALLEL with the J of spades! Multi card covers / attacks in a
+        // SINGLE BUBBLE should be animated in parallel, but these were separate
+        // bubbles!"
+        //
+        // The receiver has a fact the sender's claim cannot override: how much
+        // of this chain it has already shown. Clamping to it makes the board
+        // robust against any sender - a stale build, a failed rebase, a
+        // hand-rolled bubble - instead of trusting a number computed on a phone
+        // this one cannot see. It can only ever REMOVE re-animation, never add
+        // any: `max` with a floor of -1 (the default, "no floor") is the exact
+        // behaviour every existing caller had.
+        //
+        // Deliberately NOT applied to a cold open. There the floor is -1
+        // because the controller has adopted nothing yet, which is what keeps
+        // "close the bubble I just sent and open it again" animating my own
+        // move (owner, round 22) - a clamp keyed on the chain's own turn would
+        // have silently killed that.
+        let opening = lastMoveEventsWithPrior(viewer: viewer,
+                                              atomsBefore: max(env.atomsBefore, floor))
         return (env, opening.events, opening.prior)
     }
 
@@ -910,30 +953,9 @@ public actor MessageKernel {
     // suite still exercise Rule R as a kernel capability).
 }
 
-/// RFC 4648 base32, uppercase, no padding — the same alphabet the replay codec
-/// and the /m/ route use (codec.ts). QR-alphanumeric-safe and URL-safe, which is
-/// why the payload is base32 and not base64.
-public enum Base32 {
-    private static let A = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
-
-    public static func encode(_ data: Data) -> String {
-        var out = "", bits = 0, value = 0
-        for b in data {
-            value = (value << 8) | Int(b); bits += 8
-            while bits >= 5 { out.append(A[(value >> (bits - 5)) & 31]); bits -= 5 }
-        }
-        if bits > 0 { out.append(A[(value << (5 - bits)) & 31]) }
-        return out
-    }
-
-    public static func decode(_ s: String) -> Data? {
-        var bits = 0, value = 0
-        var out = Data()
-        for ch in s.uppercased() {
-            guard let idx = A.firstIndex(of: ch) else { continue }  // ignore stray chars
-            value = (value << 5) | idx; bits += 5
-            if bits >= 8 { out.append(UInt8((value >> (bits - 8)) & 0xff)); bits -= 8 }
-        }
-        return out
-    }
-}
+// Base32 moved to its own file (sdk/swift/Base32.swift). It is pure Foundation
+// and this file is not: everything else here reaches into CFoolish, so the codec
+// could not be compiled on its own - and the cross-language round-trip test for
+// the replay names blob (e2e/imessage_replay_names.test.ts) has to compile the
+// REAL codec, not a copy of it, or it proves nothing. Same type, same module,
+// same callers.
