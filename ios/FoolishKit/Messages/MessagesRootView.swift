@@ -516,6 +516,16 @@ private struct GameSurface: View {
             .fToast($toast)
             // The setup/lobby Settings + Help squares present these — same
             // sheets as the board's own pair (MessageTableView).
+            #if DEBUG
+            // The rig's way in, matching the board's own pair. Without it the
+            // only way to ask this surface for its Settings sheet is to hit a
+            // 40pt square with a synthetic tap, and a probe that can miss cannot
+            // tell "the sheet is broken" from "the tap was off".
+            .onAppear {
+                if ProcessInfo.processInfo.environment["HARNESS_OPEN_SETTINGS"] != nil { showSettings = true }
+                if ProcessInfo.processInfo.environment["HARNESS_OPEN_RULES"] != nil { showRules = true }
+            }
+            #endif
             .sheet(isPresented: $showSettings) {
                 MessageSettingsView { showSettings = false }
             }
@@ -1880,7 +1890,16 @@ private struct GameSurface: View {
             if let read = try? await MessageKernel.shared.readBoard(
                     .continuation(payload: winner), replaying: [], seat: -1, sentAt: 0),
                let view = read.view {
-                spectatorReplayURL = read.replayCode.map(MessageEnvelope.replayLink(code:))
+                // …with the roster attached, the same as a seated player's link
+                // (MessageTurnController.replayURL): a watcher who shares the
+                // finished game should not hand out a link that has forgotten
+                // who played it. `names` is the joins of the chain that was just
+                // decoded, `view` the table it built.
+                spectatorReplayURL = read.replayCode.map {
+                    MessageEnvelope.replayLink(
+                        code: $0,
+                        names: ReplayExtras.seatNames(names, count: view.numPlayers))
+                }
                 spectator = (view, names)
                 // ROUND 21: a FINISHED chain also gets a real board to watch the
                 // last move on, seated at nobody's seat - see `spectatorBoard`.
