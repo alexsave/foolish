@@ -1496,7 +1496,15 @@ public struct MessageTableView: View {
         // the move instead would be worse: a pickup after somebody attacks me is
         // one of the commonest turns in the game, and a rig that can never play
         // it can never test it. So do what a player does - wait, then take.
-        if asked {
+        // HARNESS_AUTOMOVE_NOWAIT (round 42): DON'T wait - play into whatever
+        // is on screen this instant, hold and running animation included. It is
+        // the only way the rig can pose "the human drags a card while the open
+        // replay is still flying", which no other knob reaches: every other
+        // auto-play path settles first, and that is exactly the moment a live
+        // play and a running stream can fight over the frozen counts (see
+        // `releaseCounts`). Never set outside the rig.
+        let nowait = ProcessInfo.processInfo.environment["HARNESS_AUTOMOVE_NOWAIT"] != nil
+        if asked, !nowait {
             let waitUntil = Date().addingTimeInterval(20)
             while controller.pickupHold > 0, Date() < waitUntil {
                 try? await Task.sleep(nanoseconds: 250_000_000)
@@ -2012,6 +2020,33 @@ public struct MessageTableView: View {
         // just the ones that end a bout. Leaving them frozen after a plain
         // attack would pin every badge at its pre-move value for good.
         func releaseCounts() {
+            // NOT WHILE SOMEBODY ELSE OWNS THEM.
+            //
+            // These overrides are a SEQUENCE's property: whoever froze them
+            // advances them step by step as its flights land, and hands them
+            // back in its own teardown. A live play that takes one of the
+            // branches below starts no sequence of its own and does NOT claim
+            // `animSequenceToken` - there is nothing to claim until the kernel
+            // publishes a table slot - so a stream that is still running is
+            // still the newest, and its teardown is still coming. Releasing
+            // here snapped every seat badge, the deck and the discard to their
+            // FINAL counts in the middle of that stream's flight, and its next
+            // step then set them back: a count twitch with no move behind it,
+            // and the one kind of twitch the hand's own machinery cannot
+            // explain.
+            //
+            // Deferring is safe in the direction that matters. The owner of the
+            // freeze is by construction the newest sequence, so `runEventStream`
+            // 's teardown WILL release them - this only declines to do it early.
+            // A board with nothing running (every other caller, and the common
+            // case) is unchanged: `sequenceDepth` is 0 and this releases exactly
+            // as it always did.
+            guard BoardAnimator.sequenceDepth == 0 else {
+                AnimLog.say("releaseCounts deferred (depth=\(BoardAnimator.sequenceDepth)) - badges stay "
+                    + (controller.view?.players ?? []).map { "s\($0.seat)=\(shownHandCount($0))" }
+                        .joined(separator: " "))
+                return
+            }
             deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
             outShown = nil
         }
@@ -2794,6 +2829,31 @@ public struct MessageTableView: View {
     /// and the cards it is about to gain are hidden by `animator.preHide`
     /// instead, so the fan holds its final layout while the cards fly into it.
     private func freezeCounts(to v: GameView) {
+        // A SEED, NOT AN OVERRIDE - exactly what `roleShown` is, five lines
+        // below, and for exactly the reason written there: "a move played while
+        // a sequence is still animating (an impatient tap, the harness's
+        // auto-move) would freeze the roles to a board that has ALREADY
+        // rotated". The counts were left open to the same thing. A running
+        // stream froze them to the board before ITS move and walks them forward
+        // one step per landing flight; a live play of mine then froze them
+        // AGAIN, to a board several steps further on, and the stream's next step
+        // put them back - so a seat badge counted DOWN to its final value, back
+        // UP to where the replay had got to, and down again. Measured on the rig
+        // (`take`, HARNESS_AUTOMOVE_NOWAIT, slowmo 8): seat 3 went 6 -> 5 -> 6
+        // -> 5 with only one card ever leaving that seat.
+        //
+        // The play loses nothing by deferring. It starts no sequence of its own
+        // (there is nothing to claim until the kernel publishes a table slot),
+        // so the stream that owns the ledger is still the newest one, it is
+        // still walking the counts forward, and its teardown still hands them
+        // back. A board at rest - every other caller, and the common case - has
+        // `sequenceDepth` 0 and freezes exactly as it always did.
+        guard BoardAnimator.sequenceDepth == 0 else {
+            AnimLog.say("freezeCounts deferred (depth=\(BoardAnimator.sequenceDepth)) - badges stay "
+                + (controller.view?.players ?? []).map { "s\($0.seat)=\(shownHandCount($0))" }
+                    .joined(separator: " "))
+            return
+        }
         deckCountOverride = v.deckCount
         discardCountOverride = v.discardCount
         // ROUND 28: and who is drawn as out, frozen at the same synchronous
