@@ -51,6 +51,17 @@ extension HarnessModel {
         case "setup":
             newGame()
 
+        case "setup-compact":
+            // ROUND 39: the New-game screen in the COMPACT DRAWER, which is
+            // where the owner cannot use it. "Can't fucking got create game un
+            // collapsed, only expanded. Create game. Name field. Passing
+            // setting are all offset like I need to press a bit higher than the
+            // actual button to hit it." Every setup scenario before this one
+            // posed the EXPANDED sheet, so a drawer-height layout fault had
+            // nowhere to show up.
+            newGame()
+            collapseForReview()
+
         case "setup-longname":
             // A stored nickname is what pre-fills the setup field. 64 chars of
             // mixed script + emoji: does the field clip, wrap, or push the

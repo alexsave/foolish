@@ -25,6 +25,9 @@ import FoolishKit
 
 @MainActor
 final class HarnessModel: ObservableObject {
+    /// The host's "I am about to request .compact" signal, threaded into
+    /// `MessagesRootView` exactly as the extension threads it. See `stage`.
+    let collapseSignal = CollapseSignal()
     struct Participant: Identifiable, Equatable { let id = UUID(); let name: String }
     /// One delivered transcript entry. `preview` is the bubble IMAGE, snapshotted
     /// once when the move was staged — exactly what a real MSMessage carries
@@ -449,6 +452,23 @@ final class HarnessModel: ObservableObject {
                ProcessInfo.processInfo.environment["HARNESS_AUTOGAME"] == nil
                 || ProcessInfo.processInfo.environment["HARNESS_AUTOGAME_COLLAPSE"] != nil {
                 AnimLog.say("host collapse -> compact")
+                // ARM THE SURFACE FIRST, exactly as MessagesViewController.stage
+                // does (`collapseSignal.token += 1` immediately before
+                // `requestPresentationStyle(.compact)`).
+                //
+                // The rig never did this, and it is a fidelity hole big enough
+                // to hide a whole class of bug: `MessagesRootView.follow` has
+                // TWO paths, and the armed one - `CollapseTween.step`'s `.start`,
+                // which holds the box at the EXPANDED height and eases it down
+                // over 0.38s - is the path a real device takes on EVERY move.
+                // Un-armed, the rig fell through to a plain resize and every
+                // collapse run logged `armed=false`, so nothing the tween does
+                // to in-flight geometry had ever been exercised here. The owner
+                // reports animations behaving "as if the coordinates are
+                // calculated from an expanded screen"; a device trace shows the
+                // armed collapse and then a flight from the expanded hand
+                // position, and the rig could not pose it at all.
+                self.collapseSignal.token += 1
                 self.presentation = .compact
             }
         }

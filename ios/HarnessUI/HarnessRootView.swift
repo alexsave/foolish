@@ -604,6 +604,11 @@ private struct ExtensionStage: View {
                 // threads it (see HarnessModel.arrive).
                 incomingURL: model.incomingURL,
                 incomingToken: model.incomingToken,
+                // The host's arm signal, threaded exactly as
+                // MessagesViewController threads it. Without it the rig only
+                // ever exercised the UNARMED collapse path, and the armed one
+                // is what a device takes on every move. See HarnessModel.stage.
+                collapseSignal: model.collapseSignal,
                 requestExpand: { model.expand() },
                 onNewGame: { model.newGame() },
                 onSend: { payload, seat, fromUndo in await model.stage(payload, seat: seat, fromUndo: fromUndo) },
