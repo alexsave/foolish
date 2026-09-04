@@ -116,7 +116,22 @@ public final class LocalGame: ObservableObject, GameSession {
         let myResult = fool < 0 ? nil : (fool == humanSeat ? "lose" : "win")
         ReplayStore.shared.save(ReplayRecord(code: code, savedAt: Date(),
                                              players: players, fool: fool, myResult: myResult))
-        return URL(string: "https://foolish.cards/\(code)")
+        // …WITH THE ROSTER ATTACHED, the same as the iMessage link
+        // (MessageTurnController.replayURL). A code with no names decodes to
+        // "P1"/"P2" on the website, which is a worse page than the one the
+        // sharer was looking at.
+        //
+        // The names here are LOCALIZED BOT NAMES (AppCoordinator builds them),
+        // so a Russian player's shared replay shows Russian bot names to
+        // whoever opens it. Raised with the owner and waved through: "a russian
+        // players will have different bot names but whatever." The alternative -
+        // baking in English names nobody on this device ever saw - is worse,
+        // because the whole point of the link is to show the game as it was
+        // played. The HUMAN seat has no entry in `seatNames` and pads to an
+        // empty name, which decodes to the reader's own default exactly as an
+        // unnamed iMessage seat does.
+        return MessageEnvelope.replayLink(
+            code: code, names: ReplayExtras.seatNames(seatNames, count: players))
     }
 
     // MARK: - Bot drive loop

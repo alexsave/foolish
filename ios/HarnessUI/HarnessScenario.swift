@@ -1001,7 +1001,12 @@ extension HarnessModel {
             + "BACKWARDS paints: \(MessageTableView.backwardsPaints) "
             + "VANISHED paints: \(MessageTableView.vanishedAtRest) "
             + "STRANDED paints: \(MessageTableView.strandedAtRest) "
-            + "SWEEP-STILL-DRAWN: \(MessageTableView.sweepVisibleNow)")
+            + "SWEEP-STILL-DRAWN: \(MessageTableView.sweepVisibleNow) "
+            // ROUND 40: the veil still standing this long after the last move.
+            // Must be 0 - anything else is a card laid out nowhere, which the
+            // CENTRED fan renders as a row at the wrong width and centre. See
+            // `MessageTableView.veilStandingNow`.
+            + "VEIL-STILL-UP: \(MessageTableView.veilStandingNow)")
         // THE CONFLICT ORACLE (1.0(28)): did the conflict machinery engage?
         // `retractions` counts staged moves visibly retracted (an ARRIVE_STAGED
         // run must show >= 1 or the model never fired); `red-flights` counts

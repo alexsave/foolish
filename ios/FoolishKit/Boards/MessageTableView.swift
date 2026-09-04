@@ -643,26 +643,14 @@ public struct MessageTableView: View {
             // up a moment ago would never be taken down again: the counts would
             // stay frozen at their pre-move values for the rest of the game and
             // any card the move would have added stay invisible. Nothing
-            // happened, so give it all straight back.
-            handBeforeMyMove = nil
-            deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
-            // Round 16: and the roles `play` froze on the way in. Nothing
-            // happened, so there is nothing to hand over - this is the same
-            // board it was frozen from, which is why it is a plain release and
-            // not a sync.
-            roleShown = nil
-            // Round-6 bug 13: the same applies to a card `playAt` hid on its way
-            // to the table. A rejected move publishes no view change, so nothing
-            // will ever fly it and nothing else would take that veil down - the
-            // card would simply be missing from the hand it never left.
-            if let p = pendingPlacement {
-                // Round-8: also drop the resting held ghost `playAt` spawned - the
-                // move was rejected, so it will never fly; reveal the hand copy AND
-                // clear the ghost, or a static ghost would sit at the source.
-                animator.cancelHeld(Set(p.cards.map(\.identity)))
-                animator.reveal(Set(p.cards.map(\.identity)))
-                pendingPlacement = nil
-            }
+            // happened, so give it all straight back - including (round-6 bug
+            // 13) the card `playAt` hid on its way to the table, which would
+            // otherwise be missing from the hand it never left.
+            //
+            // ROUND 40 moved the body into `releaseLivePlayVeil`, because a
+            // rejection is not the only way a play comes to nothing and the two
+            // paths must give back the SAME things.
+            releaseLivePlayVeil()
         }
         .task {
             AnimLog.say("board .task seat=\(controller.mySeat) ready=\(controller.ready)")
@@ -1587,6 +1575,21 @@ public struct MessageTableView: View {
     /// The half of `vanishedAtRest` that is a real defect: a card hidden with
     /// nothing scheduled to reveal it. This one must be zero.
     public private(set) static var strandedAtRest = 0
+    /// How many cards are VEILED RIGHT NOW and reserving no fan slot - i.e.
+    /// `animator.preHidden`, the set `handSlotDeferred` keeps out of the hand.
+    ///
+    /// ROUND 40's invariant, as a level the rig can read once everything has
+    /// settled (owner: "when no sequence is running, nothing is pre-hidden and
+    /// nothing is deferred - the hand lays out every card it holds"). Non-zero
+    /// seconds after the last move means a veil nothing will ever take down:
+    /// the fan is CENTRED, so a hand permanently laying out 4 of its 7 cards is
+    /// drawn at the wrong width and the wrong centre, and every later veil
+    /// change re-lays the whole row from that wrong baseline - the owner's
+    /// "still seeing the hand card rows twitch during the discard animation".
+    ///
+    /// A LEVEL, not a count, for the reason `sweepVisibleNow` spells out: the
+    /// defect is a veil still standing at rest, not a moment that had one.
+    public private(set) static var veilStandingNow = 0
     /// How many cards the pre-bout sweep grid is drawing RIGHT NOW (0 when it
     /// is not sweeping). Read at rest by the harness oracle: nonzero once
     /// everything has settled means phantom cards on a table the game says is
@@ -1689,6 +1692,7 @@ public struct MessageTableView: View {
         // off a video frame. Added for the round-12 pickup sweep and kept: it is
         // what caught #11, where a card sat `hidden` on a table nothing was ever
         // going to un-hide (`visible=0 hidden=1` with no flight after it).
+        Self.veilStandingNow = animator.preHidden.count
         Self.traceGrid(sweeping: sweeping, shown: shown,
                        hidden: sweeping ? sweepHidden : veiledCardIds,
                        atRest: BoardAnimator.sequenceDepth == 0 && settled,
@@ -2021,6 +2025,14 @@ public struct MessageTableView: View {
         let oldHandIds = Set((old.me?.hand ?? []).map(\.identity))
         let myNewIds = Set((new.me?.hand ?? []).map(\.identity)).subtracting(oldHandIds)
         if !myNewIds.isEmpty { animator.preHide(myNewIds) }
+        // ROUND 40: the mark this sequence's OWN veil went up at, read
+        // SYNCHRONOUSLY here rather than inside the Task below. Everything
+        // veiled after this instant belongs to somebody else - most often a
+        // card the player taps while this sequence is still finishing - and the
+        // teardown may not hand it back (see `BoardAnimator.veilEpoch`). Read
+        // here and not in `runEventStream` because the Task can be a paint or
+        // two away, and a tap fits in that gap.
+        let veiledAt = animator.veilEpoch
         // The table just cleared in the view, so render the cards it HELD (old
         // battles) as the pre-bout table - they sit where they were and fly off,
         // instead of vanishing (a fade) the instant the view empties. Same grid the
@@ -2077,7 +2089,7 @@ public struct MessageTableView: View {
                     setSweep(covered)
                 }
             }
-            await runEventStream(stream, finalView: new)
+            await runEventStream(stream, finalView: new, veiledAt: veiledAt)
         }
     }
 
@@ -2088,7 +2100,8 @@ public struct MessageTableView: View {
     /// one animation path, shared by the open-replay and the live bout-end, so
     /// neither derives what-flies-where from a GameView diff. The caller pre-hides
     /// the moved cards first (synchronously, before the first paint).
-    private func runEventStream(_ events: [GameEvent], finalView view: GameView, openReplay: Bool = false) async {
+    private func runEventStream(_ events: [GameEvent], finalView view: GameView,
+                                openReplay: Bool = false, veiledAt: Int) async {
         // ROUND 30: LET THE SHEET FINISH COMING UP FIRST.
         //
         // Tapping a bubble expands the extension, and this board is mounted and
@@ -2189,7 +2202,7 @@ public struct MessageTableView: View {
             // single card and it goes back down".
             deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
             outShown = nil
-            animator.clearPreHidden()
+            animator.clearPreHidden(raisedBy: veiledAt)
             // Nothing is in flight and nothing is going to be, so an orphan
             // handed on by a superseded sequence ends here (clearPreHidden
             // cannot reach one - see `orphanedOpens`).
@@ -2242,7 +2255,7 @@ public struct MessageTableView: View {
             if mySeq == animSequenceToken {
                 deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
                 outShown = nil
-                animator.clearPreHidden()
+                animator.clearPreHidden(raisedBy: veiledAt)
                 // The swept table has finished flying, so take down the pre-bout
                 // grid (its cards now live in a hand / the discard / a badge). Both
                 // paths - a live bout-end and an open-replay - lay it out now.
@@ -3332,6 +3345,7 @@ public struct MessageTableView: View {
         // Veil the returning cards in the hand AND defer their fan slots - the hand
         // opens for each only as its flight arrives (the mirror of the play's veil).
         animator.preHide(ids)
+        let veiledAt = animator.veilEpoch          // round 40 - see playBoutEnd
         // Keep the pre-undo table rendered so each card flies FROM where it sat,
         // rather than the table copy fading out (its FBattleGrid removal) as the
         // view empties. The sweep hides each copy as its own flight lifts it.
@@ -3346,7 +3360,7 @@ public struct MessageTableView: View {
             defer {
                 BoardAnimator.sequenceDepth -= 1
                 if mySeq == animSequenceToken {
-                    animator.clearPreHidden()
+                    animator.clearPreHidden(raisedBy: veiledAt)
                     dropSweep()
                     let stuck = ids.filter { animator.isHidden($0) }
                     if !stuck.isEmpty { animator.reveal(stuck) }
@@ -3460,6 +3474,7 @@ public struct MessageTableView: View {
         // Hide the table copies NOW, in the same synchronous breath as the view
         // change that put them there - the ghost is the only copy in motion.
         animator.preHide(ids)
+        let veiledAt = animator.veilEpoch          // round 40 - see playBoutEnd
         animSequenceToken += 1
         let mySeq = animSequenceToken
         #if DEBUG
@@ -3470,7 +3485,7 @@ public struct MessageTableView: View {
             defer {
                 BoardAnimator.sequenceDepth -= 1
                 if mySeq == animSequenceToken {
-                    animator.clearPreHidden()
+                    animator.clearPreHidden(raisedBy: veiledAt)
                     let stuck = ids.filter { animator.isHidden($0) }
                     if !stuck.isEmpty { animator.reveal(stuck) }
                 }
@@ -4307,7 +4322,8 @@ public struct MessageTableView: View {
             if controller.isGenesis, let hand = view.me?.hand, !hand.isEmpty {
                 let ids = Set(hand.map(\.identity))
                 animator.preHide(ids)
-                // Bug 9: this deal is a sequence like any other — claim the
+                let veiledAt = animator.veilEpoch      // round 40 - see playBoutEnd
+                // Bug 9: this deal is a sequence like any other - claim the
                 // animator so a live move started on top of it supersedes it,
                 // and so ITS teardown can never clear a newer sequence's veil.
                 animSequenceToken += 1
@@ -4317,7 +4333,7 @@ public struct MessageTableView: View {
                     defer {
                         BoardAnimator.sequenceDepth -= 1
                         if mySeq == animSequenceToken {
-                            animator.clearPreHidden()
+                            animator.clearPreHidden(raisedBy: veiledAt)
                             // Same rescue as runEventStream's teardown: openSlots
                             // pulled the opening hand OUT of preHidden, so
                             // clearPreHidden can't reveal it if myDrawFlights
@@ -4378,6 +4394,7 @@ public struct MessageTableView: View {
         // animate one at a time" (note 12) bugs.
         let touchedIds = controller.openReplayTouchedCardIds
         if !touchedIds.isEmpty { animator.preHide(touchedIds) }
+        let veiledAt = animator.veilEpoch              // round 40 - see playBoutEnd
 
         // …and the counts, likewise taking over from the veil's own
         // `pendingOpen.counts`, which is this same walk-back (`preCounts`) done
@@ -4431,7 +4448,7 @@ public struct MessageTableView: View {
             }
             await playConflictReversal(debt, facts: facts)
             guard myEpoch == arrivalEpoch else { return }
-            await runEventStream(events, finalView: view, openReplay: true)
+            await runEventStream(events, finalView: view, openReplay: true, veiledAt: veiledAt)
         }
     }
 
@@ -4617,7 +4634,7 @@ public struct MessageTableView: View {
         // enabled. Silent, deliberately: the bar above the board has already
         // said why, and a "move not allowed" toast on top of it would read as a
         // rule about the move rather than about the bubble.
-        guard !controller.superseded else { return }
+        guard !controller.superseded else { releaseLivePlayVeil(); return }
         selection.removeAll()
         // The veil, live half (round-4 note 5). Both of these are the state as
         // it is RIGHT NOW, captured before `apply` can publish a new view —
@@ -4644,7 +4661,67 @@ public struct MessageTableView: View {
                 setSweep(view.battles)
             }
         }
-        Task { await controller.apply(move); await stageNow() }
+        Task {
+            // ROUND 40: A REFUSED MOVE GIVES THE VEIL BACK.
+            //
+            // `playAt` veiled these cards synchronously, before this Task
+            // existed, because that is the only moment early enough to beat the
+            // paint. Everything that takes the veil down again hangs off what
+            // happens NEXT - the view change (`flyBoutEndToDiscard`, which
+            // consumes `pendingPlacement` on every call) or `rejectTick`. When
+            // the kernel never saw the move there is neither, and until this
+            // round the cards simply stayed pre-hidden: excluded from a CENTRED
+            // fan for the life of the board, which is the owner's
+            // `laid=1 hand=4 ... deferred=3 ... seq=0` breadcrumb exactly.
+            //
+            // `apply` now says so rather than returning in silence, and false
+            // is unambiguous: no view change is coming, so there is no race
+            // with the onChange that would otherwise own these cards.
+            let applied = await controller.apply(move)
+            if !applied { releaseLivePlayVeil() }
+            await stageNow()
+        }
+    }
+
+    /// Take down the veil a live play put up and hand back everything that play
+    /// froze - the counts, the roles, the swept table, the resting ghost.
+    ///
+    /// One implementation for the two ways a play can come to nothing: a
+    /// rejection the kernel reports (`rejectTick`) and a refusal at a door that
+    /// never reached the kernel at all (`apply` returning false). They used to
+    /// be separate: the first was written out longhand in the `rejectTick`
+    /// handler and the second did not exist, which is the leak. Safe to call
+    /// twice - it is keyed off the ledger, which it clears.
+    private func releaseLivePlayVeil() {
+        // The counts / roles / sweep are released whether or not a PLACEMENT
+        // was staged: a good and a pickup freeze all three and place no card.
+        handBeforeMyMove = nil
+        deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
+        // Round 16: and the roles `play` froze on the way in. Nothing happened,
+        // so there is nothing to hand over - this is the same board it was
+        // frozen from, which is why it is a plain release and not a sync.
+        roleShown = nil
+        // …and the pre-bout table `play` laid out for a pickup / good that then
+        // never happened. Left standing it is a phantom table over a board the
+        // game says is empty (the `sweepVisibleNow` oracle's own defect).
+        //
+        // ONLY when nothing is running, and that guard is the whole care in
+        // this line: a refusal can land in the middle of a bout-end sequence
+        // that is sweeping a table of its OWN (the buttons are gone by then,
+        // but a drag still reaches `apply`), and tearing that grid down would
+        // take the cards off the table mid-flight. The sweep this play set is
+        // only ours to clear while nobody else has taken it over; a sequence
+        // that owns it drops it in its own teardown.
+        if !BoardAnimator.isSequencing { clearSweep() }
+        guard let p = pendingPlacement else { return }
+        pendingPlacement = nil
+        pendingCover = nil
+        let ids = Set(p.cards.map(\.identity))
+        // Round-8: drop the resting held ghost `playAt` spawned - the move will
+        // never fly, so reveal the hand copy AND clear the ghost, or a static
+        // ghost would sit at the source.
+        animator.cancelHeld(ids)
+        animator.reveal(ids)
     }
 
     /// Compose + stage the bubble the instant a move is applied (§11.4 flow, B4
@@ -4771,6 +4848,10 @@ public struct MessageTableView: View {
         // then fly. `animator.preHide` is the one hiding mechanism the board
         // already has, so the handoff to the flight's own `hidden` set is
         // seamless, and any path that ends up not flying them reveals them again.
+        //
+        // Read BEFORE the slot is overwritten - this is the play (if any) whose
+        // veil is about to be disowned; see `veilHandover` below.
+        let standingVeil = pendingPlacement.map { Set($0.cards.map(\.identity)) } ?? []
         pendingPlacement = PendingPlacement(cards: cards, fromRects: fromRects,
                                             handFrameAtPlay: handFrame)
         // Round-8 (atomic takeoff): the same instant the hand copy is veiled above,
@@ -4821,9 +4902,38 @@ public struct MessageTableView: View {
         // owner's "the cards just vanish from my hand". Leaving it visible for a
         // beat is the strictly better failure: the worst case is a card that
         // appears twice for one frame, against one that disappears completely.
-        animator.preHide(placed)
+        // ONE LEDGER, ONE VEIL (round 40). `pendingPlacement` holds exactly one
+        // placement, so a second play landing before the first's view change
+        // silently DISOWNS the first's cards - nothing is left holding their
+        // ids, and `flyBoutEndToDiscard`'s reveal only ever sees the survivor.
+        // Those cards then sit in `preHidden` for the life of the board, laid
+        // out nowhere. Cheap to reach: `apply` is awaited, so the whole kernel
+        // round trip is a window a second tap fits inside. So the veil is
+        // handed over with the ledger, in one place - see `veilHandover`.
+        let handover = Self.veilHandover(standing: standingVeil, placing: placed)
+        if !handover.reveal.isEmpty {
+            AnimLog.say("veil handover: a second play disowned [\(handover.reveal.sorted().joined(separator: ","))]")
+            animator.cancelHeld(handover.reveal)
+            animator.reveal(handover.reveal)
+        }
+        animator.preHide(handover.veil)
         animator.showHeld(held)
         play(move)
+    }
+
+    /// WHAT A NEW PLAY OWES THE ONE IT REPLACES.
+    ///
+    /// `pendingPlacement` is a ONE-SLOT ledger and the veil is keyed off it, so
+    /// a play that finds an earlier one still standing has to take that veil
+    /// down before it raises its own: nothing else ever will. The cards the new
+    /// play is placing are the exception - re-veiling what is already veiled is
+    /// a no-op, and revealing them first would flash them back into the fan.
+    ///
+    /// Static and pure so the rule can be read and tested without a board, like
+    /// `sequenceTeardown` next door.
+    static func veilHandover(standing: Set<String>, placing: Set<String>)
+        -> (reveal: Set<String>, veil: Set<String>) {
+        (reveal: standing.subtracting(placing), veil: placing)
     }
 
     /// Bug 13: the rect each card of a play LEAVES FROM. Everything starts at its

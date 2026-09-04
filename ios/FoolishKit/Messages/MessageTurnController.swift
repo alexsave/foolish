@@ -1114,13 +1114,34 @@ public final class MessageTurnController: ObservableObject {
 
     // MARK: turn actions
 
-    public func apply(_ move: Move) async {
+    /// Returns whether the move ACTUALLY HAPPENED - false for every refusal,
+    /// silent or not.
+    ///
+    /// ROUND 40, and it is not bookkeeping: the board raises the veil over a
+    /// played card SYNCHRONOUSLY, before this is called (MessageTableView
+    /// `playAt` - `preHide` + `showHeld`, which is the only moment early enough
+    /// to beat the paint), and from then on the only thing that ever takes that
+    /// veil down is what happens NEXT - a view change, or `rejectTick`. Two of
+    /// the three refusals below announce themselves that way; the retraction
+    /// guard announced nothing at all, so a tap that landed in its window left
+    /// its cards pre-hidden for the life of the board. `handSlotDeferred` then
+    /// excludes them from a CENTRED fan forever - the hand lays out fewer cards
+    /// than it holds with nothing animating, which is the owner's own
+    /// breadcrumb, term for term:
+    ///
+    ///     fan-rows 1 rows laid=1 hand=4 width=398 deferred=3 veiled=3
+    ///              preHidden=3 hidden=3 settled=true seq=0
+    ///
+    /// A refusal is now a FACT the caller is handed rather than a silence it
+    /// has to infer from nothing happening.
+    @discardableResult
+    public func apply(_ move: Move) async -> Bool {
         // Mid-retraction the chain on screen is being replaced: a move staged
         // now would be composed against a base the latched arrival is about to
         // supersede, and would itself need retracting a breath later. The
         // window is one red flight long; the tap simply does nothing, exactly
         // as it would have a frame later when the arrival's board is up.
-        guard !conflictRetracting else { return }
+        guard !conflictRetracting else { return false }
         lastChangeWasUndo = false
         sending = false
         // ROUND 20: a board branching off an old bubble may not be played on.
@@ -1131,7 +1152,7 @@ public final class MessageTurnController: ObservableObject {
         if superseded {
             lastRejectReason = 0
             rejectTick += 1
-            return
+            return false
         }
         // ROUND 16: the hold, enforced and not merely displayed. The button is
         // already hidden while `pickupHold` stands, so this only fires on a path
@@ -1140,7 +1161,7 @@ public final class MessageTurnController: ObservableObject {
         if move.type == .pickup, pickupHold > 0 {
             lastRejectReason = 0
             rejectTick += 1
-            return
+            return false
         }
         do {
             try await kernel.apply(seat: mySeat, move: move)
@@ -1150,6 +1171,7 @@ public final class MessageTurnController: ObservableObject {
             // first would put the deal on screen for a paint.
             await captureSettlement()
             await refresh()
+            return true
         } catch MessageEnvelope.Failure.rejected(let reason) {
             lastRejectReason = reason
             rejectTick += 1
@@ -1157,6 +1179,7 @@ public final class MessageTurnController: ObservableObject {
             lastRejectReason = 0
             rejectTick += 1
         }
+        return false
     }
 
     /// The extension reports my staged chain was actually SENT (the human pressed

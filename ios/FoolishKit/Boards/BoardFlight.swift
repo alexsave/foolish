@@ -223,16 +223,52 @@ public final class BoardAnimator: ObservableObject {
     /// the fan opens for it AS it arrives. Published so the board's layout reacts.
     @Published public private(set) var preHidden: Set<String> = []
 
+    /// WHEN each pre-hidden card WAS VEILED, and the counter that stamps it.
+    ///
+    /// ROUND 40. `clearPreHidden` used to be a blanket over a set with more
+    /// than one owner, and that is a theft waiting to happen: a sequence winds
+    /// down, the player taps a card while it is still finishing, `playAt`
+    /// veils that card - and the sequence's teardown, which still passes its
+    /// `mySeq == animSequenceToken` test because a live play never claimed the
+    /// token, hands the freshly veiled card straight back. Caught in the rig on
+    /// the first goodend run:
+    ///
+    ///     veil preHide [1-11]                      <- the tap
+    ///     held ghost at source [1-11]
+    ///     stream#1 end
+    ///     veil clearPreHidden (pop IN) [1-11]      <- the theft
+    ///     grid ... visible=1 hidden=0              <- the card PAINTS on the table
+    ///     fan-rows 1 rows laid=5 hand=5 ... seq=0
+    ///     flight START [1-11:47,623->187,338]
+    ///     grid ... visible=0 hidden=1              <- …and vanishes again
+    ///
+    /// which is the card landing, disappearing and flying in - the exact thing
+    /// `playAt`'s veil exists to prevent - and, because the fan is CENTRED, two
+    /// spurious re-layouts of the whole row on the way (the owner: "still
+    /// seeing the hand card rows twitch during the discard animation").
+    ///
+    /// So the veil is STAMPED with the moment it went up, and a teardown may
+    /// only take down what was already standing when it began - see
+    /// `clearPreHidden(raisedBy:)`. Deliberately a monotonic counter rather
+    /// than a per-sequence owner id: a sequence does not know the ids its
+    /// caller pre-hid on its behalf (that happens a Task earlier, in `body`'s
+    /// own onChange), but it does know the mark it started at.
+    public private(set) var veilEpoch = 0
+    private var veilRaisedAt: [String: Int] = [:]
+
     public init() {}
 
     /// Synchronously hide `ids` before their flight is even scheduled (note
     /// 36). Callers predict these — e.g. "my hand minus what I had before" —
     /// and must call this BEFORE the state change that would render them
     /// renders, so there is no gap for the flash. `play` removes an id from
-    /// this set the moment its OWN step actually plays it; `clearPreHidden`
-    /// is the safety net for anything predicted but never consumed.
+    /// this set the moment its OWN step actually plays it;
+    /// `clearPreHidden(raisedBy:)` is the safety net for anything predicted by
+    /// THAT sequence and never consumed.
     public func preHide(_ ids: Set<String>) {
         AnimLog.say("veil preHide [\(ids.sorted().joined(separator: ","))]")
+        veilEpoch += 1
+        for id in ids { veilRaisedAt[id] = veilEpoch }
         preHidden.formUnion(ids)
         hidden.formUnion(ids)
     }
@@ -263,16 +299,35 @@ public final class BoardAnimator: ObservableObject {
         if !shown.isEmpty { AnimLog.say("veil reveal (pop IN) [\(shown.sorted().joined(separator: ","))]") }
         preHidden.subtract(ids)
         hidden.subtract(ids)
+        for id in ids { veilRaisedAt[id] = nil }
     }
 
-    /// Force-reveal any still-pending pre-hidden ids — called once a whole
-    /// sequence (bout-end, or an open-delta replay) finishes, so a prediction
-    /// that never got consumed (e.g. a frame that never became ready) cannot
-    /// leave a card invisible forever.
-    public func clearPreHidden() {
-        if !preHidden.isEmpty { AnimLog.say("veil clearPreHidden (pop IN) [\(preHidden.sorted().joined(separator: ","))]") }
-        hidden.subtract(preHidden)
-        preHidden.removeAll()
+    /// Force-reveal the still-pending pre-hidden ids THIS sequence is
+    /// responsible for - called once a whole sequence (bout-end, or an
+    /// open-delta replay) finishes, so a prediction that never got consumed
+    /// (e.g. a frame that never became ready) cannot leave a card invisible
+    /// forever.
+    ///
+    /// `epoch` is `veilEpoch` as it stood when the caller raised ITS veil, and
+    /// it is what stops the net from being a blanket: anything veiled AFTER
+    /// that belongs to somebody else - a live play the player made while this
+    /// sequence was winding down, or a newer sequence that has pre-hidden cards
+    /// it has not flown yet - and handing those back is the theft the stamp
+    /// exists to prevent (see `veilEpoch`).
+    ///
+    /// CONSIDERED AND REJECTED: keeping a no-argument blanket alongside this
+    /// for "the last sequence standing". There is no such caller - every veil
+    /// is raised by somebody, so every clear belongs to somebody - and leaving
+    /// the blanket in place would leave the bug one forgetful call site away.
+    public func clearPreHidden(raisedBy epoch: Int) {
+        let mine = preHidden.filter { (veilRaisedAt[$0] ?? 0) <= epoch }
+        guard !mine.isEmpty else { return }
+        AnimLog.say("veil clearPreHidden<=\(epoch) (pop IN) [\(mine.sorted().joined(separator: ","))]"
+            + (mine.count == preHidden.count ? ""
+               : " (left \(preHidden.count - mine.count) veiled later)"))
+        hidden.subtract(mine)
+        preHidden.subtract(mine)
+        for id in mine { veilRaisedAt[id] = nil }
     }
 
     /// Round-8 (atomic takeoff): show `f` as ghosts resting AT THEIR SOURCE right
