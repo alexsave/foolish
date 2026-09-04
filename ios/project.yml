@@ -26,7 +26,7 @@ options:
 settings:
   base:
     MARKETING_VERSION: "1.0"
-    CURRENT_PROJECT_VERSION: "41"
+    CURRENT_PROJECT_VERSION: "42"
     SWIFT_VERSION: "5.9"
     # Milestone F: signing enabled. Xcode manages the certificate + provisioning
     # profiles automatically against the registered App IDs (cards.foolish.app,
@@ -205,7 +205,7 @@ targets:
         # without an id, so the watch sim refused to install it.
         GENERATE_INFOPLIST_FILE: "YES"
         MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "41"
+        CURRENT_PROJECT_VERSION: "42"
         # The circular watch icon (WatchUI/Assets.xcassets/AppIcon).
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
