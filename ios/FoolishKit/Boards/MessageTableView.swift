@@ -184,11 +184,35 @@ public struct MessageTableView: View {
     /// spend a frame at the bottom of the board and then jump up.
     private var statusMarkLift: CGFloat {
         if buttonLift >= 0 { return buttonLift }
-        let hand = controller.view?.me?.hand ?? []
+        let hand = Self.fanCards(controller.view?.me?.hand ?? [], holding: handHoldback)
         guard handFrame.width > 0 else { return 0 }
         return FHandFan.height(cards: hand, availableWidth: handFrame.width, crop: Self.handCrop)
     }
     @State private var deckFrame: CGRect = .zero
+    /// MY CARDS THAT THIS OPEN-REPLAY HAS NOT FLOWN OUT OF MY HAND YET.
+    ///
+    /// An open replay renders the FINAL board (`controller.view`), so a bubble
+    /// carrying my own attack opens with those cards already gone from my hand
+    /// and the fan already re-centred - and the flight then had nowhere in the
+    /// hand to start from. Owner, 1.0(41): "When I replay an attack of mine, it
+    /// seems to animate from where my 'player card count' would be… notice that
+    /// there is no self player mini-hand visual. Thus what I'm seeing is that
+    /// they spawn in like behind the cards in my hand, then fly in to their
+    /// correct positions."
+    ///
+    /// This is the counts trick (`seatCountOverride`) applied to the hand: hold
+    /// the cards in the fan at their PRE-MOVE slots, seeded synchronously by
+    /// `replayLastMoveOnOpen`, and drop each group the instant its flight is
+    /// built. The fan animates its own re-close over exactly `flightTime`
+    /// (FHandFan's layout animation is keyed on the laid-out SET), so the hand
+    /// closes up as the cards leave rather than before they do - the second
+    /// half of the same report.
+    ///
+    /// Held-back cards are NOT in the kernel hand, and every play path filters
+    /// through `view.me.hand` (`selectedCards`) or the legal menu, so one can
+    /// never be played; the worst a tap on one can do is a reject toast, for the
+    /// ~350ms before its flight takes off.
+    @State private var handHoldback: [Card] = []
     @State private var handCardFrames: [String: CGRect] = [:]
     @State private var seatFrames: [Int: CGRect] = [:]
 
@@ -803,7 +827,13 @@ public struct MessageTableView: View {
     /// now" (see `BoardAnimator.openSlots`); everything else waits its turn.
     private var handSlotDeferred: Set<String> {
         let flyingNow = animator.hidden.subtracting(animator.preHidden)
+        // A HELD-BACK CARD IS NEVER DEFERRED. It is pre-hidden (its table copy
+        // must stay invisible until its ghost lands) and pre-hidden is exactly
+        // what this set is built from - so without this line the fan would drop
+        // the very cards `handHoldback` exists to keep on screen, and the hand
+        // would render closed again. It is the one veiled card that IS drawn.
         return veiledCardIds.subtracting(flyingNow)
+                            .subtracting(handHoldback.map(\.identity))
     }
 
     /// A seat badge's displayed hand count: the per-step override once a
@@ -873,7 +903,15 @@ public struct MessageTableView: View {
             // the FINAL hand the instant the move applies, so the buttons sit at
             // their final spot from the start and the incoming cards fill UP toward
             // them - the hand makes room, the buttons hold still.
-            let handHeight = FHandFan.height(cards: myHand, availableWidth: handWidth,
+            // …and `myHand` PLUS whatever an open replay is still holding back,
+            // which is the hand the fan is really laying out (`fanCards`). Round
+            // 7's rule is untouched by this: it is about cards ARRIVING one at a
+            // time, and a holdback is a single settled set from the first paint
+            // that empties in one step, so the chrome sits still through the
+            // replay and drops once, with the hand, rather than floating up
+            // card by card. Empty everywhere else, so nothing else moves.
+            let handHeight = FHandFan.height(cards: Self.fanCards(myHand, holding: handHoldback),
+                                             availableWidth: handWidth,
                                              crop: Self.handCrop)
             // The buttons/role mark ride THIS, mirrored out via `.onChange` below so
             // their movement is a snap, never the board spring (see `buttonLift`).
@@ -2264,6 +2302,7 @@ public struct MessageTableView: View {
             // single card and it goes back down".
             deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
             outShown = nil
+            handHoldback = []       // see the teardown below - this guard returns ahead of it
             animator.clearPreHidden(raisedBy: veiledAt)
             // Nothing is in flight and nothing is going to be, so an orphan
             // handed on by a superseded sequence ends here (clearPreHidden
@@ -2317,6 +2356,13 @@ public struct MessageTableView: View {
             if mySeq == animSequenceToken {
                 deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
                 outShown = nil
+                // A holdback that never got flown (a poll that timed out, a
+                // stream cut short) must not survive as phantom cards in the
+                // hand - this is the same rescue the veil gets a line below,
+                // and for the same reason. Only the NEWEST sequence clears it:
+                // a superseded one would be wiping the holdback its replacement
+                // just armed.
+                handHoldback = []
                 animator.clearPreHidden(raisedBy: veiledAt)
                 // The swept table has finished flying, so take down the pre-bout
                 // grid (its cards now live in a hand / the discard / a badge). Both
@@ -2582,6 +2628,21 @@ public struct MessageTableView: View {
                     f.append(contentsOf: part)
                 }
                 groupFlights = f
+                // THE HAND LETS GO, in the same breath the ghosts are created.
+                // The flights above were built from the slots these cards still
+                // hold, so the takeoff is already captured; dropping them now
+                // starts the fan's re-close (FHandFan animates its layout over
+                // `flightTime`, keyed on the laid-out set) at the instant the
+                // cards leave, which is the whole of "we'll want the hand to
+                // rearrange as a result of the cards leaving". Inside the
+                // builder rather than before the poll: the poll can run for up
+                // to a second waiting on a landing frame, and a hand that
+                // closed then would finish long before anything moved.
+                let left = Set(group.flatMap { $0.cards.compactMap { $0?.identity } })
+                if !left.isEmpty, self.handHoldback.contains(where: { left.contains($0.identity) }) {
+                    self.handHoldback.removeAll { left.contains($0.identity) }
+                    AnimLog.say("stream#\(run)   hand lets go, \(self.handHoldback.count) still held")
+                }
                 AnimLog.say("stream#\(run) step \(ev.kind.map(String.init(describing:)) ?? "?")@\(ev.seat) n=\(group.count) flights=\(f.count) [\(f.map(\.id).joined(separator: ","))]")
                 // ROUND 22: WHERE each card is actually being flown, against the
                 // regions it could legitimately land in. "a deal animation go
@@ -3860,8 +3921,39 @@ public struct MessageTableView: View {
     /// is why it never flagged this: the check and the flights disagreed about
     /// which array they were describing.
     private func laidOutHandNow(_ view: GameView) -> [Card] {
-        Self.laidOut(hand: view.me?.hand ?? [], deferred: handSlotDeferred,
+        // THE SAME ARRAY THE FAN IS GIVEN, held-back cards included - these
+        // rects have to describe the hand that is actually on screen, or a
+        // takeoff slot would be computed against a layout nobody is looking at.
+        Self.laidOut(hand: Self.fanCards(view.me?.hand ?? [], holding: handHoldback),
+                     deferred: handSlotDeferred,
                      order: MessageGameStore.shared.handOrder(gameId: controller.gameIdString))
+    }
+
+    /// What the fan is asked to lay out: my hand, plus whatever an open replay
+    /// is still holding back (`handHoldback`). Pure and static so the one rule
+    /// that matters can be asserted without a board - a held-back card appears
+    /// ONCE, and a card the kernel hand already contains is never doubled by it
+    /// (the fan places cards by index, so a duplicate identity is two cards in
+    /// one slot).
+    static func fanCards(_ hand: [Card], holding holdback: [Card]) -> [Card] {
+        guard !holdback.isEmpty else { return hand }
+        let present = Set(hand.map(\.identity))
+        return hand + holdback.filter { !present.contains($0.identity) }
+    }
+
+    /// The cards THIS stream takes out of MY hand and puts on the table, in
+    /// stream order - the seed for `handHoldback`. A placement by any other
+    /// seat, and every non-placement step, moves nothing out of my hand.
+    static func myPlacedCards(_ events: [GameEvent], mySeat: Int) -> [Card] {
+        events.filter { $0.seat == mySeat && Self.isPlacement($0.kind) }
+              .flatMap { $0.cards.compactMap { $0 } }
+    }
+
+    static func isPlacement(_ kind: EventType?) -> Bool {
+        switch kind {
+        case .attackPass, .defenderMove, .cover: return true
+        default: return false
+        }
     }
 
     /// The pure half, so the ordering contract can be asserted directly (it is
@@ -4209,6 +4301,12 @@ public struct MessageTableView: View {
             // seeing the cover animation on a replay". The pre-bout grid IS on
             // screen at that moment and knows exactly where the card goes, so
             // ask it (`sweepLandingRect`) before giving up.
+            // MY OWN placement leaves FROM THE SLOT EACH CARD HELD, not from the
+            // hand container's origin. `handSlotsNow` reads the fan that is on
+            // screen, and for the length of this step that fan still holds these
+            // cards (`handHoldback`), so the slots it returns are the PRE-move
+            // ones. Everyone else's cards leave their seat badge, unchanged.
+            let mySlots = mine ? handSlotsNow(view) : [:]
             let source = mine ? handFrame : (seatFrames[ev.seat] ?? .zero)
             var out: [Flight] = []
             for case let card? in ev.cards {
@@ -4250,8 +4348,14 @@ public struct MessageTableView: View {
                 // separate once they are already in the air. The 3pt step is
                 // the same one the deal and pickup branches below already use
                 // for a seat's backs, for exactly this reason.
-                let base = source != .zero ? source : rect.offsetBy(dx: 0, dy: -220)
-                let from = base.offsetBy(dx: CGFloat(out.count) * 3, dy: 0)
+                // A card with its own slot needs no stagger - it already has a
+                // place of its own to leave from, and nudging it would take it
+                // off the card the player is watching. The 3pt step stays for
+                // the seat-badge case, where every card of the move genuinely
+                // does share one point.
+                let slot = mySlots[card.identity]
+                let base = slot ?? (source != .zero ? source : rect.offsetBy(dx: 0, dy: -220))
+                let from = slot != nil ? base : base.offsetBy(dx: CGFloat(out.count) * 3, dy: 0)
                 out.append(Flight(id: "open-\(card.identity)-\(ev.type)", card: card,
                                   from: from, to: rect, angle: landedAngle))
             }
@@ -4469,6 +4573,19 @@ public struct MessageTableView: View {
         for (seat, c) in pre.hand where seat != controller.mySeat { counts[seat] = c }
         seatCountOverride = counts
 
+        // …and MY OWN hand, which the counts above deliberately skip (a seat
+        // badge is a number; my hand is the cards). Seeded HERE, synchronously,
+        // for the same reason every freeze above is: the board's first paint is
+        // this call's next paint, so a holdback armed inside the Task would let
+        // the hand render closed and then pop the cards back in. See
+        // `handHoldback`. Only my placements, and only when I am not spectating.
+        handHoldback = isSpectating ? []
+            : Self.myPlacedCards(events, mySeat: controller.mySeat)
+        if !handHoldback.isEmpty {
+            AnimLog.say("openReplay holds \(handHoldback.count) of my cards in the fan "
+                + "[\(handHoldback.map(\.identity).joined(separator: ","))]")
+        }
+
         // The pre-bout table this open sweeps (a pickup or discard). Rendered
         // VISIBLE by `battlesArea` so the cards sit on the table and then fly off
         // it - see `sweepBattles`. Set BEFORE the stream starts so the grid lays
@@ -4664,11 +4781,16 @@ public struct MessageTableView: View {
     ///   half (fully compact drawer), any value between as the drawer collapses.
     ///   See `boardContent`'s `collapse`.
     private func hand(_ view: GameView, crop: CGFloat, reserveNoSlot: Set<String>) -> some View {
-        FHandFan(cards: view.me?.hand ?? [], trumpSuit: view.trumpSuit,
+        // A held-back card is veiled (its TABLE copy must stay invisible until
+        // its ghost lands), so the hand has to un-veil its own copy or the fan
+        // would reserve the slot and draw nothing - a gap where the card is.
+        FHandFan(cards: Self.fanCards(view.me?.hand ?? [], holding: handHoldback),
+                 trumpSuit: view.trumpSuit,
                  selection: $selection, onTap: { toggle($0) },
                  onDragChanged: { card, point in onDragChanged(card, at: point) },
                  onDragEnded: { card, point in onDragEnded(card, at: point, view) },
-                 namespace: cardNS, hidden: veiledCardIds,
+                 namespace: cardNS,
+                 hidden: veiledCardIds.subtracting(handHoldback.map(\.identity)),
                  crop: crop,
                  onDragCardMoved: { center in dragCardCenter = center },
                  reserveNoSlot: reserveNoSlot, instantExit: true,

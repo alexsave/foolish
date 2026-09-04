@@ -99,6 +99,25 @@ extension HarnessModel {
             await seedDemoGame()
             collapseForReview()
 
+        case "myplay":
+            // ROUND 42: A COLD OPEN OF MY OWN MOVE. The bubble's last action is
+            // mine, so `openReplayEvents` replays cards out of MY hand - the
+            // one shape `board` (which seats the ACTOR of the NEXT move) cannot
+            // pose, and the only one that arms `handHoldback`.
+            //
+            // Owner, 1.0(41): "when we replay OUR OWN attack, it should go FROM
+            // OUR HAND to the table." Read it off the `OFF-HAND flight` lines
+            // in the unified log: each card's `from` must be its own hand slot,
+            // several points apart in x and sitting inside `hand=`, not one
+            // stacked point at the container's corner.
+            await dealDriven(players: playersEnv, only: [.attack, .cover],
+                             steps: 5, viewAs: .lastActor)
+
+        case "myplay-compact":
+            await dealDriven(players: playersEnv, only: [.attack, .cover],
+                             steps: 5, viewAs: .lastActor)
+            collapseForReview()
+
         case "board-sorted":
             // Round-8 #4: the persisted hand arrangement, seed-to-render. Store
             // a REVERSED arrangement for the demo game, then reopen the bubble:
@@ -391,7 +410,10 @@ extension HarnessModel {
     /// clamped to what the game supports.
     private var playersEnv: Int { max(2, min(8, participants.count)) }
 
-    private enum ViewAs { case defender, actor, biggestHand }
+    /// `lastActor` (round 42): whose eyes see their OWN move replayed on a cold
+    /// open - the one seat `defender`/`actor`/`biggestHand` can never reliably
+    /// land on, and the only one that poses `handHoldback`.
+    private enum ViewAs { case defender, actor, biggestHand, lastActor }
 
     /// Deal a real game and drive it forward with kernel moves only, so a
     /// screenshot can land on a mid-game position that no amount of tapping
@@ -469,6 +491,8 @@ extension HarnessModel {
             case .actor:
                 for s in 0..<n where (await MessageKernel.shared.residentLegal(seat: s))
                     .contains(where: { $0.type != .wait }) { seat = s; break }
+            case .lastActor:
+                seat = lastSeat
             case .biggestHand:
                 if let players = view?.players {
                     var best = (seat: 0, n: -1)
