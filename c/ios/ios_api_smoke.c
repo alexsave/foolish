@@ -557,6 +557,98 @@ static int lobby_rules_check(void) {
 
 // ---------- The 8-seat cap against a 9th player -----------------------------
 //
+// THE SHAPE OF A SEQUENCE, over the bytes a board would hold (fio_beats_packed
+// and the role beat). Portable proof that the crossing packs what the Swift
+// decoder reads: the beat stride, the flags byte, the out and attack-pass seat
+// masks and the 52-bit placed set. The rules themselves are pinned in
+// tests/tests.c; this is the layout.
+//
+// MUTATION-CHECKED against c/ios/ios_api.c, one at a time: the placed id set
+// written little-endian at the wrong offset, the beat stride written as 16, the
+// out mask and the attack-pass mask swapped, and the role answer returning the
+// FINAL defender in the first_attacker slot. Each fails here.
+static int beats_wire_check(void) {
+    // Seat 0 attacks with one card, seat 1 covers with two (one move, two
+    // events), a bout end follows, and seat 1 goes out on the way.
+    //   type, seat, has_good, good, n_ids, ids...
+    const unsigned char in[] = {
+        FIO_BEATS_VERSION, 5,
+        4, 0, 1, 0x04, 1, 6,          // ATTACK_PASS seat 0, card 6, good mask 0b100
+        5, 1, 1, 0x00, 1, 22,         // COVER seat 1, card 22, good cleared
+        5, 1, 1, 0x00, 1, 30,         // COVER seat 1, card 30 - the same move
+        8, 1, 0, 0x00, 0,             // OUT seat 1 - a notice
+        10, 0xFF, 1, 0x00, 0,         // CARDS_TO_TRASH, no seat
+    };
+    unsigned char out[512];
+    const int n = fio_beats_packed(in, (int)sizeof in, (char *)out, sizeof out);
+    if (n != FIO_BEATS_HEAD + 4 * FIO_BEATS_STRIDE) { printf("FAIL beats rc=%d\n", n); return 1; }
+    if (out[0] != FIO_BEATS_VERSION || out[1] != 4) { printf("FAIL beats header\n"); return 1; }
+    if (out[2] != 1 || out[3] != 0x04) { printf("FAIL beats first good mask\n"); return 1; }
+
+    unsigned long long placed = 0;
+    for (int i = 0; i < 8; i++) placed |= (unsigned long long)out[4 + i] << (8 * i);
+    if (placed != (((unsigned long long)1 << 6) | ((unsigned long long)1 << 22)
+                 | ((unsigned long long)1 << 30))) {
+        printf("FAIL beats placed set %llx\n", placed); return 1;
+    }
+
+    const unsigned char *b0 = out + FIO_BEATS_HEAD;
+    const unsigned char *b1 = b0 + FIO_BEATS_STRIDE;
+    if (b0[0] != 0 || b0[1] != 1 || b0[2] != 4 || b0[3] != 0) { printf("FAIL beat 0 head\n"); return 1; }
+    if (b1[0] != 1 || b1[1] != 2 || b1[2] != 5 || b1[3] != 1) { printf("FAIL beat 1 head\n"); return 1; }
+    // The two covers are one beat, it holds before the sweep, and it adopts the
+    // out notice behind it.
+    if ((b1[4] & 1) == 0) { printf("FAIL beat 1 does not hold\n"); return 1; }
+    if ((b0[4] & 1) != 0) { printf("FAIL the attack holds\n"); return 1; }
+    if (b1[5] != (1u << 1)) { printf("FAIL beat 1 outs %d\n", b1[5]); return 1; }
+    if (b0[5] != 0) { printf("FAIL the attack adopted an out\n"); return 1; }
+    if (b0[6] != (1u << 0) || b1[6] != 0) { printf("FAIL attack-pass seats\n"); return 1; }
+    if (b1[7] != 1 || b1[8] != 0) { printf("FAIL beat 1 good mask\n"); return 1; }
+    unsigned long long p1 = 0;
+    for (int i = 0; i < 8; i++) p1 |= (unsigned long long)b1[9 + i] << (8 * i);
+    if (p1 != (((unsigned long long)1 << 22) | ((unsigned long long)1 << 30))) {
+        printf("FAIL beat 1 placed %llx\n", p1); return 1;
+    }
+
+    // The role beat, answered off that same beat: seat 0 is defending in the
+    // board the badges are WEARING and laid a card, so it is a transfer.
+    int roles[FIO_ROLES_OUT];
+    if (fio_roles_pass_hand_off(0, 3, 0x04, b0[6], 1, roles) != 1) {
+        printf("FAIL hand-off not seen\n"); return 1;
+    }
+    if (roles[0] != 1 || roles[1] != 3 || roles[2] != 0x04) {
+        printf("FAIL hand-off roles %d/%d/%d\n", roles[0], roles[1], roles[2]); return 1;
+    }
+    if (fio_roles_pass_hand_off(2, 3, 0x04, b0[6], 1, roles) != 0) {
+        printf("FAIL an attacker's throw read as a transfer\n"); return 1;
+    }
+    if (fio_roles_goods_cleared(1, 3, 0x04, b1[8], roles) != 1 || roles[2] != 0) {
+        printf("FAIL the good the throw-in cleared\n"); return 1;
+    }
+    if (fio_roles_goods_opening(1, 3, 0x00, out[3], roles) != 1 || roles[2] != 0x04) {
+        printf("FAIL the good this stream opens on\n"); return 1;
+    }
+    if (fio_badge_drops_as_cards_leave(4) != 1 || fio_badge_drops_as_cards_leave(6) != 0) {
+        printf("FAIL badge direction\n"); return 1;
+    }
+
+    // A foreign version and a truncated stream are refused, never half-read.
+    unsigned char bad[sizeof in];
+    memcpy(bad, in, sizeof in);
+    bad[0] = 9;
+    if (fio_beats_packed(bad, (int)sizeof bad, (char *)out, sizeof out) != FIO_EPARSE) {
+        printf("FAIL beats accepted a foreign version\n"); return 1;
+    }
+    if (fio_beats_packed(in, 8, (char *)out, sizeof out) != FIO_EPARSE) {
+        printf("FAIL beats accepted a truncated stream\n"); return 1;
+    }
+    if (fio_beats_packed(in, (int)sizeof in, (char *)out, FIO_BEATS_HEAD) != FIO_ECAP) {
+        printf("FAIL beats wrote past its buffer\n"); return 1;
+    }
+    printf("beats wire OK (%d bytes, 4 beats)\n", n);
+    return 0;
+}
+
 // A 9+-person group chat racing into an open lobby: the 9th join must be
 // impossible at every layer the bridge owns. (The DECODE side — a forged
 // n_joins=9 header — is the tamper matrix's job, msg_wire_test.c.) The Swift
@@ -760,6 +852,7 @@ int main(void) {
     if (lobby_v2_reseat_check() != 0) return 1;
     if (lobby_rules_check() != 0) return 1;
     if (nine_player_cap_check() != 0) return 1;
+    if (beats_wire_check() != 0) return 1;
 
     printf("SMOKE OK\n");
     return 0;

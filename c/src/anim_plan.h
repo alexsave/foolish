@@ -131,8 +131,9 @@ typedef struct {
 // The count-freeze the plan emits. Before the sequence starts the display holds
 // these values (the board as it looked BEFORE this move); each step then
 // advances the counts it touches to that step's own post values as its flight
-// lands. THE unification of iOS preCounts (a backward walk from the final board)
-// and the web inFlightFromDeck lag (drop the deck the instant a card leaves it).
+// lands. A backward walk from the final board, plus the web inFlightFromDeck lag
+// (drop the deck the instant a card leaves it). It is NOT the iMessage
+// count-freeze, which anchors on a snapshot instead - see anim_build_plan.
 typedef struct {
     int deck;
     int discard;
@@ -185,14 +186,136 @@ int anim_step_duration_ms(int event_type);
 // board's counts — the state the platform renders immediately; the plan freezes
 // the DISPLAY back to the pre-sequence values and reveals forward per step.
 //
-// Derivation, faithful to iOS preCounts: walk the events BACKWARD from the final
-// counts, undoing each card movement, to get `pre`; then walk FORWARD to stamp
-// each step's post counts (== the kernel's per-step snapshot by construction).
+// Derivation: walk the events BACKWARD from the final counts, undoing each card
+// movement, to get `pre`; then walk FORWARD to stamp each step's post counts
+// (== the kernel's per-step snapshot by construction).
 // Returns ANIM_EOK, or ANIM_ECAP (n_events > ANIM_MAX_STEPS, or the veil
 // overflows) / ANIM_EBADARG (NULL out, n_players out of range).
+//
+// `pre` IS NOT THE iMessage COUNT-FREEZE, and this header used to claim it was
+// ("faithful to iOS preCounts"). The two disagree on one real shape. A REFILL
+// off the end of the deck hands out more cards than deck_count ever held - the
+// flipped trump lies under the deck and is dealt last without being counted - so
+// undoing it by putting every card back overshoots the deck by one. The board's
+// own rule (MessageTableView.preCounts) therefore anchors on the FIRST event's
+// own snapshot and undoes exactly one event, which is possible because a stream
+// never begins with a refill; this walk has no snapshots to anchor on and undoes
+// them all. On a pickup-then-refill bout end off a deck of one, `pre.deck` here
+// reads 2 where the board really showed 1. Not reconciled: the iMessage rule is
+// the spec, and a client that needs the freeze should carry the snapshots.
 int anim_build_plan(const AnimEvent *events, int n_events, int n_players,
                     int final_deck, int final_discard, const int *final_hand,
                     AnimPlan *out);
+
+// ---- beats: the SHAPE a sequence plays in ---------------------------------
+//
+// A stream's events are not its beats. The kernel spends one COVER event per
+// card, so a defender who covered two attacks in ONE move arrives as two events
+// and must still fly as one movement; consecutive covers by the same seat are
+// therefore one beat and nothing else ever merges. On top of that grouping sit
+// the rules that decide what a beat carries with it:
+//
+//   the HOLD    a cover that ended its bout rests before the sweep takes the
+//               table away, so the covered table is readable for a moment.
+//   the OUTS    an `out` is a notice - no cards, no flight, no time - so a beat
+//               that MOVED something adopts the out notices trailing it and
+//               collapses those badges with its own card motion instead of a
+//               beat later.
+//   the PLACED  the identities a beat, and the whole stream, puts DOWN on the
+//               table. A later sweep is drawn from these.
+//   the BADGE   whose hand count drops as the cards LEAVE rather than as they
+//               land (a badge reading 6 with two of that seat's cards in the air
+//               is claiming eight).
+//
+// One entry answers all of them together, because a client that asked for a
+// beat's grouping and its hold separately could be told two different things.
+
+// Beats are capped independently of ANIM_MAX_STEPS: a bubble carries everything
+// its sender staged, so a stream can be longer than any single action's plan,
+// and a stream over the cap is REFUSED rather than truncated (half a sequence
+// played as a whole one is worse than none).
+#define ANIM_MAX_BEATS 128
+
+// "this step carries no board of its own", for good_mask below.
+#define ANIM_NO_MASK (-1)
+
+// One event as the beat rules see it. `cards` BORROWS the caller's storage like
+// AnimEvent; only real identities count, so a masked back names nothing.
+typedef struct {
+    int         type;        // ANIM_EVT_*
+    int         seat;        // acting seat, or ANIM_SEAT_NONE
+    const Card *cards;       // n_cards entries; may be NULL iff n_cards == 0
+    int         n_cards;
+    int         mask_cards;  // 1 => card backs, no identity
+    int         good_mask;   // good_players_mask of THIS step's own board, or
+                             //   ANIM_NO_MASK
+} AnimBeatEvent;
+
+// Beat flags.
+#define ANIM_BEAT_HOLDS  1   // the sequence rests after this beat
+#define ANIM_BEAT_MOVED  2   // this beat moved a card at all
+#define ANIM_BEAT_PLACED 4   // this beat put a card down on the table
+#define ANIM_BEAT_DROPS  8   // the acting badge drops as these cards LEAVE
+
+typedef struct {
+    int      first;             // index of the beat's first event
+    int      n_events;
+    int      type;              // the lead event's type
+    int      seat;              // the lead event's seat
+    int      flags;             // ANIM_BEAT_*
+    unsigned outs_mask;         // seats that go out WITH this beat's motion
+    unsigned attack_pass_seats; // seats that laid cards via ATTACK_PASS here;
+                                //   the defender among them made a transfer
+    uint64_t placed_ids;        // dense card ids this beat puts on the table
+    int      good_mask;         // the LAST event's good mask, or ANIM_NO_MASK
+} AnimBeat;
+
+typedef struct {
+    int      n_beats;
+    AnimBeat beats[ANIM_MAX_BEATS];
+    uint64_t placed_ids;        // every card the whole stream puts down
+    int      first_good_mask;   // event 0's good mask, or ANIM_NO_MASK
+} AnimBeats;
+
+// Group a stream into beats and answer every rule above for each one.
+// Returns the beat count, or ANIM_EBADARG / ANIM_ECAP.
+int anim_build_beats(const AnimBeatEvent *events, int n_events, AnimBeats *out);
+
+// Does a step of this kind take cards OUT of the acting seat's hand? (The
+// ANIM_BEAT_DROPS flag as a question, for a caller holding one event.) An
+// unrecognised type moves nobody's hand.
+int anim_badge_drops_as_cards_leave(int type);
+
+// ---- the role beat --------------------------------------------------------
+//
+// WHICH marks change at WHICH point of a sequence, which is three different
+// timings and not one:
+//   a good being SET leads the stream - it is somebody's move, and the
+//     transition, the discard and the deal behind it are its consequences;
+//   a good being CLEARED runs parallel with the throw-in that cleared it, since
+//     the card and the marks are one event and neither leads;
+//   a PASS hands the shield over WITH the transfer card.
+// Everything else waits for the closing beat at the end of the sequence.
+//
+// `shown` is what the badges are WEARING, which is not the live board: a
+// sequence freezes the marks and walks them forward, so a rule that read the
+// resident game would answer about a position nobody is looking at. It crosses
+// as an argument, and so does `final_defender`: a pass is snapshotted BEFORE the
+// hand-over and writes no event for it, so the new defender appears nowhere in
+// the stream - only on the bubble's final board.
+typedef struct { int defender; int first_attacker; int good_mask; } AnimRoles;
+
+// Each returns 1 and fills `out` when the marks change, 0 when nothing does.
+// A good mask of ANIM_NO_MASK ("this step carried no board") is always 0.
+// Only the named bits move; the seats are carried over untouched, so nothing
+// flies for a goods change and only the shield flies for a hand-off.
+int anim_goods_opening(AnimRoles shown, int first_good_mask, AnimRoles *out);
+int anim_goods_cleared(AnimRoles shown, int step_good_mask, AnimRoles *out);
+// A transfer is told from an attack by the RULES, not by the wire: the two are
+// the same event type, and a defender may not attack, so cards laid by the seat
+// currently wearing the shield can only be a pass.
+int anim_pass_hand_off(AnimRoles shown, unsigned attack_pass_seats,
+                       int final_defender, AnimRoles *out);
 
 // ---- optimistic policy ----------------------------------------------------
 

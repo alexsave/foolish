@@ -270,6 +270,78 @@ int fio_anim_plan_json(int viewer, char *out, int cap);
 // layer; the web already routes its feed gate through the same C.
 int fio_anim_should_drop_stale(int has_last, int last, int has_incoming, int incoming);
 
+// ---------- the shape of a sequence (anim_plan.h beats + role beat) ---------
+//
+// A board hands the kernel a stream and gets back its BEATS: what plays
+// together, what waits, what each beat carries with it. See anim_plan.h for the
+// rules; the reason they cross with the stream instead of being re-derived from
+// the resident game is the reason fio_play_probe takes a menu. The board
+// animates a stream it was HANDED - a bubble's events, and often only HALF of
+// them, because a staged bout end is cut at its settlement and the second half
+// is withheld until Send - and it asks from a SwiftUI render pass, which cannot
+// await the actor the resident game lives behind.
+//
+// INPUT (`in`): u8 version (FIO_BEATS_VERSION), u8 n_events, then per event
+//   u8 type (EVW_T_*/ANIM_EVT_*), u8 seat (0xFF none), u8 has_good_mask,
+//   u8 good_mask (that step's own board), u8 n_ids, n_ids x u8 dense card id.
+// Only REAL identities travel: a masked card back names nothing, so the caller
+// simply does not list it.
+//
+// OUTPUT (`out`), all little-endian:
+//   0   u8  version
+//   1   u8  n_beats
+//   2   u8  the first event's good mask is present
+//   3   u8  the first event's good mask
+//   4   u64 every card the whole stream puts down on the table, as id bits
+//   12  n_beats x FIO_BEATS_STRIDE:
+//        0 u8  index of the beat's first event
+//        1 u8  how many events it spans
+//        2 u8  the lead event's type
+//        3 u8  the lead event's seat (0xFF none)
+//        4 u8  flags: 1 holds after this beat, 2 it moved a card,
+//                     4 it placed one on the table, 8 the acting badge drops
+//                       as these cards LEAVE rather than as they land
+//        5 u8  seats that go out WITH this beat
+//        6 u8  seats that laid cards via ATTACK_PASS in it
+//        7 u8  this beat's good mask is present
+//        8 u8  this beat's good mask (its LAST event's board)
+//        9 u64 the cards it puts on the table, as id bits
+// Returns bytes written, or a negative error.
+#define FIO_BEATS_VERSION 1
+#define FIO_BEATS_HEAD    12
+#define FIO_BEATS_STRIDE  17
+int fio_beats_packed(const uint8_t *in, int len, char *out, int cap);
+
+// Does a step of this kind take cards out of the acting seat's hand? (The
+// flags-bit-8 question for a caller holding one event rather than a beat.)
+int fio_badge_drops_as_cards_leave(int type);
+
+// WHICH MARKS CHANGE, AND WHEN. `out` receives {defender, first_attacker,
+// good_mask}; the return is 1 when the marks change and 0 when nothing does.
+// `shown_*` is what the badges are WEARING, not the live board - a sequence
+// freezes the marks and walks them forward - which is why it crosses as an
+// argument. A good mask of -1 means "this step carried no board".
+//
+//   opening    the goods this stream ADDS, played in FRONT of the consequences
+//              they caused (a good is a move; the discard behind it is not).
+//   cleared    the goods a beat REMOVES, played in parallel with the throw-in
+//              that cleared them.
+//   hand_off   a PASS: the shield travels with the transfer card. Told from an
+//              attack by the rules rather than the wire (they are one event
+//              type): a defender may not attack, so a card laid by the seat
+//              currently wearing the shield can only be a transfer. The new
+//              defender is an argument because a pass is snapshotted BEFORE the
+//              hand-over and emits no event for it - it appears only on the
+//              bubble's final board.
+#define FIO_ROLES_OUT 3
+int fio_roles_goods_opening(int shown_defender, int shown_first_attacker,
+                            int shown_good_mask, int first_good_mask, int *out);
+int fio_roles_goods_cleared(int shown_defender, int shown_first_attacker,
+                            int shown_good_mask, int step_good_mask, int *out);
+int fio_roles_pass_hand_off(int shown_defender, int shown_first_attacker,
+                            int shown_good_mask, int attack_pass_seats,
+                            int final_defender, int *out);
+
 // ---------- strategies (offline bot roster, §7.2) --------------------------
 
 // Number of exposed offline strategies.

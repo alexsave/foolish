@@ -2655,8 +2655,16 @@ public struct MessageTableView: View {
         // time the settlement is released there is no difference left to find.
         // Every other board - a receiver watching it arrive, a cold open
         // replaying it - has one.
-        if let opening = Self.goodsOpening(shown: ledger.roles,
-                                           firstGoodMask: events.first?.state?.goodMask) {
+        let plan = AnimBeats(events)
+        // The kernel refuses a stream it cannot hold whole rather than
+        // truncating it, and a truncated shape would animate half a move. That
+        // degrades to no flights at all - the closing beat below still settles
+        // the board - so say so rather than leaving a silent still frame.
+        if plan.beats.isEmpty, !events.isEmpty {
+            AnimLog.say("stream#\(run) no beats for \(events.count) events - the kernel refused the stream")
+        }
+        if let opening = RoleBeat.goodsOpening(shown: ledger.roles,
+                                               firstGoodMask: plan.firstGoodMask) {
             AnimLog.say("stream#\(run) good first: g\(ledger.roles?.goodMask ?? 0) -> g\(opening.goodMask)")
             // The seats do not change here, only what they are wearing, so
             // nothing flies: this is the coin flip each badge makes where it
@@ -2670,14 +2678,14 @@ public struct MessageTableView: View {
             }
         }
 
-        let groups = Self.parallelGroups(events)
-        for (gi, group) in groups.enumerated() {
-            // Every step below is written against ONE event; a group of several
+        for beat in plan.beats {
+            // Every step below is written against ONE event; a beat of several
             // is a MULTI-CARD COVER, whose cards must fly together (see
-            // `parallelGroups`). `ev` leads the group for everything that reads
-            // one event - the make-room, the deck override, the sweep marks -
-            // and only the FLIGHTS are built from all of them, which is exactly
-            // the difference between "at the same time" and "one after another".
+            // `AnimBeats`). `ev` leads the beat for everything that reads one
+            // event - the make-room, the deck override, the sweep marks - and
+            // only the FLIGHTS are built from all of them, which is exactly the
+            // difference between "at the same time" and "one after another".
+            let group = Array(events[beat.range])
             let ev = group[0]
             // Bug 9: a newer sequence has taken over (a live bout-end played on
             // top of a replay still in flight). Stop stepping the stale one
@@ -2739,7 +2747,7 @@ public struct MessageTableView: View {
             // after the first. My own seat is not a badge (my hand is the fan,
             // and the veil has already taken the played cards out of it), which
             // is the same reason `freezeCounts` skips it.
-            if Self.badgeDropsAsCardsLeave(ev.kind),
+            if beat.dropsBadge,
                ev.seat != controller.mySeat,
                let s = group.last?.state,
                let leaving = s.players.first(where: { $0.seat == ev.seat }) {
@@ -2757,11 +2765,11 @@ public struct MessageTableView: View {
             // ROUND 28: AND THE BADGE OF ANYONE THIS GROUP PUTS OUT.
             //
             // Fired with the flights, not awaited: the collapse and the card
-            // motion are one event (see `outsWith` for why the `out` notice that
+            // motion are one event (see `AnimBeats` for why the `out` notice that
             // follows a move cannot be the trigger on its own). Idempotent, so
             // the lookahead here and the fallback when the loop reaches the
             // `out` group itself cannot collapse a badge twice.
-            let goingOut = Self.outsWith(groups, gi)
+            let goingOut = beat.outs
             if !goingOut.isEmpty, !(ledger.out ?? []).isSuperset(of: goingOut) {
                 AnimLog.say("stream#\(run) out badges collapse \(goingOut.sorted())")
                 withAnimation(reduceMotion ? nil
@@ -2778,9 +2786,9 @@ public struct MessageTableView: View {
             // a throw-in is the only thing that clears a good this way, and a
             // goodMask that changes for any other reason still belongs to the
             // closing beat with the rest of the consequences.
-            if !Self.placedOnTable(group).isEmpty,
-               let cleared = Self.goodsCleared(shown: ledger.roles,
-                                               stepGoodMask: group.last?.state?.goodMask) {
+            if beat.placedAny,
+               let cleared = RoleBeat.goodsCleared(shown: ledger.roles,
+                                                   stepGoodMask: beat.goodMask) {
                 AnimLog.say("stream#\(run) goods clear with the card: g\(ledger.roles?.goodMask ?? 0) -> g\(cleared.goodMask)")
                 syncRoles(to: cleared, in: view, animated: true)
             }
@@ -2809,8 +2817,8 @@ public struct MessageTableView: View {
             // `flyPlacement`). This is the same beat for the two channels that
             // DO replay a stream - a receiver opening the bubble cold, and an
             // arrival landing on an open board.
-            if let handOff = Self.passHandOff(shown: ledger.roles, group: group,
-                                              finalDefender: view.defender) {
+            if let handOff = RoleBeat.passHandOff(shown: ledger.roles, beat: beat,
+                                                  finalDefender: view.defender) {
                 AnimLog.say("stream#\(run) pass: the shield flies with the card d\(ledger.roles?.defender ?? -1) -> d\(handOff.defender)")
                 syncRoles(to: handOff, in: view, animated: true)
             }
@@ -2884,9 +2892,8 @@ public struct MessageTableView: View {
             // is taken down. It keeps the tilt it flew in with: it is no longer
             // hidden, which is `coverTilted`'s other way of being true.
             if !sweepUnplaced.isEmpty {
-                let placed = Self.placedOnTable(group)
-                sweepUnplaced.subtract(placed)
-                sweepArriving.subtract(placed)
+                sweepUnplaced.subtract(beat.placed)
+                sweepArriving.subtract(beat.placed)
             }
             // ROUND 17: A NEWER SEQUENCE MAY HAVE TAKEN OVER WHILE THAT FLIGHT
             // PLAYED, and the counts below belong to whoever is newest.
@@ -2925,7 +2932,7 @@ public struct MessageTableView: View {
             // arrives with the landing flight already flown (its cover step is a
             // no-op - the card is not in the final view to fly to), and every
             // receiver replays the same stream from the top.
-            if Self.holdsAfter(groups, gi) {
+            if beat.holds {
                 AnimLog.say("stream#\(run) hold \(Int(boutEndHold * 1000))ms - bout-ending cover")
                 try? await Task.sleep(nanoseconds: UInt64(boutEndHold * 1_000_000_000))
             }
@@ -2974,19 +2981,6 @@ public struct MessageTableView: View {
         }
     }
 
-    /// Does this kind of step take cards OUT of the acting seat's hand?
-    ///
-    /// ROUND 30, and the whole of the count rule as a value so it can be
-    /// asserted directly: a badge drops as its cards LEAVE (they are in the air,
-    /// and a badge still counting them is claiming a hand that big plus the
-    /// flight), and ticks UP only when arriving cards land. `nil` - a step with
-    /// no kind the wire recognises - moves nobody's hand.
-    static func badgeDropsAsCardsLeave(_ kind: EventType?) -> Bool {
-        switch kind {
-        case .attackPass, .cover: return true
-        default: return false
-        }
-    }
 
     /// Freeze every displayed count to `v` — the board as it looked BEFORE the
     /// move we are about to animate. Synchronous on purpose, and it must run
@@ -3048,7 +3042,7 @@ public struct MessageTableView: View {
         // `animSequenceToken` until `runEventStream` runs a Task hop later, so a
         // forced freeze sits unprotected in that gap - the OLD stream's next
         // step begins by writing counts (the deck on a deal/refill, the acting
-        // badge on `badgeDropsAsCardsLeave`) BEFORE it reaches the token check
+        // badge on `AnimBeats.badgeDropsAsCardsLeave`) BEFORE it reaches the token check
         // that would abandon it. That is round 42's measured twitch, re-admitted
         // to straighten one lagging badge. Struck, in the shape of edcb91f.
         //
@@ -3094,21 +3088,9 @@ public struct MessageTableView: View {
     /// What the badges are wearing, as a value. Not a GameView: this is only the
     /// three facts a role mark is drawn from, so comparing two of them answers
     /// "did anything about the roles change" without a whole board diff.
-    struct RoleState: Equatable {
-        let defender: Int
-        let firstAttacker: Int
-        let goodMask: Int
-        init(_ v: GameView) {
-            defender = v.defender
-            firstAttacker = v.firstAttacker
-            goodMask = v.goodMask
-        }
-        init(defender: Int, firstAttacker: Int, goodMask: Int = 0) {
-            self.defender = defender
-            self.firstAttacker = firstAttacker
-            self.goodMask = goodMask
-        }
-    }
+    /// What the badges are wearing. Lives in the SDK beside the rules that read
+    /// it (`RoleBeat`, over c/src/anim_plan.c) rather than inside a view.
+    typealias RoleState = RoleMarks
 
     /// THE ROLES A COLD OPEN SHOULD DRAW BEFORE IT HAS PLAYED ANYTHING: the ones
     /// the bubble FOUND. A pure function of the controller, so `body` may read it
@@ -3263,111 +3245,12 @@ public struct MessageTableView: View {
         return flights
     }
 
-    /// ROUND 21: THE ROLE STATE A STREAM SHOULD OPEN ON, or nil for "start
-    /// playing straight away".
-    ///
-    /// The rule, as a value, so it can be read and tested without a board - the
-    /// prose for WHY lives at the call site in `runEventStream`.
-    ///
-    /// Only goods that this move ADDS, and only ever added to what is already
-    /// shown. A good being set is somebody's move and belongs in front of the
-    /// consequences it caused; a good being cleared is a consequence of the
-    /// attack that reopened the bout and belongs at the back with the rest of
-    /// them. The seats are carried over untouched: nothing changes hands here,
-    /// so nothing may fly.
-    static func goodsOpening(shown: RoleState?, firstGoodMask: Int?) -> RoleState? {
-        guard let shown, let firstGoodMask else { return nil }
-        let added = firstGoodMask & ~shown.goodMask
-        guard added != 0 else { return nil }
-        return RoleState(defender: shown.defender,
-                         firstAttacker: shown.firstAttacker,
-                         goodMask: shown.goodMask | added)
-    }
-
-    /// ROUND 28: THE OTHER HALF OF THE SAME RULE - the goods a step CLEARS.
-    ///
-    /// `goodsOpening` puts a good being SET in front of the consequences it
-    /// caused, and until now its mirror image was handled by omission: a good
-    /// being CLEARED fell through to the closing `syncRoles` at the back of the
-    /// sequence, with the discard and the refills. The reasoning was that a
-    /// cleared good is a consequence of the attack that reopened the bout, and
-    /// flipping it early would snap a check to a sword before the card that
-    /// cleared it had left the hand.
-    ///
-    /// The owner's answer on the 1.0(28) walk was the option that reasoning had
-    /// missed: PARALLEL. "Rotate the sword(s) in parallel with the throw in."
-    /// The card and the marks belong to one another - the throw-in is WHY the
-    /// goods cleared - so they move together and neither leads. Early is still
-    /// wrong; late is what we had; together is the answer.
-    ///
-    /// Only ever REMOVES bits, and the seats are carried over untouched - nothing
-    /// changes hands here, so nothing may fly. Pure, so the rule reads and tests
-    /// without a board; the call site in `runEventStream` fires it alongside the
-    /// group's own flight rather than awaiting it.
-    static func goodsCleared(shown: RoleState?, stepGoodMask: Int?) -> RoleState? {
-        guard let shown, let stepGoodMask else { return nil }
-        let removed = shown.goodMask & ~stepGoodMask
-        guard removed != 0 else { return nil }
-        return RoleState(defender: shown.defender,
-                         firstAttacker: shown.firstAttacker,
-                         goodMask: shown.goodMask & ~removed)
-    }
-
-    /// ROUND 29: THE DEFENCE ITSELF CHANGING HANDS - a PASS (perevod), which is
-    /// the one hand-off that happens INSIDE a bout rather than at the end of one.
-    ///
-    /// The owner, asked on the 1.0(28) walk whether the shield should fly with
-    /// the transfer card or after it: "b both at once. (shield should always
-    /// fly, my sword should rotate in, and their next sword should rotate out)."
-    /// Four things, one beat - the card flies to the table, the shield flies
-    /// from the passer to the next defender, the passer's own sword rotates IN
-    /// because passing made them an attacker, and the next defender's sword
-    /// rotates OUT because they have stopped being one.
-    ///
-    /// Only the SHIELD is named here because only the shield TRAVELS. The two
-    /// swords are gestures each badge makes where it stands, which is
-    /// `roleFlights`' standing rule - a mark that flies is a mark that went
-    /// somewhere, and nobody took those - and they need no machinery of their
-    /// own: `FRoleCoin` already turns the passer's in behind the departing
-    /// shield and the receiver's out as it arrives. Handing this state to
-    /// `syncRoles` beside the group's flight is the whole implementation.
-    ///
-    /// WHY THE NEW DEFENDER IS AN ARGUMENT INSTEAD OF BEING READ OFF THE STEP,
-    /// which is the trap here and the reason this is not one line. A pass is
-    /// snapshotted BEFORE the hand-over (c/src/game.c handle_pass:
-    /// `SNAP(ENGINE_HOOK_PASS)` runs, and only then `g->defender = next`), and
-    /// unlike a bout end it emits no DEFENDER_MOVE step at all - it writes a
-    /// LOG_DEFENDER_CHANGE, which is not a hook and so never becomes an event.
-    /// So the transfer step's own board still shows the passer defending, and
-    /// so does the OUT notice that follows a pass which put them out. The only
-    /// place in the stream the new defender appears is the bubble's FINAL
-    /// board, which is what the caller hands in.
-    ///
-    /// Only the defender, though - never a whole `RoleState` off that board.
-    /// The seats are otherwise carried over untouched for the same reason
-    /// `goodsCleared` carries its own: a pass never moves the opening sword
-    /// (`handle_pass` does not touch `first_attacker`), so taking the final
-    /// board wholesale would let a stream that ALSO ended a bout hand that
-    /// sword over with the transfer card instead of at its own closing beat.
-    ///
-    /// WHICH STEP IS A TRANSFER, given that the wire cannot say. An attack and
-    /// a pass are the same event type - `EVW_T_ATTACK_PASS` - told apart only
-    /// by a message template the board never renders. So this asks the rules
-    /// instead: a defender may not attack (`handle_attack` rejects
-    /// `player_idx == g->defender` before it looks at a single card), so cards
-    /// laid on the table by the seat currently wearing the shield can only be a
-    /// transfer.
-    ///
-    /// Pure and static, so the rule reads and tests without a board.
-    static func passHandOff(shown: RoleState?, group: [GameEvent],
-                            finalDefender: Int) -> RoleState? {
-        guard let shown, finalDefender != shown.defender,
-              group.contains(where: { $0.kind == .attackPass && $0.seat == shown.defender })
-        else { return nil }
-        return RoleState(defender: finalDefender,
-                         firstAttacker: shown.firstAttacker,
-                         goodMask: shown.goodMask)
-    }
+    // The three timings a role change can have are the kernel's answer now -
+    // `RoleBeat` over c/src/anim_plan.c's anim_goods_opening /
+    // anim_goods_cleared / anim_pass_hand_off. What is left here is WHERE in the
+    // sequence each one is fired, which is this file's business: the opening one
+    // is awaited at the top of `runEventStream`, the other two are launched
+    // beside the beat's own flights so the marks and the card move together.
 
     /// Carry the marks across, then hand the badges back their own copies. The
     /// endpoints are blank for the duration, so there is exactly one of each
@@ -3415,145 +3298,13 @@ public struct MessageTableView: View {
         }
     }
 
-    /// Poll (up to ~1.2s) for a step's frames to be ready, then play it and await
-    /// the animation. `build` returns nil (frames not ready — retry), [] (nothing to
-    /// animate), or the flights.
-    /// Split a turn's events into the steps that PLAY, which is not the same as
-    /// the events that happened.
-    ///
-    /// One step, one beat of animation. Almost every event is its own step, and
-    /// there is exactly one exception: a defender covering SEVERAL CARDS IN ONE
-    /// MOVE. The kernel emits a COVER event per card (one engine hook per pair,
-    /// each carrying its own board snapshot), so a two-card cover arrives as two
-    /// events - and played as two steps, the receiver watches the cards leave
-    /// the hand one after the other, while the player who made the move saw them
-    /// go together. Same move, two different animations, which is the defect.
-    ///
-    /// WHAT THE CHAIN CANNOT SAY, and why this groups by adjacency. The obvious
-    /// rule would be "group the covers that came from one MOVE" - but the move
-    /// boundary is not on the chain to group by. A v6 body records atoms, and
-    /// the codec spends one COVER atom per card, so a defender who covered two
-    /// cards at once and a defender who covered twice produce the same atoms in
-    /// the same order, byte for byte. (This is the same blindness round 16 met
-    /// at the bubble boundary, one level down, and it is why that one had to be
-    /// answered by a new header field rather than by reading the body harder.)
-    ///
-    /// So the boundary this uses is THE BUBBLE, which the chain does say: these
-    /// events are one bubble's (`lastMoveEvents` returns exactly what this
-    /// bubble added), and consecutive covers by one seat inside it fly together.
-    /// Two covers sent as two bubbles are two separate replays and never meet
-    /// here, which is the case the owner cared about - "that is ok if they are
-    /// in fact in the same bubble, but if they are not in the same bubble..."
-    /// The residual is a defender who staged two covers and sent them as one
-    /// bubble: those now fly together, having arrived together. Reading it any
-    /// other way would need a move marker in every replay code ever written.
-    ///
-    /// CONSECUTIVE, so a bout boundary still splits: a cover that closed a bout
-    /// puts a DISCARD between it and the next cover, which ends the run.
-    ///
-    /// Only COVER groups. Attacks and passes already carry every card of the
-    /// move in one event; deals and refills are per seat; and a bout's closing
-    /// DISCARD/REFILL are the cover's consequences, not part of the same
-    /// movement - they keep their own beats, which is what makes the counts
-    /// settle in the right order.
-    static func parallelGroups(_ events: [GameEvent]) -> [[GameEvent]] {
-        var out: [[GameEvent]] = []
-        for ev in events {
-            if ev.kind == .cover, let head = out.last?.first,
-               head.kind == .cover, head.seat == ev.seat {
-                out[out.count - 1].append(ev)
-            } else {
-                out.append([ev])
-            }
-        }
-        return out
-    }
-
-    /// ROUND 16: does the sequence HOLD after group `i`? True only for a COVER
-    /// that ended its bout - the case the owner named, "when you cover and cause
-    /// the deck to discard (last defense)".
-    ///
-    /// The bout end is the DISCARD, so this looks forward for one. Not merely at
-    /// the next group: a bout that ends because the defender's last card went
-    /// down puts their OUT (and, at the end of a game, a magic transition)
-    /// between the cover and the trash, and those carry no flight of their own -
-    /// they are notices, not movements, so they neither separate the cover from
-    /// its consequence nor deserve a hold of their own. Anything that DOES move a
-    /// card ends the scan: a refill or a pickup after a cover means the table did
-    /// not close on it, and holding there would be a stall in the middle of a
-    /// sequence that is still going somewhere.
-    ///
-    /// The far commoner bout end - defender covers, an ATTACKER then says good -
-    /// is two bubbles, so the discard arrives in a stream with no cover in it at
-    /// all and nothing here fires. That is right: nobody covered in that beat,
-    /// and the table has been sitting there readable since the last one.
-    /// ROUND 20: every card a stream PUTS DOWN on the table - the cards whose
-    /// arrival is a thing to watch, as opposed to the ones that were already
-    /// lying there when the bubble was sealed.
-    ///
-    /// Static and pure so the rule can be read and tested without a board. Only
-    /// interesting when the same stream then sweeps the table (`setSweep`
-    /// intersects this with the grid's own slots and keeps nothing else): that
-    /// is the bout-ending cover, the one placement whose battle is missing from
-    /// the final view because the final view has no battles at all.
-    static func placedOnTable(_ events: [GameEvent]) -> Set<String> {
-        var out = Set<String>()
-        for ev in events {
-            switch ev.kind {
-            case .attackPass, .defenderMove, .cover:
-                for case let c? in ev.cards { out.insert(c.identity) }
-            default: break
-            }
-        }
-        return out
-    }
-
-    /// ROUND 28: WHICH SEATS GO OUT WITH GROUP `i`'S CARD MOTION.
-    ///
-    /// The kernel emits `out` as a NOTICE - it carries no cards, so it has no
-    /// flight and takes no time - which means a badge collapsed when the loop
-    /// reaches the `out` group would collapse just AFTER the move that caused
-    /// it, as a little beat of its own. The owner asked for the opposite: "badge
-    /// collapse in parallel with the card motion (player out move will always
-    /// involve last cards in hand going to table)".
-    ///
-    /// So a group that MOVES CARDS looks ahead over the flightless notices that
-    /// follow it and takes their outs as its own. `out` events in the group
-    /// itself are included too, and the loop still applies any it reaches
-    /// directly - both paths union into the same set, so the lookahead and the
-    /// fallback cannot fight.
-    ///
-    /// Pure, and it stops at the first group that moves a card: an out belongs
-    /// to the move that caused it, never to one two beats later.
-    static func outsWith(_ groups: [[GameEvent]], _ i: Int) -> Set<Int> {
-        guard i >= 0, i < groups.count else { return [] }
-        var out = Set<Int>()
-        for e in groups[i] where e.kind == .out { out.insert(e.seat) }
-        // Only a group that actually moved something may adopt what follows it.
-        let moved = !placedOnTable(groups[i]).isEmpty
-            || groups[i].contains { $0.kind == .pickup || $0.kind == .discard
-                                    || $0.kind == .cardsToTrash || $0.kind == .refill
-                                    || $0.kind == .deal }
-        guard moved else { return out }
-        var j = i + 1
-        while j < groups.count, groups[j].allSatisfy({ $0.kind == .out }) {
-            for e in groups[j] { out.insert(e.seat) }
-            j += 1
-        }
-        return out
-    }
-
-    static func holdsAfter(_ groups: [[GameEvent]], _ i: Int) -> Bool {
-        guard i >= 0, i < groups.count, groups[i].first?.kind == .cover else { return false }
-        for j in (i + 1)..<groups.count {
-            switch groups[j].first?.kind {
-            case .discard, .cardsToTrash: return true
-            case .out, .magicTransition, .flipped: continue
-            default: return false
-            }
-        }
-        return false
-    }
+    // THE SHAPE OF A SEQUENCE is the kernel's answer now - `AnimBeats` over
+    // c/src/anim_plan.c's anim_build_beats. It groups the stream into beats
+    // (only consecutive covers by one seat merge, because the kernel spends one
+    // COVER event per card and a two-card cover must still fly as one movement),
+    // and each beat comes back knowing what it puts on the table, which seats it
+    // takes out with it, whether the sequence rests after it and which way its
+    // badge counts. What is left in this file is the playing.
 
     /// Wait for the host to finish moving the sheet.
     ///
@@ -3585,6 +3336,9 @@ public struct MessageTableView: View {
         }
     }
 
+    /// Poll (up to ~1.2s) for a step's frames to be ready, then play it and await
+    /// the animation. `build` returns nil (frames not ready - retry), [] (nothing
+    /// to animate), or the flights.
     private func playStep(_ build: (_ lastChance: Bool) -> [Flight]?) async {
         for i in 0..<26 {
             // ROUND 30: never AIM at a board that is still moving under the
@@ -5017,7 +4771,7 @@ public struct MessageTableView: View {
         // `sweepUnplaced`. For all but a bout-ending cover this set is empty
         // (nothing is placed and swept in one bubble), and `setSweep` drops
         // anything the grid does not hold a slot for.
-        setSweep(sweepTableForReplay(), unplaced: Self.placedOnTable(events))
+        setSweep(sweepTableForReplay(), unplaced: AnimBeats(events).placed)
 
         // The SAME animator the live bout-end uses - one path, the kernel's events.
         // `openReplay: true` opens the fan for a COLD first open so each drawn card

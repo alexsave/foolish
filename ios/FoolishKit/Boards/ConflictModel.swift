@@ -87,8 +87,9 @@
 //     the web's pickup flicker under a new name. This is the verdict the
 //     catalogue says to get right first.
 //
-// Pure and static in the house style (`goodsOpening`, `outsWith`, `holdsAfter`,
-// `parallelGroups`): every rule here can be asserted without a board.
+// Pure and static in the house style the ordering rules kept before they
+// became C (`AnimBeats`, `RoleBeat`): every rule here can be asserted without a
+// board.
 
 import SwiftUI
 

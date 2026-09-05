@@ -15,14 +15,14 @@
 //   UNDOING A PICKUP (`undoReleaseTargets`). The one retraction that had no
 //   animation at all - a whole table's worth of cards moving between two frames.
 //
-//   THE OUT BADGE (`outsWith`). `out` is a notice with no flight, so a badge
+//   THE OUT BADGE (`AnimBeats.Beat.outs`). `out` is a notice with no flight, so a badge
 //   collapsed when the loop reaches it would collapse just after the move that
 //   caused it. The owner wants it WITH the card motion.
 //
-//   GOODS CLEARED (`goodsCleared`). The mirror of `goodsOpening`, and the answer
+//   GOODS CLEARED (`RoleBeat.goodsCleared`). The mirror of `goodsOpening`, and the answer
 //   its asymmetry had missed: not first, not last, but alongside.
 //
-//   THE PASS / TRANSFER (`passHandOff`), the fifth and the last to be built.
+//   THE PASS / TRANSFER (`RoleBeat.passHandOff`), the fifth and the last to be built.
 //   Four things in one beat, and the only one of the four that TRAVELS is the
 //   shield - so the rule's whole job is to say when the defence changed hands
 //   and where it went, against a kernel stream that does not say either.
@@ -38,6 +38,11 @@ final class Round28ShapeTests: XCTestCase {
         GameEvent(type: kind.rawValue, seat: seat, msg: 0, from: 1, to: 2,
                   cards: cards, target: nil, battle: nil, state: nil)
     }
+
+    /// The kernel's shape for a stream, and its first beat - what
+    /// `runEventStream` hands each rule below.
+    private func plan(_ events: [GameEvent]) -> AnimBeats { AnimBeats(events) }
+    private func beat(_ events: [GameEvent]) -> AnimBeats.Beat { AnimBeats(events).beats[0] }
 
     // MARK: - the game-over hold
 
@@ -97,12 +102,12 @@ final class Round28ShapeTests: XCTestCase {
     /// THE CASE: a cover empties the defender's hand, so the kernel says `out`
     /// right after it. The badge must collapse WITH the cover, not after it.
     func testABadgeCollapsesWithTheMoveThatEndsThePlayer() {
-        let groups = MessageTableView.parallelGroups([
+        let groups = plan([
             ev(.cover, seat: 1, cards: [c(0, 9)]),
             ev(.out, seat: 1),
             ev(.cardsToTrash, seat: 1),
         ])
-        XCTAssertEqual(MessageTableView.outsWith(groups, 0), [1],
+        XCTAssertEqual(groups.beats[0].outs, [1],
                        "the cover adopts the out that follows it")
     }
 
@@ -110,40 +115,40 @@ final class Round28ShapeTests: XCTestCase {
     /// beats later belongs to the move that caused IT, and a badge that
     /// collapsed early would be edge-on before its owner's last card had moved.
     func testTheLookaheadDoesNotReachPastAMoveThatMovesCards() {
-        let groups = MessageTableView.parallelGroups([
+        let groups = plan([
             ev(.attackPass, seat: 0, cards: [c(1, 6)]),
             ev(.cover, seat: 1, cards: [c(1, 9)]),
             ev(.out, seat: 1),
         ])
-        XCTAssertTrue(MessageTableView.outsWith(groups, 0).isEmpty,
+        XCTAssertTrue(groups.beats[0].outs.isEmpty,
                       "seat 1 goes out on the COVER, not on the attack before it")
-        XCTAssertEqual(MessageTableView.outsWith(groups, 1), [1])
+        XCTAssertEqual(groups.beats[1].outs, [1])
     }
 
     /// A pickup is card motion too - the player whose last cards were taken off
     /// the table goes out on the pickup that took them.
     func testAPickupAlsoCarriesTheOutThatFollowsIt() {
-        let groups = MessageTableView.parallelGroups([
+        let groups = plan([
             ev(.pickup, seat: 2, cards: [c(0, 6), c(0, 9)]),
             ev(.out, seat: 0),
         ])
-        XCTAssertEqual(MessageTableView.outsWith(groups, 0), [0])
+        XCTAssertEqual(groups.beats[0].outs, [0])
     }
 
     /// Several seats going out on one move all collapse together, and the group
     /// carrying its OWN out (rather than a following notice) still reports it -
     /// that is the fallback the loop relies on when nothing preceded it.
     func testEveryOutOnOneMoveCollapsesTogetherAndAnOrphanOutStillCounts() {
-        let many = MessageTableView.parallelGroups([
+        let many = plan([
             ev(.cardsToTrash, seat: 1, cards: [c(0, 6)]),
             ev(.out, seat: 1),
             ev(.out, seat: 3),
         ])
-        XCTAssertEqual(MessageTableView.outsWith(many, 0), [1, 3])
+        XCTAssertEqual(many.beats[0].outs, [1, 3])
         // An `out` with no card motion in front of it: the group answers for
         // itself rather than reporting nothing and leaving a badge standing.
-        let orphan = MessageTableView.parallelGroups([ev(.out, seat: 2)])
-        XCTAssertEqual(MessageTableView.outsWith(orphan, 0), [2])
+        let orphan = plan([ev(.out, seat: 2)])
+        XCTAssertEqual(orphan.beats[0].outs, [2])
     }
 
     /// A stream with nobody going out collapses nothing. The obvious wrong
@@ -151,14 +156,12 @@ final class Round28ShapeTests: XCTestCase {
     /// yes here for every seat that was ALREADY out, which is the whole reason
     /// this reads events rather than diffing boards.
     func testAnOrdinaryStreamCollapsesNobody() {
-        let groups = MessageTableView.parallelGroups([
+        let groups = plan([
             ev(.attackPass, seat: 0, cards: [c(1, 6)]),
             ev(.cover, seat: 1, cards: [c(1, 9)]),
             ev(.refill, seat: 0, cards: [c(2, 11)]),
         ])
-        for i in 0..<groups.count {
-            XCTAssertTrue(MessageTableView.outsWith(groups, i).isEmpty)
-        }
+        for b in groups.beats { XCTAssertTrue(b.outs.isEmpty) }
     }
 
     // MARK: - goods cleared
@@ -166,7 +169,7 @@ final class Round28ShapeTests: XCTestCase {
     /// A throw-in that clears two goods turns both marks, and moves nobody.
     func testClearedGoodsTurnAndNothingChangesHands() {
         let shown = MessageTableView.RoleState(defender: 1, firstAttacker: 0, goodMask: 0b101)
-        let cleared = MessageTableView.goodsCleared(shown: shown, stepGoodMask: 0)
+        let cleared = RoleBeat.goodsCleared(shown: shown, stepGoodMask: 0)
         XCTAssertEqual(cleared?.goodMask, 0)
         XCTAssertEqual(cleared?.defender, 1, "clearing a good hands nothing over")
         XCTAssertEqual(cleared?.firstAttacker, 0)
@@ -176,7 +179,7 @@ final class Round28ShapeTests: XCTestCase {
     /// check, which is the case that separates this from "take the step's mask".
     func testAGoodThatStillStandsKeepsItsCheck() {
         let shown = MessageTableView.RoleState(defender: 1, firstAttacker: 0, goodMask: 0b101)
-        let cleared = MessageTableView.goodsCleared(shown: shown, stepGoodMask: 0b100)
+        let cleared = RoleBeat.goodsCleared(shown: shown, stepGoodMask: 0b100)
         XCTAssertEqual(cleared?.goodMask, 0b100, "seat 0's good cleared, seat 2's stands")
     }
 
@@ -185,11 +188,11 @@ final class Round28ShapeTests: XCTestCase {
     /// returning a state for it would flip the same mark twice in one sequence.
     func testAddingAGoodIsNotThisRule() {
         let none = MessageTableView.RoleState(defender: 1, firstAttacker: 0, goodMask: 0)
-        XCTAssertNil(MessageTableView.goodsCleared(shown: none, stepGoodMask: 0b100))
-        XCTAssertNil(MessageTableView.goodsCleared(shown: none, stepGoodMask: 0))
-        XCTAssertNil(MessageTableView.goodsCleared(shown: nil, stepGoodMask: 0))
+        XCTAssertNil(RoleBeat.goodsCleared(shown: none, stepGoodMask: 0b100))
+        XCTAssertNil(RoleBeat.goodsCleared(shown: none, stepGoodMask: 0))
+        XCTAssertNil(RoleBeat.goodsCleared(shown: nil, stepGoodMask: 0))
         let some = MessageTableView.RoleState(defender: 1, firstAttacker: 0, goodMask: 0b001)
-        XCTAssertNil(MessageTableView.goodsCleared(shown: some, stepGoodMask: 0b011),
+        XCTAssertNil(RoleBeat.goodsCleared(shown: some, stepGoodMask: 0b011),
                      "one good added while another stands clears nothing")
     }
 
@@ -207,14 +210,42 @@ final class Round28ShapeTests: XCTestCase {
             let onlyAdds = (shown.goodMask & ~mask) == 0
             let onlyRemoves = (mask & ~shown.goodMask) == 0
             if onlyAdds {
-                XCTAssertNil(MessageTableView.goodsCleared(shown: shown, stepGoodMask: mask),
+                XCTAssertNil(RoleBeat.goodsCleared(shown: shown, stepGoodMask: mask),
                              "mask \(mask) only adds, so it clears nothing")
             }
             if onlyRemoves {
-                XCTAssertNil(MessageTableView.goodsOpening(shown: shown, firstGoodMask: mask),
+                XCTAssertNil(RoleBeat.goodsOpening(shown: shown, firstGoodMask: mask),
                              "mask \(mask) only removes, so it opens nothing")
             }
         }
+    }
+
+    // MARK: - what the beat carries back
+
+    /// THE CROSSING, which is the half a C case cannot pin: the packed answer
+    /// has to arrive in Swift as the same beats. A rule proved in
+    /// c/tests/tests.c and then read out of the wrong byte here is a rule
+    /// nothing catches, so these assert the fields the board actually consumes.
+    ///
+    /// The cards a beat PUTS DOWN, first. Only attacks, passes and covers land
+    /// on the table; a pickup takes cards off it, and the sweep is drawn from
+    /// this set.
+    func testABeatNamesTheCardsItPutsOnTheTable() {
+        let p = plan([ev(.attackPass, seat: 0, cards: [c(1, 6)]),
+                      ev(.cover, seat: 1, cards: [c(1, 9)]),
+                      ev(.pickup, seat: 1, cards: [c(2, 7)])])
+        XCTAssertEqual(p.placed, [c(1, 6).identity, c(1, 9).identity],
+                       "the whole stream's table placements")
+        XCTAssertEqual(p.beats[0].placed, [c(1, 6).identity])
+        XCTAssertEqual(p.beats[1].placed, [c(1, 9).identity])
+        XCTAssertTrue(p.beats[2].placed.isEmpty, "a pickup takes cards OFF the table")
+        XCTAssertTrue(p.beats[0].placedAny)
+        XCTAssertFalse(p.beats[2].placedAny)
+        // A multi-card cover is one beat and names both of its cards.
+        let two = plan([ev(.cover, seat: 1, cards: [c(0, 9)]),
+                        ev(.cover, seat: 1, cards: [c(3, 11)])])
+        XCTAssertEqual(two.beats.count, 1)
+        XCTAssertEqual(two.beats[0].placed, [c(0, 9).identity, c(3, 11).identity])
     }
 
     // MARK: - the pass / transfer
@@ -231,8 +262,8 @@ final class Round28ShapeTests: XCTestCase {
     func testATransferHandsTheShieldToTheNextDefender() {
         let shown = MessageTableView.RoleState(defender: 1, firstAttacker: 0, goodMask: 0b100)
         let group = [ev(.attackPass, seat: 1, cards: [c(0, 6)])]
-        let handOff = MessageTableView.passHandOff(shown: shown, group: group,
-                                                   finalDefender: 2)
+        let handOff = RoleBeat.passHandOff(shown: shown, beat: beat(group),
+                                           finalDefender: 2)
         XCTAssertEqual(handOff?.defender, 2)
         XCTAssertEqual(handOff?.firstAttacker, 0, "a transfer does not move the opening sword")
         // The goods a transfer clears are `goodsCleared`'s business, fired in
@@ -253,13 +284,13 @@ final class Round28ShapeTests: XCTestCase {
         let shown = MessageTableView.RoleState(defender: 1, firstAttacker: 0)
         // Seat 0 attacking while seat 1 defends: a throw-in, not a transfer -
         // even though the defence really does move on later in the same bubble.
-        XCTAssertNil(MessageTableView.passHandOff(
-            shown: shown, group: [ev(.attackPass, seat: 0, cards: [c(0, 6)])],
+        XCTAssertNil(RoleBeat.passHandOff(
+            shown: shown, beat: beat([ev(.attackPass, seat: 0, cards: [c(0, 6)])]),
             finalDefender: 2))
         // …and no other step is a transfer either, whoever made it.
         for kind: EventType in [.cover, .pickup, .refill, .discard, .out, .defenderMove] {
-            XCTAssertNil(MessageTableView.passHandOff(
-                shown: shown, group: [ev(kind, seat: 1, cards: [c(0, 6)])],
+            XCTAssertNil(RoleBeat.passHandOff(
+                shown: shown, beat: beat([ev(kind, seat: 1, cards: [c(0, 6)])]),
                 finalDefender: 2), "\(kind) handed the shield over")
         }
     }
@@ -272,15 +303,15 @@ final class Round28ShapeTests: XCTestCase {
     func testAShieldAlreadyHandedOverDoesNotFlyAgain() {
         let shown = MessageTableView.RoleState(defender: 1, firstAttacker: 0)
         let group = [ev(.attackPass, seat: 1, cards: [c(0, 6)])]
-        XCTAssertNil(MessageTableView.passHandOff(shown: shown, group: group,
-                                                  finalDefender: 1),
+        XCTAssertNil(RoleBeat.passHandOff(shown: shown, beat: beat(group),
+                                          finalDefender: 1),
                      "the defence did not move, so this was an attack after all")
         let after = MessageTableView.RoleState(defender: 2, firstAttacker: 0)
-        XCTAssertNil(MessageTableView.passHandOff(shown: after, group: group,
-                                                  finalDefender: 2),
+        XCTAssertNil(RoleBeat.passHandOff(shown: after, beat: beat(group),
+                                          finalDefender: 2),
                      "the hand-off replayed itself on a second look")
         // A board with no marks yet has nothing to hand over FROM.
-        XCTAssertNil(MessageTableView.passHandOff(shown: nil, group: group, finalDefender: 2))
+        XCTAssertNil(RoleBeat.passHandOff(shown: nil, beat: beat(group), finalDefender: 2))
     }
 
     /// AND EXACTLY ONE MARK TRAVELS. The owner: "shield should always fly, my
@@ -298,8 +329,8 @@ final class Round28ShapeTests: XCTestCase {
                     1: CGRect(x: 300, y: 280, width: 40, height: 40),
                     2: CGRect(x: 160, y: 70, width: 40, height: 40)]
         let shown = MessageTableView.RoleState(defender: 1, firstAttacker: 0)
-        let handOff = try XCTUnwrap(MessageTableView.passHandOff(
-            shown: shown, group: [ev(.attackPass, seat: 1, cards: [c(0, 6)])],
+        let handOff = try XCTUnwrap(RoleBeat.passHandOff(
+            shown: shown, beat: beat([ev(.attackPass, seat: 1, cards: [c(0, 6)])]),
             finalDefender: 2))
         let flights = MessageTableView.roleFlights(from: shown, to: handOff, pads: pads)
         XCTAssertEqual(flights.count, 1, "a transfer throws exactly one mark")
@@ -315,7 +346,7 @@ final class Round28ShapeTests: XCTestCase {
     /// then `g->defender = next`) and emits no DEFENDER_MOVE step of its own,
     /// so the transfer's own board still shows the passer defending. An
     /// implementation that read `group.last?.state?.defender` - which is what
-    /// `goodsCleared` and `outsWith` both legitimately do - would find nothing
+    /// `goodsCleared` and the out collapse both legitimately do - would find nothing
     /// changed and animate nothing at all, and it would be green against every
     /// synthetic event above because those carry whatever state the test wrote.
     /// So this plays a real transfer and asserts the trap is there.
@@ -323,27 +354,38 @@ final class Round28ShapeTests: XCTestCase {
         guard let found = try await findTransfer() else {
             throw XCTSkip("no 3p game in 40 reached a legal transfer")
         }
-        let group = MessageTableView.parallelGroups(found.events)
-            .first { $0.contains { $0.kind == .attackPass } }
-        let pass = try XCTUnwrap(group, "the kernel's stream for a pass has no transfer step in it")
+        let pass = try XCTUnwrap(AnimBeats(found.events).beats
+                                    .first { $0.attackPassSeats != 0 },
+                                 "the kernel's stream for a pass has no transfer step in it")
+        let passEvents = Array(found.events[pass.range])
 
         // THE TRAP, stated as an assertion: the step's own board is one
         // hand-over behind the board the bubble carries.
-        XCTAssertEqual(pass.last?.state?.defender, found.before.defender,
+        XCTAssertEqual(passEvents.last?.state?.defender, found.before.defender,
                        "the kernel started snapshotting the pass AFTER the hand-over - "
                        + "this rule could read the step directly now")
         XCTAssertNotEqual(found.after.defender, found.before.defender)
 
+        // …and the board each beat settles to came across with it. This is what
+        // `goodsCleared` is asked against inside `runEventStream`, so a step's
+        // own good mask never reaching the kernel would leave every cleared
+        // check waiting for the closing beat again.
+        let shape = AnimBeats(found.events)
+        XCTAssertEqual(shape.firstGoodMask, found.events.first?.state?.goodMask,
+                       "the stream opens on its first step's board")
+        XCTAssertEqual(pass.goodMask, passEvents.last?.state?.goodMask,
+                       "a beat settles to its LAST step's board")
+
         let shown = MessageTableView.RoleState(found.before)
-        let handOff = try XCTUnwrap(MessageTableView.passHandOff(
-            shown: shown, group: pass, finalDefender: found.after.defender))
+        let handOff = try XCTUnwrap(RoleBeat.passHandOff(
+            shown: shown, beat: pass, finalDefender: found.after.defender))
         XCTAssertEqual(handOff.defender, found.after.defender)
         XCTAssertEqual(handOff.firstAttacker, found.before.firstAttacker,
                        "the opening sword moved on a transfer")
         // …and the same stream read the way the trap would read it says nothing.
-        XCTAssertNil(MessageTableView.passHandOff(
-            shown: shown, group: pass,
-            finalDefender: pass.last?.state?.defender ?? -1))
+        XCTAssertNil(RoleBeat.passHandOff(
+            shown: shown, beat: pass,
+            finalDefender: passEvents.last?.state?.defender ?? -1))
     }
 
     /// A real transfer, and the two boards either side of it: what the passer

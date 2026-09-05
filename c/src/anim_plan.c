@@ -183,6 +183,188 @@ int anim_build_plan(const AnimEvent *events, int n_events, int n_players,
     return ANIM_EOK;
 }
 
+// ---- beats ----------------------------------------------------------------
+
+// The three types that put a card DOWN on the table. Not "the acting seat's
+// hand shrank": a pickup shrinks the table, a discard the table too, and the
+// cards a beat placed are what a later sweep is drawn from.
+static int is_placement(int type) {
+    return type == ANIM_EVT_ATTACK_PASS
+        || type == ANIM_EVT_DEFENDER_MOVE
+        || type == ANIM_EVT_COVER;
+}
+
+// The identities one event puts on the table, as dense-id bits. A masked back
+// names nothing, which is why this can be empty for a non-empty event.
+static uint64_t placed_of(const AnimBeatEvent *ev) {
+    if (!is_placement(ev->type) || ev->mask_cards || !ev->cards) return 0;
+    uint64_t ids = 0;
+    for (int k = 0; k < ev->n_cards; k++) {
+        const int id = card_id_or_neg(ev->cards[k]);
+        if (id >= 0 && id < 52) ids |= (uint64_t)1 << id;
+    }
+    return ids;
+}
+
+// A beat that moved a card at all - the gate on adopting the out notices that
+// follow it. Wider than "placed": taking the table, sweeping it to the pile and
+// dealing all move cards and all can put a seat out.
+static int moves_cards(int type) {
+    switch (type) {
+        case ANIM_EVT_PICKUP:
+        case ANIM_EVT_DISCARD:
+        case ANIM_EVT_CARDS_TO_TRASH:
+        case ANIM_EVT_REFILL:
+        case ANIM_EVT_DEAL:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+int anim_badge_drops_as_cards_leave(int type) {
+    return type == ANIM_EVT_ATTACK_PASS || type == ANIM_EVT_COVER;
+}
+
+// A notice: no cards, no flight, no time of its own.
+static int is_out_only(const AnimBeat *b, const AnimBeatEvent *events) {
+    for (int k = 0; k < b->n_events; k++)
+        if (events[b->first + k].type != ANIM_EVT_OUT) return 0;
+    return 1;
+}
+
+int anim_build_beats(const AnimBeatEvent *events, int n_events, AnimBeats *out) {
+    if (!out || n_events < 0) return ANIM_EBADARG;
+    if (n_events > 0 && !events) return ANIM_EBADARG;
+    if (n_events > ANIM_MAX_BEATS) return ANIM_ECAP;
+
+    out->n_beats = 0;
+    out->placed_ids = 0;
+    out->first_good_mask = n_events > 0 ? events[0].good_mask : ANIM_NO_MASK;
+
+    // Grouping. ONLY consecutive covers by one seat merge: an attack or a pass
+    // already carries every card of its move in one event, deals and refills are
+    // per seat, and a bout's closing discard/refill are the cover's consequences
+    // rather than part of the same movement - they keep their own beats, which is
+    // what makes the counts settle in the right order. Consecutive, so a bout
+    // boundary splits a run: the discard between two covers ends it.
+    for (int i = 0; i < n_events; i++) {
+        AnimBeat *last = out->n_beats > 0 ? &out->beats[out->n_beats - 1] : 0;
+        if (last && events[i].type == ANIM_EVT_COVER
+            && last->type == ANIM_EVT_COVER && last->seat == events[i].seat) {
+            last->n_events++;
+        } else {
+            AnimBeat *b = &out->beats[out->n_beats++];
+            b->first = i;
+            b->n_events = 1;
+            b->type = events[i].type;
+            b->seat = events[i].seat;
+            b->flags = 0;
+            b->outs_mask = 0;
+            b->attack_pass_seats = 0;
+            b->placed_ids = 0;
+            b->good_mask = ANIM_NO_MASK;
+        }
+    }
+
+    // Per-beat facts that read only the beat's own events.
+    for (int g = 0; g < out->n_beats; g++) {
+        AnimBeat *b = &out->beats[g];
+        for (int k = 0; k < b->n_events; k++) {
+            const AnimBeatEvent *ev = &events[b->first + k];
+            b->placed_ids |= placed_of(ev);
+            if (ev->type == ANIM_EVT_OUT && ev->seat >= 0 && ev->seat < 32)
+                b->outs_mask |= 1u << ev->seat;
+            if (ev->type == ANIM_EVT_ATTACK_PASS && ev->seat >= 0 && ev->seat < 32)
+                b->attack_pass_seats |= 1u << ev->seat;
+            if (moves_cards(ev->type)) b->flags |= ANIM_BEAT_MOVED;
+        }
+        // The board the beat settles to is its LAST event's: the intermediate
+        // boards inside one move are boards nobody was ever shown.
+        b->good_mask = events[b->first + b->n_events - 1].good_mask;
+        if (b->placed_ids) b->flags |= ANIM_BEAT_PLACED | ANIM_BEAT_MOVED;
+        if (anim_badge_drops_as_cards_leave(b->type)) b->flags |= ANIM_BEAT_DROPS;
+        out->placed_ids |= b->placed_ids;
+    }
+
+    // The outs a beat adopts, and the hold after it. Both look FORWARD, so they
+    // run once the beats above exist.
+    for (int g = 0; g < out->n_beats; g++) {
+        AnimBeat *b = &out->beats[g];
+
+        // Only a beat that actually moved something may adopt what follows it -
+        // an out belongs to the move that caused it, never to one two beats
+        // later - and the lookahead stops at the first beat that is not purely
+        // notices.
+        if (b->flags & ANIM_BEAT_MOVED) {
+            for (int j = g + 1; j < out->n_beats; j++) {
+                if (!is_out_only(&out->beats[j], events)) break;
+                b->outs_mask |= out->beats[j].outs_mask;
+            }
+        }
+
+        // The hold: a COVER whose bout end follows. Not merely the next beat -
+        // a bout that ends because the defender's last card went down puts their
+        // OUT (and, at the end of a game, a magic transition) between the cover
+        // and the trash, and those are notices, so they neither separate the
+        // cover from its consequence nor earn a hold of their own. Anything that
+        // DOES move a card ends the scan: a refill or a pickup after a cover
+        // means the table did not close on it, and holding there would stall a
+        // sequence that is still going somewhere.
+        if (b->type != ANIM_EVT_COVER) continue;
+        for (int j = g + 1; j < out->n_beats; j++) {
+            const int t = out->beats[j].type;
+            if (t == ANIM_EVT_DISCARD || t == ANIM_EVT_CARDS_TO_TRASH) {
+                b->flags |= ANIM_BEAT_HOLDS;
+                break;
+            }
+            if (t == ANIM_EVT_OUT || t == ANIM_EVT_MAGIC_TRANSITION
+                || t == ANIM_EVT_FLIPPED) continue;
+            break;
+        }
+    }
+    return out->n_beats;
+}
+
+// ---- the role beat --------------------------------------------------------
+
+int anim_goods_opening(AnimRoles shown, int first_good_mask, AnimRoles *out) {
+    if (!out || first_good_mask == ANIM_NO_MASK) return 0;
+    // ADDED goods only. A good being set is somebody's move and belongs in front
+    // of the consequences it caused; one being cleared is the consequence of an
+    // attack that reopened the bout and belongs at the back with the rest.
+    const int added = first_good_mask & ~shown.good_mask;
+    if (!added) return 0;
+    out->defender = shown.defender;
+    out->first_attacker = shown.first_attacker;
+    out->good_mask = shown.good_mask | added;
+    return 1;
+}
+
+int anim_goods_cleared(AnimRoles shown, int step_good_mask, AnimRoles *out) {
+    if (!out || step_good_mask == ANIM_NO_MASK) return 0;
+    const int removed = shown.good_mask & ~step_good_mask;
+    if (!removed) return 0;
+    out->defender = shown.defender;
+    out->first_attacker = shown.first_attacker;
+    out->good_mask = shown.good_mask & ~removed;
+    return 1;
+}
+
+int anim_pass_hand_off(AnimRoles shown, unsigned attack_pass_seats,
+                       int final_defender, AnimRoles *out) {
+    if (!out || final_defender == shown.defender) return 0;
+    if (shown.defender < 0 || shown.defender >= 32) return 0;
+    if (!(attack_pass_seats & (1u << shown.defender))) return 0;
+    // Only the defender moves. A pass never touches first_attacker, so taking
+    // the final board wholesale would let a stream that ALSO ended a bout hand
+    // the opening sword over with the transfer card instead of at its own beat.
+    out->defender = final_defender;
+    out->first_attacker = shown.first_attacker;
+    out->good_mask = shown.good_mask;
+    return 1;
+}
+
 // ---- optimistic policy ----------------------------------------------------
 
 uint64_t anim_event_key(int type, Card card, int from, int to, int seat) {

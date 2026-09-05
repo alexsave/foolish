@@ -19,6 +19,7 @@
 #include "../src/evwire.h"
 #include "../src/view.h"
 #include "../src/json_out.h"
+#include "../src/anim_plan.h"
 #include "../wasm/wire.h"
 #include <stdio.h>
 #include <sys/mman.h>
@@ -3766,6 +3767,415 @@ static void test_good_is_always_enumerated_for_an_attacker(void) {
           "the human gate is the only place the same menu loses its GOOD");
 }
 
+// ---------- the shape of a sequence (anim_plan.h beats + the role beat) -----
+//
+// The ordering rules the iMessage board settled by hand and every other client
+// would otherwise re-derive, lifted out of Swift
+// (ios/FoolishKit/Boards/MessageTableView's parallelGroups / placedOnTable /
+// outsWith / holdsAfter / badgeDropsAsCardsLeave / goodsOpening / goodsCleared /
+// passHandOff). The stream is an INPUT here, exactly as it is on a board: what a
+// bubble hands over, sometimes only the half of it a staged settlement has
+// released.
+//
+// MUTATION-CHECKED, each mutation applied to c/src/anim_plan.c on its own:
+//
+//   the grouping merges any consecutive pair of the same type       -> 2 failures
+//   the grouping merges covers regardless of seat                   -> 1 failure
+//   the grouping merges covers that are not adjacent                -> 1 failure
+//   holdsAfter treats a notice as a wall (drops the `continue`)     -> 3 failures
+//   holdsAfter skips over anything, not only notices                -> 2 failures
+//   holdsAfter fires for a beat that is not a cover                 -> 5 failures
+//   outsWith drops the "this beat moved something" gate             -> 1 failure
+//   outsWith adopts past a beat that is not purely notices          -> 1 failure
+//   outsWith stops after the first out-only beat it adopts          -> 1 failure
+//   placed_of counts pickups/discards as table placements           -> 3 failures
+//   the badge drops as cards LAND (attack/cover -> pickup/refill)   -> 4 failures
+//   goods_opening replaces the shown mask instead of adding to it   -> 1 failure
+//   goods_cleared replaces the shown mask instead of removing from  -> 1 failure
+//   pass_hand_off drops the "the passer is the shown defender" test -> 2 failures
+//   pass_hand_off takes first_attacker from the final board         -> 1 failure
+
+#define BT_MAX_IDS 8
+static AnimBeatEvent bt_evs[ANIM_MAX_BEATS];
+static Card          bt_cards[ANIM_MAX_BEATS][BT_MAX_IDS];
+static int           bt_n;
+
+static void bt_reset(void) { bt_n = 0; }
+
+// One event: `n_ids` real card identities (dense ids), and the good mask of the
+// board this step committed (ANIM_NO_MASK for a step that carries none).
+static void bt_add(int type, int seat, int n_ids, const int *ids, int good) {
+    const int i = bt_n;
+    for (int k = 0; k < n_ids && k < BT_MAX_IDS; k++) bt_cards[i][k] = card_of_id(ids[k]);
+    bt_evs[i].type = type;
+    bt_evs[i].seat = seat;
+    bt_evs[i].cards = bt_cards[i];
+    bt_evs[i].n_cards = n_ids;
+    bt_evs[i].mask_cards = 0;
+    bt_evs[i].good_mask = good;
+    bt_n = i + 1;
+}
+static void bt_ev(int type, int seat) { bt_add(type, seat, 0, NULL, ANIM_NO_MASK); }
+static void bt_card_ev(int type, int seat, int id) {
+    const int one[1] = { id };
+    bt_add(type, seat, 1, one, ANIM_NO_MASK);
+}
+static int bt_build(AnimBeats *out) { return anim_build_beats(bt_evs, bt_n, out); }
+
+// The beat spans, as a string like "2,1,1", so a whole grouping compares at once.
+static const char *bt_spans(const AnimBeats *b) {
+    static char s[256];
+    int w = 0;
+    for (int i = 0; i < b->n_beats && w < (int)sizeof s - 8; i++)
+        w += snprintf(s + w, sizeof s - (size_t)w, i ? ",%d" : "%d", b->beats[i].n_events);
+    if (b->n_beats == 0) s[0] = 0;
+    return s;
+}
+// The holds, as "1,0,0".
+static const char *bt_holds(const AnimBeats *b) {
+    static char s[256];
+    int w = 0;
+    for (int i = 0; i < b->n_beats && w < (int)sizeof s - 8; i++)
+        w += snprintf(s + w, sizeof s - (size_t)w, i ? ",%d" : "%d",
+                      (b->beats[i].flags & ANIM_BEAT_HOLDS) ? 1 : 0);
+    if (b->n_beats == 0) s[0] = 0;
+    return s;
+}
+
+// ONLY consecutive covers by ONE seat merge. Everything else keeps its own beat.
+static void test_beats_merge_only_same_seat_consecutive_covers(void) {
+    AnimBeats b;
+
+    bt_reset();
+    bt_ev(ANIM_EVT_COVER, 1); bt_ev(ANIM_EVT_COVER, 1);
+    bt_build(&b);
+    CHECK(strcmp(bt_spans(&b), "2") == 0, "two covers by one seat are one beat");
+
+    bt_reset();
+    bt_ev(ANIM_EVT_COVER, 1); bt_ev(ANIM_EVT_COVER, 2);
+    bt_build(&b);
+    CHECK(strcmp(bt_spans(&b), "1,1") == 0, "a different seat is a different beat");
+
+    // NOT adjacent: a bout that closed between two covers puts its discard in
+    // the way, and the covers belong to different bouts.
+    bt_reset();
+    bt_ev(ANIM_EVT_COVER, 1); bt_ev(ANIM_EVT_DISCARD, -1); bt_ev(ANIM_EVT_COVER, 1);
+    bt_build(&b);
+    CHECK(strcmp(bt_spans(&b), "1,1,1") == 0, "a discard between two covers splits them");
+
+    // A cover's own consequences keep their beats - that is what makes the
+    // counts settle in the right order.
+    bt_reset();
+    bt_ev(ANIM_EVT_COVER, 1); bt_ev(ANIM_EVT_COVER, 1);
+    bt_ev(ANIM_EVT_DISCARD, -1); bt_ev(ANIM_EVT_REFILL, 0);
+    bt_build(&b);
+    CHECK(strcmp(bt_spans(&b), "2,1,1") == 0, "the sweep and the deal are their own beats");
+
+    // Nothing else groups, however adjacent: an attack or a pass already carries
+    // every card of its move in one event, and a deal is per seat.
+    bt_reset();
+    bt_ev(ANIM_EVT_REFILL, 0); bt_ev(ANIM_EVT_REFILL, 0);
+    bt_build(&b);
+    CHECK(strcmp(bt_spans(&b), "1,1") == 0, "two refills by one seat stay two beats");
+
+    bt_reset();
+    bt_ev(ANIM_EVT_ATTACK_PASS, 0); bt_ev(ANIM_EVT_ATTACK_PASS, 0);
+    bt_build(&b);
+    CHECK(strcmp(bt_spans(&b), "1,1") == 0, "two attacks by one seat stay two beats");
+
+    bt_reset();
+    CHECK(bt_build(&b) == 0 && b.n_beats == 0, "an empty stream has no beats");
+
+    // The lead event is what the beat reports.
+    bt_reset();
+    bt_ev(ANIM_EVT_COVER, 3); bt_ev(ANIM_EVT_COVER, 3);
+    bt_build(&b);
+    CHECK(b.beats[0].first == 0 && b.beats[0].type == ANIM_EVT_COVER
+          && b.beats[0].seat == 3, "the beat is named by its lead event");
+}
+
+// The HOLD: a cover whose bout end follows, over notices only.
+static void test_beats_hold_skips_notices_and_stops_at_card_motion(void) {
+    AnimBeats b;
+
+    bt_reset();
+    bt_ev(ANIM_EVT_COVER, 1); bt_ev(ANIM_EVT_DISCARD, -1); bt_ev(ANIM_EVT_REFILL, 0);
+    bt_build(&b);
+    CHECK(strcmp(bt_holds(&b), "1,0,0") == 0, "a cover that closed its bout holds");
+
+    bt_reset();
+    bt_ev(ANIM_EVT_COVER, 1); bt_ev(ANIM_EVT_CARDS_TO_TRASH, -1); bt_ev(ANIM_EVT_REFILL, 0);
+    bt_build(&b);
+    CHECK(strcmp(bt_holds(&b), "1,0,0") == 0, "the trash sweep is a bout end too");
+
+    // The notices: a cover that empties the defender's hand puts their OUT in
+    // the way, and the last bout of a game adds a magic transition. Neither
+    // moves a card, so neither breaks the pair.
+    bt_reset();
+    bt_ev(ANIM_EVT_COVER, 1); bt_ev(ANIM_EVT_OUT, 1); bt_ev(ANIM_EVT_DISCARD, -1);
+    bt_build(&b);
+    CHECK(strcmp(bt_holds(&b), "1,0,0") == 0, "an out between the cover and the sweep is skipped");
+
+    bt_reset();
+    bt_ev(ANIM_EVT_COVER, 1); bt_ev(ANIM_EVT_OUT, 1);
+    bt_ev(ANIM_EVT_MAGIC_TRANSITION, -1); bt_ev(ANIM_EVT_CARDS_TO_TRASH, -1);
+    bt_build(&b);
+    CHECK(strcmp(bt_holds(&b), "1,0,0,0") == 0, "so is a transition behind it");
+
+    bt_reset();
+    bt_ev(ANIM_EVT_COVER, 1); bt_ev(ANIM_EVT_FLIPPED, -1); bt_ev(ANIM_EVT_DISCARD, -1);
+    bt_build(&b);
+    CHECK(strcmp(bt_holds(&b), "1,0,0") == 0, "and the flipped trump notice");
+
+    // …and ANYTHING that moves a card ends the scan, even with a discard behind
+    // it: that discard belongs to a later beat, not to this cover.
+    bt_reset();
+    bt_ev(ANIM_EVT_COVER, 1); bt_ev(ANIM_EVT_REFILL, 0); bt_ev(ANIM_EVT_DISCARD, -1);
+    bt_build(&b);
+    CHECK(strcmp(bt_holds(&b), "0,0,0") == 0, "a refill after the cover ends the scan");
+
+    bt_reset();
+    bt_ev(ANIM_EVT_COVER, 1); bt_ev(ANIM_EVT_PICKUP, 0); bt_ev(ANIM_EVT_DISCARD, -1);
+    bt_build(&b);
+    CHECK(strcmp(bt_holds(&b), "0,0,0") == 0, "and so does a pickup");
+
+    bt_reset();
+    bt_ev(ANIM_EVT_COVER, 1); bt_ev(ANIM_EVT_ATTACK_PASS, 0);
+    bt_build(&b);
+    CHECK(strcmp(bt_holds(&b), "0,0") == 0, "a throw-in after the cover reopened the bout");
+
+    bt_reset();
+    bt_ev(ANIM_EVT_COVER, 1);
+    bt_build(&b);
+    CHECK(strcmp(bt_holds(&b), "0") == 0, "a cover with nothing behind it does not hold");
+
+    // A multi-card cover holds ONCE, after the whole beat - not between its cards.
+    bt_reset();
+    bt_ev(ANIM_EVT_COVER, 1); bt_ev(ANIM_EVT_COVER, 1); bt_ev(ANIM_EVT_DISCARD, -1);
+    bt_build(&b);
+    CHECK(strcmp(bt_spans(&b), "2,1") == 0 && strcmp(bt_holds(&b), "1,0") == 0,
+          "two cards, one beat, one hold");
+
+    // THE COMMON BOUT END is not this one: the defender covered and sent, an
+    // attacker then said good, and THAT bubble carries the discard with no cover
+    // in it. Nothing holds - the table has been readable since the last bubble.
+    bt_reset();
+    bt_ev(ANIM_EVT_DISCARD, -1); bt_ev(ANIM_EVT_REFILL, 0); bt_ev(ANIM_EVT_REFILL, 1);
+    bt_build(&b);
+    CHECK(strcmp(bt_holds(&b), "0,0,0") == 0, "a good's bubble does not hold");
+
+    bt_reset();
+    bt_ev(ANIM_EVT_PICKUP, 0); bt_ev(ANIM_EVT_REFILL, 1);
+    bt_build(&b);
+    CHECK(strcmp(bt_holds(&b), "0,0") == 0, "nor does a pickup");
+}
+
+// The OUTS: only a beat that MOVED something may adopt the notices behind it.
+static void test_beats_only_a_beat_that_moved_adopts_the_outs_behind_it(void) {
+    AnimBeats b;
+
+    // A cover empties the defender's hand, so the kernel says `out` right after
+    // it. The badge collapses WITH the cover, not a beat later.
+    bt_reset();
+    bt_card_ev(ANIM_EVT_COVER, 1, 9);
+    bt_ev(ANIM_EVT_OUT, 1);
+    bt_ev(ANIM_EVT_CARDS_TO_TRASH, -1);
+    bt_build(&b);
+    CHECK(b.beats[0].outs_mask == (1u << 1), "the cover adopts the out that follows it");
+
+    // The lookahead stops at the first beat that moves a card: an out two beats
+    // later belongs to the move that caused IT.
+    bt_reset();
+    bt_card_ev(ANIM_EVT_ATTACK_PASS, 0, 6);
+    bt_card_ev(ANIM_EVT_COVER, 1, 22);
+    bt_ev(ANIM_EVT_OUT, 1);
+    bt_build(&b);
+    CHECK(b.beats[0].outs_mask == 0, "seat 1 goes out on the COVER, not the attack before it");
+    CHECK(b.beats[1].outs_mask == (1u << 1), "the cover is the beat that carries it");
+
+    // A pickup is card motion too, even though it places nothing.
+    bt_reset();
+    bt_card_ev(ANIM_EVT_PICKUP, 2, 6);
+    bt_ev(ANIM_EVT_OUT, 0);
+    bt_build(&b);
+    CHECK(b.beats[0].outs_mask == (1u << 0), "a pickup carries the out that follows it");
+
+    // Several seats going out on one move all collapse together…
+    bt_reset();
+    bt_card_ev(ANIM_EVT_CARDS_TO_TRASH, 1, 6);
+    bt_ev(ANIM_EVT_OUT, 1);
+    bt_ev(ANIM_EVT_OUT, 3);
+    bt_build(&b);
+    CHECK(b.beats[0].outs_mask == ((1u << 1) | (1u << 3)),
+          "every out on one move collapses together");
+
+    // …and a beat carrying its OWN out still reports it, which is the fallback
+    // when nothing that moved cards preceded it.
+    bt_reset();
+    bt_ev(ANIM_EVT_OUT, 2);
+    bt_build(&b);
+    CHECK(b.beats[0].outs_mask == (1u << 2), "an orphan out answers for itself");
+
+    // A beat that placed nothing and moved nothing adopts nothing. (An `out`
+    // beat is itself flightless, so it may not speak for the one behind it.)
+    bt_reset();
+    bt_ev(ANIM_EVT_OUT, 2);
+    bt_ev(ANIM_EVT_OUT, 3);
+    bt_build(&b);
+    CHECK(b.beats[0].outs_mask == (1u << 2), "a notice does not adopt the notice behind it");
+
+    // A stream with nobody going out collapses nobody. The obvious wrong
+    // implementation - diffing the out set against a final view - answers yes
+    // here for every seat that was ALREADY out.
+    bt_reset();
+    bt_card_ev(ANIM_EVT_ATTACK_PASS, 0, 6);
+    bt_card_ev(ANIM_EVT_COVER, 1, 22);
+    bt_card_ev(ANIM_EVT_REFILL, 0, 37);
+    bt_build(&b);
+    for (int i = 0; i < b.n_beats; i++)
+        CHECK(b.beats[i].outs_mask == 0, "an ordinary stream collapses nobody");
+}
+
+// PLACED: what a stream puts DOWN on the table, and the badge direction.
+static void test_beats_placed_and_the_badge_direction(void) {
+    AnimBeats b;
+
+    bt_reset();
+    bt_card_ev(ANIM_EVT_ATTACK_PASS, 0, 6);
+    bt_card_ev(ANIM_EVT_COVER, 1, 22);
+    bt_card_ev(ANIM_EVT_DEFENDER_MOVE, 1, 30);
+    bt_card_ev(ANIM_EVT_PICKUP, 1, 40);
+    bt_card_ev(ANIM_EVT_REFILL, 0, 41);
+    bt_card_ev(ANIM_EVT_DISCARD, -1, 42);
+    bt_build(&b);
+    const uint64_t want = ((uint64_t)1 << 6) | ((uint64_t)1 << 22) | ((uint64_t)1 << 30);
+    CHECK(b.placed_ids == want, "only attacks, passes and covers land on the table");
+    CHECK(b.beats[0].placed_ids == ((uint64_t)1 << 6), "and each beat names its own");
+    CHECK((b.beats[0].flags & ANIM_BEAT_PLACED) != 0, "a placement beat says so");
+    CHECK((b.beats[3].flags & ANIM_BEAT_PLACED) == 0, "a pickup places nothing");
+    CHECK((b.beats[3].flags & ANIM_BEAT_MOVED) != 0, "but it does move cards");
+
+    // A badge drops as its cards LEAVE, and ticks up only as they land: a badge
+    // reading 6 with two of that seat's cards in the air is claiming eight.
+    CHECK((b.beats[0].flags & ANIM_BEAT_DROPS) != 0, "an attack empties a hand");
+    CHECK((b.beats[1].flags & ANIM_BEAT_DROPS) != 0, "so does a cover");
+    CHECK((b.beats[3].flags & ANIM_BEAT_DROPS) == 0, "a pickup fills one");
+    CHECK((b.beats[4].flags & ANIM_BEAT_DROPS) == 0, "and so does a refill");
+    CHECK(anim_badge_drops_as_cards_leave(ANIM_EVT_DEFENDER_MOVE) == 0,
+          "a defender move is the kernel's own bookkeeping, not a hand emptying");
+    CHECK(anim_badge_drops_as_cards_leave(-1) == 0, "an unrecognised step moves nobody's hand");
+
+    // A masked back names no identity, so it places nothing even on a placement.
+    bt_reset();
+    bt_card_ev(ANIM_EVT_ATTACK_PASS, 0, 6);
+    bt_evs[0].mask_cards = 1;
+    bt_build(&b);
+    CHECK(b.placed_ids == 0 && (b.beats[0].flags & ANIM_BEAT_PLACED) == 0,
+          "a card back puts no identity on the table");
+}
+
+// THE ROLE BEAT: three timings, and they are not the same one.
+static void test_role_beat_leads_runs_parallel_and_follows(void) {
+    AnimRoles out;
+
+    // A good being SET leads the stream. Only ADDED bits, and only ever added to
+    // what is already shown.
+    const AnimRoles shown = { 1, 0, 0 };
+    CHECK(anim_goods_opening(shown, 0b100, &out) == 1, "a good this stream adds opens it");
+    CHECK(out.good_mask == 0b100 && out.defender == 1 && out.first_attacker == 0,
+          "the mark turns and nothing changes hands");
+    CHECK(anim_goods_opening(shown, 0, &out) == 0, "a stream that adds no good opens nothing");
+    CHECK(anim_goods_opening(shown, ANIM_NO_MASK, &out) == 0, "nor does a step with no board");
+    const AnimRoles all = { 1, 0, 0b111 };
+    CHECK(anim_goods_opening(all, 0, &out) == 0,
+          "goods being CLEARED are not this rule - that is the back of the sequence");
+    CHECK(anim_goods_opening(all, 0b001, &out) == 0, "a subset adds nothing");
+    // ADDED TO WHAT IS ALREADY SHOWN, never replaced by it: a mark the badges
+    // are already wearing that this step's board does not name is not taken
+    // away here - that is the back of the sequence's job.
+    const AnimRoles one_shown = { 1, 0, 0b001 };
+    CHECK(anim_goods_opening(one_shown, 0b100, &out) == 1 && out.good_mask == 0b101,
+          "the new good joins the one on screen rather than replacing it");
+
+    // A good being CLEARED runs parallel with the throw-in that cleared it. The
+    // mirror image, and it only ever REMOVES bits.
+    const AnimRoles two_good = { 1, 0, 0b101 };
+    CHECK(anim_goods_cleared(two_good, 0, &out) == 1, "a throw-in that clears two goods");
+    CHECK(out.good_mask == 0 && out.defender == 1 && out.first_attacker == 0,
+          "both marks turn, and nobody moves");
+    CHECK(anim_goods_cleared(two_good, 0b100, &out) == 1, "one of the two");
+    CHECK(out.good_mask == 0b100, "and the other one stays");
+    const AnimRoles none_good = { 1, 0, 0 };
+    CHECK(anim_goods_cleared(none_good, 0b100, &out) == 0,
+          "a good being SET is the front of the sequence, not this");
+    CHECK(anim_goods_cleared(none_good, 0, &out) == 0, "and nothing is nothing");
+    CHECK(anim_goods_cleared(two_good, ANIM_NO_MASK, &out) == 0, "a step with no board clears nothing");
+    const AnimRoles one_good = { 1, 0, 0b001 };
+    CHECK(anim_goods_cleared(one_good, 0b011, &out) == 0,
+          "a mask that only ADDS is the opening rule's business");
+    // …and a mask that does both only REMOVES here. The bit this step set is
+    // goodsOpening's, and taking the step's mask wholesale would turn a mark on
+    // at the back of the sequence where it belongs at the front.
+    CHECK(anim_goods_cleared(two_good, 0b110, &out) == 1 && out.good_mask == 0b100,
+          "only the cleared bit turns; the one this step set is not this rule's");
+
+    // A PASS hands the shield over WITH the transfer card. Seat 1 is defending
+    // and laid cards, which a defender may only do as a transfer.
+    const AnimRoles passer = { 1, 0, 0b100 };
+    CHECK(anim_pass_hand_off(passer, 1u << 1, 2, &out) == 1, "the defender's own throw is a pass");
+    CHECK(out.defender == 2, "the shield goes to the seat the final board defends with");
+    CHECK(out.first_attacker == 0,
+          "the opening sword is NOT taken from the final board - a pass never moves it");
+    CHECK(out.good_mask == 0b100, "and the goods are goodsCleared's business, not this one");
+    CHECK(anim_pass_hand_off(passer, 1u << 0, 2, &out) == 0,
+          "an ATTACKER laying cards is an attack, whatever else the turn did");
+    CHECK(anim_pass_hand_off(passer, 0, 2, &out) == 0, "a beat that laid nothing is no transfer");
+    CHECK(anim_pass_hand_off(passer, 1u << 1, 1, &out) == 0,
+          "and a final board that still defends with the passer is no hand-off");
+
+    // A bout end also changes the defender, and it is NOT a pass: nobody wearing
+    // the shield laid a card, so this waits for the closing beat.
+    const AnimRoles defending = { 1, 0, 0 };
+    CHECK(anim_pass_hand_off(defending, 1u << 0, 0, &out) == 0,
+          "a bout end's rotation is the closing beat's, not the transfer card's");
+}
+
+// The role beat over a beat the grouping produced: the mask a hand-off reads is
+// the beat's own, so the two rules cannot describe different beats.
+static void test_role_beat_reads_the_beats_own_attack_pass_seats(void) {
+    AnimBeats b;
+    bt_reset();
+    // Seat 1 is defending and transfers; seat 2 (the new defender) then covers.
+    bt_add(ANIM_EVT_ATTACK_PASS, 1, 1, (const int[]){ 8 }, 0b100);
+    bt_add(ANIM_EVT_COVER, 2, 1, (const int[]){ 21 }, 0);
+    bt_build(&b);
+    CHECK(b.beats[0].attack_pass_seats == (1u << 1), "the beat names who laid cards");
+    CHECK(b.beats[1].attack_pass_seats == 0, "a cover is not a throw");
+    CHECK(b.first_good_mask == 0b100, "the stream opens on its first step's board");
+    CHECK(b.beats[1].good_mask == 0, "and a beat settles to its LAST step's board");
+
+    AnimRoles out;
+    const AnimRoles shown = { 1, 0, 0b100 };
+    CHECK(anim_pass_hand_off(shown, b.beats[0].attack_pass_seats, 2, &out) == 1
+          && out.defender == 2, "the transfer beat hands the shield over");
+    CHECK(anim_pass_hand_off(shown, b.beats[1].attack_pass_seats, 2, &out) == 0,
+          "the cover behind it does not");
+    // The good the throw-in cleared turns with that same beat.
+    CHECK(anim_goods_cleared(shown, b.beats[1].good_mask, &out) == 1 && out.good_mask == 0,
+          "and the good it cleared turns with the card");
+}
+
+static void test_beats_refuses_a_stream_it_cannot_hold(void) {
+    AnimBeats b;
+    AnimBeatEvent one = { ANIM_EVT_OUT, 0, NULL, 0, 0, ANIM_NO_MASK };
+    CHECK(anim_build_beats(&one, 1, NULL) == ANIM_EBADARG, "no output, no answer");
+    CHECK(anim_build_beats(NULL, 1, &b) == ANIM_EBADARG, "no events, no answer");
+    CHECK(anim_build_beats(NULL, 0, &b) == 0, "an empty stream needs no events pointer");
+    CHECK(anim_build_beats(&one, -1, &b) == ANIM_EBADARG, "a negative count is not a stream");
+    CHECK(anim_build_beats(&one, ANIM_MAX_BEATS + 1, &b) == ANIM_ECAP,
+          "a stream longer than the plan can hold is refused, never truncated");
+}
+
 int main(void) {
     test_reset_to_lobby();
     test_replay_steps_rebuilds_the_played_game();
@@ -3865,6 +4275,15 @@ int main(void) {
     test_legal_defender_all_covered();
     test_legal_pass_blocked_variants();
     test_legal_lite_greedy_cover();
+
+    // The shape of a sequence (anim_plan.h beats + the role beat).
+    test_beats_merge_only_same_seat_consecutive_covers();
+    test_beats_hold_skips_notices_and_stops_at_card_motion();
+    test_beats_only_a_beat_that_moved_adopts_the_outs_behind_it();
+    test_beats_placed_and_the_badge_direction();
+    test_role_beat_leads_runs_parallel_and_follows();
+    test_role_beat_reads_the_beats_own_attack_pass_seats();
+    test_beats_refuses_a_stream_it_cannot_hold();
 
     printf("\n%d passed, %d failed\n", n_pass, n_fail);
     return n_fail > 0 ? 1 : 0;

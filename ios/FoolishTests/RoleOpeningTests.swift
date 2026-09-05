@@ -17,9 +17,9 @@
 //   the mask by the time the badges were first drawn and the flip had nowhere
 //   to happen.
 //
-//   THE RULE - `MessageTableView.goodsOpening` decides whether a stream opens
-//   with a role beat at all, and the asymmetry in it is the whole point: goods
-//   ADDED play first, goods CLEARED play last.
+//   THE RULE - `RoleBeat.goodsOpening` (the kernel's anim_goods_opening) decides
+//   whether a stream opens with a role beat at all, and the asymmetry in it is
+//   the whole point: goods ADDED play first, goods CLEARED play last.
 import XCTest
 @testable import FoolishKit
 
@@ -35,7 +35,7 @@ final class RoleOpeningTests: XCTestCase {
     /// A good being SET is somebody's move, so the stream opens on it.
     func testAGoodThisMoveAddedOpensTheStream() {
         let shown = MessageTableView.RoleState(defender: 1, firstAttacker: 0, goodMask: 0)
-        let o = MessageTableView.goodsOpening(shown: shown, firstGoodMask: 0b100)
+        let o = RoleBeat.goodsOpening(shown: shown, firstGoodMask: 0b100)
         XCTAssertEqual(o?.goodMask, 0b100, "seat 2's good is the beat this stream opens on")
         // Nothing changes hands in an opening beat, so nothing may fly.
         XCTAssertEqual(o?.defender, 1)
@@ -53,14 +53,14 @@ final class RoleOpeningTests: XCTestCase {
     /// this asserts - the two rules read the same mask in opposite directions.
     func testAGoodThisMoveClearedDoesNotOpenTheStream() {
         let all = MessageTableView.RoleState(defender: 1, firstAttacker: 0, goodMask: 0b100)
-        XCTAssertNil(MessageTableView.goodsOpening(shown: all, firstGoodMask: 0),
+        XCTAssertNil(RoleBeat.goodsOpening(shown: all, firstGoodMask: 0),
                      "a cleared good is a consequence, not an opening move")
         // AND WITH SOMETHING LEFT BEHIND, which is the case that tells this rule
         // apart from the obvious wrong one. "Did the mask change at all" answers
         // yes here and would open the stream on a mask that only LOST a bit;
         // "which bits did it gain" answers none, which is the truth.
         let some = MessageTableView.RoleState(defender: 1, firstAttacker: 0, goodMask: 0b101)
-        XCTAssertNil(MessageTableView.goodsOpening(shown: some, firstGoodMask: 0b001),
+        XCTAssertNil(RoleBeat.goodsOpening(shown: some, firstGoodMask: 0b001),
                      "one good clearing while another stands is still only a consequence")
     }
 
@@ -70,7 +70,7 @@ final class RoleOpeningTests: XCTestCase {
     /// `= firstGoodMask` assignment gets it wrong in the other direction.
     func testOnlyTheAddedHalfOfAMixedChangeOpens() {
         let shown = MessageTableView.RoleState(defender: 1, firstAttacker: 0, goodMask: 0b001)
-        let opening = MessageTableView.goodsOpening(shown: shown, firstGoodMask: 0b100)
+        let opening = RoleBeat.goodsOpening(shown: shown, firstGoodMask: 0b100)
         XCTAssertEqual(opening?.goodMask, 0b101,
                        "the arriving good is added; the departing one waits for the end")
     }
@@ -82,14 +82,14 @@ final class RoleOpeningTests: XCTestCase {
     /// it", falling out of the rule rather than needing a flag for it.
     func testAMarkAlreadyShownPlaysNothing() {
         let shown = MessageTableView.RoleState(defender: 1, firstAttacker: 0, goodMask: 0b100)
-        XCTAssertNil(MessageTableView.goodsOpening(shown: shown, firstGoodMask: 0b100))
+        XCTAssertNil(RoleBeat.goodsOpening(shown: shown, firstGoodMask: 0b100))
     }
 
     /// Nothing to compare against is nothing to play: a board with no marks yet,
     /// or a stream whose first step carries no state.
     func testNothingToCompareAgainstPlaysNothing() {
-        XCTAssertNil(MessageTableView.goodsOpening(shown: nil, firstGoodMask: 0b1))
-        XCTAssertNil(MessageTableView.goodsOpening(
+        XCTAssertNil(RoleBeat.goodsOpening(shown: nil, firstGoodMask: 0b1))
+        XCTAssertNil(RoleBeat.goodsOpening(
             shown: MessageTableView.RoleState(defender: 1, firstAttacker: 0), firstGoodMask: nil))
     }
 
@@ -211,13 +211,13 @@ final class RoleOpeningTests: XCTestCase {
 
             // The two together are what makes a cold open play the flip…
             XCTAssertNotNil(
-                MessageTableView.goodsOpening(shown: MessageTableView.RoleState(endPrior),
+                RoleBeat.goodsOpening(shown: MessageTableView.RoleState(endPrior),
                                               firstGoodMask: endFirst.goodMask),
                 "seeded from the prior board, a good replays as a move")
             // …and seeded the OLD way, from the stream's own first frame, there
             // is nothing left to animate. The bug, asserted as a bug.
             XCTAssertNil(
-                MessageTableView.goodsOpening(shown: MessageTableView.RoleState(endFirst),
+                RoleBeat.goodsOpening(shown: MessageTableView.RoleState(endFirst),
                                               firstGoodMask: endFirst.goodMask))
             break
         }
@@ -340,7 +340,7 @@ final class RoleOpeningTests: XCTestCase {
         XCTAssertTrue(first.hasSaidGood(attacker),
                       "…and the stream's first frame already has the check on")
         XCTAssertNotNil(
-            MessageTableView.goodsOpening(shown: MessageTableView.RoleState(prior),
+            RoleBeat.goodsOpening(shown: MessageTableView.RoleState(prior),
                                           firstGoodMask: first.goodMask),
             "so the reopen must play the sword-to-good rotation before anything else")
     }

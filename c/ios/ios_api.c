@@ -620,6 +620,117 @@ int fio_anim_should_drop_stale(int has_last, int last, int has_incoming, int inc
     return anim_should_drop_stale(has_last, last, has_incoming, incoming);
 }
 
+// ---------- the shape of a sequence ----------------------------------------
+//
+// The layout is documented once, in ios_api.h. Reads nothing but its arguments:
+// the stream crosses WITH the question because the board's stream is often not
+// the resident game's (a staged bout end is cut in half and the settlement
+// withheld), and because a SwiftUI body cannot await the actor it lives behind.
+
+// Every dense id the input names, across the whole stream. A turn is at most
+// ANIM_MAX_BEATS events and no event names more cards than a full table sweep.
+#define FIO_BEATS_MAX_IDS 1024
+
+int fio_beats_packed(const uint8_t *in, int len, char *out, int cap) {
+    if (!in || !out || len < 2) return FIO_EBADARG;
+    if (in[0] != FIO_BEATS_VERSION) return FIO_EPARSE;
+    const int n = in[1];
+    if (n > ANIM_MAX_BEATS) return FIO_ECAP;
+
+    AnimBeatEvent evs[ANIM_MAX_BEATS];
+    Card ids[FIO_BEATS_MAX_IDS];
+    int n_ids = 0, p = 2;
+    for (int i = 0; i < n; i++) {
+        if (p + 5 > len) return FIO_EPARSE;
+        const int type = in[p];
+        const int seat = in[p + 1];
+        const int has_good = in[p + 2];
+        const int good = in[p + 3];
+        const int k = in[p + 4];
+        p += 5;
+        if (p + k > len) return FIO_EPARSE;
+        if (n_ids + k > FIO_BEATS_MAX_IDS) return FIO_ECAP;
+        evs[i].type = type;
+        evs[i].seat = (seat == 0xFF) ? ANIM_SEAT_NONE : seat;
+        evs[i].cards = &ids[n_ids];
+        evs[i].n_cards = k;
+        evs[i].mask_cards = 0;   // only real identities are ever listed
+        evs[i].good_mask = has_good ? good : ANIM_NO_MASK;
+        for (int c = 0; c < k; c++) {
+            if (in[p + c] >= 52) return FIO_EPARSE;
+            ids[n_ids + c] = card_of_id(in[p + c]);
+        }
+        n_ids += k;
+        p += k;
+    }
+
+    AnimBeats b;
+    const int r = anim_build_beats(evs, n, &b);
+    if (r == ANIM_ECAP) return FIO_ECAP;
+    if (r < 0) return FIO_EBADARG;
+    if (cap < FIO_BEATS_HEAD + b.n_beats * FIO_BEATS_STRIDE) return FIO_ECAP;
+
+    unsigned char *q = (unsigned char *)out;
+    q[0] = FIO_BEATS_VERSION;
+    q[1] = (unsigned char)b.n_beats;
+    q[2] = (unsigned char)(b.first_good_mask == ANIM_NO_MASK ? 0 : 1);
+    q[3] = (unsigned char)(b.first_good_mask == ANIM_NO_MASK ? 0 : b.first_good_mask);
+    for (int i = 0; i < 8; i++) q[4 + i] = (unsigned char)((b.placed_ids >> (8 * i)) & 0xff);
+    for (int g = 0; g < b.n_beats; g++) {
+        const AnimBeat *bt = &b.beats[g];
+        unsigned char *e = q + FIO_BEATS_HEAD + g * FIO_BEATS_STRIDE;
+        e[0] = (unsigned char)bt->first;
+        e[1] = (unsigned char)bt->n_events;
+        e[2] = (unsigned char)bt->type;
+        e[3] = (unsigned char)(bt->seat < 0 ? 0xFF : bt->seat);
+        e[4] = (unsigned char)bt->flags;
+        e[5] = (unsigned char)(bt->outs_mask & 0xff);
+        e[6] = (unsigned char)(bt->attack_pass_seats & 0xff);
+        e[7] = (unsigned char)(bt->good_mask == ANIM_NO_MASK ? 0 : 1);
+        e[8] = (unsigned char)(bt->good_mask == ANIM_NO_MASK ? 0 : bt->good_mask);
+        for (int i = 0; i < 8; i++) e[9 + i] = (unsigned char)((bt->placed_ids >> (8 * i)) & 0xff);
+    }
+    return FIO_BEATS_HEAD + b.n_beats * FIO_BEATS_STRIDE;
+}
+
+int fio_badge_drops_as_cards_leave(int type) {
+    return anim_badge_drops_as_cards_leave(type);
+}
+
+static int fio_roles_answer(int changed, const AnimRoles *r, int *out) {
+    if (!changed) return 0;
+    out[0] = r->defender;
+    out[1] = r->first_attacker;
+    out[2] = r->good_mask;
+    return 1;
+}
+
+int fio_roles_goods_opening(int shown_defender, int shown_first_attacker,
+                            int shown_good_mask, int first_good_mask, int *out) {
+    if (!out) return FIO_EBADARG;
+    const AnimRoles shown = { shown_defender, shown_first_attacker, shown_good_mask };
+    AnimRoles r;
+    return fio_roles_answer(anim_goods_opening(shown, first_good_mask, &r), &r, out);
+}
+
+int fio_roles_goods_cleared(int shown_defender, int shown_first_attacker,
+                            int shown_good_mask, int step_good_mask, int *out) {
+    if (!out) return FIO_EBADARG;
+    const AnimRoles shown = { shown_defender, shown_first_attacker, shown_good_mask };
+    AnimRoles r;
+    return fio_roles_answer(anim_goods_cleared(shown, step_good_mask, &r), &r, out);
+}
+
+int fio_roles_pass_hand_off(int shown_defender, int shown_first_attacker,
+                            int shown_good_mask, int attack_pass_seats,
+                            int final_defender, int *out) {
+    if (!out) return FIO_EBADARG;
+    const AnimRoles shown = { shown_defender, shown_first_attacker, shown_good_mask };
+    AnimRoles r;
+    return fio_roles_answer(
+        anim_pass_hand_off(shown, (unsigned)attack_pass_seats, final_defender, &r), &r, out);
+}
+
 int fio_last_reject(void) { return g_last_reject; }
 
 // ---------- lifecycle & turn queries --------------------------------------
