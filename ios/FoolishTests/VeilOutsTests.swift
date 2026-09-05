@@ -410,7 +410,7 @@ final class VeilOutsTests: XCTestCase {
         let src = try source("FoolishKit/Boards/MessageTableView.swift")
         for call in ["Veil.veiled(hidden: animator.hidden",
                      "Veil.handSlotDeferred(veiled: veiledCardIds",
-                     "Veil.fan(veiled: veiledCardIds, holdback: handHoldback)",
+                     "Veil.fan(veiled: veiledCardIds, holdback: fanHoldback)",
                      "Veil.grid(sweeping: sweeping, veiled: veiledCardIds"] {
             XCTAssertTrue(src.contains(call), "the board no longer calls \(call)")
         }

@@ -422,104 +422,146 @@ resource-pressure symptom worth understanding rather than re-running.
   itself.
   Use `pgrep -f "[f]oo.py"` or wait on a PID.
 
-## Queued: device findings from the 1.0(43) pass
+## Device findings from the 1.0(43) pass - ALL THREE FIXED
 
 Owner-reported, on device, after the lift stages landed.
 Not lift work.
-Recorded with the evidence so whoever picks them up does not start from scratch.
+Fixed on this branch after 1.0(44) was uploaded, so the fixes ride the next build.
 
-### 1. Replaying my own attack sneaks the card back into the hand first
+Each was reproduced on the rig BEFORE it was touched, and each fix was verified
+by the same measurement afterwards.
+The two hypotheses recorded here beforehand are kept below, because one of them
+was WRONG and the shape of the error is worth having: the guess named the right
+symptom class and the wrong layer, and it was the owner's own "just a hypothesis"
+that turned out to be the cause.
 
-Owner: "when you replay one of your own attack bubbles, I can briefly see a small
-transition as the card I played kinda 'moves back in' to my hand.
-Then it animates correctly to fly to the table ...
-we shouldn't start with 5 cards, fade the one I threw back in and rearrange
-animation, then throw it out.
+### 1. Replaying my own attack sneaks the card back into the hand first - FIXED
+
+Owner: "we shouldn't start with 5 cards, fade the one I threw back in and
+rearrange animation, then throw it out.
 The visual should START with the 6 cards, and just fly the one."
-Subtle - "like I'm catching the tail end of it" - and easy to reproduce.
 
-The FlightRecorder log has it (this-session block, a 2p chat, one attack to
-replay):
+**Reproduced**: `HARNESS_SCENARIO=arrival HARNESS_ARRIVE_COLD=1
+HARNESS_ARRIVE_SELF=1 HARNESS_ARRIVE_KIND=attack HARNESS_PLAYERS=2`, which is a
+cold open of a bubble whose last move is mine.
+The unified log carried the owner's own trail:
 
-    0.08s  adopt      turn 5, 1 to animate
-    0.10s  fan-rows   laid=6 hand=5 held=1  veiled=1 preHidden=1 settled=true seq=0
-    0.60s  style      expanded
-    0.65s  anim-open  n=1 from=4 seats=0 kinds=atta
-    0.77s  fan-rows   laid=5 hand=5 held=0  veiled=1 preHidden=0 settled=true seq=1
+    fan-rows 1 rows laid=6 hand=5 held=1 ... settled=true seq=0
+    stream#1 step attackPass@1 n=1 flights=1
+    fan-rows 1 rows laid=5 hand=5 held=0 ... settled=true seq=1
 
-`hand=5` is the committed truth; `held=1` is the holdback putting the played card
-back so the fan lays 6.
-That is the RIGHT resting state to open on.
-The defect is the ORDER in which it is reached: the board paints the settled
-5-card hand first and the 6-card layout arrives after, so the card fades in and
-the fan re-centres before anything flies.
+The tell is that the FIRST line exists at all.
+It comes from `.onChange(of: laidHandCount)`, and an onChange only fires on a
+CHANGE - so the count was 5 for every paint before it and became 6 afterwards.
+The board painted the settled five-card hand, then re-laid the fan at six and
+faded the played card in, then flew it.
 
-Likely shape of the fix, unverified: the holdback has to be established before the
-first paint, not applied from a change handler afterwards.
-That is the same class as `freezeCounts`, whose comment already says it must run
-BEFORE `apply` and not from the `onChange` the view change triggers, "because
-onChange fires after body, so a freeze there is already one paint late".
-Look at `handHoldback` / `holdbackIsMine` / `releaseHoldback` and when
-`replayLastMoveOnOpen` arms them relative to the first body pass.
+**Cause**, `MessageTableView.swift`: `handHoldback` is armed inside
+`replayLastMoveOnOpen`, which the file described as landing before the first
+paint - and structurally cannot, because it runs from `.onChange(of:
+controller.view)`.
+`settled`'s own doc had already said so about `freezeCounts`; the holdback was
+the one veil that had never been given the same cure.
 
-Note the half-second between `adopt` (0.08s) and `anim-open` (0.65s): the sheet is
-still coming up, which is exactly the window the owner is catching the tail of.
+**Fix**: `fanHoldback`, a computed property beside `pendingOpen`.
+While `unstartedReplay` is open the answer comes from the controller
+(`HandLayout.myPlacedCards` over the same stream the arming uses), and after it
+shuts the armed `handHoldback` answers, as before.
+Every render site now asks it; nothing that draws reads `handHoldback`.
+A union rather than a swap, so a sequence still flying its own cards does not
+have them pulled out of the fan when a second bubble raises a fresh veil.
 
-### 2. Table-to-discard flies with expanded coordinates on a collapsed board
+**Verified**: the `seq=0` line is gone.
+The only `fan-rows` left is the drop to five, and it now fires at flight start -
+the fan closing as the card leaves, which is what round 42 wanted.
+
+### 2. Table-to-discard flies with expanded coordinates on a collapsed board - FIXED
 
 Owner: "table to discard animation still seems to have a geometry mismatch like
 it's using expanded coords on a collapsed screen."
 
-MY HYPOTHESIS, unverified - but it is a known class in this codebase.
-Round 43 fixed exactly this on the HAND side: `handCardFrames` is a PUBLISHED
-preference and a preference lags a layout pass, so collapsing the drawer moved the
-board while the per-card frames still described the expanded one - the rig caught
-it as `SLOTCHECK MISMATCH n=11 worst=391.0pt`, 391pt being the distance the hand
-travels between expanded and compact.
-The cure was to COMPUTE the slot rather than read it (`handSlotsNow`).
+MY EARLIER HYPOTHESIS, AND IT WAS WRONG: that this was round 43's hand-side bug
+on the table side - `tableCardSource` reading the published `lastBattleCardFrames`
+instead of computing, the way `handSlotsNow` computes.
+Measured, the table's per-card frames track a collapse faithfully: a probe on
+`BattleCardFramesKey` shows them going from y=345 to y=142 in the same instant
+the drawer snaps.
+Nothing on the table side needed computing.
 
-That cure was never applied to the TABLE side.
-`tableCardSource` still reads `lastBattleCardFrames` and `discardSource` still
-reads `lastBattleFrames`, both published preferences, so the sweep to the discard
-pile should show the same lag under the same conditions.
+**Reproduced**: play the bout-ending move myself, let the board auto-collapse,
+then Send - which is when the withheld settlement is released and the sweep
+actually runs.
+`HARNESS_SCENARIO=arrival HARNESS_ARRIVE_KIND=cover HARNESS_AUTOMOVE=1
+HARNESS_AUTOMOVE_KIND=good HARNESS_AUTOSEND=1 HARNESS_AUTOSEND_DELAY_MS=3500`.
+The rig could not pose this before: `HARNESS_AUTOSEND` pressed Send after a fixed
+600ms, which outran the post-stage auto-collapse (`HarnessModel.stage` waits for
+the move's own sequence to settle first, and bails the moment the bubble is
+delivered), so every AUTOSEND run had sent from an EXPANDED board.
+The delay is a knob now.
 
-### 3. SUSPICION ONLY: does the auto collapse leave the geometry stale?
+With the collapse first, the sweep flew:
 
-Owner: "geometry seems to be broken by the auto collapse? then fixed by swiping to
-expand/collapse."
-Note the owner's own question mark, and their follow-up: "not entirely confident
-on the autocollapse not updating geometry properly, it's just a hypothesis."
+    OFF-HAND flight opendiscard-0-6 from=(151,345) to=(328,45) hand=(187,623)
 
-Keep the two apart, because only one of them is evidence.
+on a 261pt drawer.
+y=345 is the expanded table centre and 623 the expanded hand: the cards left from
+200pt below the bottom of the visible drawer.
+The same run with a MANUAL collapse instead flew `from=(151,142) ...
+hand=(187,217)` - correct - which is the control that made finding 3 the answer.
 
-**Observed**, and reproducible: the geometry is wrong at some point, and swiping to
-expand or collapse repairs it.
+**Cause**: finding 3, below. Same fix.
 
-**Guessed**, by me, and NOT verified: that the automatic collapse takes a path
-which skips a frame republish the interactive path performs.
-That is one explanation of the observation.
-It is not the only one.
-At least three others fit the same symptom equally well:
+### 3. The auto collapse leaves every published frame measured on the expanded board - FIXED
 
-- the frames are republished on both paths, but the auto collapse republishes them
-  at a moment when the layout has not settled, so the values are fresh and wrong
-  rather than stale and right;
-- nothing is wrong with the collapse at all, and the swipe merely forces an extra
-  layout pass that would have corrected ANY stale rect, whatever staled it;
-- the auto collapse and the animation that exposes the bug simply co-occur,
-  because both follow a send.
+Owner: "geometry seems to be broken by the auto collapse? then fixed by swiping
+to expand/collapse", and their own caveat, "not entirely confident ... it's just
+a hypothesis."
 
-**How to tell them apart**, before changing anything: log the published table rects
-against the presentation style on both paths and compare.
-If the auto path never publishes, the first explanation holds.
-If it publishes the expanded values while compact, the second does.
-If the rects are identical on both paths, the fault is elsewhere and finding 2
-stands on its own.
+The hypothesis was right, and it is finding 2's cause rather than a separate
+report.
+Three seconds after an ARMED collapse, with the drawer compact and still:
 
-This matters for the fix, not just for tidiness: if finding 2 is repaired by
-COMPUTING the rects rather than reading published ones - the round 43 cure - then
-the collapse path stops mattering for the sweep whichever explanation is true, and
-chasing it first would be wasted work.
+- the board's own GeometryReader reads 243 - the layout is correct;
+- `handFrame` still publishes midY 623 and the battle cards y 345 - every
+  PUBLISHED frame still describes the expanded box;
+- a MANUAL collapse takes `CollapseTween.step`'s `.follow`, never touches the box
+  height, and publishes correctly throughout.
+
+That difference between the two paths is exactly what the owner noticed, and it
+is not staleness in any one reader: it is every landmark a flight aims at.
+
+**Cause**, `MessagesRootView.follow`: the armed path holds the box at the
+expanded height and eases it down (round 10d, filmed, and correct).
+`boxHeight` runs 0 -> expanded -> (animated) target, and the target IS the height
+the box rests at - so handing the override back (`boxHeight = 0`) is numerically
+no change at all.
+SwiftUI delivered the subtree's preferences once, from the expanded pass that
+opened the animation, and never had a later height CHANGE to deliver from.
+
+**Fix**: the tween releases through `CollapseTween.handBack`, half a point off
+the rest height and back one frame later.
+Two real layout changes, sub-pixel, and the second republishes every landmark at
+the size actually on screen.
+Skipped entirely when `follow` has already released the box, so a manual drag
+mid-tween cannot be handed a compact height.
+
+**Verified**: the same run now flies `from=(151,142) to=(328,45) hand=(187,217)`,
+identical to the manual-collapse control, and `SLOTCHECK MISMATCH n=... worst=406.0pt`
+- which had been firing on every auto-collapse - is gone.
+
+### One rig scenario is inert, and was not fixed
+
+`HARNESS_SCENARIO=myplay` was built in round 42 as "a COLD OPEN of my own move …
+the only one that arms `handHoldback`", and it no longer poses that: it opens
+with `openReplay events=0`.
+`dealDriven` delivers its bubble through `deliverSealed`, which stages and then
+presses Send - and a chain this device just sent is opened QUIETLY on purpose
+(`MessageTurnController.suppressOpenReplay`), which is correct behaviour and
+kills the scenario.
+`arrival` with `HARNESS_ARRIVE_COLD=1 HARNESS_ARRIVE_SELF=1` poses the same shape
+and is what finding 1 was reproduced and verified on.
+Left as it is; noted so the next person does not read a green `myplay` run as
+evidence of anything.
 
 ### How to work these
 
@@ -529,6 +571,13 @@ log (`subsystem == "cards.foolish.anim"`), with the oracles `staleAtRest`,
 `veilStandingNow`.
 Two of those oracles have previously carried baselines that hid defects, so check
 what they assert before trusting a green run.
+
+None of the six saw any of the three findings above, and that is worth knowing
+rather than holding against them: all six are about WHAT the board is showing and
+none is about WHERE.
+A geometry oracle - "no flight may take off from a point outside the board" -
+would have caught findings 2 and 3 on any of the collapse runs the rig has been
+making for rounds.
 
 ## Queued: the JSON that is left
 

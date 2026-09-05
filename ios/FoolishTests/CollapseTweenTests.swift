@@ -125,4 +125,83 @@ final class CollapseTweenTests: XCTestCase {
         XCTAssertEqual(CollapseTween.step(height: 320, armed: false, armedFrom: 748,
                                           collapsing: true, target: 315), .retarget(to: 320))
     }
+
+    // MARK: 1.0(43) - the release, and why it may not land on the rest height
+    //
+    // MUTATIONS RUN: `remeasureNudge = 0` fails testTheReleaseNeverLandsOnThe…
+    // (and leaves testTheNudgeIsSubPixel green, which is why both exist);
+    // `remeasureNudge = 60` fails testTheNudgeIsSubPixel; putting
+    // `boxHeight = 0` back into the tween's timer Task fails
+    // testTheTweenReleasesThroughTheNudge.
+
+    /// THE BUG, as a value. The tween ends on the height the box already rests
+    /// at, so handing the override back is numerically no change - and SwiftUI
+    /// had then published every landmark from the EXPANDED pass that opened the
+    /// animation and had no later height change to publish from. Measured on the
+    /// rig three seconds after an armed collapse: the board's own reader at 243,
+    /// `handFrame` still at midY 623, the battle cards still at y 345, and the
+    /// settlement sweep flying from 200pt below a 261pt drawer.
+    ///
+    /// So the release must go THROUGH a height that is not the rest height.
+    ///
+    /// MUTANT: `remeasureNudge = 0` (i.e. `handBack` returning `target`) fails
+    /// this and `testTheNudgeIsSubPixel` passes, which is the point of having
+    /// both - a nudge that publishes nothing is exactly the shipped defect.
+    func testTheReleaseNeverLandsOnTheRestHeight() {
+        for target in [261, 315, 243.5, 667] as [CGFloat] {
+            XCTAssertNotEqual(CollapseTween.handBack(target: target), target,
+                "a release equal to the rest height is no layout change at all, so "
+                + "every published frame stays measured on the expanded board")
+        }
+    }
+
+    /// …and it must be invisible. The nudge exists to make the layout move, not
+    /// the picture: half a point is under one device pixel at every scale this
+    /// app ships on, so nothing on screen shifts on the way back to the model.
+    ///
+    /// MUTANT: a whole-point nudge (or the 60pt one that would be "obviously
+    /// safe") fails this while the test above still passes.
+    func testTheNudgeIsSubPixel() {
+        let target: CGFloat = 261
+        XCTAssertLessThan(abs(CollapseTween.handBack(target: target) - target), 1,
+                          "the release nudge must be sub-pixel - it is a re-measure, not a move")
+    }
+
+    /// The release is taken off the height the box is actually ON, so a retarget
+    /// that moved the tween carries into it. A release computed from the height
+    /// the tween STARTED at would put the box back at the expanded size for a
+    /// frame, which is the flash this whole file exists to keep out of the
+    /// collapse.
+    func testTheReleaseIsTakenOffTheTargetNotTheStart() {
+        XCTAssertEqual(CollapseTween.handBack(target: 315),
+                       315 + CollapseTween.remeasureNudge)
+        XCTAssertLessThan(CollapseTween.handBack(target: 315), CollapseTween.compactThreshold,
+                          "the release must still be a compact height")
+    }
+
+    /// WHERE THE RULE HAS TO BE SPENT, and the half a value test cannot reach:
+    /// the tween's own release. `MessagesRootView.follow` used to end its
+    /// `.start` case by assigning `boxHeight = 0` from inside the timer Task,
+    /// which is the assignment that publishes nothing.
+    ///
+    /// A source test for the reason HoldbackTests gives for its own two: the
+    /// state this rule moves is `@State` on a SwiftUI view and has no seam.
+    ///
+    /// MUTANT: put `boxHeight = 0` back in the Task in place of the
+    /// `handBackToModel()` call and this fails.
+    func testTheTweenReleasesThroughTheNudge() throws {
+        let here = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        let src = try String(contentsOf: here.deletingLastPathComponent()
+            .appendingPathComponent("FoolishKit/Messages/MessagesRootView.swift"),
+                             encoding: .utf8)
+        let head = try XCTUnwrap(src.range(of: "case .start(let from, let to):"),
+                                 "the tween's start case")
+        let body = String(src[head.lowerBound...].prefix(700))
+        XCTAssertTrue(body.contains("handBackToModel()"),
+                      "the collapse tween must release through the re-measure, not "
+                      + "by assigning the rest height it is already on")
+        XCTAssertTrue(src.contains("CollapseTween.handBack(target: boxHeight)"),
+                      "and the height it releases through is the kernel of this file's rule, "
+                      + "taken off the height the box is actually on")
+    }
 }

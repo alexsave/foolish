@@ -226,7 +226,7 @@ public struct MessageTableView: View {
     /// spend a frame at the bottom of the board and then jump up.
     private var statusMarkLift: CGFloat {
         if buttonLift >= 0 { return buttonLift }
-        let hand = HandLayout.fanCards(controller.view?.me?.hand ?? [], holding: handHoldback)
+        let hand = HandLayout.fanCards(controller.view?.me?.hand ?? [], holding: fanHoldback)
         guard handFrame.width > 0 else { return 0 }
         return FHandFan.height(cards: hand, availableWidth: handFrame.width)
     }
@@ -261,6 +261,9 @@ public struct MessageTableView: View {
     /// played. So they are now `locked` in the fan (gesture off, appearance
     /// untouched - see `hand`) and `selectionAfterTap` keeps `selection` inside
     /// the kernel hand by construction.
+    ///
+    /// ARMED HERE, ANSWERED THROUGH `fanHoldback`. Nothing that renders may read
+    /// this property directly - see that one for why.
     @State private var handHoldback: [Card] = []
     /// ROUND 43: WHICH VEIL THE HOLDBACK BELONGS TO - `animator.veilEpoch` as it
     /// stood when it was armed, and the exact mirror of `clearPreHidden(raisedBy:)`.
@@ -891,6 +894,48 @@ public struct MessageTableView: View {
                     myHand: controller.view?.me?.hand)
     }
 
+    /// WHAT THE FAN IS HOLDING BACK ON THIS PAINT - the veil's answer while its
+    /// window is open, the armed `handHoldback` after it. Every render site asks
+    /// this; nothing reads `handHoldback` to draw with.
+    ///
+    /// 1.0(43), owner: "we shouldn't start with 5 cards, fade the one I threw
+    /// back in and rearrange animation, then throw it out. The visual should
+    /// START with the 6 cards, and just fly the one." `replayLastMoveOnOpen`
+    /// arms the holdback synchronously, but IT runs from the view's `onChange`,
+    /// which is a paint after the board's first - so the fan opened on the
+    /// kernel hand alone and the played card faded in and re-centred the row
+    /// before anything flew. The rig has it as a `fan-rows` line at seq=0
+    /// (`laid=6 hand=5 held=1`): an onChange only fires on a CHANGE, so a line
+    /// there at all is the count having been 5 for the paints before it.
+    ///
+    /// Exactly `pendingOpen`'s cure, for the same reason `settled`'s doc gives:
+    /// while the veil is up the answer is a pure function of the controller, so
+    /// `body` may have it on the very first paint. Both sides ask the same
+    /// kernel rule (`HandLayout.myPlacedCards`) of the same stream, so the
+    /// handoff when the window shuts is invisible.
+    private var fanHoldback: [Card] {
+        Self.fanHoldback(unstarted: unstartedReplay, armed: handHoldback,
+                         mySeat: controller.mySeat)
+    }
+
+    /// The rule above, as a value. `armed` wins its own order and the veil's
+    /// answer only adds what it does not already name: the two are the same set
+    /// on every path that reaches here, and a union is what keeps a sequence
+    /// still flying its own cards from having them pulled out of the fan when a
+    /// second bubble raises a fresh veil over it.
+    ///
+    /// A SPECTATOR NEEDS NO GUARD. `mySeat` is passed straight through because
+    /// spectating IS seat -1, and the kernel spends -1 on "no particular player"
+    /// as well as on "no seat" - so `myPlacedCards` already answers nothing for
+    /// one, and a ternary here would be a second spelling of that rule.
+    static func fanHoldback(unstarted: [GameEvent]?, armed: [Card], mySeat: Int) -> [Card] {
+        guard let unstarted else { return armed }
+        let pending = HandLayout.myPlacedCards(unstarted, mySeat: mySeat)
+        guard !armed.isEmpty else { return pending }
+        let have = Set(armed.map(\.identity))
+        return armed + pending.filter { !have.contains($0.identity) }
+    }
+
     /// Round-6 bug 10: which veiled hand cards reserve NO fan width YET. A deal
     /// heading for my hand is veiled from the moment the whole sequence starts,
     /// but if it also RESERVED its slot from then, my present cards would slide
@@ -901,7 +946,7 @@ public struct MessageTableView: View {
         Veil.handSlotDeferred(veiled: veiledCardIds,
                               flying: Veil.flying(hidden: animator.hidden,
                                                   preHidden: animator.preHidden),
-                              holdback: handHoldback)
+                              holdback: fanHoldback)
     }
 
     /// A seat badge's displayed hand count: the per-step override once a
@@ -967,7 +1012,7 @@ public struct MessageTableView: View {
             // change rows?". `handHeight` two lines down was already measured
             // off `fanCards`, so the watch and the thing being watched had come
             // apart.
-            let laidHandCount = HandLayout.laidCount(hand: myHand, holding: handHoldback,
+            let laidHandCount = HandLayout.laidCount(hand: myHand, holding: fanHoldback,
                                                      deferred: deferredSlots)
             // The hand's on-screen height (one row, or two once M6 splits it).
             // The self-role indicator and action bar float a fixed gap ABOVE
@@ -988,7 +1033,7 @@ public struct MessageTableView: View {
             // that empties in one step, so the chrome sits still through the
             // replay and drops once, with the hand, rather than floating up
             // card by card. Empty everywhere else, so nothing else moves.
-            let handHeight = FHandFan.height(cards: HandLayout.fanCards(myHand, holding: handHoldback),
+            let handHeight = FHandFan.height(cards: HandLayout.fanCards(myHand, holding: fanHoldback),
                                              availableWidth: handWidth)
 
             // The buttons/role mark ride THIS, mirrored out via `.onChange` below so
@@ -1241,7 +1286,7 @@ public struct MessageTableView: View {
                 // printed no evidence of. `held=` is new for the same reason:
                 // when the split flips, this says which of the three inputs
                 // moved.
-                let held = handHoldback
+                let held = fanHoldback
                 let laid = HandLayout.laidCount(hand: hand, holding: held, deferred: deferred)
                 let w = handFrame.width
                 let line = "\(FHandFan.rowCount(count: laid, availableWidth: w)) rows"
@@ -3879,7 +3924,7 @@ public struct MessageTableView: View {
         // THE SAME ARRAY THE FAN IS GIVEN, held-back cards included - these
         // rects have to describe the hand that is actually on screen, or a
         // takeoff slot would be computed against a layout nobody is looking at.
-        HandLayout.laidOut(hand: HandLayout.fanCards(view.me?.hand ?? [], holding: handHoldback),
+        HandLayout.laidOut(hand: HandLayout.fanCards(view.me?.hand ?? [], holding: fanHoldback),
                            deferred: handSlotDeferred,
                            order: MessageGameStore.shared.handOrder(gameId: controller.gameIdString))
     }
@@ -4443,11 +4488,16 @@ public struct MessageTableView: View {
         }
 
         // …and MY OWN hand, which the counts above deliberately skip (a seat
-        // badge is a number; my hand is the cards). Seeded HERE, synchronously,
-        // for the same reason every freeze above is: the board's first paint is
-        // this call's next paint, so a holdback armed inside the Task would let
-        // the hand render closed and then pop the cards back in. See
-        // `handHoldback`. Only my placements, and only when I am not spectating.
+        // badge is a number; my hand is the cards). Only my placements, and only
+        // when I am not spectating.
+        //
+        // 1.0(43): this line is the HANDOVER, not the first word. It used to be
+        // described as landing before the first paint, and structurally it
+        // cannot - this whole function runs from an `onChange`. The veil has
+        // been answering the same set since the board's first paint
+        // (`fanHoldback`), and what is armed here is what carries it on once the
+        // window shuts; the two ask the same kernel rule of the same stream, so
+        // nothing moves as it changes hands.
         handHoldback = isSpectating ? []
             : HandLayout.myPlacedCards(events, mySeat: controller.mySeat)
         // Stamped with the veil this open raised, so only a teardown at or after
@@ -4659,7 +4709,7 @@ public struct MessageTableView: View {
         // A held-back card is veiled (its TABLE copy must stay invisible until
         // its ghost lands), so the hand has to un-veil its own copy or the fan
         // would reserve the slot and draw nothing - a gap where the card is.
-        FHandFan(cards: HandLayout.fanCards(view.me?.hand ?? [], holding: handHoldback),
+        FHandFan(cards: HandLayout.fanCards(view.me?.hand ?? [], holding: fanHoldback),
                  trumpSuit: view.trumpSuit,
                  // ROUND 43: the held-back cards are drawn as ordinary hand
                  // cards (that is the point of the holdback), so they are also
@@ -4667,11 +4717,11 @@ public struct MessageTableView: View {
                  // hence `locked`, which gates the gesture and paints nothing.
                  // `disabled` would have done the gating and dimmed them to
                  // 0.5, which is the one thing the holdback exists to prevent.
-                 locked: Set(handHoldback.map(\.identity)),
+                 locked: Set(fanHoldback.map(\.identity)),
                  selection: $selection, onTap: { toggle($0) },
                  onDragChanged: { card, point in onDragChanged(card, at: point) },
                  onDragEnded: { card, point in onDragEnded(card, at: point, view) },
-                 hidden: Veil.fan(veiled: veiledCardIds, holdback: handHoldback),
+                 hidden: Veil.fan(veiled: veiledCardIds, holdback: fanHoldback),
                  onDragCardMoved: { center in dragCardCenter = center },
                  reserveNoSlot: reserveNoSlot, instantExit: true,
                  // Round-8 #4: a sorted hand survives closing and reopening the

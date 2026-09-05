@@ -598,7 +598,18 @@ extension HarnessModel {
         }
         // A beat, so the staged board is on screen before the send moves it -
         // the owner watches this transition, so the rig must too.
-        try? await Task.sleep(nanoseconds: 600_000_000)
+        //
+        // HARNESS_AUTOSEND_DELAY_MS (1.0(44)): how long. The default 600ms is
+        // SHORTER than the post-stage auto-collapse takes to fire
+        // (HarnessModel.stage waits for the move's own sequence to settle and
+        // then rests half a second), and `stage`'s collapse bails out the
+        // moment the bubble is delivered - so every AUTOSEND run so far pressed
+        // Send on an EXPANDED board and the rig could not pose the ordinary
+        // human order at all: play, watch it collapse, then send. That order is
+        // the one a withheld bout end settles in, so the discard sweep on a
+        // COMPACT drawer had never been driven here. Give it ~2500 to get it.
+        let sendAfter = Int(ProcessInfo.processInfo.environment["HARNESS_AUTOSEND_DELAY_MS"] ?? "") ?? 600
+        try? await Task.sleep(nanoseconds: UInt64(max(sendAfter, 0)) * 1_000_000)
         AnimLog.say("scenario: pressing Send on the staged move")
         deliver()
         // Let the send land before the oracle reads the board: `markSent`
