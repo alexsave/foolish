@@ -162,6 +162,44 @@ struct ShownLedger {
         /// move. Now the badges wear this until the sequence that earns the
         /// change has played, and the change itself is a flight (FRoleMotion).
         var roles: MessageTableView.RoleState?
+
+        // MARK: seeding
+
+        /// A SEED IS NOT AN OVERRIDE, and the difference is the whole of round 16.
+        ///
+        /// `roles` and `out` are "what the badges are WEARING". Once they exist
+        /// they are only ever advanced by something that knows what changed and
+        /// can fly it - `syncRoles` for the marks, the per-step advance for the
+        /// outs. Writing a fresh board over them would erase exactly that: a
+        /// move played while a sequence is still animating (an impatient tap,
+        /// the harness's auto-move) would set the marks to a board that has
+        /// ALREADY rotated, and the hand-off the sequence was about to play
+        /// would find nothing left to hand over.
+        ///
+        /// So every path that establishes them does it ONLY WHEN THEY ARE UNSET.
+        /// Round 43: that rule was written out four times - twice in
+        /// `runEventStream`, once in `freezeCounts`, once in
+        /// `replayLastMoveOnOpen` - each with its own `if x == nil`. The SOURCES
+        /// legitimately differ (a cold open asks the kernel for the board before
+        /// the bubble's move; a live freeze already holds the pre-move view), so
+        /// those stay at the call sites. The RULE does not differ, and lives
+        /// here.
+        ///
+        /// `outs` is false where only the marks are being established: a live
+        /// `freezeCounts` writes the out badges as an OVERRIDE in the same
+        /// breath (it holds the pre-move board, so there is nothing to lag),
+        /// while a cold open has no freeze behind it and must seed them or a
+        /// bubble whose move puts somebody out opens with the badge already
+        /// collapsed and nothing left to watch.
+        ///
+        /// Takes the BOARD, not a built value: a caller that had to construct a
+        /// `RoleState` before asking would pay for it on every call, and the
+        /// common case is that the seed is declined.
+        mutating func seedMarks(from prior: GameView?, outs: Bool) {
+            guard let prior else { return }
+            if roles == nil { roles = MessageTableView.RoleState(prior) }
+            if outs, out == nil { out = Set(prior.players.filter(\.isOut).map(\.seat)) }
+        }
     }
 
     private var fields = Fields()

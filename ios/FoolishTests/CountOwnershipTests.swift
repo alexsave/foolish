@@ -295,26 +295,97 @@ final class CountOwnershipTests: XCTestCase {
                        + "would mean the ledger is never released at all")
     }
 
-    /// A SEED IS NOT AN OVERRIDE, and that semantic has to survive the move into
-    /// the ledger. `freezeCounts` may only seed the roles when there are none:
-    /// writing the current view over them would freeze the marks to a board that
-    /// has ALREADY rotated, and the hand-off the running sequence was about to
-    /// play would find nothing to hand over. `runEventStream`'s cold-open seeds
-    /// are the same shape for the same reason - a board that was already frozen
-    /// keeps what it froze.
-    func testTheSeedsAreStillSeeds() throws {
+    /// A board with the three facts `seedMarks` reads: who defends, who opens,
+    /// and which seats are out. Everything else is filler - `RoleState` takes
+    /// only defender/firstAttacker/goodMask, and the out seed only reads
+    /// `players`, so nothing below is load-bearing.
+    private func board(defender: Int, firstAttacker: Int, out: Set<Int>) -> GameView {
+        GameView(status: 1, numPlayers: 4, powerSuit: 1, deckCount: 10,
+                 discardCount: 0, hasFlipped: true, firstAttacker: firstAttacker,
+                 defender: defender, viewer: 0, goodMask: 0, gameOver: -1,
+                 flipped: nil, battles: [], eliminationOrder: [],
+                 players: (0..<4).map { seat in
+                     PlayerView(seat: seat, name: "p\(seat)",
+                                status: out.contains(seat) ? SeatStatus.out.rawValue
+                                                           : SeatStatus.in.rawValue,
+                                handCount: out.contains(seat) ? 0 : 6,
+                                awaitingAttack: false, strategyKey: 0, hand: nil)
+                 })
+    }
+
+    /// A SEED IS NOT AN OVERRIDE, and round 43 made that assertable directly.
+    ///
+    /// This used to be four source scans - one per site - looking for the
+    /// literal `if l.roles == nil` at each of `freezeCounts`, the two cold-open
+    /// seeds in `runEventStream`, and `replayLastMoveOnOpen`'s arming. It went
+    /// red the moment the rule moved into `ShownLedger.Fields.seedMarks`, which
+    /// is the right failure: the discipline was no longer visible where it was
+    /// being looked for. It is now enforced for every caller at once, and can be
+    /// EXERCISED rather than read, so these are real assertions on behaviour.
+    ///
+    /// The rule: an unset field takes the prior board; a set one is left alone,
+    /// because once the marks exist they are only ever advanced by something
+    /// that knows what changed and can fly it. Overwrite them from a live play
+    /// and the marks freeze to a board that has ALREADY rotated, leaving the
+    /// running sequence's hand-off with nothing to hand over.
+    func testSeedMarksFillsOnlyWhatIsUnset() {
+        let early = board(defender: 1, firstAttacker: 0, out: [])
+        let later = board(defender: 2, firstAttacker: 1, out: [3])
+
+        // Unset -> takes the board it is given.
+        var f = ShownLedger.Fields()
+        f.seedMarks(from: early, outs: true)
+        XCTAssertEqual(f.roles?.defender, 1)
+        XCTAssertEqual(f.out, [])
+
+        // Already showing -> left alone. This is the whole of the rule.
+        f.seedMarks(from: later, outs: true)
+        XCTAssertEqual(f.roles?.defender, 1, "a seed may not overwrite marks that already exist")
+        XCTAssertEqual(f.out, [], "…nor the out badges")
+    }
+
+    /// `outs: false` is not an oversight at two of the three call sites: a live
+    /// `freezeCounts` holds the pre-move board and writes the out badges as an
+    /// OVERRIDE in the same breath, so seeding them there would be the wrong
+    /// half of the same write. Only the cold open, which has no freeze behind
+    /// it, seeds them.
+    func testSeedMarksLeavesTheOutBadgesAloneUnlessAsked() {
+        var f = ShownLedger.Fields()
+        f.seedMarks(from: board(defender: 1, firstAttacker: 0, out: [2]), outs: false)
+        XCTAssertNotNil(f.roles, "the marks are always seeded")
+        XCTAssertNil(f.out, "the out badges are not, unless the caller asks")
+    }
+
+    /// A board with no earlier step to ask for - a genesis deal, the first move
+    /// on a fresh deal - seeds nothing rather than crashing or inventing one.
+    func testSeedMarksFromNoBoardIsANoOp() {
+        var f = ShownLedger.Fields()
+        f.seedMarks(from: nil, outs: true)
+        XCTAssertNil(f.roles)
+        XCTAssertNil(f.out)
+    }
+
+    /// …and the call sites still go through it. The rule is one rule only for
+    /// as long as nobody hand-rolls the conditional again.
+    ///
+    /// NARROW ON PURPOSE, and the first version was not. It asserted that these
+    /// bodies contain no `l.roles = ` and no `l.out = Set(` at all, which is
+    /// wrong twice over: `freezeCounts` writes the out badges as a deliberate
+    /// unconditional OVERRIDE (it holds the pre-move board, so there is nothing
+    /// to lag), and `runEventStream`'s teardown releases with `l.roles = nil`.
+    /// Both are legitimate. What may not come back is the SEED spelled by hand -
+    /// a `RoleState` built into the field, or an `if ... == nil` guarding it.
+    func testNoCallSiteSeedsTheMarksByHand() throws {
         let src = try source("MessageTableView.swift")
-        let freeze = code(try body(of: "freezeCounts", in: src)).joined(separator: "\n")
-        XCTAssertTrue(freeze.contains("if l.roles == nil { l.roles = RoleState(v) }"),
-                      "freezeCounts seeds the roles, it does not overwrite them")
-        let stream = code(try body(of: "runEventStream", in: src)).joined(separator: "\n")
-        XCTAssertTrue(stream.contains("if l.roles == nil"),
-                      "the cold-open role seed must not overwrite a frozen board")
-        XCTAssertTrue(stream.contains("if l.out == nil"),
-                      "…nor the out-badge seed")
-        let open = code(try body(of: "replayLastMoveOnOpen", in: src)).joined(separator: "\n")
-        XCTAssertTrue(open.contains("if l.roles == nil"),
-                      "the open replay's role arming is a seed too")
+        for fn in ["freezeCounts", "runEventStream", "replayLastMoveOnOpen"] {
+            let b = code(try body(of: fn, in: src)).joined(separator: "\n")
+            XCTAssertFalse(b.contains("l.roles = RoleState("),
+                           "\(fn) builds a RoleState into the ledger by hand - seed "
+                           + "through `seedMarks`, where the seed-if-unset rule lives")
+            XCTAssertFalse(b.contains("l.roles == nil") || b.contains("l.out == nil"),
+                           "\(fn) re-derives the seed-if-unset condition; `seedMarks` "
+                           + "is the one place that decides it")
+        }
     }
 
     // MARK: - one spelling

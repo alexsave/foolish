@@ -2346,20 +2346,13 @@ public struct MessageTableView: View {
         // (`controller.openReplayPriorState`); the first event remains the
         // fallback for the opens that have no earlier step to ask for - a
         // genesis deal, the first move on a fresh deal.
-        ledger.write(.sequence) { l in
-            if l.roles == nil, let prior = controller.openReplayPriorState ?? events.first?.state {
-                l.roles = RoleState(prior)
-            }
-        }
-        // ROUND 28: the same seed for the out badges, and for the same reason -
-        // an open replay has no `freezeCounts` behind it, so without this a
-        // bubble whose move puts somebody out would open with their badge
-        // already collapsed and nothing left to watch.
-        ledger.write(.sequence) { l in
-            if l.out == nil, let prior = controller.openReplayPriorState ?? events.first?.state {
-                l.out = Set(prior.players.filter(\.isOut).map(\.seat))
-            }
-        }
+        //
+        // ROUND 28 seeds the OUT badges from the same board and for the same
+        // reason: an open replay has no `freezeCounts` behind it, so without it
+        // a bubble whose move puts somebody out opens with the badge already
+        // collapsed and nothing left to watch. One write, since it is one board.
+        let priorBoard = controller.openReplayPriorState ?? events.first?.state
+        ledger.write(.sequence) { $0.seedMarks(from: priorBoard, outs: true) }
         guard !events.isEmpty else {
             // ROUND 16: HAND THE COUNTS BACK. Every caller freezes them to the
             // pre-move board SYNCHRONOUSLY (`play`, then `flyBoutEndToDiscard`)
@@ -2958,7 +2951,7 @@ public struct MessageTableView: View {
             // harness's auto-move) would freeze the roles to a board that has
             // ALREADY rotated, and the hand-off the sequence was about to play
             // would find nothing to hand over.
-            if l.roles == nil { l.roles = RoleState(v) }
+            l.seedMarks(from: v, outs: false)
         }
     }
 
@@ -4751,11 +4744,7 @@ public struct MessageTableView: View {
         // Refused here, the replay would open against that stream's mid-state:
         // the wrong numbers and the wrong marks, silently, with no twitch to
         // give it away. See ShownLedger.swift.
-        ledger.write(.arming) { l in
-            if l.roles == nil, let prior = controller.openReplayPriorState {
-                l.roles = RoleState(prior)
-            }
-        }
+        ledger.write(.arming) { $0.seedMarks(from: controller.openReplayPriorState, outs: false) }
 
         // notes 6/12: hand every real card this open moves - onto the table
         // (attacks/covers/passes) OR into my hand (my own draws/pickups) - to
