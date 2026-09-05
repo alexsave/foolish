@@ -87,13 +87,18 @@ jobs:
       - name: Swift toolchain is present
         run: swiftc --version
 
+      # NO PIPEFAIL HERE. Steps inside a container run under `sh -e`, not bash,
+      # and dash rejects `set -o pipefail` outright - the step then dies on its
+      # own first line with "Illegal option -o pipefail" and never runs the
+      # test. Redirect instead of piping, so the runner's exit status is the
+      # one being checked.
       - name: Swift <-> TypeScript replay-names parity
         run: |
-          set -euo pipefail
-          npm run test:swift-parity 2>&1 | tee parity.log
-          # The belt to the braces above: node's runner reports skips as a pass,
-          # so assert the count itself. Matches both the TAP ("# skipped 0") and
-          # the spec reporter's line.
+          set -eu
+          npm run test:swift-parity > parity.log 2>&1 || { cat parity.log; exit 1; }
+          cat parity.log
+          # node's runner reports skips as a pass, so assert the count itself.
+          # Matches both the TAP ("# skipped 0") and the spec reporter's line.
           grep -q 'skipped 0' parity.log || {
             echo "::error::the Swift/TypeScript replay-names parity test SKIPPED - it proved nothing"
             exit 1
