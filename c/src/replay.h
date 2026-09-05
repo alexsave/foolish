@@ -160,6 +160,12 @@
 #define REPLAY_EHEADER      20  // bad header (trump not in alphabet, ...)
 #define REPLAY_EINPUT       21  // malformed encode input bytes
 #define REPLAY_ECAP         22  // capacity exceeded (bignum / choices / output)
+// A REFUSAL, not a fault: the game outran the log buffer (num_logs hit
+// MAX_LOGS), so the recorded stream is truncated and there is no honest code to
+// emit. Its own number because every caller wants to SKIP it and fail on the
+// rest, and because folding it into EINPUT told the reader the encoder had
+// been handed garbage bytes, which is the one thing that had not happened.
+#define REPLAY_ETOOLONG     23  // session log overflowed - the game has no code
 
 // ---------- byte formats ----------------------------------------------------
 //
@@ -245,8 +251,10 @@ int replay_encode_v6(const unsigned char *in, int in_len,
 // order, and the trump.
 //
 //   g         a game dealt from `seed` and played; its logs are the action
-//             stream. Rejected if the log buffer overflowed (num_logs >=
-//             MAX_LOGS) — a truncated stream is untrusted, not encodable.
+//             stream. Rejected with REPLAY_ETOOLONG if the log buffer
+//             overflowed (num_logs >= MAX_LOGS): a truncated stream is
+//             untrusted, not encodable. Callers SKIP that one; it is the
+//             build's documented ceiling, not an encoder fault.
 //   seed      the FOOLISH_SEED_LEN-byte deal seed this game was dealt from. A
 //             seed that did not deal `g` does not encode: while the game still
 //             holds a trump it is caught up front (REPLAY_EHEADER), and
