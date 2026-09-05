@@ -2880,11 +2880,12 @@ public struct MessageTableView: View {
             }
             // THE CONFLICT MODEL's record: this group's motions, now that they
             // have flown. The dest kind is the verdict's side of the flight
-            // (see `conflictDest`), taken from the group's lead event - a
-            // group is one kernel move, so its cards share a destination kind.
+            // (the kernel's `anim_conflict_dest`), taken from the group's lead
+            // event - a group is one kernel move, so its cards share a
+            // destination kind.
             if !groupFlights.isEmpty {
-                let dest = Self.conflictDest(of: ev.kind, seat: ev.seat,
-                                             mySeat: controller.mySeat)
+                let dest = ConflictDest(of: ev.kind, seat: ev.seat,
+                                        mySeat: controller.mySeat)
                 flownThisSeq.append(groupFlights.map { FlownMotion(flight: $0, dest: dest) })
             }
             // ROUND 20: whatever this step just flew ONTO the pre-bout grid has
@@ -3487,9 +3488,7 @@ public struct MessageTableView: View {
         // publishes the arriving board - which shows it in the very place the
         // grid was holding it, so the hand-off is invisible.
         let flying = conflict.map { facts in
-            returned.filter {
-                Self.conflictVerdict(id: $0.identity, dest: .table, facts: facts) == .revert
-            }
+            returned.filter { facts.verdict($0, dest: .table) == .revert }
         } ?? returned
         let flyIds = Set(flying.map(\.identity))
         let isConflict = conflict != nil
@@ -3615,9 +3614,7 @@ public struct MessageTableView: View {
         guard !allTargets.isEmpty, handFrame != .zero else { return false }
         let isConflict = conflict != nil
         let targets = conflict.map { facts in
-            allTargets.filter {
-                Self.conflictVerdict(id: $0.0.identity, dest: .myHand, facts: facts) == .revert
-            }
+            allTargets.filter { facts.verdict($0.0, dest: .myHand) == .revert }
         } ?? allTargets
         // The old hand's own layout, read BEFORE the veil (see above). Nothing is
         // deferred in it: the board this undo is leaving was settled.

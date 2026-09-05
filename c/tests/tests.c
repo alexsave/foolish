@@ -4770,6 +4770,225 @@ static void test_the_pre_bout_table_is_the_board_the_kernel_had(void) {
            sweeps, paired, flat, flat_would_reshape);
 }
 
+// ===========================================================================
+// THE CONFLICT MODEL (anim_plan.h anim_conflict_*).
+// ===========================================================================
+//
+// When something has to leave a board that no move took off it - a staged move
+// an arrival overrides, a sequence a newer arrival supersedes - the board
+// REVERSES it in red before the newest chain plays. What is pinned here is the
+// trichotomy and, above all, its PRECEDENCE: CLEAR is decided before the
+// standing sets, because a card the incoming stream moves may also stand on its
+// opening table (a pickup's do by definition) and a red flight first is the
+// "someone picked my card up and it flew back to my hand" flicker.
+//
+// MUTATION-CHECKED, each applied to c/src/anim_plan.c on its own and reverted:
+//   CLEAR tested AFTER the standing sets (move the incoming_moved test below
+//     the switch)                                                    -> 2 failures
+//   the opening table takes only the ATTACK side (drop the cover)    -> 1 failure
+//   ANIM_DEST_MY_HAND reads table_at_open instead of my_hand_at_open -> 2 failures
+//   ANIM_DEST_POOL reverts instead of keeping                        -> 5 failures
+//   a masked back (ANIM_CARD_NONE) reverts instead of keeping        -> 2 failures
+//   the reversal walks groups FORWARD (g = 0 .. n_groups)            -> 2 failures
+//   an empty group is emitted as a step of silence                   -> 3 failures
+//   anim_conflict_dest sends a pickup by ANY seat to my hand         -> 2 failures
+
+// The owner's stock cards, as dense ids.
+#define CF_ID(suit, value) ((suit) * 13 + (value) - 1)
+
+static AnimConflictFacts cf_facts(const int *moved, int n_moved,
+                                  const unsigned char *table, int n_bat,
+                                  const unsigned char *hand, int n_hand) {
+    AnimConflictFacts f;
+    CHECK(anim_conflict_facts(moved, n_moved, table, n_bat, hand, n_hand, &f) == ANIM_EOK,
+          "the facts read the stream and the opening board");
+    return f;
+}
+
+static void test_conflict_a_chain_that_disowns_a_card_flies_it_home(void) {
+    // The canonical conflict: my staged, unsent card. No other device ever saw
+    // it, so the arriving chain neither moves it nor shows it. A KEEP here is
+    // the silent swap the owner rejected - the card is on the table one frame
+    // and gone the next with nothing to say it was mine.
+    const int mine = CF_ID(0, 9);
+    const unsigned char other[2] = { CF_ID(1, 7), ANIM_TABLE_NONE };
+    AnimConflictFacts f = cf_facts(NULL, 0, other, 1, NULL, 0);
+    CHECK(anim_conflict_verdict(mine, ANIM_DEST_TABLE, &f) == ANIM_CONFLICT_REVERT,
+          "a card the newest truth knows nothing of flies home");
+
+    // The MERGE twin: a card standing at its post spot on the arriving chain's
+    // OPENING board is vouched for and must not move. Flying it home only for
+    // the incoming seed to snap it back is the flicker one board later.
+    const unsigned char standing[2] = { mine, ANIM_TABLE_NONE };
+    AnimConflictFacts s = cf_facts(NULL, 0, standing, 1, NULL, 0);
+    CHECK(anim_conflict_verdict(mine, ANIM_DEST_TABLE, &s) == ANIM_CONFLICT_KEEP,
+          "a card the newest board vouches for stays put");
+
+    // BOTH SIDES of a battle stand. A cover read as "not on the table" would be
+    // false-reverted off a table that is holding it.
+    const int cover = CF_ID(2, 11);
+    const unsigned char covered[2] = { mine, (unsigned char)cover };
+    AnimConflictFacts c = cf_facts(NULL, 0, covered, 1, NULL, 0);
+    CHECK(anim_conflict_verdict(cover, ANIM_DEST_TABLE, &c) == ANIM_CONFLICT_KEEP,
+          "the cover on a standing battle is standing too");
+}
+
+static void test_conflict_clear_wins_over_the_standing_check(void) {
+    // THE LEG THE CATALOGUE SAYS TO GET RIGHT FIRST, checked with the card ALSO
+    // standing on the opening table - which is exactly what a picked-up card
+    // does. The arriving replay taking it off the table IS its animation.
+    const int seven = CF_ID(2, 7);
+    const int moved[1] = { seven };
+    const unsigned char table[2] = { (unsigned char)seven, ANIM_TABLE_NONE };
+    AnimConflictFacts f = cf_facts(moved, 1, table, 1, NULL, 0);
+    CHECK(anim_conflict_verdict(seven, ANIM_DEST_TABLE, &f) == ANIM_CONFLICT_CLEAR,
+          "a card the arriving replay itself moves never flies home first");
+    // …and from the other side too: my staged pickup put it in MY HAND and the
+    // arrival is my own sent pickup coming back.
+    const unsigned char hand[1] = { (unsigned char)seven };
+    AnimConflictFacts h = cf_facts(moved, 1, NULL, 0, hand, 1);
+    CHECK(anim_conflict_verdict(seven, ANIM_DEST_MY_HAND, &h) == ANIM_CONFLICT_CLEAR,
+          "…whichever side of the board the doomed motion put it on");
+}
+
+static void test_conflict_the_standing_check_reads_the_side_it_landed_on(void) {
+    // A staged pickup put the cards in MY HAND; the arriving chain showing them
+    // on its TABLE is their PRE position, not their post one, so they must
+    // still fly back out.
+    const int picked = CF_ID(1, 11);
+    const unsigned char table[2] = { (unsigned char)picked, ANIM_TABLE_NONE };
+    AnimConflictFacts t = cf_facts(NULL, 0, table, 1, NULL, 0);
+    CHECK(anim_conflict_verdict(picked, ANIM_DEST_MY_HAND, &t) == ANIM_CONFLICT_REVERT,
+          "the arriving TABLE showing it does not vouch for my HAND holding it");
+    const unsigned char hand[1] = { (unsigned char)picked };
+    AnimConflictFacts h = cf_facts(NULL, 0, NULL, 0, hand, 1);
+    CHECK(anim_conflict_verdict(picked, ANIM_DEST_MY_HAND, &h) == ANIM_CONFLICT_KEEP,
+          "…and my hand holding it is what vouches for it");
+    CHECK(anim_conflict_verdict(picked, ANIM_DEST_TABLE, &h) == ANIM_CONFLICT_REVERT,
+          "…the mirror holds: a hand does not vouch for a table spot");
+}
+
+static void test_conflict_backs_and_pools_are_never_conjured(void) {
+    // A chain nobody could read vouches for nothing - the honest default that
+    // makes everything REVERT. Which makes this the strictest place to pin the
+    // two things that must NOT fly even so.
+    AnimConflictFacts none = cf_facts(NULL, 0, NULL, 0, NULL, 0);
+    CHECK(anim_conflict_verdict(ANIM_CARD_NONE, ANIM_DEST_POOL, &none) == ANIM_CONFLICT_KEEP,
+          "a masked back has no identity to conflict on and no view to fly back from");
+    CHECK(anim_conflict_verdict(ANIM_CARD_NONE, ANIM_DEST_TABLE, &none) == ANIM_CONFLICT_KEEP,
+          "…on any destination");
+    CHECK(anim_conflict_verdict(CF_ID(0, 6), ANIM_DEST_POOL, &none) == ANIM_CONFLICT_KEEP,
+          "a card that went into a pile is bookkeeping - no ghost comes back out of it");
+    CHECK(anim_conflict_verdict(CF_ID(0, 6), ANIM_DEST_TABLE, &none) == ANIM_CONFLICT_REVERT,
+          "…while an unvouched-for table card does fly, so the default is not 'keep all'");
+}
+
+static void test_conflict_dest_is_the_flight_builders_own_mapping(void) {
+    // A wrong mapping sends the standing check to the wrong side of the board.
+    CHECK(anim_conflict_dest(ANIM_EVT_ATTACK_PASS, 2, 0) == ANIM_DEST_TABLE, "a placement lands on the table");
+    CHECK(anim_conflict_dest(ANIM_EVT_COVER, 2, 0) == ANIM_DEST_TABLE, "…so does a cover");
+    CHECK(anim_conflict_dest(ANIM_EVT_DEFENDER_MOVE, 1, 0) == ANIM_DEST_TABLE, "…and a transfer");
+    CHECK(anim_conflict_dest(ANIM_EVT_PICKUP, 0, 0) == ANIM_DEST_MY_HAND, "my pickup lands in my hand");
+    CHECK(anim_conflict_dest(ANIM_EVT_REFILL, 0, 0) == ANIM_DEST_MY_HAND, "…so does my draw");
+    CHECK(anim_conflict_dest(ANIM_EVT_DEAL, 0, 0) == ANIM_DEST_MY_HAND, "…and my deal");
+    CHECK(anim_conflict_dest(ANIM_EVT_REFILL, 2, 0) == ANIM_DEST_POOL, "an opponent's draw lands in a badge");
+    CHECK(anim_conflict_dest(ANIM_EVT_PICKUP, 2, 0) == ANIM_DEST_POOL, "…and so does their pickup");
+    CHECK(anim_conflict_dest(ANIM_EVT_CARDS_TO_TRASH, -1, 0) == ANIM_DEST_POOL, "a sweep goes to the pile");
+    CHECK(anim_conflict_dest(ANIM_EVT_OUT, 0, 0) == ANIM_DEST_POOL, "a notice moves nothing anywhere");
+    CHECK(anim_conflict_dest(-1, 0, 0) == ANIM_DEST_POOL, "an unrecognised step moves nothing either");
+}
+
+static void test_conflict_reversal_flies_back_the_way_it_came(void) {
+    // "The cards travel back the way they came": last motion first, each group
+    // one parallel step. A forward walk would un-happen the sequence in the
+    // order it happened, which is not a reversal.
+    const int a = CF_ID(0, 6), b = CF_ID(1, 8);
+    AnimConflictFacts none = cf_facts(NULL, 0, NULL, 0, NULL, 0);
+    AnimConflictMotion m[2] = { { a, ANIM_DEST_TABLE }, { b, ANIM_DEST_TABLE } };
+    const int groups[2] = { 1, 1 };
+    AnimConflictPlan p;
+    CHECK(anim_conflict_reversal(m, 2, groups, 2, &none, &p) == 2, "both groups fly");
+    CHECK(p.n_order == 2 && p.step_count[0] == 1 && p.step_count[1] == 1,
+          "…one flight each");
+    CHECK(p.order[0] == 1, "the LAST motion reverses FIRST");
+    CHECK(p.order[1] == 0, "…and the first one last");
+}
+
+static void test_conflict_reversal_drops_what_the_verdicts_empty(void) {
+    // The verdicts gate the flights: in one flown group only the disowned card
+    // flies - the one the replay moves (CLEAR) and the one its board vouches
+    // for (KEEP) build nothing - and a group left with nothing is dropped
+    // rather than played as a beat of silence.
+    const int disowned = CF_ID(0, 9), cleared = CF_ID(1, 7), standing = CF_ID(2, 10);
+    const int moved[1] = { cleared };
+    const unsigned char table[2] = { (unsigned char)standing, ANIM_TABLE_NONE };
+    AnimConflictFacts f = cf_facts(moved, 1, table, 1, NULL, 0);
+
+    AnimConflictMotion m[4] = {
+        { disowned, ANIM_DEST_TABLE }, { cleared, ANIM_DEST_TABLE },
+        { standing, ANIM_DEST_TABLE }, { CF_ID(3, 12), ANIM_DEST_POOL },
+    };
+    const int groups[2] = { 3, 1 };
+    AnimConflictPlan p;
+    CHECK(anim_conflict_reversal(m, 4, groups, 2, &f, &p) == 1,
+          "the all-keep pool group plays no beat of silence");
+    CHECK(p.n_order == 1 && p.order[0] == 0 && p.step_count[0] == 1,
+          "…and only the disowned card flies out of the group that does");
+    CHECK(p.n_verdicts == 4
+          && p.verdicts[0] == ANIM_CONFLICT_REVERT
+          && p.verdicts[1] == ANIM_CONFLICT_CLEAR
+          && p.verdicts[2] == ANIM_CONFLICT_KEEP
+          && p.verdicts[3] == ANIM_CONFLICT_KEEP,
+          "the per-motion verdicts come back too - the board asks the same call for both");
+
+    // Nothing at all to reverse is a plan with no steps, not an error: a burst
+    // of arrivals that each EXTEND the animating chain lands here for almost
+    // every card, which is the common case and must play no theatre.
+    const int all_moved[3] = { disowned, cleared, standing };
+    AnimConflictFacts vouched = cf_facts(all_moved, 3, NULL, 0, NULL, 0);
+    CHECK(anim_conflict_reversal(m, 4, groups, 2, &vouched, &p) == 0 && p.n_order == 0,
+          "a chain that vouches for everything reverses nothing");
+}
+
+static void test_conflict_degenerate_inputs(void) {
+    AnimConflictFacts f;
+    CHECK(anim_conflict_facts(NULL, 0, NULL, 0, NULL, 0, NULL) == ANIM_EBADARG, "no out, no facts");
+    CHECK(anim_conflict_facts(NULL, 1, NULL, 0, NULL, 0, &f) == ANIM_EBADARG, "a count with no array");
+    CHECK(anim_conflict_facts(NULL, 0, NULL, 0, NULL, 0, &f) == ANIM_EOK
+          && f.incoming_moved == 0 && f.table_at_open == 0 && f.my_hand_at_open == 0,
+          "a chain that could not be read vouches for nothing");
+    // An out-of-range id in the stream is dropped rather than folded into some
+    // other card's bit - a wire this rule cannot name must not name the wrong one.
+    const int junk[2] = { 52, -7 };
+    CHECK(anim_conflict_facts(junk, 2, NULL, 0, NULL, 0, &f) == ANIM_EOK && f.incoming_moved == 0,
+          "an id off the deck names nothing");
+
+    CHECK(anim_conflict_verdict(0, ANIM_DEST_TABLE, NULL) == ANIM_EBADARG, "no facts, no verdict");
+    CHECK(anim_conflict_verdict(52, ANIM_DEST_TABLE, &f) == ANIM_EBADARG, "no card, no verdict");
+    CHECK(anim_conflict_verdict(0, 99, &f) == ANIM_EBADARG, "no destination, no verdict");
+
+    AnimConflictMotion m[2] = { { 0, ANIM_DEST_TABLE }, { 1, ANIM_DEST_TABLE } };
+    int groups[2] = { 1, 1 };
+    AnimConflictPlan p;
+    CHECK(anim_conflict_reversal(m, 2, groups, 2, &f, NULL) == ANIM_EBADARG, "no out, no plan");
+    CHECK(anim_conflict_reversal(m, 2, groups, 2, NULL, &p) == ANIM_EBADARG, "no facts, no plan");
+    CHECK(anim_conflict_reversal(NULL, 2, groups, 2, &f, &p) == ANIM_EBADARG, "a count with no motions");
+    CHECK(anim_conflict_reversal(m, 0, NULL, 0, &f, &p) == 0, "nothing flown, nothing to reverse");
+    CHECK(anim_conflict_reversal(m, 2, groups, 1, &f, &p) == ANIM_EBADARG,
+          "groups that leave a motion out describe some other sequence");
+    groups[1] = 5;
+    CHECK(anim_conflict_reversal(m, 2, groups, 2, &f, &p) == ANIM_EBADARG,
+          "…and so do groups that run past the end of it");
+    groups[1] = -1;
+    CHECK(anim_conflict_reversal(m, 2, groups, 2, &f, &p) == ANIM_EBADARG, "a negative group is not a group");
+    groups[1] = 1;
+    CHECK(anim_conflict_reversal(m, ANIM_MAX_CONFLICT_MOTIONS + 1, groups, 2, &f, &p) == ANIM_ECAP,
+          "a sequence over the cap is refused rather than half-reversed");
+    CHECK(anim_conflict_reversal(m, 2, groups, ANIM_MAX_CONFLICT_GROUPS + 1, &f, &p) == ANIM_ECAP,
+          "…and so are too many groups");
+}
+
+
 int main(void) {
     test_reset_to_lobby();
     test_replay_steps_rebuilds_the_played_game();
@@ -4886,6 +5105,16 @@ int main(void) {
     test_pre_bout_table_walks_back_through_the_stream();
     test_pre_bout_table_degenerate_inputs();
     test_the_pre_bout_table_is_the_board_the_kernel_had();
+
+    // The conflict model (anim_plan.h).
+    test_conflict_a_chain_that_disowns_a_card_flies_it_home();
+    test_conflict_clear_wins_over_the_standing_check();
+    test_conflict_the_standing_check_reads_the_side_it_landed_on();
+    test_conflict_backs_and_pools_are_never_conjured();
+    test_conflict_dest_is_the_flight_builders_own_mapping();
+    test_conflict_reversal_flies_back_the_way_it_came();
+    test_conflict_reversal_drops_what_the_verdicts_empty();
+    test_conflict_degenerate_inputs();
 
     printf("\n%d passed, %d failed\n", n_pass, n_fail);
     return n_fail > 0 ? 1 : 0;

@@ -734,6 +734,115 @@ static int pretable_wire_check(void) {
     return 0;
 }
 
+// THE CONFLICT MODEL, over the bytes a board would hold. The rule is pinned in
+// tests/tests.c; this is the layout and the two answers it carries back at once
+// - the per-motion verdicts and the reversal's shape.
+//
+// The fixture: an arriving chain that MOVES the king of diamonds (51), opens on
+// a table holding the 6 of diamonds (44) covered by the king of hearts (25),
+// and shows the 10 of spades (9) in my hand. Two flown groups over that.
+//
+// MUTATION-CHECKED against c/ios/ios_api.c, one at a time: the verdicts written
+// before the count, the step sizes written after the indices, the group counts
+// read as motion counts, and the "no card" sentinel read as id 254. Each fails
+// here. Both bounds fault on the guard page when loosened, as the plan's do.
+static int conflict_wire_check(void) {
+    const unsigned char in[] = {
+        FIO_CONFLICT_VERSION,
+        1, 51,                  // the arriving stream moves the king of diamonds
+        1, 44, 25,              // …opening on a table of 6d covered by kh
+        1, 9,                   // …with the 10 of spades in my hand
+        2, 2, 3,                // two flown groups, of two and three motions
+        44, FIO_CONFLICT_DEST_TABLE,    // stands on the opening table   -> KEEP
+        30, FIO_CONFLICT_DEST_TABLE,    // nothing accounts for it       -> REVERT
+        51, FIO_CONFLICT_DEST_TABLE,    // the arriving replay moves it  -> CLEAR
+        9,  FIO_CONFLICT_DEST_MY_HAND,  // my hand holds it there        -> KEEP
+        7,  FIO_CONFLICT_DEST_MY_HAND,  // my hand does not              -> REVERT
+    };
+    unsigned char out[512];
+    int n = fio_conflict_packed(in, (int)sizeof in, (char *)out, sizeof out);
+    if (n != 12) { printf("FAIL conflict rc=%d\n", n); return 1; }
+    if (out[0] != FIO_CONFLICT_VERSION || out[1] != 5) {
+        printf("FAIL conflict header %d/%d\n", out[0], out[1]); return 1;
+    }
+    if (out[2] != FIO_CONFLICT_V_KEEP   || out[3] != FIO_CONFLICT_V_REVERT
+        || out[4] != FIO_CONFLICT_V_CLEAR || out[5] != FIO_CONFLICT_V_KEEP
+        || out[6] != FIO_CONFLICT_V_REVERT) {
+        printf("FAIL conflict verdicts %d%d%d%d%d\n",
+               out[2], out[3], out[4], out[5], out[6]); return 1;
+    }
+    // Two steps, LAST group first, one flight each: the second group's 7 before
+    // the first group's 30.
+    if (out[7] != 2 || out[8] != 1 || out[9] != 1 || out[10] != 4 || out[11] != 1) {
+        printf("FAIL conflict reversal %d [%d,%d] [%d,%d]\n",
+               out[7], out[8], out[9], out[10], out[11]); return 1;
+    }
+
+    // A masked back names nothing and is KEPT, on any destination - the wire
+    // has to carry "no identity" as well as a card.
+    unsigned char masked[sizeof in];
+    memcpy(masked, in, sizeof in);
+    masked[13] = FIO_CONFLICT_NONE;   // the REVERT motion's card
+    n = fio_conflict_packed(masked, (int)sizeof masked, (char *)out, sizeof out);
+    if (n <= 0 || out[3] != FIO_CONFLICT_V_KEEP) {
+        printf("FAIL conflict masked back rc=%d v=%d\n", n, out[3]); return 1;
+    }
+
+    unsigned char bad[sizeof in];
+    const struct { int at; unsigned char to; int want; const char *what; } forged[] = {
+        { 0, 9,   FIO_EPARSE, "a foreign version" },
+        { 1, 200, FIO_EPARSE, "more moved cards than the buffer holds" },
+        { 2, 52,  FIO_EPARSE, "a moved card off the end of the deck" },
+        { 3, 60,  FIO_EPARSE, "an opening table wider than the buffer" },
+        { 4, 52,  FIO_EPARSE, "an opening-table card off the end of the deck" },
+        { 6, 60,  FIO_EPARSE, "a hand wider than the buffer" },
+        { 7, 52,  FIO_EPARSE, "a hand card off the end of the deck" },
+        { 8, 200, FIO_ECAP,   "more groups than the rule holds" },
+        { 9, 200, FIO_EPARSE, "a group wider than the motions it carries" },
+        { 11, 52, FIO_EPARSE, "a flown card off the end of the deck" },
+        { 12, 9,  FIO_EPARSE, "a motion that went nowhere nameable" },
+    };
+    for (int i = 0; i < (int)(sizeof forged / sizeof forged[0]); i++) {
+        memcpy(bad, in, sizeof in);
+        bad[forged[i].at] = forged[i].to;
+        if (fio_conflict_packed(bad, (int)sizeof bad, (char *)out, sizeof out)
+            != forged[i].want) {
+            printf("FAIL conflict accepted %s\n", forged[i].what); return 1;
+        }
+    }
+
+    // EVERY short prefix, flush against a PROT_NONE guard page.
+    const long page = sysconf(_SC_PAGESIZE);
+    unsigned char *probe = mmap(0, (size_t)page * 2, PROT_READ | PROT_WRITE,
+                                MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (probe == MAP_FAILED || mprotect(probe + page, (size_t)page, PROT_NONE) != 0) {
+        printf("FAIL conflict guard page\n"); return 1;
+    }
+    for (int L = 0; L <= (int)sizeof in; L++) {
+        unsigned char *edge = probe + page - L;
+        memcpy(edge, in, (size_t)L);
+        const int r = fio_conflict_packed(edge, L, (char *)out, sizeof out);
+        if (L < (int)sizeof in ? (r >= 0) : (r <= 0)) {
+            printf("FAIL conflict at %d bytes rc=%d\n", L, r); return 1;
+        }
+    }
+    munmap(probe, (size_t)page * 2);
+    if (fio_conflict_packed(in, (int)sizeof in, (char *)out, 4) != FIO_ECAP) {
+        printf("FAIL conflict wrote past its buffer\n"); return 1;
+    }
+
+    // The dest mapping, which decides which side of the arriving board a
+    // motion's standing check reads.
+    if (fio_conflict_dest(4, 2, 0) != FIO_CONFLICT_DEST_TABLE
+        || fio_conflict_dest(6, 0, 0) != FIO_CONFLICT_DEST_MY_HAND
+        || fio_conflict_dest(6, 2, 0) != FIO_CONFLICT_DEST_POOL
+        || fio_conflict_dest(-1, 0, 0) != FIO_CONFLICT_DEST_POOL) {
+        printf("FAIL conflict dest mapping\n"); return 1;
+    }
+    printf("conflict wire OK (5 verdicts, 2 reversal steps)\n");
+    return 0;
+}
+
 // MUTATION-CHECKED. On the rule: the freeze walking back over every event says
 // deck 2 here; anchoring without undoing says hands 3/9; undoing two events says
 // deck 3; a step deriving forward gets step 1's board wrong. On the wire: the
@@ -1033,6 +1142,7 @@ int main(void) {
     if (beats_wire_check() != 0) return 1;
     if (plan_wire_check() != 0) return 1;
     if (pretable_wire_check() != 0) return 1;
+    if (conflict_wire_check() != 0) return 1;
 
     printf("SMOKE OK\n");
     return 0;

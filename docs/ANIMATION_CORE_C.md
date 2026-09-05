@@ -66,6 +66,33 @@ deliberately leaves behind.
   the revert-vs-keep-vs-clear decision that fixed the "card jumps to the table,
   snaps back, re-appears" flicker.
 
+### The conflict model
+
+When something has to leave a board that no move took off it - a staged move an
+arrival overrides, a sequence a newer arrival supersedes - the board REVERSES it
+before it plays anything else: the cards travel back the way they came, tinted
+red, and only then does the newest chain animate forward.
+
+- `int anim_conflict_facts(moved_ids, open_table, my_hand_ids, out)` - what the
+  arriving chain vouches for, reduced to three dense-id bitsets: the cards its
+  stream moves, the table of the board it opens on (BOTH sides of a battle
+  stand), and my hand there.
+- `int anim_conflict_verdict(card_id, dest, facts)` - REVERT / KEEP / CLEAR for
+  one card.
+  CLEAR is decided BEFORE the standing sets, because a card the incoming stream
+  moves may also stand on its opening table (a pickup's do by definition) and a
+  red flight first is the flicker.
+  A masked back and anything that went to a POOL are kept.
+- `int anim_conflict_dest(event_type, seat, my_seat)` - which kind of place an
+  event's cards went, so the standing check reads the right side of the board.
+- `int anim_conflict_reversal(motions, group_sizes, facts, out)` - the whole
+  superseded sequence at once: every motion's verdict, plus which of them fly
+  back in which order (reverse group order, a group the verdicts emptied
+  dropped).
+
+This is **not** the same question as `anim_resolve_unconfirmed_attack_covers`,
+and both are kept for that reason - see "The two conflict rules" below.
+
 Style, per `msg_wire.h`/`evwire.h`: fixed-size structs, no allocation, every
 input range-checked, errors as negative `ANIM_E*` defines. Card inputs BORROW the
 caller's storage (like `EvwEvent`).
@@ -89,6 +116,10 @@ back packed - plus `fio_anim_should_drop_stale(...)`. `sdk/swift/AnimPlanWire.sw
 is the decoder. There is no JSON plan: `fio_anim_plan_json` is deleted, since two
 plans in two formats are two rules waiting to disagree. Exercised natively by
 `make ios-smoke` (`plan_wire_check`).
+The conflict model crosses the same way: `fio_conflict_packed(in, len, out, cap)`
+answers a whole superseded sequence in one call (the verdicts AND the reversal's
+order), with `fio_conflict_dest` beside it, decoded by
+`sdk/swift/ConflictWire.swift` and smoke-tested by `conflict_wire_check`.
 
 ## Which TS modules delegate vs remain
 
@@ -191,6 +222,43 @@ See `c/src/anim_plan.h`'s corrected opening and `ConflictModel.swift`'s header.
   note above. Held against the kernel's own boards in
   `e2e/anim_core_parity.test.ts` and `ios/FoolishTests/MessageCountWindingTests`,
   both of which insist the freeze IS the board before the sequence.
+
+## The two conflict rules, and why the web did not move over
+
+`anim_conflict_*` (the iMessage rule) and
+`anim_resolve_unconfirmed_attack_covers` (the web's) both answer
+"revert / keep / clear" for a card that is on the table without the newest truth
+showing it there.
+They are different questions, and the campaign's "iMessage is the spec" rule did
+NOT apply cleanly here.
+Recorded 2026-09-05, in the lift stage that moved `ConflictModel.swift`:
+
+- The iMessage rule is asked only about motions the caller **already knows are
+  doomed** - a staged move an arrival overrides, a sequence a fork winner
+  un-happens.
+  Its whole verdict is "a newer chain exists, and here is what it vouches for".
+  A chain is complete and totally ordered, so doom is knowable locally.
+- The web asks about a card whose **own confirming broadcast is still coming**.
+  A single broadcast is a partial delta, not the whole truth, and the web's
+  function decides WHETHER the card is doomed (the accepted check, the
+  table-clear check, the defender-capacity rule) before deciding how it leaves.
+
+Feeding the iMessage rule the web's inputs makes every in-flight card read as
+disowned, because the server still shows it in my hand on the board the
+broadcast opens on.
+`e2e/optimistic_revert.test.ts` SCENARIO A is exactly that case: under the
+iMessage rule Hero's sent, legal attack would fly home in red and then fly back
+out when its own broadcast lands - the player-reported symptom ("it jumps to the
+table, back to my hand, then to the table again") that test exists to pin.
+That is a browser regression, so the web stayed on its own rule and this is the
+owner's call to revisit.
+
+**If it is revisited**, the shape that works is a split rather than a merge: the
+trichotomy and its precedence are genuinely shared and would reproduce the web's
+current answers exactly; the doom determination is a server-authority concern and
+belongs where the authority is.
+That is not "reconciling the incoming rule toward the old one" - it is
+separating two things one function currently does.
 
 ## Test mapping
 

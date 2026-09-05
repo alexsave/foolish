@@ -423,6 +423,58 @@ int fio_roles_pass_hand_off(int shown_defender, int shown_first_attacker,
 #define FIO_PRETABLE_NONE    0xFE
 int fio_pre_bout_table_packed(const uint8_t *in, int len, char *out, int cap);
 
+// ---------- the conflict model (anim_plan.h) -------------------------------
+//
+// WHAT LEAVES A BOARD THAT NO MOVE TOOK OFF IT: a staged move an arrival
+// overrides, a sequence a newer arrival supersedes. Per motion, revert / keep /
+// clear, and for the ones that revert, the order they fly back in. See
+// anim_plan.h for the rule and for why CLEAR is decided first.
+//
+// ONE ENTRY ANSWERS BOTH, for the reason fio_beats_packed's does: a board that
+// asked for a motion's verdict and for the reversal's shape separately could be
+// told two different things about the same card.
+//
+// The FACTS travel as their inputs, not as a fabricated server state: the cards
+// the arriving stream moves, the table of the board it opens on, and my hand
+// there. A caller with nothing readable passes zero of each, which reverts
+// everything - a chain nobody can read vouches for nothing.
+//
+// INPUT (`in`):
+//   0  u8 version (FIO_CONFLICT_VERSION)
+//   1  u8 n_moved, that many u8 dense card ids the arriving stream moves
+//        (FIO_CONFLICT_NONE for a masked back - it names nothing)
+//      u8 the opening board's battle count, or FIO_CONFLICT_NONE for no board
+//      2 x that many u8: the opening table (attack, then its cover or
+//        FIO_CONFLICT_NONE). BOTH sides stand.
+//      u8 n_my_hand, that many u8 dense ids: my hand on that board
+//      u8 n_groups
+//      per group: u8 its motion count
+//      then, in the order they flew, per motion:
+//        u8 dense card id, or FIO_CONFLICT_NONE for a masked back
+//        u8 dest (FIO_CONFLICT_DEST_*)
+//
+// OUTPUT (`out`):
+//   0  u8 version
+//   1  u8 n_motions, that many u8 verdicts (FIO_CONFLICT_V_*) in INPUT order
+//      u8 n_steps, that many u8 step sizes, then the motion indices with the
+//        steps laid end to end. Steps are in REVERSE group order and a group
+//        the verdicts emptied is dropped, so n_steps <= n_groups.
+// Returns bytes written, or a negative error.
+#define FIO_CONFLICT_VERSION 1
+// "no card here", the byte ANIM_TABLE_NONE / LEGAL_WIRE_NONE already are.
+#define FIO_CONFLICT_NONE 0xFE
+#define FIO_CONFLICT_V_REVERT 0
+#define FIO_CONFLICT_V_KEEP   1
+#define FIO_CONFLICT_V_CLEAR  2
+#define FIO_CONFLICT_DEST_TABLE   0
+#define FIO_CONFLICT_DEST_MY_HAND 1
+#define FIO_CONFLICT_DEST_POOL    2
+int fio_conflict_packed(const uint8_t *in, int len, char *out, int cap);
+
+// Which kind of place an event's cards went, for the input above. A step type
+// the caller cannot name (no kind at all) passes -1 and lands in a pool.
+int fio_conflict_dest(int event_type, int seat, int my_seat);
+
 // ---------- strategies (offline bot roster, §7.2) --------------------------
 
 // Number of exposed offline strategies.

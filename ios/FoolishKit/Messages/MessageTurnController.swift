@@ -605,7 +605,8 @@ public final class MessageTurnController: ObservableObject {
     /// retraction's own view change is what wakes the board).
     public private(set) var conflictRetracting = false
     /// What the arriving chain will animate and where it opens - the verdict
-    /// inputs (`MessageTableView.conflictVerdict`) for the retraction. Peeked
+    /// inputs (the kernel's `anim_conflict_*`, via ConflictWire) for the
+    /// retraction. Peeked
     /// from the arriving payload BEFORE the retraction publishes, because the
     /// board must decide which staged cards fly home while the controller still
     /// stands on the OLD base. nil outside a retraction; `.unknown` when the

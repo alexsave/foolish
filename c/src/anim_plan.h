@@ -40,6 +40,12 @@
 //      recognise an already-played optimistic card instead of animating it twice.
 //   3. TIMING POLICY: ANIM_TIME_MS and the per-event duration rule as C
 //      constants the plan emits, so a platform never invents its own pacing.
+//   4. THE CONFLICT MODEL (anim_conflict_*): what has to leave a board that no
+//      move took off it, and the order it flies back in. This is the iMessage
+//      rule, lifted whole - and it is the one incoming rule that does NOT
+//      replace what it met, because anim_resolve_unconfirmed_attack_covers in
+//      (2) answers a different question against a server verdict. Both are
+//      live; the conflict section below says what separates them.
 //
 // STYLE (msg_wire.h / evwire.h): fixed-size structs, NO allocation, every input
 // range-checked, errors as negative defines. The decoded-event inputs BORROW
@@ -510,5 +516,131 @@ int anim_resolve_unconfirmed_attack_covers(const AnimPending *pending, int n_pen
                                            const AnimEvent *events, int n_events,
                                            const AnimFinalState *fin,
                                            AnimResolve *out);
+
+// ---- the conflict model ---------------------------------------------------
+//
+// WHAT HAS TO LEAVE A BOARD THAT NO MOVE TOOK OFF IT: a staged move an arrival
+// overrides, a sequence a newer arrival supersedes. The board REVERSES those
+// motions before it plays anything else - the cards fly back the way they came,
+// tinted red - and only when it stands at a state the newest chain vouches for
+// does that chain animate forward. Never a cut, never a snap.
+//
+// The verdict is per card and asks one thing: does the arriving chain account
+// for the card being where the doomed motion put it?
+//
+//   CLEAR   the chain's own stream moves the card. Its forward replay animates
+//           it, so a red flight first is the "I put a card down, someone picked
+//           it up, and it flew back to my hand" flicker.
+//   KEEP    the card stands at its post spot on the board the chain OPENS on
+//           and the chain does not move it. The chain itself is its
+//           confirmation; flying it home only for the incoming board to snap it
+//           back is that same flicker one board later.
+//   REVERT  nothing in the newest truth accounts for it. Unsent staged cards
+//           are the canonical case - no other device ever saw them.
+//
+// PRECEDENCE IS THE RULE, not an implementation detail: CLEAR is tested BEFORE
+// the standing sets, because a card the incoming stream moves may also stand on
+// its opening table - a pickup's cards do by definition - and a red flight
+// first is the flicker.
+//
+// A masked back is KEPT: it has no identity to conflict on and no per-card view
+// to fly back from, having landed INTO a badge. So is anything that went to a
+// POOL (the discard pile, the deck, an opponent's badge), because conjuring a
+// ghost back OUT of a pile is how the "deal from the pile onto the table" class
+// of bug happens.
+//
+// NOT THE SAME QUESTION as anim_resolve_unconfirmed_attack_covers above, which
+// is why both live here. That one judges against a SERVER VERDICT - an
+// authoritative table, a defender-capacity inference, a broadcast that may yet
+// confirm the card - and decides WHETHER a motion is doomed. This one is asked
+// only about motions the caller already knows are doomed, and answers HOW each
+// one leaves. A client with a total order over complete chains (iMessage) knows
+// doom by itself; a client whose own move is confirmed by a separate later
+// broadcast (the web) does not, and asking this rule there would revert a card
+// the server is about to accept. See docs/ANIMATION_CORE_C.md.
+
+// The verdict.
+#define ANIM_CONFLICT_REVERT 0
+#define ANIM_CONFLICT_KEEP   1
+#define ANIM_CONFLICT_CLEAR  2
+
+// Where a doomed motion PUT its card - which side of the arriving board the
+// standing check reads. POOL is a destination with no persistent per-card view.
+#define ANIM_DEST_TABLE   0
+#define ANIM_DEST_MY_HAND 1
+#define ANIM_DEST_POOL    2
+
+// A motion whose card has no identity (a viewer-masked back), and the same
+// sentinel in a card-id list.
+#define ANIM_CARD_NONE (-1)
+
+// The three sets a verdict reads, as dense-id bitsets (card_to_id, 0..51 - a
+// deck fits a u64, so the sets need no allocation and no hashing).
+typedef struct {
+    uint64_t incoming_moved;    // identities the arriving stream itself moves
+    uint64_t table_at_open;     // identities standing on its opening table
+    uint64_t my_hand_at_open;   // identities in MY hand on that board
+} AnimConflictFacts;
+
+// Build the facts from what an arrival already carries. `moved_ids` are the
+// stream's cards (ANIM_CARD_NONE entries are masked backs, which name nothing
+// and are dropped); `open_table` is the opening board's table in the 2-bytes-
+// per-battle layout every table in this codebase uses (attack, then its cover
+// or ANIM_TABLE_NONE) and BOTH sides stand on it, so a cover is in the set;
+// `my_hand_ids` is my hand there. A chain that could not be read passes zero of
+// everything, which makes every card REVERT - the honest default, since a chain
+// nobody can read vouches for nothing.
+// Returns ANIM_EOK or ANIM_EBADARG.
+int anim_conflict_facts(const int *moved_ids, int n_moved,
+                        const unsigned char *open_table, int n_open_battles,
+                        const unsigned char *my_hand_ids, int n_my_hand,
+                        AnimConflictFacts *out);
+
+// The verdict for one card. `card_id` is a dense id, or ANIM_CARD_NONE for a
+// masked back. Returns ANIM_CONFLICT_*, or ANIM_EBADARG.
+int anim_conflict_verdict(int card_id, int dest, const AnimConflictFacts *facts);
+
+// Which KIND of place an event's cards went, for the verdict above. Placements
+// land on the table; my own draws and pickups land in my hand; everything else -
+// an opponent's draw or pickup, a discard sweep, the no-flight notices - lands
+// in a pool. An unrecognised type is a pool.
+int anim_conflict_dest(int event_type, int seat, int my_seat);
+
+// One motion a doomed sequence actually made, as this rule sees it: which card
+// it moved and what kind of place it put it. The FLIGHT is the caller's - rects
+// and angles are rendering.
+typedef struct {
+    int card_id;   // dense id, or ANIM_CARD_NONE for a masked back
+    int dest;      // ANIM_DEST_*
+} AnimConflictMotion;
+
+// A superseded sequence's motions arrive grouped as it flew them (one group per
+// parallel step). Sized like the streams that produce them: ANIM_MAX_BEATS
+// groups, and no more motions than a whole sequence's cards.
+#define ANIM_MAX_CONFLICT_GROUPS  ANIM_MAX_BEATS
+#define ANIM_MAX_CONFLICT_MOTIONS 256
+
+typedef struct {
+    // Per input motion, in input order.
+    int           n_verdicts;
+    unsigned char verdicts[ANIM_MAX_CONFLICT_MOTIONS];
+    // The reversal: which motions fly back, in which order, in which steps.
+    // `order` holds motion indices with the steps laid end to end, and
+    // step i owns step_count[i] of them starting at the running sum.
+    int n_steps;
+    int step_count[ANIM_MAX_CONFLICT_GROUPS];
+    int n_order;
+    int order[ANIM_MAX_CONFLICT_MOTIONS];
+} AnimConflictPlan;
+
+// THE REVERSAL'S SHAPE. `group_sizes` slices `motions` in the order they flew.
+// Steps come back in REVERSE group order - the cards travel back the way they
+// came, last motion first - each group staying one parallel step, and a group
+// no motion reverts is DROPPED rather than played as a beat of silence.
+// Returns the step count, or ANIM_EBADARG / ANIM_ECAP.
+int anim_conflict_reversal(const AnimConflictMotion *motions, int n_motions,
+                           const int *group_sizes, int n_groups,
+                           const AnimConflictFacts *facts,
+                           AnimConflictPlan *out);
 
 #endif

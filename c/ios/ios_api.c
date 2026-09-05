@@ -789,6 +789,104 @@ int fio_pre_bout_table_packed(const uint8_t *in, int len, char *out, int cap) {
     return need;
 }
 
+// ---------- the conflict model --------------------------------------------
+
+int fio_conflict_dest(int event_type, int seat, int my_seat) {
+    return anim_conflict_dest(event_type, seat, my_seat);
+}
+
+// One dense card id off the wire: FIO_CONFLICT_NONE is "no identity here", and
+// anything else off the deck is a corrupt wire rather than a case.
+static int conflict_id(uint8_t b, int *out) {
+    if (b == FIO_CONFLICT_NONE) { *out = ANIM_CARD_NONE; return 1; }
+    if (b >= 52) return 0;
+    *out = b;
+    return 1;
+}
+
+int fio_conflict_packed(const uint8_t *in, int len, char *out, int cap) {
+    if (!in || !out || len < 2) return FIO_EBADARG;
+    if (in[0] != FIO_CONFLICT_VERSION) return FIO_EPARSE;
+    const uint8_t *end = in + len;
+    int p = 1;
+
+    // Every count is bounded before the extent it implies is read - a bound
+    // checked after the reads it guards is not a bound.
+    static int moved[ANIM_MAX_CONFLICT_MOTIONS];
+    if (in + p + 1 > end) return FIO_EPARSE;
+    const int n_moved = in[p++];
+    if (n_moved > ANIM_MAX_CONFLICT_MOTIONS) return FIO_ECAP;
+    if (in + p + n_moved > end) return FIO_EPARSE;
+    for (int i = 0; i < n_moved; i++) {
+        if (!conflict_id(in[p + i], &moved[i])) return FIO_EPARSE;
+    }
+    p += n_moved;
+
+    if (in + p + 1 > end) return FIO_EPARSE;
+    const int n_bat = (in[p] == FIO_CONFLICT_NONE) ? 0 : in[p];
+    p++;
+    const uint8_t *table = in + p;
+    if (in + p + 2 * n_bat > end) return FIO_EPARSE;
+    // Either slot may be FIO_CONFLICT_NONE - an uncovered attack, or a card the
+    // viewer cannot name. Both contribute nothing to the standing set; anything
+    // else off the deck is a corrupt wire.
+    for (int i = 0; i < 2 * n_bat; i++) {
+        if (table[i] >= 52 && table[i] != FIO_CONFLICT_NONE) return FIO_EPARSE;
+    }
+    p += 2 * n_bat;
+
+    if (in + p + 1 > end) return FIO_EPARSE;
+    const int n_hand = in[p++];
+    const uint8_t *hand = in + p;
+    if (in + p + n_hand > end) return FIO_EPARSE;
+    for (int i = 0; i < n_hand; i++) if (hand[i] >= 52) return FIO_EPARSE;
+    p += n_hand;
+
+    if (in + p + 1 > end) return FIO_EPARSE;
+    const int n_groups = in[p++];
+    if (n_groups > ANIM_MAX_CONFLICT_GROUPS) return FIO_ECAP;
+    if (in + p + n_groups > end) return FIO_EPARSE;
+    static int groups[ANIM_MAX_CONFLICT_GROUPS];
+    int n_motions = 0;
+    for (int g = 0; g < n_groups; g++) {
+        groups[g] = in[p + g];
+        n_motions += groups[g];
+    }
+    p += n_groups;
+    if (n_motions > ANIM_MAX_CONFLICT_MOTIONS) return FIO_ECAP;
+    if (in + p + 2 * n_motions > end) return FIO_EPARSE;
+
+    static AnimConflictMotion motions[ANIM_MAX_CONFLICT_MOTIONS];
+    for (int i = 0; i < n_motions; i++) {
+        if (!conflict_id(in[p + 2 * i], &motions[i].card_id)) return FIO_EPARSE;
+        const int dest = in[p + 2 * i + 1];
+        if (dest != FIO_CONFLICT_DEST_TABLE && dest != FIO_CONFLICT_DEST_MY_HAND
+            && dest != FIO_CONFLICT_DEST_POOL) return FIO_EPARSE;
+        motions[i].dest = dest;
+    }
+
+    AnimConflictFacts facts;
+    if (anim_conflict_facts(moved, n_moved, table, n_bat, hand, n_hand, &facts) != ANIM_EOK) {
+        return FIO_EBADARG;
+    }
+    static AnimConflictPlan plan;
+    const int rc = anim_conflict_reversal(motions, n_motions, groups, n_groups, &facts, &plan);
+    if (rc == ANIM_ECAP) return FIO_ECAP;
+    if (rc < 0) return FIO_EBADARG;
+
+    const int need = 2 + plan.n_verdicts + 1 + plan.n_steps + plan.n_order;
+    if (cap < need) return FIO_ECAP;
+    unsigned char *q = (unsigned char *)out;
+    int w = 0;
+    q[w++] = FIO_CONFLICT_VERSION;
+    q[w++] = (unsigned char)plan.n_verdicts;
+    for (int i = 0; i < plan.n_verdicts; i++) q[w++] = plan.verdicts[i];
+    q[w++] = (unsigned char)plan.n_steps;
+    for (int i = 0; i < plan.n_steps; i++) q[w++] = (unsigned char)plan.step_count[i];
+    for (int i = 0; i < plan.n_order; i++) q[w++] = (unsigned char)plan.order[i];
+    return w;
+}
+
 int fio_badge_drops_as_cards_leave(int type) {
     return anim_badge_drops_as_cards_leave(type);
 }

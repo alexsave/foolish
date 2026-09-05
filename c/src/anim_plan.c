@@ -598,3 +598,121 @@ int anim_resolve_unconfirmed_attack_covers(const AnimPending *pending, int n_pen
     for (int i = 0; i < n_pending; i++) out->merge[out->n_merge++] = i;
     return ANIM_EOK;
 }
+
+// ---- the conflict model ---------------------------------------------------
+// See anim_plan.h. The three sets are u64 bitsets over dense card ids, so every
+// membership test here is one shift and one and.
+
+static uint64_t conflict_bit(int id) {
+    return (id >= 0 && id < 52) ? ((uint64_t)1 << id) : 0;
+}
+
+int anim_conflict_facts(const int *moved_ids, int n_moved,
+                        const unsigned char *open_table, int n_open_battles,
+                        const unsigned char *my_hand_ids, int n_my_hand,
+                        AnimConflictFacts *out) {
+    if (!out) return ANIM_EBADARG;
+    if (n_moved < 0 || n_open_battles < 0 || n_my_hand < 0) return ANIM_EBADARG;
+    if (n_moved > 0 && !moved_ids) return ANIM_EBADARG;
+    if (n_open_battles > 0 && !open_table) return ANIM_EBADARG;
+    if (n_my_hand > 0 && !my_hand_ids) return ANIM_EBADARG;
+    out->incoming_moved = out->table_at_open = out->my_hand_at_open = 0;
+
+    for (int i = 0; i < n_moved; i++) out->incoming_moved |= conflict_bit(moved_ids[i]);
+    // Both sides of a battle STAND: a covered attack and the cover that covers
+    // it are each at their post spot, and dropping the cover would false-revert
+    // a standing one.
+    for (int i = 0; i < n_open_battles; i++) {
+        out->table_at_open |= conflict_bit(open_table[2 * i]);
+        const unsigned char cover = open_table[2 * i + 1];
+        if (cover != ANIM_TABLE_NONE) out->table_at_open |= conflict_bit(cover);
+    }
+    for (int i = 0; i < n_my_hand; i++) out->my_hand_at_open |= conflict_bit(my_hand_ids[i]);
+    return ANIM_EOK;
+}
+
+int anim_conflict_verdict(int card_id, int dest, const AnimConflictFacts *facts) {
+    if (!facts) return ANIM_EBADARG;
+    // A masked back names nothing and landed into a badge - there is no view to
+    // fly home, so the newest sequence's count freeze owns it from here.
+    if (card_id == ANIM_CARD_NONE) return ANIM_CONFLICT_KEEP;
+    if (card_id < 0 || card_id >= 52) return ANIM_EBADARG;
+    const uint64_t bit = conflict_bit(card_id);
+    // CLEAR FIRST. A card the incoming stream moves may also stand on its
+    // opening table (a pickup's do by definition); the replay taking it off IS
+    // the animation, and a red flight first is the flicker.
+    if (facts->incoming_moved & bit) return ANIM_CONFLICT_CLEAR;
+    switch (dest) {
+        case ANIM_DEST_POOL:    return ANIM_CONFLICT_KEEP;
+        case ANIM_DEST_TABLE:   return (facts->table_at_open & bit)
+                                       ? ANIM_CONFLICT_KEEP : ANIM_CONFLICT_REVERT;
+        case ANIM_DEST_MY_HAND: return (facts->my_hand_at_open & bit)
+                                       ? ANIM_CONFLICT_KEEP : ANIM_CONFLICT_REVERT;
+        default: return ANIM_EBADARG;
+    }
+}
+
+int anim_conflict_dest(int event_type, int seat, int my_seat) {
+    switch (event_type) {
+        case ANIM_EVT_ATTACK_PASS:
+        case ANIM_EVT_COVER:
+        case ANIM_EVT_DEFENDER_MOVE:
+            return ANIM_DEST_TABLE;
+        case ANIM_EVT_DEAL:
+        case ANIM_EVT_REFILL:
+        case ANIM_EVT_PICKUP:
+            return (seat == my_seat) ? ANIM_DEST_MY_HAND : ANIM_DEST_POOL;
+        default:
+            return ANIM_DEST_POOL;
+    }
+}
+
+int anim_conflict_reversal(const AnimConflictMotion *motions, int n_motions,
+                           const int *group_sizes, int n_groups,
+                           const AnimConflictFacts *facts,
+                           AnimConflictPlan *out) {
+    if (!out || !facts) return ANIM_EBADARG;
+    if (n_motions < 0 || n_motions > ANIM_MAX_CONFLICT_MOTIONS) return ANIM_ECAP;
+    if (n_groups < 0 || n_groups > ANIM_MAX_CONFLICT_GROUPS) return ANIM_ECAP;
+    if (n_motions > 0 && !motions) return ANIM_EBADARG;
+    if (n_groups > 0 && !group_sizes) return ANIM_EBADARG;
+
+    out->n_verdicts = 0;
+    out->n_steps = 0;
+    out->n_order = 0;
+
+    // The groups must account for exactly the motions handed over - a slicing
+    // that runs past the array, or leaves motions in no group, is describing
+    // some other sequence.
+    int total = 0;
+    for (int g = 0; g < n_groups; g++) {
+        if (group_sizes[g] < 0) return ANIM_EBADARG;
+        total += group_sizes[g];
+        if (total > n_motions) return ANIM_EBADARG;
+    }
+    if (total != n_motions) return ANIM_EBADARG;
+
+    for (int i = 0; i < n_motions; i++) {
+        const int v = anim_conflict_verdict(motions[i].card_id, motions[i].dest, facts);
+        if (v < 0) return ANIM_EBADARG;
+        out->verdicts[i] = (unsigned char)v;
+    }
+    out->n_verdicts = n_motions;
+
+    // The starting index of each group, so the walk can run backwards.
+    int start[ANIM_MAX_CONFLICT_GROUPS];
+    int at = 0;
+    for (int g = 0; g < n_groups; g++) { start[g] = at; at += group_sizes[g]; }
+
+    for (int g = n_groups - 1; g >= 0; g--) {
+        const int n_before = out->n_order;
+        for (int k = 0; k < group_sizes[g]; k++) {
+            const int i = start[g] + k;
+            if (out->verdicts[i] == ANIM_CONFLICT_REVERT) out->order[out->n_order++] = i;
+        }
+        const int flown = out->n_order - n_before;
+        // A group the verdicts emptied is dropped, not played as silence.
+        if (flown > 0) out->step_count[out->n_steps++] = flown;
+    }
+    return out->n_steps;
+}
