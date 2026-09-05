@@ -446,7 +446,7 @@ still coming up, which is exactly the window the owner is catching the tail of.
 Owner: "table to discard animation still seems to have a geometry mismatch like
 it's using expanded coords on a collapsed screen."
 
-Strong hypothesis, and it is a known class in this codebase.
+MY HYPOTHESIS, unverified - but it is a known class in this codebase.
 Round 43 fixed exactly this on the HAND side: `handCardFrames` is a PUBLISHED
 preference and a preference lags a layout pass, so collapsing the drawer moved the
 board while the per-card frames still described the expanded one - the rig caught
@@ -459,20 +459,43 @@ That cure was never applied to the TABLE side.
 reads `lastBattleFrames`, both published preferences, so the sweep to the discard
 pile should show the same lag under the same conditions.
 
-### 3. Geometry is broken by the AUTO collapse and repaired by a manual swipe
+### 3. SUSPICION ONLY: does the auto collapse leave the geometry stale?
 
 Owner: "geometry seems to be broken by the auto collapse? then fixed by swiping to
 expand/collapse."
+Note the owner's own question mark, and their follow-up: "not entirely confident
+on the autocollapse not updating geometry properly, it's just a hypothesis."
 
-This is probably the trigger for finding 2 rather than a separate defect, and it
-is the useful half: a manual swipe drives the presentation-style change through
-the path that republishes frames, and the automatic collapse does not - so the
-stale published rects survive until something else forces a layout pass.
+Keep the two apart, because only one of them is evidence.
 
-Worth checking `CollapseTween` / `MessagesRootView`'s transition handling for a
-publish that only happens on the interactive path.
-If finding 2 is fixed by computing rather than reading, this stops mattering for
-the sweep - but anything else still reading published frames would keep the bug.
+**Observed**, and reproducible: the geometry is wrong at some point, and swiping to
+expand or collapse repairs it.
+
+**Guessed**, by me, and NOT verified: that the automatic collapse takes a path
+which skips a frame republish the interactive path performs.
+That is one explanation of the observation.
+It is not the only one.
+At least three others fit the same symptom equally well:
+
+- the frames are republished on both paths, but the auto collapse republishes them
+  at a moment when the layout has not settled, so the values are fresh and wrong
+  rather than stale and right;
+- nothing is wrong with the collapse at all, and the swipe merely forces an extra
+  layout pass that would have corrected ANY stale rect, whatever staled it;
+- the auto collapse and the animation that exposes the bug simply co-occur,
+  because both follow a send.
+
+**How to tell them apart**, before changing anything: log the published table rects
+against the presentation style on both paths and compare.
+If the auto path never publishes, the first explanation holds.
+If it publishes the expanded values while compact, the second does.
+If the rects are identical on both paths, the fault is elsewhere and finding 2
+stands on its own.
+
+This matters for the fix, not just for tidiness: if finding 2 is repaired by
+COMPUTING the rects rather than reading published ones - the round 43 cure - then
+the collapse path stops mattering for the sweep whichever explanation is true, and
+chasing it first would be wasted work.
 
 ### How to work these
 
