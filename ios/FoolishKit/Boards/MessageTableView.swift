@@ -184,8 +184,14 @@ public struct MessageTableView: View {
     /// from here changes with a SNAP, never a spring - the buttons hold still and
     /// only ever jump instantly to their final spot. `-1` marks "not measured yet"
     /// so the first real height wins immediately (see `boardContent`'s onChange).
+    ///
+    /// That rejection is about THIS vector only. The `.transaction` still on
+    /// `actionBar`'s fixed-size container is not a leftover of it - it covers a
+    /// change `.animation(nil, value:)` cannot see at all. The three overrides
+    /// and what each one is for are laid out once, in
+    /// `doesNotRideTheBoardSpring`'s doc at the foot of this file.
     @State private var buttonLift: CGFloat = -1
-    /// `lift` for the promoted status mark (see `statusMarksOnTop`'s overlay),
+    /// `lift` for the promoted status mark (the `selfRoleIndicator` overlay),
     /// which is drawn OUTSIDE `boardContent`'s GeometryReader and so cannot read
     /// the local. `buttonLift` is the mirror the chrome already rides; before it
     /// has been measured (-1, the first paint) fall back to the same arithmetic
@@ -613,7 +619,7 @@ public struct MessageTableView: View {
                                centerFromTrailing: Self.sendHintCenterFromTrailing)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
             }
-            .animation(nil, value: controller.view)   // never ride the board spring
+            .doesNotRideTheBoardSpring(controller.view)
         }
         .padding(.horizontal, 8).padding(.top, 14).padding(.bottom, 4)   // top margin so the ring isn't clipped in the compact drawer
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -651,9 +657,8 @@ public struct MessageTableView: View {
                 selfRoleIndicator(v)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                     .padding(.bottom, statusMarkLift + 6)
-                    // Round-7's rule, carried over with the view: never let the
-                    // board's card spring float this.
-                    .animation(nil, value: controller.view)
+                    // Round-7's rule, carried over with the view.
+                    .doesNotRideTheBoardSpring(controller.view)
                     .allowsHitTesting(false)
                     // The board content's own inset, re-applied INSIDE the
                     // overlay. An overlay is sized to the padded frame and the
@@ -1026,28 +1031,21 @@ public struct MessageTableView: View {
                     .offset(y: -3)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 
-                // Self role indicator: the local seat never got a role mark before
-                // (note 3) — only opponents (FSeatBadge) did. Same spot the old
-                // first-attacker-only sword used: just above my hand.
-                //
-                // ROUND 41 - IT IS DRAWN FROM `statusMarksOnTop` NOW, not from
-                // here, so that a card crossing it cannot change which of the
-                // two is in front. Left in place as an empty slot so the ZStack
-                // order below (action bar, undo, settings, hand) is unchanged.
-                Color.clear
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .padding(.bottom, lift + 6)
-                    .allowsHitTesting(false)
-                    // Round-7 ("buttons should NEVER move / float"): isolate this
-                    // from the board's card spring. The ancestor animates on
-                    // `.animation(cardMotion, value: controller.view)`; the correct
-                    // override is a NESTED `.animation(nil, value: controller.view)`
-                    // - same trigger value, innermost wins - NOT a `.transaction`
-                    // (which does not reliably beat a scoped value-animation, the
-                    // reason the earlier transaction fix let the role mark still
-                    // drift) and NOT keying on `handHeight` (the wrong value - the
-                    // change rides controller.view). Position now also snaps because
-                    // it reads the mirrored `lift`, not the springy `handHeight`.
+                // NO SELF ROLE INDICATOR HERE. It used to be the next child of
+                // this ZStack, at `lift + 6`; round 41 ("a status icon is always
+                // in front of a card") moved it OUT, into the `selfRoleIndicator`
+                // overlay above the flight layer, and it reads `statusMarkLift`
+                // there. What round 41 left behind was an empty `Color.clear` at
+                // the same padding, kept "so the ZStack order below is
+                // unchanged" - which was never a thing that could change: a
+                // transparent, non-hit-testing child draws nothing, and dropping
+                // a child does not reorder the ones after it. It is gone, and
+                // with it the round-7 animation note that described a mark this
+                // slot had not drawn for two builds. Round-7's rule itself is
+                // alive and spent by every piece of chrome below, as
+                // `.doesNotRideTheBoardSpring` - read its doc before touching
+                // any of the three overrides down there, they are three
+                // different vectors and not three tries at one.
 
                 // Action buttons float bottom-right, above the hand (web absolute
                 // bottom:90/right:20). They only appear when a flag enables them.
@@ -1092,10 +1090,14 @@ public struct MessageTableView: View {
                     // everything it was added for - the pill's insertion and its
                     // position WITHIN the column, which is the whole of the
                     // 1.0(10g) film - and nothing it was not.
+                    //
+                    // KEEP IT. It is vector 2 of the three in
+                    // `doesNotRideTheBoardSpring`'s doc, not a weaker spelling
+                    // of the `.doesNotRideTheBoardSpring` just below it.
                     .transaction { $0.animation = nil }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                     .padding(.trailing, 4).padding(.bottom, lift + 4)
-                    .animation(nil, value: controller.view)   // never float the buttons - see the role mark above
+                    .doesNotRideTheBoardSpring(controller.view)
 
                 // 1.0(4): Settings + Rulebook squares, MIRRORING the action
                 // column on the LEFT. Same 40pt height as the action pills,
@@ -1110,12 +1112,12 @@ public struct MessageTableView: View {
                 undoSlot
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                     .padding(.trailing, 20).padding(.bottom, lift + 4)
-                    .animation(nil, value: controller.view)
+                    .doesNotRideTheBoardSpring(controller.view)
 
                 settingsHelpBar
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                     .padding(.leading, 4).padding(.bottom, lift + 4)
-                    .animation(nil, value: controller.view)
+                    .doesNotRideTheBoardSpring(controller.view)
 
                 // My hand hugs the bottom (web: bottom max(10, safe-area)); the
                 // outer .padding(12) is the safe-area inset that keeps it unclipped.
@@ -5490,6 +5492,59 @@ public struct MessageTableView: View {
     /// The same axis measured from the BOARD's trailing edge - the board is
     /// inset 8 from the screen (`.padding(.horizontal, 8)` on the root).
     static let sendHintCenterFromTrailing: CGFloat = sendHintCenterFromScreenTrailing - 8
+}
+
+/// THE CHROME DOES NOT RIDE THE BOARD'S CARD SPRING - round 7, written once.
+///
+/// `boardContent` animates on `.animation(FMotion.cardMotion, value:
+/// controller.view)`. That is a SCOPED value-animation: every descendant whose
+/// geometry changes BECAUSE `controller.view` changed springs with it. Five
+/// pieces of chrome sit inside that scope and must not move on it - the staged
+/// send hint, the promoted self role mark, the action column, the undo slot and
+/// the settings/help squares. All five hang off `buttonLift`/`statusMarkLift`,
+/// so a pickup that grows the hand past the two-row threshold changes their
+/// bottom padding, and on the card spring the buttons visibly FLOATED up with
+/// the cards arriving under them. Owner, round 7: "buttons should NEVER move /
+/// float".
+///
+/// THE MECHANISM IS THE NESTED SAME-TRIGGER OVERRIDE, and only that: an
+/// `.animation(nil, value:)` on the descendant carrying THE SAME trigger value
+/// as the ancestor's, innermost wins. Which is why the trigger stays spelled
+/// out at every call site rather than being reached for inside here - the
+/// identity of the two values IS the mechanism, and a site passing something
+/// else is a site that does not work. Two other spellings were tried and
+/// rejected for this vector: `.transaction { $0.animation = nil }` on the
+/// chrome, which does not reliably beat a scoped value-animation (that is the
+/// earlier fix the role mark went on drifting through), and keying on
+/// `handHeight`, which is simply the wrong value - the change arrives through
+/// `controller.view`.
+///
+/// THIS IS ONE OF THREE DIFFERENT VECTORS, NOT THREE TRIES AT ONE. Read from
+/// the comments alone the trio looks like a band-aid on a band-aid on a
+/// band-aid - it has been misread that way, and acted on - so: they cover
+/// three unrelated ways the chrome can end up moving, and deleting any one of
+/// them puts a separately filmed bug back.
+///
+///   1. THIS. The board's card spring reaching chrome inside its scope,
+///      because the change is driven by `controller.view`. Five sites.
+///   2. `actionBar`'s `.transaction { $0.animation = nil }`, confined to its
+///      fixed-size 128x88 container. That covers the INSERTION of the Undo
+///      pill into the column and its position within it - a change NOT driven
+///      by `controller.view` at all (it rides whatever transaction is in
+///      flight, e.g. the collapse's own `withAnimation`), so nothing keyed on
+///      `controller.view` can reach it. Round 10g filmed Undo arriving ~295pt
+///      above its slot and flying down over ~7 frames.
+///   3. The `buttonLift` mirror. That gives the chrome its OWN honest
+///      animation (`FMotion.chrome`) for the one change that genuinely does
+///      move it, a row-count change, and it is deliberately driven from an
+///      `.onChange` rather than by `controller.view` so that (1) cannot null
+///      it. Round 36 asked for that slide explicitly ("at least make it slide
+///      smoothly instead of jumping"), and (2) had to be NARROWED from the
+///      placement down to the container because it was killing it.
+private extension View {
+    func doesNotRideTheBoardSpring<Trigger: Equatable>(_ trigger: Trigger) -> some View {
+        animation(nil, value: trigger)
+    }
 }
 
 /// Round-8 #3: the shared axis the send reminder's arrow and caption align on
