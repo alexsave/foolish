@@ -3659,6 +3659,15 @@ public struct MessageTableView: View {
                     for c in flying {
                         guard let from = self.lastBattleCardFrames[c.identity]
                                 ?? self.lastBattleFrames.values.first else { continue }
+                        // NOT `handLanding`, and the difference is deliberate.
+                        // These cards are coming BACK into the hand, so the fan
+                        // has not laid them out yet and `handCardFrames` cannot
+                        // hold a frame for them - the middle rung of the shared
+                        // chain would answer nil here every time. And the rough
+                        // spread is gated on `lastChance` rather than taken
+                        // straight away: an undo has a real slot waiting for it
+                        // the moment the fan opens, so this polls for the exact
+                        // answer and only approximates once out of retries.
                         guard let to = self.handLandingSlot(c, laidOut: laid)
                                 ?? (lastChance ? self.handApproxLanding() : nil) else { return nil }
                         flights.append(Flight(id: "undo-\(c.identity)", card: c, from: from, to: to,
@@ -3890,8 +3899,7 @@ public struct MessageTableView: View {
         if cards.isEmpty { return [] }
         guard deckFrame != .zero, handFrame != .zero else { return nil }
         return cards.enumerated().compactMap { i, c in
-            (handLandingSlot(c, laidOut: laidOut) ?? handCardFrames[c.identity]
-                ?? handApproxLanding(index: i, of: cards.count))
+            handLanding(c, laidOut: laidOut, index: i, of: cards.count)
                 .map { Flight(id: "draw-\(c.identity)", card: c, from: deckFrame, to: $0) }
         }
     }
@@ -3902,6 +3910,36 @@ public struct MessageTableView: View {
     /// point and then snapping apart (the first-open "bunch then ungroup"). A
     /// deck->hand flight to about-the-right-place reads far better than the card
     /// silently appearing; nil only if the hand itself hasn't rendered yet.
+    /// WHERE A CARD LANDS IN MY HAND, in falling order of authority.
+    ///
+    /// Three answers, and the order between them is the whole of round 7 plus
+    /// round 12. This chain was written out verbatim at four call sites - the
+    /// live draw, the replayed deal, the replayed pickup, and the resting ghost
+    /// a play leaves behind - which is four chances to get the order wrong, and
+    /// the order is the part that matters:
+    ///
+    ///  1. THE ANALYTICAL SLOT (`handLandingSlot`). The settled answer from the
+    ///     first instant, computed off the fan's own geometry rather than read.
+    ///     This is what lets the make-room ANIMATE while the card flies into it:
+    ///     the published frame is a moving target while the row re-centres, so
+    ///     aiming at it lands the card where the hand USED to be going.
+    ///  2. THE PUBLISHED FRAME. Only when the analytical route cannot answer -
+    ///     a card the fan is not laying out. A preference lags a layout pass, so
+    ///     it is second, never first.
+    ///  3. A ROUGH SPREAD (`handApproxLanding`), staggered by index so several
+    ///     unresolved cards do not pile onto one point and then snap apart. A
+    ///     deck-to-hand flight to about the right place reads far better than a
+    ///     card that silently appears.
+    ///
+    /// nil only when the hand has never been measured at all, which is a board
+    /// with nothing on screen to fly to.
+    private func handLanding(_ card: Card, laidOut: [Card],
+                             index: Int = 0, of count: Int = 1) -> CGRect? {
+        handLandingSlot(card, laidOut: laidOut)
+            ?? handCardFrames[card.identity]
+            ?? handApproxLanding(index: index, of: count)
+    }
+
     private func handApproxLanding(index: Int = 0, of count: Int = 1) -> CGRect? {
         guard handFrame != .zero, count > 0 else { return nil }
         let x = handFrame.minX + handFrame.width * (CGFloat(index) + 0.5) / CGFloat(count)
@@ -4557,8 +4595,7 @@ public struct MessageTableView: View {
                 // frame that is still mid-slide.
                 let laid = laidOutHandNow(view)
                 return cards.enumerated().compactMap { i, c in
-                    (handLandingSlot(c, laidOut: laid) ?? handCardFrames[c.identity]
-                        ?? handApproxLanding(index: i, of: cards.count)).map {
+                    handLanding(c, laidOut: laid, index: i, of: cards.count).map {
                         Flight(id: "opendraw-\(c.identity)", card: c, from: deckFrame, to: $0) } }
             }
             guard let badge = seatFrames[ev.seat], badge != .zero, deckFrame != .zero else { return nil }
@@ -4590,8 +4627,7 @@ public struct MessageTableView: View {
                 let laid = laidOutHandNow(view)
                 return cards.enumerated().compactMap { i, c in
                     guard let from = tableCardSource(c, fallbackIndex: i) else { return nil }
-                    return (handLandingSlot(c, laidOut: laid) ?? handCardFrames[c.identity]
-                        ?? handApproxLanding(index: i, of: cards.count)).map {
+                    return handLanding(c, laidOut: laid, index: i, of: cards.count).map {
                         // `fromAngle`: a cover was lying across its attack a
                         // moment ago, so its ghost lifts off still tilted and
                         // flattens on the way to the hand.
@@ -5359,10 +5395,10 @@ public struct MessageTableView: View {
         // a hand that has never been measured at all, which is a board with
         // nothing on screen to vanish from.
         let held: [Flight] = cards.compactMap { c in
-            let at = fromRects[c.identity]
-                ?? handLandingSlot(c, laidOut: laidOutHandNow(view))
-                ?? handCardFrames[c.identity]
-                ?? handApproxLanding()
+            // The release point of a DRAGGED card first - it is live by
+            // construction and is where the finger actually let go - then the
+            // ordinary landing chain for everything that never moved.
+            let at = fromRects[c.identity] ?? handLanding(c, laidOut: laidOutHandNow(view))
             return at.map { Flight(id: "place-\(c.identity)", card: c, from: $0, to: $0) }
         }
         let placed = Set(held.compactMap { $0.card?.identity })
