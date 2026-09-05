@@ -350,6 +350,77 @@ int anim_goods_cleared(AnimRoles shown, int step_good_mask, AnimRoles *out);
 int anim_pass_hand_off(AnimRoles shown, unsigned attack_pass_seats,
                        int final_defender, AnimRoles *out);
 
+// ---- the pre-bout table ---------------------------------------------------
+//
+// THE TABLE A BOUT END SWEEPS, as it stood the instant before the sweep took
+// it. A board opening on a pickup or a discard has to lay that table out to fly
+// each card from where it actually sat; the settled board it holds is already
+// empty, so without this every swept card starts from one shared centre point.
+//
+// The pairing is the whole difficulty. A pickup crosses the wire as a FLAT card
+// list, so a table that really held two battles with one of them covered reads
+// back as three single-card cells - a different grid, which the board animates
+// every card into before anything flies off it (round 12, the owner: "they did
+// not animate directly from their table positions, but seemed to spread out to
+// an evenly spaced row, AND THEN fly to the hand"). A board carries its battles
+// with the attack/defence pairing intact, so the answer is to find the step
+// whose board still HELD the table rather than to infer the pairing at all.
+//
+// The rule: walk back from the sweep step to the last board that still had
+// cards on it, and for a pickup accept it only if it accounts for exactly the
+// cards the pickup takes - a board holding more, or fewer, is describing some
+// other moment. Then the board this whole stream OPENED on, under the same
+// test. Only then the flat reading.
+//
+// THE FLAT READING SURVIVES, and the output says so rather than passing it off
+// as a table. A pickup that leads its stream carries no earlier board - the
+// pickup step's own board is the emptied table - so for a single-action pickup
+// turn the pairing lives ONLY in the prior board, and a caller that has no
+// prior has nothing better than one cell per card. Measured over 5810 pickups
+// (2-6 players, 30 deals, every viewer): 0 recoverable from the stream alone,
+// 5653 from the prior board, the remaining 157 needing a prior the caller does
+// not have. The flat shape differs from the real table in 3027 of them, which
+// is why "is this a real pairing" is an output and not an implementation note.
+
+// 2 bytes per battle - the attack, then its cover or ANIM_TABLE_NONE. The same
+// table layout PlayBoard takes (legal.h): one shape for a table in this
+// codebase, not a third one for this answer.
+#define ANIM_TABLE_NONE 0xFE
+// A flat reading lays every card of a pickup in its own cell, so the widest
+// answer is one battle per card the wire can name.
+#define ANIM_MAX_PRE_BATTLES ANIM_MAX_CARDS
+// "this step carried no board of its own", for AnimPreEvent.n_battles and for
+// the prior board. A board with an EMPTY table says the same thing to this rule
+// - there is no table on it to sweep - so 0 and ANIM_NO_BOARD are one case.
+#define ANIM_NO_BOARD (-1)
+
+// One event as this rule sees it: what KIND of step it was, the board it
+// committed, and the cards it moved. `battles` and `cards` BORROW the caller's
+// storage for the call only, like every other input here.
+typedef struct {
+    int type;                      // ANIM_EVT_*
+    int n_battles;                 // this step's own board, or ANIM_NO_BOARD
+    const unsigned char *battles;  // 2 x n_battles bytes
+    int n_cards;                   // the step's cards - a pickup's ARE the table
+    const unsigned char *cards;    // n_cards dense ids (card_to_id)
+} AnimPreEvent;
+
+typedef struct {
+    int n_battles;
+    unsigned char battles[2 * ANIM_MAX_PRE_BATTLES];
+    // 1 when the pairing came off a real board, 0 when it is the flat reading -
+    // the same cards in a shape nobody vouched for. A caller choosing between
+    // two tables must not treat the second as a table.
+    int paired;
+} AnimPreTable;
+
+// The table above. `prior` is the board the stream opened on (2 bytes per
+// battle), or n_prior == ANIM_NO_BOARD for none. Returns the battle count (0
+// when the stream ends no bout), or ANIM_EBADARG / ANIM_ECAP.
+int anim_pre_bout_table(const AnimPreEvent *events, int n_events,
+                        int n_prior, const unsigned char *prior,
+                        AnimPreTable *out);
+
 // ---- optimistic policy ----------------------------------------------------
 
 // Canonical dedup key — the C twin of createCardEventString

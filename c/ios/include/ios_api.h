@@ -384,6 +384,45 @@ int fio_roles_pass_hand_off(int shown_defender, int shown_first_attacker,
                             int shown_good_mask, int attack_pass_seats,
                             int final_defender, int *out);
 
+// ---------- the pre-bout table (anim_plan.h) -------------------------------
+//
+// THE TABLE A BOUT END SWEEPS, so the board can lay it out and fly each card
+// from where it actually sat. See anim_plan.h for the rule and for why the
+// PAIRING is the hard part of it.
+//
+// The stream is an input for the reason fio_beats_packed's is, and the prior
+// board travels with it because a single-action pickup turn carries no earlier
+// board of its own - the pickup step's own board is the emptied table.
+//
+// INPUT (`in`):
+//   0  u8 version (FIO_PRETABLE_VERSION)
+//   1  u8 n_events
+//   2  u8 the prior board's battle count, or FIO_PRETABLE_NONE for no prior
+//   3  2 x that many u8: the prior board
+//   then per event:
+//     u8 type (EVW_T_*/ANIM_EVT_*)
+//     u8 this step's own board: its battle count, or FIO_PRETABLE_NONE
+//     2 x that many u8: the board's battles
+//     u8 n_cards, n_cards x u8 dense card id (a pickup's cards ARE the table)
+//   A table is always 2 bytes per battle - the attack, then its cover or
+//   FIO_PRETABLE_NONE - which is the layout fio_play_probe's board takes.
+//
+// OUTPUT (`out`):
+//   0  u8 version
+//   1  u8 n_battles
+//   2  u8 1 when the pairing is a REAL board, 0 when it is the flat reading
+//        (one cell per picked-up card - the right cards in a shape nobody
+//        vouched for; a caller choosing between two tables must not take it
+//        for a table)
+//   3  2 x n_battles u8: the table
+// Returns bytes written, or a negative error.
+#define FIO_PRETABLE_VERSION 1
+#define FIO_PRETABLE_HEAD    3
+// "no board" and "this attack is uncovered" are the same byte, which is the one
+// legal.h's LEGAL_WIRE_NONE and anim_plan.h's ANIM_TABLE_NONE already use.
+#define FIO_PRETABLE_NONE    0xFE
+int fio_pre_bout_table_packed(const uint8_t *in, int len, char *out, int cap);
+
 // ---------- strategies (offline bot roster, §7.2) --------------------------
 
 // Number of exposed offline strategies.

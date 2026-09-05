@@ -649,6 +649,91 @@ static int beats_wire_check(void) {
     return 0;
 }
 
+// THE PRE-BOUT TABLE, over the bytes a board would hold. The rule is pinned in
+// tests/tests.c; this is the layout, and the two answers it can give.
+//
+// The fixture is the owner's round-12 report as ids: the 6 of diamonds (44)
+// covered by the king of hearts (25), and a bare king of diamonds (51). Three
+// cards, TWO battles - a flat reading would say three.
+//
+// MUTATION-CHECKED against c/ios/ios_api.c, one at a time: the paired flag
+// written at the wrong offset, the head written as 2, the prior board's bytes
+// consumed as one per battle rather than two, and the "no prior" sentinel read
+// as a count of 254. Each fails here. Both bounds fault on the guard page when
+// loosened, for the reason the plan's do.
+static int pretable_wire_check(void) {
+    const unsigned char in[] = {
+        FIO_PRETABLE_VERSION, 2, 2, 44, 25, 51, FIO_PRETABLE_NONE,
+        4, FIO_PRETABLE_NONE, 1, 51,          // ATTACK_PASS, no board, laid card 51
+        6, FIO_PRETABLE_NONE, 3, 44, 51, 25,  // PICKUP, no board, took all three
+    };
+    unsigned char out[512];
+    int n = fio_pre_bout_table_packed(in, (int)sizeof in, (char *)out, sizeof out);
+    if (n != FIO_PRETABLE_HEAD + 4) { printf("FAIL pre-bout rc=%d\n", n); return 1; }
+    if (out[0] != FIO_PRETABLE_VERSION || out[1] != 2 || out[2] != 1) {
+        printf("FAIL pre-bout header %d/%d/%d\n", out[0], out[1], out[2]); return 1;
+    }
+    if (out[3] != 44 || out[4] != 25 || out[5] != 51 || out[6] != FIO_PRETABLE_NONE) {
+        printf("FAIL pre-bout table %d+%d,%d+%d\n", out[3], out[4], out[5], out[6]); return 1;
+    }
+
+    // With no prior board there is nothing but the flat reading, and it says so.
+    unsigned char flat[sizeof in];
+    memcpy(flat, in, sizeof in);
+    flat[2] = FIO_PRETABLE_NONE;
+    // …which shortens the input by the prior board's four bytes.
+    memmove(flat + 3, flat + 7, sizeof in - 7);
+    n = fio_pre_bout_table_packed(flat, (int)sizeof in - 4, (char *)out, sizeof out);
+    if (n != FIO_PRETABLE_HEAD + 6 || out[1] != 3 || out[2] != 0) {
+        printf("FAIL pre-bout flat rc=%d n=%d paired=%d\n", n, out[1], out[2]); return 1;
+    }
+    if (out[3] != 44 || out[4] != FIO_PRETABLE_NONE || out[7] != 25) {
+        printf("FAIL pre-bout flat cells\n"); return 1;
+    }
+
+    unsigned char bad[sizeof in];
+    const struct { int at; unsigned char to; int want; const char *what; } forged[] = {
+        { 0, 9,   FIO_EPARSE, "a foreign version" },
+        { 1, 200, FIO_ECAP,   "more events than the rule holds" },
+        { 2, 60,  FIO_EPARSE, "a prior board wider than the buffer" },
+        { 3, 52,  FIO_EPARSE, "a prior card off the end of the deck" },
+        { 16, 52, FIO_EPARSE, "a swept card off the end of the deck" },
+        { 9, 40,  FIO_EPARSE, "an event claiming more cards than it carries" },
+    };
+    for (int i = 0; i < (int)(sizeof forged / sizeof forged[0]); i++) {
+        memcpy(bad, in, sizeof in);
+        bad[forged[i].at] = forged[i].to;
+        if (fio_pre_bout_table_packed(bad, (int)sizeof bad, (char *)out, sizeof out)
+            != forged[i].want) {
+            printf("FAIL pre-bout accepted %s\n", forged[i].what); return 1;
+        }
+    }
+
+    // EVERY short prefix, flush against a PROT_NONE guard page - see the plan's
+    // loop for why a return code is not enough on its own.
+    const long page = sysconf(_SC_PAGESIZE);
+    unsigned char *probe = mmap(0, (size_t)page * 2, PROT_READ | PROT_WRITE,
+                                MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (probe == MAP_FAILED || mprotect(probe + page, (size_t)page, PROT_NONE) != 0) {
+        printf("FAIL pre-bout guard page\n"); return 1;
+    }
+    for (int L = 0; L <= (int)sizeof in; L++) {
+        unsigned char *edge = probe + page - L;
+        memcpy(edge, in, (size_t)L);
+        const int r = fio_pre_bout_table_packed(edge, L, (char *)out, sizeof out);
+        if (L < (int)sizeof in ? (r >= 0) : (r <= 0)) {
+            printf("FAIL pre-bout at %d bytes rc=%d\n", L, r); return 1;
+        }
+    }
+    munmap(probe, (size_t)page * 2);
+    if (fio_pre_bout_table_packed(in, (int)sizeof in, (char *)out, FIO_PRETABLE_HEAD)
+        != FIO_ECAP) {
+        printf("FAIL pre-bout wrote past its buffer\n"); return 1;
+    }
+    printf("pre-bout table wire OK (2 battles paired, 3 cells flat)\n");
+    return 0;
+}
+
 // MUTATION-CHECKED. On the rule: the freeze walking back over every event says
 // deck 2 here; anchoring without undoing says hands 3/9; undoing two events says
 // deck 3; a step deriving forward gets step 1's board wrong. On the wire: the
@@ -947,6 +1032,7 @@ int main(void) {
     if (nine_player_cap_check() != 0) return 1;
     if (beats_wire_check() != 0) return 1;
     if (plan_wire_check() != 0) return 1;
+    if (pretable_wire_check() != 0) return 1;
 
     printf("SMOKE OK\n");
     return 0;

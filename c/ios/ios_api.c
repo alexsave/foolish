@@ -709,6 +709,86 @@ int fio_beats_packed(const uint8_t *in, int len, char *out, int cap) {
     return FIO_BEATS_HEAD + b.n_beats * FIO_BEATS_STRIDE;
 }
 
+// ---------- the pre-bout table ---------------------------------------------
+//
+// The layout is documented once, in ios_api.h. Like fio_beats_packed this reads
+// nothing but its arguments, and the prior board travels with the stream
+// because a single-action pickup turn has no earlier board of its own.
+
+_Static_assert(FIO_PRETABLE_NONE == ANIM_TABLE_NONE,
+               "one 'no card here' byte for a table, not two");
+_Static_assert(ANIM_TABLE_NONE == LEGAL_WIRE_NONE,
+               "…and it is the same byte the menu wire and PlayBoard use");
+
+// One table off the wire: `n` battles at `p`, bounded against `end`. Returns
+// the bytes consumed, or -1 for a table that runs off the buffer or names a
+// card that is not one.
+static int pretable_read(const uint8_t *p, const uint8_t *end, int n) {
+    if (n < 0 || p + 2 * n > end) return -1;
+    for (int i = 0; i < 2 * n; i++)
+        if (p[i] >= 52 && p[i] != ANIM_TABLE_NONE) return -1;
+    return 2 * n;
+}
+
+int fio_pre_bout_table_packed(const uint8_t *in, int len, char *out, int cap) {
+    if (!in || !out || len < 3) return FIO_EBADARG;
+    if (in[0] != FIO_PRETABLE_VERSION) return FIO_EPARSE;
+    const int n = in[1];
+    if (n > ANIM_MAX_STEPS) return FIO_ECAP;
+    const uint8_t *end = in + len;
+
+    int p = 2;
+    const int prior_n = (in[p] == FIO_PRETABLE_NONE) ? ANIM_NO_BOARD : in[p];
+    p++;
+    const uint8_t *prior = in + p;
+    if (prior_n > 0) {
+        const int took = pretable_read(in + p, end, prior_n);
+        if (took < 0) return FIO_EPARSE;
+        p += took;
+    }
+
+    static AnimPreEvent evs[ANIM_MAX_STEPS];
+    for (int i = 0; i < n; i++) {
+        // The WHOLE event is bounded before any of it is read - the counts that
+        // decide its length first, then the extent they imply. A bound checked
+        // after the reads it guards is not a bound.
+        if (in + p + 2 > end) return FIO_EPARSE;
+        const int type = in[p];
+        const int n_bat = (in[p + 1] == FIO_PRETABLE_NONE) ? ANIM_NO_BOARD : in[p + 1];
+        p += 2;
+        evs[i].type = type;
+        evs[i].n_battles = n_bat;
+        evs[i].battles = in + p;
+        if (n_bat > 0) {
+            const int took = pretable_read(in + p, end, n_bat);
+            if (took < 0) return FIO_EPARSE;
+            p += took;
+        }
+        if (in + p + 1 > end) return FIO_EPARSE;
+        const int n_cards = in[p];
+        p++;
+        if (in + p + n_cards > end) return FIO_EPARSE;
+        for (int k = 0; k < n_cards; k++) if (in[p + k] >= 52) return FIO_EPARSE;
+        evs[i].n_cards = n_cards;
+        evs[i].cards = in + p;
+        p += n_cards;
+    }
+
+    static AnimPreTable t;
+    const int rc = anim_pre_bout_table(evs, n, prior_n, prior, &t);
+    if (rc == ANIM_ECAP) return FIO_ECAP;
+    if (rc < 0) return FIO_EBADARG;
+
+    const int need = FIO_PRETABLE_HEAD + 2 * t.n_battles;
+    if (cap < need) return FIO_ECAP;
+    unsigned char *q = (unsigned char *)out;
+    q[0] = FIO_PRETABLE_VERSION;
+    q[1] = (unsigned char)t.n_battles;
+    q[2] = (unsigned char)(t.paired ? 1 : 0);
+    for (int i = 0; i < 2 * t.n_battles; i++) q[FIO_PRETABLE_HEAD + i] = t.battles[i];
+    return need;
+}
+
 int fio_badge_drops_as_cards_leave(int type) {
     return anim_badge_drops_as_cards_leave(type);
 }

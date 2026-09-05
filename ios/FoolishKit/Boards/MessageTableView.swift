@@ -124,8 +124,8 @@ public struct MessageTableView: View {
     ///
     /// Used by BOTH paths:
     ///  - live bout-end: the prior view's battles (the table I just cleared).
-    ///  - open-replay: `controller.openReplayPreBattles` (reconstructed, since the
-    ///    pre-bout table was never otherwise rendered on open).
+    ///  - open-replay: `controller.openReplayPreBattles` (the kernel's pre-bout
+    ///    table, since that table is never otherwise rendered on open).
     /// Set as the sequence begins, cleared as it ends.
     @State private var sweepBattles: [BattleView] = []
     /// Every identity in `sweepBattles`, so a bout-end flight can POLL (via
@@ -4080,28 +4080,19 @@ public struct MessageTableView: View {
     /// The table a replayed pickup/discard should be shown sweeping off.
     ///
     /// ROUND 12 ("pickup animation sometimes quickly rearranges into grid before
-    /// moving to hand for many players"). `controller.openReplayPreBattles`
-    /// RECONSTRUCTS the pre-pickup table from the pickup step's own cards, and
-    /// it has to guess the pairing: the kernel hands over one flat list, so the
-    /// reconstruction lays every card in its own uncovered slot. A table that
-    /// really held three attacks with two of them covered comes back as FIVE
-    /// single-card battles - a different grid, with a different cell count and a
-    /// different shape.
-    ///
-    /// On a cold open nobody sees that, because there is no earlier frame to
-    /// compare it against. But a pickup that ARRIVES while the board is up runs
-    /// this same path, and there the player was looking at the real covered
-    /// table a frame ago - so the reconstruction reads as the table shuffling
-    /// itself into a grid before anything flies. The more players, the more
-    /// throw-ins, the more covered pairs get split, and the worse it looks -
-    /// which is exactly the "for many players" in the report.
+    /// moving to hand for many players"). `controller.openReplayPreBattles` is
+    /// the kernel's pre-bout table, which is a REAL board wherever the stream or
+    /// the prior board carries one and the flat one-cell-per-card reading only
+    /// where neither does. That reading has the right cards in the wrong shape,
+    /// and the grid animates every card into its new cell before anything flies
+    /// off it - the report.
     ///
     /// So: prefer the REAL table when this board has one. `lastBattles` is the
     /// last table that actually had cards on it (kept by `flyBoutEndToDiscard`),
-    /// and it is the truth the reconstruction is approximating. It is only used
-    /// when it accounts for every card the sweep is about to move; otherwise it
-    /// is a stale table from an earlier bout and the reconstruction - which is at
-    /// least about the right cards - wins.
+    /// and it is nearer to hand than anything the kernel can reconstruct. It is
+    /// only used when it accounts for every card the sweep is about to move;
+    /// otherwise it is a stale table from an earlier bout and the kernel's
+    /// answer - which is at least about the right cards - wins.
     private func sweepTableForReplay() -> [BattleView] {
         let reconstructed = controller.openReplayPreBattles
         guard !reconstructed.isEmpty else { return [] }
@@ -4318,14 +4309,19 @@ public struct MessageTableView: View {
     /// nil unless it ACCOUNTS FOR everything the current sweep already holds. The
     /// live sweep is the real prior view and is never wrong about which cards were
     /// on the table; this only ever earns the swap by ADDING the cover to it. A
-    /// stream that came back short (or with the flattened one-slot-per-card shape
-    /// `preBoutTable` reconstructs for a pickup) is refused rather than allowed to
-    /// drop a covered pair off the table mid-sequence.
+    /// stream that came back short is refused rather than allowed to drop a
+    /// covered pair off the table mid-sequence.
+    ///
+    /// …and so is the FLAT reading, which the subset test alone never caught: a
+    /// pickup reconstructed as one cell per card names exactly the same cards as
+    /// the real table, so it passes every test over the card SET and swaps a
+    /// correct table for a re-shaped one. The kernel says which kind of answer it
+    /// gave (`paired`); this asks.
     static func coveredSweep(_ events: [GameEvent], current: [BattleView]) -> [BattleView]? {
-        let table = MessageTurnController.preBoutTable(events)
-        guard !table.isEmpty,
-              sweepIds(current).isSubset(of: sweepIds(table)) else { return nil }
-        return table
+        let pre = PreBoutTable(events)
+        guard pre.paired, !pre.battles.isEmpty,
+              sweepIds(current).isSubset(of: sweepIds(pre.battles)) else { return nil }
+        return pre.battles
     }
 
     /// WHICH TABLE THE GRID PAINTS, and whether it is a sweep - pure and static

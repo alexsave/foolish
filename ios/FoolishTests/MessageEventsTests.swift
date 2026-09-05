@@ -265,6 +265,65 @@ final class MessageEventsTests: XCTestCase {
         XCTFail("no 2p deal in 80 tries produced an attack the defender could pick up")
     }
 
+    /// THE PROPERTY CARRIES THE PRIOR BOARD, which is the half no pure-function
+    /// test can pin: those hand `prior:` in themselves. A single-action pickup
+    /// turn has no earlier board in its own stream, so if `openReplayPreBattles`
+    /// stopped passing the board the chain opened on, every reopened pickup
+    /// would flatten again and nothing else would notice.
+    ///
+    /// The fixture is the one shape that can tell: a table of TWO battles with
+    /// one of them covered, taken in one pickup. The flat reading is three cells
+    /// and the real board is two.
+    func testAReopenedPickupKeepsTheCoveredPairTogether() async throws {
+        for salt in UInt8(1)...UInt8(120) {
+            var creator: MessageTurnController?
+            for s2 in UInt8(0)...UInt8(40) {
+                let c = MessageTurnController(genesisSeed: freshSeed(salt &+ s2), players: 2,
+                                              gameId: 93, myNickname: "A")
+                await c.begin()
+                if c.legal.contains(where: { $0.type == .attack }) { creator = c; break }
+            }
+            guard let a = creator, let atk = a.legal.first(where: { $0.type == .attack })
+            else { continue }
+            await a.apply(atk)
+            let p0 = try await a.stagedPayload(sentAt: MessageKernel.clockNow() - 30)
+            let e0 = try await MessageEnvelope.decode(payload: p0, viewer: -1)
+
+            // Seat 1 covers, so the table holds one COVERED battle.
+            let b = MessageTurnController(parentPayload: p0, parent: e0, mySeat: 1)
+            await b.begin()
+            guard let cov = b.legal.first(where: { $0.type == .cover }) else { continue }
+            await b.apply(cov)
+            let p1 = try await b.stagedPayload(sentAt: MessageKernel.clockNow() - 30)
+            let e1 = try await MessageEnvelope.decode(payload: p1, viewer: -1)
+
+            // Seat 0 throws a second card in, so there is an UNCOVERED one too.
+            let a2 = MessageTurnController(parentPayload: p1, parent: e1, mySeat: 0)
+            await a2.begin()
+            guard let atk2 = a2.legal.first(where: { $0.type == .attack }) else { continue }
+            await a2.apply(atk2)
+            let p2 = try await a2.stagedPayload(sentAt: MessageKernel.clockNow() - 30)
+            let e2 = try await MessageEnvelope.decode(payload: p2, viewer: -1)
+
+            // Seat 1 takes the lot.
+            let b2 = MessageTurnController(parentPayload: p2, parent: e2, mySeat: 1)
+            await b2.begin()
+            guard let pick = b2.legal.first(where: { $0.type == .pickup }),
+                  let table = b2.view?.battles, table.count == 2,
+                  table.contains(where: { $0.defense != nil }) else { continue }
+            await b2.apply(pick)
+            let p3 = try await b2.stagedPayload()
+            let e3 = try await MessageEnvelope.decode(payload: p3, viewer: -1)
+
+            let reopen = MessageTurnController(parentPayload: p3, parent: e3, mySeat: 0)
+            await reopen.begin()
+            XCTAssertEqual(reopen.openReplayPreBattles, table,
+                           "a reopened pickup must sweep the board the kernel really had")
+            return
+        }
+        XCTFail("no 2p deal in 120 tries reached a covered pair being picked up")
+    }
+
     func testOpenReplayReconstructsThePreBoutTableForADiscard() async throws {
         for salt in UInt8(1)...UInt8(120) {
             let k = MessageKernel.shared

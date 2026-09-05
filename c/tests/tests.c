@@ -4431,6 +4431,345 @@ static void test_the_freeze_is_the_board_before_every_move(void) {
     CHECK(led_with_refill == 0, pf_say("%d streams led with a refill", led_with_refill));
 }
 
+// ===========================================================================
+// THE PRE-BOUT TABLE (anim_plan.h anim_pre_bout_table).
+// ===========================================================================
+//
+// The table a bout end sweeps, as it stood before the sweep. What is being
+// pinned is the PAIRING: a table of two battles with one covered must come back
+// as two battles, not as three single-card cells, because the board renders the
+// sweep through the same grid the live table used and a differently shaped
+// table animates every card into its new cell before anything flies off it.
+//
+// MUTATION-CHECKED, each applied to c/src/anim_plan.c on its own:
+//   table_accounts_for as a SUBSET test (drop the n != n_cards line)  -> 1 failure
+//   the walk stops at the first board WITH OR WITHOUT cards
+//     (n_battles < 0 instead of <= 0)                                 -> 3 failures
+//   the prior board is taken without the account test                 -> 2 failures
+//   the flat reading reports paired = 1                               -> 6 failures
+//   the sweep step is the LAST one rather than the first              -> 1 failure
+//   the walk CONTINUES past a board that fails the account            -> 1 failure
+
+#define PT_MAX 8
+static AnimPreEvent   pt_evs[PT_MAX];
+static unsigned char  pt_bat[PT_MAX][2 * ANIM_MAX_PRE_BATTLES];
+static unsigned char  pt_cards[PT_MAX][ANIM_MAX_PRE_BATTLES];
+static int            pt_n;
+
+static void pt_reset(void) { pt_n = 0; }
+
+// One step: its board (`bat`, 2 bytes per battle, or NULL for a step that
+// carries none) and the cards it moved.
+static void pt_add(int type, const unsigned char *bat, int n_bat,
+                   const unsigned char *cards, int n_cards) {
+    const int i = pt_n;
+    for (int k = 0; k < 2 * n_bat; k++) pt_bat[i][k] = bat[k];
+    for (int k = 0; k < n_cards; k++) pt_cards[i][k] = cards[k];
+    pt_evs[i].type = type;
+    pt_evs[i].n_battles = bat ? n_bat : ANIM_NO_BOARD;
+    pt_evs[i].battles = pt_bat[i];
+    pt_evs[i].n_cards = n_cards;
+    pt_evs[i].cards = pt_cards[i];
+    pt_n = i + 1;
+}
+
+// A table as "6d+kh,kd" - each battle's attack, and its cover after a '+'.
+static const char *pt_str(const AnimPreTable *t) {
+    static char s[512];
+    int w = 0;
+    for (int i = 0; i < t->n_battles && w < (int)sizeof s - 16; i++) {
+        const int a = t->battles[2 * i], d = t->battles[2 * i + 1];
+        w += snprintf(s + w, sizeof s - (size_t)w, i ? ",%d" : "%d", a);
+        if (d != ANIM_TABLE_NONE)
+            w += snprintf(s + w, sizeof s - (size_t)w, "+%d", d);
+    }
+    if (t->n_battles == 0) s[0] = 0;
+    return s;
+}
+
+static void test_pre_bout_table_keeps_the_real_pairing(void) {
+    // The owner's report, as ids: 6 of diamonds covered by the king of hearts,
+    // and a bare king of diamonds. Three cards, TWO battles.
+    const unsigned char six_d = 3 * 13 + 5, king_d = 3 * 13 + 12, king_h = 1 * 13 + 12;
+    const unsigned char real[4] = { six_d, king_h, king_d, ANIM_TABLE_NONE };
+    const unsigned char taken[3] = { six_d, king_d, king_h };
+    AnimPreTable t;
+
+    // With the prior board: the covered pair stays a pair.
+    pt_reset();
+    pt_add(ANIM_EVT_PICKUP, NULL, 0, taken, 3);
+    CHECK(anim_pre_bout_table(pt_evs, pt_n, 2, real, &t) == 2,
+          "a pickup takes its shape from the real prior table");
+    CHECK(strcmp(pt_str(&t), "44+25,51") == 0, "…with the cover still on its attack");
+    CHECK(t.paired == 1, "…and it says so");
+
+    // Without one there is nothing better than one cell per card - and the
+    // answer must NOT pass that off as a table.
+    CHECK(anim_pre_bout_table(pt_evs, pt_n, ANIM_NO_BOARD, NULL, &t) == 3,
+          "with no board to read, the flat reading is all there is");
+    CHECK(t.paired == 0, "…and it is reported as a reconstruction, never as a pairing");
+    CHECK(strcmp(pt_str(&t), "44,51,25") == 0, "the flat reading is every card, uncovered");
+}
+
+static void test_pre_bout_table_refuses_a_board_from_another_moment(void) {
+    const unsigned char six_d = 3 * 13 + 5, king_d = 3 * 13 + 12, king_h = 1 * 13 + 12;
+    const unsigned char seven_s = 0 * 13 + 6;
+    const unsigned char taken[3] = { six_d, king_d, king_h };
+    AnimPreTable t;
+    pt_reset();
+    pt_add(ANIM_EVT_PICKUP, NULL, 0, taken, 3);
+
+    // One card short.
+    const unsigned char shortt[2] = { six_d, king_h };
+    CHECK(anim_pre_bout_table(pt_evs, pt_n, 1, shortt, &t) == 3 && t.paired == 0,
+          "a table missing a picked-up card is not this table");
+    // One card too many - the test is exact account, not overlap.
+    const unsigned char extra[4] = { six_d, king_h, king_d, seven_s };
+    CHECK(anim_pre_bout_table(pt_evs, pt_n, 2, extra, &t) == 3 && t.paired == 0,
+          "a table holding a card the pickup does not take is not this table");
+    // The same cards, differently paired, IS this table: the pairing is the one
+    // thing the flat list cannot contradict.
+    const unsigned char repaired[4] = { king_d, king_h, six_d, ANIM_TABLE_NONE };
+    CHECK(anim_pre_bout_table(pt_evs, pt_n, 2, repaired, &t) == 2 && t.paired == 1,
+          "the account is over the cards, and the board owns the pairing");
+}
+
+static void test_pre_bout_table_walks_back_through_the_stream(void) {
+    const unsigned char six_d = 3 * 13 + 5, king_d = 3 * 13 + 12, king_h = 1 * 13 + 12;
+    const unsigned char covered[4] = { six_d, king_h, king_d, ANIM_TABLE_NONE };
+    const unsigned char taken[3] = { six_d, king_d, king_h };
+    const unsigned char none[1] = { 0 };
+    AnimPreTable t;
+
+    // A multi-action turn carries the table on its own earlier step, and that
+    // beats any prior board - it is nearer the sweep in time.
+    pt_reset();
+    pt_add(ANIM_EVT_ATTACK_PASS, covered, 2, &king_d, 1);
+    pt_add(ANIM_EVT_PICKUP, NULL, 0, taken, 3);
+    const unsigned char stale[2] = { six_d, ANIM_TABLE_NONE };
+    CHECK(anim_pre_bout_table(pt_evs, pt_n, 1, stale, &t) == 2 && t.paired == 1,
+          "an earlier step of the stream outranks the prior board");
+
+    // The discard side: the cover's own board still shows the whole covered
+    // table; the trash step's board is already empty.
+    pt_reset();
+    pt_add(ANIM_EVT_COVER, covered, 2, &king_h, 1);
+    pt_add(ANIM_EVT_CARDS_TO_TRASH, none, 0, taken, 3);
+    CHECK(anim_pre_bout_table(pt_evs, pt_n, ANIM_NO_BOARD, NULL, &t) == 2 && t.paired == 1,
+          "a trash sweeps the last board that still had cards on it");
+    CHECK(strcmp(pt_str(&t), "44+25,51") == 0, "…the covered table, not a flat list");
+
+    // A board that does NOT account STOPS the walk. The nearest board with
+    // cards on it is the table being swept, so an older one that happens to
+    // match the card list matches by coincidence. (A short card list is real:
+    // a pickup log truncates at MAX_LOG_PAIRS.)
+    const unsigned char seven_s2 = 0 * 13 + 6;
+    const unsigned char later[6] = { six_d, king_h, king_d, ANIM_TABLE_NONE,
+                                     seven_s2, ANIM_TABLE_NONE };
+    pt_reset();
+    pt_add(ANIM_EVT_ATTACK_PASS, covered, 2, &king_d, 1);
+    pt_add(ANIM_EVT_ATTACK_PASS, later, 3, &seven_s2, 1);
+    pt_add(ANIM_EVT_PICKUP, NULL, 0, taken, 3);
+    CHECK(anim_pre_bout_table(pt_evs, pt_n, ANIM_NO_BOARD, NULL, &t) == 3 && t.paired == 0,
+          "the walk stops at the first board that fails the account");
+
+    // TWO sweeps in one stream: the board is about to play the FIRST of them.
+    const unsigned char one_late[2] = { seven_s2, ANIM_TABLE_NONE };
+    pt_reset();
+    pt_add(ANIM_EVT_COVER, covered, 2, &king_h, 1);
+    pt_add(ANIM_EVT_CARDS_TO_TRASH, none, 0, taken, 3);
+    pt_add(ANIM_EVT_ATTACK_PASS, one_late, 1, &seven_s2, 1);
+    pt_add(ANIM_EVT_PICKUP, NULL, 0, &seven_s2, 1);
+    CHECK(anim_pre_bout_table(pt_evs, pt_n, ANIM_NO_BOARD, NULL, &t) == 2
+          && strcmp(pt_str(&t), "44+25,51") == 0,
+          "the first sweep of a stream is the one it hands back");
+
+    // A stream that ends no bout has no table to hand back at all.
+    pt_reset();
+    pt_add(ANIM_EVT_ATTACK_PASS, covered, 2, &king_d, 1);
+    CHECK(anim_pre_bout_table(pt_evs, pt_n, 2, covered, &t) == 0 && t.n_battles == 0,
+          "no sweep step, no pre-bout table");
+    // …and a discard whose stream carries no board is nothing, never a guess:
+    // a discard names the pile it filled, which is not a table to lay out.
+    pt_reset();
+    pt_add(ANIM_EVT_DISCARD, NULL, 0, taken, 3);
+    CHECK(anim_pre_bout_table(pt_evs, pt_n, 2, covered, &t) == 0,
+          "a discard is never reconstructed from its own cards");
+}
+
+static void test_pre_bout_table_degenerate_inputs(void) {
+    AnimPreTable t;
+    const unsigned char one[2] = { 0, ANIM_TABLE_NONE };
+    AnimPreEvent e = { ANIM_EVT_PICKUP, ANIM_NO_BOARD, NULL, 1, one };
+    CHECK(anim_pre_bout_table(&e, 1, ANIM_NO_BOARD, NULL, NULL) == ANIM_EBADARG,
+          "no output, no answer");
+    CHECK(anim_pre_bout_table(NULL, 1, ANIM_NO_BOARD, NULL, &t) == ANIM_EBADARG,
+          "no events, no answer");
+    CHECK(anim_pre_bout_table(NULL, 0, ANIM_NO_BOARD, NULL, &t) == 0,
+          "an empty stream needs no events pointer");
+    CHECK(anim_pre_bout_table(&e, -1, ANIM_NO_BOARD, NULL, &t) == ANIM_EBADARG,
+          "a negative count is not a stream");
+    CHECK(anim_pre_bout_table(&e, 1, 2, NULL, &t) == ANIM_EBADARG,
+          "a prior board of two battles and no bytes is not a board");
+    // A card byte that is not a card: refused rather than written out.
+    const unsigned char bad[1] = { 52 };
+    AnimPreEvent b = { ANIM_EVT_PICKUP, ANIM_NO_BOARD, NULL, 1, bad };
+    CHECK(anim_pre_bout_table(&b, 1, ANIM_NO_BOARD, NULL, &t) == ANIM_EBADARG,
+          "a card byte outside the deck is not a card");
+}
+
+// ---------------------------------------------------------------------------
+// …and over REAL GAMES, against the kernel's own boards.
+//
+// The synthetic cases above say what the rule is; this says it is true of the
+// streams a client actually gets. Every sweep in a played game is held against
+// the last board the kernel really had before it: a PAIRED answer must be that
+// board exactly, and an unpaired one may only appear where no board was to be
+// had. It also counts how often the flat shape differs from the truth, which is
+// the size of the defect this rule exists to close.
+
+typedef struct {
+    int frame, type, n_cards, n_bat;
+    unsigned char cards[ANIM_MAX_PRE_BATTLES];
+    unsigned char bat[2 * MAX_BATTLES];
+} PtEv;
+
+static PtEv pt_stream[2048];
+static int  pt_stream_n;
+static int  pt_stream_frame;
+
+static void pt_sink(void *ctx, int index, const EvwRead *ev) {
+    (void)ctx; (void)index;
+    if (pt_stream_n >= (int)(sizeof pt_stream / sizeof pt_stream[0])) return;
+    PtEv *e = &pt_stream[pt_stream_n++];
+    e->frame = pt_stream_frame;
+    e->type = ev->type;
+    e->n_cards = ev->n_cards > ANIM_MAX_PRE_BATTLES ? ANIM_MAX_PRE_BATTLES : ev->n_cards;
+    for (int i = 0; i < e->n_cards; i++) {
+        const Card c = card_from_wire_state(ev->cards_wire[i]);
+        e->cards[i] = card_is_none(c) || c.suit < 0 ? 0xFF : (unsigned char)card_to_id(c);
+    }
+    static Game snap;
+    memset(&snap, 0, sizeof snap);
+    state_get(&snap, ev->snap, 1);
+    e->n_bat = snap.num_battles > MAX_BATTLES ? MAX_BATTLES : snap.num_battles;
+    for (int i = 0; i < e->n_bat; i++) {
+        e->bat[2 * i] = (unsigned char)card_to_id(snap.table_battles[i].attack);
+        e->bat[2 * i + 1] = card_is_none(snap.table_battles[i].defense)
+                            ? ANIM_TABLE_NONE
+                            : (unsigned char)card_to_id(snap.table_battles[i].defense);
+    }
+}
+
+static void test_the_pre_bout_table_is_the_board_the_kernel_had(void) {
+    static unsigned char code[1 << 20];
+    static unsigned char frames[1 << 19];
+    long sweeps = 0, paired = 0, flat = 0, flat_would_reshape = 0;
+    long bad_paired = 0, bad_flat = 0, bad_set = 0;
+    int first_bad = -1;
+
+    for (int np = 2; np <= 5; np++) {
+        for (int seed = 1; seed <= 6; seed++) {
+            Game g;
+            unsigned char sd[FOOLISH_SEED_LEN];
+            if (!rs_play_seeded(&g, np, 900 + seed, sd)) continue;
+            const int enc = replay_encode_v6_from_game(&g, sd, FOOLISH_SEED_LEN, 1 << 20,
+                                                       code, (int)sizeof code);
+            if (enc <= 0) { CHECK(0, "the played game encodes as v6"); return; }
+            const int steps = replay_steps_count_v6(code, enc, 0);
+            for (int viewer = -1; viewer < np; viewer++) {
+                pt_stream_n = 0;
+                int from = 0, guard = 0;
+                while (from < steps && ++guard < 4096) {
+                    int nf = 0, next = from;
+                    const int w = replay_steps_frames_v6(code, enc, viewer, from, 0,
+                                                         frames, (int)sizeof frames, &nf, &next);
+                    if (w <= 0 || nf <= 0) break;
+                    int q = 0;
+                    for (int f = 0; f < nf; f++) {
+                        const int flen = frames[q] | (frames[q + 1] << 8);
+                        q += 2;
+                        pt_stream_frame = from + f;
+                        if (evwire_read(frames + q, flen, 0, 0, 0, pt_sink, 0) < 0) {
+                            CHECK(0, "every frame of a replay decodes"); return;
+                        }
+                        q += flen;
+                    }
+                    from = next;
+                }
+
+                for (int i = 0; i < pt_stream_n; i++) {
+                    const int t = pt_stream[i].type;
+                    if (t != EVW_T_PICKUP && t != EVW_T_DISCARD && t != EVW_T_CARDS_TO_TRASH) continue;
+                    sweeps++;
+                    // The truth: the last board the kernel had with cards on it.
+                    const PtEv *truth = 0;
+                    for (int j = i - 1; j >= 0 && !truth; j--)
+                        if (pt_stream[j].n_bat > 0) truth = &pt_stream[j];
+                    if (!truth) continue;
+
+                    // The bubble is this frame's events; the prior board is the
+                    // one the board's own opening rule can offer (the previous
+                    // frame, when it holds exactly one step).
+                    pt_reset();
+                    for (int j = 0; j < pt_stream_n && pt_n < PT_MAX; j++) {
+                        if (pt_stream[j].frame != pt_stream[i].frame) continue;
+                        pt_add(pt_stream[j].type, pt_stream[j].bat, pt_stream[j].n_bat,
+                               pt_stream[j].cards, pt_stream[j].n_cards);
+                    }
+                    int n_prior = ANIM_NO_BOARD;
+                    const unsigned char *prior = 0;
+                    {
+                        const int pf = pt_stream[i].frame - 1;
+                        int cnt = 0, at = -1;
+                        for (int j = 0; j < pt_stream_n; j++)
+                            if (pt_stream[j].frame == pf) { if (at < 0) at = j; cnt++; }
+                        if (cnt == 1 && at >= 0 && pt_stream[at].n_bat > 0) {
+                            n_prior = pt_stream[at].n_bat;
+                            prior = pt_stream[at].bat;
+                        }
+                    }
+
+                    AnimPreTable out;
+                    const int r = anim_pre_bout_table(pt_evs, pt_n, n_prior, prior, &out);
+                    if (r < 0) { bad_paired++; if (first_bad < 0) first_bad = i; continue; }
+                    if (out.paired) {
+                        paired++;
+                        // A pairing is a claim about a board that existed.
+                        if (out.n_battles != truth->n_bat
+                            || memcmp(out.battles, truth->bat, (size_t)(2 * out.n_battles)) != 0) {
+                            bad_paired++;
+                            if (first_bad < 0) first_bad = i;
+                        }
+                    } else if (r > 0) {
+                        flat++;
+                        // Only ever a pickup, only ever the cards it took, and
+                        // only where no board could be found.
+                        if (pt_stream[i].type != EVW_T_PICKUP) bad_flat++;
+                        for (int k = 0; k < out.n_battles; k++)
+                            if (out.battles[2 * k + 1] != ANIM_TABLE_NONE) bad_flat++;
+                        if (out.n_battles != pt_stream[i].n_cards) bad_set++;
+                        if (out.n_battles != truth->n_bat) flat_would_reshape++;
+                    }
+                }
+            }
+        }
+    }
+
+    CHECK(sweeps > 200, "the sweep drives real games");
+    CHECK(paired > 200, "and most sweeps come back as the board the kernel had");
+    CHECK(bad_paired == 0, "a PAIRED answer is the kernel's own board, exactly");
+    CHECK(bad_flat == 0, "an unpaired answer is a pickup's cards, each in its own cell");
+    CHECK(bad_set == 0, "…all of them");
+    CHECK(flat > 0, "the flat reading is reachable on real streams");
+    CHECK(flat_would_reshape > 0,
+          "…and it reshapes the table when it fires, which is the defect");
+    if (bad_paired || bad_flat || bad_set)
+        printf("    (first bad sweep at flattened index %d of %ld)\n", first_bad, sweeps);
+    printf("    pre-bout table: %ld sweeps, %ld paired, %ld flat (%ld reshaping)\n",
+           sweeps, paired, flat, flat_would_reshape);
+}
+
 int main(void) {
     test_reset_to_lobby();
     test_replay_steps_rebuilds_the_played_game();
@@ -4540,6 +4879,13 @@ int main(void) {
     test_role_beat_reads_the_beats_own_attack_pass_seats();
     test_beats_refuses_a_stream_it_cannot_hold();
     test_the_freeze_is_the_board_before_every_move();
+
+    // The pre-bout table (anim_plan.h).
+    test_pre_bout_table_keeps_the_real_pairing();
+    test_pre_bout_table_refuses_a_board_from_another_moment();
+    test_pre_bout_table_walks_back_through_the_stream();
+    test_pre_bout_table_degenerate_inputs();
+    test_the_pre_bout_table_is_the_board_the_kernel_had();
 
     printf("\n%d passed, %d failed\n", n_pass, n_fail);
     return n_fail > 0 ? 1 : 0;

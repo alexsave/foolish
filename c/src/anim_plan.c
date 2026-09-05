@@ -384,6 +384,101 @@ int anim_pass_hand_off(AnimRoles shown, unsigned attack_pass_seats,
     return 1;
 }
 
+// ---- the pre-bout table ---------------------------------------------------
+
+// Does this board name EXACTLY the cards the sweep takes? Multiplicity does not
+// come into it: a table holds 52 distinct cards at most, so a presence set over
+// dense ids answers it, and the two counts settle "exactly" against "at least".
+#define PRE_IDS 52
+static int table_accounts_for(const unsigned char *bat, int n_bat,
+                              const unsigned char *cards, int n_cards) {
+    unsigned char seen[PRE_IDS];
+    int n = 0;
+    for (int i = 0; i < PRE_IDS; i++) seen[i] = 0;
+    for (int i = 0; i < n_bat; i++) {
+        for (int h = 0; h < 2; h++) {
+            const unsigned char c = bat[2 * i + h];
+            if (c >= PRE_IDS) continue;          // an uncovered half names nothing
+            if (!seen[c]) { seen[c] = 1; n++; }
+        }
+    }
+    if (n != n_cards) return 0;
+    for (int i = 0; i < n_cards; i++) {
+        if (cards[i] >= PRE_IDS || !seen[cards[i]]) return 0;
+    }
+    return 1;
+}
+
+static int pre_take_board(AnimPreTable *out, const unsigned char *bat, int n_bat) {
+    if (n_bat > ANIM_MAX_PRE_BATTLES) return ANIM_ECAP;
+    for (int i = 0; i < 2 * n_bat; i++) out->battles[i] = bat[i];
+    out->n_battles = n_bat;
+    out->paired = 1;
+    return n_bat;
+}
+
+int anim_pre_bout_table(const AnimPreEvent *events, int n_events,
+                        int n_prior, const unsigned char *prior,
+                        AnimPreTable *out) {
+    if (!out) return ANIM_EBADARG;
+    out->n_battles = 0;
+    out->paired = 0;
+    if (n_events < 0 || (n_events > 0 && !events)) return ANIM_EBADARG;
+    if (n_prior > 0 && !prior) return ANIM_EBADARG;
+
+    // The step that takes the table away. The FIRST one: a stream can carry a
+    // pickup and the trash of the next bout, and it is the first sweep the
+    // board is about to play.
+    int bi = -1;
+    for (int i = 0; i < n_events && bi < 0; i++) {
+        const int t = events[i].type;
+        if (t == ANIM_EVT_PICKUP || t == ANIM_EVT_DISCARD || t == ANIM_EVT_CARDS_TO_TRASH) bi = i;
+    }
+    if (bi < 0) return 0;
+    const AnimPreEvent *sweep = &events[bi];
+    if (sweep->n_cards < 0 || (sweep->n_cards > 0 && !sweep->cards)) return ANIM_EBADARG;
+    const int is_pickup = sweep->type == ANIM_EVT_PICKUP;
+
+    // Back from the sweep to the last board that still had cards on it. That is
+    // the table about to be taken. A clean defence is grouped from its last
+    // cover, whose board still shows the whole covered table; the trash step's
+    // own board is already empty.
+    for (int i = bi; i >= 0; i--) {
+        const AnimPreEvent *e = &events[i];
+        if (e->n_battles <= 0) continue;
+        if (!e->battles) return ANIM_EBADARG;
+        // A pickup names its cards, so a candidate can be CHECKED rather than
+        // trusted; stop at the first board that fails, since anything older
+        // describes an even earlier moment.
+        if (is_pickup && !table_accounts_for(e->battles, e->n_battles,
+                                             sweep->cards, sweep->n_cards)) break;
+        return pre_take_board(out, e->battles, e->n_battles);
+    }
+
+    // Only a pickup gets this far: a discard's table is always on some step of
+    // its own stream (the cover that closed the bout), and a discard names the
+    // pile rather than the table, so there is nothing to check a guess against.
+    if (!is_pickup) return 0;
+
+    // The board the whole stream OPENED on, under the same exact-account test -
+    // for the single-action pickup turn, which carries no earlier step at all.
+    if (n_prior > 0 && table_accounts_for(prior, n_prior, sweep->cards, sweep->n_cards))
+        return pre_take_board(out, prior, n_prior);
+
+    // The flat reading: one uncovered cell per picked-up card. The right SET of
+    // cards every time and the wrong SHAPE about half the time, so it is
+    // reported as unpaired and a caller may refuse it.
+    if (sweep->n_cards > ANIM_MAX_PRE_BATTLES) return ANIM_ECAP;
+    for (int i = 0; i < sweep->n_cards; i++) {
+        if (sweep->cards[i] >= PRE_IDS) return ANIM_EBADARG;
+        out->battles[2 * i] = sweep->cards[i];
+        out->battles[2 * i + 1] = ANIM_TABLE_NONE;
+    }
+    out->n_battles = sweep->n_cards;
+    out->paired = 0;
+    return out->n_battles;
+}
+
 // ---- optimistic policy ----------------------------------------------------
 
 uint64_t anim_event_key(int type, Card card, int from, int to, int seat) {
