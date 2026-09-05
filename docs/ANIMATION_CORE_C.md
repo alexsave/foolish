@@ -16,7 +16,7 @@ transformation and moved to C:
 
 | Layer | Was (web) | Was (iOS) | Now (C) |
 |---|---|---|---|
-| **Plan building** — a viewer's event sequence → an ordered plan of timed steps + count-freeze + veil | `AnimationContext` queue + `ANIMATION_TIME` pacing + `inFlightFromDeck` | `MessageTableView.preCounts` (backward walk) + `preHide` veil | `anim_build_plan` |
+| **Plan building** — a viewer's event sequence → an ordered plan of timed steps + count-freeze + veil | `AnimationContext` queue + `ANIMATION_TIME` pacing + `inFlightFromDeck` | `MessageTableView.preCounts` (the freeze) + `preHide` veil | `anim_build_plan`, read through `sdk/swift/AnimPlanWire.swift` |
 | **Optimistic policy** — predicted-move synthesis, confirm/revert matching, dedup, version gate | `src/state/*` + `AnimationContext` | (iOS has no optimism yet) | `anim_*` policy fns |
 | **Timing policy** — `ANIMATION_TIME` and per-event durations | `constants.ts` | Swift `Task.sleep` | `ANIM_TIME_MS` / `anim_step_duration_ms` |
 
@@ -38,12 +38,19 @@ deliberately leaves behind.
 
 ### Plan building
 - `int anim_build_plan(events, n_events, n_players, final_deck, final_discard, final_hand, out)`
-  → `AnimPlan`. Derivation: walk the events **backward** from the final board to
-  the pre-sequence count-freeze (`AnimCounts pre` — the iOS `preCounts`
-  algorithm), then walk **forward** to stamp each `AnimPlanStep`'s post counts,
-  `duration_ms`, `start_ms`, `in_flight_from_deck`/`in_flight_to_flipped` (the web
-  `inFlightFromDeck` lag), and the **veil** (`veil_ids` — dense card ids of real
-  cards in transit into a hand or onto the table, the C twin of `preHide`).
+  → `AnimPlan`. Every input event (`AnimPlanEvent`) carries **the board it
+  committed**. The count-freeze (`AnimCounts pre`) is derived by anchoring on the
+  FIRST event's own board and undoing exactly **one** event; each step's post
+  counts are that step's own board. Plus `duration_ms`, `start_ms`,
+  `in_flight_from_deck`/`in_flight_to_flipped` (the web `inFlightFromDeck` lag),
+  and the **veil** (`veil_ids` — dense card ids of real cards in transit into a
+  hand or onto the table, the C twin of `preHide`).
+  The walk BACKWARD over every event - what this used to do - is wrong and is
+  kept only as the fallback for a stream carrying no boards: undoing a REFILL
+  puts its cards back in the deck, but the flipped trump lies under the deck and
+  is dealt last without ever being counted, so the deck reads a card high near
+  the end of a game. That was round 16's "deck suddenly go to 5 cards, then deal,
+  and now I have 6?".
 
 ### Optimistic policy
 - `uint64_t anim_event_key(type, card, from, to, seat)` — the dedup signature
@@ -76,9 +83,12 @@ them (`animShouldDropStale`, `animStaleOptimisticOnTable`, `animResolveUnconfirm
 `animBuildPlan`). The `src/state/*` modules now **delegate** to these; the React
 layer keeps only rendering + React state mechanics.
 
-**iOS.** `c/ios/ios_api.c` exports `fio_anim_plan_json(viewer, out, cap)` (the
-plan as JSON, the same evwire_walk output `j_events` uses) and
-`fio_anim_should_drop_stale(...)`. Exercised natively by `make ios-smoke`.
+**iOS.** `c/ios/ios_api.c` exports `fio_anim_plan_packed(in, len, out, cap)` -
+the stream and its per-step boards cross as PACKED BYTES, in, and the plan comes
+back packed - plus `fio_anim_should_drop_stale(...)`. `sdk/swift/AnimPlanWire.swift`
+is the decoder. There is no JSON plan: `fio_anim_plan_json` is deleted, since two
+plans in two formats are two rules waiting to disagree. Exercised natively by
+`make ios-smoke` (`plan_wire_check`).
 
 ## Which TS modules delegate vs remain
 
@@ -131,11 +141,13 @@ What did **not** move this pass, and why it is safe to leave:
 Swift was **not** edited (no Swift compiler in this environment). On the next Mac
 session:
 
-1. Add a `foolish_anim_plan(viewer) -> AnimPlan` call to the `EngineC` wrapper
-   over `fio_anim_plan_json`, decoded with `Codable` (the JSON shape is in
-   `ios_api.h`).
-2. Replace `MessageTableView.preCounts` (the backward-walk) with `plan.pre` — the
-   count-freeze is now derived in C.
+1. ~~Add a `foolish_anim_plan(viewer)` call decoded with `Codable`.~~ DONE, and
+   not with `Codable`: `sdk/swift/AnimPlanWire.swift` reads the packed
+   `fio_anim_plan_packed` blob. The stream crosses as an INPUT rather than being
+   looked up from the resident game, because a board animates the stream it was
+   handed (often half a bubble) from a SwiftUI body that cannot await the actor.
+2. ~~Replace `MessageTableView.preCounts` with `plan.pre`.~~ DONE - the
+   count-freeze is derived in C and `preCounts` is deleted.
 3. Replace the per-step `deckCountOverride`/`discardCountOverride`/`seatCountOverride`
    advance in `runEventStream` with `plan.steps[i].{deck,discard,hand}` — a count
    never jumps ahead of its flight because the plan already staggers them.
@@ -173,12 +185,12 @@ See `c/src/anim_plan.h`'s corrected opening and `ConflictModel.swift`'s header.
   one definition (real cards in transit into hand/table). Confirm it subsumes both
   on device; if the open-replay path wants a wider veil (approximate table-center
   sources), that is a rendering-time superset, not a plan change.
-- **`flipped` and the deck badge.** The plan follows the web/iOS `preCounts`
-  convention: a card to the `flipped` (trump) slot does not decrement the deck
-  badge (it stays "in the deck system"). Verified against the kernel's real
-  per-step snapshots in `e2e/anim_core_parity.test.ts` (the derived counts match
-  the engine's boards exactly), so no divergence remains here — but re-check on
-  device that the trump reveal reads right.
+- **`flipped` and the deck badge.** A card to the `flipped` (trump) slot does not
+  decrement the deck badge (it stays "in the deck system"). The trump lying UNDER
+  the deck is also why the freeze cannot undo a refill - see the plan-building
+  note above. Held against the kernel's own boards in
+  `e2e/anim_core_parity.test.ts` and `ios/FoolishTests/MessageCountWindingTests`,
+  both of which insist the freeze IS the board before the sequence.
 
 ## Test mapping
 
@@ -187,12 +199,12 @@ See `c/src/anim_plan.h`'s corrected opening and `ConflictModel.swift`'s header.
 | `e2e/optimistic_animation.test.ts` | `test_optimistic_animation` | yes — `optimistic_animation.test.ts` now runs through the C bridge |
 | `e2e/optimistic_revert.test.ts` | `test_optimistic_revert` | yes — `optimistic_revert.test.ts` (real games) through the C bridge |
 | `e2e/reconcile.test.ts` | `test_reconcile` | yes — `reconcile.test.ts` (real broadcasts, reordered) through the C bridge |
-| (new — the choreography no TS test covered) | `test_plan_building` | `e2e/anim_core_parity.test.ts` (C == TS ref, + counts == kernel snapshots) |
+| (new — the choreography no TS test covered) | `test_plan_building` + `test_plan_anchors_on_the_first_events_own_board` | `e2e/anim_core_parity.test.ts` (C == TS ref, + the freeze IS the board before), `tests.c` `test_the_freeze_is_the_board_before_every_move` |
 
 ## The Steam story
 
 A new platform implements only the **rendering**: decode the plan
-(`AnimPlan`/`fio_anim_plan_json`), tween sprites from each step's `startMs` for
+(`AnimPlan`/`fio_anim_plan_packed`), tween sprites from each step's `startMs` for
 its `durationMs`, obey the `pre` count-freeze until each step lands, and hide the
 `veil` cards until their step reveals them. It answers **no** animation-policy
 question — no pacing, no count arithmetic, no revert/keep/clear decision, no

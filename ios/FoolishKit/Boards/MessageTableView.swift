@@ -907,9 +907,9 @@ public struct MessageTableView: View {
         return events
     }
 
-    private var pendingOpen: (ids: Set<String>, counts: (deck: Int, discard: Int, hand: [Int: Int]))? {
+    private var pendingOpen: (ids: Set<String>, counts: AnimPlan.Counts)? {
         guard let events = unstartedReplay, let view = controller.view else { return nil }
-        return (controller.openReplayTouchedCardIds, Self.preCounts(events, finalView: view))
+        return (controller.openReplayTouchedCardIds, AnimPlan(events, finalView: view).pre)
     }
 
     /// Every card the board must render as not-yet-there: what is in flight
@@ -4077,54 +4077,6 @@ public struct MessageTableView: View {
     }
 
 
-    /// Deck/discard/every-seat's hand count as of BEFORE this stream's `events`.
-    /// This freezes the on-screen counts to their pre-move values before the
-    /// sequence starts; every step then jumps forward to its OWN board
-    /// (GameEvent.state) as its flight lands, so this only sets the starting
-    /// frame, not the per-step values.
-    ///
-    /// ANCHOR ON THE FIRST EVENT AND UNDO EXACTLY ONE. Every event carries the
-    /// board it produced, so `events[0].state` IS the board one event in - and
-    /// getting from there to the board before it is a single undo. This is not a
-    /// shortcut for undoing all of them; it is the only version that is right.
-    ///
-    /// ROUND 16, the owner: "I sometimes saw the deck suddenly go to 5 cards,
-    /// then deal, and now I have 6 cards? Is it a problem with the flipped
-    /// card?" It was the flipped card. Undoing a REFILL means putting its cards
-    /// back in the deck, and at the end of a game that is wrong: the trump lies
-    /// under the deck and is handed out LAST, but `deck_count` never counted it,
-    /// so a refill of two off a deck of one is real and the walk-back put two
-    /// back. The deck badge then opened one too high and corrected itself as the
-    /// draw landed - which is exactly the report, and exactly why it only ever
-    /// happened near the end of a game. Proven and pinned in
-    /// MessageCountWindingTests against the kernel's own boards.
-    ///
-    /// A refill can never be the FIRST event of a stream - it is always some
-    /// bout end's consequence, so a pickup, a trash or a magic transition
-    /// precedes it - which is what makes one undo safe where n were not. The
-    /// full walk remains as the fallback for a stream with no snapshots at all,
-    /// which the packed evwire does not produce (every event carries one).
-    static func preCounts(_ events: [GameEvent], finalView: GameView)
-        -> (deck: Int, discard: Int, hand: [Int: Int]) {
-        let anchor = events.first?.state
-        var deck = anchor?.deckCount ?? finalView.deckCount
-        var discard = anchor?.discardCount ?? finalView.discardCount
-        var hand = Dictionary(uniqueKeysWithValues:
-            (anchor?.players ?? finalView.players).map { ($0.seat, $0.handCount) })
-        let undo = anchor == nil ? Array(events.reversed()) : Array(events.prefix(1))
-        for ev in undo {
-            let n = ev.cards.count
-            switch ev.kind {
-            case .deal, .refill: deck += n; if let s = ev.actorSeat { hand[s, default: 0] -= n }
-            case .discard, .cardsToTrash: discard -= n
-            case .pickup: if let s = ev.actorSeat { hand[s, default: 0] -= n }
-            case .attackPass, .cover, .defenderMove: if let s = ev.actorSeat { hand[s, default: 0] += n }
-            default: break
-            }
-        }
-        return (deck, discard, hand)
-    }
-
     /// The table a replayed pickup/discard should be shown sweeping off.
     ///
     /// ROUND 12 ("pickup animation sometimes quickly rearranges into grid before
@@ -4732,10 +4684,10 @@ public struct MessageTableView: View {
         let veiledAt = animator.veilEpoch              // round 40 - see playBoutEnd
 
         // …and the counts, likewise taking over from the veil's own
-        // `pendingOpen.counts`, which is this same walk-back (`preCounts`) done
-        // in `body` because there is no prior view on an open - this board IS
-        // the first paint.
-        let pre = Self.preCounts(events, finalView: view)
+        // `pendingOpen.counts`, which is this same freeze (`AnimPlan.pre`, the
+        // kernel's - c/src/anim_plan.c) asked in `body` because there is no
+        // prior view on an open: this board IS the first paint.
+        let pre = AnimPlan(events, finalView: view).pre
         ledger.write(.arming) { l in
             l.deck = pre.deck
             l.discard = pre.discard

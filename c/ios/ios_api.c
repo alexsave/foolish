@@ -530,90 +530,106 @@ int fio_last_events_json(int viewer, char *out, int cap) {
 
 // ---------- animation core (c/src/anim_plan.h) -----------------------------
 //
-// The plan/policy the web already runs through wasm, exposed to Swift. The plan
-// builder consumes the SAME evwire_walk output j_events emits (EVW_T_*/EVW_LOC_*
-// numbering is identical to ANIM_EVT_*/ANIM_LOC_*, so the EvwEvent copies
-// straight into an AnimEvent), so a plan is derived from exactly the events the
-// board would otherwise re-walk. No allocation: the events and their cards live
-// in file-static scratch (this file is single-threaded by contract).
+// The layout is documented once, in ios_api.h. Like fio_beats_packed, this
+// reads nothing but its arguments: the stream crosses WITH the question because
+// a board animates the stream it was HANDED (a staged bout end is cut in half
+// and the settlement withheld), and because a SwiftUI body cannot await the
+// actor the resident game lives behind.
 
-typedef struct { AnimEvent *ev; Card *pool; int cap_ev; int cap_pool; int n; int pool_n; } FioPlanCtx;
+_Static_assert(FIO_PLAN_SEATS == MAX_PLAYERS,
+               "the plan wire's seat block must be the kernel's table size");
 
-static void fio_plan_sink(void *ctx, const EvwEvent *e) {
-    FioPlanCtx *c = (FioPlanCtx *)ctx;
-    if (c->n >= c->cap_ev) return;
-    if (e->n_cards > 0 && c->pool_n + e->n_cards > c->cap_pool) return;
-    AnimEvent *a = &c->ev[c->n];
-    a->type = e->type;   // EVW_T_* == ANIM_EVT_*
-    a->seat = e->seat;   // -1 == ANIM_SEAT_NONE
-    a->from = e->from;   // EVW_LOC_* == ANIM_LOC_*
-    a->to   = e->to;
-    a->mask_cards = e->mask_cards;
-    a->cards = &c->pool[c->pool_n];
-    a->n_cards = e->n_cards;
-    for (int i = 0; i < e->n_cards; i++) c->pool[c->pool_n++] = e->cards[i];
-    c->n++;
-}
+int fio_anim_plan_packed(const uint8_t *in, int len, char *out, int cap) {
+    if (!in || !out || len < 5) return FIO_EBADARG;
+    if (in[0] != FIO_PLAN_VERSION) return FIO_EPARSE;
+    const int np = in[1];
+    const int n = in[2];
+    if (np < 2 || np > MAX_PLAYERS) return FIO_EPARSE;
+    if (n > ANIM_MAX_STEPS) return FIO_ECAP;
 
-int fio_anim_plan_json(int viewer, char *out, int cap) {
-    if (!g_has_game) return FIO_ENOGAME;
-
-    // Walk the viewer's last-move events into AnimEvent[] (same snapshots as
-    // j_events), then build the plan against the resident (final) board's counts.
-    EvSnap refs[FIO_MAX_SNAPS];
-    for (int i = 0; i < g_n_snaps; i++) {
-        refs[i].g = (const Game *)(const void *)g_snaps[i].bytes;
-        refs[i].tag = g_snap_tags[i];
-        refs[i].aux = g_snap_aux[i];
-    }
-    static AnimEvent s_ev[ANIM_MAX_STEPS];
-    static Card s_pool[ANIM_MAX_STEPS * ANIM_MAX_CARDS];
-    FioPlanCtx ctx = { s_ev, s_pool, ANIM_MAX_STEPS,
-                       (int)(sizeof(s_pool)/sizeof(s_pool[0])), 0, 0 };
-    evwire_walk(refs, g_n_snaps, g_game.logs + g_last_event_log_start,
-                g_game.num_logs - g_last_event_log_start, viewer, fio_plan_sink, &ctx);
-
-    const int np = g_game.num_players;
+    int p = 5;
+    if (p + np > len) return FIO_EPARSE;
     int final_hand[MAX_PLAYERS];
-    for (int s = 0; s < np; s++) final_hand[s] = g_game.players[s].hand_count;
+    for (int s = 0; s < np; s++) final_hand[s] = in[p++];
+
+    static AnimPlanEvent evs[ANIM_MAX_STEPS];
+    static int  hands[ANIM_MAX_STEPS][MAX_PLAYERS];
+    static Card pool[ANIM_MAX_CARD_POOL];
+    int n_pool = 0;
+    for (int i = 0; i < n; i++) {
+        // The WHOLE event is bounded before any of it is read - the counts that
+        // decide its length (n_cards, n_ids) first, then the extent they imply.
+        // A bound checked after the reads it guards is not a bound; an optimiser
+        // is free to sink the loads past it.
+        if (p + 6 > len) return FIO_EPARSE;
+        const int n_cards = in[p + 4], n_ids = in[p + 5];
+        if (n_cards > ANIM_MAX_CARDS || n_ids > n_cards) return FIO_ECAP;
+        if (p + 9 + np + n_ids > len) return FIO_EPARSE;
+        if (n_pool + n_ids > ANIM_MAX_CARD_POOL) return FIO_ECAP;
+        const int type = in[p], seat = in[p + 1], from = in[p + 2], to = in[p + 3];
+        const int has_counts = in[p + 6], deck = in[p + 7], discard = in[p + 8];
+        p += 9;
+        for (int s = 0; s < np; s++) hands[i][s] = in[p + s];
+        p += np;
+        Card *ids = &pool[n_pool];
+        for (int k = 0; k < n_ids; k++) {
+            if (in[p + k] >= 52) return FIO_EPARSE;
+            ids[k] = card_of_id(in[p + k]);
+        }
+        n_pool += n_ids;
+        p += n_ids;
+        evs[i].type = type;
+        evs[i].seat = (seat == 0xFF) ? ANIM_SEAT_NONE : seat;
+        evs[i].from = from;
+        evs[i].to = to;
+        evs[i].cards = ids;
+        evs[i].n_cards = n_cards;
+        // Only REAL identities travel; a viewer-masked step lists none, and the
+        // veil must leave its cards alone rather than veil a back.
+        evs[i].mask_cards = (n_ids < n_cards);
+        evs[i].has_counts = has_counts ? 1 : 0;
+        evs[i].deck = deck;
+        evs[i].discard = discard;
+        evs[i].hand = hands[i];
+    }
 
     static AnimPlan plan;
-    const int rc = anim_build_plan(s_ev, ctx.n, np, g_game.deck_count,
-                                   g_game.discard_pile_length, final_hand, &plan);
+    const int rc = anim_build_plan(evs, n, np, in[3], in[4], final_hand, &plan);
+    if (rc == ANIM_ECAP) return FIO_ECAP;
     if (rc != ANIM_EOK) return FIO_EBADARG;
 
-    J j; j_init(&j, out, cap);
-    j_puts(&j, "{\"durationMs\":"); j_puti(&j, ANIM_TIME_MS);
-    j_puts(&j, ",\"gapMs\":");      j_puti(&j, ANIM_GAP_MS);
-    j_puts(&j, ",\"totalMs\":");    j_puti(&j, plan.total_ms);
-    j_puts(&j, ",\"nPlayers\":");   j_puti(&j, np);
-    j_puts(&j, ",\"pre\":{\"deck\":"); j_puti(&j, plan.pre.deck);
-    j_puts(&j, ",\"discard\":");    j_puti(&j, plan.pre.discard);
-    j_puts(&j, ",\"hand\":[");
-    for (int s = 0; s < np; s++) { if (s) j_putc(&j, ','); j_puti(&j, plan.pre.hand[s]); }
-    j_puts(&j, "]},\"veil\":[");
-    for (int i = 0; i < plan.n_veil; i++) { if (i) j_putc(&j, ','); j_puti(&j, plan.veil_ids[i]); }
-    j_puts(&j, "],\"steps\":[");
+    const int need = FIO_PLAN_HEAD + plan.n_steps * FIO_PLAN_STRIDE + plan.n_veil;
+    if (cap < need) return FIO_ECAP;
+    unsigned char *q = (unsigned char *)out;
+    for (int i = 0; i < need; i++) q[i] = 0;
+    q[0] = FIO_PLAN_VERSION;
+    q[1] = (unsigned char)plan.n_steps;
+    q[2] = (unsigned char)np;
+    q[3] = (unsigned char)plan.n_veil;
+    for (int i = 0; i < 4; i++) q[4 + i] = (unsigned char)((plan.total_ms >> (8 * i)) & 0xff);
+    q[8] = (unsigned char)plan.pre.deck;
+    q[9] = (unsigned char)plan.pre.discard;
+    for (int s = 0; s < np; s++) q[10 + s] = (unsigned char)plan.pre.hand[s];
     for (int i = 0; i < plan.n_steps; i++) {
         const AnimPlanStep *st = &plan.steps[i];
-        if (i) j_putc(&j, ',');
-        j_puts(&j, "{\"type\":");   j_puti(&j, st->type);
-        j_puts(&j, ",\"seat\":");   j_puti(&j, st->seat);
-        j_puts(&j, ",\"from\":");   j_puti(&j, st->from);
-        j_puts(&j, ",\"to\":");     j_puti(&j, st->to);
-        j_puts(&j, ",\"nCards\":"); j_puti(&j, st->n_cards);
-        j_puts(&j, ",\"durationMs\":"); j_puti(&j, st->duration_ms);
-        j_puts(&j, ",\"startMs\":");     j_puti(&j, st->start_ms);
-        j_puts(&j, ",\"deck\":");        j_puti(&j, st->deck);
-        j_puts(&j, ",\"discard\":");     j_puti(&j, st->discard);
-        j_puts(&j, ",\"inFlightFromDeck\":");  j_puti(&j, st->in_flight_from_deck);
-        j_puts(&j, ",\"inFlightToFlipped\":"); j_puti(&j, st->in_flight_to_flipped);
-        j_puts(&j, ",\"hand\":[");
-        for (int s = 0; s < np; s++) { if (s) j_putc(&j, ','); j_puti(&j, st->hand[s]); }
-        j_puts(&j, "]}");
+        unsigned char *e = q + FIO_PLAN_HEAD + i * FIO_PLAN_STRIDE;
+        e[0] = (unsigned char)st->type;
+        e[1] = (unsigned char)(st->seat < 0 ? 0xFF : st->seat);
+        e[2] = (unsigned char)st->from;
+        e[3] = (unsigned char)st->to;
+        e[4] = (unsigned char)st->n_cards;
+        e[5] = (unsigned char)(st->duration_ms & 0xff);
+        e[6] = (unsigned char)((st->duration_ms >> 8) & 0xff);
+        for (int k = 0; k < 4; k++) e[7 + k] = (unsigned char)((st->start_ms >> (8 * k)) & 0xff);
+        e[11] = (unsigned char)st->deck;
+        e[12] = (unsigned char)st->discard;
+        e[13] = (unsigned char)st->in_flight_from_deck;
+        e[14] = (unsigned char)st->in_flight_to_flipped;
+        for (int s = 0; s < np; s++) e[15 + s] = (unsigned char)st->hand[s];
     }
-    j_puts(&j, "]}");
-    return j_finish(&j);
+    unsigned char *v = q + FIO_PLAN_HEAD + plan.n_steps * FIO_PLAN_STRIDE;
+    for (int i = 0; i < plan.n_veil; i++) v[i] = plan.veil_ids[i];
+    return need;
 }
 
 int fio_anim_should_drop_stale(int has_last, int last, int has_incoming, int incoming) {

@@ -11,9 +11,9 @@
 // two places, and this file pins both against the kernel rather than against
 // itself:
 //
-//  * `preCounts` - the walk-back that decides the count a sequence STARTS at.
-//    It re-derives the pre-move board from the post-move board by undoing each
-//    event, so it can only be right if it knows every event that moves a card.
+//  * the COUNT FREEZE - the board a sequence STARTS at, `AnimPlan.pre` over the
+//    kernel's anim_build_plan. It re-derives the pre-move board from the first
+//    event's own board, so it can only be right if it undoes that event exactly.
 //    Asserted here against the board the kernel actually had before the move.
 //  * `GameEvent.state` - the per-step board each flight settles to. Asserted to
 //    walk from the pre-move board to the post-move board without ever going
@@ -23,6 +23,15 @@
 // the report came from - an empty deck, the flipped trump being drawn, a
 // bout-ending cover - are all inside the sweep rather than needing a fixture
 // each.
+// MUTATION-CHECKED against sdk/swift/AnimPlanWire.swift, each on its own:
+//
+//   the encoder stops sending each event's own board (has_counts always 0), so
+//     the kernel falls back to undoing every event  -> 36 failures, the deck
+//                                                      read 2 where it was 1
+//   a redacted step's card count becomes its
+//     identity count (a masked draw moves nothing)  -> 36 failures
+//   the freeze's seat block is read one byte over   -> 635 failures
+//   a step's card count is read one byte over       -> 434 failures
 import XCTest
 @testable import FoolishKit
 
@@ -54,8 +63,8 @@ final class MessageCountWindingTests: XCTestCase {
     /// closes it come back together. The board never asks that way: it passes
     /// the chain's own delta (`MessageTurnController.animAtomsBefore`, from the
     /// envelope), so the stream is exactly what this bubble added. Comparing a
-    /// walk-back over a kernel-grouped stream against a one-apply-ago board
-    /// measures the grouping, not the walk-back - so each move here is sealed,
+    /// freeze over a kernel-grouped stream against a one-apply-ago board
+    /// measures the grouping, not the freeze - so each move here is sealed,
     /// and its seal's atom count becomes the next one's base.
     private func sweepBubbles(players: Int, games: Int,
                               _ body: (_ before: GameView, _ events: [GameEvent],
@@ -88,7 +97,7 @@ final class MessageCountWindingTests: XCTestCase {
                           let after = await k.residentView(viewer: -1) else { acted = false; break }
                     // Viewer -1 (a spectator) is the strict case: it sees every
                     // seat's counts, and the kernel redacts its card identities,
-                    // so a walk-back that leant on identities rather than counts
+                    // so a freeze that leant on identities rather than counts
                     // fails here.
                     let events = await k.lastMoveEvents(viewer: -1, atomsBefore: base)
                     try body(before, events, after,
@@ -101,7 +110,7 @@ final class MessageCountWindingTests: XCTestCase {
         }
     }
 
-    /// THE WALK-BACK IS THE PRE-MOVE BOARD. Not "close to it", not "right for
+    /// THE FREEZE IS THE PRE-MOVE BOARD. Not "close to it", not "right for
     /// the seats that moved": the same deck, the same discard, the same count in
     /// every hand. This is the number every badge shows for the first frame of
     /// an arriving move, so anywhere it is wrong is a badge that displays a
@@ -110,14 +119,14 @@ final class MessageCountWindingTests: XCTestCase {
         for players in [2, 3, 4] {
             try await sweepBubbles(players: players, games: 4) { before, events, after, label in
                 guard !events.isEmpty else { return }
-                let pre = MessageTableView.preCounts(events, finalView: after)
+                let pre = AnimPlan(events, finalView: after).pre
                 let got = Counts(deck: pre.deck, discard: pre.discard, hand: pre.hand)
                 if got != Counts(before) {
                     let stream = events.map {
                         "\($0.kind.map(String.init(describing:)) ?? "?")@\($0.seat)"
                         + "x\($0.cards.count) -> deck \($0.state?.deckCount ?? -1)"
                     }.joined(separator: " | ")
-                    XCTFail("\(label): walk-back \(got), board was \(Counts(before))\n  after: "
+                    XCTFail("\(label): freeze \(got), board was \(Counts(before))\n  after: "
                             + "\(Counts(after))\n  stream: \(stream)")
                 }
             }
@@ -148,7 +157,7 @@ final class MessageCountWindingTests: XCTestCase {
     /// that count. Undoing such a refill by putting every card back in the deck
     /// overshoots by one, and the badge opens a card too high.
     ///
-    /// This finds that shape in real games and pins the walk-back on it
+    /// This finds that shape in real games and pins the freeze on it
     /// specifically - the sweep above would catch a regression, but only as one
     /// failure among whatever else broke, with nothing saying which rule died.
     func testARefillOffTheFlippedTrumpDoesNotPutAnExtraCardBackInTheDeck() async throws {
@@ -160,7 +169,7 @@ final class MessageCountWindingTests: XCTestCase {
                     .reduce(0) { $0 + $1.cards.count }
                 guard drawn > 0, drawn > before.deckCount else { return }
                 seen += 1
-                let pre = MessageTableView.preCounts(events, finalView: after)
+                let pre = AnimPlan(events, finalView: after).pre
                 XCTAssertEqual(pre.deck, before.deckCount,
                                "\(label): \(drawn) cards drawn off a deck of \(before.deckCount)"
                                + " - the flipped trump was counted back into the deck")
@@ -172,7 +181,7 @@ final class MessageCountWindingTests: XCTestCase {
     /// THE INVARIANT THE ONE-UNDO WALK-BACK RESTS ON: a refill is never the
     /// first event of a bubble. It is always a bout end's consequence, so a
     /// pickup, a trash or a magic transition comes first - which is what lets
-    /// `preCounts` anchor on the first event's own board and undo exactly one
+    /// the freeze anchor on the first event's own board and undo exactly one
     /// event, keeping the refill's broken deck arithmetic out of the answer
     /// entirely. If the kernel ever leads a stream with a refill, this fails
     /// here rather than as a one-card drift on somebody's screen.
@@ -208,6 +217,42 @@ final class MessageCountWindingTests: XCTestCase {
                 XCTAssertEqual(discard, after.discardCount, "\(label): the last step is not the settled board")
             }
         }
+    }
+
+    /// THE PLAN DESCRIBES THE STREAM IT WAS GIVEN, step for step. The board only
+    /// reads `pre` today, but the rest of the plan crosses the same wire, and a
+    /// step that misreports how many cards fly or which board it settles to is a
+    /// freeze waiting to be wrong for the next consumer.
+    ///
+    /// The card COUNT is the load-bearing half: a spectator's refill arrives as
+    /// card backs with no identities at all, and a wire that sent the identity
+    /// count in place of the card count would say a two-card draw moves nothing.
+    func testEveryStepCarriesItsOwnEventsCardsAndBoard() async throws {
+        var redactedSteps = 0
+        for players in [2, 3] {
+            try await sweepBubbles(players: players, games: 3) { _, events, after, label in
+                guard !events.isEmpty else { return }
+                let plan = AnimPlan(events, finalView: after)
+                XCTAssertEqual(plan.steps.count, events.count, "\(label): a step per event")
+                guard plan.steps.count == events.count else { return }
+                for (i, ev) in events.enumerated() {
+                    let step = plan.steps[i]
+                    XCTAssertEqual(step.cardCount, ev.cards.count,
+                                   "\(label): step \(i) flies \(step.cardCount) of \(ev.cards.count) cards")
+                    XCTAssertEqual(step.type, ev.type, "\(label): step \(i) type")
+                    if ev.cards.contains(where: { $0 == nil || $0?.isHidden == true }) { redactedSteps += 1 }
+                    guard let board = ev.state else { continue }
+                    XCTAssertEqual(step.counts.deck, board.deckCount, "\(label): step \(i) deck")
+                    XCTAssertEqual(step.counts.discard, board.discardCount, "\(label): step \(i) discard")
+                    for p in board.players {
+                        XCTAssertEqual(step.counts.hand[p.seat], p.handCount,
+                                       "\(label): step \(i) hand[\(p.seat)]")
+                    }
+                }
+            }
+        }
+        XCTAssertGreaterThan(redactedSteps, 10,
+                             "no step carried redacted cards - the masked case was not tested")
     }
 
     /// The last step of a move must BE the board the move produced, hand counts

@@ -26,6 +26,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdarg.h>
 
 static int n_pass = 0;
 static int n_fail = 0;
@@ -4176,6 +4177,260 @@ static void test_beats_refuses_a_stream_it_cannot_hold(void) {
           "a stream longer than the plan can hold is refused, never truncated");
 }
 
+// ===========================================================================
+// THE COUNT FREEZE, over real games, against the kernel's own boards.
+// ===========================================================================
+//
+// The freeze is the number every badge shows for the first frame of an arriving
+// move. Anywhere it is wrong is a badge displaying a board that never existed
+// and correcting itself a beat later, which is round 16's report: "I sometimes
+// saw the deck suddenly go to 5 cards, then deal, and now I have 6 cards? Is it
+// a problem with the flipped card?" It was the flipped card - it lies UNDER the
+// deck and is dealt last without ever being in deck_count, so a refill can hand
+// out more cards than the deck said it held, and a walk that undoes every event
+// puts them all back.
+//
+// The only honest oracle is the board the kernel actually had before the move,
+// so this drives seeded games move by move and holds the plan against it. The
+// twin of ios/FoolishTests/MessageCountWindingTests.swift, which drives the same
+// property through the Swift board.
+//
+// MUTATION-CHECKED, each applied to c/src/anim_plan.c on its own. The counts
+// are how many of the 1221 moves this sweep drives came out wrong; the sweep
+// reports one CHECK per property, with the first bad case named, so a mutation
+// shows up as one failure carrying that number rather than as a thousand.
+//
+//   the freeze walks back from the FINAL board over every event (the rule
+//     this stage replaced)                        -> 18 freezes wrong, deck read
+//                                                    2 where the board showed 1
+//   the freeze anchors but undoes nothing         -> 1138 freezes wrong
+//   the freeze undoes the first TWO events        -> 162 freezes wrong
+//   a step's post counts derive forward instead
+//     of adopting its own board                   -> 18 last steps are not the
+//                                                    settled board
+//   apply_undo gives a PICKUP the wrong sign      -> 122 freezes wrong
+//
+// The first mutation is the bug itself, and 18 of 1221 is why it survived in
+// the web for so long: it needs the deck down to its last card or two.
+
+#define PF_MAX_SNAPS 48
+#define PF_PREFIX (__builtin_offsetof(Game, num_logs))
+typedef struct { _Alignas(8) unsigned char bytes[PF_PREFIX]; } PfSlot;
+static PfSlot pf_snaps[PF_MAX_SNAPS];
+static int    pf_tags[PF_MAX_SNAPS], pf_aux[PF_MAX_SNAPS], pf_n_snaps;
+
+static void pf_snap_cb(const Game *g, int tag, int aux) {
+    if (pf_n_snaps >= PF_MAX_SNAPS) return;
+    memcpy(pf_snaps[pf_n_snaps].bytes, g, PF_PREFIX);
+    pf_tags[pf_n_snaps] = tag;
+    pf_aux[pf_n_snaps] = aux;
+    pf_n_snaps++;
+}
+
+static AnimPlanEvent pf_evs[ANIM_MAX_STEPS];
+// Set when an event filled the log's card list exactly, i.e. the compact native
+// arena (MAX_LOG_PAIRS 16) may have dropped cards the move really moved. The
+// production builds log 64 and never reach it; see game.h.
+static int           pf_maybe_truncated;
+static Card          pf_cards[ANIM_MAX_STEPS][MAX_LOG_PAIRS];
+static int           pf_hand[ANIM_MAX_STEPS][MAX_PLAYERS];
+static int           pf_n, pf_np;
+
+// The step's own board comes off the snapshot the kernel took AT that step -
+// the same `snap` the wire writes as the event's game_state. That is what makes
+// the freeze derivable without ever undoing a refill.
+static void pf_sink(void *ctx, const EvwEvent *e) {
+    (void)ctx;
+    if (pf_n >= ANIM_MAX_STEPS) return;
+    const int i = pf_n++;
+    const int nc = e->n_cards > MAX_LOG_PAIRS ? MAX_LOG_PAIRS : e->n_cards;
+    if (nc >= MAX_LOG_PAIRS) pf_maybe_truncated = 1;
+    for (int k = 0; k < nc; k++) pf_cards[i][k] = e->cards[k];
+    pf_evs[i].type = e->type;
+    pf_evs[i].seat = e->seat;
+    pf_evs[i].from = e->from;
+    pf_evs[i].to = e->to;
+    pf_evs[i].cards = pf_cards[i];
+    pf_evs[i].n_cards = nc;
+    pf_evs[i].mask_cards = e->mask_cards;
+    pf_evs[i].has_counts = e->snap != 0;
+    pf_evs[i].deck = e->snap ? e->snap->deck_count : 0;
+    pf_evs[i].discard = e->snap ? e->snap->discard_pile_length : 0;
+    for (int s = 0; s < pf_np; s++)
+        pf_hand[i][s] = e->snap ? e->snap->players[s].hand_count : 0;
+    pf_evs[i].hand = pf_hand[i];
+}
+
+// CHECK takes a plain string, so a per-case diagnostic is formatted here. Only
+// ever reached on a failure (CHECK evaluates its message in the else branch).
+static const char *pf_say(const char *fmt, ...) {
+    static char b[256];
+    va_list a;
+    va_start(a, fmt);
+    vsnprintf(b, sizeof b, fmt, a);
+    va_end(a);
+    return b;
+}
+
+typedef struct { int deck, discard, hand[MAX_PLAYERS]; } PfCounts;
+static PfCounts pf_counts_of(const Game *g) {
+    PfCounts c;
+    c.deck = g->deck_count;
+    c.discard = g->discard_pile_length;
+    for (int s = 0; s < g->num_players; s++) c.hand[s] = g->players[s].hand_count;
+    return c;
+}
+
+static void test_the_freeze_is_the_board_before_every_move(void) {
+    static LegalMoves moves;
+    int checked = 0, flipped_draws = 0, led_with_refill = 0, truncated = 0;
+    // A failure is reported ONCE, with the first case that showed it - a sweep
+    // that raised a CHECK per move would bury the shape under thousands of them.
+    int bad_freeze = 0, bad_settled = 0, bad_forward = 0, refused = 0;
+    static char first_bad[256];
+    first_bad[0] = 0;
+
+    for (int np = 2; np <= 4; np++) {
+        for (int salt = 0; salt < 6; salt++) {
+            Game g;
+            const int seed = 4400 + salt * 7 + np;
+            game_set_seed((uint32_t)seed);
+            random_strategy_set_seed((uint32_t)seed);
+            unsigned char deal[FOOLISH_SEED_LEN];
+            for (int i = 0; i < FOOLISH_SEED_LEN; i++)
+                deal[i] = (unsigned char)(i * 31 + seed * 13 + np);
+            game_set_deal_seed_bytes(deal, FOOLISH_SEED_LEN);
+
+            memset(&g, 0, sizeof g);
+            g.num_players = (int8_t)np;
+            for (int i = 0; i < np; i++) g.players[i].status = PLAYER_STATUS_READY;
+            start_game(&g);
+            pf_np = np;
+
+            for (int guard = 0; guard < 20000 && game_done(&g) < 0; guard++) {
+                const PfCounts before = pf_counts_of(&g);
+                bool acted = false;
+                const int log_start = g.num_logs;
+                pf_n_snaps = 0;
+                engine_snap_hook = pf_snap_cb;
+                for (int pi = 0; pi < np && !acted; pi++) {
+                    if (!should_bot_act(&g, pi)) continue;
+                    calculate_legal_moves(&g, pi, &moves);
+                    if (moves.n == 0) continue;
+                    // Cover where it can, so games reach the endgame - an empty
+                    // deck and the trump being drawn - through covers rather
+                    // than pickup loops.
+                    int pick = handwritten_strategy_choose(&g, pi, &moves, 0);
+                    for (int m = 0; m < moves.n; m++)
+                        if (moves.moves[m].type == MOVE_COVER) { pick = m; break; }
+                    const LegalMove *m = &moves.moves[pick];
+                    switch (m->type) {
+                        case MOVE_ATTACK: acted = handle_attack(&g, pi, m->cards, m->n_cards); break;
+                        case MOVE_COVER:  acted = handle_cover(&g, pi, m->cards, m->attack_cards, m->n_cards); break;
+                        case MOVE_PASS:   acted = handle_pass(&g, pi, m->cards, m->n_cards); break;
+                        case MOVE_PICKUP: acted = handle_pickup(&g, pi); break;
+                        case MOVE_GOOD:   acted = handle_good(&g, pi); break;
+                        default: break;
+                    }
+                }
+                engine_snap_hook = 0;
+                if (!acted) break;
+
+                // Viewer -1 (a spectator) is the strict case: every seat's counts
+                // are visible and every card identity is redacted, so a freeze
+                // that leant on identities rather than counts fails here.
+                EvSnap refs[PF_MAX_SNAPS];
+                for (int i = 0; i < pf_n_snaps; i++) {
+                    refs[i].g = (const Game *)(const void *)pf_snaps[i].bytes;
+                    refs[i].tag = pf_tags[i];
+                    refs[i].aux = pf_aux[i];
+                }
+                pf_n = 0;
+                pf_maybe_truncated = 0;
+                evwire_walk(refs, pf_n_snaps, g.logs + log_start, g.num_logs - log_start,
+                            -1, pf_sink, 0);
+                if (pf_n == 0 || pf_n > ANIM_MAX_STEPS) continue;
+                // A move whose card list filled the compact native log is not a
+                // stream any client ever sees (production logs 64 pairs), and its
+                // arithmetic is short by however many cards were dropped. Counted
+                // rather than silently skipped.
+                if (pf_maybe_truncated) { truncated++; continue; }
+
+                const PfCounts after = pf_counts_of(&g);
+                AnimPlan plan;
+                if (anim_build_plan(pf_evs, pf_n, np, after.deck, after.discard,
+                                    after.hand, &plan) != ANIM_EOK) { refused++; continue; }
+                checked++;
+
+                // 1. The freeze IS the board the move started from.
+                int same = plan.pre.deck == before.deck && plan.pre.discard == before.discard;
+                for (int s = 0; s < np; s++) if (plan.pre.hand[s] != before.hand[s]) same = 0;
+                if (!same) {
+                    bad_freeze++;
+                    if (!first_bad[0])
+                        snprintf(first_bad, sizeof first_bad,
+                                 "np=%d seed=%d: freeze deck %d discard %d hand[%d] %d, "
+                                 "the board was deck %d discard %d hand[%d] %d "
+                                 "(lead type %d seat %d x%d)",
+                                 np, seed, plan.pre.deck, plan.pre.discard,
+                                 pf_evs[0].seat < 0 ? 0 : pf_evs[0].seat,
+                                 plan.pre.hand[pf_evs[0].seat < 0 ? 0 : pf_evs[0].seat],
+                                 before.deck, before.discard,
+                                 pf_evs[0].seat < 0 ? 0 : pf_evs[0].seat,
+                                 before.hand[pf_evs[0].seat < 0 ? 0 : pf_evs[0].seat],
+                                 pf_evs[0].type, pf_evs[0].seat, pf_evs[0].n_cards);
+                }
+
+                // 2. The last step IS the board the move produced - releasing the
+                //    overrides there must not jump.
+                const AnimPlanStep *last = &plan.steps[plan.n_steps - 1];
+                int settled = last->deck == after.deck && last->discard == after.discard;
+                for (int s = 0; s < np; s++) if (last->hand[s] != after.hand[s]) settled = 0;
+                if (!settled) bad_settled++;
+
+                // 3. The boards only walk FORWARD across a move: a deck that grows
+                //    mid-sequence is the "deck suddenly went to 5" report itself.
+                int deck = before.deck, discard = before.discard, forward = 1;
+                for (int i = 0; i < plan.n_steps; i++) {
+                    if (plan.steps[i].deck > deck || plan.steps[i].discard < discard) forward = 0;
+                    deck = plan.steps[i].deck; discard = plan.steps[i].discard;
+                }
+                if (!forward) bad_forward++;
+
+                // The shape this whole test exists for: cards drawn off a deck
+                // that did not hold them, which is the flipped trump being dealt.
+                int drawn = 0;
+                for (int i = 0; i < plan.n_steps; i++)
+                    if (pf_evs[i].type == ANIM_EVT_REFILL || pf_evs[i].type == ANIM_EVT_DEAL)
+                        drawn += pf_evs[i].n_cards;
+                if (drawn > before.deck) flipped_draws++;
+                if (pf_evs[0].type == ANIM_EVT_REFILL) led_with_refill++;
+            }
+        }
+    }
+
+    CHECK(bad_freeze == 0,
+          pf_say("%d of %d freezes are not the board the move started from - %s",
+                 bad_freeze, checked, first_bad));
+    CHECK(bad_settled == 0,
+          pf_say("%d of %d last steps are not the settled board", bad_settled, checked));
+    CHECK(bad_forward == 0,
+          pf_say("%d of %d moves stepped their board backwards", bad_forward, checked));
+    CHECK(refused == 0, pf_say("the plan refused %d real moves", refused));
+    CHECK(checked > 200, pf_say("the sweep drove only %d moves", checked));
+    CHECK(truncated * 20 < checked,
+          pf_say("%d of %d moves overran the compact native log - the sweep is not "
+                 "measuring what it thinks", truncated, checked + truncated));
+    // Without this the test above passes by never meeting the bug at all.
+    CHECK(flipped_draws > 3,
+          pf_say("only %d moves drew the flipped trump - the shape was not tested", flipped_draws));
+    // THE INVARIANT THE ONE-UNDO FREEZE RESTS ON: a refill is never the first
+    // event of a stream - it is always a bout end's consequence, so a pickup, a
+    // trash or a magic transition comes first. If the kernel ever leads with
+    // one, it fails here rather than as a one-card drift on somebody's screen.
+    CHECK(led_with_refill == 0, pf_say("%d streams led with a refill", led_with_refill));
+}
+
 int main(void) {
     test_reset_to_lobby();
     test_replay_steps_rebuilds_the_played_game();
@@ -4284,6 +4539,7 @@ int main(void) {
     test_role_beat_leads_runs_parallel_and_follows();
     test_role_beat_reads_the_beats_own_attack_pass_seats();
     test_beats_refuses_a_stream_it_cannot_hold();
+    test_the_freeze_is_the_board_before_every_move();
 
     printf("\n%d passed, %d failed\n", n_pass, n_fail);
     return n_fail > 0 ? 1 : 0;

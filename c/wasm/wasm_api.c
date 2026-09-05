@@ -989,7 +989,7 @@ int wasm_anim_resolve(int n_pending, int n_server, int n_events,
     static AnimPending pending[ANIM_MAX_CARDS];
     static Card server[ANIM_MAX_TABLE_INPUT];
     // Event card storage: borrow a flat pool; each AnimEvent points into it.
-    static Card ev_cards[ANIM_MAX_STEPS * ANIM_MAX_CARDS];
+    static Card ev_cards[ANIM_MAX_CARD_POOL];
     static AnimEvent events[ANIM_MAX_STEPS];
     int p = 0, cpool = 0;
     for (int i = 0; i < n_pending; i++) {
@@ -1035,7 +1035,13 @@ int wasm_anim_resolve(int n_pending, int n_server, int n_events,
 // anim_build_plan (the count-freeze + veil + timing). g_io in:
 //   [0 .. n_players)   final_hand counts (u8 each)
 //   then events: n_events x { u8 type, u8 seat(0xFF none), u8 from, u8 to,
-//                             u8 mask, u8 n_cards, n_cards x u8 wire card }
+//                             u8 mask, u8 n_cards, n_cards x u8 wire card,
+//                             u8 has_counts, u8 deck, u8 discard,
+//                             n_players x u8 hand }
+// EVERY EVENT CARRIES THE BOARD IT COMMITTED. The freeze is one undo off the
+// FIRST event's own board, not a walk back from the final one - see
+// anim_plan.h - so a caller that drops the snapshots gets the fallback and the
+// deck badge reads a card high whenever the flipped trump is drawn.
 // Scalars: n_events, n_players, final_deck, final_discard.
 // g_io out (overwrites): a packed AnimPlan blob (see the TS bridge readPlan).
 // Returns bytes written, or a negative ANIM_E*.
@@ -1043,11 +1049,17 @@ static void put_u16le(unsigned char *o, int *p, int v) {
     o[(*p)++] = (unsigned char)(v & 0xff);
     o[(*p)++] = (unsigned char)((v >> 8) & 0xff);
 }
+// Wall time and step offsets: a full-length stream (ANIM_MAX_STEPS x the
+// stride) runs past 65535 ms, so these two are the wide ones.
+static void put_u32le(unsigned char *o, int *p, int v) {
+    for (int i = 0; i < 4; i++) o[(*p)++] = (unsigned char)((v >> (8 * i)) & 0xff);
+}
 int wasm_anim_build_plan(int n_events, int n_players, int final_deck, int final_discard) {
     if (n_players < 2 || n_players > MAX_PLAYERS) return ANIM_EBADARG;
     if (n_events < 0 || n_events > ANIM_MAX_STEPS) return ANIM_ECAP;
-    static Card ev_cards[ANIM_MAX_STEPS * ANIM_MAX_CARDS];
-    static AnimEvent events[ANIM_MAX_STEPS];
+    static Card ev_cards[ANIM_MAX_CARD_POOL];
+    static AnimPlanEvent events[ANIM_MAX_STEPS];
+    static int ev_hand[ANIM_MAX_STEPS][MAX_PLAYERS];
     int final_hand[MAX_PLAYERS];
     int p = 0, cpool = 0;
     for (int i = 0; i < n_players; i++) final_hand[i] = g_io[p++];
@@ -1064,6 +1076,11 @@ int wasm_anim_build_plan(int n_events, int n_players, int final_deck, int final_
         events[e].cards = &ev_cards[cpool];
         events[e].n_cards = nc;
         for (int k = 0; k < nc; k++) ev_cards[cpool++] = card_from_wire_pair(g_io[p++]);
+        events[e].has_counts = g_io[p++] ? 1 : 0;
+        events[e].deck = g_io[p++];
+        events[e].discard = g_io[p++];
+        for (int s = 0; s < n_players; s++) ev_hand[e][s] = g_io[p++];
+        events[e].hand = ev_hand[e];
     }
     static AnimPlan plan;
     int rc = anim_build_plan(events, n_events, n_players, final_deck, final_discard, final_hand, &plan);
@@ -1075,7 +1092,7 @@ int wasm_anim_build_plan(int n_events, int n_players, int final_deck, int final_
     put_u16le(g_io, &o, plan.pre.deck);
     put_u16le(g_io, &o, plan.pre.discard);
     for (int s = 0; s < n_players; s++) put_u16le(g_io, &o, plan.pre.hand[s]);
-    put_u16le(g_io, &o, plan.total_ms);
+    put_u32le(g_io, &o, plan.total_ms);
     g_io[o++] = (unsigned char)plan.n_veil;
     for (int i = 0; i < plan.n_veil; i++) g_io[o++] = plan.veil_ids[i];
     for (int i = 0; i < plan.n_steps; i++) {
@@ -1086,7 +1103,7 @@ int wasm_anim_build_plan(int n_events, int n_players, int final_deck, int final_
         g_io[o++] = (unsigned char)st->to;
         g_io[o++] = (unsigned char)st->n_cards;
         put_u16le(g_io, &o, st->duration_ms);
-        put_u16le(g_io, &o, st->start_ms);
+        put_u32le(g_io, &o, st->start_ms);
         put_u16le(g_io, &o, st->deck);
         put_u16le(g_io, &o, st->discard);
         g_io[o++] = (unsigned char)st->in_flight_from_deck;

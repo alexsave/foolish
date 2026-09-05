@@ -44,16 +44,15 @@ int anim_step_duration_ms(int event_type) {
 
 // ---- plan building --------------------------------------------------------
 
-// The per-event count delta, POSITIVE direction (forward in time). Mirrors iOS
-// preCounts (MessageTableView.preCounts), just read forward instead of undone:
+// The per-event count delta, POSITIVE direction (forward in time):
 //   deal/refill  deck -= n, acting hand += n   (deck -> a hand)
 //   discard/trash  discard += n                (table -> the pile)
 //   pickup       acting hand += n              (table -> a hand)
 //   attack/cover/defender_move  acting hand -= n   (a hand -> the table)
-//   flipped/magic_transition/out  no count change — the flipped (trump) card
+//   flipped/magic_transition/out  no count change - the flipped (trump) card
 //     stays in the deck badge (web: "cards bound for the flipped slot ... don't
 //     affect the badge total"), and a transition/out moves no card.
-static void apply_forward(const AnimEvent *ev, AnimCounts *c) {
+static void apply_forward(const AnimPlanEvent *ev, AnimCounts *c) {
     const int n = ev->n_cards;
     const int s = ev->seat;
     switch (ev->type) {
@@ -79,10 +78,9 @@ static void apply_forward(const AnimEvent *ev, AnimCounts *c) {
     }
 }
 
-// The undo (negative direction): the exact inverse of apply_forward. Kept as its
-// own function rather than negating n at the call site so the read matches
-// preCounts' `events.reversed()` walk one-for-one.
-static void apply_undo(const AnimEvent *ev, AnimCounts *c) {
+// The undo (negative direction): the exact inverse of apply_forward. Applied to
+// ONE event (the first) in the normal path - see anim_build_plan.
+static void apply_undo(const AnimPlanEvent *ev, AnimCounts *c) {
     const int n = ev->n_cards;
     const int s = ev->seat;
     switch (ev->type) {
@@ -108,26 +106,44 @@ static void apply_undo(const AnimEvent *ev, AnimCounts *c) {
     }
 }
 
-int anim_build_plan(const AnimEvent *events, int n_events, int n_players,
+// Adopt a step's own board, when it carries one.
+static void adopt_counts(const AnimPlanEvent *ev, AnimCounts *c) {
+    c->deck = ev->deck;
+    c->discard = ev->discard;
+    for (int s = 0; s < c->n_players; s++) c->hand[s] = ev->hand[s];
+}
+
+static int carries_counts(const AnimPlanEvent *ev) {
+    return ev->has_counts && ev->hand != 0;
+}
+
+int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
                     int final_deck, int final_discard, const int *final_hand,
                     AnimPlan *out) {
-    if (!out || n_players < 2 || n_players > MAX_PLAYERS) return ANIM_EBADARG;
+    if (!out || !final_hand || n_players < 2 || n_players > MAX_PLAYERS) return ANIM_EBADARG;
     if (n_events < 0) return ANIM_EBADARG;
     if (n_events > ANIM_MAX_STEPS) return ANIM_ECAP;
-    if (n_events > 0 && (!events || !final_hand)) return ANIM_EBADARG;
+    if (n_events > 0 && !events) return ANIM_EBADARG;
 
     out->n_steps = n_events;
     out->total_ms = 0;
     out->n_veil = 0;
 
-    // Backward walk from the FINAL board -> the pre-sequence freeze. This is the
-    // display's starting frame: every count holds here until its step lands.
+    // The freeze. ONE undo off the first event's own board, because a refill
+    // hands out cards the deck count never held (the flipped trump) and undoing
+    // every event would put them all back - see anim_plan.h. The n-undo walk
+    // back from the final board survives only for a stream carrying no boards.
     AnimCounts cur;
     cur.n_players = n_players;
-    cur.deck = final_deck;
-    cur.discard = final_discard;
-    for (int s = 0; s < n_players; s++) cur.hand[s] = final_hand[s];
-    for (int i = n_events - 1; i >= 0; i--) apply_undo(&events[i], &cur);
+    if (n_events > 0 && carries_counts(&events[0])) {
+        adopt_counts(&events[0], &cur);
+        apply_undo(&events[0], &cur);
+    } else {
+        cur.deck = final_deck;
+        cur.discard = final_discard;
+        for (int s = 0; s < n_players; s++) cur.hand[s] = final_hand[s];
+        for (int i = n_events - 1; i >= 0; i--) apply_undo(&events[i], &cur);
+    }
     out->pre = cur;   // cur is now the pre-sequence board
 
     // Forward walk from the freeze -> each step's post counts + timing + veil.
@@ -135,8 +151,11 @@ int anim_build_plan(const AnimEvent *events, int n_events, int n_players,
     keyset_clear(veil_seen);
     const int stride = ANIM_TIME_MS + ANIM_GAP_MS;
     for (int i = 0; i < n_events; i++) {
-        const AnimEvent *ev = &events[i];
-        apply_forward(ev, &cur);
+        const AnimPlanEvent *ev = &events[i];
+        // A step's post counts ARE its own board; the delta only carries the
+        // walk forward across a step that has none.
+        if (carries_counts(ev)) adopt_counts(ev, &cur);
+        else                    apply_forward(ev, &cur);
 
         AnimPlanStep *st = &out->steps[i];
         st->type = ev->type;

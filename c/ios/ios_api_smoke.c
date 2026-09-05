@@ -9,9 +9,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
 static char buf[1 << 16];
-// The animation plan is read into its own buffer: `buf` still holds the legal
+// The event stream is read into its own buffer: `buf` still holds the legal
 // menu the current move was picked out of.
 static char evbuf[1 << 18];
 
@@ -555,8 +557,6 @@ static int lobby_rules_check(void) {
     return 0;
 }
 
-// ---------- The 8-seat cap against a 9th player -----------------------------
-//
 // THE SHAPE OF A SEQUENCE, over the bytes a board would hold (fio_beats_packed
 // and the role beat). Portable proof that the crossing packs what the Swift
 // decoder reads: the beat stride, the flags byte, the out and attack-pass seat
@@ -649,6 +649,113 @@ static int beats_wire_check(void) {
     return 0;
 }
 
+// MUTATION-CHECKED. On the rule: the freeze walking back over every event says
+// deck 2 here; anchoring without undoing says hands 3/9; undoing two events says
+// deck 3; a step deriving forward gets step 1's board wrong. On the wire: the
+// version, seat-count, event-cap, identity-count and card-id checks each fail a
+// forged-header case; the output cap check fails the small-buffer case; and each
+// of the three bounds (the event's count fields, its whole extent, the final
+// hand block) faults on the guard page when loosened, because the reader would
+// still RETURN an error while having read past the caller's buffer to get there.
+//
+// THE COUNT FREEZE, over the shape that broke it: a bout end off a deck of ONE
+// whose next card is the flipped trump. Seat 1 takes the table, then seat 0
+// draws TWO - one more than deck_count ever held, because the trump lies under
+// the deck and is dealt last without being counted. Undoing every event puts
+// both back and opens the deck badge at 2; anchoring on the first event's own
+// board and undoing ONE says 1, which is what the board really showed. Round
+// 16's "deck suddenly go to 5 cards, then deal, and now I have 6?".
+static int plan_wire_check(void) {
+    //  ver, np, n_events, final deck, final discard, final hands
+    //  then per event: type seat from to n_cards n_ids has_counts deck discard
+    //                  hand[np] ids...
+    const unsigned char in[] = {
+        FIO_PLAN_VERSION, 2, 2, 0, 20, 5, 9,
+        // PICKUP seat 1, 4 table cards -> hand. Its board: deck 1, hands [3,9].
+        6, 1, 2, 1, 4, 4, 1, 1, 20, 3, 9, 2, 14, 27, 40,
+        // REFILL seat 0, 2 cards off a deck of 1. Its board: deck 0, hands [5,9].
+        9, 0, 0, 1, 2, 2, 1, 0, 20, 5, 9, 6, 33,
+    };
+    unsigned char out[512];
+    const int n = fio_anim_plan_packed(in, (int)sizeof in, (char *)out, sizeof out);
+    if (n != FIO_PLAN_HEAD + 2 * FIO_PLAN_STRIDE + 6) { printf("FAIL plan rc=%d\n", n); return 1; }
+    if (out[0] != FIO_PLAN_VERSION || out[1] != 2 || out[2] != 2) { printf("FAIL plan header\n"); return 1; }
+
+    // The freeze: the board BEFORE the pickup. A deck of ONE, not two.
+    if (out[8] != 1) { printf("FAIL plan pre deck %d (the flipped trump was counted back)\n", out[8]); return 1; }
+    if (out[9] != 20) { printf("FAIL plan pre discard %d\n", out[9]); return 1; }
+    if (out[10] != 3 || out[11] != 5) { printf("FAIL plan pre hands %d/%d\n", out[10], out[11]); return 1; }
+
+    const unsigned char *s0 = out + FIO_PLAN_HEAD;
+    const unsigned char *s1 = s0 + FIO_PLAN_STRIDE;
+    // Each step lands on its OWN board, and the last one is the final board.
+    if (s0[11] != 1 || s0[15] != 3 || s0[16] != 9) { printf("FAIL plan step 0 board\n"); return 1; }
+    if (s1[11] != 0 || s1[15] != 5 || s1[16] != 9) { printf("FAIL plan step 1 board\n"); return 1; }
+    if (s0[13] != 0 || s1[13] != 2 || s1[14] != 0) { printf("FAIL plan in-flight from deck\n"); return 1; }
+    // Timing: ANIMATION_TIME each, staggered by TIME+GAP, and the wall time.
+    const int dur = s0[5] | (s0[6] << 8);
+    const int start1 = s1[7] | (s1[8] << 8) | (s1[9] << 16) | (s1[10] << 24);
+    const int total = out[4] | (out[5] << 8) | (out[6] << 16) | (out[7] << 24);
+    if (dur != 500 || start1 != 525 || total != 1025) {
+        printf("FAIL plan timing %d/%d/%d\n", dur, start1, total); return 1;
+    }
+    // The veil: every real identity this stream lands, in order, once each.
+    const unsigned char *veil = s1 + FIO_PLAN_STRIDE;
+    if (out[3] != 6) { printf("FAIL plan veil %d\n", out[3]); return 1; }
+    const unsigned char want[6] = { 2, 14, 27, 40, 6, 33 };
+    for (int i = 0; i < 6; i++)
+        if (veil[i] != want[i]) { printf("FAIL plan veil[%d]=%d\n", i, veil[i]); return 1; }
+
+    // A foreign version, a forged header and a buffer that cannot hold the
+    // answer are refused, never half-written. The header fields are what size
+    // the fixed scratch this reader fills, so a forged one is a write past it.
+    unsigned char bad[sizeof in];
+    const struct { int at; unsigned char to; int want; const char *what; } forged[] = {
+        { 0, 9,   FIO_EPARSE, "a foreign version" },
+        { 1, 1,   FIO_EPARSE, "a one-seat table" },
+        { 1, 9,   FIO_EPARSE, "a nine-seat table" },
+        { 2, 200, FIO_ECAP,   "more events than a plan holds" },
+        { 12, 12, FIO_ECAP,   "more identities than the event has cards" },
+        { 18, 52, FIO_EPARSE, "a card id off the end of the deck" },
+    };
+    for (int i = 0; i < (int)(sizeof forged / sizeof forged[0]); i++) {
+        memcpy(bad, in, sizeof in);
+        bad[forged[i].at] = forged[i].to;
+        if (fio_anim_plan_packed(bad, (int)sizeof bad, (char *)out, sizeof out) != forged[i].want) {
+            printf("FAIL plan accepted %s\n", forged[i].what); return 1;
+        }
+    }
+    // EVERY short prefix, not one: a bound that is off by a byte is refused at
+    // exactly one length, and picking that length by hand is guesswork. Each
+    // prefix sits flush against a PROT_NONE guard page, so the last byte the
+    // reader may touch is the last readable byte: a bound that still RETURNS an
+    // error while reading one past it kills the process instead of passing.
+    // (evwire's reader is held to the same standard, for the same reason - there
+    // is no ASAN in this repo.)
+    const long page = sysconf(_SC_PAGESIZE);
+    unsigned char *probe = mmap(0, (size_t)page * 2, PROT_READ | PROT_WRITE,
+                                MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (probe == MAP_FAILED || mprotect(probe + page, (size_t)page, PROT_NONE) != 0) {
+        printf("FAIL plan guard page\n"); return 1;
+    }
+    for (int L = 0; L <= (int)sizeof in; L++) {
+        unsigned char *edge = probe + page - L;
+        memcpy(edge, in, (size_t)L);
+        const int r = fio_anim_plan_packed(edge, L, (char *)out, sizeof out);
+        if (L < (int)sizeof in ? (r >= 0) : (r <= 0)) {
+            printf("FAIL plan at %d bytes rc=%d\n", L, r); return 1;
+        }
+    }
+    munmap(probe, (size_t)page * 2);
+    if (fio_anim_plan_packed(in, (int)sizeof in, (char *)out, FIO_PLAN_HEAD) != FIO_ECAP) {
+        printf("FAIL plan wrote past its buffer\n"); return 1;
+    }
+    printf("plan wire OK (%d bytes, freeze deck=1 over a flipped-trump refill)\n", n);
+    return 0;
+}
+
+// ---------- The 8-seat cap against a 9th player -----------------------------
+//
 // A 9+-person group chat racing into an open lobby: the 9th join must be
 // impossible at every layer the bridge owns. (The DECODE side — a forged
 // n_joins=9 header — is the tamper matrix's job, msg_wire_test.c.) The Swift
@@ -803,20 +910,6 @@ int main(void) {
             }
             ev_moves++;
             ev_total += n_ev;
-
-            // The animation PLAN for the same move (anim_plan.h): one step per
-            // event, each carrying its post-step counts, plus the pre-sequence
-            // count-freeze and the veil. This is what MessageTableView's
-            // runEventStream/preCounts/veil collapse onto — the plan is derived
-            // in C, not re-walked in Swift.
-            static char planbuf[65536];
-            int pl = fio_anim_plan_json(0, planbuf, sizeof(planbuf));
-            if (pl < 0) { printf("FAIL anim_plan err=%d\n", pl); return 1; }
-            int n_steps = count_of(planbuf, "{\"type\":");
-            if (n_steps != n_ev) { printf("FAIL plan: %d events but %d steps\n", n_ev, n_steps); return 1; }
-            if (count_of(planbuf, "\"pre\":{") != 1 || count_of(planbuf, "\"veil\":[") != 1) {
-                printf("FAIL plan: missing pre/veil\n"); return 1;
-            }
         } else {
             // not the human's turn: drive the bots one cycle (all seats but 0).
             if (fio_bot_drive_packed(1, buf, sizeof(buf)) < 0) break;
@@ -853,6 +946,7 @@ int main(void) {
     if (lobby_rules_check() != 0) return 1;
     if (nine_player_cap_check() != 0) return 1;
     if (beats_wire_check() != 0) return 1;
+    if (plan_wire_check() != 0) return 1;
 
     printf("SMOKE OK\n");
     return 0;

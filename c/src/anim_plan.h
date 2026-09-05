@@ -1,9 +1,9 @@
 // anim_plan ("animation core") — the platform-independent half of the animation
 // pipeline, moved OUT of TypeScript (src/contexts/AnimationContext.tsx, the pure
 // modules under src/state/) and Swift (ios/FoolishKit/Boards/MessageTableView's
-// runEventStream/preCounts/veil) into the one place both already agree they want
-// to be. One derivation is the only way to guarantee a card that flies right on
-// the phone flies right in the browser (the same argument msg_wire.h and
+// runEventStream/veil/count-freeze) into the one place both already agree they
+// want to be. One derivation is the only way to guarantee a card that flies right
+// on the phone flies right in the browser (the same argument msg_wire.h and
 // evwire.h make for their layers).
 //
 // WHICH CLIENT IS THE SPEC - CORRECTED, 2026-09-05. This header opened by saying
@@ -30,8 +30,8 @@
 //      the display obeys (which deck/discard/seat-hand values hold until which
 //      step lands) and the VEIL (which real card identities are "not there yet"
 //      until their step reveals them). This is exactly what the web's queue +
-//      ANIMATION_TIME pacing and iOS's preCounts + preHide veil each re-derive
-//      today, written once.
+//      ANIMATION_TIME pacing and the iMessage board's freeze + preHide veil each
+//      re-derived, written once. The FREEZE is the iMessage rule, not the web's.
 //   2. OPTIMISTIC POLICY (the predicted-move layer): the version gate
 //      (anim_should_drop_stale), the release of confirmed optimistic cards
 //      (anim_stale_optimistic_on_table), the revert-vs-keep-vs-clear decision for
@@ -49,9 +49,10 @@
 // WHAT DID NOT MOVE, and why. evwire DECODING (packed bytes -> events + per-step
 // snapshots) still lives in the platform decoders (sdk/ts/wire/evwire.ts,
 // sdk/swift/EvWire.swift) that the replay-parity tests pin; this layer consumes
-// their OUTPUT (AnimEvent). The React queue's setState/timeout machinery and the
-// SwiftUI matchedGeometry flights stay per-platform — they are the rendering the
-// boundary leaves behind. See docs/ANIMATION_CORE_C.md.
+// their OUTPUT (AnimPlanEvent, each step's own board included). The React
+// queue's setState/timeout machinery and the SwiftUI matchedGeometry flights
+// stay per-platform — they are the rendering the boundary leaves behind. See
+// docs/ANIMATION_CORE_C.md.
 #ifndef CNITRO_ANIM_PLAN_H
 #define CNITRO_ANIM_PLAN_H
 
@@ -94,12 +95,18 @@
 #define ANIM_SEAT_NONE (-1)
 
 // ---------- caps (fixed, build-variant-independent) ----------------------
-// A sequence never runs long (a bout-end refill fans a handful of steps); 64 is
-// far above any real viewer sequence and bounds the plan walk.
-#define ANIM_MAX_STEPS 64
+// The SAME cap as ANIM_MAX_BEATS, deliberately: a stream the beats accept must
+// have a plan too, or a client would animate a sequence it has no count-freeze
+// for and open on the settled board. A bubble carries everything its sender
+// staged, which is what sizes both.
+#define ANIM_MAX_STEPS 128
 // One event's card count: a bout-end pickup sweeps the whole table, MAX_BATTLES
 // (64 on the wasm build) x2 = 128. Sized for that hostile-but-legal worst.
 #define ANIM_MAX_CARDS 128
+// Every card a WHOLE sequence names, for a bridge that has to park them
+// somewhere. Far above a full deck swept and re-dealt several times over; the
+// per-step product (steps x cards) was two orders of magnitude of dead static.
+#define ANIM_MAX_CARD_POOL 1024
 // The veil pool: every distinct card the whole sequence touches. A table + a
 // full refill is the ceiling; 160 covers it with slack.
 #define ANIM_MAX_VEIL  160
@@ -130,10 +137,9 @@ typedef struct {
 
 // The count-freeze the plan emits. Before the sequence starts the display holds
 // these values (the board as it looked BEFORE this move); each step then
-// advances the counts it touches to that step's own post values as its flight
-// lands. A backward walk from the final board, plus the web inFlightFromDeck lag
-// (drop the deck the instant a card leaves it). It is NOT the iMessage
-// count-freeze, which anchors on a snapshot instead - see anim_build_plan.
+// advances to that step's own board as its flight lands. How the freeze is
+// derived - and why it is not a walk back from the final board - is
+// anim_build_plan's business.
 typedef struct {
     int deck;
     int discard;
@@ -174,6 +180,26 @@ typedef struct {
     unsigned char veil_ids[ANIM_MAX_VEIL];
 } AnimPlan;
 
+// One decoded event as the PLAN sees it: the step, PLUS the board that step
+// committed. `cards` and `hand` BORROW the caller's storage for the call only,
+// exactly like EvwEvent.
+//
+// The board is not decoration. Every evwire event carries the state it produced
+// (EvwEvent.snap, GameEvent.state), and that snapshot is the only thing that
+// makes the count-freeze derivable at all - see anim_build_plan.
+typedef struct {
+    int         type;      // ANIM_EVT_*
+    int         seat;      // acting seat, or ANIM_SEAT_NONE
+    int         from, to;  // ANIM_LOC_*
+    const Card *cards;     // n_cards entries; may be NULL iff n_cards == 0
+    int         n_cards;
+    int         mask_cards; // 1 => cards are viewer-masked backs (no identity);
+                            //      excluded from the veil (they animate as backs)
+    int         has_counts; // 1 => deck/discard/hand are THIS step's own board
+    int         deck, discard;
+    const int  *hand;      // n_players entries; NULL iff has_counts == 0
+} AnimPlanEvent;
+
 // ---- timing policy: the one place a duration is decided -------------------
 // Every event currently paces at ANIM_TIME_MS. A dedicated function (rather than
 // inlining the constant) is the seam a per-event-type rule would land in — a
@@ -183,27 +209,34 @@ int anim_step_duration_ms(int event_type);
 // ---- plan building --------------------------------------------------------
 // Build the timed plan for a decoded viewer sequence. `final_deck`,
 // `final_discard`, `final_hand` (length n_players) are the FINAL committed
-// board's counts — the state the platform renders immediately; the plan freezes
+// board's counts - the state the platform renders immediately; the plan freezes
 // the DISPLAY back to the pre-sequence values and reveals forward per step.
 //
-// Derivation: walk the events BACKWARD from the final counts, undoing each card
-// movement, to get `pre`; then walk FORWARD to stamp each step's post counts
-// (== the kernel's per-step snapshot by construction).
-// Returns ANIM_EOK, or ANIM_ECAP (n_events > ANIM_MAX_STEPS, or the veil
-// overflows) / ANIM_EBADARG (NULL out, n_players out of range).
+// THE FREEZE ANCHORS ON THE FIRST EVENT'S OWN BOARD AND UNDOES EXACTLY ONE
+// EVENT. events[0]'s snapshot IS the board one event in, so one undo reaches
+// the board before it. That is not a shortcut for undoing all of them; it is
+// the only version that is right. A REFILL hands out cards the deck count never
+// held - the flipped trump lies UNDER the deck and is dealt last without ever
+// being counted - so undoing a refill by putting every card back overshoots the
+// deck by one, and the badge opens a card too high near the end of a game.
+// Round 16, the owner: "I sometimes saw the deck suddenly go to 5 cards, then
+// deal, and now I have 6 cards? Is it a problem with the flipped card?" It was.
 //
-// `pre` IS NOT THE iMessage COUNT-FREEZE, and this header used to claim it was
-// ("faithful to iOS preCounts"). The two disagree on one real shape. A REFILL
-// off the end of the deck hands out more cards than deck_count ever held - the
-// flipped trump lies under the deck and is dealt last without being counted - so
-// undoing it by putting every card back overshoots the deck by one. The board's
-// own rule (MessageTableView.preCounts) therefore anchors on the FIRST event's
-// own snapshot and undoes exactly one event, which is possible because a stream
-// never begins with a refill; this walk has no snapshots to anchor on and undoes
-// them all. On a pickup-then-refill bout end off a deck of one, `pre.deck` here
-// reads 2 where the board really showed 1. Not reconciled: the iMessage rule is
-// the spec, and a client that needs the freeze should carry the snapshots.
-int anim_build_plan(const AnimEvent *events, int n_events, int n_players,
+// A stream never LEADS with a refill - a refill is always some bout end's
+// consequence, so a pickup, a trash or a magic transition comes first - which is
+// what makes one undo safe where n are not. Undoing all n survives only as the
+// fallback for a stream carrying no boards at all, which the packed evwire never
+// produces (every event carries one).
+//
+// Each step's POST counts are that step's OWN board, not a forward derivation
+// of it: committing the step's snapshot as its flight lands is what every client
+// actually does (iOS GameEvent.state, the web's updateGameState). A step with no
+// board of its own carries the derivation forward instead.
+//
+// Returns ANIM_EOK, or ANIM_ECAP (n_events > ANIM_MAX_STEPS, or the veil
+// overflows) / ANIM_EBADARG (NULL out/final_hand, NULL events with n_events > 0,
+// n_players out of range).
+int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
                     int final_deck, int final_discard, const int *final_hand,
                     AnimPlan *out);
 
@@ -230,10 +263,10 @@ int anim_build_plan(const AnimEvent *events, int n_events, int n_players,
 // One entry answers all of them together, because a client that asked for a
 // beat's grouping and its hold separately could be told two different things.
 
-// Beats are capped independently of ANIM_MAX_STEPS: a bubble carries everything
-// its sender staged, so a stream can be longer than any single action's plan,
-// and a stream over the cap is REFUSED rather than truncated (half a sequence
-// played as a whole one is worse than none).
+// The SAME cap as ANIM_MAX_STEPS, so a stream the beats accept always has a
+// plan: a bubble carries everything its sender staged. A stream over the cap is
+// REFUSED rather than truncated (half a sequence played as a whole one is worse
+// than none).
 #define ANIM_MAX_BEATS 128
 
 // "this step carries no board of its own", for good_mask below.

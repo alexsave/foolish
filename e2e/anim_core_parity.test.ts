@@ -13,6 +13,11 @@
  * keys, out-of-order versions, conflicting covers, dropped broadcasts).
  *
  * Pure kernel/wasm test — needs no Postgres.
+ *
+ * MUTATION-CHECKED (2026-09-05, the plan half):
+ *   the TS mirror goes back to walking every event    -> the C == TS test fails
+ *   the harness stops sending each event's own board  -> the freeze test fails
+ *   the bots.ts bridge drops the has_counts flag      -> both plan tests fail
  * ========================================================================== */
 
 import { test } from 'node:test';
@@ -119,7 +124,19 @@ const tableCardsOf = (gs: any): Card[] => (gs?.table_battles ?? [])
     .flatMap((b: any) => (b.defense ? [b.attack, b.defense] : [b.attack]));
 const locCode = (loc: string | undefined): number => (loc && loc in ANIM_LOC) ? ANIM_LOC[loc] : 0xff;
 
+const handsOf = (gs: any, np: number): number[] =>
+    Array.from({ length: np }, (_, s) => gs?.players?.[s]?.hand_length
+        ?? gs?.players?.[s]?.hand?.length ?? 0);
+const countsOf = (gs: any, np: number) => ({
+    deck: gs?.deck_length ?? 0, discard: gs?.discard_pile_length ?? 0, hand: handsOf(gs, np),
+});
+
 // Convert a decoded sequence + its committed board into animBuildPlan inputs.
+//
+// EVERY EVENT'S OWN BOARD (`game_state`) CROSSES WITH IT. The count-freeze is
+// one undo off the first event's board, not a walk back over all of them - see
+// __ts_reference's plan-building note and c/src/anim_plan.h - so a caller that
+// drops the boards is asking for the fallback, not for the rule.
 function planInputs(seq: DecodedSequence, game: Game) {
     const np = game.players.length;
     const seatOf = new Map(game.players.map((p, i) => [p.player_id, i]));
@@ -134,10 +151,15 @@ function planInputs(seq: DecodedSequence, game: Game) {
             to: locCode(e.to_location),
             mask,
             cards,
+            counts: (e as any).game_state ? countsOf((e as any).game_state, np) : null,
         };
     });
-    const finalHand = finalG.players.map((p: any) => p.hand_length ?? (p.hand?.length ?? 0));
-    return { events, np, finalDeck: finalG.deck_length ?? 0, finalDiscard: finalG.discard_pile_length ?? 0, finalHand };
+    return {
+        events, np,
+        finalDeck: finalG.deck_length ?? 0,
+        finalDiscard: finalG.discard_pile_length ?? 0,
+        finalHand: handsOf(finalG, np),
+    };
 }
 
 // ============================ 1. PLAN PARITY ==============================
@@ -161,32 +183,55 @@ test('plan building: C animBuildPlan == TS reference over real evwire sequences'
     assert.ok(stepsSeen > 0, 'plans carried steps');
 });
 
-// Bonus: the plan's derived per-step counts match the KERNEL's real snapshots,
-// so the count-freeze is not just self-consistent with the TS mirror but true to
-// the board the engine produced (discard + per-seat hand are unambiguous).
-test('plan building: derived counts match the kernel per-step snapshots', async () => {
-    let checks = 0;
+// THE FREEZE IS THE BOARD THE MOVE STARTED FROM. Not "self-consistent with the
+// TS mirror": the board the engine really had one sequence earlier, which for a
+// spectator's frame stream is the previous frame's committed board. This is the
+// assertion the old rule could not pass - a bout end off a deck of one whose
+// next card is the flipped trump reads a card high - and the browser twin of
+// ios/FoolishTests/MessageCountWindingTests.
+test('plan building: the freeze is the board before the sequence, and the last step is the board after', async () => {
+    let checks = 0, flippedDraws = 0;
     for (let np = 2; np <= 4; np++) {
-        const got = await collectFrames(np, SEEDS[0]);
-        if (!got) continue;
-        for (const seq of got.seqs) {
-            const { events, np: n, finalDeck, finalDiscard, finalHand } = planInputs(seq, got.game);
-            if (events.length === 0 || events.length > 64) continue;
-            const plan = animBuildPlan(events, n, finalDeck, finalDiscard, finalHand);
-            for (let i = 0; i < seq.events.length; i++) {
-                const gs: any = seq.events[i].game_state;
-                if (!gs) continue;
-                assert.equal(plan.steps[i].discard, gs.discard_pile_length,
-                    `discard count mismatch at step ${i}`);
-                for (let s = 0; s < n; s++) {
-                    const hl = gs.players?.[s]?.hand_length ?? gs.players?.[s]?.hand?.length ?? 0;
-                    assert.equal(plan.steps[i].hand[s], hl, `hand[${s}] mismatch at step ${i}`);
+        for (const seed of SEEDS) {
+            const got = await collectFrames(np, seed);
+            if (!got) continue;
+            let before: any = null;         // the previous frame's committed board
+            for (const seq of got.seqs) {
+                const { events, finalDeck, finalDiscard, finalHand } = planInputs(seq, got.game);
+                if (events.length === 0 || events.length > 128) { before = seq.game; continue; }
+                const plan = animBuildPlan(events, np, finalDeck, finalDiscard, finalHand);
+                if (before) {
+                    const was = countsOf(before, np);
+                    assert.deepEqual(
+                        { deck: plan.pre.deck, discard: plan.pre.discard, hand: plan.pre.hand },
+                        was,
+                        `np=${np} seed=${seed.slice(0, 8)}: the freeze is not the board before`);
+                    const drawn = events
+                        .filter((e) => e.type === animEventTypeCode('refill') || e.type === animEventTypeCode('deal'))
+                        .reduce((a, e) => a + e.cards.length, 0);
+                    if (drawn > was.deck) flippedDraws++;
+                    checks++;
                 }
-                checks++;
+                // …and the last step IS the board the sequence produced, so
+                // releasing the display overrides there cannot jump.
+                const last = plan.steps[plan.steps.length - 1];
+                assert.deepEqual({ deck: last.deck, discard: last.discard, hand: last.hand },
+                                 { deck: finalDeck, discard: finalDiscard, hand: finalHand },
+                                 `np=${np}: the last step is not the settled board`);
+                // …and nothing walks backwards on the way there.
+                let deck = plan.pre.deck, discard = plan.pre.discard;
+                for (const st of plan.steps) {
+                    assert.ok(st.deck <= deck, `np=${np}: the deck GREW mid-sequence`);
+                    assert.ok(st.discard >= discard, `np=${np}: the discard SHRANK mid-sequence`);
+                    deck = st.deck; discard = st.discard;
+                }
+                before = seq.game;
             }
         }
     }
-    assert.ok(checks > 0, 'expected snapshot cross-checks');
+    assert.ok(checks > 100, `expected many sequences, got ${checks}`);
+    // Without this the test passes by never meeting the shape it exists for.
+    assert.ok(flippedDraws > 3, `no sequence drew the flipped trump (${flippedDraws})`);
 });
 
 // ======================== 2. STALE-OPTIMISTIC PARITY ======================

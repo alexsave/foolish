@@ -1355,15 +1355,22 @@ export interface AnimPlan {
 }
 
 /** anim_build_plan, in C: a decoded viewer sequence -> the timed plan (count-
- *  freeze + veil + durations). Provided for iOS/Steam parity and completeness;
- *  the web's React queue currently renders its own pacing (a TODO seam — see
- *  docs/ANIMATION_CORE_C.md). `events[].seat` may be null for a seat-less event. */
+ *  freeze + veil + durations). `events[].seat` may be null for a seat-less event.
+ *
+ *  EVERY EVENT CARRIES THE BOARD IT COMMITTED (`counts`, from its own evwire
+ *  game_state). That is not optional detail: the freeze is one undo off the
+ *  FIRST event's board, and a caller that omits the boards gets the fallback -
+ *  the walk back over every event, which reads the deck one card high whenever
+ *  the flipped trump was drawn. See c/src/anim_plan.h. */
 export function animBuildPlan(
-    events: { type: number; seat: number | null; from: number; to: number; mask: boolean; cards: Card[] }[],
+    events: {
+        type: number; seat: number | null; from: number; to: number; mask: boolean; cards: Card[];
+        counts?: { deck: number; discard: number; hand: number[] } | null;
+    }[],
     nPlayers: number, finalDeck: number, finalDiscard: number, finalHand: number[],
 ): AnimPlan {
     const ex = bots();
-    if (events.length > 64) throw new Error('anim: plan exceeds ABI cap');
+    if (events.length > 128) throw new Error('anim: plan exceeds ABI cap');
     const buf = __mem(ex);
     const base = ex.wasm_io_ptr();
     let p = base;
@@ -1376,25 +1383,34 @@ export function animBuildPlan(
         buf[p++] = e.mask ? 1 : 0;
         buf[p++] = e.cards.length & 0xff;
         for (const c of e.cards) buf[p++] = __wireStateCard(c);
+        buf[p++] = e.counts ? 1 : 0;
+        buf[p++] = (e.counts?.deck ?? 0) & 0xff;
+        buf[p++] = (e.counts?.discard ?? 0) & 0xff;
+        for (let s = 0; s < nPlayers; s++) buf[p++] = (e.counts?.hand[s] ?? 0) & 0xff;
     }
     const len = ex.wasm_anim_build_plan(events.length, nPlayers, finalDeck, finalDiscard);
     if (len < 0) throw new Error(`anim_build_plan error ${len}`);
     const out = __mem(ex);
     let q = ex.wasm_io_ptr();
     const rd16 = () => { const v = out[q] | (out[q + 1] << 8); q += 2; return v; };
+    // Wall time and step offsets are wide: a full-length stream runs past 65535 ms.
+    const rd32 = () => {
+        const v = (out[q] | (out[q + 1] << 8) | (out[q + 2] << 16) | (out[q + 3] << 24)) >>> 0;
+        q += 4; return v;
+    };
     const nSteps = out[q++];
     const np = out[q++];
     const preDeck = rd16(), preDiscard = rd16();
     const preHand: number[] = [];
     for (let s = 0; s < np; s++) preHand.push(rd16());
-    const totalMs = rd16();
+    const totalMs = rd32();
     const nVeil = out[q++];
     const veilIds: number[] = [];
     for (let i = 0; i < nVeil; i++) veilIds.push(out[q++]);
     const steps: AnimPlanStep[] = [];
     for (let i = 0; i < nSteps; i++) {
         const type = out[q++], seat = out[q++], from = out[q++], to = out[q++], nCards = out[q++];
-        const durationMs = rd16(), startMs = rd16(), deck = rd16(), discard = rd16();
+        const durationMs = rd16(), startMs = rd32(), deck = rd16(), discard = rd16();
         const inFlightFromDeck = out[q++], inFlightToFlipped = out[q++];
         const hand: number[] = [];
         for (let s = 0; s < np; s++) hand.push(rd16());

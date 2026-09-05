@@ -23,9 +23,9 @@
 //     reordering fix). The e2e version drives real games; the invariant it proves
 //     is pure, so we prove it directly over every permutation of a broadcast set.
 //
-// Plus test_plan_building() — the count-freeze (iOS preCounts backward walk), the
-// per-step timing (ANIMATION_TIME), and the veil, which no TS test covered
-// because that choreography lived inside AnimationContext's setState machinery.
+// Plus test_plan_building() — the count-freeze, the per-step timing
+// (ANIMATION_TIME), and the veil, which no TS test covered because that
+// choreography lived inside AnimationContext's setState machinery.
 //
 // Usage: anim_plan_test              (no args)
 // Modelled on tests/msg_wire_test.c's CHECK harness.
@@ -270,7 +270,7 @@ static void test_reconcile(void) {
 }
 
 // ======================================================================
-// 4. plan building  (count-freeze / preCounts backward walk / veil / timing)
+// 4. plan building  (count-freeze / veil / timing)
 // ======================================================================
 static void test_plan_building(void) {
     // A 2-player bout-end sequence, viewer = seat 0 (the attacker who drew):
@@ -278,10 +278,15 @@ static void test_plan_building(void) {
     //   step1 REFILL   deck->seat0 hand, 2 REAL cards (viewer's own draws)
     //   step2 REFILL   deck->seat1 hand, 2 MASKED backs (opponent's draws)
     // Final board: deck 20, discard 8, hands [6, 6].
+    //
+    // NO EVENT CARRIES A BOARD here, which is the FALLBACK path: with nothing to
+    // anchor on the freeze is the n-event walk back from the final board. The
+    // anchored path - the one every real evwire stream takes - is
+    // test_plan_anchors_on_the_first_events_own_board below.
     Card refill0[] = { C(0, 5), C(2, 7) };   // ids 4 and 32
     Card refill1[] = { C(-1, -1), C(-1, -1) };  // masked backs
 
-    AnimEvent ev[3];
+    AnimPlanEvent ev[3];
     memset(ev, 0, sizeof(ev));
     ev[0].type = ANIM_EVT_DISCARD;   ev[0].seat = ANIM_SEAT_NONE; ev[0].from = ANIM_LOC_TABLE; ev[0].to = ANIM_LOC_DISCARD; ev[0].n_cards = 4;
     ev[1].type = ANIM_EVT_REFILL;    ev[1].seat = 0; ev[1].from = ANIM_LOC_DECK; ev[1].to = ANIM_LOC_HAND; ev[1].cards = refill0; ev[1].n_cards = 2;
@@ -293,7 +298,7 @@ static void test_plan_building(void) {
     CHECK(rc == ANIM_EOK, "plan rc");
     CHECK(plan.n_steps == 3, "3 steps");
 
-    // Count-freeze (backward walk from final): pre = {deck 24, discard 4, [4,4]}.
+    // Count-freeze (the fallback walk back from final): pre = {deck 24, discard 4, [4,4]}.
     CHECK(plan.pre.deck == 24, "pre deck 24 (got %d)", plan.pre.deck);
     CHECK(plan.pre.discard == 4, "pre discard 4 (got %d)", plan.pre.discard);
     CHECK(plan.pre.hand[0] == 4 && plan.pre.hand[1] == 4, "pre hands [4,4] (got [%d,%d])", plan.pre.hand[0], plan.pre.hand[1]);
@@ -332,12 +337,74 @@ static void test_plan_building(void) {
           "empty sequence -> empty plan");
 }
 
+// MUTATION-CHECKED against c/src/anim_plan.c: the freeze walking back from the
+// final board over every event fails 2 cases here; anchoring and undoing nothing
+// fails 1; undoing the first two events fails 3; a step deriving forward instead
+// of adopting its own board fails 1.
+//
+// THE ANCHORED FREEZE, and the shape it exists for. A 2-player bout end off a
+// deck of ONE whose next card is the flipped trump: seat 1 takes the table,
+// then seat 0 draws TWO. The draw is real - the trump lies under the deck and is
+// handed out last without ever being in deck_count - so undoing every event puts
+// both cards back and opens the deck badge at 2. Anchoring on the FIRST event's
+// own board and undoing exactly one says 1, which is the board that existed.
+//
+// Round 16, the owner: "I sometimes saw the deck suddenly go to 5 cards, then
+// deal, and now I have 6 cards? Is it a problem with the flipped card?"
+static void test_plan_anchors_on_the_first_events_own_board(void) {
+    Card taken[4] = { C(0, 6), C(1, 7), C(2, 8), C(3, 9) };
+    Card drawn[2] = { C(0, 10), C(2, 11) };
+
+    // The board before the move: deck 1, discard 20, hands [3, 5].
+    int pickup_hand[2] = { 3, 9 };   // seat 1 has taken the table
+    int refill_hand[2] = { 5, 9 };   // seat 0 has drawn its two
+    AnimPlanEvent ev[2];
+    memset(ev, 0, sizeof(ev));
+    ev[0].type = ANIM_EVT_PICKUP; ev[0].seat = 1; ev[0].from = ANIM_LOC_TABLE; ev[0].to = ANIM_LOC_HAND;
+    ev[0].cards = taken; ev[0].n_cards = 4;
+    ev[0].has_counts = 1; ev[0].deck = 1; ev[0].discard = 20; ev[0].hand = pickup_hand;
+    ev[1].type = ANIM_EVT_REFILL; ev[1].seat = 0; ev[1].from = ANIM_LOC_DECK; ev[1].to = ANIM_LOC_HAND;
+    ev[1].cards = drawn; ev[1].n_cards = 2;
+    ev[1].has_counts = 1; ev[1].deck = 0; ev[1].discard = 20; ev[1].hand = refill_hand;
+
+    int final_hand[2] = { 5, 9 };
+    AnimPlan plan;
+    CHECK(anim_build_plan(ev, 2, 2, /*deck*/0, /*discard*/20, final_hand, &plan) == ANIM_EOK,
+          "the anchored plan builds");
+    CHECK(plan.pre.deck == 1, "pre deck 1, not 2 (got %d)", plan.pre.deck);
+    CHECK(plan.pre.discard == 20, "pre discard 20 (got %d)", plan.pre.discard);
+    CHECK(plan.pre.hand[0] == 3 && plan.pre.hand[1] == 5,
+          "pre hands [3,5] (got [%d,%d])", plan.pre.hand[0], plan.pre.hand[1]);
+
+    // Each step lands on its OWN board rather than on a forward derivation of
+    // it: derived, step 1's deck would be 1 - 2 = -1.
+    CHECK(plan.steps[0].deck == 1 && plan.steps[0].hand[1] == 9, "step 0 is its own board");
+    CHECK(plan.steps[1].deck == 0 && plan.steps[1].hand[0] == 5, "step 1 is its own board");
+
+    // A step with no board of its own carries the walk forward from the one
+    // before it, which is the only thing the delta is still for.
+    ev[1].has_counts = 0; ev[1].hand = 0;
+    CHECK(anim_build_plan(ev, 2, 2, 0, 20, final_hand, &plan) == ANIM_EOK, "mixed plan builds");
+    CHECK(plan.pre.deck == 1, "the anchor is the FIRST event's board (got %d)", plan.pre.deck);
+    CHECK(plan.steps[1].deck == -1 && plan.steps[1].hand[0] == 5,
+          "a boardless step derives forward (got deck %d)", plan.steps[1].deck);
+
+    // Bounds: no output, no final board, and events that were promised but not
+    // handed over are each refused rather than read.
+    CHECK(anim_build_plan(ev, 2, 2, 0, 20, final_hand, 0) == ANIM_EBADARG, "no output, no plan");
+    CHECK(anim_build_plan(ev, 2, 2, 0, 20, 0, &plan) == ANIM_EBADARG, "no final board, no plan");
+    CHECK(anim_build_plan(0, 2, 2, 0, 20, final_hand, &plan) == ANIM_EBADARG, "no events, no plan");
+    CHECK(anim_build_plan(ev, ANIM_MAX_STEPS + 1, 2, 0, 20, final_hand, &plan) == ANIM_ECAP,
+          "a sequence over the cap is refused, not truncated");
+}
+
 int main(void) {
     printf("anim_plan_test\n");
     test_optimistic_animation();
     test_optimistic_revert();
     test_reconcile();
     test_plan_building();
+    test_plan_anchors_on_the_first_events_own_board();
     if (g_fails == 0) printf("anim_plan_test: OK\n");
     else              printf("anim_plan_test: %d FAILURES\n", g_fails);
     return g_fails ? 1 : 0;

@@ -242,26 +242,68 @@ int fio_bot_drive_json(int human_mask, char *out, int cap);
 // ---------- animation core (c/src/anim_plan.h) -----------------------------
 //
 // The platform-independent animation POLICY, shared with the web (which reaches
-// the same C through wasm) and any future client. THE point: MessageTableView's
-// runEventStream + preCounts + veil each re-derive this choreography today; this
-// hands them the finished plan so Swift only tweens sprites per step and obeys
-// the freezes/veils. See docs/ANIMATION_CORE_C.md.
+// the same C through wasm) and any future client. THE point: MessageTableView
+// re-derived this choreography in Swift; this hands it the finished plan so
+// Swift only tweens sprites per step and obeys the freezes/veils. See
+// docs/ANIMATION_CORE_C.md.
 //
-// The animation plan for the LAST fio_apply_awire / fio_bot_drive_json, as seen
-// by `viewer` (a seat, or -1 spectator). One ordered plan of steps, each with a
-// duration and the board counts the display advances to as its flight lands,
-// PLUS the pre-sequence count-freeze (the iOS preCounts backward walk, in C now)
-// and the veil (the card identities to hide until their step lands, the C twin
-// of preHide). Shape:
-//   {"durationMs":500,"gapMs":25,"totalMs":1550,"nPlayers":2,
-//    "pre":{"deck":24,"discard":4,"hand":[4,4]},
-//    "veil":[4,32],                       // dense card ids (suit*13+value-1)
-//    "steps":[{"type":7,"seat":-1,"from":2,"to":3,"nCards":4,
-//              "durationMs":500,"startMs":0,"deck":24,"discard":8,
-//              "inFlightFromDeck":0,"inFlightToFlipped":0,"hand":[4,4]}, ...]}
-// type/from/to are EVW_*/ANIM_* codes (identical numbering; c/src/anim_plan.h).
+// THE STREAM IS AN INPUT, for the reason fio_beats_packed's is: a board
+// animates the stream it was HANDED (often only half a bubble, because a staged
+// bout end is cut at its settlement), and it asks from a SwiftUI render pass
+// that cannot await the actor the resident game lives behind.
+//
+// EVERY EVENT CARRIES THE BOARD IT COMMITTED, and that is what the freeze is
+// derived from - one undo off the FIRST event's own board, never a walk back
+// from the final one. anim_plan.h says why (the flipped trump lies under the
+// deck and is dealt without ever being counted).
+//
+// INPUT (`in`):
+//   0  u8  version (FIO_PLAN_VERSION)
+//   1  u8  n_players (2..8)
+//   2  u8  n_events  (0..ANIM_MAX_STEPS, 128)
+//   3  u8  final deck count
+//   4  u8  final discard count
+//   5  n_players x u8 final hand counts, by seat
+//   then per event, 9 + n_players + n_ids bytes:
+//     u8 type (EVW_T_*/ANIM_EVT_*), u8 seat (0xFF none), u8 from, u8 to,
+//     u8 n_cards (the count the arithmetic reads), u8 n_ids (real identities
+//     listed; 0 for viewer-masked backs), u8 has_counts, u8 deck, u8 discard,
+//     n_players x u8 hand counts, n_ids x u8 dense card id.
+//   A step with has_counts == 0 carries the walk forward instead of anchoring
+//   it; a stream whose FIRST event has none falls back to undoing them all.
+//
+// OUTPUT (`out`):
+//   0  u8  version
+//   1  u8  n_steps
+//   2  u8  n_players
+//   3  u8  n_veil
+//   4  u32 total wall time, ms (a full-length stream runs past a u16)
+//   8  u8  pre deck   (the count-freeze the display opens on)
+//   9  u8  pre discard
+//  10  FIO_PLAN_SEATS x u8 pre hand counts, by seat
+//   then n_steps x FIO_PLAN_STRIDE:
+//     0  u8  type
+//     1  u8  seat (0xFF none)
+//     2  u8  from
+//     3  u8  to
+//     4  u8  n_cards
+//     5  u16 duration ms
+//     7  u32 start ms (offset from the sequence's first frame)
+//    11  u8  deck as this step lands
+//    12  u8  discard as this step lands
+//    13  u8  cards of this step that left the deck
+//    14  u8  ...of which are bound for the flipped slot (no badge change)
+//    15  FIO_PLAN_SEATS x u8 hand counts as this step lands
+//   then n_veil x u8 dense card id: identities in transit, hidden until the step
+//   that lands them.
 // Returns bytes written, or a negative error.
-int fio_anim_plan_json(int viewer, char *out, int cap);
+#define FIO_PLAN_VERSION 1
+// The seat block is a FIXED width so a step sits at a constant offset whatever
+// the table size; the kernel's MAX_PLAYERS is checked against it at build time.
+#define FIO_PLAN_SEATS   8
+#define FIO_PLAN_HEAD    (10 + FIO_PLAN_SEATS)
+#define FIO_PLAN_STRIDE  (15 + FIO_PLAN_SEATS)
+int fio_anim_plan_packed(const uint8_t *in, int len, char *out, int cap);
 
 // The live-broadcast version gate (anim_should_drop_stale): should a broadcast
 // at `incoming` be dropped as stale given the newest applied `last`? The has_*
