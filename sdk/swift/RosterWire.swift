@@ -33,14 +33,13 @@ public enum RosterWire {
     /// and a refused seal is a bubble that never goes out; the display cap is 12
     /// bytes anyway (docs/APP_REVIEW_NOTES.md), so 64 is already generous.
     public static func encode(_ joins: [MessageJoin]) -> Data {
-        var out: [UInt8] = [UInt8(min(joins.count, maxJoins))]
+        var w = PackedWriter()
+        w.u8(min(joins.count, maxJoins))
         for j in joins.prefix(maxJoins) {
-            let name = nameBytes(j.name)
-            out.append(UInt8(truncatingIfNeeded: j.seat))
-            out.append(UInt8(name.count))
-            out.append(contentsOf: name)
+            w.u8(j.seat)
+            w.blob8(nameBytes(j.name))   // <=64 bytes, so the u8 prefix always fits
         }
-        return Data(out)
+        return w.data
     }
 
     /// The roster back out of a blob, starting at `at`. Returns the joins and
@@ -48,21 +47,15 @@ public enum RosterWire {
     /// same all-or-nothing the C reader keeps, since a roster read short is a
     /// different table.
     public static func decode(_ b: [UInt8], at: Int) -> (joins: [MessageJoin], next: Int)? {
-        guard at < b.count else { return nil }
-        let n = Int(b[at])
-        var p = at + 1
+        var r = PackedReader(b, at: at)
+        guard let n = r.u8() else { return nil }
         var joins: [MessageJoin] = []
         joins.reserveCapacity(n)
         for _ in 0..<n {
-            guard p + 2 <= b.count else { return nil }
-            let seat = Int(b[p]), len = Int(b[p + 1])
-            p += 2
-            guard p + len <= b.count else { return nil }
-            joins.append(MessageJoin(seat: seat,
-                                     name: String(decoding: b[p..<p + len], as: UTF8.self)))
-            p += len
+            guard let seat = r.u8(), let name = r.blob8() else { return nil }
+            joins.append(MessageJoin(seat: seat, name: String(decoding: name, as: UTF8.self)))
         }
-        return (joins, p)
+        return (joins, r.at)
     }
 
     /// One name's UTF-8 bytes, trimmed to the budget on a scalar boundary.

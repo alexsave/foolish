@@ -313,21 +313,34 @@ final class MessageTurnControllerTests: XCTestCase {
     func testHandOrderStoreRoundTripClearAndCap() {
         let store = MessageGameStore(defaults: UserDefaults(suiteName: "test.ho.\(UUID().uuidString)")!)
 
+        // REAL CARD IDENTITIES, because the row is stored as dense card ids -
+        // the shape the kernel takes (anim_hand_laid_out). These used to be
+        // "S-6"-style strings that name no card, which a byte-per-card row
+        // cannot carry and which no hand could ever contain.
+        let ids = (0..<52).map { CardSet.card(UInt8($0)).identity }
         XCTAssertTrue(store.handOrder(gameId: "g1").isEmpty, "empty until saved")
-        store.setHandOrder(["S-6", "H-10", "C-14"], gameId: "g1")
-        XCTAssertEqual(store.handOrder(gameId: "g1"), ["S-6", "H-10", "C-14"])
-        store.setHandOrder(["H-10", "S-6", "C-14"], gameId: "g1")
-        XCTAssertEqual(store.handOrder(gameId: "g1"), ["H-10", "S-6", "C-14"],
+        store.setHandOrder([ids[6], ids[22], ids[48]], gameId: "g1")
+        XCTAssertEqual(store.handOrder(gameId: "g1"), [ids[6], ids[22], ids[48]])
+        store.setHandOrder([ids[22], ids[6], ids[48]], gameId: "g1")
+        XCTAssertEqual(store.handOrder(gameId: "g1"), [ids[22], ids[6], ids[48]],
                        "a later reorder overwrites")
+
+        // EVERY CARD, BOTH DIRECTIONS. A dense id crossing is invisible until
+        // the last card and then wrong in silence, so the whole deck goes
+        // through the store in one row and comes back in order.
+        store.setHandOrder(ids, gameId: "deck")
+        XCTAssertEqual(store.handOrder(gameId: "deck"), ids,
+                       "all 52 cards survive the round trip, in order")
 
         store.clearHandOrder(gameId: "g1")
         XCTAssertTrue(store.handOrder(gameId: "g1").isEmpty, "the end-of-game clear empties the row")
 
         // Cap: write well past it; the newest row survives, the oldest are gone.
         for i in 0..<(MessageGameStore.handOrderCap + 8) {
-            store.setHandOrder(["S-\(i)"], gameId: "cap\(i)")
+            store.setHandOrder([ids[i % 52]], gameId: "cap\(i)")
         }
-        XCTAssertEqual(store.handOrder(gameId: "cap\(MessageGameStore.handOrderCap + 7)"), ["S-39"],
+        let last = (MessageGameStore.handOrderCap + 7) % 52
+        XCTAssertEqual(store.handOrder(gameId: "cap\(MessageGameStore.handOrderCap + 7)"), [ids[last]],
                        "the newest row is always kept")
         XCTAssertTrue(store.handOrder(gameId: "cap0").isEmpty,
                       "the oldest rows are evicted past the cap")
@@ -343,10 +356,11 @@ final class MessageTurnControllerTests: XCTestCase {
         let parent = try await MessageEnvelope.decode(payload: parentBytes, viewer: 0)
         let live = MessageTurnController(parentPayload: parentBytes, parent: parent,
                                          mySeat: 0, store: store)
-        store.setHandOrder(["S-6", "H-10"], gameId: live.gameIdString)
+        let kept = [CardSet.card(6).identity, CardSet.card(22).identity]
+        store.setHandOrder(kept, gameId: live.gameIdString)
         await live.begin()
         XCTAssertFalse(live.isOver)
-        XCTAssertEqual(store.handOrder(gameId: live.gameIdString), ["S-6", "H-10"],
+        XCTAssertEqual(store.handOrder(gameId: live.gameIdString), kept,
                        "a mid-game open keeps the arrangement - that is the whole point of the cache")
 
         // Now a finished chain: play a real game out, seal phase 3, open it.
@@ -368,7 +382,7 @@ final class MessageTurnControllerTests: XCTestCase {
         let finished = try await k.seal(phase: 3, lastActorSeat: 0, gameId: 4242,
                                         parent8: Data(repeating: 0, count: 8), joins: joins)
         let env = try await MessageEnvelope.decode(payload: finished, viewer: -1)
-        store.setHandOrder(["S-6", "H-10"], gameId: "4242")
+        store.setHandOrder(kept, gameId: "4242")
         let over = MessageTurnController(parentPayload: finished, parent: env,
                                          mySeat: 0, store: store)
         await over.begin()

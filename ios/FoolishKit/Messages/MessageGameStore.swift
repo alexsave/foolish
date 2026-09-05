@@ -40,6 +40,20 @@
 // ROUND 9 (owner): the pending-move LEDGER (Rule R §7.4) is removed too — see
 // the note at its old section below.
 
+//
+// THE CONTAINER IS BYTES, NOT JSON (owner: "I REALLY don't like JSON", and
+// "turn the on-disk stores away from JSON too"). Every row here is written with
+// PackedWriter and read with PackedReader, the same primitive the wire codecs
+// use, behind a leading format byte.
+//
+// A CLEAN CUT, deliberately, with the owner's blessing ("just break in progress
+// games if you need to"): each key is bumped, so the JSON blobs a device
+// already holds are never read again rather than migrated. This file has made
+// that call twice before (fmsg.games.v2, fmsg.latest.v1), and everything it
+// keeps is an optimization the top of this file promises §6/§7 survive the loss
+// of. What a device loses is a seat cache, a high-water mark and a hand
+// arrangement - it does not lose a game, because the message IS the state.
+
 import Foundation
 
 /// Round 7: the whole of what the store keeps per game now - the seat this device
@@ -54,7 +68,7 @@ import Foundation
 /// hands to chat B's participants. That rationale outlived the row it was
 /// written for (the deleted `MessageGameRecord`) and is why `seat(gameId:
 /// chatKey:)` is scoped.
-public struct SeatRow: Codable, Equatable, Sendable {
+public struct SeatRow: Equatable, Sendable {
     public var chatKey: String
     public var seat: Int
     public init(chatKey: String, seat: Int) { self.chatKey = chatKey; self.seat = seat }
@@ -84,13 +98,13 @@ public final class MessageGameStore {
     private let defaults: UserDefaults?
     // Round-8 #4: the local player's cosmetic hand arrangement, per game (see
     // the "hand order" section below).
-    private let handOrderKey = "fmsg.handorder.v1"
+    private let handOrderKey = "fmsg.handorder.v2"   // v1 was JSON; see the header
     // Round 7: the ONLY per-game fact still persisted — the seat this device holds
     // in a game, scoped by chat (see `SeatRow`/`chatKey`). A fresh key, so a
     // device upgrading from the old `fmsg.games.v2` blob simply starts empty here
     // (harmless: 2p seats re-infer from the payload, and a mid-game 3+ seat re-
     // caches the next time this device seals a move into that game).
-    private let seatsKey = "fmsg.seats.v1"
+    private let seatsKey = "fmsg.seats.v2"           // v1 was JSON; see the header
     // The suite is nil on an unsigned/misconfigured build (no App Group). That is
     // not fatal — the cache simply reports empty and every §6/§7 rule still holds
     // off the payload — so this class NEVER force-unwraps it.
@@ -138,8 +152,7 @@ public final class MessageGameStore {
     public func setSeat(gameId: String, chatKey: String, seat: Int) {
         var map = allSeats()
         map[gameId] = SeatRow(chatKey: chatKey, seat: seat)
-        guard let data = try? JSONEncoder().encode(map) else { return }
-        defaults?.set(data, forKey: seatsKey)
+        persistSeats(map)
     }
 
     /// Drop this device's seat in `gameId` - the LEAVE half of `setSeat`
@@ -150,15 +163,31 @@ public final class MessageGameStore {
     public func forgetSeat(gameId: String) {
         var map = allSeats()
         guard map.removeValue(forKey: gameId) != nil else { return }
-        guard let data = try? JSONEncoder().encode(map) else { return }
-        defaults?.set(data, forKey: seatsKey)
+        persistSeats(map)
     }
 
+    /// fmt(1) n(u16) then n x { gameId(text) chatKey(text) seat(1) }.
     private func allSeats() -> [String: SeatRow] {
-        guard let data = defaults?.data(forKey: seatsKey),
-              let map = try? JSONDecoder().decode([String: SeatRow].self, from: data)
-        else { return [:] }
+        guard let data = defaults?.data(forKey: seatsKey) else { return [:] }
+        var r = PackedReader(data)
+        guard r.u8() == Self.storeFormat, let n = r.u16() else { return [:] }
+        var map: [String: SeatRow] = [:]
+        for _ in 0..<n {
+            guard let gameId = r.text(), let chatKey = r.text(), let seat = r.u8()
+            else { return [:] }   // half a container is no container
+            map[gameId] = SeatRow(chatKey: chatKey, seat: seat)
+        }
         return map
+    }
+
+    private func persistSeats(_ map: [String: SeatRow]) {
+        var w = PackedWriter()
+        w.u8(Self.storeFormat)
+        w.u16(map.count)
+        for (gameId, row) in map {
+            w.text(gameId); w.text(row.chatKey); w.u8(row.seat)
+        }
+        defaults?.set(w.data, forKey: seatsKey)
     }
 
     /// My seat for `gameId` regardless of which chat it was claimed under - the
@@ -209,14 +238,14 @@ public final class MessageGameStore {
     /// re-decoded every time a bubble is opened. In an extension under a hard
     /// memory ceiling that is the shape of a slow degradation.
     ///
-    /// v1 -> v2: the row grew from a bare base64 string to `LatestRow`, for the
-    /// eviction backstop below. Swift's synthesized Codable THROWS on a shape
-    /// change rather than defaulting, so the key is bumped instead of decoded
-    /// around - the same call this file already made at `fmsg.games.v1`. Old
-    /// rows simply become invisible, which is precisely what this mark is
-    /// written to survive (see the paragraph above: a device with no note
-    /// trusts every bubble it opens, the behaviour before round 20).
-    private let latestKey = "fmsg.latest.v2"
+    /// v1 -> v2 grew the row from a bare string to `LatestRow`; v2 -> v3 turned
+    /// the container from JSON into bytes and the chain from base64 into the
+    /// sealed payload itself. A shape change bumps the key rather than being
+    /// decoded around, the call this file has now made three times. Old rows
+    /// simply become invisible, which is precisely what this mark is written to
+    /// survive (see the paragraph above: a device with no note trusts every
+    /// bubble it opens, the behaviour before round 20).
+    private let latestKey = "fmsg.latest.v3"         // v2 was JSON; see the header
 
     /// One game's high-water row.
     ///
@@ -225,10 +254,10 @@ public final class MessageGameStore {
     /// read the chains themselves, never a local clock, because a device clock
     /// is not evidence about a game (two devices disagree, and a cheater's
     /// agrees with nobody).
-    public struct LatestRow: Codable, Equatable, Sendable {
-        public var chain: String            // the payload, base64
+    public struct LatestRow: Equatable, Sendable {
+        public var chain: Data              // the sealed payload, as sealed
         public var updatedAt: TimeInterval  // seconds since 1970; orders eviction only
-        public init(chain: String, updatedAt: TimeInterval) {
+        public init(chain: Data, updatedAt: TimeInterval) {
             self.chain = chain; self.updatedAt = updatedAt
         }
     }
@@ -244,9 +273,7 @@ public final class MessageGameStore {
     static func latestRowKey(gameId: String, chatKey: String) -> String { "\(chatKey)|\(gameId)" }
 
     public func latestChain(gameId: String, chatKey: String) -> Data? {
-        guard let row = allLatest()[Self.latestRowKey(gameId: gameId, chatKey: chatKey)]
-        else { return nil }
-        return Data(base64Encoded: row.chain)
+        allLatest()[Self.latestRowKey(gameId: gameId, chatKey: chatKey)]?.chain
     }
 
     /// Record `payload` as the newest chain seen for this game. THE CALLER has
@@ -255,8 +282,7 @@ public final class MessageGameStore {
     public func setLatestChain(gameId: String, chatKey: String, payload: Data) {
         var map = allLatest()
         map[Self.latestRowKey(gameId: gameId, chatKey: chatKey)] =
-            LatestRow(chain: payload.base64EncodedString(),
-                      updatedAt: Date().timeIntervalSince1970)
+            LatestRow(chain: payload, updatedAt: Date().timeIntervalSince1970)
         evictOldestLatestBeyondCap(&map)
         persistLatest(map)
     }
@@ -331,16 +357,33 @@ public final class MessageGameStore {
 
     // ---- end backstop ----
 
+    /// fmt(1) n(u16) then n x { rowKey(text) updatedAt(f64) chain(blob) }.
+    ///
+    /// THE CHAIN IS THE SEALED PAYLOAD, VERBATIM. It used to be base64 because
+    /// JSON cannot hold bytes; the container can, so the base64 is gone and the
+    /// bytes are the ones the sender sealed. Nothing re-encodes a chain here -
+    /// Rule P compares whole chains, and a chain this store had altered would
+    /// be a different chain.
     private func allLatest() -> [String: LatestRow] {
-        guard let data = defaults?.data(forKey: latestKey),
-              let map = try? JSONDecoder().decode([String: LatestRow].self, from: data)
-        else { return [:] }
+        guard let data = defaults?.data(forKey: latestKey) else { return [:] }
+        var r = PackedReader(data)
+        guard r.u8() == Self.storeFormat, let n = r.u16() else { return [:] }
+        var map: [String: LatestRow] = [:]
+        for _ in 0..<n {
+            guard let key = r.text(), let at = r.f64(), let chain = r.blob() else { return [:] }
+            map[key] = LatestRow(chain: Data(chain), updatedAt: at)
+        }
         return map
     }
 
     private func persistLatest(_ map: [String: LatestRow]) {
-        guard let data = try? JSONEncoder().encode(map) else { return }
-        defaults?.set(data, forKey: latestKey)
+        var w = PackedWriter()
+        w.u8(Self.storeFormat)
+        w.u16(map.count)
+        for (key, row) in map {
+            w.text(key); w.f64(row.updatedAt); w.blob([UInt8](row.chain))
+        }
+        defaults?.set(w.data, forKey: latestKey)
     }
 
     // ROUND-9 (owner): the durable pending ledger (§7.4 Rule R's safety net) is
@@ -441,7 +484,7 @@ public final class MessageGameStore {
     // move); the cap below bounds what abandoned games can leak.
 
     /// One game's stored arrangement. `updatedAt` orders eviction only.
-    public struct HandOrderRow: Codable, Equatable, Sendable {
+    public struct HandOrderRow: Equatable, Sendable {
         public var order: [String]
         public var updatedAt: TimeInterval
         public init(order: [String], updatedAt: TimeInterval) {
@@ -485,15 +528,41 @@ public final class MessageGameStore {
     /// doc above): a finished game's hand no longer needs a preferred order.
     public func clearHandOrder(gameId: String) { setHandOrder([], gameId: gameId) }
 
+    /// fmt(1) n(u16) then n x { gameId(text) updatedAt(f64) order(blob8 of dense
+    /// card ids) }.
+    ///
+    /// A CARD IS ONE BYTE HERE, not an identity string, because that is what
+    /// the row's only consumer wants: this arrangement goes to the kernel
+    /// (anim_hand_laid_out, through HandLayout.laidOut), which takes dense ids.
+    /// An identity the deck does not name is not a card and cannot be in a
+    /// hand, so it is dropped on the way in - the same thing `laidOut` already
+    /// does with one downstream.
     private func allHandOrders() -> [String: HandOrderRow] {
-        guard let data = defaults?.data(forKey: handOrderKey),
-              let map = try? JSONDecoder().decode([String: HandOrderRow].self, from: data)
-        else { return [:] }
+        guard let data = defaults?.data(forKey: handOrderKey) else { return [:] }
+        var r = PackedReader(data)
+        guard r.u8() == Self.storeFormat, let n = r.u16() else { return [:] }
+        var map: [String: HandOrderRow] = [:]
+        for _ in 0..<n {
+            guard let gameId = r.text(), let at = r.f64(), let ids = r.blob8() else { return [:] }
+            map[gameId] = HandOrderRow(order: ids.map(CardSet.identityOf), updatedAt: at)
+        }
         return map
     }
 
     private func persistHandOrders(_ map: [String: HandOrderRow]) {
-        guard let data = try? JSONEncoder().encode(map) else { return }
-        defaults?.set(data, forKey: handOrderKey)
+        var w = PackedWriter()
+        w.u8(Self.storeFormat)
+        w.u16(map.count)
+        for (gameId, row) in map {
+            w.text(gameId); w.f64(row.updatedAt)
+            w.blob8(row.order.compactMap(CardSet.idOf))
+        }
+        defaults?.set(w.data, forKey: handOrderKey)
     }
+
+    /// The leading byte of every container this store writes. Bumping a key is
+    /// how a shape change is handled here (see the file header); this is the
+    /// cheap guard that says an unreadable blob is unreadable rather than
+    /// half-read.
+    static let storeFormat = 1
 }

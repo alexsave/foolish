@@ -55,6 +55,16 @@ public enum CardSet {
     /// The card a dense id names.
     public static func card(_ id: UInt8) -> Card { Card(s: Int(id) / 13, v: Int(id) % 13 + 1) }
 
+    /// The two directions between a dense id and the identity string the board
+    /// keys views on, for a caller that stores ids and speaks identities
+    /// (MessageGameStore's hand arrangement). `idOf` is nil for a string the
+    /// deck does not name; `identityOf` clamps an id off the deck to the last
+    /// one rather than trapping, which no reader of a bounded blob can produce.
+    public static func idOf(_ identity: String) -> UInt8? { byIdentity[identity] }
+    public static func identityOf(_ id: UInt8) -> String {
+        identities[Int(id) < identities.count ? Int(id) : identities.count - 1]
+    }
+
     static func bits(_ ids: Set<String>) -> UInt64 {
         var bits: UInt64 = 0
         for id in ids { if let n = byIdentity[id] { bits |= 1 << UInt64(n) } }
