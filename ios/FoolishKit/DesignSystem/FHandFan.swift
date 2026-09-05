@@ -443,7 +443,7 @@ public struct FHandFan: View {
     ///
     /// The hand's whole TOP ROW lies inside the battle grid. The resting centre
     /// of hand slot 4, (170,150), is a point the player is holding a card at,
-    /// and `BoardDrop.target` answers `.battle(0)` for it. `CardPlay.resolve`
+    /// and `BoardDrop.target` answers `.battle(0)` for it. the kernel's `play_resolve`
     /// then ignores the target entirely for an attacker and returns the plain
     /// attack - the card is played. That is the owner's "it seems to trigger
     /// attack", and it is compact-only because that is the only place the two

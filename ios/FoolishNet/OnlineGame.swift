@@ -18,6 +18,9 @@ import FoolishKit
 public final class OnlineGame: ObservableObject, GameSession {
     @Published public private(set) var view: GameView?
     @Published public private(set) var humanLegal: [Move] = []
+    /// The same menu as the kernel wrote it - what the board's play rules read
+    /// (PlayWire / fio_play_probe). See GameSession.
+    @Published public private(set) var humanLegalPacked: Data = MoveWire.emptyMenu
     @Published public private(set) var actorMask: Int = 0
     @Published public private(set) var thinking: Bool = false
     @Published public private(set) var lastReject: EngineError?
@@ -64,7 +67,10 @@ public final class OnlineGame: ObservableObject, GameSession {
             guard decoded.gameId == gameId else { return }
             apply(decoded)
             if !spectator {
-                humanLegal = (try? await engine.legalFromPacked(decoded.stateBytes, seat: decoded.seat)) ?? []
+                let packed = (try? await engine.legalFromPackedData(decoded.stateBytes,
+                                                                    seat: decoded.seat)) ?? MoveWire.emptyMenu
+                humanLegalPacked = packed
+                humanLegal = MoveWire.decode(packed)
             }
         }
     }

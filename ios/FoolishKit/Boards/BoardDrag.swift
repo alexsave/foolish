@@ -5,8 +5,8 @@
 // board needs the on-screen frames of the battle slots and the hand, all in one
 // coordinate space ("board"). FBattleGrid and FHandFan publish their frames up
 // through these preference keys; `BoardDrop.target` turns a release point into a
-// PlayTarget, and CardPlay resolves that against the kernel menu — exactly like
-// the web's getTableCardUnderCursor + determineGameAction.
+// PlayTarget, and PlayWire has the kernel resolve that against the menu - exactly
+// like the web's getTableCardUnderCursor + determineGameAction.
 
 import SwiftUI
 

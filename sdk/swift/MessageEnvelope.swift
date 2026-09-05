@@ -315,11 +315,25 @@ public actor MessageKernel {
         return MaskedView.decode(data, viewer: viewer)
     }
 
-    /// The legal moves for `seat` on the resident game (kernel-computed). Empty
-    /// on no game or none legal.
+    /// The legal moves for `seat` on the resident game (kernel-computed), as the
+    /// kernel's own bytes. The board's play rules take the menu as an input
+    /// (PlayWire / fio_play_probe), so this is the form that travels.
+    public func residentLegalPacked(seat: Int) -> Data {
+        packedCall({ fio_legal_packed(Int32(seat), $0, $1) }) ?? MoveWire.emptyMenu
+    }
+
+    /// The same menu decoded. Empty on no game or none legal.
     public func residentLegal(seat: Int) -> [Move] {
-        guard let data = packedCall({ fio_legal_packed(Int32(seat), $0, $1) }) else { return [] }
-        return MoveWire.decode(data)
+        MoveWire.decode(residentLegalPacked(seat: seat))
+    }
+
+    /// The moves a HUMAN may make at `seat` on the resident game - the kernel
+    /// menu narrowed by fio_play_human_menu (no `wait`, no `good` over an
+    /// uncovered attack). ONE actor call, so the menu and the table it is
+    /// narrowed against cannot come from two different chains.
+    public func residentHumanMoves(seat: Int) -> [Move] {
+        guard let view = residentView(viewer: seat) else { return [] }
+        return PlayWire.humanMoves(menu: residentLegalPacked(seat: seat), battles: view.battles)
     }
 
     /// Call a packed-bytes-emitting C function into a growing buffer (mirrors
@@ -594,7 +608,10 @@ public actor MessageKernel {
     /// One board, read in one breath - see `readBoard` for why that matters.
     public struct BoardRead: Sendable {
         public let view: GameView?
-        public let legal: [Move]
+        /// The seat's menu as the KERNEL's bytes. Not a decode: a board hands
+        /// these on to the play rules (PlayWire / fio_play_probe), and its own
+        /// [Move] view of them is derived once, downstream.
+        public let legalPacked: Data
         public let stagedAtomsBefore: Int
         /// Seconds the seat must still wait before it may pick up; 0 = now.
         public let hold: Int
@@ -671,7 +688,7 @@ public actor MessageKernel {
         try rebuild(base, replaying: moves, seat: seat)
         let v = residentView(viewer: seat)
         return BoardRead(view: v,
-                         legal: residentLegal(seat: seat),
+                         legalPacked: residentLegalPacked(seat: seat),
                          stagedAtomsBefore: stagedAtomsBefore(),
                          hold: sentAt == 0 ? 0 : pickupHold(seat: seat, sentAt: sentAt, now: now),
                          replayCode: v?.isOver == true ? residentReplayCode() : nil)

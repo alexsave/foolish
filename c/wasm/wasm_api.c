@@ -1114,21 +1114,12 @@ int wasm_export_moves(int start, int max_moves) {
     // worst-case wire move is 2 + 2 x MAX_MOVE_CARDS bytes.
     int fit = (IO_CAP - 4) / (2 + 2 * MAX_MOVE_CARDS);
     if (max_moves > fit) max_moves = fit;
-    unsigned char *q = g_io;
-    int end = start + max_moves;
-    if (end > g_moves.n) end = g_moves.n;
-    if (start > end) start = end;
-    unsigned int n = (unsigned int)(end - start);
-    *q++ = (unsigned char)(n & 0xff);
-    *q++ = (unsigned char)((n >> 8) & 0xff);
-    *q++ = (unsigned char)((n >> 16) & 0xff);
-    *q++ = (unsigned char)((n >> 24) & 0xff);
-    for (int i = start; i < end; i++) {
-        const LegalMove *m = &g_moves.moves[i];
-        *q++ = (unsigned char)m->type;
-        *q++ = (unsigned char)m->n_cards;
-        for (int j = 0; j < m->n_cards; j++) *q++ = wire_from_card(m->cards[j]);
-        for (int j = 0; j < m->n_cards; j++) *q++ = wire_from_card(m->attack_cards[j]);
-    }
-    return (int)(q - g_io);
+    // The layout itself is legal.c's (legal_menu_write) - written down once,
+    // beside the reader the board rules walk it with. The clamp above stays
+    // here because the chunking is this export's own contract with the TS
+    // caller, not a property of the format.
+    const int n = legal_menu_write(&g_moves, start, max_moves, g_io, IO_CAP);
+    if (n >= 0) return n;
+    g_io[0] = g_io[1] = g_io[2] = g_io[3] = 0;   // an empty chunk, never a lie
+    return 4;
 }

@@ -3188,6 +3188,584 @@ static void test_reset_to_lobby(void) {
         CHECK(g.players[i].hand_count == CARDS_PER_PLAYER, "the rematch deals a full hand");
 }
 
+
+// ---------- the menu wire, and the board rules over it ----------------------
+//
+// What a gesture on a board MEANS (legal.c's play_*), lifted out of Swift
+// (ios/FoolishKit/Boards/CardPlay.swift). The menu these read is the client's
+// PUBLISHED one, so the cases build menus by hand exactly as that Swift did -
+// a menu is an input here, not something re-derived.
+//
+// MUTATION-CHECKED, each mutation applied to c/src/legal.c on its own:
+//
+//   play_resolve answers the HAND target instead of refusing it    ->  2 failures
+//   the hand guard applies to the defender alone                   ->  1 failure
+//   .table auto-covers whenever ANY cover matches, not exactly one ->  1 failure
+//   .battle(i) drops the "covers THIS attack" test                 ->  3 failures
+//   .battle(i) accepts an already-covered battle                   ->  1 failure
+//   best cover takes the FIRST coverable index, not the highest    -> 11 failures
+//   best cover drops the trump term from wire_strength             ->  1 failure
+//   best cover breaks ties on the LAST index rather than the first -> 20 failures
+//   play_can_say_good drops the all-covered test                   ->  4 failures
+//   play_can_say_good treats an empty table as fully covered       ->  1 failure
+//   play_human_menu keeps `wait`                                   ->  5 failures
+//   play_human_menu keeps `good` unconditionally                   ->  2 failures
+//   legal_menu_next reads its n_cards byte at q+2 rather than q+1  -> 58 failures
+//   legal_menu_write emits the count BEFORE the entries (so a
+//     capped write leaves a header claiming moves it never wrote)  ->  1 failure
+//   calculate_legal_moves gates MOVE_GOOD on all_covered           ->  4 failures
+//
+// The last one is the mistake this whole lift could have made: gating GOOD in
+// the ENUMERATION rather than on the way to a board. See the note in legal.c.
+
+static LegalMoves g_pm;
+static unsigned char g_pm_wire[1 << 16];
+static int g_pm_len;
+static unsigned char g_pm_table[2 * 64];
+static int g_pm_nb;
+
+static void pm_reset(void) { g_pm.n = 0; g_pm_nb = 0; }
+
+// One menu entry. `attacks` may be NULL (anything but a cover); a cover with
+// fewer attack cards than cover cards pads with LEGAL_WIRE_NONE, which is what
+// a menu that names one attack for a two-card selection looks like on the wire.
+static void pm_add(int type, const Card *cards, int n, const Card *attacks, int n_att) {
+    if (g_pm.n >= MAX_LEGAL_MOVES || n > MAX_MOVE_CARDS) { CHECK(0, "menu fixture overflowed"); return; }
+    LegalMove *m = &g_pm.moves[g_pm.n++];
+    m->type = (int8_t)type;
+    m->n_cards = (int8_t)n;
+    for (int i = 0; i < n; i++) {
+        m->cards[i] = cards[i];
+        m->attack_cards[i] = (attacks && i < n_att) ? attacks[i] : CARD_NONE;
+    }
+}
+
+static void pm_seal(void) {
+    g_pm_len = legal_menu_write(&g_pm, 0, -1, g_pm_wire, (int)sizeof g_pm_wire);
+}
+
+static void tb_add(Card attack, int covered) {
+    g_pm_table[2 * g_pm_nb] = (unsigned char)card_to_id(attack);
+    g_pm_table[2 * g_pm_nb + 1] = covered ? (unsigned char)card_to_id(attack) : LEGAL_WIRE_NONE;
+    g_pm_nb++;
+}
+
+static PlayBoard pm_board(int power_suit, int is_defender) {
+    PlayBoard b;
+    b.menu = g_pm_wire; b.menu_len = g_pm_len;
+    b.table = g_pm_table; b.n_battles = g_pm_nb;
+    b.power_suit = power_suit; b.is_defender = is_defender;
+    return b;
+}
+
+static unsigned char pm_sel[8];
+static int pm_sel_n;
+
+static void sel_set(const Card *cards, int n) {
+    pm_sel_n = n;
+    for (int i = 0; i < n; i++) pm_sel[i] = (unsigned char)card_to_id(cards[i]);
+}
+
+// The menu wire is only worth having if what the writer put down is what the
+// reader walks back, entry for entry.
+static void test_menu_wire_round_trips(void) {
+    pm_reset();
+    Card a1[1] = { { SUIT_SPADES, 6 } };
+    Card a2[2] = { { SUIT_SPADES, 6 }, { SUIT_HEARTS, 6 } };
+    Card cov[1] = { { SUIT_CLUBS, 13 } };
+    Card att[1] = { { SUIT_HEARTS, 9 } };
+    pm_add(MOVE_ATTACK, a1, 1, 0, 0);
+    pm_add(MOVE_ATTACK, a2, 2, 0, 0);
+    pm_add(MOVE_COVER, cov, 1, att, 1);
+    pm_add(MOVE_PICKUP, 0, 0, 0, 0);
+    pm_seal();
+    CHECK(g_pm_len > 4, "a menu of four moves writes something");
+
+    MenuWalk w;
+    MenuMove m;
+    CHECK(legal_menu_begin(&w, g_pm_wire, g_pm_len) == 4, "the header counts the entries");
+    CHECK(legal_menu_next(&w, &m) == 1 && m.type == MOVE_ATTACK && m.n_cards == 1
+          && m.cards[0] == card_to_id(a1[0]), "entry 0 is the one-card attack");
+    CHECK(w.index == 0, "and the walk names its index");
+    CHECK(legal_menu_next(&w, &m) == 1 && m.n_cards == 2
+          && m.cards[0] == card_to_id(a2[0]) && m.cards[1] == card_to_id(a2[1]),
+          "entry 1 is the two-card attack, in order");
+    CHECK(legal_menu_next(&w, &m) == 1 && m.type == MOVE_COVER
+          && m.attacks[0] == card_to_id(att[0]), "entry 2 is the cover, with its attack");
+    CHECK(legal_menu_next(&w, &m) == 1 && m.type == MOVE_PICKUP && m.n_cards == 0,
+          "entry 3 is the pickup");
+    CHECK(legal_menu_next(&w, &m) == 0, "and then the menu ends");
+
+    // A buffer cut short is refused rather than half-walked.
+    MenuWalk t;
+    legal_menu_begin(&t, g_pm_wire, g_pm_len - 1);
+    int rc = 1, seen = 0;
+    while ((rc = legal_menu_next(&t, &m)) == 1) seen++;
+    CHECK(rc == LEGAL_WIRE_EPARSE, "a truncated menu is a parse error, not a short menu");
+    CHECK(seen < 4, "and it does not hand back the entry it could not read");
+
+    // A cap that cannot hold the whole menu leaves NO header claiming it did.
+    unsigned char small[8];
+    memset(small, 0xAB, sizeof small);
+    CHECK(legal_menu_write(&g_pm, 0, -1, small, (int)sizeof small) == LEGAL_WIRE_ECAP,
+          "a menu that will not fit is refused");
+    MenuWalk s;
+    CHECK(legal_menu_begin(&s, small, (int)sizeof small) != 4,
+          "and the refused write left no header promising four moves");
+}
+
+// The writer is the one the shipped bridges use, so a chunk of it has to be a
+// well-formed menu of exactly the moves asked for.
+static void test_menu_wire_writes_a_chunk(void) {
+    pm_reset();
+    Card c[1] = { { SUIT_SPADES, 6 } };
+    for (int i = 0; i < 5; i++) { c[0].value = (int8_t)(6 + i); pm_add(MOVE_ATTACK, c, 1, 0, 0); }
+    unsigned char buf[64];
+    int n = legal_menu_write(&g_pm, 1, 2, buf, (int)sizeof buf);
+    CHECK(n > 0, "a chunk writes");
+    MenuWalk w;
+    MenuMove m;
+    CHECK(legal_menu_begin(&w, buf, n) == 2, "a chunk of 2 counts 2");
+    CHECK(legal_menu_next(&w, &m) == 1 && m.cards[0] == card_to_id((Card){ SUIT_SPADES, 7 }),
+          "and starts at the requested index");
+    // Past the end is an empty chunk, not a wrap or a read off the array.
+    CHECK(legal_menu_begin(&w, buf, legal_menu_write(&g_pm, 99, 3, buf, (int)sizeof buf)) == 0,
+          "a chunk starting past the last move is empty");
+}
+
+// ---------- play_resolve ----------------------------------------------------
+
+static void test_play_resolve_attacker(void) {
+    Card six_s = { SUIT_SPADES, 6 }, six_h = { SUIT_HEARTS, 6 };
+    Card pair[2] = { six_s, six_h };
+    pm_reset();
+    pm_add(MOVE_ATTACK, &six_s, 1, 0, 0);
+    pm_add(MOVE_ATTACK, pair, 2, 0, 0);
+    pm_seal();
+    PlayBoard b = pm_board(SUIT_DIAMONDS, 0);
+
+    sel_set(&six_s, 1);
+    CHECK(play_resolve(&b, pm_sel, pm_sel_n, PLAY_TARGET_TABLE) == 0,
+          "a single card on open table is the single attack");
+
+    // A selection is a SET: the order it was tapped in must not matter.
+    Card reversed[2] = { six_h, six_s };
+    sel_set(reversed, 2);
+    CHECK(play_resolve(&b, pm_sel, pm_sel_n, PLAY_TARGET_TABLE) == 1,
+          "the two-card attack matches whichever order the cards were selected in");
+
+    Card ten_c = { SUIT_CLUBS, 10 };
+    sel_set(&ten_c, 1);
+    CHECK(play_resolve(&b, pm_sel, pm_sel_n, PLAY_TARGET_TABLE) == -1,
+          "a card no menu entry names resolves to nothing");
+    CHECK(play_resolve(&b, pm_sel, 0, PLAY_TARGET_TABLE) == -1, "and an empty selection to nothing");
+}
+
+// A DROP BACK IN THE HAND IS A REARRANGE, for the attacker as much as the
+// defender. The attacker branch reads only the cards, so a resolver that did
+// not answer the hand first would hand back a perfectly good attack for it.
+static void test_play_resolve_refuses_the_hand_for_both_roles(void) {
+    Card six = { SUIT_SPADES, 6 }, ace = { SUIT_SPADES, 13 }, nine = { SUIT_SPADES, 9 };
+    pm_reset();
+    pm_add(MOVE_ATTACK, &six, 1, 0, 0);
+    pm_seal();
+    PlayBoard att = pm_board(SUIT_DIAMONDS, 0);
+    sel_set(&six, 1);
+    CHECK(play_resolve(&att, pm_sel, pm_sel_n, PLAY_TARGET_HAND) == -1,
+          "an attacker dropping back in the hand plays nothing");
+    CHECK(play_resolve(&att, pm_sel, pm_sel_n, PLAY_TARGET_TABLE) == 0,
+          "…while the same cards on the table still attack");
+
+    pm_reset();
+    tb_add(nine, 0);
+    pm_add(MOVE_COVER, &ace, 1, &nine, 1);
+    pm_seal();
+    PlayBoard def = pm_board(SUIT_DIAMONDS, 1);
+    sel_set(&ace, 1);
+    CHECK(play_resolve(&def, pm_sel, pm_sel_n, PLAY_TARGET_HAND) == -1,
+          "and a defender dropping back in the hand plays nothing");
+    CHECK(play_resolve(&def, pm_sel, pm_sel_n, 0) == 0, "…while the same drop on the battle covers");
+}
+
+static void test_play_resolve_defender_onto_a_battle(void) {
+    Card nine = { SUIT_SPADES, 9 }, ten = { SUIT_SPADES, 10 }, ace = { SUIT_SPADES, 13 };
+    pm_reset();
+    tb_add(nine, 0);
+    tb_add(ten, 1);              // already covered
+    pm_add(MOVE_COVER, &ace, 1, &nine, 1);
+    // A menu entry aimed at the COVERED battle too, so the refusal below has to
+    // come from the table rather than from the menu happening not to offer it.
+    pm_add(MOVE_COVER, &ace, 1, &ten, 1);
+    pm_seal();
+    PlayBoard b = pm_board(SUIT_DIAMONDS, 1);
+    sel_set(&ace, 1);
+    CHECK(play_resolve(&b, pm_sel, pm_sel_n, 0) == 0, "a drop on the uncovered attack covers it");
+    CHECK(play_resolve(&b, pm_sel, pm_sel_n, 1) == -1, "a drop on an already-covered battle is nothing");
+    CHECK(play_resolve(&b, pm_sel, pm_sel_n, 2) == -1, "and a drop on a battle that is not there");
+}
+
+// A drop on a named battle only plays a cover that covers THAT attack - the
+// menu may hold a cover with the same cards aimed somewhere else.
+static void test_play_resolve_battle_target_names_its_attack(void) {
+    Card nine = { SUIT_SPADES, 9 }, six = { SUIT_HEARTS, 6 }, ace = { SUIT_DIAMONDS, 13 };
+    pm_reset();
+    tb_add(nine, 0);
+    tb_add(six, 0);
+    pm_add(MOVE_COVER, &ace, 1, &six, 1);     // this ace covers the SIX on the menu
+    pm_seal();
+    PlayBoard b = pm_board(SUIT_DIAMONDS, 1);
+    sel_set(&ace, 1);
+    CHECK(play_resolve(&b, pm_sel, pm_sel_n, 1) == 0, "the battle the menu entry covers resolves");
+    CHECK(play_resolve(&b, pm_sel, pm_sel_n, 0) == -1,
+          "the battle it does not cover resolves to nothing, even with the same cards");
+}
+
+static void test_play_resolve_open_table_prefers_a_pass(void) {
+    Card nine = { SUIT_SPADES, 9 }, nine_h = { SUIT_HEARTS, 9 };
+    pm_reset();
+    tb_add(nine, 0);
+    pm_add(MOVE_COVER, &nine_h, 1, &nine, 1);
+    pm_add(MOVE_PASS, &nine_h, 1, 0, 0);
+    pm_seal();
+    PlayBoard b = pm_board(SUIT_HEARTS, 1);
+    sel_set(&nine_h, 1);
+    CHECK(play_resolve(&b, pm_sel, pm_sel_n, PLAY_TARGET_TABLE) == 1,
+          "open table bounces the bout when a pass is legal with these cards");
+}
+
+static void test_play_resolve_open_table_auto_covers_only_when_unambiguous(void) {
+    Card nine = { SUIT_SPADES, 9 }, ten = { SUIT_SPADES, 10 }, ace = { SUIT_SPADES, 13 };
+    pm_reset();
+    tb_add(nine, 0);
+    pm_add(MOVE_COVER, &ace, 1, &nine, 1);
+    pm_seal();
+    PlayBoard one = pm_board(SUIT_DIAMONDS, 1);
+    sel_set(&ace, 1);
+    CHECK(play_resolve(&one, pm_sel, pm_sel_n, PLAY_TARGET_TABLE) == 0,
+          "one legal cover with this selection auto-targets");
+
+    pm_reset();
+    tb_add(nine, 0);
+    tb_add(ten, 0);
+    pm_add(MOVE_COVER, &ace, 1, &nine, 1);
+    pm_add(MOVE_COVER, &ace, 1, &ten, 1);
+    pm_seal();
+    PlayBoard two = pm_board(SUIT_DIAMONDS, 1);
+    CHECK(play_resolve(&two, pm_sel, pm_sel_n, PLAY_TARGET_TABLE) == -1,
+          "two of them is a question the drop cannot answer, so it plays nothing");
+}
+
+// ---------- coverable battles ----------------------------------------------
+
+static void test_play_coverable_battles(void) {
+    Card six = { SUIT_SPADES, 5 }, king = { SUIT_HEARTS, 12 }, nine = { SUIT_DIAMONDS, 8 };
+    Card ace = { SUIT_CLUBS, 13 };
+    pm_reset();
+    tb_add(six, 0); tb_add(king, 0); tb_add(nine, 0);
+    pm_add(MOVE_COVER, &ace, 1, &six, 1);
+    pm_add(MOVE_COVER, &ace, 1, &king, 1);
+    pm_add(MOVE_COVER, &ace, 1, &nine, 1);
+    pm_seal();
+    PlayBoard b = pm_board(SUIT_CLUBS, 1);
+    sel_set(&ace, 1);
+    CHECK(play_coverable_battles(&b, pm_sel, pm_sel_n) == 0x7,
+          "every coverable attack is offered, so the player may aim at any of them");
+    CHECK(play_coverable_battles(&b, pm_sel, 0) == 0, "an empty selection covers nothing");
+
+    // A covered battle is never a drop target, whatever the menu says.
+    pm_reset();
+    tb_add(six, 1); tb_add(king, 0);
+    pm_add(MOVE_COVER, &ace, 1, &six, 1);
+    pm_add(MOVE_COVER, &ace, 1, &king, 1);
+    pm_seal();
+    PlayBoard c = pm_board(SUIT_CLUBS, 1);
+    CHECK(play_coverable_battles(&c, pm_sel, pm_sel_n) == 0x2,
+          "a battle already covered is not a target");
+}
+
+// ---------- the cover BUTTON's choice ---------------------------------------
+//
+// Owner, round 16: "cover the highest value card that can be covered by that
+// card. Trump is higher than non trump. If there are multiple highest value
+// cards that can be covered, just choose one." Each case asserts on the CARD
+// that ends up covered - an index only means something relative to a table
+// order, and which attack it chose is the whole question.
+
+static Card best_covered(const Card *cards, int n, const Card *attacks, int n_att,
+                         const int *coverable, int n_cov, int trump) {
+    pm_reset();
+    for (int i = 0; i < n_att; i++) tb_add(attacks[i], 0);
+    for (int i = 0; i < n_cov; i++) pm_add(MOVE_COVER, cards, n, &attacks[coverable[i]], 1);
+    pm_seal();
+    PlayBoard b = pm_board(trump, 1);
+    sel_set(cards, n);
+    const int idx = play_best_cover_target(&b, pm_sel, pm_sel_n);
+    return idx < 0 ? CARD_NONE : attacks[idx];
+}
+
+static void test_best_cover_takes_the_highest_it_can_beat(void) {
+    Card ace[1] = { { SUIT_CLUBS, 13 } };
+    Card attacks[3] = { { SUIT_SPADES, 5 }, { SUIT_HEARTS, 12 }, { SUIT_DIAMONDS, 8 } };
+    int all[3] = { 0, 1, 2 };
+    CHECK(card_eq(best_covered(ace, 1, attacks, 3, all, 3, SUIT_CLUBS), attacks[1]),
+          "did not spend the ace on the king");
+    // The old behaviour, pinned as a change: the leftmost coverable is index 0.
+    CHECK(!card_eq(best_covered(ace, 1, attacks, 3, all, 3, SUIT_CLUBS), attacks[0]),
+          "the choice is no longer just the leftmost attack");
+}
+
+static void test_best_cover_trump_outranks_a_bigger_plain_card(void) {
+    Card trump_ace[1] = { { SUIT_SPADES, 13 } };
+    Card attacks[2] = { { SUIT_HEARTS, 13 }, { SUIT_SPADES, 5 } };   // A-heart, 6-spade
+    int all[2] = { 0, 1 };
+    CHECK(card_eq(best_covered(trump_ace, 1, attacks, 2, all, 2, SUIT_SPADES), attacks[1]),
+          "an ace off-suit beat a trump six");
+    // …and the rule follows the TRUMP SUIT, not whichever suit is listed first.
+    Card plain_ace[1] = { { SUIT_CLUBS, 13 } };
+    CHECK(card_eq(best_covered(plain_ace, 1, attacks, 2, all, 2, SUIT_CLUBS), attacks[0]),
+          "with clubs trump, neither attack is a trump and the ace is the highest");
+}
+
+static void test_best_cover_only_considers_what_the_menu_offers(void) {
+    Card nine[1] = { { SUIT_CLUBS, 8 } };
+    Card attacks[3] = { { SUIT_HEARTS, 6 }, { SUIT_SPADES, 13 }, { SUIT_HEARTS, 7 } };
+    int cov[2] = { 0, 2 };   // the ace is on the table but not on the menu
+    CHECK(card_eq(best_covered(nine, 1, attacks, 3, cov, 2, SUIT_DIAMONDS), attacks[2]),
+          "chose an attack that was not on the legal menu");
+    CHECK(card_is_none(best_covered(nine, 1, attacks, 3, cov, 0, SUIT_DIAMONDS)),
+          "a selection that covers nothing chooses nothing");
+}
+
+// A tie resolves to the leftmost and keeps resolving there. The owner allows
+// any of them; a choice that moved between two identical taps reads as a bug.
+static void test_best_cover_breaks_ties_the_same_way_every_time(void) {
+    Card card[1] = { { SUIT_SPADES, 13 } };
+    Card attacks[3] = { { SUIT_HEARTS, 9 }, { SUIT_CLUBS, 9 }, { SUIT_DIAMONDS, 9 } };
+    int all[3] = { 0, 1, 2 };
+    for (int i = 0; i < 20; i++)
+        CHECK(card_eq(best_covered(card, 1, attacks, 3, all, 3, SUIT_SPADES), attacks[0]),
+              "the same table chose a different attack on a second tap");
+}
+
+// The choice must not depend on the order the attackers happened to throw in.
+static void test_best_cover_ignores_table_order(void) {
+    Card ace[1] = { { SUIT_CLUBS, 13 } };
+    Card base[3] = { { SUIT_SPADES, 5 }, { SUIT_HEARTS, 12 }, { SUIT_DIAMONDS, 8 } };
+    const int perms[6][3] = { {0,1,2}, {2,1,0}, {1,0,2}, {2,0,1}, {0,2,1}, {1,2,0} };
+    for (int p = 0; p < 6; p++) {
+        Card ordered[3];
+        for (int i = 0; i < 3; i++) ordered[i] = base[perms[p][i]];
+        int all[3] = { 0, 1, 2 };
+        CHECK(card_eq(best_covered(ace, 1, ordered, 3, all, 3, SUIT_CLUBS), base[1]),
+              "a permutation of the table covered something else");
+    }
+}
+
+// Whatever it picks has to survive the resolver the tap then runs it through.
+static void test_best_cover_target_resolves_to_a_legal_cover(void) {
+    Card ace[1] = { { SUIT_CLUBS, 13 } };
+    Card attacks[3] = { { SUIT_SPADES, 5 }, { SUIT_HEARTS, 12 }, { SUIT_DIAMONDS, 8 } };
+    pm_reset();
+    for (int i = 0; i < 3; i++) tb_add(attacks[i], 0);
+    for (int i = 0; i < 3; i++) pm_add(MOVE_COVER, ace, 1, &attacks[i], 1);
+    pm_seal();
+    PlayBoard b = pm_board(SUIT_CLUBS, 1);
+    sel_set(ace, 1);
+    const int i = play_best_cover_target(&b, pm_sel, pm_sel_n);
+    CHECK(i == 1, "the button aims at the king");
+    CHECK(play_resolve(&b, pm_sel, pm_sel_n, i) == 1,
+          "and the tap that follows plays the cover it aimed at");
+}
+
+// A multi-card cover is chosen the same way. The menu may name fewer attack
+// cards than cover cards; the padding must never read as a real attack.
+static void test_best_cover_multi_card_selection(void) {
+    Card cards[2] = { { SUIT_CLUBS, 13 }, { SUIT_CLUBS, 12 } };
+    Card attacks[2] = { { SUIT_HEARTS, 5 }, { SUIT_HEARTS, 11 } };
+    pm_reset();
+    tb_add(attacks[0], 0); tb_add(attacks[1], 0);
+    pm_add(MOVE_COVER, cards, 2, &attacks[0], 1);
+    pm_add(MOVE_COVER, cards, 2, &attacks[1], 1);
+    pm_seal();
+    PlayBoard b = pm_board(SUIT_SPADES, 1);
+    sel_set(cards, 2);
+    CHECK(play_best_cover_target(&b, pm_sel, pm_sel_n) == 1, "did not aim at the jack");
+    CHECK(play_resolve(&b, pm_sel, pm_sel_n, 1) == 1, "and the jack is what it plays");
+}
+
+// ---------- the buttons -----------------------------------------------------
+
+static void test_play_has_verb(void) {
+    Card six = { SUIT_SPADES, 6 }, other = { SUIT_HEARTS, 10 };
+    pm_reset();
+    pm_add(MOVE_ATTACK, &six, 1, 0, 0);
+    pm_add(MOVE_PASS, &other, 1, 0, 0);
+    pm_seal();
+    PlayBoard b = pm_board(SUIT_DIAMONDS, 0);
+    sel_set(&six, 1);
+    CHECK(play_has_verb(&b, MOVE_ATTACK, pm_sel, pm_sel_n), "Attack lights for a selection it can attack with");
+    CHECK(!play_has_verb(&b, MOVE_PASS, pm_sel, pm_sel_n), "…and Pass does not");
+    sel_set(&other, 1);
+    CHECK(play_has_verb(&b, MOVE_PASS, pm_sel, pm_sel_n), "Pass lights for the card the menu passes with");
+    CHECK(!play_has_verb(&b, MOVE_ATTACK, pm_sel, 0), "an empty selection lights nothing");
+}
+
+// THE UI RULE THE KERNEL MENU CONTRADICTS. The menu always offers GOOD (it is
+// how an attacker leaves the bot loop's eligible set); a human may not end a
+// bout over an attack that is still uncovered.
+static void test_play_can_say_good_only_over_a_covered_table(void) {
+    Card nine = { SUIT_SPADES, 9 };
+    pm_reset();
+    tb_add(nine, 0);
+    pm_add(MOVE_GOOD, 0, 0, 0, 0);
+    pm_seal();
+    PlayBoard uncovered = pm_board(SUIT_DIAMONDS, 0);
+    CHECK(!play_can_say_good(&uncovered), "an attacker cannot say good over an uncovered attack");
+
+    pm_reset();
+    tb_add(nine, 1);
+    pm_add(MOVE_GOOD, 0, 0, 0, 0);
+    pm_seal();
+    PlayBoard covered = pm_board(SUIT_DIAMONDS, 0);
+    CHECK(play_can_say_good(&covered), "…and can once every attack is covered");
+
+    pm_reset();
+    pm_add(MOVE_GOOD, 0, 0, 0, 0);
+    pm_seal();
+    PlayBoard empty = pm_board(SUIT_DIAMONDS, 0);
+    CHECK(!play_can_say_good(&empty), "an empty table is not a bout to finish");
+
+    pm_reset();
+    tb_add(nine, 1);
+    pm_add(MOVE_PICKUP, 0, 0, 0, 0);
+    pm_seal();
+    PlayBoard no_good = pm_board(SUIT_DIAMONDS, 1);
+    CHECK(!play_can_say_good(&no_good), "and legality still comes from the menu");
+}
+
+static int human_menu_types(const PlayBoard *b, unsigned char *out, int cap, int *n_out) {
+    const int n = play_human_menu(b, out, cap);
+    MenuWalk w;
+    MenuMove m;
+    int types = 0;
+    *n_out = 0;
+    if (n < 0) return -1;
+    legal_menu_begin(&w, out, n);
+    while (legal_menu_next(&w, &m) == 1) { types |= 1 << m.type; (*n_out)++; }
+    return types;
+}
+
+static void test_play_human_menu_drops_wait_and_gates_good(void) {
+    unsigned char out[512];
+    int n = 0;
+    Card nine = { SUIT_SPADES, 9 }, queen = { SUIT_SPADES, 11 };
+
+    pm_reset();
+    tb_add(nine, 0);
+    pm_add(MOVE_GOOD, 0, 0, 0, 0);
+    pm_add(MOVE_WAIT, 0, 0, 0, 0);
+    pm_add(MOVE_PICKUP, 0, 0, 0, 0);
+    pm_add(MOVE_COVER, &queen, 1, &nine, 1);
+    pm_seal();
+    PlayBoard uncovered = pm_board(SUIT_DIAMONDS, 1);
+    int types = human_menu_types(&uncovered, out, (int)sizeof out, &n);
+    CHECK(types == ((1 << MOVE_PICKUP) | (1 << MOVE_COVER)),
+          "wait is never a move and good is withheld over an uncovered attack");
+    CHECK(n == 2, "…and everything else survives the gate untouched");
+
+    pm_reset();
+    tb_add(nine, 1);
+    pm_add(MOVE_GOOD, 0, 0, 0, 0);
+    pm_add(MOVE_WAIT, 0, 0, 0, 0);
+    pm_seal();
+    PlayBoard covered = pm_board(SUIT_DIAMONDS, 0);
+    types = human_menu_types(&covered, out, (int)sizeof out, &n);
+    CHECK(types == (1 << MOVE_GOOD) && n == 1, "a fully covered table offers good and nothing else");
+
+    pm_reset();
+    pm_add(MOVE_WAIT, 0, 0, 0, 0);
+    pm_seal();
+    PlayBoard nothing = pm_board(SUIT_DIAMONDS, 0);
+    types = human_menu_types(&nothing, out, (int)sizeof out, &n);
+    CHECK(types == 0 && n == 0, "a seat whose only offer is wait may do nothing");
+
+    // The move a human menu keeps must still be the move the kernel enumerated,
+    // cards and all - a filter that reshaped an entry would play the wrong card.
+    pm_reset();
+    tb_add(nine, 0);
+    pm_add(MOVE_WAIT, 0, 0, 0, 0);
+    pm_add(MOVE_COVER, &queen, 1, &nine, 1);
+    pm_seal();
+    PlayBoard one = pm_board(SUIT_DIAMONDS, 1);
+    const int len = play_human_menu(&one, out, (int)sizeof out);
+    MenuWalk w;
+    MenuMove m;
+    legal_menu_begin(&w, out, len);
+    CHECK(legal_menu_next(&w, &m) == 1 && m.type == MOVE_COVER && m.n_cards == 1
+          && m.cards[0] == card_to_id(queen) && m.attacks[0] == card_to_id(nine),
+          "the survivor crosses the filter byte for byte");
+}
+
+// ---------- GOOD stays in the ENUMERATED menu -------------------------------
+//
+// The narrowing above is a rule about a board, and it must never migrate into
+// calculate_legal_moves. Saying good is how a non-defender leaves the bot
+// loop's eligible set (good_players_mask -> should_bot_act ->
+// bot_drive_eligible_mask); gate GOOD on all-covered there and an attacker
+// holding a legal throw-in could never decline one, so it would keep attacking
+// until it ran out of cards and stay eligible every cycle for as long as that
+// lasted.
+static void test_good_is_always_enumerated_for_an_attacker(void) {
+    Game g;
+    memset(&g, 0, sizeof g);
+    g.status = GAME_STATUS_PLAYING;
+    g.num_players = 3;
+    g.power_suit = SUIT_DIAMONDS;
+    g.first_attacker = 0;
+    g.defender = 1;
+    g.deck_count = 10;
+    for (int i = 0; i < 3; i++) g.players[i].status = PLAYER_STATUS_IN;
+
+    // An UNCOVERED attack on the table, and seat 2 holding a legal throw-in of
+    // the same rank - the exact state a human board hides GOOD in.
+    g.num_battles = 1;
+    g.table_battles[0].attack = (Card){ SUIT_SPADES, 9 };
+    g.table_battles[0].defense = CARD_NONE;
+    g.players[0].hand[0] = (Card){ SUIT_HEARTS, 9 };  g.players[0].hand_count = 1;
+    // The defender needs room to take everything on the table plus the
+    // throw-in, or the enumerator drops the attack and the case tests nothing.
+    for (int i = 0; i < 5; i++) g.players[1].hand[i] = (Card){ SUIT_SPADES, (int8_t)(8 + i) };
+    g.players[1].hand_count = 5;
+    g.players[2].hand[0] = (Card){ SUIT_CLUBS, 9 };   g.players[2].hand_count = 1;
+
+    static LegalMoves lm;
+    calculate_legal_moves(&g, 2, &lm);
+    int has_good = 0, has_attack = 0;
+    for (int i = 0; i < lm.n; i++) {
+        if (lm.moves[i].type == MOVE_GOOD) has_good = 1;
+        if (lm.moves[i].type == MOVE_ATTACK) has_attack = 1;
+    }
+    CHECK(has_attack, "the throw-in is legal");
+    CHECK(has_good, "and so is declining it - GOOD is in the menu over an uncovered table");
+
+    // …which is what lets the seat leave the drive loop.
+    CHECK((bot_drive_eligible_mask(&g, 0) & (1u << 2)) != 0,
+          "an attacker that has not said good is eligible every cycle");
+    g.good_players_mask |= (1u << 2);
+    CHECK((bot_drive_eligible_mask(&g, 0) & (1u << 2)) == 0,
+          "and saying good is what drops it out of the eligible set");
+
+    // The board's own narrowing of that same menu still hides it.
+    unsigned char wire[4096];
+    const int len = legal_menu_write(&lm, 0, -1, wire, (int)sizeof wire);
+    unsigned char table[2] = { (unsigned char)card_to_id(g.table_battles[0].attack), LEGAL_WIRE_NONE };
+    PlayBoard b;
+    b.menu = wire; b.menu_len = len; b.table = table; b.n_battles = 1;
+    b.power_suit = SUIT_DIAMONDS; b.is_defender = 0;
+    CHECK(!play_can_say_good(&b),
+          "the human gate is the only place the same menu loses its GOOD");
+}
+
 int main(void) {
     test_reset_to_lobby();
     test_replay_steps_rebuilds_the_played_game();
@@ -3243,6 +3821,26 @@ int main(void) {
     test_unambiguous_cover_more_cards_than_attacks();
     test_unambiguous_cover_trump_over_plain();
     test_unambiguous_cover_degenerate_inputs();
+    test_menu_wire_round_trips();
+    test_menu_wire_writes_a_chunk();
+    test_play_resolve_attacker();
+    test_play_resolve_refuses_the_hand_for_both_roles();
+    test_play_resolve_defender_onto_a_battle();
+    test_play_resolve_battle_target_names_its_attack();
+    test_play_resolve_open_table_prefers_a_pass();
+    test_play_resolve_open_table_auto_covers_only_when_unambiguous();
+    test_play_coverable_battles();
+    test_best_cover_takes_the_highest_it_can_beat();
+    test_best_cover_trump_outranks_a_bigger_plain_card();
+    test_best_cover_only_considers_what_the_menu_offers();
+    test_best_cover_breaks_ties_the_same_way_every_time();
+    test_best_cover_ignores_table_order();
+    test_best_cover_target_resolves_to_a_legal_cover();
+    test_best_cover_multi_card_selection();
+    test_play_has_verb();
+    test_play_can_say_good_only_over_a_covered_table();
+    test_play_human_menu_drops_wait_and_gates_good();
+    test_good_is_always_enumerated_for_an_attacker();
     test_full_game_random();
     test_full_game_handwritten();
     test_full_game_3p_handwritten();

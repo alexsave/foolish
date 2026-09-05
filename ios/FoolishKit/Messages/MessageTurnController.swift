@@ -23,6 +23,17 @@ import SwiftUI
 @MainActor
 public final class MessageTurnController: ObservableObject {
     @Published public private(set) var view: GameView?
+    /// THE MENU, as the kernel wrote it. This is the published one - every play
+    /// the board makes is the kernel's answer over these bytes (PlayWire /
+    /// fio_play_probe) - and `legal` below is nothing but its decode, so the
+    /// rules that narrow it (the held settlement in `publish`) are applied to
+    /// one value and cannot leave the two describing different menus.
+    @Published public private(set) var legalPacked: Data = MoveWire.emptyMenu {
+        didSet { legal = MoveWire.decode(legalPacked) }
+    }
+
+    /// The same menu decoded, for the callers that read moves rather than ask
+    /// questions about a selection. Assigned ONLY by `legalPacked` above.
     @Published public private(set) var legal: [Move] = []
     /// ROUND 16 — seconds this seat must still wait before it may pick up; 0
     /// means now. The board hides Take while it is non-zero and `apply` refuses
@@ -932,7 +943,7 @@ public final class MessageTurnController: ObservableObject {
     ///
     /// The board never asks this to decide what a player may DO - the kernel
     /// simply stops offering a transfer, so the Pass button and the drag-to-pass
-    /// disappear on their own (CardPlay reads `legal` for both). It is here for
+    /// disappear on their own (the board's kernel probe reads `legalPacked` for both). It is here for
     /// the one thing the legal menu cannot say: which RULES to teach. A
     /// podkidnoy player opening How to play must not be shown a page about
     /// passing.
@@ -1041,7 +1052,6 @@ public final class MessageTurnController: ObservableObject {
             return
         }
         let v = read.view
-        let l = read.legal
         let staged = read.stagedAtomsBefore
         let held = read.hold
         // The replay code comes back with the view rather than being asked for
@@ -1078,7 +1088,7 @@ public final class MessageTurnController: ObservableObject {
         // next first attacker, so without this they could pick that attack out
         // of a hand they are not supposed to have seen yet, all still staged.
         view = heldView ?? v
-        legal = heldSettlement.isEmpty ? l : []
+        legalPacked = heldSettlement.isEmpty ? read.legalPacked : MoveWire.emptyMenu
         if code != replayCode { replayCode = code }
         if held != pickupHold { pickupHold = held }
         armHoldTicker(held)

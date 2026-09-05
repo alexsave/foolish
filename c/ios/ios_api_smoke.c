@@ -627,6 +627,55 @@ int main(void) {
     if (fio_legal_packed(0, buf, sizeof(buf)) < 0) { printf("FAIL legal\n"); return 1; }
     printf("legal[0] packed OK\n");
 
+    // THE BOARD RULES, over the bytes a board would hold (fio_play_probe /
+    // fio_play_human_menu). Portable proof that the crossing packs what the
+    // Swift decoder reads: the flags byte, the -1 cover target, the coverable
+    // mask and a one-entry move wire. The rules themselves are pinned in
+    // tests/tests.c; this is the layout.
+    //
+    // MUTATION-CHECKED against c/ios/ios_api.c, one at a time: the move wire
+    // written a byte early, the attack flag written in the pass bit, the
+    // coverable mask written a byte into the cover-target slot, and the probe
+    // answering the HAND target as if it were the open table. Each fails here.
+    {
+        // The opening actor, whichever seat holds the lowest trump.
+        int actor = -1, m0 = fio_actor_mask();
+        for (int s = 0; s < 4; s++) if (m0 & (1 << s)) { actor = s; break; }
+        if (actor < 0) { printf("FAIL probe fixture: nobody may open\n"); return 1; }
+        int lrc = fio_legal_packed(actor, buf, sizeof(buf));
+        if (lrc < 0) { printf("FAIL legal for probe\n"); return 1; }
+        unsigned char menu[1 << 16];
+        memcpy(menu, buf, (size_t)lrc);
+        // The opening table is empty, so the seat that acts first has attacks
+        // on its menu; its own cards are the selection that resolves to one.
+        int q = 4, at = -1;
+        while (q + 2 <= lrc) {
+            if (menu[q] == 0 /* MOVE_ATTACK */) { at = q; break; }
+            q += 2 + 2 * menu[q + 1];
+        }
+        if (at < 0) { printf("FAIL probe fixture: no attack on the opening menu\n"); return 1; }
+        const int n_sel = menu[at + 1];
+        unsigned char probe[512];
+        int prc = fio_play_probe(menu, lrc, 0, 0, 0, 0, menu + at + 2, n_sel,
+                                 FIO_PLAY_TARGET_TABLE, (char *)probe, sizeof probe);
+        if (prc < FIO_PLAY_PROBE_HEAD + 4) { printf("FAIL probe rc=%d\n", prc); return 1; }
+        if ((probe[0] & 1) == 0) { printf("FAIL probe: the attack was not offered\n"); return 1; }
+        if ((signed char)probe[1] != -1) { printf("FAIL probe: a cover target on an empty table\n"); return 1; }
+        for (int i = 0; i < 8; i++)
+            if (probe[2 + i]) { printf("FAIL probe: a coverable battle on an empty table\n"); return 1; }
+        const unsigned char *mv = probe + FIO_PLAY_PROBE_HEAD;
+        if (mv[0] != 1 || mv[4] != 0 || mv[5] != n_sel) { printf("FAIL probe: the move did not come back\n"); return 1; }
+        // …and the hand is a rearrange, for the attacker too.
+        prc = fio_play_probe(menu, lrc, 0, 0, 0, 0, menu + at + 2, n_sel,
+                             FIO_PLAY_TARGET_HAND, (char *)probe, sizeof probe);
+        if (prc < 0 || probe[FIO_PLAY_PROBE_HEAD] != 0) { printf("FAIL probe: the hand played a card\n"); return 1; }
+
+        unsigned char human[1 << 16];
+        int hrc = fio_play_human_menu(menu, lrc, 0, 0, (char *)human, sizeof human);
+        if (hrc < 4) { printf("FAIL human menu rc=%d\n", hrc); return 1; }
+        printf("play probe OK (menu %d -> human %d bytes)\n", lrc, hrc);
+    }
+
     // Drive the game to completion: at each step, if seat 0 (human) is eligible,
     // play its first legal move via apply_json; then let bots step.
     int steps = 0, ev_moves = 0, ev_total = 0;

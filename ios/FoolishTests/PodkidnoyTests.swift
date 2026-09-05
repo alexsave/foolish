@@ -124,9 +124,9 @@ final class PodkidnoyTests: XCTestCase {
     /// SAME deal played the classic way does, which is what makes this a test
     /// of the variant rather than of a position with no transfer in it anyway.
     ///
-    /// This is the assertion the Pass button and the drag rest on: both are
-    /// built by CardPlay from this menu (canPass / resolve), so a rule enforced
-    /// here cannot be forgotten by a control.
+    /// This is the assertion the Pass button and the drag rest on: both are the
+    /// kernel's answer over this menu (fio_play_probe), so a rule enforced here
+    /// cannot be forgotten by a control.
     func testADefenderIsNeverOfferedATransfer() async throws {
         var sawTransferInTheClassicGame = false
 
@@ -159,15 +159,16 @@ final class PodkidnoyTests: XCTestCase {
                 // And the buttons: the same selection that could be passed in
                 // the classic game cannot be here.
                 let passCards = classicMenu.first { $0.type == .pass }!.cards
-                XCTAssertTrue(CardPlay.canPass(passCards, legal: classicMenu))
-                XCTAssertFalse(CardPlay.canPass(passCards, legal: podkidnoyMenu),
+                func probe(_ menu: [Move]) -> PlayProbe {
+                    PlayWire.probe(menu: MoveWire.encode(menu), battles: [], powerSuit: -1,
+                                   isDefender: true, selection: passCards, target: .table)
+                }
+                XCTAssertTrue(probe(classicMenu).canPass)
+                XCTAssertFalse(probe(podkidnoyMenu).canPass,
                                "seed \(salt): the Pass button would still be offered")
                 // …and dropping those cards on open table space is no longer a
                 // transfer (it resolves to a cover, or to nothing).
-                let dropped = CardPlay.resolve(cards: passCards, target: .table,
-                                               isDefender: true, battles: [],
-                                               legal: podkidnoyMenu)
-                XCTAssertNotEqual(dropped?.type, .pass,
+                XCTAssertNotEqual(probe(podkidnoyMenu).move?.type, .pass,
                                   "seed \(salt): the drag would still transfer")
             }
         }

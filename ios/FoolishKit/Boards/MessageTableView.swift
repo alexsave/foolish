@@ -1631,6 +1631,16 @@ public struct MessageTableView: View {
     /// mount call does not wait: a board that opens with no move for me is the
     /// ordinary "your opponent's turn" case, and spinning there would race the
     /// arrival's own auto-play for the same move.
+    /// The moves a human may make on THIS board right now - the published menu
+    /// narrowed by the kernel's own human rule (no `wait`, no `good` over an
+    /// uncovered attack). The dev auto-player and HarnessModel's turn handoff
+    /// have to agree on it: a handoff reading the raw menu passes the game to a
+    /// seat whose only offer is a good this board will not let it make.
+    private func humanMoves() -> [Move] {
+        PlayWire.humanMoves(menu: controller.legalPacked,
+                            battles: controller.view?.battles ?? [])
+    }
+
     private func autoPlayIfAsked(waitForBoard: Bool = false) async {
         let devAutoMove = FileManager.default
             .containerURL(forSecurityApplicationGroupIdentifier: "group.cards.foolish.msg")
@@ -1639,15 +1649,13 @@ public struct MessageTableView: View {
         let asked = ProcessInfo.processInfo.environment["HARNESS_AUTOMOVE"] != nil || devAutoMove
         AnimLog.say("automove enter asked=\(asked) tick=\(controller.arrivalTick) "
             + "ready=\(controller.ready) hold=\(controller.pickupHold) legal=\(controller.legal.count) "
-            + "human=\(CardPlay.humanMoves(battles: controller.view?.battles ?? [], legal: controller.legal).count)")
+            + "human=\(humanMoves().count)")
         if asked, waitForBoard {
             let settle = Date().addingTimeInterval(20)
-            while Date() < settle,
-                  CardPlay.humanMoves(battles: controller.view?.battles ?? [],
-                                      legal: controller.legal).isEmpty {
+            while Date() < settle, humanMoves().isEmpty {
                 try? await Task.sleep(nanoseconds: 100_000_000)
             }
-            AnimLog.say("automove board settled human=\(CardPlay.humanMoves(battles: controller.view?.battles ?? [], legal: controller.legal).count)")
+            AnimLog.say("automove board settled human=\(humanMoves().count)")
         }
         // WAIT OUT THE PICKUP HOLD rather than working around it. While the
         // round-16 hold stands the Take pill is not on screen (FActionBar's
@@ -1673,8 +1681,7 @@ public struct MessageTableView: View {
         }
         if asked,
            let view = controller.view,
-           let m = Self.autoPick(CardPlay.humanMoves(battles: view.battles,
-                                                     legal: controller.legal)) {
+           let m = Self.autoPick(humanMoves()) {
             AnimLog.say("automove: playing \(m.type) (hold=\(controller.pickupHold))")
             // Let the incoming replay (the OTHER player's last move flying
             // deck/seat→table on open) finish and rest so it's watchable,
@@ -2016,7 +2023,7 @@ public struct MessageTableView: View {
     /// a little down) from the published hand frame. In the compact drawer the fan
     /// is cropped to a ~44pt strip at the very bottom, so a horizontal rearrange
     /// whose finger drifts up off that thin strip fell OUTSIDE `handFrame` - and a
-    /// release there resolves to `.table`, i.e. an attack/pass, which `CardPlay`
+    /// release there resolves to `.table`, i.e. an attack/pass, which the kernel
     /// rejects with the "move not allowed" toast. Battles are hit-tested FIRST in
     /// `BoardDrop.target`, so widening the hand band never swallows a real cover;
     /// and a genuine open-table attack is dropped well above this band (the centre
@@ -2030,16 +2037,14 @@ public struct MessageTableView: View {
     }
 
     /// The move a release right now would resolve to, if any — the SAME
-    /// `BoardDrop.target` + `CardPlay.resolve` math `onDragEnded` uses, shared
-    /// by the verb hint (note 33) and the pass ghost-slot preview (note 34) so
-    /// neither can disagree with what actually happens on release.
+    /// `BoardDrop.target` + kernel probe math `onDragEnded` uses, shared by the
+    /// verb hint (note 33) and the pass ghost-slot preview (note 34) so neither
+    /// can disagree with what actually happens on release.
     private func dragPreview(_ view: GameView) -> (target: PlayTarget, move: Move)? {
         guard let card = dragCard, let point = dragPoint else { return nil }
         let target = BoardDrop.target(at: point, battles: battleFrames, handFrame: handDropFrame)
         guard target != .hand,
-              let move = CardPlay.resolve(cards: playCards(for: card, view), target: target,
-                                          isDefender: view.defender == controller.mySeat,
-                                          battles: view.battles, legal: controller.legal)
+              let move = probe(view, playCards(for: card, view), target).move
         else { return nil }
         return (target, move)
     }
@@ -2054,7 +2059,7 @@ public struct MessageTableView: View {
 
     /// note 33: what a release would do, localized — "Attack" / "Cover" /
     /// "Pass". Nothing over the hand (that's a reorder, not a play) or for a
-    /// drop `CardPlay` can't resolve into a legal move.
+    /// drop the kernel can't resolve into a legal move.
     private func dragHintText(_ view: GameView) -> String? {
         guard let move = dragPreview(view)?.move else { return nil }
         switch move.type {
@@ -2097,7 +2102,7 @@ public struct MessageTableView: View {
     /// could cover.
     private func highlightBattles(_ view: GameView) -> Set<Int> {
         let cards = dragCard.map { playCards(for: $0, view) } ?? selectedCards(view)
-        return CardPlay.coverableBattles(cards: cards, battles: view.battles, legal: controller.legal)
+        return probe(view, cards, .table).coverable
     }
 
     /// A bout closed (the table cleared): animate its end - the discard or pickup
@@ -5096,10 +5101,13 @@ public struct MessageTableView: View {
         // Play buttons only while I can act and have NOT staged; once staged, the
         // only control is Undo (the extension has dropped the user at Messages' Send).
         let acting = controller.iCanAct && !controller.canSend
+        // ONE kernel answer for every enable-state below, so no two of them can
+        // describe different menus.
+        let bar = probe(view, cards, .table)
         return FActionBar(
-            canAttack: acting && !defending && CardPlay.canAttack(cards, legal: controller.legal),
-            canCover: acting && defending && CardPlay.canCover(cards, battles: view.battles, legal: controller.legal),
-            canPass: acting && defending && CardPlay.canPass(cards, legal: controller.legal),
+            canAttack: acting && !defending && bar.canAttack,
+            canCover: acting && defending && bar.canCover,
+            canPass: acting && defending && bar.canPass,
             // Selection-aware: with cards selected, the defender's Take and the
             // attacker's Good must disappear — a stray tap on either while mid-
             // selection would abandon the cards you'd picked (web parity TODO).
@@ -5135,7 +5143,7 @@ public struct MessageTableView: View {
             canPickup: defending && !view.battles.isEmpty && cards.isEmpty
                 && !(view.me?.isOut ?? false) && !controller.canSend
                 && controller.pickupHold == 0 && !controller.superseded,
-            canDone: acting && CardPlay.canSayGood(battles: view.battles, legal: controller.legal) && cards.isEmpty,
+            canDone: acting && bar.canSayGood && cards.isEmpty,
             canUndo: false,   // the board draws its own - see `undoSlot`
             onAttack: { playAt(.table, cards, view) },
             onCover: { playCover(cards, view) },
@@ -5422,8 +5430,18 @@ public struct MessageTableView: View {
     }
 
 
-    // Dumb selection; CardPlay resolves (selection, target) into one legal move,
-    // exactly like the app's TableView (both read the kernel menu, never a rule).
+    // Dumb selection; the KERNEL resolves (selection, target) into one legal move
+    // (fio_play_probe via PlayWire), exactly like the app's TableView - both ask
+    // about the menu they were published, never about a rule of their own.
+
+    /// One kernel answer about the current selection, for every question this
+    /// board asks about it. `controller.legalPacked` is the PUBLISHED menu, which
+    /// is deliberately empty while a bout settlement is held back.
+    private func probe(_ view: GameView, _ cards: [Card], _ target: PlayTarget) -> PlayProbe {
+        PlayWire.probe(menu: controller.legalPacked, battles: view.battles,
+                       powerSuit: view.powerSuit, isDefender: view.defender == controller.mySeat,
+                       selection: cards, target: target)
+    }
 
     private func toggle(_ card: Card) {
         selection = Self.selectionAfterTap(selection, card: card,
@@ -5474,9 +5492,7 @@ public struct MessageTableView: View {
     private func playAt(_ target: PlayTarget, _ cards: [Card], _ view: GameView,
                         released: (card: Card, centre: CGPoint)? = nil) {
         guard !controller.superseded else { return }   // round 20 - see `play`
-        guard let move = CardPlay.resolve(cards: cards, target: target,
-                                          isDefender: view.defender == controller.mySeat,
-                                          battles: view.battles, legal: controller.legal) else {
+        guard let move = probe(view, cards, target).move else {
             Haptics.fire(.reject); toast = FStrings.t("ios.reject"); return
         }
         // Bug 13: where each card of this play leaves from. ONE answer, used by
@@ -5641,20 +5657,17 @@ public struct MessageTableView: View {
     }
 
     /// Cover button: cover the BIGGEST uncovered attack the selection can beat
-    /// (round 16 - see `CardPlay.bestCoverTarget`; the drag path names its own
-    /// target and is untouched).
+    /// (round 16 - the kernel's `play_best_cover_target`; the drag path names
+    /// its own target and is untouched).
     private func playCover(_ cards: [Card], _ view: GameView) {
-        guard let i = CardPlay.bestCoverTarget(cards: cards, battles: view.battles,
-                                               legal: controller.legal,
-                                               trumpSuit: view.trumpSuit) else {
+        guard let i = probe(view, cards, .table).bestCover else {
             Haptics.fire(.reject); return
         }
         playAt(.battle(i), cards, view)
     }
 
     private func coverableBattles(_ view: GameView) -> Set<Int> {
-        let out = CardPlay.coverableBattles(cards: selectedCards(view), battles: view.battles, legal: controller.legal)
-        return out
+        probe(view, selectedCards(view), .table).coverable
     }
 
     /// Round-8 #3 / round-9: where the send reminder's CENTRE sits, measured

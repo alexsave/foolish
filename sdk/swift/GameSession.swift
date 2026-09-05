@@ -13,6 +13,10 @@ public protocol GameSession: ObservableObject {
     var view: GameView? { get }
     /// The local seat's legal-move menu (kernel-computed). Drives enable-states.
     var humanLegal: [Move] { get }
+    /// The same menu as the kernel's own bytes. The board rules take the menu as
+    /// an input (PlayWire / fio_play_probe), so what the board passes on has to
+    /// be the wire rather than a re-encoding of the decode above.
+    var humanLegalPacked: Data { get }
     /// Seats with a pending action (bitmask) — per-seat "thinking" marks.
     var actorMask: Int { get }
     /// True while an opponent is deliberating / the server hasn't confirmed.

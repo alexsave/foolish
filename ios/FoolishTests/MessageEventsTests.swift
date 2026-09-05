@@ -629,8 +629,8 @@ final class MessageEventsTests: XCTestCase {
                     for seat in 0..<players {
                         let c = MessageTurnController(parentPayload: chain, parent: parent, mySeat: seat)
                         await c.begin()
-                        guard let mv = CardPlay.humanMoves(battles: c.view?.battles ?? [],
-                                                           legal: c.legal).first
+                        guard let mv = PlayWire.humanMoves(menu: c.legalPacked,
+                                                           battles: c.view?.battles ?? []).first
                         else { continue }
                         await c.apply(mv)
                         guard c.canSend else { continue }

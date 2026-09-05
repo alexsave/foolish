@@ -122,6 +122,61 @@ int fio_legal_moves_json(int seat, char *out, int cap);
 int fio_state_packed(int viewer, char *out, int cap);
 int fio_legal_packed(int seat, char *out, int cap);
 int fio_legal_from_packed(const uint8_t *buf, int len, int seat, char *out, int cap);
+
+// ---------- what a gesture on a board means --------------------------------
+//
+// The rules a board applies between a finger and a move (legal.c's play_*):
+// which menu entry a drop resolves to, which battles a selection could cover,
+// which one the Cover button aims at, which moves a human may make at all.
+//
+// THEY READ NOTHING BUT THEIR ARGUMENTS - no resident game, no static - which
+// is what lets a SwiftUI render pass call them at all: the resident game lives
+// behind an actor a view body cannot await. It is also what a board actually
+// wants asked. A board renders its own PUBLISHED pair, the menu it was handed
+// and the table it was handed, and the iMessage board deliberately publishes an
+// EMPTY menu while it holds a bout settlement back; a rule that re-derived the
+// menu from the live game would answer about a position nobody is looking at.
+//
+// `menu` is the seat's packed menu (fio_legal_packed / fio_legal_from_packed
+// bytes). `table` is 2 bytes per battle - the attack, then its cover or 0xFE.
+// `sel` is the selected cards as card bytes. `target` is the battle index a
+// gesture landed on, or FIO_PLAY_TARGET_TABLE / _HAND.
+#define FIO_PLAY_TARGET_HAND   (-2)
+#define FIO_PLAY_TARGET_TABLE  (-1)
+
+// The fixed head of a probe answer, before the move wire (see below).
+#define FIO_PLAY_PROBE_HEAD 10
+
+// ONE ANSWER for a selection, so a board cannot paint a highlight that the
+// release then refuses. Layout (LE):
+//
+//   0   u8    flags: 1 = an attack with this selection is legal,
+//                    2 = a pass is, 4 = this seat may say good
+//   1   i8    the battle the Cover button aims at, -1 for none
+//   2   u64   bitmask of the battles this selection could cover
+//   10  ...   the move the gesture resolves to, as a ONE-ENTRY menu wire
+//             (count 0 when it resolves to nothing) - so it decodes through
+//             MoveWire and no second format is born.
+//
+// "May say good" is the human rule the kernel menu deliberately does not carry:
+// the menu always offers GOOD because that is how an attacker leaves the bot
+// loop's eligible set (legal.c), while a player may not end a bout over an
+// uncovered attack.
+int fio_play_probe(const uint8_t *menu, int menu_len,
+                   const uint8_t *table, int n_battles,
+                   int power_suit, int is_defender,
+                   const uint8_t *sel, int n_sel, int target,
+                   char *out, int cap);
+
+// The moves a HUMAN may make on this board, as the same menu wire back out:
+// the kernel's menu minus `wait`, minus `good` while any attack is uncovered.
+// The set form of the same rule, for the callers that ask "can this seat do
+// anything at all" rather than "is this one button live" - a turn handoff that
+// reads the raw menu passes the game to a seat whose only offer is a good the
+// board will not let it make, and stops with no button on screen.
+int fio_play_human_menu(const uint8_t *menu, int menu_len,
+                        const uint8_t *table, int n_battles,
+                        char *out, int cap);
 // Apply an awire action frame ([kind, n, cards, attacks]) — THE apply entry
 // (a plain move never crosses as JSON). Returns FIO_EREJECT on an illegal move
 // (see fio_last_reject).

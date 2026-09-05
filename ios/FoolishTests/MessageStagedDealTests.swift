@@ -133,6 +133,9 @@ final class MessageStagedDealTests: XCTestCase {
                                 case .cover:  covers += 1
                                 default:      goods += 1
                                 }
+                                // `legal` is the decode of `legalPacked`, the
+                                // menu the board actually plays from, so this
+                                // is both halves of the hold at once.
                                 XCTAssertTrue(c.legal.isEmpty,
                                               "a held bout end left \(c.legal.count) moves legal - "
                                               + "the deal is hidden but still playable")
@@ -209,6 +212,32 @@ final class MessageStagedDealTests: XCTestCase {
                       "the released half must start at the settlement, not before it")
         XCTAssertLessThan(c.view?.deckCount ?? 99, deckBefore, "the deal never arrived")
         XCTAssertNil(c.takeReleasedSettlement(), "the release is one-shot")
+    }
+
+    /// `legal` IS `legalPacked`, always. The board plays from the packed menu
+    /// (every play is the kernel's answer over it) and reads moves off the
+    /// decoded one, and the hold that empties a menu while a settlement stands
+    /// is applied to the packed value alone - so a second, independent
+    /// assignment of `legal` would be a menu the board does not play from.
+    ///
+    /// Asserted on a live board with a menu on it, so it says something: an
+    /// empty menu agrees with an empty menu whatever the derivation is.
+    func testTheDecodedMenuIsAlwaysTheDecodeOfTheOne() async throws {
+        var sawAMenu = false
+        for salt in UInt8(1)...UInt8(8) {
+            let c = MessageTurnController(genesisSeed: seed(salt), players: 2,
+                                          gameId: 93, myNickname: "P0")
+            await c.begin()
+            XCTAssertEqual(c.legal, MoveWire.decode(c.legalPacked))
+            guard let m = c.legal.first(where: { $0.type != .wait }) else { continue }
+            sawAMenu = true
+            await c.apply(m)
+            XCTAssertEqual(c.legal, MoveWire.decode(c.legalPacked),
+                           "the two published forms of the menu disagree")
+            await c.undo()
+            XCTAssertEqual(c.legal, MoveWire.decode(c.legalPacked))
+        }
+        XCTAssertTrue(sawAMenu, "fixture: no seat ever had a move to make")
     }
 
     /// Undo DROPS the hold rather than releasing it: the move it belonged to is

@@ -143,13 +143,17 @@ public actor EngineC {
     // live here (fio_view_from_packed_json) is gone with the JSON surface.
 
     /// Legal moves for `seat` computed from a server packed masked-view blob —
-    /// online enable-states, kernel-computed (§3).
-    public func legalFromPacked(_ bytes: Data, seat: Int) throws -> [Move] {
-        let data = try bytes.withUnsafeBytes { raw -> Data in
+    /// online enable-states, kernel-computed (§3). The PACKED form is what the
+    /// board actually passes on (the play rules take the menu as bytes, see
+    /// PlayWire), so the decode is the caller's second step, not this one's.
+    public func legalFromPackedData(_ bytes: Data, seat: Int) throws -> Data {
+        try bytes.withUnsafeBytes { raw -> Data in
             let base = raw.bindMemory(to: UInt8.self).baseAddress
             return try json { fio_legal_from_packed(base, Int32(bytes.count), Int32(seat), $0, $1) }
         }
-        return MoveWire.decode(data)
+    }
+    public func legalFromPacked(_ bytes: Data, seat: Int) throws -> [Move] {
+        MoveWire.decode(try legalFromPackedData(bytes, seat: seat))
     }
 
     // MARK: replays (§7.3)

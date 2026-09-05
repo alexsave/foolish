@@ -37,9 +37,9 @@ cannot come to disagree - a menu that offers what the validator refuses is how
 a phantom "invalid move" reaches a board.
 
 **The UI needed no gate at all.**
-The Pass button, the drag-to-empty-table, and the drag hint are all built by
-`CardPlay` from the kernel's legal menu (`canPass`, `resolve`), so they
-disappear on their own.
+The Pass button, the drag-to-empty-table, and the drag hint are all the
+kernel's own answer over its legal menu (`fio_play_probe`), so they disappear on
+their own.
 That is the whole payoff of keeping the rules in C: a variant is added in one
 place and every surface follows.
 The one thing the menu cannot say is which rules to TEACH, so the rulebook is
