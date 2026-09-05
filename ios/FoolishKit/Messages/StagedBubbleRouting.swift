@@ -15,6 +15,13 @@
 // Pure decision, zero MSConversation/MSMessage coupling, so it's testable
 // without the Messages framework (mirrors SeatIdentity's own reasoning) —
 // the extension only wires MSConversation/MSMessage values into it.
+//
+// DELIBERATELY NOT LIFTED, while its three neighbours were (StaleBranchGate,
+// NicknameGate, SeatIdentity all became msg_wire.c rules). Everything here is
+// either URL work, which is Swift's by the same rule that keeps Base32 and the
+// "/m/1" prefix in Swift, or `isMine` - which is two byte comparisons. A second
+// chain client cannot get `a == b || a == c` wrong; what it could get wrong is
+// WHY byte equality is enough, and that is the comment below rather than code.
 import Foundation
 
 public enum StagedBubbleRouting {

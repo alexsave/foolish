@@ -1,37 +1,36 @@
-// NicknameGate — pure UI-side nickname validation, round-5 B1 (the UI half).
+// NicknameGate - the nickname a lobby will accept, round-5 B1 (the UI half).
 //
 // The wire enforces its OWN byte cap at the seal layer (MSG_MAX_NAME,
 // c/src/msg_wire.h) and rejects anything over it with MSG_ENAME — which
-// `MessagesRootView`'s `createWaiting`/`joinLobby` used to turn into "this
-// game link is damaged" (docs/APP_REVIEW_NOTES.md B1: an ordinary too-long
-// name reads as a broken LINK, not a rejected name). B1's fix has three
-// parts; this type is the first one — catch it in the UI so the seal layer
-// is never handed a name it is going to reject in the first place.
+// `MessagesRootView`'s `createWaiting`/`joinLobby` used to turn into "this game
+// link is damaged" (docs/APP_REVIEW_NOTES.md B1: an ordinary too-long name
+// reads as a broken LINK, not a rejected name). B1's fix has three parts; this
+// type is the first one - catch it in the UI so the seal layer is never handed
+// a name it is going to reject.
 //
-// Two SEPARATE limits, and a name must clear BOTH ("if it goes over EITHER,
-// disable the Create game [button]" — the owner's round-5 call):
-//   - `maxBytes` mirrors the wire's own cap. It MUST equal MSG_MAX_NAME
-//     (c/src/msg_wire.h) — that cap is being raised from 12 to 64 this same
-//     round precisely so ordinary non-Latin names fit (B1's headline example,
-//     "Владимир", is 8 characters but 16 UTF-8 bytes, and did not fit the old
-//     12-byte cap). If the wire cap ever moves again, this constant moves
-//     with it: too low silently rejects names the wire would accept, too high
-//     lets one through for the seal to fail on — B1 again, just moved here.
-//   - `maxChars` is a separate, UI-only display limit (16 characters) on top
-//     of the byte cap: a name can clear 64 bytes and still be an unreasonably
-//     long string of 1-byte characters that the lobby row / seat badge has no
-//     room for.
+// THE RULE IS THE KERNEL'S (msg_nickname_verdict / msg_name_taken). Both caps
+// live beside the one the seal enforces, which is what stops them drifting: a
+// UI cap set too low silently rejects names the wire would take, one set too
+// high hands the seal a name it will refuse, and B1 is what that looks like on
+// a device. What stays here is the Unicode work no C kernel should be doing -
+// trimming whitespace, and counting CHARACTERS (grapheme clusters) rather than
+// scalars or bytes.
 //
-// Deliberately no truncating case: the owner's call is to REJECT a name over
-// either cap outright (dim the button, name the reason), never to silently
-// cut it down to something that fits.
+// Two separate caps, and a name must clear BOTH ("if it goes over EITHER,
+// disable the Create game [button]" - the owner's round-5 call): the wire's 64
+// UTF-8 bytes, and a display limit of 16 characters that a lobby row or seat
+// badge can actually show. Deliberately no truncating case: reject and name the
+// reason, never silently cut a name down to something that fits.
+
+import Foundation
+import CFoolish
+
 public enum NicknameGate {
-    /// UI-only display cap — not derived from the wire, just what a lobby row
-    /// or seat badge can show without eliding.
-    public static let maxChars = 16
-    /// Must equal MSG_MAX_NAME (c/src/msg_wire.h). Keeps the UI from ever
-    /// handing the seal layer a name it is going to reject (round-5 B1).
-    public static let maxBytes = 64
+    /// The display cap, from the kernel (MSG_MAX_NAME_CHARS) - read rather than
+    /// repeated, so there is one number.
+    public static var maxChars: Int { Int(fio_name_max_chars()) }
+    /// MSG_MAX_NAME, the cap the SEAL enforces. Same reason.
+    public static var maxBytes: Int { Int(fio_name_max_bytes()) }
 
     /// The three states a nickname field can be in, once trimmed. `.ok`
     /// carries the TRIMMED string — the exact value that gets stored and
@@ -46,18 +45,18 @@ public enum NicknameGate {
         case tooLong
     }
 
-    /// Trim whitespace once, then check length. Character count first (the
-    /// cap a human typing actually feels), byte count second — a string can
-    /// clear the character cap and still blow the byte one (multi-byte
-    /// scripts, or a short run of multi-codepoint emoji), and B1 is
-    /// specifically about a cap that only ever looked at bytes catching
+    /// Trim whitespace once, count the two ways, and let the kernel judge. A
+    /// string can clear the character cap and still blow the byte one
+    /// (multi-byte scripts, or a short run of multi-codepoint emoji), which is
+    /// exactly what B1 was: a cap that only ever looked at bytes catching
     /// ordinary short names nobody expected to fail.
     public static func check(_ raw: String) -> Verdict {
         let trimmed = raw.trimmingCharacters(in: .whitespaces)
-        if trimmed.isEmpty { return .empty }
-        if trimmed.count > maxChars { return .tooLong }
-        if trimmed.utf8.count > maxBytes { return .tooLong }
-        return .ok(trimmed)
+        switch fio_nickname_verdict(Int32(trimmed.count), Int32(trimmed.utf8.count)) {
+        case Int32(FIO_NAME_OK): return .ok(trimmed)
+        case Int32(FIO_NAME_TOO_LONG): return .tooLong
+        default: return .empty
+        }
     }
 
     /// Is this (already-trimmed) name held by a seat in the lobby being
@@ -72,6 +71,6 @@ public enum NicknameGate {
     /// forked chains can still each hold their own "Alex" — the residual the
     /// claim-token design (docs/IMESSAGE_SEAT_IDENTITY_V2.md) exists to close.
     public static func isTaken(_ name: String, in joins: [MessageJoin]) -> Bool {
-        joins.contains { $0.name == name }
+        RosterWire.call(joins, name) { fio_roster_name_taken($0, $1, $2, $3) != 0 }
     }
 }

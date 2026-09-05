@@ -858,6 +858,64 @@ int fio_msg_penalty_fool_seat(const uint8_t *joins, int joins_len,
 // fio_msg_encode repeats the term, so the caller does not carry it.
 int fio_msg_start_rematch(const uint8_t *joins, int joins_len, uint32_t carry_key,
                           int carry_fool, int *opening_out);
+
+// ---------- the chain layer's gates ----------------------------------------
+//
+// The four small decisions a chain-based client makes around a bubble: is this
+// board a branch off an old one, is this nickname usable, is it taken, and
+// which seat am I. The RULES are msg_wire.c's (msg_chain_is_ahead,
+// msg_nickname_verdict, msg_name_taken, msg_seat_*); these marshal.
+//
+// Every roster argument is the same packed blob fio_msg_encode takes, and every
+// name is raw UTF-8 bytes with a length - never a C string, because a nickname
+// is arbitrary Unicode and a NUL is not its terminator.
+
+// Does chain `a` show more of the game than `b`? See msg_wire.h for why round
+// is compared above turn and where this deliberately fails open.
+int fio_msg_chain_is_ahead(int a_phase, int a_round, int a_turn,
+                           int b_phase, int b_round, int b_turn);
+
+// A nickname's verdict from its TRIMMED counts, which the host takes (trimming
+// and grapheme clustering are Unicode work). Returns FIO_NAME_*.
+#define FIO_NAME_OK       0
+#define FIO_NAME_EMPTY    1
+#define FIO_NAME_TOO_LONG 2
+int fio_nickname_verdict(int n_chars, int n_bytes);
+
+// The caps that verdict is taken against, so a UI can show them without
+// repeating either number. Bytes is MSG_MAX_NAME, the one the seal enforces.
+int fio_name_max_bytes(void);
+int fio_name_max_chars(void);
+
+// Is `name` already held by a seat in this roster? 1 or 0; 0 for a roster that
+// does not read.
+int fio_roster_name_taken(const uint8_t *joins, int joins_len,
+                          const uint8_t *name, int name_len);
+
+// Which seat am I, from the three §6 signals? The seat, or -1 for ambiguous.
+int fio_seat_resolve(int cached_seat, int sender_is_local, int n_players,
+                     int last_actor_seat, int chat_is_dm);
+
+// The seat carrying my own recorded claim name in this roster, or -1.
+int fio_seat_claimed_by_name(const uint8_t *joins, int joins_len,
+                             const uint8_t *name, int name_len);
+
+// Does this roster list my cached seat under a different name? 1 or 0.
+int fio_seat_cache_disowned(const uint8_t *joins, int joins_len, int cached_seat,
+                            const uint8_t *name, int name_len);
+
+// fio_seat_resolve gated on this bubble's OWN roster - the lobby answer. The
+// seat, or -1 for ambiguous OR resolved-but-not-listed.
+int fio_seat_resolve_in_lobby(const uint8_t *joins, int joins_len,
+                              int cached_seat, int sender_is_local, int n_players,
+                              int last_actor_seat, int chat_is_dm,
+                              const uint8_t *name, int name_len);
+
+// MSG_PHASE_FINISHED - the phase a chain carries when its game is over. The
+// wire makes the claim CHECKABLE rather than merely stated: msg_wire.c refuses
+// a chain whose header and body disagree about being over, so a peeked 3 is a
+// fact the kernel replayed the body to confirm.
+#define FIO_PHASE_FINISHED 3
 // This one entry seals every phase. A 0-action game — a WAITING lobby (§5.2) or
 // the last-joiner LIVE handoff that "applies nothing" — seals to an empty body:
 // msg_seal detects "no opening attack logged" and emits no v6 body, since the v6

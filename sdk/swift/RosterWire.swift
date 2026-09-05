@@ -58,6 +58,22 @@ public enum RosterWire {
         return (joins, r.at)
     }
 
+    /// CALL A GATE THAT TAKES A ROSTER AND A NAME. Both cross as bytes with a
+    /// length - a nickname is arbitrary Unicode and NUL is not its terminator,
+    /// so a C string was never the right shape for one.
+    static func call<T>(_ joins: [MessageJoin], _ name: String?,
+                        _ body: (UnsafePointer<UInt8>?, Int32,
+                                 UnsafePointer<UInt8>?, Int32) -> T) -> T {
+        let packed = encode(joins)
+        let n = Array((name ?? "").utf8)
+        return packed.withUnsafeBytes { p in
+            n.withUnsafeBufferPointer { np in
+                body(p.bindMemory(to: UInt8.self).baseAddress, Int32(packed.count),
+                     np.baseAddress, Int32(n.count))
+            }
+        }
+    }
+
     /// One name's UTF-8 bytes, trimmed to the budget on a scalar boundary.
     private static func nameBytes(_ name: String) -> [UInt8] {
         var scalars = Array(name.unicodeScalars)

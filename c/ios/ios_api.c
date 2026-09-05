@@ -1973,6 +1973,77 @@ int fio_msg_carry(const uint8_t *joins_packed, int joins_len, int fool_seat,
     return FIO_EOK;
 }
 
+// ---------- the chain layer's gates (msg_wire.h) ---------------------------
+//
+// Nothing here decides anything: each entry reads the packed roster through the
+// one reader a seal uses and hands the rule its arguments.
+
+int fio_msg_chain_is_ahead(int a_phase, int a_round, int a_turn,
+                           int b_phase, int b_round, int b_turn) {
+    return msg_chain_is_ahead(a_phase, a_round, a_turn, b_phase, b_round, b_turn);
+}
+
+int fio_nickname_verdict(int n_chars, int n_bytes) {
+    return msg_nickname_verdict(n_chars, n_bytes);
+}
+
+int fio_name_max_bytes(void) { return MSG_MAX_NAME; }
+int fio_name_max_chars(void) { return MSG_MAX_NAME_CHARS; }
+
+int fio_seat_resolve(int cached_seat, int sender_is_local, int n_players,
+                     int last_actor_seat, int chat_is_dm) {
+    return msg_seat_resolve(cached_seat, sender_is_local, n_players,
+                            last_actor_seat, chat_is_dm);
+}
+
+// The roster every gate below takes, read once. A blob that does not read is
+// an EMPTY roster rather than an error: these gates all fail open, and a caller
+// that cannot read its own bubble has already lost the argument elsewhere.
+//
+// NOT fio_joins_of, which is the rematch key's reader and demands two or more
+// players. A lobby with ONE join is the ordinary case here - it is the bubble
+// the creator sends - and a gate that refused it would put the Join button
+// back on every fresh invite.
+static int fio_gate_joins(const uint8_t *joins, int joins_len, MsgJoin *out) {
+    static MsgEnvelope tmp;   // static for the same reason fio_joins_of is
+    msg_envelope_init(&tmp);
+    if (!joins || fio_read_joins(joins, joins_len, &tmp) != FIO_EOK) return 0;
+    for (int i = 0; i < tmp.n_joins; i++) out[i] = tmp.joins[i];
+    return tmp.n_joins;
+}
+
+int fio_roster_name_taken(const uint8_t *joins, int joins_len,
+                          const uint8_t *name, int name_len) {
+    MsgJoin js[MSG_MAX_JOINS];
+    const int n = fio_gate_joins(joins, joins_len, js);
+    return msg_name_taken(js, n, (const char *)name, name_len);
+}
+
+int fio_seat_claimed_by_name(const uint8_t *joins, int joins_len,
+                             const uint8_t *name, int name_len) {
+    MsgJoin js[MSG_MAX_JOINS];
+    const int n = fio_gate_joins(joins, joins_len, js);
+    return msg_seat_claimed_by_name(js, n, (const char *)name, name_len);
+}
+
+int fio_seat_cache_disowned(const uint8_t *joins, int joins_len, int cached_seat,
+                            const uint8_t *name, int name_len) {
+    MsgJoin js[MSG_MAX_JOINS];
+    const int n = fio_gate_joins(joins, joins_len, js);
+    return msg_seat_cache_disowned(js, n, cached_seat, (const char *)name, name_len);
+}
+
+int fio_seat_resolve_in_lobby(const uint8_t *joins, int joins_len,
+                              int cached_seat, int sender_is_local, int n_players,
+                              int last_actor_seat, int chat_is_dm,
+                              const uint8_t *name, int name_len) {
+    MsgJoin js[MSG_MAX_JOINS];
+    const int n = fio_gate_joins(joins, joins_len, js);
+    return msg_seat_resolve_in_lobby(js, n, cached_seat, sender_is_local, n_players,
+                                     last_actor_seat, chat_is_dm,
+                                     (const char *)name, name_len);
+}
+
 int fio_msg_set_carry(uint32_t key, int fool_index) {
     if (key == 0 || fool_index < 0 || fool_index >= MSG_MAX_JOINS) {
         g_msg_carry_key = 0;
