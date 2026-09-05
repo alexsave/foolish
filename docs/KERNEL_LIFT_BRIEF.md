@@ -226,9 +226,51 @@ Three guardrails, each earned by something this repo has already been bitten by:
    A wrong-mode bug looks exactly like an animation bug, and the only cheap way
    to tell them apart is to be able to read the mode back.
 
-Shape of the work: keep the trichotomy and its precedence shared - they already
-reproduce the web's answers exactly - and let the mode select only the doom
-determination.
-Share the deciding; keep the knowing where the knowledge is.
-`anim_resolve_unconfirmed_attack_covers` and `anim_conflict_verdict` become two
-readings of one rule rather than two rules.
+### Shape of the work: share everything that can be shared
+
+The mode is not a fork in the road.
+It selects ONE extra step, and everything either side of that step is the same
+code running on the same inputs.
+
+Owner's instruction: the doom determination shares as much code as possible.
+So do not stop at "the trichotomy is shared" - most of the doom test is shared
+too, and only one question inside it is transport-specific.
+
+What is IDENTICAL in both transports, and must be written once:
+
+- the CLEAR test - does the incoming stream itself move this card.
+  Checked first in both, for the same reason: a card the arrival animates must
+  not fly home red before it, and a pickup's cards stand on the table it sweeps.
+- the KEEP test - does the card stand where the motion put it, on the board the
+  newest truth vouches for.
+  The server calls that board the authoritative table; iMessage calls it the
+  arriving chain's opening board.
+  Different name, same question, same set membership.
+- the pool rule - a card that went into a pile or a badge is never reverted,
+  because conjuring a ghost back out of a pile is its own class of bug.
+- the masked-back rule - an opponent's face-down draw has no identity to
+  conflict on and no view to fly back from.
+- the reversal: which motions fly, in reverse group order, empty groups dropped.
+
+What is GENUINELY transport-specific, and is the whole of the flag:
+
+> Once a card has failed both tests above, is "not accounted for" CONCLUSIVE?
+
+- iMessage: yes.
+  A chain is complete and totally ordered, so a card the newest chain does not
+  account for is doomed. REVERT.
+- Server: no.
+  The card's own confirmation is a separate future broadcast that has not
+  arrived.
+  So before concluding, the server asks its extra question - the
+  defender-capacity inference in `anim_resolve_unconfirmed_attack_covers` - and
+  keeps the card when the answer is "this could still be accepted".
+
+Concretely that is one branch near the end of one function, not two functions:
+the shared path computes CLEAR / KEEP / not-accounted-for, and only the
+not-accounted-for case consults the mode.
+A reviewer should be able to point at the single `if` that the flag controls.
+If the diff ever grows a second one, the split has been drawn in the wrong place.
+
+`anim_resolve_unconfirmed_attack_covers` and `anim_conflict_verdict` then stop
+being two rules and become one rule with one transport-dependent question.
