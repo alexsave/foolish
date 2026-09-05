@@ -131,7 +131,22 @@ public struct MessageTableView: View {
     /// Every identity in `sweepBattles`, so a bout-end flight can POLL (via
     /// `playStep`) until its source slot has been measured rather than firing off
     /// the centre fallback before the grid has laid out.
-    @State private var sweepTableIds: Set<String> = []
+    ///
+    /// ROUND 45: COMPUTED, NOT STORED - the one piece of the veil's state that
+    /// turned out to be a second copy of another piece rather than a fact of its
+    /// own. It was `@State`, written in lockstep with `sweepBattles` at the only
+    /// two places either may be written (`setSweep` / `dropSweep`), which is a
+    /// cache kept correct by hand. The value is identical by construction, so
+    /// nothing observable moves; what goes away is the way a THIRD writer of
+    /// `sweepBattles` would leave this stale without a symptom at the write. A
+    /// stale entry here is a flight that polls for a rect that will never
+    /// publish (`tableSourceReady` blocks on a card the grid does not hold) or
+    /// one that refuses a landing the grid has room for (`sweepLandingRect`) -
+    /// a cover that simply never animates, which is the round-20 report.
+    ///
+    /// The rest of the group did NOT collapse, and the reasons are written at
+    /// `gridVeil` and at `sweepUnplaced`.
+    private var sweepTableIds: Set<String> { Self.sweepIds(sweepBattles) }
     /// Swept cards whose flight has STARTED - hidden in the pre-bout grid from that
     /// instant on (the overlay ghost is now the only copy). Grows through the
     /// sequence, cleared with `sweepBattles`. Kept separate from `animator.hidden`
@@ -158,6 +173,18 @@ public struct MessageTableView: View {
     /// has no battles), lands, holds for `boutEndHold`, and only then sweeps.
     /// Kept apart from `sweptFlownIds` because the two mean opposite things and
     /// the debug trace is worth being able to tell them apart.
+    ///
+    /// ROUND 45 TRIED TO MERGE THEM AND FOUND A SECOND, HARDER REASON. The two
+    /// are unioned into one set for the grid (`gridVeil`), so on that side alone
+    /// they could be one - seed it with the un-arrived cards, subtract on
+    /// arrival, union on takeoff. But this set has a consumer the other does
+    /// not: `openReplayFlights` reads it as "the whole gate" for whether a card
+    /// is flying ONTO the pre-bout grid, and `sweepArriving` is derived by
+    /// intersecting a step's flights with it. Merged, a card that has already
+    /// been carried OFF the table would test true on both - it would be built a
+    /// second flight, landing on a grid it just left, and the attack under it
+    /// would tilt as it went. The union is a coincidence of what the grid needs
+    /// to hide, not evidence that the two facts are one.
     @State private var sweepUnplaced: Set<String> = []
     /// The subset of `sweepUnplaced` whose flight is in the air THIS INSTANT, so
     /// the attack underneath a cover tilts in lockstep with the card coming down
@@ -890,14 +917,56 @@ public struct MessageTableView: View {
     /// the battle grid and the hand fan, so "is this card on the table" has one
     /// answer and the cover tilt can be read straight off it.
     private var veiledCardIds: Set<String> {
-        var ids = animator.hidden
-        if let open = pendingOpen { ids.formUnion(open.ids) }
+        Self.veiledCards(hidden: animator.hidden, pendingOpen: pendingOpen?.ids,
+                         handBeforeMyMove: handBeforeMyMove,
+                         myHand: controller.view?.me?.hand)
+    }
+
+    /// …as a value, so the veil can be asserted without a board.
+    ///
+    /// ROUND 45. The board's veil state was nine pieces of `@State` read
+    /// directly out of `body`, so not one of the four sets the board actually
+    /// HANDS OUT could be exercised at all - and item 12 of this cleanup had
+    /// just found that mutating a comparable condition passed all 539 tests.
+    /// These four (`veiledCards`, `flyingNow`, `handSlotDeferred`, `gridVeil`)
+    /// are the whole of what the veil answers; everything upstream of them is
+    /// state, and everything downstream is a view. See VeilOutsTests.
+    ///
+    /// THREE SOURCES, UNIONED - deliberately not "whichever is up":
+    ///  - `hidden`, the animator's own (a flight in the air, or pre-hidden for
+    ///    one that has not started).
+    ///  - `pendingOpen`, an arriving/opening replay the board has not begun to
+    ///    animate yet, derived PURELY from the controller so it is legal to read
+    ///    in `body`. The handoff to `hidden` is invisible because both name the
+    ///    same cards (see `settled`).
+    ///  - live play: cards THIS move just put in my hand, which nothing has
+    ///    pre-hidden yet (that happens an `onChange` late).
+    ///
+    /// `myHand` nil takes the third source out entirely, holdback and all. That
+    /// is a spectator, or a board with no view yet - neither has a fan to veil.
+    static func veiledCards(hidden: Set<String>, pendingOpen: Set<String>?,
+                            handBeforeMyMove: Set<String>?, myHand: [Card]?) -> Set<String> {
+        var ids = hidden
+        if let pendingOpen { ids.formUnion(pendingOpen) }
         // Live play: cards this move just put in my hand, which have not been
         // pre-hidden yet (that also happens an onChange late).
-        if let before = handBeforeMyMove, let hand = controller.view?.me?.hand {
-            ids.formUnion(Set(hand.map(\.identity)).subtracting(before))
+        if let handBeforeMyMove, let myHand {
+            ids.formUnion(Set(myHand.map(\.identity)).subtracting(handBeforeMyMove))
         }
         return ids
+    }
+
+    /// "IN THE AIR RIGHT NOW", the one derivation four places rest on:
+    /// `hidden \ preHidden`. `preHide` puts a card in both sets; `openSlots`
+    /// takes it out of `preHidden` alone the instant its own step begins, so
+    /// the difference is exactly the set of cards whose flight is playing.
+    ///
+    /// Named because it is read as three different things - the cards that keep
+    /// their fan slot (`handSlotDeferred`), the covers whose attack tilts with
+    /// them (`FBattleGrid.flyingNow`), and the orphan test at a teardown - and
+    /// each of those was its own inline subtraction.
+    static func flyingNow(hidden: Set<String>, preHidden: Set<String>) -> Set<String> {
+        hidden.subtracting(preHidden)
     }
 
     /// Round-6 bug 10: which veiled hand cards reserve NO fan width YET. A deal
@@ -910,14 +979,34 @@ public struct MessageTableView: View {
     /// lands). `animator.hidden \ animator.preHidden` is precisely "flying right
     /// now" (see `BoardAnimator.openSlots`); everything else waits its turn.
     private var handSlotDeferred: Set<String> {
-        let flyingNow = animator.hidden.subtracting(animator.preHidden)
+        Self.handSlotDeferred(veiled: veiledCardIds,
+                              flying: Self.flyingNow(hidden: animator.hidden,
+                                                     preHidden: animator.preHidden),
+                              holdback: handHoldback)
+    }
+
+    /// …as a value (round 45, with the rest of the veil's outs).
+    static func handSlotDeferred(veiled: Set<String>, flying: Set<String>,
+                                 holdback: [Card]) -> Set<String> {
         // A HELD-BACK CARD IS NEVER DEFERRED. It is pre-hidden (its table copy
         // must stay invisible until its ghost lands) and pre-hidden is exactly
         // what this set is built from - so without this line the fan would drop
         // the very cards `handHoldback` exists to keep on screen, and the hand
         // would render closed again. It is the one veiled card that IS drawn.
-        return veiledCardIds.subtracting(flyingNow)
-                            .subtracting(handHoldback.map(\.identity))
+        veiled.subtracting(flying).subtracting(holdback.map(\.identity))
+    }
+
+    /// WHICH VEILED CARDS THE FAN ITSELF DRAWS NOTHING FOR - `hand(_:)`'s
+    /// `hidden:` argument, and the twin of `handSlotDeferred` one step out.
+    ///
+    /// A held-back card is veiled (its TABLE copy must stay invisible until its
+    /// ghost lands), so the hand has to un-veil its own copy or the fan would
+    /// reserve the slot and draw nothing - a gap where the card is. Extracted
+    /// beside the other three because the pair has an invariant worth asserting:
+    /// `handSlotDeferred` is a SUBSET of this, i.e. the fan never withholds a
+    /// slot from a card it is drawing.
+    static func fanVeil(veiled: Set<String>, holdback: [Card]) -> Set<String> {
+        veiled.subtracting(holdback.map(\.identity))
     }
 
     /// A seat badge's displayed hand count: the per-step override once a
@@ -1865,7 +1954,15 @@ public struct MessageTableView: View {
         // ROUND 20: the sweep grid hides BOTH ends of the sequence - what has
         // already flown off it, and what has not yet flown onto it (a
         // bout-ending cover being replayed; see `sweepUnplaced`).
-        let sweepHidden = sweptFlownIds.union(sweepUnplaced)
+        // ROUND 45: …as one value, so the trace below and the grid below THAT
+        // cannot answer the question differently. They were two copies of the
+        // same pair of ternaries, and the trace is the only thing that says
+        // which cards the table is withholding.
+        let grid = Self.gridVeil(sweeping: sweeping, veiled: veiledCardIds,
+                                 sweptFlown: sweptFlownIds, sweepUnplaced: sweepUnplaced,
+                                 sweepArriving: sweepArriving,
+                                 flying: Self.flyingNow(hidden: animator.hidden,
+                                                        preHidden: animator.preHidden))
         #if DEBUG
         // What the table is actually PAINTING, logged only when it changes - so
         // a re-layout mid-sweep shows up as a line instead of having to be read
@@ -1874,7 +1971,7 @@ public struct MessageTableView: View {
         // going to un-hide (`visible=0 hidden=1` with no flight after it).
         Self.veilStandingNow = animator.preHidden.count
         Self.traceGrid(sweeping: sweeping, shown: shown,
-                       hidden: sweeping ? sweepHidden : veiledCardIds,
+                       hidden: grid.hidden,
                        atRest: !BoardAnimator.isSequencing && settled,
                        preHidden: animator.preHidden, veil: animator.hidden)
         #endif
@@ -1889,8 +1986,8 @@ public struct MessageTableView: View {
                             // Sweeping cards are hidden per-flight (`sweptFlownIds`),
                             // NOT by the hand veil (`veiledCardIds`, which also hides
                             // a picked-up card's HAND copy) - the table copy must
-                            // stay up until its own flight lifts it.
-                            hidden: sweeping ? sweepHidden : veiledCardIds,
+                            // stay up until its own flight lifts it. See `gridVeil`.
+                            hidden: grid.hidden,
                             showGhostSlot: sweeping ? false : passPreview,
                             // Round-7 #7: the covers whose flight is playing this
                             // instant, so the attack beneath one tilts WITH it (same
@@ -1902,8 +1999,7 @@ public struct MessageTableView: View {
                             // rotating. Everything else a sweep flies is leaving,
                             // with nothing left to tilt onto - hence the empty
                             // set this used to pass unconditionally.
-                            flyingNow: sweeping ? sweepArriving
-                                                : animator.hidden.subtracting(animator.preHidden))
+                            flyingNow: grid.flyingNow)
             } else {
                 // Empty table: render nothing (web parity). A "no battle" label
                 // just tells the player what they can already see (owner's call).
@@ -4298,12 +4394,12 @@ public struct MessageTableView: View {
     private func sweepTableForReplay() -> [BattleView] {
         let reconstructed = controller.openReplayPreBattles
         guard !reconstructed.isEmpty else { return [] }
-        let need = Set(reconstructed.flatMap { b in
-            [b.attack.identity] + (b.defense.map { [$0.identity] } ?? [])
-        })
-        let have = Set(lastBattles.flatMap { b in
-            [b.attack.identity] + (b.defense.map { [$0.identity] } ?? [])
-        })
+        // Round 45: through `sweepIds`, like the other two places that ask a
+        // table which cards are on it - this was the fourth and fifth copy of
+        // one flatMap, and "accounts for every card" has to mean the same thing
+        // here as it does in `coveredSweep` next door.
+        let need = Self.sweepIds(reconstructed)
+        let have = Self.sweepIds(lastBattles)
         return need.isSubset(of: have) ? lastBattles : reconstructed
     }
 
@@ -4472,19 +4568,36 @@ public struct MessageTableView: View {
     /// four hand-repeated assignments it replaces: round 20 added two more sets
     /// to the group (`sweepUnplaced` / `sweepArriving`), and a grid left standing
     /// with a card marked un-arrived is a card that never comes back.
+    ///
+    /// THESE TWO ARE THE ONLY WRITERS OF `sweepBattles`, and round 45 turned
+    /// that from a convention into the thing `sweepTableIds` rests on - it is
+    /// now derived from the table rather than assigned beside it. Pinned by
+    /// `VeilOutsTests.testOnlyTheSweepSettersEverWriteTheSweptTable`.
     private func dropSweep() {
-        sweepBattles = []; sweepTableIds = []; sweptFlownIds = []
+        sweepBattles = []; sweptFlownIds = []
         sweepUnplaced = []; sweepArriving = []
     }
 
     private func setSweep(_ battles: [BattleView], unplaced: Set<String> = []) {
         sweepBattles = battles
         sweptFlownIds = []
-        sweepTableIds = Set(battles.flatMap { b -> [String] in
+        // Off the ARGUMENT, not off `sweepTableIds`, though the two are now the
+        // same value: a setter reading back the state it wrote one line earlier
+        // is a habit that only works while the write is synchronous.
+        sweepUnplaced = unplaced.intersection(Self.sweepIds(battles))
+        sweepArriving = []
+    }
+
+    /// The identities a battle table holds - each attack, and its cover if it
+    /// has one. The one derivation: `sweepTableIds` and `setSweep` ask it of the
+    /// swept table, `coveredSweep` and `sweepTableForReplay` of the two tables
+    /// each is choosing between. It was written out longhand at all five, and
+    /// the three that are SUBSET TESTS have to agree about what "accounts for
+    /// every card on it" means or a covered pair drops off the table mid-sweep.
+    static func sweepIds(_ battles: [BattleView]) -> Set<String> {
+        Set(battles.flatMap { b -> [String] in
             [b.attack.identity] + (b.defense.map { [$0.identity] } ?? [])
         })
-        sweepUnplaced = unplaced.intersection(sweepTableIds)
-        sweepArriving = []
     }
 
     /// ROUND 16: the table a bout-ending COVER should be swept off - the kernel's
@@ -4498,11 +4611,9 @@ public struct MessageTableView: View {
     /// `preBoutTable` reconstructs for a pickup) is refused rather than allowed to
     /// drop a covered pair off the table mid-sequence.
     static func coveredSweep(_ events: [GameEvent], current: [BattleView]) -> [BattleView]? {
-        func ids(_ bs: [BattleView]) -> Set<String> {
-            Set(bs.flatMap { [$0.attack.identity] + ($0.defense.map { [$0.identity] } ?? []) })
-        }
         let table = MessageTurnController.preBoutTable(events)
-        guard !table.isEmpty, ids(current).isSubset(of: ids(table)) else { return nil }
+        guard !table.isEmpty,
+              sweepIds(current).isSubset(of: sweepIds(table)) else { return nil }
         return table
     }
 
@@ -4522,6 +4633,39 @@ public struct MessageTableView: View {
         if !sweep.isEmpty { return (sweep, true) }
         if !pending.isEmpty { return (pending, true) }
         return ([], false)
+    }
+
+    /// WHAT THE GRID IS TOLD, once `shownTable` has said WHICH table it is
+    /// drawing - the pair of sets `battlesArea` hands `FBattleGrid`, and a
+    /// straight switch on the same `sweeping` flag.
+    ///
+    /// The two branches answer with DIFFERENT STATE, not a different filter over
+    /// one, and that is the point:
+    ///
+    ///  - NOT SWEEPING. The live table, veiled by the hand veil
+    ///    (`veiledCards`): a card in flight, and a card an unstarted replay has
+    ///    not put down yet. `flyingNow` is the animator's `hidden \ preHidden`,
+    ///    which is what tilts the attack under a landing cover.
+    ///  - SWEEPING. The pre-bout table, which the hand veil must NOT touch: a
+    ///    picked-up card lives in the hand AND on this grid, `veiledCards` hides
+    ///    it for the hand's sake, and honouring that here would take the table
+    ///    copy away before its own flight ever lifted it. So the sweep grid
+    ///    answers off its own two sets, one for each end of the sequence -
+    ///    `sweptFlown` ("has left") and `sweepUnplaced` ("has not arrived") -
+    ///    and its `flyingNow` is `sweepArriving`, the only thing that can be
+    ///    coming DOWN onto a table everything else is leaving.
+    ///
+    /// ROUND 45 CONSIDERED COLLAPSING THE TWO BRANCHES ONTO ONE SET AND DID
+    /// NOT. `veiled` and the sweep pair are not the same question asked twice:
+    /// the same identity is legitimately hidden on one grid and drawn on the
+    /// other, in the same paint, and that is a pickup - the commonest bout end
+    /// in the game. See VeilOutsTests for that case as an assertion.
+    static func gridVeil(sweeping: Bool, veiled: Set<String>,
+                         sweptFlown: Set<String>, sweepUnplaced: Set<String>,
+                         sweepArriving: Set<String>, flying: Set<String>)
+        -> (hidden: Set<String>, flyingNow: Set<String>) {
+        sweeping ? (hidden: sweptFlown.union(sweepUnplaced), flyingNow: sweepArriving)
+                 : (hidden: veiled, flyingNow: flying)
     }
 
     /// Drop the pre-bout table. Called on any view change that empties the table
@@ -5067,7 +5211,7 @@ public struct MessageTableView: View {
                  selection: $selection, onTap: { toggle($0) },
                  onDragChanged: { card, point in onDragChanged(card, at: point) },
                  onDragEnded: { card, point in onDragEnded(card, at: point, view) },
-                 hidden: veiledCardIds.subtracting(handHoldback.map(\.identity)),
+                 hidden: Self.fanVeil(veiled: veiledCardIds, holdback: handHoldback),
                  onDragCardMoved: { center in dragCardCenter = center },
                  reserveNoSlot: reserveNoSlot, instantExit: true,
                  // Round-8 #4: a sorted hand survives closing and reopening the

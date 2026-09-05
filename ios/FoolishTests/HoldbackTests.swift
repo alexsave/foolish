@@ -152,9 +152,20 @@ final class HoldbackTests: XCTestCase {
     /// all. Pinned because the round-43 lock only makes sense on a card that is
     /// drawn: if this un-veil were ever reverted the lock would be guarding an
     /// empty slot and the two changes would silently disagree.
+    ///
+    /// ROUND 45: the subtraction moved BEHIND a name (`fanVeil`) with the rest
+    /// of the veil's outs, so the source half of this now pins the call and the
+    /// value half - which is the part that was always the point - is asserted
+    /// directly rather than read off a string. Same rule, same expression, one
+    /// of the two halves no longer a spelling test.
     func testTheHeldCardsAreStillDrawnInTheFan() throws {
         let src = try source("FoolishKit/Boards/MessageTableView.swift")
-        XCTAssertTrue(src.contains("hidden: veiledCardIds.subtracting(handHoldback.map(\\.identity))"))
+        XCTAssertTrue(src.contains("hidden: Self.fanVeil(veiled: veiledCardIds, holdback: handHoldback)"),
+                      "the fan's hidden set must still be the veil MINUS the held cards")
+        let held = Card(s: 0, v: 6)
+        XCTAssertFalse(MessageTableView.fanVeil(veiled: [held.identity, "x"], holdback: [held])
+                           .contains(held.identity),
+                       "a held card is drawn in the fan, veiled or not")
     }
 
     // MARK: 2 - the row-jump trace counts the hand the fan lays out
