@@ -339,3 +339,61 @@ extension's worst bugs have lived.
 Note that these 2,388 lines already satisfy the campaign's fallback rule: they
 are in FoolishKit, not in a view, so nothing here is stranded in the extension.
 The question is reuse, not rescue.
+
+## Queued: findings the campaign turned up but did not fix
+
+These are not lifts.
+They are defects and gaps found while moving other code, deliberately not fixed
+in passing, and recorded here because a commit message is not where anyone looks
+for work.
+
+### A real bug: the prior board is nil more often than it should be
+
+`MessageEnvelope.lastMoveEventsWithPrior` returns nil whenever the previous step
+emitted anything other than EXACTLY ONE event - and a bare `good` emits none.
+
+Measured in stage 5 over 5,810 pickups: **157 of them** fall back to the flat
+one-battle-per-card table because of this, and the flat shape differs from the
+real table in over half of all cases.
+On screen that is the grid re-arranging itself just before the cards fly.
+
+Not fixed with stage 5 because the same prior ALSO seeds the role marks, where
+"the first event of the previous step" is deliberate.
+So this is a change with two consumers and wants its own look.
+
+### An untested load-bearing rule: the empty menu under a held settlement
+
+While a bout settlement is withheld, the board publishes an EMPTY legal menu so
+the player cannot act on a deal they have not been shown.
+Stage 2 mutated away both halves of that rule and **the whole suite stayed
+green**.
+
+The reason no test catches it: every held bout end the fixtures reach is a pickup
+or a good, after which the acting seat is not the next actor and the raw menu is
+empty anyway - so the assertion passes against no rule at all.
+The one shape that would catch it is a defender's cover that empties their own
+hand, which no fixture reaches.
+
+Stage 2 removed the duplication the rule could hide behind rather than faking a
+test.
+Writing the missing fixture is the actual fix.
+
+### A CI flake: edge-serve 502s under the real memory budget
+
+The `memory` workflow's `edge-serve` job failed on main with
+`semtex,octogen returned 502` at commit `fb9294e`, then passed on re-run with a
+BYTE-IDENTICAL tree (`798b003b` both times), so it is a flake and not a
+regression.
+Two Monte Carlo bots timing out under the edge runtime's real memory budget is a
+resource-pressure symptom worth understanding rather than re-running.
+
+### Housekeeping
+
+- Three stale git worktrees: one marked `prunable` from an old session,
+  `/private/tmp/foolish-drag-wt`, and the flake-fix worktree now that #114 is
+  merged.
+- A background-shell trap worth knowing about, since it cost seven stuck
+  processes: `until ! pgrep -f foo.py; do sleep 5; done` never exits, because the
+  waiting shell's own command line contains `foo.py` and `pgrep -f` matches
+  itself.
+  Use `pgrep -f "[f]oo.py"` or wait on a PID.
