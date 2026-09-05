@@ -1,12 +1,20 @@
 // ios_api.h — the Swift-visible C API for the native iOS app (sdk/swift).
 //
-// This header IS the bridge contract. Per docs/IOS_APP_DESIGN.md §16.0 ("the
-// JSON bridge rule"): Swift never parses the kernel's packed binary formats.
-// Every piece of state Swift needs is emitted as JSON into a caller-provided
-// buffer and decoded in Swift with Codable. Binary crosses the boundary in
-// exactly two places (both outside this header): golden-vector fixtures
-// (compared as opaque bytes) and the packed action encoder (Net/PackedAction,
-// where byte-exactness against the TS implementation is the whole point).
+// This header IS the bridge contract.
+//
+// CORRECTED, 2026-09-05. It used to say, per docs/IOS_APP_DESIGN.md §16.0 "the
+// JSON bridge rule", that Swift never parses the kernel's packed binary formats
+// and that every piece of state crosses as JSON. Task #17 deliberately made that
+// false: production Swift decodes the PACKED wire for the masked view, the legal
+// menu, the replay and the message envelope (sdk/swift/MaskedView.swift,
+// DecodedReplay.swift, EvWire.swift, MessageEnvelope.swift), and
+// fio_state_json / fio_apply_json / fio_msg_decode_json were deleted outright.
+//
+// The rule that actually survived is narrower, and it is the one that matters:
+// NO DURAK RULE IS REIMPLEMENTED IN SWIFT. Swift may read a layout the kernel
+// wrote; it may not decide anything the kernel could decide. A new entry point
+// here should emit PACKED bytes into a caller-provided buffer by default - JSON
+// only where a human reads the output.
 //
 // The one hard rule (§3): no Durak rule is ever reimplemented in Swift. Whose
 // turn, legal moves, capacity checks, refills — every rules question is

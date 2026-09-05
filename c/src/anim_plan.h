@@ -2,11 +2,24 @@
 // pipeline, moved OUT of TypeScript (src/contexts/AnimationContext.tsx, the pure
 // modules under src/state/) and Swift (ios/FoolishKit/Boards/MessageTableView's
 // runEventStream/preCounts/veil) into the one place both already agree they want
-// to be. The web hardened this behaviour through months of glitch-fixing, so the
-// WEB is the spec; iOS re-derived the same choreography a second time; a Steam
-// client would be a third. One derivation is the only way to guarantee a card
-// that flies right on the phone flies right in the browser (the same argument
-// msg_wire.h and evwire.h make for their layers).
+// to be. One derivation is the only way to guarantee a card that flies right on
+// the phone flies right in the browser (the same argument msg_wire.h and
+// evwire.h make for their layers).
+//
+// WHICH CLIENT IS THE SPEC - CORRECTED, 2026-09-05. This header opened by saying
+// the WEB is the spec, because the web had hardened the behaviour through months
+// of glitch-fixing while iOS re-derived it second. That is no longer the owner's
+// position: "the imessage behavior and layout and animation is slightly
+// different from the webs, and I prefer the imessage version." The iMessage
+// board has since grown a RICHER model than the one here - beats rather than
+// steps, a bout-end hold, an out-collapse that rides its own card motion, and a
+// role hand-off this file has no concept of at all.
+//
+// So the direction of travel is INVERTED. When an iMessage rule lands here it
+// REPLACES the rule it meets rather than being reconciled with it, and the web
+// becomes the client that re-derives. Do not "fix" an incoming rule to conform
+// to what is already here; that is exactly backwards. ConflictModel.swift's
+// header states the same thing from the other side.
 //
 // THE BOUNDARY (agreed with the owner). Only RENDERING is irreducibly
 // per-platform: interpolation/springs, view updates, screen coordinates, gesture

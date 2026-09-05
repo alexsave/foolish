@@ -145,15 +145,25 @@ session:
 5. Keep the flight builders (`openReplayFlights`, `myDrawFlights`, spring
    animation) — that is the rendering the boundary keeps in Swift.
 
-### Web/iOS divergences to reconcile (the web is the spec)
+### Web/iOS divergences to reconcile (iMessage is the spec)
 
-The web is the hardened reference; capture its behaviour, note iOS's difference,
-do not average:
+**CORRECTED 2026-09-05.** This section used to read "the web is the spec" and
+told iOS to bend to the C plan. That is no longer the owner's position: "the
+imessage behavior and layout and animation is slightly different from the webs,
+and I prefer the imessage version."
+So the reconciliation runs the other way - capture the iMessage behaviour, and
+the web re-derives.
+See `c/src/anim_plan.h`'s corrected opening and `ConflictModel.swift`'s header.
 
-- **Bout-end discard flight ordering.** iOS flies the ending cover's landing
-  before the discard sweep (`pendingCoverLandingFlights`, note 17). The C plan
-  emits steps in the kernel's evwire order (what the web plays). If iOS wants the
-  cover-first beat, it should reorder *rendering*, not the plan.
+- **Bout-end discard flight ordering.** iOS holds the ending cover's landing
+  before the discard sweep (`pendingCoverLandingFlights`, note 17, and round
+  16's `holdsAfter` which rests 1.5s on exactly that beat).
+  The C plan emits steps in the kernel's evwire order, which is what the web
+  plays.
+  This file used to say that if iOS wanted the cover-first beat it should
+  "reorder *rendering*, not the plan".
+  That instruction is struck: the hold is a rule about how a bout ends, not a
+  rendering workaround, and it belongs in the plan as a per-beat `hold_ms`.
 - **Open-replay veil vs live veil.** iOS derives the veil two ways
   (`openReplayTouchedCardIds` on open vs `myNewIds` live); the C plan's `veil` is
   one definition (real cards in transit into hand/table). Confirm it subsumes both
