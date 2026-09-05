@@ -53,10 +53,58 @@ final class ComponentSnapshotTests: XCTestCase {
     private static let imagePrecision: Float = 0.999
     private static let imagePerceptual: Float = 0.98
 
+    /// The table surface these references were rendered against, restored in
+    /// `tearDown`. nil until `setUp` has run.
+    private var tableBefore: TableSurface?
+
     override func setUp() {
         super.setUp()
         // isRecording is global to the library.
         // SnapshotTesting.isRecording = record
+        //
+        // PIN THE TABLE, for exactly the reason `host` pins the colour scheme.
+        //
+        // `TableBackground` reads `FPrefs.shared.table`, which is a PERSISTED
+        // user preference (`ios.table.surface` in UserDefaults.standard, added
+        // with the table picker in 1.0(33)) - so it survives between runs, and
+        // whatever the simulator last had is what these images render against.
+        // Nothing in this class was declaring it, so the reference PNGs
+        // recorded whatever the RECORDING machine happened to be set to.
+        //
+        // That is not hypothetical. `testRoleMarksReadAsOneFamily` went red on
+        // 2026-09-04 with no source change and passed forty seconds earlier: its
+        // reference (recorded 2026-09-03) is green FELT, and felt is the option,
+        // not the baseline - `FPrefs.table` defaults to `.wool`. So the
+        // reference had captured a session in which somebody had switched the
+        // table, and the test only kept passing for as long as that preference
+        // happened to survive on this machine.
+        //
+        // `.wool` because it is the product's default AND what this class is
+        // actually about - the role-marks test's own doc says the marks are
+        // drawn "on the wool they have to survive".
+        //
+        // Worth knowing while reading this: `ios/FoolishTests/__Snapshots__` is
+        // git-ignored, so every machine records its own references on first run.
+        // That makes an unpinned ambient input worse than flaky - it is
+        // per-machine, and no two checkouts are asserting the same picture.
+        // `FPrefs` is @MainActor and these overrides are not (the class is not,
+        // unlike Round30NitTests). XCTest runs setUp/tearDown on the main thread
+        // for a UI-rendering suite, which is also where every `host(_:)` below
+        // already relies on being, so the isolation is a fact to assert rather
+        // than a hop to make - a hop would need async overrides and would not be
+        // ordered against the test body anyway.
+        MainActor.assumeIsolated {
+            tableBefore = FPrefs.shared.table
+            FPrefs.shared.setTable(.wool)
+        }
+    }
+
+    override func tearDown() {
+        MainActor.assumeIsolated {
+            if let tableBefore { FPrefs.shared.setTable(tableBefore) }
+        }
+        tableBefore = nil
+        super.tearDown()
     }
 
     private func host<V: View>(_ view: V, width: CGFloat = 320, height: CGFloat = 200) -> UIViewController {
