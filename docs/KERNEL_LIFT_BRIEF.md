@@ -685,3 +685,84 @@ The point is not the randomness.
 It is that "which bot gets added" is answered two different ways depending on
 which client asks, which is the class of divergence this whole campaign has been
 closing.
+
+## Queued: delete the dead C build flags
+
+Owner: "All of it. It's in git history if we need to tune it again."
+
+Every dead flag is in BOT RESEARCH code.
+Nothing in the game core, the wire, or the animation layer is guarded by a flag
+no build sets.
+
+### Delete: read by the code, set by no build target
+
+| flag | guarded lines | file |
+|---|---:|---|
+| `CD_TT_TRACE` | ~95 | `cordite_sim.c` |
+| `CD_TT_RANKSYM` | ~79 | `cordite_sim.c` |
+| `CD_TT_STATS` | ~67 | `cordite_sim.c` |
+| `CD_TT_BOUNDS` | ~49 | `cordite_sim.c` |
+| `CD_TT_SUITSYM` | ~48 | `cordite_sim.c` |
+| `CD_TT_BOUNDS_USE` | ~32 | `cordite_sim.c` |
+| `CD_TT_TAILCACHE` | ~17 | `cordite_sim.c` |
+| `GRPO_RNG_DEBUG` | ~14 | `game.c` |
+| `CD_TT_ADAPT` | ~11 | `cordite_sim.c` |
+| `OG_HIDE_UNCOVERABLE` | ~11 | `octogen_strategy.c` |
+| `CD_TT_DEPTH_PREF`, `CD_TT_ORDER2`, `CD_TT_ORDER3` | ~9 | `cordite_sim.c` |
+| `CD_SIM_SOLVE_MAX_DEPTH` | ~3 | `alphabeta_probe.c` |
+
+About 435 lines over ~50 sites.
+`cordite_sim.c` is the largest C file in the repo at 1,727 lines and roughly a
+quarter of it is unreachable.
+
+The `CD_TT_*` family is transposition-table tuning scaffolding from the cordite
+research - trace, stats, suit and rank symmetry folding, bound tightening, move
+ordering.
+Cordite is the ELO #1 bot, so this is the record of how it got there.
+The owner's call is to delete it and rely on git.
+
+Delete the guarded code WITH the guard.
+An `#ifdef` whose body is removed but whose flag survives in a comment or a
+Makefile note is the same vestige in a smaller size.
+
+### Do NOT touch: tunables that only look like dead conditionals
+
+`GUNPOWDER_MODE`, `CD_TT_TAIL_K`, `CD_TT_TAIL_N`, `CD_TT_BOUND_MINCARDS`,
+`LEAFBOOK_K`, `REPLAY_BN_CAP` are `#ifndef X / #define X <default>` idioms.
+They guard ZERO lines.
+Deleting the guard deletes the default and breaks the build.
+`CNITRO_WASM_SIZE_T` is a typedef guard in the wasm libc shims.
+
+### The other direction: are any flags always on, so the guard is pointless?
+
+Checked, and the answer is **no** - with one near-miss worth writing down,
+because it is the one a careless sweep would remove.
+
+`CD_LEAFBOOK` sits in the GLOBAL `CFLAGS` (`Makefile:31`), so every native target
+has it and the guard looks redundant.
+It is not.
+The `leafbook` target builds with its own `LEAFBOOK_CFLAGS`, which deliberately
+omits it - the Makefile says so in as many words: "The build_book pass compiles
+WITHOUT -DCD_LEAFBOOK (it builds the book by direct solves)".
+The guard IS the bootstrap.
+Remove it and the book becomes unbuildable, because building the book would
+require the book.
+
+Everything else - `CD_WASM_OVERLAY`, `CD_RULES_OVERLAY`, `CD_TT_2WAY`,
+`CD_TT_PACK8`, `DEAL_RNG_DISABLED`, `FOOLISH_ORACLE_BUILD`,
+`FOOLISH_SEEDED_BOTS_ONLY`, `GUARDS_VALIDATE_ONLY`, `REPLAY_STATS`,
+`LEGAL_STATS`, `OG_EXPLAIN_BUILD` - is set by one or two named targets and is
+genuinely conditional.
+
+`ACCELERATE_NEW_LAPACK` is in the global `CFLAGS` and read by nothing in this
+repo: it is Apple's own Accelerate macro, consumed by a system header.
+Not ours, leave it.
+(`_T` in an earlier scan was an artifact of a regex chopping
+`-D_Thread_local=`; there is no such flag.)
+
+### How to verify the deletion
+
+Deleting dead code cannot change behaviour, so prove that rather than assert it:
+build every target that touches these files and diff the binaries, or failing
+that run the bot benchmarks and hold the ELO table.
+`make tests`, `make difftests` and the bot parity suites must be unchanged.
