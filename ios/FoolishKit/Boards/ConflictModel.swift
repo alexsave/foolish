@@ -15,10 +15,10 @@
 //
 // The lift was the standing intent this file was written with (owner, on
 // accepting it: "definitely add a comment to lift to C later"), and the
-// direction it names held: the iMessage rule went to C as the shared one rather
-// than being reconciled with anim_resolve_unconfirmed_attack_covers, which
-// answers a different question against a server verdict and stays for the web.
-// See anim_plan.h for what separates them.
+// direction it names held: the iMessage rule went to C as the shared one, and
+// anim_resolve_unconfirmed_attack_covers - the web's - became a marshaller over
+// it. What separates the two clients is one question at the end of the verdict,
+// and the app declares which of them it is (AnimTransport, anim_plan.h).
 
 import SwiftUI
 

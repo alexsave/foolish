@@ -43,6 +43,8 @@ import { createCardEventString, getCardKey } from '../src/utils/animationUtils.t
 import { staleOptimisticKeysOnTable } from '../src/state/optimisticAnimation.ts';
 import { resolveUnconfirmedAttackCovers } from '../src/state/optimisticConflicts.ts';
 import { shouldDropStaleSequence } from '../src/state/clientReconcile.ts';
+import { animTransport, __setAnimTransport, ANIM_TRANSPORT_CHAIN, ANIM_TRANSPORT_SERVER }
+    from '../sdk/ts/wasm/bots.ts';
 // The ORIGINAL TS reference implementations, kept for exactly this comparison.
 import {
     staleOptimisticKeysOnTableTsReference,
@@ -317,6 +319,46 @@ test('resolveUnconfirmedAttackCovers: C == TS reference (generated + edge cases)
         }
     }
     assert.ok(scenarios > 10, `expected generated scenarios, got ${scenarios}`);
+});
+
+// ================== 3b. THE TRANSPORT, IN THIS PROCESS ====================
+//
+// The doom rule is written once and runs on both transports; the only thing
+// that differs is whether "the newest news does not mention my card" is a
+// verdict. This pins BOTH halves of that claim in the host that would be hurt
+// by getting it wrong: that the browser's module comes up on the server
+// transport without anyone asking, and that the same input answers differently
+// on the other one.
+//
+// MUTATION: have `bots()` declare CHAIN instead of SERVER (sdk/ts/wasm/bots.ts)
+// and this fails on the first assertion, and optimistic_revert SCENARIO A with
+// it - which is the browser regression the split exists to prevent.
+test('the transport: this module is the server one, and the other one disagrees', () => {
+    assert.equal(animTransport(), ANIM_TRANSPORT_SERVER,
+        'a wasm host is a broadcast host, and says so at init rather than inheriting a default');
+
+    // SCENARIO A's shape: my legal in-flight attack, a broadcast that shows the
+    // rival's card and not mine, and a defender who could still hold it.
+    const mine: Card = { suit: 3, value: 11 };
+    const rival: Card = { suit: 3, value: 6 };
+    const fin = { defender: 0, players: [{ hand_length: 6 }],
+                  table_battles: [{ attack: rival, defense: null }] };
+    const events = [{ type: 'attack_pass', cards: [rival] }];
+    const server = resolveUnconfirmedAttackCovers([mine], [rival], events, fin);
+    assert.deepEqual({ revert: server.revert.length, merge: server.merge.length },
+        { revert: 0, merge: 1 },
+        'the server keeps it: my card confirmation is a later broadcast, not this one');
+
+    try {
+        __setAnimTransport(ANIM_TRANSPORT_CHAIN);
+        const chain = resolveUnconfirmedAttackCovers([mine], [rival], events, fin);
+        assert.equal(chain.revert.length, 1,
+            'a chain is complete, so a card it does not account for is doomed - and reading '
+            + 'a broadcast that way is the card-out/home-in-red/out-again stutter');
+    } finally {
+        __setAnimTransport(ANIM_TRANSPORT_SERVER);
+    }
+    assert.equal(animTransport(), ANIM_TRANSPORT_SERVER, 'put back for everything after it');
 });
 
 // ========================= 4. VERSION-GATE PARITY =========================

@@ -103,6 +103,10 @@ static void test_optimistic_animation(void) {
 // 2. optimistic_revert.test.ts  (resolveUnconfirmedAttackCovers)
 // ======================================================================
 static void test_optimistic_revert(void) {
+    // THE SERVER TRANSPORT is what this whole rule is: a broadcast is a partial
+    // delta and a card's own confirmation may still be in the post. The kernel
+    // refuses to guess that (ANIM_ETRANSPORT), so the host says it once.
+    CHECK(anim_set_transport(ANIM_TRANSPORT_SERVER) == ANIM_EOK, "the host names its transport");
     // --- SCENARIO B: a card the defender immediately picks up is NOT reverted to
     //     my hand — it was accepted, then swept off by the pickup, so it CLEARs. ---
     {
@@ -177,6 +181,29 @@ static void test_optimistic_revert(void) {
         CHECK(rc == ANIM_EOK, "resolve rc");
         CHECK(r.n_revert == 1 && same(pending[r.revert[0]].card, C(0, 5)), "cover-excl: the ATTACK reverts");
         CHECK(r.n_merge == 1 && same(pending[r.merge[0]].card, C(2, 9)), "cover-excl: the COVER merges");
+    }
+
+    // --- MIXED, and a deliberate change of answer: the broadcast shows ONE of
+    //     my two pending cards. The one it shows is STANDING and needs no
+    //     merging into a state that already has it; the other still has to
+    //     answer for itself, and the defender can hold it, so it merges. The
+    //     rule this replaced short-circuited the WHOLE set on the first
+    //     accepted card - a shape AnimationContext cannot produce (it only asks
+    //     when none is accepted), and per-card is the question being asked. ---
+    {
+        AnimPending pending[] = { { C(1, 8), 0 }, { C(2, 4), 0 } };
+        Card serverTable[] = { C(1, 8) };
+        AnimEvent events[1]; memset(events, 0, sizeof(events));
+        events[0].type = ANIM_EVT_ATTACK_PASS;
+        AnimFinalState fin; memset(&fin, 0, sizeof(fin));
+        fin.defender = 1; fin.n_players = 2; fin.hand_length[1] = 6;
+        fin.final_uncovered_attacks = 1;
+        AnimResolve r;
+        int rc = anim_resolve_unconfirmed_attack_covers(pending, 2, serverTable, 1, events, 1, &fin, &r);
+        CHECK(rc == ANIM_EOK, "resolve rc");
+        CHECK(r.n_revert == 0 && r.n_clear == 0, "nothing is doomed here");
+        CHECK(r.n_merge == 1 && same(pending[r.merge[0]].card, C(2, 4)),
+              "only the card the broadcast does NOT show needs merging");
     }
 
     // --- accepted short-circuit: server already shows my card -> no revert/merge/clear. ---

@@ -126,6 +126,37 @@
 #define ANIM_EOK      0
 #define ANIM_ECAP    -1   // an output buffer / cap would be exceeded
 #define ANIM_EBADARG -2   // a NULL pointer, a count out of range, a bad enum
+#define ANIM_ETRANSPORT -3 // a question that depends on the transport, asked
+                           //   before anyone said which one this is
+
+// ---------- the transport ------------------------------------------------
+//
+// HOW A CLIENT LEARNS THAT ITS OWN OPTIMISTIC CARD SURVIVED. Set once at
+// initialization, because it is a property of the app rather than of the
+// question being asked - iMessage is the odd one out and every other client
+// shares the server's shape.
+//
+//   CHAIN   every message carries the whole game, totally ordered (iMessage).
+//           A newer chain is the complete truth, so doom is knowable locally
+//           and immediately.
+//   SERVER  a card's confirmation is its own later broadcast (web, iOS, watch,
+//           Steam). "The newest news does not mention my card" means the
+//           receipt is still in the post, not that the card was rejected, and
+//           reading the second as the first is the card-out / card-home-in-red
+//           / card-out-again stutter.
+//
+// It controls exactly one question - the last `if` in anim_conflict_verdict -
+// and it has NO DEFAULT: a verdict that reaches that question with nothing set
+// returns ANIM_ETRANSPORT rather than guessing which client it is inside.
+#define ANIM_TRANSPORT_UNSET  0
+#define ANIM_TRANSPORT_CHAIN  1
+#define ANIM_TRANSPORT_SERVER 2
+
+// Returns ANIM_EOK, or ANIM_EBADARG for a value that is not one of the three.
+int anim_set_transport(int transport);
+// What is set, for diagnostics: a wrong-mode bug looks exactly like an
+// animation bug, and reading the mode back is the cheap way to tell them apart.
+int anim_transport(void);
 
 // One decoded animation event as this layer sees it — the output of the
 // platform evwire decoder, one step of a viewer's sequence. `cards` BORROWS the
@@ -496,21 +527,22 @@ typedef struct {
 // The "my optimistically-played attack/cover is not (yet) on the authoritative
 // table" decision — optimisticConflicts.resolveUnconfirmedAttackCovers. This is
 // the hardened fix for the "card jumps to the table, snaps back to my hand, then
-// re-appears" flicker. Per pending card, decide revert / merge / clear:
+// re-appears" flicker.
 //
-//   * server already shows one of my cards       -> {} (per-event dedup handles it)
-//   * this broadcast is a pickup/cards_to_trash  -> a swept card is CLEARed (it was
-//     (has_table_clear)                             accepted then carried off; no
-//                                                   revert), an unswept one REVERTs
-//   * else the defender can't hold all the        -> the attacks REVERT, covers MERGE
-//     attacks (capacity rule, attacks only)
-//   * else                                        -> all MERGE (defender can hold them)
+// THE DECISION IS anim_conflict_verdict's, under ANIM_TRANSPORT_SERVER. What is
+// left here is marshalling: the broadcast's cards become the same facts an
+// arriving chain builds (the swept set is what the stream MOVES, the
+// authoritative table is what it VOUCHES for), the capacity scalars become an
+// AnimServerHope, and the three verdicts become the three index sets this
+// caller speaks. A KEEP the server table already shows is in NO set - it needs
+// no merging, and the per-event dedup upstream owns it.
 //
 //   events[n_events]   the broadcast's events (type + cards; the clear set is the
 //                      union of pickup/cards_to_trash cards)
 //   server_table[...]  the authoritative table cards this broadcast shows
 //   fin                the final personalized state's scalars
-// Returns ANIM_EOK, or ANIM_EBADARG (NULL out / bad counts).
+// Returns ANIM_EOK, ANIM_EBADARG (NULL out / bad counts / a pending card with no
+// identity), or ANIM_ETRANSPORT if no transport has been set.
 int anim_resolve_unconfirmed_attack_covers(const AnimPending *pending, int n_pending,
                                            const Card *server_table, int n_server_table,
                                            const AnimEvent *events, int n_events,
@@ -549,15 +581,15 @@ int anim_resolve_unconfirmed_attack_covers(const AnimPending *pending, int n_pen
 // ghost back OUT of a pile is how the "deal from the pile onto the table" class
 // of bug happens.
 //
-// NOT THE SAME QUESTION as anim_resolve_unconfirmed_attack_covers above, which
-// is why both live here. That one judges against a SERVER VERDICT - an
-// authoritative table, a defender-capacity inference, a broadcast that may yet
-// confirm the card - and decides WHETHER a motion is doomed. This one is asked
-// only about motions the caller already knows are doomed, and answers HOW each
-// one leaves. A client with a total order over complete chains (iMessage) knows
-// doom by itself; a client whose own move is confirmed by a separate later
-// broadcast (the web) does not, and asking this rule there would revert a card
-// the server is about to accept. See docs/ANIMATION_CORE_C.md.
+// ONE RULE, TWO TRANSPORTS. anim_resolve_unconfirmed_attack_covers below is no
+// longer a second rule: it marshals a server broadcast's inputs into these same
+// facts and buckets these same verdicts. Everything above - the precedence, the
+// standing sets, the pool and masked-back rules, the reversal's order - is
+// identical in both transports. What differs is one question, asked only after
+// both tests have failed: is "not accounted for" CONCLUSIVE? A chain is
+// complete and totally ordered, so yes. A server broadcast is a partial delta,
+// so no, and the server asks its own extra question (AnimServerHope) before
+// concluding. See docs/ANIMATION_CORE_C.md.
 
 // The verdict.
 #define ANIM_CONFLICT_REVERT 0
@@ -596,9 +628,27 @@ int anim_conflict_facts(const int *moved_ids, int n_moved,
                         const unsigned char *my_hand_ids, int n_my_hand,
                         AnimConflictFacts *out);
 
+// THE SERVER TRANSPORT'S EXTRA QUESTION, as the scalars that answer it: after
+// the shared tests have failed, could this card still be accepted? Only read
+// under ANIM_TRANSPORT_SERVER, where it is REQUIRED - a NULL there is
+// ANIM_EBADARG, because a broadcast that cannot say is not a broadcast that
+// says no. Ignored entirely under ANIM_TRANSPORT_CHAIN.
+typedef struct {
+    int is_cover;         // the defender's own play - the capacity rule is an
+                          //   ATTACK rule (game.c handle_attack) and excludes it
+    int table_cleared;    // a pickup or trash took the table away; a card the
+                          //   sweep did not name never reached it
+    int pending_attacks;  // my still-unconfirmed attacks, covers excluded
+    int defender_hand;    // the defender's hand in the final state
+    int final_uncovered;  // uncovered attacks the final state shows
+} AnimServerHope;
+
 // The verdict for one card. `card_id` is a dense id, or ANIM_CARD_NONE for a
-// masked back. Returns ANIM_CONFLICT_*, or ANIM_EBADARG.
-int anim_conflict_verdict(int card_id, int dest, const AnimConflictFacts *facts);
+// masked back. `hope` is the server transport's extra inputs (see above); pass
+// NULL under the chain transport. Returns ANIM_CONFLICT_*, ANIM_EBADARG, or
+// ANIM_ETRANSPORT when no transport has been set.
+int anim_conflict_verdict(int card_id, int dest, const AnimConflictFacts *facts,
+                          const AnimServerHope *hope);
 
 // Which KIND of place an event's cards went, for the verdict above. Placements
 // land on the table; my own draws and pickups land in my hand; everything else -
@@ -633,7 +683,10 @@ typedef struct {
     int order[ANIM_MAX_CONFLICT_MOTIONS];
 } AnimConflictPlan;
 
-// THE REVERSAL'S SHAPE. `group_sizes` slices `motions` in the order they flew.
+// THE REVERSAL'S SHAPE. Chain transport only - it reverses motions the caller
+// already knows are doomed, which is a thing only a total order can know, so it
+// passes no AnimServerHope and a SERVER-transport call is ANIM_EBADARG.
+// `group_sizes` slices `motions` in the order they flew.
 // Steps come back in REVERSE group order - the cards travel back the way they
 // came, last motion first - each group staying one parallel step, and a group
 // no motion reverts is DROPPED rather than played as a beat of silence.

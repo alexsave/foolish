@@ -63,6 +63,27 @@ interface BotsExports extends EngineExports {
     wasm_anim_resolve(nPending: number, nServer: number, nEvents: number,
                       defender: number, defenderHand: number, finalUncovered: number): number;
     wasm_anim_build_plan(nEvents: number, nPlayers: number, finalDeck: number, finalDiscard: number): number;
+    wasm_anim_set_transport(transport: number): number;
+    wasm_anim_transport(): number;
+}
+
+// ANIM_TRANSPORT_* (c/src/anim_plan.h).
+export const ANIM_TRANSPORT_UNSET = 0;
+export const ANIM_TRANSPORT_CHAIN = 1;
+export const ANIM_TRANSPORT_SERVER = 2;
+
+/** Which transport this module is set to, for diagnostics: a wrong-mode bug
+ *  looks exactly like an animation bug. The setter is deliberately not exported
+ *  as a public knob - a host states its transport at init, in `bots()`. */
+export function animTransport(): number { return bots().wasm_anim_transport(); }
+
+/** THE ONE PLACE A TEST MAY MOVE IT. The two transports have to be provable
+ *  against the same input in the same process (the FMSG suites already drive
+ *  chain behaviour through this module), and that cannot be done without
+ *  putting it back afterwards. */
+export function __setAnimTransport(transport: number): void {
+    const rc = bots().wasm_anim_set_transport(transport);
+    if (rc < 0) throw new Error(`anim_set_transport error ${rc}`);
 }
 
 // Mirrors STRAT_* in c/src/strategy.h (only the ids the server uses).
@@ -177,6 +198,13 @@ function bots(): BotsExports {
     const instance = new WebAssembly.Instance(module, {});
     const ex = instance.exports as unknown as BotsExports;
     ex.wasm_init();
+    // THE TRANSPORT, said once (anim_plan.h). Every host that reaches the
+    // kernel through this module is the server shape: a card's confirmation is
+    // its own later broadcast, so "the newest news does not mention my card"
+    // means the receipt is in the post, not that it was rejected. The kernel
+    // has no default for this and errors rather than guessing, which is what
+    // keeps a new host from silently inheriting iMessage's answer.
+    ex.wasm_anim_set_transport(ANIM_TRANSPORT_SERVER);
     exportsCache = ex;
     // bots.wasm is a superset of rules.wasm — adopt the engine slot so a bot
     // turn's choose and its follow-up action run on one instance, enabling

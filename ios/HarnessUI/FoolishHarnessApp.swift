@@ -26,6 +26,9 @@ import FoolishKit
 @main
 struct FoolishHarnessApp: App {
     init() {
+        // The rig POSES the iMessage extension, so it is the chain transport
+        // (see MessagesViewController.viewDidLoad).
+        AnimTransport.declare(.chain)
         // Each fake participant gets its OWN seat cache (see HarnessModel), so
         // seat identity resolves automatically — the DEBUG single-sim seat picker
         // would be wrong here.

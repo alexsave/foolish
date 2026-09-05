@@ -747,6 +747,19 @@ static int pretable_wire_check(void) {
 // read as motion counts, and the "no card" sentinel read as id 254. Each fails
 // here. Both bounds fault on the guard page when loosened, as the plan's do.
 static int conflict_wire_check(void) {
+    // The chain transport is what a reversal IS - motions the caller already
+    // knows are doomed, which only a total order can know. Unset, the kernel
+    // refuses to answer (FIO_ETRANSPORT) rather than picking a client.
+    unsigned char tprobe[] = { FIO_CONFLICT_VERSION, 0, 0, 0, 1, 1, 30, FIO_CONFLICT_DEST_TABLE };
+    unsigned char tpout[64];
+    if (fio_set_transport(FIO_TRANSPORT_UNSET) != FIO_EOK) { printf("FAIL transport unset\n"); return 1; }
+    if (fio_transport() != FIO_TRANSPORT_UNSET) { printf("FAIL transport readback\n"); return 1; }
+    if (fio_conflict_packed(tprobe, (int)sizeof tprobe, (char *)tpout, sizeof tpout) != FIO_ETRANSPORT) {
+        printf("FAIL conflict answered with no transport set\n"); return 1;
+    }
+    if (fio_set_transport(FIO_TRANSPORT_CHAIN) != FIO_EOK) { printf("FAIL transport chain\n"); return 1; }
+    if (fio_transport() != FIO_TRANSPORT_CHAIN) { printf("FAIL transport chain readback\n"); return 1; }
+
     const unsigned char in[] = {
         FIO_CONFLICT_VERSION,
         1, 51,                  // the arriving stream moves the king of diamonds

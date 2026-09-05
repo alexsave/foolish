@@ -974,6 +974,14 @@ int wasm_anim_stale_optimistic(int n_opt, int n_table, int n_named) {
     return n;
 }
 
+// THE TRANSPORT (anim_plan.h), said once by the host. Every wasm host is the
+// server shape - a browser, an edge function, a test harness driving either -
+// but the kernel will not assume that, so bots.ts states it at module init.
+// The FMSG suites drive CHAIN behaviour from this same module, so it is a
+// setter and not a compile-time constant.
+int wasm_anim_set_transport(int transport) { return anim_set_transport(transport); }
+int wasm_anim_transport(void) { return anim_transport(); }
+
 // resolveUnconfirmedAttackCovers (optimisticConflicts.ts). g_io in:
 //   pending: n_pending x { u8 wire card, u8 is_cover }
 //   server:  n_server  x u8 wire card

@@ -51,6 +51,8 @@ extern "C" {
 #define FIO_EREPLAY     -7   // replay encode/decode failed (see fio_last_replay_error)
 #define FIO_ENOSEED     -8   // this game was not dealt from a wide seed, so its
                              // deal cannot be re-derived (v6 needs it; use v5)
+#define FIO_ETRANSPORT  -9   // a question that depends on the transport, asked
+                             // before anyone said which one this is
 
 // ---------- lifecycle ------------------------------------------------------
 
@@ -460,6 +462,20 @@ int fio_pre_bout_table_packed(const uint8_t *in, int len, char *out, int cap);
 //        steps laid end to end. Steps are in REVERSE group order and a group
 //        the verdicts emptied is dropped, so n_steps <= n_groups.
 // Returns bytes written, or a negative error.
+// THE TRANSPORT - how this client learns that its own optimistic card survived,
+// and the only thing the two clients' conflict rule disagrees about (see
+// c/src/anim_plan.h). CHAIN is iMessage, where a newer chain is the complete
+// truth and doom is knowable locally; SERVER is everything that goes through a
+// broadcast, where a card the newest news does not mention may still be in the
+// post. Set it once at startup: there is NO default, and the verdict returns
+// FIO_ETRANSPORT rather than guessing which client it is inside.
+#define FIO_TRANSPORT_UNSET  0
+#define FIO_TRANSPORT_CHAIN  1
+#define FIO_TRANSPORT_SERVER 2
+int fio_set_transport(int transport);
+// What is set, for diagnostics: a wrong-mode bug looks like an animation bug.
+int fio_transport(void);
+
 #define FIO_CONFLICT_VERSION 1
 // "no card here", the byte ANIM_TABLE_NONE / LEGAL_WIRE_NONE already are.
 #define FIO_CONFLICT_NONE 0xFE

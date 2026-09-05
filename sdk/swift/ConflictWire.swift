@@ -25,6 +25,38 @@
 import Foundation
 import CFoolish
 
+/// HOW THIS APP LEARNS THAT ITS OWN OPTIMISTIC CARD SURVIVED - said once, at
+/// startup, because it is a property of the app and not of the question.
+///
+/// It is the ONLY thing the two clients' conflict rule disagrees about. The
+/// CLEAR test, the standing test, the pool and masked-back rules and the
+/// reversal's order are one implementation for both; the transport answers a
+/// single question at the end of the verdict - once a card has failed both
+/// tests, is "not accounted for" conclusive? (anim_plan.h.)
+///
+/// There is deliberately no default. A verdict asked before anyone declares
+/// gets FIO_ETRANSPORT and this reader turns it into no plan at all, which is
+/// loud, rather than quietly handing a new client iMessage's answer.
+public enum AnimTransport: Int32, Sendable {
+    /// iMessage: every message carries the whole game, totally ordered, so a
+    /// newer chain is the complete truth and doom is knowable locally.
+    case chain  = 1
+    /// Everything through a server (the app's online play, a watch, Steam): a
+    /// card's confirmation is its own later broadcast, so "the newest news does
+    /// not mention my card" means the receipt is still in the post.
+    case server = 2
+
+    /// Say which one this process is. Call it from the app or extension entry
+    /// point before any board is built; calling it twice with the same value is
+    /// harmless, and the harness relies on that.
+    public static func declare(_ t: AnimTransport) { _ = fio_set_transport(t.rawValue) }
+
+    /// What is set, or nil if nothing has said. For diagnostics: a wrong-mode
+    /// bug looks exactly like an animation bug and this is the cheap way to
+    /// tell them apart.
+    public static var current: AnimTransport? { AnimTransport(rawValue: fio_transport()) }
+}
+
 /// The three-way verdict. See anim_plan.h for the rule; the short of it is
 /// whether the arriving chain accounts for the card being where the doomed
 /// motion put it.

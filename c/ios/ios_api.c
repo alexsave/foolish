@@ -791,6 +791,13 @@ int fio_pre_bout_table_packed(const uint8_t *in, int len, char *out, int cap) {
 
 // ---------- the conflict model --------------------------------------------
 
+// THE TRANSPORT (anim_plan.h), said once by the host. This library is linked by
+// the iMessage extension, whose messages each carry the whole game in a total
+// order, and by the iOS app, whose online play is confirmed by a later server
+// broadcast - so it cannot be a constant here, and the kernel refuses to guess.
+int fio_set_transport(int transport) { return anim_set_transport(transport); }
+int fio_transport(void) { return anim_transport(); }
+
 int fio_conflict_dest(int event_type, int seat, int my_seat) {
     return anim_conflict_dest(event_type, seat, my_seat);
 }
@@ -872,6 +879,7 @@ int fio_conflict_packed(const uint8_t *in, int len, char *out, int cap) {
     static AnimConflictPlan plan;
     const int rc = anim_conflict_reversal(motions, n_motions, groups, n_groups, &facts, &plan);
     if (rc == ANIM_ECAP) return FIO_ECAP;
+    if (rc == ANIM_ETRANSPORT) return FIO_ETRANSPORT;
     if (rc < 0) return FIO_EBADARG;
 
     const int need = 2 + plan.n_verdicts + 1 + plan.n_steps + plan.n_order;

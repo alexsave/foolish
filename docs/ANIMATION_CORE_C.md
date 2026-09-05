@@ -65,6 +65,11 @@ deliberately leaves behind.
   → `AnimResolve{revert,merge,clear}` — `optimisticConflicts.resolveUnconfirmedAttackCovers`,
   the revert-vs-keep-vs-clear decision that fixed the "card jumps to the table,
   snaps back, re-appears" flicker.
+  Since the transport landed this is **marshalling**, not a second rule: it
+  builds the same `AnimConflictFacts` the chain builds and buckets the same
+  `anim_conflict_verdict` answers.
+- `int anim_set_transport(t)` / `int anim_transport(void)` - which client this
+  is, said once at initialization.
 
 ### The conflict model
 
@@ -77,12 +82,14 @@ red, and only then does the newest chain animate forward.
   arriving chain vouches for, reduced to three dense-id bitsets: the cards its
   stream moves, the table of the board it opens on (BOTH sides of a battle
   stand), and my hand there.
-- `int anim_conflict_verdict(card_id, dest, facts)` - REVERT / KEEP / CLEAR for
-  one card.
+- `int anim_conflict_verdict(card_id, dest, facts, hope)` - REVERT / KEEP /
+  CLEAR for one card, on either transport.
   CLEAR is decided BEFORE the standing sets, because a card the incoming stream
   moves may also stand on its opening table (a pickup's do by definition) and a
   red flight first is the flicker.
   A masked back and anything that went to a POOL are kept.
+  `hope` is the server transport's extra inputs and is required there, NULL on a
+  chain - see "The transport" below.
 - `int anim_conflict_dest(event_type, seat, my_seat)` - which kind of place an
   event's cards went, so the standing check reads the right side of the board.
 - `int anim_conflict_reversal(motions, group_sizes, facts, out)` - the whole
@@ -90,8 +97,8 @@ red, and only then does the newest chain animate forward.
   back in which order (reverse group order, a group the verdicts emptied
   dropped).
 
-This is **not** the same question as `anim_resolve_unconfirmed_attack_covers`,
-and both are kept for that reason - see "The two conflict rules" below.
+`anim_resolve_unconfirmed_attack_covers` is the same rule reached through the
+server's own vocabulary - see "The transport" below.
 
 ### The board's own sets and small rules
 
@@ -302,42 +309,64 @@ See `c/src/anim_plan.h`'s corrected opening and `ConflictModel.swift`'s header.
   `e2e/anim_core_parity.test.ts` and `ios/FoolishTests/MessageCountWindingTests`,
   both of which insist the freeze IS the board before the sequence.
 
-## The two conflict rules, and why the web did not move over
+## The transport: one rule, two clients, one question
 
-`anim_conflict_*` (the iMessage rule) and
-`anim_resolve_unconfirmed_attack_covers` (the web's) both answer
-"revert / keep / clear" for a card that is on the table without the newest truth
-showing it there.
-They are different questions, and the campaign's "iMessage is the spec" rule did
-NOT apply cleanly here.
-Recorded 2026-09-05, in the lift stage that moved `ConflictModel.swift`:
+`anim_conflict_*` and `anim_resolve_unconfirmed_attack_covers` used to be two
+rules answering "revert / keep / clear" for a card that is on the table without
+the newest truth showing it there.
+They are one rule now, and the thing that separated them is a single question
+asked at the very end of it.
 
-- The iMessage rule is asked only about motions the caller **already knows are
-  doomed** - a staged move an arrival overrides, a sequence a fork winner
-  un-happens.
-  Its whole verdict is "a newer chain exists, and here is what it vouches for".
-  A chain is complete and totally ordered, so doom is knowable locally.
-- The web asks about a card whose **own confirming broadcast is still coming**.
-  A single broadcast is a partial delta, not the whole truth, and the web's
-  function decides WHETHER the card is doomed (the accepted check, the
-  table-clear check, the defender-capacity rule) before deciding how it leaves.
+What is IDENTICAL, and is written once:
 
-Feeding the iMessage rule the web's inputs makes every in-flight card read as
-disowned, because the server still shows it in my hand on the board the
-broadcast opens on.
-`e2e/optimistic_revert.test.ts` SCENARIO A is exactly that case: under the
-iMessage rule Hero's sent, legal attack would fly home in red and then fly back
-out when its own broadcast lands - the player-reported symptom ("it jumps to the
-table, back to my hand, then to the table again") that test exists to pin.
-That is a browser regression, so the web stayed on its own rule and this is the
-owner's call to revisit.
+- the CLEAR test - does the incoming stream itself move this card, checked first
+  in both because a card the arrival animates must not fly home red before it;
+- the KEEP test - does the card stand where the motion put it, on the board the
+  newest truth vouches for.
+  The server calls that board the authoritative table and iMessage calls it the
+  arriving chain's opening board: different name, same set membership;
+- the pool rule and the masked-back rule;
+- the reversal's order.
 
-**If it is revisited**, the shape that works is a split rather than a merge: the
-trichotomy and its precedence are genuinely shared and would reproduce the web's
-current answers exactly; the doom determination is a server-authority concern and
-belongs where the authority is.
-That is not "reconciling the incoming rule toward the old one" - it is
-separating two things one function currently does.
+What DIFFERS, and is the whole of the flag:
+
+> Once a card has failed both tests, is "not accounted for" CONCLUSIVE?
+
+- `ANIM_TRANSPORT_CHAIN` (iMessage): yes.
+  Every message carries the whole game in a total order, so a card the newest
+  chain does not account for is doomed. REVERT.
+- `ANIM_TRANSPORT_SERVER` (web, the iOS app's online play, a watch, Steam): no.
+  The card's own confirmation is a separate future broadcast.
+  So the verdict asks its extra question first - the defender-capacity
+  inference, as `AnimServerHope` - and KEEPs the card when the answer is "this
+  could still be accepted".
+
+That is one `if` near the end of one function, and a reviewer should be able to
+point at it.
+Reading a broadcast the chain's way is `e2e/optimistic_revert.test.ts` SCENARIO
+A: Hero's sent, legal attack flies home in red and then flies back out when its
+own broadcast lands - the player-reported "it jumps to the table, back to my
+hand, then to the table again".
+
+**No default.** A verdict that reaches that question with nothing set returns
+`ANIM_ETRANSPORT` (`FIO_ETRANSPORT`), and the Swift reader turns that into no
+plan at all rather than into somebody else's answer.
+The A1 roster cutover is the precedent: unlinked bots silently played `random`,
+and nothing noticed until the fuzz was made honest.
+
+**Who declares it.** `MessagesViewController.viewDidLoad` (chain),
+`FoolishHarnessApp.init` (chain - the rig poses the extension),
+`FoolishApp.init` (server), and `bots()` in `sdk/ts/wasm/bots.ts` (server - every
+wasm host is a broadcast host).
+`anim_transport()` / `fio_transport()` / `animTransport()` read it back, because
+a wrong-mode bug looks exactly like an animation bug.
+
+**One deliberate change of answer.** The old server rule short-circuited the
+WHOLE pending set on the first card the broadcast already showed; the shared
+rule judges each card, so a broadcast showing some of my run leaves the ones it
+shows standing and still asks after the rest.
+`AnimationContext` only calls when NONE is accepted, so no caller can produce
+that shape; it is pinned in `anim_plan_test.c` rather than left implicit.
 
 ## Test mapping
 

@@ -530,6 +530,39 @@ int anim_stale_optimistic_on_table(const Card *opt_cards, int n_opt,
     return n;
 }
 
+static uint64_t conflict_bit(int id) {
+    return (id >= 0 && id < 52) ? ((uint64_t)1 << id) : 0;
+}
+
+// THE TRANSPORT (anim_plan.h). Session-scoped, set once at initialization,
+// deliberately unset until somebody says - see anim_conflict_verdict for the
+// one question that reads it.
+static int g_anim_transport = ANIM_TRANSPORT_UNSET;
+
+int anim_set_transport(int transport) {
+    if (transport != ANIM_TRANSPORT_UNSET && transport != ANIM_TRANSPORT_CHAIN
+        && transport != ANIM_TRANSPORT_SERVER) return ANIM_EBADARG;
+    g_anim_transport = transport;
+    return ANIM_EOK;
+}
+
+int anim_transport(void) { return g_anim_transport; }
+
+// THE SERVER'S EXTRA QUESTION. Asked only where the shared tests could not
+// account for the card: could this card still be accepted, so that a red flight
+// now would be undone by its own broadcast a moment later?
+//
+// Order matters. A sweep that took the table is evidence against anything it
+// did not name, cover or not; and the capacity rule after that is an ATTACK
+// rule (game.c handle_attack DEFENDER_CAPACITY), so a legal in-flight attack
+// keeps total attacks <= the defender's hand and never false-reverts.
+static int server_may_still_accept(const AnimServerHope *h) {
+    if (h->table_cleared) return 0;
+    if (h->is_cover)      return 1;
+    if (h->pending_attacks <= 0) return 1;
+    return h->final_uncovered + h->pending_attacks <= h->defender_hand;
+}
+
 int anim_resolve_unconfirmed_attack_covers(const AnimPending *pending, int n_pending,
                                            const Card *server_table, int n_server_table,
                                            const AnimEvent *events, int n_events,
@@ -538,64 +571,64 @@ int anim_resolve_unconfirmed_attack_covers(const AnimPending *pending, int n_pen
     if (!out || !fin) return ANIM_EBADARG;
     if (n_pending < 0 || n_pending > ANIM_MAX_CARDS) return ANIM_EBADARG;
     if (n_pending > 0 && !pending) return ANIM_EBADARG;
+    if (n_server_table < 0 || (n_server_table > 0 && !server_table)) return ANIM_EBADARG;
+    if (n_events < 0 || (n_events > 0 && !events)) return ANIM_EBADARG;
     out->n_revert = out->n_merge = out->n_clear = 0;
+    if (n_pending == 0) return ANIM_EOK;
 
-    // Server already shows (some of) my cards -> accepted; the per-event dedup
-    // upstream handles them, this branch does not apply.
-    unsigned char on_table[KEYSET_N];
-    keyset_clear(on_table);
-    for (int i = 0; i < n_server_table; i++) keyset_add_card(on_table, server_table[i]);
-    int accepted = 0;
-    for (int i = 0; i < n_pending; i++) {
-        if (keyset_has_card(on_table, pending[i].card)) { accepted = 1; break; }
-    }
-    if (n_pending == 0 || accepted) return ANIM_EOK;   // {revert:[], merge:[], clear:[]}
-
-    // SPECIAL CASE: a pickup/cards_to_trash cleared the table. A card the clear
-    // event NAMES was on the table (accepted) and is being carried off -> CLEAR
-    // (drop tracking, no revert). A card NOT named never reached the table
-    // (genuinely too slow) -> REVERT.
-    int has_table_clear = 0;
-    unsigned char swept[KEYSET_N];
-    keyset_clear(swept);
+    // THE SAME FACTS AN ARRIVING CHAIN BUILDS, said in the server's words. What
+    // the stream MOVES is the sweep: a pickup or trash names the cards it
+    // carries off, and those are exactly the ones a revert would fly home out
+    // of somebody else's hand. What it VOUCHES for is the authoritative table.
+    AnimConflictFacts f;
+    f.incoming_moved = f.table_at_open = f.my_hand_at_open = 0;
+    int table_cleared = 0;
     for (int e = 0; e < n_events; e++) {
-        if (events[e].type == ANIM_EVT_PICKUP || events[e].type == ANIM_EVT_CARDS_TO_TRASH) {
-            has_table_clear = 1;
-            for (int k = 0; k < events[e].n_cards; k++) {
-                if (events[e].cards) keyset_add_card(swept, events[e].cards[k]);
-            }
-        }
+        if (events[e].type != ANIM_EVT_PICKUP && events[e].type != ANIM_EVT_CARDS_TO_TRASH)
+            continue;
+        table_cleared = 1;
+        for (int k = 0; k < events[e].n_cards; k++)
+            if (events[e].cards) f.incoming_moved |= conflict_bit(card_to_id(events[e].cards[k]));
     }
-    if (has_table_clear) {
-        for (int i = 0; i < n_pending; i++) {
-            if (keyset_has_card(swept, pending[i].card)) out->clear[out->n_clear++] = i;
-            else                                         out->revert[out->n_revert++] = i;
-        }
-        return ANIM_EOK;
+    for (int i = 0; i < n_server_table; i++)
+        f.table_at_open |= conflict_bit(card_to_id(server_table[i]));
+
+    // The capacity scalars. A broadcast that shows SOME of my pending cards is
+    // judged card by card from here - the ones it shows are standing and the
+    // ones it does not still have to answer for themselves. The rule this
+    // replaces short-circuited the whole set on the first accepted card; no
+    // caller can produce that shape (AnimationContext only asks when NONE is
+    // accepted) and per-card is the question actually being asked.
+    AnimServerHope hope;
+    hope.table_cleared = table_cleared;
+    hope.pending_attacks = 0;
+    hope.defender_hand = 0;
+    hope.final_uncovered = fin->final_uncovered_attacks;
+    if (fin->defender >= 0 && fin->defender < fin->n_players
+        && fin->n_players <= MAX_PLAYERS) {
+        hope.defender_hand = fin->hand_length[fin->defender];
+    }
+    for (int i = 0; i < n_pending; i++) {
+        const int id = card_to_id(pending[i].card);
+        // One of my own plays always has an identity; a card with none is a
+        // caller mistake, not a masked back that could be kept.
+        if (id < 0 || id >= 52) return ANIM_EBADARG;
+        if (!pending[i].is_cover) hope.pending_attacks++;
     }
 
-    // Capacity check (an ATTACK rule — game.c handle_attack DEFENDER_CAPACITY):
-    // can the defender still take every attack? Covers are the defender's own
-    // play and are excluded. A legal in-flight attack keeps totalAttacks <=
-    // defenderHand, so this never false-reverts one.
-    int n_pending_attacks = 0;
-    for (int i = 0; i < n_pending; i++) if (!pending[i].is_cover) n_pending_attacks++;
-    int defender_hand = 0;
-    if (fin->defender >= 0 && fin->defender < fin->n_players) {
-        defender_hand = fin->hand_length[fin->defender];
+    for (int i = 0; i < n_pending; i++) {
+        const int id = card_to_id(pending[i].card);
+        hope.is_cover = pending[i].is_cover;
+        const int v = anim_conflict_verdict(id, ANIM_DEST_TABLE, &f, &hope);
+        if (v < 0) return v;
+        if (v == ANIM_CONFLICT_CLEAR)       out->clear[out->n_clear++] = i;
+        else if (v == ANIM_CONFLICT_REVERT) out->revert[out->n_revert++] = i;
+        // A KEEP the server table already shows needs no merging into a state
+        // that has it - that is the per-event dedup's card, and putting it in
+        // `merge` would make its own confirming event look un-optimistic and
+        // animate it a second time.
+        else if (!(f.table_at_open & conflict_bit(id))) out->merge[out->n_merge++] = i;
     }
-    int total_attacks = fin->final_uncovered_attacks + n_pending_attacks;
-    if (n_pending_attacks > 0 && total_attacks > defender_hand) {
-        // Attack invalidated by an earlier attack -> revert the attacks, keep covers.
-        for (int i = 0; i < n_pending; i++) {
-            if (pending[i].is_cover) out->merge[out->n_merge++] = i;
-            else                     out->revert[out->n_revert++] = i;
-        }
-        return ANIM_EOK;
-    }
-
-    // Defender can hold them -> keep and merge everything.
-    for (int i = 0; i < n_pending; i++) out->merge[out->n_merge++] = i;
     return ANIM_EOK;
 }
 
@@ -603,9 +636,6 @@ int anim_resolve_unconfirmed_attack_covers(const AnimPending *pending, int n_pen
 // See anim_plan.h. The three sets are u64 bitsets over dense card ids, so every
 // membership test here is one shift and one and.
 
-static uint64_t conflict_bit(int id) {
-    return (id >= 0 && id < 52) ? ((uint64_t)1 << id) : 0;
-}
 
 int anim_conflict_facts(const int *moved_ids, int n_moved,
                         const unsigned char *open_table, int n_open_battles,
@@ -631,25 +661,37 @@ int anim_conflict_facts(const int *moved_ids, int n_moved,
     return ANIM_EOK;
 }
 
-int anim_conflict_verdict(int card_id, int dest, const AnimConflictFacts *facts) {
+int anim_conflict_verdict(int card_id, int dest, const AnimConflictFacts *facts,
+                          const AnimServerHope *hope) {
     if (!facts) return ANIM_EBADARG;
     // A masked back names nothing and landed into a badge - there is no view to
     // fly home, so the newest sequence's count freeze owns it from here.
     if (card_id == ANIM_CARD_NONE) return ANIM_CONFLICT_KEEP;
     if (card_id < 0 || card_id >= 52) return ANIM_EBADARG;
+    if (dest != ANIM_DEST_POOL && dest != ANIM_DEST_TABLE && dest != ANIM_DEST_MY_HAND)
+        return ANIM_EBADARG;
     const uint64_t bit = conflict_bit(card_id);
     // CLEAR FIRST. A card the incoming stream moves may also stand on its
     // opening table (a pickup's do by definition); the replay taking it off IS
     // the animation, and a red flight first is the flicker.
     if (facts->incoming_moved & bit) return ANIM_CONFLICT_CLEAR;
-    switch (dest) {
-        case ANIM_DEST_POOL:    return ANIM_CONFLICT_KEEP;
-        case ANIM_DEST_TABLE:   return (facts->table_at_open & bit)
-                                       ? ANIM_CONFLICT_KEEP : ANIM_CONFLICT_REVERT;
-        case ANIM_DEST_MY_HAND: return (facts->my_hand_at_open & bit)
-                                       ? ANIM_CONFLICT_KEEP : ANIM_CONFLICT_REVERT;
-        default: return ANIM_EBADARG;
+    // A pool has no persistent per-card view to fly back from.
+    if (dest == ANIM_DEST_POOL) return ANIM_CONFLICT_KEEP;
+    // STANDING where the motion put it, on the board the newest truth vouches
+    // for. The server calls that board the authoritative table and iMessage
+    // calls it the arriving chain's opening board; same question, same set.
+    const uint64_t standing = (dest == ANIM_DEST_TABLE) ? facts->table_at_open
+                                                        : facts->my_hand_at_open;
+    if (standing & bit) return ANIM_CONFLICT_KEEP;
+
+    // NOT ACCOUNTED FOR - and this is the whole of the transport. No default:
+    // guessing here is the A1 roster cutover's mistake in another costume.
+    if (g_anim_transport == ANIM_TRANSPORT_UNSET) return ANIM_ETRANSPORT;
+    if (g_anim_transport == ANIM_TRANSPORT_SERVER) {
+        if (!hope) return ANIM_EBADARG;
+        if (server_may_still_accept(hope)) return ANIM_CONFLICT_KEEP;
     }
+    return ANIM_CONFLICT_REVERT;
 }
 
 int anim_conflict_dest(int event_type, int seat, int my_seat) {
@@ -692,9 +734,13 @@ int anim_conflict_reversal(const AnimConflictMotion *motions, int n_motions,
     }
     if (total != n_motions) return ANIM_EBADARG;
 
+    // A reversal is asked only about motions the caller ALREADY knows are
+    // doomed, which is a thing only a total order over complete chains can
+    // know. There is no AnimServerHope to pass and none would mean anything.
+    if (anim_transport() == ANIM_TRANSPORT_SERVER) return ANIM_EBADARG;
     for (int i = 0; i < n_motions; i++) {
-        const int v = anim_conflict_verdict(motions[i].card_id, motions[i].dest, facts);
-        if (v < 0) return ANIM_EBADARG;
+        const int v = anim_conflict_verdict(motions[i].card_id, motions[i].dest, facts, 0);
+        if (v < 0) return v;
         out->verdicts[i] = (unsigned char)v;
     }
     out->n_verdicts = n_motions;

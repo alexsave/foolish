@@ -35,10 +35,21 @@
 //   WHAT IS TRUE BETWEEN the offer and the finish.
 
 import XCTest
+import CFoolish
 @testable import FoolishKit
 
 @MainActor
 final class ConflictModelTests: XCTestCase {
+
+    /// THE TRANSPORT IS PART OF THE QUESTION. The kernel refuses to answer a
+    /// verdict until a host says which client it is (anim_plan.h), and every
+    /// board in this target is the iMessage one, whose messages carry the whole
+    /// game in a total order. The app declares this in its own entry point;
+    /// a test process has no entry point, so it declares it here.
+    override func setUp() {
+        super.setUp()
+        AnimTransport.declare(.chain)
+    }
 
     private func c(_ suit: Int, _ v: Int) -> Card { Card(s: suit, v: v) }
 
@@ -82,6 +93,34 @@ final class ConflictModelTests: XCTestCase {
     /// clear-flicker one board later - this is what keeps a burst of arrivals
     /// that each EXTEND the animating chain from theatrically un-playing moves
     /// that really happened.
+    /// THE TRANSPORT IS A REAL INPUT ON THIS SIDE TOO. The kernel answers the
+    /// shared tests either way, but the question at the end of the verdict -
+    /// is "not accounted for" conclusive? - is one this app has to have
+    /// declared. Unset, `fio_conflict_packed` returns FIO_ETRANSPORT and this
+    /// reader turns it into NO plan, which is loud, rather than quietly
+    /// reverting or quietly keeping.
+    ///
+    /// MUTATION: give AnimTransport a default (declare `.chain` inside
+    /// `ConflictPlan.ask`) and the middle assertion fails - a client that never
+    /// says would inherit iMessage's answer without anyone noticing.
+    func testAVerdictNeedsSomebodyToHaveSaidWhichClientThisIs() {
+        let mine = c(0, 9)
+        let f = facts(table: [c(1, 7)])
+        XCTAssertEqual(AnimTransport.current, .chain, "setUp declared it, and it reads back")
+
+        AnimTransport.declare(.chain)
+        XCTAssertEqual(f.verdict(mine, dest: .table), .revert,
+                       "a chain is complete, so a card it does not account for is doomed")
+
+        _ = fio_set_transport(0)          // FIO_TRANSPORT_UNSET - no Swift case for it
+        XCTAssertNil(AnimTransport.current, "nothing has said")
+        XCTAssertEqual(ConflictPlan([[ConflictMotion(card: mine, dest: .table)]], facts: f),
+                       .empty,
+                       "no transport, no plan - the reader degrades to no animation rather "
+                       + "than to somebody else's answer")
+        AnimTransport.declare(.chain)
+    }
+
     func testACardTheNewestBoardVouchesForStaysPut() {
         let king = c(3, 13)
         XCTAssertEqual(facts(table: [king]).verdict(king, dest: .table), .keep)
