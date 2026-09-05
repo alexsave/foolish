@@ -242,14 +242,87 @@ final class RoleOpeningTests: XCTestCase {
         XCTAssertNil(opened.prior, "there is no step before the first move to report")
 
         // BELT AND BRACES, both pinned. Two independent things refuse this case -
-        // the `atomsBefore >= 1` early-out, and the self-check on the step count -
-        // and an assertion on the result alone cannot tell which one did the
-        // work. So the second one is asserted directly: an `atomsBefore` of -1 is
-        // the kernel's "no delta, guess it" path, and what it guesses is not one
-        // step longer than the real stream, which is what the self-check rejects.
+        // the `atomsBefore >= 1` early-out, and the self-check that the earlier
+        // read is exactly one FRAME longer - and an assertion on the result
+        // alone cannot tell which one did the work. So the second one is
+        // asserted directly: an `atomsBefore` of -1 is the kernel's "no delta,
+        // guess it" path, and what it guesses is not one step longer than the
+        // real stream, which is what the self-check rejects.
         let guessed = await k.lastMoveEvents(viewer: attacker, atomsBefore: -1)
         XCTAssertNotEqual(guessed.count, opened.events.count + 1,
                           "the guess path must not be mistakable for one step earlier")
+    }
+
+    /// A STEP IS A FRAME, NEVER AN EVENT COUNT - and the two disagree often.
+    ///
+    /// The self-check used to demand that the one-step-earlier read come back
+    /// with exactly one more EVENT, which holds only when the previous step
+    /// emitted exactly one. A good that does not close the bout emits NONE; a
+    /// cover that closes one emits the cover, the sweep, and every refill. Both
+    /// shapes lost the prior board, and a bout end with no prior board falls
+    /// back to the flat one-cell-per-card table, which is the grid re-arranging
+    /// itself an instant before the cards fly.
+    ///
+    /// So this plays a real thread - one move, one bubble, forty times - and
+    /// holds every bubble to the same line: if there is a step behind you, you
+    /// know the board it left. It also COUNTS the bubbles whose predecessor
+    /// emitted something other than one event, and fails if there are none,
+    /// because a run that never poses the case proves nothing.
+    ///
+    /// MUTATIONS, each applied to MessageEnvelope.lastMoveEventsWithPrior on
+    /// its own:
+    ///   count events again (`EvWire.decodeFrames(earlier).count ==
+    ///     events.count + 1`)                     -> 7 of 39 bubbles lose it
+    ///   read the extra frame's first EVENT rather than its trailer
+    ///     (`EvWire.decode(first).first?.state`)  -> 5 of 39 lose it
+    func testEveryBubbleBehindAnotherStepKnowsTheBoardItOpensFrom() async throws {
+        let k = MessageKernel.shared
+        let n = 3
+        let joins = (0..<n).map { MessageJoin(seat: $0, name: "P\($0)") }
+        try await k.newGame(seed: freshSeed(7), players: n)
+
+        // ONE MOVE PER BUBBLE, which is what makes `atomsBefore` land on a real
+        // boundary: a bubble carrying a whole staged run has nothing behind it.
+        var chain: Data?
+        var bubbles: [(payload: Data, seat: Int)] = []
+        for _ in 0..<40 {
+            var moved = false
+            for s in 0..<n {
+                if let c = chain { _ = try await k.decode(payload: c, viewer: s) }
+                guard let m = await k.residentLegal(seat: s).first else { continue }
+                try await k.apply(seat: s, move: m)
+                let p = try await k.seal(phase: 2, lastActorSeat: s, gameId: 11,
+                                         parent8: Data(repeating: 0, count: 8),
+                                         joins: joins, sentAt: 1)
+                chain = p
+                bubbles.append((p, s))
+                moved = true
+                break
+            }
+            if !moved { break }
+        }
+
+        var checked = 0, posed = 0, missing = 0
+        for b in bubbles {
+            let env = try await k.decode(payload: b.payload, viewer: b.seat)
+            guard env.atomsBefore >= 1 else { continue }
+            checked += 1
+            let opened = await k.lastMoveEventsWithPrior(viewer: b.seat,
+                                                         atomsBefore: env.atomsBefore)
+            // The OLD self-check, computed rather than trusted: how many events
+            // the step behind this bubble emitted.
+            let back = await k.lastMoveEvents(viewer: b.seat, atomsBefore: env.atomsBefore - 1)
+            if back.count != opened.events.count + 1 { posed += 1 }
+            if opened.prior == nil { missing += 1 }
+        }
+
+        XCTAssertGreaterThan(checked, 10, "the thread has to reach past its first move")
+        XCTAssertGreaterThan(posed, 0,
+                             "no bubble in this run sits behind a step that emitted anything "
+                             + "other than one event - the run poses nothing, fix the rig")
+        XCTAssertEqual(missing, 0,
+                       "\(missing) of \(checked) bubbles could not say what board they open "
+                       + "from, \(posed) of them behind a step the event count cannot measure")
     }
 
     /// The events are the SAME events either way. The prior board is an

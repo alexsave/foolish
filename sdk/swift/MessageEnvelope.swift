@@ -952,25 +952,43 @@ public actor MessageKernel {
     /// repoints the resident game, and the second read would describe a different
     /// chain than the first (see `resealFromBase`).
     ///
-    /// SELF-CHECKING. The extra read must come back as exactly one more step than
-    /// the plain one; anything else means the step/atom mapping is not what is
-    /// assumed here and the prior board is reported as `nil` rather than guessed
-    /// at. A nil prior is not a failure - it is what every caller did before this
-    /// existed, and the board falls back to seeding from the first frame.
+    /// COUNTED IN FRAMES, TAKEN FROM THE TRAILER. Both halves are about the same
+    /// fact: a step is a FRAME and emits any number of events, including none.
+    /// Counting events instead made the self-check reject every bubble whose
+    /// previous step did not emit exactly one - a bare good emits none, a
+    /// bout-closing cover emits several - and the board then fell back to the
+    /// flat one-cell-per-card table and re-arranged the grid an instant before
+    /// the cards flew (measured: 26 of 1291 sweeps in c/tests/tests.c, 16 of
+    /// them reshaping; 5 and 5 now, and those 5 are a pickup the test build's
+    /// MAX_LOG_PAIRS under-names rather than a missing prior).
+    ///
+    /// The board itself comes from the extra frame's TRAILER (EvWire.finalState),
+    /// which is the state that step COMMITTED - defined even for a step that
+    /// emitted no events, where there is no snapshot to read at all.
+    ///
+    /// The self-check stays: the extra read must come back as exactly one more
+    /// FRAME than the plain one, or the step/atom mapping is not what is assumed
+    /// here and the prior is reported as `nil` rather than guessed at. A nil
+    /// prior is not a failure - it is what every caller did before this existed,
+    /// and the board falls back to seeding from the first frame.
     ///
     /// `atomsBefore < 1` has no earlier step to ask for (the bubble is the first
     /// move on a fresh deal, or the deal itself), so it skips the second read.
     public func lastMoveEventsWithPrior(viewer: Int, atomsBefore: Int)
         -> (events: [GameEvent], prior: GameView?) {
-        let events = lastMoveEvents(viewer: viewer, atomsBefore: atomsBefore)
+        let packed = lastMovePacked(viewer: viewer, atomsBefore: atomsBefore)
+        let events = packed.map(EvWire.decodeFrames) ?? []
         // An EMPTY stream is worth a prior board too, and is in fact the case
         // that needs one most: a `good` that does not close the bout emits no
         // step at all, so the only thing a board can be told about it is the
         // difference between two role states.
-        guard atomsBefore >= 1 else { return (events, nil) }
-        let withPrior = lastMoveEvents(viewer: viewer, atomsBefore: atomsBefore - 1)
-        guard withPrior.count == events.count + 1 else { return (events, nil) }
-        return (events, withPrior.first?.state)
+        guard atomsBefore >= 1,
+              let earlier = lastMovePacked(viewer: viewer, atomsBefore: atomsBefore - 1)
+        else { return (events, nil) }
+        let mine = packed.map { EvWire.frames($0).count } ?? 0
+        let back = EvWire.frames(earlier)
+        guard back.count == mine + 1, let first = back.first else { return (events, nil) }
+        return (events, EvWire.finalState(first))
     }
 
     /// Rule P (§7.2). <0 `a` wins, >0 `b`, 0 the same chain. Delivery order is

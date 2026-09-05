@@ -4484,6 +4484,13 @@ static void test_the_freeze_is_the_board_before_every_move(void) {
 //   the flat reading reports paired = 1                               -> 6 failures
 //   the sweep step is the LAST one rather than the first              -> 1 failure
 //   the walk CONTINUES past a board that fails the account            -> 1 failure
+//
+// The REAL-GAME sweep below models what a client can offer as the prior board.
+// It reads the frame's TRAILER (the board that step committed), not the first
+// event's snapshot, because a step can emit two events or none - see
+// MessageEnvelope.lastMoveEventsWithPrior. Mutating it back to "the previous
+// frame, only when it holds exactly one event" takes the flat reading from
+// 5 sweeps to 26 and the reshaping ones from 5 to 16.
 
 #define PT_MAX 8
 static AnimPreEvent   pt_evs[PT_MAX];
@@ -4673,6 +4680,32 @@ static PtEv pt_stream[2048];
 static int  pt_stream_n;
 static int  pt_stream_frame;
 
+// THE BOARD A STEP COMMITTED - the frame's own trailer (evwire.h), one per
+// step, which is what a bubble opening at that boundary actually finds. It
+// exists even for a step that emitted NO events (a bare good), which is why it
+// and not "the previous frame's first event" is the prior board.
+typedef struct { int n_bat; unsigned char bat[2 * MAX_BATTLES]; } PtBoard;
+static PtBoard pt_final[2048];
+static int     pt_final_n;
+
+static void pt_note_final(int step, const unsigned char *snap, int snap_len) {
+    if (step < 0 || step >= (int)(sizeof pt_final / sizeof pt_final[0])) return;
+    if (step >= pt_final_n) pt_final_n = step + 1;
+    PtBoard *b = &pt_final[step];
+    b->n_bat = 0;
+    if (!snap || snap_len <= 0) return;
+    static Game snapg;
+    memset(&snapg, 0, sizeof snapg);
+    state_get(&snapg, snap, 1);
+    b->n_bat = snapg.num_battles > MAX_BATTLES ? MAX_BATTLES : snapg.num_battles;
+    for (int i = 0; i < b->n_bat; i++) {
+        b->bat[2 * i] = (unsigned char)card_to_id(snapg.table_battles[i].attack);
+        b->bat[2 * i + 1] = card_is_none(snapg.table_battles[i].defense)
+                            ? ANIM_TABLE_NONE
+                            : (unsigned char)card_to_id(snapg.table_battles[i].defense);
+    }
+}
+
 static void pt_sink(void *ctx, int index, const EvwRead *ev) {
     (void)ctx; (void)index;
     if (pt_stream_n >= (int)(sizeof pt_stream / sizeof pt_stream[0])) return;
@@ -4714,6 +4747,7 @@ static void test_the_pre_bout_table_is_the_board_the_kernel_had(void) {
             const int steps = replay_steps_count_v6(code, enc, 0);
             for (int viewer = -1; viewer < np; viewer++) {
                 pt_stream_n = 0;
+                pt_final_n = 0;
                 int from = 0, guard = 0;
                 while (from < steps && ++guard < 4096) {
                     int nf = 0, next = from;
@@ -4725,9 +4759,11 @@ static void test_the_pre_bout_table_is_the_board_the_kernel_had(void) {
                         const int flen = frames[q] | (frames[q + 1] << 8);
                         q += 2;
                         pt_stream_frame = from + f;
-                        if (evwire_read(frames + q, flen, 0, 0, 0, pt_sink, 0) < 0) {
+                        const unsigned char *fin = 0; int fin_len = 0;
+                        if (evwire_read(frames + q, flen, 0, &fin, &fin_len, pt_sink, 0) < 0) {
                             CHECK(0, "every frame of a replay decodes"); return;
                         }
+                        pt_note_final(from + f, fin, fin_len);
                         q += flen;
                     }
                     from = next;
@@ -4756,12 +4792,9 @@ static void test_the_pre_bout_table_is_the_board_the_kernel_had(void) {
                     const unsigned char *prior = 0;
                     {
                         const int pf = pt_stream[i].frame - 1;
-                        int cnt = 0, at = -1;
-                        for (int j = 0; j < pt_stream_n; j++)
-                            if (pt_stream[j].frame == pf) { if (at < 0) at = j; cnt++; }
-                        if (cnt == 1 && at >= 0 && pt_stream[at].n_bat > 0) {
-                            n_prior = pt_stream[at].n_bat;
-                            prior = pt_stream[at].bat;
+                        if (pf >= 0 && pf < pt_final_n && pt_final[pf].n_bat > 0) {
+                            n_prior = pt_final[pf].n_bat;
+                            prior = pt_final[pf].bat;
                         }
                     }
 
@@ -4785,6 +4818,18 @@ static void test_the_pre_bout_table_is_the_board_the_kernel_had(void) {
                             if (out.battles[2 * k + 1] != ANIM_TABLE_NONE) bad_flat++;
                         if (out.n_battles != pt_stream[i].n_cards) bad_set++;
                         if (out.n_battles != truth->n_bat) flat_would_reshape++;
+                        // A flat reading is only ever allowed where NO board
+                        // could account for the cards. With the prior board
+                        // taken from the step's committed trailer there is
+                        // always one to try, so the only way through is a wire
+                        // that under-names the pickup (this build's
+                        // MAX_LOG_PAIRS truncates a 20-card table to 16).
+                        int truth_cards = 0;
+                        for (int k = 0; k < truth->n_bat; k++) {
+                            if (truth->bat[2 * k] < 52) truth_cards++;
+                            if (truth->bat[2 * k + 1] < 52) truth_cards++;
+                        }
+                        if (truth_cards == pt_stream[i].n_cards) bad_flat++;
                     }
                 }
             }
@@ -4794,11 +4839,16 @@ static void test_the_pre_bout_table_is_the_board_the_kernel_had(void) {
     CHECK(sweeps > 200, "the sweep drives real games");
     CHECK(paired > 200, "and most sweeps come back as the board the kernel had");
     CHECK(bad_paired == 0, "a PAIRED answer is the kernel's own board, exactly");
-    CHECK(bad_flat == 0, "an unpaired answer is a pickup's cards, each in its own cell");
+    CHECK(bad_flat == 0, "an unpaired answer is a pickup's cards, each in its own cell, "
+                         "and only where the wire named fewer cards than the table held");
     CHECK(bad_set == 0, "…all of them");
-    CHECK(flat > 0, "the flat reading is reachable on real streams");
-    CHECK(flat_would_reshape > 0,
-          "…and it reshapes the table when it fires, which is the defect");
+    // The flat reading is now reachable only where the WIRE cannot name the
+    // table: this build's MAX_LOG_PAIRS is 16, so a 20-card pickup arrives
+    // naming 16 cards and no board can account for them. (Production builds
+    // with -DMAX_LOG_PAIRS=64 do not reach it at all on these games; the
+    // reading stays, because a bigger table than 64 cards is still possible.)
+    CHECK(flat > 0, "the flat reading is still reachable when the wire under-names a pickup");
+    CHECK(flat_would_reshape > 0, "…and it reshapes the table when it fires");
     if (bad_paired || bad_flat || bad_set)
         printf("    (first bad sweep at flattened index %d of %ld)\n", first_bad, sweeps);
     printf("    pre-bout table: %ld sweeps, %ld paired, %ld flat (%ld reshaping)\n",
