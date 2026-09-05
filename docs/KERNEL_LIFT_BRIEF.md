@@ -178,3 +178,57 @@ The work, when it is picked up:
    composition is not gameplay, and the chosen bot is recorded in the game.
    Do NOT extend the gate to `src/` (cosmetic textures, React keys, error ids) or
    `offlinefun/` (research arenas, where randomness is the point).
+
+## Queued: the transport mode, and the conflict rule that reads it
+
+Not part of this campaign.
+Owner's design call, recorded so it is not lost.
+
+Stage 6 (`9357178`) found that the iMessage conflict rule and the web one answer
+different questions, and stopped rather than making the browser worse.
+The difference is not the verdict - it is **how a client knows whether its own
+optimistic card survived**.
+
+- iMessage: every message carries the whole game, totally ordered.
+  When a newer chain arrives it is the complete truth, so doom is knowable
+  locally and immediately.
+- Everything else (web, iOS, watch, Steam) goes through the server.
+  A card's confirmation is its own later broadcast, so "the newest news does not
+  mention my card" means "the receipt is still in the post", not "it was
+  rejected".
+
+Reading the second as the first is what would have put the card-out /
+card-home-in-red / card-out-again stutter back into the browser.
+
+**The design: a transport mode set once at initialization, not a flag threaded
+through every call.**
+iMessage is the odd one out and every other client shares the server's shape, so
+the mode is a property of the app rather than of the question being asked.
+
+There is a precedent to copy: `fio_set_passing` is exactly this - a
+session-scoped term of the table, set after adoption and before use, reported
+back by `fio_passing_allowed`.
+Follow that shape rather than inventing another.
+
+Three guardrails, each earned by something this repo has already been bitten by:
+
+1. **No silent default.**
+   A call that depends on the mode before it has been set returns an error
+   rather than guessing.
+   The A1 roster cutover is the precedent: unlinked bots silently played
+   `random`, and nothing noticed until the fuzz was made honest.
+2. **A test that proves the two modes DISAGREE** on the same input.
+   Without it the flag is untested plumbing, and the pending-attack case from
+   Stage 6 is the obvious one to pin: server says keep, iMessage says revert.
+   Both must also be exercised in the same process, because the FMSG e2e
+   concurrency suite already drives chain behaviour from a server-shaped host.
+3. **The mode is visible in diagnostics.**
+   A wrong-mode bug looks exactly like an animation bug, and the only cheap way
+   to tell them apart is to be able to read the mode back.
+
+Shape of the work: keep the trichotomy and its precedence shared - they already
+reproduce the web's answers exactly - and let the mode select only the doom
+determination.
+Share the deciding; keep the knowing where the knowledge is.
+`anim_resolve_unconfirmed_attack_covers` and `anim_conflict_verdict` become two
+readings of one rule rather than two rules.
