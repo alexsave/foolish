@@ -98,7 +98,7 @@ static int replay_sweep(void) {
                 // A game longer than MAX_LOGS cannot be encoded at all — a
                 // documented build limit, not an encoder fault (the same skip
                 // as tests/replay_difftest.c).
-                if (fio_last_replay_error() == 21 /* REPLAY_EINPUT */) { skipped++; continue; }
+                if (fio_last_replay_error() == REPLAY_ETOOLONG) { skipped++; continue; }
                 printf("FAIL sweep encode p=%d seed=%d err=%d detail=%d steps=%d\n",
                        players, s, clen, fio_last_replay_error(), steps);
                 return 1;

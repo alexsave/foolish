@@ -1855,7 +1855,7 @@ int replay_encode_v6_from_game(const Game *g, const unsigned char *seed, int see
     g_err_detail = 0;
     comb_init();
     if (!g || !seed || seed_len < FOOLISH_SEED_LEN) return -REPLAY_EINPUT;
-    if (g->num_logs >= MAX_LOGS) return -REPLAY_EINPUT;  // overflowed → untrusted
+    if (g->num_logs >= MAX_LOGS) return -REPLAY_ETOOLONG;  // overflowed → untrusted
     int n = g->num_players;
     if (n < 2 || n > MAX_PLAYERS) return -REPLAY_EINPUT;
     if (max_atoms <= 0) return -REPLAY_EINPUT;
