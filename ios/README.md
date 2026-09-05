@@ -33,16 +33,57 @@ either; change `project.yml` (project) or `c/ios/*` (engine) instead.
 
 ## Build & test from the shell
 
+There is **no macOS CI job** and there is not going to be one (the repo is
+private, where Actions minutes are metered and macOS bills at 10x Linux), so the
+Xcode half of the suite is gated by running it here, locally:
+
+```bash
+ios/scripts/mac_tests.sh          # from the repo root
+```
+
+That is the whole Mac-side invocation in one place: it rebuilds the engine
+xcframework, regenerates the project, **restores the entitlements `xcodegen`
+blanks** (see below), runs `FoolishTests` (scheme `Foolish`) and `HarnessTests`
+(scheme `FoolishHarness`), and builds the shipping scheme `FoolishMessagesApp`.
+`ios/scripts/mac_tests.sh --help` lists the subsets (`unit`, `harness`, `app`,
+`--no-lib`) and the `DEST` simulator override.
+
+The first run in a fresh checkout **fails** on `ComponentSnapshotTests`: the
+snapshot references are git-ignored, so run one records them and run two
+compares. Re-run before believing a snapshot failure.
+
+Underneath it is plain `xcodebuild`, if you want one scheme by hand:
+
 ```bash
 cd ios
-xcodebuild -project Foolish.xcodeproj -scheme Foolish \
-  -destination 'platform=iOS Simulator,name=iPhone 16' build
 xcodebuild -project Foolish.xcodeproj -scheme Foolish \
   -destination 'platform=iOS Simulator,name=iPhone 16' test
 ```
 
 Simulator builds need **no code signing** (the project ships with signing off).
 Device / TestFlight signing is set up in Milestone F.
+
+> ⚠️ `xcodegen generate` silently blanks `ios/FoolishApp/Foolish.entitlements`
+> to an empty `<dict/>`, destroying the `applinks:foolish.cards` universal-links
+> entry (§16.C5). The file is tracked, so the damage lands in your diff looking
+> intentional. `mac_tests.sh` puts it back with `cp -p`, **timestamp included**.
+>
+> Do not put it back with `git checkout`. That restores the bytes but leaves a
+> new mtime, and Xcode caches the entitlements file's timestamp in the build
+> description under
+> `DerivedData/<project>/Build/Intermediates.noindex/XCBuildData`. Every later
+> build that reuses that description then fails with
+>
+> ```
+> error: Entitlements file "Foolish.entitlements" was modified during the
+> build, which is not supported.
+> ```
+>
+> which is a misdiagnosis - nothing changed during the build and the content did
+> not change at all - and it is permanent: putting the old timestamp back does
+> not clear it. If you hit it, delete that `XCBuildData` directory (products and
+> module caches survive, so it costs one partial rebuild) and build again;
+> `mac_tests.sh` does exactly that for you and retries once.
 
 ## Verifying the engine without a Mac
 
@@ -57,6 +98,15 @@ make ios-goldens    # regenerates ios/Fixtures/goldens.json
 `make ios-smoke` is the M-A keystone check that runs anywhere clang does. The
 Swift `EngineGoldenTests` then assert the built `libfoolish.a` reproduces
 `goldens.json` byte-for-byte.
+
+Some **Swift** is provable without a Mac too. The replay link's nickname codec
+(`sdk/swift/Base32.swift` + `sdk/swift/ReplayExtras.swift`) is Foundation-only
+by design, so `npm run test:swift-parity` compiles it with a real Swift
+toolchain and asserts its bytes equal the TypeScript encoder's
+(`server/api/common/replay/extras.ts`). CI runs it on Linux inside the official
+`swift:` image - see the `replay-names-parity` job in
+`.github/workflows/ios.yml`. Any other Swift file that can be kept free of
+`CFoolish` can be gated the same way.
 
 ## Layout
 
