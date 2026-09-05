@@ -174,6 +174,14 @@ public final class BoardAnimator: ObservableObject {
     /// `MessagesViewController.stage` awaits instead of guessing a fixed
     /// sleep long enough for the longest possible sequence.
     public static var sequenceDepth = 0
+    /// ONE SPELLING PER QUESTION (round 44). "Is a sequence running" is THIS,
+    /// everywhere - the board used to ask it both ways (`isSequencing` here,
+    /// `sequenceDepth == 0` in three copy-pasted ownership guards and two
+    /// `atRest` composites), which reads like two different rules about two
+    /// different things. `sequenceDepth` is now only for the three uses that are
+    /// genuinely about the NUMBER: claiming it (`+= 1` / `-= 1`), the
+    /// nested-wait floor in `MessageTableView.drainOtherSequences`, and printing
+    /// it in a trace. Pinned by `CountOwnershipTests`.
     public static var isSequencing: Bool { sequenceDepth > 0 }
 
     /// note 8: block until no animated sequence is running, instead of a

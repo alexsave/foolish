@@ -209,7 +209,7 @@ public struct MessageTableView: View {
     /// they spawn in like behind the cards in my hand, then fly in to their
     /// correct positions."
     ///
-    /// This is the counts trick (`seatCountOverride`) applied to the hand: hold
+    /// This is the counts trick (`ledger.hand`) applied to the hand: hold
     /// the cards in the fan at their PRE-MOVE slots, seeded synchronously by
     /// `replayLastMoveOnOpen`, and drop each group the instant its flight is
     /// built. The fan animates its own re-close over exactly `flightTime`
@@ -251,37 +251,22 @@ public struct MessageTableView: View {
     @State private var handCardFrames: [String: CGRect] = [:]
     @State private var seatFrames: [Int: CGRect] = [:]
 
-    // Displayed counts LAG the game state during a bout-end sequence: a badge/deck/
-    // discard count holds its old value until that card's flight lands, then bumps
-    // (so a hand count never jumps before the deck→player draw animation plays).
-    @State private var seatCountOverride: [Int: Int] = [:]
-    @State private var deckCountOverride: Int?
-    @State private var discardCountOverride: Int?
-    /// ROUND 28: WHICH SEATS THE BOARD IS DRAWING AS OUT, which during a
-    /// sequence is not the same question as which seats ARE out.
+    /// WHAT THE BADGES ARE SHOWING - the deck, the discard, every seat's hand
+    /// count, who is drawn as OUT and which mark each seat is wearing. All five
+    /// LAG the game state during a sequence: a count holds its old value until
+    /// that card's flight lands, then bumps (so a hand count never jumps before
+    /// the deck→player draw animation plays), and a mark stays where it is until
+    /// the move that moved it has been watched.
     ///
-    /// The badge of a player who goes out collapses edge-on and stays there
-    /// (`FSeatBadge.collapsed`), and the owner's rule for WHEN is "in parallel
-    /// with the card motion" - a player only ever goes out by playing their last
-    /// cards, so the collapse and those flights are one event. The view carrying
-    /// `isOut` arrives before the sequence starts, though, so read straight off
-    /// it every badge would collapse a whole sequence early - the same lag the
-    /// counts and the role marks each already keep, for the same reason.
-    ///
-    /// nil means "no sequence is running, follow the view", which is also what
-    /// draws a seat that was ALREADY out when the board opened as collapsed from
-    /// the first paint with nothing to animate: an out player is a fact about
-    /// the board, and only the MOMENT of going out is an event.
-    @State private var outShown: Set<Int>?
-    // ROUND 16: the ROLES lag the game state the same way the counts do, and for
-    // the same reason. A bout end publishes one view in which the table is
-    // already clear, the hands already refilled AND the roles already rotated;
-    // the counts have been unpicked from that for rounds, but the marks still
-    // teleported - the shield was simply somewhere else on the first paint of a
-    // sequence whose cards had not begun to move. Now the badges wear
-    // `roleShown` until the sequence that earns the change has played, and the
-    // change itself is a flight (FRoleMotion).
-    @State private var roleShown: RoleState?
+    /// ROUND 44: ONE VALUE, WRITTEN ONE WAY. The five used to be five separate
+    /// pieces of `@State` with twenty-odd assignments between them, and the rule
+    /// about who may make one was a `guard` line copy-pasted into three
+    /// functions - which is exactly how round 43 came to find a fourth writer
+    /// that undid round 42's fix one line after it applied. They now live behind
+    /// `ShownLedger`, in a file this one cannot assign into, and every write
+    /// names its claim: see ShownLedger.swift, which is where the whole rule and
+    /// its history is written down.
+    @State private var ledger = ShownLedger()
     @State private var roleFlights: [RoleFlight] = []
     @State private var roleProgress: Double = 0
     /// Seats whose own mark is in the air - the take-off ends. They blank
@@ -874,23 +859,23 @@ public struct MessageTableView: View {
     /// A seat badge's displayed hand count: the per-step override once a
     /// sequence is running, else the veil's pre-move value, else the truth.
     private func shownHandCount(_ p: PlayerView) -> Int {
-        if let n = seatCountOverride[p.seat] { return n }
+        if let n = ledger.hand[p.seat] { return n }
         if let n = pendingOpen?.counts.hand[p.seat] { return n }
         return p.handCount
     }
     private func shownDeckCount(_ view: GameView) -> Int {
-        let n = deckCountOverride ?? pendingOpen?.counts.deck ?? view.deckCount
+        let n = ledger.deck ?? pendingOpen?.counts.deck ?? view.deckCount
         #if DEBUG
         // Where a displayed count COMES FROM. "The board is a bit behind" is
         // always one of three sources disagreeing with the kernel, and only the
         // board knows which one it used.
-        Self.traceCount(shown: n, override: deckCountOverride,
+        Self.traceCount(shown: n, override: ledger.deck,
                         veil: pendingOpen?.counts.deck, truth: view.deckCount)
         #endif
         return n
     }
     private func shownDiscardCount(_ view: GameView) -> Int {
-        discardCountOverride ?? pendingOpen?.counts.discard ?? view.discardCount
+        ledger.discard ?? pendingOpen?.counts.discard ?? view.discardCount
     }
 
     /// The live board, laid out like the web GameBoard: every piece is placed
@@ -1745,7 +1730,7 @@ public struct MessageTableView: View {
         // is a floor high enough to hide a real one. The lag is the feature;
         // what this counter is for is a board that disagrees with the kernel
         // with NOTHING pending to put it right.
-        let atRest = BoardAnimator.sequenceDepth == 0 && override == nil && veil == nil
+        let atRest = !BoardAnimator.isSequencing && override == nil && veil == nil
         if atRest && shown != truth { staleAtRest += 1 }
         if let ls = lastShown, let lt = lastTruth, lt == truth, shown != ls,
            abs(shown - truth) > abs(ls - truth) {
@@ -1829,7 +1814,7 @@ public struct MessageTableView: View {
         Self.veilStandingNow = animator.preHidden.count
         Self.traceGrid(sweeping: sweeping, shown: shown,
                        hidden: sweeping ? sweepHidden : veiledCardIds,
-                       atRest: BoardAnimator.sequenceDepth == 0 && settled,
+                       atRest: !BoardAnimator.isSequencing && settled,
                        preHidden: animator.preHidden, veil: animator.hidden)
         #endif
         // note 34: a pass preview shows the ghost slot instead of a cover highlight.
@@ -2064,16 +2049,15 @@ public struct MessageTableView: View {
             // freeze is by construction the newest sequence, so `runEventStream`
             // 's teardown WILL release them - this only declines to do it early.
             // A board with nothing running (every other caller, and the common
-            // case) is unchanged: `sequenceDepth` is 0 and this releases exactly
-            // as it always did.
-            guard BoardAnimator.sequenceDepth == 0 else {
-                AnimLog.say("releaseCounts deferred (depth=\(BoardAnimator.sequenceDepth)) - badges stay "
-                    + (controller.view?.players ?? []).map { "s\($0.seat)=\(shownHandCount($0))" }
-                        .joined(separator: " "))
-                return
+            // case) is unchanged: nothing is sequencing and this releases
+            // exactly as it always did.
+            ledger.write(.bystander, by: "releaseCounts",
+                         note: "badges stay "
+                            + (controller.view?.players ?? []).map { "s\($0.seat)=\(shownHandCount($0))" }
+                                .joined(separator: " ")) { l in
+                l.deck = nil; l.discard = nil; l.hand = [:]
+                l.out = nil
             }
-            deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
-            outShown = nil
         }
         if reduceMotion {
             releaseCounts(); clearSweep()
@@ -2340,15 +2324,19 @@ public struct MessageTableView: View {
         // (`controller.openReplayPriorState`); the first event remains the
         // fallback for the opens that have no earlier step to ask for - a
         // genesis deal, the first move on a fresh deal.
-        if roleShown == nil, let prior = controller.openReplayPriorState ?? events.first?.state {
-            roleShown = RoleState(prior)
+        ledger.write(.sequence) { l in
+            if l.roles == nil, let prior = controller.openReplayPriorState ?? events.first?.state {
+                l.roles = RoleState(prior)
+            }
         }
         // ROUND 28: the same seed for the out badges, and for the same reason -
         // an open replay has no `freezeCounts` behind it, so without this a
         // bubble whose move puts somebody out would open with their badge
         // already collapsed and nothing left to watch.
-        if outShown == nil, let prior = controller.openReplayPriorState ?? events.first?.state {
-            outShown = Set(prior.players.filter(\.isOut).map(\.seat))
+        ledger.write(.sequence) { l in
+            if l.out == nil, let prior = controller.openReplayPriorState ?? events.first?.state {
+                l.out = Set(prior.players.filter(\.isOut).map(\.seat))
+            }
         }
         guard !events.isEmpty else {
             // ROUND 16: HAND THE COUNTS BACK. Every caller freezes them to the
@@ -2360,8 +2348,10 @@ public struct MessageTableView: View {
             // and re-freeze them. An opponent stuck a card too high until they
             // played again is the owner's "briefly bumped, then they play a
             // single card and it goes back down".
-            deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
-            outShown = nil
+            ledger.write(.sequence) { l in
+                l.deck = nil; l.discard = nil; l.hand = [:]
+                l.out = nil
+            }
             releaseHoldback(raisedBy: veiledAt)   // see the teardown below - this guard returns ahead of it
             animator.clearPreHidden(raisedBy: veiledAt)
             // Nothing is in flight and nothing is going to be, so an orphan
@@ -2414,8 +2404,10 @@ public struct MessageTableView: View {
             // it has pre-hidden but not yet flown, so they appear in the fan and
             // are then flown into it a second time.
             if mySeq == animSequenceToken {
-                deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
-                outShown = nil
+                ledger.write(.sequence) { l in
+                    l.deck = nil; l.discard = nil; l.hand = [:]
+                    l.out = nil
+                }
                 // A holdback that never got flown (a poll that timed out, a
                 // stream cut short) must not survive as phantom cards in the
                 // hand - this is the same rescue the veil gets a line below,
@@ -2515,9 +2507,9 @@ public struct MessageTableView: View {
         // time the settlement is released there is no difference left to find.
         // Every other board - a receiver watching it arrive, a cold open
         // replaying it - has one.
-        if let opening = Self.goodsOpening(shown: roleShown,
+        if let opening = Self.goodsOpening(shown: ledger.roles,
                                            firstGoodMask: events.first?.state?.goodMask) {
-            AnimLog.say("stream#\(run) good first: g\(roleShown?.goodMask ?? 0) -> g\(opening.goodMask)")
+            AnimLog.say("stream#\(run) good first: g\(ledger.roles?.goodMask ?? 0) -> g\(opening.goodMask)")
             // The seats do not change here, only what they are wearing, so
             // nothing flies: this is the coin flip each badge makes where it
             // stands, and `syncRoles` finds no hand-off to build.
@@ -2577,7 +2569,7 @@ public struct MessageTableView: View {
             // draws; the discard pile and seat badges still tick up when THEIR cards
             // arrive (the per-step advance after the flight, below).
             if let s = ev.state, ev.kind == .deal || ev.kind == .refill {
-                deckCountOverride = s.deckCount
+                ledger.write(.sequence) { $0.deck = s.deckCount }
             }
             // ROUND 30, and the same rule one seat over. The owner: "when the
             // cards fly out of the hand to cover some cards on the table, the
@@ -2603,7 +2595,7 @@ public struct MessageTableView: View {
                ev.seat != controller.mySeat,
                let s = group.last?.state,
                let leaving = s.players.first(where: { $0.seat == ev.seat }) {
-                seatCountOverride[ev.seat] = leaving.handCount
+                ledger.write(.sequence) { $0.hand[ev.seat] = leaving.handCount }
             }
             // A card leaving the TABLE (pickup / discard) hides its pre-bout grid
             // copy the instant its flight begins, so the overlay ghost is the only
@@ -2622,11 +2614,11 @@ public struct MessageTableView: View {
             // the lookahead here and the fallback when the loop reaches the
             // `out` group itself cannot collapse a badge twice.
             let goingOut = Self.outsWith(groups, gi)
-            if !goingOut.isEmpty, !(outShown ?? []).isSuperset(of: goingOut) {
+            if !goingOut.isEmpty, !(ledger.out ?? []).isSuperset(of: goingOut) {
                 AnimLog.say("stream#\(run) out badges collapse \(goingOut.sorted())")
                 withAnimation(reduceMotion ? nil
                               : .timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime)) {
-                    outShown = (outShown ?? []).union(goingOut)
+                    ledger.write(.sequence) { $0.out = ($0.out ?? []).union(goingOut) }
                 }
             }
             // ROUND 28: THE GOODS THIS GROUP CLEARS TURN NOW, WITH ITS CARD.
@@ -2639,9 +2631,9 @@ public struct MessageTableView: View {
             // goodMask that changes for any other reason still belongs to the
             // closing beat with the rest of the consequences.
             if !Self.placedOnTable(group).isEmpty,
-               let cleared = Self.goodsCleared(shown: roleShown,
+               let cleared = Self.goodsCleared(shown: ledger.roles,
                                                stepGoodMask: group.last?.state?.goodMask) {
-                AnimLog.say("stream#\(run) goods clear with the card: g\(roleShown?.goodMask ?? 0) -> g\(cleared.goodMask)")
+                AnimLog.say("stream#\(run) goods clear with the card: g\(ledger.roles?.goodMask ?? 0) -> g\(cleared.goodMask)")
                 syncRoles(to: cleared, in: view, animated: true)
             }
             // ROUND 29: AND A TRANSFER HANDS THE SHIELD OVER WITH ITS CARD.
@@ -2660,7 +2652,7 @@ public struct MessageTableView: View {
             // - so a pass read as two movements, the card and then the shield,
             // when the owner's whole point is that it is one move. That closing
             // beat still runs and is still right for everything else: by the
-            // time it does, `roleShown` already holds this state, so it finds
+            // time it does, the ledger's roles already hold this state, so it finds
             // nothing left to hand over and flies nothing twice.
             //
             // Channel A never reaches here (a pass does not clear the table, so
@@ -2669,9 +2661,9 @@ public struct MessageTableView: View {
             // `flyPlacement`). This is the same beat for the two channels that
             // DO replay a stream - a receiver opening the bubble cold, and an
             // arrival landing on an open board.
-            if let handOff = Self.passHandOff(shown: roleShown, group: group,
+            if let handOff = Self.passHandOff(shown: ledger.roles, group: group,
                                               finalDefender: view.defender) {
-                AnimLog.say("stream#\(run) pass: the shield flies with the card d\(roleShown?.defender ?? -1) -> d\(handOff.defender)")
+                AnimLog.say("stream#\(run) pass: the shield flies with the card d\(ledger.roles?.defender ?? -1) -> d\(handOff.defender)")
                 syncRoles(to: handOff, in: view, animated: true)
             }
             // What this step actually flies, captured out of the builder for
@@ -2772,9 +2764,11 @@ public struct MessageTableView: View {
             // The board settles to the LAST event of the group: the intermediate
             // states inside one move are boards nobody was ever shown.
             if let s = group.last?.state ?? ev.state {
-                deckCountOverride = s.deckCount
-                discardCountOverride = s.discardCount
-                for p in s.players where p.seat != controller.mySeat { seatCountOverride[p.seat] = p.handCount }
+                ledger.write(.sequence) { l in
+                    l.deck = s.deckCount
+                    l.discard = s.discardCount
+                    for p in s.players where p.seat != controller.mySeat { l.hand[p.seat] = p.handCount }
+                }
             }
             // ROUND 16: a cover that ended the bout HOLDS before the sweep takes
             // the table away. See `boutEndHold` for why this one beat is unlike
@@ -2857,8 +2851,8 @@ public struct MessageTableView: View {
     /// and the cards it is about to gain are hidden by `animator.preHide`
     /// instead, so the fan holds its final layout while the cards fly into it.
     private func freezeCounts(to v: GameView) {
-        // A SEED, NOT AN OVERRIDE - exactly what `roleShown` is, five lines
-        // below, and for exactly the reason written there: "a move played while
+        // A SEED, NOT AN OVERRIDE - exactly what the ROLES are, further down
+        // the same block, and for exactly the reason written there: "a move played while
         // a sequence is still animating (an impatient tap, the harness's
         // auto-move) would freeze the roles to a board that has ALREADY
         // rotated". The counts were left open to the same thing. A running
@@ -2874,8 +2868,8 @@ public struct MessageTableView: View {
         // (there is nothing to claim until the kernel publishes a table slot),
         // so the stream that owns the ledger is still the newest one, it is
         // still walking the counts forward, and its teardown still hands them
-        // back. A board at rest - every other caller, and the common case - has
-        // `sequenceDepth` 0 and freezes exactly as it always did.
+        // back. A board at rest - every other caller, and the common case - is
+        // not sequencing and freezes exactly as it always did.
         // ROUND 43 - A TRIGGER PROPOSED AND STRUCK, with the run that struck it.
         //
         // The worry: `playBoutEnd` also calls this, and unlike `play` it DOES
@@ -2909,35 +2903,42 @@ public struct MessageTableView: View {
         // badge on `badgeDropsAsCardsLeave`) BEFORE it reaches the token check
         // that would abandon it. That is round 42's measured twitch, re-admitted
         // to straighten one lagging badge. Struck, in the shape of edcb91f.
-        guard BoardAnimator.sequenceDepth == 0 else {
-            AnimLog.say("freezeCounts deferred (depth=\(BoardAnimator.sequenceDepth)) - badges stay "
-                + (controller.view?.players ?? []).map { "s\($0.seat)=\(shownHandCount($0))" }
-                    .joined(separator: " "))
-            return
-        }
-        deckCountOverride = v.deckCount
-        discardCountOverride = v.discardCount
-        // ROUND 28: and who is drawn as out, frozen at the same synchronous
-        // moment and for the same reason as the counts - `isOut` is already true
-        // in the view this move produced, so a badge read straight off it would
-        // be edge-on before the cards that emptied the hand had moved.
-        outShown = Set(v.players.filter(\.isOut).map(\.seat))
-        var counts: [Int: Int] = [:]
-        for p in v.players where p.seat != controller.mySeat { counts[p.seat] = p.handCount }
-        seatCountOverride = counts
-        // ROUND 16: and the roles with them, at the same synchronous moment and
-        // for the same reason - by the time an onChange could do it the board
-        // has already drawn the marks at their new seats and there is nothing
-        // left to fly.
         //
-        // A SEED, not an override. `roleShown` is "what the badges are wearing",
-        // and once it exists it is only ever advanced by `syncRoles` - which
-        // knows what changed and flies it. Writing the current view over it here
-        // would erase exactly that: a move played while a sequence is still
-        // animating (an impatient tap, the harness's auto-move) would freeze the
-        // roles to a board that has ALREADY rotated, and the hand-off the
-        // sequence was about to play would find nothing to hand over.
-        if roleShown == nil { roleShown = RoleState(v) }
+        // ROUND 44 moved the guard itself into `ShownLedger.write`; what is left
+        // here is the CLAIM, `.bystander`, which is the whole of the reasoning
+        // above stated in one word. Every branch of the block below is inside
+        // it, exactly as the `guard` used to return past all of them.
+        ledger.write(.bystander, by: "freezeCounts",
+                     note: "badges stay "
+                        + (controller.view?.players ?? []).map { "s\($0.seat)=\(shownHandCount($0))" }
+                            .joined(separator: " ")) { l in
+            l.deck = v.deckCount
+            l.discard = v.discardCount
+            // ROUND 28: and who is drawn as out, frozen at the same synchronous
+            // moment and for the same reason as the counts - `isOut` is already
+            // true in the view this move produced, so a badge read straight off
+            // it would be edge-on before the cards that emptied the hand had
+            // moved.
+            l.out = Set(v.players.filter(\.isOut).map(\.seat))
+            var counts: [Int: Int] = [:]
+            for p in v.players where p.seat != controller.mySeat { counts[p.seat] = p.handCount }
+            l.hand = counts
+            // ROUND 16: and the roles with them, at the same synchronous moment
+            // and for the same reason - by the time an onChange could do it the
+            // board has already drawn the marks at their new seats and there is
+            // nothing left to fly.
+            //
+            // A SEED, not an override, and that survives the move into the
+            // ledger unchanged. The roles are "what the badges are wearing", and
+            // once they exist they are only ever advanced by `syncRoles` (the
+            // `.handOff` claim) - which knows what changed and flies it. Writing
+            // the current view over them here would erase exactly that: a move
+            // played while a sequence is still animating (an impatient tap, the
+            // harness's auto-move) would freeze the roles to a board that has
+            // ALREADY rotated, and the hand-off the sequence was about to play
+            // would find nothing to hand over.
+            if l.roles == nil { l.roles = RoleState(v) }
+        }
     }
 
     // MARK: - the roles, and the marks that carry them (round 16)
@@ -2984,7 +2985,7 @@ public struct MessageTableView: View {
     /// sequence, the pre-move ones on a cold open that has not started, the live
     /// ones at rest.
     private func shownRoles(_ view: GameView) -> RoleState {
-        roleShown ?? pendingRoles ?? RoleState(view)
+        ledger.roles ?? pendingRoles ?? RoleState(view)
     }
 
     private func shownIsDefender(_ seat: Int, _ view: GameView) -> Bool {
@@ -2997,7 +2998,7 @@ public struct MessageTableView: View {
     /// exactly `shownRoles`' shape, and the nil case is what makes a seat that
     /// was already out when the board opened collapse with no animation.
     private func shownOut(_ seat: Int, _ view: GameView) -> Bool {
-        if let outShown { return outShown.contains(seat) }
+        if let out = ledger.out { return out.contains(seat) }
         return view.players.first { $0.seat == seat }?.isOut ?? false
     }
     private func shownSaidGood(_ seat: Int, _ view: GameView) -> Bool {
@@ -3022,8 +3023,14 @@ public struct MessageTableView: View {
     /// than something still in the air after it ends.
     @discardableResult
     private func syncRoles(to target: RoleState, in view: GameView, animated: Bool) -> Bool {
-        let old = roleShown
-        roleShown = target
+        let old = ledger.roles
+        // `.handOff` - the one claim that is not a sequence and is still allowed
+        // to write. See ShownLedger.swift: this is the only writer that reads
+        // what the badges are wearing, works out which marks changed hands and
+        // FLIES them, and its one caller outside a stream (the `!sequenced`
+        // branch of the board's `onChange`) is the only thing that animates a
+        // pass's shield hand-off.
+        ledger.write(.handOff) { $0.roles = target }
         guard animated, !reduceMotion, let old, old != target, !view.isOver else {
             // Only when something actually moved and did NOT fly: a cold board
             // with nothing to hand over from, a Reduce Motion snap, a game that
@@ -4713,8 +4720,20 @@ public struct MessageTableView: View {
         // FINAL view for that gap and flip twice on their way to being right.
         // Same reasoning as `freezeCounts`: the freeze has to be synchronous
         // with the change that needs it, not one onChange behind.
-        if roleShown == nil, let prior = controller.openReplayPriorState {
-            roleShown = RoleState(prior)
+        //
+        // ROUND 44: `.arming`, NOT `.bystander`, and the difference is a real
+        // regression rather than a label. This function is seeding the ledger
+        // for a sequence it is ABOUT to start, and that sequence does not claim
+        // `animSequenceToken` until `runEventStream` runs a Task hop later - so
+        // at this instant a PREVIOUS stream may still be in flight (an arrival
+        // landing on an open board is exactly that, and is the normal case).
+        // Refused here, the replay would open against that stream's mid-state:
+        // the wrong numbers and the wrong marks, silently, with no twitch to
+        // give it away. See ShownLedger.swift.
+        ledger.write(.arming) { l in
+            if l.roles == nil, let prior = controller.openReplayPriorState {
+                l.roles = RoleState(prior)
+            }
         }
 
         // notes 6/12: hand every real card this open moves - onto the table
@@ -4735,11 +4754,13 @@ public struct MessageTableView: View {
         // in `body` because there is no prior view on an open - this board IS
         // the first paint.
         let pre = Self.preCounts(events, finalView: view)
-        deckCountOverride = pre.deck
-        discardCountOverride = pre.discard
-        var counts: [Int: Int] = [:]
-        for (seat, c) in pre.hand where seat != controller.mySeat { counts[seat] = c }
-        seatCountOverride = counts
+        ledger.write(.arming) { l in
+            l.deck = pre.deck
+            l.discard = pre.discard
+            var counts: [Int: Int] = [:]
+            for (seat, c) in pre.hand where seat != controller.mySeat { counts[seat] = c }
+            l.hand = counts
+        }
 
         // …and MY OWN hand, which the counts above deliberately skip (a seat
         // badge is a number; my hand is the cards). Seeded HERE, synchronously,
@@ -5067,7 +5088,7 @@ public struct MessageTableView: View {
         // ROUND 43: THE COUNTS AND THE ROLES ARE STILL NOT OURS TO GIVE BACK.
         //
         // Round 42 taught `freezeCounts` and `releaseCounts` that the badges,
-        // the deck, the discard, `outShown` and `roleShown` belong to whichever
+        // the deck, the discard, the out set and the roles belong to whichever
         // SEQUENCE is animating - it froze them to the board before its move and
         // walks them forward one step per landing flight. This function did the
         // very same writes with no guard at all, and its three callers all reach
@@ -5082,8 +5103,8 @@ public struct MessageTableView: View {
         // arrival's replay re-seeded them. That backwards move is what the
         // `backwardsPaints` oracle counts.
         //
-        // `roleShown` is the same story with a worse ending: nilled mid-sequence
-        // it leaves `syncRoles`' closing hand-off with `old == nil`, so no mark
+        // The roles are the same story with a worse ending: nilled mid-sequence
+        // they leave `syncRoles`' closing hand-off with `old == nil`, so no mark
         // flies and the shield / sword teleport.
         //
         // Deferring costs nothing here for the same reason it costs nothing in
@@ -5091,40 +5112,37 @@ public struct MessageTableView: View {
         // `animSequenceToken`, so the stream still running is still the newest
         // one and its teardown still hands all of this back.
         //
-        // `BoardAnimator.isSequencing` is `sequenceDepth > 0` (BoardFlight.swift)
-        // - the sweep line below used to spell the same test the other way
-        // round, which read like a different rule. One spelling now, the one the
-        // round-42 guards use.
-        if BoardAnimator.sequenceDepth == 0 {
-            deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
-            // `outShown` with them, which this function used to leave frozen:
-            // `freezeCounts` seeds it in the same breath as the counts and both
-            // `releaseCounts` and the stream teardown nil it in the same breath,
-            // so a release that skipped it pinned `isOutShown` (which prefers
-            // `outShown` over the live view whenever it is non-nil) at the
-            // pre-move board until some later stream happened to clear it.
-            outShown = nil
+        // ROUND 44: the guard itself is `ShownLedger.write`'s now, and the
+        // three copies of it are one. All that is left here is the claim.
+        let released = ledger.write(.bystander, by: "releaseLivePlayVeil",
+                                    note: "counts/roles/sweep stay with the running sequence") { l in
+            l.deck = nil; l.discard = nil; l.hand = [:]
+            // The out badges with them, which this function used to leave
+            // frozen: `freezeCounts` seeds them in the same breath as the counts
+            // and both `releaseCounts` and the stream teardown nil them in the
+            // same breath, so a release that skipped them pinned `shownOut`
+            // (which prefers the ledger over the live view whenever it is
+            // non-nil) at the pre-move board until some later stream happened to
+            // clear it.
+            l.out = nil
             // Round 16: and the roles `play` froze on the way in. Nothing
             // happened, so there is nothing to hand over - this is the same
-            // board it was frozen from, which is why it is a plain release and
-            // not a sync.
-            roleShown = nil
-            // …and the pre-bout table `play` laid out for a pickup / good that
-            // then never happened. Left standing it is a phantom table over a
-            // board the game says is empty (the `sweepVisibleNow` oracle's own
-            // defect).
-            //
-            // This one has always been guarded, and its reasoning is the same
-            // one now covering the whole block: a refusal can land in the middle
-            // of a bout-end sequence that is sweeping a table of its OWN (the
-            // buttons are gone by then, but a drag still reaches `apply`), and
-            // tearing that grid down would take the cards off the table
-            // mid-flight. A sequence that owns it drops it in its own teardown.
-            clearSweep()
-        } else {
-            AnimLog.say("releaseLivePlayVeil deferred (depth=\(BoardAnimator.sequenceDepth)) - "
-                + "counts/roles/sweep stay with the running sequence")
+            // board they were frozen from, which is why it is a plain release
+            // and not a sync.
+            l.roles = nil
         }
+        // …and the pre-bout table `play` laid out for a pickup / good that then
+        // never happened. Left standing it is a phantom table over a board the
+        // game says is empty (the `sweepVisibleNow` oracle's own defect).
+        //
+        // ON THE SAME TERMS as the ledger, which is what `write` returning a
+        // Bool is for: this is not the ledger, but it was frozen by the same
+        // play and a sequence that owns it drops it in its own teardown. A
+        // refusal can land in the middle of a bout-end sequence sweeping a table
+        // of its OWN (the buttons are gone by then, but a drag still reaches
+        // `apply`), and tearing that grid down would take the cards off the
+        // table mid-flight.
+        if released { clearSweep() }
         // THE PLACEMENT HALF IS UNCONDITIONAL, and deliberately outside the
         // guard above. These cards are this play's own property - `playAt` hid
         // them, no sequence knows about them, and nothing else will ever hand
