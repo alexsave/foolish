@@ -56,6 +56,12 @@
 //     ADOPTION (MessageEnvelope.peek's own doc), so ranking would move the
 //     resident game out from under the board it is ranking. The header is what
 //     may be read here, and `peek` is how.
+//
+// ROUND 43 - THIS TYPE ALSO OWNS THE END OF THE MARK'S LIFE. The owner, on the
+// high-water map growing without bound: "easy - clear when the last move
+// plays." This gate is where that happens, because it is already the only
+// reader and the only writer of `MessageGameStore.latestChain`, and it is a
+// pure enum a test can drive with real sealed chains. See `record` below.
 import Foundation
 
 public enum StaleBranchGate {
@@ -121,6 +127,55 @@ public enum StaleBranchGate {
         public let newest: Data?
     }
 
+    /// `MSG_PHASE_FINISHED` (c/src/msg_wire.h), named once rather than written
+    /// as a bare 3 at the site that asks.
+    ///
+    /// The wire makes this claim CHECKABLE rather than merely stated: msg_wire.c
+    /// decode refuses a chain whose header and body disagree about being over -
+    /// `if (over && e->phase != MSG_PHASE_FINISHED) return MSG_EPHASE;` and the
+    /// converse right under it. So a peeked phase of 3 is not a device's opinion
+    /// about a game, it is a fact the kernel replayed the body to confirm, which
+    /// is the standard anything gating storage against a possibly-hostile sender
+    /// has to meet.
+    static let finishedPhase = 3
+
+    /// Note `payload` as the newest chain seen for this game - OR, when the
+    /// game it carries is over, drop the note entirely (round 43).
+    ///
+    /// WHY A FINISHED GAME'S MARK IS DEAD WEIGHT. The mark exists to answer one
+    /// question - "may this board be staged on?" - and a finished board answers
+    /// it without help: `iCanAct` is false, the legal menu is empty, there is no
+    /// move to branch with. Keeping the row past that point buys nothing and
+    /// costs a whole base64 chain in an App Group plist that is read on every
+    /// bubble open, in an extension with a hard memory ceiling.
+    ///
+    /// WHAT IT COSTS, stated rather than glossed: once the row is gone, tapping
+    /// an OLD mid-game bubble of that same finished game finds nothing on file
+    /// and gets a live, playable board again. That is a real (if narrow) reopening
+    /// of the round-20 hole, and it is the trade the owner asked for. It is
+    /// bounded on the other side by Rule P, which is where the guarantee actually
+    /// lives: a branch sealed off that board loses to the finished chain on every
+    /// device that still holds one, so it converges away rather than replacing
+    /// the ending. This gate was always a courtesy on the brancher's own device -
+    /// its own header calls the note "purely an optimization" - never the thing
+    /// that makes the fork illegal.
+    ///
+    /// Only the two paths that would RECORD go through here. The two that
+    /// deliberately do not - a same-state sibling, and a genuine supersession -
+    /// leave the row exactly where it stands, because in both of those the chain
+    /// on file is the one Rule P prefers and it is not this board's to drop. Both
+    /// are fork geometries, and both resolve the moment that preferred chain is
+    /// itself opened: if it is finished, its own rank clears the row then.
+    private static func record(_ payload: Data, env: MessageEnvelope,
+                               chatKey: String, store: MessageGameStore) {
+        guard env.phase != finishedPhase else {
+            AnimLog.say("stale gate: game \(env.gameId) is over - the high-water mark is dropped")
+            store.forgetLatestChain(gameId: env.gameId)
+            return
+        }
+        store.setLatestChain(gameId: env.gameId, chatKey: chatKey, payload: payload)
+    }
+
     /// IS THIS BOARD A BRANCH OFF AN OLD BUBBLE, and record it if it is not.
     ///
     /// Two authorities, both consulted, neither sufficient alone:
@@ -139,7 +194,7 @@ public enum StaleBranchGate {
                             kernel: MessageKernel = .shared) async -> Verdict {
         guard let known = store.latestChain(gameId: env.gameId, chatKey: chatKey),
               known != payload else {
-            store.setLatestChain(gameId: env.gameId, chatKey: chatKey, payload: payload)
+            record(payload, env: env, chatKey: chatKey, store: store)
             return Verdict(superseded: false, newest: nil)
         }
         // > 0 means the SECOND argument wins, so this asks "does what I already
@@ -147,7 +202,7 @@ public enum StaleBranchGate {
         // makes, in the other direction.
         let pref = (try? await kernel.preferred(payload, known)) ?? -1
         guard pref > 0 else {
-            store.setLatestChain(gameId: env.gameId, chatKey: chatKey, payload: payload)
+            record(payload, env: env, chatKey: chatKey, store: store)
             return Verdict(superseded: false, newest: nil)
         }
         // Rule P prefers the chain on file. The gate now asks the second

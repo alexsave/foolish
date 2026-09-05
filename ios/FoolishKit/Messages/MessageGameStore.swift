@@ -223,11 +223,55 @@ public final class MessageGameStore {
     ///
     /// Keyed by game AND chat, like `seat(gameId:chatKey:)`, and stored as the
     /// raw payload because Rule P is a comparison of whole chains.
-    private let latestKey = "fmsg.latest.v1"
+    ///
+    /// CLEARED WHEN THE GAME ENDS (round 43, owner: "easy - clear when the last
+    /// move plays"). `StaleBranchGate.rank` drops the row the moment the chain
+    /// it is ranking says FINISHED. A finished board cannot be staged on -
+    /// `iCanAct` is false and the legal menu is empty - so the mark gates
+    /// nothing there and is pure storage. Without that, this map was the one
+    /// thing in this file that only ever grew: every game, in every chat,
+    /// forever, each row a whole base64 chain, re-encoded on every write and
+    /// re-decoded every time a bubble is opened. In an extension under a hard
+    /// memory ceiling that is the shape of a slow degradation.
+    ///
+    /// v1 -> v2: the row grew from a bare base64 string to `LatestRow`, for the
+    /// eviction backstop below. Swift's synthesized Codable THROWS on a shape
+    /// change rather than defaulting, so the key is bumped instead of decoded
+    /// around - the same call this file already made at `fmsg.games.v1`. Old
+    /// rows simply become invisible, which is precisely what this mark is
+    /// written to survive (see the paragraph above: a device with no note
+    /// trusts every bubble it opens, the behaviour before round 20).
+    private let latestKey = "fmsg.latest.v2"
+
+    /// One game's high-water row.
+    ///
+    /// `updatedAt` is read by the eviction backstop ALONE. Nothing about the
+    /// gate's answer depends on it: Rule P and `StaleBranchGate.isAhead` both
+    /// read the chains themselves, never a local clock, because a device clock
+    /// is not evidence about a game (two devices disagree, and a cheater's
+    /// agrees with nobody).
+    public struct LatestRow: Codable, Equatable, Sendable {
+        public var chain: String            // the payload, base64
+        public var updatedAt: TimeInterval  // seconds since 1970; orders eviction only
+        public init(chain: String, updatedAt: TimeInterval) {
+            self.chain = chain; self.updatedAt = updatedAt
+        }
+    }
+
+    /// The composite row key.
+    ///
+    /// `chatKey` is ITSELF a "|"-joined participant set (`ChatKey.make`), so
+    /// this string carries many separators - but a `gameId` is `String(UInt64)`
+    /// (`MessageEnvelope`'s own note: "a u64: a String because JSON numbers are
+    /// doubles"), all digits and never a "|", so the LAST separator is always
+    /// the one that splits the pair. That is what lets `forgetLatestChain`
+    /// match on the suffix without having to know the chat.
+    static func latestRowKey(gameId: String, chatKey: String) -> String { "\(chatKey)|\(gameId)" }
 
     public func latestChain(gameId: String, chatKey: String) -> Data? {
-        guard let row = allLatest()["\(chatKey)|\(gameId)"] else { return nil }
-        return Data(base64Encoded: row)
+        guard let row = allLatest()[Self.latestRowKey(gameId: gameId, chatKey: chatKey)]
+        else { return nil }
+        return Data(base64Encoded: row.chain)
     }
 
     /// Record `payload` as the newest chain seen for this game. THE CALLER has
@@ -235,16 +279,93 @@ public final class MessageGameStore {
     /// no async work) - this only writes what it is told.
     public func setLatestChain(gameId: String, chatKey: String, payload: Data) {
         var map = allLatest()
-        map["\(chatKey)|\(gameId)"] = payload.base64EncodedString()
-        guard let data = try? JSONEncoder().encode(map) else { return }
-        defaults?.set(data, forKey: latestKey)
+        map[Self.latestRowKey(gameId: gameId, chatKey: chatKey)] =
+            LatestRow(chain: payload.base64EncodedString(),
+                      updatedAt: Date().timeIntervalSince1970)
+        evictOldestLatestBeyondCap(&map)
+        persistLatest(map)
     }
 
-    private func allLatest() -> [String: String] {
+    /// Drop every high-water row for `gameId` - the mirror of `setLatestChain`,
+    /// called by `StaleBranchGate.rank` when the chain it is ranking carries a
+    /// FINISHED game (the round-43 clear; see `latestKey`'s doc for why a
+    /// finished game's mark is dead weight).
+    ///
+    /// UNSCOPED BY chatKey, on purpose, and for the same two reasons `forgetSeat`
+    /// is - plus one this map has and the seats map does not:
+    ///
+    ///   * the caller is holding the bubble it just ranked, and a `gameId` is a
+    ///     `UInt64.random` minted once at creation, so the gameId is itself the
+    ///     proof the row is this game's, whatever key the conversation hashed to
+    ///     when it was written;
+    ///   * ADDING OR REMOVING A GROUP MEMBER RE-KEYS `chatKey` MID-GAME
+    ///     (`seatForBubble`'s doc spells this out), and this map is keyed by the
+    ///     pair - so a re-key does not REPLACE the row, it writes the same game a
+    ///     SECOND time under the new key. A chatKey-scoped delete would clear the
+    ///     row for today's roster and leave yesterday's behind with nothing that
+    ///     could ever collect it. The seats map cannot accumulate that way
+    ///     because it is keyed by gameId alone.
+    ///
+    /// The cross-chat leak the scoping exists to stop lives in READS (a foreign
+    /// row must never be returned, or a stale chain could out-rank a bubble it
+    /// was never sealed against). Deleting rows leaks nothing: the worst a wrong
+    /// delete could do is drop a mark, and a missing mark is the fail-open state
+    /// this whole feature is built to degrade to.
+    public func forgetLatestChain(gameId: String) {
+        var map = allLatest()
+        let suffix = "|\(gameId)"
+        let doomed = map.keys.filter { $0.hasSuffix(suffix) }
+        guard !doomed.isEmpty else { return }
+        for key in doomed { map.removeValue(forKey: key) }
+        persistLatest(map)
+    }
+
+    // ---- BACKSTOP (round 43), separable from the game-over clear above ----
+    //
+    // The clear only reclaims games that actually REACH game over on this
+    // device. A thread that goes quiet at move 4 and is never opened again
+    // never calls it, so abandoned games would still accumulate one whole
+    // chain each, forever. This is the same bound `handOrder` already carries
+    // (`handOrderCap`, and see its doc: "abandoned games never call the
+    // end-of-game clear, so the map could grow forever") applied to the map
+    // next door, which was the only difference between the two.
+    //
+    // What eviction COSTS, stated plainly: dropping a mark re-opens the
+    // round-20 hole for that one game - a branch off an old bubble is trusted
+    // again. That is why the cap is generous rather than tight, and why the
+    // victim is the LEAST RECENTLY WRITTEN row, which is the game least likely
+    // to still be running.
+    //
+    // TO REVERT, leaving the game-over clear intact: delete this comment, the
+    // `latestChainCap` constant and `evictOldestLatestBeyondCap` (and its one
+    // call in `setLatestChain`); `LatestRow.updatedAt` can stay, unread.
+
+    /// Deliberately the SAME number as `handOrderCap`, so there is one bound to
+    /// reason about rather than two. A row here is far bigger than a hand-order
+    /// row - a whole sealed chain, hundreds of bytes of base64, against ~36
+    /// short card ids - but 32 chains is still tens of kilobytes, and nobody
+    /// has 32 live games across all their threads at once.
+    static let latestChainCap = 32
+
+    private func evictOldestLatestBeyondCap(_ map: inout [String: LatestRow]) {
+        while map.count > Self.latestChainCap,
+              let oldest = map.min(by: { $0.value.updatedAt < $1.value.updatedAt }) {
+            map.removeValue(forKey: oldest.key)
+        }
+    }
+
+    // ---- end backstop ----
+
+    private func allLatest() -> [String: LatestRow] {
         guard let data = defaults?.data(forKey: latestKey),
-              let map = try? JSONDecoder().decode([String: String].self, from: data)
+              let map = try? JSONDecoder().decode([String: LatestRow].self, from: data)
         else { return [:] }
         return map
+    }
+
+    private func persistLatest(_ map: [String: LatestRow]) {
+        guard let data = try? JSONEncoder().encode(map) else { return }
+        defaults?.set(data, forKey: latestKey)
     }
 
     /// ROUND 7: the preferred-chain record is gone; nothing is stored per game but
