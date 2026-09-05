@@ -35,7 +35,7 @@ final class HandOrderFlightTests: XCTestCase {
     func testLaidOutFollowsTheSavedArrangement() {
         let cards = hand()
         let reversed = cards.reversed().map(\.identity)
-        let laid = MessageTableView.laidOut(hand: cards, deferred: [], order: reversed)
+        let laid = HandLayout.laidOut(hand: cards, deferred: [], order: reversed)
         XCTAssertEqual(laid.map(\.identity), reversed,
                        "the flight builders must lay the hand out the way the FAN does")
         XCTAssertNotEqual(laid.map(\.identity), cards.map(\.identity),
@@ -50,7 +50,7 @@ final class HandOrderFlightTests: XCTestCase {
         let cards = hand()
         let dealt = Card(s: 1, v: 13)
         let order = cards.map(\.identity)          // the arrangement predates the deal
-        let laid = MessageTableView.laidOut(hand: cards + [dealt], deferred: [], order: order)
+        let laid = HandLayout.laidOut(hand: cards + [dealt], deferred: [], order: order)
         XCTAssertEqual(laid.map(\.identity), order + [dealt.identity])
         XCTAssertEqual(laid.map(\.identity),
                        FHandFan.displayOrder(cards: cards + [dealt], order: order).map(\.identity),
@@ -63,7 +63,7 @@ final class HandOrderFlightTests: XCTestCase {
         let cards = hand()
         let reversed = cards.reversed().map(\.identity)
         let deferred: Set<String> = [cards[0].identity]
-        let laid = MessageTableView.laidOut(hand: cards, deferred: deferred, order: reversed)
+        let laid = HandLayout.laidOut(hand: cards, deferred: deferred, order: reversed)
         XCTAssertEqual(laid.map(\.identity), reversed.filter { $0 != cards[0].identity })
     }
 
@@ -71,7 +71,7 @@ final class HandOrderFlightTests: XCTestCase {
     /// fix cannot have moved anything for a player who never rearranged.
     func testNoArrangementIsKernelOrder() {
         let cards = hand()
-        XCTAssertEqual(MessageTableView.laidOut(hand: cards, deferred: [], order: []).map(\.identity),
+        XCTAssertEqual(HandLayout.laidOut(hand: cards, deferred: [], order: []).map(\.identity),
                        cards.map(\.identity))
     }
 }

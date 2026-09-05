@@ -145,8 +145,8 @@ public struct MessageTableView: View {
     /// a cover that simply never animates, which is the round-20 report.
     ///
     /// The rest of the group did NOT collapse, and the reasons are written at
-    /// `gridVeil` and at `sweepUnplaced`.
-    private var sweepTableIds: Set<String> { Self.sweepIds(sweepBattles) }
+    /// `Veil.grid` and at `sweepUnplaced`.
+    private var sweepTableIds: Set<String> { PreBoutTable.cardIds(sweepBattles) }
     /// Swept cards whose flight has STARTED - hidden in the pre-bout grid from that
     /// instant on (the overlay ghost is now the only copy). Grows through the
     /// sequence, cleared with `sweepBattles`. Kept separate from `animator.hidden`
@@ -175,7 +175,7 @@ public struct MessageTableView: View {
     /// the debug trace is worth being able to tell them apart.
     ///
     /// ROUND 45 TRIED TO MERGE THEM AND FOUND A SECOND, HARDER REASON. The two
-    /// are unioned into one set for the grid (`gridVeil`), so on that side alone
+    /// are unioned into one set for the grid (`Veil.grid`), so on that side alone
     /// they could be one - seed it with the un-arrived cards, subtract on
     /// arrival, union on takeoff. But this set has a consumer the other does
     /// not: `openReplayFlights` reads it as "the whole gate" for whether a card
@@ -226,7 +226,7 @@ public struct MessageTableView: View {
     /// spend a frame at the bottom of the board and then jump up.
     private var statusMarkLift: CGFloat {
         if buttonLift >= 0 { return buttonLift }
-        let hand = Self.fanCards(controller.view?.me?.hand ?? [], holding: handHoldback)
+        let hand = HandLayout.fanCards(controller.view?.me?.hand ?? [], holding: handHoldback)
         guard handFrame.width > 0 else { return 0 }
         return FHandFan.height(cards: hand, availableWidth: handFrame.width)
     }
@@ -508,25 +508,6 @@ public struct MessageTableView: View {
     /// stale-paint counters below.
     public private(set) static var redRevertFlights = 0
     public private(set) static var conflictRetractions = 0
-
-    /// WHAT A FINISHING SEQUENCE OWES THE BOARD: which opened-but-unflown cards
-    /// to reveal now, and which to leave for whoever is still running.
-    ///
-    /// The newest sequence is the last one standing, so anything still hidden
-    /// when it ends is hidden for good - it reveals its own opens and every
-    /// orphan handed to it. A SUPERSEDED one reveals nothing (the sequence that
-    /// replaced it has pre-hidden cards of its own that it has not flown yet,
-    /// and revealing those is the bug-9 double animation) but must still pass
-    /// its opens ON. Dropping them there is the defect: `openSlots` takes a card
-    /// out of `preHidden` and leaves it in `hidden`, so `clearPreHidden` - the
-    /// blanket net - can no longer reach it, and nothing else ever would.
-    ///
-    /// Static and pure so the rule can be read and tested without a board.
-    static func sequenceTeardown(opened: Set<String>, orphaned: Set<String>,
-                                 isNewest: Bool) -> (reveal: Set<String>, carry: Set<String>) {
-        isNewest ? (reveal: opened.union(orphaned), carry: [])
-                 : (reveal: [], carry: orphaned.union(opened))
-    }
 
     public init(controller: MessageTurnController, onSend: @escaping (Data, Bool) async -> Void,
                 onNewGame: @escaping () -> Void = {}, onUnstage: @escaping () -> Void = {},
@@ -891,20 +872,8 @@ public struct MessageTableView: View {
     /// them phrasing the same test as two guards, so a change to what "not
     /// started yet" means had two places to be made and two chances to diverge.
     private var unstartedReplay: [GameEvent]? {
-        Self.unstartedReplay(replayPending: controller.replayPending,
+        Veil.unstartedReplay(replayPending: controller.replayPending,
                              events: controller.openReplayEvents)
-    }
-
-    /// …as a value, so the window can be asserted without a board.
-    ///
-    /// Extracted the moment it was collapsed, because the collapse revealed the
-    /// hole: mutating the accessor to ignore `replayPending` - which makes the
-    /// veil NEVER LIFT, so every card the replay touches stays hidden for the
-    /// life of the board - passed all 539 tests. The most load-bearing half of
-    /// the condition was covered by nothing at all.
-    static func unstartedReplay(replayPending: Bool, events: [GameEvent]) -> [GameEvent]? {
-        guard replayPending, !events.isEmpty else { return nil }
-        return events
     }
 
     private var pendingOpen: (ids: Set<String>, counts: AnimPlan.Counts)? {
@@ -917,96 +886,22 @@ public struct MessageTableView: View {
     /// the battle grid and the hand fan, so "is this card on the table" has one
     /// answer and the cover tilt can be read straight off it.
     private var veiledCardIds: Set<String> {
-        Self.veiledCards(hidden: animator.hidden, pendingOpen: pendingOpen?.ids,
-                         handBeforeMyMove: handBeforeMyMove,
-                         myHand: controller.view?.me?.hand)
-    }
-
-    /// …as a value, so the veil can be asserted without a board.
-    ///
-    /// ROUND 45. The board's veil state was nine pieces of `@State` read
-    /// directly out of `body`, so not one of the four sets the board actually
-    /// HANDS OUT could be exercised at all - and item 12 of this cleanup had
-    /// just found that mutating a comparable condition passed all 539 tests.
-    /// These four (`veiledCards`, `flyingNow`, `handSlotDeferred`, `gridVeil`)
-    /// are the whole of what the veil answers; everything upstream of them is
-    /// state, and everything downstream is a view. See VeilOutsTests.
-    ///
-    /// THREE SOURCES, UNIONED - deliberately not "whichever is up":
-    ///  - `hidden`, the animator's own (a flight in the air, or pre-hidden for
-    ///    one that has not started).
-    ///  - `pendingOpen`, an arriving/opening replay the board has not begun to
-    ///    animate yet, derived PURELY from the controller so it is legal to read
-    ///    in `body`. The handoff to `hidden` is invisible because both name the
-    ///    same cards (see `settled`).
-    ///  - live play: cards THIS move just put in my hand, which nothing has
-    ///    pre-hidden yet (that happens an `onChange` late).
-    ///
-    /// `myHand` nil takes the third source out entirely, holdback and all. That
-    /// is a spectator, or a board with no view yet - neither has a fan to veil.
-    static func veiledCards(hidden: Set<String>, pendingOpen: Set<String>?,
-                            handBeforeMyMove: Set<String>?, myHand: [Card]?) -> Set<String> {
-        var ids = hidden
-        if let pendingOpen { ids.formUnion(pendingOpen) }
-        // Live play: cards this move just put in my hand, which have not been
-        // pre-hidden yet (that also happens an onChange late).
-        if let handBeforeMyMove, let myHand {
-            ids.formUnion(Set(myHand.map(\.identity)).subtracting(handBeforeMyMove))
-        }
-        return ids
-    }
-
-    /// "IN THE AIR RIGHT NOW", the one derivation four places rest on:
-    /// `hidden \ preHidden`. `preHide` puts a card in both sets; `openSlots`
-    /// takes it out of `preHidden` alone the instant its own step begins, so
-    /// the difference is exactly the set of cards whose flight is playing.
-    ///
-    /// Named because it is read as three different things - the cards that keep
-    /// their fan slot (`handSlotDeferred`), the covers whose attack tilts with
-    /// them (`FBattleGrid.flyingNow`), and the orphan test at a teardown - and
-    /// each of those was its own inline subtraction.
-    static func flyingNow(hidden: Set<String>, preHidden: Set<String>) -> Set<String> {
-        hidden.subtracting(preHidden)
+        Veil.veiled(hidden: animator.hidden, pendingOpen: pendingOpen?.ids,
+                    handBeforeMyMove: handBeforeMyMove,
+                    myHand: controller.view?.me?.hand)
     }
 
     /// Round-6 bug 10: which veiled hand cards reserve NO fan width YET. A deal
     /// heading for my hand is veiled from the moment the whole sequence starts,
     /// but if it also RESERVED its slot from then, my present cards would slide
     /// left "in anticipation" while unrelated earlier steps (other seats' deals
-    /// / pickups) play — the exact complaint. So everything veiled defers its
-    /// slot EXCEPT the card whose flight is playing this instant: that one keeps
-    /// its slot (it needs a real landing frame, and the fan opens for it as it
-    /// lands). `animator.hidden \ animator.preHidden` is precisely "flying right
-    /// now" (see `BoardAnimator.openSlots`); everything else waits its turn.
+    /// / pickups) play - the exact complaint. The rule is `Veil.handSlotDeferred`
+    /// (c/src/anim_plan.c's anim_veil_hand_slot_deferred).
     private var handSlotDeferred: Set<String> {
-        Self.handSlotDeferred(veiled: veiledCardIds,
-                              flying: Self.flyingNow(hidden: animator.hidden,
-                                                     preHidden: animator.preHidden),
+        Veil.handSlotDeferred(veiled: veiledCardIds,
+                              flying: Veil.flying(hidden: animator.hidden,
+                                                  preHidden: animator.preHidden),
                               holdback: handHoldback)
-    }
-
-    /// …as a value (round 45, with the rest of the veil's outs).
-    static func handSlotDeferred(veiled: Set<String>, flying: Set<String>,
-                                 holdback: [Card]) -> Set<String> {
-        // A HELD-BACK CARD IS NEVER DEFERRED. It is pre-hidden (its table copy
-        // must stay invisible until its ghost lands) and pre-hidden is exactly
-        // what this set is built from - so without this line the fan would drop
-        // the very cards `handHoldback` exists to keep on screen, and the hand
-        // would render closed again. It is the one veiled card that IS drawn.
-        veiled.subtracting(flying).subtracting(holdback.map(\.identity))
-    }
-
-    /// WHICH VEILED CARDS THE FAN ITSELF DRAWS NOTHING FOR - `hand(_:)`'s
-    /// `hidden:` argument, and the twin of `handSlotDeferred` one step out.
-    ///
-    /// A held-back card is veiled (its TABLE copy must stay invisible until its
-    /// ghost lands), so the hand has to un-veil its own copy or the fan would
-    /// reserve the slot and draw nothing - a gap where the card is. Extracted
-    /// beside the other three because the pair has an invariant worth asserting:
-    /// `handSlotDeferred` is a SUBSET of this, i.e. the fan never withholds a
-    /// slot from a card it is drawing.
-    static func fanVeil(veiled: Set<String>, holdback: [Card]) -> Set<String> {
-        veiled.subtracting(holdback.map(\.identity))
     }
 
     /// A seat badge's displayed hand count: the per-step override once a
@@ -1072,8 +967,8 @@ public struct MessageTableView: View {
             // change rows?". `handHeight` two lines down was already measured
             // off `fanCards`, so the watch and the thing being watched had come
             // apart.
-            let laidHandCount = Self.laidCount(hand: myHand, holding: handHoldback,
-                                               deferred: deferredSlots)
+            let laidHandCount = HandLayout.laidCount(hand: myHand, holding: handHoldback,
+                                                     deferred: deferredSlots)
             // The hand's on-screen height (one row, or two once M6 splits it).
             // The self-role indicator and action bar float a fixed gap ABOVE
             // this, so a hand that grows to two rows pushes them up with it.
@@ -1093,7 +988,7 @@ public struct MessageTableView: View {
             // that empties in one step, so the chrome sits still through the
             // replay and drops once, with the hand, rather than floating up
             // card by card. Empty everywhere else, so nothing else moves.
-            let handHeight = FHandFan.height(cards: Self.fanCards(myHand, holding: handHoldback),
+            let handHeight = FHandFan.height(cards: HandLayout.fanCards(myHand, holding: handHoldback),
                                              availableWidth: handWidth)
 
             // The buttons/role mark ride THIS, mirrored out via `.onChange` below so
@@ -1347,7 +1242,7 @@ public struct MessageTableView: View {
                 // when the split flips, this says which of the three inputs
                 // moved.
                 let held = handHoldback
-                let laid = Self.laidCount(hand: hand, holding: held, deferred: deferred)
+                let laid = HandLayout.laidCount(hand: hand, holding: held, deferred: deferred)
                 let w = handFrame.width
                 let line = "\(FHandFan.rowCount(count: laid, availableWidth: w)) rows"
                     + " laid=\(laid) hand=\(hand.count) held=\(held.count) width=\(Int(w))"
@@ -1452,27 +1347,17 @@ public struct MessageTableView: View {
         Self.finishRows(view, names: controller.names, mySeat: controller.mySeat)
     }
 
-    /// …as a pure function of the view and the roster, so the SPECTATOR screen
-    /// can rank a finished game the same way (round 20: "spectators should still
-    /// be able to see win screen"). A spectator holds no seat, which `mySeat: -1`
-    /// says - no row is theirs, and none is marked "(You)".
-    ///
-    /// Static rather than duplicated at the other call site on purpose: who came
-    /// first and who was the fool is the one thing a result screen exists to say,
-    /// and two readings of `eliminationOrder` could disagree about it.
+    /// …with the NAMES attached, which is the only half of a result screen that
+    /// is this client's. The ORDER is `FinishOrder.places`
+    /// (c/src/anim_plan.c's anim_finish_rows), so the spectator screen ranks a
+    /// finished game the same way (round 20: "spectators should still be able to
+    /// see win screen") and cannot disagree with the player's about who was the
+    /// fool. A spectator holds no seat, which `mySeat: -1` says.
     static func finishRows(_ view: GameView, names: [Int: String], mySeat: Int) -> [FinishRow] {
-        func label(_ seat: Int) -> String { names[seat] ?? "Seat \(seat + 1)" }
-        let total = view.players.count
-        var rows: [FinishRow] = []
-        for (i, seat) in view.eliminationOrder.enumerated() {
-            rows.append(FinishRow(place: i + 1, total: total, name: label(seat),
-                                  isYou: seat == mySeat))
+        FinishOrder.places(view, mySeat: mySeat).map {
+            FinishRow(place: $0.place, total: $0.total,
+                      name: names[$0.seat] ?? "Seat \($0.seat + 1)", isYou: $0.isYou)
         }
-        if view.gameOver >= 0 {
-            rows.append(FinishRow(place: total, total: total, name: label(view.gameOver),
-                                  isYou: view.gameOver == mySeat))
-        }
-        return rows
     }
 
     // MARK: zones
@@ -1953,9 +1838,10 @@ public struct MessageTableView: View {
         // shows is `sweepTableForReplay()` - the one the sweep itself is about
         // to use - so the cards carry the same identities across the handoff and
         // nothing is created or destroyed at all.
-        let table = Self.shownTable(live: view.battles, sweep: sweepBattles,
-                                    pending: view.battles.isEmpty && sweepBattles.isEmpty
-                                        && pendingOpen != nil ? sweepTableForReplay() : [])
+        let table = PreBoutTable.shownTable(
+            live: view.battles, sweep: sweepBattles,
+            pending: view.battles.isEmpty && sweepBattles.isEmpty
+                && pendingOpen != nil ? sweepTableForReplay() : [])
         let sweeping = table.sweeping
         let shown = table.shown
         // ROUND 20: the sweep grid hides BOTH ends of the sequence - what has
@@ -1965,11 +1851,11 @@ public struct MessageTableView: View {
         // cannot answer the question differently. They were two copies of the
         // same pair of ternaries, and the trace is the only thing that says
         // which cards the table is withholding.
-        let grid = Self.gridVeil(sweeping: sweeping, veiled: veiledCardIds,
-                                 sweptFlown: sweptFlownIds, sweepUnplaced: sweepUnplaced,
-                                 sweepArriving: sweepArriving,
-                                 flying: Self.flyingNow(hidden: animator.hidden,
-                                                        preHidden: animator.preHidden))
+        let grid = Veil.grid(sweeping: sweeping, veiled: veiledCardIds,
+                             sweptFlown: sweptFlownIds, sweepUnplaced: sweepUnplaced,
+                             sweepArriving: sweepArriving,
+                             flying: Veil.flying(hidden: animator.hidden,
+                                                 preHidden: animator.preHidden))
         #if DEBUG
         // What the table is actually PAINTING, logged only when it changes - so
         // a re-layout mid-sweep shows up as a line instead of having to be read
@@ -1993,7 +1879,7 @@ public struct MessageTableView: View {
                             // Sweeping cards are hidden per-flight (`sweptFlownIds`),
                             // NOT by the hand veil (`veiledCardIds`, which also hides
                             // a picked-up card's HAND copy) - the table copy must
-                            // stay up until its own flight lifts it. See `gridVeil`.
+                            // stay up until its own flight lifts it. See `Veil.grid`.
                             hidden: grid.hidden,
                             showGhostSlot: sweeping ? false : passPreview,
                             // Round-7 #7: the covers whose flight is playing this
@@ -2386,7 +2272,7 @@ public struct MessageTableView: View {
                 // card also now sweeps from its OWN rendered slot rather than the
                 // centre fallback `tableCardSource` documents for exactly this
                 // case - it finally has a slot, because it is finally on a table.
-                if let covered = Self.coveredSweep(stream, current: sweepBattles) {
+                if let covered = PreBoutTable.coveredSweep(stream, current: sweepBattles) {
                     setSweep(covered)
                 }
             }
@@ -2571,8 +2457,8 @@ public struct MessageTableView: View {
                 // grid (its cards now live in a hand / the discard / a badge). Both
                 // paths - a live bout-end and an open-replay - lay it out now.
                 dropSweep()
-                let owed = Self.sequenceTeardown(opened: openedThisSeq,
-                                                 orphaned: orphanedOpens, isNewest: true)
+                let owed = Veil.teardown(opened: openedThisSeq,
+                                         orphaned: orphanedOpens, isNewest: true)
                 let stuck = owed.reveal.filter { animator.isHidden($0) }
                 if !stuck.isEmpty {
                     AnimLog.say("stream#\(run) rescue-reveal \(stuck.count) opened-but-unflown [\(stuck.sorted().joined(separator: ","))]")
@@ -2580,8 +2466,8 @@ public struct MessageTableView: View {
                 }
                 orphanedOpens = owed.carry
             } else {
-                let owed = Self.sequenceTeardown(opened: openedThisSeq,
-                                                 orphaned: orphanedOpens, isNewest: false)
+                let owed = Veil.teardown(opened: openedThisSeq,
+                                         orphaned: orphanedOpens, isNewest: false)
                 orphanedOpens = owed.carry
                 // THE CONFLICT MODEL: hand what this sequence had already flown
                 // to the arrival that superseded it, so it can be reversed (red)
@@ -3618,8 +3504,8 @@ public struct MessageTableView: View {
         } ?? allTargets
         // The old hand's own layout, read BEFORE the veil (see above). Nothing is
         // deferred in it: the board this undo is leaving was settled.
-        let wasLaidOut = Self.laidOut(hand: old.me?.hand ?? [], deferred: [],
-                                      order: MessageGameStore.shared.handOrder(gameId: controller.gameIdString))
+        let wasLaidOut = HandLayout.laidOut(hand: old.me?.hand ?? [], deferred: [],
+                                            order: MessageGameStore.shared.handOrder(gameId: controller.gameIdString))
         var sources: [String: CGRect] = [:]
         for (card, _) in targets {
             if let r = handLandingSlot(card, laidOut: wasLaidOut) { sources[card.identity] = r }
@@ -3993,21 +3879,9 @@ public struct MessageTableView: View {
         // THE SAME ARRAY THE FAN IS GIVEN, held-back cards included - these
         // rects have to describe the hand that is actually on screen, or a
         // takeoff slot would be computed against a layout nobody is looking at.
-        Self.laidOut(hand: Self.fanCards(view.me?.hand ?? [], holding: handHoldback),
-                     deferred: handSlotDeferred,
-                     order: MessageGameStore.shared.handOrder(gameId: controller.gameIdString))
-    }
-
-    /// What the fan is asked to lay out: my hand, plus whatever an open replay
-    /// is still holding back (`handHoldback`). Pure and static so the one rule
-    /// that matters can be asserted without a board - a held-back card appears
-    /// ONCE, and a card the kernel hand already contains is never doubled by it
-    /// (the fan places cards by index, so a duplicate identity is two cards in
-    /// one slot).
-    static func fanCards(_ hand: [Card], holding holdback: [Card]) -> [Card] {
-        guard !holdback.isEmpty else { return hand }
-        let present = Set(hand.map(\.identity))
-        return hand + holdback.filter { !present.contains($0.identity) }
+        HandLayout.laidOut(hand: HandLayout.fanCards(view.me?.hand ?? [], holding: handHoldback),
+                           deferred: handSlotDeferred,
+                           order: MessageGameStore.shared.handOrder(gameId: controller.gameIdString))
     }
 
     /// THE HOLDBACK'S RESCUE, in one place because there are now four teardowns
@@ -4019,18 +3893,10 @@ public struct MessageTableView: View {
     /// reasoning written out at `runEventStream`'s teardown ("a superseded one
     /// would be wiping the holdback its replacement just armed"), in the units
     /// that order the two events rather than in `animSequenceToken`, which a
-    /// fresh open replay does not claim until a Task hop later.
-    /// The epoch rule as a value, so it can be asserted without a board: a
-    /// teardown owns the holdback only if the holdback was armed no later than
-    /// the veil that teardown raised. Equal epochs ARE the same sequence (a
-    /// stream is handed the very `veiledAt` its own open stamped the holdback
-    /// with), so this has to be `<=`, not `<`.
-    static func holdbackIsMine(armedAt: Int, teardownAt: Int) -> Bool {
-        armedAt <= teardownAt
-    }
-
+    /// fresh open replay does not claim until a Task hop later. The ordering
+    /// itself is `Veil.holdbackIsMine` (anim_holdback_is_mine).
     private func releaseHoldback(raisedBy epoch: Int) {
-        guard Self.holdbackIsMine(armedAt: handHoldbackAt, teardownAt: epoch) else {
+        guard Veil.holdbackIsMine(armedAt: handHoldbackAt, teardownAt: epoch) else {
             AnimLog.say("holdback kept (armed at \(handHoldbackAt) > teardown \(epoch))")
             return
         }
@@ -4038,39 +3904,6 @@ public struct MessageTableView: View {
         AnimLog.say("holdback rescue - \(handHoldback.count) card(s) let go by a teardown "
             + "[\(handHoldback.map(\.identity).joined(separator: ","))]")
         handHoldback = []
-    }
-
-    /// How many cards the fan LAYS OUT: the hand it is really given
-    /// (`fanCards`, holdback and all) minus the deals still deferring their
-    /// slot. Pure and static because it is the trigger for the `fan-rows` trace
-    /// AND the value that trace re-reads live, and those two must be the same
-    /// function or the log disagrees with what made it print.
-    static func laidCount(hand: [Card], holding holdback: [Card], deferred: Set<String>) -> Int {
-        fanCards(hand, holding: holdback).filter { !deferred.contains($0.identity) }.count
-    }
-
-    /// The cards THIS stream takes out of MY hand and puts on the table, in
-    /// stream order - the seed for `handHoldback`. A placement by any other
-    /// seat, and every non-placement step, moves nothing out of my hand.
-    static func myPlacedCards(_ events: [GameEvent], mySeat: Int) -> [Card] {
-        events.filter { $0.seat == mySeat && Self.isPlacement($0.kind) }
-              .flatMap { $0.cards.compactMap { $0 } }
-    }
-
-    static func isPlacement(_ kind: EventType?) -> Bool {
-        switch kind {
-        case .attackPass, .defenderMove, .cover: return true
-        default: return false
-        }
-    }
-
-    /// The pure half, so the ordering contract can be asserted directly (it is
-    /// the whole of round-12's deal-lands-in-the-wrong-slot fix, and a test that
-    /// only exercised `FHandFan.displayOrder` would pass against the bug -
-    /// the bug was never in `displayOrder`, it was in not CALLING it).
-    static func laidOut(hand: [Card], deferred: Set<String>, order: [String]) -> [Card] {
-        FHandFan.displayOrder(cards: hand.filter { !deferred.contains($0.identity) },
-                              order: order)
     }
 
 
@@ -4093,13 +3926,10 @@ public struct MessageTableView: View {
     private func sweepTableForReplay() -> [BattleView] {
         let reconstructed = controller.openReplayPreBattles
         guard !reconstructed.isEmpty else { return [] }
-        // Round 45: through `sweepIds`, like the other two places that ask a
-        // table which cards are on it - this was the fourth and fifth copy of
-        // one flatMap, and "accounts for every card" has to mean the same thing
-        // here as it does in `coveredSweep` next door.
-        let need = Self.sweepIds(reconstructed)
-        let have = Self.sweepIds(lastBattles)
-        return need.isSubset(of: have) ? lastBattles : reconstructed
+        // Through the kernel's one subset test (`PreBoutTable.covers`, i.e.
+        // anim_table_covers), because "accounts for every card" has to mean the
+        // same thing here as it does in `coveredSweep` next door.
+        return PreBoutTable.covers(lastBattles, reconstructed) ? lastBattles : reconstructed
     }
 
     /// note 4: an approximate source rect for a pickup/discard flight replayed
@@ -4283,94 +4113,17 @@ public struct MessageTableView: View {
         // Off the ARGUMENT, not off `sweepTableIds`, though the two are now the
         // same value: a setter reading back the state it wrote one line earlier
         // is a habit that only works while the write is synchronous.
-        sweepUnplaced = unplaced.intersection(Self.sweepIds(battles))
+        sweepUnplaced = unplaced.intersection(PreBoutTable.cardIds(battles))
         sweepArriving = []
     }
 
-    /// The identities a battle table holds - each attack, and its cover if it
-    /// has one. The one derivation: `sweepTableIds` and `setSweep` ask it of the
-    /// swept table, `coveredSweep` and `sweepTableForReplay` of the two tables
-    /// each is choosing between. It was written out longhand at all five, and
-    /// the three that are SUBSET TESTS have to agree about what "accounts for
-    /// every card on it" means or a covered pair drops off the table mid-sweep.
-    static func sweepIds(_ battles: [BattleView]) -> Set<String> {
-        Set(battles.flatMap { b -> [String] in
-            [b.attack.identity] + (b.defense.map { [$0.identity] } ?? [])
-        })
-    }
-
-    /// ROUND 16: the table a bout-ending COVER should be swept off - the kernel's
-    /// covered table (`preBoutTable`), the same one a receiver's open-replay lays
-    /// out, so both sides sweep the identical board.
-    ///
-    /// nil unless it ACCOUNTS FOR everything the current sweep already holds. The
-    /// live sweep is the real prior view and is never wrong about which cards were
-    /// on the table; this only ever earns the swap by ADDING the cover to it. A
-    /// stream that came back short is refused rather than allowed to drop a
-    /// covered pair off the table mid-sequence.
-    ///
-    /// …and so is the FLAT reading, which the subset test alone never caught: a
-    /// pickup reconstructed as one cell per card names exactly the same cards as
-    /// the real table, so it passes every test over the card SET and swaps a
-    /// correct table for a re-shaped one. The kernel says which kind of answer it
-    /// gave (`paired`); this asks.
-    static func coveredSweep(_ events: [GameEvent], current: [BattleView]) -> [BattleView]? {
-        let pre = PreBoutTable(events)
-        guard pre.paired, !pre.battles.isEmpty,
-              sweepIds(current).isSubset(of: sweepIds(pre.battles)) else { return nil }
-        return pre.battles
-    }
-
-    /// WHICH TABLE THE GRID PAINTS, and whether it is a sweep - pure and static
-    /// in the house style, because "the table must never be seen empty while a
-    /// bout end is still being animated onto it" is a claim worth asserting
-    /// rather than eyeballing on a device.
-    ///
-    /// Three sources, in falling order of authority: the live table; the sweep a
-    /// move of MY OWN captured synchronously; and the pre-bout table of an
-    /// open-replay this board has not started yet. The last one exists only
-    /// because an arrival publishes its view a paint before anything sets the
-    /// sweep - see the note at the call site.
-    static func shownTable(live: [BattleView], sweep: [BattleView],
-                           pending: [BattleView]) -> (shown: [BattleView], sweeping: Bool) {
-        if !live.isEmpty { return (live, false) }
-        if !sweep.isEmpty { return (sweep, true) }
-        if !pending.isEmpty { return (pending, true) }
-        return ([], false)
-    }
-
-    /// WHAT THE GRID IS TOLD, once `shownTable` has said WHICH table it is
-    /// drawing - the pair of sets `battlesArea` hands `FBattleGrid`, and a
-    /// straight switch on the same `sweeping` flag.
-    ///
-    /// The two branches answer with DIFFERENT STATE, not a different filter over
-    /// one, and that is the point:
-    ///
-    ///  - NOT SWEEPING. The live table, veiled by the hand veil
-    ///    (`veiledCards`): a card in flight, and a card an unstarted replay has
-    ///    not put down yet. `flyingNow` is the animator's `hidden \ preHidden`,
-    ///    which is what tilts the attack under a landing cover.
-    ///  - SWEEPING. The pre-bout table, which the hand veil must NOT touch: a
-    ///    picked-up card lives in the hand AND on this grid, `veiledCards` hides
-    ///    it for the hand's sake, and honouring that here would take the table
-    ///    copy away before its own flight ever lifted it. So the sweep grid
-    ///    answers off its own two sets, one for each end of the sequence -
-    ///    `sweptFlown` ("has left") and `sweepUnplaced` ("has not arrived") -
-    ///    and its `flyingNow` is `sweepArriving`, the only thing that can be
-    ///    coming DOWN onto a table everything else is leaving.
-    ///
-    /// ROUND 45 CONSIDERED COLLAPSING THE TWO BRANCHES ONTO ONE SET AND DID
-    /// NOT. `veiled` and the sweep pair are not the same question asked twice:
-    /// the same identity is legitimately hidden on one grid and drawn on the
-    /// other, in the same paint, and that is a pickup - the commonest bout end
-    /// in the game. See VeilOutsTests for that case as an assertion.
-    static func gridVeil(sweeping: Bool, veiled: Set<String>,
-                         sweptFlown: Set<String>, sweepUnplaced: Set<String>,
-                         sweepArriving: Set<String>, flying: Set<String>)
-        -> (hidden: Set<String>, flyingNow: Set<String>) {
-        sweeping ? (hidden: sweptFlown.union(sweepUnplaced), flyingNow: sweepArriving)
-                 : (hidden: veiled, flyingNow: flying)
-    }
+    /// WHAT THE GRID IS TOLD once the caller knows WHICH table it is drawing is
+    /// `Veil.grid` (c/src/anim_plan.c's anim_veil_grid): the pair of sets
+    /// `battlesArea` hands `FBattleGrid`, a straight switch on the same
+    /// `sweeping` flag, with the two branches answering off DIFFERENT STATE
+    /// rather than a different filter over one. See VeilOutsTests for the pickup
+    /// that makes that necessary - the same identity hidden on one grid and
+    /// drawn on the other, in the same paint.
 
     /// Drop the pre-bout table. Called on any view change that empties the table
     /// WITHOUT running a bout-end sequence (reduce-motion, an undo), so a sweep
@@ -4696,7 +4449,7 @@ public struct MessageTableView: View {
         // the hand render closed and then pop the cards back in. See
         // `handHoldback`. Only my placements, and only when I am not spectating.
         handHoldback = isSpectating ? []
-            : Self.myPlacedCards(events, mySeat: controller.mySeat)
+            : HandLayout.myPlacedCards(events, mySeat: controller.mySeat)
         // Stamped with the veil this open raised, so only a teardown at or after
         // that veil may take it down again - see `handHoldbackAt`.
         handHoldbackAt = veiledAt
@@ -4906,7 +4659,7 @@ public struct MessageTableView: View {
         // A held-back card is veiled (its TABLE copy must stay invisible until
         // its ghost lands), so the hand has to un-veil its own copy or the fan
         // would reserve the slot and draw nothing - a gap where the card is.
-        FHandFan(cards: Self.fanCards(view.me?.hand ?? [], holding: handHoldback),
+        FHandFan(cards: HandLayout.fanCards(view.me?.hand ?? [], holding: handHoldback),
                  trumpSuit: view.trumpSuit,
                  // ROUND 43: the held-back cards are drawn as ordinary hand
                  // cards (that is the point of the holdback), so they are also
@@ -4918,7 +4671,7 @@ public struct MessageTableView: View {
                  selection: $selection, onTap: { toggle($0) },
                  onDragChanged: { card, point in onDragChanged(card, at: point) },
                  onDragEnded: { card, point in onDragEnded(card, at: point, view) },
-                 hidden: Self.fanVeil(veiled: veiledCardIds, holdback: handHoldback),
+                 hidden: Veil.fan(veiled: veiledCardIds, holdback: handHoldback),
                  onDragCardMoved: { center in dragCardCenter = center },
                  reserveNoSlot: reserveNoSlot, instantExit: true,
                  // Round-8 #4: a sorted hand survives closing and reopening the
@@ -5143,7 +4896,7 @@ public struct MessageTableView: View {
     }
 
     private func toggle(_ card: Card) {
-        selection = Self.selectionAfterTap(selection, card: card,
+        selection = Veil.selectionAfterTap(selection, card: card,
                                            hand: controller.view?.me?.hand ?? [])
     }
 
@@ -5252,7 +5005,7 @@ public struct MessageTableView: View {
         // seamless, and any path that ends up not flying them reveals them again.
         //
         // Read BEFORE the slot is overwritten - this is the play (if any) whose
-        // veil is about to be disowned; see `veilHandover` below.
+        // veil is about to be disowned; see `Veil.handover`.
         let standingVeil = pendingPlacement.map { Set($0.cards.map(\.identity)) } ?? []
         pendingPlacement = PendingPlacement(cards: cards, fromRects: fromRects,
                                             handFrameAtPlay: handFrame)
@@ -5311,8 +5064,8 @@ public struct MessageTableView: View {
         // Those cards then sit in `preHidden` for the life of the board, laid
         // out nowhere. Cheap to reach: `apply` is awaited, so the whole kernel
         // round trip is a window a second tap fits inside. So the veil is
-        // handed over with the ledger, in one place - see `veilHandover`.
-        let handover = Self.veilHandover(standing: standingVeil, placing: placed)
+        // handed over with the ledger, in one place - see `Veil.handover`.
+        let handover = Veil.handover(standing: standingVeil, placing: placed)
         if !handover.reveal.isEmpty {
             AnimLog.say("veil handover: a second play disowned [\(handover.reveal.sorted().joined(separator: ","))]")
             animator.cancelHeld(handover.reveal)
@@ -5321,21 +5074,6 @@ public struct MessageTableView: View {
         animator.preHide(handover.veil)
         animator.showHeld(held)
         play(move)
-    }
-
-    /// WHAT A NEW PLAY OWES THE ONE IT REPLACES.
-    ///
-    /// `pendingPlacement` is a ONE-SLOT ledger and the veil is keyed off it, so
-    /// a play that finds an earlier one still standing has to take that veil
-    /// down before it raises its own: nothing else ever will. The cards the new
-    /// play is placing are the exception - re-veiling what is already veiled is
-    /// a no-op, and revealing them first would flash them back into the fan.
-    ///
-    /// Static and pure so the rule can be read and tested without a board, like
-    /// `sequenceTeardown` next door.
-    static func veilHandover(standing: Set<String>, placing: Set<String>)
-        -> (reveal: Set<String>, veil: Set<String>) {
-        (reveal: standing.subtracting(placing), veil: placing)
     }
 
     /// Bug 13: the rect each card of a play LEAVES FROM. Everything starts at its

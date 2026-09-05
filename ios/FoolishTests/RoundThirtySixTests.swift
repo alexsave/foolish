@@ -194,17 +194,17 @@ final class PreBoutTableTests: XCTestCase {
         let real = [BattleView(attack: sixD, defense: kingH),
                     BattleView(attack: kingD, defense: nil)]
         let evs = [pickup([sixD, kingD, kingH])]
-        XCTAssertEqual(MessageTableView.sweepIds(real),
-                       MessageTableView.sweepIds(MessageTurnController.preBoutTable(evs)),
+        XCTAssertEqual(PreBoutTable.cardIds(real),
+                       PreBoutTable.cardIds(MessageTurnController.preBoutTable(evs)),
                        "the fixture must be indistinguishable by card set, or this asserts nothing")
-        XCTAssertNil(MessageTableView.coveredSweep(evs, current: real),
+        XCTAssertNil(PreBoutTable.coveredSweep(evs, current: real),
                      "a reconstruction must never replace a real table")
 
         // A real board still earns the swap - that is what the call is for.
         let covered = [ev(.cover, seat: 1, cards: [kingH], state: view(battles: real)),
                        ev(.cardsToTrash, seat: -1, cards: [sixD, kingH, kingD],
                           state: view(battles: []))]
-        XCTAssertEqual(MessageTableView.coveredSweep(covered, current: [real[0]]), real)
+        XCTAssertEqual(PreBoutTable.coveredSweep(covered, current: [real[0]]), real)
     }
 
     /// The discard/trash side is untouched - it already walked back through the
@@ -234,7 +234,7 @@ final class ShownTableTests: XCTestCase {
     /// quickly and immediatley out".
     func testTheTableNeverGoesEmptyWhileABoutEndIsStillPending() {
         let pre = [b(9), b(10)]
-        let t = MessageTableView.shownTable(live: [], sweep: [], pending: pre)
+        let t = PreBoutTable.shownTable(live: [], sweep: [], pending: pre)
         XCTAssertEqual(t.shown, pre, "the table blinked empty between the arrival and its sweep")
         XCTAssertTrue(t.sweeping, "…and it is a sweep, so nothing on it is a drop target")
     }
@@ -243,7 +243,7 @@ final class ShownTableTests: XCTestCase {
     /// board that still has real cards on it.
     func testALiveTableOutranksBothReconstructions() {
         let live = [b(7)]
-        let t = MessageTableView.shownTable(live: live, sweep: [b(9), b(10)], pending: [b(11)])
+        let t = PreBoutTable.shownTable(live: live, sweep: [b(9), b(10)], pending: [b(11)])
         XCTAssertEqual(t.shown, live)
         XCTAssertFalse(t.sweeping)
     }
@@ -253,7 +253,7 @@ final class ShownTableTests: XCTestCase {
     /// the same thing (MessageTurnController.preBoutTable).
     func testMyOwnSweepOutranksThePendingReconstruction() {
         let sweep = [b(9), b(10)]
-        let t = MessageTableView.shownTable(live: [], sweep: sweep, pending: [b(11)])
+        let t = PreBoutTable.shownTable(live: [], sweep: sweep, pending: [b(11)])
         XCTAssertEqual(t.shown, sweep)
         XCTAssertTrue(t.sweeping)
     }
@@ -261,7 +261,7 @@ final class ShownTableTests: XCTestCase {
     /// A settled empty table is still empty, and is NOT a sweep - otherwise the
     /// grid would refuse taps on a board that is simply waiting for a move.
     func testASettledEmptyTableIsNotASweep() {
-        let t = MessageTableView.shownTable(live: [], sweep: [], pending: [])
+        let t = PreBoutTable.shownTable(live: [], sweep: [], pending: [])
         XCTAssertTrue(t.shown.isEmpty)
         XCTAssertFalse(t.sweeping)
     }

@@ -716,3 +716,240 @@ int anim_conflict_reversal(const AnimConflictMotion *motions, int n_motions,
     }
     return out->n_steps;
 }
+
+// ---- the board's own sets and small rules ---------------------------------
+// See anim_plan.h. Card sets are u64 bitsets over dense ids, so every one of
+// these is set algebra a compiler turns into a handful of instructions.
+
+// A dense id as a bit. An id outside the deck - a viewer-masked back, or a
+// corrupt byte - contributes nothing, which is the same thing the conflict
+// model says about it.
+static uint64_t ap_bit(int id) {
+    return (id >= 0 && id < 52) ? ((uint64_t)1 << id) : 0;
+}
+
+uint64_t anim_veil_veiled(uint64_t hidden, uint64_t pending_open,
+                          int has_hand_before, uint64_t hand_before,
+                          int has_my_hand, uint64_t my_hand) {
+    uint64_t ids = hidden | pending_open;
+    // Live play: cards this move just put in my hand, which nothing has
+    // pre-hidden yet (that happens a paint late). Both halves are needed - no
+    // hand is no fan to veil, and no "before" is nothing to diff against.
+    if (has_hand_before && has_my_hand) ids |= (my_hand & ~hand_before);
+    return ids;
+}
+
+uint64_t anim_veil_flying(uint64_t hidden, uint64_t pre_hidden) {
+    return hidden & ~pre_hidden;
+}
+
+uint64_t anim_veil_hand_slot_deferred(uint64_t veiled, uint64_t flying,
+                                      uint64_t holdback) {
+    return veiled & ~flying & ~holdback;
+}
+
+uint64_t anim_veil_fan(uint64_t veiled, uint64_t holdback) {
+    return veiled & ~holdback;
+}
+
+void anim_veil_grid(int sweeping, uint64_t veiled,
+                    uint64_t swept_flown, uint64_t sweep_unplaced,
+                    uint64_t sweep_arriving, uint64_t flying,
+                    uint64_t *out_hidden, uint64_t *out_flying) {
+    // A sweep answers off its own two sets, one for each end of the sequence:
+    // what has left, and what has not arrived. The only thing that can be
+    // coming DOWN onto a table everything else is leaving is sweep_arriving.
+    const uint64_t h = sweeping ? (swept_flown | sweep_unplaced) : veiled;
+    const uint64_t f = sweeping ? sweep_arriving : flying;
+    if (out_hidden) *out_hidden = h;
+    if (out_flying) *out_flying = f;
+}
+
+void anim_veil_teardown(uint64_t opened, uint64_t orphaned, int is_newest,
+                        uint64_t *out_reveal, uint64_t *out_carry) {
+    if (out_reveal) *out_reveal = is_newest ? (opened | orphaned) : 0;
+    if (out_carry)  *out_carry  = is_newest ? 0 : (orphaned | opened);
+}
+
+void anim_veil_handover(uint64_t standing, uint64_t placing,
+                        uint64_t *out_reveal, uint64_t *out_veil) {
+    if (out_reveal) *out_reveal = standing & ~placing;
+    if (out_veil)   *out_veil   = placing;
+}
+
+int anim_veil_unstarted_replay(int replay_pending, int n_events) {
+    return (replay_pending && n_events > 0) ? 1 : 0;
+}
+
+int anim_holdback_is_mine(int armed_at, int teardown_at) {
+    return armed_at <= teardown_at ? 1 : 0;
+}
+
+uint64_t anim_selection_after_tap(uint64_t selection, int card_id, uint64_t hand) {
+    // Sweep first: an id that has since left my hand is dropped whatever this
+    // tap was for. A stale one can only ever go on to disable the action bar.
+    uint64_t next = selection & hand;
+    const uint64_t bit = ap_bit(card_id);
+    if (!bit || !(hand & bit)) return next;
+    return (next & bit) ? (next & ~bit) : (next | bit);
+}
+
+int anim_is_placement(int event_type) {
+    switch (event_type) {
+        case ANIM_EVT_ATTACK_PASS:
+        case ANIM_EVT_DEFENDER_MOVE:
+        case ANIM_EVT_COVER:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+int anim_is_my_placement(int event_type, int seat, int my_seat) {
+    // A seatless viewer owns nothing. The kernel spends -1 on "no particular
+    // player" as well as on "no seat", so seat == my_seat is only meaningful
+    // once somebody is actually seated.
+    if (my_seat < 0) return 0;
+    return (seat == my_seat && anim_is_placement(event_type)) ? 1 : 0;
+}
+
+int anim_fan_cards(const unsigned char *hand, int n_hand,
+                   const unsigned char *held, int n_held,
+                   unsigned char *out, int cap) {
+    if (!out || n_hand < 0 || n_held < 0) return ANIM_EBADARG;
+    if (n_hand > 0 && !hand) return ANIM_EBADARG;
+    if (n_held > 0 && !held) return ANIM_EBADARG;
+    if (cap < n_hand) return ANIM_ECAP;
+    uint64_t present = 0;
+    int w = 0;
+    for (int i = 0; i < n_hand; i++) { out[w++] = hand[i]; present |= ap_bit(hand[i]); }
+    for (int i = 0; i < n_held; i++) {
+        const uint64_t bit = ap_bit(held[i]);
+        if (!bit || (present & bit)) continue;
+        if (w >= cap) return ANIM_ECAP;
+        out[w++] = held[i];
+        present |= bit;
+    }
+    return w;
+}
+
+int anim_laid_count(const unsigned char *hand, int n_hand,
+                    const unsigned char *held, int n_held, uint64_t deferred) {
+    static unsigned char fan[52];
+    const int n = anim_fan_cards(hand, n_hand, held, n_held, fan, (int)sizeof fan);
+    if (n < 0) return n;
+    int laid = 0;
+    for (int i = 0; i < n; i++) if (!(deferred & ap_bit(fan[i]))) laid++;
+    return laid;
+}
+
+int anim_hand_laid_out(const unsigned char *cards, int n_cards, uint64_t deferred,
+                       const unsigned char *order, int n_order,
+                       unsigned char *out, int cap) {
+    if (!out || n_cards < 0 || n_order < 0) return ANIM_EBADARG;
+    if (n_cards > 0 && !cards) return ANIM_EBADARG;
+    if (n_order > 0 && !order) return ANIM_EBADARG;
+
+    // Which ids are actually in the hand and not deferred. A deferred card
+    // reserves nothing and must not be placed by `order` either.
+    uint64_t live = 0;
+    for (int i = 0; i < n_cards; i++) {
+        const uint64_t bit = ap_bit(cards[i]);
+        if (bit && !(deferred & bit)) live |= bit;
+    }
+
+    uint64_t seen = 0;
+    int w = 0;
+    for (int i = 0; i < n_order; i++) {
+        const uint64_t bit = ap_bit(order[i]);
+        // Stale ids (a played card the sticky memory still remembers) and
+        // repeats drop out by construction.
+        if (!bit || !(live & bit) || (seen & bit)) continue;
+        if (w >= cap) return ANIM_ECAP;
+        out[w++] = order[i];
+        seen |= bit;
+    }
+    for (int i = 0; i < n_cards; i++) {
+        const uint64_t bit = ap_bit(cards[i]);
+        if (!bit || !(live & bit) || (seen & bit)) continue;
+        if (w >= cap) return ANIM_ECAP;
+        out[w++] = cards[i];
+        seen |= bit;
+    }
+    return w;
+}
+
+uint64_t anim_table_card_ids(const unsigned char *table, int n_battles) {
+    uint64_t ids = 0;
+    if (!table || n_battles <= 0) return 0;
+    // BOTH cells go through ap_bit and nothing else. An empty cell and a card
+    // nobody can name are both outside the deck, so ap_bit already answers zero
+    // for them; a second `!= ANIM_TABLE_NONE` branch beside it was unkillable
+    // code - no input could tell the two spellings apart - and the static
+    // assert in the header is what keeps that true.
+    for (int i = 0; i < n_battles; i++) {
+        ids |= ap_bit(table[2 * i]);
+        ids |= ap_bit(table[2 * i + 1]);
+    }
+    return ids;
+}
+
+int anim_table_covers(const unsigned char *outer, int n_outer,
+                      const unsigned char *inner, int n_inner) {
+    if (n_outer < 0 || n_inner < 0) return ANIM_EBADARG;
+    if (n_outer > 0 && !outer) return ANIM_EBADARG;
+    if (n_inner > 0 && !inner) return ANIM_EBADARG;
+    // A card the caller could not name is never accounted for. It has no bit,
+    // so without this it drops out of the subset test entirely and the swap is
+    // granted over a table that IS losing a card.
+    for (int i = 0; i < 2 * n_inner; i++) if (inner[i] == ANIM_TABLE_UNKNOWN) return 0;
+    const uint64_t have = anim_table_card_ids(outer, n_outer);
+    const uint64_t need = anim_table_card_ids(inner, n_inner);
+    return (need & ~have) == 0 ? 1 : 0;
+}
+
+int anim_covered_sweep_accepts(int paired,
+                               const unsigned char *pre, int n_pre,
+                               const unsigned char *cur, int n_cur) {
+    if (!paired || n_pre <= 0) return 0;
+    return anim_table_covers(pre, n_pre, cur, n_cur);
+}
+
+int anim_shown_table(int n_live, int n_sweep, int n_pending, int *out_sweeping) {
+    int which = ANIM_SHOWN_NONE, sweeping = 0;
+    if (n_live > 0)         { which = ANIM_SHOWN_LIVE; }
+    else if (n_sweep > 0)   { which = ANIM_SHOWN_SWEEP;   sweeping = 1; }
+    else if (n_pending > 0) { which = ANIM_SHOWN_PENDING; sweeping = 1; }
+    if (out_sweeping) *out_sweeping = sweeping;
+    return which;
+}
+
+int anim_finish_rows(const unsigned char *elimination, int n_elim,
+                     int game_over, int n_players, int my_seat,
+                     AnimFinishRow *out, int cap) {
+    if (!out || n_elim < 0 || n_players < 0) return ANIM_EBADARG;
+    if (n_elim > 0 && !elimination) return ANIM_EBADARG;
+    const int rows = n_elim + (game_over >= 0 ? 1 : 0);
+    if (rows > cap) return ANIM_ECAP;
+    int w = 0;
+    for (int i = 0; i < n_elim; i++) {
+        out[w].place = i + 1;
+        out[w].seat = elimination[i];
+        out[w].is_you = (my_seat >= 0 && (int)elimination[i] == my_seat) ? 1 : 0;
+        w++;
+    }
+    // The fool is the one seat still holding cards, and takes the last place -
+    // which is the SEAT COUNT, not the row count: a row knows it is the fool by
+    // place == total.
+    if (game_over >= 0) {
+        out[w].place = n_players;
+        out[w].seat = game_over;
+        out[w].is_you = (my_seat >= 0 && game_over == my_seat) ? 1 : 0;
+        w++;
+    }
+    return w;
+}
+
+int anim_shown_ledger_allows(int claim, int sequencing) {
+    return (claim == ANIM_CLAIM_BYSTANDER && sequencing) ? 0 : 1;
+}

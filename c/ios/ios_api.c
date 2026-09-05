@@ -887,6 +887,135 @@ int fio_conflict_packed(const uint8_t *in, int len, char *out, int cap) {
     return w;
 }
 
+// ---- the board's sets and small rules -------------------------------------
+// Thin crossings: the rule is anim_plan.c's, and every one of these is a set or
+// a scalar, so nothing here parses a record.
+
+uint64_t fio_veil_veiled(uint64_t hidden, uint64_t pending_open,
+                         int has_hand_before, uint64_t hand_before,
+                         int has_my_hand, uint64_t my_hand) {
+    return anim_veil_veiled(hidden, pending_open, has_hand_before, hand_before,
+                            has_my_hand, my_hand);
+}
+
+uint64_t fio_veil_flying(uint64_t hidden, uint64_t pre_hidden) {
+    return anim_veil_flying(hidden, pre_hidden);
+}
+
+uint64_t fio_veil_hand_slot_deferred(uint64_t veiled, uint64_t flying, uint64_t holdback) {
+    return anim_veil_hand_slot_deferred(veiled, flying, holdback);
+}
+
+uint64_t fio_veil_fan(uint64_t veiled, uint64_t holdback) {
+    return anim_veil_fan(veiled, holdback);
+}
+
+void fio_veil_grid(int sweeping, uint64_t veiled,
+                   uint64_t swept_flown, uint64_t sweep_unplaced,
+                   uint64_t sweep_arriving, uint64_t flying,
+                   uint64_t *out_hidden, uint64_t *out_flying) {
+    anim_veil_grid(sweeping, veiled, swept_flown, sweep_unplaced, sweep_arriving,
+                   flying, out_hidden, out_flying);
+}
+
+void fio_veil_teardown(uint64_t opened, uint64_t orphaned, int is_newest,
+                       uint64_t *out_reveal, uint64_t *out_carry) {
+    anim_veil_teardown(opened, orphaned, is_newest, out_reveal, out_carry);
+}
+
+void fio_veil_handover(uint64_t standing, uint64_t placing,
+                       uint64_t *out_reveal, uint64_t *out_veil) {
+    anim_veil_handover(standing, placing, out_reveal, out_veil);
+}
+
+int fio_veil_unstarted_replay(int replay_pending, int n_events) {
+    return anim_veil_unstarted_replay(replay_pending, n_events);
+}
+
+int fio_holdback_is_mine(int armed_at, int teardown_at) {
+    return anim_holdback_is_mine(armed_at, teardown_at);
+}
+
+uint64_t fio_selection_after_tap(uint64_t selection, int card_id, uint64_t hand) {
+    return anim_selection_after_tap(selection, card_id, hand);
+}
+
+int fio_is_placement(int event_type) { return anim_is_placement(event_type); }
+
+int fio_is_my_placement(int event_type, int seat, int my_seat) {
+    return anim_is_my_placement(event_type, seat, my_seat);
+}
+
+int fio_fan_cards(const uint8_t *hand, int n_hand, const uint8_t *held, int n_held,
+                  char *out, int cap) {
+    if (!out || cap < 0) return FIO_EBADARG;
+    const int rc = anim_fan_cards(hand, n_hand, held, n_held, (unsigned char *)out, cap);
+    if (rc == ANIM_ECAP) return FIO_ECAP;
+    return rc < 0 ? FIO_EBADARG : rc;
+}
+
+int fio_laid_count(const uint8_t *hand, int n_hand, const uint8_t *held, int n_held,
+                   uint64_t deferred) {
+    const int rc = anim_laid_count(hand, n_hand, held, n_held, deferred);
+    if (rc == ANIM_ECAP) return FIO_ECAP;
+    return rc < 0 ? FIO_EBADARG : rc;
+}
+
+int fio_hand_laid_out(const uint8_t *cards, int n_cards, uint64_t deferred,
+                      const uint8_t *order, int n_order, char *out, int cap) {
+    if (!out || cap < 0) return FIO_EBADARG;
+    const int rc = anim_hand_laid_out(cards, n_cards, deferred, order, n_order,
+                                      (unsigned char *)out, cap);
+    if (rc == ANIM_ECAP) return FIO_ECAP;
+    return rc < 0 ? FIO_EBADARG : rc;
+}
+
+uint64_t fio_table_card_ids(const uint8_t *table, int n_battles) {
+    return anim_table_card_ids(table, n_battles);
+}
+
+int fio_table_covers(const uint8_t *outer, int n_outer, const uint8_t *inner, int n_inner) {
+    const int rc = anim_table_covers(outer, n_outer, inner, n_inner);
+    return rc < 0 ? FIO_EBADARG : rc;
+}
+
+int fio_covered_sweep_accepts(int paired, const uint8_t *pre, int n_pre,
+                              const uint8_t *cur, int n_cur) {
+    const int rc = anim_covered_sweep_accepts(paired, pre, n_pre, cur, n_cur);
+    return rc < 0 ? FIO_EBADARG : rc;
+}
+
+int fio_shown_table(int n_live, int n_sweep, int n_pending, int *out_sweeping) {
+    return anim_shown_table(n_live, n_sweep, n_pending, out_sweeping);
+}
+
+int fio_finish_rows(const uint8_t *elimination, int n_elim, int game_over,
+                    int n_players, int my_seat, char *out, int cap) {
+    if (!out) return FIO_EBADARG;
+    AnimFinishRow rows[MAX_PLAYERS];
+    const int n = anim_finish_rows(elimination, n_elim, game_over, n_players,
+                                   my_seat, rows, MAX_PLAYERS);
+    if (n == ANIM_ECAP) return FIO_ECAP;
+    if (n < 0) return FIO_EBADARG;
+    const int need = FIO_FINISH_HEAD + 3 * n;
+    if (cap < need) return FIO_ECAP;
+    unsigned char *q = (unsigned char *)out;
+    int w = 0;
+    q[w++] = FIO_FINISH_VERSION;
+    q[w++] = (unsigned char)n;
+    q[w++] = (unsigned char)n_players;
+    for (int i = 0; i < n; i++) {
+        q[w++] = (unsigned char)rows[i].place;
+        q[w++] = (unsigned char)rows[i].seat;
+        q[w++] = (unsigned char)rows[i].is_you;
+    }
+    return w;
+}
+
+int fio_shown_ledger_allows(int claim, int sequencing) {
+    return anim_shown_ledger_allows(claim, sequencing);
+}
+
 int fio_badge_drops_as_cards_leave(int type) {
     return anim_badge_drops_as_cards_leave(type);
 }

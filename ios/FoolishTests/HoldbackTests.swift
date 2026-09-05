@@ -62,9 +62,9 @@ final class HoldbackTests: XCTestCase {
     /// tap: a card in my hand toggles on, then off.
     func testTappingAHandCardStillToggles() {
         let h = hand()
-        let on = MessageTableView.selectionAfterTap([], card: h[1], hand: h)
+        let on = Veil.selectionAfterTap([], card: h[1], hand: h)
         XCTAssertEqual(on, [h[1].identity])
-        let off = MessageTableView.selectionAfterTap(on, card: h[1], hand: h)
+        let off = Veil.selectionAfterTap(on, card: h[1], hand: h)
         XCTAssertTrue(off.isEmpty)
     }
 
@@ -78,11 +78,11 @@ final class HoldbackTests: XCTestCase {
         let h = hand()
         let played = Card(s: 3, v: 14)              // flew out on the open replay
         XCTAssertFalse(h.map(\.identity).contains(played.identity))
-        XCTAssertTrue(MessageTableView.selectionAfterTap([], card: played, hand: h).isEmpty,
+        XCTAssertTrue(Veil.selectionAfterTap([], card: played, hand: h).isEmpty,
                       "a card the kernel hand does not contain can never be selected")
         // …and it cannot be smuggled in alongside a real selection either.
         let live: Set<String> = [h[0].identity]
-        XCTAssertEqual(MessageTableView.selectionAfterTap(live, card: played, hand: h), live)
+        XCTAssertEqual(Veil.selectionAfterTap(live, card: played, hand: h), live)
     }
 
     /// The invariant, not just the tap: an identity that has since LEFT my hand
@@ -95,9 +95,13 @@ final class HoldbackTests: XCTestCase {
     /// above still passes - which is the point of having both.
     func testAStaleIdentityIsSweptOutOfTheSelection() {
         let h = hand()
-        let gone = Card(s: 3, v: 14).identity
-        let next = MessageTableView.selectionAfterTap([gone, h[0].identity],
-                                                      card: h[2], hand: h)
+        // A REAL card that is simply not in this hand. It used to be `v: 14`,
+        // which no deck holds - and the sweep would then have "passed" for the
+        // wrong reason once the rule became the kernel's, because a card with no
+        // dense id has no bit to sweep.
+        let gone = Card(s: 3, v: 13).identity
+        let next = Veil.selectionAfterTap([gone, h[0].identity],
+                                          card: h[2], hand: h)
         XCTAssertFalse(next.contains(gone), "a card that left my hand may not stay selected")
         XCTAssertEqual(next, [h[0].identity, h[2].identity])
     }
@@ -160,12 +164,12 @@ final class HoldbackTests: XCTestCase {
     /// of the two halves no longer a spelling test.
     func testTheHeldCardsAreStillDrawnInTheFan() throws {
         let src = try source("FoolishKit/Boards/MessageTableView.swift")
-        XCTAssertTrue(src.contains("hidden: Self.fanVeil(veiled: veiledCardIds, holdback: handHoldback)"),
+        XCTAssertTrue(src.contains("hidden: Veil.fan(veiled: veiledCardIds, holdback: handHoldback)"),
                       "the fan's hidden set must still be the veil MINUS the held cards")
         let held = Card(s: 0, v: 6)
-        XCTAssertFalse(MessageTableView.fanVeil(veiled: [held.identity, "x"], holdback: [held])
-                           .contains(held.identity),
-                       "a held card is drawn in the fan, veiled or not")
+        XCTAssertFalse(Veil.fan(veiled: [held.identity, "x"], holdback: [held])
+                                .contains(held.identity),
+                                "a held card is drawn in the fan, veiled or not")
     }
 
     // MARK: 2 - the row-jump trace counts the hand the fan lays out
@@ -178,10 +182,15 @@ final class HoldbackTests: XCTestCase {
     /// the row change the `fan-rows` trace could not see.
     func testTheLaidCountIncludesWhatTheHoldbackIsHolding() {
         let h = hand()
-        let held = [Card(s: 3, v: 14), Card(s: 3, v: 11)]
-        XCTAssertEqual(MessageTableView.laidCount(hand: h, holding: held, deferred: []), 5,
+        // REAL cards, and that now matters: the count is the kernel's
+        // (anim_laid_count) over dense ids, so a value outside 1...13 is not a
+        // card at all and is not laid out. This used to read `v: 14`, which the
+        // old Swift set algebra counted happily because it only ever compared
+        // identity STRINGS.
+        let held = [Card(s: 3, v: 13), Card(s: 3, v: 11)]
+        XCTAssertEqual(HandLayout.laidCount(hand: h, holding: held, deferred: []), 5,
                        "the fan lays out the hand PLUS the holdback, so the row split is taken on 5")
-        XCTAssertEqual(MessageTableView.laidCount(hand: h, holding: [], deferred: []), 3,
+        XCTAssertEqual(HandLayout.laidCount(hand: h, holding: [], deferred: []), 3,
                        "…and the count drops when the holdback lets go - the row change "
                        + "the trace exists to explain")
     }
@@ -191,8 +200,8 @@ final class HoldbackTests: XCTestCase {
     /// cannot quietly drop it.
     func testADeferredSlotIsNotLaidOut() {
         let h = hand()
-        XCTAssertEqual(MessageTableView.laidCount(hand: h, holding: [],
-                                                  deferred: [h[0].identity]), 2)
+        XCTAssertEqual(HandLayout.laidCount(hand: h, holding: [],
+                                            deferred: [h[0].identity]), 2)
     }
 
     /// A card the kernel hand has already got back is not counted twice. Same
@@ -201,7 +210,7 @@ final class HoldbackTests: XCTestCase {
     /// what the row split is taken on.
     func testAHeldCardTheHandAlreadyHasIsNotDoubled() {
         let h = hand()
-        XCTAssertEqual(MessageTableView.laidCount(hand: h, holding: [h[1]], deferred: []), 3)
+        XCTAssertEqual(HandLayout.laidCount(hand: h, holding: [h[1]], deferred: []), 3)
     }
 
     /// Both ends of the trace read the SAME function. The `.onChange` body
@@ -215,11 +224,11 @@ final class HoldbackTests: XCTestCase {
     /// this fails.
     func testTheTraceAndItsTriggerAreTheSameArithmetic() throws {
         let src = try source("FoolishKit/Boards/MessageTableView.swift")
-        XCTAssertTrue(src.contains("let laidHandCount = Self.laidCount("),
+        XCTAssertTrue(src.contains("let laidHandCount = HandLayout.laidCount("),
                       "the trigger must count the hand the fan lays out")
         let onChange = try XCTUnwrap(src.range(of: ".onChange(of: laidHandCount)"))
         let block = String(src[onChange.upperBound...].prefix(1400))
-        XCTAssertTrue(block.contains("Self.laidCount("),
+        XCTAssertTrue(block.contains("HandLayout.laidCount("),
                       "the live re-read must be the same function as the trigger")
         XCTAssertFalse(block.contains("hand.filter { !deferred.contains"),
                        "…not its own copy of a slightly different sum")
@@ -240,11 +249,11 @@ final class HoldbackTests: XCTestCase {
     /// MUTANT: change `<=` to `<` and the first assertion fails; change it to
     /// `>=` and the last one fails.
     func testOnlyTheVeilThatCouldHaveRaisedItMayTakeItDown() {
-        XCTAssertTrue(MessageTableView.holdbackIsMine(armedAt: 7, teardownAt: 7),
+        XCTAssertTrue(Veil.holdbackIsMine(armedAt: 7, teardownAt: 7),
                       "a stream is handed the same epoch its own open stamped")
-        XCTAssertTrue(MessageTableView.holdbackIsMine(armedAt: 4, teardownAt: 7),
+        XCTAssertTrue(Veil.holdbackIsMine(armedAt: 4, teardownAt: 7),
                       "a later teardown rescues an older holdback - the whole point")
-        XCTAssertFalse(MessageTableView.holdbackIsMine(armedAt: 8, teardownAt: 7),
+        XCTAssertFalse(Veil.holdbackIsMine(armedAt: 8, teardownAt: 7),
                        "a superseded teardown must not wipe the holdback its replacement armed")
     }
 

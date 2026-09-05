@@ -197,17 +197,21 @@ final class MessageBoutEndHoldTests: XCTestCase {
         guard let found = try await findClosingCover() else {
             throw XCTSkip("no 2p game in 40 reached a cover that closed its own bout")
         }
-        let taken = try XCTUnwrap(MessageTableView.coveredSweep(found.events,
-                                                               current: found.priorBattles),
+        let taken = try XCTUnwrap(PreBoutTable.coveredSweep(found.events,
+                                                           current: found.priorBattles),
                                   "the kernel's covered table must be accepted")
         XCTAssertTrue(taken.contains { $0.defense == found.card })
 
         // A board holding a card the stream never mentions is NOT swapped out.
+        // `stranger` is deliberately not a card of any deck, which the kernel
+        // now answers as its own case: a cell it cannot NAME crosses as
+        // FIO_TABLE_UNKNOWN and is never accounted for, so the refusal holds for
+        // a card that has no dense id just as it does for one that has.
         let stranger = Card(s: 9, v: 9)
-        XCTAssertNil(MessageTableView.coveredSweep(
+        XCTAssertNil(PreBoutTable.coveredSweep(
             found.events, current: found.priorBattles + [BattleView(attack: stranger, defense: nil)]))
         // …and an empty stream is nothing to swap TO.
-        XCTAssertNil(MessageTableView.coveredSweep([], current: found.priorBattles))
+        XCTAssertNil(PreBoutTable.coveredSweep([], current: found.priorBattles))
     }
 
     /// …and the rule fires on that real stream, not only on synthesized kinds.

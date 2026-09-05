@@ -843,6 +843,217 @@ static int conflict_wire_check(void) {
     return 0;
 }
 
+// THE BOARD'S SETS AND SMALL RULES, across the bridge. These cross as ints and
+// u64 bitsets rather than as packed records, so what this proves is the CROSSING
+// - the bitset arithmetic survives the ABI, the array readers stay inside the
+// lengths they were given, and the packed finish rows come back in the layout
+// the header states.
+//
+// MUTATION-CHECKED on the bridge, each caught by the check it is named for:
+// fio_veil_grid pinned to sweeping=1 ("FAIL grid live"); fio_selection_after_tap
+// handed the hand as its own state ("FAIL selection at card 0"); fio_fan_cards
+// forwarding `cap` as the hand length ("FAIL fan cards"); fio_finish_rows
+// writing the row count where the seat count goes ("FAIL finish rows total is
+// the seat count" - which needed a roster with fewer rows than seats to see at
+// all, and survived until one was added); fio_shown_table returning the sweeping
+// flag rather than the choice ("FAIL shown table").
+#define SMOKE_ID(suit, value) ((unsigned char)((suit) * 13 + ((value) - 1)))
+#define SMOKE_SET(id) ((uint64_t)1 << (id))
+
+static int board_rules_check(void) {
+    const unsigned char six = SMOKE_ID(0, 6), nine = SMOKE_ID(1, 9), ace = SMOKE_ID(3, 13);
+
+    // The veil's four outs, with the LAST card of the deck in the sets: a dense
+    // id off by one is invisible everywhere else.
+    if (fio_veil_veiled(SMOKE_SET(six), SMOKE_SET(ace), 0, 0, 0, 0)
+        != (SMOKE_SET(six) | SMOKE_SET(ace))) {
+        printf("FAIL veil union\n"); return 1;
+    }
+    if (fio_veil_veiled(0, 0, 1, SMOKE_SET(six), 1, SMOKE_SET(six) | SMOKE_SET(ace))
+        != SMOKE_SET(ace)) {
+        printf("FAIL veil live source\n"); return 1;
+    }
+    if (fio_veil_veiled(0, 0, 0, SMOKE_SET(six), 1, SMOKE_SET(ace)) != 0
+        || fio_veil_veiled(0, 0, 1, SMOKE_SET(six), 0, SMOKE_SET(ace)) != 0) {
+        printf("FAIL veil live source needs both halves\n"); return 1;
+    }
+    if (fio_veil_flying(SMOKE_SET(six) | SMOKE_SET(ace), SMOKE_SET(ace)) != SMOKE_SET(six)) {
+        printf("FAIL veil flying\n"); return 1;
+    }
+    if (fio_veil_hand_slot_deferred(SMOKE_SET(six) | SMOKE_SET(ace), 0, SMOKE_SET(ace))
+        != SMOKE_SET(six)) {
+        printf("FAIL veil deferral\n"); return 1;
+    }
+    if (fio_veil_fan(SMOKE_SET(six) | SMOKE_SET(ace), SMOKE_SET(ace)) != SMOKE_SET(six)) {
+        printf("FAIL veil fan\n"); return 1;
+    }
+
+    uint64_t hidden = 0, flying = 0;
+    fio_veil_grid(0, SMOKE_SET(six), SMOKE_SET(nine), SMOKE_SET(ace), SMOKE_SET(nine),
+                  SMOKE_SET(six), &hidden, &flying);
+    if (hidden != SMOKE_SET(six) || flying != SMOKE_SET(six)) {
+        printf("FAIL grid live\n"); return 1;
+    }
+    fio_veil_grid(1, SMOKE_SET(six), SMOKE_SET(nine), SMOKE_SET(ace), SMOKE_SET(six),
+                  SMOKE_SET(six), &hidden, &flying);
+    if (hidden != (SMOKE_SET(nine) | SMOKE_SET(ace)) || flying != SMOKE_SET(six)) {
+        printf("FAIL grid sweeping\n"); return 1;
+    }
+
+    uint64_t reveal = 0, carry = 0;
+    fio_veil_teardown(SMOKE_SET(six), SMOKE_SET(ace), 1, &reveal, &carry);
+    if (reveal != (SMOKE_SET(six) | SMOKE_SET(ace)) || carry != 0) {
+        printf("FAIL teardown newest\n"); return 1;
+    }
+    fio_veil_teardown(SMOKE_SET(six), SMOKE_SET(ace), 0, &reveal, &carry);
+    if (reveal != 0 || carry != (SMOKE_SET(six) | SMOKE_SET(ace))) {
+        printf("FAIL teardown superseded\n"); return 1;
+    }
+    fio_veil_handover(SMOKE_SET(six) | SMOKE_SET(ace), SMOKE_SET(ace), &reveal, &carry);
+    if (reveal != SMOKE_SET(six) || carry != SMOKE_SET(ace)) {
+        printf("FAIL handover\n"); return 1;
+    }
+
+    if (fio_veil_unstarted_replay(1, 2) != 1 || fio_veil_unstarted_replay(0, 2) != 0
+        || fio_veil_unstarted_replay(1, 0) != 0) {
+        printf("FAIL unstarted replay\n"); return 1;
+    }
+    if (fio_holdback_is_mine(7, 7) != 1 || fio_holdback_is_mine(8, 7) != 0) {
+        printf("FAIL holdback epoch\n"); return 1;
+    }
+    if (fio_shown_ledger_allows(FIO_CLAIM_BYSTANDER, 1) != 0
+        || fio_shown_ledger_allows(FIO_CLAIM_BYSTANDER, 0) != 1
+        || fio_shown_ledger_allows(FIO_CLAIM_SEQUENCE, 1) != 1
+        || fio_shown_ledger_allows(FIO_CLAIM_ARMING, 1) != 1
+        || fio_shown_ledger_allows(FIO_CLAIM_HAND_OFF, 1) != 1) {
+        printf("FAIL ledger ownership\n"); return 1;
+    }
+
+    // The selection, over the whole deck both ways.
+    for (int id = 0; id < 52; id++) {
+        const uint64_t only = SMOKE_SET(id);
+        if (fio_selection_after_tap(0, id, only) != only
+            || fio_selection_after_tap(only, id, only) != 0
+            || fio_selection_after_tap(0, id, 0) != 0) {
+            printf("FAIL selection at card %d\n", id); return 1;
+        }
+    }
+
+    if (fio_is_placement(5) != 1 || fio_is_placement(9) != 0
+        || fio_is_my_placement(5, 2, 2) != 1 || fio_is_my_placement(5, 3, 2) != 0
+        || fio_is_my_placement(5, -1, -1) != 0) {
+        printf("FAIL placement mapping\n"); return 1;
+    }
+
+    // The fan and the layout, as arrays of dense ids.
+    unsigned char out[64];
+    const unsigned char hand[3] = { six, nine, ace };
+    const unsigned char held[2] = { SMOKE_ID(2, 7), nine };
+    int n = fio_fan_cards(hand, 3, held, 2, (char *)out, sizeof out);
+    if (n != 4 || out[0] != six || out[3] != SMOKE_ID(2, 7)) {
+        printf("FAIL fan cards rc=%d\n", n); return 1;
+    }
+    if (fio_fan_cards(hand, 3, held, 2, (char *)out, 2) != FIO_ECAP) {
+        printf("FAIL fan cards wrote past its buffer\n"); return 1;
+    }
+    if (fio_laid_count(hand, 3, held, 2, SMOKE_SET(ace)) != 3) {
+        printf("FAIL laid count\n"); return 1;
+    }
+    const unsigned char order[3] = { ace, nine, six };
+    n = fio_hand_laid_out(hand, 3, 0, order, 3, (char *)out, sizeof out);
+    if (n != 3 || out[0] != ace || out[1] != nine || out[2] != six) {
+        printf("FAIL laid out rc=%d\n", n); return 1;
+    }
+    n = fio_hand_laid_out(hand, 3, SMOKE_SET(nine), order, 3, (char *)out, sizeof out);
+    if (n != 2 || out[0] != ace || out[1] != six) {
+        printf("FAIL laid out deferral rc=%d\n", n); return 1;
+    }
+    if (fio_hand_laid_out(hand, 3, 0, order, 3, (char *)out, 1) != FIO_ECAP) {
+        printf("FAIL laid out wrote past its buffer\n"); return 1;
+    }
+
+    // The table, 2 bytes per battle, and the two choices that rest on it.
+    const unsigned char covered[4] = { six, nine, ace, FIO_CONFLICT_NONE };
+    const unsigned char uncovered[2] = { six, FIO_CONFLICT_NONE };
+    if (fio_table_card_ids(covered, 2) != (SMOKE_SET(six) | SMOKE_SET(nine) | SMOKE_SET(ace))) {
+        printf("FAIL table ids\n"); return 1;
+    }
+    const unsigned char unnameable[2] = { FIO_TABLE_UNKNOWN, FIO_CONFLICT_NONE };
+    if (fio_table_covers(covered, 2, uncovered, 1) != 1
+        || fio_table_covers(uncovered, 1, covered, 2) != 0
+        || fio_table_covers(covered, 2, unnameable, 1) != 0) {
+        printf("FAIL table covers\n"); return 1;
+    }
+    if (fio_covered_sweep_accepts(1, covered, 2, uncovered, 1) != 1
+        || fio_covered_sweep_accepts(0, covered, 2, uncovered, 1) != 0) {
+        printf("FAIL covered sweep\n"); return 1;
+    }
+    int sweeping = -1;
+    if (fio_shown_table(1, 1, 1, &sweeping) != FIO_SHOWN_LIVE || sweeping != 0
+        || fio_shown_table(0, 1, 1, &sweeping) != FIO_SHOWN_SWEEP || sweeping != 1
+        || fio_shown_table(0, 0, 1, &sweeping) != FIO_SHOWN_PENDING || sweeping != 1
+        || fio_shown_table(0, 0, 0, &sweeping) != FIO_SHOWN_NONE || sweeping != 0) {
+        printf("FAIL shown table\n"); return 1;
+    }
+
+    // The finish rows, in the packed layout the header states.
+    const unsigned char elim[3] = { 2, 0, 3 };
+    n = fio_finish_rows(elim, 3, 1, 4, 0, (char *)out, sizeof out);
+    if (n != FIO_FINISH_HEAD + 3 * 4 || out[0] != FIO_FINISH_VERSION
+        || out[1] != 4 || out[2] != 4) {
+        printf("FAIL finish rows header rc=%d\n", n); return 1;
+    }
+    if (out[3] != 1 || out[4] != 2 || out[5] != 0
+        || out[6] != 2 || out[7] != 0 || out[8] != 1
+        || out[12] != 4 || out[13] != 1 || out[14] != 0) {
+        printf("FAIL finish rows body\n"); return 1;
+    }
+    if (fio_finish_rows(elim, 3, 1, 4, 0, (char *)out, 4) != FIO_ECAP) {
+        printf("FAIL finish rows wrote past its buffer\n"); return 1;
+    }
+    // A ROSTER WITH FEWER ROWS THAN SEATS, so `total` cannot be read off the row
+    // count: the fool's place is the SEAT count, and that is what tells a row it
+    // is the fool. Six seats, two out, one fool - three rows, place 6 at the end.
+    n = fio_finish_rows(elim, 2, 1, 6, -1, (char *)out, sizeof out);
+    if (n != FIO_FINISH_HEAD + 3 * 3 || out[1] != 3 || out[2] != 6 || out[9] != 6) {
+        printf("FAIL finish rows total is the seat count rc=%d\n", n); return 1;
+    }
+
+    // EVERY ARRAY READER, FLUSH AGAINST A PROT_NONE PAGE. There is no record to
+    // parse here - the caller's count IS the bound - so this is what proves the
+    // bound is real rather than a static array's slack.
+    const long page = sysconf(_SC_PAGESIZE);
+    unsigned char *probe = mmap(0, (size_t)page * 2, PROT_READ | PROT_WRITE,
+                                MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (probe == MAP_FAILED || mprotect(probe + page, (size_t)page, PROT_NONE) != 0) {
+        printf("FAIL board guard page\n"); return 1;
+    }
+    unsigned char *edge = probe + page - 3;
+    memcpy(edge, hand, 3);
+    if (fio_fan_cards(edge, 3, NULL, 0, (char *)out, sizeof out) != 3
+        || fio_laid_count(edge, 3, NULL, 0, 0) != 3
+        || fio_hand_laid_out(edge, 3, 0, NULL, 0, (char *)out, sizeof out) != 3
+        || fio_hand_laid_out(hand, 3, 0, edge, 3, (char *)out, sizeof out) != 3
+        || fio_fan_cards(hand, 3, edge, 3, (char *)out, sizeof out) != 3) {
+        printf("FAIL board guard hand\n"); return 1;
+    }
+    memcpy(edge, elim, 3);
+    if (fio_finish_rows(edge, 3, 1, 4, 0, (char *)out, sizeof out) != FIO_FINISH_HEAD + 12) {
+        printf("FAIL board guard elimination\n"); return 1;
+    }
+    unsigned char *tedge = probe + page - 4;
+    memcpy(tedge, covered, 4);
+    if (fio_table_card_ids(tedge, 2) != (SMOKE_SET(six) | SMOKE_SET(nine) | SMOKE_SET(ace))
+        || fio_table_covers(tedge, 2, tedge, 2) != 1
+        || fio_covered_sweep_accepts(1, tedge, 2, tedge, 2) != 1) {
+        printf("FAIL board guard table\n"); return 1;
+    }
+    munmap(probe, (size_t)page * 2);
+
+    printf("board rules OK (veil, hand, table, finish, ledger)\n");
+    return 0;
+}
+
 // MUTATION-CHECKED. On the rule: the freeze walking back over every event says
 // deck 2 here; anchoring without undoing says hands 3/9; undoing two events says
 // deck 3; a step deriving forward gets step 1's board wrong. On the wire: the
@@ -1143,6 +1354,7 @@ int main(void) {
     if (plan_wire_check() != 0) return 1;
     if (pretable_wire_check() != 0) return 1;
     if (conflict_wire_check() != 0) return 1;
+    if (board_rules_check() != 0) return 1;
 
     printf("SMOKE OK\n");
     return 0;

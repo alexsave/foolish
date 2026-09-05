@@ -4989,6 +4989,559 @@ static void test_conflict_degenerate_inputs(void) {
 }
 
 
+// ---- the board's own sets and small rules ---------------------------------
+//
+// The last pure statics on MessageTableView, lifted whole. Card sets are u64
+// bitsets over dense ids, so the crossing that can go wrong is the ID, and it
+// goes wrong invisibly: both sides of every comparison go through the same
+// encoder, so an off-by-one is only visible at the LAST card of the deck. Every
+// test below that names a card names 51 as well as 0.
+//
+// MUTATIONS RUN (each applied, rebuilt from scratch, then put back). The
+// harness asserts the SUITE ACTUALLY RAN - a "N passed, M failed" line - because
+// a build failure prints no failures and had been counted as a pass once
+// already, and it re-stamps every C source first because two `make`s in the same
+// second in c/build can skip the rebuild and report the last run's numbers.
+//
+//   1  anim_veil_veiled drops the live-play source            -> 2 failures
+//   2  ...ORs hand_before instead of subtracting it           -> 2
+//   3  ...honours my_hand without has_hand_before             -> 1
+//   4  anim_veil_flying returns `hidden` whole                -> 3
+//   5  anim_veil_hand_slot_deferred drops the holdback term   -> 3
+//   6  anim_veil_fan returns `veiled` whole                   -> 2
+//   7  anim_veil_grid uses `veiled` on the sweeping branch    -> 2
+//   8  anim_veil_teardown carries the orphans, not its opens  -> 2
+//   9  ...reveals on a superseded sequence                    -> 1
+//  10  anim_veil_handover reveals the placing cards too       -> 2
+//  11  anim_veil_unstarted_replay ignores replay_pending      -> 1
+//  12  anim_holdback_is_mine uses < instead of <=             -> 1
+//  13  anim_selection_after_tap skips the stale sweep         -> 2
+//  14  ...inserts a card that is not in my hand               -> 3
+//  15  anim_is_placement counts a refill                      -> 2
+//  16  anim_is_my_placement drops the my_seat < 0 guard       -> 1
+//  17  anim_fan_cards appends a held card unconditionally     -> 6
+//  18  anim_laid_count counts the kernel hand, not the fan    -> 2
+//  19  anim_hand_laid_out places a deferred card from `order` -> 4
+//  20  anim_table_covers lets an unnameable cell vanish       -> 3
+//  21  ap_bit lets a table sentinel name a card (id < 255)    -> 1
+//  22  anim_table_covers tests the sets the other way round   -> 6
+//  23  anim_covered_sweep_accepts drops the `paired` test     -> 2
+//  24  anim_shown_table prefers the sweep to the live table   -> 1
+//  25  anim_finish_rows gives the fool place n_rows           -> 1
+//  26  anim_shown_ledger_allows refuses `arming` too          -> 1
+//  27  ap_bit accepts id 52 (the last-card off-by-one)        -> 1
+//
+// ONE SURVIVED AND WAS REMOVED RATHER THAN TESTED. anim_table_card_ids used to
+// skip a cover cell equal to ANIM_TABLE_NONE before asking for its bit, which no
+// input could tell apart from asking anyway - the sentinel is off the deck, so
+// the range check already answers zero. Unkillable code is not defence in depth,
+// it is a second rule nobody is checking; the branch is gone and a
+// _Static_assert in the header keeps both sentinels off the deck instead.
+//
+// A dense id, spelled out here rather than borrowed, so a change to the
+// encoder anywhere else fails these tests instead of moving with them.
+#define BID(suit, value) ((unsigned char)((suit) * 13 + ((value) - 1)))
+#define BSET(id) ((uint64_t)1 << (id))
+
+static void test_board_veil_unions_its_three_sources(void) {
+    const unsigned char six = BID(0, 6), nine = BID(1, 9), ace = BID(3, 13);
+
+    // Nothing veiled is nothing veiled.
+    CHECK(anim_veil_veiled(0, 0, 0, 0, 0, 0) == 0, "an idle board veils nothing");
+
+    // The animator's own set, and an unstarted replay's, both count.
+    CHECK(anim_veil_veiled(BSET(six), 0, 0, 0, 0, 0) == BSET(six),
+          "a card the animator hid is veiled");
+    CHECK(anim_veil_veiled(0, BSET(nine), 0, 0, 0, 0) == BSET(nine),
+          "a card an unstarted replay will move is veiled before it starts");
+    CHECK(anim_veil_veiled(BSET(six), BSET(nine), 0, 0, 0, 0) == (BSET(six) | BSET(nine)),
+          "the sources are UNIONED, not `whichever is up`");
+
+    // Live play: what this move just put in my hand, and nothing else in it.
+    const uint64_t before = BSET(six);
+    const uint64_t now = BSET(six) | BSET(nine);
+    CHECK(anim_veil_veiled(0, 0, 1, before, 1, now) == BSET(nine),
+          "a card THIS move put in my hand is veiled; the ones already there are not");
+    CHECK(anim_veil_veiled(0, 0, 1, now, 1, now) == 0,
+          "a hand that did not change veils nothing");
+
+    // Both halves of the live source are required. A spectator has no fan.
+    CHECK(anim_veil_veiled(0, 0, 0, before, 1, now) == 0,
+          "with no pre-move hand there is nothing to diff against");
+    CHECK(anim_veil_veiled(0, 0, 1, before, 0, 0) == 0,
+          "and a board with no hand of its own veils none of it");
+
+    // The last card of the deck, which is where an id off by one bites.
+    CHECK(anim_veil_veiled(BSET(ace), 0, 0, 0, 0, 0) == BSET(ace),
+          "the last card of the deck veils like every other");
+}
+
+static void test_board_veil_flying_is_hidden_minus_pre_hidden(void) {
+    const unsigned char six = BID(0, 6), nine = BID(1, 9);
+    CHECK(anim_veil_flying(BSET(six) | BSET(nine), BSET(nine)) == BSET(six),
+          "a card taken out of pre-hidden alone is the one in the air");
+    CHECK(anim_veil_flying(BSET(six), BSET(six)) == 0,
+          "a card pre-hidden for a step not yet reached is NOT flying");
+    CHECK(anim_veil_flying(BSET(six), 0) == BSET(six), "nothing pre-hidden, everything hidden flies");
+    CHECK(anim_veil_flying(0, BSET(six)) == 0, "pre-hidden without hidden cannot happen and flies nothing");
+}
+
+static void test_board_veil_the_fan_never_withholds_a_slot_it_draws(void) {
+    const unsigned char six = BID(0, 6), nine = BID(1, 9), ace = BID(3, 13);
+    const uint64_t veiled = BSET(six) | BSET(nine) | BSET(ace);
+
+    // A held-back card is the one veiled card the fan DOES draw, so it keeps
+    // its slot: without that term the hand renders closed.
+    CHECK(anim_veil_hand_slot_deferred(veiled, 0, BSET(nine)) == (BSET(six) | BSET(ace)),
+          "a held-back card is never deferred");
+    CHECK(anim_veil_hand_slot_deferred(veiled, BSET(six), 0) == (BSET(nine) | BSET(ace)),
+          "and neither is the card whose flight is playing this instant");
+    CHECK(anim_veil_fan(veiled, BSET(nine)) == (BSET(six) | BSET(ace)),
+          "the fan draws the held-back card and nothing else that is veiled");
+
+    // THE INVARIANT, over every combination of the three sets that matters:
+    // the deferral is a subset of the fan's veil, i.e. the fan never withholds
+    // a slot from a card it is drawing.
+    int checked = 0, held = 1;
+    for (int v = 0; v < 8; v++) {
+        for (int f = 0; f < 8; f++) {
+            for (int h = 0; h < 8; h++) {
+                uint64_t sv = 0, sf = 0, sh = 0;
+                const unsigned char ids[3] = { six, nine, ace };
+                for (int i = 0; i < 3; i++) {
+                    if (v & (1 << i)) sv |= BSET(ids[i]);
+                    if (f & (1 << i)) sf |= BSET(ids[i]);
+                    if (h & (1 << i)) sh |= BSET(ids[i]);
+                }
+                const uint64_t deferred = anim_veil_hand_slot_deferred(sv, sf, sh);
+                const uint64_t hidden = anim_veil_fan(sv, sh);
+                if ((deferred & ~hidden) != 0) held = 0;
+                checked++;
+            }
+        }
+    }
+    CHECK(checked == 512 && held, "the deferral is always a subset of the fan's veil");
+}
+
+static void test_board_veil_grid_answers_off_different_state_when_sweeping(void) {
+    const unsigned char six = BID(0, 6), nine = BID(1, 9), ace = BID(3, 13);
+    uint64_t hidden = 0, flying = 0;
+
+    anim_veil_grid(0, BSET(six), BSET(nine), BSET(ace), BSET(nine), BSET(six),
+                   &hidden, &flying);
+    CHECK(hidden == BSET(six) && flying == BSET(six),
+          "a live grid reads the hand veil and the cards in the air");
+
+    anim_veil_grid(1, BSET(six), BSET(nine), BSET(ace), BSET(six), BSET(six),
+                   &hidden, &flying);
+    CHECK(hidden == (BSET(nine) | BSET(ace)) && flying == BSET(six),
+          "a sweeping grid reads its OWN two sets, one per end of the sequence");
+
+    // THE PICKUP. The same card is legitimately hidden on one grid and drawn on
+    // the other in the same paint, which is why the branches are not one filter:
+    // the hand veil hides a picked-up card, and honouring that on the sweeping
+    // grid would take the table copy away before its own flight lifted it.
+    anim_veil_grid(1, BSET(six), 0, 0, 0, 0, &hidden, &flying);
+    CHECK(hidden == 0, "a sweeping grid does not honour the hand veil");
+    anim_veil_grid(0, BSET(six), 0, 0, 0, 0, &hidden, &flying);
+    CHECK(hidden == BSET(six), "…while the live grid does");
+
+    // Either out may be NULL; a caller that wants one set should not have to
+    // find somewhere to put the other.
+    anim_veil_grid(0, BSET(six), 0, 0, 0, 0, NULL, NULL);
+    CHECK(1, "a NULL out is not a crash");
+}
+
+static void test_board_veil_teardown_and_handover(void) {
+    const unsigned char a = BID(0, 6), b = BID(1, 9), c = BID(3, 13);
+    uint64_t reveal = 0, carry = 0;
+
+    anim_veil_teardown(BSET(a) | BSET(b), BSET(c), 1, &reveal, &carry);
+    CHECK(reveal == (BSET(a) | BSET(b) | BSET(c)) && carry == 0,
+          "the newest sequence reveals its own opens and every orphan handed to it");
+
+    anim_veil_teardown(BSET(a), BSET(b) | BSET(c), 0, &reveal, &carry);
+    CHECK(reveal == 0 && carry == (BSET(a) | BSET(b) | BSET(c)),
+          "a superseded one reveals nothing and passes its opens ON");
+
+    // The defect the carry exists for: an opened card is out of the pre-hidden
+    // set, so the blanket net can no longer reach it and nothing else would.
+    uint64_t held = 0;
+    anim_veil_teardown(BSET(a), 0, 0, &reveal, &held);
+    anim_veil_teardown(BSET(b), held, 1, &reveal, &carry);
+    CHECK(reveal == (BSET(a) | BSET(b)) && carry == 0,
+          "an orphan handed on through a superseded teardown is revealed by the last one standing");
+
+    anim_veil_handover(BSET(a), BSET(b), &reveal, &carry);
+    CHECK(reveal == BSET(a) && carry == BSET(b),
+          "a new play takes the standing veil down and raises its own");
+    anim_veil_handover(BSET(a) | BSET(b), BSET(b) | BSET(c), &reveal, &carry);
+    CHECK(reveal == BSET(a) && carry == (BSET(b) | BSET(c)),
+          "…except the cards it is placing, which revealing would flash back into the fan");
+}
+
+static void test_board_veil_small_decisions(void) {
+    CHECK(anim_veil_unstarted_replay(1, 3) == 1, "a pending replay with events is unstarted");
+    CHECK(anim_veil_unstarted_replay(1, 0) == 0, "a pending flag with no events veils nothing");
+    CHECK(anim_veil_unstarted_replay(0, 3) == 0,
+          "events with the flag down belong to a replay already running - ignore this and the veil never lifts");
+    CHECK(anim_veil_unstarted_replay(0, 0) == 0, "and an idle board has no replay");
+
+    CHECK(anim_holdback_is_mine(7, 7) == 1, "equal epochs ARE the same sequence");
+    CHECK(anim_holdback_is_mine(4, 7) == 1, "a holdback armed before this veil is this teardown's");
+    CHECK(anim_holdback_is_mine(8, 7) == 0, "one armed after it belongs to the sequence that replaced this one");
+
+    CHECK(anim_shown_ledger_allows(ANIM_CLAIM_SEQUENCE, 1) == 1
+          && anim_shown_ledger_allows(ANIM_CLAIM_ARMING, 1) == 1
+          && anim_shown_ledger_allows(ANIM_CLAIM_HAND_OFF, 1) == 1,
+          "the three shapes of the owner are never refused - guarding them freezes every badge");
+    CHECK(anim_shown_ledger_allows(ANIM_CLAIM_BYSTANDER, 1) == 0,
+          "a bystander stands down while a sequence is running");
+    CHECK(anim_shown_ledger_allows(ANIM_CLAIM_BYSTANDER, 0) == 1,
+          "…and writes exactly as it always did on a board at rest");
+}
+
+static void test_board_selection_may_only_name_cards_in_my_hand(void) {
+    const unsigned char six = BID(0, 6), nine = BID(1, 9), ace = BID(3, 13);
+    const uint64_t hand = BSET(six) | BSET(nine) | BSET(ace);
+
+    CHECK(anim_selection_after_tap(0, six, hand) == BSET(six), "a tap selects");
+    CHECK(anim_selection_after_tap(BSET(six), six, hand) == 0, "and a second tap deselects");
+    CHECK(anim_selection_after_tap(BSET(six), nine, hand) == (BSET(six) | BSET(nine)),
+          "two cards can be selected at once");
+
+    // A card that is drawn in the fan but no longer in the kernel hand (the
+    // holdback) cannot enter the selection at all - the state the action bar
+    // silently gated off is not representable.
+    CHECK(anim_selection_after_tap(0, ace, BSET(six)) == 0,
+          "tapping a card that is not in my hand selects nothing");
+    // …and an identity that has since left sweeps out whatever the tap was for.
+    CHECK(anim_selection_after_tap(BSET(nine) | BSET(six), ace, BSET(six)) == BSET(six),
+          "a stale selection is swept even by a tap that does nothing");
+    CHECK(anim_selection_after_tap(BSET(nine), six, BSET(six)) == BSET(six),
+          "…and by one that does");
+
+    // Every card of the deck, both ways: an id off by one is invisible until
+    // the last one, where the selection silently stops working.
+    int ok = 1;
+    for (int id = 0; id < 52; id++) {
+        const uint64_t only = BSET(id);
+        if (anim_selection_after_tap(0, id, only) != only) ok = 0;
+        if (anim_selection_after_tap(only, id, only) != 0) ok = 0;
+        if (anim_selection_after_tap(0, id, ~only & 0xFFFFFFFFFFFFFULL) != 0) ok = 0;
+    }
+    CHECK(ok, "all 52 cards select, deselect and refuse the same way");
+    CHECK(anim_selection_after_tap(0, 52, ~(uint64_t)0) == 0,
+          "and a card off the deck - a masked back - selects nothing");
+    CHECK(anim_selection_after_tap(0, -1, ~(uint64_t)0) == 0, "nor does one with no id at all");
+}
+
+static void test_board_placement_is_a_hand_reaching_the_table(void) {
+    CHECK(anim_is_placement(ANIM_EVT_ATTACK_PASS) == 1
+          && anim_is_placement(ANIM_EVT_DEFENDER_MOVE) == 1
+          && anim_is_placement(ANIM_EVT_COVER) == 1,
+          "the three ways a card leaves a hand for the table are placements");
+    CHECK(anim_is_placement(ANIM_EVT_REFILL) == 0 && anim_is_placement(ANIM_EVT_DEAL) == 0
+          && anim_is_placement(ANIM_EVT_PICKUP) == 0 && anim_is_placement(ANIM_EVT_DISCARD) == 0
+          && anim_is_placement(ANIM_EVT_OUT) == 0 && anim_is_placement(ANIM_EVT_CARDS_TO_TRASH) == 0
+          && anim_is_placement(ANIM_EVT_MAGIC_TRANSITION) == 0
+          && anim_is_placement(ANIM_EVT_FLIPPED) == 0 && anim_is_placement(-1) == 0,
+          "nothing else is, including a step this board cannot name");
+
+    CHECK(anim_is_my_placement(ANIM_EVT_COVER, 2, 2) == 1, "my own cover takes a card out of my hand");
+    CHECK(anim_is_my_placement(ANIM_EVT_COVER, 3, 2) == 0, "another seat's does not");
+    CHECK(anim_is_my_placement(ANIM_EVT_REFILL, 2, 2) == 0, "and neither does a step that is no placement");
+    // A discard and a bout transition both carry seat -1, and so does a
+    // spectator: without the guard a seatless viewer claims them as its own.
+    CHECK(anim_is_my_placement(ANIM_EVT_COVER, -1, -1) == 0, "a spectator places nothing");
+    CHECK(anim_is_my_placement(ANIM_EVT_DISCARD, -1, -1) == 0, "…including the steps that carry no seat");
+}
+
+static void test_board_the_fan_lays_out_the_hand_it_is_given(void) {
+    unsigned char out[64];
+    const unsigned char hand[3] = { BID(0, 6), BID(1, 9), BID(3, 13) };
+    const unsigned char held[2] = { BID(2, 7), BID(1, 9) };
+
+    CHECK(anim_fan_cards(hand, 3, NULL, 0, out, 64) == 3
+          && out[0] == hand[0] && out[1] == hand[1] && out[2] == hand[2],
+          "nothing held back, the fan lays out the hand unchanged");
+
+    // A held-back card appears ONCE. The fan places by index, so an identity
+    // the kernel hand already carries would be two cards in one slot.
+    const int n = anim_fan_cards(hand, 3, held, 2, out, 64);
+    CHECK(n == 4 && out[3] == BID(2, 7),
+          "a card the hand does not hold is appended; one it already holds is not doubled");
+    CHECK(anim_fan_cards(NULL, 0, held, 2, out, 64) == 2, "an empty hand lays out the holdback alone");
+    CHECK(anim_fan_cards(NULL, 0, NULL, 0, out, 64) == 0, "and an empty board lays out nothing");
+
+    // The count the fan actually draws: the hand it is really given, minus the
+    // deals still deferring their slot.
+    CHECK(anim_laid_count(hand, 3, held, 2, 0) == 4, "everything laid out is counted");
+    CHECK(anim_laid_count(hand, 3, NULL, 0, 0) == 3, "…and the count follows the FAN, not the kernel hand");
+    CHECK(anim_laid_count(hand, 3, held, 2, BSET(BID(0, 6)) | BSET(BID(2, 7))) == 2,
+          "a deferred card reserves no width");
+    CHECK(anim_laid_count(hand, 3, held, 2, BSET(BID(1, 9))) == 3,
+          "and a held-back duplicate is still only one card to defer");
+}
+
+static void test_board_hand_laid_out_follows_the_local_arrangement(void) {
+    unsigned char out[64];
+    const unsigned char a = BID(0, 6), b = BID(1, 9), c = BID(3, 13), d = BID(2, 2);
+    const unsigned char cards[3] = { a, b, c };
+
+    CHECK(anim_hand_laid_out(cards, 3, 0, NULL, 0, out, 64) == 3
+          && out[0] == a && out[1] == b && out[2] == c,
+          "with no arrangement the hand keeps kernel order");
+
+    const unsigned char reversed[3] = { c, b, a };
+    CHECK(anim_hand_laid_out(cards, 3, 0, reversed, 3, out, 64) == 3
+          && out[0] == c && out[1] == b && out[2] == a,
+          "the local arrangement decides the order of the cards it knows");
+
+    // A card the arrangement has never seen appends in kernel order, at the
+    // right - a pickup or a draw lands rightmost.
+    const unsigned char partial[2] = { c, a };
+    CHECK(anim_hand_laid_out(cards, 3, 0, partial, 2, out, 64) == 3
+          && out[0] == c && out[1] == a && out[2] == b,
+          "a card the arrangement does not know appends after the ones it does");
+
+    // Stale ids (a played card the sticky memory still remembers) and repeats
+    // drop out by construction rather than conjuring a card into the fan.
+    const unsigned char stale[5] = { d, c, c, a, d };
+    CHECK(anim_hand_laid_out(cards, 3, 0, stale, 5, out, 64) == 3
+          && out[0] == c && out[1] == a && out[2] == b,
+          "an arrangement naming cards that are not in the hand places none of them");
+
+    // A deferred card reserves nothing, and the arrangement must not place it
+    // either - the round-12 bug was the check and the flights describing
+    // different arrays.
+    CHECK(anim_hand_laid_out(cards, 3, BSET(b), reversed, 3, out, 64) == 2
+          && out[0] == c && out[1] == a,
+          "a deferred card is out of the laid-out hand, arrangement or no arrangement");
+    CHECK(anim_hand_laid_out(cards, 3, BSET(a) | BSET(b) | BSET(c), reversed, 3, out, 64) == 0,
+          "and a wholly deferred hand lays out nothing");
+}
+
+static void test_board_the_table_under_the_sweep(void) {
+    // 2 bytes per battle: the attack, then its cover or ANIM_TABLE_NONE.
+    const unsigned char a = BID(0, 6), b = BID(1, 9), c = BID(3, 13), d = BID(2, 2);
+    const unsigned char uncovered[2] = { a, ANIM_TABLE_NONE };
+    const unsigned char covered[4] = { a, b, c, ANIM_TABLE_NONE };
+
+    CHECK(anim_table_card_ids(uncovered, 1) == BSET(a), "an uncovered attack names one card");
+    CHECK(anim_table_card_ids(covered, 2) == (BSET(a) | BSET(b) | BSET(c)),
+          "a covered battle names BOTH sides");
+    CHECK(anim_table_card_ids(NULL, 0) == 0, "an empty table names none");
+    CHECK(anim_table_card_ids(covered, 0) == 0, "and neither does a table with no battles on it");
+
+    // The subset test, in the direction the two table choices need: does the
+    // candidate account for everything the board already holds?
+    CHECK(anim_table_covers(covered, 2, uncovered, 1) == 1,
+          "a table that adds the cover accounts for the one that did not have it");
+    CHECK(anim_table_covers(uncovered, 1, covered, 2) == 0,
+          "…and not the other way round, which would drop a covered pair mid-sweep");
+    CHECK(anim_table_covers(covered, 2, NULL, 0) == 1, "everything accounts for nothing");
+
+    // A CARD NOBODY CAN NAME. It has no bit, so without a rule of its own it
+    // would drop out of the subset test and the swap would be granted over a
+    // table that is really losing a card. On the INNER side it refuses; on the
+    // outer it simply names nothing, which is at least as conservative.
+    const unsigned char unnameable[2] = { ANIM_TABLE_UNKNOWN, ANIM_TABLE_NONE };
+    CHECK(anim_table_covers(covered, 2, unnameable, 1) == 0,
+          "a card the caller cannot name is never accounted for");
+    const unsigned char hidden_cover[2] = { a, ANIM_TABLE_UNKNOWN };
+    CHECK(anim_table_covers(covered, 2, hidden_cover, 1) == 0, "…on either side of a battle");
+    CHECK(anim_table_covers(unnameable, 1, uncovered, 1) == 0,
+          "and a table that holds one accounts for nothing else either");
+    CHECK(anim_covered_sweep_accepts(1, covered, 2, unnameable, 1) == 0,
+          "so the sweep is refused rather than allowed to drop it");
+
+    // coveredSweep. `paired` is not redundant with the subset test: the flat
+    // reading names exactly the same cards in a shape nobody vouched for, and
+    // the grid animates every card into its new cell before anything flies off.
+    CHECK(anim_covered_sweep_accepts(1, covered, 2, uncovered, 1) == 1,
+          "a real board that adds the cover earns the swap");
+    CHECK(anim_covered_sweep_accepts(0, covered, 2, uncovered, 1) == 0,
+          "the FLAT reading is refused even though it names the same cards");
+    CHECK(anim_covered_sweep_accepts(1, NULL, 0, uncovered, 1) == 0, "and so is an empty table");
+    CHECK(anim_covered_sweep_accepts(1, uncovered, 1, covered, 2) == 0,
+          "a stream that came back short is refused rather than allowed to drop a pair");
+
+    // The one flat table that names the same cards, spelled out: two battles,
+    // one covered, read as three uncovered cells.
+    const unsigned char flat[6] = { a, ANIM_TABLE_NONE, b, ANIM_TABLE_NONE, c, ANIM_TABLE_NONE };
+    CHECK(anim_table_card_ids(flat, 3) == anim_table_card_ids(covered, 2),
+          "the flat reading has the right cards…");
+    CHECK(anim_covered_sweep_accepts(0, flat, 3, covered, 2) == 0, "…and is still refused");
+    (void)d;
+
+    // Which table the grid paints, on emptiness alone.
+    int sweeping = -1;
+    CHECK(anim_shown_table(2, 3, 4, &sweeping) == ANIM_SHOWN_LIVE && sweeping == 0,
+          "the live table wins, and is not a sweep");
+    CHECK(anim_shown_table(0, 3, 4, &sweeping) == ANIM_SHOWN_SWEEP && sweeping == 1,
+          "then the sweep a move of my own captured");
+    CHECK(anim_shown_table(0, 0, 4, &sweeping) == ANIM_SHOWN_PENDING && sweeping == 1,
+          "then an arriving replay's pre-bout table, which lands a paint before the sweep is set");
+    CHECK(anim_shown_table(0, 0, 0, &sweeping) == ANIM_SHOWN_NONE && sweeping == 0,
+          "and an empty board is empty, not sweeping");
+    CHECK(anim_shown_table(1, 0, 0, NULL) == ANIM_SHOWN_LIVE, "a NULL out is not a crash");
+}
+
+static void test_board_finish_rows_rank_first_out_to_the_fool(void) {
+    AnimFinishRow rows[MAX_PLAYERS];
+    const unsigned char order[3] = { 2, 0, 3 };
+
+    int n = anim_finish_rows(order, 3, 1, 4, 0, rows, MAX_PLAYERS);
+    CHECK(n == 4, "everyone gets a row");
+    CHECK(rows[0].place == 1 && rows[0].seat == 2 && rows[0].is_you == 0,
+          "rank 1 is the first player out");
+    CHECK(rows[1].place == 2 && rows[1].seat == 0 && rows[1].is_you == 1, "and my row is marked");
+    CHECK(rows[3].place == 4 && rows[3].seat == 1 && rows[3].is_you == 0,
+          "the fool - the one seat still holding cards - takes the LAST place");
+
+    // The last place is the seat count, not the row count. A game with rows
+    // missing must not promote the fool.
+    n = anim_finish_rows(order, 2, 1, 4, -1, rows, MAX_PLAYERS);
+    CHECK(n == 3 && rows[2].place == 4,
+          "the fool's place is the seat count even when the list is short");
+
+    // A spectator holds no seat, and the kernel spends -1 on "no seat" too.
+    n = anim_finish_rows(order, 3, 1, 4, -1, rows, MAX_PLAYERS);
+    CHECK(n == 4 && rows[0].is_you == 0 && rows[1].is_you == 0
+          && rows[2].is_you == 0 && rows[3].is_you == 0,
+          "no row belongs to a spectator");
+
+    // A game still running has no fool yet.
+    n = anim_finish_rows(order, 1, -1, 4, 0, rows, MAX_PLAYERS);
+    CHECK(n == 1 && rows[0].place == 1, "a game with nobody out yet ranks only who is out");
+    CHECK(anim_finish_rows(NULL, 0, -1, 4, 0, rows, MAX_PLAYERS) == 0, "…and an untouched game, nobody");
+}
+
+static void test_board_degenerate_inputs(void) {
+    unsigned char out[8];
+    AnimFinishRow rows[MAX_PLAYERS];
+    const unsigned char ids[2] = { 0, 1 };
+
+    CHECK(anim_fan_cards(ids, 2, NULL, 0, NULL, 8) == ANIM_EBADARG, "no out, no fan");
+    CHECK(anim_fan_cards(NULL, 2, NULL, 0, out, 8) == ANIM_EBADARG, "a count with no hand");
+    CHECK(anim_fan_cards(ids, 2, NULL, 1, out, 8) == ANIM_EBADARG, "a count with no holdback");
+    CHECK(anim_fan_cards(ids, -1, NULL, 0, out, 8) == ANIM_EBADARG, "a negative hand is not a hand");
+    CHECK(anim_fan_cards(ids, 2, NULL, 0, out, 1) == ANIM_ECAP, "an output too small for the hand");
+    CHECK(anim_fan_cards(ids, 2, ids, 2, out, 8) == 2, "a holdback wholly in the hand adds nothing");
+
+    CHECK(anim_laid_count(NULL, 2, NULL, 0, 0) == ANIM_EBADARG, "a count with no hand counts nothing");
+    CHECK(anim_hand_laid_out(ids, 2, 0, NULL, 0, NULL, 8) == ANIM_EBADARG, "no out, no layout");
+    CHECK(anim_hand_laid_out(NULL, 2, 0, NULL, 0, out, 8) == ANIM_EBADARG, "a count with no cards");
+    CHECK(anim_hand_laid_out(ids, 2, 0, NULL, 1, out, 8) == ANIM_EBADARG, "a count with no arrangement");
+    CHECK(anim_hand_laid_out(ids, 2, 0, NULL, 0, out, 1) == ANIM_ECAP, "an output too small to lay out");
+
+    CHECK(anim_table_covers(NULL, 1, NULL, 0) == ANIM_EBADARG, "a count with no table");
+    CHECK(anim_table_covers(NULL, 0, NULL, 1) == ANIM_EBADARG, "…on either side");
+    CHECK(anim_table_covers(NULL, -1, NULL, 0) == ANIM_EBADARG, "a negative table is not a table");
+
+    CHECK(anim_finish_rows(NULL, 0, 0, 4, 0, NULL, 4) == ANIM_EBADARG, "no out, no rows");
+    CHECK(anim_finish_rows(NULL, 1, 0, 4, 0, rows, 4) == ANIM_EBADARG, "a count with no elimination list");
+    CHECK(anim_finish_rows(ids, 2, 0, 4, 0, rows, 2) == ANIM_ECAP,
+          "a roster that will not fit is refused rather than half-ranked");
+}
+
+// EVERY BOUND CHECKED AGAINST A GUARD PAGE. These readers take a pointer and a
+// count with no record to parse, so the count IS the bound; placed flush against
+// a PROT_NONE page, one byte past it kills the process instead of walking into
+// whatever follows in a static array (see jt_flush_to_guard).
+static void test_board_reads_nothing_past_what_it_was_given(void) {
+    unsigned char out[64];
+    const unsigned char hand[3] = { BID(0, 6), BID(1, 9), BID(3, 13) };
+    const unsigned char table[4] = { BID(0, 6), BID(1, 9), BID(3, 13), ANIM_TABLE_NONE };
+
+    const unsigned char *h = jt_flush_to_guard(hand, 3);
+    if (!h) { CHECK(0, "the guard page maps"); return; }
+    CHECK(anim_fan_cards(h, 3, NULL, 0, out, 64) == 3, "the fan reads exactly the hand it was given");
+    CHECK(anim_laid_count(h, 3, NULL, 0, 0) == 3, "and so does the count");
+    CHECK(anim_hand_laid_out(h, 3, 0, NULL, 0, out, 64) == 3, "and the layout");
+
+    const unsigned char *o = jt_flush_to_guard(hand, 3);
+    CHECK(anim_hand_laid_out(hand, 3, 0, o, 3, out, 64) == 3,
+          "the arrangement is read to its length and no further");
+
+    const unsigned char *held = jt_flush_to_guard(hand, 2);
+    CHECK(anim_fan_cards(hand, 3, held, 2, out, 64) == 3, "and so is the holdback");
+
+    // A table is TWO bytes per battle, which is the bound that is easy to get
+    // wrong by one battle.
+    const unsigned char *t = jt_flush_to_guard(table, 4);
+    CHECK(anim_table_card_ids(t, 2) == (BSET(BID(0, 6)) | BSET(BID(1, 9)) | BSET(BID(3, 13))),
+          "a table is read two bytes per battle and not one byte further");
+    CHECK(anim_table_covers(t, 2, t, 2) == 1, "…on both sides of the subset test");
+    CHECK(anim_covered_sweep_accepts(1, t, 2, t, 2) == 1, "…and through the sweep's decision");
+
+    const unsigned char elim[3] = { 2, 0, 3 };
+    const unsigned char *e = jt_flush_to_guard(elim, 3);
+    AnimFinishRow rows[MAX_PLAYERS];
+    CHECK(anim_finish_rows(e, 3, 1, 4, 0, rows, MAX_PLAYERS) == 4,
+          "the elimination list is read to its length");
+}
+
+// THE ID CROSSING, ALL 52 CARDS, BOTH DIRECTIONS. A dense-id off-by-one is
+// invisible through most of the deck because both sides of every comparison go
+// through the same encoder; it bites only at the last card, where a set comes
+// back empty and everything silently passes. So walk the whole deck through
+// every entry that takes an id, and prove the ace of the last suit behaves like
+// the six of the first.
+static void test_board_every_card_of_the_deck_crosses_both_ways(void) {
+    unsigned char out[64];
+    int veil_ok = 1, fan_ok = 1, table_ok = 1, laid_ok = 1;
+
+    for (int suit = 0; suit < 4; suit++) {
+        for (int value = 1; value <= 13; value++) {
+            const unsigned char id = BID(suit, value);
+            const uint64_t bit = BSET(id);
+            if (id != (unsigned char)(suit * 13 + value - 1)) veil_ok = 0;
+
+            // Through each of the veil's four outs.
+            if (anim_veil_veiled(bit, 0, 0, 0, 0, 0) != bit) veil_ok = 0;
+            if (anim_veil_veiled(0, bit, 0, 0, 0, 0) != bit) veil_ok = 0;
+            if (anim_veil_veiled(0, 0, 1, 0, 1, bit) != bit) veil_ok = 0;
+            if (anim_veil_flying(bit, 0) != bit) veil_ok = 0;
+            if (anim_veil_flying(bit, bit) != 0) veil_ok = 0;
+            if (anim_veil_hand_slot_deferred(bit, 0, bit) != 0) veil_ok = 0;
+            if (anim_veil_fan(bit, bit) != 0) veil_ok = 0;
+
+            // Through the fan: a held card the hand already holds is not doubled.
+            if (anim_fan_cards(&id, 1, &id, 1, out, 64) != 1 || out[0] != id) fan_ok = 0;
+            if (anim_laid_count(&id, 1, NULL, 0, bit) != 0) fan_ok = 0;
+            if (anim_laid_count(&id, 1, NULL, 0, 0) != 1) fan_ok = 0;
+
+            // Through the layout, ordered by an arrangement that names it.
+            if (anim_hand_laid_out(&id, 1, 0, &id, 1, out, 64) != 1 || out[0] != id) laid_ok = 0;
+            if (anim_hand_laid_out(&id, 1, bit, &id, 1, out, 64) != 0) laid_ok = 0;
+
+            // Through a table, on both sides of a battle.
+            const unsigned char attack[2] = { id, ANIM_TABLE_NONE };
+            const unsigned char cover[2] = { BID(0, 6), id };
+            if (anim_table_card_ids(attack, 1) != bit) table_ok = 0;
+            if (id != BID(0, 6) && anim_table_card_ids(cover, 1) != (bit | BSET(BID(0, 6))))
+                table_ok = 0;
+        }
+    }
+    CHECK(veil_ok, "all 52 cards veil, fly and defer the same way");
+    CHECK(fan_ok, "all 52 cards fan and count the same way");
+    CHECK(laid_ok, "all 52 cards lay out the same way");
+    CHECK(table_ok, "all 52 cards stand on a table the same way, attack side and cover side");
+
+    // The sentinels. ANIM_TABLE_NONE is not a card, and neither is anything
+    // else off the deck - folding one in would name the wrong card, which is
+    // exactly the failure this crossing hides.
+    const unsigned char none[2] = { ANIM_TABLE_NONE, ANIM_TABLE_NONE };
+    CHECK(anim_table_card_ids(none, 1) == 0, "an empty cell names no card");
+    const unsigned char off[2] = { 52, 200 };
+    CHECK(anim_table_card_ids(off, 1) == 0, "and neither does a byte off the deck");
+    CHECK(anim_fan_cards(NULL, 0, off, 2, out, 64) == 0,
+          "a holdback of cards that do not exist adds nothing to the fan");
+    CHECK(anim_hand_laid_out(off, 2, 0, NULL, 0, out, 64) == 0, "…and lays out nothing");
+}
+
 int main(void) {
     test_reset_to_lobby();
     test_replay_steps_rebuilds_the_played_game();
@@ -5115,6 +5668,21 @@ int main(void) {
     test_conflict_reversal_flies_back_the_way_it_came();
     test_conflict_reversal_drops_what_the_verdicts_empty();
     test_conflict_degenerate_inputs();
+    test_board_veil_unions_its_three_sources();
+    test_board_veil_flying_is_hidden_minus_pre_hidden();
+    test_board_veil_the_fan_never_withholds_a_slot_it_draws();
+    test_board_veil_grid_answers_off_different_state_when_sweeping();
+    test_board_veil_teardown_and_handover();
+    test_board_veil_small_decisions();
+    test_board_selection_may_only_name_cards_in_my_hand();
+    test_board_placement_is_a_hand_reaching_the_table();
+    test_board_the_fan_lays_out_the_hand_it_is_given();
+    test_board_hand_laid_out_follows_the_local_arrangement();
+    test_board_the_table_under_the_sweep();
+    test_board_finish_rows_rank_first_out_to_the_fool();
+    test_board_degenerate_inputs();
+    test_board_reads_nothing_past_what_it_was_given();
+    test_board_every_card_of_the_deck_crosses_both_ways();
 
     printf("\n%d passed, %d failed\n", n_pass, n_fail);
     return n_fail > 0 ? 1 : 0;

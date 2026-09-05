@@ -93,6 +93,80 @@ red, and only then does the newest chain animate forward.
 This is **not** the same question as `anim_resolve_unconfirmed_attack_covers`,
 and both are kept for that reason - see "The two conflict rules" below.
 
+### The board's own sets and small rules
+
+The last stage of the lift, which took everything that was still a pure static on
+`MessageTableView.swift`.
+Card SETS cross as a `u64` bitset over dense ids and ordered hands as arrays of
+those same ids, so none of this needs a packed record: a versioned envelope
+around two `u64`s would be ceremony, and the brief says to cross as ints instead.
+
+The veil, which is four sets and everything else about it is state (upstream) or
+a view (downstream):
+
+- `anim_veil_veiled(hidden, pending_open, has_hand_before, hand_before, has_my_hand, my_hand)`
+  - three sources unioned, deliberately not "whichever is up".
+  Both halves of the live-play source are required: no pre-move hand is nothing
+  to diff against, and no hand at all is a spectator, who has no fan to veil.
+- `anim_veil_flying(hidden, pre_hidden)` - `hidden \ pre_hidden`, "in the air
+  right now", the one derivation four places rest on.
+- `anim_veil_hand_slot_deferred(veiled, flying, holdback)` - which veiled hand
+  cards reserve no fan width yet. A held-back card is the one veiled card the fan
+  DOES draw, so it keeps its slot.
+- `anim_veil_fan(veiled, holdback)` - which veiled cards the fan draws nothing
+  for. INVARIANT: the deferral is a subset of this, so the fan never withholds a
+  slot from a card it is drawing (asserted over all 512 combinations in
+  `tests.c`).
+- `anim_veil_grid(sweeping, ...)` - the battle grid's two sets. The branches
+  answer off DIFFERENT STATE rather than a different filter over one, because a
+  picked-up card is legitimately hidden on the hand's grid and drawn on the
+  sweeping one in the same paint.
+- `anim_veil_teardown` / `anim_veil_handover` - what a finishing sequence owes the
+  board, and what a new play owes the one it replaces.
+- `anim_veil_unstarted_replay`, `anim_holdback_is_mine`,
+  `anim_selection_after_tap` - the window the veil is up for, the epoch that says
+  whose holdback it is, and the rule that the selection may only ever name cards
+  in my hand.
+
+The hand's layout, which is a LIST because the fan places cards by index:
+
+- `anim_fan_cards(hand, held, out, cap)` - my hand plus whatever a replay is
+  still holding back, each card once.
+- `anim_laid_count(hand, held, deferred)` - how many of those the fan lays out.
+- `anim_hand_laid_out(cards, deferred, order, out, cap)` - the array the fan
+  actually draws, in the order it draws it. `order` is the player's own grow-only
+  arrangement and is an INPUT: it legitimately names cards that are not in the
+  hand. This is also `FHandFan.displayOrder` with nothing deferred, and the web
+  states the same contract as `displayedHand` (`src/state/clientReconcile.ts`).
+- `anim_is_placement(type)` / `anim_is_my_placement(type, seat, my_seat)` - the
+  holdback's seed. A seatless viewer places nothing, because the kernel spends
+  seat -1 on "no particular player" as well as on "no seat".
+
+The table under a sweep, and the end screen:
+
+- `anim_table_card_ids(table, n)` - the cards a 2-bytes-per-battle table holds.
+- `anim_table_covers(outer, inner)` - the ONE subset test two table choices rest
+  on. A cell holding a card the caller cannot NAME crosses as
+  `ANIM_TABLE_UNKNOWN`, not as an empty cell, and is never accounted for: a sweep
+  may add a card, never drop one.
+- `anim_covered_sweep_accepts(paired, pre, cur)` - whether a bout-ending cover
+  sweeps off the kernel's covered table. The `paired` test is not redundant with
+  the subset one - a pickup read flat names the same cards in a shape nobody
+  vouched for.
+- `anim_shown_table(n_live, n_sweep, n_pending, out_sweeping)` - which of the
+  three tables the grid paints. It turns on emptiness alone, so the tables never
+  cross.
+- `anim_finish_rows(elimination, game_over, n_players, my_seat, out, cap)` - rank
+  1 is the first player out, the fool takes the last place, and that place is the
+  SEAT count rather than the row count. Names are not here; identity lives in the
+  roster.
+- `anim_shown_ledger_allows(claim, sequencing)` - who may say what the badges are
+  showing. Only a bystander ever stands down.
+
+Reached from Swift through `sdk/swift/BoardWire.swift` (the card-set crossing,
+the veil, the ledger codes, the finish order), `sdk/swift/HandWire.swift` and the
+table half of `sdk/swift/PreTableWire.swift`.
+
 Style, per `msg_wire.h`/`evwire.h`: fixed-size structs, no allocation, every
 input range-checked, errors as negative `ANIM_E*` defines. Card inputs BORROW the
 caller's storage (like `EvwEvent`).
@@ -179,13 +253,18 @@ session:
    handed (often half a bubble) from a SwiftUI body that cannot await the actor.
 2. ~~Replace `MessageTableView.preCounts` with `plan.pre`.~~ DONE - the
    count-freeze is derived in C and `preCounts` is deleted.
-3. Replace the per-step `deckCountOverride`/`discardCountOverride`/`seatCountOverride`
+3. ~~Everything still pure on `MessageTableView`.~~ DONE, in the final lift
+   stage: the veil's four sets, the hand's layout, the table under a sweep, the
+   end screen's order and the ledger's ownership are all `anim_plan.c`. What is
+   left on the board is rects, angles, springs, timing against the host and the
+   DEBUG traces - see "What stayed in Swift, and why" below.
+4. Replace the per-step `deckCountOverride`/`discardCountOverride`/`seatCountOverride`
    advance in `runEventStream` with `plan.steps[i].{deck,discard,hand}` — a count
    never jumps ahead of its flight because the plan already staggers them.
-4. Replace the `preHide` set (`myNewIds` / `openReplayTouchedCardIds`) with
+5. Replace the `preHide` set (`myNewIds` / `openReplayTouchedCardIds`) with
    `plan.veil` (dense card ids → identities), and reveal a card when its step
    plays (`plan.steps[i]`'s `startMs`/duration).
-5. Keep the flight builders (`openReplayFlights`, `myDrawFlights`, spring
+6. Keep the flight builders (`openReplayFlights`, `myDrawFlights`, spring
    animation) — that is the rendering the boundary keeps in Swift.
 
 ### Web/iOS divergences to reconcile (iMessage is the spec)
@@ -268,6 +347,47 @@ separating two things one function currently does.
 | `e2e/optimistic_revert.test.ts` | `test_optimistic_revert` | yes — `optimistic_revert.test.ts` (real games) through the C bridge |
 | `e2e/reconcile.test.ts` | `test_reconcile` | yes — `reconcile.test.ts` (real broadcasts, reordered) through the C bridge |
 | (new — the choreography no TS test covered) | `test_plan_building` + `test_plan_anchors_on_the_first_events_own_board` | `e2e/anim_core_parity.test.ts` (C == TS ref, + the freeze IS the board before), `tests.c` `test_the_freeze_is_the_board_before_every_move` |
+
+## What stayed in Swift, and why
+
+The closing inventory of the lift campaign, taken when the last stage landed.
+
+**Rendering, which is where the boundary puts it.** Rects, angles, screen
+coordinates and springs: `dragHintPosition`, `collapseFraction`,
+`coverLandingRects` / `coverLandingFlights`, `inBoardSpace`, `tableSource`,
+`playSourceRects`, `roleFlights`, `undoReleaseTargets`, `approximateTableCenter`,
+the `boardSpace` frame plumbing, `FHandFan`'s geometry, `FBattleGrid`'s tilt,
+`FlyingCardsLayer`, `CollapseTween`, and every `matchedGeometryEffect` namespace.
+`awaitSheetSettled` is timing against the Messages host, not a rule.
+The `traceGrid` / `traceCount` / `traceMark` trio is DEBUG diagnostics about what
+this board painted, which only this board can answer.
+
+**Liftable and deliberately left.**
+
+- `MessageTableView.autoPick(_ moves:)` - the FoolishHarness rig's move chooser.
+  It is `#if DEBUG`, and its actual input is a process environment variable
+  (`HARNESS_AUTOMOVE_KIND`); the pure remainder is one `first(where:)` over a
+  menu the kernel already narrowed (`fio_play_human_menu`). It is test
+  scaffolding, not behaviour a second client re-derives.
+- `MessageTurnController.sentBytes(staged:host:sealed:)` - which bytes a send
+  actually put on the wire. It passes the screen-independence test but it is a
+  rule about the iMessage HOST's payload handoff (`didStartSending` can deliver
+  nil, or stale), there is no kernel concept behind it, and it selects between
+  two opaque `Data` blobs the kernel never sees. It already lives in
+  `FoolishKit` rather than in a view, so any Swift client can reuse it. If a
+  second transport ever grows the same shape, the thing to lift is the PICKER
+  (three ints in, one out), not the bytes.
+- `MessageGameStore.handOrder(gameId:)` - the local per-game arrangement the fan
+  is laid out against. It is client-local memory in the App Group container, and
+  the kernel already consumes it as an input to `anim_hand_laid_out`.
+
+**Neither, and worth a look.** The extension's own on-disk data is still JSON:
+`ReplayStore`'s saved-replay index, and `MessageGameStore`'s App Group rows
+(seat roster, hand arrangement). Both are client-local STORAGE rather than a
+wire, so neither is a task-#17 remainder and neither is a rule a second client
+re-derives - but the owner has said they dislike the first, and the two are the
+same decision. Recorded here so the campaign closes with it named rather than
+quietly out of scope.
 
 ## The Steam story
 

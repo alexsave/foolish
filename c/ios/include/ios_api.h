@@ -475,6 +475,121 @@ int fio_conflict_packed(const uint8_t *in, int len, char *out, int cap);
 // the caller cannot name (no kind at all) passes -1 and lands in a pool.
 int fio_conflict_dest(int event_type, int seat, int my_seat);
 
+// ---------- the board's sets and small rules (anim_plan.h) -----------------
+//
+// The veil, the hand's layout, the table under a sweep, the end screen's order
+// and who may say what the badges show - the last pure rules on the iMessage
+// board, and the spec for every client that draws the same board.
+//
+// THESE CROSS AS INTS, NOT AS A BLOB. A card SET is a u64 bitset over dense ids
+// (0..51 - a deck fits in 64 bits), which is what the conflict model above
+// already uses; an ORDERED hand crosses as an array of those same ids, because
+// the fan places cards by index. Neither needs a packed record, so neither gets
+// one: a versioned envelope around two u64s would be ceremony.
+//
+// A CARD OUTSIDE THE DECK HAS NO BIT. A viewer-masked back is exactly that
+// case, and it is not a loss - a back has no identity to veil, which is the
+// same thing fio_conflict_packed says about it.
+
+// The veil's four outs: what the board renders as not-yet-there, what is in the
+// air this instant, which veiled hand cards reserve no fan width yet, and which
+// the fan draws nothing for. `has_hand_before` / `has_my_hand` are the live-play
+// source's two halves - a spectator, or a board with no view, has no fan to veil.
+uint64_t fio_veil_veiled(uint64_t hidden, uint64_t pending_open,
+                         int has_hand_before, uint64_t hand_before,
+                         int has_my_hand, uint64_t my_hand);
+uint64_t fio_veil_flying(uint64_t hidden, uint64_t pre_hidden);
+uint64_t fio_veil_hand_slot_deferred(uint64_t veiled, uint64_t flying, uint64_t holdback);
+uint64_t fio_veil_fan(uint64_t veiled, uint64_t holdback);
+
+// The battle grid's two sets, a straight switch on whether this is a sweep.
+// Either out pointer may be NULL.
+void fio_veil_grid(int sweeping, uint64_t veiled,
+                   uint64_t swept_flown, uint64_t sweep_unplaced,
+                   uint64_t sweep_arriving, uint64_t flying,
+                   uint64_t *out_hidden, uint64_t *out_flying);
+
+// What a finishing sequence owes the board (reveal now / carry on), and what a
+// new play owes the one it replaces (take that veil down / raise mine).
+void fio_veil_teardown(uint64_t opened, uint64_t orphaned, int is_newest,
+                       uint64_t *out_reveal, uint64_t *out_carry);
+void fio_veil_handover(uint64_t standing, uint64_t placing,
+                       uint64_t *out_reveal, uint64_t *out_veil);
+
+// Is there a replay the board has not started - the window the veil is up for.
+int fio_veil_unstarted_replay(int replay_pending, int n_events);
+
+// Does this teardown own the holdback? Only if the holdback was armed no later
+// than the veil the teardown raised.
+int fio_holdback_is_mine(int armed_at, int teardown_at);
+
+// The selection after a tap, which may only ever name cards in my hand.
+uint64_t fio_selection_after_tap(uint64_t selection, int card_id, uint64_t hand);
+
+// Does this step put a card from a hand on the table, and is it mine? A
+// seatless viewer (my_seat < 0) places nothing.
+int fio_is_placement(int event_type);
+int fio_is_my_placement(int event_type, int seat, int my_seat);
+
+// The hand the fan is asked to lay out (my hand plus a still-held-back card,
+// once), how many of those it actually lays, and the array in the order it
+// draws them. `out` takes dense ids; the return is the count, or a negative
+// error. `order` is the local grow-only arrangement and legitimately names
+// cards that are not in the hand.
+int fio_fan_cards(const uint8_t *hand, int n_hand, const uint8_t *held, int n_held,
+                  char *out, int cap);
+int fio_laid_count(const uint8_t *hand, int n_hand, const uint8_t *held, int n_held,
+                   uint64_t deferred);
+int fio_hand_laid_out(const uint8_t *cards, int n_cards, uint64_t deferred,
+                      const uint8_t *order, int n_order, char *out, int cap);
+
+// A table is 2 bytes per battle - the attack, then its cover or
+// FIO_CONFLICT_NONE, the layout fio_conflict_packed's already takes. The cards
+// on it as a set; whether one table accounts for every card on another; and
+// whether a bout-ending cover should sweep off the kernel's covered table
+// instead of the one the board holds.
+//
+// A CELL HOLDING A CARD THE CALLER CANNOT NAME is this byte rather than the
+// empty one. It names no card and, on the table being tested FOR coverage, is
+// never accounted for - a sweep may add a card, never drop one.
+#define FIO_TABLE_UNKNOWN 0xFF
+uint64_t fio_table_card_ids(const uint8_t *table, int n_battles);
+int fio_table_covers(const uint8_t *outer, int n_outer, const uint8_t *inner, int n_inner);
+int fio_covered_sweep_accepts(int paired, const uint8_t *pre, int n_pre,
+                              const uint8_t *cur, int n_cur);
+
+// Which of the three tables the grid paints, and whether that is a sweep. The
+// answer turns on emptiness alone, so the tables never cross.
+#define FIO_SHOWN_NONE    (-1)
+#define FIO_SHOWN_LIVE      0
+#define FIO_SHOWN_SWEEP     1
+#define FIO_SHOWN_PENDING   2
+int fio_shown_table(int n_live, int n_sweep, int n_pending, int *out_sweeping);
+
+// The end screen's order: rank 1 is the first player out, the fool takes the
+// last place. `elimination` is first-out first and excludes the fool;
+// `game_over` is the fool's seat, or negative while the game runs. Names are
+// NOT here - identity lives in the roster, like every other wire in this file.
+//
+// OUTPUT (`out`):
+//   0  u8 version (FIO_FINISH_VERSION)
+//   1  u8 n_rows
+//   2  u8 total (the SEAT count; a row is the fool when place == total)
+//      per row: u8 place, u8 seat, u8 is_you
+// Returns bytes written, or a negative error.
+#define FIO_FINISH_VERSION 1
+#define FIO_FINISH_HEAD 3
+int fio_finish_rows(const uint8_t *elimination, int n_elim, int game_over,
+                    int n_players, int my_seat, char *out, int cap);
+
+// May this caller write what the badges are showing? Only a bystander ever
+// stands down, and only while a sequence is running.
+#define FIO_CLAIM_SEQUENCE   0
+#define FIO_CLAIM_ARMING     1
+#define FIO_CLAIM_HAND_OFF   2
+#define FIO_CLAIM_BYSTANDER  3
+int fio_shown_ledger_allows(int claim, int sequencing);
+
 // ---------- strategies (offline bot roster, §7.2) --------------------------
 
 // Number of exposed offline strategies.

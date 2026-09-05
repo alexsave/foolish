@@ -138,6 +138,26 @@ Do not run `xcodegen generate` by hand without restoring
 Do not bump the version and do not archive or upload.
 The owner runs those builds by hand for this campaign.
 
+## The campaign is finished
+
+Seven stages, ending 2026-09-05.
+What moved: the wire's reader and the settlement cut, what a gesture on a board
+means, the shape of a sequence, the count freeze, the pre-bout table, the
+conflict verdict, and finally the board's own sets - the veil, the hand's layout,
+the table under a sweep, the end screen's order and who may write the shown
+counts.
+
+`docs/ANIMATION_CORE_C.md` carries the closing inventory under **"What stayed in
+Swift, and why"**: the rendering that correctly stays, the two liftable things
+that were deliberately left (the harness's `autoPick`, which is a `#if DEBUG` rig
+reading an environment variable, and `MessageTurnController.sentBytes`, which is
+a rule about the iMessage host's payload handoff with no kernel concept behind
+it), and the one thing that is neither and should be looked at (the extension's
+own on-disk data is still JSON).
+
+Read that section before starting an eighth stage.
+It exists so the campaign closes as finished rather than abandoned.
+
 ## Queued for after the lift: the determinism pass
 
 Not part of this campaign.
