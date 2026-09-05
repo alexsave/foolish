@@ -274,3 +274,68 @@ If the diff ever grows a second one, the split has been drawn in the wrong place
 
 `anim_resolve_unconfirmed_attack_covers` and `anim_conflict_verdict` then stop
 being two rules and become one rule with one transport-dependent question.
+
+## Queued: the iMessage chain layer
+
+Third in the queue, after the determinism pass and the transport mode.
+Owner's instinct was that all of `ios/FoolishKit/Messages` (2,388 lines) should be
+C.
+Measured, it splits three ways, and only two of them are worth doing.
+
+### Does not move, and should not
+
+About 1,400 lines are the Messages framework and platform storage, not rules
+wearing a UI hat:
+
+- `MessagesRootView` (1,142 lines, by far the most platform-coupled file in the
+  directory) - `MSMessagesAppViewController` lifecycle, conversation objects,
+  presentation-style transitions, the lobby and nickname screens.
+- `MessageGameStore` (145) - App Group `UserDefaults` shared between the app and
+  its extension.
+- `MessageSummary` (129) - the bubble caption.
+  Captions stay in the sender's language by owner's decision, so the strings
+  cannot move; only the choice of which summary fits which event could, and that
+  is a few dozen lines.
+- `CollapseTween`, `MessageDevBoard`, `ChatKey` - presentation timing, the dev
+  board, a key type.
+
+### Item 1: the gates.  Small, obviously correct
+
+`StaleBranchGate` (59), `NicknameGate` (19), `StagedBubbleRouting` (22), and
+possibly `SeatIdentity` (48).
+Zero platform coupling, pure decisions, the same shape stages 2 and 7 moved.
+About 150 lines.
+
+One wrinkle on `SeatIdentity`: `game.h` states that seat identity "is
+deliberately not in the state blob; it lives with the caller."
+Moving it reverses a documented decision, so do it consciously or leave it.
+
+### Item 2: the turn controller as a transition function.  The one with leverage
+
+`MessageTurnController` (474) is not a pure function - it is a state machine over
+time.
+Its historical bugs were never wrong rules; they were concurrency
+(`never seal OR READ across an await`, the resident game being one slot,
+`markSent` rebasing backwards).
+C cannot own those, because the suspension points are Swift's.
+
+But it can own the decisions ACROSS them, and this repo has already proved the
+pattern: `bot_drive` returns the actions AND the pacing, and the host decides
+only how to wait.
+
+Same shape here - `(chain state, event) -> (new state, effects)` in C, with Swift
+pumping it and performing the effects.
+The awaits stay Swift; what may be staged, what is withheld, and what a send
+means stop being Swift's.
+Roughly 250 lines of decision logic, not 2,388.
+
+**Trigger: a second chain-based client.**
+Today nothing else speaks FMSG, so the move buys correctness-by-construction and
+no reuse.
+When a watch, an Android client or anything else adopts the chain, this is the
+piece that stops it re-deriving the staging protocol - and staging is where the
+extension's worst bugs have lived.
+
+Note that these 2,388 lines already satisfy the campaign's fallback rule: they
+are in FoolishKit, not in a view, so nothing here is stranded in the extension.
+The question is reuse, not rescue.
