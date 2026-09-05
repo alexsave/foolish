@@ -54,20 +54,32 @@ public struct FHandFan: View {
     /// Cards currently in overlay flight (a draw landing) — rendered invisible so
     /// only the flying ghost shows.
     public let hidden: Set<String>
-    /// Round-5 M5b ("in the collapsed view, show only the top half of the
-    /// cards"): how much of each hand card to hide off the bottom edge, as a
-    /// CONTINUOUS fraction — 0 shows the whole card (the full board), 1 reserves
-    /// only the top half so the lower half falls past the drawer's bottom edge
-    /// (the compact drawer). Any value between the two is a partly-descended
-    /// card, which is what lets `MessageTableView` drive this off its continuous
-    /// `collapse` fraction so the hand slides DOWN smoothly as the drawer height
-    /// changes (round-6 bugs 2/4 — the self cards "gradually go down as we
-    /// collapse") instead of the card height halving in one frame at a single
-    /// height threshold. Round-6: this replaced the old `topHalfOnly: Bool`; the
-    /// Bool is still accepted as an init convenience (it maps to 0 or 1) so every
-    /// pre-existing call site (TableView, GalleryView, the snapshot tests) keeps
-    /// rendering exactly the full-height card it always did.
-    public let crop: CGFloat
+    // THE HAND IS NEVER CROPPED, and round 43 deleted the ability to ask for
+    // it. This is the reasoning that must outlive the parameter, because the
+    // idea is an obvious one to have again.
+    //
+    // Round-5 M5b cropped the fan in the compact drawer - the card drawn whole
+    // and pushed down so its lower half fell past the drawer's edge - and
+    // round 6 made it a continuous fraction so the hand descended smoothly with
+    // the collapse. It bought the compact drawer ~36pt of table, and ROUND 11
+    // measured what it cost:
+    //
+    //   * the hand LANDED SOMEWHERE ELSE. A cropped card is drawn full height,
+    //     top-aligned in a half-height slot, so cropping slides the cards down
+    //     past their own container - filmed at y=760 expanded, y=791 compact.
+    //   * the CHROME landed somewhere else in the other direction, since the
+    //     buttons float a hand-height above the board's bottom.
+    //   * the BOUNCE. The host does not hand over a monotone height ramp; one
+    //     filmed collapse reported 748, 315, 307, 778, 758, 253, 315. Every one
+    //     of those was a different crop, so the hand and the chrome chased the
+    //     noise under the card spring and RANG.
+    //
+    // So round 11 pinned the board's crop at 0 and the parameter has carried a
+    // constant ever since, with the compact drawer paying 36pt of table for a
+    // hand and a chrome whose geometry does not mention the drawer height at
+    // all. Round 43 removes the parameter itself: a crop driven from live
+    // geometry is not a feature this board may have, and a knob nobody may turn
+    // is worse than no knob - it reads as available.
     /// Round-5 finding 5 ("the little mid-drag text... should be centered
     /// horizontally on the card(s)"): the dragged card's own LIVE visual centre
     /// in `boardSpace`, delivered on every `onDragChanged` alongside the raw
@@ -108,7 +120,6 @@ public struct FHandFan: View {
                 onDragChanged: @escaping (Card, CGPoint) -> Void = { _, _ in },
                 onDragEnded: @escaping (Card, CGPoint) -> Void = { _, _ in },
                 namespace: Namespace.ID? = nil, hidden: Set<String> = [],
-                topHalfOnly: Bool = false, crop: CGFloat? = nil,
                 onDragCardMoved: @escaping (CGPoint) -> Void = { _ in },
                 reserveNoSlot: Set<String> = [], instantExit: Bool = false,
                 initialOrder: [String] = [],
@@ -124,10 +135,6 @@ public struct FHandFan: View {
         self.onDragEnded = onDragEnded
         self.namespace = namespace
         self.hidden = hidden
-        // `crop` wins when a caller passes a continuous value (the compact
-        // drawer, off its collapse fraction); otherwise the `topHalfOnly` Bool
-        // maps to the two endpoints, so every existing call site is unchanged.
-        self.crop = crop ?? (topHalfOnly ? 1 : 0)
         self.onDragCardMoved = onDragCardMoved
         self.reserveNoSlot = reserveNoSlot
         // Round-8 #4: seed the cosmetic order from the caller's persisted copy.
@@ -230,9 +237,6 @@ public struct FHandFan: View {
     /// simply falls off the bottom — see `cardView`). Continuous between the two
     /// so the compact drawer can drive it off a smooth collapse fraction and the
     /// hand descends gradually (round-6 bugs 2/4) instead of halving in one frame.
-    static func shownCardHeight(crop: CGFloat) -> CGFloat {
-        Self.cardH * (1 - 0.5 * max(0, min(1, crop)))
-    }
     private static let maxCardW: CGFloat = 52   // never wider than ~proper aspect, so cards never go "superwide"
     private static let gap: CGFloat = 4
     private static var rowH: CGFloat { cardH + 8 }
@@ -312,32 +316,23 @@ public struct FHandFan: View {
         return [first, count - first]
     }
 
-    /// The fan's total on-screen height at `availableWidth` — one row (full
-    /// `rowH`, or half that under `topHalfOnly` — round-5 M5b) normally, or two
-    /// such rows stacked with `rowGap` between once M6 splits the hand. Public
+    /// The fan's total on-screen height at `availableWidth` — one row (`rowH`)
+    /// normally, or two such rows stacked with `rowGap` between once M6 splits
+    /// the hand. Public
     /// and static so MessageTableView can reserve exactly this much room above
     /// the hand (see its `handLift`) instead of guessing at a second constant.
-    public static func height(cards: [Card], availableWidth: CGFloat, crop: CGFloat) -> CGFloat {
-        Self.height(count: cards.count, availableWidth: availableWidth, crop: crop)
+    public static func height(cards: [Card], availableWidth: CGFloat) -> CGFloat {
+        Self.height(count: cards.count, availableWidth: availableWidth)
     }
 
     /// Count-only form, for the same reason as `rowCount(count:)`.
-    public static func height(count: Int, availableWidth: CGFloat, crop: CGFloat) -> CGFloat {
-        let oneRow = Self.shownCardHeight(crop: crop) + 8
+    public static func height(count: Int, availableWidth: CGFloat) -> CGFloat {
+        let oneRow = Self.cardH + 8
         return Self.rowCount(count: count, availableWidth: availableWidth) == 2 ? oneRow * 2 + Self.rowGap : oneRow
     }
 
-    /// `topHalfOnly` convenience overload — the pre-round-6 spelling, kept so
-    /// TableView/GalleryView/the snapshot tests that reserve room off this
-    /// function compile unchanged. `false` → crop 0 (full card), `true` → crop 1
-    /// (top half), so every pinned number in Round5BoardTests still holds exactly.
-    public static func height(cards: [Card], availableWidth: CGFloat, topHalfOnly: Bool = false) -> CGFloat {
-        Self.height(cards: cards, availableWidth: availableWidth, crop: topHalfOnly ? 1 : 0)
-    }
-
     /// The resting SLOT rect of every card in a hand of `cards`, laid out in a
-    /// container `width` wide at collapse `crop` — the geometry `body` renders,
-    /// keyed by card.
+    /// container `width` wide — the geometry `body` renders, keyed by card.
     ///
     /// Round-7 ("fix this once and for all"): an overlay flight into the hand
     /// needs the card's FINAL slot as its landing target. Reading it off the live
@@ -357,8 +352,8 @@ public struct FHandFan: View {
     /// step just opened) - the incoming card sits at the END, exactly where the
     /// fan puts a freshly dealt card, so its slot matches even if the player has
     /// cosmetically reordered the cards already in hand.
-    public static func slotRects(cards: [Card], width: CGFloat, crop: CGFloat) -> [String: CGRect] {
-        let frames = Self.slotFrames(count: cards.count, width: width, crop: crop)
+    public static func slotRects(cards: [Card], width: CGFloat) -> [String: CGRect] {
+        let frames = Self.slotFrames(count: cards.count, width: width)
         guard frames.count == cards.count else { return [:] }
         var out: [String: CGRect] = [:]
         for (i, card) in cards.enumerated() { out[card.identity] = frames[i] }
@@ -380,7 +375,7 @@ public struct FHandFan: View {
     /// from these rects makes a row change an ordinary change of offset, which
     /// animates like every other slide in the fan, and leaves exactly one copy of
     /// the arithmetic for the flight targeting and the layout to share.
-    public static func slotFrames(count: Int, width: CGFloat, crop: CGFloat) -> [CGRect] {
+    public static func slotFrames(count: Int, width: CGFloat) -> [CGRect] {
         guard width > 0, count > 0 else { return [] }
         let rows = Self.rowSizes(count: count, availableWidth: width)
         // ONE card width for BOTH rows, sized by the FULLER row - sizing each row
@@ -391,8 +386,8 @@ public struct FHandFan: View {
         // the fuller one was true only while the cut was a ceil, and would have
         // sized an 11-card hand off 5 and then overflowed the row of 6.
         let cardW = Self.singleRowCardWidth(count: rows.max() ?? count, availableWidth: width)
-        let cardH = Self.shownCardHeight(crop: crop)
-        let containerH = Self.height(count: count, availableWidth: width, crop: crop)
+        let cardH = Self.cardH
+        let containerH = Self.height(count: count, availableWidth: width)
         let stackH = CGFloat(rows.count) * cardH + CGFloat(rows.count - 1) * Self.rowGap
         let vTop = (containerH - stackH) / 2
         var out: [CGRect] = []
@@ -682,8 +677,8 @@ public struct FHandFan: View {
             // it is zero and these are exactly the rects `slotRects` publishes
             // for flights to aim at.
             let dy = (geo.size.height - Self.height(count: laid.count,
-                                                    availableWidth: width, crop: crop)) / 2
-            let slots = Self.slotFrames(count: laid.count, width: width, crop: crop)
+                                                    availableWidth: width)) / 2
+            let slots = Self.slotFrames(count: laid.count, width: width)
                 .map { $0.offsetBy(dx: 0, dy: dy) }
             ZStack(alignment: .topLeading) {
                 // A bed, so the stack fills the container even when the hand is
@@ -719,8 +714,7 @@ public struct FHandFan: View {
         // reproduces the pre-M6 default (one full-width row) until the real
         // number arrives a paint later.
         .frame(height: Self.height(cards: cards.filter { !reserveNoSlot.contains($0.identity) },
-                                   availableWidth: measuredWidth > 0 ? measuredWidth : .greatestFiniteMagnitude,
-                                   crop: crop))
+                                   availableWidth: measuredWidth > 0 ? measuredWidth : .greatestFiniteMagnitude))
         // Round-5 M6: measure this view's own proposed WIDTH once — see
         // `measuredWidth`'s doc — so the `.frame(height:)` just above can size
         // itself for a possibly-two-row hand. Unaffected by whatever height
@@ -780,21 +774,14 @@ public struct FHandFan: View {
               disabled: disabled.contains(card.identity),
               trump: trumpSuit != nil && card.suit == trumpSuit,
               size: CGSize(width: slot.width, height: Self.cardH))
-            // Round-5 M5b: the compact drawer shows only the TOP HALF of each
-            // hand card. The card is drawn WHOLE and pushed DOWN so its lower
-            // half falls past the drawer's own bottom edge — it is NOT cut in
-            // half. The first attempt did literally clip each card to cardH/2,
-            // which put a hard horizontal edge across every card mid-face
-            // (owner, on device: "don't ACTUALLY crop the cards, just move them
-            // down so that we only see the top half. right now they look
-            // fucking ridiculous"). Reserving half the height with a .top
-            // alignment and NO `.clipped()` gets the same compactness from a
-            // real card that happens to be partly off-screen — which is what a
-            // hand of cards held below the edge of a table actually looks like.
-            //
-            // The touch target follows the RESERVED half (`.contentShape`
-            // below sizes to this frame), which is exactly the part you can
-            // see and therefore the only part you could sensibly aim at.
+            // The slot IS the card now that the crop is gone (round 43), so
+            // `.top` is a no-op kept for shape: it says the card hangs from the
+            // top of its slot, which is what made a cropped hand read as cards
+            // held below the edge of a table rather than cards cut in half.
+            // Whatever reintroduces a crop wants this alignment, not a
+            // `.clipped()` - the owner on the one build that did clip: "don't
+            // ACTUALLY crop the cards, just move them down so that we only see
+            // the top half. right now they look fucking ridiculous".
             // Round-16: the width is pinned as well as the height, so this
             // card's layout rect IS its slot - the stack places it absolutely
             // now, and the frame it publishes through `HandCardFramesKey` is
@@ -902,15 +889,15 @@ public struct FHandFan: View {
                         // `handCardFramesSelf`), which is round-6 bug 5.
                         let centre = CGPoint(x: g.location.x + grabSlot.width,
                                              y: g.location.y + grabSlot.height)
-                        // `crop` matters for the HINT: the slot is
-                        // `shownCardHeight` tall while the card is drawn full
-                        // `cardH` tall and TOP-aligned in it, so the card's
-                        // visible middle sits half the cropped-away part lower
-                        // than the slot's. The reorder wants the slot centre, the
-                        // pill wants the visible one (round-5 finding 5, round-6
-                        // bug 13 - the flight starts where the finger let go).
-                        let cropDrop = (Self.cardH - Self.shownCardHeight(crop: crop)) / 2
-                        onDragCardMoved(CGPoint(x: centre.x, y: centre.y + cropDrop))
+                        // This used to add a `cropDrop`: under a crop the slot
+                        // was shorter than the card and the card hung top-aligned
+                        // in it, so the card's VISIBLE middle sat lower than the
+                        // slot's centre - the reorder wants the slot's, the hint
+                        // pill and the takeoff want the visible one (round-5
+                        // finding 5, round-6 bug 13). With the crop gone (round
+                        // 43) the slot IS the card and that correction is
+                        // identically zero, so the two centres are one point.
+                        onDragCardMoved(centre)
                         // A TAP MUST NEVER REORDER. `minimumDistance: 0` means
                         // onChanged fires the instant a finger lands, before it
                         // has moved at all, so an ungated reorder ran on every

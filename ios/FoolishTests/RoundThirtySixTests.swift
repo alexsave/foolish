@@ -26,20 +26,20 @@ final class HandLandingAnchorTests: XCTestCase {
 
         // The STALE frame: the one-row box the hand had before the pickup, sat
         // on the board's bottom edge at y = 500.
-        let oneRow = FHandFan.height(count: 6, availableWidth: width, crop: 0)
+        let oneRow = FHandFan.height(count: 6, availableWidth: width)
         let stale = CGRect(x: 0, y: 500 - oneRow, width: width, height: oneRow)
         // The frame the hand will actually have once it has two rows. Same
         // bottom edge - that is the whole point.
-        let twoRow = FHandFan.height(count: 11, availableWidth: width, crop: 0)
+        let twoRow = FHandFan.height(count: 11, availableWidth: width)
         let settled = CGRect(x: 0, y: 500 - twoRow, width: width, height: twoRow)
         XCTAssertEqual(stale.maxY, settled.maxY)
         XCTAssertGreaterThan(twoRow - oneRow, 80, "the two boxes really are a row apart")
 
-        let slots = FHandFan.slotRects(cards: cards, width: width, crop: 0)
+        let slots = FHandFan.slotRects(cards: cards, width: width)
         for c in cards {
             let local = try! XCTUnwrap(slots[c.identity])
             let aimed = MessageTableView.inBoardSpace(local, laidOutCount: cards.count,
-                                                      handFrame: stale, crop: 0)
+                                                      handFrame: stale)
             let truth = local.offsetBy(dx: settled.minX, dy: settled.minY)
             XCTAssertEqual(aimed.midX, truth.midX, accuracy: 0.01, "\(c.identity)")
             XCTAssertEqual(aimed.midY, truth.midY, accuracy: 0.01,
@@ -55,14 +55,14 @@ final class HandLandingAnchorTests: XCTestCase {
     func testAnAlreadySettledFrameIsUnchanged() {
         let width: CGFloat = 340
         let cards = (0..<5).map { Card(s: 0, v: $0 + 2) }
-        let h = FHandFan.height(count: cards.count, availableWidth: width, crop: 0)
+        let h = FHandFan.height(count: cards.count, availableWidth: width)
         let frame = CGRect(x: 12, y: 400, width: width, height: h)
-        let slots = FHandFan.slotRects(cards: cards, width: width, crop: 0)
+        let slots = FHandFan.slotRects(cards: cards, width: width)
         for c in cards {
             let local = try! XCTUnwrap(slots[c.identity])
             XCTAssertEqual(
                 MessageTableView.inBoardSpace(local, laidOutCount: cards.count,
-                                              handFrame: frame, crop: 0),
+                                              handFrame: frame),
                 local.offsetBy(dx: frame.minX, dy: frame.minY))
         }
     }

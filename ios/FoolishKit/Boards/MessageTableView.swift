@@ -195,7 +195,7 @@ public struct MessageTableView: View {
         if buttonLift >= 0 { return buttonLift }
         let hand = Self.fanCards(controller.view?.me?.hand ?? [], holding: handHoldback)
         guard handFrame.width > 0 else { return 0 }
-        return FHandFan.height(cards: hand, availableWidth: handFrame.width, crop: Self.handCrop)
+        return FHandFan.height(cards: hand, availableWidth: handFrame.width)
     }
     @State private var deckFrame: CGRect = .zero
     /// MY CARDS THAT THIS OPEN-REPLAY HAS NOT FLOWN OUT OF MY HAND YET.
@@ -692,8 +692,8 @@ public struct MessageTableView: View {
                 let display = FHandFan.displayOrder(
                     cards: hand,
                     order: MessageGameStore.shared.handOrder(gameId: controller.gameIdString))
-                let rects = FHandFan.slotRects(cards: display, width: handFrame.width,
-                                               crop: Self.handCrop)
+                let rects = FHandFan.slotRects(cards: display, width: handFrame.width)
+
                 var worst = 0.0, worstId = ""
                 for c in hand {
                     // Placed by the SAME rule the flights use (`inBoardSpace`,
@@ -707,7 +707,7 @@ public struct MessageTableView: View {
                     // survives this change: the 391pt collapse gap still reads.
                     guard let a = rects[c.identity].map({
                               Self.inBoardSpace($0, laidOutCount: display.count,
-                                                handFrame: handFrame, crop: Self.handCrop) }),
+                                                handFrame: handFrame) }),
                           let m = $0[c.identity] else { continue }
                     let d = max(abs(a.midX - m.midX), abs(a.midY - m.midY))
                     if d > worst { worst = d; worstId = c.identity }
@@ -956,8 +956,8 @@ public struct MessageTableView: View {
             // replay and drops once, with the hand, rather than floating up
             // card by card. Empty everywhere else, so nothing else moves.
             let handHeight = FHandFan.height(cards: Self.fanCards(myHand, holding: handHoldback),
-                                             availableWidth: handWidth,
-                                             crop: Self.handCrop)
+                                             availableWidth: handWidth)
+
             // The buttons/role mark ride THIS, mirrored out via `.onChange` below so
             // their movement is a snap, never the board spring (see `buttonLift`).
             // Until the first mirror lands (-1) they read `handHeight` directly, so a
@@ -1106,7 +1106,7 @@ public struct MessageTableView: View {
 
                 // My hand hugs the bottom (web: bottom max(10, safe-area)); the
                 // outer .padding(12) is the safe-area inset that keeps it unclipped.
-                hand(view, crop: Self.handCrop, reserveNoSlot: deferredSlots)
+                hand(view, reserveNoSlot: deferredSlots)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
 
                 // note 33 / round-4 note 4 / round-5 finding 5: the verb hint
@@ -1284,39 +1284,12 @@ public struct MessageTableView: View {
                        y: y - dragHintLift >= dragHintMinY ? y - dragHintLift : y + dragHintLift)
     }
 
-    /// How much of each hand card the board hides off the bottom. A CONSTANT,
-    /// and the reason it is one is round-11.
-    ///
-    /// This used to be the live `collapseFraction`: the compact drawer showed
-    /// the top half of every card (crop 1), the expanded board the whole card
-    /// (crop 0). That is a 36pt change in the hand's reserved height, and it
-    /// bought the compact drawer 36pt of table - but it is ALSO, measurably,
-    /// every vertical defect the owner reported in the collapse:
-    ///
-    /// * The hand LANDED SOMEWHERE ELSE. A cropped card is drawn full height,
-    ///   top-aligned in a half-height slot, so cropping slides the cards down
-    ///   past their own container. Filmed: the hand's top edge rested at y=760
-    ///   expanded and y=791 compact.
-    /// * The chrome landed somewhere else too, in the other direction. The
-    ///   buttons float `handHeight` above the board's bottom, so a hand that
-    ///   reserves 36pt less pulls them down 36pt - reading as the buttons and
-    ///   the hand drifting APART across the transition.
-    /// * The BOUNCE. The host does not hand us a monotone height ramp; it
-    ///   re-lays the board out at whatever intermediate (and out-of-order)
-    ///   sizes the drawer animation passes through - one filmed collapse
-    ///   reported 748, 315, 307, 778, 758, 253, 315. Every one of those was a
-    ///   different crop, so the hand and the chrome chased the noise, under the
-    ///   card spring, and rang: the hand's top edge went 807, 763, 767, 776,
-    ///   790, 793, 787, 790 before settling.
-    ///
-    /// Pinning the crop makes all three impossible rather than smaller: the
-    /// hand and the chrome now have geometry that does not mention the drawer
-    /// height at all, so there is nothing to interpolate, nothing to ring, and
-    /// the resting expanded and compact layouts are the same layout. The
-    /// compact drawer pays 36pt of table for it. `FHandFan` keeps the crop
-    /// parameter (it is tested, and a short drawer is exactly the case it was
-    /// built for) - this board simply no longer drives it from live geometry.
-    static let handCrop: CGFloat = 0
+    // (round 43: `handCrop` is gone. It was a `static let ... = 0` and every
+    // geometry call passed it. Round 11 pinned it at 0 after measuring what a
+    // live crop cost - the hand landing 31pt lower, the chrome drifting the
+    // other way, and both ringing across a collapse the host does not ramp
+    // monotonically. FHandFan carries that finding now, beside the parameter it
+    // justified removing.)
 
     /// The board's CONTINUOUS collapse fraction from its own height: 0 at/above
     /// `expandedAnchor` (the resting expanded board), 1 at/below `compactAnchor`
@@ -3925,7 +3898,7 @@ public struct MessageTableView: View {
     /// live frame / a rough spread).
     private func handLandingSlot(_ card: Card, laidOut: [Card]) -> CGRect? {
         guard handFrame != .zero else { return nil }
-        let rects = FHandFan.slotRects(cards: laidOut, width: handFrame.width, crop: Self.handCrop)
+        let rects = FHandFan.slotRects(cards: laidOut, width: handFrame.width)
         guard let local = rects[card.identity] else { return nil }
         // ANCHOR ON THE FAN'S BOTTOM EDGE, NEVER ITS TOP.
         //
@@ -3963,8 +3936,7 @@ public struct MessageTableView: View {
         // catch up. Tried and rejected before: waiting a paint before building
         // (that is the "make-room THEN flight" the owner rejected) and snapping
         // the fan open (the "cards jump" they rejected before that).
-        return Self.inBoardSpace(local, laidOutCount: laidOut.count, handFrame: handFrame,
-                                 crop: Self.handCrop)
+        return Self.inBoardSpace(local, laidOutCount: laidOut.count, handFrame: handFrame)
     }
 
     /// The pure half of `handLandingSlot`: a container-local slot rect placed
@@ -3974,9 +3946,9 @@ public struct MessageTableView: View {
     /// without a board - which matters here more than usual, because the two
     /// readings differ by a whole row and both look equally plausible in a diff.
     static func inBoardSpace(_ local: CGRect, laidOutCount: Int,
-                             handFrame: CGRect, crop: CGFloat) -> CGRect {
+                             handFrame: CGRect) -> CGRect {
         let willBe = FHandFan.height(count: laidOutCount,
-                                     availableWidth: handFrame.width, crop: crop)
+                                     availableWidth: handFrame.width)
         return local.offsetBy(dx: handFrame.minX, dy: handFrame.maxY - willBe)
     }
 
@@ -4048,11 +4020,10 @@ public struct MessageTableView: View {
     private func handSlotsNow(_ view: GameView) -> [String: CGRect] {
         guard handFrame != .zero else { return handCardFrames }
         let laid = laidOutHandNow(view)
-        let local = FHandFan.slotRects(cards: laid, width: handFrame.width, crop: Self.handCrop)
+        let local = FHandFan.slotRects(cards: laid, width: handFrame.width)
         guard !local.isEmpty else { return handCardFrames }
         return local.mapValues {
-            Self.inBoardSpace($0, laidOutCount: laid.count, handFrame: handFrame,
-                              crop: Self.handCrop)
+            Self.inBoardSpace($0, laidOutCount: laid.count, handFrame: handFrame)
         }
     }
 
@@ -4980,7 +4951,7 @@ public struct MessageTableView: View {
     ///   card to hide off the bottom — 0 the whole card (expanded), 1 the top
     ///   half (fully compact drawer), any value between as the drawer collapses.
     ///   See `boardContent`'s `collapse`.
-    private func hand(_ view: GameView, crop: CGFloat, reserveNoSlot: Set<String>) -> some View {
+    private func hand(_ view: GameView, reserveNoSlot: Set<String>) -> some View {
         // A held-back card is veiled (its TABLE copy must stay invisible until
         // its ghost lands), so the hand has to un-veil its own copy or the fan
         // would reserve the slot and draw nothing - a gap where the card is.
@@ -4997,7 +4968,6 @@ public struct MessageTableView: View {
                  onDragChanged: { card, point in onDragChanged(card, at: point) },
                  onDragEnded: { card, point in onDragEnded(card, at: point, view) },
                  hidden: veiledCardIds.subtracting(handHoldback.map(\.identity)),
-                 crop: crop,
                  onDragCardMoved: { center in dragCardCenter = center },
                  reserveNoSlot: reserveNoSlot, instantExit: true,
                  // Round-8 #4: a sorted hand survives closing and reopening the

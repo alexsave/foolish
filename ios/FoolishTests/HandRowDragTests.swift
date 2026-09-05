@@ -27,7 +27,7 @@ final class HandRowDragTests: XCTestCase {
     private let width: CGFloat = 340
 
     private func slots(_ n: Int) -> [CGRect] {
-        FHandFan.slotFrames(count: n, width: width, crop: 0)
+        FHandFan.slotFrames(count: n, width: width)
     }
     private func centre(_ slot: CGRect) -> CGPoint { CGPoint(x: slot.midX, y: slot.midY) }
 

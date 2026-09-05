@@ -71,7 +71,7 @@ final class HandRearrangeDropTests: XCTestCase {
     /// Every slot centre of the measured two-row hand, not just the one that
     /// happened to be over a battle - the rule is about the hand, not about slot 4.
     func testNoRestingSlotInTheCompactHandCanPlayACard() {
-        let slots = FHandFan.slotFrames(count: 20, width: hand.width, crop: 0)
+        let slots = FHandFan.slotFrames(count: 20, width: hand.width)
         XCTAssertEqual(FHandFan.rowCount(count: 20, availableWidth: hand.width), 2,
                        "the fixture is the TWO-ROW hand; a one-row hand never overlaps")
         for (i, s) in slots.enumerated() {
