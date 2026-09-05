@@ -806,15 +806,14 @@ final class HarnessModel: ObservableObject {
             // the one-time name gate intercepts before the board (this is a
             // screenshot helper, not the join flow).
             MessageGameStore.shared.nickname = participants[actor].name
-            // N>=3: a non-sender with no cache is §6.3 ambiguous (would show the
-            // seat picker). Pre-cache the viewer's seat so the board shows directly.
-            if let env = try? await MessageEnvelope.decode(payload: payload, viewer: actor) {
-                let names = Dictionary(env.joins.map { ($0.seat, $0.name) }, uniquingKeysWith: { a, _ in a })
-                MessageGameStore.shared.put(MessageGameRecord(
-                    gameId: env.gameId, chatKey: chatKey, mySeat: actor, nPlayers: env.nPlayers, round: env.round,
-                    turn: env.turn, phase: env.phase, finished: false, names: names,
-                    payloadBase32: Base32.encode(payload), updatedAt: 1))
-            }
+            // N>=3: a non-sender is §6.3 ambiguous on the numbers alone (it would
+            // show the seat picker). What seats this viewer directly is the
+            // nickname written just above: it matches this seat's name in the
+            // chain's own roster, and `SeatIdentity.seatClaimedByName` resolves
+            // on that before anything else. This used to ALSO write a
+            // `MessageGameRecord` "pre-cache" here; that store went inert in
+            // round 7 and is deleted now, so the line was doing nothing and the
+            // by-name path is what has been carrying the scenario all along.
         } catch {
             // leave the harness on the New-game screen if seeding fails
         }

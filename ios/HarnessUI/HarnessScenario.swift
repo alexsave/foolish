@@ -505,18 +505,18 @@ extension HarnessModel {
             await deliverSealed(payload, senderSeat: lastSeat)
             // Seat the viewer explicitly - this rig is about the BOARD, not
             // about re-testing seat inference (which `seatpick` covers). The
-            // store has to be written AFTER `become` rebinds to that
-            // participant's own suite, then `become` again so the view reloads
-            // with the cache in place.
+            // nickname has to be written AFTER `become` rebinds to that
+            // participant's own suite (each fake player has their own), then
+            // `become` again so the view reloads with it in place: the name it
+            // stores is this seat's name in the chain's roster, which is what
+            // `SeatIdentity.seatClaimedByName` resolves the seat from.
+            //
+            // A `MessageGameRecord` "pre-cache" used to be written alongside
+            // the nickname here. That store went inert in round 7 and is
+            // deleted now; the by-name resolution above is what actually seats
+            // this rig, and always was.
             become(seat)
             MessageGameStore.shared.nickname = Self.nameFor(seat)
-            if let env = try? await MessageEnvelope.decode(payload: payload, viewer: seat) {
-                MessageGameStore.shared.put(MessageGameRecord(
-                    gameId: env.gameId, chatKey: chatKey, mySeat: seat, nPlayers: env.nPlayers,
-                    round: env.round, turn: env.turn, phase: env.phase, finished: false,
-                    names: Dictionary(env.joins.map { ($0.seat, $0.name) }, uniquingKeysWith: { a, _ in a }),
-                    payloadBase32: Base32.encode(payload), updatedAt: 1))
-            }
             become(seat)
             expand()
         } catch {}

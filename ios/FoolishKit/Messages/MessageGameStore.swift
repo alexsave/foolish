@@ -6,15 +6,29 @@
 // degrades to "nothing stored", never a crash.
 //
 // ROUND 7 (owner: "if we are storing anything other than the player nickname I
-// strongly suggest removing it — the last text has everything we need to animate
+// strongly suggest removing it - the last text has everything we need to animate
 // the last move; the cache seems to only be hurting us"): the thing that could
-// make the extension render something OTHER than the tapped bubble — the
-// PREFERRED-CHAIN payload cache + its denormalized display fields (Rule P §7.2) —
+// make the extension render something OTHER than the tapped bubble - the
+// PREFERRED-CHAIN payload cache + its denormalized display fields (Rule P §7.2) -
 // is GONE. The router now always renders exactly the bubble you tapped, and the
-// last-move animation was already derived from that bubble alone. `put`/`record`/
-// `games`/`remove` are retained as inert stubs so the §5/§6/§7 call sites keep
-// compiling and simply behave as "nothing cached", which those paths were always
-// written to survive.
+// last-move animation was already derived from that bubble alone.
+//
+// Round 7 left the SHAPE of that cache behind - `MessageGameRecord`, `put`,
+// `record`, `games`, `remove`, over an `all()` that returned an empty map and a
+// `persist` that wrote nowhere - so the §5/§6/§7 call sites would keep compiling
+// and simply read as "nothing cached". No production path ever called any of it
+// again, so it is now DELETED outright. Kept as no-ops it cost nothing at
+// runtime and a reader every time: a `put` that stores nothing and a `record`
+// that always returns nil describe a cache this extension does not have, and
+// two tests were green against scenarios they only appeared to set up with it.
+// Its `fmsg.games.v2` key goes too; blobs written under it before round 7 are
+// simply never read again, which is the same "purely an optimization, §6/§7
+// survive its total loss" guarantee the top of this file promises.
+// Removed with it: `lobbyCachePreferred`, the note-15 comparison that let a
+// CACHED later phase out-rank a tapped WAITING invite. Round 7 settled that
+// question the other way (the tapped bubble always wins, and
+// MessageSurfaceRouterTests proves it), and its `cachedPhase` argument had no
+// remaining production source once the record cache was inert.
 //
 // What the store still keeps, all device-local and none of it touching what the
 // board renders/animates:
@@ -28,46 +42,18 @@
 
 import Foundation
 
-/// One game's cached row. Denormalized display fields (round/turn/phase/names)
-/// let the drawer list render WITHOUT decoding each chain (decoding adopts, §7.3,
-/// so it must not happen just to draw a list). `payloadBase32` is the preferred
-/// chain itself, for Rule P.
+/// Round 7: the whole of what the store keeps per game now - the seat this device
+/// holds, scoped to the chat it was claimed in.
 ///
 /// `chatKey` is the conversation this row belongs to (`ChatKey.make` over the
-/// conversation's whole participant set — see that type for why the local
+/// conversation's whole participant set - see that type for why the local
 /// participant identifier ALONE is not a conversation identity). Without it
-/// `games()` was device-wide: opening the extension in chat B with no bubble
-/// selected could resolve `.known` off chat A's cached seat and stage chat A's
-/// deal-seed-bearing payload into chat B, leaking chat A players' hands to chat
-/// B's participants. Every read below is scoped by this field for that reason.
-public struct MessageGameRecord: Codable, Equatable, Sendable {
-    public var gameId: String
-    public var chatKey: String
-    public var mySeat: Int
-    public var nPlayers: Int
-    public var round: Int
-    public var turn: Int
-    public var phase: Int              // 0 WAITING · 1 ACCEPT · 2 LIVE · 3 FINISHED
-    public var finished: Bool
-    public var names: [Int: String]
-    public var payloadBase32: String   // the preferred chain (URL body), for Rule P
-    public var updatedAt: Double        // seconds since 1970; newest sorts first in the drawer
-
-    public init(gameId: String, chatKey: String, mySeat: Int, nPlayers: Int, round: Int, turn: Int,
-                phase: Int, finished: Bool, names: [Int: String],
-                payloadBase32: String, updatedAt: Double) {
-        self.gameId = gameId; self.chatKey = chatKey; self.mySeat = mySeat; self.nPlayers = nPlayers
-        self.round = round; self.turn = turn; self.phase = phase
-        self.finished = finished; self.names = names
-        self.payloadBase32 = payloadBase32; self.updatedAt = updatedAt
-    }
-
-    public func name(_ seat: Int) -> String { names[seat] ?? "Seat \(seat + 1)" }
-}
-
-/// Round 7: the whole of what the store keeps per game now — the seat this device
-/// holds, scoped to the chat it was claimed in (a device-wide seat could seat you
-/// into another conversation's game; see `MessageGameRecord`'s chatKey note).
+/// every per-game read was device-wide: opening the extension in chat B with no
+/// bubble selected could resolve `.known` off chat A's cached seat and stage
+/// chat A's deal-seed-bearing payload into chat B, leaking chat A players'
+/// hands to chat B's participants. That rationale outlived the row it was
+/// written for (the deleted `MessageGameRecord`) and is why `seat(gameId:
+/// chatKey:)` is scoped.
 public struct SeatRow: Codable, Equatable, Sendable {
     public var chatKey: String
     public var seat: Int
@@ -96,17 +82,6 @@ public final class MessageGameStore {
     }
 
     private let defaults: UserDefaults?
-    // v1 -> v2: `MessageGameRecord` gained a required `chatKey` field (the chat-
-    // scoping security fix — see the type doc). Swift's synthesized Codable does
-    // NOT fall back to a default when a key is missing, it throws — so a v1 blob
-    // would decode every row to nil and `all()` would silently drop them, which
-    // reads the same as "cache lost" (harmless) EXCEPT it would do so non-
-    // deterministically depending on what happened to be cached at upgrade time.
-    // Bumping the storage key instead makes old blobs simply invisible, always,
-    // which is the same "purely an optimization, §6/§7 survive its total loss"
-    // guarantee the file header already promises — cheaper and more honest than
-    // a custom decoder just to preserve rows that carry no chatKey to be correct.
-    private let key = "fmsg.games.v2"
     // Round-8 #4: the local player's cosmetic hand arrangement, per game (see
     // the "hand order" section below).
     private let handOrderKey = "fmsg.handorder.v1"
@@ -368,65 +343,6 @@ public final class MessageGameStore {
         defaults?.set(data, forKey: latestKey)
     }
 
-    /// ROUND 7: the preferred-chain record is gone; nothing is stored per game but
-    /// the seat (`seat(gameId:chatKey:)`). Retained as a no-op returning nil so the
-    /// §5/§6/§7 call sites compile and behave as "nothing cached".
-    public func record(gameId: String, chatKey: String) -> MessageGameRecord? { nil }
-
-    /// Rule P extended to lobby (phase-0/WAITING) bubbles (note 15,
-    /// HARNESS_NOTES_R2). A WAITING envelope is otherwise exempt from Rule P's
-    /// round/turn comparison — every lobby sits at round 0/turn 0, so that
-    /// comparison is meaningless — but a STALE WAITING invite can still be
-    /// tapped after the SAME game has since gone LIVE or FINISHED elsewhere,
-    /// and every WAITING envelope renders as an open lobby regardless of how
-    /// many actually joined (`createWaiting`'s doc in MessagesRootView.swift),
-    /// so a stale one rendered a phantom full lobby instead of the real board.
-    /// True means the cache is strictly newer and the caller should adopt IT
-    /// instead of showing the incoming (stale) lobby bubble. `cachedPhase` nil
-    /// means nothing is cached for this game yet, which never wins.
-    public static func lobbyCachePreferred(cachedPhase: Int?, incomingPhase: Int) -> Bool {
-        guard let cachedPhase else { return false }
-        return cachedPhase > incomingPhase
-    }
-
-    /// Every cached game IN THIS CHAT, newest first — the drawer list source
-    /// (§10 compact). Unscoped would be device-wide (the bug this type doc's
-    /// chatKey paragraph describes): reopening the extension with no bubble
-    /// selected would resolve the newest game from ANY conversation, not this
-    /// one.
-    public func games(chatKey: String) -> [MessageGameRecord] {
-        all().values.filter { $0.chatKey == chatKey }.sorted { $0.updatedAt > $1.updatedAt }
-    }
-
-    // MARK: write
-
-    /// Insert or replace a game's row. Callers pass a row they built at adopt/
-    /// seal time (they know the seat and the freshly-preferred chain); this only
-    /// persists it. Writing a row with a strictly-older `updatedAt` than what is
-    /// stored is ignored, so a late-delivered stale bubble can't roll the cache
-    /// backward (§7.2 is delivery-order-independent).
-    ///
-    /// The underlying map is still keyed by `gameId` alone, device-wide, not by
-    /// `(chatKey, gameId)` — a cross-chat gameId collision would make two
-    /// different games fight over one row. Left as-is deliberately: `gameId` is
-    /// a `UInt64.random` (createWaiting/startGenesis), so a collision is as
-    /// astronomically unlikely here as it is for the hand-order rows (§ below,
-    /// same reasoning) — every READ is chatKey-scoped regardless, so the only
-    /// consequence of the pathological collision would be one row's
-    /// `updatedAt`/eviction racing the other's, not a leak.
-    public func put(_ rec: MessageGameRecord) {
-        var map = all()
-        if let existing = map[rec.gameId], existing.updatedAt > rec.updatedAt { return }
-        map[rec.gameId] = rec
-        persist(map)
-    }
-
-    public func remove(gameId: String) {
-        var map = all()
-        guard map.removeValue(forKey: gameId) != nil else { return }
-        persist(map)
-    }
-
     // ROUND-9 (owner): the durable pending ledger (§7.4 Rule R's safety net) is
     // REMOVED - "caching has caused A LOT of problems in the past. The extension
     // is rarely killed, and it's rare that an arriving bubble can happen mid
@@ -580,13 +496,4 @@ public final class MessageGameStore {
         guard let data = try? JSONEncoder().encode(map) else { return }
         defaults?.set(data, forKey: handOrderKey)
     }
-
-    // MARK: storage (a corrupt blob is treated as empty, never thrown)
-    //
-    // ROUND 7: the preferred-chain game-record cache (Rule P) is removed. `all()`
-    // reports empty and `persist` is a no-op, so `record`/`games`/`put`/`remove`
-    // are inert — the router always renders the tapped bubble, and seat identity
-    // moved to its own `fmsg.seats.v1` store (`seat`/`setSeat` above).
-    private func all() -> [String: MessageGameRecord] { [:] }
-    private func persist(_ map: [String: MessageGameRecord]) {}
 }

@@ -142,53 +142,18 @@ final class MessageLobbyTests: XCTestCase {
         XCTAssertTrue(someoneCanPlay, "a live game has a first attacker with a legal move")
     }
 
-    // MARK: - note 15: Rule P extended to lobby (WAITING) bubbles
-
-    /// The pure comparison `MessagesRootView.load()` gates a stale-lobby
-    /// adoption on: a cached row strictly LATER than the incoming (always
-    /// phase-0) bubble wins; no cache, or nothing past WAITING, does not.
-    func testLobbyCachePreferredOnlyWhenCacheIsStrictlyLater() {
-        XCTAssertTrue(MessageGameStore.lobbyCachePreferred(cachedPhase: 2, incomingPhase: 0),
-                      "a cached LIVE game must win over a stale WAITING bubble")
-        XCTAssertTrue(MessageGameStore.lobbyCachePreferred(cachedPhase: 3, incomingPhase: 0),
-                      "a cached FINISHED game must win too")
-        XCTAssertFalse(MessageGameStore.lobbyCachePreferred(cachedPhase: 0, incomingPhase: 0),
-                       "two WAITING lobbies at the same phase: the incoming one is not stale")
-        XCTAssertFalse(MessageGameStore.lobbyCachePreferred(cachedPhase: nil, incomingPhase: 0),
-                       "nothing cached yet — the incoming lobby is all we know")
-    }
-
-    /// End-to-end: a viewer's device cached the game after it went LIVE
-    /// (mirrors GameSurface.cache(), called on every adopt), then taps a STALE
-    /// WAITING invite bubble for the SAME game. The phantom-8-player bug (note
-    /// 15) was: `env.phase == 0` returned the lobby unconditionally, with no
-    /// cache lookup at all. Proves the primitive the fix now consults would
-    /// correctly steer `load()` to adopt the cached LIVE chain instead.
-    func testStaleWaitingBubbleWouldBeSupersededByALaterCachedPhase() async throws {
-        let k = MessageKernel.shared
-        let gid: UInt64 = 903
-        try await k.newGame(seed: freshSeed(21), players: 8)
-        let waiting = try await k.seal(phase: 0, lastActorSeat: 0, gameId: gid,
-                                             parent8: Data(repeating: 0, count: 8),
-                                             joins: [MessageJoin(seat: 0, name: "Alex")])
-        let waitingEnv = try await MessageEnvelope.decode(payload: waiting, viewer: -1)
-        XCTAssertEqual(waitingEnv.phase, 0)
-
-        // The game went LIVE elsewhere (e.g. this device itself started it) and
-        // got cached at that later phase.
-        try await k.reseatResidentGame(players: 3)
-        let live = try await k.seal(phase: 2, lastActorSeat: 0, gameId: gid,
-                                          parent8: MessageTurnController.firstEight(hex: waitingEnv.digest),
-                                          joins: [MessageJoin(seat: 0, name: "Alex")])
-        let liveEnv = try await MessageEnvelope.decode(payload: live, viewer: -1)
-        XCTAssertEqual(liveEnv.phase, 2)
-
-        // The exact gate `load()` runs before showing the tapped (stale)
-        // WAITING bubble: is the cached phase strictly later?
-        XCTAssertTrue(MessageGameStore.lobbyCachePreferred(cachedPhase: liveEnv.phase,
-                                                            incomingPhase: waitingEnv.phase),
-                      "the cached LIVE game must supersede the stale WAITING invite")
-    }
+    // MARK: - note 15: Rule P extended to lobby (WAITING) bubbles - REMOVED
+    //
+    // Two tests lived here over `MessageGameStore.lobbyCachePreferred`, the
+    // comparison that let a CACHED later phase out-rank a tapped WAITING
+    // invite. Round 7 answered that question the other way round - the
+    // extension renders exactly the bubble you tapped - and deleted the cache
+    // that was the only thing which could ever supply a `cachedPhase`. The
+    // function outlived it as a pure `cachedPhase > incomingPhase` with no
+    // production caller at all, kept alive by these assertions alone, so both
+    // it and they are gone. The behaviour that replaced it is asserted in
+    // MessageSurfaceRouterTests.testAStaleLobbyBubbleRendersAsTheTappedLobby,
+    // which starts the game for real and then taps the stale invite.
 
     // MARK: - note 2: "join then start" and "join and start" are the same deal
 

@@ -4,7 +4,7 @@
 # Everything portable is already gated on Linux (.github/workflows/ios.yml):
 # the C bridge smoke test, the goldens diff, the architecture lint and the
 # Swift/TypeScript replay-names codec parity. What is left needs Xcode and a
-# simulator - 512 XCTest cases in FoolishTests plus 24 headless game-loop cases
+# simulator - 513 XCTest cases in FoolishTests plus 24 headless game-loop cases
 # in HarnessTests, ~50s together on an M-series Mac - and there is no macOS CI
 # job to run them: the repo is private, where Actions minutes are metered and
 # macOS bills at 10x Linux.

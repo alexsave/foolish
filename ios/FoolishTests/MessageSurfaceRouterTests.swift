@@ -22,19 +22,21 @@ final class MessageSurfaceRouterTests: XCTestCase {
         store = MessageGameStore(defaults: d)
     }
 
-    /// What a device caches when it acts on a chain (GameSurface.cache).
-    private func cache(_ payload: Data, env: MessageEnvelope, seat: Int, at t: Double) {
-        store.put(MessageGameRecord(
-            gameId: env.gameId, chatKey: chat, mySeat: seat, nPlayers: env.nPlayers,
-            round: env.round, turn: env.turn, phase: env.phase, finished: env.phase == 3,
-            names: [:], payloadBase32: Base32.encode(payload), updatedAt: t))
-    }
-
     /// The reported bug, as a scenario: Alex opens a lobby, Vera and Boris join,
-    /// Dima starts it at four. Boris's device has his own lobby reseal cached —
-    /// which is exactly what he was left staring at. Opening the started bubble
-    /// must give him the BOARD.
-    func testAJoinerOpeningTheStartedGameGetsTheBoardNotTheirCachedLobby() async throws {
+    /// Dima starts it at four. Boris - a JOINER, not the sender, and the person
+    /// in the screenshot who was left staring at a three-name lobby - opens the
+    /// started bubble. It must give him the BOARD.
+    ///
+    /// This used to seed "Boris's device has his own lobby reseal cached" and
+    /// name itself after it. That seeding went inert in round 7 and has now been
+    /// deleted with the cache it wrote to, so the test never built the scenario
+    /// it named: it was passing on the plain case (nothing cached at all). The
+    /// assertion is the half that was always real and is kept - a started chain
+    /// is phase 2 and phase is the whole of what picks lobby vs board, so a
+    /// LOBBY-CAPACITY 8-seat game started at four still resolves to a board.
+    /// Nothing seeds a preference any more because there is nothing left that
+    /// could hold one: the router reads the tapped bubble and nothing else.
+    func testAJoinerOpeningTheStartedGameGetsTheBoard() async throws {
         let k = MessageKernel.shared
         let gid: UInt64 = 4242
         try await k.newGame(seed: Data(repeating: 9, count: 32), players: 8)
@@ -49,11 +51,6 @@ final class MessageSurfaceRouterTests: XCTestCase {
             newest = try await k.seal(phase: 0, lastActorSeat: seat, gameId: gid,
                                       parent8: MessageTurnController.firstEight(hex: env.digest),
                                       joins: joins)
-            // Boris's device caches his own reseal — the lobby he was stuck on.
-            if seat == 2 {
-                let mine = try await MessageEnvelope.decode(payload: newest, viewer: -1)
-                cache(newest, env: mine, seat: 2, at: 100)
-            }
         }
 
         let lobbyEnv = try await MessageEnvelope.decode(payload: newest, viewer: -1)
@@ -65,15 +62,25 @@ final class MessageSurfaceRouterTests: XCTestCase {
         let screen = await MessageSurfaceRouter.resolve(payload: live, startNewGame: false,
                                                         chatKey: chat, store: store)
         XCTAssertEqual(screen, .board(payload: live),
-                       "a joiner opening the started game must get the BOARD, not the lobby they cached")
+                       "a joiner opening the started game must get the BOARD, not a lobby")
     }
 
     /// Round 7 deliberately changed the other direction (was note 15's Rule P):
-    /// tapping a STALE invite now renders that invite. Rule P — which used to
-    /// prefer a started chain the device had cached over the tapped bubble — is
-    /// gone with the preferred-chain cache, so the router always shows exactly the
-    /// bubble you tapped (owner: "the last text has everything we need"). A tapped
-    /// lobby therefore renders as a lobby, cache or no cache.
+    /// tapping a STALE invite now renders that invite. Rule P - which used to
+    /// prefer a started chain over the tapped bubble - is gone with the
+    /// preferred-chain cache, so the router shows exactly the bubble you tapped
+    /// (owner: "the last text has everything we need").
+    ///
+    /// The staleness here is REAL, not seeded: the same game is started off this
+    /// very lobby, which leaves the resident kernel holding the LIVE game (a
+    /// decode adopts, §7.3). The pair of assertions is the whole point - the
+    /// same router, moments apart, calls the live chain a board and the older
+    /// lobby chain a lobby. Which bubble you hand it is the only input; nothing
+    /// about the newer chain existing changes the older one's answer.
+    ///
+    /// This test used to seed a "cache" for the started game here and claim the
+    /// tapped lobby beat it. That write went inert in round 7 and is now
+    /// deleted, so the premise is stated the way it actually holds.
     func testAStaleLobbyBubbleRendersAsTheTappedLobby() async throws {
         let k = MessageKernel.shared
         let gid: UInt64 = 4343
@@ -81,13 +88,17 @@ final class MessageSurfaceRouterTests: XCTestCase {
         let joins = [MessageJoin(seat: 0, name: "Alex"), MessageJoin(seat: 1, name: "Vera")]
         let lobby = try await k.seal(phase: 0, lastActorSeat: 0, gameId: gid,
                                      parent8: Data(repeating: 0, count: 8), joins: joins)
-        // Even having "cached" a started game for this id, the tapped lobby wins.
+        // The game really does start, off this very lobby: the invite left in
+        // the transcript is now genuinely stale.
         let lobbyEnv = try await MessageEnvelope.decode(payload: lobby, viewer: -1)
         let live = try await k.startFromLobby(
             lobbyPayload: lobby, gameId: gid, actingSeat: 1,
             parent8: MessageTurnController.firstEight(hex: lobbyEnv.digest), joins: joins)
-        let liveEnv = try await MessageEnvelope.decode(payload: live, viewer: -1)
-        cache(live, env: liveEnv, seat: 1, at: 200)          // inert now (no preferred-chain cache)
+
+        let started = await MessageSurfaceRouter.resolve(payload: live, startNewGame: false,
+                                                         chatKey: chat, store: store)
+        XCTAssertEqual(started, .board(payload: live),
+                       "the started chain for this game does have a board to show")
 
         let screen = await MessageSurfaceRouter.resolve(payload: lobby, startNewGame: false,
                                                         chatKey: chat, store: store)

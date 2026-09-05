@@ -1439,9 +1439,11 @@ private struct GameSurface: View {
     /// gated through `SeatIdentity.resolveInLobby`, not the plain `resolve` the
     /// live board uses — see that function's doc for the bug this closes (a
     /// stale lobby bubble granting Start/Send to a seat it doesn't list, and
-    /// the flip side, a fresh join not showing as joined). Note 15's Rule-P-
-    /// for-lobbies fix in `load()` means the NEWEST bubble (the one that really
-    /// does list me) is what gets shown here in the first place.
+    /// the flip side, a fresh join not showing as joined). This used to add
+    /// that note 15's Rule-P-for-lobbies fix in `load()` showed the NEWEST
+    /// bubble here in the first place; round 7 removed that (and its cache),
+    /// so what arrives here is exactly the bubble that was tapped, stale or
+    /// not - which is precisely why the membership gate below has to hold.
     ///
     /// Bubble-anchored lookup (`seatForBubble`): this env came off a real
     /// bubble, whose gameId identifies my seat even after a group-membership
