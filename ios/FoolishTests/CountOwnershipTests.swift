@@ -27,8 +27,19 @@
 // WoodHitRegionTests. The behaviour itself is pinned by the rig measurement
 // above, which is reproducible from the command line in that header.
 //
-// MUTATION-CHECKED: deleting either guard fails its own test here, and reverting
-// the rig run reproduces the 6-5-6-5 timeline.
+// ROUND 43 FOUND A THIRD WRITER. `releaseLivePlayVeil` - the one path for a play
+// that comes to nothing - made the very same writes with no guard at all, so
+// round 42's fix was undone one line after it was applied: `play` deferred the
+// freeze (correctly) and then released what it had just declined to touch. Its
+// bluntest reproduction is a tap during a red conflict retraction, because
+// `MessageTurnController.apply` returns false for the whole of that window and
+// `flyUndoReturn` holds it open at `sequenceDepth >= 1`. The three tests below
+// the round-42 pair pin that, plus the half that must STAY unconditional (the
+// refused play's own cards) and the single spelling of the predicate.
+//
+// MUTATION-CHECKED: deleting any of the three guards fails its own test here
+// (verified for all three), and reverting the rig run reproduces the 6-5-6-5
+// timeline.
 
 import XCTest
 @testable import FoolishKit
@@ -78,6 +89,79 @@ final class CountOwnershipTests: XCTestCase {
                 }
             }
         }
+    }
+
+    /// Brace depth of the first `needle` inside `src`, counting the function's
+    /// own opening brace as depth 1. This is how "unconditionally" is spelled in
+    /// a source test: a write at depth 1 runs on every call, a write at depth 2
+    /// is inside the ownership `if`. Returns nil when the needle is absent.
+    private func depth(of needle: String, in src: String) -> Int? {
+        guard let at = src.range(of: needle)?.lowerBound else { return nil }
+        var d = 0
+        for ch in src[..<at] {
+            if ch == "{" { d += 1 }
+            if ch == "}" { d -= 1 }
+        }
+        return d
+    }
+
+    /// ROUND 43, THE THIRD WRITER. `releaseLivePlayVeil` performed the very same
+    /// writes as `releaseCounts` with no guard at all, and all three of its call
+    /// sites reach it mid-sequence - most bluntly `apply` returning false, which
+    /// it does for the WHOLE of a red conflict retraction
+    /// (`MessageTurnController.conflictRetracting`), a window `flyUndoReturn`
+    /// holds open at `sequenceDepth >= 1`. So a tap during a retraction had
+    /// `play` correctly defer the freeze and then release it one line later:
+    /// badges forward to the retracted base, back again on the arrival's replay.
+    ///
+    /// Note this asserts MORE than the two above: `roleShown` and `outShown` are
+    /// in the same ownership (nilling `roleShown` mid-sequence leaves `syncRoles`
+    /// with nothing to hand over, so the shield teleports).
+    func testReleaseLivePlayVeilDefersToARunningSequenceToo() throws {
+        let src = try source("MessageTableView.swift")
+        let b = try body(of: "releaseLivePlayVeil", in: src)
+        XCTAssertTrue(b.contains("BoardAnimator.sequenceDepth == 0"),
+                      "releaseLivePlayVeil must stand down while a sequence owns the counts")
+        for write in ["deckCountOverride", "discardCountOverride", "seatCountOverride",
+                      "roleShown = nil", "outShown = nil", "clearSweep()"] {
+            XCTAssertEqual(depth(of: write, in: b), 2,
+                           "\(write) must sit INSIDE the ownership check, not run on every call")
+        }
+    }
+
+    /// …and the other half of the same rule, which a guard placed too high would
+    /// break just as badly: the cards THIS play hid are its own property. No
+    /// sequence knows about them and nothing else will ever hand them back, so a
+    /// refusal that lands mid-flight must still reveal them or they are gone
+    /// from the fan for the life of the board (that is round 40's leak, and it
+    /// must not be re-opened in the name of round 43).
+    func testTheRefusedPlacementIsStillGivenBackUnconditionally() throws {
+        let src = try source("MessageTableView.swift")
+        let b = try body(of: "releaseLivePlayVeil", in: src)
+        for write in ["handBeforeMyMove = nil", "pendingPlacement = nil",
+                      "animator.cancelHeld(ids)", "animator.reveal(ids)"] {
+            XCTAssertEqual(depth(of: write, in: b), 1,
+                           "\(write) belongs to this play alone and must run on every call")
+        }
+    }
+
+    /// One spelling of one predicate. `BoardAnimator.isSequencing` is defined as
+    /// `sequenceDepth > 0` (BoardFlight.swift), so `!isSequencing` and
+    /// `sequenceDepth == 0` are the same test - and this function used to carry
+    /// both, which reads like two different rules about two different things.
+    func testTheOwnershipTestIsSpelledOneWay() throws {
+        let src = try source("MessageTableView.swift")
+        // CODE ONLY. The body's own comment explains the equivalence by naming
+        // `BoardAnimator.isSequencing`, and a test that cannot tell a comment
+        // from a statement would fail on the very sentence that documents it.
+        let code = try body(of: "releaseLivePlayVeil", in: src)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+        XCTAssertFalse(code.contains("isSequencing"),
+                       "use `sequenceDepth == 0`, the spelling the other two guards use")
+        XCTAssertTrue(code.contains("BoardAnimator.sequenceDepth == 0"),
+                      "…and the guard is a statement, not only a comment about one")
     }
 
     /// The counts are a SEQUENCE's property, so exactly one place may hand them

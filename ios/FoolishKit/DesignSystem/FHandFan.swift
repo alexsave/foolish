@@ -27,6 +27,20 @@ public struct FHandFan: View {
     public let trumpSuit: Suit?
     /// Cards currently locked (in-flight / illegal in this context) — dimmed.
     public let disabled: Set<String>
+    /// ROUND 43: cards that must not respond to touch and must LOOK EXACTLY AS
+    /// THEY DID - no dimming, no selection ring, nothing to notice.
+    ///
+    /// `disabled` above cannot serve: `FCard` renders it at opacity 0.5, which
+    /// is the correct affordance for "you may not play this" and the wrong one
+    /// for the message board's `handHoldback`, whose whole purpose is that a
+    /// card you have already played keeps sitting in your hand looking ordinary
+    /// right up to the moment its replay flies it out. A dimmed card there
+    /// announces a state the player cannot act on and did not cause.
+    ///
+    /// So this is the gesture half of `disabled` with none of the paint. One
+    /// gesture covers both interactions - the tap is synthesized inside the drag
+    /// gesture's `onEnded` (see `cardView`), so gating the drag gates the tap.
+    public let locked: Set<String>
     @Binding public var selection: Set<String>
     /// Tap a card — the board toggles it in the selection.
     public let onTap: (Card) -> Void
@@ -89,6 +103,7 @@ public struct FHandFan: View {
     public let onOrderChanged: ([String]) -> Void
 
     public init(cards: [Card], trumpSuit: Suit?, disabled: Set<String> = [],
+                locked: Set<String> = [],
                 selection: Binding<Set<String>>, onTap: @escaping (Card) -> Void,
                 onDragChanged: @escaping (Card, CGPoint) -> Void = { _, _ in },
                 onDragEnded: @escaping (Card, CGPoint) -> Void = { _, _ in },
@@ -102,6 +117,7 @@ public struct FHandFan: View {
         self.cards = cards
         self.trumpSuit = trumpSuit
         self.disabled = disabled
+        self.locked = locked
         self._selection = selection
         self.onTap = onTap
         self.onDragChanged = onDragChanged
@@ -823,6 +839,13 @@ public struct FHandFan: View {
                 DragGesture(minimumDistance: 0, coordinateSpace: .named(boardSpace))
                     .onChanged { g in
                         guard !disabled.contains(card.identity) else { return }
+                        // …and the silent lock (round 43). Held-back replay
+                        // cards are drawn as ordinary hand cards on purpose, so
+                        // there is nothing here to distinguish - the touch is
+                        // simply not taken, and `dragId` therefore never names
+                        // this card, which is what makes `onEnded`'s drag branch
+                        // a no-op for it as well.
+                        guard !locked.contains(card.identity) else { return }
                         if dragId != card.identity {
                             dragId = card.identity; reorderShift = .zero
                             // Round-6 bug 5: capture finger -> card ONCE, while
@@ -930,6 +953,13 @@ public struct FHandFan: View {
                             // A tap, not a drag — same disabled-check + haptic
                             // + `onTap` the old `.onTapGesture` used to run.
                             guard !disabled.contains(c.identity) else { Haptics.fire(.reject); return }
+                            // A LOCKED card swallows the tap and says nothing.
+                            // Not even the reject haptic `disabled` fires: a
+                            // rejection is feedback about a rule the player
+                            // broke, and this card is mid-animation on its way
+                            // out of the hand - there is no rule and nothing for
+                            // them to do differently.
+                            guard !locked.contains(c.identity) else { return }
                             Haptics.fire(.pickUp)
                             onTap(c)
                             return

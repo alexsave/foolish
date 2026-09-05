@@ -210,9 +210,35 @@ public struct MessageTableView: View {
     ///
     /// Held-back cards are NOT in the kernel hand, and every play path filters
     /// through `view.me.hand` (`selectedCards`) or the legal menu, so one can
-    /// never be played; the worst a tap on one can do is a reject toast, for the
-    /// ~350ms before its flight takes off.
+    /// never be played. Round 42 left it at that - "the worst a tap on one can
+    /// do is a reject toast". ROUND 43: that was wrong twice over. `toggle` wrote
+    /// the identity into `selection` regardless, where it stayed for the life of
+    /// the board and silently disabled Take and Good (both gate on
+    /// `cards.isEmpty`) the moment the card came home in a pickup; and dragging
+    /// one raised a "move not allowed" toast about a card the player had already
+    /// played. So they are now `locked` in the fan (gesture off, appearance
+    /// untouched - see `hand`) and `selectionAfterTap` keeps `selection` inside
+    /// the kernel hand by construction.
     @State private var handHoldback: [Card] = []
+    /// ROUND 43: WHICH VEIL THE HOLDBACK BELONGS TO - `animator.veilEpoch` as it
+    /// stood when it was armed, and the exact mirror of `clearPreHidden(raisedBy:)`.
+    ///
+    /// The holdback used to be cleared in two places only, both inside
+    /// `runEventStream`. Every other sequence that can SUPERSEDE a replay -
+    /// `flyUndoReturn`, `flyUndoRelease`, the genesis-deal fallback - left it
+    /// standing, so a holdback whose stream never got to tear down stayed in the
+    /// fan for good: cards you have already played, drawn in your hand, and (the
+    /// `veilStandingNow` oracle's complaint) still `preHidden` at rest. Every
+    /// other veil in this file has an unconditional rescue; this one had none.
+    ///
+    /// The epoch is what makes the rescue safe to add in three more places. A
+    /// teardown may only take down a holdback IT could have raised: a newer
+    /// sequence armed its own after a `preHide` that bumped the epoch, so an
+    /// older teardown finds `handHoldbackAt > veiledAt` and leaves it alone.
+    /// That is the same hazard the newest-sequence check at `runEventStream`'s
+    /// teardown was written for, stated in the units that actually order these
+    /// two events.
+    @State private var handHoldbackAt = 0
     @State private var handCardFrames: [String: CGRect] = [:]
     @State private var seatFrames: [Int: CGRect] = [:]
 
@@ -890,7 +916,17 @@ public struct MessageTableView: View {
             // which is what the chrome reserves against. The two are equal at
             // rest and only differ mid-sequence; see the `fan-rows` note below,
             // which exists to say which of them moved when the split flips.
-            let laidHandCount = myHand.filter { !deferredSlots.contains($0.identity) }.count
+            //
+            // ROUND 43: THROUGH `fanCards`, like everything else that describes
+            // the laid-out hand. This read the kernel hand alone, so the one row
+            // change round 42 introduced - the drop when `handHoldback` lets go
+            // of my replayed cards - was invisible to the very trace that exists
+            // to answer "we had ten cards and they said good, why did the hand
+            // change rows?". `handHeight` two lines down was already measured
+            // off `fanCards`, so the watch and the thing being watched had come
+            // apart.
+            let laidHandCount = Self.laidCount(hand: myHand, holding: handHoldback,
+                                               deferred: deferredSlots)
             // The hand's on-screen height (one row, or two once M6 splits it).
             // The self-role indicator and action bar float a fixed gap ABOVE
             // this, so a hand that grows to two rows pushes them up with it.
@@ -1159,10 +1195,18 @@ public struct MessageTableView: View {
                 // than none, because it invites a wrong conclusion.
                 let hand = controller.view?.me?.hand ?? []
                 let deferred = handSlotDeferred
-                let laid = hand.filter { !deferred.contains($0.identity) }.count
+                // Round 43: the same live re-read as before, through the same
+                // `fanCards` the trigger above uses. Recomputing it WITHOUT the
+                // holdback (which is what this did) meant the line could
+                // disagree with its own trigger - fire on a change it then
+                // printed no evidence of. `held=` is new for the same reason:
+                // when the split flips, this says which of the three inputs
+                // moved.
+                let held = handHoldback
+                let laid = Self.laidCount(hand: hand, holding: held, deferred: deferred)
                 let w = handFrame.width
                 let line = "\(FHandFan.rowCount(count: laid, availableWidth: w)) rows"
-                    + " laid=\(laid) hand=\(hand.count) width=\(Int(w))"
+                    + " laid=\(laid) hand=\(hand.count) held=\(held.count) width=\(Int(w))"
                     + " deferred=\(deferred.count) veiled=\(veiledCardIds.count)"
                     + " preHidden=\(animator.preHidden.count) hidden=\(animator.hidden.count)"
                     + " settled=\(settled) seq=\(BoardAnimator.sequenceDepth)"
@@ -2337,7 +2381,7 @@ public struct MessageTableView: View {
             // single card and it goes back down".
             deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
             outShown = nil
-            handHoldback = []       // see the teardown below - this guard returns ahead of it
+            releaseHoldback(raisedBy: veiledAt)   // see the teardown below - this guard returns ahead of it
             animator.clearPreHidden(raisedBy: veiledAt)
             // Nothing is in flight and nothing is going to be, so an orphan
             // handed on by a superseded sequence ends here (clearPreHidden
@@ -2396,8 +2440,11 @@ public struct MessageTableView: View {
                 // hand - this is the same rescue the veil gets a line below,
                 // and for the same reason. Only the NEWEST sequence clears it:
                 // a superseded one would be wiping the holdback its replacement
-                // just armed.
-                handHoldback = []
+                // just armed. Round 43 moved that rule into `releaseHoldback`,
+                // which states it as the veil epoch, and gave the same rescue to
+                // the three teardowns that can supersede a replay without being
+                // one (`flyUndoReturn`, `flyUndoRelease`, the genesis deal).
+                releaseHoldback(raisedBy: veiledAt)
                 animator.clearPreHidden(raisedBy: veiledAt)
                 // The swept table has finished flying, so take down the pre-bout
                 // grid (its cards now live in a hand / the discard / a badge). Both
@@ -2848,6 +2895,39 @@ public struct MessageTableView: View {
         // still walking the counts forward, and its teardown still hands them
         // back. A board at rest - every other caller, and the common case - has
         // `sequenceDepth` 0 and freezes exactly as it always did.
+        // ROUND 43 - A TRIGGER PROPOSED AND STRUCK, with the run that struck it.
+        //
+        // The worry: `playBoutEnd` also calls this, and unlike `play` it DOES
+        // start a sequence - so deferring here would have the new stream open
+        // from the old stream's mid-state instead of from `old`.
+        //
+        // MEASURED, not argued (scenario `take`, 4 players, HARNESS_AUTOMOVE +
+        // HARNESS_AUTOMOVE_KIND=pickup + HARNESS_SLOWMO=25 - the hold lapses at
+        // 15s while a 25x replay is still on its second of three steps, which is
+        // how a BOUT-ENDING move gets played into a running stream; NOWAIT
+        // cannot pose it, because `apply` refuses a pickup while the hold
+        // stands). The same board twice, once with this guard and once with the
+        // freeze forced through it:
+        //
+        //                       s0   s1(me)  s2   s3      board before my move
+        //   deferred (shipped)   4      -     6    6      s3=5
+        //   forced               4      -     6    5      s3=5
+        //
+        // One badge, one card, and the deck and discard identical. Seat 3 held
+        // its pre-stream 6 until the pickup's own first step, which then wrote
+        // 5. It is a LAG, never a lead and never a step backwards - because
+        // every step writes ABSOLUTE counts out of that event's kernel state
+        // (`s.deckCount`, `p.handCount`, below and in `runEventStream`), so
+        // whatever mid-state a new stream opens from is corrected by its first
+        // step, not carried.
+        //
+        // And forcing it costs more than it buys. `playBoutEnd` does not claim
+        // `animSequenceToken` until `runEventStream` runs a Task hop later, so a
+        // forced freeze sits unprotected in that gap - the OLD stream's next
+        // step begins by writing counts (the deck on a deal/refill, the acting
+        // badge on `badgeDropsAsCardsLeave`) BEFORE it reaches the token check
+        // that would abandon it. That is round 42's measured twitch, re-admitted
+        // to straighten one lagging badge. Struck, in the shape of edcb91f.
         guard BoardAnimator.sequenceDepth == 0 else {
             AnimLog.say("freezeCounts deferred (depth=\(BoardAnimator.sequenceDepth)) - badges stay "
                 + (controller.view?.players ?? []).map { "s\($0.seat)=\(shownHandCount($0))" }
@@ -3544,6 +3624,10 @@ public struct MessageTableView: View {
                 BoardAnimator.sequenceDepth -= 1
                 if mySeq == animSequenceToken {
                     animator.clearPreHidden(raisedBy: veiledAt)
+                    // Round 43: this retraction has superseded whatever replay
+                    // was holding cards in the fan, and nothing else will hand
+                    // them back - see `handHoldbackAt`.
+                    releaseHoldback(raisedBy: veiledAt)
                     dropSweep()
                     let stuck = ids.filter { animator.isHidden($0) }
                     if !stuck.isEmpty { animator.reveal(stuck) }
@@ -3669,6 +3753,7 @@ public struct MessageTableView: View {
                 BoardAnimator.sequenceDepth -= 1
                 if mySeq == animSequenceToken {
                     animator.clearPreHidden(raisedBy: veiledAt)
+                    releaseHoldback(raisedBy: veiledAt)   // round 43 - as in `flyUndoReturn`
                     let stuck = ids.filter { animator.isHidden($0) }
                     if !stuck.isEmpty { animator.reveal(stuck) }
                 }
@@ -3999,6 +4084,45 @@ public struct MessageTableView: View {
         guard !holdback.isEmpty else { return hand }
         let present = Set(hand.map(\.identity))
         return hand + holdback.filter { !present.contains($0.identity) }
+    }
+
+    /// THE HOLDBACK'S RESCUE, in one place because there are now four teardowns
+    /// that need it and copying a guard four times is how the third copy ends up
+    /// meaning something slightly different.
+    ///
+    /// `epoch` is the caller's own `veiledAt`. A holdback armed AFTER that veil
+    /// belongs to a sequence that replaced this one and must survive - the
+    /// reasoning written out at `runEventStream`'s teardown ("a superseded one
+    /// would be wiping the holdback its replacement just armed"), in the units
+    /// that order the two events rather than in `animSequenceToken`, which a
+    /// fresh open replay does not claim until a Task hop later.
+    /// The epoch rule as a value, so it can be asserted without a board: a
+    /// teardown owns the holdback only if the holdback was armed no later than
+    /// the veil that teardown raised. Equal epochs ARE the same sequence (a
+    /// stream is handed the very `veiledAt` its own open stamped the holdback
+    /// with), so this has to be `<=`, not `<`.
+    static func holdbackIsMine(armedAt: Int, teardownAt: Int) -> Bool {
+        armedAt <= teardownAt
+    }
+
+    private func releaseHoldback(raisedBy epoch: Int) {
+        guard Self.holdbackIsMine(armedAt: handHoldbackAt, teardownAt: epoch) else {
+            AnimLog.say("holdback kept (armed at \(handHoldbackAt) > teardown \(epoch))")
+            return
+        }
+        guard !handHoldback.isEmpty else { return }
+        AnimLog.say("holdback rescue - \(handHoldback.count) card(s) let go by a teardown "
+            + "[\(handHoldback.map(\.identity).joined(separator: ","))]")
+        handHoldback = []
+    }
+
+    /// How many cards the fan LAYS OUT: the hand it is really given
+    /// (`fanCards`, holdback and all) minus the deals still deferring their
+    /// slot. Pure and static because it is the trigger for the `fan-rows` trace
+    /// AND the value that trace re-reads live, and those two must be the same
+    /// function or the log disagrees with what made it print.
+    static func laidCount(hand: [Card], holding holdback: [Card], deferred: Set<String>) -> Int {
+        fanCards(hand, holding: holdback).filter { !deferred.contains($0.identity) }.count
     }
 
     /// The cards THIS stream takes out of MY hand and puts on the table, in
@@ -4560,6 +4684,11 @@ public struct MessageTableView: View {
                         BoardAnimator.sequenceDepth -= 1
                         if mySeq == animSequenceToken {
                             animator.clearPreHidden(raisedBy: veiledAt)
+                            // Round 43: and the holdback, for the same reason it
+                            // is rescued in the two undo teardowns - a genesis
+                            // fallback that supersedes a replay is the last
+                            // thing that will ever run over those cards.
+                            releaseHoldback(raisedBy: veiledAt)
                             // Same rescue as runEventStream's teardown: openSlots
                             // pulled the opening hand OUT of preHidden, so
                             // clearPreHidden can't reveal it if myDrawFlights
@@ -4641,6 +4770,9 @@ public struct MessageTableView: View {
         // `handHoldback`. Only my placements, and only when I am not spectating.
         handHoldback = isSpectating ? []
             : Self.myPlacedCards(events, mySeat: controller.mySeat)
+        // Stamped with the veil this open raised, so only a teardown at or after
+        // that veil may take it down again - see `handHoldbackAt`.
+        handHoldbackAt = veiledAt
         if !handHoldback.isEmpty {
             AnimLog.say("openReplay holds \(handHoldback.count) of my cards in the fan "
                 + "[\(handHoldback.map(\.identity).joined(separator: ","))]")
@@ -4846,6 +4978,13 @@ public struct MessageTableView: View {
         // would reserve the slot and draw nothing - a gap where the card is.
         FHandFan(cards: Self.fanCards(view.me?.hand ?? [], holding: handHoldback),
                  trumpSuit: view.trumpSuit,
+                 // ROUND 43: the held-back cards are drawn as ordinary hand
+                 // cards (that is the point of the holdback), so they are also
+                 // TAPPABLE and DRAGGABLE unless something says otherwise -
+                 // hence `locked`, which gates the gesture and paints nothing.
+                 // `disabled` would have done the gating and dimmed them to
+                 // 0.5, which is the one thing the holdback exists to prevent.
+                 locked: Set(handHoldback.map(\.identity)),
                  selection: $selection, onTap: { toggle($0) },
                  onDragChanged: { card, point in onDragChanged(card, at: point) },
                  onDragEnded: { card, point in onDragEnded(card, at: point, view) },
@@ -4930,6 +5069,11 @@ public struct MessageTableView: View {
     /// Take down the veil a live play put up and hand back everything that play
     /// froze - the counts, the roles, the swept table, the resting ghost.
     ///
+    /// Everything except the placement is handed back only when NOTHING IS
+    /// ANIMATING (round 43, written out in the body): a play refused mid-stream
+    /// never froze those pieces in the first place, and the sequence that did
+    /// still owns them.
+    ///
     /// One implementation for the two ways a play can come to nothing: a
     /// rejection the kernel reports (`rejectTick`) and a refusal at a door that
     /// never reached the kernel at all (`apply` returning false). They used to
@@ -4937,26 +5081,78 @@ public struct MessageTableView: View {
     /// handler and the second did not exist, which is the leak. Safe to call
     /// twice - it is keyed off the ledger, which it clears.
     private func releaseLivePlayVeil() {
-        // The counts / roles / sweep are released whether or not a PLACEMENT
-        // was staged: a good and a pickup freeze all three and place no card.
+        // My own hand veil goes back unconditionally: `play` raised it
+        // unconditionally too (it is not behind `freezeCounts`' guard), it names
+        // only MY cards, and the one other place that touches it
+        // (`flyBoutEndToDiscard`) consumes it rather than owning it - so there
+        // is nobody else it could be taken from.
         handBeforeMyMove = nil
-        deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
-        // Round 16: and the roles `play` froze on the way in. Nothing happened,
-        // so there is nothing to hand over - this is the same board it was
-        // frozen from, which is why it is a plain release and not a sync.
-        roleShown = nil
-        // …and the pre-bout table `play` laid out for a pickup / good that then
-        // never happened. Left standing it is a phantom table over a board the
-        // game says is empty (the `sweepVisibleNow` oracle's own defect).
+        // ROUND 43: THE COUNTS AND THE ROLES ARE STILL NOT OURS TO GIVE BACK.
         //
-        // ONLY when nothing is running, and that guard is the whole care in
-        // this line: a refusal can land in the middle of a bout-end sequence
-        // that is sweeping a table of its OWN (the buttons are gone by then,
-        // but a drag still reaches `apply`), and tearing that grid down would
-        // take the cards off the table mid-flight. The sweep this play set is
-        // only ours to clear while nobody else has taken it over; a sequence
-        // that owns it drops it in its own teardown.
-        if !BoardAnimator.isSequencing { clearSweep() }
+        // Round 42 taught `freezeCounts` and `releaseCounts` that the badges,
+        // the deck, the discard, `outShown` and `roleShown` belong to whichever
+        // SEQUENCE is animating - it froze them to the board before its move and
+        // walks them forward one step per landing flight. This function did the
+        // very same writes with no guard at all, and its three callers all reach
+        // it mid-sequence: the `rejectTick` onChange, the `controller.superseded`
+        // door in `play`, and `apply` returning false. The last of those is not
+        // theoretical - `MessageTurnController.apply` refuses for the whole of a
+        // red retraction (`conflictRetracting`), and that retraction is
+        // `flyUndoReturn` holding `sequenceDepth >= 1`. So a tap during a
+        // retraction had `play` correctly DECLINE to freeze the counts and then,
+        // one line later, release what it had just declined to touch: every
+        // badge snapped forward to the retracted base and snapped back when the
+        // arrival's replay re-seeded them. That backwards move is what the
+        // `backwardsPaints` oracle counts.
+        //
+        // `roleShown` is the same story with a worse ending: nilled mid-sequence
+        // it leaves `syncRoles`' closing hand-off with `old == nil`, so no mark
+        // flies and the shield / sword teleport.
+        //
+        // Deferring costs nothing here for the same reason it costs nothing in
+        // `releaseCounts`: a refused play starts no sequence and claims no
+        // `animSequenceToken`, so the stream still running is still the newest
+        // one and its teardown still hands all of this back.
+        //
+        // `BoardAnimator.isSequencing` is `sequenceDepth > 0` (BoardFlight.swift)
+        // - the sweep line below used to spell the same test the other way
+        // round, which read like a different rule. One spelling now, the one the
+        // round-42 guards use.
+        if BoardAnimator.sequenceDepth == 0 {
+            deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
+            // `outShown` with them, which this function used to leave frozen:
+            // `freezeCounts` seeds it in the same breath as the counts and both
+            // `releaseCounts` and the stream teardown nil it in the same breath,
+            // so a release that skipped it pinned `isOutShown` (which prefers
+            // `outShown` over the live view whenever it is non-nil) at the
+            // pre-move board until some later stream happened to clear it.
+            outShown = nil
+            // Round 16: and the roles `play` froze on the way in. Nothing
+            // happened, so there is nothing to hand over - this is the same
+            // board it was frozen from, which is why it is a plain release and
+            // not a sync.
+            roleShown = nil
+            // …and the pre-bout table `play` laid out for a pickup / good that
+            // then never happened. Left standing it is a phantom table over a
+            // board the game says is empty (the `sweepVisibleNow` oracle's own
+            // defect).
+            //
+            // This one has always been guarded, and its reasoning is the same
+            // one now covering the whole block: a refusal can land in the middle
+            // of a bout-end sequence that is sweeping a table of its OWN (the
+            // buttons are gone by then, but a drag still reaches `apply`), and
+            // tearing that grid down would take the cards off the table
+            // mid-flight. A sequence that owns it drops it in its own teardown.
+            clearSweep()
+        } else {
+            AnimLog.say("releaseLivePlayVeil deferred (depth=\(BoardAnimator.sequenceDepth)) - "
+                + "counts/roles/sweep stay with the running sequence")
+        }
+        // THE PLACEMENT HALF IS UNCONDITIONAL, and deliberately outside the
+        // guard above. These cards are this play's own property - `playAt` hid
+        // them, no sequence knows about them, and nothing else will ever hand
+        // them back - so a refusal during somebody else's flight must still
+        // reveal them or they are gone from the fan for the life of the board.
         guard let p = pendingPlacement else { return }
         pendingPlacement = nil
         pendingCover = nil
@@ -5012,8 +5208,37 @@ public struct MessageTableView: View {
     // exactly like the app's TableView (both read the kernel menu, never a rule).
 
     private func toggle(_ card: Card) {
-        if selection.contains(card.identity) { selection.remove(card.identity) }
-        else { selection.insert(card.identity) }
+        selection = Self.selectionAfterTap(selection, card: card,
+                                           hand: controller.view?.me?.hand ?? [])
+    }
+
+    /// ROUND 43: THE SELECTION MAY ONLY EVER NAME CARDS THAT ARE IN MY HAND.
+    ///
+    /// It used to be a plain toggle, and that was true by accident for as long
+    /// as the only tappable cards were hand cards. Round 42's `handHoldback`
+    /// broke it: a card I have already played stays DRAWN in the fan while its
+    /// replay flies, so it could be tapped, and the identity it inserted was one
+    /// the kernel hand no longer contained. `selectedCards` filters through
+    /// `view.me.hand`, so the move was never playable - but the identity stayed
+    /// in `selection` for the life of the board, and `actionBar` gates BOTH
+    /// `canPickup` and `canDone` on `cards.isEmpty`. Pick that table up and the
+    /// card comes home already selected: Take and Good silently gone, with
+    /// nothing on screen to explain it and no way to deselect a card that is not
+    /// there. The lock in `hand` stops the tap arriving; this stops the state
+    /// from being representable at all, which is the invariant the bug was
+    /// really about.
+    ///
+    /// Pure and static so the rule can be asserted without a board.
+    static func selectionAfterTap(_ selection: Set<String>, card: Card, hand: [Card]) -> Set<String> {
+        let mine = Set(hand.map(\.identity))
+        // Sweep first: an identity that has since left my hand (played, swept,
+        // discarded) is dropped whatever this tap was for. A stale one can only
+        // ever go on to disable the action bar.
+        var next = selection.intersection(mine)
+        guard mine.contains(card.identity) else { return next }
+        if next.contains(card.identity) { next.remove(card.identity) }
+        else { next.insert(card.identity) }
+        return next
     }
 
     private func selectedCards(_ view: GameView) -> [Card] {
