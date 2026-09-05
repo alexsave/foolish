@@ -51,6 +51,14 @@ import {
   validateCover as clientValidateCover,
 } from '../src/utils/gameValidation.ts';
 import { kernelUnambiguousCover } from '../sdk/ts/wasm/bots.ts';
+import { __setDealSeedOverride } from '../sdk/ts/wasm/engine.ts';
+import { suiteRng } from './helpers/rng.ts';
+
+// Seeded end to end: the deal AND the order eligible bots act in both come from
+// this stream, so a red run replays exactly. Same trial count as before; to
+// widen the search, sweep the seed rather than unpinning it.
+const rng = suiteRng('attack_cover_parity');
+const dealSeed = (): Uint8Array => Uint8Array.from({ length: 32 }, () => rng.int(256));
 
 // The engine logs play-by-play; keep the reporter readable.
 if (!process.env.E2E_VERBOSE) {
@@ -145,7 +153,8 @@ function candidateCoverMappings(hand: Card[], game: Game): { covers: Card[]; att
 
 async function playAndCheck(np: number, strategy: StrategyKey, stats: { states: number; attacks: number; covers: number }): Promise<boolean> {
   const game = mkGame(np, strategy);
-  start_game(game);
+  __setDealSeedOverride(dealSeed());
+  try { start_game(game); } finally { __setDealSeedOverride(null); }
   let actions = 0;
   while (game_done(game) === null) {
     if (++actions > MAX_ACTIONS) return false;
@@ -167,7 +176,7 @@ async function playAndCheck(np: number, strategy: StrategyKey, stats: { states: 
           stats.attacks++;
           const detail = `seat=${seat} first_attacker=${game.first_attacker} defender=${game.defender} `
             + `table=[${game.table_battles.map((b) => `${cardKey(b.attack)}${b.defense ? '/' + cardKey(b.defense) : ''}`).join(' ')}] `
-            + `cards=[${cards.map(cardKey).join(',')}]`;
+            + `cards=[${cards.map(cardKey).join(',')}] seed=${rng.seed}`;
           assert.equal(button, server, `canAttack !== kernel: ${detail}`);
           assert.equal(optimistic, server, `validateAttack !== kernel: ${detail}`);
         }
@@ -180,11 +189,12 @@ async function playAndCheck(np: number, strategy: StrategyKey, stats: { states: 
           for (const sel of selections) {
             if (!clientCanCoverCards(personal, sel)) continue;
             const mapping = kernelUnambiguousCover(sel, game.table_battles, game.power_suit);
-            assert.ok(mapping, 'canCoverCards true but no unambiguous mapping');
+            assert.ok(mapping, `canCoverCards true but no unambiguous mapping (seed=${rng.seed})`);
             stats.covers++;
             assert.ok(
               serverAllowsCover(game, p.player_id, mapping!.coverCards, mapping!.attackCards),
-              `client offers a cover the kernel rejects: covers=[${mapping!.coverCards.map(cardKey).join(',')}] `
+              `client offers a cover the kernel rejects (seed=${rng.seed}): `
+              + `covers=[${mapping!.coverCards.map(cardKey).join(',')}] `
               + `attacks=[${mapping!.attackCards.map(cardKey).join(',')}]`,
             );
           }
@@ -195,7 +205,7 @@ async function playAndCheck(np: number, strategy: StrategyKey, stats: { states: 
             stats.covers++;
             assert.equal(
               optimistic, server,
-              `validateCover !== kernel: covers=[${m.covers.map(cardKey).join(',')}] `
+              `validateCover !== kernel (seed=${rng.seed}): covers=[${m.covers.map(cardKey).join(',')}] `
               + `attacks=[${m.attacks.map(cardKey).join(',')}] `
               + `table=[${game.table_battles.map((b) => `${cardKey(b.attack)}${b.defense ? '/' + cardKey(b.defense) : ''}`).join(' ')}]`,
             );
@@ -213,11 +223,7 @@ async function playAndCheck(np: number, strategy: StrategyKey, stats: { states: 
       }
     }
     if (eligible.length === 0) return false;
-    const order = [...eligible];
-    for (let i = order.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [order[i], order[j]] = [order[j], order[i]];
-    }
+    const order = rng.shuffle([...eligible]);
     let acted = false;
     for (const p of order) {
       if (await processBotAction(game, p)) { acted = true; break; }

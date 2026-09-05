@@ -34,6 +34,30 @@ Files run serially (`--test-concurrency=1`) because each resets the shared schem
 see `concurrent_games.test.ts` for why that reset — not gameplay — is what
 deadlocks under parallelism.
 
+## Seeds
+
+No suite draws from `Math.random` - `scripts/check_determinism.mjs` fails CI over
+`e2e/`, `sdk/` and `server/` if one does, because the product's rule is one crypto
+draw per game, at the deal, with everything after it derived from that seed.
+A suite that shuffles unseeded breaks the same rule from the outside: every run is
+a different experiment, and a red one hands the reader no repro.
+
+Seeded suites draw from `helpers/rng.ts` (`suiteRng`), which resolves its seed as
+`E2E_SEED_<SUITE>`, else `E2E_SEED`, else the fixed default, and prints the one it
+picked.
+The seed is named in the failure messages too, since that is the line that gets
+pasted.
+
+```bash
+E2E_SEED_REPLAY_CODEC=12345 npm run test:e2e     # one suite, one experiment
+E2E_SEED=12345 npm run test:e2e                  # every suite
+for s in $(seq 1 50); do E2E_SEED=$s ... ; done  # widen the search deliberately
+```
+
+Seeding narrows nothing: the trial counts are what they were.
+The five Postgres-backed suites still deal from the live crypto path, exactly as
+production does, so their seed reproduces the move choices but not the deal.
+
 ## What's checked
 
 | file | uses real… | asserts |

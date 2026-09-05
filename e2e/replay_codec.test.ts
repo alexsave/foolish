@@ -38,6 +38,7 @@ import {
   urlToGame, base64Decode, base64Encode, base32Encode, bytesToBigint, codeToGame, gameToUrl,
 } from '../server/api/common/replay/codec.ts';
 import { kernelReplayEncodeV6FromGame } from '../sdk/ts/wasm/bots.ts';
+import { suiteRng } from './helpers/rng.ts';
 import { __setDealSeedOverride } from '../sdk/ts/wasm/engine.ts';
 
 const hexToBytes = (h: string) => Uint8Array.from(h.match(/../g)!.map((b) => parseInt(b, 16)));
@@ -61,6 +62,10 @@ if (!process.env.E2E_VERBOSE) {
 
 const GAMES_PER_PC = Number(process.env.REPLAY_GAMES_PER_PC ?? 20);
 const MAX_ACTIONS = 100000;
+
+// The deal is already pinned per game (seedCounter below); this is the other
+// half - the order eligible bots act in. Both seeded, so a red run replays.
+const rng = suiteRng('replay_codec');
 
 const mkPlayer = (i: number, strategy: StrategyKey): PrivatePlayer => ({
   player_id: `bot_${i}`,
@@ -95,11 +100,16 @@ const mkGame = (np: number, strategy: StrategyKey): Game => ({
 // Seeded, because the v6 producer re-derives the deal FROM the seed. Without
 // the override the TS engine deals from its own RNG and the kernel rebuilds a
 // different game ("logged attack not in menu").
+//
+// The counter keeps every game in a run on a different deal; the suite seed is
+// mixed in so sweeping E2E_SEED_REPLAY_CODEC sweeps the DEALS too, not just the
+// order the bots act in. Same games per seed, every run.
 let seedCounter = 0;
 async function playRandomGame(np: number, strategy: StrategyKey): Promise<Game | null> {
   const game = mkGame(np, strategy);
+  const salt = rng.int(256);
   const seed = Array.from({ length: 32 },
-    (_, i) => ((i * 53 + (++seedCounter) * 89 + np * 13) & 0xff).toString(16).padStart(2, '0')).join('');
+    (_, i) => (((i * 53 + (++seedCounter) * 89 + np * 13) ^ salt) & 0xff).toString(16).padStart(2, '0')).join('');
   __setDealSeedOverride(hexToBytes(seed));
   try {
     start_game(game);
@@ -117,11 +127,7 @@ async function playRandomGame(np: number, strategy: StrategyKey): Promise<Game |
       }
     }
     if (eligible.length === 0) return null;
-    const order = [...eligible];
-    for (let i = order.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [order[i], order[j]] = [order[j], order[i]];
-    }
+    const order = rng.shuffle([...eligible]);
     let acted = false;
     for (const p of order) {
       if (await processBotAction(game, p)) {
@@ -199,8 +205,8 @@ async function roundTripGame(game: Game, np: number): Promise<void> {
   // decode through every serialization layer
   const xUrl = urlToGame(enc.url);
   const xB64 = bytesToBigint(base64Decode(enc.base64));
-  assert.equal(xUrl, enc.x, 'serialization round-trip mismatch (url)');
-  assert.equal(xB64, enc.x, 'serialization round-trip mismatch (base64)');
+  assert.equal(xUrl, enc.x, `serialization round-trip mismatch (url) (np=${np}, seed=${rng.seed})`);
+  assert.equal(xB64, enc.x, `serialization round-trip mismatch (base64) (np=${np}, seed=${rng.seed})`);
 
   // The decode is the game the engine actually played — compared on the INFO
   // actions, which is the honest common denominator between the two streams.
@@ -216,14 +222,14 @@ async function roundTripGame(game: Game, np: number): Promise<void> {
   const dec = await decodeReplay(enc.x);
   const infoOf = (ls: SeatLog[]) => ls.filter((l) => INFO_TYPES.includes(l.log_type));
   assert.equal(diffStreams(infoOf(normOriginal(game)), infoOf(normDecoded(dec))), null,
-    'info-action stream mismatch');
+    `info-action stream mismatch (np=${np}, seed=${rng.seed})`);
 
   // elimination order / fool / discard must match too
   const elim = game.elimination_order.map((pid) => game.players.findIndex((p) => p.player_id === pid));
-  assert.deepEqual(elim, dec.eliminationOrder, 'elimination mismatch');
+  assert.deepEqual(elim, dec.eliminationOrder, `elimination mismatch (np=${np}, seed=${rng.seed})`);
   const fool = game.players.findIndex((p) => p.player_id === game_done(game));
-  assert.equal(fool, dec.fool, 'fool mismatch');
-  assert.equal(game.discard_pile_length, dec.discardPileLength, 'discard pile mismatch');
+  assert.equal(fool, dec.fool, `fool mismatch (np=${np}, seed=${rng.seed})`);
+  assert.equal(game.discard_pile_length, dec.discardPileLength, `discard pile mismatch (np=${np}, seed=${rng.seed})`);
 
   // The replay screen must be able to replay this code. It used to fold the log
   // stream into boards itself, and this asserted the fold's arithmetic (one step
@@ -353,9 +359,22 @@ export function registerReplayValidation(): void {
 
 if (!process.env.VALIDATION_ONLY) registerReplayValidation();
 
+// v6 refuses to encode a session whose log outran the kernel's MAX_LOGS
+// (c/src/game.h, 1024) - the stream is truncated at that point, so there is no
+// honest code to cut, and production accepts that a game that long gets no share
+// code. This branch's kernel reports that documented refusal as REPLAY_EINPUT,
+// the same code a genuinely malformed input gets, so the refusal cannot be told
+// from a fault by its code. Recognise it by the condition instead, BEFORE
+// encoding: the game itself says how many logs it has. A too-long game is
+// skipped and counted; anything else that raises EINPUT still fails.
+// (origin/main's ebcc7a1 gives the refusal its own code, REPLAY_ETOOLONG; when
+// that lands here this check is superseded by skipping on the code.)
+const MAX_LOGS = 1024;
+
 if (!process.env.VALIDATION_ONLY) test(`replay codec round-trips engine-played games (${GAMES_PER_PC}/player-count, 2..8 players)`, async () => {
   let totalGames = 0;
   let stalled = 0;
+  let tooLong = 0;
   for (let np = 2; np <= 8; np++) {
     for (let g = 0; g < GAMES_PER_PC; g++) {
       // Alternate fast strategies for distribution diversity: random explores
@@ -368,9 +387,16 @@ if (!process.env.VALIDATION_ONLY) test(`replay codec round-trips engine-played g
         stalled++;
         continue;
       }
+      if (game.logs.length >= MAX_LOGS) {
+        tooLong++;
+        continue;
+      }
       totalGames++;
       await roundTripGame(game, np);
     }
   }
-  assert.ok(totalGames > 0, `no games completed (stalled=${stalled})`);
+  // eslint-disable-next-line no-console
+  console.log(`[replay codec] ${totalGames} games round-tripped, ${stalled} stalled, `
+    + `${tooLong} past MAX_LOGS (no code by design), seed=${rng.seed}`);
+  assert.ok(totalGames > 0, `no games completed (stalled=${stalled}, seed=${rng.seed})`);
 });

@@ -12,9 +12,13 @@ import { executeWithGameLock } from '../server/impls/supabase/functions/_shared/
 import { start_game } from '../server/api/common/game_lifecycle.ts';
 import { AnimationEvent } from '../server/api/core/types.ts';
 import { legalMovesFor, applyPlayerMove, checkCardConservation, PlayerMove } from './dispatch.ts';
+import { suiteRng } from './helpers/rng.ts';
 
-const rand = (n: number) => Math.floor(Math.random() * n);
-const pick = <T>(a: T[]): T => a[rand(a.length)];
+// One stream for the whole file: every test here draws sequentially, so the
+// suite seed reproduces the exact move sequence of every game it plays.
+const rng = suiteRng('server');
+const rand = (n: number) => rng.int(n);
+const pick = <T>(a: T[]): T => rng.pick(a);
 
 async function loadGame(gameId: string) {
     // use the real loader by going through executeWithGameLock would mutate; for a
@@ -46,7 +50,7 @@ export function registerServerValidation(): void {
             if (moves.length === 0) break;
             try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, pick(moves)) }), `s${step}`, true); } catch { /* stale */ }
             const chk = await checkCardConservation(gameId);
-            assert.ok(chk.ok, `card conservation violated at step ${step}: ${chk.detail}`);
+            assert.ok(chk.ok, `card conservation violated at step ${step} (seed=${rng.seed}): ${chk.detail}`);
         }
         const evts = broadcastLog.filter((b) => b.event === 'animation_events');
         assert.ok(evts.length > 0, 'expected broadcasts');
@@ -71,7 +75,7 @@ export function registerServerValidation(): void {
             burst.push(burst[0]); // rapid double-submit
             await Promise.all(burst.map((m, i) => executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, m) }), `b${step}-${i}`, true).catch(() => {})));
             const chk = await checkCardConservation(gameId);
-            assert.ok(chk.ok, `conservation broke under contention at step ${step}: ${chk.detail}`);
+            assert.ok(chk.ok, `conservation broke under contention at step ${step} (seed=${rng.seed}): ${chk.detail}`);
         }
     });
 }
@@ -91,10 +95,10 @@ test('card conservation holds across a full sequential game (real executeWithGam
         const m = pick(moves);
         try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, m) }), `s${steps}`, true); } catch { /* stale */ }
         const chk = await checkCardConservation(gameId);
-        assert.ok(chk.ok, `card conservation violated at step ${steps}: ${chk.detail}`);
+        assert.ok(chk.ok, `card conservation violated at step ${steps} (seed=${rng.seed}): ${chk.detail}`);
         steps++;
     }
-    assert.ok(steps > 5, 'game should have progressed');
+    assert.ok(steps > 5, `game should have progressed (seed=${rng.seed})`);
 });
 
 test('every broadcast carries a monotonically non-decreasing games.version (the reordering fix, server side)', async () => {
@@ -150,13 +154,13 @@ test('every finished game gets a replay snapshot and its logs wiped (log order i
         if (g.status !== 'game_over') continue;
         finished++;
         const snaps = await pgPool.query('SELECT moves FROM game_snapshots WHERE game_id=$1', [gameId]);
-        assert.equal(snaps.rowCount, 1, `finished game ${gameId} has no replay snapshot — the encoder desynced (check log ordering)`);
+        assert.equal(snaps.rowCount, 1, `finished game ${gameId} has no replay snapshot (seed=${rng.seed}) - the encoder desynced (check log ordering)`);
         // The packed session-log column (the snapshot's source) is retired after
         // a snapshot — game_logs rows are gone (migration 20260708120000).
         const packed = await pgPool.query('SELECT logs_packed FROM games WHERE id=$1', [gameId]);
-        assert.equal(packed.rows[0].logs_packed, '', `finished game ${gameId} kept its packed session log — snapshot should have retired it`);
+        assert.equal(packed.rows[0].logs_packed, '', `finished game ${gameId} kept its packed session log (seed=${rng.seed}) - snapshot should have retired it`);
     }
-    assert.ok(finished >= 2, `expected at least 2 finished games, got ${finished}`);
+    assert.ok(finished >= 2, `expected at least 2 finished games, got ${finished} (seed=${rng.seed})`);
 });
 
 test('CAS serializes concurrent moves without losing or duplicating a card', async () => {
@@ -171,10 +175,10 @@ test('CAS serializes concurrent moves without losing or duplicating a card', asy
         const burst: PlayerMove[] = [];
         const n = 1 + rand(Math.min(3, moves.length));
         for (let i = 0; i < n; i++) burst.push(pick(moves));
-        if (Math.random() < 0.3) burst.push(burst[0]); // rapid double-submit
+        if (rng.chance(0.3)) burst.push(burst[0]); // rapid double-submit
         await Promise.all(burst.map((m, i) => executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, m) }), `b${steps}-${i}`, true).catch(() => {})));
         const chk = await checkCardConservation(gameId);
-        assert.ok(chk.ok, `conservation broke under contention at step ${steps}: ${chk.detail}`);
+        assert.ok(chk.ok, `conservation broke under contention at step ${steps} (seed=${rng.seed}): ${chk.detail}`);
         steps++;
     }
 });

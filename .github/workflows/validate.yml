@@ -60,5 +60,11 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      # No Math.random() in e2e/, sdk/ or server/. The invariant it guards: one
+      # crypto draw per game, at the deal; everything after it derives from that
+      # seed. Needs no database, so it runs first and fails in seconds.
+      - name: Determinism gate (no Math.random in the game path)
+        run: npm run check:determinism
+
       - name: Run validation suite (handpicked regression scenarios)
         run: npm run test:validate

@@ -15,6 +15,11 @@ import { handleMetaAction, handleContinue } from '../server/impls/supabase/funct
 import { GAME_STATUS, PLAYER_STATUS } from '../server/api/core/types.ts';
 import { resetToLobby } from '../src/state/clientReconcile.ts';
 import { checkCardConservation } from './dispatch.ts';
+import { suiteRng } from './helpers/rng.ts';
+
+// Only one test here draws: the rematch scenario plays a dealt game out with
+// random legal moves. Seeded, so the game it plays is the same game every run.
+const rng = suiteRng('meta');
 
 const params = (game: any, userId: string, body: any) => ({ user: { id: userId } as any, user_name: 'U', body, game, reqId: 'r' });
 const runMeta = (gameId: string, userId: string, body: any) =>
@@ -255,14 +260,14 @@ if (!process.env.VALIDATION_ONLY) {
             if (g.status !== GAME_STATUS.PLAYING) break;
             const moves = legalMovesFor(g);
             if (moves.length === 0) break;
-            const pick = moves[Math.floor(Math.random() * moves.length)];
+            const pick = rng.pick(moves);
             try {
                 await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, pick) }), `rm${steps}`, true);
             } catch { /* stale pick under the CAS — normal */ }
         }
         const finished = await pgPool.query('SELECT status, state FROM games WHERE id=$1', [gameId]);
-        assert.equal(finished.rows[0].status, 'game_over', 'game played to completion');
-        assert.ok(finished.rows[0].state, 'finished game carries a blob');
+        assert.equal(finished.rows[0].status, 'game_over', `game played to completion (seed=${rng.seed})`);
+        assert.ok(finished.rows[0].state, `finished game carries a blob (seed=${rng.seed})`);
 
         // Continue: the reset commit must CLEAR the blob (state = NULL on a
         // WAITING transition), or everything below regresses.

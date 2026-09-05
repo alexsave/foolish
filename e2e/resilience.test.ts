@@ -18,8 +18,10 @@ import {
 import { start_game } from '../server/api/common/game_lifecycle.ts';
 import { GAME_STATUS, AnimationEvent } from '../server/api/core/types.ts';
 import { legalMovesFor, applyPlayerMove } from './dispatch.ts';
+import { suiteRng } from './helpers/rng.ts';
 
-const pick = <T>(a: T[]): T => a[Math.floor(Math.random() * a.length)];
+const rng = suiteRng('resilience');
+const pick = rng.pick;
 const dbVersion = async (id: string): Promise<number> =>
   Number((await pgPool.query('SELECT version FROM games WHERE id=$1', [id])).rows[0].version);
 const bumpVersion = (id: string) => pgPool.query('UPDATE games SET version = version + 1 WHERE id=$1', [id]);
@@ -125,15 +127,18 @@ test('a full game commits GAME_OVER and lands its end-of-game side effects (ELO 
   }
 
   const finalStatus = (await pgPool.query('SELECT status FROM games WHERE id=$1', [id])).rows[0].status;
-  assert.equal(finalStatus, 'game_over', 'the game reached and durably committed GAME_OVER');
+  assert.equal(finalStatus, 'game_over',
+    `the game reached and durably committed GAME_OVER (seed=${rng.seed})`);
 
   // The replay snapshot is a best-effort side effect — but on the happy path it
   // must land (proving finalizeEndedGame ran to completion).
   const snaps = Number((await pgPool.query('SELECT count(*)::int AS n FROM game_snapshots WHERE game_id=$1', [id])).rows[0].n);
-  assert.equal(snaps, 1, 'exactly one replay snapshot row was written');
+  assert.equal(snaps, 1, `exactly one replay snapshot row was written (seed=${rng.seed})`);
 
   // updateEloRatings ran: the two bots no longer sit at the 1000 default.
   const elos = (await pgPool.query('SELECT elo_rating, games_played FROM bots')).rows;
-  assert.ok(elos.some((r: any) => r.elo_rating !== 1000), 'at least one bot rating moved off the default');
-  assert.ok(elos.every((r: any) => r.games_played === 1), 'every bot recorded exactly one played game');
+  assert.ok(elos.some((r: any) => r.elo_rating !== 1000),
+    `at least one bot rating moved off the default (seed=${rng.seed})`);
+  assert.ok(elos.every((r: any) => r.games_played === 1),
+    `every bot recorded exactly one played game (seed=${rng.seed})`);
 });

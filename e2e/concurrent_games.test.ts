@@ -14,8 +14,12 @@ import { executeWithGameLock, loadCompleteGame } from '../server/impls/supabase/
 import { start_game } from '../server/api/common/game_lifecycle.ts';
 import { AnimationEvent } from '../server/api/core/types.ts';
 import { legalMovesFor, applyPlayerMove, checkCardConservation } from './dispatch.ts';
+import { suiteRng } from './helpers/rng.ts';
 
-const pick = <T>(a: T[]): T => a[Math.floor(Math.random() * a.length)];
+// One stream per game, forked from the suite seed: these games race on one
+// Postgres, so a single shared stream would deal a different move sequence to
+// each game every run and the seed would reproduce nothing.
+const rng = suiteRng('concurrent_games');
 
 async function startedGame(): Promise<string> {
     const gameId = `cg${uuid().slice(0, 5)}`;
@@ -32,7 +36,8 @@ export function registerConcurrentValidation(): void {
     test('concurrent: a few games progressing at once stay isolated (no deadlock, no cross-game corruption)', async () => {
         const ids = await Promise.all([0, 1, 2].map(() => startedGame()));
         const errors: string[] = [];
-        await Promise.all(ids.map(async (gameId) => {
+        await Promise.all(ids.map(async (gameId, gi) => {
+            const pick = rng.fork(`v${gi}`).pick;
             for (let step = 0; step < 60; step++) {
                 const g = await loadCompleteGame(gameId);
                 if (g.status !== 'playing') break;
@@ -44,7 +49,7 @@ export function registerConcurrentValidation(): void {
                 if (!chk.ok) errors.push(`${gameId}@${step}: ${chk.detail}`);
             }
         }));
-        assert.deepEqual(errors, [], `cross-game errors: ${errors.slice(0, 5).join(' | ')}`);
+        assert.deepEqual(errors, [], `cross-game errors (seed=${rng.seed}): ${errors.slice(0, 5).join(' | ')}`);
     });
 }
 
@@ -72,7 +77,8 @@ if (!process.env.VALIDATION_ONLY) {
 
         const errors: string[] = [];
         const violations: string[] = [];
-        await Promise.all(ids.map(async (gameId) => {
+        await Promise.all(ids.map(async (gameId, gi) => {
+            const pick = rng.fork(gi).pick;
             let steps = 0;
             while (steps < 400) {
                 let g;
@@ -92,8 +98,9 @@ if (!process.env.VALIDATION_ONLY) {
             }
         }));
 
-        assert.deepEqual(errors, [], `cross-game errors/deadlocks: ${errors.slice(0, 5).join(' | ')}`);
-        assert.deepEqual(violations.slice(0, 5), [], `card-conservation violations: ${violations.slice(0, 5).join(' | ')}`);
+        assert.deepEqual(errors, [], `cross-game errors/deadlocks (seed=${rng.seed}): ${errors.slice(0, 5).join(' | ')}`);
+        assert.deepEqual(violations.slice(0, 5), [],
+            `card-conservation violations (seed=${rng.seed}): ${violations.slice(0, 5).join(' | ')}`);
     });
 
     test('the harness DROP SCHEMA / TRUNCATE is what deadlocks — not gameplay (documentation)', () => {
