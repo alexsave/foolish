@@ -255,13 +255,6 @@ public final class MessageTurnController: ObservableObject {
     private let gameId: UInt64
     private var parent8: Data
     private var joins: [MessageJoin]
-    /// DEPRECATED (retained only so GameSurface's call sites compile unchanged):
-    /// the previously-cached chain, once used to diff my hand for the open-replay.
-    /// The open-replay is now the kernel's evwire for the last move
-    /// (`openReplayEvents`, resolved from the adopted chain alone), which needs no
-    /// "where I last looked", so this is no longer read. Safe to remove along with
-    /// its GameSurface threading in a follow-up cleanup.
-    private let prevPayload: Data?
     /// Round-9 #5: this base is the chain THIS DEVICE just pressed Send on
     /// (MessageGameStore's one-shot just-sent marker matched at adopt). Opening
     /// it must be QUIET - the "last move" on it is my own, watched live seconds
@@ -275,11 +268,9 @@ public final class MessageTurnController: ObservableObject {
     /// payload (the view decoded it to resolve my seat); `begin()` re-adopts it
     /// anyway so the controller owns the base unambiguously. `store` is where
     /// the hand-arrangement rows live (round-8 #4).
-    /// `prevPayload` is the previously-cached chain for this game (§ open-delta
-    /// replay, notes 4/9/38) — nil skips the delta computation entirely.
     public init(parentPayload: Data, parent: MessageEnvelope, mySeat: Int,
                 store: MessageGameStore = .shared,
-                prevPayload: Data? = nil, suppressOpenReplay: Bool = false) {
+                suppressOpenReplay: Bool = false) {
         self.base = .continuation(payload: parentPayload)
         self.gameId = UInt64(parent.gameId) ?? 0
         self.parent8 = Self.firstEight(hex: parent.digest)
@@ -288,7 +279,6 @@ public final class MessageTurnController: ObservableObject {
         self.mySeat = mySeat
         self.names = Dictionary(parent.joins.map { ($0.seat, $0.name) },
                                 uniquingKeysWith: { a, _ in a })
-        self.prevPayload = prevPayload
         self.suppressOpenReplay = suppressOpenReplay
         #if DEBUG
         Self.debugLatest = self
@@ -314,7 +304,6 @@ public final class MessageTurnController: ObservableObject {
         self.store = store
         self.mySeat = 0
         self.names = [0: myNickname]
-        self.prevPayload = nil
         self.suppressOpenReplay = false
         #if DEBUG
         Self.debugLatest = self
@@ -582,8 +571,9 @@ public final class MessageTurnController: ObservableObject {
         let opened = await rebuildBase()
         // The open animations: the kernel's viewer-aware evwire for the LAST move
         // on the adopted chain (notes 6/12/#9), resolved after rebuildBase puts
-        // the received chain resident. `prevPayload` is no longer consulted:
-        // the kernel decides the group from the chain alone.
+        // the received chain resident. There is no "where I last looked" to
+        // consult - the kernel decides the group from the chain alone, which is
+        // what let round 43 delete the `prevPayload` this used to name.
         //
         // Note this does NOT depend on who sealed the chain. An earlier pass
         // suppressed the replay when `lastActorSeat == mySeat`, to kill a

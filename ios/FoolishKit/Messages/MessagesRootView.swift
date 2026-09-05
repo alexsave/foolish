@@ -406,7 +406,6 @@ private struct GameSurface: View {
     /// seat resolves from an exact signal but the stored nickname is gone with
     /// the cache. Any player count. Ask once, store it, then seat them.
     private struct NameGate { let env: MessageEnvelope; let payload: Data; let seat: Int
-                              let prevPayload: Data?     // note 4/9/38: threaded to seatOnBoard
                               var quietOpen = false }    // round-9 #5: my just-sent chain
 
     @State private var controller: MessageTurnController?
@@ -1773,11 +1772,6 @@ private struct GameSurface: View {
         // `@State` because `seatOnBoard` is where the controller finally exists
         // (and is reached from the name gate and the seat picker too).
         staleBranch = await rankAgainstHighWater(winner, env: env)
-        // Round 7: `prevPayload` (the previously-cached chain) is gone - the
-        // open-replay was already resolved purely from the adopted chain by the
-        // kernel (MessageTurnController.begin -> lastMoveEvents), never from a
-        // cached diff, so there is nothing to look up here any more.
-        let prevPayload: Data? = nil
         // Make the resident game the winner (the round guard/ledger it used to set
         // are gone with Rule R).
         _ = try? await MessageKernel.shared.decode(payload: winner, viewer: -1)
@@ -1832,10 +1826,9 @@ private struct GameSurface: View {
             if !MessageGameStore.shared.hasSetNickname {
                 controller = nil
                 nameGate = NameGate(env: env, payload: winner, seat: seat,
-                                    prevPayload: prevPayload, quietOpen: justSent)
+                                    quietOpen: justSent)
             } else {
-                seatOnBoard(seat: seat, env: env, winner: winner,
-                            prevPayload: prevPayload, quietOpen: justSent)
+                seatOnBoard(seat: seat, env: env, winner: winner, quietOpen: justSent)
             }
         case .ambiguous:
             controller = nil
@@ -1898,7 +1891,7 @@ private struct GameSurface: View {
     /// with the name gate. `quietOpen` (round-9 #5): this is my own just-sent
     /// chain, so its last move - mine, watched live - is not replayed.
     private func seatOnBoard(seat: Int, env: MessageEnvelope, winner: Data,
-                             prevPayload: Data? = nil, quietOpen: Bool = false) {
+                             quietOpen: Bool = false) {
         cache(seat: seat, env: env, payload: winner)
         // ROUND 12: same game, same seat, board already up -> hand the new chain
         // to the LIVE controller instead of replacing it.
@@ -1928,7 +1921,6 @@ private struct GameSurface: View {
             return
         }
         let fresh = MessageTurnController(parentPayload: winner, parent: env, mySeat: seat,
-                                          prevPayload: prevPayload,
                                           suppressOpenReplay: quietOpen)
         fresh.setSuperseded(staleBranch)
         controller = fresh
@@ -1948,18 +1940,15 @@ private struct GameSurface: View {
             MessageGameStore.shared.nickname = name
         }
         nameGate = nil
-        seatOnBoard(seat: g.seat, env: g.env, winner: g.payload,
-                    prevPayload: g.prevPayload, quietOpen: g.quietOpen)
+        seatOnBoard(seat: g.seat, env: g.env, winner: g.payload, quietOpen: g.quietOpen)
     }
 
     /// §6.3 pick resolved: remember the seat, then play. DEBUG-only
-    /// single-simulator path (never compiled into Release): deliberately skips
-    /// the open-delta-replay hint (`prevPayload` stays nil below) rather than
-    /// duplicating `adopt`'s prev-chain lookup for a testing-only picker that
-    /// runs before that lookup would even happen (`pickSeatOnAdopt` returns
-    /// out of `adopt` first) — this seat opens with the plain fallback replay
-    /// instead (notes 4/9/38's cache-miss path), which is a fine trade for a
-    /// dev aid.
+    /// single-simulator path (never compiled into Release). It used to be
+    /// described as skipping the "open-delta-replay hint" that `adopt` looks
+    /// up; round 43 established there was never a lookup to skip - the hint
+    /// was nil at its only origin and read nowhere - so this picker opens
+    /// exactly the same board every other path does.
     private func choose(seat: Int, from a: (env: MessageEnvelope, payload: Data)) async {
         cache(seat: seat, env: a.env, payload: a.payload)
         let c = MessageTurnController(parentPayload: a.payload, parent: a.env, mySeat: seat)
