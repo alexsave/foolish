@@ -86,7 +86,16 @@ public struct MessageTableView: View {
     // overlay does NOT own, so the card returns table→hand purely by
     // matchedGeometry. With no namespace, undo (and any non-overlay move) SNAPS the
     // card home instantly, which is what an instantaneous swap should look like.
-    private var cardNS: Namespace.ID? { nil }
+    // (round 43: `cardNS` is gone. It was a computed `Namespace.ID?` returning
+    // nil, and every call site passed it. Round 8 established that this board
+    // has no matchedGeometry namespace and must not have one - the overlay owns
+    // every flight, so a shared namespace would DOUBLE-animate and the
+    // cross-fade it produces is an opacity animation on a card, which is the
+    // one thing this game never does. That is still true; what is gone is the
+    // ceremony of passing nil to say so. A board with no namespace argument
+    // says it more plainly than a nil-valued one, and it cannot be handed a
+    // real namespace by accident. See `BoardDrag.FlightID` for the invariant
+    // that replaced the per-card guard.)
     // Overlay flights to the discard pile (bout end), where matchedGeometry has no
     // target view to match against.
     @StateObject private var animator = BoardAnimator()
@@ -1858,7 +1867,6 @@ public struct MessageTableView: View {
                 FBattleGrid(battles: shown, trumpSuit: view.trumpSuit,
                             coverable: sweeping || passPreview ? [] : highlightBattles(view),
                             onTapBattle: sweeping ? { _ in } : { idx in tapBattle(idx, view) },
-                            namespace: cardNS,
                             // Sweeping cards are hidden per-flight (`sweptFlownIds`),
                             // NOT by the hand veil (`veiledCardIds`, which also hides
                             // a picked-up card's HAND copy) - the table copy must
@@ -4988,7 +4996,6 @@ public struct MessageTableView: View {
                  selection: $selection, onTap: { toggle($0) },
                  onDragChanged: { card, point in onDragChanged(card, at: point) },
                  onDragEnded: { card, point in onDragEnded(card, at: point, view) },
-                 namespace: cardNS,
                  hidden: veiledCardIds.subtracting(handHoldback.map(\.identity)),
                  crop: crop,
                  onDragCardMoved: { center in dragCardCenter = center },

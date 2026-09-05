@@ -808,15 +808,14 @@ public struct FHandFan: View {
             // Round-8: an overlay-flight board exits a card INSTANTLY (no fade);
             // see `instantExit`. Everyone else keeps the default cross-fade.
             .transition(instantExit ? .identity : .opacity)
-            // Round-7 #2: a card the board's overlay is flying (it is in `hidden`)
-            // must NOT also carry matchedGeometry, or SwiftUI flies it a SECOND
-            // time from wherever it left (a picked-up card's grid slot) into this
-            // fan while the overlay is already flying it there - the "double
-            // animation" for pickup. A hidden card drops its matched namespace so
-            // it just appears here (opacity 0) and the overlay flies it in once. At
-            // rest (not hidden) the namespace stays, a no-op. Empty `hidden` (the
-            // offline board) keeps every card matched, exactly as before.
-            .modifier(FlightID(id: card.identity, namespace: hidden.contains(card.identity) ? nil : namespace))
+            // Round-7 #2 dropped the namespace for a card the overlay was flying
+            // (`hidden.contains(id) ? nil : namespace`), to stop SwiftUI flying it
+            // a SECOND time into this fan - the "double animation" for pickup.
+            // Round 43 states that rule where it belongs instead: a board either
+            // veils cards or shares a namespace, never both, so the two could not
+            // be simultaneously non-trivial and the ternary never chose. See
+            // `FlightID`, which carries the invariant and the test that pins it.
+            .modifier(FlightID(id: card.identity, namespace: namespace))
             .background(GeometryReader { g in
                 Color.clear.preference(key: HandCardFramesKey.self,
                                        value: [card.identity: g.frame(in: .named(boardSpace))])

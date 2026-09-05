@@ -186,9 +186,15 @@ public struct FBattleGrid: View {
     /// drop its matched namespace: it then simply appears (opacity 0) at its
     /// destination and the overlay flies it in once, cleanly. A settled card
     /// (not hidden) keeps its namespace, a no-op at rest.
-    private func handoffNamespace(_ id: String) -> Namespace.ID? {
-        hidden.contains(id) ? nil : namespace
-    }
+    /// Round 43: this used to be `hidden.contains(id) ? nil : namespace`, the
+    /// same per-card guard FHandFan carried, and for the same reason - a card
+    /// the overlay is flying must not ALSO carry matchedGeometry. The rule is
+    /// real; the per-card test for it was unreachable. A board either veils
+    /// cards or shares a namespace, never both (see `FlightID`), so `hidden`
+    /// and `namespace` were never simultaneously non-trivial and this never
+    /// chose. Kept as a named function rather than inlined so the two call
+    /// sites below still read as one decision.
+    private func handoffNamespace(_ id: String) -> Namespace.ID? { namespace }
 
     private func pair(_ battle: BattleView, index: Int) -> some View {
         let covered = battle.defense != nil
