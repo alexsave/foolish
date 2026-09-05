@@ -1210,6 +1210,23 @@ public final class MessageTurnController: ObservableObject {
     /// bubble after it then claimed BOTH moves - the very doubling this rebase
     /// exists to prevent. Being handed the bytes that went out is the whole
     /// signal; what was pending is only what to forget.
+    /// WHICH BYTES WENT OUT, as a value - the rule stated above, extracted so
+    /// it can be exercised rather than argued.
+    ///
+    /// It replaced two layers written in two different rounds, and the claim
+    /// that they are equivalent is the whole risk of that change: this is the
+    /// send path, and getting it wrong strands a settlement or red-retracts a
+    /// move the thread already has. `MarkSentBytesTests` enumerates all eight
+    /// combinations of (staged, host nil, sealed nil) against the superseded
+    /// two-layer expression written out longhand, so the equivalence is checked
+    /// rather than reasoned about.
+    /// `nonisolated` because it is pure: three values in, one out, no actor
+    /// state touched. That is what lets a test enumerate the input space
+    /// without a controller and without hopping to the main actor.
+    nonisolated static func sentBytes(staged: Bool, host: Data?, sealed: Data?) -> Data? {
+        staged ? (sealed ?? host) : host
+    }
+
     public func markSent(payload: Data? = nil) async {
         // THE SIGNAL MAY ARRIVE WITHOUT ITS BYTES, AND ON DEVICE IT DOES.
         //
@@ -1237,11 +1254,8 @@ public final class MessageTurnController: ObservableObject {
         // They travel from `didStartSending` through a root-view rebuild and a
         // SwiftUI `onChange` to reach it, which is a long way for a value to
         // survive, and none of it is necessary: `lastSealed` IS the chain this
-        // controller sealed, staging is the only thing that makes one, and a
-        // send signal arriving with moves still pending can only be the send of
-        // that bubble. The host's payload stays preferred - it is what Messages
-        // actually transmitted - and our own is the fallback, the same bytes by
-        // construction and reachable without leaving the object.
+        // controller sealed, and staging is the only thing that makes one. See
+        // the resolution below for which of the two wins, and when.
         // THE TRAIL HAS TO SHOW THIS FUNCTION RAN AT ALL.
         //
         // Every note this function writes today is on a PATH through it, so a
@@ -1253,35 +1267,55 @@ public final class MessageTurnController: ObservableObject {
         FlightRecorder.note("send-mark",
             "\(pending.count) staged, in=\(payload?.count ?? -1)b,"
           + " sealed=\(lastSealed?.count ?? -1)b, held=\(heldSettlement.count)")
-        var sent = payload ?? (pending.isEmpty ? nil : lastSealed)
-        if payload == nil, sent != nil {
-            FlightRecorder.note("send-bytesless", "rebased onto my own sealed chain instead")
-        }
-        // ...AND A WRONG VALUE IS THE SAME PROBLEM AS A MISSING ONE.
+        // WHICH BYTES WENT OUT - one rule, from two rounds that each found half
+        // of it and never met.
         //
-        // 1.0(26) taught this function that the host's bytes may not survive the
-        // trip out to `didStartSending`, through a root-view rebuild and a
-        // SwiftUI `onChange`, and back into a Task - and the answer was
-        // `lastSealed` as a fallback for NIL. A value that arrives STALE rather
-        // than absent takes the refusal below instead, and a refusal is not the
-        // harmless shrug it was when it was written: it strands the withheld
-        // settlement, which only this function releases, and it leaves `pending`
-        // full so the NEXT arrival red-retracts a move the thread already has.
-        // Owner, on a sent pickup followed by an ordinary throw-in: "Somehow
-        // this caused an UNDO animation of the previous pickup! ... My pickup
-        // definitely wasn't superceded."
+        // 1.0(26): the host's payload can arrive NIL. It travels from
+        // `didStartSending` through a root-view rebuild and a SwiftUI
+        // `onChange` into a Task, and a nil emptied `pending` while leaving
+        // `base` where it stood - which un-plays the staged move, so the board
+        // reads its own table clearing as a bout end and animates the bubble
+        // BEFORE the one just sent. The answer was `lastSealed` as a fallback
+        // for nil.
         //
-        // With moves STAGED there is exactly one bubble in the input field and
-        // this controller sealed it (`stagedPayload` is the only thing that
-        // makes one), so a send signal can only be that bubble's going out,
-        // whatever bytes came along for the ride. Trust our own. With NOTHING
-        // staged we have no such claim, and the refusal below still stands
-        // untouched - which is the shape a genuinely foreign signal arrives in
-        // anyway (a reload handed a chain this controller did not make).
-        if let host = payload, let mine = lastSealed, host != mine, !pending.isEmpty {
-            FlightRecorder.note("send-substituted",
-                                "host \(host.count)b != sealed \(mine.count)b - using mine")
-            sent = mine
+        // 1.0(36): the host's payload can arrive STALE, which took the refusal
+        // below instead - and a refusal is not the shrug it was written as. It
+        // strands the withheld settlement that only this function releases, and
+        // leaves `pending` full so the next arrival red-retracts a move the
+        // thread already has. Owner, on a sent pickup then an ordinary throw-in:
+        // "Somehow this caused an UNDO animation of the previous pickup! ... My
+        // pickup definitely wasn't superceded."
+        //
+        // Those were fixed as two layers - a `??` for the nil and a
+        // substitution for the stale - and the second silently reversed the
+        // first's stated preference without deleting it. They are one sentence:
+        //
+        //   WITH MOVES STAGED, OUR OWN SEALED CHAIN IS THE BUBBLE.
+        //   WITH NOTHING STAGED, ONLY THE HOST CAN SAY.
+        //
+        // Staged, there is exactly one bubble in the input field and this
+        // controller sealed it (`stagedPayload` is the only thing that makes
+        // one), so a send signal can only be that bubble going out - whatever
+        // bytes came along for the ride, absent or stale. Unstaged there is no
+        // such claim, which is also the shape a genuinely foreign signal arrives
+        // in (a reload handed a chain this controller never made), and the
+        // refusal below still stands untouched for it.
+        //
+        // Byte-for-byte identical to the two layers it replaces, checked over
+        // all eight combinations of (staged, host nil, sealed nil). The two
+        // trail notes keep their names: they are what the owner greps a device
+        // dump for, and they still separate the two ways the host let us down.
+        let sent = Self.sentBytes(staged: !pending.isEmpty, host: payload, sealed: lastSealed)
+        if !pending.isEmpty {
+            if let mine = lastSealed, mine != payload {
+                if let host = payload {
+                    FlightRecorder.note("send-substituted",
+                                        "host \(host.count)b != sealed \(mine.count)b - using mine")
+                } else {
+                    FlightRecorder.note("send-bytesless",
+                                        "rebased onto my own sealed chain instead")
+                }
+            }
         }
 
         // A SEND MAY NEVER MOVE THIS BOARD BACKWARDS.
