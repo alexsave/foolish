@@ -18,6 +18,25 @@ static char buf[1 << 16];
 static char evbuf[1 << 18];
 
 // How many times `needle` occurs in `s` (non-overlapping).
+
+// A PACKED ROSTER (ios_api.h): n_joins(1) then n_joins x {seat, name_len, name}.
+// The smoke builds one wherever it used to write a joins JSON literal.
+typedef struct { int seat; const char *name; } SmokeJoin;
+static int pack_joins(unsigned char *out, int cap, const SmokeJoin *js, int n) {
+    int p = 0;
+    if (cap < 1) return -1;
+    out[p++] = (unsigned char)n;
+    for (int i = 0; i < n; i++) {
+        const int nl = (int)strlen(js[i].name);
+        if (p + 2 + nl > cap) return -1;
+        out[p++] = (unsigned char)js[i].seat;
+        out[p++] = (unsigned char)nl;
+        memcpy(out + p, js[i].name, (size_t)nl);
+        p += nl;
+    }
+    return p;
+}
+
 static int count_of(const char *s, const char *needle) {
     int n = 0;
     size_t len = strlen(needle);
@@ -218,11 +237,12 @@ static int fmsg_check(void) {
         if (fio_apply_awire(seat, aw, al) != FIO_EOK) break;
     }
 
-    const char *joins = "[{\"seat\":0,\"name\":\"Sveta\"},{\"seat\":1,\"name\":\"Ann\"},"
-                        "{\"seat\":2,\"name\":\"Bo\"},{\"seat\":3,\"name\":\"Cy\"}]";
+    const SmokeJoin jspec[4] = { {0,"Sveta"}, {1,"Ann"}, {2,"Bo"}, {3,"Cy"} };
+    unsigned char joins[128];
+    const int joins_n = pack_joins(joins, (int)sizeof joins, jspec, 4);
     unsigned char pay[2048];
     const uint8_t zero8[8] = {0};
-    const int n = fio_msg_encode(2 /* LIVE */, 0, 0x0123456789abcdefULL, zero8, joins, 0 /* no send clock in this smoke */, pay, sizeof(pay));
+    const int n = fio_msg_encode(2 /* LIVE */, 0, 0x0123456789abcdefULL, zero8, joins, joins_n, 0 /* no send clock in this smoke */, pay, sizeof(pay));
     if (n <= 0) { printf("FAIL fmsg encode: %d (msg_err=%d)\n", n, fio_last_msg_error()); return 1; }
 
     // The size claim the whole design rests on (§4.4): base32 is 8 chars/5 bytes.
@@ -286,7 +306,7 @@ static int fmsg_check(void) {
         }
         if (v == FIO_REBASE_REAPPLY) {
             unsigned char child[2048];
-            const int cn = fio_msg_encode(2, seat, 0x0123456789abcdefULL, zero8, joins, 0 /* no send clock in this smoke */, child, sizeof(child));
+            const int cn = fio_msg_encode(2, seat, 0x0123456789abcdefULL, zero8, joins, joins_n, 0 /* no send clock in this smoke */, child, sizeof(child));
             if (cn <= 0) { printf("FAIL fmsg child encode %d\n", cn); return 1; }
             if (fio_msg_rule_p(child, cn, pay, n) >= 0) {
                 printf("FAIL rule_p: the child chain must win\n"); return 1;
@@ -337,7 +357,8 @@ static int fmsg_check(void) {
 // The turn itself: two actions on the chain `parent`, sealed after each, with
 // the composer's read of its own staged bubble in between when `with_read`.
 // Hands back what the FINAL bubble says about itself.
-static int delta_stage_two(const unsigned char *parent, int pn, const char *joins,
+static int delta_stage_two(const unsigned char *parent, int pn,
+                           const unsigned char *joins, int joins_n,
                            int with_read, int *turn_out, int *delta_out) {
     const uint8_t zero8[8] = {0};
     unsigned char mb[1 << 14];
@@ -356,7 +377,7 @@ static int delta_stage_two(const unsigned char *parent, int pn, const char *join
         const int al = pick_move_awire((const unsigned char *)buf, lrc, aw);
         if (al == 0 || fio_apply_awire(seat, aw, al) != FIO_EOK) break;
         applied++;
-        bn = fio_msg_encode(2, seat, 0xD00DULL, zero8, joins, 0, bubble, sizeof(bubble));
+        bn = fio_msg_encode(2, seat, 0xD00DULL, zero8, joins, joins_n, 0, bubble, sizeof(bubble));
         if (bn <= 0) return -1;
         // THE READ: what the composer does with the bubble it has just staged,
         // before the human plays the rest of the turn.
@@ -378,8 +399,9 @@ static int delta_stage_two(const unsigned char *parent, int pn, const char *join
 static int bubble_delta_check(void) {
     unsigned char seed[32];
     for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(i * 7 + 5);
-    const char *joins = "[{\"seat\":0,\"name\":\"Sveta\"},{\"seat\":1,\"name\":\"Ann\"},"
-                        "{\"seat\":2,\"name\":\"Bo\"},{\"seat\":3,\"name\":\"Cy\"}]";
+    const SmokeJoin jspec[4] = { {0,"Sveta"}, {1,"Ann"}, {2,"Bo"}, {3,"Cy"} };
+    unsigned char joins[128];
+    const int joins_n = pack_joins(joins, (int)sizeof joins, jspec, 4);
     const uint8_t zero8[8] = {0};
 
     // A turn of two actions that really is two ATOMS wide - not one the codec
@@ -403,9 +425,9 @@ static int bubble_delta_check(void) {
             if (al == 0 || fio_apply_awire(seat, aw, al) != FIO_EOK) break;
         }
         if (played != n_pre) break;
-        pn = fio_msg_encode(2, 0, 0xD00DULL, zero8, joins, 0, parent, sizeof(parent));
+        pn = fio_msg_encode(2, 0, 0xD00DULL, zero8, joins, joins_n, 0, parent, sizeof(parent));
         if (pn <= 0) { printf("FAIL delta parent encode %d\n", pn); return 1; }
-        if (delta_stage_two(parent, pn, joins, 0, &silent_turn, &silent_delta) != 0) continue;
+        if (delta_stage_two(parent, pn, joins, joins_n, 0, &silent_turn, &silent_delta) != 0) continue;
         if (silent_delta == 2) { prelude = n_pre; break; }
     }
     if (prelude < 0) { printf("FAIL delta: no two-atom turn found to test\n"); return 1; }
@@ -413,7 +435,7 @@ static int bubble_delta_check(void) {
     // The SAME turn again, this time with the read in between. What the bubble
     // says about itself must not depend on who looked at it.
     int read_turn = 0, read_delta = 0;
-    const int rc = delta_stage_two(parent, pn, joins, 1, &read_turn, &read_delta);
+    const int rc = delta_stage_two(parent, pn, joins, joins_n, 1, &read_turn, &read_delta);
     if (rc == -2) { printf("FAIL delta: peek and decode disagree about the same bytes\n"); return 1; }
     if (rc != 0) { printf("FAIL delta: the read run did not stage its turn\n"); return 1; }
 
@@ -447,9 +469,11 @@ static int lobby_v2_reseat_check(void) {
     // lobby" convention — and seal WAITING with just the creator's join.
     if (fio_new_game(seed, 32, 8) != FIO_EOK) { printf("FAIL lobby new_game(8)\n"); return 1; }
     const uint8_t zero8[8] = {0};
-    const char *joins1 = "[{\"seat\":0,\"name\":\"Alex\"}]";
+    const SmokeJoin jspec1[1] = { {0,"Alex"} };
+    unsigned char joins1[64];
+    const int joins1_n = pack_joins(joins1, (int)sizeof joins1, jspec1, 1);
     unsigned char waiting[2048];
-    const int wn = fio_msg_encode(0 /* WAITING */, 0, 0xF001ULL, zero8, joins1, 0 /* no send clock in this smoke */, waiting, sizeof(waiting));
+    const int wn = fio_msg_encode(0 /* WAITING */, 0, 0xF001ULL, zero8, joins1, joins1_n, 0 /* no send clock in this smoke */, waiting, sizeof(waiting));
     if (wn <= 0) { printf("FAIL lobby waiting encode: %d (msg_err=%d)\n", wn, fio_last_msg_error()); return 1; }
 
     // Two joins land (seats 1, 2) — mechanically identical to today's join
@@ -458,10 +482,11 @@ static int lobby_v2_reseat_check(void) {
     if (fio_msg_decode_packed(waiting, wn, mb, sizeof(mb)) <= 0) {
         printf("FAIL lobby waiting decode: msg_err=%d\n", fio_last_msg_error()); return 1;
     }
-    const char *joins3 = "[{\"seat\":0,\"name\":\"Alex\"},{\"seat\":1,\"name\":\"Sveta\"},"
-                        "{\"seat\":2,\"name\":\"Boris\"}]";
+    const SmokeJoin jspec3[3] = { {0,"Alex"}, {1,"Sveta"}, {2,"Boris"} };
+    unsigned char joins3[128];
+    const int joins3_n = pack_joins(joins3, (int)sizeof joins3, jspec3, 3);
     unsigned char waiting3[2048];
-    const int wn3 = fio_msg_encode(0, 2, 0xF001ULL, zero8, joins3, 0 /* no send clock in this smoke */, waiting3, sizeof(waiting3));
+    const int wn3 = fio_msg_encode(0, 2, 0xF001ULL, zero8, joins3, joins3_n, 0 /* no send clock in this smoke */, waiting3, sizeof(waiting3));
     if (wn3 <= 0) { printf("FAIL lobby waiting3 encode: %d\n", wn3); return 1; }
     if (fio_msg_decode_packed(waiting3, wn3, mb, sizeof(mb)) <= 0) {
         printf("FAIL lobby waiting3 decode: msg_err=%d\n", fio_last_msg_error()); return 1;
@@ -475,7 +500,7 @@ static int lobby_v2_reseat_check(void) {
     // at the actual joined count (3) from the SAME locked seed, then seal LIVE.
     if (fio_reseat_game(3) != FIO_EOK) { printf("FAIL lobby reseat(3)\n"); return 1; }
     unsigned char live[2048];
-    const int ln = fio_msg_encode(2 /* LIVE */, 0, 0xF001ULL, zero8, joins3, 0 /* no send clock in this smoke */, live, sizeof(live));
+    const int ln = fio_msg_encode(2 /* LIVE */, 0, 0xF001ULL, zero8, joins3, joins3_n, 0 /* no send clock in this smoke */, live, sizeof(live));
     if (ln <= 0) { printf("FAIL lobby live encode: %d (msg_err=%d)\n", ln, fio_last_msg_error()); return 1; }
 
     // THE claim: the wire accepts a LIVE child whose n_players (3) differs
@@ -514,9 +539,11 @@ static int lobby_rules_check(void) {
     // The checkbox comes OFF: the lobby is resealed, and this is the bubble the
     // others will open.
     if (fio_set_passing(0) != FIO_EOK) { printf("FAIL rules set_passing(0)\n"); return 1; }
-    const char *joins2 = "[{\"seat\":0,\"name\":\"Alex\"},{\"seat\":1,\"name\":\"Dima\"}]";
+    const SmokeJoin jspec2[2] = { {0,"Alex"}, {1,"Dima"} };
+    unsigned char joins2[128];
+    const int joins2_n = pack_joins(joins2, (int)sizeof joins2, jspec2, 2);
     unsigned char waiting[2048];
-    const int wn = fio_msg_encode(0 /* WAITING */, 0, 0xF003ULL, zero8, joins2, 0, waiting, sizeof(waiting));
+    const int wn = fio_msg_encode(0 /* WAITING */, 0, 0xF003ULL, zero8, joins2, joins2_n, 0, waiting, sizeof(waiting));
     if (wn <= 0) { printf("FAIL rules waiting encode: %d (msg_err=%d)\n", wn, fio_last_msg_error()); return 1; }
     if (fio_msg_decode_packed(waiting, wn, mb, sizeof(mb)) <= 0) {
         printf("FAIL rules waiting decode: msg_err=%d\n", fio_last_msg_error()); return 1;
@@ -528,7 +555,7 @@ static int lobby_rules_check(void) {
     if (fio_reseat_game(2) != FIO_EOK) { printf("FAIL rules reseat(2)\n"); return 1; }
     if (fio_passing_allowed()) { printf("FAIL rules: the re-deal restored the transfer\n"); return 1; }
     unsigned char live[2048];
-    const int ln = fio_msg_encode(2 /* LIVE */, 0, 0xF003ULL, zero8, joins2, 0, live, sizeof(live));
+    const int ln = fio_msg_encode(2 /* LIVE */, 0, 0xF003ULL, zero8, joins2, joins2_n, 0, live, sizeof(live));
     if (ln <= 0) { printf("FAIL rules live encode: %d (msg_err=%d)\n", ln, fio_last_msg_error()); return 1; }
     if (fio_msg_decode_packed(live, ln, mb, sizeof(mb)) <= 0) {
         printf("FAIL rules live decode: msg_err=%d\n", fio_last_msg_error()); return 1;
@@ -1189,31 +1216,90 @@ static int nine_player_cap_check(void) {
     unsigned char out[2048];
 
     // A full 8-join WAITING lobby seals fine (the cap itself is reachable)…
-    char joins8[512]; int off = 0;
-    off += snprintf(joins8 + off, sizeof(joins8) - off, "[");
-    for (int s = 0; s < 8; s++)
-        off += snprintf(joins8 + off, sizeof(joins8) - off,
-                        "%s{\"seat\":%d,\"name\":\"P%d\"}", s ? "," : "", s, s);
-    snprintf(joins8 + off, sizeof(joins8) - off, "]");
-    if (fio_msg_encode(0, 7, 0xF002ULL, zero8, joins8, 0 /* no send clock in this smoke */, out, sizeof(out)) <= 0) {
+    SmokeJoin jspec8[9];
+    char names8[9][8];
+    for (int s = 0; s < 9; s++) {
+        snprintf(names8[s], sizeof names8[s], "P%d", s);
+        jspec8[s].seat = s; jspec8[s].name = names8[s];
+    }
+    unsigned char joins8[256];
+    const int joins8_n = pack_joins(joins8, (int)sizeof joins8, jspec8, 8);
+    if (fio_msg_encode(0, 7, 0xF002ULL, zero8, joins8, joins8_n, 0 /* no send clock in this smoke */, out, sizeof(out)) <= 0) {
         printf("FAIL cap: a full 8-join lobby refused to seal (msg_err=%d)\n",
                fio_last_msg_error());
         return 1;
     }
 
-    // …a 9th join in the list does not (fio_parse_joins caps at MSG_MAX_JOINS)…
-    char joins9[600];
-    snprintf(joins9, sizeof(joins9), "%.*s,{\"seat\":8,\"name\":\"P8\"}]",
-             (int)strlen(joins8) - 1, joins8);
-    if (fio_msg_encode(0, 7, 0xF002ULL, zero8, joins9, 0 /* no send clock in this smoke */, out, sizeof(out)) > 0) {
+    // …a 9th join in the list does not (fio_read_joins caps at MSG_MAX_JOINS)…
+    unsigned char joins9[256];
+    const int joins9_n = pack_joins(joins9, (int)sizeof joins9, jspec8, 9);
+    if (fio_msg_encode(0, 7, 0xF002ULL, zero8, joins9, joins9_n, 0 /* no send clock in this smoke */, out, sizeof(out)) > 0) {
         printf("FAIL cap: a 9-join lobby sealed\n"); return 1;
     }
 
     // …a claim on seat 8 (outside the 0..7 wire range) does not…
-    if (fio_msg_encode(0, 0, 0xF002ULL, zero8,
-                       "[{\"seat\":0,\"name\":\"A\"},{\"seat\":8,\"name\":\"I\"}]", 0 /* no send clock in this smoke */,
+    const SmokeJoin jbad[2] = { {0,"A"}, {8,"I"} };
+    unsigned char joinsbad[64];
+    const int joinsbad_n = pack_joins(joinsbad, (int)sizeof joinsbad, jbad, 2);
+    if (fio_msg_encode(0, 0, 0xF002ULL, zero8, joinsbad, joinsbad_n, 0 /* no send clock in this smoke */,
                        out, sizeof(out)) > 0) {
         printf("FAIL cap: a seat-8 claim sealed\n"); return 1;
+    }
+
+    // …and neither does a roster the caller and the kernel would read
+    // differently: a length that runs past the blob, or bytes left over.
+    if (fio_msg_encode(0, 7, 0xF002ULL, zero8, joins8, joins8_n - 1, 0, out, sizeof(out)) > 0
+        || fio_msg_encode(0, 7, 0xF002ULL, zero8, joins8, joins8_n + 1, 0, out, sizeof(out)) > 0
+        || fio_msg_encode(0, 7, 0xF002ULL, zero8, joins8, 0, 0, out, sizeof(out)) > 0) {
+        printf("FAIL cap: a roster that does not measure up sealed\n"); return 1;
+    }
+
+    // …nor does a name longer than the MsgJoin it has to land in. name_len is
+    // a byte and the slot is 64, so an unchecked 200 writes past the struct.
+    {
+        unsigned char longname[512];
+        int q = 0;
+        longname[q++] = 2;
+        longname[q++] = 0; longname[q++] = 1; longname[q++] = 'A';
+        longname[q++] = 1; longname[q++] = 200;
+        for (int i = 0; i < 200; i++) longname[q++] = 'x';
+        // FIO_EPARSE exactly: the ROSTER READER has to be the one that refuses
+        // it. Something downstream also refuses the result, but only after 200
+        // bytes have been copied into a 64-byte MsgJoin.name.
+        if (fio_msg_encode(0, 1, 0xF002ULL, zero8, longname, q, 0, out, sizeof(out)) != FIO_EPARSE) {
+            printf("FAIL cap: a 200-byte name was not refused by the roster reader\n"); return 1;
+        }
+        longname[5] = 60;   // …and the same blob at a legal length does seal
+        if (fio_msg_encode(0, 1, 0xF002ULL, zero8, longname, 6 + 60, 0, out, sizeof(out)) <= 0) {
+            printf("FAIL cap: a 60-byte name was refused\n"); return 1;
+        }
+    }
+
+    // THE ROSTER READER, FLUSH AGAINST A PROT_NONE GUARD PAGE. Every short
+    // prefix of a valid blob, with its LAST byte on the page boundary: a count
+    // read before its record is bounded faults here rather than in the field.
+    // One sweep covers all four entries - they share fio_read_joins.
+    {
+        const long page = sysconf(_SC_PAGESIZE);
+        unsigned char *probe = mmap(0, (size_t)page * 2, PROT_READ | PROT_WRITE,
+                                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (probe == MAP_FAILED || mprotect(probe + page, (size_t)page, PROT_NONE) != 0) {
+            printf("FAIL roster guard page\n"); return 1;
+        }
+        for (int L = 0; L <= joins8_n; L++) {
+            unsigned char *edge = probe + page - L;
+            memcpy(edge, joins8, (size_t)L);
+            const int r = fio_msg_encode(0, 7, 0xF002ULL, zero8, edge, L, 0, out, sizeof(out));
+            if (L < joins8_n ? (r > 0) : (r <= 0)) {
+                printf("FAIL roster at %d bytes rc=%d\n", L, r); return 1;
+            }
+            uint32_t k = 0; int fi = 0;
+            const int c = fio_msg_carry(edge, L, 0, &k, &fi);
+            if (L < joins8_n ? (c == FIO_EOK) : (c != FIO_EOK)) {
+                printf("FAIL roster carry at %d bytes rc=%d\n", L, c); return 1;
+            }
+        }
+        munmap(probe, (size_t)page * 2);
     }
 
     // …and no 9-player deal exists to start into.

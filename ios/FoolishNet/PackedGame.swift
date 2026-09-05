@@ -69,6 +69,12 @@ public enum PackedGame {
 
         // Decode the masked state directly in Swift — no kernel JSON round-trip
         // (owner: wipe the JSON; client↔server is packed kernel wire).
+        //
+        // TRUE OF THE STATE, NOT OF THE ROSTER. The segment above is still
+        // JSON, and it is the last of it anywhere: the FMSG roster went packed
+        // (sdk/swift/RosterWire.swift) but this envelope is the SERVER's, so
+        // changing it means changing the server's encoder and deploying both in
+        // lockstep. Deliberately left - see docs/KERNEL_LIFT_BRIEF.md.
         guard let raw = MaskedView.decode(stateBytes, viewer: seat) else { return nil }
 
         // Merge the roster's real names / is_ai (the masked state carries neither).

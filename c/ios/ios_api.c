@@ -1850,42 +1850,43 @@ int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, i
     return fio_msg_pack(&e, digest, out, cap);
 }
 
-// joins: [{"seat":0,"name":"Sveta"},...] → e->joins / e->n_joins. Shared by the
-// action seal (fio_msg_encode) and the empty-body lobby seal
-// (fio_msg_encode_waiting). Returns FIO_EOK or FIO_EPARSE.
-static int fio_parse_joins(const char *joins_json, MsgEnvelope *e) {
-    const char *p = joins_json;
-    while (*p && *p != '[') p++;
-    if (*p != '[') return FIO_EPARSE;
-    p++;
-    while (*p) {
-        while (*p == ' ' || *p == ',') p++;
-        if (*p == ']' || !*p) break;
-        if (*p != '{') return FIO_EPARSE;
-        if (e->n_joins >= MSG_MAX_JOINS) return FIO_EPARSE;
-        const char *sp = find_key(p, "seat");
-        const char *np = find_key(p, "name");
-        if (!sp || !np || *np != '"') return FIO_EPARSE;
-        MsgJoin *jn = &e->joins[e->n_joins];
-        jn->seat = (uint8_t)atoi(sp);
-        np++;
-        int n = 0;
-        while (*np && *np != '"' && n < MSG_MAX_NAME) jn->name[n++] = *np++;
-        if (*np != '"') return FIO_EPARSE;   // > MSG_MAX_NAME bytes, or unterminated
-        jn->name_len = (uint8_t)n;
-        e->n_joins++;
-        const char *close = strchr(p, '}');
-        if (!close) return FIO_EPARSE;
-        p = close + 1;
+// A ROSTER, PACKED - byte for byte the tail fio_msg_decode_packed hands BACK:
+//   n_joins(1), then n_joins x { seat(1), name_len(1), name[name_len] }
+// One layout for the roster in both directions, so a host that can read one can
+// write one. It used to arrive as [{"seat":0,"name":"Sveta"},...] and be parsed
+// here, which made the roster the last JSON on any path that matters.
+//
+// Every record is BOUNDED BEFORE IT IS READ, and the blob must be consumed
+// EXACTLY: trailing bytes mean the caller and the kernel disagree about what a
+// roster is, and a roster read short is a different table. Returns FIO_EOK or
+// FIO_EPARSE.
+static int fio_read_joins(const uint8_t *b, int len, MsgEnvelope *e) {
+    if (!b || len < 1) return FIO_EPARSE;
+    const int n = b[0];
+    if (n > MSG_MAX_JOINS) return FIO_EPARSE;
+    int p = 1;
+    for (int i = 0; i < n; i++) {
+        if (p + 2 > len) return FIO_EPARSE;
+        const int seat = b[p];
+        const int name_len = b[p + 1];
+        if (name_len > MSG_MAX_NAME) return FIO_EPARSE;
+        if (p + 2 + name_len > len) return FIO_EPARSE;
+        MsgJoin *jn = &e->joins[i];
+        jn->seat = (uint8_t)seat;
+        jn->name_len = (uint8_t)name_len;
+        if (name_len > 0) memcpy(jn->name, b + p + 2, (size_t)name_len);
+        p += 2 + name_len;
     }
+    if (p != len) return FIO_EPARSE;
+    e->n_joins = (uint8_t)n;
     return FIO_EOK;
 }
 
 int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
-                   const uint8_t parent8[8], const char *joins_json,
+                   const uint8_t parent8[8], const uint8_t *joins, int joins_len,
                    int sent_at, uint8_t *out, int cap) {
     if (!g_has_game) return FIO_ENOGAME;
-    if (!out || cap <= 0 || !joins_json) return FIO_EBADARG;
+    if (!out || cap <= 0 || !joins || joins_len < 1) return FIO_EBADARG;
     if (!g_has_deal_seed) return FIO_ENOSEED;   // no seed, no serverless game
     g_last_msg_error = 0;
 
@@ -1921,7 +1922,7 @@ int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
     if (parent8) memcpy(e.parent8, parent8, MSG_PARENT_LEN);
     memcpy(e.seed, g_deal_seed, FOOLISH_SEED_LEN);
 
-    const int jrc = fio_parse_joins(joins_json, &e);
+    const int jrc = fio_read_joins(joins, joins_len, &e);
     if (jrc != FIO_EOK) return jrc;
 
     static unsigned char body[1024];   // a v6 body measures ~68 B at 8 players
@@ -1939,13 +1940,13 @@ int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
 
 // ---------- Rule F: the fool's penalty ------------------------------------
 
-// Parse a joins JSON into a bare array, the shape msg_roster_key wants. Shares
-// fio_parse_joins so the two entries below cannot read a roster differently
-// from the way a seal writes one.
-static int fio_joins_of(const char *joins_json, MsgJoin *out, int *n_out) {
+// A packed roster as a bare array, the shape msg_roster_key wants. Shares
+// fio_read_joins so the entries below cannot read a roster differently from the
+// way a seal writes one.
+static int fio_joins_of(const uint8_t *joins, int joins_len, MsgJoin *out, int *n_out) {
     static MsgEnvelope tmp;   // static: MsgEnvelope is large, and this is a
     msg_envelope_init(&tmp);  // single-threaded actor (see the file header)
-    const int rc = fio_parse_joins(joins_json, &tmp);
+    const int rc = fio_read_joins(joins, joins_len, &tmp);
     if (rc != FIO_EOK) return rc;
     if (tmp.n_joins < 2 || tmp.n_joins > MSG_MAX_JOINS) return FIO_EBADARG;
     for (int i = 0; i < tmp.n_joins; i++) out[i] = tmp.joins[i];
@@ -1953,12 +1954,12 @@ static int fio_joins_of(const char *joins_json, MsgJoin *out, int *n_out) {
     return FIO_EOK;
 }
 
-int fio_msg_carry(const char *joins_json, int fool_seat,
+int fio_msg_carry(const uint8_t *joins_packed, int joins_len, int fool_seat,
                   uint32_t *key_out, int *fool_index_out) {
-    if (!joins_json || !key_out || !fool_index_out) return FIO_EBADARG;
+    if (!joins_packed || !key_out || !fool_index_out) return FIO_EBADARG;
     MsgJoin joins[MSG_MAX_JOINS];
     int n = 0;
-    const int rc = fio_joins_of(joins_json, joins, &n);
+    const int rc = fio_joins_of(joins_packed, joins_len, joins, &n);
     if (rc != FIO_EOK) return rc;
     if (fool_seat < 0 || fool_seat >= n) return FIO_EBADARG;
 
@@ -1983,22 +1984,23 @@ int fio_msg_set_carry(uint32_t key, int fool_index) {
     return FIO_EOK;
 }
 
-int fio_msg_penalty_fool_seat(const char *joins_json, uint32_t carry_key, int carry_fool) {
-    if (!joins_json) return -1;
+int fio_msg_penalty_fool_seat(const uint8_t *joins_packed, int joins_len,
+                              uint32_t carry_key, int carry_fool) {
+    if (!joins_packed) return -1;
     MsgJoin joins[MSG_MAX_JOINS];
     int n = 0;
-    if (fio_joins_of(joins_json, joins, &n) != FIO_EOK) return -1;
+    if (fio_joins_of(joins_packed, joins_len, joins, &n) != FIO_EOK) return -1;
     const uint8_t fool = (carry_fool < 0 || carry_fool > 0xFF)
                        ? (uint8_t)MSG_NO_FOOL : (uint8_t)carry_fool;
     return msg_rematch_fool_seat(joins, n, carry_key, fool);
 }
 
-int fio_msg_start_rematch(const char *joins_json, uint32_t carry_key,
+int fio_msg_start_rematch(const uint8_t *joins_packed, int joins_len, uint32_t carry_key,
                           int carry_fool, int *opening_out) {
-    if (!joins_json || !opening_out) return FIO_EBADARG;
+    if (!joins_packed || !opening_out) return FIO_EBADARG;
     MsgJoin joins[MSG_MAX_JOINS];
     int n = 0;
-    const int rc = fio_joins_of(joins_json, joins, &n);
+    const int rc = fio_joins_of(joins_packed, joins_len, joins, &n);
     if (rc != FIO_EOK) return rc;
 
     const uint8_t fool = (carry_fool < 0 || carry_fool > 0xFF)

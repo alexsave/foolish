@@ -786,10 +786,15 @@ int fio_msg_last_body_version(void);
 // fills in what the BODY owns (turn, round) by decoding the code it just wrote,
 // so a device cannot emit a payload it would itself reject.
 //
-// `joins_json` is [{"seat":0,"name":"Sveta"},...]; names are <=64 UTF-8 bytes
-// (round-5 B1, docs/APP_REVIEW_NOTES.md — was 12, too tight for a byte-counted
-// Cyrillic name) and are the only identity a payload carries (no participant
-// UUID ever goes in — they do not transfer across devices, §6).
+// `joins` is the roster PACKED, in the one layout this file already writes -
+// the tail of fio_msg_decode_packed's blob:
+//     n_joins(1), then n_joins x { seat(1) name_len(1) name[name_len] }
+// The blob must be consumed exactly (no trailing bytes), and names are <=64
+// UTF-8 bytes (round-5 B1, docs/APP_REVIEW_NOTES.md - was 12, too tight for a
+// byte-counted Cyrillic name). Names are the only identity a payload carries
+// (no participant UUID ever goes in - they do not transfer across devices, §6).
+// It crossed as JSON until the roster was the last JSON left anywhere that
+// matters; the layout is unchanged, only the direction is new.
 //
 // `sent_at` is the SEND CLOCK: this device's unix seconds mod 65536, which seals
 // a format-3 envelope, or 0 to seal format 2 exactly as before. It is a
@@ -799,7 +804,7 @@ int fio_msg_last_body_version(void);
 // Returns bytes written to `out`, or negative. FIO_ENOSEED if this game was not
 // dealt from a wide seed (a serverless game cannot be rebuilt without one).
 int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
-                   const uint8_t parent8[8], const char *joins_json,
+                   const uint8_t parent8[8], const uint8_t *joins, int joins_len,
                    int sent_at, uint8_t *out, int cap);
 
 // ROUND 16 — the pickup hold, asked of the RESIDENT game (the one the last
@@ -826,7 +831,8 @@ int fio_msg_pickup_hold(int seat, int sent_at, int now);
 // it into the carry a WAITING envelope hands forward. `*key_out` is the roster
 // key (never 0) and `*fool_index_out` the fool's index in that key's canonical
 // rotation. Seal them as the envelope's carry_key/carry_fool.
-int fio_msg_carry(const char *joins_json, int fool_seat,
+// `joins`/`joins_len` are the packed roster fio_msg_encode takes.
+int fio_msg_carry(const uint8_t *joins, int joins_len, int fool_seat,
                   uint32_t *key_out, int *fool_index_out);
 
 // Arm the resident game's carry, so the next fio_msg_encode seals a WAITING
@@ -839,7 +845,8 @@ int fio_msg_set_carry(uint32_t key, int fool_index);
 // becomes the first defender - or -1 if the rule would not apply to this
 // roster. Read-only; it deals nothing and changes nothing, so a lobby can call
 // it on every render.
-int fio_msg_penalty_fool_seat(const char *joins_json, uint32_t carry_key, int carry_fool);
+int fio_msg_penalty_fool_seat(const uint8_t *joins, int joins_len,
+                              uint32_t carry_key, int carry_fool);
 
 // STARTING it: deal the resident locked seed at the joins' count, applying the
 // penalty if - and only if - the roster still keys equal to the carry. Replaces
@@ -849,7 +856,7 @@ int fio_msg_penalty_fool_seat(const char *joins_json, uint32_t carry_key, int ca
 // not apply (anyone joined, left or was renamed) and the deal derived its
 // opener normally. Either way the resident game is dealt and every later
 // fio_msg_encode repeats the term, so the caller does not carry it.
-int fio_msg_start_rematch(const char *joins_json, uint32_t carry_key,
+int fio_msg_start_rematch(const uint8_t *joins, int joins_len, uint32_t carry_key,
                           int carry_fool, int *opening_out);
 // This one entry seals every phase. A 0-action game — a WAITING lobby (§5.2) or
 // the last-joiner LIVE handoff that "applies nothing" — seals to an empty body:

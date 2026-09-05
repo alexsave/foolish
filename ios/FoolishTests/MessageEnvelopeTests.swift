@@ -123,6 +123,50 @@ final class MessageEnvelopeTests: XCTestCase {
         XCTAssertEqual(env.joins, orig.joins, "identities survived")
     }
 
+    /// THE ROSTER CROSSES AS BYTES, in the layout the kernel hands back - it
+    /// was the last JSON on any path that mattered. What is pinned is that the
+    /// codec is a round trip through the REAL kernel and not a Swift-only
+    /// equality, and that it survives the two things a JSON parser used to have
+    /// opinions about: multi-byte UTF-8, and the characters JSON has to escape.
+    ///
+    /// MUTATIONS (sdk/swift/RosterWire.swift), each on its own: write name_len
+    /// as the CHARACTER count rather than the UTF-8 byte count -> this test
+    /// fails at the seal, because the blob no longer measures up and the kernel
+    /// refuses it whole (c/ios/ios_api.c fio_read_joins); drop the n_joins byte
+    /// -> every test in the target that seals fails, for the same reason.
+    func testTheRosterCrossesAsBytesAndComesBackWhole() async throws {
+        let k = MessageKernel.shared
+        let seed = Data((0..<32).map { UInt8(truncatingIfNeeded: $0 &* 11 &+ 5) | 1 })
+        try await k.newGame(seed: seed, players: 4)
+        let joins = [MessageJoin(seat: 0, name: "Света"),
+                     MessageJoin(seat: 1, name: "A \"quoted\" name, with \\ and \u{1F0A1}"),
+                     MessageJoin(seat: 2, name: ""),
+                     MessageJoin(seat: 3, name: String(repeating: "x", count: 64))]
+        let payload = try await k.seal(phase: 2, lastActorSeat: 0, gameId: 77,
+                                       parent8: Data(repeating: 0, count: 8),
+                                       joins: joins, sentAt: 1)
+        let env = try await MessageEnvelope.decode(payload: payload, viewer: -1)
+        XCTAssertEqual(env.joins, joins,
+                       "every seat, every byte - the kernel writes the roster back in the "
+                       + "same layout it was handed")
+
+        // The 64-byte cap is the kernel's (MSG_MAX_NAME) and the encoder trims
+        // to it on a scalar boundary, so an over-long name shortens rather than
+        // failing the seal or arriving as broken UTF-8.
+        let longName = String(repeating: "Ж", count: 40)          // 80 UTF-8 bytes
+        let over = try await k.seal(phase: 2, lastActorSeat: 0, gameId: 78,
+                                    parent8: Data(repeating: 0, count: 8),
+                                    joins: [MessageJoin(seat: 0, name: longName),
+                                            MessageJoin(seat: 1, name: "B"),
+                                            MessageJoin(seat: 2, name: "C"),
+                                            MessageJoin(seat: 3, name: "D")],
+                                    sentAt: 1)
+        let trimmed = try await MessageEnvelope.decode(payload: over, viewer: -1).joins[0].name
+        XCTAssertEqual(trimmed, String(repeating: "Ж", count: 32),
+                       "trimmed by whole scalars to 64 bytes, never mid-sequence")
+        XCTAssertTrue(longName.hasPrefix(trimmed), "…and it is a prefix of what was asked for")
+    }
+
     // MARK: - Rule P, decided in C
 
     func testRulePIsReflexiveAndSymmetric() async throws {

@@ -234,16 +234,10 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
         // kernel (msg_pass_allowed): Swift never learns which formats carry a
         // variant byte.
         let passing = b[63] != 0
-        let nJoins = Int(b[64])
-        var joins: [MessageJoin] = []
-        var q = HDR
-        for _ in 0..<nJoins {
-            guard q + 2 <= b.count else { return nil }
-            let seat = Int(b[q]); let nl = Int(b[q + 1]); q += 2
-            guard q + nl <= b.count else { return nil }
-            let name = String(decoding: b[q..<q + nl], as: UTF8.self); q += nl
-            joins.append(MessageJoin(seat: seat, name: name))
-        }
+        // The roster, through the one codec that also WRITES it (RosterWire) -
+        // n_joins sits at 64, so the tail starts one byte earlier than HDR.
+        guard let roster = RosterWire.decode(b, at: HDR - 1) else { return nil }
+        let joins = roster.joins
         return MessageEnvelope(phase: phase, turn: turn, round: round, nPlayers: nPlayers,
                                lastActorSeat: last, gameId: String(gid),
                                parent8: parent8, digest: digest, sentAt: sentAt,
@@ -411,11 +405,13 @@ public actor MessageKernel {
     /// kernel would not take the pair (which simply means no penalty rides).
     @discardableResult
     public func armRematchCarry(joins: [MessageJoin], foolSeat: Int) -> Bool {
-        let joinsJSON = (try? JSONEncoder().encode(joins))
-            .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        let packed = RosterWire.encode(joins)
         var key: UInt32 = 0
         var idx: Int32 = 0
-        let rc = joinsJSON.withCString { jp in fio_msg_carry(jp, Int32(foolSeat), &key, &idx) }
+        let rc = packed.withUnsafeBytes { p in
+            fio_msg_carry(p.bindMemory(to: UInt8.self).baseAddress, Int32(packed.count),
+                          Int32(foolSeat), &key, &idx)
+        }
         guard rc == 0, key != 0 else { fio_msg_set_carry(0, -1); return false }
         return fio_msg_set_carry(key, idx) == 0
     }
@@ -426,10 +422,10 @@ public actor MessageKernel {
     /// may ask on every render.
     public func penaltyFoolSeat(joins: [MessageJoin],
                                 carryKey: UInt32, carryFool: Int) -> Int? {
-        let joinsJSON = (try? JSONEncoder().encode(joins))
-            .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
-        let s = joinsJSON.withCString { jp in
-            fio_msg_penalty_fool_seat(jp, carryKey, Int32(carryFool))
+        let packed = RosterWire.encode(joins)
+        let s = packed.withUnsafeBytes { p in
+            fio_msg_penalty_fool_seat(p.bindMemory(to: UInt8.self).baseAddress,
+                                      Int32(packed.count), carryKey, Int32(carryFool))
         }
         return s >= 0 ? Int(s) : nil
     }
@@ -444,11 +440,11 @@ public actor MessageKernel {
     @discardableResult
     public func startRematchDeal(joins: [MessageJoin],
                                  carryKey: UInt32, carryFool: Int) throws -> Int? {
-        let joinsJSON = (try? JSONEncoder().encode(joins))
-            .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        let packed = RosterWire.encode(joins)
         var opening: Int32 = -1
-        let rc = joinsJSON.withCString { jp in
-            fio_msg_start_rematch(jp, carryKey, Int32(carryFool), &opening)
+        let rc = packed.withUnsafeBytes { p in
+            fio_msg_start_rematch(p.bindMemory(to: UInt8.self).baseAddress, Int32(packed.count),
+                                  carryKey, Int32(carryFool), &opening)
         }
         guard rc == 0 else { throw MessageEnvelope.Failure.damaged(code: Int(rc)) }
         return opening >= 0 ? Int(opening) : nil
@@ -585,12 +581,13 @@ public actor MessageKernel {
                                                            resident: resident)
             }
         }
-        let joinsJSON = String(data: try JSONEncoder().encode(joins), encoding: .utf8) ?? "[]"
+        let packed = RosterWire.encode(joins)
         var parent = [UInt8](repeating: 0, count: 8)
         parent.replaceSubrange(0..<min(8, parent8.count), with: parent8.prefix(8))
         var out = [UInt8](repeating: 0, count: 8 * 1024)
-        let n = joinsJSON.withCString { jp in
-            fio_msg_encode(Int32(phase), Int32(lastActorSeat), gameId, parent, jp,
+        let n = packed.withUnsafeBytes { p in
+            fio_msg_encode(Int32(phase), Int32(lastActorSeat), gameId, parent,
+                           p.bindMemory(to: UInt8.self).baseAddress, Int32(packed.count),
                            Int32(sentAt & 0xffff), &out, Int32(out.count))
         }
         guard n > 0 else { throw MessageEnvelope.Failure.damaged(code: Int(fio_last_msg_error())) }
