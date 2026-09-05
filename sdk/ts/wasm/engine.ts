@@ -1439,9 +1439,21 @@ export function kernelCanCover(attack: Card, defense: Card, powerSuit: number): 
 // a resident game state.
 // ---------------------------------------------------------------------------
 
+// The one replay outcome callers are meant to RECOGNISE rather than report: a
+// game whose session log outran MAX_LOGS has no code, by build design. Exported
+// as a constant so a caller matches the kernel's own word for it and not a
+// string it retyped (isReplayTooLong).
+export const REPLAY_TOO_LONG = 'replay: game too long to encode (session log overflowed)';
+
+/** Did this throw mean "no code exists for this game", rather than a fault? */
+export function isReplayTooLong(e: unknown): boolean {
+    return e instanceof Error && e.message === REPLAY_TOO_LONG;
+}
+
 // Mirrors REPLAY_E* in replay.h. Messages match the TS reference's throws,
 // except the conservation desync (the reference interpolated the live
-// counts; the kernel reports only the code) and the C-side-only EINPUT/ECAP.
+// counts; the kernel reports only the code) and the C-side-only
+// EINPUT/ECAP/ETOOLONG.
 function replayError(negCode: number, detail: number): Error {
     switch (-negCode) {
         case 1: return new Error(`unsupported replay format version ${detail}`);
@@ -1472,6 +1484,10 @@ function replayError(negCode: number, detail: number): Error {
         case 20: return new Error('invalid replay header (trump not in alphabet, or the rebuilt deal contradicts it)');
         case 21: return new Error('replay: malformed encode input');
         case 22: return new Error('replay: capacity exceeded');
+        // A refusal, not a fault - see REPLAY_ETOOLONG in c/src/replay.h. It
+        // used to come back as EINPUT, which read as "your bytes are garbage"
+        // and sent the reader into the codec for a bug that was not there.
+        case 23: return new Error(REPLAY_TOO_LONG);
         default: return new Error(`replay kernel error ${negCode}`);
     }
 }

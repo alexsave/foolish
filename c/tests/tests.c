@@ -3103,6 +3103,41 @@ static void test_replay_step_index_reports_a_pending_good(void) {
     CHECK(idx[last + 1] < 3, "which is a real seat");
 }
 
+// A game that outran the log buffer has NO code, and the kernel must say so in
+// its own words. It used to answer -REPLAY_EINPUT ("malformed encode input"),
+// which is the one thing that had not happened: the bytes were fine, the GAME
+// was too long. The misnaming cost a red CI job's worth of hunting through the
+// codec (e2e/replay_codec.test.ts, ~0.1% of its `random`-bot games), so the
+// refusal has a number of its own now and this pins it.
+// MUTATION-CHECKED: putting -REPLAY_EINPUT back in replay.c fails this case
+// (tests.c CHECK "a full log buffer refuses as ETOOLONG, not EINPUT"), and so
+// does relaxing the cap test there to `> MAX_LOGS`.
+static void test_replay_v6_refuses_an_overflowed_log(void) {
+    static Game g;
+    static unsigned char code[1 << 16];
+    unsigned char seed[FOOLISH_SEED_LEN];
+    if (!rs_play_seeded(&g, 4, 4242, seed)) { CHECK(0, "seeded game plays out"); return; }
+
+    // Encodes as played, so whatever the padded game answers next is about the
+    // CAP and not about this game.
+    int ok = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 30,
+                                        code, (int)sizeof code);
+    CHECK(ok > 0, "the played game has a v6 code");
+
+    const int played = g.num_logs;
+    CHECK(played > 0 && played < MAX_LOGS, "the fixture starts short of the cap");
+    // Fill the array the way a longer game does: log_alloc simply stops
+    // appending at MAX_LOGS, so the recorded stream is TRUNCATED and the
+    // encoder cannot round-trip what was never written down.
+    while (g.num_logs < MAX_LOGS) {
+        g.logs[g.num_logs] = g.logs[g.num_logs % played];
+        g.num_logs++;
+    }
+    int r = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 30,
+                                       code, (int)sizeof code);
+    CHECK(r == -REPLAY_ETOOLONG, "a full log buffer refuses as ETOOLONG, not EINPUT");
+}
+
 static void test_replay_steps_refuses_v5(void) {
     static unsigned char v5[1 << 16];
     static unsigned char in[1 << 16];
@@ -5562,6 +5597,7 @@ int main(void) {
     test_evwire_read_refuses_a_malformed_sequence();
     test_evwire_frames_settlement_cut();
     test_replay_steps_refuses_v5();
+    test_replay_v6_refuses_an_overflowed_log();
     test_bot_drive_preferred();
     test_bot_pacing_table();
     test_bot_roster_strat_unique();

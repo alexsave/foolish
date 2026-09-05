@@ -39,7 +39,7 @@ import {
 } from '../server/api/common/replay/codec.ts';
 import { kernelReplayEncodeV6FromGame } from '../sdk/ts/wasm/bots.ts';
 import { suiteRng } from './helpers/rng.ts';
-import { __setDealSeedOverride } from '../sdk/ts/wasm/engine.ts';
+import { __setDealSeedOverride, isReplayTooLong } from '../sdk/ts/wasm/engine.ts';
 
 const hexToBytes = (h: string) => Uint8Array.from(h.match(/../g)!.map((b) => parseInt(b, 16)));
 import {
@@ -194,8 +194,21 @@ function diffStreams(a: SeatLog[], b: SeatLog[]): string | null {
 // bought was covering the games v6 refuses — which trimming the dead goods took
 // to 0.05% of 8-player games. A game longer than that gets no code at all
 // (owner's call), so there is nothing left for a second encoder to do.
-async function roundTripGame(game: Game, np: number): Promise<void> {
-  const bytes = kernelReplayEncodeV6FromGame(game, hexToBytes(game.game_seed!));
+async function roundTripGame(game: Game, np: number, where: string): Promise<void> {
+  let bytes: Uint8Array;
+  try {
+    bytes = kernelReplayEncodeV6FromGame(game, hexToBytes(game.game_seed!));
+  } catch (e) {
+    // The caller's ceiling let through a game the kernel calls too long, so the
+    // two disagree about MAX_LOGS. Say so, rather than let the next reader take
+    // it for a codec fault.
+    if (isReplayTooLong(e)) {
+      throw new Error(`MAX_LOGS (${MAX_LOGS}) no longer matches c/src/game.h: the kernel `
+        + `refused a ${game.logs.length}-log ${np}p game as too long (${where}, seed=${rng.seed})`);
+    }
+    throw new Error(`v6 encode failed on a ${game.logs.length}-log ${np}p game `
+      + `(${where}, seed=${rng.seed}): ${(e as Error).message}`);
+  }
   const x = bytesToBigint(bytes);
   const enc = {
     x, bytes, byteLength: bytes.length,
@@ -347,10 +360,11 @@ export function registerReplayValidation(): void {
     let played = 0;
     for (let np = 2; np <= 4; np++) {
       for (let g = 0; g < 2; g++) {
-        const game = await playRandomGame(np, (g % 2 === 0 ? 'random' : 'handwritten') as StrategyKey);
+        const strategy = (g % 2 === 0 ? 'random' : 'handwritten') as StrategyKey;
+        const game = await playRandomGame(np, strategy);
         if (!game) continue;
         played++;
-        await roundTripGame(game, np);
+        await roundTripGame(game, np, `np=${np} game=${g} strategy=${strategy}`);
       }
     }
     assert.ok(played > 0, 'at least one short game completed');
@@ -392,11 +406,15 @@ if (!process.env.VALIDATION_ONLY) test(`replay codec round-trips engine-played g
         continue;
       }
       totalGames++;
-      await roundTripGame(game, np);
+      await roundTripGame(game, np, `np=${np} game=${g} strategy=${strategy}`);
     }
   }
   // eslint-disable-next-line no-console
   console.log(`[replay codec] ${totalGames} games round-tripped, ${stalled} stalled, `
     + `${tooLong} past MAX_LOGS (no code by design), seed=${rng.seed}`);
   assert.ok(totalGames > 0, `no games completed (stalled=${stalled}, seed=${rng.seed})`);
+  // A ceiling that swallowed the suite would otherwise pass silently.
+  assert.ok(tooLong <= totalGames * 0.05,
+    `${tooLong} of ${totalGames + tooLong} games overran the log buffer: `
+    + `the harness is skipping its own coverage (seed=${rng.seed})`);
 });
