@@ -847,10 +847,41 @@ public struct MessageTableView: View {
     /// of the controller, so `body` may read it on the very first paint — which
     /// is the whole point, that being the paint the onChange path misses.
     /// nil once `settled`, or when there is nothing to replay.
+    /// THE OPEN REPLAY THIS BOARD HAS NOT STARTED YET - the window itself, as
+    /// one name, because three things were spelling it out separately.
+    ///
+    /// It opens when a bubble is tapped and the controller says a replay is
+    /// outstanding, and it closes when `flyBoutEndToDiscard` consumes that flag
+    /// on its way to starting the sequence. Inside it the board must render the
+    /// game as it was BEFORE the move it is about to animate - that is the veil
+    /// - and because it is a pure function of the controller, `body` may read it
+    /// on the very first paint. That is the whole point: the onChange path runs
+    /// AFTER body, so anything that waits for it is a paint too late, which is
+    /// the "starts already landed and then animates" family of bugs.
+    ///
+    /// nil once the replay has started, and nil when there is nothing to replay.
+    /// Round 43: `pendingOpen` and `pendingRoles` each re-derived this, one of
+    /// them phrasing the same test as two guards, so a change to what "not
+    /// started yet" means had two places to be made and two chances to diverge.
+    private var unstartedReplay: [GameEvent]? {
+        Self.unstartedReplay(replayPending: controller.replayPending,
+                             events: controller.openReplayEvents)
+    }
+
+    /// …as a value, so the window can be asserted without a board.
+    ///
+    /// Extracted the moment it was collapsed, because the collapse revealed the
+    /// hole: mutating the accessor to ignore `replayPending` - which makes the
+    /// veil NEVER LIFT, so every card the replay touches stays hidden for the
+    /// life of the board - passed all 539 tests. The most load-bearing half of
+    /// the condition was covered by nothing at all.
+    static func unstartedReplay(replayPending: Bool, events: [GameEvent]) -> [GameEvent]? {
+        guard replayPending, !events.isEmpty else { return nil }
+        return events
+    }
+
     private var pendingOpen: (ids: Set<String>, counts: (deck: Int, discard: Int, hand: [Int: Int]))? {
-        guard !settled, let view = controller.view else { return nil }
-        let events = controller.openReplayEvents
-        guard !events.isEmpty else { return nil }
+        guard let events = unstartedReplay, let view = controller.view else { return nil }
         return (controller.openReplayTouchedCardIds, Self.preCounts(events, finalView: view))
     }
 
@@ -2992,7 +3023,7 @@ public struct MessageTableView: View {
     /// window.) Nil once the marks are being driven properly, and nil for a board
     /// with nothing to replay - both of those draw the live view, as always.
     private var pendingRoles: RoleState? {
-        guard !settled, !controller.openReplayEvents.isEmpty,
+        guard unstartedReplay != nil,
               let prior = controller.openReplayPriorState else { return nil }
         return RoleState(prior)
     }
