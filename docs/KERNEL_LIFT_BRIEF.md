@@ -203,10 +203,25 @@ The work, when it is picked up:
    Do NOT extend the gate to `src/` (cosmetic textures, React keys, error ids) or
    `offlinefun/` (research arenas, where randomness is the point).
 
-## Queued: the transport mode, and the conflict rule that reads it
+## Queued: the transport mode, and the conflict rule that reads it - DONE
 
-Not part of this campaign.
-Owner's design call, recorded so it is not lost.
+Landed 2026-09-05, as specified below.
+`anim_set_transport` / `anim_transport`, one `if` at the end of
+`anim_conflict_verdict`, and `anim_resolve_unconfirmed_attack_covers` reduced to
+marshalling over the same verdict.
+The two modes are proven to disagree on the stage-6 input in one process (C) and
+again through the browser's own module, and to agree on everything before the
+question.
+See `docs/ANIMATION_CORE_C.md` "The transport: one rule, two clients, one
+question" for the shipped shape.
+
+One answer changed deliberately: the server rule short-circuited the whole
+pending set on the first card the broadcast already showed, and each card is now
+judged on its own.
+`AnimationContext` only calls when NONE is accepted, so no caller can produce
+that shape.
+
+The original spec follows.
 
 Stage 6 (`9357178`) found that the iMessage conflict rule and the web one answer
 different questions, and stopped rather than making the browser worse.
@@ -323,7 +338,21 @@ wearing a UI hat:
 - `CollapseTween`, `MessageDevBoard`, `ChatKey` - presentation timing, the dev
   board, a key type.
 
-### Item 1: the gates.  Small, obviously correct
+### Item 1: the gates.  Small, obviously correct - DONE
+
+Landed 2026-09-05.
+`StaleBranchGate.isAhead`, `NicknameGate` (both caps and the taken-name scan)
+and all four of `SeatIdentity`'s decisions are `msg_wire.c` rules now, reached
+through packed rosters and length-counted names.
+`StagedBubbleRouting` was deliberately LEFT: it is URL work plus one byte
+comparison, and a second client cannot get `a == b || a == c` wrong.
+
+The `SeatIdentity` wrinkle was resolved rather than dodged: `game.h`'s "seat
+identity is deliberately not in the state blob" is not reversed, because no seat
+goes into any state and every signal the rules read is still handed in by the
+host.
+
+The original assessment follows.
 
 `StaleBranchGate` (59), `NicknameGate` (19), `StagedBubbleRouting` (22), and
 possibly `SeatIdentity` (48).
@@ -371,7 +400,20 @@ They are defects and gaps found while moving other code, deliberately not fixed
 in passing, and recorded here because a commit message is not where anyone looks
 for work.
 
-### A real bug: the prior board is nil more often than it should be
+### A real bug: the prior board is nil more often than it should be - FIXED
+
+Fixed 2026-09-05.
+The self-check counted EVENTS where a step is a FRAME, and the board came off
+the extra frame's first event where it should come off its TRAILER (the state
+that step committed, which is defined even for a step that emitted none).
+Measured on the real-game sweep in `c/tests/tests.c`, whose prior-board model
+now reads the same trailer: 26 of 1291 sweeps fell back to the flat table with
+16 reshaping the grid, and it is 5 and 5.
+Those 5 are one 20-card pickup the test build's `MAX_LOG_PAIRS=16` under-names,
+not a missing board, and the suite now asserts that is the only way a flat
+reading can happen.
+
+The original report follows.
 
 `MessageEnvelope.lastMoveEventsWithPrior` returns nil whenever the previous step
 emitted anything other than EXACTLY ONE event - and a bare `good` emits none.
@@ -579,7 +621,36 @@ A geometry oracle - "no flight may take off from a point outside the board" -
 would have caught findings 2 and 3 on any of the collapse runs the rig has been
 making for rounds.
 
-## Queued: the JSON that is left
+## Queued: the JSON that is left - THREE OF FOUR DONE
+
+Landed 2026-09-05.
+
+- **3 (the kernel crossing) DONE.** `fio_msg_encode`, `fio_msg_carry`,
+  `fio_msg_start_rematch` and `fio_msg_penalty_fool_seat` take the packed roster
+  - `n_joins(1)` then `n_joins x {seat(1) name_len(1) name[]}`, byte for byte
+  the tail `fio_msg_decode_packed` hands back.
+  `sdk/swift/RosterWire.swift` is the one codec.
+  Nothing on the wire moved.
+- **1 and 2 (the on-disk stores) DONE**, after the owner extended the scope
+  ("turn the on-disk stores away from JSON too") and waived the migration
+  ("just break in progress games if you need to").
+  `MessageGameStore`'s three maps and `ReplayStore`'s index are
+  `PackedWriter`/`PackedReader` bytes behind a format byte; the keys and the
+  filename were bumped, so the old JSON is never read rather than migrated, and
+  the old `replays.json` is left on disk rather than deleted.
+- **4 (the client-server envelope) NOT DONE, and deliberately.**
+  `ios/FoolishNet/PackedGame.swift`'s roster island is the last JSON, and it is
+  the SERVER's envelope (`GAME_RESP_FORMAT`): changing it means changing the
+  server's encoder and deploying both in lockstep, which the owner's "try not to
+  change wire format if you can - only the ondisk container" rules out.
+  The file now says so at the site instead of claiming the whole payload is
+  packed.
+  When it IS picked up, the work is the server's encoder emitting the same
+  `n_joins/seat/name_len/name` shape plus `is_ai` and the game's id/name/status,
+  and `PackedGame.decode` reading it with `PackedReader`; it needs a coordinated
+  deploy or a version byte in the envelope, not a client change.
+
+The original spec follows.
 
 Owner: "I REALLY don't like JSON."
 Four items, queued together.
