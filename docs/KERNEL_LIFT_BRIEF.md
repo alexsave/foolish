@@ -40,6 +40,36 @@ means.
 A useful test: if the function would give the same answer on a watch with a
 different screen, it belongs in C.
 
+## No JSON
+
+**Every new kernel entry this campaign adds crosses as PACKED BYTES.**
+Not JSON.
+This is the owner's standing position and it is not a preference about taste -
+task #17 spent a whole round taking production Swift off JSON decode, and a new
+JSON entry hands that ground straight back.
+
+So:
+
+- A new `fio_*` entry gets a fixed-layout byte blob and a Swift decoder beside
+  the other wire decoders in `sdk/swift/`, in the shape `fio_state_packed` /
+  `fio_legal_packed` / `fio_bot_drive_packed` already use.
+- Where a stage meets an existing `*_json` entry that it is replacing, the JSON
+  one goes.
+  `fio_anim_plan_json` is the case in point: its only caller in the entire repo
+  is the C smoke test, so Stage 4 replaces it with a packed twin and deletes it
+  rather than leaving two plans that can disagree.
+- `c/src/json_out.c` is the ONE exception and stays.
+  It is how non-Swift hosts (the web, through wasm) read the kernel's formats,
+  and it is a reader of packed bytes rather than a second format.
+  Refactoring it is fine; growing it for a Swift caller is not.
+- `docs/ANIMATION_CORE_C.md`'s "Mac session" checklist opens by telling you to
+  call `fio_anim_plan_json` and decode it with `Codable`.
+  That step is stale and this rule overrides it.
+
+If a packed layout feels like too much ceremony for what you are moving, that is
+usually a sign the thing should cross as a handful of ints rather than as a blob
+at all.
+
 ## Comments
 
 The Swift these rules are moving out of carries very long archaeological comment
