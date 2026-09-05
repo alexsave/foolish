@@ -598,3 +598,41 @@ That is the Supabase client's own protocol, not a format this repo chooses, and
 the payload inside `view` is already a packed blob.
 Replacing it means replacing the transport.
 Leave it.
+
+## Queued: the iOS lobby needs the bot picker
+
+NOTE ONLY - do not build this as part of the determinism pass.
+
+Two clients disagree about how a bot is chosen, and the `Math.random` in
+`server/impls/supabase/functions/_shared/adapter/meta_actions.ts` is a symptom
+rather than the problem.
+
+- **Web**: `src/components/Lobby.tsx` has a picker and passes the chosen id
+  (`addBot(game_id, bot?.id)`).
+  The optional chaining is deliberate - the code beside it handles the
+  no-id case explicitly ("the random fallback has no id yet, so it keeps a temp
+  id") - so the random path is still reachable there too, just not what anyone
+  taps.
+- **iOS app**: `ios/FoolishApp/LobbyView.swift` is a plain "Add Bot" button
+  calling `game.addBot()` with no id, so `OnlineService.addBot(gameId:)` sends
+  `bot_id: nil` and the server takes the random branch.
+  The iOS lobby never got the picker.
+
+**The work, when it is picked up:**
+
+1. Give the iOS lobby the same picker the web has - tap through the bot options,
+   tap the one you want.
+2. Then delete the server's random branch, since nothing will reach it.
+3. Then remove the allowlist entry from the `Math.random` CI gate, which stops
+   needing an exception at all.
+
+Until step 1 lands, the server's random pick must STAY - deleting it would leave
+the iOS "Add Bot" button unable to add anything - and the gate's allowlist stays
+with it.
+The allowlist entry should say it is temporary and name this note, so nobody
+reads it as a permanent blessing.
+
+The point is not the randomness.
+It is that "which bot gets added" is answered two different ways depending on
+which client asks, which is the class of divergence this whole campaign has been
+closing.
