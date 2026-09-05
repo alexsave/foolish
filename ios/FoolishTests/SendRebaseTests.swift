@@ -81,17 +81,32 @@ final class SendRebaseTests: XCTestCase {
         XCTAssertEqual(c.view, after, "…and must not re-animate the bubble before it")
     }
 
-    /// A REFUSAL MUST CHANGE NOTHING. Declining the rebase but still dropping
-    /// the staged moves would walk the board back by exactly the move the player
-    /// just watched themselves make - a smaller version of the same complaint.
-    /// So the moves stay, and with them the board they draw.
+    /// WITH A MOVE STAGED, THE SEND IS MINE - WHATEVER BYTES COME WITH IT.
     ///
-    /// Built two chains deep by hand, because the reported shape needs a board
-    /// that has already moved PAST the chain it is handed: an attack (chain A),
-    /// a cover on top of it (chain B), and then the attacker staging a good on
-    /// B and SEALING it. Handing that board chain A - bytes it never sealed -
-    /// is the send that must be refused.
-    func testARefusedSendLeavesTheStagedMoveOnTheBoard() async throws {
+    /// This test used to assert the opposite, and the opposite was the bug.
+    /// `markSent` declined to rebase whenever the host's bytes were not the ones
+    /// this controller sealed, and a refusal left three things standing:
+    /// `pending` full, `sending` up, and the bout end's settlement HELD. All
+    /// three are unrecoverable - `markSent` is the only releaser - so the board
+    /// froze on a staged good with no legal moves ("it just stayed stuck in the
+    /// good checkmark state, and didn't move when I sent it. had to close and
+    /// reopen the extension"), and the next arrival red-retracted a move the
+    /// thread already had ("Somehow this caused an UNDO animation of the
+    /// previous pickup!").
+    ///
+    /// The guard was answering a question it cannot get wrong when it is asked
+    /// properly: with moves STAGED there is exactly one bubble in the input
+    /// field, and `stagedPayload` is the only thing that makes one, so a send
+    /// signal can only be that bubble going out. The bytes riding along have
+    /// already been shown once (1.0(26)) not to survive the trip from the host
+    /// through a root-view rebuild and a SwiftUI `onChange`; a value that
+    /// arrives STALE is the same hazard as one that arrives nil, and gets the
+    /// same answer - use our own.
+    ///
+    /// So the refusal survives only where the claim does not: nothing staged.
+    /// That case has its own test below, and it is the shape a genuinely
+    /// foreign signal arrives in anyway.
+    func testAStaleSendSignalStillRebasesOntoMyOwnStagedBubble() async throws {
         let k = MessageKernel.shared
         var setup: (a: Data, b: Data, attacker: Int)?
         for salt in UInt8(1)...UInt8(60) {
@@ -127,18 +142,43 @@ final class SendRebaseTests: XCTestCase {
         // SEAL it, which is what gives this controller an opinion about which
         // bytes are its own - the guard abstains until it has made a chain,
         // because a reload can legitimately hand it one it did not build.
-        _ = try await c.stagedPayload()
+        // Kept, because a re-seal stamps a fresh send clock and would be a
+        // DIFFERENT chain - this is the one the controller will call its own.
+        let mine = try await c.stagedPayload()
         let staged = c.pending
         let shown = try XCTUnwrap(c.view)
         XCTAssertFalse(staged.isEmpty, "a move is staged")
+        XCTAssertNotEqual(mine, chainA, "the fixture must actually hand over foreign bytes")
 
         c.markSending()
-        await c.markSent(payload: chainA)     // not the bytes I sealed - refused
+        await c.markSent(payload: chainA)     // NOT the bytes I sealed - substituted
 
-        XCTAssertEqual(c.basePayload, chainB, "the board stays on the chain it is playing")
-        XCTAssertEqual(c.pending, staged, "the staged move must survive a refusal")
-        XCTAssertEqual(c.view, shown, "…so the board still shows what the player played")
-        XCTAssertTrue(c.sending, "nothing may be undone or re-sent while the send is unresolved")
+        XCTAssertEqual(c.basePayload, mine,
+                       "the board rebases onto the bubble it actually sealed, not the stale one")
+        XCTAssertTrue(c.pending.isEmpty, "the staged move is in the thread now")
+        XCTAssertFalse(c.sending, "the send resolved, so Undo may come back")
+        XCTAssertFalse(c.settlementHeld,
+                       "a good's settlement must be released - holding it is a frozen board")
+        XCTAssertNotEqual(c.view, shown,
+                          "…and the board moves on to the state the good produced")
+        _ = staged
+    }
+
+    /// AND THE REFUSAL THAT REMAINS. With NOTHING staged this controller has no
+    /// claim on the bubble being sent - a reload can legitimately hand it a
+    /// chain it did not build - so foreign bytes must not move the base. This is
+    /// the half of the old guard that was right, kept.
+    func testASendOfBytesIDidNotSealWithNothingStagedLeavesTheBaseAlone() async throws {
+        let (c, opened, _) = try await board()
+        let before = c.basePayload
+        let shown = try XCTUnwrap(c.view)
+        XCTAssertTrue(c.pending.isEmpty, "nothing staged - the precondition of this test")
+
+        // A chain from this same game that this controller never sealed.
+        await c.markSent(payload: opened + Data([0x00]))
+
+        XCTAssertEqual(c.basePayload, before, "the base must not move onto bytes I did not seal")
+        XCTAssertEqual(c.view, shown, "…and the board must not re-animate")
     }
 
     /// THE 1.0(26) REPORT: the send signal arrives WITHOUT ITS BYTES.

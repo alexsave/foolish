@@ -27,6 +27,20 @@ public struct FHandFan: View {
     public let trumpSuit: Suit?
     /// Cards currently locked (in-flight / illegal in this context) — dimmed.
     public let disabled: Set<String>
+    /// ROUND 43: cards that must not respond to touch and must LOOK EXACTLY AS
+    /// THEY DID - no dimming, no selection ring, nothing to notice.
+    ///
+    /// `disabled` above cannot serve: `FCard` renders it at opacity 0.5, which
+    /// is the correct affordance for "you may not play this" and the wrong one
+    /// for the message board's `handHoldback`, whose whole purpose is that a
+    /// card you have already played keeps sitting in your hand looking ordinary
+    /// right up to the moment its replay flies it out. A dimmed card there
+    /// announces a state the player cannot act on and did not cause.
+    ///
+    /// So this is the gesture half of `disabled` with none of the paint. One
+    /// gesture covers both interactions - the tap is synthesized inside the drag
+    /// gesture's `onEnded` (see `cardView`), so gating the drag gates the tap.
+    public let locked: Set<String>
     @Binding public var selection: Set<String>
     /// Tap a card — the board toggles it in the selection.
     public let onTap: (Card) -> Void
@@ -40,20 +54,32 @@ public struct FHandFan: View {
     /// Cards currently in overlay flight (a draw landing) — rendered invisible so
     /// only the flying ghost shows.
     public let hidden: Set<String>
-    /// Round-5 M5b ("in the collapsed view, show only the top half of the
-    /// cards"): how much of each hand card to hide off the bottom edge, as a
-    /// CONTINUOUS fraction — 0 shows the whole card (the full board), 1 reserves
-    /// only the top half so the lower half falls past the drawer's bottom edge
-    /// (the compact drawer). Any value between the two is a partly-descended
-    /// card, which is what lets `MessageTableView` drive this off its continuous
-    /// `collapse` fraction so the hand slides DOWN smoothly as the drawer height
-    /// changes (round-6 bugs 2/4 — the self cards "gradually go down as we
-    /// collapse") instead of the card height halving in one frame at a single
-    /// height threshold. Round-6: this replaced the old `topHalfOnly: Bool`; the
-    /// Bool is still accepted as an init convenience (it maps to 0 or 1) so every
-    /// pre-existing call site (TableView, GalleryView, the snapshot tests) keeps
-    /// rendering exactly the full-height card it always did.
-    public let crop: CGFloat
+    // THE HAND IS NEVER CROPPED, and round 43 deleted the ability to ask for
+    // it. This is the reasoning that must outlive the parameter, because the
+    // idea is an obvious one to have again.
+    //
+    // Round-5 M5b cropped the fan in the compact drawer - the card drawn whole
+    // and pushed down so its lower half fell past the drawer's edge - and
+    // round 6 made it a continuous fraction so the hand descended smoothly with
+    // the collapse. It bought the compact drawer ~36pt of table, and ROUND 11
+    // measured what it cost:
+    //
+    //   * the hand LANDED SOMEWHERE ELSE. A cropped card is drawn full height,
+    //     top-aligned in a half-height slot, so cropping slides the cards down
+    //     past their own container - filmed at y=760 expanded, y=791 compact.
+    //   * the CHROME landed somewhere else in the other direction, since the
+    //     buttons float a hand-height above the board's bottom.
+    //   * the BOUNCE. The host does not hand over a monotone height ramp; one
+    //     filmed collapse reported 748, 315, 307, 778, 758, 253, 315. Every one
+    //     of those was a different crop, so the hand and the chrome chased the
+    //     noise under the card spring and RANG.
+    //
+    // So round 11 pinned the board's crop at 0 and the parameter has carried a
+    // constant ever since, with the compact drawer paying 36pt of table for a
+    // hand and a chrome whose geometry does not mention the drawer height at
+    // all. Round 43 removes the parameter itself: a crop driven from live
+    // geometry is not a feature this board may have, and a knob nobody may turn
+    // is worse than no knob - it reads as available.
     /// Round-5 finding 5 ("the little mid-drag text... should be centered
     /// horizontally on the card(s)"): the dragged card's own LIVE visual centre
     /// in `boardSpace`, delivered on every `onDragChanged` alongside the raw
@@ -89,11 +115,11 @@ public struct FHandFan: View {
     public let onOrderChanged: ([String]) -> Void
 
     public init(cards: [Card], trumpSuit: Suit?, disabled: Set<String> = [],
+                locked: Set<String> = [],
                 selection: Binding<Set<String>>, onTap: @escaping (Card) -> Void,
                 onDragChanged: @escaping (Card, CGPoint) -> Void = { _, _ in },
                 onDragEnded: @escaping (Card, CGPoint) -> Void = { _, _ in },
                 namespace: Namespace.ID? = nil, hidden: Set<String> = [],
-                topHalfOnly: Bool = false, crop: CGFloat? = nil,
                 onDragCardMoved: @escaping (CGPoint) -> Void = { _ in },
                 reserveNoSlot: Set<String> = [], instantExit: Bool = false,
                 initialOrder: [String] = [],
@@ -102,16 +128,13 @@ public struct FHandFan: View {
         self.cards = cards
         self.trumpSuit = trumpSuit
         self.disabled = disabled
+        self.locked = locked
         self._selection = selection
         self.onTap = onTap
         self.onDragChanged = onDragChanged
         self.onDragEnded = onDragEnded
         self.namespace = namespace
         self.hidden = hidden
-        // `crop` wins when a caller passes a continuous value (the compact
-        // drawer, off its collapse fraction); otherwise the `topHalfOnly` Bool
-        // maps to the two endpoints, so every existing call site is unchanged.
-        self.crop = crop ?? (topHalfOnly ? 1 : 0)
         self.onDragCardMoved = onDragCardMoved
         self.reserveNoSlot = reserveNoSlot
         // Round-8 #4: seed the cosmetic order from the caller's persisted copy.
@@ -214,9 +237,6 @@ public struct FHandFan: View {
     /// simply falls off the bottom — see `cardView`). Continuous between the two
     /// so the compact drawer can drive it off a smooth collapse fraction and the
     /// hand descends gradually (round-6 bugs 2/4) instead of halving in one frame.
-    static func shownCardHeight(crop: CGFloat) -> CGFloat {
-        Self.cardH * (1 - 0.5 * max(0, min(1, crop)))
-    }
     private static let maxCardW: CGFloat = 52   // never wider than ~proper aspect, so cards never go "superwide"
     private static let gap: CGFloat = 4
     private static var rowH: CGFloat { cardH + 8 }
@@ -270,49 +290,49 @@ public struct FHandFan: View {
         return Self.singleRowCardWidth(count: count, availableWidth: availableWidth) < Self.twoRowThreshold ? 2 : 1
     }
 
-    /// How many cards each display row holds at `availableWidth`. The FIRST row
+    /// How many cards each display row holds at `availableWidth`. The BOTTOM row
     /// gets the extra card on an odd count.
     ///
+    /// WHICH ROW GETS THE ODD CARD is the owner's call, and they reversed it:
+    /// "If we have 11 cards, do 5 up top and 6 below". It used to be `ceil` -
+    /// six up top, five below - which stands the hand on its point. A hand fans
+    /// out from the hand that holds it, so the wider row belongs at the BOTTOM,
+    /// nearest the player; the narrow row reads as sitting behind it. Under the
+    /// collapsed drawer's crop it matters even more, because the bottom row is
+    /// the one whose faces are least occluded.
+    ///
     /// Round-16: this split is what makes the cross-row drag work at all. Rows
-    /// are DERIVED from a flat order by cutting it at `ceil(n/2)`, they are not
+    /// are DERIVED from a flat order by cutting it at `floor(n/2)`, they are not
     /// storage - so moving a card across the boundary is an ordinary splice into
     /// the flat array, and the cut then falls in a different place. Sliding a
     /// bottom card up to slot 1 pushes everything from 1 onward right by one, and
     /// the card that was last in the top row lands first in the bottom row. The
     /// "bump" the owner asked for is not a special case; it is what a fixed cut
-    /// through a shifted array already does.
+    /// through a shifted array already does. Moving the cut from ceil to floor
+    /// changes WHERE it falls, not that it is a cut, so all of that still holds.
     public static func rowSizes(count: Int, availableWidth: CGFloat) -> [Int] {
         guard Self.rowCount(count: count, availableWidth: availableWidth) == 2 else { return [count] }
-        let first = (count + 1) / 2   // ceil: extra card up top on odd counts
+        let first = count / 2   // floor: the extra card goes BELOW on odd counts
         return [first, count - first]
     }
 
-    /// The fan's total on-screen height at `availableWidth` — one row (full
-    /// `rowH`, or half that under `topHalfOnly` — round-5 M5b) normally, or two
-    /// such rows stacked with `rowGap` between once M6 splits the hand. Public
+    /// The fan's total on-screen height at `availableWidth` — one row (`rowH`)
+    /// normally, or two such rows stacked with `rowGap` between once M6 splits
+    /// the hand. Public
     /// and static so MessageTableView can reserve exactly this much room above
     /// the hand (see its `handLift`) instead of guessing at a second constant.
-    public static func height(cards: [Card], availableWidth: CGFloat, crop: CGFloat) -> CGFloat {
-        Self.height(count: cards.count, availableWidth: availableWidth, crop: crop)
+    public static func height(cards: [Card], availableWidth: CGFloat) -> CGFloat {
+        Self.height(count: cards.count, availableWidth: availableWidth)
     }
 
     /// Count-only form, for the same reason as `rowCount(count:)`.
-    public static func height(count: Int, availableWidth: CGFloat, crop: CGFloat) -> CGFloat {
-        let oneRow = Self.shownCardHeight(crop: crop) + 8
+    public static func height(count: Int, availableWidth: CGFloat) -> CGFloat {
+        let oneRow = Self.cardH + 8
         return Self.rowCount(count: count, availableWidth: availableWidth) == 2 ? oneRow * 2 + Self.rowGap : oneRow
     }
 
-    /// `topHalfOnly` convenience overload — the pre-round-6 spelling, kept so
-    /// TableView/GalleryView/the snapshot tests that reserve room off this
-    /// function compile unchanged. `false` → crop 0 (full card), `true` → crop 1
-    /// (top half), so every pinned number in Round5BoardTests still holds exactly.
-    public static func height(cards: [Card], availableWidth: CGFloat, topHalfOnly: Bool = false) -> CGFloat {
-        Self.height(cards: cards, availableWidth: availableWidth, crop: topHalfOnly ? 1 : 0)
-    }
-
     /// The resting SLOT rect of every card in a hand of `cards`, laid out in a
-    /// container `width` wide at collapse `crop` — the geometry `body` renders,
-    /// keyed by card.
+    /// container `width` wide — the geometry `body` renders, keyed by card.
     ///
     /// Round-7 ("fix this once and for all"): an overlay flight into the hand
     /// needs the card's FINAL slot as its landing target. Reading it off the live
@@ -332,8 +352,8 @@ public struct FHandFan: View {
     /// step just opened) - the incoming card sits at the END, exactly where the
     /// fan puts a freshly dealt card, so its slot matches even if the player has
     /// cosmetically reordered the cards already in hand.
-    public static func slotRects(cards: [Card], width: CGFloat, crop: CGFloat) -> [String: CGRect] {
-        let frames = Self.slotFrames(count: cards.count, width: width, crop: crop)
+    public static func slotRects(cards: [Card], width: CGFloat) -> [String: CGRect] {
+        let frames = Self.slotFrames(count: cards.count, width: width)
         guard frames.count == cards.count else { return [:] }
         var out: [String: CGRect] = [:]
         for (i, card) in cards.enumerated() { out[card.identity] = frames[i] }
@@ -355,16 +375,19 @@ public struct FHandFan: View {
     /// from these rects makes a row change an ordinary change of offset, which
     /// animates like every other slide in the fan, and leaves exactly one copy of
     /// the arithmetic for the flight targeting and the layout to share.
-    public static func slotFrames(count: Int, width: CGFloat, crop: CGFloat) -> [CGRect] {
+    public static func slotFrames(count: Int, width: CGFloat) -> [CGRect] {
         guard width > 0, count > 0 else { return [] }
         let rows = Self.rowSizes(count: count, availableWidth: width)
-        // ONE card width for BOTH rows, sized by the fuller first row (it gets
-        // the ceil on odd counts) - sizing each row by its own count made the
-        // shorter bottom row's cards visibly WIDER than the top row's, which
-        // read as two different decks rather than one hand that wrapped.
-        let cardW = Self.singleRowCardWidth(count: rows[0], availableWidth: width)
-        let cardH = Self.shownCardHeight(crop: crop)
-        let containerH = Self.height(count: count, availableWidth: width, crop: crop)
+        // ONE card width for BOTH rows, sized by the FULLER row - sizing each row
+        // by its own count made the shorter row's cards visibly WIDER than the
+        // other's, which read as two different decks rather than one hand that
+        // wrapped. This asks `rows.max()` rather than `rows[0]` because the odd
+        // card now lands in the SECOND row (see `rowSizes`); hard-coding row 0 as
+        // the fuller one was true only while the cut was a ceil, and would have
+        // sized an 11-card hand off 5 and then overflowed the row of 6.
+        let cardW = Self.singleRowCardWidth(count: rows.max() ?? count, availableWidth: width)
+        let cardH = Self.cardH
+        let containerH = Self.height(count: count, availableWidth: width)
         let stackH = CGFloat(rows.count) * cardH + CGFloat(rows.count - 1) * Self.rowGap
         let vTop = (containerH - stackH) / 2
         var out: [CGRect] = []
@@ -400,6 +423,71 @@ public struct FHandFan: View {
             if d < bestDistance { bestDistance = d; best = i }
         }
         return best
+    }
+
+    /// THE POINT THE BOARD IS TOLD ABOUT - and the whole answer to "a drag that
+    /// ends INSIDE THE HAND must never play a card".
+    ///
+    /// ROUND 40, owner on a real device in the COMPACT DRAWER: "In collapsed
+    /// mode, now I can't rearrange cards. It seems to trigger attack." Sliding a
+    /// card sideways to reorder it threw it onto the table as an attack instead.
+    ///
+    /// WHY it happens. The board resolves a release with `BoardDrop.target`,
+    /// which hit-tests the BATTLE SLOTS BEFORE the hand (deliberately - see
+    /// `MessageTableView.handDropFrame`). In the compact drawer the two regions
+    /// genuinely overlap. Measured on the rig, iPhone 16, a 20-card hand in a
+    /// ~276pt drawer (`board-compact` with the hand two rows deep):
+    ///
+    ///     hand      = (16, 106) 343x166      -> rows centred at y=150 and y=228
+    ///     battle[0] = (156, 101)  62x84      -> y 101...185, x 156...218
+    ///
+    /// The hand's whole TOP ROW lies inside the battle grid. The resting centre
+    /// of hand slot 4, (170,150), is a point the player is holding a card at,
+    /// and `BoardDrop.target` answers `.battle(0)` for it. `CardPlay.resolve`
+    /// then ignores the target entirely for an attacker and returns the plain
+    /// attack - the card is played. That is the owner's "it seems to trigger
+    /// attack", and it is compact-only because that is the only place the two
+    /// regions touch.
+    ///
+    /// WHY THE FIX IS HERE and not in `BoardDrop.target`. Two other cures were
+    /// tried on paper and rejected:
+    ///
+    ///  - ORDERING (hand beats battles). The board does not hand `BoardDrop` the
+    ///    hand's real rect: it hands `handDropFrame`, the CANCEL BAND, which is
+    ///    the hand grown 64pt UPWARD (round-7 #3: in the compact drawer a
+    ///    rearrange whose finger drifts off the thin cropped strip used to land
+    ///    on `.table` and get rejected with "move not allowed"). On the measured
+    ///    board that band is (16,42) 343x254 - it SWALLOWS battle[0] whole, so
+    ///    letting it win first would make every cover in the compact drawer
+    ///    unreachable. `BoardDrop` cannot tell the band from the hand, because it
+    ///    is given one rect and only the band ever reaches it.
+    ///  - GEOMETRY (stop the battle slack reaching down into the hand). The 8pt
+    ///    slack is not the cause: (170,150) is inside battle[0]'s RAW rect, not
+    ///    just its inflated one. Removing the slack changes nothing.
+    ///
+    /// This view is the one place that holds the hand's TRUE frame at the instant
+    /// the finger lifts (`handFrameSelf`), so this is where the rule can be
+    /// stated. Round-7 #3's 64pt widening is left exactly as it was: a release
+    /// ABOVE the hand is not inside it, so it is passed through untouched and
+    /// still falls through battles into the cancel band, exactly as before. All
+    /// that changes is the case that band was never meant to cover - a finger
+    /// still ON the cards.
+    ///
+    /// The projection is onto the hand's own FLOOR, keeping x so the point stays
+    /// over the same card. Reporting nothing at all instead was tried and
+    /// rejected: `onDragEnded` is the ONLY thing that clears the board's
+    /// `dragCard`/`dragPoint`, so swallowing it leaves the verb-hint pill stuck
+    /// on screen and the cover highlights lit after every rearrange. The floor is
+    /// the one line inside the hand that the table cannot be sitting on - the
+    /// battle grid grows DOWNWARD from the top of the board into the hand, so a
+    /// battle reaching the hand's bottom edge would mean the table is drawn over
+    /// the entire hand, at which point no drop is meaningful anyway.
+    public static func boardPoint(_ point: CGPoint, hand: CGRect) -> CGPoint {
+        guard hand.contains(point) else { return point }
+        // `nextDown`, not a whole point: this must stay inside `hand` for a
+        // `contains` test (which excludes maxY) while moving the point as
+        // little as possible - it is still the player's finger.
+        return CGPoint(x: point.x, y: hand.maxY.nextDown)
     }
 
     /// `cards` reordered by the local `order` state: identities still present
@@ -589,8 +677,8 @@ public struct FHandFan: View {
             // it is zero and these are exactly the rects `slotRects` publishes
             // for flights to aim at.
             let dy = (geo.size.height - Self.height(count: laid.count,
-                                                    availableWidth: width, crop: crop)) / 2
-            let slots = Self.slotFrames(count: laid.count, width: width, crop: crop)
+                                                    availableWidth: width)) / 2
+            let slots = Self.slotFrames(count: laid.count, width: width)
                 .map { $0.offsetBy(dx: 0, dy: dy) }
             ZStack(alignment: .topLeading) {
                 // A bed, so the stack fills the container even when the hand is
@@ -626,8 +714,7 @@ public struct FHandFan: View {
         // reproduces the pre-M6 default (one full-width row) until the real
         // number arrives a paint later.
         .frame(height: Self.height(cards: cards.filter { !reserveNoSlot.contains($0.identity) },
-                                   availableWidth: measuredWidth > 0 ? measuredWidth : .greatestFiniteMagnitude,
-                                   crop: crop))
+                                   availableWidth: measuredWidth > 0 ? measuredWidth : .greatestFiniteMagnitude))
         // Round-5 M6: measure this view's own proposed WIDTH once — see
         // `measuredWidth`'s doc — so the `.frame(height:)` just above can size
         // itself for a possibly-two-row hand. Unaffected by whatever height
@@ -687,21 +774,14 @@ public struct FHandFan: View {
               disabled: disabled.contains(card.identity),
               trump: trumpSuit != nil && card.suit == trumpSuit,
               size: CGSize(width: slot.width, height: Self.cardH))
-            // Round-5 M5b: the compact drawer shows only the TOP HALF of each
-            // hand card. The card is drawn WHOLE and pushed DOWN so its lower
-            // half falls past the drawer's own bottom edge — it is NOT cut in
-            // half. The first attempt did literally clip each card to cardH/2,
-            // which put a hard horizontal edge across every card mid-face
-            // (owner, on device: "don't ACTUALLY crop the cards, just move them
-            // down so that we only see the top half. right now they look
-            // fucking ridiculous"). Reserving half the height with a .top
-            // alignment and NO `.clipped()` gets the same compactness from a
-            // real card that happens to be partly off-screen — which is what a
-            // hand of cards held below the edge of a table actually looks like.
-            //
-            // The touch target follows the RESERVED half (`.contentShape`
-            // below sizes to this frame), which is exactly the part you can
-            // see and therefore the only part you could sensibly aim at.
+            // The slot IS the card now that the crop is gone (round 43), so
+            // `.top` is a no-op kept for shape: it says the card hangs from the
+            // top of its slot, which is what made a cropped hand read as cards
+            // held below the edge of a table rather than cards cut in half.
+            // Whatever reintroduces a crop wants this alignment, not a
+            // `.clipped()` - the owner on the one build that did clip: "don't
+            // ACTUALLY crop the cards, just move them down so that we only see
+            // the top half. right now they look fucking ridiculous".
             // Round-16: the width is pinned as well as the height, so this
             // card's layout rect IS its slot - the stack places it absolutely
             // now, and the frame it publishes through `HandCardFramesKey` is
@@ -715,15 +795,14 @@ public struct FHandFan: View {
             // Round-8: an overlay-flight board exits a card INSTANTLY (no fade);
             // see `instantExit`. Everyone else keeps the default cross-fade.
             .transition(instantExit ? .identity : .opacity)
-            // Round-7 #2: a card the board's overlay is flying (it is in `hidden`)
-            // must NOT also carry matchedGeometry, or SwiftUI flies it a SECOND
-            // time from wherever it left (a picked-up card's grid slot) into this
-            // fan while the overlay is already flying it there - the "double
-            // animation" for pickup. A hidden card drops its matched namespace so
-            // it just appears here (opacity 0) and the overlay flies it in once. At
-            // rest (not hidden) the namespace stays, a no-op. Empty `hidden` (the
-            // offline board) keeps every card matched, exactly as before.
-            .modifier(FlightID(id: card.identity, namespace: hidden.contains(card.identity) ? nil : namespace))
+            // Round-7 #2 dropped the namespace for a card the overlay was flying
+            // (`hidden.contains(id) ? nil : namespace`), to stop SwiftUI flying it
+            // a SECOND time into this fan - the "double animation" for pickup.
+            // Round 43 states that rule where it belongs instead: a board either
+            // veils cards or shares a namespace, never both, so the two could not
+            // be simultaneously non-trivial and the ternary never chose. See
+            // `FlightID`, which carries the invariant and the test that pins it.
+            .modifier(FlightID(id: card.identity, namespace: namespace))
             .background(GeometryReader { g in
                 Color.clear.preference(key: HandCardFramesKey.self,
                                        value: [card.identity: g.frame(in: .named(boardSpace))])
@@ -746,6 +825,13 @@ public struct FHandFan: View {
                 DragGesture(minimumDistance: 0, coordinateSpace: .named(boardSpace))
                     .onChanged { g in
                         guard !disabled.contains(card.identity) else { return }
+                        // …and the silent lock (round 43). Held-back replay
+                        // cards are drawn as ordinary hand cards on purpose, so
+                        // there is nothing here to distinguish - the touch is
+                        // simply not taken, and `dragId` therefore never names
+                        // this card, which is what makes `onEnded`'s drag branch
+                        // a no-op for it as well.
+                        guard !locked.contains(card.identity) else { return }
                         if dragId != card.identity {
                             dragId = card.identity; reorderShift = .zero
                             // Round-6 bug 5: capture finger -> card ONCE, while
@@ -774,7 +860,15 @@ public struct FHandFan: View {
                         // start. `dragOffset` above is untouched, so the card still
                         // follows the finger from the first pixel.
                         if dragMoved || hypot(g.translation.width, g.translation.height) >= Self.tapThreshold {
-                            onDragChanged(card, g.location)
+                            // Round 40: through `boardPoint`, the same as the
+                            // release below. The board's live verb hint resolves
+                            // the SAME `BoardDrop.target` the release will (see
+                            // `MessageTableView.dragPreview` - "so neither can
+                            // disagree with what actually happens on release"),
+                            // so reporting the raw point here and the projected
+                            // one there would put an "Attack" pill on screen for
+                            // the whole of a rearrange that then plays nothing.
+                            onDragChanged(card, Self.boardPoint(g.location, hand: handFrameSelf))
                         }
                         // The dragged card's live SLOT centre, and from it the
                         // two things that want it.
@@ -795,15 +889,15 @@ public struct FHandFan: View {
                         // `handCardFramesSelf`), which is round-6 bug 5.
                         let centre = CGPoint(x: g.location.x + grabSlot.width,
                                              y: g.location.y + grabSlot.height)
-                        // `crop` matters for the HINT: the slot is
-                        // `shownCardHeight` tall while the card is drawn full
-                        // `cardH` tall and TOP-aligned in it, so the card's
-                        // visible middle sits half the cropped-away part lower
-                        // than the slot's. The reorder wants the slot centre, the
-                        // pill wants the visible one (round-5 finding 5, round-6
-                        // bug 13 - the flight starts where the finger let go).
-                        let cropDrop = (Self.cardH - Self.shownCardHeight(crop: crop)) / 2
-                        onDragCardMoved(CGPoint(x: centre.x, y: centre.y + cropDrop))
+                        // This used to add a `cropDrop`: under a crop the slot
+                        // was shorter than the card and the card hung top-aligned
+                        // in it, so the card's VISIBLE middle sat lower than the
+                        // slot's centre - the reorder wants the slot's, the hint
+                        // pill and the takeoff want the visible one (round-5
+                        // finding 5, round-6 bug 13). With the crop gone (round
+                        // 43) the slot IS the card and that correction is
+                        // identically zero, so the two centres are one point.
+                        onDragCardMoved(centre)
                         // A TAP MUST NEVER REORDER. `minimumDistance: 0` means
                         // onChanged fires the instant a finger lands, before it
                         // has moved at all, so an ungated reorder ran on every
@@ -845,11 +939,24 @@ public struct FHandFan: View {
                             // A tap, not a drag — same disabled-check + haptic
                             // + `onTap` the old `.onTapGesture` used to run.
                             guard !disabled.contains(c.identity) else { Haptics.fire(.reject); return }
+                            // A LOCKED card swallows the tap and says nothing.
+                            // Not even the reject haptic `disabled` fires: a
+                            // rejection is feedback about a rule the player
+                            // broke, and this card is mid-animation on its way
+                            // out of the hand - there is no rule and nothing for
+                            // them to do differently.
+                            guard !locked.contains(c.identity) else { return }
                             Haptics.fire(.pickUp)
                             onTap(c)
                             return
                         }
-                        if wasDragging { onDragEnded(c, g.location) }
+                        // Round 40: `boardPoint`, not the raw finger - a release
+                        // still on the cards is a rearrange and must never play
+                        // one, whatever the battle grid claims about that spot.
+                        // See `boardPoint` for the measurement and for the two
+                        // cures (reordering `BoardDrop`, shrinking the battle
+                        // slack) that were rejected.
+                        if wasDragging { onDragEnded(c, Self.boardPoint(g.location, hand: handFrameSelf)) }
                     }
             )
     }

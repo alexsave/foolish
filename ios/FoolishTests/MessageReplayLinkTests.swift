@@ -74,6 +74,11 @@ final class MessageReplayLinkTests: XCTestCase {
     /// on the domain, which the site classifies as a self-contained replay
     /// payload. Not the `/m/1<base32>` bubble link: that one is a move to be
     /// adopted, and it lands on the play page, not the replay page.
+    ///
+    /// The code the kernel gives is the MOVES HALF of that path segment. Since
+    /// 1.0(38) the nicknames ride behind it after a dash (see the next test), so
+    /// what is pinned here is that the kernel's half arrives untouched - the
+    /// game a link resolves to must not depend on who was sitting at the table.
     func testAFinishedGameOffersTheBareFunnelLink() async throws {
         let c = try await finishedController()
         XCTAssertEqual(c.isOver, true, "the driven game reached game over")
@@ -81,9 +86,72 @@ final class MessageReplayLinkTests: XCTestCase {
         XCTAssertFalse(code.isEmpty)
 
         let url = try XCTUnwrap(c.replayURL)
-        XCTAssertEqual(url.absoluteString, "https://foolish.cards/" + code)
+        XCTAssertTrue(url.absoluteString.hasPrefix("https://foolish.cards/" + code),
+                      "the link is not this game's code: \(url.absoluteString)")
         XCTAssertFalse(url.path.hasPrefix("/m/"),
                        "that is the bubble's payload link, which opens the game, not the replay")
+    }
+
+    /// THE NICKNAMES TRAVEL WITH THE LINK (owner, 1.0(38): "Replay code in
+    /// iMessage does not save nicknames! It should").
+    ///
+    /// The site has read a names channel off the end of a replay code since the
+    /// channel existed - `<moves>-<extras>`, decoded by ReplayScreen through
+    /// server/api/common/replay/extras.ts - and the website's own finished games
+    /// have written it all along. The phone was the one producer that did not,
+    /// so a game between friends replayed as "P1" beating "P2".
+    ///
+    /// Asserted against the WIRE BYTES rather than by decoding with a Swift
+    /// decoder, because there is no Swift decoder and writing one here would
+    /// only prove this file agrees with itself. The layout is extras.ts's:
+    /// version 2, flags bit0 = names, then exactly one NUL-terminated UTF-8 name
+    /// per seat. The other half of this - that the real web decoder reads what
+    /// the real Swift encoder writes, trimming rule and all - is
+    /// e2e/imessage_replay_names.test.ts.
+    func testTheLinkCarriesTheTableNicknames() async throws {
+        let c = try await finishedController()
+        let code = try XCTUnwrap(c.replayCode)
+        let url = try XCTUnwrap(c.replayURL)
+
+        let segment = String(url.absoluteString.dropFirst("https://foolish.cards/".count))
+        let halves = segment.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
+        // A `guard` and not an assert: everything below indexes into it, and a
+        // test that CRASHES the runner on failure takes the rest of the suite
+        // with it instead of reporting one red line.
+        guard halves.count == 2 else {
+            return XCTFail("the link carries no names segment: \(segment)")
+        }
+        XCTAssertEqual(String(halves[0]), code, "the names segment disturbed the moves half")
+
+        let blob = try XCTUnwrap(Base32.decode(String(halves[1])), "the names segment is not base32")
+        // The fixture's chain names seat 0 "Ann0" and seat 1 "Ann1" (its joins).
+        let expected: [UInt8] = [2, 1]
+            + Array("Ann0".utf8) + [0]
+            + Array("Ann1".utf8) + [0]
+        XCTAssertEqual([UInt8](blob), expected)
+    }
+
+    /// EVERY SEAT GETS A SLOT, named or not. The reader takes the player count
+    /// from the decoded MOVES and then reads that many NUL-terminated strings,
+    /// so a roster short by one seat does not just lose a name - it walks the
+    /// parse off the end of the blob and throws away the whole thing. A seat
+    /// nobody introduced is "", which the frame builder renders as "P<n>".
+    func testAnUnnamedSeatStillGetsItsSlot() {
+        XCTAssertEqual(ReplayExtras.seatNames([0: "Ann"], count: 3), ["Ann", "", ""])
+        XCTAssertEqual(ReplayExtras.seatNames([1: "Bo", 0: "Al"], count: 2), ["Al", "Bo"])
+        // No view means no seat count (see `replayURL`): nothing to pad to.
+        XCTAssertEqual(ReplayExtras.seatNames([0: "Ann"], count: 0), [])
+    }
+
+    /// A TABLE WHERE NOBODY IS NAMED EMITS THE OLD BARE CODE. An all-empty
+    /// roster decodes to the same "P1"/"P2" the reader already falls back to, so
+    /// the segment would be bytes for nothing - and a link byte-identical to what
+    /// earlier builds produced is one less thing that can behave differently.
+    func testAnAnonymousTableEmitsTheCodeUnchanged() {
+        XCTAssertEqual(ReplayExtras.code(moves: "MOVES", names: []), "MOVES")
+        XCTAssertEqual(ReplayExtras.code(moves: "MOVES", names: ["", ""]), "MOVES")
+        XCTAssertNotEqual(ReplayExtras.code(moves: "MOVES", names: ["", "Bo"]), "MOVES",
+                          "one named seat is still worth carrying")
     }
 
     /// …and the link really is this game: the code decodes to a COMPLETE replay

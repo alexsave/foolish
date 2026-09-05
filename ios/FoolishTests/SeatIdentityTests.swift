@@ -187,18 +187,6 @@ final class SeatIdentityTests: XCTestCase {
         XCTAssertEqual(s.seat(gameId: "g1", chatKey: chatA), 0)
     }
 
-    /// Round 7 removed the preferred-chain game-record cache and the drawer list:
-    /// `put`/`record`/`games`/`remove` are inert now, so the extension always
-    /// renders the tapped bubble rather than a cached chain.
-    func testGameRecordCacheIsInert() {
-        let s = freshStore()
-        s.put(MessageGameRecord(gameId: "g", chatKey: chatA, mySeat: 1, nPlayers: 2, round: 1,
-                                turn: 4, phase: 2, finished: false, names: [:],
-                                payloadBase32: "AAAA", updatedAt: 100))
-        XCTAssertNil(s.record(gameId: "g", chatKey: chatA), "no game-record cache after round 7")
-        XCTAssertTrue(s.games(chatKey: chatA).isEmpty, "no drawer list after round 7")
-    }
-
     /// A corrupt seat blob reads as no seat and never crashes; a write recovers.
     func testCorruptSeatBlobDegradesToEmpty() {
         let suite = "test.fmsg.\(UUID().uuidString)"

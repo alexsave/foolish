@@ -630,6 +630,57 @@ static void test_deal_order(void) {
               g.players[1].hand[0].value);
     }
 
+    // AFTER A PASS the seat that draws last is the seat that COVERED, not the
+    // seat the bout opened against. A transfer moves the defender on one seat
+    // and leaves first_attacker where it was, so the cascade reads: opener,
+    // clockwise past the NEW defender (which sweeps up the passer in their
+    // rotation slot), coverer last.
+    //
+    // Alice attacks Bob with 6D, Bob passes it back with 6S, Cara covers both
+    // and the bout is good. Bob - who was the defender when the cards hit the
+    // table - draws in the middle; Cara draws last.
+    //
+    // Two players cannot pin this: with only one other seat every candidate
+    // order collapses to the same two draws. Three can.
+    {
+        Game g; setup_playing_np(&g, 3);
+        g.power_suit = SUIT_CLUBS;      // so 6D/6S/7D/7S are all plain cards
+        stock_countable_deck(&g, 24);
+        Card ha[4] = {{SUIT_DIAMONDS,6},{SUIT_HEARTS,10},{SUIT_HEARTS,11},{SUIT_HEARTS,12}};
+        Card hb[4] = {{SUIT_SPADES,6},  {SUIT_HEARTS,13},{SUIT_HEARTS,14},{SUIT_HEARTS,9}};
+        Card hc[4] = {{SUIT_DIAMONDS,7},{SUIT_SPADES,7}, {SUIT_SPADES,13},{SUIT_SPADES,14}};
+        memcpy(g.players[0].hand, ha, sizeof ha); g.players[0].hand_count = 4;
+        memcpy(g.players[1].hand, hb, sizeof hb); g.players[1].hand_count = 4;
+        memcpy(g.players[2].hand, hc, sizeof hc); g.players[2].hand_count = 4;
+
+        Card c6d = { SUIT_DIAMONDS, 6 }, c6s = { SUIT_SPADES, 6 };
+        Card cov[2] = { { SUIT_DIAMONDS, 7 }, { SUIT_SPADES, 7 } };
+        Card atk[2] = { c6d, c6s };
+        CHECK(handle_attack(&g, 0, &c6d, 1), "after a pass: Alice opens with 6D");
+        CHECK(handle_pass(&g, 1, &c6s, 1),   "after a pass: Bob transfers with 6S");
+        DCHECK(g.defender == 2 && g.first_attacker == 0,
+              "after a pass: the defender moves on, the opener does not "
+              "(defender %d, first attacker %d)", g.defender, g.first_attacker);
+        CHECK(handle_cover(&g, 2, cov, atk, 2), "after a pass: Cara covers both");
+        CHECK(handle_good(&g, 0) && handle_good(&g, 1), "after a pass: the bout is good");
+
+        int n = draw_log_order(&g, seats, MAX_PLAYERS);
+        DCHECK(n == 3, "after a pass: three seats drew, got %d", n);
+        DCHECK(seats[0] == 0 && seats[1] == 1 && seats[2] == 2,
+              "after a pass: want 0,1,2 (opener, the passer, the coverer LAST), "
+              "got %d,%d,%d", seats[0], seats[1], seats[2]);
+        // and the cards prove it: 3 to Alice, 3 to Bob, then 4 to Cara.
+        DCHECK(g.players[0].hand[3].value == MIN_VALUE_SMALL,
+              "after a pass: the opener got the top card, got %d",
+              g.players[0].hand[3].value);
+        DCHECK(g.players[1].hand[3].value == MIN_VALUE_SMALL + 3,
+              "after a pass: the passer got the fourth card, got %d",
+              g.players[1].hand[3].value);
+        DCHECK(g.players[2].hand[2].value == MIN_VALUE_SMALL + 6,
+              "after a pass: the coverer drew last, starting at the seventh "
+              "card, got %d", g.players[2].hand[2].value);
+    }
+
     // Two players: the defender is the only other seat, so the order reads the
     // same either way. Pinned so the two-player game cannot quietly regress.
     {
@@ -2156,18 +2207,15 @@ static void test_replay_steps_replays_a_deal_with_no_trump(void) {
                 if (d.players[i].hand[j].suit == d.power_suit) trumps++;
         if (trumps == 0) found = s;
     }
+    // The seed search above is what pins this to the branch under test: no
+    // trump was dealt, so the opening seat was rolled for, not derived. (It
+    // cannot be re-checked off `g` below - that game is played out, and every
+    // hand in it is empty.)
     CHECK(found >= 0, "found a 2p deal with no trump in either hand");
     if (found < 0) return;
 
     Game g;
     if (!rs_play_seeded(&g, 2, found, seed)) { CHECK(0, "the no-trump game plays out"); return; }
-
-    // It really is the branch under test: no trump was dealt, so the opening
-    // seat was rolled for, not derived.
-    int trumps_dealt = 0;
-    for (int i = 0; i < 2; i++)
-        for (int j = 0; j < g.players[i].hand_count; j++)
-            if (g.players[i].hand[j].suit == g.power_suit) trumps_dealt++;
 
     int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
                                          code, (int)sizeof code);

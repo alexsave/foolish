@@ -86,7 +86,16 @@ public struct MessageTableView: View {
     // overlay does NOT own, so the card returns table→hand purely by
     // matchedGeometry. With no namespace, undo (and any non-overlay move) SNAPS the
     // card home instantly, which is what an instantaneous swap should look like.
-    private var cardNS: Namespace.ID? { nil }
+    // (round 43: `cardNS` is gone. It was a computed `Namespace.ID?` returning
+    // nil, and every call site passed it. Round 8 established that this board
+    // has no matchedGeometry namespace and must not have one - the overlay owns
+    // every flight, so a shared namespace would DOUBLE-animate and the
+    // cross-fade it produces is an opacity animation on a card, which is the
+    // one thing this game never does. That is still true; what is gone is the
+    // ceremony of passing nil to say so. A board with no namespace argument
+    // says it more plainly than a nil-valued one, and it cannot be handed a
+    // real namespace by accident. See `BoardDrag.FlightID` for the invariant
+    // that replaced the per-card guard.)
     // Overlay flights to the discard pile (bout end), where matchedGeometry has no
     // target view to match against.
     @StateObject private var animator = BoardAnimator()
@@ -122,7 +131,22 @@ public struct MessageTableView: View {
     /// Every identity in `sweepBattles`, so a bout-end flight can POLL (via
     /// `playStep`) until its source slot has been measured rather than firing off
     /// the centre fallback before the grid has laid out.
-    @State private var sweepTableIds: Set<String> = []
+    ///
+    /// ROUND 45: COMPUTED, NOT STORED - the one piece of the veil's state that
+    /// turned out to be a second copy of another piece rather than a fact of its
+    /// own. It was `@State`, written in lockstep with `sweepBattles` at the only
+    /// two places either may be written (`setSweep` / `dropSweep`), which is a
+    /// cache kept correct by hand. The value is identical by construction, so
+    /// nothing observable moves; what goes away is the way a THIRD writer of
+    /// `sweepBattles` would leave this stale without a symptom at the write. A
+    /// stale entry here is a flight that polls for a rect that will never
+    /// publish (`tableSourceReady` blocks on a card the grid does not hold) or
+    /// one that refuses a landing the grid has room for (`sweepLandingRect`) -
+    /// a cover that simply never animates, which is the round-20 report.
+    ///
+    /// The rest of the group did NOT collapse, and the reasons are written at
+    /// `gridVeil` and at `sweepUnplaced`.
+    private var sweepTableIds: Set<String> { Self.sweepIds(sweepBattles) }
     /// Swept cards whose flight has STARTED - hidden in the pre-bout grid from that
     /// instant on (the overlay ghost is now the only copy). Grows through the
     /// sequence, cleared with `sweepBattles`. Kept separate from `animator.hidden`
@@ -149,6 +173,18 @@ public struct MessageTableView: View {
     /// has no battles), lands, holds for `boutEndHold`, and only then sweeps.
     /// Kept apart from `sweptFlownIds` because the two mean opposite things and
     /// the debug trace is worth being able to tell them apart.
+    ///
+    /// ROUND 45 TRIED TO MERGE THEM AND FOUND A SECOND, HARDER REASON. The two
+    /// are unioned into one set for the grid (`gridVeil`), so on that side alone
+    /// they could be one - seed it with the un-arrived cards, subtract on
+    /// arrival, union on takeoff. But this set has a consumer the other does
+    /// not: `openReplayFlights` reads it as "the whole gate" for whether a card
+    /// is flying ONTO the pre-bout grid, and `sweepArriving` is derived by
+    /// intersecting a step's flights with it. Merged, a card that has already
+    /// been carried OFF the table would test true on both - it would be built a
+    /// second flight, landing on a grid it just left, and the attack under it
+    /// would tilt as it went. The union is a coincidence of what the grid needs
+    /// to hide, not evidence that the two facts are one.
     @State private var sweepUnplaced: Set<String> = []
     /// The subset of `sweepUnplaced` whose flight is in the air THIS INSTANT, so
     /// the attack underneath a cover tilts in lockstep with the card coming down
@@ -175,42 +211,95 @@ public struct MessageTableView: View {
     /// from here changes with a SNAP, never a spring - the buttons hold still and
     /// only ever jump instantly to their final spot. `-1` marks "not measured yet"
     /// so the first real height wins immediately (see `boardContent`'s onChange).
+    ///
+    /// That rejection is about THIS vector only. The `.transaction` still on
+    /// `actionBar`'s fixed-size container is not a leftover of it - it covers a
+    /// change `.animation(nil, value:)` cannot see at all. The three overrides
+    /// and what each one is for are laid out once, in
+    /// `doesNotRideTheBoardSpring`'s doc at the foot of this file.
     @State private var buttonLift: CGFloat = -1
+    /// `lift` for the promoted status mark (the `selfRoleIndicator` overlay),
+    /// which is drawn OUTSIDE `boardContent`'s GeometryReader and so cannot read
+    /// the local. `buttonLift` is the mirror the chrome already rides; before it
+    /// has been measured (-1, the first paint) fall back to the same arithmetic
+    /// it will settle on, off the hand's published width, so the mark does not
+    /// spend a frame at the bottom of the board and then jump up.
+    private var statusMarkLift: CGFloat {
+        if buttonLift >= 0 { return buttonLift }
+        let hand = Self.fanCards(controller.view?.me?.hand ?? [], holding: handHoldback)
+        guard handFrame.width > 0 else { return 0 }
+        return FHandFan.height(cards: hand, availableWidth: handFrame.width)
+    }
     @State private var deckFrame: CGRect = .zero
+    /// MY CARDS THAT THIS OPEN-REPLAY HAS NOT FLOWN OUT OF MY HAND YET.
+    ///
+    /// An open replay renders the FINAL board (`controller.view`), so a bubble
+    /// carrying my own attack opens with those cards already gone from my hand
+    /// and the fan already re-centred - and the flight then had nowhere in the
+    /// hand to start from. Owner, 1.0(41): "When I replay an attack of mine, it
+    /// seems to animate from where my 'player card count' would be… notice that
+    /// there is no self player mini-hand visual. Thus what I'm seeing is that
+    /// they spawn in like behind the cards in my hand, then fly in to their
+    /// correct positions."
+    ///
+    /// This is the counts trick (`ledger.hand`) applied to the hand: hold
+    /// the cards in the fan at their PRE-MOVE slots, seeded synchronously by
+    /// `replayLastMoveOnOpen`, and drop each group the instant its flight is
+    /// built. The fan animates its own re-close over exactly `flightTime`
+    /// (FHandFan's layout animation is keyed on the laid-out SET), so the hand
+    /// closes up as the cards leave rather than before they do - the second
+    /// half of the same report.
+    ///
+    /// Held-back cards are NOT in the kernel hand, and every play path filters
+    /// through `view.me.hand` (`selectedCards`) or the legal menu, so one can
+    /// never be played. Round 42 left it at that - "the worst a tap on one can
+    /// do is a reject toast". ROUND 43: that was wrong twice over. `toggle` wrote
+    /// the identity into `selection` regardless, where it stayed for the life of
+    /// the board and silently disabled Take and Good (both gate on
+    /// `cards.isEmpty`) the moment the card came home in a pickup; and dragging
+    /// one raised a "move not allowed" toast about a card the player had already
+    /// played. So they are now `locked` in the fan (gesture off, appearance
+    /// untouched - see `hand`) and `selectionAfterTap` keeps `selection` inside
+    /// the kernel hand by construction.
+    @State private var handHoldback: [Card] = []
+    /// ROUND 43: WHICH VEIL THE HOLDBACK BELONGS TO - `animator.veilEpoch` as it
+    /// stood when it was armed, and the exact mirror of `clearPreHidden(raisedBy:)`.
+    ///
+    /// The holdback used to be cleared in two places only, both inside
+    /// `runEventStream`. Every other sequence that can SUPERSEDE a replay -
+    /// `flyUndoReturn`, `flyUndoRelease`, the genesis-deal fallback - left it
+    /// standing, so a holdback whose stream never got to tear down stayed in the
+    /// fan for good: cards you have already played, drawn in your hand, and (the
+    /// `veilStandingNow` oracle's complaint) still `preHidden` at rest. Every
+    /// other veil in this file has an unconditional rescue; this one had none.
+    ///
+    /// The epoch is what makes the rescue safe to add in three more places. A
+    /// teardown may only take down a holdback IT could have raised: a newer
+    /// sequence armed its own after a `preHide` that bumped the epoch, so an
+    /// older teardown finds `handHoldbackAt > veiledAt` and leaves it alone.
+    /// That is the same hazard the newest-sequence check at `runEventStream`'s
+    /// teardown was written for, stated in the units that actually order these
+    /// two events.
+    @State private var handHoldbackAt = 0
     @State private var handCardFrames: [String: CGRect] = [:]
     @State private var seatFrames: [Int: CGRect] = [:]
 
-    // Displayed counts LAG the game state during a bout-end sequence: a badge/deck/
-    // discard count holds its old value until that card's flight lands, then bumps
-    // (so a hand count never jumps before the deck→player draw animation plays).
-    @State private var seatCountOverride: [Int: Int] = [:]
-    @State private var deckCountOverride: Int?
-    @State private var discardCountOverride: Int?
-    /// ROUND 28: WHICH SEATS THE BOARD IS DRAWING AS OUT, which during a
-    /// sequence is not the same question as which seats ARE out.
+    /// WHAT THE BADGES ARE SHOWING - the deck, the discard, every seat's hand
+    /// count, who is drawn as OUT and which mark each seat is wearing. All five
+    /// LAG the game state during a sequence: a count holds its old value until
+    /// that card's flight lands, then bumps (so a hand count never jumps before
+    /// the deck→player draw animation plays), and a mark stays where it is until
+    /// the move that moved it has been watched.
     ///
-    /// The badge of a player who goes out collapses edge-on and stays there
-    /// (`FSeatBadge.collapsed`), and the owner's rule for WHEN is "in parallel
-    /// with the card motion" - a player only ever goes out by playing their last
-    /// cards, so the collapse and those flights are one event. The view carrying
-    /// `isOut` arrives before the sequence starts, though, so read straight off
-    /// it every badge would collapse a whole sequence early - the same lag the
-    /// counts and the role marks each already keep, for the same reason.
-    ///
-    /// nil means "no sequence is running, follow the view", which is also what
-    /// draws a seat that was ALREADY out when the board opened as collapsed from
-    /// the first paint with nothing to animate: an out player is a fact about
-    /// the board, and only the MOMENT of going out is an event.
-    @State private var outShown: Set<Int>?
-    // ROUND 16: the ROLES lag the game state the same way the counts do, and for
-    // the same reason. A bout end publishes one view in which the table is
-    // already clear, the hands already refilled AND the roles already rotated;
-    // the counts have been unpicked from that for rounds, but the marks still
-    // teleported - the shield was simply somewhere else on the first paint of a
-    // sequence whose cards had not begun to move. Now the badges wear
-    // `roleShown` until the sequence that earns the change has played, and the
-    // change itself is a flight (FRoleMotion).
-    @State private var roleShown: RoleState?
+    /// ROUND 44: ONE VALUE, WRITTEN ONE WAY. The five used to be five separate
+    /// pieces of `@State` with twenty-odd assignments between them, and the rule
+    /// about who may make one was a `guard` line copy-pasted into three
+    /// functions - which is exactly how round 43 came to find a fourth writer
+    /// that undid round 42's fix one line after it applied. They now live behind
+    /// `ShownLedger`, in a file this one cannot assign into, and every write
+    /// names its claim: see ShownLedger.swift, which is where the whole rule and
+    /// its history is written down.
+    @State private var ledger = ShownLedger()
     @State private var roleFlights: [RoleFlight] = []
     @State private var roleProgress: Double = 0
     /// Seats whose own mark is in the air - the take-off ends. They blank
@@ -254,6 +343,10 @@ public struct MessageTableView: View {
         /// animate towards a single attack card".
         let landing: [String: CGRect]
         let fromRects: [String: CGRect]   // card.identity -> hand rect AT PLAY TIME
+        /// The hand's OWN frame at that same instant - the yardstick those rects
+        /// were measured against, so a board that has since resized can put them
+        /// back where they meant. See `rebased`.
+        let handFrameAtPlay: CGRect
     }
     @State private var pendingCover: PendingCover?
     /// Round-6 bug 13 ("when we drag a card then let go, it should animate from
@@ -268,6 +361,8 @@ public struct MessageTableView: View {
     private struct PendingPlacement {
         let cards: [Card]
         let fromRects: [String: CGRect]   // card.identity -> where it left from
+        /// The hand's own frame at that same instant - see `rebased`.
+        let handFrameAtPlay: CGRect
     }
     @State private var pendingPlacement: PendingPlacement?
     /// THE VEIL (round-4 notes 3 and 5). False until the board has handed its
@@ -335,6 +430,34 @@ public struct MessageTableView: View {
     /// no longer belongs to it. Bumped by `runEventStream` (and the genesis deal
     /// fallback) as each claims the animator.
     @State private var animSequenceToken = 0
+
+    /// CLAIM THE ANIMATOR: bump the token, and keep the number that came back.
+    ///
+    /// The two statements only mean anything together - the bump says
+    /// "everything already running is stale", and the number is the receipt
+    /// every later guard in that sequence checks itself against
+    /// (`mySeq == animSequenceToken`) - and they were written out longhand at
+    /// five sites, where a claim that bumped and forgot to keep the number
+    /// would look exactly like a claim that did.
+    ///
+    /// `@discardableResult` because one site genuinely has no receipt to keep:
+    /// `drainSupersededForReversal` supersedes whatever is running and then
+    /// starts no sequence of its own, so there is nothing later to compare.
+    /// Discarding it there is a decision, and it says so in a comment.
+    ///
+    /// DELIBERATELY NOT A WRAPPER ROUND THE TEARDOWNS TOO. The four claims that
+    /// do start a sequence end in four genuinely different ways - one hands
+    /// orphaned hand slots forward and deposits into the reversal ledger, one
+    /// reveals a specific id set, one drops the swept table as well, one
+    /// rescues a holdback - and a helper that pretended they were one shape
+    /// would hide differences that are real. Only the claim is shared, because
+    /// only the claim is the same everywhere.
+    @discardableResult
+    private func claimAnimSequence() -> Int {
+        animSequenceToken += 1
+        return animSequenceToken
+    }
+
     /// Cards a SUPERSEDED sequence had already opened a hand slot for and never
     /// got to fly - laid out, opacity 0, and belonging to nobody.
     ///
@@ -523,11 +646,55 @@ public struct MessageTableView: View {
                                centerFromTrailing: Self.sendHintCenterFromTrailing)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
             }
-            .animation(nil, value: controller.view)   // never ride the board spring
+            .doesNotRideTheBoardSpring(controller.view)
         }
         .padding(.horizontal, 8).padding(.top, 14).padding(.bottom, 4)   // top margin so the ring isn't clipped in the compact drawer
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay { FlyingCardsLayer(animator: animator) }
+        // A STATUS ICON IS ALWAYS IN FRONT OF A CARD.
+        //
+        // Owner, round 41: "when the cards on the table or hand swap from the
+        // static version to the animated moving version, the z index on screen
+        // changes. As a result this can cause it to go from being under a
+        // checkbox to on top of a checkbox."
+        //
+        // Both halves of that are true and neither is wrong on its own. In the
+        // ZStack a table card is drawn FIRST, so it is behind the role marks; a
+        // flying card is not in the ZStack at all, it is in the overlay above
+        // it, so it is in front of them. Nothing moves the card - the layer it
+        // lives in changes the instant it starts moving, and the mark it was
+        // behind is suddenly behind IT.
+        //
+        // So the marks move above the flight layer, and the ordering stops
+        // depending on which copy of the card is on screen. Wrapped in the SAME
+        // padding the board content carries, so this is a pure change of z: the
+        // mark lands on exactly the pixel it landed on before (an overlay is
+        // sized to the padded frame, the ZStack to that frame minus the
+        // padding, and the difference is what this puts back).
+        //
+        // NOT DONE HERE, and worth knowing: the OPPONENTS' status pips live
+        // inside `FSeatBadge`'s own VStack (`roleRow`), so promoting them means
+        // splitting the badge in two - and the badge publishes `SeatFramesKey`
+        // from inside itself, which is where every draw and pickup flight aims.
+        // The self mark is the one a card actually crosses (it sits 6pt above
+        // the hand, in the takeoff path of every card played), so it is the one
+        // this fixes.
+        .overlay {
+            if let v = controller.view {
+                selfRoleIndicator(v)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .padding(.bottom, statusMarkLift + 6)
+                    // Round-7's rule, carried over with the view.
+                    .doesNotRideTheBoardSpring(controller.view)
+                    .allowsHitTesting(false)
+                    // The board content's own inset, re-applied INSIDE the
+                    // overlay. An overlay is sized to the padded frame and the
+                    // ZStack to that frame minus the padding, so without this
+                    // the mark would sit 4pt lower and 8pt wider than it used
+                    // to. This is a change of z and nothing else.
+                    .padding(.horizontal, 8).padding(.top, 14).padding(.bottom, 4)
+            }
+        }
         // Above the cards: a role changing hands IS the thing being read at that
         // moment (it happens after the sweep and the deal, when nothing else is
         // moving), and a shield disappearing behind a badge would read as a
@@ -570,17 +737,52 @@ public struct MessageTableView: View {
                 let display = FHandFan.displayOrder(
                     cards: hand,
                     order: MessageGameStore.shared.handOrder(gameId: controller.gameIdString))
-                let rects = FHandFan.slotRects(cards: display, width: handFrame.width,
-                                               crop: Self.handCrop)
+                let rects = FHandFan.slotRects(cards: display, width: handFrame.width)
+
                 var worst = 0.0, worstId = ""
                 for c in hand {
-                    guard let a = rects[c.identity]?.offsetBy(dx: handFrame.minX, dy: handFrame.minY),
+                    // Placed by the SAME rule the flights use (`inBoardSpace`,
+                    // anchored on the fan's bottom edge). It used to offset by
+                    // `handFrame.minY`, which made this check disagree with
+                    // every flight it was supposed to be validating - and made
+                    // it report a full row of error (86pt at eleven cards)
+                    // whenever the two preferences were a paint out of step,
+                    // which is noise, not drift. What is worth shouting about
+                    // is the two disagreeing about where the hand IS, and that
+                    // survives this change: the 391pt collapse gap still reads.
+                    guard let a = rects[c.identity].map({
+                              Self.inBoardSpace($0, laidOutCount: display.count,
+                                                handFrame: handFrame) }),
                           let m = $0[c.identity] else { continue }
                     let d = max(abs(a.midX - m.midX), abs(a.midY - m.midY))
                     if d > worst { worst = d; worstId = c.identity }
                 }
                 if worst > 2 {
                     AnimLog.say("SLOTCHECK MISMATCH n=\(hand.count) worst=\(String(format: "%.1f", worst))pt @\(worstId)")
+                }
+                // …AND INTO THE DUMP THE OWNER CAN ACTUALLY READ, once it is
+                // past half a card. That threshold is the line between two
+                // completely different facts, and only the magnitude separates
+                // them: a few points is `handCardFrames` being one layout pass
+                // behind something that is still moving, which is harmless and
+                // constant during a drag; a whole board is the hand's per-card
+                // frames NOT RE-PUBLISHING AT ALL when the drawer resizes.
+                //
+                // The second is real and measured. On a 667 board collapsing to
+                // 261, the rig reads `SLOTCHECK MISMATCH n=7 worst=406.0pt` -
+                // and 406 is exactly 667 - 261. `HandFrameKey` re-publishes
+                // across that resize and `HandCardFramesKey` does not, which is
+                // why the analytical route (`handSlotsNow`, off `handFrame`)
+                // reads the new drawer correctly while anything trusting the
+                // per-card frames is still describing the expanded board.
+                //
+                // Everything load-bearing has been moved off them - a takeoff
+                // and a landing are both computed now - so this is a WATCH, not
+                // a live defect. It is here because this check named the bug in
+                // the owner's own Debug build for months and only ever said so
+                // to a log nobody was streaming.
+                if worst > 35 {
+                    FlightRecorder.note("slotcheck", "hand rects \(Int(worst))pt off - stale after a resize?")
                 }
             }
             #endif
@@ -602,26 +804,14 @@ public struct MessageTableView: View {
             // up a moment ago would never be taken down again: the counts would
             // stay frozen at their pre-move values for the rest of the game and
             // any card the move would have added stay invisible. Nothing
-            // happened, so give it all straight back.
-            handBeforeMyMove = nil
-            deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
-            // Round 16: and the roles `play` froze on the way in. Nothing
-            // happened, so there is nothing to hand over - this is the same
-            // board it was frozen from, which is why it is a plain release and
-            // not a sync.
-            roleShown = nil
-            // Round-6 bug 13: the same applies to a card `playAt` hid on its way
-            // to the table. A rejected move publishes no view change, so nothing
-            // will ever fly it and nothing else would take that veil down - the
-            // card would simply be missing from the hand it never left.
-            if let p = pendingPlacement {
-                // Round-8: also drop the resting held ghost `playAt` spawned - the
-                // move was rejected, so it will never fly; reveal the hand copy AND
-                // clear the ghost, or a static ghost would sit at the source.
-                animator.cancelHeld(Set(p.cards.map(\.identity)))
-                animator.reveal(Set(p.cards.map(\.identity)))
-                pendingPlacement = nil
-            }
+            // happened, so give it all straight back - including (round-6 bug
+            // 13) the card `playAt` hid on its way to the table, which would
+            // otherwise be missing from the hand it never left.
+            //
+            // ROUND 40 moved the body into `releaseLivePlayVeil`, because a
+            // rejection is not the only way a play comes to nothing and the two
+            // paths must give back the SAME things.
+            releaseLivePlayVeil()
         }
         .task {
             AnimLog.say("board .task seat=\(controller.mySeat) ready=\(controller.ready)")
@@ -684,10 +874,41 @@ public struct MessageTableView: View {
     /// of the controller, so `body` may read it on the very first paint — which
     /// is the whole point, that being the paint the onChange path misses.
     /// nil once `settled`, or when there is nothing to replay.
+    /// THE OPEN REPLAY THIS BOARD HAS NOT STARTED YET - the window itself, as
+    /// one name, because three things were spelling it out separately.
+    ///
+    /// It opens when a bubble is tapped and the controller says a replay is
+    /// outstanding, and it closes when `flyBoutEndToDiscard` consumes that flag
+    /// on its way to starting the sequence. Inside it the board must render the
+    /// game as it was BEFORE the move it is about to animate - that is the veil
+    /// - and because it is a pure function of the controller, `body` may read it
+    /// on the very first paint. That is the whole point: the onChange path runs
+    /// AFTER body, so anything that waits for it is a paint too late, which is
+    /// the "starts already landed and then animates" family of bugs.
+    ///
+    /// nil once the replay has started, and nil when there is nothing to replay.
+    /// Round 43: `pendingOpen` and `pendingRoles` each re-derived this, one of
+    /// them phrasing the same test as two guards, so a change to what "not
+    /// started yet" means had two places to be made and two chances to diverge.
+    private var unstartedReplay: [GameEvent]? {
+        Self.unstartedReplay(replayPending: controller.replayPending,
+                             events: controller.openReplayEvents)
+    }
+
+    /// …as a value, so the window can be asserted without a board.
+    ///
+    /// Extracted the moment it was collapsed, because the collapse revealed the
+    /// hole: mutating the accessor to ignore `replayPending` - which makes the
+    /// veil NEVER LIFT, so every card the replay touches stays hidden for the
+    /// life of the board - passed all 539 tests. The most load-bearing half of
+    /// the condition was covered by nothing at all.
+    static func unstartedReplay(replayPending: Bool, events: [GameEvent]) -> [GameEvent]? {
+        guard replayPending, !events.isEmpty else { return nil }
+        return events
+    }
+
     private var pendingOpen: (ids: Set<String>, counts: (deck: Int, discard: Int, hand: [Int: Int]))? {
-        guard !settled, let view = controller.view else { return nil }
-        let events = controller.openReplayEvents
-        guard !events.isEmpty else { return nil }
+        guard let events = unstartedReplay, let view = controller.view else { return nil }
         return (controller.openReplayTouchedCardIds, Self.preCounts(events, finalView: view))
     }
 
@@ -696,14 +917,56 @@ public struct MessageTableView: View {
     /// the battle grid and the hand fan, so "is this card on the table" has one
     /// answer and the cover tilt can be read straight off it.
     private var veiledCardIds: Set<String> {
-        var ids = animator.hidden
-        if let open = pendingOpen { ids.formUnion(open.ids) }
+        Self.veiledCards(hidden: animator.hidden, pendingOpen: pendingOpen?.ids,
+                         handBeforeMyMove: handBeforeMyMove,
+                         myHand: controller.view?.me?.hand)
+    }
+
+    /// …as a value, so the veil can be asserted without a board.
+    ///
+    /// ROUND 45. The board's veil state was nine pieces of `@State` read
+    /// directly out of `body`, so not one of the four sets the board actually
+    /// HANDS OUT could be exercised at all - and item 12 of this cleanup had
+    /// just found that mutating a comparable condition passed all 539 tests.
+    /// These four (`veiledCards`, `flyingNow`, `handSlotDeferred`, `gridVeil`)
+    /// are the whole of what the veil answers; everything upstream of them is
+    /// state, and everything downstream is a view. See VeilOutsTests.
+    ///
+    /// THREE SOURCES, UNIONED - deliberately not "whichever is up":
+    ///  - `hidden`, the animator's own (a flight in the air, or pre-hidden for
+    ///    one that has not started).
+    ///  - `pendingOpen`, an arriving/opening replay the board has not begun to
+    ///    animate yet, derived PURELY from the controller so it is legal to read
+    ///    in `body`. The handoff to `hidden` is invisible because both name the
+    ///    same cards (see `settled`).
+    ///  - live play: cards THIS move just put in my hand, which nothing has
+    ///    pre-hidden yet (that happens an `onChange` late).
+    ///
+    /// `myHand` nil takes the third source out entirely, holdback and all. That
+    /// is a spectator, or a board with no view yet - neither has a fan to veil.
+    static func veiledCards(hidden: Set<String>, pendingOpen: Set<String>?,
+                            handBeforeMyMove: Set<String>?, myHand: [Card]?) -> Set<String> {
+        var ids = hidden
+        if let pendingOpen { ids.formUnion(pendingOpen) }
         // Live play: cards this move just put in my hand, which have not been
         // pre-hidden yet (that also happens an onChange late).
-        if let before = handBeforeMyMove, let hand = controller.view?.me?.hand {
-            ids.formUnion(Set(hand.map(\.identity)).subtracting(before))
+        if let handBeforeMyMove, let myHand {
+            ids.formUnion(Set(myHand.map(\.identity)).subtracting(handBeforeMyMove))
         }
         return ids
+    }
+
+    /// "IN THE AIR RIGHT NOW", the one derivation four places rest on:
+    /// `hidden \ preHidden`. `preHide` puts a card in both sets; `openSlots`
+    /// takes it out of `preHidden` alone the instant its own step begins, so
+    /// the difference is exactly the set of cards whose flight is playing.
+    ///
+    /// Named because it is read as three different things - the cards that keep
+    /// their fan slot (`handSlotDeferred`), the covers whose attack tilts with
+    /// them (`FBattleGrid.flyingNow`), and the orphan test at a teardown - and
+    /// each of those was its own inline subtraction.
+    static func flyingNow(hidden: Set<String>, preHidden: Set<String>) -> Set<String> {
+        hidden.subtracting(preHidden)
     }
 
     /// Round-6 bug 10: which veiled hand cards reserve NO fan width YET. A deal
@@ -716,30 +979,56 @@ public struct MessageTableView: View {
     /// lands). `animator.hidden \ animator.preHidden` is precisely "flying right
     /// now" (see `BoardAnimator.openSlots`); everything else waits its turn.
     private var handSlotDeferred: Set<String> {
-        let flyingNow = animator.hidden.subtracting(animator.preHidden)
-        return veiledCardIds.subtracting(flyingNow)
+        Self.handSlotDeferred(veiled: veiledCardIds,
+                              flying: Self.flyingNow(hidden: animator.hidden,
+                                                     preHidden: animator.preHidden),
+                              holdback: handHoldback)
+    }
+
+    /// …as a value (round 45, with the rest of the veil's outs).
+    static func handSlotDeferred(veiled: Set<String>, flying: Set<String>,
+                                 holdback: [Card]) -> Set<String> {
+        // A HELD-BACK CARD IS NEVER DEFERRED. It is pre-hidden (its table copy
+        // must stay invisible until its ghost lands) and pre-hidden is exactly
+        // what this set is built from - so without this line the fan would drop
+        // the very cards `handHoldback` exists to keep on screen, and the hand
+        // would render closed again. It is the one veiled card that IS drawn.
+        veiled.subtracting(flying).subtracting(holdback.map(\.identity))
+    }
+
+    /// WHICH VEILED CARDS THE FAN ITSELF DRAWS NOTHING FOR - `hand(_:)`'s
+    /// `hidden:` argument, and the twin of `handSlotDeferred` one step out.
+    ///
+    /// A held-back card is veiled (its TABLE copy must stay invisible until its
+    /// ghost lands), so the hand has to un-veil its own copy or the fan would
+    /// reserve the slot and draw nothing - a gap where the card is. Extracted
+    /// beside the other three because the pair has an invariant worth asserting:
+    /// `handSlotDeferred` is a SUBSET of this, i.e. the fan never withholds a
+    /// slot from a card it is drawing.
+    static func fanVeil(veiled: Set<String>, holdback: [Card]) -> Set<String> {
+        veiled.subtracting(holdback.map(\.identity))
     }
 
     /// A seat badge's displayed hand count: the per-step override once a
     /// sequence is running, else the veil's pre-move value, else the truth.
     private func shownHandCount(_ p: PlayerView) -> Int {
-        if let n = seatCountOverride[p.seat] { return n }
+        if let n = ledger.hand[p.seat] { return n }
         if let n = pendingOpen?.counts.hand[p.seat] { return n }
         return p.handCount
     }
     private func shownDeckCount(_ view: GameView) -> Int {
-        let n = deckCountOverride ?? pendingOpen?.counts.deck ?? view.deckCount
+        let n = ledger.deck ?? pendingOpen?.counts.deck ?? view.deckCount
         #if DEBUG
         // Where a displayed count COMES FROM. "The board is a bit behind" is
         // always one of three sources disagreeing with the kernel, and only the
         // board knows which one it used.
-        Self.traceCount(shown: n, override: deckCountOverride,
+        Self.traceCount(shown: n, override: ledger.deck,
                         veil: pendingOpen?.counts.deck, truth: view.deckCount)
         #endif
         return n
     }
     private func shownDiscardCount(_ view: GameView) -> Int {
-        discardCountOverride ?? pendingOpen?.counts.discard ?? view.discardCount
+        ledger.discard ?? pendingOpen?.counts.discard ?? view.discardCount
     }
 
     /// The live board, laid out like the web GameBoard: every piece is placed
@@ -751,11 +1040,15 @@ public struct MessageTableView: View {
     /// move" label that ate layout) marks that I must open the bout.
     private func boardContent(_ view: GameView) -> some View {
         GeometryReader { geo in
-            // The board's live collapse fraction (0 = expanded, 1 = fully compact
-            // drawer). Round-11 narrowed what this may drive: it gates the send
-            // hint and widens the opponent ring, and that is ALL. Nothing that
-            // positions the hand or the chrome may read it - see `handCrop`.
-            let collapse = Self.collapseFraction(height: geo.size.height)
+            // The board's live collapse fraction (0 = expanded, 1 = fully
+            // compact drawer) is NOT bound here. Round-11 narrowed what may
+            // read it to two things - the send hint's visibility and the
+            // opponent ring's radius - and both now ask
+            // `Self.collapseFraction` at their own call site, so a binding here
+            // was left over reading as "the board has a collapse fraction in
+            // hand", which is exactly the invitation round 11 was closing.
+            // Nothing that positions the hand or the chrome may read it at all;
+            // see `handCrop`.
             let myHand = view.me?.hand ?? []
             // The width FHandFan itself actually lays out in: this reader's
             // width minus `hand(_:)`'s own `.padding(.horizontal, FSpace.s)`.
@@ -765,6 +1058,22 @@ public struct MessageTableView: View {
             // `handSlotDeferred`). Room is reserved off THIS, so an incoming
             // card's width is not reserved until its own flight opens the slot.
             let deferredSlots = handSlotDeferred
+            // How many cards the fan actually LAYS OUT this paint - the number
+            // its row split is really taken on, as opposed to `myHand.count`
+            // which is what the chrome reserves against. The two are equal at
+            // rest and only differ mid-sequence; see the `fan-rows` note below,
+            // which exists to say which of them moved when the split flips.
+            //
+            // ROUND 43: THROUGH `fanCards`, like everything else that describes
+            // the laid-out hand. This read the kernel hand alone, so the one row
+            // change round 42 introduced - the drop when `handHoldback` lets go
+            // of my replayed cards - was invisible to the very trace that exists
+            // to answer "we had ten cards and they said good, why did the hand
+            // change rows?". `handHeight` two lines down was already measured
+            // off `fanCards`, so the watch and the thing being watched had come
+            // apart.
+            let laidHandCount = Self.laidCount(hand: myHand, holding: handHoldback,
+                                               deferred: deferredSlots)
             // The hand's on-screen height (one row, or two once M6 splits it).
             // The self-role indicator and action bar float a fixed gap ABOVE
             // this, so a hand that grows to two rows pushes them up with it.
@@ -777,8 +1086,16 @@ public struct MessageTableView: View {
             // the FINAL hand the instant the move applies, so the buttons sit at
             // their final spot from the start and the incoming cards fill UP toward
             // them - the hand makes room, the buttons hold still.
-            let handHeight = FHandFan.height(cards: myHand, availableWidth: handWidth,
-                                             crop: Self.handCrop)
+            // …and `myHand` PLUS whatever an open replay is still holding back,
+            // which is the hand the fan is really laying out (`fanCards`). Round
+            // 7's rule is untouched by this: it is about cards ARRIVING one at a
+            // time, and a holdback is a single settled set from the first paint
+            // that empties in one step, so the chrome sits still through the
+            // replay and drops once, with the hand, rather than floating up
+            // card by card. Empty everywhere else, so nothing else moves.
+            let handHeight = FHandFan.height(cards: Self.fanCards(myHand, holding: handHoldback),
+                                             availableWidth: handWidth)
+
             // The buttons/role mark ride THIS, mirrored out via `.onChange` below so
             // their movement is a snap, never the board spring (see `buttonLift`).
             // Until the first mirror lands (-1) they read `handHeight` directly, so a
@@ -834,23 +1151,21 @@ public struct MessageTableView: View {
                     .offset(y: -3)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 
-                // Self role indicator: the local seat never got a role mark before
-                // (note 3) — only opponents (FSeatBadge) did. Same spot the old
-                // first-attacker-only sword used: just above my hand.
-                selfRoleIndicator(view)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .padding(.bottom, lift + 6)
-                    // Round-7 ("buttons should NEVER move / float"): isolate this
-                    // from the board's card spring. The ancestor animates on
-                    // `.animation(cardMotion, value: controller.view)`; the correct
-                    // override is a NESTED `.animation(nil, value: controller.view)`
-                    // - same trigger value, innermost wins - NOT a `.transaction`
-                    // (which does not reliably beat a scoped value-animation, the
-                    // reason the earlier transaction fix let the role mark still
-                    // drift) and NOT keying on `handHeight` (the wrong value - the
-                    // change rides controller.view). Position now also snaps because
-                    // it reads the mirrored `lift`, not the springy `handHeight`.
-                    .animation(nil, value: controller.view)
+                // NO SELF ROLE INDICATOR HERE. It used to be the next child of
+                // this ZStack, at `lift + 6`; round 41 ("a status icon is always
+                // in front of a card") moved it OUT, into the `selfRoleIndicator`
+                // overlay above the flight layer, and it reads `statusMarkLift`
+                // there. What round 41 left behind was an empty `Color.clear` at
+                // the same padding, kept "so the ZStack order below is
+                // unchanged" - which was never a thing that could change: a
+                // transparent, non-hit-testing child draws nothing, and dropping
+                // a child does not reorder the ones after it. It is gone, and
+                // with it the round-7 animation note that described a mark this
+                // slot had not drawn for two builds. Round-7's rule itself is
+                // alive and spent by every piece of chrome below, as
+                // `.doesNotRideTheBoardSpring` - read its doc before touching
+                // any of the three overrides down there, they are three
+                // different vectors and not three tries at one.
 
                 // Action buttons float bottom-right, above the hand (web absolute
                 // bottom:90/right:20). They only appear when a flag enables them.
@@ -867,9 +1182,6 @@ public struct MessageTableView: View {
                     // grows upward into reserved space instead of moving the
                     // first one.
                     .frame(width: 128, height: 88, alignment: .bottomTrailing)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                    .padding(.trailing, 4).padding(.bottom, lift + 4)
-                    .animation(nil, value: controller.view)   // never float the buttons — see the role mark above
                     // Round-10g, and the ONLY change to a collapse the owner
                     // otherwise signed off on ("make it like that but JUST fix
                     // the undo button"): the pill must not be INTERPOLATED.
@@ -880,13 +1192,32 @@ public struct MessageTableView: View {
                     // `withAnimation`. Measured off the film: Undo appeared
                     // ~295pt above its slot and flew down over ~7 frames while
                     // the settings squares - a CONSTANT view, nothing to insert
-                    // - sat still. `.animation(nil, value:)` above cannot stop
-                    // that (it only covers changes driven by `controller.view`)
-                    // and FActionBar's own `.transaction` sits BELOW this
-                    // placement, so it cannot either. Here it can, and it
-                    // touches nothing else: the squares, the role mark, the
-                    // hand and the board's collapse are exactly as they were.
+                    // - sat still. `.animation(nil, value:)` cannot stop that
+                    // (it only covers changes driven by `controller.view`) and
+                    // FActionBar's own `.transaction` sits BELOW the placement,
+                    // so it cannot either.
+                    //
+                    // IT WRAPS THE FIXED-SIZE CONTAINER, NOT THE PLACEMENT.
+                    // Round 36: it used to sit outermost, above the `lift`
+                    // padding, and a `.transaction` nils the animation of
+                    // EVERYTHING it passes down - including the board-level
+                    // padding that carries the chrome up when the hand grows a
+                    // second row. That made this one column the only piece of
+                    // chrome that could not honour the owner's "at least make
+                    // it slide smoothly instead of jumping" (see `buttonLift`'s
+                    // mirror), because the slide was being nulled on its way in.
+                    // Confined to the 128x88 container it still covers
+                    // everything it was added for - the pill's insertion and its
+                    // position WITHIN the column, which is the whole of the
+                    // 1.0(10g) film - and nothing it was not.
+                    //
+                    // KEEP IT. It is vector 2 of the three in
+                    // `doesNotRideTheBoardSpring`'s doc, not a weaker spelling
+                    // of the `.doesNotRideTheBoardSpring` just below it.
                     .transaction { $0.animation = nil }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .padding(.trailing, 4).padding(.bottom, lift + 4)
+                    .doesNotRideTheBoardSpring(controller.view)
 
                 // 1.0(4): Settings + Rulebook squares, MIRRORING the action
                 // column on the LEFT. Same 40pt height as the action pills,
@@ -901,16 +1232,16 @@ public struct MessageTableView: View {
                 undoSlot
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                     .padding(.trailing, 20).padding(.bottom, lift + 4)
-                    .animation(nil, value: controller.view)
+                    .doesNotRideTheBoardSpring(controller.view)
 
                 settingsHelpBar
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                     .padding(.leading, 4).padding(.bottom, lift + 4)
-                    .animation(nil, value: controller.view)
+                    .doesNotRideTheBoardSpring(controller.view)
 
                 // My hand hugs the bottom (web: bottom max(10, safe-area)); the
                 // outer .padding(12) is the safe-area inset that keeps it unclipped.
-                hand(view, crop: Self.handCrop, reserveNoSlot: deferredSlots)
+                hand(view, reserveNoSlot: deferredSlots)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
 
                 // note 33 / round-4 note 4 / round-5 finding 5: the verb hint
@@ -943,14 +1274,101 @@ public struct MessageTableView: View {
                     dragHint(view).position(x: at.x, y: at.y)
                 }
             }
-            // Mirror the hand height out to `buttonLift` so the buttons SNAP to it
-            // (this callback runs in its own no-animation transaction) instead of
-            // floating on the board spring. Since round-11 this only ever fires on
-            // a ROW-COUNT change - the drawer height no longer enters it - so the
-            // log line is now the whole story of why the chrome ever moves.
+            // Mirror the hand height out to `buttonLift` so the chrome moves on
+            // ITS OWN animation instead of floating on the board's card spring.
+            // Since round-11 this only ever fires on a ROW-COUNT change - the
+            // drawer height no longer enters it - so the log line is the whole
+            // story of why the chrome ever moves.
+            //
+            // AND IT SLIDES NOW, IT DOES NOT JUMP. Round-7's rule was "buttons
+            // should NEVER move / float", and the mirror delivered that by
+            // running in `.onChange`'s own transaction, which carries no ambient
+            // animation - so `buttonLift` snapped. That was the right cure for
+            // the wrong half of the problem: what the owner objected to was the
+            // chrome DRIFTING on the card spring during motion that had nothing
+            // to do with it, not the chrome arriving at a new resting place. The
+            // hand growing a second row genuinely does move the chrome, and
+            // round 36 asked for that move to be honest: "if you're going to
+            // make the settings/rules/action button move up for the double-row,
+            // at least make it slide smoothly instead of jumping."
+            //
+            // So it gets an EXPLICIT animation of its own rather than the
+            // ambient one. `FMotion.chrome` is the board's 150ms ease-out for
+            // exactly this class of thing, and being explicit is what keeps the
+            // round-7 fix intact: the only change that can ever animate this
+            // value is a row-count change arriving through here. Every other
+            // path into the chrome's position is still `.animation(nil, value:
+            // controller.view)`, so a card spring still cannot reach it.
+            // ROUND 36 DIAGNOSTIC - WHY DID THE HAND CHANGE ROWS?
+            //
+            // Owner, on an opponent's `good` landing while holding ten cards:
+            // "the cards started to animate towards the two row layout, then
+            // like changed their mind mid layout transition and went back to
+            // the skinny card one row layout. Why the fuck did that happen? We
+            // had ten cards and they said good! There was no way our card count
+            // was going to change!!!" - and the same shape again on an
+            // opponent's triple cover, which likewise cannot touch my hand.
+            //
+            // The row split is a pure function of exactly two numbers: how many
+            // cards the fan LAYS OUT, and how wide it is
+            // (`FHandFan.rowCount`). So a split that flips and flips back is one
+            // of those two moving, and reading the code cannot say which - both
+            // have a plausible route. The laid-out count is the kernel hand
+            // minus whatever the veil is still deferring (`handSlotDeferred`),
+            // which a replay drives; the width is the board's own geometry,
+            // which the host drives when it resizes the drawer.
+            //
+            // So the board says which, in the trail the owner can pull off the
+            // device with the gear hold. Both counts and the width, on every
+            // change of the laid-out row count - not on every paint, which
+            // would drown the trail in a value that is constant almost always.
+            // Deliberately a `FlightRecorder.note` rather than an `AnimLog.say`:
+            // AnimLog is DEBUG-only and this has to survive a shipping build,
+            // which is the only kind the report came from.
+            // Fires on the LAID-OUT COUNT, not on the row count: below the split
+            // threshold the same churn only makes the cards thinner ("normal one
+            // row to skinny card view"), which is the same defect and would not
+            // have tripped a row-count watch at all.
+            .onChange(of: laidHandCount) { _ in
+                // READ LIVE, NOT FROM THE CAPTURED BODY LOCALS. `.onChange`'s
+                // action is the closure from the LATEST body evaluation, which
+                // can be a paint after the change that fired it - so a captured
+                // `laidHandCount` describes a different moment than the trigger
+                // does, and the first version of this line printed "2 rows" next
+                // to a count that needs one. A trace nobody can read is worse
+                // than none, because it invites a wrong conclusion.
+                let hand = controller.view?.me?.hand ?? []
+                let deferred = handSlotDeferred
+                // Round 43: the same live re-read as before, through the same
+                // `fanCards` the trigger above uses. Recomputing it WITHOUT the
+                // holdback (which is what this did) meant the line could
+                // disagree with its own trigger - fire on a change it then
+                // printed no evidence of. `held=` is new for the same reason:
+                // when the split flips, this says which of the three inputs
+                // moved.
+                let held = handHoldback
+                let laid = Self.laidCount(hand: hand, holding: held, deferred: deferred)
+                let w = handFrame.width
+                let line = "\(FHandFan.rowCount(count: laid, availableWidth: w)) rows"
+                    + " laid=\(laid) hand=\(hand.count) held=\(held.count) width=\(Int(w))"
+                    + " deferred=\(deferred.count) veiled=\(veiledCardIds.count)"
+                    + " preHidden=\(animator.preHidden.count) hidden=\(animator.hidden.count)"
+                    + " settled=\(settled) seq=\(BoardAnimator.sequenceDepth)"
+                FlightRecorder.note("fan-rows", line)
+                // AnimLog too, so the RIG can read this off the unified log
+                // (`log stream --predicate 'subsystem == "cards.foolish.anim"'`)
+                // without pulling a device trail. The FlightRecorder line is for
+                // the owner's phone; this one is for reproducing it here.
+                AnimLog.say("fan-rows \(line)")
+            }
             .onChange(of: handHeight) {
-                AnimLog.say("handHeight \(Int(buttonLift))->\(Int($0)) cards=\(myHand.count) rows=\(FHandFan.rowCount(cards: myHand, availableWidth: handWidth))")
-                buttonLift = $0
+                let h = $0
+                AnimLog.say("handHeight \(Int(buttonLift))->\(Int(h)) cards=\(myHand.count) rows=\(FHandFan.rowCount(cards: myHand, availableWidth: handWidth))")
+                // The FIRST measurement is a placement, not a movement: sliding
+                // the chrome up from an unmeasured -1 would be the whole board
+                // assembling itself in front of the player on every open.
+                if buttonLift < 0 { buttonLift = h }
+                else { withAnimation(FMotion.chrome) { buttonLift = h } }
             }
             .onAppear { buttonLift = handHeight }
         }
@@ -1001,39 +1419,12 @@ public struct MessageTableView: View {
                        y: y - dragHintLift >= dragHintMinY ? y - dragHintLift : y + dragHintLift)
     }
 
-    /// How much of each hand card the board hides off the bottom. A CONSTANT,
-    /// and the reason it is one is round-11.
-    ///
-    /// This used to be the live `collapseFraction`: the compact drawer showed
-    /// the top half of every card (crop 1), the expanded board the whole card
-    /// (crop 0). That is a 36pt change in the hand's reserved height, and it
-    /// bought the compact drawer 36pt of table - but it is ALSO, measurably,
-    /// every vertical defect the owner reported in the collapse:
-    ///
-    /// * The hand LANDED SOMEWHERE ELSE. A cropped card is drawn full height,
-    ///   top-aligned in a half-height slot, so cropping slides the cards down
-    ///   past their own container. Filmed: the hand's top edge rested at y=760
-    ///   expanded and y=791 compact.
-    /// * The chrome landed somewhere else too, in the other direction. The
-    ///   buttons float `handHeight` above the board's bottom, so a hand that
-    ///   reserves 36pt less pulls them down 36pt - reading as the buttons and
-    ///   the hand drifting APART across the transition.
-    /// * The BOUNCE. The host does not hand us a monotone height ramp; it
-    ///   re-lays the board out at whatever intermediate (and out-of-order)
-    ///   sizes the drawer animation passes through - one filmed collapse
-    ///   reported 748, 315, 307, 778, 758, 253, 315. Every one of those was a
-    ///   different crop, so the hand and the chrome chased the noise, under the
-    ///   card spring, and rang: the hand's top edge went 807, 763, 767, 776,
-    ///   790, 793, 787, 790 before settling.
-    ///
-    /// Pinning the crop makes all three impossible rather than smaller: the
-    /// hand and the chrome now have geometry that does not mention the drawer
-    /// height at all, so there is nothing to interpolate, nothing to ring, and
-    /// the resting expanded and compact layouts are the same layout. The
-    /// compact drawer pays 36pt of table for it. `FHandFan` keeps the crop
-    /// parameter (it is tested, and a short drawer is exactly the case it was
-    /// built for) - this board simply no longer drives it from live geometry.
-    static let handCrop: CGFloat = 0
+    // (round 43: `handCrop` is gone. It was a `static let ... = 0` and every
+    // geometry call passed it. Round 11 pinned it at 0 after measuring what a
+    // live crop cost - the hand landing 31pt lower, the chrome drifting the
+    // other way, and both ringing across a collapse the host does not ramp
+    // monotonically. FHandFan carries that finding now, beside the parameter it
+    // justified removing.)
 
     /// The board's CONTINUOUS collapse fraction from its own height: 0 at/above
     /// `expandedAnchor` (the resting expanded board), 1 at/below `compactAnchor`
@@ -1147,10 +1538,10 @@ public struct MessageTableView: View {
                    // board is SHOWING, like every other lagging value on this
                    // badge, so the collapse rides the move that caused it.
                    collapsed: shownOut(p.seat, view))
-            .background(GeometryReader { g in
-                Color.clear.preference(key: SeatFramesKey.self,
-                                       value: [p.seat: g.frame(in: .named(boardSpace))])
-            })
+        // `SeatFramesKey` comes from INSIDE the badge now, off its mini fan -
+        // see FSeatBadge for why. Measuring the whole badge here put every
+        // seat's flight pad about 13pt under the cards it is supposed to be
+        // about, because the badge's role row outweighs its name.
     }
 
     /// A seat's centre on the web's 35% ellipse (PlayerRing): the local player is
@@ -1266,7 +1657,15 @@ public struct MessageTableView: View {
         // the move instead would be worse: a pickup after somebody attacks me is
         // one of the commonest turns in the game, and a rig that can never play
         // it can never test it. So do what a player does - wait, then take.
-        if asked {
+        // HARNESS_AUTOMOVE_NOWAIT (round 42): DON'T wait - play into whatever
+        // is on screen this instant, hold and running animation included. It is
+        // the only way the rig can pose "the human drags a card while the open
+        // replay is still flying", which no other knob reaches: every other
+        // auto-play path settles first, and that is exactly the moment a live
+        // play and a running stream can fight over the frozen counts (see
+        // `releaseCounts`). Never set outside the rig.
+        let nowait = ProcessInfo.processInfo.environment["HARNESS_AUTOMOVE_NOWAIT"] != nil
+        if asked, !nowait {
             let waitUntil = Date().addingTimeInterval(20)
             while controller.pickupHold > 0, Date() < waitUntil {
                 try? await Task.sleep(nanoseconds: 250_000_000)
@@ -1445,6 +1844,21 @@ public struct MessageTableView: View {
     /// The half of `vanishedAtRest` that is a real defect: a card hidden with
     /// nothing scheduled to reveal it. This one must be zero.
     public private(set) static var strandedAtRest = 0
+    /// How many cards are VEILED RIGHT NOW and reserving no fan slot - i.e.
+    /// `animator.preHidden`, the set `handSlotDeferred` keeps out of the hand.
+    ///
+    /// ROUND 40's invariant, as a level the rig can read once everything has
+    /// settled (owner: "when no sequence is running, nothing is pre-hidden and
+    /// nothing is deferred - the hand lays out every card it holds"). Non-zero
+    /// seconds after the last move means a veil nothing will ever take down:
+    /// the fan is CENTRED, so a hand permanently laying out 4 of its 7 cards is
+    /// drawn at the wrong width and the wrong centre, and every later veil
+    /// change re-lays the whole row from that wrong baseline - the owner's
+    /// "still seeing the hand card rows twitch during the discard animation".
+    ///
+    /// A LEVEL, not a count, for the reason `sweepVisibleNow` spells out: the
+    /// defect is a veil still standing at rest, not a moment that had one.
+    public private(set) static var veilStandingNow = 0
     /// How many cards the pre-bout sweep grid is drawing RIGHT NOW (0 when it
     /// is not sweeping). Read at rest by the harness oracle: nonzero once
     /// everything has settled means phantom cards on a table the game says is
@@ -1466,7 +1880,7 @@ public struct MessageTableView: View {
         // is a floor high enough to hide a real one. The lag is the feature;
         // what this counter is for is a board that disagrees with the kernel
         // with NOTHING pending to put it right.
-        let atRest = BoardAnimator.sequenceDepth == 0 && override == nil && veil == nil
+        let atRest = !BoardAnimator.isSequencing && override == nil && veil == nil
         if atRest && shown != truth { staleAtRest += 1 }
         if let ls = lastShown, let lt = lastTruth, lt == truth, shown != ls,
            abs(shown - truth) > abs(ls - truth) {
@@ -1506,21 +1920,59 @@ public struct MessageTableView: View {
         // when `sweptFlownIds` snaps it hidden (FBattleGrid's `.animation(nil)`) and
         // the overlay ghost carries it the rest of the way - no fade, no gap, no
         // reappear. A settled empty table (nothing sweeping) renders nothing.
-        let sweeping = view.battles.isEmpty && !sweepBattles.isEmpty
-        let shown = sweeping ? sweepBattles : view.battles
+        //
+        // …EXCEPT ON AN ARRIVAL, WHERE IT DID BLINK EMPTY. That guarantee holds
+        // only for a move made HERE: `play` sets the sweep synchronously before
+        // `apply` publishes. A bubble that lands while the board is open takes
+        // the other road - the arriving view is published first, and the sweep
+        // is set inside `replayLastMoveOnOpen`, which runs from the `onChange`
+        // AFTER the body has already been evaluated with an empty table. The rig
+        // catches it in the act on an opponent's bout-ending good:
+        //
+        //     grid sweeping=false cells=2 pairs=2 visible=4 hidden=0
+        //     grid sweeping=false cells=0 pairs=0 visible=0 hidden=4   <-- blink
+        //     grid sweeping=true  cells=2 pairs=2 visible=4 hidden=0
+        //
+        // Four cards torn off the table and put straight back. Until this round
+        // the grid had no explicit transition, so SwiftUI cross-faded both ends
+        // of that: the owner's "super annoying glitch with ghost cards fading
+        // halfway in quickly and immediatley out", and - because the grid wraps
+        // every three battles and its cell count changes with it - the layout
+        // "changed its mind mid transition" too.
+        //
+        // `pendingOpen` is exactly the right window: it is non-nil only between
+        // the arriving view landing and `flyBoutEndToDiscard` consuming it,
+        // which is the same `onChange` that sets the sweep. And the table it
+        // shows is `sweepTableForReplay()` - the one the sweep itself is about
+        // to use - so the cards carry the same identities across the handoff and
+        // nothing is created or destroyed at all.
+        let table = Self.shownTable(live: view.battles, sweep: sweepBattles,
+                                    pending: view.battles.isEmpty && sweepBattles.isEmpty
+                                        && pendingOpen != nil ? sweepTableForReplay() : [])
+        let sweeping = table.sweeping
+        let shown = table.shown
         // ROUND 20: the sweep grid hides BOTH ends of the sequence - what has
         // already flown off it, and what has not yet flown onto it (a
         // bout-ending cover being replayed; see `sweepUnplaced`).
-        let sweepHidden = sweptFlownIds.union(sweepUnplaced)
+        // ROUND 45: …as one value, so the trace below and the grid below THAT
+        // cannot answer the question differently. They were two copies of the
+        // same pair of ternaries, and the trace is the only thing that says
+        // which cards the table is withholding.
+        let grid = Self.gridVeil(sweeping: sweeping, veiled: veiledCardIds,
+                                 sweptFlown: sweptFlownIds, sweepUnplaced: sweepUnplaced,
+                                 sweepArriving: sweepArriving,
+                                 flying: Self.flyingNow(hidden: animator.hidden,
+                                                        preHidden: animator.preHidden))
         #if DEBUG
         // What the table is actually PAINTING, logged only when it changes - so
         // a re-layout mid-sweep shows up as a line instead of having to be read
         // off a video frame. Added for the round-12 pickup sweep and kept: it is
         // what caught #11, where a card sat `hidden` on a table nothing was ever
         // going to un-hide (`visible=0 hidden=1` with no flight after it).
+        Self.veilStandingNow = animator.preHidden.count
         Self.traceGrid(sweeping: sweeping, shown: shown,
-                       hidden: sweeping ? sweepHidden : veiledCardIds,
-                       atRest: BoardAnimator.sequenceDepth == 0 && settled,
+                       hidden: grid.hidden,
+                       atRest: !BoardAnimator.isSequencing && settled,
                        preHidden: animator.preHidden, veil: animator.hidden)
         #endif
         // note 34: a pass preview shows the ghost slot instead of a cover highlight.
@@ -1531,12 +1983,11 @@ public struct MessageTableView: View {
                 FBattleGrid(battles: shown, trumpSuit: view.trumpSuit,
                             coverable: sweeping || passPreview ? [] : highlightBattles(view),
                             onTapBattle: sweeping ? { _ in } : { idx in tapBattle(idx, view) },
-                            namespace: cardNS,
                             // Sweeping cards are hidden per-flight (`sweptFlownIds`),
                             // NOT by the hand veil (`veiledCardIds`, which also hides
                             // a picked-up card's HAND copy) - the table copy must
-                            // stay up until its own flight lifts it.
-                            hidden: sweeping ? sweepHidden : veiledCardIds,
+                            // stay up until its own flight lifts it. See `gridVeil`.
+                            hidden: grid.hidden,
                             showGhostSlot: sweeping ? false : passPreview,
                             // Round-7 #7: the covers whose flight is playing this
                             // instant, so the attack beneath one tilts WITH it (same
@@ -1548,8 +1999,7 @@ public struct MessageTableView: View {
                             // rotating. Everything else a sweep flies is leaving,
                             // with nothing left to tilt onto - hence the empty
                             // set this used to pass unconditionally.
-                            flyingNow: sweeping ? sweepArriving
-                                                : animator.hidden.subtracting(animator.preHidden))
+                            flyingNow: grid.flyingNow)
             } else {
                 // Empty table: render nothing (web parity). A "no battle" label
                 // just tells the player what they can already see (owner's call).
@@ -1706,6 +2156,17 @@ public struct MessageTableView: View {
         //    because for a released pickup there is no diff to read - the table
         //    was already empty on the board being replaced.
         let staged = controller.takeStagedAnimation()
+        // CONSIDERED AND REJECTED: withholding this from the branches that drop
+        // it. Two of the branches below discard whatever they are handed
+        // (`lastChangeWasUndo`, and `prior == nil`), and a released settlement
+        // is the only account there will ever be of its discard and its deal -
+        // so consuming it into one of those looks like a bout end that never
+        // animates. It cannot actually happen: `adopt` and the conflict
+        // retraction both call `dropHold`, which clears the release along with
+        // the hold, so by the time either branch runs there is nothing left to
+        // eat. Making it survive instead would leave a stale settlement on the
+        // controller to be replayed against some later, unrelated view - a real
+        // bug traded for an impossible one.
         let released = controller.takeReleasedSettlement()
         defer {
             if !placementFlown, let p = placement {
@@ -1726,8 +2187,34 @@ public struct MessageTableView: View {
         // just the ones that end a bout. Leaving them frozen after a plain
         // attack would pin every badge at its pre-move value for good.
         func releaseCounts() {
-            deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
-            outShown = nil
+            // NOT WHILE SOMEBODY ELSE OWNS THEM.
+            //
+            // These overrides are a SEQUENCE's property: whoever froze them
+            // advances them step by step as its flights land, and hands them
+            // back in its own teardown. A live play that takes one of the
+            // branches below starts no sequence of its own and does NOT claim
+            // `animSequenceToken` - there is nothing to claim until the kernel
+            // publishes a table slot - so a stream that is still running is
+            // still the newest, and its teardown is still coming. Releasing
+            // here snapped every seat badge, the deck and the discard to their
+            // FINAL counts in the middle of that stream's flight, and its next
+            // step then set them back: a count twitch with no move behind it,
+            // and the one kind of twitch the hand's own machinery cannot
+            // explain.
+            //
+            // Deferring is safe in the direction that matters. The owner of the
+            // freeze is by construction the newest sequence, so `runEventStream`
+            // 's teardown WILL release them - this only declines to do it early.
+            // A board with nothing running (every other caller, and the common
+            // case) is unchanged: nothing is sequencing and this releases
+            // exactly as it always did.
+            ledger.write(.bystander, by: "releaseCounts",
+                         note: "badges stay "
+                            + (controller.view?.players ?? []).map { "s\($0.seat)=\(shownHandCount($0))" }
+                                .joined(separator: " ")) { l in
+                l.deck = nil; l.discard = nil; l.hand = [:]
+                l.out = nil
+            }
         }
         if reduceMotion {
             releaseCounts(); clearSweep()
@@ -1781,9 +2268,9 @@ public struct MessageTableView: View {
         // the pre-settlement board the player has been looking at since they
         // staged the move, which is exactly the "board before this move" the
         // sweep, the pre-hide and the frozen counts all want.
-        if let released {
+        if let released, let old = prior {
             AnimLog.say("-> settlement released n=\(released.count)")
-            playBoutEnd(events: released, old: prior!, new: new, cover: nil)
+            playBoutEnd(events: released, old: old, new: new, cover: nil)
             return true
         }
         guard let old = prior, !old.battles.isEmpty, new.battles.isEmpty else {
@@ -1839,6 +2326,14 @@ public struct MessageTableView: View {
         let oldHandIds = Set((old.me?.hand ?? []).map(\.identity))
         let myNewIds = Set((new.me?.hand ?? []).map(\.identity)).subtracting(oldHandIds)
         if !myNewIds.isEmpty { animator.preHide(myNewIds) }
+        // ROUND 40: the mark this sequence's OWN veil went up at, read
+        // SYNCHRONOUSLY here rather than inside the Task below. Everything
+        // veiled after this instant belongs to somebody else - most often a
+        // card the player taps while this sequence is still finishing - and the
+        // teardown may not hand it back (see `BoardAnimator.veilEpoch`). Read
+        // here and not in `runEventStream` because the Task can be a paint or
+        // two away, and a tap fits in that gap.
+        let veiledAt = animator.veilEpoch
         // The table just cleared in the view, so render the cards it HELD (old
         // battles) as the pre-bout table - they sit where they were and fly off,
         // instead of vanishing (a fade) the instant the view empties. Same grid the
@@ -1865,18 +2360,13 @@ public struct MessageTableView: View {
             if fetched == nil { fetched = await controller.turnEvents() }
             let stream = fetched ?? []
             if let pc = matchedCover {
-                // BALANCED BY `defer`, like every other sequence claim in this
-                // file. It was a bare `+= 1` / `-= 1` pair when round 16 added
-                // it, and an early return or a cancellation between them would
-                // have leaked the counter PERMANENTLY - after which
-                // `BoardAnimator.waitForSettle` (which the extension awaits
-                // before staging a bubble) spends its full 8-second timeout on
-                // every send for the rest of the process. That is indis-
-                // tinguishable from "sometimes it just hangs", so it is not
-                // something to leave resting on this function having no other
-                // way out.
-                BoardAnimator.sequenceDepth += 1
-                defer { BoardAnimator.sequenceDepth -= 1 }
+                // Held for the cover's landing flight and the swap that
+                // follows it, and NOT for the rest of this Task - the stream
+                // below takes its own hold. `BoardAnimator.holdSequence` is
+                // where the reason a hold is always given back in a `defer`
+                // (and never in a bare pair) is written down.
+                let hold = BoardAnimator.holdSequence()
+                defer { hold.release() }
                 await playStep { _ in self.pendingCoverLandingFlights(pc) }
                 // ROUND 16: the cover has LANDED, and the next beat is the sweep
                 // that carries the whole table off. Swap the swept table for the
@@ -1895,7 +2385,7 @@ public struct MessageTableView: View {
                     setSweep(covered)
                 }
             }
-            await runEventStream(stream, finalView: new)
+            await runEventStream(stream, finalView: new, veiledAt: veiledAt)
         }
     }
 
@@ -1906,7 +2396,39 @@ public struct MessageTableView: View {
     /// one animation path, shared by the open-replay and the live bout-end, so
     /// neither derives what-flies-where from a GameView diff. The caller pre-hides
     /// the moved cards first (synchronously, before the first paint).
-    private func runEventStream(_ events: [GameEvent], finalView view: GameView, openReplay: Bool = false) async {
+    private func runEventStream(_ events: [GameEvent], finalView view: GameView,
+                                openReplay: Bool = false, veiledAt: Int) async {
+        // ROUND 30: LET THE SHEET FINISH COMING UP FIRST.
+        //
+        // Tapping a bubble expands the extension, and this board is mounted and
+        // running while Messages is still sliding the sheet into view. The
+        // replay is the entire reason the bubble was tapped, and it was spending
+        // its opening beat behind the edge of the screen. The owner saw it on
+        // the shortest gesture there is - "the rotation of the sword to check
+        // animation started WHILE the view was coming up into view, so we barely
+        // saw the sword" - and suspected it was every replay, not just a good.
+        // It is: the card flights lose the same beat, they are just long enough
+        // to survive it.
+        //
+        // This waits for the HOST's own signal and nothing more (see
+        // `awaitSheetSettled`): the padding beat that shipped alongside it in
+        // 1.0(34) was dead air, because `didTransition` already lands after the
+        // sheet has visibly settled.
+        //
+        // OPEN REPLAYS ONLY. A live sequence is a move made on a board already
+        // on screen, and holding that would put a lag on every tap.
+        //
+        // CLAIMED while it holds, and scoped to this `if` so that it holds for
+        // the sheet transition and nothing else. The sequence's own hold is not
+        // taken until further down, so an unclaimed wait here would have the
+        // board answering "not animating" for the length of the hold - and
+        // `BoardAnimator.waitForSettle`, which the extension awaits before
+        // staging a bubble, would sail straight through it.
+        if openReplay {
+            let hold = BoardAnimator.holdSequence()
+            defer { hold.release() }
+            await Self.awaitSheetSettled()
+        }
         let run = AnimLog.on ? AnimLog.nextRun() : 0
         AnimLog.say("stream#\(run) begin n=\(events.count) [\(events.map { "\($0.kind.map(String.init(describing:)) ?? "?")@\($0.seat)x\($0.cards.count)" }.joined(separator: " "))] depth=\(BoardAnimator.sequenceDepth)")
         // THE ONE LINE A FIELD REPORT NEEDS, and the one the trail did not have.
@@ -1953,16 +2475,13 @@ public struct MessageTableView: View {
         // (`controller.openReplayPriorState`); the first event remains the
         // fallback for the opens that have no earlier step to ask for - a
         // genesis deal, the first move on a fresh deal.
-        if roleShown == nil, let prior = controller.openReplayPriorState ?? events.first?.state {
-            roleShown = RoleState(prior)
-        }
-        // ROUND 28: the same seed for the out badges, and for the same reason -
-        // an open replay has no `freezeCounts` behind it, so without this a
-        // bubble whose move puts somebody out would open with their badge
-        // already collapsed and nothing left to watch.
-        if outShown == nil, let prior = controller.openReplayPriorState ?? events.first?.state {
-            outShown = Set(prior.players.filter(\.isOut).map(\.seat))
-        }
+        //
+        // ROUND 28 seeds the OUT badges from the same board and for the same
+        // reason: an open replay has no `freezeCounts` behind it, so without it
+        // a bubble whose move puts somebody out opens with the badge already
+        // collapsed and nothing left to watch. One write, since it is one board.
+        let priorBoard = controller.openReplayPriorState ?? events.first?.state
+        ledger.write(.sequence) { $0.seedMarks(from: priorBoard, outs: true) }
         guard !events.isEmpty else {
             // ROUND 16: HAND THE COUNTS BACK. Every caller freezes them to the
             // pre-move board SYNCHRONOUSLY (`play`, then `flyBoutEndToDiscard`)
@@ -1973,9 +2492,12 @@ public struct MessageTableView: View {
             // and re-freeze them. An opponent stuck a card too high until they
             // played again is the owner's "briefly bumped, then they play a
             // single card and it goes back down".
-            deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
-            outShown = nil
-            animator.clearPreHidden()
+            ledger.write(.sequence) { l in
+                l.deck = nil; l.discard = nil; l.hand = [:]
+                l.out = nil
+            }
+            releaseHoldback(raisedBy: veiledAt)   // see the teardown below - this guard returns ahead of it
+            animator.clearPreHidden(raisedBy: veiledAt)
             // Nothing is in flight and nothing is going to be, so an orphan
             // handed on by a superseded sequence ends here (clearPreHidden
             // cannot reach one - see `orphanedOpens`).
@@ -1994,9 +2516,7 @@ public struct MessageTableView: View {
             return
         }
         // Bug 9: claim the animator. Anything already running is now stale.
-        animSequenceToken += 1
-        let mySeq = animSequenceToken
-        BoardAnimator.sequenceDepth += 1
+        let mySeq = claimAnimSequence()
         // Round-7 (invisible-deal fix): every hand-card slot this sequence OPENS
         // for an incoming deal/refill/pickup (openSlots, below). clearPreHidden()
         // on teardown CANNOT rescue these — openSlots pulled them back OUT of
@@ -2018,17 +2538,30 @@ public struct MessageTableView: View {
         // Only what genuinely flew is recorded - a step whose frames never
         // resolved moved nothing and owes nothing.
         var flownThisSeq: [[FlownMotion]] = []
+        let hold = BoardAnimator.holdSequence()
         defer {
-            BoardAnimator.sequenceDepth -= 1
+            hold.release()
             // ONLY the newest sequence may hand the veil and the counts back. A
             // superseded one doing it here is the double pickup (see
             // `animSequenceToken`): it un-hides cards the sequence that replaced
             // it has pre-hidden but not yet flown, so they appear in the fan and
             // are then flown into it a second time.
             if mySeq == animSequenceToken {
-                deckCountOverride = nil; discardCountOverride = nil; seatCountOverride = [:]
-                outShown = nil
-                animator.clearPreHidden()
+                ledger.write(.sequence) { l in
+                    l.deck = nil; l.discard = nil; l.hand = [:]
+                    l.out = nil
+                }
+                // A holdback that never got flown (a poll that timed out, a
+                // stream cut short) must not survive as phantom cards in the
+                // hand - this is the same rescue the veil gets a line below,
+                // and for the same reason. Only the NEWEST sequence clears it:
+                // a superseded one would be wiping the holdback its replacement
+                // just armed. Round 43 moved that rule into `releaseHoldback`,
+                // which states it as the veil epoch, and gave the same rescue to
+                // the three teardowns that can supersede a replay without being
+                // one (`flyUndoReturn`, `flyUndoRelease`, the genesis deal).
+                releaseHoldback(raisedBy: veiledAt)
+                animator.clearPreHidden(raisedBy: veiledAt)
                 // The swept table has finished flying, so take down the pre-bout
                 // grid (its cards now live in a hand / the discard / a badge). Both
                 // paths - a live bout-end and an open-replay - lay it out now.
@@ -2117,9 +2650,9 @@ public struct MessageTableView: View {
         // time the settlement is released there is no difference left to find.
         // Every other board - a receiver watching it arrive, a cold open
         // replaying it - has one.
-        if let opening = Self.goodsOpening(shown: roleShown,
+        if let opening = Self.goodsOpening(shown: ledger.roles,
                                            firstGoodMask: events.first?.state?.goodMask) {
-            AnimLog.say("stream#\(run) good first: g\(roleShown?.goodMask ?? 0) -> g\(opening.goodMask)")
+            AnimLog.say("stream#\(run) good first: g\(ledger.roles?.goodMask ?? 0) -> g\(opening.goodMask)")
             // The seats do not change here, only what they are wearing, so
             // nothing flies: this is the coin flip each badge makes where it
             // stands, and `syncRoles` finds no hand-off to build.
@@ -2179,7 +2712,7 @@ public struct MessageTableView: View {
             // draws; the discard pile and seat badges still tick up when THEIR cards
             // arrive (the per-step advance after the flight, below).
             if let s = ev.state, ev.kind == .deal || ev.kind == .refill {
-                deckCountOverride = s.deckCount
+                ledger.write(.sequence) { $0.deck = s.deckCount }
             }
             // ROUND 30, and the same rule one seat over. The owner: "when the
             // cards fly out of the hand to cover some cards on the table, the
@@ -2205,7 +2738,7 @@ public struct MessageTableView: View {
                ev.seat != controller.mySeat,
                let s = group.last?.state,
                let leaving = s.players.first(where: { $0.seat == ev.seat }) {
-                seatCountOverride[ev.seat] = leaving.handCount
+                ledger.write(.sequence) { $0.hand[ev.seat] = leaving.handCount }
             }
             // A card leaving the TABLE (pickup / discard) hides its pre-bout grid
             // copy the instant its flight begins, so the overlay ghost is the only
@@ -2224,11 +2757,11 @@ public struct MessageTableView: View {
             // the lookahead here and the fallback when the loop reaches the
             // `out` group itself cannot collapse a badge twice.
             let goingOut = Self.outsWith(groups, gi)
-            if !goingOut.isEmpty, !(outShown ?? []).isSuperset(of: goingOut) {
+            if !goingOut.isEmpty, !(ledger.out ?? []).isSuperset(of: goingOut) {
                 AnimLog.say("stream#\(run) out badges collapse \(goingOut.sorted())")
                 withAnimation(reduceMotion ? nil
                               : .timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime)) {
-                    outShown = (outShown ?? []).union(goingOut)
+                    ledger.write(.sequence) { $0.out = ($0.out ?? []).union(goingOut) }
                 }
             }
             // ROUND 28: THE GOODS THIS GROUP CLEARS TURN NOW, WITH ITS CARD.
@@ -2241,9 +2774,9 @@ public struct MessageTableView: View {
             // goodMask that changes for any other reason still belongs to the
             // closing beat with the rest of the consequences.
             if !Self.placedOnTable(group).isEmpty,
-               let cleared = Self.goodsCleared(shown: roleShown,
+               let cleared = Self.goodsCleared(shown: ledger.roles,
                                                stepGoodMask: group.last?.state?.goodMask) {
-                AnimLog.say("stream#\(run) goods clear with the card: g\(roleShown?.goodMask ?? 0) -> g\(cleared.goodMask)")
+                AnimLog.say("stream#\(run) goods clear with the card: g\(ledger.roles?.goodMask ?? 0) -> g\(cleared.goodMask)")
                 syncRoles(to: cleared, in: view, animated: true)
             }
             // ROUND 29: AND A TRANSFER HANDS THE SHIELD OVER WITH ITS CARD.
@@ -2262,7 +2795,7 @@ public struct MessageTableView: View {
             // - so a pass read as two movements, the card and then the shield,
             // when the owner's whole point is that it is one move. That closing
             // beat still runs and is still right for everything else: by the
-            // time it does, `roleShown` already holds this state, so it finds
+            // time it does, the ledger's roles already hold this state, so it finds
             // nothing left to hand over and flies nothing twice.
             //
             // Channel A never reaches here (a pass does not clear the table, so
@@ -2271,9 +2804,9 @@ public struct MessageTableView: View {
             // `flyPlacement`). This is the same beat for the two channels that
             // DO replay a stream - a receiver opening the bubble cold, and an
             // arrival landing on an open board.
-            if let handOff = Self.passHandOff(shown: roleShown, group: group,
+            if let handOff = Self.passHandOff(shown: ledger.roles, group: group,
                                               finalDefender: view.defender) {
-                AnimLog.say("stream#\(run) pass: the shield flies with the card d\(roleShown?.defender ?? -1) -> d\(handOff.defender)")
+                AnimLog.say("stream#\(run) pass: the shield flies with the card d\(ledger.roles?.defender ?? -1) -> d\(handOff.defender)")
                 syncRoles(to: handOff, in: view, animated: true)
             }
             // What this step actually flies, captured out of the builder for
@@ -2293,6 +2826,21 @@ public struct MessageTableView: View {
                     f.append(contentsOf: part)
                 }
                 groupFlights = f
+                // THE HAND LETS GO, in the same breath the ghosts are created.
+                // The flights above were built from the slots these cards still
+                // hold, so the takeoff is already captured; dropping them now
+                // starts the fan's re-close (FHandFan animates its layout over
+                // `flightTime`, keyed on the laid-out set) at the instant the
+                // cards leave, which is the whole of "we'll want the hand to
+                // rearrange as a result of the cards leaving". Inside the
+                // builder rather than before the poll: the poll can run for up
+                // to a second waiting on a landing frame, and a hand that
+                // closed then would finish long before anything moved.
+                let left = Set(group.flatMap { $0.cards.compactMap { $0?.identity } })
+                if !left.isEmpty, self.handHoldback.contains(where: { left.contains($0.identity) }) {
+                    self.handHoldback.removeAll { left.contains($0.identity) }
+                    AnimLog.say("stream#\(run)   hand lets go, \(self.handHoldback.count) still held")
+                }
                 AnimLog.say("stream#\(run) step \(ev.kind.map(String.init(describing:)) ?? "?")@\(ev.seat) n=\(group.count) flights=\(f.count) [\(f.map(\.id).joined(separator: ","))]")
                 // ROUND 22: WHERE each card is actually being flown, against the
                 // regions it could legitimately land in. "a deal animation go
@@ -2359,9 +2907,11 @@ public struct MessageTableView: View {
             // The board settles to the LAST event of the group: the intermediate
             // states inside one move are boards nobody was ever shown.
             if let s = group.last?.state ?? ev.state {
-                deckCountOverride = s.deckCount
-                discardCountOverride = s.discardCount
-                for p in s.players where p.seat != controller.mySeat { seatCountOverride[p.seat] = p.handCount }
+                ledger.write(.sequence) { l in
+                    l.deck = s.deckCount
+                    l.discard = s.discardCount
+                    for p in s.players where p.seat != controller.mySeat { l.hand[p.seat] = p.handCount }
+                }
             }
             // ROUND 16: a cover that ended the bout HOLDS before the sweep takes
             // the table away. See `boutEndHold` for why this one beat is unlike
@@ -2444,29 +2994,94 @@ public struct MessageTableView: View {
     /// and the cards it is about to gain are hidden by `animator.preHide`
     /// instead, so the fan holds its final layout while the cards fly into it.
     private func freezeCounts(to v: GameView) {
-        deckCountOverride = v.deckCount
-        discardCountOverride = v.discardCount
-        // ROUND 28: and who is drawn as out, frozen at the same synchronous
-        // moment and for the same reason as the counts - `isOut` is already true
-        // in the view this move produced, so a badge read straight off it would
-        // be edge-on before the cards that emptied the hand had moved.
-        outShown = Set(v.players.filter(\.isOut).map(\.seat))
-        var counts: [Int: Int] = [:]
-        for p in v.players where p.seat != controller.mySeat { counts[p.seat] = p.handCount }
-        seatCountOverride = counts
-        // ROUND 16: and the roles with them, at the same synchronous moment and
-        // for the same reason - by the time an onChange could do it the board
-        // has already drawn the marks at their new seats and there is nothing
-        // left to fly.
+        // A SEED, NOT AN OVERRIDE - exactly what the ROLES are, further down
+        // the same block, and for exactly the reason written there: "a move played while
+        // a sequence is still animating (an impatient tap, the harness's
+        // auto-move) would freeze the roles to a board that has ALREADY
+        // rotated". The counts were left open to the same thing. A running
+        // stream froze them to the board before ITS move and walks them forward
+        // one step per landing flight; a live play of mine then froze them
+        // AGAIN, to a board several steps further on, and the stream's next step
+        // put them back - so a seat badge counted DOWN to its final value, back
+        // UP to where the replay had got to, and down again. Measured on the rig
+        // (`take`, HARNESS_AUTOMOVE_NOWAIT, slowmo 8): seat 3 went 6 -> 5 -> 6
+        // -> 5 with only one card ever leaving that seat.
         //
-        // A SEED, not an override. `roleShown` is "what the badges are wearing",
-        // and once it exists it is only ever advanced by `syncRoles` - which
-        // knows what changed and flies it. Writing the current view over it here
-        // would erase exactly that: a move played while a sequence is still
-        // animating (an impatient tap, the harness's auto-move) would freeze the
-        // roles to a board that has ALREADY rotated, and the hand-off the
-        // sequence was about to play would find nothing to hand over.
-        if roleShown == nil { roleShown = RoleState(v) }
+        // The play loses nothing by deferring. It starts no sequence of its own
+        // (there is nothing to claim until the kernel publishes a table slot),
+        // so the stream that owns the ledger is still the newest one, it is
+        // still walking the counts forward, and its teardown still hands them
+        // back. A board at rest - every other caller, and the common case - is
+        // not sequencing and freezes exactly as it always did.
+        // ROUND 43 - A TRIGGER PROPOSED AND STRUCK, with the run that struck it.
+        //
+        // The worry: `playBoutEnd` also calls this, and unlike `play` it DOES
+        // start a sequence - so deferring here would have the new stream open
+        // from the old stream's mid-state instead of from `old`.
+        //
+        // MEASURED, not argued (scenario `take`, 4 players, HARNESS_AUTOMOVE +
+        // HARNESS_AUTOMOVE_KIND=pickup + HARNESS_SLOWMO=25 - the hold lapses at
+        // 15s while a 25x replay is still on its second of three steps, which is
+        // how a BOUT-ENDING move gets played into a running stream; NOWAIT
+        // cannot pose it, because `apply` refuses a pickup while the hold
+        // stands). The same board twice, once with this guard and once with the
+        // freeze forced through it:
+        //
+        //                       s0   s1(me)  s2   s3      board before my move
+        //   deferred (shipped)   4      -     6    6      s3=5
+        //   forced               4      -     6    5      s3=5
+        //
+        // One badge, one card, and the deck and discard identical. Seat 3 held
+        // its pre-stream 6 until the pickup's own first step, which then wrote
+        // 5. It is a LAG, never a lead and never a step backwards - because
+        // every step writes ABSOLUTE counts out of that event's kernel state
+        // (`s.deckCount`, `p.handCount`, below and in `runEventStream`), so
+        // whatever mid-state a new stream opens from is corrected by its first
+        // step, not carried.
+        //
+        // And forcing it costs more than it buys. `playBoutEnd` does not claim
+        // `animSequenceToken` until `runEventStream` runs a Task hop later, so a
+        // forced freeze sits unprotected in that gap - the OLD stream's next
+        // step begins by writing counts (the deck on a deal/refill, the acting
+        // badge on `badgeDropsAsCardsLeave`) BEFORE it reaches the token check
+        // that would abandon it. That is round 42's measured twitch, re-admitted
+        // to straighten one lagging badge. Struck, in the shape of edcb91f.
+        //
+        // ROUND 44 moved the guard itself into `ShownLedger.write`; what is left
+        // here is the CLAIM, `.bystander`, which is the whole of the reasoning
+        // above stated in one word. Every branch of the block below is inside
+        // it, exactly as the `guard` used to return past all of them.
+        ledger.write(.bystander, by: "freezeCounts",
+                     note: "badges stay "
+                        + (controller.view?.players ?? []).map { "s\($0.seat)=\(shownHandCount($0))" }
+                            .joined(separator: " ")) { l in
+            l.deck = v.deckCount
+            l.discard = v.discardCount
+            // ROUND 28: and who is drawn as out, frozen at the same synchronous
+            // moment and for the same reason as the counts - `isOut` is already
+            // true in the view this move produced, so a badge read straight off
+            // it would be edge-on before the cards that emptied the hand had
+            // moved.
+            l.out = Set(v.players.filter(\.isOut).map(\.seat))
+            var counts: [Int: Int] = [:]
+            for p in v.players where p.seat != controller.mySeat { counts[p.seat] = p.handCount }
+            l.hand = counts
+            // ROUND 16: and the roles with them, at the same synchronous moment
+            // and for the same reason - by the time an onChange could do it the
+            // board has already drawn the marks at their new seats and there is
+            // nothing left to fly.
+            //
+            // A SEED, not an override, and that survives the move into the
+            // ledger unchanged. The roles are "what the badges are wearing", and
+            // once they exist they are only ever advanced by `syncRoles` (the
+            // `.handOff` claim) - which knows what changed and flies it. Writing
+            // the current view over them here would erase exactly that: a move
+            // played while a sequence is still animating (an impatient tap, the
+            // harness's auto-move) would freeze the roles to a board that has
+            // ALREADY rotated, and the hand-off the sequence was about to play
+            // would find nothing to hand over.
+            l.seedMarks(from: v, outs: false)
+        }
     }
 
     // MARK: - the roles, and the marks that carry them (round 16)
@@ -2504,7 +3119,7 @@ public struct MessageTableView: View {
     /// window.) Nil once the marks are being driven properly, and nil for a board
     /// with nothing to replay - both of those draw the live view, as always.
     private var pendingRoles: RoleState? {
-        guard !settled, !controller.openReplayEvents.isEmpty,
+        guard unstartedReplay != nil,
               let prior = controller.openReplayPriorState else { return nil }
         return RoleState(prior)
     }
@@ -2513,7 +3128,7 @@ public struct MessageTableView: View {
     /// sequence, the pre-move ones on a cold open that has not started, the live
     /// ones at rest.
     private func shownRoles(_ view: GameView) -> RoleState {
-        roleShown ?? pendingRoles ?? RoleState(view)
+        ledger.roles ?? pendingRoles ?? RoleState(view)
     }
 
     private func shownIsDefender(_ seat: Int, _ view: GameView) -> Bool {
@@ -2526,7 +3141,7 @@ public struct MessageTableView: View {
     /// exactly `shownRoles`' shape, and the nil case is what makes a seat that
     /// was already out when the board opened collapse with no animation.
     private func shownOut(_ seat: Int, _ view: GameView) -> Bool {
-        if let outShown { return outShown.contains(seat) }
+        if let out = ledger.out { return out.contains(seat) }
         return view.players.first { $0.seat == seat }?.isOut ?? false
     }
     private func shownSaidGood(_ seat: Int, _ view: GameView) -> Bool {
@@ -2551,8 +3166,14 @@ public struct MessageTableView: View {
     /// than something still in the air after it ends.
     @discardableResult
     private func syncRoles(to target: RoleState, in view: GameView, animated: Bool) -> Bool {
-        let old = roleShown
-        roleShown = target
+        let old = ledger.roles
+        // `.handOff` - the one claim that is not a sequence and is still allowed
+        // to write. See ShownLedger.swift: this is the only writer that reads
+        // what the badges are wearing, works out which marks changed hands and
+        // FLIES them, and its one caller outside a stream (the `!sequenced`
+        // branch of the board's `onChange`) is the only thing that animates a
+        // pass's shield hand-off.
+        ledger.write(.handOff) { $0.roles = target }
         guard animated, !reduceMotion, let old, old != target, !view.isOver else {
             // Only when something actually moved and did NOT fly: a cold board
             // with nothing to hand over from, a Reduce Motion snap, a game that
@@ -2929,6 +3550,36 @@ public struct MessageTableView: View {
         return false
     }
 
+    /// Wait for the host to finish moving the sheet.
+    ///
+    /// `CollapseTween.isPresenting` is the honest signal - the extension sets it
+    /// between `willTransition` and `didTransition`, so this waits exactly as
+    /// long as the slide actually takes rather than guessing at it.
+    ///
+    /// IT USED TO WAIT A BEAT LONGER, on the theory that `didTransition` fires
+    /// on the first frame the board is fully up and starting a rotation on that
+    /// exact frame would still read as starting during the arrival. Measured on
+    /// device, that theory was wrong in a useful way: `didTransition` lands well
+    /// AFTER the sheet has visibly settled, so the beat was insurance against
+    /// something that was not happening and the owner could see it as dead air -
+    /// "about .5s of empty time between the thing fully opening and the first
+    /// animation". The flag alone already holds long enough; the extra 200ms was
+    /// pure wait.
+    ///
+    /// Bounded, because a board that never animates is far worse than one that
+    /// animates a beat early: the flag is a static set by a view controller this
+    /// view cannot see, and a build where nothing ever clears it (the harness,
+    /// which fakes presentation, or a future host that skips the callback) must
+    /// degrade to starting immediately rather than to silence.
+    private static func awaitSheetSettled() async {
+        let deadline = 12   // x 50ms = 600ms, comfortably past Messages' own slide
+        var waited = 0
+        while CollapseTween.isPresenting && waited < deadline {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            waited += 1
+        }
+    }
+
     private func playStep(_ build: (_ lastChance: Bool) -> [Flight]?) async {
         for i in 0..<26 {
             // ROUND 30: never AIM at a board that is still moving under the
@@ -2966,7 +3617,13 @@ public struct MessageTableView: View {
     /// battle they covered. A pure snapshot, so no retry: what was measured
     /// is what there is.
     private func pendingCoverLandingFlights(_ pc: PendingCover) -> [Flight]? {
-        Self.coverLandingFlights(cards: pc.cards, landing: pc.landing, fromRects: pc.fromRects)
+        // The snapshot moves into TODAY's board first - see `rebased`. The
+        // LANDING rects need no such treatment: they were measured off the live
+        // `battleFrames`, and it is only the hand side that is frozen from
+        // before the apply.
+        Self.coverLandingFlights(cards: pc.cards, landing: pc.landing,
+                                 fromRects: rebased(pc.fromRects,
+                                                    measuredIn: pc.handFrameAtPlay))
     }
 
     /// Where each card of a cover is going to LAND, measured before the apply
@@ -3020,16 +3677,16 @@ public struct MessageTableView: View {
     /// already hidden (`playAt` pre-hid them before the apply), so what the
     /// viewer sees is one continuous movement out of the fingertip.
     ///
-    /// Wrapped in `sequenceDepth` like every other animated sequence, which is
+    /// Holds `sequenceDepth` like every other animated sequence, which is
     /// what makes the extension's auto-collapse (note 8's `waitForSettle`) hold
     /// off until the card has actually landed instead of yanking the drawer down
     /// mid-flight.
     private func flyPlacement(_ pp: PendingPlacement, to view: GameView) {
         let ids = Set(pp.cards.map(\.identity))
         Task {
-            BoardAnimator.sequenceDepth += 1
+            let hold = BoardAnimator.holdSequence()
             defer {
-                BoardAnimator.sequenceDepth -= 1
+                hold.release()
                 // The card must end up visible whatever happened. If it really
                 // flew, `BoardAnimator.play` already un-hid it and this is a
                 // no-op; if its landing slot never published and `playStep` gave
@@ -3082,21 +3739,25 @@ public struct MessageTableView: View {
         // Veil the returning cards in the hand AND defer their fan slots - the hand
         // opens for each only as its flight arrives (the mirror of the play's veil).
         animator.preHide(ids)
+        let veiledAt = animator.veilEpoch          // round 40 - see playBoutEnd
         // Keep the pre-undo table rendered so each card flies FROM where it sat,
         // rather than the table copy fading out (its FBattleGrid removal) as the
         // view empties. The sweep hides each copy as its own flight lifts it.
         setSweep(old.battles)
-        animSequenceToken += 1
-        let mySeq = animSequenceToken
+        let mySeq = claimAnimSequence()
         #if DEBUG
         if isConflict { Self.redRevertFlights += flyIds.count }
         #endif
         Task {
-            BoardAnimator.sequenceDepth += 1
+            let hold = BoardAnimator.holdSequence()
             defer {
-                BoardAnimator.sequenceDepth -= 1
+                hold.release()
                 if mySeq == animSequenceToken {
-                    animator.clearPreHidden()
+                    animator.clearPreHidden(raisedBy: veiledAt)
+                    // Round 43: this retraction has superseded whatever replay
+                    // was holding cards in the fan, and nothing else will hand
+                    // them back - see `handHoldbackAt`.
+                    releaseHoldback(raisedBy: veiledAt)
                     dropSweep()
                     let stuck = ids.filter { animator.isHidden($0) }
                     if !stuck.isEmpty { animator.reveal(stuck) }
@@ -3127,6 +3788,15 @@ public struct MessageTableView: View {
                     for c in flying {
                         guard let from = self.lastBattleCardFrames[c.identity]
                                 ?? self.lastBattleFrames.values.first else { continue }
+                        // NOT `handLanding`, and the difference is deliberate.
+                        // These cards are coming BACK into the hand, so the fan
+                        // has not laid them out yet and `handCardFrames` cannot
+                        // hold a frame for them - the middle rung of the shared
+                        // chain would answer nil here every time. And the rough
+                        // spread is gated on `lastChance` rather than taken
+                        // straight away: an undo has a real slot waiting for it
+                        // the moment the fan opens, so this polls for the exact
+                        // answer and only approximates once out of retries.
                         guard let to = self.handLandingSlot(c, laidOut: laid)
                                 ?? (lastChance ? self.handApproxLanding() : nil) else { return nil }
                         flights.append(Flight(id: "undo-\(c.identity)", card: c, from: from, to: to,
@@ -3210,17 +3880,18 @@ public struct MessageTableView: View {
         // Hide the table copies NOW, in the same synchronous breath as the view
         // change that put them there - the ghost is the only copy in motion.
         animator.preHide(ids)
-        animSequenceToken += 1
-        let mySeq = animSequenceToken
+        let veiledAt = animator.veilEpoch          // round 40 - see playBoutEnd
+        let mySeq = claimAnimSequence()
         #if DEBUG
         if isConflict { Self.redRevertFlights += flyIds.count }
         #endif
         Task {
-            BoardAnimator.sequenceDepth += 1
+            let hold = BoardAnimator.holdSequence()
             defer {
-                BoardAnimator.sequenceDepth -= 1
+                hold.release()
                 if mySeq == animSequenceToken {
-                    animator.clearPreHidden()
+                    animator.clearPreHidden(raisedBy: veiledAt)
+                    releaseHoldback(raisedBy: veiledAt)   // round 43 - as in `flyUndoReturn`
                     let stuck = ids.filter { animator.isHidden($0) }
                     if !stuck.isEmpty { animator.reveal(stuck) }
                 }
@@ -3281,7 +3952,10 @@ public struct MessageTableView: View {
     /// consumer (see `reversalDebt`).
     private func drainSupersededForReversal() async -> [[FlownMotion]] {
         reversalCollecting = true
-        animSequenceToken += 1
+        // A claim with no `mySeq`, and the only one: this supersedes whatever
+        // is running and then starts nothing of its own, so there is no later
+        // guard to check a receipt against (see `claimAnimSequence`).
+        claimAnimSequence()
         await drainOtherSequences(floor: 0)
         reversalCollecting = false
         let debt = reversalDebt
@@ -3304,8 +3978,8 @@ public struct MessageTableView: View {
             + "red=[\(steps.flatMap { $0 }.map(\.id).sorted().joined(separator: ","))]")
         FlightRecorder.note("conflict-reverse", "\(steps.count) steps, "
             + "\(steps.reduce(0) { $0 + $1.count }) flights")
-        BoardAnimator.sequenceDepth += 1
-        defer { BoardAnimator.sequenceDepth -= 1 }
+        let hold = BoardAnimator.holdSequence()
+        defer { hold.release() }
         await animator.play(steps)
     }
 
@@ -3332,11 +4006,14 @@ public struct MessageTableView: View {
     /// like `openReplayFlights`), so a lost card can never wedge the poll.
     private func placementFlights(_ pp: PendingPlacement, view: GameView) -> [Flight]? {
         var out: [Flight] = []
+        // Play-time rects, moved into the board this flight actually plays in -
+        // see `rebased`. Same snapshot, same hazard as the cover landing above.
+        let sources = rebased(pp.fromRects, measuredIn: pp.handFrameAtPlay)
         for c in pp.cards {
             guard let idx = view.battles.firstIndex(where: { $0.attack == c || $0.defense == c })
             else { continue }
             guard let rect = battleFrames[idx] else { return nil }
-            let from = pp.fromRects[c.identity] ?? handCardFrames[c.identity] ?? rect
+            let from = sources[c.identity] ?? handCardFrames[c.identity] ?? rect
             // Round-6 bug 1 (batch 3) parity: a card landing as the DEFENSE lies
             // across, so its ghost rotates INTO that tilt over the flight rather
             // than arriving flat and snapping tilted when the ghost is removed.
@@ -3351,8 +4028,7 @@ public struct MessageTableView: View {
         if cards.isEmpty { return [] }
         guard deckFrame != .zero, handFrame != .zero else { return nil }
         return cards.enumerated().compactMap { i, c in
-            (handLandingSlot(c, laidOut: laidOut) ?? handCardFrames[c.identity]
-                ?? handApproxLanding(index: i, of: cards.count))
+            handLanding(c, laidOut: laidOut, index: i, of: cards.count)
                 .map { Flight(id: "draw-\(c.identity)", card: c, from: deckFrame, to: $0) }
         }
     }
@@ -3363,6 +4039,36 @@ public struct MessageTableView: View {
     /// point and then snapping apart (the first-open "bunch then ungroup"). A
     /// deck->hand flight to about-the-right-place reads far better than the card
     /// silently appearing; nil only if the hand itself hasn't rendered yet.
+    /// WHERE A CARD LANDS IN MY HAND, in falling order of authority.
+    ///
+    /// Three answers, and the order between them is the whole of round 7 plus
+    /// round 12. This chain was written out verbatim at four call sites - the
+    /// live draw, the replayed deal, the replayed pickup, and the resting ghost
+    /// a play leaves behind - which is four chances to get the order wrong, and
+    /// the order is the part that matters:
+    ///
+    ///  1. THE ANALYTICAL SLOT (`handLandingSlot`). The settled answer from the
+    ///     first instant, computed off the fan's own geometry rather than read.
+    ///     This is what lets the make-room ANIMATE while the card flies into it:
+    ///     the published frame is a moving target while the row re-centres, so
+    ///     aiming at it lands the card where the hand USED to be going.
+    ///  2. THE PUBLISHED FRAME. Only when the analytical route cannot answer -
+    ///     a card the fan is not laying out. A preference lags a layout pass, so
+    ///     it is second, never first.
+    ///  3. A ROUGH SPREAD (`handApproxLanding`), staggered by index so several
+    ///     unresolved cards do not pile onto one point and then snap apart. A
+    ///     deck-to-hand flight to about the right place reads far better than a
+    ///     card that silently appears.
+    ///
+    /// nil only when the hand has never been measured at all, which is a board
+    /// with nothing on screen to fly to.
+    private func handLanding(_ card: Card, laidOut: [Card],
+                             index: Int = 0, of count: Int = 1) -> CGRect? {
+        handLandingSlot(card, laidOut: laidOut)
+            ?? handCardFrames[card.identity]
+            ?? handApproxLanding(index: index, of: count)
+    }
+
     private func handApproxLanding(index: Int = 0, of count: Int = 1) -> CGRect? {
         guard handFrame != .zero, count > 0 else { return nil }
         let x = handFrame.minX + handFrame.width * (CGFloat(index) + 0.5) / CGFloat(count)
@@ -3381,9 +4087,133 @@ public struct MessageTableView: View {
     /// live frame / a rough spread).
     private func handLandingSlot(_ card: Card, laidOut: [Card]) -> CGRect? {
         guard handFrame != .zero else { return nil }
-        let rects = FHandFan.slotRects(cards: laidOut, width: handFrame.width, crop: Self.handCrop)
+        let rects = FHandFan.slotRects(cards: laidOut, width: handFrame.width)
         guard let local = rects[card.identity] else { return nil }
-        return local.offsetBy(dx: handFrame.minX, dy: handFrame.minY)
+        // ANCHOR ON THE FAN'S BOTTOM EDGE, NEVER ITS TOP.
+        //
+        // The whole point of an analytical slot is that it is the SETTLED
+        // answer from the first instant, while the published frame is still
+        // mid-slide (see this function's doc above). That held for `laidOut`
+        // and for the width, and then leaked straight back in through the one
+        // input nobody re-derived: `handFrame.minY`. The fan is BOTTOM-anchored
+        // in the board (`boardContent` places it `alignment: .bottom`) and its
+        // own box height IS a function of the row count (FHandFan's outer
+        // `.frame(height:)`, taken off the laid-out cards) - so a pickup that
+        // takes the hand from one row to two moves `minY` UP by a whole row
+        // while `maxY` does not move at all.
+        //
+        // A pickup builds its flight in the SAME MainActor turn as `openSlots`
+        // (runEventStream calls playStep, which runs `build` with no suspension
+        // in between), so `handFrame` is still the ONE-ROW box when this is
+        // asked; and because the row change is animated over `flightTime`,
+        // `minY` then keeps moving for exactly as long as the flight lasts. At
+        // the shipping metrics that is 86pt of error (a two-row box is 166,
+        // a one-row box 80): the top row lands flush on the drawer's bottom
+        // edge and the bottom row lands entirely below it. Owner, on a
+        // collapsed five-card pickup (Q-hearts, J-clubs, Q-clubs, 7-hearts,
+        // J-spades): "the cards on the table kinda started flying a bit down,
+        // then literally just diappeared. Vanieshed. No idea where they went.
+        // Then they only popped back in once the cards already in my hand
+        // stopped rearranging, into the two rows." They popped back in at the
+        // right place because the REAL hand copy is un-hidden when the flight
+        // lands, at the true slot; only the flight was ever aimed wrong.
+        //
+        // So derive the top the container WILL have from the bottom edge it
+        // already has. `maxY` is the one number a row-count change cannot
+        // touch, which makes this right on the first poll and right again on
+        // every frame of the make-room, with no waiting for a preference to
+        // catch up. Tried and rejected before: waiting a paint before building
+        // (that is the "make-room THEN flight" the owner rejected) and snapping
+        // the fan open (the "cards jump" they rejected before that).
+        return Self.inBoardSpace(local, laidOutCount: laidOut.count, handFrame: handFrame)
+    }
+
+    /// The pure half of `handLandingSlot`: a container-local slot rect placed
+    /// into `boardSpace` against a hand frame that may still be the WRONG HEIGHT.
+    ///
+    /// Static and pure in the house style so the anchoring rule can be asserted
+    /// without a board - which matters here more than usual, because the two
+    /// readings differ by a whole row and both look equally plausible in a diff.
+    static func inBoardSpace(_ local: CGRect, laidOutCount: Int,
+                             handFrame: CGRect) -> CGRect {
+        let willBe = FHandFan.height(count: laidOutCount,
+                                     availableWidth: handFrame.width)
+        return local.offsetBy(dx: handFrame.minX, dy: handFrame.maxY - willBe)
+    }
+
+    /// A rect measured at PLAY TIME, moved into the board it is about to fly in.
+    ///
+    /// A play's source rects are a snapshot: `playAt` measures each card's hand
+    /// slot BEFORE the apply, because by the time the flight builds the hand has
+    /// closed over the gap and there is nothing left to measure. That snapshot is
+    /// only meaningful against the board box it was taken in, and in the compact
+    /// drawer that box can move between the two moments: `MessagesRootView.follow`
+    /// holds it at the EXPANDED height for the collapse tween and then hands it
+    /// back to the model box in one turn, flipping top-anchored to
+    /// bottom-anchored. The board box is `boxHeight > 0 ? boxHeight :
+    /// geo.size.height`, so the tween is the ONLY thing that can make it taller
+    /// than the drawer, and `playStep`'s own tween gate is what can stall a
+    /// build across the flip.
+    ///
+    /// MEASURED, AND ONE THEORY STRUCK. This used to also claim that "staging
+    /// while already compact resizes the compose field and with it the drawer".
+    /// It does not: driven on a device with a staged bubble inserted while
+    /// compact, the transcript shrinks and the drawer does not move - no `stage
+    /// follow` line fires at all. A multicover played while already compact is
+    /// clean end to end (ghosts at y=288 in a 332pt board, covers landing
+    /// correctly, no `flight-rebase`). What the same run DID show is that the
+    /// host reports real noise even on a plain compact open (854 -> 332 -> 298
+    /// -> 332), which is why this stays.
+    ///
+    /// So its scope is narrow and honest: a play whose flight is built across a
+    /// box change, which is the collapse tween and nothing else. It is a
+    /// mathematical no-op otherwise - `playStep` builds one runloop hop after
+    /// the snapshot with the battle rect already published, so no new preference
+    /// has arrived and both deltas are zero.
+    ///
+    /// IT IS NOT THE CURE FOR THE "VANISH". That half was `showHeld` being
+    /// planted only for cards WITH a source rect while `preHide` veiled them
+    /// all - see `playAt`. Owner, on a double cover of J-hearts and 9-hearts:
+    /// "instead of flying over smoothly, the cards just vanish from my hand, and
+    /// then fly in from the bottom of the screen to cover the cards."
+    ///
+    /// THIS IS THE SAME RULE AS `inBoardSpace`, on the other side of the flight:
+    /// anchor on the hand's BOTTOM edge, the one number neither a row-count
+    /// change nor a drawer resize moves. Anchoring on `minY` would smear a row
+    /// change (a cover takes cards OUT of the hand, which can collapse two rows
+    /// to one) into the correction and break the case it is meant to fix.
+    ///
+    /// A no-op on a board that did not move, which is every expanded board and
+    /// most collapsed ones - so nothing that works today pays for this. It
+    /// leaves a breadcrumb whenever it actually corrects anything: if a report
+    /// of a mis-aimed flight ever arrives with no `flight-rebase` line beside
+    /// it, the cause is somewhere else and this can come out.
+    private func rebased(_ rects: [String: CGRect], measuredIn was: CGRect) -> [String: CGRect] {
+        guard was != .zero, handFrame != .zero else { return rects }
+        let dx = handFrame.minX - was.minX
+        let dy = handFrame.maxY - was.maxY
+        guard dx != 0 || dy != 0 else { return rects }
+        FlightRecorder.note("flight-rebase", "play-time rects by (\(Int(dx)),\(Int(dy)))")
+        return rects.mapValues { $0.offsetBy(dx: dx, dy: dy) }
+    }
+
+    /// EVERY hand card's settled rect in `boardSpace`, computed rather than read.
+    ///
+    /// The plural of `handLandingSlot`, and it exists for the takeoff side of a
+    /// flight for the same reason that one exists for the landing side: the
+    /// published `handCardFrames` is a preference, so it lags any change that
+    /// moves the hand by a layout pass, and a drawer collapse moves it by most
+    /// of a screen. Falls back to the published frames only when the hand has
+    /// never been measured at all, which is the one case the analytical route
+    /// cannot answer.
+    private func handSlotsNow(_ view: GameView) -> [String: CGRect] {
+        guard handFrame != .zero else { return handCardFrames }
+        let laid = laidOutHandNow(view)
+        let local = FHandFan.slotRects(cards: laid, width: handFrame.width)
+        guard !local.isEmpty else { return handCardFrames }
+        return local.mapValues {
+            Self.inBoardSpace($0, laidOutCount: laid.count, handFrame: handFrame)
+        }
     }
 
     /// The hand cards the fan actually lays out at this instant: the whole hand
@@ -3404,8 +4234,78 @@ public struct MessageTableView: View {
     /// is why it never flagged this: the check and the flights disagreed about
     /// which array they were describing.
     private func laidOutHandNow(_ view: GameView) -> [Card] {
-        Self.laidOut(hand: view.me?.hand ?? [], deferred: handSlotDeferred,
+        // THE SAME ARRAY THE FAN IS GIVEN, held-back cards included - these
+        // rects have to describe the hand that is actually on screen, or a
+        // takeoff slot would be computed against a layout nobody is looking at.
+        Self.laidOut(hand: Self.fanCards(view.me?.hand ?? [], holding: handHoldback),
+                     deferred: handSlotDeferred,
                      order: MessageGameStore.shared.handOrder(gameId: controller.gameIdString))
+    }
+
+    /// What the fan is asked to lay out: my hand, plus whatever an open replay
+    /// is still holding back (`handHoldback`). Pure and static so the one rule
+    /// that matters can be asserted without a board - a held-back card appears
+    /// ONCE, and a card the kernel hand already contains is never doubled by it
+    /// (the fan places cards by index, so a duplicate identity is two cards in
+    /// one slot).
+    static func fanCards(_ hand: [Card], holding holdback: [Card]) -> [Card] {
+        guard !holdback.isEmpty else { return hand }
+        let present = Set(hand.map(\.identity))
+        return hand + holdback.filter { !present.contains($0.identity) }
+    }
+
+    /// THE HOLDBACK'S RESCUE, in one place because there are now four teardowns
+    /// that need it and copying a guard four times is how the third copy ends up
+    /// meaning something slightly different.
+    ///
+    /// `epoch` is the caller's own `veiledAt`. A holdback armed AFTER that veil
+    /// belongs to a sequence that replaced this one and must survive - the
+    /// reasoning written out at `runEventStream`'s teardown ("a superseded one
+    /// would be wiping the holdback its replacement just armed"), in the units
+    /// that order the two events rather than in `animSequenceToken`, which a
+    /// fresh open replay does not claim until a Task hop later.
+    /// The epoch rule as a value, so it can be asserted without a board: a
+    /// teardown owns the holdback only if the holdback was armed no later than
+    /// the veil that teardown raised. Equal epochs ARE the same sequence (a
+    /// stream is handed the very `veiledAt` its own open stamped the holdback
+    /// with), so this has to be `<=`, not `<`.
+    static func holdbackIsMine(armedAt: Int, teardownAt: Int) -> Bool {
+        armedAt <= teardownAt
+    }
+
+    private func releaseHoldback(raisedBy epoch: Int) {
+        guard Self.holdbackIsMine(armedAt: handHoldbackAt, teardownAt: epoch) else {
+            AnimLog.say("holdback kept (armed at \(handHoldbackAt) > teardown \(epoch))")
+            return
+        }
+        guard !handHoldback.isEmpty else { return }
+        AnimLog.say("holdback rescue - \(handHoldback.count) card(s) let go by a teardown "
+            + "[\(handHoldback.map(\.identity).joined(separator: ","))]")
+        handHoldback = []
+    }
+
+    /// How many cards the fan LAYS OUT: the hand it is really given
+    /// (`fanCards`, holdback and all) minus the deals still deferring their
+    /// slot. Pure and static because it is the trigger for the `fan-rows` trace
+    /// AND the value that trace re-reads live, and those two must be the same
+    /// function or the log disagrees with what made it print.
+    static func laidCount(hand: [Card], holding holdback: [Card], deferred: Set<String>) -> Int {
+        fanCards(hand, holding: holdback).filter { !deferred.contains($0.identity) }.count
+    }
+
+    /// The cards THIS stream takes out of MY hand and puts on the table, in
+    /// stream order - the seed for `handHoldback`. A placement by any other
+    /// seat, and every non-placement step, moves nothing out of my hand.
+    static func myPlacedCards(_ events: [GameEvent], mySeat: Int) -> [Card] {
+        events.filter { $0.seat == mySeat && Self.isPlacement($0.kind) }
+              .flatMap { $0.cards.compactMap { $0 } }
+    }
+
+    static func isPlacement(_ kind: EventType?) -> Bool {
+        switch kind {
+        case .attackPass, .defenderMove, .cover: return true
+        default: return false
+        }
     }
 
     /// The pure half, so the ordering contract can be asserted directly (it is
@@ -3494,12 +4394,12 @@ public struct MessageTableView: View {
     private func sweepTableForReplay() -> [BattleView] {
         let reconstructed = controller.openReplayPreBattles
         guard !reconstructed.isEmpty else { return [] }
-        let need = Set(reconstructed.flatMap { b in
-            [b.attack.identity] + (b.defense.map { [$0.identity] } ?? [])
-        })
-        let have = Set(lastBattles.flatMap { b in
-            [b.attack.identity] + (b.defense.map { [$0.identity] } ?? [])
-        })
+        // Round 45: through `sweepIds`, like the other two places that ask a
+        // table which cards are on it - this was the fourth and fifth copy of
+        // one flatMap, and "accounts for every card" has to mean the same thing
+        // here as it does in `coveredSweep` next door.
+        let need = Self.sweepIds(reconstructed)
+        let have = Self.sweepIds(lastBattles)
         return need.isSubset(of: have) ? lastBattles : reconstructed
     }
 
@@ -3550,10 +4450,12 @@ public struct MessageTableView: View {
         let tilt: Double = battle.defense == card
             ? FBattleGrid.coverAngle
             : (battle.defense != nil ? -FBattleGrid.coverAngle : 0)
+        // Slot -> CARD: the two cards sit bottom-aligned in a slot that is taller
+        // than they are, so the card's centre is `half` up from the slot's
+        // bottom edge. That conversion is all this does. The TILT is not baked
+        // in - the ghost applies it (see `sweptTilt`).
         let half = 35.0                      // half of FBattleGrid's 70pt card height
-        let r = tilt * .pi / 180
-        let rect = slot.offsetBy(dx: CGFloat(sin(r) * half),
-                                 dy: slot.height / 2 - CGFloat(half) + CGFloat((1 - cos(r)) * half))
+        let rect = slot.offsetBy(dx: 0, dy: slot.height / 2 - CGFloat(half))
         return (rect, tilt)
     }
 
@@ -3567,13 +4469,33 @@ public struct MessageTableView: View {
     /// rendered on the table (a cover that ended the bout in the same apply, so its
     /// slot was never laid out).
     private func tableCardSource(_ card: Card, fallbackIndex i: Int) -> (rect: CGRect, tilt: Double)? {
-        let tilt = sweptTilt(of: card)
-        if let base = lastBattleCardFrames[card.identity] {
-            return (Self.swungAboutBottom(base, degrees: tilt), tilt)
-        }
+        if let src = Self.tableSource(card, battles: sweepBattles.isEmpty ? lastBattles : sweepBattles,
+                                      frames: lastBattleCardFrames) { return src }
         if let src = discardSource(for: card) { return src }
         guard let center = approximateTableCenter() else { return nil }
         return (center.offsetBy(dx: CGFloat(i) * 6, dy: CGFloat(i) * 4), 0)
+    }
+
+    /// WHERE A CARD ON THE TABLE STARTS ITS FLIGHT - as a pure function, because
+    /// this is the whole of the 1.0(33) jump and the whole of the round-12 one,
+    /// and they are opposite mistakes about the same line.
+    ///
+    /// The rect is the card's own published frame, UNCHANGED, and the tilt rides
+    /// beside it for the ghost to rotate by. A battle's two cards publish the
+    /// SAME frame - `FBattleGrid` stacks them bottom-aligned and separates them
+    /// only with `.rotationEffect(anchor: .bottom)`, which is a render transform
+    /// and moves no layout frame - so this returning one rect for both is not a
+    /// bug being tolerated, it is the fact the ghost's own rotation then acts on.
+    /// Rotate once and the ghost lands exactly on the card; rotate twice and the
+    /// pair springs apart the instant it lifts (see `sweptTilt`); rotate never
+    /// and the pair collapses into a stack (round 12).
+    static func tableSource(_ card: Card, battles: [BattleView],
+                            frames: [String: CGRect]) -> (rect: CGRect, tilt: Double)? {
+        guard let rect = frames[card.identity] else { return nil }
+        guard let b = battles.first(where: { $0.attack == card || $0.defense == card })
+        else { return (rect, 0) }
+        if b.defense == card { return (rect, FBattleGrid.coverAngle) }
+        return (rect, b.defense != nil ? -FBattleGrid.coverAngle : 0)
     }
 
     /// ROUND 20: where a card ARRIVING onto the pre-bout grid is going to land,
@@ -3596,37 +4518,30 @@ public struct MessageTableView: View {
     /// cover, -`coverAngle` for the attack under one, 0 for an uncovered attack.
     /// Mirrors what `FBattleGrid` actually draws (its attack takes the negative
     /// tilt, its defense the positive one).
+    ///
+    /// THE TILT IS APPLIED ONCE, BY THE GHOST. Round 12 corrected a source rect
+    /// by the sideways swing a bottom-anchored rotation produces
+    /// (sin(tilt)*halfHeight), because a battle's two cards publish the SAME
+    /// layout rect - rotation is a render transform and moves no frame - and
+    /// flying both ghosts from it collapsed every pair into a stack. Since then
+    /// the ghost rotates itself (`Flight.fromAngle`, about `.bottom`, the same
+    /// pivot the grid uses), so that correction became the SECOND application of
+    /// one swing: the cover started ~7pt right of where it was drawn and the
+    /// attack ~7pt left, then flew to the discard from there. The owner, 1.0(33):
+    /// "the cards very slightly jump, cover card to the right and attack card to
+    /// the left, before then animating to discard."
+    ///
+    /// So sources hand over the RAW rect and the tilt beside it, and the ghost -
+    /// the one thing that actually draws the card - does the rotating. That is
+    /// also what `sweepLandingRect` has always done on the landing side ("no
+    /// bottom-edge swing correction belongs here"); the two sides simply
+    /// disagreed, and the source side was the one that was wrong.
     private func sweptTilt(of card: Card) -> Double {
         let table = sweepBattles.isEmpty ? lastBattles : sweepBattles
         guard let b = table.first(where: { $0.attack == card || $0.defense == card })
         else { return 0 }
         if b.defense == card { return FBattleGrid.coverAngle }
         return b.defense != nil ? -FBattleGrid.coverAngle : 0
-    }
-
-    /// A card's VISUAL rect once it has been rotated about its own bottom edge.
-    ///
-    /// ROUND 12 - this is the "pickup animation quickly rearranges into grid"
-    /// bug, and it is a layout-vs-render mix-up. `FBattleGrid` stacks a battle's
-    /// two cards in a `ZStack(alignment: .bottom)` and separates them ONLY with
-    /// `.rotationEffect(anchor: .bottom)`. Rotation is a render transform: it
-    /// does not move the layout frame, so the rect each card publishes through
-    /// `BattleCardFramesKey` is the SAME rect for the attack and the cover.
-    /// Flying both ghosts from that rect makes the covering card jump onto its
-    /// attack the instant the sweep starts - ten cards collapsing into five
-    /// stacked pairs, which is precisely the "rearrange into a grid" the owner
-    /// saw, and why it is worse the more covered pairs the table holds.
-    ///
-    /// Rotating about the bottom edge swings the centre sideways by
-    /// sin(tilt)*halfHeight and down by (1-cos(tilt))*halfHeight - the same
-    /// correction `discardSource` has always applied to its slot rect. This puts
-    /// it where it belongs, on the per-card rect that supersedes it.
-    static func swungAboutBottom(_ r: CGRect, degrees: Double) -> CGRect {
-        guard degrees != 0 else { return r }
-        let rad = degrees * .pi / 180
-        let half = r.height / 2
-        return r.offsetBy(dx: CGFloat(sin(rad)) * half,
-                          dy: CGFloat(1 - cos(rad)) * half)
     }
 
     /// Round-7 (replay bunch): are the on-table SOURCE slots for these swept
@@ -3653,19 +4568,36 @@ public struct MessageTableView: View {
     /// four hand-repeated assignments it replaces: round 20 added two more sets
     /// to the group (`sweepUnplaced` / `sweepArriving`), and a grid left standing
     /// with a card marked un-arrived is a card that never comes back.
+    ///
+    /// THESE TWO ARE THE ONLY WRITERS OF `sweepBattles`, and round 45 turned
+    /// that from a convention into the thing `sweepTableIds` rests on - it is
+    /// now derived from the table rather than assigned beside it. Pinned by
+    /// `VeilOutsTests.testOnlyTheSweepSettersEverWriteTheSweptTable`.
     private func dropSweep() {
-        sweepBattles = []; sweepTableIds = []; sweptFlownIds = []
+        sweepBattles = []; sweptFlownIds = []
         sweepUnplaced = []; sweepArriving = []
     }
 
     private func setSweep(_ battles: [BattleView], unplaced: Set<String> = []) {
         sweepBattles = battles
         sweptFlownIds = []
-        sweepTableIds = Set(battles.flatMap { b -> [String] in
+        // Off the ARGUMENT, not off `sweepTableIds`, though the two are now the
+        // same value: a setter reading back the state it wrote one line earlier
+        // is a habit that only works while the write is synchronous.
+        sweepUnplaced = unplaced.intersection(Self.sweepIds(battles))
+        sweepArriving = []
+    }
+
+    /// The identities a battle table holds - each attack, and its cover if it
+    /// has one. The one derivation: `sweepTableIds` and `setSweep` ask it of the
+    /// swept table, `coveredSweep` and `sweepTableForReplay` of the two tables
+    /// each is choosing between. It was written out longhand at all five, and
+    /// the three that are SUBSET TESTS have to agree about what "accounts for
+    /// every card on it" means or a covered pair drops off the table mid-sweep.
+    static func sweepIds(_ battles: [BattleView]) -> Set<String> {
+        Set(battles.flatMap { b -> [String] in
             [b.attack.identity] + (b.defense.map { [$0.identity] } ?? [])
         })
-        sweepUnplaced = unplaced.intersection(sweepTableIds)
-        sweepArriving = []
     }
 
     /// ROUND 16: the table a bout-ending COVER should be swept off - the kernel's
@@ -3679,12 +4611,61 @@ public struct MessageTableView: View {
     /// `preBoutTable` reconstructs for a pickup) is refused rather than allowed to
     /// drop a covered pair off the table mid-sequence.
     static func coveredSweep(_ events: [GameEvent], current: [BattleView]) -> [BattleView]? {
-        func ids(_ bs: [BattleView]) -> Set<String> {
-            Set(bs.flatMap { [$0.attack.identity] + ($0.defense.map { [$0.identity] } ?? []) })
-        }
         let table = MessageTurnController.preBoutTable(events)
-        guard !table.isEmpty, ids(current).isSubset(of: ids(table)) else { return nil }
+        guard !table.isEmpty,
+              sweepIds(current).isSubset(of: sweepIds(table)) else { return nil }
         return table
+    }
+
+    /// WHICH TABLE THE GRID PAINTS, and whether it is a sweep - pure and static
+    /// in the house style, because "the table must never be seen empty while a
+    /// bout end is still being animated onto it" is a claim worth asserting
+    /// rather than eyeballing on a device.
+    ///
+    /// Three sources, in falling order of authority: the live table; the sweep a
+    /// move of MY OWN captured synchronously; and the pre-bout table of an
+    /// open-replay this board has not started yet. The last one exists only
+    /// because an arrival publishes its view a paint before anything sets the
+    /// sweep - see the note at the call site.
+    static func shownTable(live: [BattleView], sweep: [BattleView],
+                           pending: [BattleView]) -> (shown: [BattleView], sweeping: Bool) {
+        if !live.isEmpty { return (live, false) }
+        if !sweep.isEmpty { return (sweep, true) }
+        if !pending.isEmpty { return (pending, true) }
+        return ([], false)
+    }
+
+    /// WHAT THE GRID IS TOLD, once `shownTable` has said WHICH table it is
+    /// drawing - the pair of sets `battlesArea` hands `FBattleGrid`, and a
+    /// straight switch on the same `sweeping` flag.
+    ///
+    /// The two branches answer with DIFFERENT STATE, not a different filter over
+    /// one, and that is the point:
+    ///
+    ///  - NOT SWEEPING. The live table, veiled by the hand veil
+    ///    (`veiledCards`): a card in flight, and a card an unstarted replay has
+    ///    not put down yet. `flyingNow` is the animator's `hidden \ preHidden`,
+    ///    which is what tilts the attack under a landing cover.
+    ///  - SWEEPING. The pre-bout table, which the hand veil must NOT touch: a
+    ///    picked-up card lives in the hand AND on this grid, `veiledCards` hides
+    ///    it for the hand's sake, and honouring that here would take the table
+    ///    copy away before its own flight ever lifted it. So the sweep grid
+    ///    answers off its own two sets, one for each end of the sequence -
+    ///    `sweptFlown` ("has left") and `sweepUnplaced` ("has not arrived") -
+    ///    and its `flyingNow` is `sweepArriving`, the only thing that can be
+    ///    coming DOWN onto a table everything else is leaving.
+    ///
+    /// ROUND 45 CONSIDERED COLLAPSING THE TWO BRANCHES ONTO ONE SET AND DID
+    /// NOT. `veiled` and the sweep pair are not the same question asked twice:
+    /// the same identity is legitimately hidden on one grid and drawn on the
+    /// other, in the same paint, and that is a pickup - the commonest bout end
+    /// in the game. See VeilOutsTests for that case as an assertion.
+    static func gridVeil(sweeping: Bool, veiled: Set<String>,
+                         sweptFlown: Set<String>, sweepUnplaced: Set<String>,
+                         sweepArriving: Set<String>, flying: Set<String>)
+        -> (hidden: Set<String>, flyingNow: Set<String>) {
+        sweeping ? (hidden: sweptFlown.union(sweepUnplaced), flyingNow: sweepArriving)
+                 : (hidden: veiled, flyingNow: flying)
     }
 
     /// Drop the pre-bout table. Called on any view change that empties the table
@@ -3720,6 +4701,12 @@ public struct MessageTableView: View {
             // seeing the cover animation on a replay". The pre-bout grid IS on
             // screen at that moment and knows exactly where the card goes, so
             // ask it (`sweepLandingRect`) before giving up.
+            // MY OWN placement leaves FROM THE SLOT EACH CARD HELD, not from the
+            // hand container's origin. `handSlotsNow` reads the fan that is on
+            // screen, and for the length of this step that fan still holds these
+            // cards (`handHoldback`), so the slots it returns are the PRE-move
+            // ones. Everyone else's cards leave their seat badge, unchanged.
+            let mySlots = mine ? handSlotsNow(view) : [:]
             let source = mine ? handFrame : (seatFrames[ev.seat] ?? .zero)
             var out: [Flight] = []
             for case let card? in ev.cards {
@@ -3755,7 +4742,20 @@ public struct MessageTableView: View {
                 // +coverAngle, so its ghost rotates into that tilt as it flies. An
                 // attack lands upright (0); its own later tilt, once ITS cover
                 // lands, is the battle grid's job, not this flight's.
-                let from = source != .zero ? source : rect.offsetBy(dx: 0, dy: -220)
+                // ONE EVENT CAN PUT SEVERAL CARDS DOWN - the owner's "double 7
+                // attack" - and they all leave the same seat, so without a
+                // stagger they spawn as a single stacked ghost and only
+                // separate once they are already in the air. The 3pt step is
+                // the same one the deal and pickup branches below already use
+                // for a seat's backs, for exactly this reason.
+                // A card with its own slot needs no stagger - it already has a
+                // place of its own to leave from, and nudging it would take it
+                // off the card the player is watching. The 3pt step stays for
+                // the seat-badge case, where every card of the move genuinely
+                // does share one point.
+                let slot = mySlots[card.identity]
+                let base = slot ?? (source != .zero ? source : rect.offsetBy(dx: 0, dy: -220))
+                let from = slot != nil ? base : base.offsetBy(dx: CGFloat(out.count) * 3, dy: 0)
                 out.append(Flight(id: "open-\(card.identity)-\(ev.type)", card: card,
                                   from: from, to: rect, angle: landedAngle))
             }
@@ -3772,8 +4772,7 @@ public struct MessageTableView: View {
                 // frame that is still mid-slide.
                 let laid = laidOutHandNow(view)
                 return cards.enumerated().compactMap { i, c in
-                    (handLandingSlot(c, laidOut: laid) ?? handCardFrames[c.identity]
-                        ?? handApproxLanding(index: i, of: cards.count)).map {
+                    handLanding(c, laidOut: laid, index: i, of: cards.count).map {
                         Flight(id: "opendraw-\(c.identity)", card: c, from: deckFrame, to: $0) } }
             }
             guard let badge = seatFrames[ev.seat], badge != .zero, deckFrame != .zero else { return nil }
@@ -3805,8 +4804,7 @@ public struct MessageTableView: View {
                 let laid = laidOutHandNow(view)
                 return cards.enumerated().compactMap { i, c in
                     guard let from = tableCardSource(c, fallbackIndex: i) else { return nil }
-                    return (handLandingSlot(c, laidOut: laid) ?? handCardFrames[c.identity]
-                        ?? handApproxLanding(index: i, of: cards.count)).map {
+                    return handLanding(c, laidOut: laid, index: i, of: cards.count).map {
                         // `fromAngle`: a cover was lying across its attack a
                         // moment ago, so its ghost lifts off still tilted and
                         // flattens on the way to the hand.
@@ -3888,17 +4886,22 @@ public struct MessageTableView: View {
             if controller.isGenesis, let hand = view.me?.hand, !hand.isEmpty {
                 let ids = Set(hand.map(\.identity))
                 animator.preHide(ids)
-                // Bug 9: this deal is a sequence like any other — claim the
+                let veiledAt = animator.veilEpoch      // round 40 - see playBoutEnd
+                // Bug 9: this deal is a sequence like any other - claim the
                 // animator so a live move started on top of it supersedes it,
                 // and so ITS teardown can never clear a newer sequence's veil.
-                animSequenceToken += 1
-                let mySeq = animSequenceToken
+                let mySeq = claimAnimSequence()
                 Task {
-                    BoardAnimator.sequenceDepth += 1
+                    let hold = BoardAnimator.holdSequence()
                     defer {
-                        BoardAnimator.sequenceDepth -= 1
+                        hold.release()
                         if mySeq == animSequenceToken {
-                            animator.clearPreHidden()
+                            animator.clearPreHidden(raisedBy: veiledAt)
+                            // Round 43: and the holdback, for the same reason it
+                            // is rescued in the two undo teardowns - a genesis
+                            // fallback that supersedes a replay is the last
+                            // thing that will ever run over those cards.
+                            releaseHoldback(raisedBy: veiledAt)
                             // Same rescue as runEventStream's teardown: openSlots
                             // pulled the opening hand OUT of preHidden, so
                             // clearPreHidden can't reveal it if myDrawFlights
@@ -3944,9 +4947,17 @@ public struct MessageTableView: View {
         // FINAL view for that gap and flip twice on their way to being right.
         // Same reasoning as `freezeCounts`: the freeze has to be synchronous
         // with the change that needs it, not one onChange behind.
-        if roleShown == nil, let prior = controller.openReplayPriorState {
-            roleShown = RoleState(prior)
-        }
+        //
+        // ROUND 44: `.arming`, NOT `.bystander`, and the difference is a real
+        // regression rather than a label. This function is seeding the ledger
+        // for a sequence it is ABOUT to start, and that sequence does not claim
+        // `animSequenceToken` until `runEventStream` runs a Task hop later - so
+        // at this instant a PREVIOUS stream may still be in flight (an arrival
+        // landing on an open board is exactly that, and is the normal case).
+        // Refused here, the replay would open against that stream's mid-state:
+        // the wrong numbers and the wrong marks, silently, with no twitch to
+        // give it away. See ShownLedger.swift.
+        ledger.write(.arming) { $0.seedMarks(from: controller.openReplayPriorState, outs: false) }
 
         // notes 6/12: hand every real card this open moves - onto the table
         // (attacks/covers/passes) OR into my hand (my own draws/pickups) - to
@@ -3959,17 +4970,36 @@ public struct MessageTableView: View {
         // animate one at a time" (note 12) bugs.
         let touchedIds = controller.openReplayTouchedCardIds
         if !touchedIds.isEmpty { animator.preHide(touchedIds) }
+        let veiledAt = animator.veilEpoch              // round 40 - see playBoutEnd
 
         // …and the counts, likewise taking over from the veil's own
         // `pendingOpen.counts`, which is this same walk-back (`preCounts`) done
         // in `body` because there is no prior view on an open - this board IS
         // the first paint.
         let pre = Self.preCounts(events, finalView: view)
-        deckCountOverride = pre.deck
-        discardCountOverride = pre.discard
-        var counts: [Int: Int] = [:]
-        for (seat, c) in pre.hand where seat != controller.mySeat { counts[seat] = c }
-        seatCountOverride = counts
+        ledger.write(.arming) { l in
+            l.deck = pre.deck
+            l.discard = pre.discard
+            var counts: [Int: Int] = [:]
+            for (seat, c) in pre.hand where seat != controller.mySeat { counts[seat] = c }
+            l.hand = counts
+        }
+
+        // …and MY OWN hand, which the counts above deliberately skip (a seat
+        // badge is a number; my hand is the cards). Seeded HERE, synchronously,
+        // for the same reason every freeze above is: the board's first paint is
+        // this call's next paint, so a holdback armed inside the Task would let
+        // the hand render closed and then pop the cards back in. See
+        // `handHoldback`. Only my placements, and only when I am not spectating.
+        handHoldback = isSpectating ? []
+            : Self.myPlacedCards(events, mySeat: controller.mySeat)
+        // Stamped with the veil this open raised, so only a teardown at or after
+        // that veil may take it down again - see `handHoldbackAt`.
+        handHoldbackAt = veiledAt
+        if !handHoldback.isEmpty {
+            AnimLog.say("openReplay holds \(handHoldback.count) of my cards in the fan "
+                + "[\(handHoldback.map(\.identity).joined(separator: ","))]")
+        }
 
         // The pre-bout table this open sweeps (a pickup or discard). Rendered
         // VISIBLE by `battlesArea` so the cards sit on the table and then fly off
@@ -4012,7 +5042,7 @@ public struct MessageTableView: View {
             }
             await playConflictReversal(debt, facts: facts)
             guard myEpoch == arrivalEpoch else { return }
-            await runEventStream(events, finalView: view, openReplay: true)
+            await runEventStream(events, finalView: view, openReplay: true, veiledAt: veiledAt)
         }
     }
 
@@ -4165,13 +5195,23 @@ public struct MessageTableView: View {
     ///   card to hide off the bottom — 0 the whole card (expanded), 1 the top
     ///   half (fully compact drawer), any value between as the drawer collapses.
     ///   See `boardContent`'s `collapse`.
-    private func hand(_ view: GameView, crop: CGFloat, reserveNoSlot: Set<String>) -> some View {
-        FHandFan(cards: view.me?.hand ?? [], trumpSuit: view.trumpSuit,
+    private func hand(_ view: GameView, reserveNoSlot: Set<String>) -> some View {
+        // A held-back card is veiled (its TABLE copy must stay invisible until
+        // its ghost lands), so the hand has to un-veil its own copy or the fan
+        // would reserve the slot and draw nothing - a gap where the card is.
+        FHandFan(cards: Self.fanCards(view.me?.hand ?? [], holding: handHoldback),
+                 trumpSuit: view.trumpSuit,
+                 // ROUND 43: the held-back cards are drawn as ordinary hand
+                 // cards (that is the point of the holdback), so they are also
+                 // TAPPABLE and DRAGGABLE unless something says otherwise -
+                 // hence `locked`, which gates the gesture and paints nothing.
+                 // `disabled` would have done the gating and dimmed them to
+                 // 0.5, which is the one thing the holdback exists to prevent.
+                 locked: Set(handHoldback.map(\.identity)),
                  selection: $selection, onTap: { toggle($0) },
                  onDragChanged: { card, point in onDragChanged(card, at: point) },
                  onDragEnded: { card, point in onDragEnded(card, at: point, view) },
-                 namespace: cardNS, hidden: veiledCardIds,
-                 crop: crop,
+                 hidden: Self.fanVeil(veiled: veiledCardIds, holdback: handHoldback),
                  onDragCardMoved: { center in dragCardCenter = center },
                  reserveNoSlot: reserveNoSlot, instantExit: true,
                  // Round-8 #4: a sorted hand survives closing and reopening the
@@ -4198,7 +5238,7 @@ public struct MessageTableView: View {
         // enabled. Silent, deliberately: the bar above the board has already
         // said why, and a "move not allowed" toast on top of it would read as a
         // rule about the move rather than about the bubble.
-        guard !controller.superseded else { return }
+        guard !controller.superseded else { releaseLivePlayVeil(); return }
         selection.removeAll()
         // The veil, live half (round-4 note 5). Both of these are the state as
         // it is RIGHT NOW, captured before `apply` can publish a new view —
@@ -4225,7 +5265,121 @@ public struct MessageTableView: View {
                 setSweep(view.battles)
             }
         }
-        Task { await controller.apply(move); await stageNow() }
+        Task {
+            // ROUND 40: A REFUSED MOVE GIVES THE VEIL BACK.
+            //
+            // `playAt` veiled these cards synchronously, before this Task
+            // existed, because that is the only moment early enough to beat the
+            // paint. Everything that takes the veil down again hangs off what
+            // happens NEXT - the view change (`flyBoutEndToDiscard`, which
+            // consumes `pendingPlacement` on every call) or `rejectTick`. When
+            // the kernel never saw the move there is neither, and until this
+            // round the cards simply stayed pre-hidden: excluded from a CENTRED
+            // fan for the life of the board, which is the owner's
+            // `laid=1 hand=4 ... deferred=3 ... seq=0` breadcrumb exactly.
+            //
+            // `apply` now says so rather than returning in silence, and false
+            // is unambiguous: no view change is coming, so there is no race
+            // with the onChange that would otherwise own these cards.
+            let applied = await controller.apply(move)
+            if !applied { releaseLivePlayVeil() }
+            await stageNow()
+        }
+    }
+
+    /// Take down the veil a live play put up and hand back everything that play
+    /// froze - the counts, the roles, the swept table, the resting ghost.
+    ///
+    /// Everything except the placement is handed back only when NOTHING IS
+    /// ANIMATING (round 43, written out in the body): a play refused mid-stream
+    /// never froze those pieces in the first place, and the sequence that did
+    /// still owns them.
+    ///
+    /// One implementation for the two ways a play can come to nothing: a
+    /// rejection the kernel reports (`rejectTick`) and a refusal at a door that
+    /// never reached the kernel at all (`apply` returning false). They used to
+    /// be separate: the first was written out longhand in the `rejectTick`
+    /// handler and the second did not exist, which is the leak. Safe to call
+    /// twice - it is keyed off the ledger, which it clears.
+    private func releaseLivePlayVeil() {
+        // My own hand veil goes back unconditionally: `play` raised it
+        // unconditionally too (it is not behind `freezeCounts`' guard), it names
+        // only MY cards, and the one other place that touches it
+        // (`flyBoutEndToDiscard`) consumes it rather than owning it - so there
+        // is nobody else it could be taken from.
+        handBeforeMyMove = nil
+        // ROUND 43: THE COUNTS AND THE ROLES ARE STILL NOT OURS TO GIVE BACK.
+        //
+        // Round 42 taught `freezeCounts` and `releaseCounts` that the badges,
+        // the deck, the discard, the out set and the roles belong to whichever
+        // SEQUENCE is animating - it froze them to the board before its move and
+        // walks them forward one step per landing flight. This function did the
+        // very same writes with no guard at all, and its three callers all reach
+        // it mid-sequence: the `rejectTick` onChange, the `controller.superseded`
+        // door in `play`, and `apply` returning false. The last of those is not
+        // theoretical - `MessageTurnController.apply` refuses for the whole of a
+        // red retraction (`conflictRetracting`), and that retraction is
+        // `flyUndoReturn` holding `sequenceDepth >= 1`. So a tap during a
+        // retraction had `play` correctly DECLINE to freeze the counts and then,
+        // one line later, release what it had just declined to touch: every
+        // badge snapped forward to the retracted base and snapped back when the
+        // arrival's replay re-seeded them. That backwards move is what the
+        // `backwardsPaints` oracle counts.
+        //
+        // The roles are the same story with a worse ending: nilled mid-sequence
+        // they leave `syncRoles`' closing hand-off with `old == nil`, so no mark
+        // flies and the shield / sword teleport.
+        //
+        // Deferring costs nothing here for the same reason it costs nothing in
+        // `releaseCounts`: a refused play starts no sequence and claims no
+        // `animSequenceToken`, so the stream still running is still the newest
+        // one and its teardown still hands all of this back.
+        //
+        // ROUND 44: the guard itself is `ShownLedger.write`'s now, and the
+        // three copies of it are one. All that is left here is the claim.
+        let released = ledger.write(.bystander, by: "releaseLivePlayVeil",
+                                    note: "counts/roles/sweep stay with the running sequence") { l in
+            l.deck = nil; l.discard = nil; l.hand = [:]
+            // The out badges with them, which this function used to leave
+            // frozen: `freezeCounts` seeds them in the same breath as the counts
+            // and both `releaseCounts` and the stream teardown nil them in the
+            // same breath, so a release that skipped them pinned `shownOut`
+            // (which prefers the ledger over the live view whenever it is
+            // non-nil) at the pre-move board until some later stream happened to
+            // clear it.
+            l.out = nil
+            // Round 16: and the roles `play` froze on the way in. Nothing
+            // happened, so there is nothing to hand over - this is the same
+            // board they were frozen from, which is why it is a plain release
+            // and not a sync.
+            l.roles = nil
+        }
+        // …and the pre-bout table `play` laid out for a pickup / good that then
+        // never happened. Left standing it is a phantom table over a board the
+        // game says is empty (the `sweepVisibleNow` oracle's own defect).
+        //
+        // ON THE SAME TERMS as the ledger, which is what `write` returning a
+        // Bool is for: this is not the ledger, but it was frozen by the same
+        // play and a sequence that owns it drops it in its own teardown. A
+        // refusal can land in the middle of a bout-end sequence sweeping a table
+        // of its OWN (the buttons are gone by then, but a drag still reaches
+        // `apply`), and tearing that grid down would take the cards off the
+        // table mid-flight.
+        if released { clearSweep() }
+        // THE PLACEMENT HALF IS UNCONDITIONAL, and deliberately outside the
+        // guard above. These cards are this play's own property - `playAt` hid
+        // them, no sequence knows about them, and nothing else will ever hand
+        // them back - so a refusal during somebody else's flight must still
+        // reveal them or they are gone from the fan for the life of the board.
+        guard let p = pendingPlacement else { return }
+        pendingPlacement = nil
+        pendingCover = nil
+        let ids = Set(p.cards.map(\.identity))
+        // Round-8: drop the resting held ghost `playAt` spawned - the move will
+        // never fly, so reveal the hand copy AND clear the ghost, or a static
+        // ghost would sit at the source.
+        animator.cancelHeld(ids)
+        animator.reveal(ids)
     }
 
     /// Compose + stage the bubble the instant a move is applied (§11.4 flow, B4
@@ -4272,8 +5426,37 @@ public struct MessageTableView: View {
     // exactly like the app's TableView (both read the kernel menu, never a rule).
 
     private func toggle(_ card: Card) {
-        if selection.contains(card.identity) { selection.remove(card.identity) }
-        else { selection.insert(card.identity) }
+        selection = Self.selectionAfterTap(selection, card: card,
+                                           hand: controller.view?.me?.hand ?? [])
+    }
+
+    /// ROUND 43: THE SELECTION MAY ONLY EVER NAME CARDS THAT ARE IN MY HAND.
+    ///
+    /// It used to be a plain toggle, and that was true by accident for as long
+    /// as the only tappable cards were hand cards. Round 42's `handHoldback`
+    /// broke it: a card I have already played stays DRAWN in the fan while its
+    /// replay flies, so it could be tapped, and the identity it inserted was one
+    /// the kernel hand no longer contained. `selectedCards` filters through
+    /// `view.me.hand`, so the move was never playable - but the identity stayed
+    /// in `selection` for the life of the board, and `actionBar` gates BOTH
+    /// `canPickup` and `canDone` on `cards.isEmpty`. Pick that table up and the
+    /// card comes home already selected: Take and Good silently gone, with
+    /// nothing on screen to explain it and no way to deselect a card that is not
+    /// there. The lock in `hand` stops the tap arriving; this stops the state
+    /// from being representable at all, which is the invariant the bug was
+    /// really about.
+    ///
+    /// Pure and static so the rule can be asserted without a board.
+    static func selectionAfterTap(_ selection: Set<String>, card: Card, hand: [Card]) -> Set<String> {
+        let mine = Set(hand.map(\.identity))
+        // Sweep first: an identity that has since left my hand (played, swept,
+        // discarded) is dropped whatever this tap was for. A stale one can only
+        // ever go on to disable the action bar.
+        var next = selection.intersection(mine)
+        guard mine.contains(card.identity) else { return next }
+        if next.contains(card.identity) { next.remove(card.identity) }
+        else { next.insert(card.identity) }
+        return next
     }
 
     private func selectedCards(_ view: GameView) -> [Card] {
@@ -4300,7 +5483,33 @@ public struct MessageTableView: View {
         // both landing animations below - the ordinary placement flight and note
         // 17's cover-that-ended-the-bout - so a dragged card cannot start from
         // the release point in one and from the hand in the other.
-        let fromRects = Self.playSourceRects(cards: cards, handRects: handCardFrames,
+        // TAKE OFF FROM THE SETTLED SLOT, NOT THE LAST PUBLISHED ONE.
+        //
+        // `handCardFrames` is a PREFERENCE, and a preference is one layout pass
+        // behind whatever moved the view it describes. Collapsing the drawer
+        // moves the whole board, and the rig catches the gap in the act:
+        //
+        //     stage follow geo=667->261 armed=false
+        //     SLOTCHECK MISMATCH n=11 worst=391.0pt @3-12
+        //
+        // 391 is exactly the distance the hand travelled (mid y 580 expanded,
+        // 189 compact). `handFrame` had already re-published; the per-card
+        // frames had not. A cover played in that window snapshots hand rects
+        // from the EXPANDED board, so the ghost is planted ~391pt below a
+        // 261pt drawer - off-screen - and then flies up into the table. Owner:
+        // "the cards just vanish from my hand, and then fly in from the bottom
+        // of the screen to cover the cards. I suspect this is some geometry
+        // coordinate mishap for the collapsed mode. seen this a lot in many
+        // forms."
+        //
+        // The cure is the one round 7 already applied to the LANDING side and
+        // never to this one: compute the slot, do not read it. `handSlotsNow`
+        // derives every card's resting rect from `handFrame` (which is fresh)
+        // and the fan's own pure geometry, so a takeoff is right on the first
+        // frame after any resize instead of one paint later. The release point
+        // of a DRAGGED card still comes from the gesture, which is live by
+        // construction - see `playSourceRects`.
+        let fromRects = Self.playSourceRects(cards: cards, handRects: handSlotsNow(view),
                                              released: released.map { ($0.card.identity, $0.centre) })
         // note 17: a cover might end the bout in the SAME kernel apply as the
         // cover itself (the defender's hand empties) — stash enough, BEFORE
@@ -4316,7 +5525,8 @@ public struct MessageTableView: View {
         let landing = Self.coverLandingRects(move: move, battles: view.battles,
                                              frames: battleFrames, fallback: lastBattleFrames)
         pendingCover = landing.isEmpty ? nil
-            : PendingCover(cards: cards, landing: landing, fromRects: fromRects)
+            : PendingCover(cards: cards, landing: landing, fromRects: fromRects,
+                           handFrameAtPlay: handFrame)
         // Bug 13: hand the placement to `flyBoutEndToDiscard`, and hide the cards
         // NOW - synchronously, before `apply` can publish a view with them
         // already sitting on the table. This is the same veil trick as
@@ -4325,18 +5535,92 @@ public struct MessageTableView: View {
         // then fly. `animator.preHide` is the one hiding mechanism the board
         // already has, so the handoff to the flight's own `hidden` set is
         // seamless, and any path that ends up not flying them reveals them again.
-        pendingPlacement = PendingPlacement(cards: cards, fromRects: fromRects)
-        animator.preHide(Set(cards.map(\.identity)))
+        //
+        // Read BEFORE the slot is overwritten - this is the play (if any) whose
+        // veil is about to be disowned; see `veilHandover` below.
+        let standingVeil = pendingPlacement.map { Set($0.cards.map(\.identity)) } ?? []
+        pendingPlacement = PendingPlacement(cards: cards, fromRects: fromRects,
+                                            handFrameAtPlay: handFrame)
         // Round-8 (atomic takeoff): the same instant the hand copy is veiled above,
         // put a resting ghost where each card WAS, so the swap is seamless - no
         // frame where the card is neither in the hand nor in the overlay. The real
         // `place-<id>` flight (`placementFlights` -> `animator.play`) reuses these
         // ids and simply starts moving them once the kernel publishes the table
         // slot. `fromRects` is the card's own hand slot (or drag-release point).
-        animator.showHeld(cards.compactMap { c in
-            fromRects[c.identity].map { Flight(id: "place-\(c.identity)", card: c, from: $0, to: $0) }
-        })
+        //
+        // AND EVERY VEILED CARD MUST GET ONE. `preHide` above hides ALL of
+        // them; this plants a ghost only for the ones with a source rect, so a
+        // card that has none is veiled into thin air - no hand copy, no
+        // overlay, nothing. It then flies from whatever `placementFlights`
+        // falls back to, which is the destination itself. That is the owner's
+        // "the cards just vanish from my hand, and then fly in from the bottom
+        // of the screen to cover the cards", and the asymmetry between these
+        // two lines is the whole of it.
+        //
+        // Computing `fromRects` (`handSlotsNow`) was not enough on its own: the
+        // analytical slots are cut for the cards the fan LAYS OUT, and a card
+        // that is already veiled by an earlier move is not one of them. The rig
+        // reached it inside a minute -
+        //
+        //     held ghost at source [0-10]
+        //     NO GHOST for [0-10] - they will vanish
+        //
+        // the same card played twice, the second time with its slot already
+        // given up. So the veil and the ghost are now decided TOGETHER, from one
+        // list, and a card that cannot be placed is not veiled either. The
+        // fallbacks descend from exact to approximate and only ever run out at
+        // a hand that has never been measured at all, which is a board with
+        // nothing on screen to vanish from.
+        let held: [Flight] = cards.compactMap { c in
+            // The release point of a DRAGGED card first - it is live by
+            // construction and is where the finger actually let go - then the
+            // ordinary landing chain for everything that never moved.
+            let at = fromRects[c.identity] ?? handLanding(c, laidOut: laidOutHandNow(view))
+            return at.map { Flight(id: "place-\(c.identity)", card: c, from: $0, to: $0) }
+        }
+        let placed = Set(held.compactMap { $0.card?.identity })
+        if placed.count != cards.count {
+            let lost = cards.map(\.identity).filter { !placed.contains($0) }
+            FlightRecorder.note("no-ghost", "unplaceable, left visible: \(lost.joined(separator: ","))")
+            AnimLog.say("NO GHOST for [\(lost.joined(separator: ","))] - left in the hand rather than veiled")
+        }
+        // ONLY what has somewhere to be. A card veiled with no ghost is gone from
+        // the screen entirely - no hand copy, no overlay - and that is the
+        // owner's "the cards just vanish from my hand". Leaving it visible for a
+        // beat is the strictly better failure: the worst case is a card that
+        // appears twice for one frame, against one that disappears completely.
+        // ONE LEDGER, ONE VEIL (round 40). `pendingPlacement` holds exactly one
+        // placement, so a second play landing before the first's view change
+        // silently DISOWNS the first's cards - nothing is left holding their
+        // ids, and `flyBoutEndToDiscard`'s reveal only ever sees the survivor.
+        // Those cards then sit in `preHidden` for the life of the board, laid
+        // out nowhere. Cheap to reach: `apply` is awaited, so the whole kernel
+        // round trip is a window a second tap fits inside. So the veil is
+        // handed over with the ledger, in one place - see `veilHandover`.
+        let handover = Self.veilHandover(standing: standingVeil, placing: placed)
+        if !handover.reveal.isEmpty {
+            AnimLog.say("veil handover: a second play disowned [\(handover.reveal.sorted().joined(separator: ","))]")
+            animator.cancelHeld(handover.reveal)
+            animator.reveal(handover.reveal)
+        }
+        animator.preHide(handover.veil)
+        animator.showHeld(held)
         play(move)
+    }
+
+    /// WHAT A NEW PLAY OWES THE ONE IT REPLACES.
+    ///
+    /// `pendingPlacement` is a ONE-SLOT ledger and the veil is keyed off it, so
+    /// a play that finds an earlier one still standing has to take that veil
+    /// down before it raises its own: nothing else ever will. The cards the new
+    /// play is placing are the exception - re-veiling what is already veiled is
+    /// a no-op, and revealing them first would flash them back into the fan.
+    ///
+    /// Static and pure so the rule can be read and tested without a board, like
+    /// `sequenceTeardown` next door.
+    static func veilHandover(standing: Set<String>, placing: Set<String>)
+        -> (reveal: Set<String>, veil: Set<String>) {
+        (reveal: standing.subtracting(placing), veil: placing)
     }
 
     /// Bug 13: the rect each card of a play LEAVES FROM. Everything starts at its
@@ -4383,6 +5667,59 @@ public struct MessageTableView: View {
     /// The same axis measured from the BOARD's trailing edge - the board is
     /// inset 8 from the screen (`.padding(.horizontal, 8)` on the root).
     static let sendHintCenterFromTrailing: CGFloat = sendHintCenterFromScreenTrailing - 8
+}
+
+/// THE CHROME DOES NOT RIDE THE BOARD'S CARD SPRING - round 7, written once.
+///
+/// `boardContent` animates on `.animation(FMotion.cardMotion, value:
+/// controller.view)`. That is a SCOPED value-animation: every descendant whose
+/// geometry changes BECAUSE `controller.view` changed springs with it. Five
+/// pieces of chrome sit inside that scope and must not move on it - the staged
+/// send hint, the promoted self role mark, the action column, the undo slot and
+/// the settings/help squares. All five hang off `buttonLift`/`statusMarkLift`,
+/// so a pickup that grows the hand past the two-row threshold changes their
+/// bottom padding, and on the card spring the buttons visibly FLOATED up with
+/// the cards arriving under them. Owner, round 7: "buttons should NEVER move /
+/// float".
+///
+/// THE MECHANISM IS THE NESTED SAME-TRIGGER OVERRIDE, and only that: an
+/// `.animation(nil, value:)` on the descendant carrying THE SAME trigger value
+/// as the ancestor's, innermost wins. Which is why the trigger stays spelled
+/// out at every call site rather than being reached for inside here - the
+/// identity of the two values IS the mechanism, and a site passing something
+/// else is a site that does not work. Two other spellings were tried and
+/// rejected for this vector: `.transaction { $0.animation = nil }` on the
+/// chrome, which does not reliably beat a scoped value-animation (that is the
+/// earlier fix the role mark went on drifting through), and keying on
+/// `handHeight`, which is simply the wrong value - the change arrives through
+/// `controller.view`.
+///
+/// THIS IS ONE OF THREE DIFFERENT VECTORS, NOT THREE TRIES AT ONE. Read from
+/// the comments alone the trio looks like a band-aid on a band-aid on a
+/// band-aid - it has been misread that way, and acted on - so: they cover
+/// three unrelated ways the chrome can end up moving, and deleting any one of
+/// them puts a separately filmed bug back.
+///
+///   1. THIS. The board's card spring reaching chrome inside its scope,
+///      because the change is driven by `controller.view`. Five sites.
+///   2. `actionBar`'s `.transaction { $0.animation = nil }`, confined to its
+///      fixed-size 128x88 container. That covers the INSERTION of the Undo
+///      pill into the column and its position within it - a change NOT driven
+///      by `controller.view` at all (it rides whatever transaction is in
+///      flight, e.g. the collapse's own `withAnimation`), so nothing keyed on
+///      `controller.view` can reach it. Round 10g filmed Undo arriving ~295pt
+///      above its slot and flying down over ~7 frames.
+///   3. The `buttonLift` mirror. That gives the chrome its OWN honest
+///      animation (`FMotion.chrome`) for the one change that genuinely does
+///      move it, a row-count change, and it is deliberately driven from an
+///      `.onChange` rather than by `controller.view` so that (1) cannot null
+///      it. Round 36 asked for that slide explicitly ("at least make it slide
+///      smoothly instead of jumping"), and (2) had to be NARROWED from the
+///      placement down to the container because it was killing it.
+private extension View {
+    func doesNotRideTheBoardSpring<Trigger: Equatable>(_ trigger: Trigger) -> some View {
+        animation(nil, value: trigger)
+    }
 }
 
 /// Round-8 #3: the shared axis the send reminder's arrow and caption align on
@@ -4433,6 +5770,20 @@ struct WhiteRing<Content: View>: View {
 }
 
 struct SendHintReminder: View {
+    /// Re-render this view when a setting changes (see FPrefs) - the house
+    /// pattern, shared with FActionBar and SettingsHelpSquares.
+    ///
+    /// THE BUG THIS FIXES (owner, Eva's test pass): "send hint text did not
+    /// change back to english when I changed to chinese then to english.
+    /// switched back after some time though." `FStrings.t` is a plain function
+    /// call, so a view's caption is only re-resolved when SwiftUI re-evaluates
+    /// its body - and this view's stored properties (`paused`) do not change
+    /// when the language does, so SwiftUI correctly skipped it. "After some
+    /// time" is whatever unrelated change finally forced a rebuild, which is
+    /// the signature of this whole class of bug: the string is not stale, the
+    /// BODY is. Observing the settings object is what puts the language back
+    /// into this view's inputs.
+    @ObservedObject private var prefs = FPrefs.shared
     /// True while the reminder is not actually on screen (fuse not elapsed, or
     /// the drawer is expanded): freezes the TimelineView so an invisible arrow
     /// doesn't burn frames inside a Messages extension.
@@ -4783,6 +6134,13 @@ struct FinishRow: Identifiable {
 /// not, can deal the next one. No ELO in the iMessage game, and no emoji: the rank
 /// is a colored number (brass for 1st, red for the fool) with a "Fool" tag.
 struct FGameOverList: View {
+    /// Re-render on a settings change (see FPrefs), the same reason
+    /// `SendHintReminder` grew one: "Fool", "You", "New game" and the game-over
+    /// heading are all resolved by `FStrings.t` at body-eval time, and nothing
+    /// else about this view changes when the language does. The end screen is
+    /// also the one place a player is likely to sit and read, so a caption
+    /// stuck in the previous language has all the time in the world to be seen.
+    @ObservedObject private var prefs = FPrefs.shared
     private static let rowH: CGFloat = 34   // fixed per-row height (plank scales with player count)
     let rows: [FinishRow]
     let onNewGame: () -> Void

@@ -91,14 +91,23 @@ an old invite for a game that started at 4 showed a phantom 8-seat lobby, and
 different people in the same thread saw different player counts depending on
 which bubble they happened to tap (note 15).
 
-v3 consults the cache on phase-0 bubbles: if a chain for the same game is cached
-at a strictly later phase, adopt that instead. The stale invite opens the real
-board. No cached row, or nothing past WAITING, and the bubble really is the
-lobby - unchanged. The comparison is `MessageGameStore.lobbyCachePreferred`.
+v3 consulted the cache on phase-0 bubbles: if a chain for the same game was
+cached at a strictly later phase, adopt that instead, so the stale invite opened
+the real board.
+That comparison was `MessageGameStore.lobbyCachePreferred`, and it depended on
+the chat scoping added alongside it (the lookup was keyed by game id *and* chat
+key, so a lobby could never be superseded by a same-id row belonging to a
+different conversation).
 
-Note this depends on the chat scoping added alongside it: the cache lookup is
-keyed by game id *and* chat key, so a lobby can never be superseded by a
-same-id row belonging to a different conversation.
+**Round 7 reversed this and it is now deleted.**
+The owner removed the preferred-chain cache entirely ("the last text has
+everything we need"), so the extension renders exactly the bubble you tapped: a
+tapped WAITING invite is a lobby, full stop.
+Nothing could supply a `cachedPhase` after that, so the comparison sat as a pure
+function with no production caller until it was removed too.
+The phantom-8-seat symptom this section describes is real, and what answers it
+today is that a stale invite is simply the lobby it says it is - the assertion
+lives in `MessageSurfaceRouterTests.testAStaleLobbyBubbleRendersAsTheTappedLobby`.
 
 ## The invite button is gone
 

@@ -34,6 +34,28 @@ public struct HandFrameKey: PreferenceKey {
 /// Applies a card-flight matchedGeometryEffect only when a shared namespace is
 /// given — so a card animates as it moves between the hand and the table (same
 /// card.identity in both places). No namespace ⇒ no effect (previews/tests).
+///
+/// THE INVARIANT THAT MAKES THIS SAFE, and the reason two guards could be
+/// deleted in round 43:
+///
+///     A BOARD EITHER VEILS CARDS OR SHARES A NAMESPACE. NEVER BOTH.
+///
+/// The offline `TableView` shares a namespace and passes no `hidden` set - its
+/// flights ARE matchedGeometry. The message board veils cards and passes no
+/// namespace - `BoardAnimator`'s overlay owns every flight there, and a shared
+/// namespace would fly each card a second time, cross-fading between the two
+/// copies (an opacity animation on a card, the one thing this game never does).
+///
+/// Round-7 #2 wrote that rule per-card instead, in two places: FHandFan and
+/// FBattleGrid each computed `hidden.contains(id) ? nil : namespace`, to drop
+/// the namespace for a card the overlay was flying. Both were structurally
+/// unreachable by the time they were read - on the veiling board `namespace`
+/// was already nil, and on the namespace board `hidden` is always empty - so
+/// each was a guard against a combination neither caller could produce.
+/// Stating the rule once, here, is the whole of what those two lines did.
+///
+/// Pinned by `FlightNamespaceInvariantTests`, which fails if a board ever
+/// starts passing both.
 public struct FlightID: ViewModifier {
     public let id: String
     public let namespace: Namespace.ID?

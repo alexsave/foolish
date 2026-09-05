@@ -56,6 +56,11 @@ public struct FSquareButton: View {
                 .overlay(Rectangle().strokeBorder(Color.black.opacity(0.35), lineWidth: 1))
                 .clipShape(Rectangle())                        // sharp corners — wood is a plank, not a pill
         }
+        // The same explicit style its wood-pill sibling wears, for the same
+        // reason: no system button decoration may paint outside our plank. See
+        // `FPressStyle` for the whole of it (owner, Eva's pass: "for some
+        // reason I see a highlight around her wooden buttons").
+        .buttonStyle(FPressStyle())
         .accessibilityLabel(accessibility)
         // Simultaneous, not `.onLongPressGesture`: the Button must keep owning
         // the tap (its press highlight and accessibility action come with it).

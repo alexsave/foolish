@@ -51,6 +51,17 @@ extension HarnessModel {
         case "setup":
             newGame()
 
+        case "setup-compact":
+            // ROUND 39: the New-game screen in the COMPACT DRAWER, which is
+            // where the owner cannot use it. "Can't fucking got create game un
+            // collapsed, only expanded. Create game. Name field. Passing
+            // setting are all offset like I need to press a bit higher than the
+            // actual button to hit it." Every setup scenario before this one
+            // posed the EXPANDED sheet, so a drawer-height layout fault had
+            // nowhere to show up.
+            newGame()
+            collapseForReview()
+
         case "setup-longname":
             // A stored nickname is what pre-fills the setup field. 64 chars of
             // mixed script + emoji: does the field clip, wrap, or push the
@@ -86,6 +97,25 @@ extension HarnessModel {
 
         case "board-compact":
             await seedDemoGame()
+            collapseForReview()
+
+        case "myplay":
+            // ROUND 42: A COLD OPEN OF MY OWN MOVE. The bubble's last action is
+            // mine, so `openReplayEvents` replays cards out of MY hand - the
+            // one shape `board` (which seats the ACTOR of the NEXT move) cannot
+            // pose, and the only one that arms `handHoldback`.
+            //
+            // Owner, 1.0(41): "when we replay OUR OWN attack, it should go FROM
+            // OUR HAND to the table." Read it off the `OFF-HAND flight` lines
+            // in the unified log: each card's `from` must be its own hand slot,
+            // several points apart in x and sitting inside `hand=`, not one
+            // stacked point at the container's corner.
+            await dealDriven(players: playersEnv, only: [.attack, .cover],
+                             steps: 5, viewAs: .lastActor)
+
+        case "myplay-compact":
+            await dealDriven(players: playersEnv, only: [.attack, .cover],
+                             steps: 5, viewAs: .lastActor)
             collapseForReview()
 
         case "board-sorted":
@@ -380,7 +410,10 @@ extension HarnessModel {
     /// clamped to what the game supports.
     private var playersEnv: Int { max(2, min(8, participants.count)) }
 
-    private enum ViewAs { case defender, actor, biggestHand }
+    /// `lastActor` (round 42): whose eyes see their OWN move replayed on a cold
+    /// open - the one seat `defender`/`actor`/`biggestHand` can never reliably
+    /// land on, and the only one that poses `handHoldback`.
+    private enum ViewAs { case defender, actor, biggestHand, lastActor }
 
     /// Deal a real game and drive it forward with kernel moves only, so a
     /// screenshot can land on a mid-game position that no amount of tapping
@@ -458,6 +491,8 @@ extension HarnessModel {
             case .actor:
                 for s in 0..<n where (await MessageKernel.shared.residentLegal(seat: s))
                     .contains(where: { $0.type != .wait }) { seat = s; break }
+            case .lastActor:
+                seat = lastSeat
             case .biggestHand:
                 if let players = view?.players {
                     var best = (seat: 0, n: -1)
@@ -470,18 +505,18 @@ extension HarnessModel {
             await deliverSealed(payload, senderSeat: lastSeat)
             // Seat the viewer explicitly - this rig is about the BOARD, not
             // about re-testing seat inference (which `seatpick` covers). The
-            // store has to be written AFTER `become` rebinds to that
-            // participant's own suite, then `become` again so the view reloads
-            // with the cache in place.
+            // nickname has to be written AFTER `become` rebinds to that
+            // participant's own suite (each fake player has their own), then
+            // `become` again so the view reloads with it in place: the name it
+            // stores is this seat's name in the chain's roster, which is what
+            // `SeatIdentity.seatClaimedByName` resolves the seat from.
+            //
+            // A `MessageGameRecord` "pre-cache" used to be written alongside
+            // the nickname here. That store went inert in round 7 and is
+            // deleted now; the by-name resolution above is what actually seats
+            // this rig, and always was.
             become(seat)
             MessageGameStore.shared.nickname = Self.nameFor(seat)
-            if let env = try? await MessageEnvelope.decode(payload: payload, viewer: seat) {
-                MessageGameStore.shared.put(MessageGameRecord(
-                    gameId: env.gameId, chatKey: chatKey, mySeat: seat, nPlayers: env.nPlayers,
-                    round: env.round, turn: env.turn, phase: env.phase, finished: false,
-                    names: Dictionary(env.joins.map { ($0.seat, $0.name) }, uniquingKeysWith: { a, _ in a }),
-                    payloadBase32: Base32.encode(payload), updatedAt: 1))
-            }
             become(seat)
             expand()
         } catch {}
@@ -607,12 +642,39 @@ extension HarnessModel {
         // every hand contains a transfer at all (the defender has to be holding
         // the rank that is on the table), so a single deal is a coin toss.
         let transfer = kind == "pass"
+        // ROUND 36: HARNESS_ARRIVE_BIGHAND=<n> warms up until somebody is
+        // holding at least `n` cards, which is the only way to pose the owner's
+        // row-split reports at all.
+        //
+        // "I had 10 of diamonds covering 8 of diamonds. The cards were in the
+        // skinny card one row layout. The other player then hit good. Around
+        // the time the check started rotate animating, the cards started to
+        // animate towards the two row layout, then like changed their mind mid
+        // layout transition and went back to the skinny card one row layout.
+        // Why the fuck did that happen? We had ten cards and they said good!"
+        //
+        // FHandFan splits into two rows once a card would be thinner than 34pt,
+        // which at a phone's hand width is somewhere around ten cards - so every
+        // arrival run before this one watched a hand that could not split, and
+        // the whole class was invisible to the rig. The warm-up below therefore
+        // PREFERS pickups while it is under the target, because a pickup is the
+        // only move in Durak that makes a hand bigger by more than one.
+        let bigHand = Int(ProcessInfo.processInfo.environment["HARNESS_ARRIVE_BIGHAND"] ?? "") ?? 0
+        func biggestHand() async -> Int {
+            guard let v = await MessageKernel.shared.residentView(viewer: -1) else { return 0 }
+            return v.players.map(\.handCount).max() ?? 0
+        }
         // Is the wanted ARRIVAL playable right now? For `goodend` the good must
         // actually CLOSE the bout, which means a non-empty, fully covered table
         // - a good over open attacks merely passes priority and animates
         // nothing, which is not the arrival being posed.
         func wantReady() async -> Int? {
             guard let v = await MessageKernel.shared.residentView(viewer: -1) else { return nil }
+            // Not until somebody's hand can actually SPLIT - see `bigHand`. The
+            // arrival is only interesting on a board where the row count is in
+            // play, so a run that posed it over a six-card hand would pass while
+            // testing nothing.
+            if bigHand > 0, (v.players.map(\.handCount).max() ?? 0) < bigHand { return nil }
             if kind == "goodend" {
                 guard !v.battles.isEmpty, v.battles.allSatisfy({ $0.defense != nil })
                 else { return nil }
@@ -666,7 +728,9 @@ extension HarnessModel {
         // than the other kinds, and PREFERS covering all the way there (the same
         // two tricks MessageBoutEndHoldTests.findClosingCover uses to reach the
         // same board offline: round after round of pickups never gets there).
-        let cap = deep ? 400 : 40
+        // …and a bighand run needs room to take several times over, so it gets
+        // the deep cap even for a shallow kind.
+        let cap = deep || bigHand > 0 ? 400 : 40
         // …and if one whole game goes by without producing the board, RE-DEAL.
         // Not every deal contains a bout-ending cover at all (the defender has
         // to run out on a table they can fully answer), so a single game is a
@@ -676,6 +740,14 @@ extension HarnessModel {
         // it re-deals too. Any other kind takes exactly one pass, as it always
         // has.
         let deals = deep || transfer ? 40 : 1
+        // Grow a hand: take the table rather than defend it, and open bouts
+        // rather than end them, until somebody is over the split threshold.
+        // Returns nil once the target is reached, which hands the warm-up back
+        // to its ordinary "first legal move" driver.
+        func bigHandPick(_ legal: [Move], _ biggest: Int) -> Move? {
+            guard bigHand > 0, biggest < bigHand else { return nil }
+            return legal.first { $0.type == .pickup } ?? legal.first { $0.type == .attack }
+        }
         deal: for salt in 0..<deals {
             if salt > 0 {
                 let reseed = Data((0..<32).map { UInt8(truncatingIfNeeded: $0 &* 29 &+ salt) | 1 })
@@ -696,7 +768,8 @@ extension HarnessModel {
                         // second clause the warm-up plays every pass it finds
                         // and `wantReady` is asked the instant after the only
                         // seat that could transfer has stopped being able to.
-                        : legal.first { $0.type != .wait && !(transfer && $0.type == .pass) }
+                        : bigHandPick(legal, await biggestHand())
+                            ?? legal.first { $0.type != .wait && !(transfer && $0.type == .pass) }
                     if let m = pick {
                         try? await MessageKernel.shared.apply(seat: s, move: m)
                         lastSeat = s; acted = true; break
@@ -952,7 +1025,12 @@ extension HarnessModel {
             + "BACKWARDS paints: \(MessageTableView.backwardsPaints) "
             + "VANISHED paints: \(MessageTableView.vanishedAtRest) "
             + "STRANDED paints: \(MessageTableView.strandedAtRest) "
-            + "SWEEP-STILL-DRAWN: \(MessageTableView.sweepVisibleNow)")
+            + "SWEEP-STILL-DRAWN: \(MessageTableView.sweepVisibleNow) "
+            // ROUND 40: the veil still standing this long after the last move.
+            // Must be 0 - anything else is a card laid out nowhere, which the
+            // CENTRED fan renders as a row at the wrong width and centre. See
+            // `MessageTableView.veilStandingNow`.
+            + "VEIL-STILL-UP: \(MessageTableView.veilStandingNow)")
         // THE CONFLICT ORACLE (1.0(28)): did the conflict machinery engage?
         // `retractions` counts staged moves visibly retracted (an ARRIVE_STAGED
         // run must show >= 1 or the model never fired); `red-flights` counts

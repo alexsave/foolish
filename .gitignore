@@ -35,12 +35,22 @@ yarn-error.log*
 .env.build
 .vercel
 
-# Vim swap files. NOTE: must not be `*.sw*` — that also swallows *.swift
-# (the entire iOS app). Match only the real swap extensions.
+# Vim swap files. Do NOT write `*.sw*`: that also swallows *.swift, i.e. the
+# whole iOS app. There are two shapes to catch.
+#   .notes.txt.swp        a swap for a named buffer, anywhere in the tree
+#   .swp .swo ... .swa .svz .svy
+#                         vim opened with NO filename, in the repo root. It
+#                         walks the alphabet BACKWARDS on each new session, so
+#                         any pattern with a floor (the old `.sw[c-m]`) leaks
+#                         the moment vim steps past it. Four of them reached
+#                         main that way. The range below covers the whole walk
+#                         and is exactly four characters, so it cannot reach
+#                         `.swift`; the leading slash keeps it at the root.
 *.swp
 *.swo
 *.swn
 .*.sw?
+/.s[t-w][a-z]
 .vscode
 .cursor
 
@@ -54,14 +64,17 @@ c/tools/tt_divergence_viz/backup/
 c/tools/tt_divergence_viz/backup2/
 c/tools/tt_divergence_viz/data/W/
 
-# Local scratch that has snuck into commits before. Bare-name editor spill
-# (.swc..swm, not caught by .*.sw? which guards .swift), a dev server log, the
-# iOS snapshot-test output dir, and the memtest edge scratch function.
-.sw[c-m]
+# Local scratch that has snuck into commits before: a stray vim runtime file,
+# a dev server log, the iOS snapshot-test output dir, and the memtest edge
+# scratch function. (Bare-name editor spill is handled in the vim block above.)
 .watchrealsizevim
 serve.log
 ios/FoolishTests/__Snapshots__/
 server/impls/supabase/functions/memtest/
+# The supabase CLI's own version-check cache. Written by any `supabase` command,
+# so it appears as untracked the first time you touch the CLI in a session and
+# is exactly the shape of thing that rides along in a `git add -A`.
+supabase/.temp/
 
 # local dev overrides (shadows next.config.mjs if tracked!)
 next.config.js

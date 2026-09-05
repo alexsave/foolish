@@ -103,6 +103,17 @@ public struct TableWeave: View {
                     // frame. The clip is here too, so no caller can forget it.
                     .frame(width: geo.size.width, height: geo.size.height, alignment: .bottom)
                     .clipped()
+                    // The same round-39 clause as WoodFill's, and for the same
+                    // reason: `cover` is >= 1 by construction, so the weave is
+                    // ALWAYS at least as big as the surface and usually much
+                    // bigger, and every point of that overflow used to answer
+                    // touches outside the table it is painting. Nothing has been
+                    // filed against this one - the weave is a background, so
+                    // whatever it steals it steals from views BEHIND it, and in
+                    // the extension there are none. It is fixed with its twin
+                    // because leaving one of two identical faults in place only
+                    // guarantees the next person has to find it again.
+                    .contentShape(Rectangle())
             }
         }
     }
@@ -224,6 +235,44 @@ public struct WoodFill: View {
                 }
             }
             .clipped()
+            // ROUND 39 - A CLIP HIDES THE PAINT, NOT THE TOUCH.
+            //
+            // The swatch above is 448x288pt and the control it fills is often a
+            // 40pt square, so the overlay overflows its frame enormously and
+            // `.clipped()` above hides the overflow. `.clipped()` bounds the
+            // PAINT ONLY: the hidden overflow goes on answering touches, so
+            // every wood surface used to carry an invisible tap slab far larger
+            // than the plank you can see - measured on the real extension
+            // (iPhone 16, compact drawer, the New-game screen): the rulebook
+            // square is painted at x81..121 and was ANSWERING TAPS from x11 to
+            // x191, ~70pt past each of its own edges, in both axes. That is one
+            // 40pt button holding a 180pt slab, and it is the whole of the
+            // owner's 1.0(38) report:
+            //
+            //   "Settings can't even open wtf. Tapping it opens rules"
+            //      - the two squares are 16pt apart, so the BOOK's slab (drawn
+            //        second, hit-tested first) covers the gear completely. The
+            //        gear was unreachable from anywhere on the screen.
+            //   "Create game. Name field. Passing setting are all offset like I
+            //    need to press a bit higher than the actual button to hit it"
+            //      - the Create-game plank's slab reaches ~70pt ABOVE the plank,
+            //        over the nickname field and the checkbox above it. Every
+            //        such control answers to the plank instead, and the only way
+            //        left to reach it is to aim above the slab: "a bit higher".
+            //
+            // Compact is where it bites because compact is where the controls
+            // are close together; the same slabs exist expanded, with enough air
+            // between the controls that the right one usually still wins - the
+            // owner's "only expanded", exactly.
+            //
+            // `.contentShape(Rectangle())` says the touch region is this view's
+            // own frame, which for a FILL is the only region it could honestly
+            // claim. It changes no pixel. Rejected: `.allowsHitTesting(false)`,
+            // which would also work here but silently un-taps any surface that
+            // relies on the fill to BE the tappable area (a wood pill's own
+            // label is smaller than the pill), and moving the clip into the
+            // callers, which is the same forgettable line in six places.
+            .contentShape(Rectangle())
     }
 }
 

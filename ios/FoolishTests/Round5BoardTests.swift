@@ -80,31 +80,21 @@ final class Round5BoardTests: XCTestCase {
                              "a two-row hand must reserve more height than a one-row hand")
     }
 
-    /// M5b's crop is a fixed fraction (roughly half) of a row's height,
-    /// applied per row — so it must shrink a one-row hand AND still preserve
-    /// the two-row relationship (a compact two-row hand is still taller than
-    /// a compact one-row hand).
-    func testTopHalfOnlyShrinksHeightButPreservesTheRowRelationship() {
-        let full = FHandFan.height(cards: hand(6), availableWidth: 340, topHalfOnly: false)
-        let compact = FHandFan.height(cards: hand(6), availableWidth: 340, topHalfOnly: true)
-        XCTAssertLessThan(compact, full,
-                          "the compact drawer's one-row hand must be shorter than the full board's")
-        XCTAssertGreaterThan(compact, 0)
-
-        let compactOneRow = FHandFan.height(cards: hand(6), availableWidth: 340, topHalfOnly: true)
-        let compactTwoRow = FHandFan.height(cards: hand(15), availableWidth: 340, topHalfOnly: true)
-        XCTAssertGreaterThan(compactTwoRow, compactOneRow,
-                             "a two-row hand is still taller than a one-row hand once both are cropped")
-    }
+    // (round 43: `testTopHalfOnlyShrinksHeightButPreservesTheRowRelationship`
+    // lived here. It asserted that a cropped hand is shorter than a full one and
+    // that a cropped two-row hand is still taller than a cropped one-row hand -
+    // both true, and both about a capability no board could reach. Round 11
+    // pinned the board's crop at 0 after measuring what a live one cost, and
+    // round 43 removed the parameter; the only thing keeping the crop code alive
+    // was this test proving it worked. See FHandFan's note for why it must not
+    // come back.)
 
     /// The exact numbers `MessageTableView`'s `handLift` depends on: pinned so
     /// a future tweak to `cardH`/`rowGap` is a deliberate, visible change here
     /// rather than a silent drift between this file and that one's padding math.
     func testExactHeightsAtAKnownWidth() {
-        XCTAssertEqual(FHandFan.height(cards: hand(6), availableWidth: 340, topHalfOnly: false), 80)
-        XCTAssertEqual(FHandFan.height(cards: hand(6), availableWidth: 340, topHalfOnly: true), 44)
-        XCTAssertEqual(FHandFan.height(cards: hand(15), availableWidth: 340, topHalfOnly: false), 166)
-        XCTAssertEqual(FHandFan.height(cards: hand(15), availableWidth: 340, topHalfOnly: true), 94)
+        XCTAssertEqual(FHandFan.height(cards: hand(6), availableWidth: 340), 80)
+        XCTAssertEqual(FHandFan.height(cards: hand(15), availableWidth: 340), 166)
     }
 
     /// `MessageTableView.boardContent` computes its `handLift` as the
@@ -128,7 +118,7 @@ final class Round5BoardTests: XCTestCase {
     /// dead on the real card - which is the whole point (no mid-slide bunch).
     func testSlotRectsTwoCardsAreCentredAndExact() {
         let cards = hand(2)
-        let r = FHandFan.slotRects(cards: cards, width: 300, crop: 0)
+        let r = FHandFan.slotRects(cards: cards, width: 300)
         XCTAssertEqual(r.count, 2)
         let a = r[cards[0].identity]!, b = r[cards[1].identity]!
         XCTAssertEqual(a, CGRect(x: 96, y: 4, width: 52, height: 72))
@@ -140,7 +130,7 @@ final class Round5BoardTests: XCTestCase {
     /// One card is centred horizontally in the container.
     func testSlotRectsSingleCardCentred() {
         let cards = hand(1)
-        let r = FHandFan.slotRects(cards: cards, width: 300, crop: 0)[cards[0].identity]!
+        let r = FHandFan.slotRects(cards: cards, width: 300)[cards[0].identity]!
         XCTAssertEqual(r.midX, 150, accuracy: 0.01)
         XCTAssertEqual(r.height, 72)
     }
@@ -153,7 +143,7 @@ final class Round5BoardTests: XCTestCase {
         // slot dict would dedupe - fine for count-only tests, wrong here).
         let cards = (0..<15).map { Card(s: $0 / 13, v: $0 % 13 + 1) }
         let width: CGFloat = 340
-        let r = FHandFan.slotRects(cards: cards, width: width, crop: 0)
+        let r = FHandFan.slotRects(cards: cards, width: width)
         XCTAssertEqual(r.count, 15, "every card has a slot")
         // 15 cards -> 8 up top, 7 below (ceil on odd). The 9th card (first of the
         // bottom row) sits a full card-height + rowGap below the 1st.
@@ -161,7 +151,7 @@ final class Round5BoardTests: XCTestCase {
         let botY = r[cards[8].identity]!.minY
         XCTAssertGreaterThan(botY - topY, 72, "the second row is a full row below the first")
         // Slots stay inside the reserved container height.
-        let h = FHandFan.height(cards: cards, availableWidth: width, crop: 0)
+        let h = FHandFan.height(cards: cards, availableWidth: width)
         for c in cards {
             let rect = r[c.identity]!
             XCTAssertGreaterThanOrEqual(rect.minY, 0)
@@ -169,14 +159,17 @@ final class Round5BoardTests: XCTestCase {
         }
     }
 
-    /// Cropping (the compact drawer) shortens each slot the same way the fan
-    /// crops its cards, so a flight into a collapsed hand still lands true.
-    func testSlotRectsShrinkUnderCrop() {
+    /// A SLOT IS A WHOLE CARD. This was `testSlotRectsShrinkUnderCrop`, which
+    /// asserted a cropped slot came back half height - true of a capability
+    /// removed in round 43 (see FHandFan's note: round 11 pinned the crop at 0
+    /// after measuring what a live one cost, and nothing but this test kept the
+    /// code reachable). The live half of it is worth keeping on its own: the
+    /// slot height is the card height, and a flight aimed at a slot therefore
+    /// lands on the card.
+    func testASlotIsAWholeCardTall() {
         let cards = hand(3)
-        let full = FHandFan.slotRects(cards: cards, width: 300, crop: 0)[cards[0].identity]!
-        let crop = FHandFan.slotRects(cards: cards, width: 300, crop: 1)[cards[0].identity]!
-        XCTAssertEqual(full.height, 72)
-        XCTAssertEqual(crop.height, 36, "top-half crop halves the slot height")
+        let slot = FHandFan.slotRects(cards: cards, width: 300)[cards[0].identity]!
+        XCTAssertEqual(slot.height, 72)
     }
 
     // MARK: round-8 #4 — the display-order reconcile (the web's displayedHand)

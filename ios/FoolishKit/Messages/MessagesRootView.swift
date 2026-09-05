@@ -406,7 +406,6 @@ private struct GameSurface: View {
     /// seat resolves from an exact signal but the stored nickname is gone with
     /// the cache. Any player count. Ask once, store it, then seat them.
     private struct NameGate { let env: MessageEnvelope; let payload: Data; let seat: Int
-                              let prevPayload: Data?     // note 4/9/38: threaded to seatOnBoard
                               var quietOpen = false }    // round-9 #5: my just-sent chain
 
     @State private var controller: MessageTurnController?
@@ -516,6 +515,16 @@ private struct GameSurface: View {
             .fToast($toast)
             // The setup/lobby Settings + Help squares present these — same
             // sheets as the board's own pair (MessageTableView).
+            #if DEBUG
+            // The rig's way in, matching the board's own pair. Without it the
+            // only way to ask this surface for its Settings sheet is to hit a
+            // 40pt square with a synthetic tap, and a probe that can miss cannot
+            // tell "the sheet is broken" from "the tap was off".
+            .onAppear {
+                if ProcessInfo.processInfo.environment["HARNESS_OPEN_SETTINGS"] != nil { showSettings = true }
+                if ProcessInfo.processInfo.environment["HARNESS_OPEN_RULES"] != nil { showRules = true }
+            }
+            #endif
             .sheet(isPresented: $showSettings) {
                 MessageSettingsView { showSettings = false }
             }
@@ -658,37 +667,16 @@ private struct GameSurface: View {
 
     /// IS THIS BOARD A BRANCH OFF AN OLD BUBBLE, and record it if it is not.
     ///
-    /// One question asked of one authority: the kernel's Rule P, against the
-    /// newest chain this device has already seen for the same game
-    /// (`MessageGameStore.latestChain`). A strictly-preferred chain on file
-    /// means the table has moved past what is being opened, which is the owner's
-    /// cheat and also the ordinary accident of tapping an old bubble.
-    ///
-    /// FAILS OPEN, everywhere. Nothing on file, a store with no App Group, a
-    /// kernel call that threw - all answer "not superseded" and record what they
-    /// can. A false positive here is a game that cannot be played, which is a
-    /// far worse defect than the one this prevents.
+    /// The decision itself is `StaleBranchGate.rank` - two authorities, Rule P
+    /// and "does the chain on file actually show more of the game", both of
+    /// which must agree before the board goes read-only. It lives there and not
+    /// here because it can be driven from a test with real sealed chains; this
+    /// only spends the answer.
     @discardableResult
     private func rankAgainstHighWater(_ payload: Data, env: MessageEnvelope) async -> Bool {
-        let store = MessageGameStore.shared
-        guard let known = store.latestChain(gameId: env.gameId, chatKey: chatKey),
-              known != payload else {
-            store.setLatestChain(gameId: env.gameId, chatKey: chatKey, payload: payload)
-            supersededBy = nil
-            return false
-        }
-        // > 0 means the SECOND argument wins, so this asks "does what I already
-        // have beat what is being opened?" - the same call `maybeAdoptIncoming`
-        // makes, in the other direction.
-        let pref = (try? await MessageKernel.shared.preferred(payload, known)) ?? -1
-        if pref > 0 {
-            AnimLog.say("board is behind - a newer chain for game \(env.gameId) is on file")
-            supersededBy = known
-            return true
-        }
-        store.setLatestChain(gameId: env.gameId, chatKey: chatKey, payload: payload)
-        supersededBy = nil
-        return false
+        let verdict = await StaleBranchGate.rank(payload: payload, env: env, chatKey: chatKey)
+        supersededBy = verdict.newest
+        return verdict.superseded
     }
 
     /// Fold an ARRIVING bubble into the live surface, Rule P deciding (§7.2).
@@ -1451,9 +1439,11 @@ private struct GameSurface: View {
     /// gated through `SeatIdentity.resolveInLobby`, not the plain `resolve` the
     /// live board uses — see that function's doc for the bug this closes (a
     /// stale lobby bubble granting Start/Send to a seat it doesn't list, and
-    /// the flip side, a fresh join not showing as joined). Note 15's Rule-P-
-    /// for-lobbies fix in `load()` means the NEWEST bubble (the one that really
-    /// does list me) is what gets shown here in the first place.
+    /// the flip side, a fresh join not showing as joined). This used to add
+    /// that note 15's Rule-P-for-lobbies fix in `load()` showed the NEWEST
+    /// bubble here in the first place; round 7 removed that (and its cache),
+    /// so what arrives here is exactly the bubble that was tapped, stale or
+    /// not - which is precisely why the membership gate below has to hold.
     ///
     /// Bubble-anchored lookup (`seatForBubble`): this env came off a real
     /// bubble, whose gameId identifies my seat even after a group-membership
@@ -1784,11 +1774,6 @@ private struct GameSurface: View {
         // `@State` because `seatOnBoard` is where the controller finally exists
         // (and is reached from the name gate and the seat picker too).
         staleBranch = await rankAgainstHighWater(winner, env: env)
-        // Round 7: `prevPayload` (the previously-cached chain) is gone - the
-        // open-replay was already resolved purely from the adopted chain by the
-        // kernel (MessageTurnController.begin -> lastMoveEvents), never from a
-        // cached diff, so there is nothing to look up here any more.
-        let prevPayload: Data? = nil
         // Make the resident game the winner (the round guard/ledger it used to set
         // are gone with Rule R).
         _ = try? await MessageKernel.shared.decode(payload: winner, viewer: -1)
@@ -1843,10 +1828,9 @@ private struct GameSurface: View {
             if !MessageGameStore.shared.hasSetNickname {
                 controller = nil
                 nameGate = NameGate(env: env, payload: winner, seat: seat,
-                                    prevPayload: prevPayload, quietOpen: justSent)
+                                    quietOpen: justSent)
             } else {
-                seatOnBoard(seat: seat, env: env, winner: winner,
-                            prevPayload: prevPayload, quietOpen: justSent)
+                seatOnBoard(seat: seat, env: env, winner: winner, quietOpen: justSent)
             }
         case .ambiguous:
             controller = nil
@@ -1880,7 +1864,16 @@ private struct GameSurface: View {
             if let read = try? await MessageKernel.shared.readBoard(
                     .continuation(payload: winner), replaying: [], seat: -1, sentAt: 0),
                let view = read.view {
-                spectatorReplayURL = read.replayCode.map(MessageEnvelope.replayLink(code:))
+                // …with the roster attached, the same as a seated player's link
+                // (MessageTurnController.replayURL): a watcher who shares the
+                // finished game should not hand out a link that has forgotten
+                // who played it. `names` is the joins of the chain that was just
+                // decoded, `view` the table it built.
+                spectatorReplayURL = read.replayCode.map {
+                    MessageEnvelope.replayLink(
+                        code: $0,
+                        names: ReplayExtras.seatNames(names, count: view.numPlayers))
+                }
                 spectator = (view, names)
                 // ROUND 21: a FINISHED chain also gets a real board to watch the
                 // last move on, seated at nobody's seat - see `spectatorBoard`.
@@ -1900,7 +1893,7 @@ private struct GameSurface: View {
     /// with the name gate. `quietOpen` (round-9 #5): this is my own just-sent
     /// chain, so its last move - mine, watched live - is not replayed.
     private func seatOnBoard(seat: Int, env: MessageEnvelope, winner: Data,
-                             prevPayload: Data? = nil, quietOpen: Bool = false) {
+                             quietOpen: Bool = false) {
         cache(seat: seat, env: env, payload: winner)
         // ROUND 12: same game, same seat, board already up -> hand the new chain
         // to the LIVE controller instead of replacing it.
@@ -1930,7 +1923,6 @@ private struct GameSurface: View {
             return
         }
         let fresh = MessageTurnController(parentPayload: winner, parent: env, mySeat: seat,
-                                          prevPayload: prevPayload,
                                           suppressOpenReplay: quietOpen)
         fresh.setSuperseded(staleBranch)
         controller = fresh
@@ -1950,18 +1942,15 @@ private struct GameSurface: View {
             MessageGameStore.shared.nickname = name
         }
         nameGate = nil
-        seatOnBoard(seat: g.seat, env: g.env, winner: g.payload,
-                    prevPayload: g.prevPayload, quietOpen: g.quietOpen)
+        seatOnBoard(seat: g.seat, env: g.env, winner: g.payload, quietOpen: g.quietOpen)
     }
 
     /// §6.3 pick resolved: remember the seat, then play. DEBUG-only
-    /// single-simulator path (never compiled into Release): deliberately skips
-    /// the open-delta-replay hint (`prevPayload` stays nil below) rather than
-    /// duplicating `adopt`'s prev-chain lookup for a testing-only picker that
-    /// runs before that lookup would even happen (`pickSeatOnAdopt` returns
-    /// out of `adopt` first) — this seat opens with the plain fallback replay
-    /// instead (notes 4/9/38's cache-miss path), which is a fine trade for a
-    /// dev aid.
+    /// single-simulator path (never compiled into Release). It used to be
+    /// described as skipping the "open-delta-replay hint" that `adopt` looks
+    /// up; round 43 established there was never a lookup to skip - the hint
+    /// was nil at its only origin and read nowhere - so this picker opens
+    /// exactly the same board every other path does.
     private func choose(seat: Int, from a: (env: MessageEnvelope, payload: Data)) async {
         cache(seat: seat, env: a.env, payload: a.payload)
         let c = MessageTurnController(parentPayload: a.payload, parent: a.env, mySeat: seat)

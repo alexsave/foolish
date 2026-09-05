@@ -306,6 +306,85 @@ final class ConflictModelTests: XCTestCase {
         XCTAssertTrue(c.pending.isEmpty)
     }
 
+    /// ROUND 40: A MOVE REFUSED MID-RETRACTION SAYS SO.
+    ///
+    /// The retraction guard at the top of `apply` returns in silence - no view
+    /// change, no `rejectTick` - because "the tap simply does nothing, exactly
+    /// as it would have a frame later when the arrival's board is up". Which
+    /// was true of the KERNEL and false of the BOARD: `MessageTableView.playAt`
+    /// has already veiled the tapped cards and planted a resting ghost by the
+    /// time this is called (synchronously, which is the only moment early
+    /// enough to beat the paint), and the only things that ever take that veil
+    /// down again are the view change and `rejectTick`. With neither, the cards
+    /// stayed pre-hidden for the LIFE OF THE BOARD - `handSlotDeferred` keeps
+    /// them out of a centred fan, so the hand lays out fewer cards than it
+    /// holds with nothing animating. That is the owner's device breadcrumb,
+    /// term for term:
+    ///
+    ///     fan-rows 1 rows laid=1 hand=4 width=398 deferred=3 veiled=3
+    ///              preHidden=3 hidden=3 settled=true seq=0
+    ///
+    /// So the refusal is a FACT handed back rather than a silence: `apply`
+    /// answers false, and the board gives the veil back on the spot.
+    func testAMoveRefusedMidRetractionReportsThatItDidNotHappen() async throws {
+        let (c, opened) = try await stagedBoard()
+        guard let arriving = try await chainAfter(opened, notSeat: c.mySeat)
+        else { throw XCTSkip("no opponent move on this deal") }
+        c.setBoardWatching(true)
+        defer { c.setBoardWatching(false) }
+        await c.offerArrival(payload: arriving.payload, parent: arriving.env)
+        XCTAssertTrue(c.conflictRetracting, "the fixture did not pose a retraction")
+
+        // Any move at all - the guard is ahead of every rule, and the kernel is
+        // never asked. `c.legal` is the retracted base's own menu.
+        let move = try XCTUnwrap(c.legal.first { $0.type != .wait })
+        let tick = c.rejectTick
+        let applied = await c.apply(move)
+
+        XCTAssertFalse(applied,
+                       "a move refused mid-retraction reported success, so the board "
+                       + "never gives back the veil it raised over the tapped cards - "
+                       + "they stay laid out nowhere for the life of the board")
+        XCTAssertEqual(c.rejectTick, tick,
+                       "the refusal stays SILENT on screen (no toast, no haptic) - "
+                       + "the answer is the return value, not a rejection")
+        XCTAssertTrue(c.pending.isEmpty, "the refused move must not have been staged")
+    }
+
+    /// The other half of the same contract, so `false` cannot be read as "this
+    /// always says no": a move the kernel really applies answers true. The
+    /// board hangs its veil release off that answer, so a `false` here would
+    /// hand back the veil over a card that IS on its way to the table - the
+    /// original bug with the sign flipped.
+    func testAnAppliedMoveReportsThatItHappened() async throws {
+        // The same searched deal `stagedBoard` uses, stopped one step earlier:
+        // the chain as it was DEALT, opened by the seat that may attack.
+        let k = MessageKernel.shared
+        for salt in UInt8(1)...UInt8(60) {
+            try await k.newGame(seed: Data(repeating: salt, count: 32), players: 2)
+            var opener = -1
+            for s in 0..<2 {
+                if (await k.residentLegal(seat: s)).contains(where: { $0.type == .attack }) {
+                    opener = s; break
+                }
+            }
+            guard opener >= 0 else { continue }
+            let dealt = try await k.seal(phase: 2, lastActorSeat: opener, gameId: 0xC02,
+                                         parent8: zero8, joins: joins)
+            let env = try await MessageEnvelope.decode(payload: dealt, viewer: -1)
+            let c = MessageTurnController(parentPayload: dealt, parent: env, mySeat: opener)
+            await c.begin()
+            guard let attack = c.legal.first(where: { $0.type == .attack }) else { continue }
+
+            let applied = await c.apply(attack)
+
+            XCTAssertTrue(applied, "a move the kernel accepted reported a refusal")
+            XCTAssertEqual(c.pending.count, 1)
+            return
+        }
+        throw XCTSkip("no 2p deal in 60 tries let its opener attack")
+    }
+
     /// A duplicate delivery of the chain my staged move is built on is NOT a
     /// conflict: the staged move was composed against exactly those bytes and
     /// must survive. Before the conflict model this fell into `adopt`'s

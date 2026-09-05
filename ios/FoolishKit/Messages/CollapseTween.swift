@@ -58,6 +58,27 @@ public enum CollapseTween {
     /// a race. Exactly one writer, and it is the tween itself.
     @MainActor public static var isTweening = false
 
+    /// IS THE HOST STILL MOVING THE SHEET? Set from the extension's
+    /// `willTransition`/`didTransition` (the only place that can know), read by
+    /// the board before it starts an OPEN REPLAY.
+    ///
+    /// ROUND 30, the owner on 1.0(33): "when I replayed a bout ending good
+    /// bubble, the rotation of the sword to check animation started WHILE the
+    /// view was coming up into view. So we barely saw the sword."
+    ///
+    /// Tapping a bubble expands the extension, and the board is mounted and
+    /// running while Messages is still sliding the sheet up. The replay is the
+    /// whole reason the player tapped, and it was spending its first half behind
+    /// the edge of the screen - worst for the shortest gestures, which is why a
+    /// good's sword-to-check was the one that vanished. The card flights were
+    /// losing the same beat and nobody had noticed.
+    ///
+    /// A flag rather than the existing `awaitTransitionSettled` continuation
+    /// because the waiter lives on the view controller and the thing that needs
+    /// to wait is a SwiftUI view three frameworks down; this is the same shape
+    /// as `isTweening` beside it, and for the same reason.
+    @MainActor public static var isPresenting = false
+
     /// Heights under this are the compact strip; an expanded board is far
     /// taller. The transition reports both, and only the compact ones say
     /// anything about where the collapse is going.

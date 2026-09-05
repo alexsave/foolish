@@ -1,9 +1,15 @@
 name: ios
 
-# iOS checks. The portable half runs on Linux (no Xcode needed): the C engine
-# bridge smoke test, goldens freshness, and the architecture lint. The Xcode
-# build+test half needs a macOS runner and is templated below — enable it once
-# an Apple Developer account / macOS minutes are available (Milestone F).
+# iOS checks that do NOT need a Mac. Two jobs:
+#
+#   bridge-linux         - the C engine bridge smoke test, goldens freshness and
+#                          the architecture lint, on any clang box.
+#   replay-names-parity  - the Swift replay-names encoder compiled by a REAL
+#                          Swift toolchain and diffed against the TypeScript
+#                          decoder byte for byte (see the job's own comment).
+#
+# The Xcode build+test half (FoolishTests, HarnessTests) is deliberately NOT
+# here - see the note at the bottom of this file.
 
 on:
   push:
@@ -25,7 +31,7 @@ jobs:
         run: |
           cd c && make ios-goldens
           if ! git diff --quiet -- ../ios/Fixtures/goldens.json; then
-            echo "::error::ios/Fixtures/goldens.json is stale — run 'make ios-goldens' and commit."
+            echo "::error::ios/Fixtures/goldens.json is stale - run 'make ios-goldens' and commit."
             git --no-pager diff -- ../ios/Fixtures/goldens.json
             exit 1
           fi
@@ -33,20 +39,92 @@ jobs:
       - name: Architecture lint (§4, §16.E1)
         run: bash ios/scripts/lint_architecture.sh
 
-  # ---- Xcode build + test (macOS) — enable in Milestone F -------------------
-  # xcode:
-  #   runs-on: macos-15
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - name: Install XcodeGen
-  #       run: brew install xcodegen
-  #     - name: Build the C engine xcframework
-  #       run: cd c && make ios-lib
-  #     - name: Generate the project
-  #       run: cd ios && xcodegen generate
-  #     - name: Build & test
-  #       run: |
-  #         cd ios
-  #         xcodebuild -project Foolish.xcodeproj -scheme Foolish \
-  #           -destination 'platform=iOS Simulator,name=iPhone 16' \
-  #           build test | xcpretty
+  # ---- Portable: the replay-link nicknames codec, both languages at once ----
+  #
+  # e2e/imessage_replay_names.test.ts compiles the REAL Swift encoder
+  # (sdk/swift/Base32.swift + sdk/swift/ReplayExtras.swift) and asserts its blob
+  # is byte-identical to what the TypeScript encoder/decoder
+  # (server/api/common/replay/extras.ts) produce for the same roster. That
+  # equality is the only thing stopping the two implementations drifting on the
+  # name-trimming rule, which is the one part of the format with any judgement
+  # in it.
+  #
+  # It needs a Swift compiler, and without one it SKIPS ITSELF. The full e2e
+  # suite already runs this file inside coverage.yml (coverage:e2e globs
+  # e2e/*.test.ts), but on a swiftless ubuntu runner - so until this job existed
+  # the guard had only ever run on the owner's Mac and CI was green either way.
+  #
+  # WHY A CONTAINER AND NOT swift-actions/setup-swift. Both work; the official
+  # docker.io/library/swift image is first-party, pins the exact toolchain in
+  # one readable token, and is the thing that was actually tested before this
+  # was committed (the parity test was run inside swift:6.2.4-noble and passed
+  # 6/6, skipped 0, with byte-identical output to macOS swiftc 6.2.3). A
+  # third-party action would add a supply-chain hop and a version matrix that
+  # has to keep matching whatever ubuntu-latest becomes. 6.2.4-noble is Ubuntu
+  # 24.04 (same family as ubuntu-latest) and the 6.2.x line the Mac runs; bump
+  # the pin deliberately, never float it - a codec gate that silently changes
+  # compiler is a gate that can silently change bytes.
+  #
+  # No Postgres: this test touches no database (its own header says so), so it
+  # deliberately does NOT ride along on the heavy coverage/validate jobs.
+  replay-names-parity:
+    runs-on: ubuntu-latest
+    container: swift:6.2.4-noble
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # 20 matches validate.yml. The test is pure TS + a subprocess; it does
+          # not need the 24 that coverage.yml's ESM-loader tests do.
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      # Fail loudly if the image ever ships without a compiler, rather than
+      # letting the test quietly skip its way to a green check.
+      - name: Swift toolchain is present
+        run: swiftc --version
+
+      # NO PIPEFAIL HERE. Steps inside a container run under `sh -e`, not bash,
+      # and dash rejects `set -o pipefail` outright - the step then dies on its
+      # own first line with "Illegal option -o pipefail" and never runs the
+      # test. Redirect instead of piping, so the runner's exit status is the
+      # one being checked.
+      - name: Swift <-> TypeScript replay-names parity
+        run: |
+          set -eu
+          npm run test:swift-parity > parity.log 2>&1 || { cat parity.log; exit 1; }
+          cat parity.log
+          # node's runner reports skips as a pass, so assert the count itself.
+          # Matches both the TAP ("# skipped 0") and the spec reporter's line.
+          grep -q 'skipped 0' parity.log || {
+            echo "::error::the Swift/TypeScript replay-names parity test SKIPPED - it proved nothing"
+            exit 1
+          }
+
+# ---- Mac-side tests are run LOCALLY, not here -------------------------------
+#
+# There is no macOS job in this repo and there is not going to be one: the repo
+# is private, where Actions minutes are metered and macOS bills at 10x Linux.
+#
+# The 454 XCTest cases that genuinely need Xcode (430 FoolishTests via scheme
+# Foolish, 24 HarnessTests via scheme FoolishHarness) run on the owner's Mac
+# with:
+#
+#     ios/scripts/mac_tests.sh
+#
+# which builds the xcframework, regenerates the project, restores the
+# entitlements xcodegen wipes, runs both test schemes and builds the SHIPPING
+# scheme FoolishMessagesApp. About a minute all in. Anything portable belongs
+# in a job above instead - `make ios-smoke`, the goldens diff, the architecture
+# lint and the codec parity job are all Mac-free proofs of Mac-bound code, and
+# that is the pattern to extend.
+#
+# (A previous version of this file carried a commented-out macos-15 template
+# "for Milestone F". It was removed rather than left to rot: besides being ruled
+# out on cost, it built and tested scheme `Foolish` - the standalone iOS app,
+# bundle cards.foolish.app - which is NOT the product that ships. The shipping
+# scheme is `FoolishMessagesApp`, bundle cards.foolish.msg. That exact scheme
+# confusion has already cost one App Store upload.)

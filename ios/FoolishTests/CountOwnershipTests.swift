@@ -1,0 +1,519 @@
+// THE FROZEN COUNTS BELONG TO WHOEVER IS ANIMATING - rounds 42, 43 and 44.
+//
+// A running sequence freezes the seat badges, the deck, the discard, the out
+// badges and the role marks to the board BEFORE its move and walks them
+// forward one step per landing flight (`runEventStream`). A LIVE PLAY of mine
+// that lands in the middle of that used to write over the same state twice:
+// `freezeCounts` re-froze it to a board several steps further on, and
+// `releaseCounts` then cleared it outright. The stream's next step put it back.
+//
+// MEASURED ON THE RIG, and this is where the numbers come from - scenario
+// `take`, 4 players, HARNESS_AUTOMOVE + HARNESS_AUTOMOVE_NOWAIT (which is the
+// rig playing INTO a running replay, the one lifecycle nothing else poses),
+// HARNESS_SLOWMO=8 so the beats are separable. Seat 3's badge, one card ever
+// leaving that seat:
+//
+//              step 1     my play     step 2     step 3
+//   before       6           5          6          5      <- down, back UP, down
+//   after        6           6          6          5      <- one card, one step
+//
+// And seat 0's, filmed at t=4.6s: before the fix the badge read 4 with an EMPTY
+// table - it had counted down a card that had not started moving.
+//
+// ROUND 43 FOUND A THIRD WRITER. `releaseLivePlayVeil` - the one path for a
+// play that comes to nothing - made the very same writes with no guard at all,
+// so round 42's fix was undone one line after it was applied: `play` deferred
+// the freeze (correctly) and then released what it had just declined to touch.
+// Its bluntest reproduction is a tap during a red conflict retraction, because
+// `MessageTurnController.apply` returns false for the whole of that window and
+// `flyUndoReturn` holds it open at `sequenceDepth >= 1`.
+//
+// ROUND 44 STOPPED COUNTING WRITERS. Two rounds, two instances, one shape: the
+// rule lived as a `guard` line copy-pasted into three functions, and there were
+// twenty-odd assignments across six thousand lines that could each have been a
+// fourth. So the five fields moved into `ShownLedger` (its own file, `private`
+// storage), and the only way to change them is `write(_:)`, which takes a
+// CLAIM. A new writer in MessageTableView.swift cannot assign to the fields at
+// all - that is the compiler's job now, not a reviewer's - and cannot call
+// `write` without picking a claim off the list and reading what each one means.
+//
+// WHAT IS LEFT FOR A SOURCE TEST, and why these are still source tests. The
+// compiler enforces the funnel; it cannot enforce that the funnel stays a
+// funnel (somebody making the fields settable, or handing `&fields` out
+// somewhere else), nor that each caller claims what it actually IS. Both are
+// facts about WHERE something is written, which is exactly what this can check
+// - the same choice, for the same reason, as WoodHitRegionTests. The behaviour
+// itself is pinned by the rig measurement above, which is reproducible from the
+// command line in that header.
+//
+// FUNCTION BODIES ARE CUT ON INDENTATION, not on a brace count. Round 43's
+// version of this file walked braces, which cannot tell a `{` in a comment from
+// a `{` in code - and these functions are more comment than code. Every method
+// here sits at four spaces inside `MessageTableView` and closes with a line
+// that is exactly `    }`, so that line is the end of it. (`releaseCounts` is a
+// nested func at eight.)
+//
+// MUTATION-CHECKED, round 44, fourteen mutants, all of them red before the
+// code went back - the claim on each of the six owners swapped for a wrong one
+// (six mutants, including `replayLastMoveOnOpen` demoted to `.bystander`, which
+// is the trap this round was warned about, and `syncRoles` demoted, which would
+// silently drop a pass's shield flight); a ledger write added in a seventh
+// function; a second `&fields` hand-out; a field made settable and then
+// assigned from the board; `clearSweep()` unhooked from the ledger's verdict;
+// the role seed turned into an override; `allows` reduced to `true`, which IS
+// rounds 42 and 43 undone; the guard re-spelled with the counter; and a loose
+// `@State` override put back on the board.
+//
+// AND ONE THAT NEVER REACHED A TEST, which is the point of the whole shape:
+// assigning `ledger.deck` from the board without first making the property
+// settable does not compile at all - "cannot assign to property: 'deck' is a
+// get-only property". The tests below cover what the compiler cannot: somebody
+// making it settable, or claiming to be somebody they are not.
+//
+// ROUND 45 BROUGHT THE SECOND COUNTER IN, on exactly the same terms. The other
+// number a sequence owns is `BoardAnimator.sequenceDepth`, and it was claimed
+// by hand at eight sites - `+= 1` with a matching `defer { -= 1 }`, exactly one
+// of which carried the paragraph explaining why the release has to be a
+// `defer`. The arithmetic now lives in `BoardAnimator.holdSequence`,
+// the counter's setter is `fileprivate` to BoardFlight.swift, and the last
+// section of this file pins what the compiler still cannot: that every hold is
+// released, and that it is released BEFORE its teardown rather than after.
+
+import XCTest
+@testable import FoolishKit
+
+final class CountOwnershipTests: XCTestCase {
+
+    // MARK: - reading the source
+
+    private func source(_ name: String) throws -> [String] {
+        // #filePath is this file; the board sits two directories over.
+        let here = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        let url = here.deletingLastPathComponent()
+            .appendingPathComponent("FoolishKit/Boards/\(name)")
+        return try String(contentsOf: url, encoding: .utf8)
+            .components(separatedBy: "\n")
+    }
+
+    /// The lines of `func <name>(`, from its declaration to the line that closes
+    /// it - which at this indentation is the whole of the function and nothing
+    /// else. See the header for why this is not a brace count.
+    private func body(of fn: String, in src: [String], indent: Int = 4) throws -> [String] {
+        let pad = String(repeating: " ", count: indent)
+        let decl = try XCTUnwrap(src.firstIndex { line in
+            line.hasPrefix(pad) && !line.hasPrefix(pad + " ")
+                && line.contains("func \(fn)(")
+        }, "no func \(fn) at indent \(indent)")
+        let close = try XCTUnwrap(src[decl...].firstIndex(of: pad + "}"),
+                                  "func \(fn) never closes at indent \(indent)")
+        return Array(src[decl...close])
+    }
+
+    /// Code only - every `//` comment stripped. Most of this file's assertions
+    /// are about statements, and these two files explain themselves at such
+    /// length that a test which cannot tell a comment from a statement would
+    /// fail on the very sentence documenting the thing it is checking.
+    private func code(_ lines: [String]) -> [String] {
+        lines.filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+    }
+
+    private let owners = [("freezeCounts", 4), ("releaseCounts", 8),
+                          ("releaseLivePlayVeil", 4), ("runEventStream", 4),
+                          ("replayLastMoveOnOpen", 4), ("syncRoles", 4)]
+
+    // MARK: - the funnel
+
+    /// THE FIVE FIELDS LIVE IN ONE PLACE. Not five pieces of `@State` on the
+    /// board any more: one ledger, whose storage the board cannot reach.
+    func testTheBoardHoldsOneLedgerAndNoLooseOverrides() throws {
+        let src = try code(source("MessageTableView.swift"))
+        XCTAssertEqual(src.filter { $0.contains("@State private var ledger = ShownLedger()") }.count, 1,
+                       "the board should hold exactly one ShownLedger")
+        for gone in ["deckCountOverride", "discardCountOverride", "seatCountOverride",
+                     "outShown", "roleShown"] {
+            XCTAssertFalse(src.contains { $0.contains("@State") && $0.contains(gone) },
+                           "\(gone) is back as loose @State - it belongs in ShownLedger, "
+                           + "where a write has to name its claim")
+        }
+    }
+
+    /// …AND THE BOARD CANNOT ASSIGN THEM. The compiler already says so (they are
+    /// read-only computed properties over `private` storage in another file);
+    /// this says it too, so that making one settable is a red test and not a
+    /// quiet re-opening of rounds 42 and 43.
+    func testNothingAssignsALedgerFieldDirectly() throws {
+        let src = try code(source("MessageTableView.swift"))
+        // `ledger.deck =`, `ledger.hand[3] =`, and so on. `==` is a read.
+        let write = try NSRegularExpression(
+            pattern: #"ledger\.(deck|discard|hand|out|roles)(\[[^\]]*\])?\s*=[^=]"#)
+        for (i, line) in src.enumerated() {
+            let r = NSRange(line.startIndex..., in: line)
+            XCTAssertNil(write.firstMatch(in: line, range: r),
+                         "line \(i + 1) assigns a ledger field directly: \(line.trimmingCharacters(in: .whitespaces))")
+        }
+    }
+
+    /// THE FUNNEL STAYS A FUNNEL. `write` is handed the storage as `inout`, and
+    /// that is the one hand-out: a second `&fields` anywhere in the file - a
+    /// convenience mutator, a "just this once" escape - would let a caller
+    /// change what the badges show without ever naming a claim, which is the
+    /// whole of what rounds 42 and 43 cost.
+    func testTheStorageEscapesOnlyThroughWrite() throws {
+        let src = try source("ShownLedger.swift")
+        XCTAssertTrue(code(src).contains { $0.contains("private var fields = Fields()") },
+                      "the five fields must be private storage, not a settable property")
+        let handOuts = code(src).enumerated().filter { $0.element.contains("&fields") }
+        XCTAssertEqual(handOuts.count, 1, "exactly one place may hand the storage out")
+        let write = try body(of: "write", in: src)
+        XCTAssertTrue(write.contains { $0.contains("&fields") },
+                      "…and that place is `write`, which is where the claim is checked")
+    }
+
+    // MARK: - who claims what
+
+    /// NO FOURTH WRITER, SILENTLY. Every ledger write in the board must sit
+    /// inside one of the six functions that are known to own or arm the ledger.
+    /// A new one somewhere else fails here and has to be argued for in the
+    /// claim list - which is the review this rule never got the first two times.
+    func testEveryLedgerWriteSitsInsideAKnownOwner() throws {
+        let src = try source("MessageTableView.swift")
+        var accounted: [String] = []
+        for (fn, indent) in owners {
+            accounted += code(try body(of: fn, in: src, indent: indent))
+                .filter { $0.contains("ledger.write(") }
+        }
+        let all = code(src).filter { $0.contains("ledger.write(") }
+        XCTAssertFalse(all.isEmpty, "the board writes the ledger somewhere")
+        XCTAssertEqual(all.count, accounted.count,
+                       "a ledger write outside freezeCounts / releaseCounts / "
+                       + "releaseLivePlayVeil / runEventStream / replayLastMoveOnOpen / "
+                       + "syncRoles - say which of the four claims it is and add it here")
+    }
+
+    /// AND EACH ONE CLAIMS WHAT IT IS. One line per function is the whole rule
+    /// rounds 42-44 were about, and it is now checkable per call site rather
+    /// than "is there a guard in here somewhere".
+    func testEachOwnerClaimsWhatItActuallyIs() throws {
+        let src = try source("MessageTableView.swift")
+        let expected: [String: (String, Int)] = [
+            // The three bystanders: a live play, a plain-move release, a
+            // refusal. All three defer to a running sequence (round 42/43).
+            "freezeCounts": (".bystander", 4),
+            "releaseCounts": (".bystander", 8),
+            "releaseLivePlayVeil": (".bystander", 4),
+            // The owner. Guarding ANY of these would freeze every badge on the
+            // board for good, which is far worse than the twitch they fix.
+            "runEventStream": (".sequence", 4),
+            // Arming a ledger for a sequence that has not claimed
+            // `animSequenceToken` yet - see ShownClaim.arming for the
+            // regression a `.bystander` here would cause.
+            "replayLastMoveOnOpen": (".arming", 4),
+            // The one diff-aware advance, and the only animator of a pass's
+            // shield hand-off when no sequence is running.
+            "syncRoles": (".handOff", 4)
+        ]
+        let claims = [".sequence", ".arming", ".handOff", ".bystander"]
+        for (fn, (want, indent)) in expected {
+            let lines = code(try body(of: fn, in: src, indent: indent))
+                .filter { $0.contains("ledger.write(") }
+            XCTAssertFalse(lines.isEmpty, "\(fn) should still write the ledger")
+            for line in lines {
+                for claim in claims {
+                    XCTAssertEqual(line.contains("ledger.write(\(claim)"), claim == want,
+                                   "\(fn) must claim \(want): \(line.trimmingCharacters(in: .whitespaces))")
+                }
+            }
+        }
+    }
+
+    /// THE RULE ITSELF, with no board and no running sequence anywhere near it.
+    /// Exactly one of the four claims ever stands down; the other three are the
+    /// owner in its three shapes.
+    func testOnlyABystanderStandsDownForARunningSequence() {
+        for claim in [ShownClaim.sequence, .arming, .handOff] {
+            XCTAssertTrue(ShownLedger.allows(claim, sequencing: true),
+                          "\(claim) owns the ledger and must never be refused")
+            XCTAssertTrue(ShownLedger.allows(claim, sequencing: false))
+        }
+        XCTAssertFalse(ShownLedger.allows(.bystander, sequencing: true),
+                       "a bystander must not write over a running sequence's ledger")
+        XCTAssertTrue(ShownLedger.allows(.bystander, sequencing: false),
+                      "…and must write normally on a board at rest, which is the common case")
+    }
+
+    // MARK: - the halves that must NOT defer
+
+    /// The other half of the same rule, which a guard placed too high would
+    /// break just as badly: the cards THIS play hid are its own property. No
+    /// sequence knows about them and nothing else will ever hand them back, so a
+    /// refusal that lands mid-flight must still reveal them or they are gone
+    /// from the fan for the life of the board (that is round 40's leak, and it
+    /// must not be re-opened in the name of round 43). Eight spaces = the
+    /// function's own top level = it runs on every call.
+    func testTheRefusedPlacementIsStillGivenBackUnconditionally() throws {
+        let b = try body(of: "releaseLivePlayVeil", in: try source("MessageTableView.swift"))
+        for write in ["handBeforeMyMove = nil", "pendingPlacement = nil",
+                      "pendingCover = nil", "animator.cancelHeld(ids)",
+                      "animator.reveal(ids)"] {
+            XCTAssertTrue(b.contains("        \(write)"),
+                          "\(write) belongs to this play alone and must run on every call")
+        }
+    }
+
+    /// …and the piece that is NOT the ledger but is handed back on exactly the
+    /// same terms. The pre-bout table `play` laid out is frozen by the same play
+    /// and dropped by the same sequence teardown, so it goes back if and only if
+    /// the ledger did - which is what `write` returning a Bool is for. Written
+    /// out as one line so this cannot pass on a `clearSweep()` that has drifted
+    /// out of the verdict.
+    func testTheSweptTableIsHandedBackOnTheSameTermsAsTheLedger() throws {
+        let b = code(try body(of: "releaseLivePlayVeil", in: try source("MessageTableView.swift")))
+        XCTAssertTrue(b.contains("        if released { clearSweep() }"),
+                      "the swept table must follow the ledger's own verdict")
+        XCTAssertFalse(b.contains("        clearSweep()"),
+                       "an unconditional clearSweep takes a running sequence's cards off the table")
+    }
+
+    /// The ledger is a SEQUENCE's property, so exactly one place may hand it
+    /// back unconditionally: `runEventStream`'s teardown, and only on the branch
+    /// that has established it is the newest sequence. Pinned because the whole
+    /// fix above rests on that release still happening - a board whose badges
+    /// never come back off their overrides is frozen for good, which is a worse
+    /// defect than the twitch.
+    func testTheStreamTeardownStillReleasesItUnconditionally() throws {
+        let src = try source("MessageTableView.swift")
+        let stream = code(try body(of: "runEventStream", in: src))
+        let teardown = try XCTUnwrap(stream.firstIndex { $0.contains("if mySeq == animSequenceToken {") },
+                                     "the teardown's newest-sequence branch")
+        let after = stream[teardown...].prefix(12).joined(separator: "\n")
+        XCTAssertTrue(after.contains("ledger.write(.sequence)"),
+                      "the newest sequence's teardown must still hand the ledger back")
+        XCTAssertTrue(after.contains("l.deck = nil"))
+        XCTAssertTrue(after.contains("l.hand = [:]"))
+        XCTAssertFalse(after.contains(".bystander"),
+                       "the teardown runs INSIDE its own sequence - claiming bystander there "
+                       + "would mean the ledger is never released at all")
+    }
+
+    /// A board with the three facts `seedMarks` reads: who defends, who opens,
+    /// and which seats are out. Everything else is filler - `RoleState` takes
+    /// only defender/firstAttacker/goodMask, and the out seed only reads
+    /// `players`, so nothing below is load-bearing.
+    private func board(defender: Int, firstAttacker: Int, out: Set<Int>) -> GameView {
+        GameView(status: 1, numPlayers: 4, powerSuit: 1, deckCount: 10,
+                 discardCount: 0, hasFlipped: true, firstAttacker: firstAttacker,
+                 defender: defender, viewer: 0, goodMask: 0, gameOver: -1,
+                 flipped: nil, battles: [], eliminationOrder: [],
+                 players: (0..<4).map { seat in
+                     PlayerView(seat: seat, name: "p\(seat)",
+                                status: out.contains(seat) ? SeatStatus.out.rawValue
+                                                           : SeatStatus.in.rawValue,
+                                handCount: out.contains(seat) ? 0 : 6,
+                                awaitingAttack: false, strategyKey: 0, hand: nil)
+                 })
+    }
+
+    /// A SEED IS NOT AN OVERRIDE, and round 43 made that assertable directly.
+    ///
+    /// This used to be four source scans - one per site - looking for the
+    /// literal `if l.roles == nil` at each of `freezeCounts`, the two cold-open
+    /// seeds in `runEventStream`, and `replayLastMoveOnOpen`'s arming. It went
+    /// red the moment the rule moved into `ShownLedger.Fields.seedMarks`, which
+    /// is the right failure: the discipline was no longer visible where it was
+    /// being looked for. It is now enforced for every caller at once, and can be
+    /// EXERCISED rather than read, so these are real assertions on behaviour.
+    ///
+    /// The rule: an unset field takes the prior board; a set one is left alone,
+    /// because once the marks exist they are only ever advanced by something
+    /// that knows what changed and can fly it. Overwrite them from a live play
+    /// and the marks freeze to a board that has ALREADY rotated, leaving the
+    /// running sequence's hand-off with nothing to hand over.
+    func testSeedMarksFillsOnlyWhatIsUnset() {
+        let early = board(defender: 1, firstAttacker: 0, out: [])
+        let later = board(defender: 2, firstAttacker: 1, out: [3])
+
+        // Unset -> takes the board it is given.
+        var f = ShownLedger.Fields()
+        f.seedMarks(from: early, outs: true)
+        XCTAssertEqual(f.roles?.defender, 1)
+        XCTAssertEqual(f.out, [])
+
+        // Already showing -> left alone. This is the whole of the rule.
+        f.seedMarks(from: later, outs: true)
+        XCTAssertEqual(f.roles?.defender, 1, "a seed may not overwrite marks that already exist")
+        XCTAssertEqual(f.out, [], "…nor the out badges")
+    }
+
+    /// `outs: false` is not an oversight at two of the three call sites: a live
+    /// `freezeCounts` holds the pre-move board and writes the out badges as an
+    /// OVERRIDE in the same breath, so seeding them there would be the wrong
+    /// half of the same write. Only the cold open, which has no freeze behind
+    /// it, seeds them.
+    func testSeedMarksLeavesTheOutBadgesAloneUnlessAsked() {
+        var f = ShownLedger.Fields()
+        f.seedMarks(from: board(defender: 1, firstAttacker: 0, out: [2]), outs: false)
+        XCTAssertNotNil(f.roles, "the marks are always seeded")
+        XCTAssertNil(f.out, "the out badges are not, unless the caller asks")
+    }
+
+    /// A board with no earlier step to ask for - a genesis deal, the first move
+    /// on a fresh deal - seeds nothing rather than crashing or inventing one.
+    func testSeedMarksFromNoBoardIsANoOp() {
+        var f = ShownLedger.Fields()
+        f.seedMarks(from: nil, outs: true)
+        XCTAssertNil(f.roles)
+        XCTAssertNil(f.out)
+    }
+
+    /// …and the call sites still go through it. The rule is one rule only for
+    /// as long as nobody hand-rolls the conditional again.
+    ///
+    /// NARROW ON PURPOSE, and the first version was not. It asserted that these
+    /// bodies contain no `l.roles = ` and no `l.out = Set(` at all, which is
+    /// wrong twice over: `freezeCounts` writes the out badges as a deliberate
+    /// unconditional OVERRIDE (it holds the pre-move board, so there is nothing
+    /// to lag), and `runEventStream`'s teardown releases with `l.roles = nil`.
+    /// Both are legitimate. What may not come back is the SEED spelled by hand -
+    /// a `RoleState` built into the field, or an `if ... == nil` guarding it.
+    func testNoCallSiteSeedsTheMarksByHand() throws {
+        let src = try source("MessageTableView.swift")
+        for fn in ["freezeCounts", "runEventStream", "replayLastMoveOnOpen"] {
+            let b = code(try body(of: fn, in: src)).joined(separator: "\n")
+            XCTAssertFalse(b.contains("l.roles = RoleState("),
+                           "\(fn) builds a RoleState into the ledger by hand - seed "
+                           + "through `seedMarks`, where the seed-if-unset rule lives")
+            XCTAssertFalse(b.contains("l.roles == nil") || b.contains("l.out == nil"),
+                           "\(fn) re-derives the seed-if-unset condition; `seedMarks` "
+                           + "is the one place that decides it")
+        }
+    }
+
+    // MARK: - one spelling
+
+    /// ONE SPELLING OF ONE PREDICATE. `BoardAnimator.isSequencing` is defined as
+    /// `sequenceDepth > 0` (BoardFlight.swift), so the two are the same test -
+    /// and the board used to carry both, which reads like two different rules
+    /// about two different things. The question "is a sequence running" is now
+    /// `isSequencing` everywhere; `sequenceDepth` is left only for the three
+    /// uses that are about the NUMBER - claiming it, the nested-wait floor in
+    /// `drainOtherSequences`, and printing it in a trace.
+    func testTheOwnershipTestIsSpelledOneWay() throws {
+        for file in ["MessageTableView.swift", "ShownLedger.swift"] {
+            for line in code(try source(file)) {
+                XCTAssertFalse(line.contains("sequenceDepth == 0") || line.contains("sequenceDepth > 0"),
+                               "\(file): ask `BoardAnimator.isSequencing`, not the counter: "
+                               + line.trimmingCharacters(in: .whitespaces))
+            }
+        }
+        let write = code(try body(of: "write", in: try source("ShownLedger.swift")))
+            .joined(separator: "\n")
+        XCTAssertTrue(write.contains("BoardAnimator.isSequencing"),
+                      "…and the ownership guard is a statement, not only a comment about one")
+    }
+
+    // MARK: - one hold
+
+    /// ONE PLACE MOVES THE COUNTER. Like the ledger fields above, the compiler
+    /// already says so - `sequenceDepth`'s setter is `fileprivate` to
+    /// BoardFlight.swift, so a ninth hand-rolled `+= 1` in the board does not
+    /// build - and like the ledger fields, this says it too, so that quietly
+    /// widening the setter back to `public` is a red test rather than a free
+    /// re-opening of the eight-copies-of-one-rule shape.
+    func testTheSequenceCounterIsMovedInExactlyOnePlace() throws {
+        let src = try source("BoardFlight.swift")
+        XCTAssertTrue(code(src).contains { $0.contains("public fileprivate(set) static var sequenceDepth") },
+                      "the depth's setter must stay fileprivate to BoardFlight.swift - "
+                      + "`holdSequence` is the only way to take it")
+        let boards = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("FoolishKit/Boards")
+        let files = try FileManager.default.contentsOfDirectory(atPath: boards.path)
+            .filter { $0.hasSuffix(".swift") && $0 != "BoardFlight.swift" }
+        XCTAssertFalse(files.isEmpty, "the board files should be readable from here")
+        for file in files {
+            for line in code(try source(file)) {
+                XCTAssertFalse(line.contains("sequenceDepth +=") || line.contains("sequenceDepth -="),
+                               "\(file): take the depth with `BoardAnimator.holdSequence()`, "
+                               + "not by hand: " + line.trimmingCharacters(in: .whitespaces))
+            }
+        }
+    }
+
+    /// EVERY HOLD IS RELEASED, AND RELEASED FIRST. Two rules in one shape, and
+    /// the shape is the only thing a source test can see.
+    ///
+    /// The first is the leak: a hold taken and never given back leaves
+    /// `waitForSettle` - which the extension awaits before staging a bubble -
+    /// spending its whole 8-second timeout on every later send, for the rest of
+    /// the process. Indistinguishable from "sometimes it just hangs", and
+    /// invisible in a unit test, because it is a counter that is only ever one
+    /// too high.
+    ///
+    /// The second is the ORDER, which round 45 was warned about and did not
+    /// change. Five of these eight holds are followed, in the same `defer`, by
+    /// real teardown work - handing orphaned hand slots forward, depositing
+    /// into the reversal ledger, revealing a stuck id set, dropping the swept
+    /// table, rescuing a holdback - and the release has always come FIRST, so
+    /// the teardown runs on a board that is no longer counted as sequencing.
+    /// Wrapping the body in a `holdingSequence { }` instead, or simply moving
+    /// the release to the bottom of the `defer`, inverts that: the teardowns
+    /// reach `ShownLedger.write`, which asks `isSequencing`. So the release is
+    /// pinned to the first statement of the hold's own `defer`, which is the
+    /// one place the order is visible.
+    func testEverySequenceHoldIsReleasedFirstThingInItsDefer() throws {
+        let src = code(try source("MessageTableView.swift"))
+        let holds = src.indices.filter { src[$0].contains("BoardAnimator.holdSequence()") }
+        XCTAssertFalse(holds.isEmpty, "the board takes the depth somewhere")
+        for i in holds {
+            XCTAssertEqual(src[i].trimmingCharacters(in: .whitespaces),
+                           "let hold = BoardAnimator.holdSequence()",
+                           "a hold is bound to `hold` and nothing else, so its release is greppable")
+            let next = src[i + 1].trimmingCharacters(in: .whitespaces)
+            if next == "defer { hold.release() }" { continue }
+            XCTAssertEqual(next, "defer {",
+                           "the hold on line \(i + 1) is not given straight back in a `defer` - "
+                           + "an early return between the two leaks the counter for good")
+            XCTAssertEqual(src[i + 2].trimmingCharacters(in: .whitespaces), "hold.release()",
+                           "the release must be the FIRST statement of the defer, ahead of any "
+                           + "teardown - see this test's own note for why the order matters")
+        }
+        let releases = src.filter { $0.contains("hold.release()") }
+        XCTAssertEqual(releases.count, holds.count,
+                       "every hold is released exactly once, and nothing else releases one")
+    }
+
+    /// THE HOLD ITSELF, with no board anywhere near it - the counter goes up
+    /// while it is held, comes back down when released, and a second release is
+    /// a no-op (a hold given back twice would put the board at rest with cards
+    /// still in the air, which is the same leak with the sign flipped).
+    @MainActor
+    func testAHoldIsTakenOnceAndGivenBackOnce() {
+        let before = BoardAnimator.sequenceDepth
+        let hold = BoardAnimator.holdSequence()
+        XCTAssertEqual(BoardAnimator.sequenceDepth, before + 1)
+        XCTAssertTrue(BoardAnimator.isSequencing)
+        let nested = BoardAnimator.holdSequence()
+        XCTAssertEqual(BoardAnimator.sequenceDepth, before + 2, "holds nest")
+        nested.release()
+        hold.release()
+        XCTAssertEqual(BoardAnimator.sequenceDepth, before)
+        hold.release()
+        XCTAssertEqual(BoardAnimator.sequenceDepth, before,
+                       "releasing a hold twice must not take a live sequence's claim away")
+    }
+
+    /// A CLAIM IS ONE STATEMENT. The animator's other number - the sequence
+    /// token - is claimed by `claimAnimSequence()`, so the bump and the receipt
+    /// cannot drift apart, and a bare bump somewhere else (which is half a
+    /// claim: it supersedes everything and then has no way to notice it was
+    /// itself superseded) is a red test rather than a plausible-looking line.
+    func testTheSequenceTokenIsClaimedThroughOneAccessor() throws {
+        let src = code(try source("MessageTableView.swift"))
+        let bumps = src.filter { $0.contains("animSequenceToken += 1") }
+        XCTAssertEqual(bumps.count, 1,
+                       "the token is bumped only inside `claimAnimSequence` - "
+                       + "call it instead of bumping by hand")
+        let claim = try body(of: "claimAnimSequence", in: try source("MessageTableView.swift"))
+        XCTAssertTrue(code(claim).contains { $0.contains("animSequenceToken += 1") },
+                      "…and that one bump is the accessor's own")
+    }
+}

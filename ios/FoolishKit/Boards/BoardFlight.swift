@@ -29,6 +29,7 @@ public var flightTime: Double {
 }
 public let flightGap: Double = 0.025       // web inter-event queue gap = 25ms
 
+
 /// ROUND 16: the HOLD between a cover that ENDED THE BOUT and the sweep that
 /// clears the table (owner: "when you cover and cause the deck to discard (last
 /// defense), it should give some time to let people see what you covered with").
@@ -166,14 +167,78 @@ public final class BoardAnimator: ObservableObject {
     /// Non-zero while a board is mid multi-step ANIMATED sequence: a bout-end
     /// cascade (discard/pickup, then each drawing player's refill) or an
     /// open-delta replay (`MessageTableView.flyBoutEndToDiscard` /
-    /// `replayLastMoveOnOpen`, both wrap their Task in `sequenceDepth += 1` /
-    /// `-= 1`). Originally HARNESS_AUTOGAME-only (it waited on this before
-    /// switching players); note 8 promoted it into the real extension's own
-    /// completion signal too — see `waitForSettle` below, which
+    /// `replayLastMoveOnOpen`, both of which hold it across their Task - see
+    /// `holdSequence`). Originally HARNESS_AUTOGAME-only (it waited on this
+    /// before switching players); note 8 promoted it into the real extension's
+    /// own completion signal too - see `waitForSettle` below, which
     /// `MessagesViewController.stage` awaits instead of guessing a fixed
     /// sleep long enough for the longest possible sequence.
-    public static var sequenceDepth = 0
+    ///
+    /// EVERYBODY READS IT, ONE FILE MOVES IT. The setter is `fileprivate` so
+    /// that the arithmetic can only happen through `holdSequence` below: a
+    /// ninth hand-rolled `+= 1` in the board does not compile, which is the
+    /// compiler doing the job a reviewer was doing eight times over.
+    public fileprivate(set) static var sequenceDepth = 0
+    /// ONE SPELLING PER QUESTION (round 44). "Is a sequence running" is THIS,
+    /// everywhere - the board used to ask it both ways (`isSequencing` here,
+    /// `sequenceDepth == 0` in three copy-pasted ownership guards and two
+    /// `atRest` composites), which reads like two different rules about two
+    /// different things. `sequenceDepth` is now only for the three uses that are
+    /// genuinely about the NUMBER: claiming it (`holdSequence`), the
+    /// nested-wait floor in `MessageTableView.drainOtherSequences`, and printing
+    /// it in a trace. Pinned by `CountOwnershipTests`.
     public static var isSequencing: Bool { sequenceDepth > 0 }
+
+    /// TAKE THE COUNTER THIS WAY, OR NOT AT ALL.
+    ///
+    /// Eight animated sequences in `MessageTableView` claim the depth, and each
+    /// one used to hand-roll the claim: a `sequenceDepth += 1` with a matching
+    /// `defer { sequenceDepth -= 1 }`. One of the eight carried the paragraph
+    /// below in full, a second pointed at it, and the other six said nothing at
+    /// all - which is the trouble with a rule that lives at its call sites.
+    /// Eight copies is eight chances to get the ninth one wrong, so the
+    /// arithmetic lives here and the reason is written down once, where the
+    /// next sequence to need a hold will read it.
+    ///
+    /// WHY THE RELEASE BELONGS IN A `defer`, and never in a bare pair at the
+    /// end of the body. An early return or a cancellation between the two
+    /// halves leaks the counter PERMANENTLY - after which `waitForSettle`
+    /// (which the extension awaits before staging a bubble) spends its full
+    /// 8-second timeout on every send for the rest of the process. That is
+    /// indistinguishable from "sometimes it just hangs", so it is not something
+    /// to leave resting on a function happening to have no other way out.
+    ///
+    /// WHY A HOLD YOU RELEASE, AND NOT A `holdingSequence { ... }` THAT WRAPS
+    /// THE BODY. Five of the eight sites do real work in that same `defer`
+    /// AFTER the decrement: handing orphaned hand slots forward, depositing
+    /// into the reversal ledger, revealing a stuck id set, rescuing a holdback.
+    /// A wrapper would put those teardowns INSIDE the hold and so invert the
+    /// order - the decrement landing after the teardown instead of before it.
+    /// Nothing outside the board could see that (a `defer` body cannot suspend,
+    /// so a decrement and the teardown that follows it are one synchronous
+    /// main-actor block, with no paint and no other sequence in between), but
+    /// the teardowns themselves reach `ShownLedger.write`, which asks
+    /// `isSequencing`. Its answer for a `.sequence` claim is the same either
+    /// way today; a change whose entire point is that nothing changes does not
+    /// get to bet on that staying true. So the shape is exactly what it always
+    /// was: release FIRST, then tear down. Pinned by `CountOwnershipTests`.
+    public static func holdSequence() -> SequenceHold { SequenceHold() }
+
+    /// One live claim on `sequenceDepth`. `init` is `fileprivate`, so the only
+    /// way to come by one is `holdSequence()`; `release()` is idempotent, so a
+    /// belt-and-braces second call can never push the counter below the number
+    /// of sequences actually running (which would be the same leak in reverse -
+    /// a board that claims to be at rest with cards still in the air).
+    @MainActor
+    public final class SequenceHold {
+        private var held = true
+        fileprivate init() { BoardAnimator.sequenceDepth += 1 }
+        public func release() {
+            guard held else { return }
+            held = false
+            BoardAnimator.sequenceDepth -= 1
+        }
+    }
 
     /// note 8: block until no animated sequence is running, instead of a
     /// caller guessing how long one might take. A plain attack/cover (no
@@ -222,16 +287,52 @@ public final class BoardAnimator: ObservableObject {
     /// the fan opens for it AS it arrives. Published so the board's layout reacts.
     @Published public private(set) var preHidden: Set<String> = []
 
+    /// WHEN each pre-hidden card WAS VEILED, and the counter that stamps it.
+    ///
+    /// ROUND 40. `clearPreHidden` used to be a blanket over a set with more
+    /// than one owner, and that is a theft waiting to happen: a sequence winds
+    /// down, the player taps a card while it is still finishing, `playAt`
+    /// veils that card - and the sequence's teardown, which still passes its
+    /// `mySeq == animSequenceToken` test because a live play never claimed the
+    /// token, hands the freshly veiled card straight back. Caught in the rig on
+    /// the first goodend run:
+    ///
+    ///     veil preHide [1-11]                      <- the tap
+    ///     held ghost at source [1-11]
+    ///     stream#1 end
+    ///     veil clearPreHidden (pop IN) [1-11]      <- the theft
+    ///     grid ... visible=1 hidden=0              <- the card PAINTS on the table
+    ///     fan-rows 1 rows laid=5 hand=5 ... seq=0
+    ///     flight START [1-11:47,623->187,338]
+    ///     grid ... visible=0 hidden=1              <- …and vanishes again
+    ///
+    /// which is the card landing, disappearing and flying in - the exact thing
+    /// `playAt`'s veil exists to prevent - and, because the fan is CENTRED, two
+    /// spurious re-layouts of the whole row on the way (the owner: "still
+    /// seeing the hand card rows twitch during the discard animation").
+    ///
+    /// So the veil is STAMPED with the moment it went up, and a teardown may
+    /// only take down what was already standing when it began - see
+    /// `clearPreHidden(raisedBy:)`. Deliberately a monotonic counter rather
+    /// than a per-sequence owner id: a sequence does not know the ids its
+    /// caller pre-hid on its behalf (that happens a Task earlier, in `body`'s
+    /// own onChange), but it does know the mark it started at.
+    public private(set) var veilEpoch = 0
+    private var veilRaisedAt: [String: Int] = [:]
+
     public init() {}
 
     /// Synchronously hide `ids` before their flight is even scheduled (note
     /// 36). Callers predict these — e.g. "my hand minus what I had before" —
     /// and must call this BEFORE the state change that would render them
     /// renders, so there is no gap for the flash. `play` removes an id from
-    /// this set the moment its OWN step actually plays it; `clearPreHidden`
-    /// is the safety net for anything predicted but never consumed.
+    /// this set the moment its OWN step actually plays it;
+    /// `clearPreHidden(raisedBy:)` is the safety net for anything predicted by
+    /// THAT sequence and never consumed.
     public func preHide(_ ids: Set<String>) {
         AnimLog.say("veil preHide [\(ids.sorted().joined(separator: ","))]")
+        veilEpoch += 1
+        for id in ids { veilRaisedAt[id] = veilEpoch }
         preHidden.formUnion(ids)
         hidden.formUnion(ids)
     }
@@ -262,16 +363,35 @@ public final class BoardAnimator: ObservableObject {
         if !shown.isEmpty { AnimLog.say("veil reveal (pop IN) [\(shown.sorted().joined(separator: ","))]") }
         preHidden.subtract(ids)
         hidden.subtract(ids)
+        for id in ids { veilRaisedAt[id] = nil }
     }
 
-    /// Force-reveal any still-pending pre-hidden ids — called once a whole
-    /// sequence (bout-end, or an open-delta replay) finishes, so a prediction
-    /// that never got consumed (e.g. a frame that never became ready) cannot
-    /// leave a card invisible forever.
-    public func clearPreHidden() {
-        if !preHidden.isEmpty { AnimLog.say("veil clearPreHidden (pop IN) [\(preHidden.sorted().joined(separator: ","))]") }
-        hidden.subtract(preHidden)
-        preHidden.removeAll()
+    /// Force-reveal the still-pending pre-hidden ids THIS sequence is
+    /// responsible for - called once a whole sequence (bout-end, or an
+    /// open-delta replay) finishes, so a prediction that never got consumed
+    /// (e.g. a frame that never became ready) cannot leave a card invisible
+    /// forever.
+    ///
+    /// `epoch` is `veilEpoch` as it stood when the caller raised ITS veil, and
+    /// it is what stops the net from being a blanket: anything veiled AFTER
+    /// that belongs to somebody else - a live play the player made while this
+    /// sequence was winding down, or a newer sequence that has pre-hidden cards
+    /// it has not flown yet - and handing those back is the theft the stamp
+    /// exists to prevent (see `veilEpoch`).
+    ///
+    /// CONSIDERED AND REJECTED: keeping a no-argument blanket alongside this
+    /// for "the last sequence standing". There is no such caller - every veil
+    /// is raised by somebody, so every clear belongs to somebody - and leaving
+    /// the blanket in place would leave the bug one forgetful call site away.
+    public func clearPreHidden(raisedBy epoch: Int) {
+        let mine = preHidden.filter { (veilRaisedAt[$0] ?? 0) <= epoch }
+        guard !mine.isEmpty else { return }
+        AnimLog.say("veil clearPreHidden<=\(epoch) (pop IN) [\(mine.sorted().joined(separator: ","))]"
+            + (mine.count == preHidden.count ? ""
+               : " (left \(preHidden.count - mine.count) veiled later)"))
+        hidden.subtract(mine)
+        preHidden.subtract(mine)
+        for id in mine { veilRaisedAt[id] = nil }
     }
 
     /// Round-8 (atomic takeoff): show `f` as ghosts resting AT THEIR SOURCE right
@@ -381,6 +501,19 @@ public struct FlyingCardsLayer: View {
                                             : .black.opacity(0.4 * p),
                             radius: 10 * p, y: 8 * p)
                     .position(x: cx, y: cy)
+                    // A CARD NEVER FADES, AND A GHOST IS A CARD.
+                    //
+                    // FBattleGrid's rule, applied to the overlay it hands off
+                    // to. This ForEach's membership changes at every step
+                    // boundary and again at teardown (`flights = []`), and
+                    // SwiftUI's default for a view leaving a container is
+                    // `.opacity` - so a ghost cleared inside any ambient
+                    // transaction dissolves in mid-air instead of handing over
+                    // to the real card at its destination. Owner, on a
+                    // retracted pickup: "Those cards then FADED. We should
+                    // NEVER fade cards in this game. Real life cards don't ever
+                    // fade like that! EVER!"
+                    .transition(.identity)
             }
         }
         .allowsHitTesting(false)

@@ -254,6 +254,10 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func willTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
         super.willTransition(to: presentationStyle)
+        // ROUND 30: the sheet is about to MOVE. An open replay started now spends
+        // its first beat behind the edge of the screen - see
+        // `CollapseTween.isPresenting`, which the board waits on.
+        CollapseTween.isPresenting = true
         // Round-7 #5 ("when we auto-collapse it should be the same as if we swiped
         // to collapse"; "it rearranges the display right before the auto collapse").
         // A plain compact<->expanded toggle must NOT re-present: the board is laid
@@ -282,6 +286,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func didTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
         super.didTransition(to: presentationStyle)
+        CollapseTween.isPresenting = false
         FlightRecorder.note("style", presentationStyle == .compact ? "compact" : "expanded")
         let waiters = transitionWaiters
         transitionWaiters.removeAll()
