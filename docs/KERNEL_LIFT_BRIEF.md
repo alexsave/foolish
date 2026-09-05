@@ -525,3 +525,72 @@ log (`subsystem == "cards.foolish.anim"`), with the oracles `staleAtRest`,
 `veilStandingNow`.
 Two of those oracles have previously carried baselines that hid defects, so check
 what they assert before trusting a green run.
+
+## Queued: the JSON that is left
+
+Owner: "I REALLY don't like JSON."
+Four items, queued together.
+Stage 7 ADDED none of this - its diff contains no new encoder, decoder or
+`Codable` - it reported what was already there.
+
+### The finding that ties 3 and 4 together: the roster is the last JSON
+
+Everything else in this system went packed.
+The roster - seats, names, is_ai - did not, because it is strings, and it is now
+the only JSON left on any path that matters.
+
+**The packed client-server payload carries a JSON island inside it.**
+`ios/FoolishNet/PackedGame.swift` decodes `magic | flags | seat | version |
+rosterLen | ROSTER | viewLen | packed state`, and that roster segment is
+`JSONDecoder().decode(Roster.self, ...)` - sitting a dozen lines above a comment
+that reads "no kernel JSON round-trip (owner: wipe the JSON; client-server is
+packed kernel wire)".
+The comment is true of the state and false of the roster.
+
+**The same roster crosses into the kernel as a JSON string.**
+`fio_msg_seal`, `fio_msg_carry`, `fio_msg_start_rematch` and
+`fio_msg_penalty_fool_seat` all take `const char *joins_json`, and
+`sdk/swift/MessageEnvelope.swift` builds it at four sites.
+
+**And a packed layout for exactly this data already exists and is already
+shipping.**
+`fio_msg_decode_packed`'s blob ends with `n_joins(1)` then
+`n_joins x {seat(1) name_len(1) name[]}`.
+So the kernel currently PARSES JSON in order to produce a format it already knows
+how to write and read.
+That is the whole of items 3 and 4: use the layout that exists.
+
+Watch the name budget when doing it - names are <=64 UTF-8 bytes and there is a
+12-byte display cap from the App Store review pass; a length-prefixed byte string
+handles both without the escaping rules JSON drags in, and
+`e2e/imessage_replay_names.test.ts` already gates a Swift/TypeScript name codec
+byte-for-byte, so there is a pattern and a test shape to copy.
+
+### 1. `MessageGameStore` - App Group storage, 7 sites
+
+Seat rows, latest-chain rows, hand order, all `JSONEncoder`/`JSONDecoder` into
+`UserDefaults` in the shared container.
+Client-local: no other client reads these bytes and no rule is derived from them.
+
+Lower value than 3 and 4 - it crosses no boundary - but it is JSON on disk, the
+owner does not want it, and the rows are small fixed shapes that pack trivially.
+Do it AFTER 3 and 4, and reuse whatever encoder those produce rather than
+inventing a third.
+Storage needs a migration story that a wire does not: the container already holds
+v2 rows, so either read-old-write-new or a version byte.
+
+### 2. `ReplayStore` - the saved-replay index on disk, 5 sites
+
+`[ReplayRecord]` encoded to a file.
+Already known and already deferred once (see the owner's note that they dislike it
+but that it is not a task-#17 wire remainder).
+Same category as item 1 and the same migration caveat; do them together.
+
+### What is NOT ours, and should stay
+
+`ios/FoolishNet/GameFeed.swift` decodes Supabase realtime rows
+(`struct ViewRow { view: String; version: Int? }`).
+That is the Supabase client's own protocol, not a format this repo chooses, and
+the payload inside `view` is already a packed blob.
+Replacing it means replacing the transport.
+Leave it.
