@@ -1149,6 +1149,14 @@ int fio_last_replay_error(void) { return g_last_replay_error; }
 // extension asks the kernel rather than switching on the type itself.
 int fio_evw_is_settlement(int type) { return evw_is_settlement(type); }
 
+// THE CUT, over the frame stream fio_replay_last_events_packed just handed
+// back. The clients flatten those frames into one event list, so the answer is
+// an index into the FLATTENED list; the walk across frames is in evwire.c and
+// this is one line so it stays that way.
+int fio_evw_frames_settlement_cut(const unsigned char *frames, int len) {
+    return evwire_frames_settlement_cut(frames, len);
+}
+
 // Where THIS DEVICE's own staged run starts in the resident game's atom stream
 // - the same question msg_seal answers for the bubble delta, asked for the
 // animation instead of for the wire, and answered from the same log mark.

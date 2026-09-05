@@ -126,7 +126,7 @@ Status: unit (`MessageStagedDealTests.testAStagedTurnNeverShowsACardOffTheDeck`,
 The seat's BADGE rotates out: it squishes horizontally to zero width and STAYS there, never expanding back.
 Decided (change): the collapse runs IN PARALLEL with the card motion of the move that ends them, not as a beat of its own.
 The owner's reasoning is that going out always means a player's last cards are travelling - to the table, or into somebody's hand - so the badge and those cards are one event and should read as one.
-Status: the cut rule is unit-tested (`MessageStagedDealTests`: `[cover, out].settlementStart == nil`); the badge behaviour is **spec** - see "The out badge" below.
+Status: the cut rule is unit-tested (`MessageStagedDealTests`: a `[cover, out]` frame cuts to `nil`); the badge behaviour is **spec** - see "The out badge" below.
 
 **Undo.**
 The staged card returns to its hand slot, the held settlement is DROPPED rather than released, and re-staging replaces the input bubble.

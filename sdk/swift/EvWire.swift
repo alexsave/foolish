@@ -20,6 +20,7 @@
 // A card byte: 0..51 = suit*13 + (value-1); 0xFE hidden; 0xFF none.
 
 import Foundation
+import CFoolish
 
 public enum EvWire {
     private static let WIRE_HIDDEN: UInt8 = 0xFE
@@ -114,6 +115,26 @@ public enum EvWire {
                                     target: target, battle: battle, state: snap))
         }
         return events
+    }
+
+    /// WHERE A TURN SETTLES, over the same frame stream `decodeFrames` reads:
+    /// the index, into the flattened event list, of the first step that belongs
+    /// to the bout end rather than to the move that caused it. nil when the turn
+    /// ended no bout.
+    ///
+    /// The kernel answers it (fio_evw_frames_settlement_cut). Both the rule -
+    /// which step types a bout end owns - and the counting ACROSS frames are
+    /// facts about the wire, and a client that worked them out from its own
+    /// decoded list would be re-deriving the second one every time it flattened.
+    ///
+    /// Ask it of the SAME bytes `decodeFrames` was given, in the same breath: the
+    /// cut indexes the list those bytes produce and nothing else.
+    public static func settlementCut(_ bytes: Data) -> Int? {
+        let cut = bytes.withUnsafeBytes { raw -> Int32 in
+            fio_evw_frames_settlement_cut(raw.bindMemory(to: UInt8.self).baseAddress,
+                                          Int32(bytes.count))
+        }
+        return cut >= 0 ? Int(cut) : nil
     }
 
     /// c/src/evwire.h EVWIRE_FORMAT_VERSION.

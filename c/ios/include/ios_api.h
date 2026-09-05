@@ -306,6 +306,18 @@ int fio_last_replay_error(void);
 // because which steps a bout end owns is a rules fact.
 int fio_evw_is_settlement(int type);
 
+// WHERE A STAGED TURN SETTLES: the index, into the flattened event list of the
+// frames fio_replay_last_events_packed returned, of the first step that belongs
+// to the bout end rather than to the move that caused it. -1 when the turn
+// ended no bout; below -1 for a stream that is not whole.
+//
+// A turn is several frames because a player may stage several actions before
+// sending, and both clients flatten them into one list before animating - so
+// the cut has to be counted ACROSS frames, in order, which is the part a client
+// would get subtly wrong on its own. Everything from the cut onward is withheld
+// until Send (see fio_evw_is_settlement for what is being withheld and why).
+int fio_evw_frames_settlement_cut(const unsigned char *frames, int len);
+
 // Where the moves THIS DEVICE has staged begin, as an atom count on the
 // resident game - the `atoms_before` a board passes to
 // fio_replay_last_events_packed to animate its own turn, and the same number

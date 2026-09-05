@@ -679,14 +679,25 @@ public actor MessageKernel {
 
     /// The event stream for the moves STAGED on `base`, with the boundary they
     /// were cut at - one actor call, same argument as `readBoard`. The board
-    /// splits this at its settlement to decide what a staged turn may show
+    /// withholds everything from `settlementCut` onward until Send
     /// (`MessageTurnController.captureSettlement`), and a stream that described
     /// somebody else's chain would withhold the wrong half of it.
-    public func stagedTurn(_ base: SealBase, replaying moves: [Move],
-                           seat: Int) throws -> (atomsBefore: Int, events: [GameEvent]) {
+    ///
+    /// `settlementCut` is the kernel's, over these exact frames
+    /// (evwire_frames_settlement_cut); nil means the turn ended no bout and
+    /// there is nothing to hold.
+    public func stagedTurn(_ base: SealBase, replaying moves: [Move], seat: Int)
+        throws -> (atomsBefore: Int, events: [GameEvent], settlementCut: Int?) {
         try rebuild(base, replaying: moves, seat: seat)
         let before = stagedAtomsBefore()
-        return (before, lastMoveEvents(viewer: seat, atomsBefore: before))
+        // The PACKED bytes, read twice: once into events, once for the cut
+        // (EvWire.settlementCut -> evwire_frames_settlement_cut). Two reads of
+        // one buffer, in one actor call - a second trip in here to fetch the cut
+        // would be a suspension point between the stream and the boundary it is
+        // cut at, and the note on `readBoard` says what lands in those.
+        guard let packed = lastMovePacked(viewer: seat, atomsBefore: before)
+        else { return (before, [], nil) }
+        return (before, EvWire.decodeFrames(packed), EvWire.settlementCut(packed))
     }
 
     /// The same stream at a boundary the CALLER already knows (the board's
@@ -880,7 +891,19 @@ public actor MessageKernel {
     /// [] if there is no game, it is not v6-encodable, or the group produced
     /// nothing to animate.
     public func lastMoveEvents(viewer: Int, atomsBefore: Int = -1) -> [GameEvent] {
-        guard let code = residentReplayCode() else { return [] }
+        guard let packed = lastMovePacked(viewer: viewer, atomsBefore: atomsBefore)
+        else { return [] }
+        return EvWire.decodeFrames(packed)
+    }
+
+    /// The same stream still PACKED - the frame bytes the kernel wrote, before
+    /// anything decoded them. `stagedTurn` needs them twice (the events, and the
+    /// settlement cut the kernel reads off the same frames), and a decode throws
+    /// away what the second question is asked of.
+    /// nil if there is no game, it is not v6-encodable, or the turn animates
+    /// nothing.
+    private func lastMovePacked(viewer: Int, atomsBefore: Int) -> Data? {
+        guard let code = residentReplayCode() else { return nil }
         let packed = code.withCString { (cstr: UnsafePointer<CChar>) -> Data? in
             packedCall { out, cap in
                 out.withMemoryRebound(to: UInt8.self, capacity: Int(cap)) { u8 in
@@ -888,8 +911,8 @@ public actor MessageKernel {
                 }
             }
         }
-        guard let packed, !packed.isEmpty else { return [] }
-        return EvWire.decodeFrames(packed)
+        guard let packed, !packed.isEmpty else { return nil }
+        return packed
     }
 
     /// THIS BUBBLE'S ANIMATIONS, AND THE BOARD THEY START FROM.

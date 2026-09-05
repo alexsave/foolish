@@ -19,7 +19,10 @@
 #include "../src/evwire.h"
 #include "../src/view.h"
 #include "../src/json_out.h"
+#include "../wasm/wire.h"
 #include <stdio.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -2496,6 +2499,430 @@ static void test_json_events_refuses_a_truncated_or_foreign_payload(void) {
           "an output buffer too small is an error, not truncated JSON");
 }
 
+
+// ---------- the packed evwire READER ----------------------------------------
+//
+// MUTATION-CHECKED, each mutation applied to c/src/evwire.c on its own:
+//
+//   dropping EVW_T_CARDS_TO_TRASH from evw_is_settlement  -> 1 failure
+//   frame walk reads its length prefix at p + 1           -> 8 failures
+//   the frame length bound loosened to `p + flen > len+1` -> 1 failure
+//   the cut latches the LAST settlement, not the first    -> 4 failures
+//   the per-event snapshot bound removed                  -> 1 failure
+//   the card-list/tail bound removed                      -> the binary faults
+//   the event-header bound cut to `q + 6 > len`           -> the binary faults
+//   the trailer length bound removed                      -> the binary faults
+//
+// The last three are memory-safety bounds: without them evwire_read still
+// RETURNS an error, it just reads past the caller's buffer on the way. They are
+// only checkable because the probes below sit against a guard page.
+
+// Every event the writer's own derivation produced, flattened, so the reader can
+// be held against it rather than against a second copy of the layout.
+#define EVR_MAX_EVENTS 4096
+typedef struct {
+    int n;
+    int type[EVR_MAX_EVENTS], seat[EVR_MAX_EVENTS], msg[EVR_MAX_EVENTS];
+    int from[EVR_MAX_EVENTS], to[EVR_MAX_EVENTS];
+    int has_target[EVR_MAX_EVENTS], has_battle[EVR_MAX_EVENTS];
+    unsigned char target[EVR_MAX_EVENTS];
+    int battle[EVR_MAX_EVENTS];
+    int n_cards[EVR_MAX_EVENTS];
+    unsigned char cards[EVR_MAX_EVENTS][MAX_LOG_PAIRS];
+    int snap_len[EVR_MAX_EVENTS];
+    int base;       // events already read from earlier frames
+    int mismatch;
+    // The buffer the reader was handed. Every borrowed pointer it passes on
+    // must land inside it - a bound that only stops the RETURN VALUE going
+    // wrong still lets a sink dereference bytes nobody gave it.
+    const unsigned char *buf;
+    int len;
+    int escaped;
+} EvrLog;
+
+static EvrLog g_evr_walked;   // what evwire_walk derived
+static EvrLog g_evr_read;     // what evwire_read got back off the wire
+
+// The walk side: record the derived event in WIRE terms, so the comparison is
+// against the format's own vocabulary and not against a decode of it.
+static void evr_walk_sink(void *ctx, const EvwEvent *ev) {
+    EvrLog *l = (EvrLog *)ctx;
+    if (l->n >= EVR_MAX_EVENTS) return;
+    const int i = l->n++;
+    l->type[i] = ev->type; l->seat[i] = ev->seat; l->msg[i] = ev->msg;
+    l->from[i] = ev->from; l->to[i] = ev->to;
+    l->has_target[i] = ev->has_target;
+    l->target[i] = ev->has_target ? wire_from_card(ev->target) : 0;
+    l->has_battle[i] = ev->has_battle;
+    l->battle[i] = ev->has_battle ? ev->battle : 0;
+    l->n_cards[i] = ev->n_cards;
+    for (int c = 0; c < ev->n_cards && c < MAX_LOG_PAIRS; c++)
+        l->cards[i][c] = ev->mask_cards ? (unsigned char)WIRE_CARD_HIDDEN
+                                        : wire_from_card(ev->cards[c]);
+    l->snap_len[i] = 0;
+}
+
+static void evr_read_sink(void *ctx, int index, const EvwRead *ev) {
+    EvrLog *l = (EvrLog *)ctx;
+    if (l->n >= EVR_MAX_EVENTS) return;
+    const int i = l->n++;
+    // The index is the event's place in ITS OWN sequence, so it restarts per frame.
+    if (index != i - l->base) l->mismatch = 1;
+    l->type[i] = ev->type; l->seat[i] = ev->seat; l->msg[i] = ev->msg;
+    l->from[i] = ev->from; l->to[i] = ev->to;
+    l->has_target[i] = ev->has_target;
+    l->target[i] = ev->has_target ? ev->target_wire : 0;
+    l->has_battle[i] = ev->has_battle;
+    l->battle[i] = ev->has_battle ? ev->battle : 0;
+    l->n_cards[i] = ev->n_cards;
+    if (l->buf) {
+        const unsigned char *end = l->buf + l->len;
+        if (ev->cards_wire < l->buf || ev->cards_wire + ev->n_cards > end) { l->escaped = 1; return; }
+        if (ev->snap_len < 0 || ev->snap < l->buf || ev->snap + ev->snap_len > end) { l->escaped = 1; return; }
+    }
+    for (int c = 0; c < ev->n_cards && c < MAX_LOG_PAIRS; c++)
+        l->cards[i][c] = ev->cards_wire[c];
+    l->snap_len[i] = ev->snap_len;
+}
+
+// Serialize a real game's whole event stream, read it back, and insist the two
+// agree event for event. The reader is only worth having if it recovers what the
+// writer put down, and the only honest reference for that is the derivation
+// itself (evwire_walk) rather than a second reader.
+static void test_evwire_read_round_trips_the_writers_own_events(void) {
+    static unsigned char code[1 << 20];
+    static unsigned char frames[1 << 18];
+
+    for (int np = 2; np <= 4; np++) {
+        Game g;
+        unsigned char seed[FOOLISH_SEED_LEN];
+        if (!rs_play_seeded(&g, np, 900 + np, seed)) { CHECK(0, "seeded game plays out"); continue; }
+        int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
+                                             code, (int)sizeof code);
+        if (enc <= 0) { CHECK(0, "the played game encodes as v6"); continue; }
+
+        // Viewer 0, not a spectator: it is the only setting in which the
+        // DEAL/REFILL redaction differs per event, so a reader that dropped the
+        // masking distinction would show up here.
+        memset(&g_evr_walked, 0, sizeof g_evr_walked);
+        int rc = replay_steps_v6(code, enc, 0, 0, evr_walk_sink, &g_evr_walked);
+        CHECK(rc == REPLAY_EOK, "the code replays to the derivation");
+        if (rc != REPLAY_EOK) continue;
+
+        memset(&g_evr_read, 0, sizeof g_evr_read);
+        int from = 0, guard = 0;
+        const int steps = replay_steps_count_v6(code, enc, 0);
+        while (from < steps && ++guard < 4096) {
+            int n = 0, next = from;
+            int len = replay_steps_frames_v6(code, enc, 0, from, 0,
+                                             frames, (int)sizeof frames, &n, &next);
+            if (len < 0 || next <= from) { CHECK(0, "a frame chunk serializes"); break; }
+            int q = 0;
+            for (int i = 0; i < n; i++) {
+                const int flen = frames[q] | (frames[q + 1] << 8); q += 2;
+                const unsigned char *fin = 0;
+                int fin_len = -1;
+                EvwHeader h;
+                g_evr_read.base = g_evr_read.n;
+                g_evr_read.buf = frames + q; g_evr_read.len = flen;
+                int got = evwire_read(frames + q, flen, &h, &fin, &fin_len,
+                                      evr_read_sink, &g_evr_read);
+                CHECK(got >= 0, "every frame the writer wrote, the reader reads");
+                CHECK(h.version == EVWIRE_FORMAT_VERSION && h.viewer == 0,
+                      "and the header comes back as it was written");
+                CHECK(fin != NULL && fin_len >= 0 && fin + fin_len <= frames + q + flen,
+                      "the trailer is inside the frame the reader was given");
+                q += flen;
+            }
+            from = next;
+        }
+
+            CHECK(g_evr_read.escaped == 0, "no borrowed pointer left the buffer the reader was given");
+    CHECK(g_evr_read.mismatch == 0, "the sink indexes each sequence's events in wire order");
+        CHECK(g_evr_read.n == g_evr_walked.n && g_evr_read.n > 0,
+              "the reader recovers every event the derivation produced");
+        if (g_evr_read.n != g_evr_walked.n) continue;
+
+        int same = 1, snaps = 0;
+        for (int i = 0; i < g_evr_read.n; i++) {
+            const EvrLog *a = &g_evr_walked, *b = &g_evr_read;
+            if (a->type[i] != b->type[i] || a->seat[i] != b->seat[i] ||
+                a->msg[i] != b->msg[i] || a->from[i] != b->from[i] ||
+                a->to[i] != b->to[i] || a->has_target[i] != b->has_target[i] ||
+                a->target[i] != b->target[i] ||
+                a->has_battle[i] != b->has_battle[i] || a->battle[i] != b->battle[i] ||
+                a->n_cards[i] != b->n_cards[i]) { same = 0; break; }
+            for (int c = 0; c < a->n_cards[i] && c < MAX_LOG_PAIRS; c++)
+                if (a->cards[i][c] != b->cards[i][c]) { same = 0; break; }
+            if (!same) break;
+            if (b->snap_len[i] > 0) snaps++;
+        }
+        CHECK(same, "field for field, the wire says what the derivation derived");
+        CHECK(snaps == g_evr_read.n, "and every event carries its own board");
+    }
+}
+
+// THE GUARD PAGE. A short buffer handed to a reader out of a static array proves
+// nothing: an over-read walks into the bytes that happen to follow, stays inside
+// the array, and every bound in the test passes while the reader is in fact
+// reading memory it was not given (measured - deleting a bound does not fail a
+// test written that way). A heap copy sized to the byte only catches it under a
+// sanitizer, which is not what the default suite runs.
+//
+// So the probe is placed FLUSH against an unreadable page: the last byte the
+// reader may touch is the last byte of a readable page, and the next page is
+// PROT_NONE. One byte over the length it was given and the process dies, with no
+// tooling and on every host. Three of the reader's four bounds are memory-safety
+// bounds - the walk still returns an error without them, it just reads past the
+// buffer on the way - and this is what makes them checkable at all.
+static unsigned char *jt_guard_base(void) {
+    static unsigned char *base = 0;
+    static long pg = 0;
+    if (!base) {
+        pg = sysconf(_SC_PAGESIZE);
+        base = (unsigned char *)mmap(0, (size_t)pg * 2, PROT_READ | PROT_WRITE,
+                                     MAP_PRIVATE | MAP_ANON, -1, 0);
+        if (base == MAP_FAILED) { base = 0; return 0; }
+        if (mprotect(base + pg, (size_t)pg, PROT_NONE) != 0) { base = 0; return 0; }
+    }
+    return base;
+}
+
+// Copy `n` bytes so that they END on the last readable byte before the guard.
+static const unsigned char *jt_flush_to_guard(const unsigned char *src, int n) {
+    unsigned char *base = jt_guard_base();
+    const long pg = sysconf(_SC_PAGESIZE);
+    if (!base || n < 0 || n > pg) return 0;
+    memset(base, 0, (size_t)pg);
+    unsigned char *p = base + pg - n;
+    if (n) memcpy(p, src, (size_t)n);
+    return p;
+}
+
+// A sequence that is not whole is UNREADABLE - and is refused without reading a
+// single byte past the buffer, which is what the guard page above enforces.
+static void test_evwire_read_refuses_a_malformed_sequence(void) {
+    static unsigned char code[1 << 20];
+    static unsigned char frames[1 << 18];
+
+    Game g;
+    unsigned char seed[FOOLISH_SEED_LEN];
+    if (!rs_play_seeded(&g, 3, 71, seed)) { CHECK(0, "seeded game plays out"); return; }
+    int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
+                                         code, (int)sizeof code);
+    if (enc <= 0) { CHECK(0, "the played game encodes as v6"); return; }
+
+    // A step with covers on it: the one shape that exercises the target and
+    // battle bytes, so the card-list bound is not the only variable tail here.
+    int n_frames = 0, next = 0;
+    int wrote = replay_steps_frames_v6(code, enc, VIEW_SPECTATOR, 0, 0,
+                                       frames, (int)sizeof frames, &n_frames, &next);
+    if (wrote <= 0 || n_frames < 2) { CHECK(0, "frames serialize"); return; }
+
+    // Pick the longest frame in the chunk - the most event tail to truncate.
+    int q = 0, best = -1, best_len = 0;
+    for (int i = 0; i < n_frames; i++) {
+        const int flen = frames[q] | (frames[q + 1] << 8);
+        if (flen > best_len) { best_len = flen; best = q + 2; }
+        q += 2 + flen;
+    }
+    if (best < 0) { CHECK(0, "a frame was found"); return; }
+    const unsigned char *frame = frames + best;
+    const int flen = best_len;
+
+    memset(&g_evr_read, 0, sizeof g_evr_read);
+    g_evr_read.buf = frame; g_evr_read.len = flen;
+    CHECK(evwire_read(frame, flen, 0, 0, 0, evr_read_sink, &g_evr_read) >= 0,
+          "the whole frame reads (the control)");
+
+    // Too short to hold a header at all.
+    for (int len = 0; len < 4; len++)
+        CHECK(evwire_read(frame, len, 0, 0, 0, 0, 0) == EVW_EBADARG,
+              "a buffer with no room for a header is a bad argument");
+    CHECK(evwire_read(0, 64, 0, 0, 0, 0, 0) == EVW_EBADARG, "and so is no buffer");
+
+    // A foreign format version.
+    {
+        static unsigned char copy[1 << 16];
+        if (flen > (int)sizeof copy) { CHECK(0, "the version probe fits"); return; }
+        memcpy(copy, frame, (size_t)flen);
+        copy[0] = (unsigned char)(copy[0] + 7);
+        CHECK(evwire_read(copy, flen, 0, 0, 0, 0, 0) == EVW_EPARSE,
+              "a foreign format version is refused, not guessed at");
+    }
+
+    // Every truncation: a header cut mid-event, a card list cut short, a
+    // snapshot cut short, a missing trailer. Against the guard page, so an
+    // over-read is a fault rather than a quiet success.
+    const int probe_max = (int)sysconf(_SC_PAGESIZE);
+    for (int len = 4; len < flen && len <= probe_max; len++) {
+        const unsigned char *exact = jt_flush_to_guard(frame, len);
+        CHECK(exact != NULL, "the truncation probe maps its guard page");
+        if (!exact) return;
+        // With the sink attached: an error return is not enough on its own, the
+        // events the sink DID see must have pointed inside the buffer.
+        memset(&g_evr_read, 0, sizeof g_evr_read);
+        g_evr_read.buf = exact; g_evr_read.len = len;
+        int r = evwire_read(exact, len, 0, 0, 0, evr_read_sink, &g_evr_read);
+        CHECK(r == EVW_EPARSE, "a truncated sequence is unreadable, never a partial parse");
+        CHECK(!g_evr_read.escaped, "and hands its sink nothing outside the bytes it was given");
+        if (r != EVW_EPARSE || g_evr_read.escaped) return;
+    }
+
+    // A LYING SNAPSHOT LENGTH: the bytes are all there, the header is ours, and
+    // one event claims a board bigger than the frame. Truncation alone would
+    // never produce this, and it is exactly the shape a hostile payload takes.
+    {
+        // Find the first event's snap_len field: 7 fixed bytes, then the tail.
+        const int n_cards = frame[4 + 6];
+        const int flags = frame[4 + 5];
+        int sp = 4 + 7 + n_cards + ((flags & 1) ? 1 : 0) + ((flags & 2) ? 1 : 0);
+        CHECK(sp + 2 <= flen, "the first event's snapshot length is inside the frame");
+        if (sp + 2 > flen) return;
+        static unsigned char copy[1 << 16];
+        if (flen > (int)sizeof copy || flen > probe_max) { CHECK(0, "the lying-length probe fits"); return; }
+        memcpy(copy, frame, (size_t)flen);
+        copy[sp] = 0xff; copy[sp + 1] = 0xff;   // 65535 bytes of board
+        const unsigned char *g = jt_flush_to_guard(copy, flen);
+        CHECK(g != NULL, "the lying-length probe maps its guard page");
+        if (!g) return;
+        memset(&g_evr_read, 0, sizeof g_evr_read);
+        g_evr_read.buf = g; g_evr_read.len = flen;
+        int r = evwire_read(g, flen, 0, 0, 0, evr_read_sink, &g_evr_read);
+        const int escaped = g_evr_read.escaped;
+        CHECK(r == EVW_EPARSE, "a snapshot that claims more bytes than it has is refused");
+        // The event is refused BEFORE the sink sees it. Refusing only at the end
+        // of the walk would still have handed a decoder a pointer past the
+        // buffer and a length to read through it - the return value is not the
+        // only thing a bound protects.
+        CHECK(!escaped, "and is never handed on as a borrowed pointer past the end");
+    }
+
+    // A LYING EVENT COUNT: one more event than the bytes hold. The trailer is
+    // read as an event header and the walk runs off the end.
+    {
+        static unsigned char copy[1 << 16];
+        if (flen > (int)sizeof copy || flen > probe_max) { CHECK(0, "the lying-count probe fits"); return; }
+        memcpy(copy, frame, (size_t)flen);
+        copy[3] = 255;
+        const unsigned char *g = jt_flush_to_guard(copy, flen);
+        CHECK(g != NULL, "the lying-count probe maps its guard page");
+        if (!g) return;
+        memset(&g_evr_read, 0, sizeof g_evr_read);
+        g_evr_read.buf = g; g_evr_read.len = flen;
+        int r = evwire_read(g, flen, 0, 0, 0, evr_read_sink, &g_evr_read);
+        CHECK(r == EVW_EPARSE, "an event count the bytes cannot back is refused");
+        CHECK(!g_evr_read.escaped, "and never walks its sink off the end getting there");
+    }
+}
+
+// ---------- the settlement cut ----------------------------------------------
+
+// Build a frame stream by hand: one event type per event, no cards, no board.
+// The cut is a question about TYPES and ORDER across frames, so a stream that
+// carries nothing else is the sharpest way to ask it - and it is the same shape
+// the Swift tests pin (ios/FoolishTests/MessageStagedDealTests.swift).
+static int evc_frames(const int *const *frames, const int *sizes, int n_frames,
+                      unsigned char *out) {
+    int w = 0;
+    for (int f = 0; f < n_frames; f++) {
+        const int n = sizes[f];
+        const int flen = 4 + n * 9 + 2;   // header + events (7 fixed + u16 zero snap) + trailer
+        out[w++] = (unsigned char)(flen & 0xff);
+        out[w++] = (unsigned char)((flen >> 8) & 0xff);
+        out[w++] = EVWIRE_FORMAT_VERSION;
+        out[w++] = 0;                     // viewer
+        out[w++] = 0;                     // actor
+        out[w++] = (unsigned char)n;
+        for (int i = 0; i < n; i++) {
+            out[w++] = (unsigned char)frames[f][i];  // type
+            out[w++] = 1;                            // seat
+            out[w++] = 0;                            // msg
+            out[w++] = EVW_LOC_HAND;
+            out[w++] = EVW_LOC_TABLE;
+            out[w++] = 0;                            // flags
+            out[w++] = 0;                            // n_cards
+            out[w++] = 0; out[w++] = 0;              // snap_len 0
+        }
+        out[w++] = 0; out[w++] = 0;                  // final_len 0
+    }
+    return w;
+}
+
+static int evc_one(const int *types, int n, unsigned char *out) {
+    const int *fr[1] = { types };
+    const int sz[1] = { n };
+    return evc_frames(fr, sz, 1, out);
+}
+
+// The seven shapes the extension's contract is written in. A cover that swept
+// the table, a double cover, a pickup, a good, and the three that settle
+// nothing. Same expectations as MessageStagedDealTests.testTheSettlementCut.
+static void test_evwire_frames_settlement_cut(void) {
+    static unsigned char buf[4096];
+
+    { const int t[] = { EVW_T_COVER, EVW_T_CARDS_TO_TRASH, EVW_T_REFILL };
+      CHECK(evwire_frames_settlement_cut(buf, evc_one(t, 3, buf)) == 1,
+            "a cover that swept the table settles at the sweep"); }
+    { const int t[] = { EVW_T_COVER, EVW_T_COVER, EVW_T_DISCARD, EVW_T_REFILL };
+      CHECK(evwire_frames_settlement_cut(buf, evc_one(t, 4, buf)) == 2,
+            "both covers are the player's; the discard is not"); }
+    { const int t[] = { EVW_T_PICKUP, EVW_T_REFILL, EVW_T_DEFENDER_MOVE };
+      CHECK(evwire_frames_settlement_cut(buf, evc_one(t, 3, buf)) == 1,
+            "the sweep into the hand is the move; the refill is not"); }
+    { const int t[] = { EVW_T_MAGIC_TRANSITION, EVW_T_DISCARD, EVW_T_REFILL };
+      CHECK(evwire_frames_settlement_cut(buf, evc_one(t, 3, buf)) == 0,
+            "a good emits no step of its own, so the whole stream is the bout end"); }
+    { const int t[] = { EVW_T_ATTACK_PASS };
+      CHECK(evwire_frames_settlement_cut(buf, evc_one(t, 1, buf)) == -1,
+            "ordinary play settles nothing"); }
+    { const int t[] = { EVW_T_COVER, EVW_T_OUT };
+      CHECK(evwire_frames_settlement_cut(buf, evc_one(t, 2, buf)) == -1,
+            "an OUT with no settlement behind it is not one"); }
+    { const int t[] = { EVW_T_ATTACK_PASS };
+      CHECK(evwire_frames_settlement_cut(buf, evc_one(t, 0, buf)) == -1,
+            "an empty sequence settles nothing"); (void)t; }
+    CHECK(evwire_frames_settlement_cut(buf, 0) == -1,
+          "and so does an empty stream - a turn that animates nothing ended no bout");
+
+    // ACROSS FRAMES, which is the whole reason this is in C. A staged turn is
+    // one frame per action, the clients flatten them, and the cut indexes into
+    // the flattened list - so the second frame's settlement is at 2, not at 0.
+    { const int a[] = { EVW_T_ATTACK_PASS };
+      const int b[] = { EVW_T_COVER, EVW_T_DISCARD, EVW_T_REFILL };
+      const int *fr[2] = { a, b };
+      const int sz[2] = { 1, 3 };
+      CHECK(evwire_frames_settlement_cut(buf, evc_frames(fr, sz, 2, buf)) == 2,
+            "the cut counts across frames, not within one"); }
+    { const int a[] = { EVW_T_COVER, EVW_T_DISCARD };
+      const int b[] = { EVW_T_REFILL };
+      const int *fr[2] = { a, b };
+      const int sz[2] = { 2, 1 };
+      CHECK(evwire_frames_settlement_cut(buf, evc_frames(fr, sz, 2, buf)) == 1,
+            "a settlement in the first frame is still the first settlement"); }
+
+    // A stream that is not whole is an ERROR, below -1, and never the -1 that
+    // means "no bout ended" - the two must not be confusable, or a corrupt turn
+    // would silently animate its own deal.
+    {
+      const int t[] = { EVW_T_COVER, EVW_T_DISCARD };
+      const int n = evc_one(t, 2, buf);
+      for (int len = 1; len < n; len++) {
+          const unsigned char *exact = jt_flush_to_guard(buf, len);
+          CHECK(exact != NULL, "the frame truncation probe maps its guard page");
+          if (!exact) return;
+          int r = evwire_frames_settlement_cut(exact, len);
+          CHECK(r < -1, "a truncated frame stream is an error, not 'no settlement'");
+          if (r >= -1) return;
+      }
+      // Slack after the last whole frame is a malformed stream too: the walk
+      // must consume the buffer exactly.
+      memcpy(buf + n, "\x00", 1);
+      CHECK(evwire_frames_settlement_cut(buf, n + 1) < -1,
+            "a trailing byte after the last frame is not a stream we can read");
+    }
+}
+
 // Play until an attacker has said good and the bout is still open — a state
 // only reachable with 3+ players (heads-up, the one attacker's good always
 // closes the round). The game is left exactly there, logs ending on the GOOD,
@@ -2777,6 +3204,9 @@ int main(void) {
     test_json_events_from_packed_reads_the_frames_the_kernel_wrote();
     test_json_events_trailer_is_the_board_the_engine_ended_on();
     test_json_events_refuses_a_truncated_or_foreign_payload();
+    test_evwire_read_round_trips_the_writers_own_events();
+    test_evwire_read_refuses_a_malformed_sequence();
+    test_evwire_frames_settlement_cut();
     test_replay_steps_refuses_v5();
     test_bot_drive_preferred();
     test_bot_pacing_table();

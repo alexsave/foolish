@@ -737,7 +737,7 @@ Three moves close a bout, and every one of them deals from the stock in the same
 Applied whole at staging time, each one hands its player a look at their new hand with the move still retractable: say good, read the deal, undo, throw in another card instead.
 Four same-rank covers over four same-rank attacks is the cover case, not a rule of its own — the kernel has no separate four-of-a-kind transition, and a table nobody can add to still ends on an explicit good.
 
-So a staged turn is cut in two at the kernel's own boundary (`evw_is_settlement`, exposed as `[GameEvent].settlementStart`):
+So a staged turn is cut in two at the kernel's own boundary (`evwire_frames_settlement_cut`, which walks the turn's frames and applies `evw_is_settlement`; Swift reads it off `MessageKernel.stagedTurn`):
 
 - the **action** half plays as it is staged — the cover lands, the table is taken, the good mark appears;
 - the **settlement** half — discard, deal, roles — is withheld, with the board showing the kernel's own pre-settlement snapshot, until `didStartSending`.

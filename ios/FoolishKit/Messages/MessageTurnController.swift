@@ -326,7 +326,8 @@ public final class MessageTurnController: ObservableObject {
     // deal, undo, throw in another card instead.
     //
     // So the turn is cut in two at the kernel's own boundary
-    // (`[GameEvent].settlementStart`). The ACTION half plays as it is staged -
+    // (`MessageKernel.stagedTurn`'s settlementCut, answered by evwire.c's
+    // evwire_frames_settlement_cut). The ACTION half plays as it is staged -
     // the cover lands, the table is taken, the good is declared. The
     // SETTLEMENT half - discard, deal, roles - is held here, with the board
     // showing the state before it, until `markSent` says the bytes went out.
@@ -426,7 +427,9 @@ public final class MessageTurnController: ObservableObject {
                                                       seat: mySeat)
         else { dropHold(); return }
         let evs = turn.events
-        guard let cut = evs.settlementStart else { dropHold(); return }
+        // The cut is the kernel's, taken off the same frames these events were
+        // decoded from (evwire_frames_settlement_cut).
+        guard let cut = turn.settlementCut, cut < evs.count else { dropHold(); return }
         // The board to show while the rest is withheld. For a good the cut is
         // at index 0 - a good emits no step of its own - and the transition
         // step it lands on carries the PRE-discard board (game.c's
