@@ -133,10 +133,14 @@ Do not run `xcodegen generate` by hand without restoring
 | the staging/send controller | `ios/FoolishKit/Messages/MessageTurnController.swift` |
 | the Swift kernel bindings | `sdk/swift/` |
 
-## Not in scope
+## Shipping
 
-Do not bump the version and do not archive or upload.
-The owner runs those builds by hand for this campaign.
+Superseded 2026-09-05: the owner asked for the lift itself to be bumped and
+uploaded ("bump and upload this version, then go forth with the things we
+queued"), so the campaign's original "the owner runs these builds by hand" no
+longer holds for this branch.
+See reference notes for the archive/export steps; the scheme is
+FoolishMessagesApp, and `destination: upload` needs the owner signed into Xcode.
 
 ## The campaign is finished
 
