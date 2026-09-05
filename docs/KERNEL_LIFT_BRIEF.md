@@ -137,3 +137,44 @@ Do not run `xcodegen generate` by hand without restoring
 
 Do not bump the version and do not archive or upload.
 The owner runs those builds by hand for this campaign.
+
+## Queued for after the lift: the determinism pass
+
+Not part of this campaign.
+Recorded here so it is not lost, and so nobody starts it early.
+
+The invariant, in the owner's words: **the only true nondeterministic randomness
+should be when we seed a live game.**
+That is already the design - one crypto draw per game at the deal
+(`injectDealSeed`, `sdk/ts/wasm/engine.ts`), with mid-game engine randomness and
+bot decisions both reseeded deterministically from the deal seed, so a whole game
+replays from it.
+The bot seed folds in the never-client-visible deal seed on purpose, so a
+Monte Carlo bot's rollout stream is reproducible only to the server that holds it.
+
+What is not yet true is that anything enforces it.
+The comments in `engine.ts` and `bots.ts` record that per-move `Math.random`
+reseeding was there once and was removed, so this has been broken before.
+
+The work, when it is picked up:
+
+1. Seven e2e suites still shuffle with `Math.random`, so they run a different
+   experiment every run and a failure hands the reader no repro:
+   `concurrent_games`, `meta`, `attack_cover_parity`, `server`, `reconcile`,
+   `resilience`, and whatever remains of `replay_codec`.
+   `bot_parity.test.ts` already does it correctly - it patches `Math.random` with
+   an LCG and restores it afterwards.
+   That is the house pattern; hoist its `mkLcg` into a shared `e2e/` helper
+   rather than inventing a second one.
+2. Seed from an env var with a fixed default, print the seed, and name it in
+   failure messages.
+   Seeding must not shrink what a suite explores - same number of trials, just
+   reproducible.
+3. A CI gate over `e2e/`, `sdk/` and `server/`.
+   `sdk/` has zero real calls today (every hit there is a comment about the ones
+   that were removed, so the check must match calls and not the string).
+   `server/` has exactly one, `meta_actions.ts`'s random lobby bot, which should
+   stay and should be allowlisted by name with its reason beside it - lobby
+   composition is not gameplay, and the chosen bot is recorded in the game.
+   Do NOT extend the gate to `src/` (cosmetic textures, React keys, error ids) or
+   `offlinefun/` (research arenas, where randomness is the point).
