@@ -69,6 +69,15 @@
 // settable does not compile at all - "cannot assign to property: 'deck' is a
 // get-only property". The tests below cover what the compiler cannot: somebody
 // making it settable, or claiming to be somebody they are not.
+//
+// ROUND 45 BROUGHT THE SECOND COUNTER IN, on exactly the same terms. The other
+// number a sequence owns is `BoardAnimator.sequenceDepth`, and it was claimed
+// by hand at eight sites - `+= 1` with a matching `defer { -= 1 }`, exactly one
+// of which carried the paragraph explaining why the release has to be a
+// `defer`. The arithmetic now lives in `BoardAnimator.holdSequence`,
+// the counter's setter is `fileprivate` to BoardFlight.swift, and the last
+// section of this file pins what the compiler still cannot: that every hold is
+// released, and that it is released BEFORE its teardown rather than after.
 
 import XCTest
 @testable import FoolishKit
@@ -329,5 +338,111 @@ final class CountOwnershipTests: XCTestCase {
             .joined(separator: "\n")
         XCTAssertTrue(write.contains("BoardAnimator.isSequencing"),
                       "…and the ownership guard is a statement, not only a comment about one")
+    }
+
+    // MARK: - one hold
+
+    /// ONE PLACE MOVES THE COUNTER. Like the ledger fields above, the compiler
+    /// already says so - `sequenceDepth`'s setter is `fileprivate` to
+    /// BoardFlight.swift, so a ninth hand-rolled `+= 1` in the board does not
+    /// build - and like the ledger fields, this says it too, so that quietly
+    /// widening the setter back to `public` is a red test rather than a free
+    /// re-opening of the eight-copies-of-one-rule shape.
+    func testTheSequenceCounterIsMovedInExactlyOnePlace() throws {
+        let src = try source("BoardFlight.swift")
+        XCTAssertTrue(code(src).contains { $0.contains("public fileprivate(set) static var sequenceDepth") },
+                      "the depth's setter must stay fileprivate to BoardFlight.swift - "
+                      + "`holdSequence` is the only way to take it")
+        let boards = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("FoolishKit/Boards")
+        let files = try FileManager.default.contentsOfDirectory(atPath: boards.path)
+            .filter { $0.hasSuffix(".swift") && $0 != "BoardFlight.swift" }
+        XCTAssertFalse(files.isEmpty, "the board files should be readable from here")
+        for file in files {
+            for line in code(try source(file)) {
+                XCTAssertFalse(line.contains("sequenceDepth +=") || line.contains("sequenceDepth -="),
+                               "\(file): take the depth with `BoardAnimator.holdSequence()`, "
+                               + "not by hand: " + line.trimmingCharacters(in: .whitespaces))
+            }
+        }
+    }
+
+    /// EVERY HOLD IS RELEASED, AND RELEASED FIRST. Two rules in one shape, and
+    /// the shape is the only thing a source test can see.
+    ///
+    /// The first is the leak: a hold taken and never given back leaves
+    /// `waitForSettle` - which the extension awaits before staging a bubble -
+    /// spending its whole 8-second timeout on every later send, for the rest of
+    /// the process. Indistinguishable from "sometimes it just hangs", and
+    /// invisible in a unit test, because it is a counter that is only ever one
+    /// too high.
+    ///
+    /// The second is the ORDER, which round 45 was warned about and did not
+    /// change. Five of these eight holds are followed, in the same `defer`, by
+    /// real teardown work - handing orphaned hand slots forward, depositing
+    /// into the reversal ledger, revealing a stuck id set, dropping the swept
+    /// table, rescuing a holdback - and the release has always come FIRST, so
+    /// the teardown runs on a board that is no longer counted as sequencing.
+    /// Wrapping the body in a `holdingSequence { }` instead, or simply moving
+    /// the release to the bottom of the `defer`, inverts that: the teardowns
+    /// reach `ShownLedger.write`, which asks `isSequencing`. So the release is
+    /// pinned to the first statement of the hold's own `defer`, which is the
+    /// one place the order is visible.
+    func testEverySequenceHoldIsReleasedFirstThingInItsDefer() throws {
+        let src = code(try source("MessageTableView.swift"))
+        let holds = src.indices.filter { src[$0].contains("BoardAnimator.holdSequence()") }
+        XCTAssertFalse(holds.isEmpty, "the board takes the depth somewhere")
+        for i in holds {
+            XCTAssertEqual(src[i].trimmingCharacters(in: .whitespaces),
+                           "let hold = BoardAnimator.holdSequence()",
+                           "a hold is bound to `hold` and nothing else, so its release is greppable")
+            let next = src[i + 1].trimmingCharacters(in: .whitespaces)
+            if next == "defer { hold.release() }" { continue }
+            XCTAssertEqual(next, "defer {",
+                           "the hold on line \(i + 1) is not given straight back in a `defer` - "
+                           + "an early return between the two leaks the counter for good")
+            XCTAssertEqual(src[i + 2].trimmingCharacters(in: .whitespaces), "hold.release()",
+                           "the release must be the FIRST statement of the defer, ahead of any "
+                           + "teardown - see this test's own note for why the order matters")
+        }
+        let releases = src.filter { $0.contains("hold.release()") }
+        XCTAssertEqual(releases.count, holds.count,
+                       "every hold is released exactly once, and nothing else releases one")
+    }
+
+    /// THE HOLD ITSELF, with no board anywhere near it - the counter goes up
+    /// while it is held, comes back down when released, and a second release is
+    /// a no-op (a hold given back twice would put the board at rest with cards
+    /// still in the air, which is the same leak with the sign flipped).
+    @MainActor
+    func testAHoldIsTakenOnceAndGivenBackOnce() {
+        let before = BoardAnimator.sequenceDepth
+        let hold = BoardAnimator.holdSequence()
+        XCTAssertEqual(BoardAnimator.sequenceDepth, before + 1)
+        XCTAssertTrue(BoardAnimator.isSequencing)
+        let nested = BoardAnimator.holdSequence()
+        XCTAssertEqual(BoardAnimator.sequenceDepth, before + 2, "holds nest")
+        nested.release()
+        hold.release()
+        XCTAssertEqual(BoardAnimator.sequenceDepth, before)
+        hold.release()
+        XCTAssertEqual(BoardAnimator.sequenceDepth, before,
+                       "releasing a hold twice must not take a live sequence's claim away")
+    }
+
+    /// A CLAIM IS ONE STATEMENT. The animator's other number - the sequence
+    /// token - is claimed by `claimAnimSequence()`, so the bump and the receipt
+    /// cannot drift apart, and a bare bump somewhere else (which is half a
+    /// claim: it supersedes everything and then has no way to notice it was
+    /// itself superseded) is a red test rather than a plausible-looking line.
+    func testTheSequenceTokenIsClaimedThroughOneAccessor() throws {
+        let src = code(try source("MessageTableView.swift"))
+        let bumps = src.filter { $0.contains("animSequenceToken += 1") }
+        XCTAssertEqual(bumps.count, 1,
+                       "the token is bumped only inside `claimAnimSequence` - "
+                       + "call it instead of bumping by hand")
+        let claim = try body(of: "claimAnimSequence", in: try source("MessageTableView.swift"))
+        XCTAssertTrue(code(claim).contains { $0.contains("animSequenceToken += 1") },
+                      "…and that one bump is the accessor's own")
     }
 }

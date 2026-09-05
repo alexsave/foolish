@@ -397,6 +397,34 @@ public struct MessageTableView: View {
     /// no longer belongs to it. Bumped by `runEventStream` (and the genesis deal
     /// fallback) as each claims the animator.
     @State private var animSequenceToken = 0
+
+    /// CLAIM THE ANIMATOR: bump the token, and keep the number that came back.
+    ///
+    /// The two statements only mean anything together - the bump says
+    /// "everything already running is stale", and the number is the receipt
+    /// every later guard in that sequence checks itself against
+    /// (`mySeq == animSequenceToken`) - and they were written out longhand at
+    /// five sites, where a claim that bumped and forgot to keep the number
+    /// would look exactly like a claim that did.
+    ///
+    /// `@discardableResult` because one site genuinely has no receipt to keep:
+    /// `drainSupersededForReversal` supersedes whatever is running and then
+    /// starts no sequence of its own, so there is nothing later to compare.
+    /// Discarding it there is a decision, and it says so in a comment.
+    ///
+    /// DELIBERATELY NOT A WRAPPER ROUND THE TEARDOWNS TOO. The four claims that
+    /// do start a sequence end in four genuinely different ways - one hands
+    /// orphaned hand slots forward and deposits into the reversal ledger, one
+    /// reveals a specific id set, one drops the swept table as well, one
+    /// rescues a holdback - and a helper that pretended they were one shape
+    /// would hide differences that are real. Only the claim is shared, because
+    /// only the claim is the same everywhere.
+    @discardableResult
+    private func claimAnimSequence() -> Int {
+        animSequenceToken += 1
+        return animSequenceToken
+    }
+
     /// Cards a SUPERSEDED sequence had already opened a hand slot for and never
     /// got to fly - laid out, opacity 0, and belonging to nobody.
     ///
@@ -2203,18 +2231,13 @@ public struct MessageTableView: View {
             if fetched == nil { fetched = await controller.turnEvents() }
             let stream = fetched ?? []
             if let pc = matchedCover {
-                // BALANCED BY `defer`, like every other sequence claim in this
-                // file. It was a bare `+= 1` / `-= 1` pair when round 16 added
-                // it, and an early return or a cancellation between them would
-                // have leaked the counter PERMANENTLY - after which
-                // `BoardAnimator.waitForSettle` (which the extension awaits
-                // before staging a bubble) spends its full 8-second timeout on
-                // every send for the rest of the process. That is indis-
-                // tinguishable from "sometimes it just hangs", so it is not
-                // something to leave resting on this function having no other
-                // way out.
-                BoardAnimator.sequenceDepth += 1
-                defer { BoardAnimator.sequenceDepth -= 1 }
+                // Held for the cover's landing flight and the swap that
+                // follows it, and NOT for the rest of this Task - the stream
+                // below takes its own hold. `BoardAnimator.holdSequence` is
+                // where the reason a hold is always given back in a `defer`
+                // (and never in a bare pair) is written down.
+                let hold = BoardAnimator.holdSequence()
+                defer { hold.release() }
                 await playStep { _ in self.pendingCoverLandingFlights(pc) }
                 // ROUND 16: the cover has LANDED, and the next beat is the sweep
                 // that carries the whole table off. Swap the swept table for the
@@ -2266,16 +2289,15 @@ public struct MessageTableView: View {
         // OPEN REPLAYS ONLY. A live sequence is a move made on a board already
         // on screen, and holding that would put a lag on every tap.
         //
-        // CLAIMED while it holds. `sequenceDepth` is not taken until further
-        // down, so an unclaimed wait here would have the board answering "not
-        // animating" for the length of the hold - and `BoardAnimator
-        // .waitForSettle`, which the extension awaits before staging a bubble,
-        // would sail straight through it. Balanced by `defer` rather than a
-        // bare pair, for the reason the claim below spells out: a leaked
-        // counter costs every later send its full 8-second timeout.
+        // CLAIMED while it holds, and scoped to this `if` so that it holds for
+        // the sheet transition and nothing else. The sequence's own hold is not
+        // taken until further down, so an unclaimed wait here would have the
+        // board answering "not animating" for the length of the hold - and
+        // `BoardAnimator.waitForSettle`, which the extension awaits before
+        // staging a bubble, would sail straight through it.
         if openReplay {
-            BoardAnimator.sequenceDepth += 1
-            defer { BoardAnimator.sequenceDepth -= 1 }
+            let hold = BoardAnimator.holdSequence()
+            defer { hold.release() }
             await Self.awaitSheetSettled()
         }
         let run = AnimLog.on ? AnimLog.nextRun() : 0
@@ -2372,9 +2394,7 @@ public struct MessageTableView: View {
             return
         }
         // Bug 9: claim the animator. Anything already running is now stale.
-        animSequenceToken += 1
-        let mySeq = animSequenceToken
-        BoardAnimator.sequenceDepth += 1
+        let mySeq = claimAnimSequence()
         // Round-7 (invisible-deal fix): every hand-card slot this sequence OPENS
         // for an incoming deal/refill/pickup (openSlots, below). clearPreHidden()
         // on teardown CANNOT rescue these — openSlots pulled them back OUT of
@@ -2396,8 +2416,9 @@ public struct MessageTableView: View {
         // Only what genuinely flew is recorded - a step whose frames never
         // resolved moved nothing and owes nothing.
         var flownThisSeq: [[FlownMotion]] = []
+        let hold = BoardAnimator.holdSequence()
         defer {
-            BoardAnimator.sequenceDepth -= 1
+            hold.release()
             // ONLY the newest sequence may hand the veil and the counts back. A
             // superseded one doing it here is the double pickup (see
             // `animSequenceToken`): it un-hides cards the sequence that replaced
@@ -3534,16 +3555,16 @@ public struct MessageTableView: View {
     /// already hidden (`playAt` pre-hid them before the apply), so what the
     /// viewer sees is one continuous movement out of the fingertip.
     ///
-    /// Wrapped in `sequenceDepth` like every other animated sequence, which is
+    /// Holds `sequenceDepth` like every other animated sequence, which is
     /// what makes the extension's auto-collapse (note 8's `waitForSettle`) hold
     /// off until the card has actually landed instead of yanking the drawer down
     /// mid-flight.
     private func flyPlacement(_ pp: PendingPlacement, to view: GameView) {
         let ids = Set(pp.cards.map(\.identity))
         Task {
-            BoardAnimator.sequenceDepth += 1
+            let hold = BoardAnimator.holdSequence()
             defer {
-                BoardAnimator.sequenceDepth -= 1
+                hold.release()
                 // The card must end up visible whatever happened. If it really
                 // flew, `BoardAnimator.play` already un-hid it and this is a
                 // no-op; if its landing slot never published and `playStep` gave
@@ -3601,15 +3622,14 @@ public struct MessageTableView: View {
         // rather than the table copy fading out (its FBattleGrid removal) as the
         // view empties. The sweep hides each copy as its own flight lifts it.
         setSweep(old.battles)
-        animSequenceToken += 1
-        let mySeq = animSequenceToken
+        let mySeq = claimAnimSequence()
         #if DEBUG
         if isConflict { Self.redRevertFlights += flyIds.count }
         #endif
         Task {
-            BoardAnimator.sequenceDepth += 1
+            let hold = BoardAnimator.holdSequence()
             defer {
-                BoardAnimator.sequenceDepth -= 1
+                hold.release()
                 if mySeq == animSequenceToken {
                     animator.clearPreHidden(raisedBy: veiledAt)
                     // Round 43: this retraction has superseded whatever replay
@@ -3730,15 +3750,14 @@ public struct MessageTableView: View {
         // change that put them there - the ghost is the only copy in motion.
         animator.preHide(ids)
         let veiledAt = animator.veilEpoch          // round 40 - see playBoutEnd
-        animSequenceToken += 1
-        let mySeq = animSequenceToken
+        let mySeq = claimAnimSequence()
         #if DEBUG
         if isConflict { Self.redRevertFlights += flyIds.count }
         #endif
         Task {
-            BoardAnimator.sequenceDepth += 1
+            let hold = BoardAnimator.holdSequence()
             defer {
-                BoardAnimator.sequenceDepth -= 1
+                hold.release()
                 if mySeq == animSequenceToken {
                     animator.clearPreHidden(raisedBy: veiledAt)
                     releaseHoldback(raisedBy: veiledAt)   // round 43 - as in `flyUndoReturn`
@@ -3802,7 +3821,10 @@ public struct MessageTableView: View {
     /// consumer (see `reversalDebt`).
     private func drainSupersededForReversal() async -> [[FlownMotion]] {
         reversalCollecting = true
-        animSequenceToken += 1
+        // A claim with no `mySeq`, and the only one: this supersedes whatever
+        // is running and then starts nothing of its own, so there is no later
+        // guard to check a receipt against (see `claimAnimSequence`).
+        claimAnimSequence()
         await drainOtherSequences(floor: 0)
         reversalCollecting = false
         let debt = reversalDebt
@@ -3825,8 +3847,8 @@ public struct MessageTableView: View {
             + "red=[\(steps.flatMap { $0 }.map(\.id).sorted().joined(separator: ","))]")
         FlightRecorder.note("conflict-reverse", "\(steps.count) steps, "
             + "\(steps.reduce(0) { $0 + $1.count }) flights")
-        BoardAnimator.sequenceDepth += 1
-        defer { BoardAnimator.sequenceDepth -= 1 }
+        let hold = BoardAnimator.holdSequence()
+        defer { hold.release() }
         await animator.play(steps)
     }
 
@@ -4662,12 +4684,11 @@ public struct MessageTableView: View {
                 // Bug 9: this deal is a sequence like any other - claim the
                 // animator so a live move started on top of it supersedes it,
                 // and so ITS teardown can never clear a newer sequence's veil.
-                animSequenceToken += 1
-                let mySeq = animSequenceToken
+                let mySeq = claimAnimSequence()
                 Task {
-                    BoardAnimator.sequenceDepth += 1
+                    let hold = BoardAnimator.holdSequence()
                     defer {
-                        BoardAnimator.sequenceDepth -= 1
+                        hold.release()
                         if mySeq == animSequenceToken {
                             animator.clearPreHidden(raisedBy: veiledAt)
                             // Round 43: and the holdback, for the same reason it

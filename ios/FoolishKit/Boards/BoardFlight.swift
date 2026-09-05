@@ -167,22 +167,78 @@ public final class BoardAnimator: ObservableObject {
     /// Non-zero while a board is mid multi-step ANIMATED sequence: a bout-end
     /// cascade (discard/pickup, then each drawing player's refill) or an
     /// open-delta replay (`MessageTableView.flyBoutEndToDiscard` /
-    /// `replayLastMoveOnOpen`, both wrap their Task in `sequenceDepth += 1` /
-    /// `-= 1`). Originally HARNESS_AUTOGAME-only (it waited on this before
-    /// switching players); note 8 promoted it into the real extension's own
-    /// completion signal too — see `waitForSettle` below, which
+    /// `replayLastMoveOnOpen`, both of which hold it across their Task - see
+    /// `holdSequence`). Originally HARNESS_AUTOGAME-only (it waited on this
+    /// before switching players); note 8 promoted it into the real extension's
+    /// own completion signal too - see `waitForSettle` below, which
     /// `MessagesViewController.stage` awaits instead of guessing a fixed
     /// sleep long enough for the longest possible sequence.
-    public static var sequenceDepth = 0
+    ///
+    /// EVERYBODY READS IT, ONE FILE MOVES IT. The setter is `fileprivate` so
+    /// that the arithmetic can only happen through `holdSequence` below: a
+    /// ninth hand-rolled `+= 1` in the board does not compile, which is the
+    /// compiler doing the job a reviewer was doing eight times over.
+    public fileprivate(set) static var sequenceDepth = 0
     /// ONE SPELLING PER QUESTION (round 44). "Is a sequence running" is THIS,
     /// everywhere - the board used to ask it both ways (`isSequencing` here,
     /// `sequenceDepth == 0` in three copy-pasted ownership guards and two
     /// `atRest` composites), which reads like two different rules about two
     /// different things. `sequenceDepth` is now only for the three uses that are
-    /// genuinely about the NUMBER: claiming it (`+= 1` / `-= 1`), the
+    /// genuinely about the NUMBER: claiming it (`holdSequence`), the
     /// nested-wait floor in `MessageTableView.drainOtherSequences`, and printing
     /// it in a trace. Pinned by `CountOwnershipTests`.
     public static var isSequencing: Bool { sequenceDepth > 0 }
+
+    /// TAKE THE COUNTER THIS WAY, OR NOT AT ALL.
+    ///
+    /// Eight animated sequences in `MessageTableView` claim the depth, and each
+    /// one used to hand-roll the claim: a `sequenceDepth += 1` with a matching
+    /// `defer { sequenceDepth -= 1 }`. One of the eight carried the paragraph
+    /// below in full, a second pointed at it, and the other six said nothing at
+    /// all - which is the trouble with a rule that lives at its call sites.
+    /// Eight copies is eight chances to get the ninth one wrong, so the
+    /// arithmetic lives here and the reason is written down once, where the
+    /// next sequence to need a hold will read it.
+    ///
+    /// WHY THE RELEASE BELONGS IN A `defer`, and never in a bare pair at the
+    /// end of the body. An early return or a cancellation between the two
+    /// halves leaks the counter PERMANENTLY - after which `waitForSettle`
+    /// (which the extension awaits before staging a bubble) spends its full
+    /// 8-second timeout on every send for the rest of the process. That is
+    /// indistinguishable from "sometimes it just hangs", so it is not something
+    /// to leave resting on a function happening to have no other way out.
+    ///
+    /// WHY A HOLD YOU RELEASE, AND NOT A `holdingSequence { ... }` THAT WRAPS
+    /// THE BODY. Five of the eight sites do real work in that same `defer`
+    /// AFTER the decrement: handing orphaned hand slots forward, depositing
+    /// into the reversal ledger, revealing a stuck id set, rescuing a holdback.
+    /// A wrapper would put those teardowns INSIDE the hold and so invert the
+    /// order - the decrement landing after the teardown instead of before it.
+    /// Nothing outside the board could see that (a `defer` body cannot suspend,
+    /// so a decrement and the teardown that follows it are one synchronous
+    /// main-actor block, with no paint and no other sequence in between), but
+    /// the teardowns themselves reach `ShownLedger.write`, which asks
+    /// `isSequencing`. Its answer for a `.sequence` claim is the same either
+    /// way today; a change whose entire point is that nothing changes does not
+    /// get to bet on that staying true. So the shape is exactly what it always
+    /// was: release FIRST, then tear down. Pinned by `CountOwnershipTests`.
+    public static func holdSequence() -> SequenceHold { SequenceHold() }
+
+    /// One live claim on `sequenceDepth`. `init` is `fileprivate`, so the only
+    /// way to come by one is `holdSequence()`; `release()` is idempotent, so a
+    /// belt-and-braces second call can never push the counter below the number
+    /// of sequences actually running (which would be the same leak in reverse -
+    /// a board that claims to be at rest with cards still in the air).
+    @MainActor
+    public final class SequenceHold {
+        private var held = true
+        fileprivate init() { BoardAnimator.sequenceDepth += 1 }
+        public func release() {
+            guard held else { return }
+            held = false
+            BoardAnimator.sequenceDepth -= 1
+        }
+    }
 
     /// note 8: block until no animated sequence is running, instead of a
     /// caller guessing how long one might take. A plain attack/cover (no
