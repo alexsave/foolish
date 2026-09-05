@@ -397,3 +397,88 @@ resource-pressure symptom worth understanding rather than re-running.
   waiting shell's own command line contains `foo.py` and `pgrep -f` matches
   itself.
   Use `pgrep -f "[f]oo.py"` or wait on a PID.
+
+## Queued: device findings from the 1.0(43) pass
+
+Owner-reported, on device, after the lift stages landed.
+Not lift work.
+Recorded with the evidence so whoever picks them up does not start from scratch.
+
+### 1. Replaying my own attack sneaks the card back into the hand first
+
+Owner: "when you replay one of your own attack bubbles, I can briefly see a small
+transition as the card I played kinda 'moves back in' to my hand.
+Then it animates correctly to fly to the table ...
+we shouldn't start with 5 cards, fade the one I threw back in and rearrange
+animation, then throw it out.
+The visual should START with the 6 cards, and just fly the one."
+Subtle - "like I'm catching the tail end of it" - and easy to reproduce.
+
+The FlightRecorder log has it (this-session block, a 2p chat, one attack to
+replay):
+
+    0.08s  adopt      turn 5, 1 to animate
+    0.10s  fan-rows   laid=6 hand=5 held=1  veiled=1 preHidden=1 settled=true seq=0
+    0.60s  style      expanded
+    0.65s  anim-open  n=1 from=4 seats=0 kinds=atta
+    0.77s  fan-rows   laid=5 hand=5 held=0  veiled=1 preHidden=0 settled=true seq=1
+
+`hand=5` is the committed truth; `held=1` is the holdback putting the played card
+back so the fan lays 6.
+That is the RIGHT resting state to open on.
+The defect is the ORDER in which it is reached: the board paints the settled
+5-card hand first and the 6-card layout arrives after, so the card fades in and
+the fan re-centres before anything flies.
+
+Likely shape of the fix, unverified: the holdback has to be established before the
+first paint, not applied from a change handler afterwards.
+That is the same class as `freezeCounts`, whose comment already says it must run
+BEFORE `apply` and not from the `onChange` the view change triggers, "because
+onChange fires after body, so a freeze there is already one paint late".
+Look at `handHoldback` / `holdbackIsMine` / `releaseHoldback` and when
+`replayLastMoveOnOpen` arms them relative to the first body pass.
+
+Note the half-second between `adopt` (0.08s) and `anim-open` (0.65s): the sheet is
+still coming up, which is exactly the window the owner is catching the tail of.
+
+### 2. Table-to-discard flies with expanded coordinates on a collapsed board
+
+Owner: "table to discard animation still seems to have a geometry mismatch like
+it's using expanded coords on a collapsed screen."
+
+Strong hypothesis, and it is a known class in this codebase.
+Round 43 fixed exactly this on the HAND side: `handCardFrames` is a PUBLISHED
+preference and a preference lags a layout pass, so collapsing the drawer moved the
+board while the per-card frames still described the expanded one - the rig caught
+it as `SLOTCHECK MISMATCH n=11 worst=391.0pt`, 391pt being the distance the hand
+travels between expanded and compact.
+The cure was to COMPUTE the slot rather than read it (`handSlotsNow`).
+
+That cure was never applied to the TABLE side.
+`tableCardSource` still reads `lastBattleCardFrames` and `discardSource` still
+reads `lastBattleFrames`, both published preferences, so the sweep to the discard
+pile should show the same lag under the same conditions.
+
+### 3. Geometry is broken by the AUTO collapse and repaired by a manual swipe
+
+Owner: "geometry seems to be broken by the auto collapse? then fixed by swiping to
+expand/collapse."
+
+This is probably the trigger for finding 2 rather than a separate defect, and it
+is the useful half: a manual swipe drives the presentation-style change through
+the path that republishes frames, and the automatic collapse does not - so the
+stale published rects survive until something else forces a layout pass.
+
+Worth checking `CollapseTween` / `MessagesRootView`'s transition handling for a
+publish that only happens on the interactive path.
+If finding 2 is fixed by computing rather than reading, this stops mattering for
+the sweep - but anything else still reading published frames would keep the bug.
+
+### How to work these
+
+The rig is the right tool and it already exists: `FoolishHarness` plus the unified
+log (`subsystem == "cards.foolish.anim"`), with the oracles `staleAtRest`,
+`backwardsPaints`, `vanishedAtRest`, `strandedAtRest`, `sweepVisibleNow`,
+`veilStandingNow`.
+Two of those oracles have previously carried baselines that hid defects, so check
+what they assert before trusting a green run.
