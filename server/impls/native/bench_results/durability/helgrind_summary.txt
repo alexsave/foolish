@@ -1,0 +1,99 @@
+Stage 2 (SQLite WAL write-behind persistence) — Helgrind race-check.
+
+Command (repeated 3x): valgrind --tool=helgrind --history-level=approx
+./foolish_server <port> --db=<scratch path> --persist-interval-ms=30
+--game-workers=4, driven by foolish_hammer --mode=mixed (~10s, real
+/action+/state+/status HTTP traffic through the game-worker queues) then
+--mode=ws (~8-10s, persistent-connection real legal moves) back to back on
+the same run, kill -TERM on the valgrind PID afterward (same technique
+SERVER_SCALING.md's T2a Helgrind run used — `timeout` forks an untraced
+child, so it can't end a helgrind capture cleanly).
+
+--persist-interval-ms=30 (below the shipped default of 75) was used
+specifically to run the persistence thread's drain/snapshot/write cycle far
+more often per wall-clock second than production would, maximizing how many
+times the dirty-set-scan -> per-slot lock/memcpy/unlock -> unlocked
+serialize -> one SQLite transaction sequence actually executes during a
+short "brief" run — the thing this check exists to stress.
+
+=== BEFORE the fix (paraphrased from the raw capture) ===
+
+Possible data race during read of size 4 ... by thread #2 (persist_thread)
+Locks held: 1, at address <s->lock's own address>
+   at memmove ... by game_persist_snapshot ... by persist_thread
+This conflicts with a previous access by thread #3 (a game-worker
+worker_thread, i.e. ordinary /action or /state traffic for the SAME game),
+...
+Address <...> is N bytes inside data symbol "g_games"
+
+Root cause: game_persist_snapshot's original `memcpy(&snap, s, sizeof
+snap)` copied the WHOLE GameSlot struct — including s->lock and s->cond
+THEMSELVES, not just the game data those fields guard — while holding
+s->lock. Copying a live pthread_mutex_t/pthread_cond_t by value while
+another thread may be concurrently locking/unlocking that SAME mutex is
+undefined behavior even under the lock: POSIX does not guarantee the raw
+bytes of an in-use mutex are safe to read concurrently with normal lock
+traffic, because an implementation may touch its own internal bookkeeping
+(wait-queue state, adaptive-spin counters, etc.) via atomics that aren't
+covered by the happens-before edge the lock provides for USER data. Fixed
+in foolish_server.c's game_persist_snapshot: copy only
+`offsetof(GameSlot, lock)` bytes — exactly the used/id/game/owner/
+seat_user/seat_name/seat_ready prefix serialize_slot actually reads, which
+the GameSlot layout keeps entirely before `lock` — never touching the
+mutex/cond bytes at all.
+
+=== AFTER the fix, 3 runs ===
+
+Run 1 (game=4, first fix verification): 0 occurrences of the g_games race
+above. ERROR SUMMARY: 2 errors from 1 contexts (both the SAME single
+remaining warning — see below).
+Run 2 (game=4, repeat): ERROR SUMMARY: 1 errors from 1 contexts (same
+warning).
+Run 3 (game=4, repeat): ERROR SUMMARY: 1 errors from 1 contexts (same
+warning).
+
+The dirty-set + snapshot handoff this check exists to verify — persist.c's
+g_wake_mtx-guarded dirty bitmap, and game_persist_snapshot's per-slot
+lock/memcpy/unlock — produced ZERO races across all 3 post-fix runs.
+
+=== The one remaining warning, all 3 runs, same single location ===
+
+Thread #2: pthread_cond_{signal,broadcast}: dubious: associated lock is
+not held by any thread
+   at ... (in vgpreload_helgrind-amd64-linux.so)
+   by pthread_cond_wait_common (pthread_cond_wait.c:516)
+   by pthread_cond_timedwait@@GLIBC_2.3.2 (pthread_cond_wait.c:652)
+   by ... (in vgpreload_helgrind-amd64-linux.so)
+   by persist_thread (foolish_server)
+
+This is INSIDE persist_thread's own `pthread_cond_timedwait(&g_wake_cond,
+&g_wake_mtx, &ts)` call (persist.c) — despite the message text naming
+signal/broadcast, the reported stack is entirely the WAIT side, in glibc/
+pthread internals, and appears every time right at/around the kill -TERM
+that ends the capture (see "Process terminating with default action of
+signal 15" immediately after it in the raw log each time).
+
+Investigation: this codebase's only two call sites that ever signal
+g_wake_cond (persist_mark_dirty, persist_delete, both in persist.c) BOTH
+hold g_wake_mtx for the entire duration of their pthread_cond_signal call
+(verified by direct code inspection) — neither is where Helgrind's stack
+trace points. A minimal standalone reproduction (one thread looping
+pthread_cond_timedwait(30ms) under a mutex, another thread looping
+pthread_cond_signal under the same mutex, SIGTERM delivered mid-run,
+valgrind --tool=helgrind) did NOT reproduce this warning even after several
+attempts, including with a SIGTERM landing mid-wait. Given: (a) it is 100%
+attributed to glibc/pthread-internal frames, never to foolish_server.c/
+persist.c logic; (b) both real signal call sites correctly hold the mutex;
+(c) it appears only at forced-shutdown time, never during ~30-40s of
+combined steady-state mixed+ws traffic across 3 runs (persist_thread woke
+roughly every 30ms throughout, i.e. many hundreds of ordinary
+pthread_cond_timedwait cycles with no report); and (d) this is the FIRST
+pthread_cond_timedwait this codebase has ever used (Stage 1's bot_thread
+uses only plain, untimed pthread_cond_wait, and SERVER_SCALING.md's own
+Helgrind run on that code was fully clean) — this is assessed as a benign
+Helgrind/glibc(2.34+ NPTL condvar rewrite)-interaction artifact specific to
+pthread_cond_timedwait's internal teardown path when a SIGTERM lands during
+or near a wait, not a real race in this program's dirty-set/snapshot
+handoff. Not suppressed here (kept visible rather than hidden behind a
+suppression file) — see DURABILITY.md's Helgrind section for the verdict
+this digest supports.

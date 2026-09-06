@@ -297,7 +297,16 @@ uint32_t random_strategy_rng_get(void);
 #define ENGINE_HOOK_FLIPPED          13
 #define ENGINE_HOOK_START_DEFENDER   14
 
-extern void (*engine_snap_hook)(const Game *g, int tag, int aux);
+// _Thread_local (Stage 5, SERVER_SCALING.md): bot_drive's choose_move saves,
+// clears and restores this hook around every bot decision (see bot_drive.c),
+// which is a WRITE — safe under the old single g_kernel_lock (one kernel
+// mutation in flight process-wide) but a write/write race the instant two
+// DIFFERENT games' bot_drive calls run concurrently. Thread-local makes each
+// thread's save/restore act on its own instance; wasm neutralizes this via
+// c/Makefile's `-D_Thread_local=` (single-threaded module, so a plain global
+// is unchanged), and every other single-threaded caller (tests, iOS, replay
+// tooling) is likewise unaffected — same reasoning as g_seed/g_rand_seed above.
+extern _Thread_local void (*engine_snap_hook)(const Game *g, int tag, int aux);
 
 // ---------- Rejection reasons --------------------------------------------
 //
@@ -333,7 +342,13 @@ extern void (*engine_snap_hook)(const Game *g, int tag, int aux);
 // are no transfers here".
 #define ENGINE_REJECT_PASS_DISABLED       22
 
-extern int engine_last_reject;
+// _Thread_local (Stage 5): every handle_* writes this at entry and the caller
+// reads it right after — with two games' handle_* calls running on different
+// threads (per-game locks, no shared kernel lock) a process-wide instance is a
+// write/write and read/write race between unrelated games. Thread-local keeps
+// each thread reading only what its own handle_* just wrote. See the
+// engine_snap_hook comment above for the wasm/single-thread transparency note.
+extern _Thread_local int engine_last_reject;
 
 // ---------- Helpers -----------------------------------------------------
 

@@ -1,2 +1,66 @@
 foolish_server
+foolish_server_prof
+foolish_hammer
 *.o
+
+# AddressSanitizer/UBSan server build + the adversarial fuzz client
+# (fuzz_client.c). Both are local-only dev/test binaries — the source is
+# tracked, the compiled artifacts are not. See the foolish_server_asan and
+# fuzz_client targets in the Makefile.
+foolish_server_asan
+fuzz_client
+sem_fuzz
+sem_fuzz_asan
+
+# QUIC/HTTP3/WebTransport build (foolish_server_quic — quic_wt.c). The binary
+# statically links libquiche.a (~tens of MB) and is never tracked. `quiche/`
+# is the local quiche FFI build (libquiche.a + quiche.h) the Makefile's
+# QUICHE_DIR points at — vendored/built out of tree, not committed. See the
+# foolish_server_quic target in the Makefile for how to build it.
+foolish_server_quic
+wt_client
+quiche/
+*.a
+
+# Stage 2 (SQLite WAL write-behind persistence — DURABILITY.md): the DB file
+# + its WAL/shm sidecars are local run state, never tracked. crash_test.sh
+# always points --db at a scratch path under a tmp dir for exactly this
+# reason, but guard the default (./foolish.db, from a bare `make run`) too.
+*.db
+*.db-wal
+*.db-shm
+
+# Profiling artifacts (server/impls/native/profile.sh, PROFILE_HOTPATH.md):
+# raw profiler dumps (callgrind.out*, perf.data, sample.txt), the
+# callgrind_annotate TEXT they digest into, and any standalone profiling
+# binaries are local-only. What IS tracked under bench_results/<label>/ is
+# the small human-readable residue: meta.txt (how the run was taken),
+# summary.txt, the *.csv tables, and the helgrind digests. The annotated.txt
+# dumps are ~1 MB of machine-specific line attribution that PROFILE_HOTPATH.md
+# already quotes the load-bearing lines of; regenerate them with profile.sh
+# when a number needs re-checking. See PROFILE_HOTPATH.md "Reading the
+# bench_results citations".
+bench_results/*/raw/
+bench_results/*/raw_cache/
+bench_results/*/annotated*.txt
+bench_results/eval_t2_oracle
+bench_results/eval_t3_prod
+bench_results/*.o
+
+# Stage 3 (TLS — TLS.md): never commit a private key or cert, self-signed
+# test or otherwise. tls_test.sh always generates its own throwaway cert
+# under a scratch tmp dir, never in-tree — this is a guard, not the normal
+# case.
+*.pem
+*.crt
+*.key
+
+# Raw Helgrind output (TLS.md's race-check) is a large, run-specific dump —
+# same "commit only the digested writeup" discipline persistence/profiling
+# artifacts above follow.
+helgrind*.log
+*.valgrind.log
+foolish_server_asm
+
+# throwaway compiler-flag A/B variant binaries (cflags experiment)
+fs_*

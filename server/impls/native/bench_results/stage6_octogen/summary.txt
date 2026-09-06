@@ -1,0 +1,21 @@
+bot_stress.sh summary — 2026-07-21T14:42:39Z
+host: Linux vm 6.18.5 #1 SMP PREEMPT_DYNAMIC @0 x86_64 x86_64 x86_64 GNU/Linux
+cores: 4
+
+-- single-thread octogen ceiling (production TT, this box) --
+octogen_ceiling: decisions=1450 wall_s=45.8653 rate_per_s=31.61
+
+-- sweep A: full-stress (seats=7, spectators=2) --
+label,games,seats,spectators,elapsed_s,applied_moves_per_s,lat_mean_us,lat_p99_us,spectator_conns,octogen_decisions,octogen_decisions_per_s,cpu_secs,cpu_cores_avg,rss_first_kb,rss_mean_kb,rss_peak_kb,rss_vmhwm_kb
+full_g1,1,7,2,20.00,12.1,47.3,217.1,2,7,0.35,3.180,0.159,13504,13644,13660,13596
+full_g2,2,7,2,20.04,37.5,20.9,4.9,4,20,1.00,3.650,0.182,14276,14683,14724,14652
+
+-- sweep B: scaling (seats=1, spectators=0) --
+label,games,seats,spectators,elapsed_s,applied_moves_per_s,lat_mean_us,lat_p99_us,spectator_conns,octogen_decisions,octogen_decisions_per_s,cpu_secs,cpu_cores_avg,rss_first_kb,rss_mean_kb,rss_peak_kb,rss_vmhwm_kb
+scale_g1,1,1,0,20.03,0.6,128.3,224.0,0,7,0.35,1.180,0.059,13540,13555,13560,13560
+scale_g8,8,1,0,20.01,5.0,111.9,229.6,0,56,2.80,6.090,0.304,14468,20627,20700,20656
+scale_g32,32,1,0,20.02,19.2,189.0,282.5,0,222,11.09,21.240,1.062,14764,44779,45148,44892
+scale_g96,96,1,0,20.03,57.0,608.1,946.6,0,635,31.70,46.660,2.333,12276,108603,110128,109660
+scale_g160,160,1,0,20.23,95.1,2651.3,72258.7,0,1081,53.43,66.100,3.305,12216,171848,174856,174400
+
+=== bot_stress.sh: PASS — octogen games progressed at every scale point, no server crash ===

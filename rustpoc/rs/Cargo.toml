@@ -1,0 +1,14 @@
+[package]
+name = "rustpoc"
+version = "0.1.0"
+edition = "2021"
+
+# No dependencies, deliberately: the comparison is language-vs-language on the
+# same algorithms, not ecosystem-vs-hand-rolled.
+[dependencies]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"

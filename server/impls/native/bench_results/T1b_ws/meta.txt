@@ -1,0 +1,27 @@
+label:      T1b_ws
+mode:       --launch (equivalent; run directly to control lifetime — see PROFILE_HOTPATH.md T1's note)
+host uname: Linux x86_64
+tool:       callgrind
+cmd:        valgrind --tool=callgrind --callgrind-out-file=raw/callgrind.out -- ./foolish_server_prof 8096
+load:       foolish_hammer --host=127.0.0.1 --port=8096 --games=3 --seats=2 --secs=20 --mode=ws
+
+note: same lifetime technique as T1_server (see its meta.txt / PROFILE_HOTPATH.md
+T1) — GNU `timeout` forks+execs an untraced child, so the server was started
+directly under `valgrind --tool=callgrind` and sent SIGTERM after the load
+window instead. valgrind forwards the signal, the guest's blocking accept()
+(or, here, a /ws connection's blocking read()) unwinds, and valgrind flushes
+callgrind.out before exiting.
+
+Collected: 81,096,990 instructions (Ir) over 20.04s wall clock.
+Load result: 97,557 total WS round trips (340 real applied moves, 97,217
+empty "poll" frames), 6 persistent WS connections (--games=3 --seats=2, one
+connection per seat — --conns is not used in --mode=ws).
+
+See PROFILE_HOTPATH.md's "T1b — WebSocket server + legal-move clients"
+section for the full writeup: what changed (items 1-3 of T1's own "where to
+speed up" list), before/after throughput, the hot-function table below, and
+why this run's server-side instruction counts are a clean per-message
+attribution rather than a throughput measurement (this small a connection
+count is client poll-interval-bound, not server-CPU-bound — confirmed by a
+native, non-instrumented run at the identical --games=3 --seats=2 --secs=20
+scale measuring a statistically identical messages/s).

@@ -1,0 +1,11 @@
+label:      T3_octogen_prod
+mode:       --launch
+host uname: Linux x86_64
+started:    2026-07-20T20:42:02Z
+tool:       callgrind
+cmd:        valgrind --tool=callgrind --callgrind-out-file=/home/user/foolish/server/impls/native/bench_results/T3_octogen_prod/raw/callgrind.out -- ./bench_results/eval_t3_prod --strategy=octogen --opp=octogen --players=2 --games=1 --seed-start=1
+finished:   2026-07-20T20:43:03Z
+
+supplementary cache-sim run (see annotated_cache_excerpt.txt, PROFILE_HOTPATH.md T3):
+cmd: valgrind --tool=callgrind --cache-sim=yes --callgrind-out-file=raw_cache/callgrind.out -- ./bench_results/eval_t3_prod --strategy=octogen --opp=octogen --players=2 --games=1 --seed-start=1
+D1 misses: 2,678,601 (0.1%)   LLd misses: 33,406 (0.0%)

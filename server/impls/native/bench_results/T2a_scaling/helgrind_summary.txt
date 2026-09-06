@@ -1,0 +1,69 @@
+T2a — Helgrind race-freedom gate (digest; raw valgrind logs not committed)
+
+Tool: valgrind --tool=helgrind --history-level=approx
+Technique: launch valgrind directly on foolish_server (never through `timeout`
+— it forks an untraced child, so a callgrind/helgrind capture measures only
+`timeout`'s own startup; see PROFILE_HOTPATH.md's note on the same issue),
+drive it with foolish_hammer for a bounded window, then `kill -TERM` the
+valgrind PID so it forwards the signal, the guest's blocking accept()/read()
+unwinds, and valgrind flushes its report before exiting.
+
+=== Run 1 (first per-game-lock-only build, BEFORE g_kernel_lock existed) ===
+cmd: valgrind --tool=helgrind -- ./foolish_server 8098
+load: foolish_hammer --mode=mixed (games=3 seats=4 conns=6 secs=15)
+      then foolish_hammer --mode=ws (games=3 seats=2 secs=15)
+RESULT: Possible data race during write of size 4 on `engine_last_reject`
+  (game.c) between two DIFFERENT games' threads, each correctly holding its
+  own GameSlot.lock — see SERVER_SCALING.md "What Helgrind found" for the
+  full analysis and the kernel-source citation explaining why. NOT
+  Helgrind-clean.
+FIX: g_kernel_lock added around awire_apply / bot_drive / game_seat_and_deal.
+
+=== Run 2 (after g_kernel_lock, before g_seq fix) ===
+cmd/load: same as Run 1
+RESULT: ERROR SUMMARY: 13 errors from 2 contexts — all on `g_seq` (a
+  monotonic ID-generation counter), read unguarded by h_meta's deal-seed
+  loop (GameSlot.lock only) while written under g_registry_lock elsewhere.
+  NOT Helgrind-clean.
+FIX: g_seq changed to a C11 atomic_ulong (atomic_fetch_add_explicit /
+  atomic_load_explicit, relaxed) — no lock needed, it has no other
+  invariant to protect.
+
+=== Run 3 (after both fixes; default pool sizes: game=6 meta=1 create=1) ===
+cmd: valgrind --tool=helgrind --history-level=approx -- ./foolish_server 8098
+load: foolish_hammer --mode=mixed (games=3 seats=4 conns=6 secs=15)
+      then foolish_hammer --mode=ws (games=3 seats=2 secs=15)
+RESULT: ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 973308 from 187)
+  — clean. Suppressions are valgrind/glibc's own defaults (pthread
+  internals), none of this file's code.
+
+=== Run 4 (--meta-workers=0 fold mode; game=3 meta=0 create=2) ===
+cmd: valgrind --tool=helgrind --history-level=approx -- \
+     ./foolish_server 8098 --game-workers=3 --meta-workers=0 --create-workers=2
+load: foolish_hammer --mode=mixed (games=3 seats=4 conns=6 secs=15)
+      then foolish_hammer --mode=ws (games=3 seats=2 secs=15)
+RESULT: ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 973308 from 187)
+  — clean. Exercises /meta traffic routed onto the sharded game pool.
+
+=== Run 5 (multi-worker pools; game=6 meta=2 create=2) ===
+cmd: valgrind --tool=helgrind --history-level=approx -- \
+     ./foolish_server 8097 --game-workers=6 --meta-workers=2 --create-workers=2
+load: foolish_hammer --mode=mixed (games=6 seats=3 conns=8 secs=18)
+      then foolish_hammer --mode=ws (games=4 seats=2 secs=18)
+RESULT: ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 1253433 from 190)
+  — clean. Exercises >1 worker thread sharing one WorkQueue (meta AND
+  create pools both widened past 1).
+
+=== Run 6 (shipped defaults; game=4 meta=0 create=1) ===
+cmd: valgrind --tool=helgrind --history-level=approx -- \
+     ./foolish_server 8096 --game-workers=4 --meta-workers=0 --create-workers=1
+load: foolish_hammer --mode=mixed (games=4 seats=3 conns=8 secs=15)
+      then foolish_hammer --mode=ws (games=4 seats=2 secs=15)
+RESULT: ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 1069195 from 185)
+  — clean. The exact configuration foolish_server ships with by default.
+
+VERDICT: Helgrind-clean across every worker-pool topology exercised
+(default, fold-mode, multi-worker-pool, and shipped defaults), after fixing
+the two real races Helgrind found (engine_last_reject via g_kernel_lock,
+g_seq via making it atomic). No suppressions beyond valgrind/glibc's own
+pthread-internal defaults were added or needed.

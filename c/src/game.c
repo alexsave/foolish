@@ -101,9 +101,12 @@ static int deal_index(int n) {
 }
 
 // Observation hook + rejection reason (see game.h). Both are no-cost when
-// unused: the hook is NULL by default and the reason is a plain store.
-void (*engine_snap_hook)(const Game *g, int tag, int aux) = 0;
-int engine_last_reject = ENGINE_REJECT_NONE;
+// unused: the hook is NULL by default and the reason is a plain store. Both
+// are _Thread_local (Stage 5, SERVER_SCALING.md — see the extern declarations
+// in game.h for why): definition and declaration must agree on thread storage
+// duration, so both sides carry the qualifier.
+_Thread_local void (*engine_snap_hook)(const Game *g, int tag, int aux) = 0;
+_Thread_local int engine_last_reject = ENGINE_REJECT_NONE;
 
 #define SNAP(g, tag, aux) do { if (engine_snap_hook) engine_snap_hook((g), (tag), (aux)); } while (0)
 #define REJECT(code) do { engine_last_reject = (code); return false; } while (0)
@@ -274,8 +277,13 @@ void game_seat_and_deal(Game *g, const int8_t *strategy_keys, int n) {
 // behind e2e/client_guards + e2e/wasm_kernel_fuzz). Compile the whole log-append
 // path down to no-ops so the validator carries none of it. A single static sink
 // backs callers that write log fields directly (e.g. LOG_DEFENDER_CHANGE's
-// dc->defender_index); those writes are inert.
-static GameLog g_log_sink;
+// dc->defender_index); those writes are inert. _Thread_local for the same
+// reason as the drop-branch `scratch` below (Stage 5) — this build is
+// guards.wasm-only (single-threaded, and c/Makefile neutralizes the
+// qualifier there anyway) so it is moot in practice, but keeping the
+// qualifier here means the file has ONE rule ("kernel-mutated statics are
+// thread-local"), not a guards-only exception to remember.
+static _Thread_local GameLog g_log_sink;
 static GameLog *log_alloc(Game *g, int log_type, int player_idx) {
     (void)g; (void)log_type; (void)player_idx;
     return &g_log_sink;
@@ -301,7 +309,12 @@ static GameLog *log_alloc(Game *g, int log_type, int player_idx) {
         drop = g->num_logs >= MAX_LOGS;
     }
     if (drop) {
-        static GameLog scratch;
+        // _Thread_local (Stage 5): this IS live on the server's concurrent
+        // play path (a log-cap overflow during a real game), unlike the
+        // GUARDS_VALIDATE_ONLY sink above — two games' handle_* calls
+        // overflowing in the same instant would otherwise tear one shared
+        // GameLog between threads.
+        static _Thread_local GameLog scratch;
         memset(&scratch, 0, sizeof(scratch));
         scratch.log_type = log_type;
         scratch.player_idx = player_idx;
@@ -410,6 +423,15 @@ static void deal_initial(Game *g) {
 // Rare but real: ~1.4% of 2-player deals (12 cards from 36, 9 of them trumps)
 // have no trump at all. Those replays used to fail with "trump not in alphabet"
 // — REPLAY_EHEADER's message, which is about a different fault entirely.
+//
+// NOT thread-local (Stage 5 audit, SERVER_SCALING.md): game_force_first_attacker
+// is called only from replay_steps.c's replay rebuild, which the native server
+// never links or calls (foolish_server/persist.c serialize through view.c's
+// state_put/state_get, not replay_steps.c — confirmed by grep). So this global
+// is unreachable from bot_drive/awire_apply/game_seat_and_deal and never
+// mutated during concurrent play; it stays a plain global, matching the
+// single-threaded replay-tooling callers that do touch it (cnitro_replay,
+// replay_difftest, replay_v6_test — none of which are multi-threaded).
 static int g_forced_first_attacker = -1;
 
 void game_force_first_attacker(int seat) { g_forced_first_attacker = seat; }

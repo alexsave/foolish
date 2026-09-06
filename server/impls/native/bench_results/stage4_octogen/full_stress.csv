@@ -1,0 +1,5 @@
+label,games,seats,spectators,elapsed_s,applied_moves_per_s,lat_mean_us,lat_p99_us,spectator_conns,octogen_decisions,octogen_decisions_per_s,cpu_secs,cpu_cores_avg,rss_first_kb,rss_mean_kb,rss_peak_kb,rss_vmhwm_kb
+full_g1,1,7,2,25.01,14.8,51.3,193.9,2,7,0.28,4.780,0.191,17740,19772,21044,20736
+full_g2,2,7,2,25.01,21.2,71.5,231.0,4,17,0.68,7.410,0.296,12288,27325,30368,29984
+full_g4,4,7,2,25.02,55.2,57.5,232.2,8,42,1.68,16.250,0.650,11416,42615,49148,48968
+full_g8,8,7,2,25.06,101.4,92.2,444.5,16,89,3.55,24.560,0.982,11248,72999,86420,86204
