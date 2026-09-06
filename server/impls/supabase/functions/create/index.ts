@@ -3,7 +3,7 @@ import { corsHeaders, handleCors } from "@shared/adapter/cors.ts";
 import { getAuthenticatedUser } from "@shared/adapter/auth.ts";
 import { Game, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from "@api/core/types.ts";
 import { createId } from "@api/common/common_utils.ts";
-import { buildPlayerViewRows, buildSpectatorView, personalViewOf } from "@api/common/player_views.ts";
+import { buildPlayerViewRows, buildSpectatorView } from "@api/common/player_views.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
@@ -94,15 +94,13 @@ serve(async (req: Request): Promise<Response> => {
         if (er && typeof er.waitUntil === 'function') er.waitUntil(persist);
         else await persist; // no EdgeRuntime (local/test): don't lose the write
 
-        // Return the packed view buffer (decodable by decodePackedGame). A human
-        // creator always yields a row; the JSON fallback is defensive only.
-        if (mine) {
-            return new Response(hexToBytes(mine.view) as unknown as BodyInit, {
-                headers: { ...corsHeaders, 'Content-Type': 'application/octet-stream' },
-            });
-        }
-        return new Response(JSON.stringify(await personalViewOf(dbGameData, user_id)), {
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        // Return the packed view buffer (decodable by decodePackedGame). The
+        // creator is a human seated in the roster, so buildPlayerViewRows always
+        // yields their row; no row means the builder is broken, and an error is
+        // a truer answer than a second, JSON-shaped way to say the same game.
+        if (!mine) throw new Error('create: no view row for the creator');
+        return new Response(hexToBytes(mine.view) as unknown as BodyInit, {
+            headers: { ...corsHeaders, 'Content-Type': 'application/octet-stream' },
         });
     } catch (e: any) {
         return new Response(JSON.stringify({ error: e.message }), {
