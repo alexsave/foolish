@@ -1050,11 +1050,16 @@ With those two put back and nothing else, the module is byte-identical - so
 every actual flag deletion is provably codegen-neutral, and what changed is the
 runtime-dead branch the non-LTO wasm build could not prove away.
 
-All of this was measured again after rebasing onto the merge that moved
-`cordite_sim.c`'s mask tables to `_Thread_local`, because the earlier numbers
-were taken against a tree without them and no longer proved what they claimed.
-The signatures come back identical value for value, so that change is itself
-play-neutral and the deletion stays play-neutral on top of it.
+All of this was measured again on each of the five bases main moved through while
+the branch was open: the native-server merge that moved `cordite_sim.c`'s mask
+tables to `_Thread_local`, the Mode B oracle, the determinism pass, the chain
+layer's turn controller, and the post-game analyser.
+Each time the earlier numbers had been taken against a tree that no longer
+existed, and a measurement that IS the evidence for a change has to be true of the
+tree that actually merges - re-running it is the work, not a formality.
+The signatures come back identical value for value every time, so each of those
+changes is itself play-neutral and the deletion stays play-neutral on top of all
+of them.
 
 Play identity was then measured directly.
 `GAME_SIG` signatures over 380 games at 2-8 players, native and again under the
@@ -1062,12 +1067,13 @@ wasm bot module's exact flag set (`CD_TT_BITS=12 -DCD_TT_2WAY -DCD_TT_PACK8
 -DCD_LEAFBOOK`), are identical bot for bot: octogen, cordite, semtex, robusta,
 blackpowder, firecracker.
 
-`make tests` 6017 passed / 0 failed - the same count the pristine baseline
-reports, measured rather than assumed - `make difftests` green with
+`make tests` 6056 passed / 0 failed - the same count the pristine baseline
+reports, measured rather than assumed, and up from 6017 because the post-game
+analyser added 39 cases while this branch was open - `make difftests` green with
 `solver_difftest` at 0 mismatches for 2, 3 and 4 players, `make leafbook-verify`
 1,000,000 samples 0 mismatches, `make leafbook-gate`, `make l1-measure`,
 `make og_explain`, `make ios-lib` / `ios-smoke` / `ios-goldens`,
-`ios/scripts/mac_tests.sh` (615 + 25 XCTest cases, 0 failures),
+`ios/scripts/mac_tests.sh` (623 + 25 XCTest cases, 0 failures),
 `ios/scripts/lint_architecture.sh` and `npm run check:determinism` all pass.
 The native server is Linux-only since it grew epoll, so on this Mac the check is
 its kernel-linking target, `make sem_fuzz`, which builds.
@@ -1077,6 +1083,48 @@ the only thing in that file that ever called into either, which is exactly what
 the wasm libc shims say in their own header comments.
 `rules.wasm` and `guards.wasm` stayed byte-identical across that removal, so it
 is provably a no-op.
+
+### Two breaks the parallel merges left on main
+
+Neither is this change's doing and both are fixed here, in their own commits, so
+they are easy to lift out.
+
+`make wasm-oracle-mt` did not compile. The native-server merge made
+`engine_snap_hook` `_Thread_local` in `game.h`; the Mode B merge added
+`wasm/wasm_oracle_mt.c`, which re-declared it without the qualifier. No CI job
+builds wasm, so the collision landed green.
+
+`npm run check:determinism` failed. The determinism pass taught the gate to catch
+clock reads that decide a test verdict; the Mode B suite has two, and it landed
+first. The gate is right: that loop's tolerance is derived from the counts the run
+reached, so a slow runner would gather less evidence and get a WIDER tolerance -
+the assertion weakening exactly when the machine is least able to earn it. The cap
+never fired anyway (measured: the heavy caller reaches its full target in ~5s
+against a 25s cap), so it is deleted rather than allowlisted.
+
+That one was fixed twice. A separate PR reached main first and settled it by
+allowlisting the two reads as a budget rather than a verdict, which silences the
+gate without closing the widening-tolerance hole; this branch replaces that entry
+with the deletion. Removing the reads then forces removing the entry, because the
+gate checks in both directions and fails on an allowlisted call site that no
+longer exists. An allowlist that cannot go stale is worth more than one that only
+ever grows.
+
+Three times in one night, two PRs merged cleanly in text and broke in meaning -
+this branch included, which is why its evidence was re-taken rather than carried
+forward. The pattern is worth naming: nothing in CI built wasm, and nothing
+re-runs a merged PR's gate against a tree the other PR changed.
+The first half now has a CI job. The second half is still open.
+
+A third, smaller instance of the same shape, recorded because it will bite again:
+`ios/scripts/mac_tests.sh` regenerates the Xcode project only when
+`ios/project.yml` is newer than the generated `project.pbxproj`. The project
+globs `../sdk/swift` as a DIRECTORY, so a PR that adds a Swift file there without
+touching `project.yml` leaves every existing checkout building a project that
+does not contain it - a `cannot find type` error in a file nobody edited. The
+turn controller did exactly that. `--regen` clears it; a staleness check that
+looked at the globbed directories rather than only at the spec would not need to
+be remembered.
 
 One pre-existing warning went with the sweep: `sim_other_in` in `cordite_sim.c`
 had no callers before this change either.
