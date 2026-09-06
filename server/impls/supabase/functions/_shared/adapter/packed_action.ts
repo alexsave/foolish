@@ -15,6 +15,25 @@ import { verify_player_in_game } from '@api/common/common_utils.ts';
 import { ACTION_STATUS, AwireMove, decodeAction, REJECT_STALE_ROUND } from '@sdk/ts/wire/awire.ts';
 import { getCachedGame, invalidateCachedGame } from './game_cache.ts';
 
+// A lazy import that resolves ONCE. The deferral is deliberate (a cold start must
+// not pull the rules-wasm embed it never uses); re-RESOLVING the specifier on
+// every call was not - see the note on `lazy` in
+// server/impls/supabase/functions/_shared/adapter/utils.ts.
+const lazy = <T>(load: () => Promise<T>): (() => Promise<T>) => {
+    let mod: Promise<T> | undefined;
+    return () => (mod ??= load());
+};
+const codecMod = lazy(() => import('@api/common/replay/codec.ts'));
+const engineMod = lazy(() => import('@sdk/ts/wasm/engine.ts'));
+const logwireMod = lazy(() => import('@sdk/ts/wire/logwire.ts'));
+const bytesMod = lazy(() => import('@sdk/ts/wire/bytes.ts'));
+const attackMod = lazy(() => import('@api/common/actions/attack.ts'));
+const coverMod = lazy(() => import('@api/common/actions/cover.ts'));
+const passMod = lazy(() => import('@api/common/actions/pass.ts'));
+const pickupMod = lazy(() => import('@api/common/actions/pickup.ts'));
+const goodMod = lazy(() => import('@api/common/actions/good.ts'));
+
+
 export interface PackedActionOutcome {
     status: number;       // ACTION_STATUS.*
     rejectCode: number;   // ENGINE_REJECT_* (0 unless REJECTED)
@@ -121,10 +140,10 @@ export async function executePackedAction(
         // ONE synchronous kernel section: load blob -> apply wire -> finalize
         // win -> serialize state + logs + every recipient's masked event
         // stream. Lazy import keeps the wasm embed off lobby-only cold starts.
-        const { hexToBytes, bytesToHex } = await import('@api/common/replay/codec.ts');
-        const { runPackedAction, materializeKernelGame } = await import('@sdk/ts/wasm/engine.ts');
-        const { logsFromKernelExport } = await import('@sdk/ts/wire/logwire.ts');
-        const { bytesToBareHex } = await import('@sdk/ts/wire/bytes.ts');
+        const { hexToBytes, bytesToHex } = await codecMod();
+        const { runPackedAction, materializeKernelGame } = await engineMod();
+        const { logsFromKernelExport } = await logwireMod();
+        const { bytesToBareHex } = await bytesMod();
         const run = runPackedAction(hexToBytes(row.state), seat, wire, aiMask, humanSeats);
 
         if (!run.ok) {
@@ -205,11 +224,11 @@ async function legacyFallback(
 ): Promise<PackedActionOutcome> {
     const move = decodeAction(wire);
     if (!move) throw new Error('malformed action wire');
-    const { handleAttack } = await import('@api/common/actions/attack.ts');
-    const { handleCover } = await import('@api/common/actions/cover.ts');
-    const { handlePass } = await import('@api/common/actions/pass.ts');
-    const { handlePickup } = await import('@api/common/actions/pickup.ts');
-    const { handleGood } = await import('@api/common/actions/good.ts');
+    const { handleAttack } = await attackMod();
+    const { handleCover } = await coverMod();
+    const { handlePass } = await passMod();
+    const { handlePickup } = await pickupMod();
+    const { handleGood } = await goodMod();
     let rejected = false;
     const result = await executeWithGameLock(gameId, async (game) => {
         rejected = false; // reset per CAS attempt — the op re-runs on conflict

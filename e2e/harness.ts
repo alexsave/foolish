@@ -13,7 +13,9 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {};
 
 import { readFileSync } from 'fs';
 import { basename, join } from 'path';
-import { e2ePool as pool, resetBroadcastLog } from './adapters/supabase.ts';
+import { Client } from 'pg';
+import { after } from 'node:test';
+import { e2ePool as pool, pgAdminConfig, suiteDatabase, resetBroadcastLog } from './adapters/supabase.ts';
 import { derivedUuid } from '../sdk/ts/wire/detid.ts';
 import { suiteRng } from './helpers/rng.ts';
 
@@ -40,17 +42,62 @@ export const uuid = () => derivedUuid(idNamespace, idSeq++);
 /** Reset the id counter - only for a test that wants two identical id runs. */
 export const __resetIds = () => { idSeq = 0; };
 
-// Stand up the Supabase platform shim, then apply the REAL production schema
-// (server/impls/supabase/seed.sql — tables, types, the commit_game CAS, the bot lease, the
-// triggers) verbatim. seed.sql is the single source of truth; nothing about the
-// gameplay schema is copied here, so the harness can't drift from production.
+// One short-lived connection to the maintenance database, for the two statements
+// that cannot run against the database they act on. A Client rather than a Pool:
+// it is opened, used and closed inside the call, so a file's steady-state
+// footprint stays exactly its own pool (see the connection budget in
+// adapters/supabase.ts).
+async function onAdmin(sql: string): Promise<void> {
+    const admin = new Client(pgAdminConfig);
+    await admin.connect();
+    try { await admin.query(sql); } finally { await admin.end(); }
+}
+
+let ownsDatabase = false;
+
+// Create this FILE's database, then stand up the Supabase platform shim and apply
+// the REAL production schema (server/impls/supabase/seed.sql — tables, types, the
+// commit_game CAS, the bot lease, the triggers) verbatim into it. seed.sql is the
+// single source of truth; nothing about the gameplay schema is copied here, and
+// nothing about it is rewritten to fit the isolation either - a per-file DATABASE
+// (rather than a per-file schema) is what lets `auth.users` and `realtime.messages`
+// keep the names production calls them by, so the harness can't drift from
+// production.
+//
+// DROP-then-CREATE, in that order: the DROP is the cleanup for whatever a killed
+// run left behind, and WITH (FORCE) terminates its orphaned backends instead of
+// failing on them. This is why a stale namespace is inert rather than poisonous.
 export async function applySchema(): Promise<void> {
+    await onAdmin(`DROP DATABASE IF EXISTS ${suiteDatabase} WITH (FORCE)`);
+    await onAdmin(`CREATE DATABASE ${suiteDatabase}`);
+    ownsDatabase = true;
+
     const shim = readFileSync(join(process.cwd(), 'e2e', 'schema.sql'), 'utf8');
     await pool.query(shim);
 
     const seed = readFileSync(join(process.cwd(), 'server', 'impls', 'supabase', 'seed.sql'), 'utf8');
     await pool.query(seed);
 }
+
+// Release: close the pool, then drop the file's database. Best-effort by design:
+// a run killed between here and the next applySchema() leaves at most one inert
+// database per test file, which the next run's DROP ... WITH (FORCE) removes.
+let tornDown: Promise<void> | null = null;
+export function teardownSuiteDb(): Promise<void> {
+    return (tornDown ??= (async () => {
+        await pool.end();
+        if (!ownsDatabase) return;
+        try { await onAdmin(`DROP DATABASE IF EXISTS ${suiteDatabase} WITH (FORCE)`); } catch { /* the next run's DROP gets it */ }
+    })());
+}
+
+// Under `node --test` each file is its own process and its own root suite, so a
+// root after() here runs once, last, for every suite that imports the harness,
+// including the ones that end the pool themselves (pool.end() folds repeat calls).
+// Outside the runner (the e2e/bench_*.ts scripts) there is no root suite, so hang
+// the same teardown off beforeExit instead.
+if (process.env.NODE_TEST_CONTEXT) after(async () => { await teardownSuiteDb(); });
+else process.on('beforeExit', () => { void teardownSuiteDb(); });
 
 export async function resetDb(): Promise<void> {
     await pool.query('TRUNCATE games, game_decks, player_hands, bot_hands, bots, game_snapshots, user_elo_ratings, player_views RESTART IDENTITY CASCADE');

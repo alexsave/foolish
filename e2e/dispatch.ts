@@ -8,6 +8,12 @@ import { LegalMove } from '../server/api/core/bot_interfaces.ts';
 import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
 import { executeBotMove } from '../server/api/common/pure_bot_actions.ts';
 import { pgPool } from './harness.ts';
+// Top-level, not `await import`ed inside checkCardConservation: that runs once
+// per move in server/fuzz/pass_parity/concurrent_games, and the e2e runner's TS
+// loader re-resolves a dynamic import on every call (~1.9ms) even though the
+// module is already in the registry.
+import { deserializeGameState } from '../sdk/ts/wasm/engine.ts';
+import { hexToBytes } from '../server/api/common/replay/codec.ts';
 
 export interface PlayerMove { playerId: string; move: LegalMove }
 
@@ -46,8 +52,6 @@ export async function checkCardConservation(gameId: string): Promise<{ ok: boole
     // see commitGame). Reconstruct from the blob; fall back to the tables for
     // never-dealt / legacy rows that predate the blob column.
     if (g.state) {
-        const { deserializeGameState } = await import('../sdk/ts/wasm/engine.ts');
-        const { hexToBytes } = await import('../server/api/common/replay/codec.ts');
         const game = deserializeGameState(hexToBytes(g.state), {
             id: gameId, name: '', version: 0, deck_length: 0,
             players: (g.players ?? []).map((p: any) => ({ player_id: p.player_id, name: p.name, is_ai: p.is_ai, strategy_key: 'human' })),

@@ -8,7 +8,7 @@ import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { applySchema, resetDb, seedGame, uuid, pgPool, broadcastLog } from './harness.ts';
-import { executeWithGameLock } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
+import { executeWithGameLock, loadCompleteGame } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
 import { start_game } from '../server/api/common/game_lifecycle.ts';
 import { AnimationEvent } from '../server/api/core/types.ts';
 import { legalMovesFor, applyPlayerMove, checkCardConservation, PlayerMove } from './dispatch.ts';
@@ -20,12 +20,12 @@ const rng = suiteRng('server');
 const rand = (n: number) => rng.int(n);
 const pick = <T>(a: T[]): T => rng.pick(a);
 
-async function loadGame(gameId: string) {
-    // use the real loader by going through executeWithGameLock would mutate; for a
-    // read we just enumerate moves from a fresh load via the adapter-backed path.
-    const { loadCompleteGame } = await import('../server/impls/supabase/functions/_shared/adapter/utils.ts');
-    return loadCompleteGame(gameId);
-}
+// Going through executeWithGameLock would mutate; for a read we just enumerate
+// moves from a fresh load via the adapter-backed path. loadCompleteGame is a
+// top-level import rather than an `await import` here, because the e2e runner's
+// TS loader re-resolves a dynamic import on every call (~1.9ms) and this runs
+// once per move of every game.
+const loadGame = (gameId: string) => loadCompleteGame(gameId);
 
 async function newGame(humans: number, bots: number): Promise<{ gameId: string; humanIds: string[]; botIds: Set<string> }> {
     const gameId = `g${uuid().slice(0, 6)}`;
