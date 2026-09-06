@@ -261,7 +261,7 @@ if (!process.env.VALIDATION_ONLY) {
             if (moves.length === 0) break;
             const pick = rng.pick(moves);
             try {
-                await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, pick) }), `rm${steps}`, true);
+                await executeWithGameLock(gameId, async (gg) => ({ game: gg, ...applyPlayerMove(gg, pick) }), `rm${steps}`, true);
             } catch { /* stale pick under the CAS — normal */ }
         }
         const finished = await pgPool.query('SELECT status, state FROM games WHERE id=$1', [gameId]);

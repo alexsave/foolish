@@ -10,7 +10,7 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, seedGame, uuid, pgPool, broadcastLog } from './harness.ts';
 import { executeWithGameLock, loadCompleteGame } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
-import { start_game } from '../server/api/common/game_lifecycle.ts';
+import { packedProducts, start_game_packed } from '../server/api/common/game_lifecycle.ts';
 import { AnimationEvent } from '../server/api/core/types.ts';
 import { legalMovesFor, applyPlayerMove } from './dispatch.ts';
 import { shouldDropStaleSequence, mergeTableBattles } from '../src/state/clientReconcile';
@@ -42,7 +42,7 @@ async function driveAndCapture(): Promise<{ stream: Bcast[]; serverFinalTable: a
     // The identity roster the client already holds when a broadcast arrives —
     // exactly what it needs to decode the packed event wire.
     const roster = { id: gameId, name: gameId, players: seeded.map((p) => ({ player_id: p.id, name: p.name, is_ai: p.is_ai })) };
-    await executeWithGameLock(gameId, async (g) => ({ game: g, events: start_game(g) as AnimationEvent[] }), 'start', false);
+    await executeWithGameLock(gameId, async (g) => ({ game: g, events: [], packed: packedProducts(start_game_packed(g)) }), 'start', false);
 
     let steps = 0;
     while (steps < 600) {
@@ -50,7 +50,7 @@ async function driveAndCapture(): Promise<{ stream: Bcast[]; serverFinalTable: a
         if (g.status !== 'playing') break;
         const moves = legalMovesFor(g);
         if (moves.length === 0) break;
-        try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, moveRng.pick(moves)) }), `s${steps}`, true); } catch { /* */ }
+        try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, ...applyPlayerMove(gg, moveRng.pick(moves)) }), `s${steps}`, true); } catch { /* */ }
         steps++;
     }
 

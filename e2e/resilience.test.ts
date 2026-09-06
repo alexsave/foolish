@@ -13,9 +13,8 @@ import assert from 'node:assert/strict';
 
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
 import {
-  executeWithGameLock, loadCompleteGame, commitGame,
-} from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
-import { start_game } from '../server/api/common/game_lifecycle.ts';
+  executeWithGameLock, loadCompleteGame, commitGame, } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
+import { packedProducts, start_game_packed } from '../server/api/common/game_lifecycle.ts';
 import { GAME_STATUS, AnimationEvent } from '../server/api/core/types.ts';
 import { legalMovesFor, applyPlayerMove } from './dispatch.ts';
 import { suiteRng } from './helpers/rng.ts';
@@ -33,7 +32,7 @@ async function startedGame(): Promise<string> {
     { id: uuid(), name: 'B0', is_ai: true, strategy_key: 'random' },
     { id: uuid(), name: 'B1', is_ai: true, strategy_key: 'random' },
   ]);
-  await executeWithGameLock(id, async (g) => ({ game: g, events: start_game(g) as AnimationEvent[] }), 'start', false);
+  await executeWithGameLock(id, async (g) => ({ game: g, events: [], packed: packedProducts(start_game_packed(g)) }), 'start', false);
   return id;
 }
 
@@ -122,7 +121,7 @@ test('a full game commits GAME_OVER and lands its end-of-game side effects (ELO 
     const moves = legalMovesFor(g);
     if (moves.length === 0) break;
     try {
-      await executeWithGameLock(id, async (gg) => ({ game: gg, events: applyPlayerMove(gg, pick(moves)) }), `p${step}`, true);
+      await executeWithGameLock(id, async (gg) => ({ game: gg, ...applyPlayerMove(gg, pick(moves)) }), `p${step}`, true);
     } catch { /* transient contention — not expected single-threaded, but harmless */ }
   }
 

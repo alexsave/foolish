@@ -8,6 +8,11 @@
 // This file constructs deterministic mid-round states and calls those exports
 // directly. Pure kernel test — needs no Postgres.
 
+// NOTE: these assert STATE, not events. The handlers no longer synthesize a JS
+// AnimationEvent stream - the kernel serializes its own per-viewer streams and
+// production broadcasts those bytes - so what is left to check here is that the
+// handler applies the move to the Game and is a no-op on a finished one. The
+// stream itself is covered by e2e/packed_wire_stream.test.ts.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -58,8 +63,7 @@ test('validateAttack: accepts a legal first attack, rejects empty/malformed', ()
 
 test('executeAttack: applies on a live game, is a no-op once the game is over', () => {
   const g = baseGame([C(0, 5), C(0, 6), C(1, 7)], [C(2, 8), C(2, 9)]);
-  const events = executeAttack(g, 'p0', [C(0, 5)]);
-  assert.ok(events.length > 0, 'a live attack emits animation events');
+  executeAttack(g, 'p0', [C(0, 5)]);
   assert.equal(g.table_battles.length, 1, 'the attack card lands on the table');
   assert.equal(g.table_battles[0].attack.value, 5, 'correct card on the table');
 
@@ -98,8 +102,7 @@ test('validateCover: accepts a legal cover, enforces playing-state and paired sh
 
 test('executeCover: covers on a live game, is a no-op once the game is over', () => {
   const g = coverState();
-  const events = executeCover(g, 'p1', [C(0, 9)], [C(0, 7)]);
-  assert.ok(events.length > 0, 'a live cover emits events');
+  executeCover(g, 'p1', [C(0, 9)], [C(0, 7)]);
   assert.equal(uncovered(g), 0, 'the attack is now covered');
 
   const over = coverState();
@@ -129,8 +132,7 @@ test('validatePass: accepts a legal transfer, enforces playing-state and non-emp
 
 test('executePass: transfers on a live game, is a no-op once the game is over', () => {
   const g = passState();
-  const events = executePass(g, 'p1', [C(2, 7)]);
-  assert.ok(events.length > 0, 'a live pass emits events');
+  executePass(g, 'p1', [C(2, 7)]);
   assert.equal(g.defender, 0, 'the pass hands the defence to the next seat');
 
   const over = passState();
@@ -159,13 +161,12 @@ test('executeRoundTransition: discards a covered table, is a no-op once the game
     [C(2, 8), C(2, 9), C(2, 10), C(2, 11), C(2, 12), C(1, 5)],
     [{ attack: C(0, 7), defense: C(0, 9) }],   // fully covered
   );
-  const events = executeRoundTransition(g, 'test');
-  assert.ok(events.length > 0, 'the transition emits events');
+  executeRoundTransition(g, 'test');
   assert.equal(g.table_battles.length, 0, 'the covered table is discarded');
   assert.equal(g.discard_pile_length, 2, 'both cards go to the discard pile');
 
   const over = baseGame([C(0, 5)], [C(2, 8)], [{ attack: C(0, 7), defense: C(0, 9) }]);
   over.status = GAME_STATUS.GAME_OVER;
-  assert.deepEqual(executeRoundTransition(over, 'test'), [], 'no events on a finished game');
+  executeRoundTransition(over, 'test');
   assert.equal(over.table_battles.length, 1, 'finished game keeps its table');
 });

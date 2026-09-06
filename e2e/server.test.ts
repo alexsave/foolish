@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 
 import { applySchema, resetDb, seedGame, uuid, pgPool, broadcastLog } from './harness.ts';
 import { executeWithGameLock, loadCompleteGame } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
-import { start_game } from '../server/api/common/game_lifecycle.ts';
+import { packedProducts, start_game_packed } from '../server/api/common/game_lifecycle.ts';
 import { AnimationEvent } from '../server/api/core/types.ts';
 import { legalMovesFor, applyPlayerMove, checkCardConservation, PlayerMove } from './dispatch.ts';
 import { suiteRng } from './helpers/rng.ts';
@@ -35,7 +35,7 @@ async function newGame(humans: number, bots: number): Promise<{ gameId: string; 
     const botIds = new Set<string>();
     for (let i = 0; i < bots; i++) { const id = uuid(); botIds.add(id); players.push({ id, name: `B${i}`, is_ai: true, strategy_key: 'random' }); }
     await seedGame(gameId, players);
-    await executeWithGameLock(gameId, async (g) => ({ game: g, events: start_game(g) as AnimationEvent[] }), 'start', false);
+    await executeWithGameLock(gameId, async (g) => ({ game: g, events: [], packed: packedProducts(start_game_packed(g)) }), 'start', false);
     return { gameId, humanIds, botIds };
 }
 
@@ -48,7 +48,7 @@ export function registerServerValidation(): void {
             if (g.status !== 'playing') break;
             const moves = legalMovesFor(g);
             if (moves.length === 0) break;
-            try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, pick(moves)) }), `s${step}`, true); } catch { /* stale */ }
+            try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, ...applyPlayerMove(gg, pick(moves)) }), `s${step}`, true); } catch { /* stale */ }
             const chk = await checkCardConservation(gameId);
             assert.ok(chk.ok, `card conservation violated at step ${step} (seed=${rng.seed}): ${chk.detail}`);
         }
@@ -73,7 +73,7 @@ export function registerServerValidation(): void {
             if (moves.length === 0) continue;
             const burst: PlayerMove[] = [pick(moves), pick(moves)];
             burst.push(burst[0]); // rapid double-submit
-            await Promise.all(burst.map((m, i) => executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, m) }), `b${step}-${i}`, true).catch(() => {})));
+            await Promise.all(burst.map((m, i) => executeWithGameLock(gameId, async (gg) => ({ game: gg, ...applyPlayerMove(gg, m) }), `b${step}-${i}`, true).catch(() => {})));
             const chk = await checkCardConservation(gameId);
             assert.ok(chk.ok, `conservation broke under contention at step ${step} (seed=${rng.seed}): ${chk.detail}`);
         }
@@ -93,7 +93,7 @@ test('card conservation holds across a full sequential game (real executeWithGam
         const moves = legalMovesFor(g);
         if (moves.length === 0) break;
         const m = pick(moves);
-        try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, m) }), `s${steps}`, true); } catch { /* stale */ }
+        try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, ...applyPlayerMove(gg, m) }), `s${steps}`, true); } catch { /* stale */ }
         const chk = await checkCardConservation(gameId);
         assert.ok(chk.ok, `card conservation violated at step ${steps} (seed=${rng.seed}): ${chk.detail}`);
         steps++;
@@ -109,7 +109,7 @@ test('every broadcast carries a monotonically non-decreasing games.version (the 
         if (g.status !== 'playing') break;
         const moves = legalMovesFor(g);
         if (moves.length === 0) break;
-        try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, pick(moves)) }), `s${steps}`, true); } catch { /* */ }
+        try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, ...applyPlayerMove(gg, pick(moves)) }), `s${steps}`, true); } catch { /* */ }
         steps++;
     }
     // Each animation_events broadcast must carry a numeric version (the packed
@@ -147,7 +147,7 @@ test('every finished game gets a replay snapshot and its logs wiped (log order i
             if (g.status !== 'playing') break;
             const moves = legalMovesFor(g);
             if (moves.length === 0) break;
-            try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, pick(moves)) }), `s${steps}`, true); } catch { /* stale */ }
+            try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, ...applyPlayerMove(gg, pick(moves)) }), `s${steps}`, true); } catch { /* stale */ }
             steps++;
         }
         const g = await loadGame(gameId);
@@ -176,7 +176,7 @@ test('CAS serializes concurrent moves without losing or duplicating a card', asy
         const n = 1 + rand(Math.min(3, moves.length));
         for (let i = 0; i < n; i++) burst.push(pick(moves));
         if (rng.chance(0.3)) burst.push(burst[0]); // rapid double-submit
-        await Promise.all(burst.map((m, i) => executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, m) }), `b${steps}-${i}`, true).catch(() => {})));
+        await Promise.all(burst.map((m, i) => executeWithGameLock(gameId, async (gg) => ({ game: gg, ...applyPlayerMove(gg, m) }), `b${steps}-${i}`, true).catch(() => {})));
         const chk = await checkCardConservation(gameId);
         assert.ok(chk.ok, `conservation broke under contention at step ${steps} (seed=${rng.seed}): ${chk.detail}`);
         steps++;

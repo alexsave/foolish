@@ -1053,201 +1053,6 @@ function runKernel(game: Game, action: KernelAction): KernelRun {
     return { ok: true, reason: 0, post, logs, snaps };
 }
 
-// Synthesize the production AnimationEvent stream from the kernel's hook
-// snapshots + logs. Every event's game_state is the full intermediate Game,
-// exactly as the TS handlers captured with cloneGame.
-function buildEvents(game: Game, run: KernelRun, ctx: { reason?: string; actorId?: string | null }): AnimationEvent[] {
-    const events: AnimationEvent[] = [];
-    const name = (seat: number) => game.players[seat].name;
-    const pid = (seat: number) => game.players[seat].player_id;
-
-    // The good_players/good_timestamp of intermediate snapshots: reconstruct
-    // per snapshot from its own mask, with the same insertion-order rule as
-    // the live object.
-    const preGood = game.good_players;
-    const preGoodTs = game.good_timestamp;
-    const snapGame = (s: Snapshot) =>
-        stateToGame(s.state, game, preGood, ctx.actorId ?? null, preGoodTs ?? nowMs());
-
-    // Sequential readers for per-type logs (each DRAW/COVER hook consumes the
-    // next matching log).
-    const drawLogs = run.logs.filter(l => l.type === LOG_TYPE.DRAW);
-    const coverLogs = run.logs.filter(l => l.type === LOG_TYPE.COVER);
-    const discardLog = run.logs.find(l => l.type === LOG_TYPE.DISCARD);
-    let drawI = 0, coverI = 0;
-
-    for (const s of run.snaps) {
-        switch (s.tag) {
-            case HOOK.ATTACK: {
-                const log = run.logs.find(l => l.type === LOG_TYPE.ATTACK);
-                const cards = log ? log.pairs.map(p => p.primary) : [];
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.ATTACK_PASS,
-                    player_id: pid(s.aux),
-                    cards,
-                    from_location: 'hand',
-                    to_location: 'table',
-                    message: `${name(s.aux)} attacked with ${cardList(cards)}`,
-                    game_state: snapGame(s),
-                });
-                break;
-            }
-            case HOOK.PASS: {
-                const log = run.logs.find(l => l.type === LOG_TYPE.PASS);
-                const cards = log ? log.pairs.map(p => p.primary) : [];
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.ATTACK_PASS,
-                    player_id: pid(s.aux),
-                    cards,
-                    from_location: 'hand',
-                    to_location: 'table',
-                    message: `${name(s.aux)} passed with ${cardList(cards)}`,
-                    game_state: snapGame(s),
-                });
-                break;
-            }
-            case HOOK.OUT:
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.OUT,
-                    player_id: pid(s.aux),
-                    message: `${name(s.aux)} is out`,
-                    game_state: snapGame(s),
-                });
-                break;
-            case HOOK.COVER: {
-                const log = coverLogs[coverI++];
-                const cover = log.pairs[0].primary;
-                const attack = log.pairs[0].target!;
-                const defenderSeat = seatCoveredBy(run, s);
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.COVER,
-                    player_id: pid(defenderSeat),
-                    cards: [cover],
-                    target_card: attack,
-                    battle_index: s.aux,
-                    from_location: 'hand',
-                    to_location: 'table',
-                    message: `${name(defenderSeat)} covered ${cardDisplay(attack)} with ${cardDisplay(cover)}`,
-                    game_state: snapGame(s),
-                });
-                break;
-            }
-            case HOOK.DISCARD: {
-                const cards = discardLog ? discardLog.pairs.map(p => p.primary) : [];
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.DISCARD,
-                    cards,
-                    from_location: 'table',
-                    to_location: 'discard',
-                    message: `${cards.length} cards discarded`,
-                    game_state: snapGame(s),
-                });
-                break;
-            }
-            case HOOK.TRASH: {
-                const cards = discardLog ? discardLog.pairs.map(p => p.primary) : [];
-                if (cards.length > 0) {
-                    events.push({
-                        type: ANIMATION_EVENT_TYPE.CARDS_TO_TRASH,
-                        cards,
-                        from_location: 'table',
-                        to_location: 'discard',
-                        message: `${cards.length} cards discarded`,
-                        game_state: snapGame(s),
-                    });
-                }
-                break;
-            }
-            case HOOK.DRAW: {
-                const log = drawLogs[drawI++];
-                const cards = log.pairs.map(p => p.primary); // real identities for the recipient
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.REFILL,
-                    player_id: pid(s.aux),
-                    cards,
-                    from_location: 'deck',
-                    to_location: 'hand',
-                    message: `${name(s.aux)} drew ${cards.length} cards`,
-                    game_state: snapGame(s),
-                });
-                break;
-            }
-            case HOOK.DEFENDER_MOVE:
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.DEFENDER_MOVE,
-                    player_id: pid(s.aux),
-                    message: `${name(s.aux)} is now the defender`,
-                    game_state: snapGame(s),
-                });
-                break;
-            case HOOK.PICKUP: {
-                const log = run.logs.find(l => l.type === LOG_TYPE.PICKUP);
-                const cards = log ? log.pairs.map(p => p.primary) : [];
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.PICKUP,
-                    player_id: pid(s.aux),
-                    cards,
-                    from_location: 'table',
-                    to_location: 'hand',
-                    message: `${name(s.aux)} picked up ${cards.length} cards`,
-                    game_state: snapGame(s),
-                });
-                break;
-            }
-            case HOOK.MAGIC_TRANSITION: {
-                const reason = ctx.reason ?? transitionReason(s.state, game);
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
-                    message: `${reason} - proceeding to next round`,
-                    game_state: snapGame(s),
-                });
-                break;
-            }
-            case HOOK.START_MAGIC:
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
-                    message: `All players ready - starting game!`,
-                    game_state: snapGame(s),
-                });
-                break;
-            case HOOK.DEAL:
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.DEAL,
-                    player_id: pid(s.aux),
-                    cards: s.state.players[s.aux].hand,
-                    from_location: 'deck',
-                    to_location: 'hand',
-                    game_state: snapGame(s),
-                });
-                break;
-            case HOOK.FLIPPED:
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.FLIPPED,
-                    cards: [s.state.flipped!],
-                    from_location: 'deck',
-                    to_location: 'flipped',
-                    game_state: snapGame(s),
-                });
-                break;
-            case HOOK.START_DEFENDER: {
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.DEFENDER_MOVE,
-                    player_id: pid(s.aux),
-                    game_state: snapGame(s),
-                });
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
-                    message: `Player ${name(s.state.firstAttacker)} is the first attacker, wait for them to attack`,
-                    game_state: snapGame(s),
-                });
-                break;
-            }
-        }
-    }
-    return events;
-}
-
-// The seat that performed a cover is the defender at snapshot time.
 function seatCoveredBy(_run: KernelRun, s: Snapshot): number {
     return s.state.defender;
 }
@@ -1346,10 +1151,15 @@ function execute(game: Game, action: KernelAction, actorId: string | null, ctx: 
         const attacks = action.kind === 'cover' ? action.attacks : null;
         throw rejectionError(game, run.reason, actorId ?? '', cards, attacks, action.kind);
     }
-    const events = buildEvents(game, run, { ...ctx, actorId });
+    // NO JS event synthesis. The kernel serializes its own per-viewer event
+    // streams (wasm_events_serialize -> exportPackedProducts), and every
+    // production broadcast now carries those bytes; a second derivation here,
+    // from the same snapshots, was the duplication this campaign exists to
+    // remove. What is left is the marshalling: apply the kernel's state to the
+    // JS Game and append its logs.
     applyStateToGame(game, run.post!, actorId);
     appendLogs(game, run.logs, preFlipped, game.flipped);
-    return events;
+    return [];
 }
 
 // Run the action against the kernel purely for the accept/reject verdict —

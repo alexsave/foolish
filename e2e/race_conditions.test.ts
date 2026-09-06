@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
 import { executeWithGameLock, loadCompleteGame } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
-import { start_game } from '../server/api/common/game_lifecycle.ts';
+import { packedProducts, start_game_packed } from '../server/api/common/game_lifecycle.ts';
 import { AnimationEvent, Game } from '../server/api/core/types.ts';
 import { executePackedAction } from '../server/impls/supabase/functions/_shared/adapter/packed_action.ts';
 import { encodeAction, ACTION_STATUS, REJECT_STALE_ROUND, AwireKindName } from '../sdk/ts/wire/awire.ts';
@@ -65,7 +65,7 @@ async function newPackedGame(humans: number): Promise<Seeded> {
         seedPlayers.push({ id, name: `H${i}`, is_ai: false, strategy_key: 'human' });
     }
     await seedGame(gameId, seedPlayers);
-    await executeWithGameLock(gameId, async (g) => ({ game: g, events: start_game(g) as AnimationEvent[] }), 'start', false);
+    await executeWithGameLock(gameId, async (g) => ({ game: g, events: [], packed: packedProducts(start_game_packed(g)) }), 'start', false);
     return { gameId, players };
 }
 

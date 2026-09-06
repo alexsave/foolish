@@ -7,7 +7,36 @@
 import { Card, Game, GAME_STATUS, PLAYER_STATUS, PrivatePlayer, AnimationEvent } from '@api/core/types.ts';
 import { MAX_PLAYERS } from '@api/core/constants.ts';
 import { __setDealSeedOverride, applyKernelStateToGame, getLastDealSeedHex, kernelStartGame, PackedRunOk, runPackedStart } from '@sdk/ts/wasm/engine.ts';
-import { hexToBytes } from './replay/codec.ts';
+import { bytesToHex, hexToBytes } from './replay/codec.ts';
+import { bytesToBareHex } from '@sdk/ts/wire/bytes.ts';
+import { logsFromKernelExport } from '@sdk/ts/wire/logwire.ts';
+
+// The durable + broadcastable products of a packed kernel run, in the shape
+// executeWithGameLock commits and broadcasts. It lives beside the deal that
+// produces the run so the lobby's two deal branches and the e2e harnesses all
+// deal the way production does, rather than through an event pipeline of their
+// own. `extra` is for the one deal whose broadcast changes the roster.
+export interface PackedDealProducts {
+    ended: boolean;
+    stateHex: string;
+    logsHex: string | null;
+    nEvents: number;
+    events: Map<number, Uint8Array>;
+    extra?: { r?: { name: string; players: { player_id: string; name: string; is_ai: boolean }[] }; m?: (string | null)[] };
+}
+
+export const packedProducts = (
+    run: PackedRunOk, extra?: PackedDealProducts['extra'],
+): PackedDealProducts => ({
+    ended: run.ended,
+    stateHex: bytesToHex(run.stateBlob),
+    logsHex: run.logsWire.length > 2
+        ? bytesToBareHex(logsFromKernelExport(run.logsWire, Date.now()))
+        : null,
+    nEvents: run.nEvents,
+    events: run.events,
+    extra,
+});
 
 // Starts the game with all the animations. The deal/flip/first-attacker
 // rules live in the C kernel (c/src/game.c start_game): player-major

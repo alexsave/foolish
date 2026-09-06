@@ -18,7 +18,7 @@
 import './harness.ts';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
 import { executeWithGameLock } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
-import { start_game } from '../server/api/common/game_lifecycle.ts';
+import { packedProducts, start_game_packed } from '../server/api/common/game_lifecycle.ts';
 import { BOT_STRATEGIES, calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
 import { processBotActionPacked, shouldBotActCore } from '../server/api/common/pure_bot_actions.ts';
 import { __setBotSeedSource, __botsWasmMB, __botsWasmBytes } from '../sdk/ts/wasm/bots.ts';
@@ -67,7 +67,7 @@ async function benchStrategy(strategy: string): Promise<{ strategy: string; n: n
   const gameId = `be${uuid().slice(0, 5)}`;
   const pids = [uuid(), uuid()];
   await seedGame(gameId, pids.map((id, i) => ({ id, name: `B${i}`, is_ai: true, strategy_key: strategy })));
-  await executeWithGameLock(gameId, async (g: Game) => ({ game: g, events: start_game(g) as AnimationEvent[] }), 'bench-start', false);
+  await executeWithGameLock(gameId, async (g: Game) => ({ game: g, events: [], packed: packedProducts(start_game_packed(g)) }), 'bench-start', false);
 
   const samples: number[] = [];
   let beliefHydrated = false;

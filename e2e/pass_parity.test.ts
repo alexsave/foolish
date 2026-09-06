@@ -17,7 +17,7 @@ import assert from 'node:assert/strict';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
 import { executeWithGameLock, loadCompleteGame } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
 import { personalize_game } from '../server/api/common/common_utils.ts';
-import { start_game } from '../server/api/common/game_lifecycle.ts';
+import { packedProducts, start_game_packed } from '../server/api/common/game_lifecycle.ts';
 import { Game, AnimationEvent, PersonalGame, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY, Card } from '../server/api/core/types.ts';
 import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
 import { validatePass as serverValidatePass } from '../server/api/common/actions/pass.ts';
@@ -161,7 +161,7 @@ if (!process.env.VALIDATION_ONLY) {
             { id: uuid(), name: 'H1', is_ai: false, strategy_key: 'human' },
             { id: uuid(), name: 'B0', is_ai: true, strategy_key: 'random' },
         ]);
-        await executeWithGameLock(gameId, async (g) => ({ game: g, events: start_game(g) as AnimationEvent[] }), 'start', false);
+        await executeWithGameLock(gameId, async (g) => ({ game: g, events: [], packed: packedProducts(start_game_packed(g)) }), 'start', false);
         return gameId;
     };
 
@@ -203,7 +203,7 @@ if (!process.env.VALIDATION_ONLY) {
 
             const moves = legalMovesFor(g);
             if (moves.length) {
-                try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, pick(moves)) }), `m${i}`, true); } catch { /* race -> no-op */ }
+                try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, ...applyPlayerMove(gg, pick(moves)) }), `m${i}`, true); } catch { /* race -> no-op */ }
             } else { gameId = await freshGame(); }
         }
 

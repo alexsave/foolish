@@ -31,7 +31,7 @@ import assert from 'node:assert/strict';
 
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
 import { executeWithGameLock } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
-import { start_game } from '../server/api/common/game_lifecycle.ts';
+import { packedProducts, start_game_packed } from '../server/api/common/game_lifecycle.ts';
 import { __setBotSeedSource } from '../sdk/ts/wasm/bots.ts';
 import { __setKernelSeedSource } from '../sdk/ts/wasm/engine.ts';
 import { AnimationEvent, Game } from '../server/api/core/types.ts';
@@ -99,7 +99,7 @@ test('the server bot loop feeds octogen the whole session log (not an empty one)
   ];
   await seedGame(gameId, players);
   await executeWithGameLock(gameId,
-    async (g: Game) => ({ game: g, events: start_game(g) as AnimationEvent[] }), 'start', false);
+    async (g: Game) => ({ game: g, events: [], packed: packedProducts(start_game_packed(g)) }), 'start', false);
 
   // One drive segment. Octogen is heavy, so the CPU predictor may bail after a
   // handful of cycles — that's fine: a handful is enough for the session log to

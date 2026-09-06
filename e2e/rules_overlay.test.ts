@@ -18,7 +18,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { Game, GAME_STATUS, PLAYER_STATUS, PrivatePlayer, StrategyKey } from '../server/api/core/types.ts';
-import { start_game } from '../server/api/common/game_lifecycle.ts';
+import { start_game_packed } from '../server/api/common/game_lifecycle.ts';
 import { kernelLegalMoves, serializeGameState } from '../sdk/ts/wasm/engine.ts';
 import { ReplayInput } from '../server/api/common/replay/core.ts';
 import { encodeReplay } from '../server/api/common/replay/encode.ts';
@@ -91,7 +91,7 @@ test('R1 overlay: menu + state stay byte-identical across an interleaved replay 
 
   for (let np = 2; np <= 6; np++) {
     const g = mkGame(np);
-    start_game(g);                                  // deal on rules.wasm (g_snaps + g_io)
+    start_game_packed(g);                           // deal on rules.wasm (g_snaps + g_io)
     const pid = g.players[g.first_attacker].player_id;
 
     const menuA = kernelLegalMoves(g, pid);         // g_moves
@@ -115,7 +115,7 @@ test('R1 overlay: call-by-call interleave keeps menus stable and snapshots intac
   const { x, input } = await tutorialReplay();
 
   const base = mkGame(4);
-  start_game(base);
+  start_game_packed(base);
   const basePid = base.players[base.first_attacker].player_id;
   const baseMenu = kernelLegalMoves(base, basePid);
   assert.ok(baseMenu.length > 0, 'base game has no opening menu');
@@ -127,10 +127,12 @@ test('R1 overlay: call-by-call interleave keeps menus stable and snapshots intac
     assert.deepEqual(kernelLegalMoves(base, basePid), baseMenu, `menu diverged at interleave ${k}`);
 
     // A fresh deal immediately after a replay call must still fill the snapshot
-    // ring (start_game emits DEAL/FLIPPED animation events built from g_snaps).
+    // ring. The kernel's own event count is the proof: wasm_events_serialize
+    // builds the DEAL/FLIPPED stream out of g_snaps, so a corrupt ring shows up
+    // as nEvents == 0.
     const g = mkGame(2 + (k % 5));
-    const events = start_game(g);
-    assert.ok(events.length > 0, `deal after replay ${k} produced no animation events (snapshot ring corrupt)`);
+    const run = start_game_packed(g);
+    assert.ok(run.nEvents > 0, `deal after replay ${k} produced no events (snapshot ring corrupt)`);
     for (const p of g.players) {
       assert.ok(p.hand.length > 0, `deal after replay ${k}: a player was dealt no cards`);
     }

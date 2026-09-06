@@ -20,7 +20,7 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, seedGame, uuid, pgPool, broadcastLog } from './harness.ts';
 import { executeWithGameLock, loadCompleteGame } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
-import { start_game } from '../server/api/common/game_lifecycle.ts';
+import { packedProducts, start_game_packed } from '../server/api/common/game_lifecycle.ts';
 import { AnimationEvent, Card } from '../server/api/core/types.ts';
 import { legalMovesFor, applyPlayerMove } from './dispatch.ts';
 import { resolveUnconfirmedAttackCovers } from '../src/state/optimisticConflicts';
@@ -67,7 +67,7 @@ async function startTwoHumanGame() {
     ];
     await seedGame(gameId, seeded);
     const roster: ViewRoster = { id: gameId, name: gameId, players: seeded.map((p) => ({ player_id: p.id, name: p.name, is_ai: p.is_ai })) };
-    await executeWithGameLock(gameId, async (g) => ({ game: g, events: start_game(g) as AnimationEvent[] }), 'start', false);
+    await executeWithGameLock(gameId, async (g) => ({ game: g, events: [], packed: packedProducts(start_game_packed(g)) }), 'start', false);
     const g = await loadCompleteGame(gameId);
     const attackerId = g.players[g.first_attacker].player_id;
     const defenderId = g.players[g.defender].player_id;
@@ -82,13 +82,13 @@ test('SCENARIO B: a card the defender picks up is NOT reverted to my hand', asyn
     const attackMove = legalMovesFor(g, (p) => p === attackerId).find((m) => m.move.type === 'attack' && m.move.cards?.length === 1);
     assert.ok(attackMove, 'attacker should have a single-card attack available');
     const myCard: Card = attackMove!.move.cards![0];
-    await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, attackMove!) }), 'attack', false);
+    await executeWithGameLock(gameId, async (gg) => ({ game: gg, ...applyPlayerMove(gg, attackMove!) }), 'attack', false);
 
     // 2. The defender immediately picks up — sweeping my card off the table.
     g = await loadCompleteGame(gameId);
     const pickupMove = legalMovesFor(g, (p) => p === defenderId).find((m) => m.move.type === 'pickup');
     assert.ok(pickupMove, 'defender should be able to pick up');
-    await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, pickupMove!) }), 'pickup', false);
+    await executeWithGameLock(gameId, async (gg) => ({ game: gg, ...applyPlayerMove(gg, pickupMove!) }), 'pickup', false);
 
     // 3. The pickup broadcast the attacker's client receives.
     const stream = streamFor(gameId, attackerId, roster);
@@ -133,7 +133,7 @@ test('SCENARIO A: a card still in flight is NOT reverted by a concurrent attack 
         ];
         await seedGame(gameId, seeded);
         const roster: ViewRoster = { id: gameId, name: gameId, players: seeded.map((p) => ({ player_id: p.id, name: p.name, is_ai: p.is_ai })) };
-        await executeWithGameLock(gameId, async (g) => ({ game: g, events: start_game(g) as AnimationEvent[] }), 'start', false);
+        await executeWithGameLock(gameId, async (g) => ({ game: g, events: [], packed: packedProducts(start_game_packed(g)) }), 'start', false);
 
         let g = await loadCompleteGame(gameId);
         const defenderId = g.players[g.defender].player_id;
@@ -146,7 +146,7 @@ test('SCENARIO A: a card still in flight is NOT reverted by a concurrent attack 
         if (!rivalAttack) continue;
 
         // Rival commits first — Hero's optimistic card is NOT in this broadcast.
-        await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, rivalAttack) }), 'rival', false);
+        await executeWithGameLock(gameId, async (gg) => ({ game: gg, ...applyPlayerMove(gg, rivalAttack) }), 'rival', false);
 
         // Hero's LEGAL follow-up (the kernel only offers rank-matching adds here).
         g = await loadCompleteGame(gameId);
