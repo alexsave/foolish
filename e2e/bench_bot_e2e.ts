@@ -19,7 +19,7 @@ import './harness.ts';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
 import { executeWithGameLock } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
 import { start_game } from '../server/api/common/game_lifecycle.ts';
-import { botStrategyKeys, calculateLegalMoves, resolveBotStrategy } from '../server/api/common/bot_strategy.ts';
+import { BOT_STRATEGIES, calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
 import { processBotActionPacked, shouldBotActCore } from '../server/api/common/pure_bot_actions.ts';
 import { __setBotSeedSource, __botsWasmMB, __botsWasmBytes } from '../sdk/ts/wasm/bots.ts';
 import { __setKernelSeedSource, __kernelWasmMB, __kernelWasmBytes } from '../sdk/ts/wasm/engine.ts';
@@ -37,11 +37,18 @@ const JSON_OUT = process.env.BENCH_JSON === '1';
 // silently measures a different bot is worse than one that does not run, so
 // unknown keys are refused below rather than defaulted away.
 const BOTS = (process.env.BENCH_BOTS || 'octogen,cordite,blackpowder,firecracker').split(',').map(s => s.trim()).filter(Boolean);
-const UNKNOWN_BOTS = BOTS.filter(k => resolveBotStrategy(k) === null);
+//
+// Resolved against BOT_STRATEGIES directly, not through the strict
+// resolveBotStrategy() helper: metrics.yml copies THIS FILE into the base
+// checkout and runs it there ("the base branch may predate them"), so anything
+// it imports must exist on both sides of the comparison. A helper added in the
+// same PR does not, and the import failure takes the whole base measurement
+// with it — every base cell reports n/a while the job stays green.
+const UNKNOWN_BOTS = BOTS.filter(k => !BOT_STRATEGIES.has(k));
 if (UNKNOWN_BOTS.length > 0) {
     throw new Error(`BENCH_BOTS names ${UNKNOWN_BOTS.join(', ')}, which the bot registry cannot `
         + `dispatch — they would be benched as 'random' under their own names. `
-        + `Known keys: ${botStrategyKeys().join(', ')}`);
+        + `Known keys: ${[...BOT_STRATEGIES.keys()].join(', ')}`);
 }
 const MOVES = Number(process.env.BENCH_BOT_MOVES || 25);
 
