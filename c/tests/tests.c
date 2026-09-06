@@ -1686,6 +1686,47 @@ static void test_bot_pacing_table(void) {
     CHECK(bot_pacing_ms(999, 1) == 0, "an unknown class does not invent a delay");
 }
 
+// The two steps in FRONT of the table, which every host used to do by hand:
+// reduce a cycle's actions to their most visible class, and decide whether a
+// human is still IN. bot_cycle_delay_ms exists so that reduction has one
+// answer, and the web host was the last one still re-deriving it in TypeScript.
+static void test_bot_cycle_delay(void) {
+    Game g;
+    make_seeded_game(&g, 3, 1);
+    // Seat 0 human and IN; seats 1-2 bots.
+    uint32_t human = 1u << 0;
+
+    BotDriveOut drv;
+    memset(&drv, 0, sizeof(drv));
+    CHECK(bot_cycle_delay_ms(&g, human, &drv) == 0, "an empty cycle is worth no wait at all");
+
+    // The MAX across the cycle, not the first or the last: a bundled passive
+    // followed by a visible move must be priced as the move.
+    drv.n = 2;
+    drv.actions[0].pacing_class = BOT_PACE_BUNDLED_PASSIVE;
+    drv.actions[1].pacing_class = BOT_PACE_MOVE;
+    CHECK(bot_cycle_delay_ms(&g, human, &drv) == 3000, "the cycle is priced by its most visible action");
+    drv.actions[0].pacing_class = BOT_PACE_ROUND_TRANSITION;
+    drv.actions[1].pacing_class = BOT_PACE_BUNDLED_PASSIVE;
+    CHECK(bot_cycle_delay_ms(&g, human, &drv) == 3000, "order does not matter - it is a max, not a last");
+
+    // All-silent stays free, which is the whole point of bundling.
+    drv.actions[0].pacing_class = BOT_PACE_BUNDLED_PASSIVE;
+    CHECK(bot_cycle_delay_ms(&g, human, &drv) == 0, "a cycle of silent goods costs nothing");
+
+    // Humans present is about who is still IN, not who has a seat. The same
+    // cycle in the same game paces at 300ms once the only human is out.
+    drv.actions[0].pacing_class = BOT_PACE_MOVE;
+    CHECK(bot_cycle_delay_ms(&g, human, &drv) == 3000, "a human still IN sets the tempo");
+    g.players[0].status = PLAYER_STATUS_OUT;
+    CHECK(bot_cycle_delay_ms(&g, human, &drv) == 300, "a human who is OUT is not watching a turn order");
+    g.players[0].status = PLAYER_STATUS_IN;
+    CHECK(bot_cycle_delay_ms(&g, 0, &drv) == 300, "no human seats at all is a bots-only game");
+
+    CHECK(bot_cycle_delay_ms(0, human, &drv) == 0 && bot_cycle_delay_ms(&g, human, 0) == 0,
+          "a missing game or drive is 0, never a guess");
+}
+
 // Every roster entry must name a DISTINCT brain: bot_drive resolves a seat's
 // roster entry back from its STRAT_* id, which is only sound 1:1. The old
 // cordite/cordite_max pair (two entries, one brain, different knobs) is exactly
@@ -6335,6 +6376,7 @@ int main(void) {
     test_replay_v6_refuses_an_overflowed_log();
     test_bot_drive_preferred();
     test_bot_pacing_table();
+    test_bot_cycle_delay();
     test_bot_roster_strat_unique();
     test_bot_drive_basic();
     test_bot_drive_bundles_only_silent();

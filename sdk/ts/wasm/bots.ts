@@ -54,7 +54,7 @@ interface BotsExports extends EngineExports {
     wasm_bot_roster_dump(): number;
     // The drive cycle (docs/C_CORE_CONSOLIDATION.md F2/F3)
     wasm_bot_eligible_mask(humanMask: number): number;
-    wasm_bot_pacing_ms(pacingClass: number, humansPresent: number): number;
+    wasm_bot_cycle_delay_ms(humanMask: number): number;
     wasm_bot_drive(humanMask: number, maxActions: number, nPref: number): number;
     wasm_bot_drive_log_start(): number;
     // Belief probe (observability; off until reset arms it)
@@ -502,13 +502,14 @@ export function wasmChooseMoveDirect(
 // class, per-decision seeding — is kernel property.
 // ---------------------------------------------------------------------------
 
-// BOT_STOP_* / BOT_PACE_* — c/src/bot_drive.h.
+// BOT_STOP_* — c/src/bot_drive.h.
 export const BOT_STOP = { NO_ELIGIBLE: 0, ENDED: 1, EVENTS: 2, MAX: 3 } as const;
-export const BOT_PACE = { NONE: 0, BUNDLED_PASSIVE: 1, MOVE: 2, ROUND_TRANSITION: 3 } as const;
 
+// BOT_PACE_* is deliberately NOT mirrored here. A pacing class is only ever an
+// input to "how long is this worth watching", and that is one kernel call now
+// (wasmBotCycleDelayMs) rather than a reduce a host performs over the classes.
 export interface BotDriveAction {
     seat: number;
-    pacingClass: number;   // BOT_PACE_*
     move: LegalMove;
 }
 
@@ -588,11 +589,14 @@ export function wasmBeliefProbeDump(): BeliefProbeRecord[] {
     return out;
 }
 
-// class -> milliseconds, from the kernel's one pacing table. Never mirrored
-// here: the whole point of F3 is that the site and the phone cannot answer
-// "how long is this worth watching" differently.
-export function wasmBotPacingMs(pacingClass: number, humansPresent: boolean): number {
-    return bots().wasm_bot_pacing_ms(pacingClass, humansPresent ? 1 : 0);
+// The whole wait for the cycle wasmBotDrive just ran, from the kernel's one
+// pacing table. Not a class-to-milliseconds converter: the host used to reduce
+// the cycle's actions to their most visible class and re-check whether a human
+// was still IN before asking, and both of those are questions about a game of
+// Durak. Call it straight after wasmBotDrive - it reads the drive the kernel
+// still has.
+export function wasmBotCycleDelayMs(humanMask: number): number {
+    return bots().wasm_bot_cycle_delay_ms(humanMask);
 }
 
 // Per-game bot memory: FNV-1a of game.id, so a new game resets and the same
@@ -674,7 +678,7 @@ export function wasmBotDrive(
     const actions: BotDriveAction[] = [];
     for (let i = 0; i < count; i++) {
         const seat = buf[q++];
-        const pacingClass = buf[q++];
+        q++;   // pacing class: the kernel's own input to wasmBotCycleDelayMs
         const type = __MOVE_TYPE[buf[q++]] as LegalMove['type'];
         const k = buf[q++];
         const cards = new Array(k);
@@ -684,7 +688,7 @@ export function wasmBotDrive(
         const move: LegalMove = type === 'cover' ? { type, cards, attack_cards: attacks }
             : (type === 'pickup' || type === 'good' || type === 'wait') ? { type }
             : { type, cards };
-        actions.push({ seat, pacingClass, move });
+        actions.push({ seat, move });
     }
 
     if (count === 0) return { actions, stop, ended, run: null };

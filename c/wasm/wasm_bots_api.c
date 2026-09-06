@@ -317,11 +317,24 @@ int wasm_bot_eligible_mask(int human_mask) {
     return (int)bot_drive_eligible_mask(wasm_game_ptr_internal(), (uint32_t)human_mask);
 }
 
-// class -> milliseconds, from the ONE pacing table. Exported rather than
-// mirrored in TS: the whole point of F3 is that the site and the phone cannot
-// answer "how long is this worth watching" differently.
-int wasm_bot_pacing_ms(int pacing_class, int humans_present) {
-    return bot_pacing_ms(pacing_class, humans_present);
+// The last cycle wasm_bot_drive applied, kept so the delay below can be asked
+// about it without the host shipping the actions back in.
+static BotDriveOut g_drv;
+
+// The whole wait for the cycle that wasm_bot_drive just ran, in one call.
+//
+// The export used to be bot_pacing_ms itself - class in, milliseconds out - and
+// every host then did the two steps in front of it by hand: reduce the cycle's
+// actions to their most visible pacing class, and re-check whether a human is
+// still IN. That is the reduction bot_cycle_delay_ms was added to end (see its
+// comment in bot_drive.c); the TS host was the last one still doing it. Now the
+// host owns only the loop and the actual sleep.
+//
+// Reads the SAME g_drv wasm_bot_drive just filled, so it is only meaningful
+// straight after a drive; before the first one g_drv is zeroed, which reduces
+// to BOT_PACE_NONE and a delay of 0.
+int wasm_bot_cycle_delay_ms(int human_mask) {
+    return bot_cycle_delay_ms(wasm_game_ptr_internal(), (uint32_t)human_mask, &g_drv);
 }
 
 // Opens ONE action scope for the whole cycle: resets the snapshot buffer and
@@ -468,7 +481,6 @@ static void drive_seed_hook(const Game *g, int seat, int phase) {
 }
 
 int wasm_bot_drive(int human_mask, int max_actions, int n_pref) {
-    static BotDriveOut drv;
     Game *g = wasm_game_ptr_internal();
     if (decode_prefs(wasm_io_ptr(), n_pref) < 0) return -1;
 
@@ -478,16 +490,16 @@ int wasm_bot_drive(int human_mask, int max_actions, int n_pref) {
     // (wasm_choose_move) seeds itself through the TS bridge, as it always has.
     bot_drive_pre_action_hook = drive_seed_hook;
     int n = bot_drive(g, (uint32_t)human_mask, max_actions,
-                      n_pref > 0 ? g_pref : 0, n_pref, &drv);
+                      n_pref > 0 ? g_pref : 0, n_pref, &g_drv);
     bot_drive_pre_action_hook = 0;
     if (n < 0) return -1;
 
     unsigned char *out = wasm_io_ptr();
-    *out++ = (unsigned char)drv.stop;
-    *out++ = (unsigned char)(signed char)drv.ended;
-    *out++ = (unsigned char)drv.n;
-    for (int i = 0; i < drv.n; i++) {
-        const BotDriveAction *a = &drv.actions[i];
+    *out++ = (unsigned char)g_drv.stop;
+    *out++ = (unsigned char)(signed char)g_drv.ended;
+    *out++ = (unsigned char)g_drv.n;
+    for (int i = 0; i < g_drv.n; i++) {
+        const BotDriveAction *a = &g_drv.actions[i];
         *out++ = (unsigned char)a->seat;
         *out++ = a->pacing_class;
         *out++ = (unsigned char)a->move.type;
@@ -495,7 +507,7 @@ int wasm_bot_drive(int human_mask, int max_actions, int n_pref) {
         for (int c = 0; c < a->move.n_cards; c++) *out++ = wire_from_card(a->move.cards[c]);
         for (int c = 0; c < a->move.n_cards; c++) *out++ = wire_from_card(a->move.attack_cards[c]);
     }
-    return drv.n;
+    return g_drv.n;
 }
 
 // ---------- replay steps (docs/C_CORE_CONSOLIDATION.md F4.2 / A5) -----------

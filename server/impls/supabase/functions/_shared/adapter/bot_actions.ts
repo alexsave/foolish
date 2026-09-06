@@ -3,8 +3,8 @@ import { executeWithGameLock, loadSessionLogBytes, PackedOpProducts } from './ut
 import { strategyUsesLogs, LegalMove } from '@api/common/bot_strategy.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
 import {
-    __botsWasmMB, ensureBotsAsync, wasmBotDrive, wasmBotEligibleMask, wasmBotPacingMs,
-    BOT_PACE, BotDrivePref,
+    __botsWasmMB, ensureBotsAsync, wasmBotDrive, wasmBotEligibleMask, wasmBotCycleDelayMs,
+    BotDrivePref,
 } from '@sdk/ts/wasm/bots.ts';
 import { __kernelWasmMB } from '@sdk/ts/wasm/engine.ts';
 import { bytesToHex, hexToBytes } from '@api/common/replay/codec.ts';
@@ -30,7 +30,7 @@ const supabaseClient = createClient(
 
 // Bot timing is NOT a constant here any more: what a move is worth pausing for
 // is one table in the kernel (bot_pacing_ms, c/src/bot_drive.c), reached
-// through wasmBotPacingMs and shared with every other client
+// through wasmBotCycleDelayMs and shared with every other client
 // (docs/C_CORE_CONSOLIDATION.md F3). Its values are the ones this file used to
 // hold — 3000ms with a human watching, 300ms bots-only — so the feel is
 // unchanged; tune them there and the phone changes with the site.
@@ -236,10 +236,6 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
             packedEvents = null;
             botProcessed = false;
             const lockWorkStartTime = Date.now();
-            // Pacing based on whether humans are still playing in THIS game
-            const humanPlayersStillIn = game.players.filter(player =>
-                !player.is_ai && player.status === PLAYER_STATUS.IN
-            ).length;
             cycleDelay = 0;
 
             // Capture game state for broadcasting later
@@ -313,7 +309,7 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
                 // a resident log carried from the previous cycle is still exactly
                 // logs_packed — reuse it and skip the DB read. Human games might
                 // be written between cycles, so always reload fresh.
-                botsOnlyCycle = humanPlayersStillIn === 0;
+                botsOnlyCycle = game.players.every(p => p.is_ai || p.status !== PLAYER_STATUS.IN);
                 if (residentBelief && botsOnlyCycle) {
                     game.belief_log_bytes = residentBelief;
                 } else {
@@ -363,14 +359,16 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
                 botProcessed = true;
             }
 
-            // What the cycle is worth pausing for: the most visible thing that
-            // happened in it, priced by the kernel's one table.
-            const pace = drive.actions.reduce((m, a) => Math.max(m, a.pacingClass), BOT_PACE.NONE);
-            cycleDelay = wasmBotPacingMs(pace, humanPlayersStillIn > 0);
+            // What the cycle is worth pausing for. One kernel call: it reduces
+            // the cycle's actions to their most visible pacing class, prices
+            // that from its one table, and reduces it again for a human still
+            // IN. All three of those are facts about the game, so none of them
+            // is re-derived here any more.
+            cycleDelay = wasmBotCycleDelayMs(humanMask);
 
             console.log(`[ACTION] ${drive.actions.length ? '✓' : '✗'} drove ${drive.actions.length} action(s) in ${driveDuration}ms: `
                 + `${drive.actions.map(a => `${game.players[a.seat].name}:${a.move.type}`).join(', ') || 'none'}`
-                + ` (stop ${drive.stop}, pace ${pace} -> ${cycleDelay}ms)`);
+                + ` (stop ${drive.stop}, delay ${cycleDelay}ms)`);
             if (!botProcessed) {
                 console.log(`[ACTION] No eligible bots could make valid moves in game ${game_id}`);
             }
