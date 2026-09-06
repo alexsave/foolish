@@ -21,7 +21,7 @@ static char buf[1 << 16];
 static char evbuf[1 << 18];
 
 // A PACKED ROSTER (ios_api.h): n_joins(1) then n_joins x {seat, name_len, name}.
-// The smoke builds one wherever it used to write a joins JSON literal.
+// The smoke builds one for every roster it needs.
 typedef struct { int seat; const char *name; } SmokeJoin;
 static int pack_joins(unsigned char *out, int cap, const SmokeJoin *js, int n) {
     int p = 0;
@@ -75,7 +75,7 @@ static int pick_move_awire(const unsigned char *packed, int len, unsigned char *
 // fio_replay_last_events_packed emits u16-LE-length-prefixed evwire frames.
 // Everything below goes through the KERNEL's own reader (evwire_read) and its
 // own state decoder (view.c's state_get), so no byte offset is restated here -
-// this walker cannot drift from the format the way the JSON strstr checks it
+// this walker cannot drift from the format the way the strstr checks it
 // replaces could not detect drift at all.
 //
 // `viewer` is the seat the frames were masked for (-1 spectating). Returns the

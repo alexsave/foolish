@@ -183,7 +183,10 @@ public enum MoveType: String, Codable, Sendable {
 
 /// One move — a legal-move menu entry, an intent to apply, or (with `seat`) the
 /// move a bot just made (fio_bot_drive_packed result).
-public struct Move: Codable, Equatable, Sendable {
+// A move crosses to the kernel as an AWIRE frame (sdk/swift/MoveWire.swift,
+// c/src/awire.c) and never as JSON. Codable is gone with jsonString(), which
+// existed only to feed fio_apply_json - an entry point that no longer exists.
+public struct Move: Equatable, Sendable {
     public let type: MoveType
     public let cards: [Card]
     /// Cover only: the attack cards being covered, positionally paired with `cards`.
@@ -201,16 +204,6 @@ public struct Move: Codable, Equatable, Sendable {
     public static let pickup = Move(type: .pickup)
     public static let good = Move(type: .good)
 
-    /// Compact JSON for fio_apply_json. Synthesized Codable omits nil optionals
-    /// (encodeIfPresent), so `attackCards`/`seat` are absent unless set — exactly
-    /// what the C parser (find_key) expects.
-    public func jsonString() -> String {
-        let enc = JSONEncoder()
-        guard let data = try? enc.encode(self), let s = String(data: data, encoding: .utf8) else {
-            return "{\"type\":\"\(type.rawValue)\",\"cards\":[]}"
-        }
-        return s
-    }
 }
 
 /// What a move is worth pausing for — the kernel's classification

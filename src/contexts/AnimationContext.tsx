@@ -1053,7 +1053,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 baseState = magicTransitionEvent.game_state;
             } else if (pickupEvent?.cards) {
                 // Reconstruct state with cards on table (before pickup)
-                baseState = serverStateForRevert ? JSON.parse(JSON.stringify(serverStateForRevert)) : null;
+                baseState = serverStateForRevert ? structuredClone(serverStateForRevert) : null;
                 if (baseState && pickupEvent.cards) {
                     // Put the cards back on the table as uncovered attacks
                     baseState.table_battles = pickupEvent.cards.map((card: Card) => ({
@@ -1068,7 +1068,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             baseState = serverStateForRevert;
         }
 
-        const stateWithOptimistic = baseState ? JSON.parse(JSON.stringify(baseState)) : null;
+        const stateWithOptimistic = baseState ? structuredClone(baseState) : null;
 
         // Check if we have pass reverts - they need original defender value
         const hasPassReverts = revertEvents.some(rev =>

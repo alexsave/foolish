@@ -2,17 +2,13 @@
 //
 // This header IS the bridge contract.
 //
-// CORRECTED. It used to say, per docs/IOS_APP_DESIGN.md §16.0 "the JSON bridge
-// rule", that Swift never parses the kernel's packed binary formats and that
-// every piece of state crosses as JSON. That is now false in both halves:
-// production Swift decodes the PACKED wire for the masked view, the legal menu,
-// the replay and the message envelope (sdk/swift/MaskedView.swift,
-// DecodedReplay.swift, EvWire.swift, MessageEnvelope.swift), and NOTHING
-// crosses this boundary as JSON at all. The last emitters
-// (fio_legal_moves_json / fio_last_events_json / fio_bot_drive_json /
-// fio_replay_events_json) went with src/json_out.c; their packed twins below
-// are the only readers, and a new entry point here emits packed bytes into a
-// caller-provided buffer.
+// EVERYTHING CROSSES AS PACKED BYTES. Swift decodes the wire directly for the
+// masked view, the legal menu, the replay and the message envelope
+// (sdk/swift/MaskedView.swift, DecodedReplay.swift, EvWire.swift,
+// MessageEnvelope.swift), and a new entry point here emits packed bytes into a
+// caller-provided buffer. docs/IOS_APP_DESIGN.md §16.0 once said the opposite,
+// that Swift never parses a binary format; it is wrong and this header is the
+// contract.
 //
 // THE BOT HALF IS NOT HERE. fio_set_seat_strategy, fio_bot_drive_packed,
 // fio_strategy_count and fio_strategy_name are declared by
@@ -21,11 +17,9 @@
 // by size. The iMessage extension plays people and links only this half. The
 // two share ONE resident game through fio_resident_game (ios/ios_internal.h).
 //
-// The rule that actually survived is narrower, and it is the one that matters:
-// NO DURAK RULE IS REIMPLEMENTED IN SWIFT. Swift may read a layout the kernel
-// wrote; it may not decide anything the kernel could decide.
-//
-// The one hard rule (§3): no Durak rule is ever reimplemented in Swift. Whose
+// The one hard rule (§3): no Durak rule is ever reimplemented in Swift. Swift
+// may read a layout the kernel wrote; it may not decide anything the kernel
+// could decide. Whose
 // turn, legal moves, capacity checks, refills — every rules question is
 // answered here, through the C kernel (game.c / legal.c / view.c / replay.c).
 // Swift renders state and forwards intents.
@@ -178,7 +172,7 @@ int fio_play_human_menu(const uint8_t *menu, int menu_len,
                         const uint8_t *table, int n_battles,
                         char *out, int cap);
 // Apply an awire action frame ([kind, n, cards, attacks]) — THE apply entry
-// (a plain move never crosses as JSON). Returns FIO_EREJECT on an illegal move
+// Returns FIO_EREJECT on an illegal move
 // (see fio_last_reject).
 int fio_apply_awire(int actor_seat, const uint8_t *buf, int len);
 
@@ -630,7 +624,7 @@ int fio_replay_decode_packed(const char *code, unsigned char *out, int cap);
 // drawn/picked-up cards carry real
 // identities, everyone else's are hidden - the same packed evwire live play
 // broadcasts and the website renders, so a reopen animates through the kernel,
-// not a client-side view diff. No JSON (§zero-JSON): Swift reads them with
+// not a client-side view diff. Swift reads them with
 // EvWire.decodeFrames. Bytes written (0 if the turn produced nothing), or
 // negative - including when `cap` could not hold the whole turn, which is an
 // error rather than a silently truncated animation. v6 only (v5 hides the
@@ -703,7 +697,7 @@ int fio_msg_staged_atoms_before(void);
 // loudly — validation IS replay, and there is no partial recovery (§7.3).
 //
 // The envelope metadata is handed back as a PACKED fixed-layout blob (Swift
-// parses it with MessageEnvelope.decode) — no JSON, no embedded state / moves
+// parses it with MessageEnvelope.decode) — no embedded state / moves
 // (read those via fio_state_packed / fio_legal_packed). Layout:
 //   phase(1) n_players(1) last_actor_seat(1) round(1) turn(u16 LE) game_id(u64 LE)
 //   parent8(8) digest(32) sent_at(u16 LE) n_new(1) opening(1) carry_key(u32 LE)
@@ -750,8 +744,8 @@ int fio_msg_last_body_version(void);
 // UTF-8 bytes (round-5 B1, docs/APP_REVIEW_NOTES.md - was 12, too tight for a
 // byte-counted Cyrillic name). Names are the only identity a payload carries
 // (no participant UUID ever goes in - they do not transfer across devices, §6).
-// It crossed as JSON until the roster was the last JSON left anywhere that
-// matters; the layout is unchanged, only the direction is new.
+// One layout for the roster in both directions: a host that can read one can
+// write one.
 //
 // `sent_at` is the SEND CLOCK: this device's unix seconds mod 65536, which seals
 // a format-3 envelope, or 0 to seal format 2 exactly as before. It is a

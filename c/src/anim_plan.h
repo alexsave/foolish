@@ -462,7 +462,7 @@ int anim_pre_bout_table(const AnimPreEvent *events, int n_events,
 
 // Canonical dedup key — the C twin of createCardEventString
 // (src/utils/animationUtils.ts). Two events collide iff they name the same
-// (type, card, from, to, seat). The web keys on a JSON string that includes the
+// (type, card, from, to, seat). The web keys on a string that includes the
 // player_id; a plan is per-viewer, so the only actor whose optimistic key can
 // collide with a confirming broadcast is the local seat, and we carry the seat
 // in place of the uuid. Packs into a u64 so a set of keys needs no allocation.

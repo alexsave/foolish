@@ -7,7 +7,7 @@
  * thread) marshals g_game once via the normal bridge; N worker threads
  * deliberate in parallel over the shared state and fold their per-candidate
  * rollout scores into g_ogmt with C atomics (the MT5 hook lives in
- * octogen_strategy.c). No per-batch JSON, no postMessage.
+ * octogen_strategy.c). No per-batch marshalling, no postMessage.
  *
  * What is NOT shared, deliberately: the endgame solver's transposition table.
  * cd_tt is _Thread_local, so each thread grows its own 8 MiB table out of the

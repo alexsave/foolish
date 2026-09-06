@@ -1,5 +1,5 @@
 // Event wire ("evwire" v1) — one recipient's animation sequence as packed
-// bytes, replacing the JSON AnimationEvent stream. This is the C port of the
+// bytes. This is the C port of the
 // TS buildEvents (sdk/ts/wasm/engine.ts) fused with the
 // per-recipient masking that convertToPersonal/PublicAnimationEvents did:
 // the same engine hook snapshots + kernel logs drive it, and every event's
@@ -13,7 +13,7 @@
 //   per event:
 //     u8 type       EVW_T_* (mirrors ANIMATION_EVENT_TYPE)
 //     u8 seat       event player seat, 0xFF none
-//     u8 msg_code   EVW_MSG_* — which message template the JSON path attached
+//     u8 msg_code   EVW_MSG_* — which message template this step carries
 //                   (strings are reconstructed by the decoder; the client UI
 //                   never rendered them, tests assert template parity)
 //     u8 from_loc, u8 to_loc   EVW_LOC_*, 0xFF none
@@ -82,8 +82,8 @@ typedef struct {
 //
 // The kernel already knows which card flies where — it is the only thing that
 // does. Exposing the derived event (rather than only the packed evwire bytes)
-// lets a second destination consume it without re-deriving anything: the iOS
-// bridge emits these as JSON, which is why `BoardDiff.swift` is cancelled
+// lets a second destination consume it without re-deriving anything, which is
+// why `BoardDiff.swift` is cancelled
 // (docs/C_CORE_CONSOLIDATION.md F4). `cards`/`snap` point into the caller's
 // buffers and are valid only for the duration of the sink call.
 typedef struct {
@@ -130,7 +130,7 @@ int evw_is_settlement(int type);
 
 // Derive the event sequence for `viewer` from the hook snapshots + this
 // action's logs, handing each event to `sink`. THE one derivation; both
-// evwire_serialize (packed, for the web) and the iOS JSON emitter drive it.
+// evwire_serialize and the settlement cut drive it.
 void evwire_walk(const EvSnap *snaps, int n_snaps,
                  const GameLog *logs, int n_logs, int viewer,
                  EvwSink sink, void *ctx);
@@ -138,8 +138,8 @@ void evwire_walk(const EvSnap *snaps, int n_snaps,
 // ---------- reading the format back -----------------------------------------
 //
 // The writer above is only half a format. Everything the kernel does with an
-// event stream downstream of serialization - emit it as JSON, ask where a turn
-// settles, whatever a later stage needs - has to walk these bytes, and a walk
+// event stream downstream of serialization - ask where a turn settles, whatever
+// a later stage needs - has to walk these bytes, and a walk
 // inlined at each of those sites is the same duplication the wire exists to
 // end, just moved indoors. So the reader lives here, beside the writer, and the
 // byte offsets are written down exactly once.
@@ -181,7 +181,7 @@ typedef struct {
 typedef void (*EvwReadSink)(void *ctx, int index, const EvwRead *ev);
 
 // The header alone, without walking the events - what a caller needs BEFORE the
-// first event (the JSON emitter writes `viewer` and `actor` ahead of the array).
+// first event, when a reader must announce `viewer` and `actor` up front).
 // Returns 0, or EVW_EBADARG / EVW_EPARSE.
 int evwire_read_header(const unsigned char *buf, int len, EvwHeader *out);
 

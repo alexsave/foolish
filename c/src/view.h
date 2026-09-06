@@ -33,7 +33,7 @@ int state_put(const Game *g, int viewer, unsigned char *out);
 // masked=1 additionally decodes WIRE_CARD_HIDDEN state cards to the {0,1}
 // placeholder — the same placeholder the browser marshal always used for
 // redacted cards, so a client importing a masked view gets a kernel state
-// byte-identical to one marshaled from the PersonalGame JSON.
+// byte-identical to one marshaled from the host's own PersonalGame.
 void state_get(Game *g, const unsigned char *p, int masked);
 
 #endif

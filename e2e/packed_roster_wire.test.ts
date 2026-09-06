@@ -40,7 +40,7 @@ import {
     Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
 } from '../server/api/core/types.ts';
 import {
-    GAME_RESP_FORMAT, GAME_RESP_FLAG_PACKED_ROSTER, LEGACY_ROSTER_JSON,
+    GAME_RESP_FORMAT, GAME_RESP_FLAG_PACKED_ROSTER,
     VIEW_FORMAT_VERSION, PackedGameRoster,
     encodeGameResponse, decodePackedGame,
 } from '../sdk/ts/wire/view.ts';
@@ -152,138 +152,56 @@ function decode_build43(buf: Uint8Array): Build43Game | null {
 }
 
 // ===========================================================================
-// 1. The gate: an installed 1.0(43) client sees the same bytes it always saw
+// 1. The envelope, now that the island is gone
 // ===========================================================================
+//
+// This file used to open with a compatibility gate: two sections proving that
+// every byte an installed 1.0(43) client read was unchanged, that a reader
+// ignoring the new flag bit still landed on the JSON roster island, and that
+// the packed trailer won over the island when both were present. All three
+// described a transition that is over. The island is not written any more
+// (roster_len is 0), the trailer is mandatory, and an envelope without it does
+// not decode at all - which is the behaviour this section pins instead.
 
-test('every byte a 1.0(43) client reads is unchanged, and the trailer is all that is new', () => {
-    assert.ok(LEGACY_ROSTER_JSON,
-        'the island is gone - this gate no longer protects anything, and the deletion ' +
-        'condition in view.ts must have been met before it was flipped');
-
-    for (const names of [['Sveta'], ['Sveta', 'Misha', 'Оля'], ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']]) {
-        const game = mkGame(names, GAME_STATUS.PLAYING);
-        game.good_players = [game.players[0].player_id];
-        game.good_timestamp = 1723456789012;
-        const roster = rosterFor(game);
-        for (const seat of [...names.map((_, i) => i), -1]) {
-            const blob = viewBlobFor(game, seat);
-            const shipped = encodeGameResponse_build43(7, seat, roster, blob);
-            const now = encodeGameResponse(7, seat, roster, blob);
-            const tag = `${names.length}p seat ${seat}`;
-
-            assert.ok(now.length > shipped.length, `${tag}: no trailer was appended at all`);
-            // The flags byte is the ONE place the new bit lives. Assert the
-            // difference there is exactly that bit, then hold every other byte
-            // of the old reader's span to equality - so nothing can hide behind
-            // the exemption.
-            assert.equal(now[1] & ~GAME_RESP_FLAG_PACKED_ROSTER, shipped[1],
-                         `${tag}: flags byte changed by more than the trailer bit`);
-            assert.notEqual(now[1] & GAME_RESP_FLAG_PACKED_ROSTER, 0,
-                            `${tag}: the trailer was written without announcing itself`);
-            // The load-bearing assertion. Not "it still decodes" - the actual
-            // bytes, in order, for the whole span an old reader walks.
-            const mask = (b: Uint8Array) => { const c = Array.from(b); c[1] = 0; return c; };
-            assert.deepEqual(
-                mask(now.subarray(0, shipped.length)), mask(shipped),
-                `${tag}: the prefix a 1.0(43) client reads changed`);
-        }
-    }
-});
-
-test('the frozen 1.0(43) decoder reads the new envelope to exactly the game it read before', () => {
-    const names = ['Sveta', 'Владимир', '🤡'];
-    const game = mkGame(names, GAME_STATUS.PLAYING);
-    const roster = rosterFor(game);
-    for (const seat of [0, 1, 2, -1]) {
-        const blob = viewBlobFor(game, seat);
-        const before = decode_build43(encodeGameResponse_build43(11, seat, roster, blob));
-        const after = decode_build43(encodeGameResponse(11, seat, roster, blob));
-        assert.ok(before, `seat ${seat}: the frozen decoder cannot read its own build's bytes`);
-        assert.ok(after, `seat ${seat}: a 1.0(43) client can no longer read this envelope`);
-        assert.deepEqual(after, before, `seat ${seat}: a 1.0(43) client decodes a DIFFERENT game now`);
-    }
-});
-
-// The same guarantee for the OTHER shipped reader: a browser holding a cached
-// bundle from before this change. Its decoder is decodePackedGame's JSON
-// branch, which is still in this tree, so exercise it directly by clearing the
-// flag bit - the payload a pre-trailer reader effectively sees.
-test('a reader that ignores the flag bit still lands on the JSON island', () => {
-    const game = mkGame(['Sveta', 'Misha'], GAME_STATUS.PLAYING);
-    const blob = viewBlobFor(game, 0);
-    const bytes = encodeGameResponse(3, 0, rosterFor(game), blob);
-    const blind = Uint8Array.from(bytes);
-    blind[1] &= ~GAME_RESP_FLAG_PACKED_ROSTER;   // pretend the bit was never set
-
-    const viaTrailer = decodePackedGame(bytes);
-    const viaJson = decodePackedGame(blind);
-    assert.ok(viaTrailer && viaJson, 'both paths must decode');
-    assert.deepEqual(viaJson!.game, viaTrailer!.game,
-                     'the packed roster and the JSON island describe different games');
-});
-
-// ===========================================================================
-// 2. The decoder really reads the trailer (and not the island next to it)
-// ===========================================================================
-
-test('the packed trailer wins over the island - the new path is the one being taken', () => {
-    const game = mkGame(['Sveta', 'Misha'], GAME_STATUS.PLAYING);
-    const blob = viewBlobFor(game, 0);
-    // An island that disagrees with the trailer. Only a reader that ignores the
-    // island can pass this, which is the point: a decoder that quietly kept
-    // parsing JSON would sail through every other test in this file.
-    const lying: PackedGameRoster = { ...rosterFor(game), name: 'ISLAND', players: [
-        { player_id: 'island-0', name: 'ISLAND-0', is_ai: true },
-        { player_id: 'island-1', name: 'ISLAND-1', is_ai: true },
-    ] };
-    const truth = rosterFor(game);
-
-    const island = new TextEncoder().encode(JSON.stringify(lying));
-    const trailer = encodePackedRoster(truth);
-    const out = new Uint8Array(9 + island.length + 2 + blob.length + trailer.length);
-    let q = 0;
-    out[q++] = GAME_RESP_FORMAT;
-    out[q++] = 1 | GAME_RESP_FLAG_PACKED_ROSTER;
-    out[q++] = 0;
-    out[q++] = 1; out[q++] = 0; out[q++] = 0; out[q++] = 0;
-    out[q++] = island.length & 0xff; out[q++] = (island.length >> 8) & 0xff;
-    out.set(island, q); q += island.length;
-    out[q++] = blob.length & 0xff; out[q++] = (blob.length >> 8) & 0xff;
-    out.set(blob, q); q += blob.length;
-    out.set(trailer, q);
-
-    const dec = decodePackedGame(out);
-    assert.ok(dec, 'the mixed envelope must decode');
-    assert.equal(dec!.game.name, "Sveta's Game", 'the JSON island was read instead of the trailer');
-    assert.deepEqual(dec!.game.players.map(p => p.name), ['Sveta', 'Misha'],
-                     'the names came from the island, not the trailer');
-});
-
-test('an envelope with NO island at all decodes - the one-commit deletion is already reachable', () => {
-    // What encodeGameResponse emits with LEGACY_ROSTER_JSON flipped to false:
-    // roster_len 0, trailer present. If this ever fails, the deletion commit is
-    // not one commit.
+test('the envelope carries no roster island, and the trailer is the roster', () => {
     const game = mkGame(['Sveta', 'Misha', 'Пётр'], GAME_STATUS.PLAYING);
     game.good_players = [game.players[1].player_id];
     game.good_timestamp = 1723456789012;
     const blob = viewBlobFor(game, 1);
-    const full = encodeGameResponse(5, 1, rosterFor(game), blob);
-    const trailer = encodePackedRoster(rosterFor(game));
+    const out = encodeGameResponse(5, 1, rosterFor(game), blob);
 
-    const out = new Uint8Array(9 + 2 + blob.length + trailer.length);
-    out.set(full.subarray(0, 7), 0);
-    out[7] = 0; out[8] = 0;                       // rosterLen = 0
-    out[9] = blob.length & 0xff; out[10] = (blob.length >> 8) & 0xff;
-    out.set(blob, 11);
-    out.set(trailer, 11 + blob.length);
+    // roster_len is the u16 at bytes 7-8, and it is zero: nothing rides there.
+    assert.equal(out[7] | (out[8] << 8), 0, 'the roster island is still being written');
+    assert.ok((out[1] & GAME_RESP_FLAG_PACKED_ROSTER) !== 0, 'the trailer flag must be set');
+    assert.equal(out[0], GAME_RESP_FORMAT);
 
     const dec = decodePackedGame(out);
-    assert.ok(dec, 'an island-free envelope must decode');
-    assert.deepEqual(dec!.game.players.map(p => p.name), ['Sveta', 'Misha', 'Пётр']);
+    assert.ok(dec, 'the envelope must decode');
+    assert.deepEqual(dec!.game.players.map(p => p.name), ['Sveta', 'Misha', 'Пётр'],
+                     'the names came from the packed trailer');
     assert.equal(dec!.game.status, GAME_STATUS.PLAYING);
     assert.equal(dec!.game.id, 'game-abc123');
     assert.deepEqual(dec!.game.good_players, [game.players[1].player_id]);
 });
+
+// A stored player_views row written before the trailer existed carries neither
+// island nor trailer once the island stops being written. It must fail as
+// unreadable rather than decode to a game with an empty roster - a table with
+// no names is worse than a load error, because the caller cannot tell it went
+// wrong. The next commit on that game rewrites the row.
+test('an envelope with no packed trailer is unreadable, not an empty table', () => {
+    const game = mkGame(['Sveta', 'Misha'], GAME_STATUS.PLAYING);
+    const blob = viewBlobFor(game, 0);
+    const full = encodeGameResponse(5, 0, rosterFor(game), blob);
+
+    // The same bytes with the trailer lopped off and its flag cleared - what a
+    // pre-trailer writer emitted, minus the island it used to put at byte 9.
+    const head = 9 + 2 + blob.length;
+    const legacy = full.subarray(0, head).slice();
+    legacy[1] &= ~GAME_RESP_FLAG_PACKED_ROSTER;
+    assert.equal(decodePackedGame(legacy), null, 'a trailer-less envelope must not decode');
+});
+
 
 // ===========================================================================
 // 3. The codec itself
@@ -316,7 +234,7 @@ const ROSTERS: PackedRoster[] = [
     },
 ];
 
-test('the packed roster round-trips every field the JSON island carried', () => {
+test('the packed roster round-trips every field the roster carries', () => {
     for (const roster of ROSTERS) {
         const bytes = encodePackedRoster(roster);
         assert.equal(bytes[0], ROSTER_WIRE_FORMAT, 'the trailer leads with its version byte');

@@ -584,7 +584,7 @@ const ReplayStage = ({ decoded, frames, reverses, gameId, names, times }: StageP
     const publishSeq = useRef(0);
     const publishStep = useCallback(
         (i: number) => {
-            const seq: AnimationSequenceMessage = JSON.parse(JSON.stringify(frames[i].seq));
+            const seq: AnimationSequenceMessage = structuredClone(frames[i].seq);
             seq.sequence_id = `replay-${i}-${++publishSeq.current}-${Math.random().toString(36).slice(2)}`;
             seq.timestamp = Date.now();
             (seq.events[0] as any)._nonce = seq.sequence_id; // defeat content dedup
@@ -609,7 +609,7 @@ const ReplayStage = ({ decoded, frames, reverses, gameId, names, times }: StageP
         (i: number) => {
             const rev = reverses[i];
             if (!rev) return;
-            const seq: AnimationSequenceMessage = JSON.parse(JSON.stringify(rev));
+            const seq: AnimationSequenceMessage = structuredClone(rev);
             seq.sequence_id = `replay-rev-${i}-${++publishSeq.current}-${Math.random().toString(36).slice(2)}`;
             seq.timestamp = Date.now();
             if (seq.events[0]) (seq.events[0] as any)._nonce = seq.sequence_id;

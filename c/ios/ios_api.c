@@ -3,9 +3,9 @@
 // One static Game, no threads inside (the Swift EngineC wrapper serializes every
 // call onto a single queue). Everything crosses as the kernel's own packed bytes
 // — the same wire the wasm build hands the web — and Swift decodes them
-// directly (MaskedView / MoveWire / awire). There is no JSON here any more. No
-// Durak rule lives here either: this file only marshals to and from
-// game.c / legal.c / view.c / replay.c (docs/IOS_APP_DESIGN.md §3, §16.0).
+// directly (MaskedView / MoveWire / awire). No Durak rule lives here either:
+// this file only marshals to and from game.c / legal.c / view.c / replay.c
+// (docs/IOS_APP_DESIGN.md §3, §16.0).
 
 #include "ios_api.h"
 #include "ios_internal.h"
@@ -95,11 +95,10 @@ static uint8_t  g_msg_carry_fool = MSG_NO_FOOL;
 static int8_t g_msg_rules = 0;
 
 // ---------- legal moves ----------------------------------------------------
+//
+// The packed wire carries the MOVE_* integer; naming it is the host's job.
 
-// (move_type_name went with the JSON emitters: the packed wire carries the
-// MOVE_* integer and the host names it.)
-
-// ---------- packed emitters (no JSON — the packed kernel wire) --------------
+// ---------- packed emitters -------------------------------------------------
 //
 // Client and server are kernel-to-kernel, so these hand out the SAME bytes the
 // wasm build does and Swift decodes them directly (MaskedView / MoveWire).
@@ -927,11 +926,8 @@ int fio_has_game(void) { return g_has_game; }
 Game *fio_resident_game(void) { return g_has_game ? &g_game : 0; }
 
 // A server packed-view blob decodes to a GameView in pure Swift (MaskedView),
-// and legal moves from that blob come through the PACKED fio_legal_from_packed
-// (view.ts / MoveWire) — so the JSON packed-view bridges that lived here
-// (fio_view_from_packed_json / fio_legal_from_packed_json) are gone with the
-// JSON surface, along with fio_public_state_json (unused: publicState() reads
-// fio_state_packed).
+// and legal moves from that blob come through fio_legal_from_packed
+// (view.ts / MoveWire).
 
 int fio_actor_mask(void) {
     if (!g_has_game) return FIO_ENOGAME;
@@ -1004,9 +1000,9 @@ static int build_encode_input(const Game *g, unsigned char *out, int cap) {
     // encode died with REPLAY_ENOTINMENU on step 0 — ~50% of 2p and ~75% of 4p
     // finished games. Derive it from the log, as the other three encoders
     // already do (tests/replay_difftest.c, tests/replay_v6_test.c,
-    // _shared/common/replay/encode.ts). NOTE: fio_state_json's read of
-    // g->first_attacker is correct and must stay — a live view wants the
-    // CURRENT round's attacker.
+    // _shared/common/replay/encode.ts). NOTE: the LIVE view's read of
+    // g->first_attacker is correct and must stay - a view wants the CURRENT
+    // round's attacker; only the encoder wants the game's first.
     int first_attacker = -1;
     for (int i = 0; i < g->num_logs && first_attacker < 0; i++)
         if (g->logs[i].log_type == LOG_ATTACK) first_attacker = g->logs[i].player_idx;
@@ -1088,8 +1084,8 @@ int fio_replay_share_link(const char *moves,
 
 // The animations of the chain's LAST TURN, as packed evwire frames — the "what
 // just happened" an iMessage receiver sees on opening a bubble. Same packed
-// evwire the website renders and live play broadcasts (no JSON crosses this
-// boundary, §zero-JSON); Swift reads it with EvWire.decodeFrames.
+// evwire the website renders and live play broadcasts; Swift reads it with
+// EvWire.decodeFrames.
 //
 // THE KERNEL decides the group; the client passes the encoded chain and the one
 // fact the chain cannot hold - `atoms_before`, how many atoms were on it BEFORE
@@ -1215,9 +1211,9 @@ int fio_replay_last_events_packed(const char *code, int viewer, int atoms_before
 
 // The replay decode as its RAW binary (replay.h DECODE layout: a 20-byte header
 // then n_logs records of [type,seat,defIdx,n_pairs] + n_pairs*[primary,target]
-// wire-card bytes). Swift parses this directly (DecodedReplay.decode) — the same
-// bytes fio_replay_decode_json used to walk into JSON, now handed over whole so
-// no JSON crosses the boundary. Card bytes: 0xFF none, 0xFE hidden, else id.
+// wire-card bytes). Swift parses this directly (DecodedReplay.decode): the
+// stream is handed over whole rather than walked here. Card bytes: 0xFF none,
+// 0xFE hidden, else id.
 int fio_replay_decode_packed(const char *code, unsigned char *out, int cap) {
     if (!code) return FIO_EBADARG;
     g_last_replay_error = 0;
@@ -1276,9 +1272,9 @@ static int g_msg_round = -1;      // the adopted chain's round — Rule R's guar
 int fio_last_msg_error(void) { return g_last_msg_error; }
 
 // The FMSG envelope decode+adopt hands the metadata back as a PACKED
-// fixed-layout blob (Swift parses it with MessageEnvelope.decode) — no JSON, and
-// no embedded state/moves (the phone
-// reads those through fio_state_packed / fio_legal_packed in the same actor).
+// fixed-layout blob (Swift parses it with MessageEnvelope.decode), with no
+// embedded state or moves - the phone reads those through fio_state_packed /
+// fio_legal_packed in the same actor.
 // Layout: phase(1) n_players(1) last_actor_seat(1) round(1) turn(u16 LE)
 //   game_id(u64 LE) parent8(8) digest(32) sent_at(u16 LE) n_new(1)
 //   opening(1) carry_key(u32 LE) carry_fool(1) passing(1) n_joins(1)
@@ -1416,8 +1412,7 @@ int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, i
 // A ROSTER, PACKED - byte for byte the tail fio_msg_decode_packed hands BACK:
 //   n_joins(1), then n_joins x { seat(1), name_len(1), name[name_len] }
 // One layout for the roster in both directions, so a host that can read one can
-// write one. It used to arrive as [{"seat":0,"name":"Sveta"},...] and be parsed
-// here, which made the roster the last JSON on any path that matters.
+// write one.
 //
 // Every record is BOUNDED BEFORE IT IS READ, and the blob must be consumed
 // EXACTLY: trailing bytes mean the caller and the kernel disagree about what a
@@ -1674,8 +1669,8 @@ int fio_msg_rule_p(const uint8_t *a, int a_len, const uint8_t *b, int b_len) {
 }
 
 // Rule R over the AWIRE frame - the one rebase entry (the phone stages moves as
-// awire and the pending ledger holds them the same way; the JSON twin this used
-// to shadow is deleted). Same contract as wasm_msg_rebase: decode the
+// awire and the pending ledger holds them the same way). Same contract as
+// wasm_msg_rebase: decode the
 // action, then msg_rebase_one against the adopted chain's round (g_msg_round, set
 // by the last fio_msg_decode_packed). Returns MSG_REBASE_* (0 re-applied and
 // APPLIED to the resident game, 1 discarded by the round guard, 2 discarded as

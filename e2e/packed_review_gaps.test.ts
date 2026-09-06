@@ -34,7 +34,7 @@ import { start_game } from '../server/api/common/game_lifecycle.ts';
 import { kernelLegalMoves, kernelShouldAct, serializeGameState, __setKernelSeedSource } from '../sdk/ts/wasm/engine.ts';
 import { encodeAction, decodeAction, encodeActionRequest, decodeActionRequest, encodeActionResponse, decodeActionResponse, ACTION_STATUS, AwireKindName } from '../sdk/ts/wire/awire.ts';
 import { buildPackedGameBytes, gameViewFromRow } from '../server/api/common/packed_game.ts';
-import { decodePackedGame, encodeGamesList, decodePackedGamesList } from '../sdk/ts/wire/view.ts';
+import { decodePackedGame } from '../sdk/ts/wire/view.ts';
 import { bytesToHex } from '../server/api/common/replay/codec.ts';
 import { validateActionWire, initClientGuards } from '../src/wasm/clientGuards.ts';
 
@@ -175,14 +175,10 @@ test('buildPackedGameBytes matches personalize_game; WAITING rows refuse; list r
   assert.equal(await buildPackedGameBytes({ ...row, status: 'waiting' }, me), null, 'lobby refuses packed');
   assert.equal(await buildPackedGameBytes({ ...row, state: null }, me), null, 'blob-less refuses packed');
 
-  // Games-list envelope: one packed + one JSON entry round-trip.
-  const jsonEntry = new TextEncoder().encode(JSON.stringify(personalize_game(game, me)));
-  const list = encodeGamesList([{ kind: 1, bytes: bytes! }, { kind: 0, bytes: jsonEntry }]);
-  const games = decodePackedGamesList(list);
-  assert.ok(games && games.length === 2, 'both entries decode');
-  assert.equal(games![0].id, game.id);
-  assert.equal(games![1].id, game.id);
-  assert.equal(decodePackedGamesList(new Uint8Array([9, 1])), null, 'unknown list format is null');
+  // (The games-list envelope used to be round-tripped here, one packed entry
+  // beside one JSON one. That codec had no caller anywhere in the product - it
+  // existed to be tested - and the JSON entry kind was its only reason to exist,
+  // so it went with the island.)
 });
 
 // ---- 1. the DB grants (needs Postgres) ---------------------------------------

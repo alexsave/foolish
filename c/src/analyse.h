@@ -23,7 +23,7 @@
 // in the document's "what it cannot see" section; read that before quoting a
 // number.
 //
-// No JSON anywhere: the result crosses as packed bytes, with the reader beside
+// The result crosses as packed bytes, with the reader beside
 // the writer below, in the shape of the fio_*_packed entries.
 #ifndef CNITRO_ANALYSE_H
 #define CNITRO_ANALYSE_H

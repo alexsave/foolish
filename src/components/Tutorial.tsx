@@ -196,7 +196,7 @@ const TutorialPlayback = ({ decoded, frames, names, onExit }: PlaybackProps) => 
     );
 
     const publishStep = useCallback((i: number) => {
-        const seq: AnimationSequenceMessage = JSON.parse(JSON.stringify(frames[i].seq));
+        const seq: AnimationSequenceMessage = structuredClone(frames[i].seq);
         seq.sequence_id = `tut-${i}-${++publishSeq.current}-${Math.random().toString(36).slice(2)}`;
         seq.timestamp = Date.now();
         if (seq.events[0]) (seq.events[0] as any)._nonce = seq.sequence_id;

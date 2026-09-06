@@ -188,7 +188,7 @@ static const ReplayAction *g_rs_cur;
 typedef struct { EvwSink sink; void *ctx; } RsWalkCtx;
 
 // What a playback does at each step (the deal, then one per action). The two
-// consumers differ ONLY here: the phone walks the events to a JSON sink, the
+// consumers differ ONLY here: the phone walks the events to its own sink, the
 // web serializes the same events into the packed frame it already renders.
 // Neither re-derives anything — both are evwire_walk, once, from real hooks.
 typedef void (*RsStepFn)(const Game *g, int viewer, void *u);
