@@ -595,9 +595,10 @@ So this is a change with two consumers and wants its own look.
 ### An untested load-bearing rule: the empty menu under a held settlement - TESTED
 
 Fixed 2026-09-06, and the report below was right on every count.
-Mutating `legalPacked = heldSettlement.isEmpty ? read.legalPacked : emptyMenu`
-down to `legalPacked = read.legalPacked` left the whole `MessageStagedDealTests`
-class green, its own `XCTAssertTrue(c.legal.isEmpty)` included.
+Mutating the rule away - `legalPacked = heldSettlement.isEmpty ? read.legalPacked
+: emptyMenu` cut down to `legalPacked = read.legalPacked` - left the whole
+`MessageStagedDealTests` class green, its own `XCTAssertTrue(c.legal.isEmpty)`
+included.
 
 The missing fixture is written:
 `MessageStagedDealTests.testAHeldSettlementEmptiesAMenuTheKernelWouldHaveOffered`.
@@ -614,6 +615,13 @@ Both halves are mutation-checked, and neither catches the other's mutation:
 - the view half (`view = heldView ?? v`) fails with "1 dealt card(s) reached the
   board".
 It finds its position in about a second, so it costs the suite nothing.
+
+Re-checked after Item 2 moved the decision into the kernel, because a fixture
+that only guards the Swift it was written against is worth little: setting
+`out->empty_menu = 0` in `msg_turn_publish` (c/src/msg_wire.c) fails this test
+with the same message and at the same position.
+So it guards the rule where the rule now lives, through a real controller, not
+the expression it happened to be written as.
 
 Why the shape is as rare as the report says: after a pickup or a good the next
 first attacker is never the seat that moved, so the kernel's menu for it is empty
