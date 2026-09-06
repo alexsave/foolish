@@ -1522,15 +1522,21 @@ static void h_meta(Req *r, Conn *conn) {
             start_bot_loop(s);             // the game-loop paces bot play from here
         }
     } else if (!strcmp(type, "continue")) {
-        // Reset the kernel to the lobby for a rematch (identities kept, re-dealt
-        // on start). The host owns only this lobby transition; game-over was the
-        // kernel's to declare.
-        g->status = GAME_STATUS_WAITING;
+        // The rematch reset is game_reset_to_lobby's (game.c) - identities kept,
+        // re-dealt on start. This branch used to spell out its own, and spelled
+        // it SHORT: it set the seat statuses and the game status and left the
+        // board fields (deck, discard, flipped, trump, battles, eliminations,
+        // goods) standing until the next deal cleared them. Between the two, /ws
+        // serves that state to the lobby, so the finished round's table was
+        // still on screen. The host keeps only what is genuinely host state:
+        // seat_ready.
+        unsigned int bot_mask = 0;
         for (int i = 0; i < g->num_players; i++) {
             bool ai = seat_is_bot(g, i);
+            if (ai) bot_mask |= 1u << i;
             s->seat_ready[i] = ai;
-            g->players[i].status = ai ? PLAYER_STATUS_READY : PLAYER_STATUS_IDLE;
         }
+        game_reset_to_lobby(g, bot_mask);
     }
     // Every branch above either mutates the roster/lobby state or is a no-op
     // (an already-seated join, a re-ready), and bumping on a no-op is

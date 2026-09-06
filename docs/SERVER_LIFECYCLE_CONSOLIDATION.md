@@ -39,7 +39,7 @@ Findings, ranked by leverage (shared-across-hosts × no-kernel-home × bug-risk)
 | # | Finding | Dup in | Verdict |
 |---|---|---|---|
 | L1 | **Lobby/seating state machine** — join (seat + human kind), add-bot (seat cap + roster pick + kind), set-ready, the `all-ready ∧ ≥2 → deal` start predicate, exit | **N + T** | **NEW.** No kernel entry exists; both servers hand-roll it, with a byte-identical start predicate. Propose a kernel lobby module (§4.1). |
-| L2 | **Rematch reset** — `game_over → waiting` board clear | **N** | **REGRESSION.** F6's `game_reset_to_lobby` exists and is used by web/iOS; the native server calls it **0 times** and hand-rolls a PARTIAL reset that leaves stale `good`/board state in the lobby — the exact bug F6 fixed (§4.2). One-line fix. |
+| L2 | **Rematch reset** — `game_over → waiting` board clear | **N + T** | **DONE.** Both hosts call `game_reset_to_lobby` now. The web was in this row too, not just the native server: `handleContinue` hand-rolled its own and left `good_players`/`good_timestamp` set for the lobby to show. The native copy was the partial board clear §4.2 describes. Both adopted, §4.2. |
 | L3 | **End-of-game result** - winner / fool / placements from `elimination_order` | **N** | **PARTLY DONE for the web.** `anim_finish_rows` now answers the placements and the web reaches it through `server/api/common/finish_order.ts`; the native server still has no ranking. `game_result` (§4.3) would finish it. |
 | L4 | **"Does this game need a bot to act?"** predicate | **N + T** | Kernel already has the pieces (`bot_drive_eligible_mask` + `game_done`); expose one convenience wrapper (§4.4). |
 | L5 | **Scoring math** — elimination→rankings, pairwise Elo delta, base-1000 | **T + S** | Three copies of one formula (+ the `main_elo.c` CLI). PURE and kernel-able, BUT the doctrine lists Elo as a host non-goal — a boundary call, not a slam dunk (§4.5). |
@@ -62,8 +62,8 @@ Measured in `foolish_server.c` (call counts):
 - The semantic anti-cheat fuzzer (`sem_fuzz.c`) proves the one chokepoint this
   relies on — `awire_apply` — cannot be cheated regardless of transport.
 
-What it does NOT call, and should: `game_reset_to_lobby` ×0 (→ L2),
-`game_done` ×0 (→ L3). And what has no kernel entry to call at all: the lobby
+What it does NOT call, and should: `game_done` ×0 (→ L3).
+(`game_reset_to_lobby` ×0 was here too; L2 is done and it calls it now.) And what has no kernel entry to call at all: the lobby
 join/add-bot/ready/start machine (→ L1).
 
 ## 2. Method
@@ -76,10 +76,15 @@ machinery, L2 reset bug, the start predicate, `seat_ready[]` duplication) and
 the kernel surface were verified by direct read; the Supabase/SQL-side detail in
 L5/L7 came from a survey pass and should be re-read before action.
 
-## 3. The motivating bug (found by this audit — a live divergence)
+## 3. The motivating bug (found by this audit — a live divergence) — FIXED
+
+Both servers call `game_reset_to_lobby` now; this section is kept as the record
+of what was wrong. It was also worse than written: §4.2 has the web half, which
+this audit attributed to the kernel and which was in fact a third hand-rolled
+copy.
 
 **The native server's rematch leaves stale board state on the lobby screen.**
-`h_meta`'s `continue` branch (`foolish_server.c:1524-1534`) hand-rolls the reset:
+`h_meta`'s `continue` branch (`foolish_server.c:1524-1534`) hand-rolled the reset:
 
 ```c
 } else if (!strcmp(type, "continue")) {
@@ -105,10 +110,17 @@ is the settled behavior:
 > good state is visible in it. One definition, so the divergence is settled
 > rather than mirrored.*
 
-So the native server reproduced, by hand, the precise pre-F6 bug the kernel
-already retired for web and iOS. Between a `continue` and the next `start`, a
-native-server lobby can show stale "good" ticks and leftover board counts. L2 is
-both a dedup and a bug fix.
+So the native server reproduced, by hand, the precise pre-F6 bug the kernel had
+retired for iOS. Between a `continue` and the next `start`, a native-server
+lobby could show stale "good" ticks and leftover board counts. L2 was both a
+dedup and a bug fix.
+
+And the WEB was never actually on the kernel's side of this, despite what the
+quoted comment implies: the comment settled the definition IN C, but
+`handleContinue` went on hand-rolling its own reset and leaving `good_players`
+and `good_timestamp` set - the very pair the comment is about. Only the browser's
+optimistic mirror cleared them, which is why nothing looked wrong locally. Both
+are fixed by calling the one transform.
 
 ## 4. Findings in detail
 
@@ -159,19 +171,35 @@ half-owns. **Verify:** kernel invariants in `c/tests/tests.c` (add-seat respects
 compacts correctly), then byte-compare a lobby→deal sequence against the current
 TS path before cutover, and re-point the native `h_meta` at the new calls.
 
-### 4.2 L2 — adopt `game_reset_to_lobby` in the native server (bug fix)
+### 4.2 L2 — adopt `game_reset_to_lobby` on both servers (bug fix) — DONE
 
-F6 is built. The fix is to delete the six hand-rolled lines in §3 and call:
+F6 was built and had no caller outside `tests.c`. Both servers call it now:
 
 ```c
 game_reset_to_lobby(&s->game, bot_mask);   // bot_mask bit i = seat i is a bot
 ```
 
-deriving `bot_mask` from `seat_is_bot(g,i)` over the seats (the same test the
-loop already runs). This clears the full board, killing the stale-lobby
-divergence. **Effort:** trivial. **Risk:** none (strictly a bug fix); guard with
-a native smoke test that a `continue` leaves `good_players_mask == 0` and all
-counts zero.
+with `bot_mask` derived from `seat_is_bot(g,i)` over the seats (the same test
+the loop already ran).
+
+This row understated the problem: it named only the native server, and the web
+was doing the same thing. `handleContinue` cleared the board but left
+`good_players` and `good_timestamp` set, leaning on the next deal to clear them
+- so between the reset and the deal the lobby it broadcast still showed the
+finished round's goods. Measured before the change: `good_players ["h1"]`,
+`good_timestamp 123`; after: `[]` and `null`. `game.c` had already recorded
+that exact divergence and settled it the client's way, which is what adopting
+the kernel applies.
+
+The native copy was the partial board clear described above: it set the seat
+statuses and the game status and left deck, discard, trump, battles,
+eliminations and goods standing until the next deal, with `/ws` serving that
+state to the lobby in between.
+
+`c/tests/tests.c test_reset_to_lobby` already asserts every field, and
+`e2e/meta.test.ts` compares the web's optimistic mirror against the server
+reset - it now includes the good-players pair it used to skip, which is why the
+divergence survived it.
 
 ### 4.3 L3 — end-of-game result (winner / fool / placements)
 
