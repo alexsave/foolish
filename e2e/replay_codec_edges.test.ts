@@ -8,15 +8,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  kernelB32Encode, kernelB32Decode, kernelReplayLink, REPLAY_LINK,
+  kernelB32Encode, kernelB32Decode, kernelReplayLink, REPLAY_LINK, kernelReplayLinkParse,
 } from '../sdk/ts/wasm/bots.ts';
 
 import {
-  bytesToHex, hexToBytes, classifyPathSegment, urlToGame, bytesToBigint, bigintToBytes,
+  bytesToHex, hexToBytes, classifyPathSegment, bytesToBigint, bigintToBytes,
 } from '../server/api/common/replay/codec.ts';
 import {
   encodeExtras, decodeExtras, splitReplayCode, joinReplayCode,
 } from '../server/api/common/replay/extras.ts';
+
+// A pasted link as the moves bigint: the kernel strips and refuses
+// (replay_link_parse), the kernel decodes (replay_b32_decode). Composed here
+// rather than in the product, which never needed the bigint form.
+const urlToGame = (url: string): bigint =>
+    bytesToBigint(kernelB32Decode(kernelReplayLinkParse(url)));
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 

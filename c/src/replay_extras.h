@@ -119,6 +119,28 @@ int replay_extras_roster_speaks(const unsigned char *in, int in_len);
 #define REPLAY_LINK_STYLE_URL 0
 #define REPLAY_LINK_STYLE_QR  1
 
+// READING a link back: the replay code out of whatever a person pasted.
+//
+// The builders above are only half of it. replay_b32_decode is deliberately
+// tolerant - it ignores characters outside the alphabet and stops at '-' -
+// which is right for a code and WRONG for a URL, because every letter of
+// "https" is in the base32 alphabet. A prefix nothing strips does not fail: it
+// silently names a DIFFERENT game, and that surfaces much later as an
+// unsupported-format error, sending the reader after a codec bug that is not
+// there. So stripping is a step of its own, and it belongs beside the builder.
+//
+// Accepts the bare code, the QR form `WWW.FOOLISH.CARDS/<code>`, and the links
+// a browser hands out: with or without a scheme, with or without www, a
+// trailing slash, a query or a fragment, and surrounding whitespace. An extras
+// section after '-' is dropped - the moves code is the prefix.
+//
+// Writes a NUL-terminated code and returns its length, or:
+//   -REPLAY_EXTRAS_EINPUT  nothing that could be a code (empty, or a character
+//                          outside the base32 alphabet - which is the guard a
+//                          tolerant decoder cannot give you)
+//   -REPLAY_EXTRAS_ECAP    `cap` too small
+int replay_link_parse(const char *url, char *out, int cap);
+
 int replay_extras_link_styled(const char *moves,
                               const unsigned char *names, int names_len, int n_names,
                               int style, char *out, int cap);

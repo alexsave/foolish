@@ -44,6 +44,7 @@ interface BotsExports extends EngineExports {
     wasm_replay_link(in_len: number, style: number): number;
     wasm_replay_b32_encode(in_len: number): number;
     wasm_replay_b32_decode(in_len: number): number;
+    wasm_replay_link_parse(in_len: number): number;
     wasm_unambiguous_cover(n_cover: number, n_battles: number, power_suit: number): number;
     wasm_clear_logs(): void;
     wasm_import_strategy_keys(): void;
@@ -1337,6 +1338,22 @@ export function kernelB32Decode(code: string): Uint8Array {
     if (w < 0) throw new Error('b32: decode overflowed the kernel IO buffer');
     const base = ex.wasm_io_ptr();
     return __mem(ex).slice(base, base + w);
+}
+
+// The replay code out of whatever a person pasted - the kernel's
+// replay_link_parse. Building a link and reading one back are two halves of the
+// same format, and this is the half that has to REFUSE: replay_b32_decode is
+// deliberately tolerant, so an unstripped "https" prefix would decode to a
+// different game rather than fail. Throws when the input is not a code.
+export function kernelReplayLinkParse(url: string): string {
+    const ex = bots();
+    const inBytes = new TextEncoder().encode(url);
+    if (inBytes.length + 1 >= ex.wasm_replay_io_cap()) throw new Error('link: input exceeds the kernel IO buffer');
+    __mem(ex).set(inBytes, ex.wasm_replay_io_ptr());
+    const w = ex.wasm_replay_link_parse(inBytes.length);
+    if (w < 0) throw new Error(`not a replay code: ${JSON.stringify(url)}`);
+    const base = ex.wasm_io_ptr();
+    return new TextDecoder().decode(__mem(ex).slice(base, base + w));
 }
 
 export function kernelReplayLink(moves: string, names: string[], style: number = REPLAY_LINK.url): string {

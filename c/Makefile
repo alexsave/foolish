@@ -540,6 +540,7 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_replay_extras_decode \
   -Wl,--export=wasm_replay_link \
   -Wl,--export=wasm_replay_b32_encode -Wl,--export=wasm_replay_b32_decode \
+  -Wl,--export=wasm_replay_link_parse \
   -Wl,--export=wasm_unambiguous_cover \
   -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal \
   -Wl,--export=wasm_msg_rule_p -Wl,--export=wasm_msg_rebase \

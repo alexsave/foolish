@@ -18,7 +18,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { kernelB32Encode, kernelReplayLink } from '../sdk/ts/wasm/bots.ts';
+import {
+  kernelB32Encode, kernelReplayLink, kernelB32Decode, kernelReplayLinkParse,
+} from '../sdk/ts/wasm/bots.ts';
 
 import { game_done } from '../server/api/common/common_utils.ts';
 import { start_game } from '../server/api/common/game_lifecycle.ts';
@@ -36,7 +38,7 @@ import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
 import { ReplayInput, SeatLog, DecodedReplay, INFO_TYPES } from '../server/api/common/replay/core.ts';
 import { decodeReplay } from '../server/api/common/replay/decode.ts';
 import {
-  urlToGame, base64Decode, base64Encode, bytesToBigint,
+  base64Decode, base64Encode, bytesToBigint,
 } from '../server/api/common/replay/codec.ts';
 import { kernelReplayEncodeV6FromGame } from '../sdk/ts/wasm/bots.ts';
 import { suiteRng } from './helpers/rng.ts';
@@ -52,6 +54,12 @@ import {
   moveTimesFromLogs,
 } from '../server/api/common/replay/extras.ts';
 import { buildReplayFrames, REPLAY_STEP } from '../src/replay/frames';
+
+// A pasted link as the moves bigint: the kernel strips and refuses
+// (replay_link_parse), the kernel decodes (replay_b32_decode). Composed here
+// rather than in the product, which never needed the bigint form.
+const urlToGame = (url: string): bigint =>
+    bytesToBigint(kernelB32Decode(kernelReplayLinkParse(url)));
 
 // The engine logs play-by-play; silence it so the test reporter stays readable.
 if (!process.env.E2E_VERBOSE) {

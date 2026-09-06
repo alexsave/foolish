@@ -31,7 +31,6 @@
  * a hex column value, a base32 URL segment, or a base64 blob.
  * ------------------------------------------------------------------------- */
 
-import { kernelB32Decode } from "@sdk/ts/wasm/bots.ts";
 
 const B64 =
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -126,52 +125,13 @@ export function hexToBytes(hex: string): Uint8Array {
 // uppercase scheme-less one, which stays in QR alphanumeric mode and so fits a
 // smaller QR version.
 //
-const URL_HOST = "FOOLISH.CARDS/";
-const IS_BASE32 = /^[A-Za-z2-7]+$/;
-
-/**
- * The replay code out of whatever a person pasted.
- *
- * PARSING is what stayed on this side. The kernel BUILDS links
- * (replay_extras_link_styled) and every builder here is gone, but nothing in C
- * reads a link back: replay_b32_decode is deliberately tolerant - it ignores
- * characters outside the alphabet and stops at '-' - which is right for a code
- * and wrong for a URL, because every letter of "https" is in the base32
- * alphabet. A prefix this does not strip does not fail; it silently names a
- * DIFFERENT game, and that surfaces much later as "unsupported replay format
- * version N", sending the reader after a codec bug that is not there.
- *
- * Accepts the bare code, the QR form `WWW.FOOLISH.CARDS/<code>`, and the links
- * a browser hands out - `https://foolish.cards/<code>`, with or without www, a
- * trailing slash, a query or a fragment. Does NOT decide whether the result is
- * a code; see urlToGame.
- */
-export function urlToCode(url: string): string {
-  // A query or a fragment is never part of the code.
-  let s = url.trim().replace(/\s+/g, "").split(/[?#]/)[0].replace(/\/+$/, "");
-  const host = s.toUpperCase().lastIndexOf(URL_HOST);
-  if (host >= 0) s = s.slice(host + URL_HOST.length);
-  // Some other host, or a bare path: the code is the last path segment.
-  else if (s.includes("/")) s = s.slice(s.lastIndexOf("/") + 1);
-  // An optional extras section (player names + move times) follows the moves
-  // after a dash - the move code is the prefix.
-  const dash = s.indexOf("-");
-  if (dash >= 0) s = s.slice(0, dash);
-  return s;
-}
-
-/**
- * A pasted link or code as the moves bigint, or a throw that names the fault.
- * The base32 itself is the kernel's (kernelB32Decode); the guard below is the
- * part a tolerant decoder cannot do for us.
- */
-export function urlToGame(url: string): bigint {
-  const code = urlToCode(url);
-  if (!code || !IS_BASE32.test(code)) {
-    throw new Error(`not a replay code: ${JSON.stringify(url)}`);
-  }
-  return bytesToBigint(kernelB32Decode(code));
-}
+// urlToCode and urlToGame lived here: strip the prefix, refuse anything that
+// is not base32, then decode. Both are the kernel's now (replay_extras.c
+// replay_link_parse, through bots.ts kernelReplayLinkParse) - building a link
+// and reading one back are two halves of one format, and the refusal is the
+// half a tolerant decoder cannot do.
+//
+// classifyPathSegment stays: replay_extras.h keeps the URL *type* platform-side.
 
 /* ----------------------------------------------------------------------------
  * 4. ROUTING  (legacy short code vs. self-contained replay)

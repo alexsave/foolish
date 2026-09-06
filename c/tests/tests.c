@@ -1650,6 +1650,59 @@ static void test_bot_roster_choose_scopes_knobs(void) {
     CHECK(all_ok, "every offline rung dispatches to a linked brain");
 }
 
+/* ---------------- reading a pasted replay link -------------------------- */
+
+static void test_link_parse(void) {
+    char out[128];
+    const char *code = "MZXW6YTB";
+
+    // Every form a person actually pastes must name the SAME game. The web's
+    // urlToCode carried these cases; they are the kernel's now.
+    static const char *forms[] = {
+        "MZXW6YTB",
+        "WWW.FOOLISH.CARDS/MZXW6YTB",
+        "www.foolish.cards/MZXW6YTB",
+        "https://foolish.cards/MZXW6YTB",
+        "https://www.foolish.cards/MZXW6YTB",
+        "http://foolish.cards/MZXW6YTB",
+        "https://foolish.cards/MZXW6YTB/",
+        "foolish.cards/MZXW6YTB",
+        "https://foolish.cards/MZXW6YTB?utm_source=imessage",
+        "https://foolish.cards/MZXW6YTB#top",
+        "https://foolish.cards/MZXW6YTB-SOMEEXTRAS",
+        "  https://foolish.cards/MZXW6YTB\n",
+    };
+    int all = 1;
+    for (int i = 0; i < (int)(sizeof forms / sizeof forms[0]); i++) {
+        const int n = replay_link_parse(forms[i], out, (int)sizeof out);
+        if (n != 8 || strcmp(out, code) != 0) { all = 0; break; }
+    }
+    CHECK(all, "every pasted link form names the same code");
+
+    // The guard a tolerant decoder cannot give you. Each of these would
+    // otherwise decode to SOME game and die later under a codec error.
+    static const char *junk[] = {
+        "",
+        "WWW.FOOLISH.CARDS/",
+        "https://foolish.cards/",
+        "https://foolish.cards/MZXW6YTB0189",   // 0 1 8 9 are not in the alphabet
+        "MZXW6YTB!!",
+        "https://foolish.cards/hello world!",
+    };
+    int refused = 1;
+    for (int i = 0; i < (int)(sizeof junk / sizeof junk[0]); i++)
+        if (replay_link_parse(junk[i], out, (int)sizeof out) >= 0) { refused = 0; break; }
+    CHECK(refused, "input that is not a replay code is refused, never decoded");
+
+    CHECK(replay_link_parse(0, out, (int)sizeof out) < 0, "a NULL link is refused");
+    CHECK(replay_link_parse("MZXW6YTB", out, 4) == -REPLAY_EXTRAS_ECAP, "a short buffer says ECAP");
+
+    // A link that quotes another one still names its own game.
+    CHECK(replay_link_parse("see https://foolish.cards/AAAA vs foolish.cards/MZXW6YTB",
+                            out, (int)sizeof out) == 8 && strcmp(out, code) == 0,
+          "the LAST host occurrence wins");
+}
+
 /* ---------------- L1: the lobby is the kernel's ------------------------- */
 
 static void test_lobby(void) {
@@ -6425,6 +6478,7 @@ int main(void) {
     test_replay_steps_refuses_v5();
     test_replay_v6_refuses_an_overflowed_log();
     test_bot_drive_preferred();
+    test_link_parse();
     test_lobby();
     test_bot_pacing_table();
     test_bot_cycle_delay();

@@ -599,6 +599,15 @@ int wasm_replay_b32_decode(int in_len) {
     return replay_b32_decode((const char *)in, wasm_io_ptr(), wasm_io_cap());
 }
 
+// Reading a link back (replay_extras.h replay_link_parse): the pasted string
+// goes in the REPLAY buffer, the bare code comes back in the MAIN one.
+int wasm_replay_link_parse(int in_len) {
+    unsigned char *in = wasm_replay_io_ptr();
+    if (in_len < 0 || in_len >= wasm_replay_io_cap()) return -REPLAY_EXTRAS_EINPUT;
+    in[in_len] = 0;
+    return replay_link_parse((const char *)in, (char *)wasm_io_ptr(), wasm_io_cap());
+}
+
 // The whole shareable link, in one of two styles (REPLAY_LINK_STYLE_*): the
 // https link a person copies, or the uppercase scheme-less form a QR wants,
 // which stays in QR alphanumeric mode and so fits a smaller version. Same link.
