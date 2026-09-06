@@ -11,13 +11,34 @@
 // test output stays readable (assertions still surface failures).
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
-import { randomUUID } from 'crypto';
 import { readFileSync } from 'fs';
-import { join } from 'path';
+import { basename, join } from 'path';
 import { e2ePool as pool, resetBroadcastLog } from './adapters/supabase.ts';
+import { derivedUuid } from '../sdk/ts/wire/detid.ts';
+import { suiteRng } from './helpers/rng.ts';
 
 export { broadcastLog, resetBroadcastLog } from './adapters/supabase.ts';
-export const uuid = () => randomUUID();
+
+// Game ids and player ids used to come from crypto.randomUUID(), which made
+// every suite that seeds a game a different experiment each run: a red
+// "game m4a3f2, player 9c1e… rejected" named nothing anyone could re-run, and
+// the fuzzers that advertise a FUZZ_SEED were quietly mixing entropic player
+// ids into the stream the seed was supposed to pin.
+//
+// They are derived instead, from the suite seed and the test FILE. The file is
+// in the namespace because node --test runs each file in its own process, so
+// without it two files would hand the shared Postgres the same ids; with it,
+// one file's ids are stable across runs and disjoint from every other file's.
+// The counter guarantees uniqueness inside the file exactly, not probabilistically.
+const idRng = suiteRng('ids');
+const idNamespace = `${idRng.seed}:${basename(process.argv[1] ?? 'e2e')}`;
+let idSeq = 0;
+
+/** A UUID for a test row. Reproducible from E2E_SEED_IDS (or E2E_SEED). */
+export const uuid = () => derivedUuid(idNamespace, idSeq++);
+
+/** Reset the id counter - only for a test that wants two identical id runs. */
+export const __resetIds = () => { idSeq = 0; };
 
 // Stand up the Supabase platform shim, then apply the REAL production schema
 // (server/impls/supabase/seed.sql — tables, types, the commit_game CAS, the bot lease, the
