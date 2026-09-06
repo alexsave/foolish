@@ -167,8 +167,7 @@ That is the engine-relativity of "what you should have played" made visible, and
 
 What this says about the product question, recorded and not decided: an octogen-everywhere review is a server job or a long background job, a robusta scan plus an octogen deep pass is minutes on a laptop core and tens of seconds across cores, and a handwritten scan is instant but is the Oracle's own policy with all of its blind spots.
 The world loop is embarrassingly parallel and the result is identical at any thread count, so a client-side build inherits whatever threads the host has.
-Every bot's scratch, the solver's table and the engine's RNGs are already per thread (the native OMP arena relies on it); `bot_drive`'s menu scratch joins them here.
-Three kernel globals are still shared and are written with identical values by every thread (`engine_last_reject`, `engine_snap_hook` around a bot's choose, the dropped-log sink `g_log_sink`); a sibling change (PR #118, "the last shared kernel globals go thread-local") retires that caveat and nothing here depends on it.
+Every bot's scratch, the solver's table, the engine's RNGs, `bot_drive`'s menu scratch and the last kernel globals (`engine_last_reject`, `engine_snap_hook`, the dropped-log sink) are per thread on main since PR #118, which is what the one-thread-equals-four test rests on.
 
 ## The sample game
 
@@ -200,12 +199,12 @@ Main's `c/tests/og_explain.c` is the branch's file plus the wasm-faithful reseed
 Nothing on the branch is missing from main in a better form.
 The analyser reuses what that work established (the driven replay, the deal-from-moves idea) but not its code: the recorded game now enters through the real replay codec rather than a fixture loader.
 
-**`origin/claude/oracle-mode-b`** (9 commits) is a shared-memory, multi-threaded wasm build of octogen's per-decision deliberation: N worker threads run `octogen_strategy_choose` over one shared board and fold per-candidate scores into a C accumulator, with the exact endgame verdict probe hoisted out of the explain build.
+**`origin/claude/oracle-mode-b`** (9 commits, since landed on main through PR #119 as `claude/oracle-mode-b-port`) is a shared-memory, multi-threaded wasm build of octogen's per-decision deliberation: N worker threads run `octogen_strategy_choose` over one shared board and fold per-candidate scores into a C accumulator, with the exact endgame verdict probe hoisted out of the explain build.
 Does it solve the analyser's cost problem?
 Partly, and in the right shape.
 It does not reduce the work: the cost above is CPU time, and Mode B divides wall time by the thread count (its own benchmark shows near-linear scaling and a ~10% per-choose saving over the instance fleet).
 What it establishes is that freestanding wasm threads with real TLS work, which is exactly what the analyser's world loop needs in a browser: the loop is already a fan-out over independent (candidate, world) cells with all scratch thread-local, so it maps onto that build directly.
-The analyser was designed for it (one entry, packed result, a per-cell function with no shared state) but does not depend on it landing; natively the same loop runs over pthreads.
+The analyser was designed for it (one entry, packed result, a per-cell function with no shared state) but does not use it yet; natively the same loop runs over pthreads, and the wasm export is still the "to become a product surface" item below.
 The cost problem itself is decided by the engine choice, not by the threading.
 
 ## To become a product surface
