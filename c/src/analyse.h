@@ -224,6 +224,10 @@ void analyse_belief(const Game *g, int seat, AnalyseBelief *B);
 // Own hand, table, discard and log are untouched. deterministic_deck is set.
 void analyse_install_world(Game *g, int seat, const AnalyseBelief *B, const Card *perm);
 
+// One sampled world: the pool shuffled by `seed`, in the order
+// analyse_install_world takes. Same seed, same world; the whole pool, always.
+void analyse_sample_world(const AnalyseBelief *B, uint32_t seed, Card *perm);
+
 // P(k trumps in a hand of CARDS_PER_PLAYER dealt from a deck of `deck` cards
 // holding `trumps` trumps), and P(at most k). Exact.
 double analyse_hypergeom(int deck, int trumps, int k);

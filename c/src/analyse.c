@@ -500,7 +500,7 @@ static void an_perm_from_labels(const AnalyseBelief *B, const AnWorldShape *S,
     }
 }
 
-static void an_perm_sampled(const AnalyseBelief *B, uint32_t seed, Card *perm) {
+void analyse_sample_world(const AnalyseBelief *B, uint32_t seed, Card *perm) {
     for (int i = 0; i < B->n; i++) perm[i] = B->pool[i];
     uint32_t s = seed;
     for (int i = B->n - 1; i > 0; i--) {
@@ -676,7 +676,7 @@ static int an_evaluate(const Game *g, int seat, const LegalMoves *moves, AnNode 
         if (n_worlds > AN_MAX_WORLDS) n_worlds = AN_MAX_WORLDS;
         for (int w = 0; w < n_worlds; w++) {
             g_wseed[w] = an_mix(base, (uint32_t)(w + 1));
-            an_perm_sampled(B, an_mix(g_wseed[w], 0x51AB1E5u), g_perms[w]);
+            analyse_sample_world(B, an_mix(g_wseed[w], 0x51AB1E5u), g_perms[w]);
         }
     }
 
@@ -734,7 +734,7 @@ static int an_best_of(const AnCandStat *st, int nc, int played) {
     return best;
 }
 
-static void an_settle(AnNode *node, const AnCandStat *st, int np, int proof,
+static void an_settle(const AnNode *node, const AnCandStat *st, int proof,
                       int *best_out, double *loss_out, double *se_out, int *verdict_out) {
     int nc = node->n_cands;
     int best = an_best_of(st, nc, node->played);
@@ -742,7 +742,6 @@ static void an_settle(AnNode *node, const AnCandStat *st, int np, int proof,
     double se = proof ? 0.0 : an_diff_se(&st[best]);
     bool all_lost = true;
     for (int ci = 0; ci < nc; ci++) if (st[ci].n_fool != st[ci].n) all_lost = false;
-    (void)np;
     *best_out = best;
     *loss_out = loss;
     *se_out = se;
@@ -898,7 +897,7 @@ static int an_scan_visit(void *vctx, const Game *g, int step, int sub, int seat,
     node->flags |= flags;
     int best, verdict;
     double loss, se;
-    an_settle(node, node->st, g->num_players, (flags & ANALYSE_NF_PROOF) != 0, &best, &loss, &se, &verdict);
+    an_settle(node, node->st, (flags & ANALYSE_NF_PROOF) != 0, &best, &loss, &se, &verdict);
     node->best = (uint8_t)best;
     node->loss = loss;
     node->loss_se = se;
@@ -933,7 +932,7 @@ static int an_deep_visit(void *vctx, const Game *g, int step, int sub, int seat,
                                                     ctx->p->deep_worlds, node->deep, &flags);
         int best, verdict;
         double loss, se;
-        an_settle(node, node->deep, g->num_players, (flags & ANALYSE_NF_PROOF) != 0, &best, &loss, &se, &verdict);
+        an_settle(node, node->deep, (flags & ANALYSE_NF_PROOF) != 0, &best, &loss, &se, &verdict);
         node->deep_best = (uint8_t)best;
         node->deep_loss = loss;
         node->deep_loss_se = se;

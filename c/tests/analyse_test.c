@@ -19,19 +19,29 @@
 //   belief      at every decision of BOTH seats: conservation holds, every
 //               real hidden card is in the pool, every pinned card is really in
 //               that hand. Mutation: drop the pinned-remove on ATTACK/COVER/PASS
-//               -> "pinned card not in hand" fails at the first re-played pickup.
+//               -> a played card stays "known", leaves the pool, and the
+//               conservation line fails at the first re-played pickup (it fires
+//               before the pinned-in-hand line can; both are kept).
 //   worlds      every installed world is a legal 36-card board. Mutation: skip
 //               the last free slot -> the duplicate/missing check fails.
+//   sampler     a sampled world is a permutation of the whole pool, the same
+//               for the same seed and different for a different one. Mutation:
+//               ignore the seed in analyse_sample_world -> the different-seed
+//               check fails. (The end-to-end "different seed, different bytes"
+//               check below does NOT catch that one: handwritten draws its own
+//               RNG from the same seed and moves the bytes anyway.)
 //   proof       at the cover of the last eight (step 50) the jack cover is a
 //               proven loss in every world and the king cover a proven win in
-//               at least one of the five the belief admits; two steps later (step 52) every candidate is a
-//               proven loss and the node is LOST. These are the brief's
-//               ground-truth findings, reproduced by the analyser's exact play,
-//               not by its playouts. Mutation: flip the sign an_exact_rec
-//               returns for a finished board -> both fail.
+//               at least one of the five the belief admits; two steps later
+//               (step 52) every candidate is a proven loss and the node is
+//               LOST. These are the brief's ground-truth findings, reproduced
+//               by the analyser's exact play, not by its playouts. Mutation:
+//               flip the sign of the value cd_sim_solve_d hands an_exact_rec
+//               -> both fail. (Flipping the struct-level finished-board leaf
+//               instead changes nothing: with the stock at one card the
+//               bitboard solver takes every tail, so that leaf is dead there.)
 //   determinism the same parameters produce the same bytes twice, and a
-//               different seed produces different sampled results. Mutation:
-//               seed the world shuffle from an uninitialised value -> fails.
+//               different seed produces different results.
 //   reader      the bytes read back to the node count the header claims, and
 //               every truncation of the buffer is refused with ETRUNC rather
 //               than read as a shorter analysis. Mutation: remove the bounds
@@ -313,6 +323,39 @@ static void test_worlds(void) {
 
 static unsigned char g_out[1 << 20], g_out2[1 << 20];
 
+typedef struct { int n, bad_perm, same_seed_differs, diff_seed_same; } SamplerStats;
+
+static void sampler_visit(const Game *g, int step, int seat, void *u) {
+    (void)step;
+    SamplerStats *st = (SamplerStats *)u;
+    AnalyseBelief B;
+    analyse_belief(g, seat, &B);
+    if (!B.ok || B.n < 2) return;
+    Card a[MAX_DECK], b[MAX_DECK], c[MAX_DECK];
+    analyse_sample_world(&B, 1234u, a);
+    analyse_sample_world(&B, 1234u, b);
+    analyse_sample_world(&B, 4321u, c);
+    st->n++;
+    // A permutation of the pool: every pool card once, nothing else.
+    unsigned long long seen = 0;
+    for (int i = 0; i < B.n; i++) seen |= 1ull << card_to_id(a[i]);
+    unsigned long long pool = 0;
+    for (int i = 0; i < B.n; i++) pool |= 1ull << card_to_id(B.pool[i]);
+    if (seen != pool) st->bad_perm++;
+    if (memcmp(a, b, (size_t)B.n) != 0) st->same_seed_differs++;
+    if (memcmp(a, c, (size_t)B.n) == 0) st->diff_seed_same++;
+}
+
+static void test_sampler(void) {
+    SamplerStats st; memset(&st, 0, sizeof st);
+    walk(sampler_visit, &st);
+    CHECK(st.n > 40, "worlds were sampled at dozens of decisions");
+    CHECK(st.bad_perm == 0, "every sampled world is a permutation of the whole pool");
+    CHECK(st.same_seed_differs == 0, "the same seed samples the same world");
+    // Two cards can only be shuffled two ways; past that a seed change must show.
+    CHECK(st.diff_seed_same <= 2, "a different seed samples a different world");
+}
+
 static const AnalyseCand *find_cand(const AnalyseNode *n, int type, int card_id, int target_id) {
     for (int c = 0; c < n->n_cands; c++) {
         const AnalyseCand *cd = &n->cands[c];
@@ -534,6 +577,7 @@ int main(int argc, char **argv) {
     test_fixture();
     test_belief();
     test_worlds();
+    test_sampler();
     test_proof_and_reader();
     test_threads_agree();
     test_deep_pass();
