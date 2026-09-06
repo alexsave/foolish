@@ -241,6 +241,13 @@ public struct BotAction: Codable, Equatable, Sendable {
 
     public var pacing: PacingClass { PacingClass(rawValue: pace) ?? .move }
     public var move: Move { Move(type: type, cards: cards, attackCards: attackCards, seat: seat) }
+
+    // Spelled out because the synthesized memberwise init is internal, and the
+    // only thing that builds one of these is BotDriveWire in FoolishBots.
+    public init(seat: Int, type: MoveType, cards: [Card], attackCards: [Card]?, pace: Int) {
+        self.seat = seat; self.type = type; self.cards = cards
+        self.attackCards = attackCards; self.pace = pace
+    }
 }
 
 /// Where a card came from / went to (EVW_LOC_* in c/src/evwire.h).
@@ -331,5 +338,11 @@ public struct BotDrive: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case actions, events, ended, delayMs
         case stopRaw = "stop"
+    }
+
+    // Same reason as BotAction: FoolishBots decodes the kernel's bytes into this.
+    public init(actions: [BotAction], events: [GameEvent], stopRaw: Int, ended: Int, delayMs: Int) {
+        self.actions = actions; self.events = events
+        self.stopRaw = stopRaw; self.ended = ended; self.delayMs = delayMs
     }
 }

@@ -2,7 +2,9 @@
 Foolish.xcodeproj/
 
 # The C engine, built by `make ios-lib` in ../c. Regenerated, not tracked.
+# Two halves since the bot split: the core, and the strategy ladder.
 vendor/Foolish.xcframework/
+vendor/FoolishBots.xcframework/
 
 # Per-machine Debug overrides (points the app at a LOCAL `supabase start` stack
 # and carries its key). Config/Debug.xcconfig pulls it in via `#include?`, so

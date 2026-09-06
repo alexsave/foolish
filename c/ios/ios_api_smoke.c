@@ -2,9 +2,14 @@
 // xcframework; compiled natively (clang) to prove new->legal->apply->state
 // round-trips and that a full bot-vs-bot game runs to a fool through the same
 // entry points Swift uses. Build/run:
-//   clang -O2 -Isrc -Iios/include -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 \
-//         -DMAX_MOVE_CARDS=28 ios/ios_api_smoke.c ios/ios_api.c <CORE_SRC> -lm
+//   clang -O2 -Isrc -Iios/include -Iios/include-bots/CFoolishBots \
+//         -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_MOVE_CARDS=28 \
+//         ios/ios_api_smoke.c ios/ios_api.c ios/ios_bots_api.c <CORE_SRC> -lm
 #include "ios_api.h"
+// The bot entries are declared in the OTHER header (the split, see ios_api.h):
+// this test drives a bot-vs-bot game, so it names them, and a compiler that
+// makes an implicit declaration an error - any recent clang - needs this.
+#include "ios_bots_api.h"
 #include "replay.h"   // the codec version this build stamps (-Isrc)
 #include "replay_extras.h"
 #include "evwire.h"   // the packed event reader - see smoke_walk_frames

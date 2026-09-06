@@ -201,7 +201,13 @@ IOS_BOTS_SRC := $(filter-out $(IOS_CORE_SRC),$(CORE_SRC)) ios/ios_bots_api.c
 
 # Everything, for the host-side smoke/golden binaries that want one link line.
 IOS_SRC    := $(IOS_CORE_SRC) $(IOS_BOTS_SRC)
-IOS_CFLAGS := -O2 -Isrc -Iios/include -Iios/include-bots $(IOS_CAPS)
+# The bots headers sit one level down, in a directory named for their clang
+# module, because Xcode copies BOTH xcframeworks' headers into the one
+# $(BUILT_PRODUCTS_DIR)/include: two files called module.modulemap there is
+# "Multiple commands produce". Nested, the bots map lands at
+# include/CFoolishBots/module.modulemap, and the FoolishBots target names that
+# directory in HEADER_SEARCH_PATHS (ios/project.yml).
+IOS_CFLAGS := -O2 -Isrc -Iios/include -Iios/include-bots/CFoolishBots $(IOS_CAPS)
 
 # $(1)=target-triple  $(2)=sdk name  $(3)=output dir  $(4)=lib name  $(5)=sources
 define IOS_BUILD_SLICE
@@ -254,6 +260,12 @@ ios-lib:
 #   2. core + bots still share ONE resident game (ios/one_game_check.c)
 # (1) is the one that keeps octogen out of the iMessage bundle. (2) is what
 # would break silently if the split were done carelessly.
+# `ar` on a Mac is not necessarily Apple's: a homebrew binutils on PATH writes a
+# GNU-format archive that ld(1) refuses ("archive member '/' not a mach-o
+# file"). Apple's libtool writes what its linker reads, and is what ios-lib
+# already uses; elsewhere plain ar is right. Both take -o/out then inputs.
+IOS_ARCHIVE := $(if $(filter Darwin,$(shell uname -s)),libtool -static -o,ar rcs)
+
 .PHONY: ios-archives
 ios-archives:
 	@mkdir -p build/ios-a/core build/ios-a/bots
@@ -261,8 +273,8 @@ ios-archives:
 	  $(CC) $(IOS_CFLAGS) -c $$s -o build/ios-a/core/$$(basename $$s .c).o || exit 1; done
 	@for s in $(IOS_BOTS_SRC); do \
 	  $(CC) $(IOS_CFLAGS) -c $$s -o build/ios-a/bots/$$(basename $$s .c).o || exit 1; done
-	@ar rcs build/ios-a/libfoolish.a     build/ios-a/core/*.o
-	@ar rcs build/ios-a/libfoolishbots.a build/ios-a/bots/*.o
+	@$(IOS_ARCHIVE) build/ios-a/libfoolish.a     build/ios-a/core/*.o
+	@$(IOS_ARCHIVE) build/ios-a/libfoolishbots.a build/ios-a/bots/*.o
 	@printf 'core %s B   bots %s B\n' \
 	  $$(wc -c < build/ios-a/libfoolish.a) $$(wc -c < build/ios-a/libfoolishbots.a)
 	./ios/archive_check.sh build/ios-a/libfoolish.a build/ios-a/libfoolishbots.a

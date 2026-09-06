@@ -148,10 +148,12 @@ final class PackedRosterTests: XCTestCase {
         XCTAssertEqual(dec.view.status, GameStatus.playing.rawValue)
     }
 
-    /// A row stored BEFORE this deployed carries no trailer and no flag. It must
-    /// still open - that is the whole reason the JSON fallback is still here.
-    /// Delete this test with the fallback, and not before.
-    func testAnEnvelopeWithoutATrailerStillReadsTheIsland() async throws {
+    /// A row stored BEFORE the trailer existed carries a JSON island and no
+    /// trailer. The fallback that read it is gone, so this is REFUSED, and that
+    /// is the intended trade: a table seated with no names is worse than a load
+    /// error, because the caller cannot tell it went wrong. The next commit on
+    /// that game rewrites the row.
+    func testAnEnvelopeWithoutATrailerIsRefused() async throws {
         let engine = EngineC()
         try await engine.newGame(seed: seed(6), players: 2)
         let blob = try await viewBlob(engine, seat: 0)
@@ -163,11 +165,8 @@ final class PackedRosterTests: XCTestCase {
         """.utf8)
         let buf = envelope(seat: 0, version: 9, island: island, viewBlob: blob, trailer: nil)
 
-        guard let dec = await PackedGame.decode(buf, engine: engine) else {
-            return XCTFail("a pre-trailer row became unreadable")
-        }
-        XCTAssertEqual(dec.gameId, "old-row")
-        XCTAssertEqual(dec.view.players.map(\.name), ["Sveta", "Миша"])
+        let dec = await PackedGame.decode(buf, engine: engine)
+        XCTAssertNil(dec, "a JSON island was read as a roster - the fallback is back")
     }
 
     /// A trailer read short is nothing, never half a table: the decode fails
