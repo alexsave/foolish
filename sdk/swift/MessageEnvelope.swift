@@ -15,11 +15,10 @@
 import Foundation
 import CFoolish
 
-public struct MessageJoin: Codable, Sendable, Equatable {
-    public let seat: Int
-    public let name: String
-    public init(seat: Int, name: String) { self.seat = seat; self.name = name }
-}
+// MessageJoin - one seat and its name - lives in RosterWire.swift, beside the
+// codec that writes it. It moved there so the roster codec compiles against
+// nothing but Foundation, which is what lets e2e/packed_roster_wire.test.ts
+// build the REAL decoder rather than a copy of it.
 
 /// A decoded, VALIDATED payload. Holding one means the chain replayed cleanly
 /// through the kernel and the game it describes is now the resident one.

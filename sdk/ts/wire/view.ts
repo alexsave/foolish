@@ -11,6 +11,7 @@ import {
 } from "@api/core/types.ts";
 import { WIRE_HIDDEN, WIRE_NONE, wireCard } from "./awire.ts";
 import { KernelCard, KernelState, kernelViewFromPacked } from "@sdk/ts/wasm/bots.ts";
+import { decodePackedRoster, encodePackedRoster } from "./roster.ts";
 
 export const VIEW_FORMAT_VERSION = 1;
 
@@ -120,13 +121,53 @@ export function viewToGame(
 
 // ---------------------------------------------------------------------------
 // get_game packed response envelope:
-//   u8 fmt | u8 flags (bit0 = caller is a player) | u8 my_seat (0xFF
-//   spectator) | u32 LE version | u16 LE roster_len | roster JSON (identity +
-//   the column-authoritative fields the blob omits) | u16 LE view_len |
-//   masked view blob ([VIEW_FORMAT_VERSION | viewer | masked put_state])
+//   u8 fmt | u8 flags (bit0 = caller is a player, bit1 = a PACKED roster
+//   trailer follows the view blob) | u8 my_seat (0xFF spectator) | u32 LE
+//   version | u16 LE roster_len | roster JSON (identity + the
+//   column-authoritative fields the blob omits) | u16 LE view_len | masked view
+//   blob ([VIEW_FORMAT_VERSION | viewer | masked put_state])
+//   | packed roster trailer (encodePackedRoster), present iff flags bit1
+//
+// THE TRAILER, AND WHY IT IS A TRAILER. The roster island is JSON, it is the
+// last JSON on any path that matters, and the owner does not want it. It cannot
+// simply be replaced: merging a PR here deploys the server IMMEDIATELY while the
+// iOS client ships through the App Store, so build 1.0(43) is reading these
+// bytes in users' hands the moment this lands - and the same envelope is STORED
+// in player_views.view / spectator_views.view, a column rather than a request,
+// so there is no caller to negotiate a format with. What every shipped reader
+// does have in common is that it reads a PREFIX: it takes flags bit0 and
+// ignores the rest of that byte, and it bounds the view blob with
+// `q + viewLen <= length` and ignores whatever follows. So the packed roster is
+// appended AFTER the view blob and announced in a flag bit both existing
+// decoders discard. Byte 0 through the end of the view blob is unchanged, byte
+// for byte, from what this function emitted before - which is what
+// e2e/packed_roster_wire.test.ts pins, with a frozen replica of the 1.0(43)
+// decoder reading it.
+//
+// HOW THE JSON DIES, IN ONE COMMIT. Flip LEGACY_ROSTER_JSON to false (the island
+// becomes a zero-length segment), then delete the JSON branch here, the JSON
+// fallback in decodePackedGame, and the `Roster` Codable in
+// ios/FoolishNet/PackedGame.swift. The condition is BOTH of: no client older
+// than the first build that reads the trailer is still in the field, AND every
+// stored player_views/spectator_views row has been rewritten since this
+// deployed - an idle game keeps the row it was last committed with, and a row
+// written before this deploy carries no trailer at all.
 // ---------------------------------------------------------------------------
 
 export const GAME_RESP_FORMAT = 1;
+
+/** flags bit0 - the caller occupies a seat in this game. */
+export const GAME_RESP_FLAG_PLAYER = 0x01;
+/** flags bit1 - a packed roster trailer follows the view blob. */
+export const GAME_RESP_FLAG_PACKED_ROSTER = 0x02;
+
+/**
+ * Whether the legacy JSON roster island is still written. TRUE while readers
+ * that can only read the island are in the field; see "HOW THE JSON DIES"
+ * above. A build constant and not an env switch on purpose: which bytes the
+ * server emits is a property of the build, not of a running instance.
+ */
+export const LEGACY_ROSTER_JSON = true;
 
 // The roster JSON rides the identity/presentation fields, same split as
 // engine.ts's RosterTemplate: ids/names/is_ai, good order + timestamp value,
@@ -140,22 +181,29 @@ export interface PackedGameRoster extends ViewRoster {
 export function encodeGameResponse(
     version: number, seat: number, roster: PackedGameRoster, viewBlob: Uint8Array,
 ): Uint8Array {
-    const rosterBytes = new TextEncoder().encode(JSON.stringify(roster));
+    const rosterBytes = LEGACY_ROSTER_JSON
+        ? new TextEncoder().encode(JSON.stringify(roster))
+        : new Uint8Array(0);
+    const trailer = encodePackedRoster(roster);
     // Both length fields are u16 — enforce, never wrap (a silent & 0xff
     // truncation would desync the whole envelope). Real payloads are ~½KB.
     if (rosterBytes.length > 0xffff) throw new Error(`view: roster JSON ${rosterBytes.length}B exceeds the u16 cap`);
     if (viewBlob.length > 0xffff) throw new Error(`view: view blob ${viewBlob.length}B exceeds the u16 cap`);
-    const out = new Uint8Array(3 + 4 + 2 + rosterBytes.length + 2 + viewBlob.length);
+    const out = new Uint8Array(3 + 4 + 2 + rosterBytes.length + 2 + viewBlob.length + trailer.length);
     let q = 0;
     out[q++] = GAME_RESP_FORMAT;
-    out[q++] = seat >= 0 ? 1 : 0;
+    out[q++] = (seat >= 0 ? GAME_RESP_FLAG_PLAYER : 0) | GAME_RESP_FLAG_PACKED_ROSTER;
     out[q++] = seat >= 0 ? seat : 0xff;
     out[q++] = version & 0xff; out[q++] = (version >> 8) & 0xff;
     out[q++] = (version >> 16) & 0xff; out[q++] = (version >> 24) & 0xff;
     out[q++] = rosterBytes.length & 0xff; out[q++] = (rosterBytes.length >> 8) & 0xff;
     out.set(rosterBytes, q); q += rosterBytes.length;
     out[q++] = viewBlob.length & 0xff; out[q++] = (viewBlob.length >> 8) & 0xff;
-    out.set(viewBlob, q);
+    out.set(viewBlob, q); q += viewBlob.length;
+    // Everything above this line is byte for byte what pre-trailer builds wrote;
+    // everything below is invisible to a reader that stops at the view blob,
+    // which every shipped reader does.
+    out.set(trailer, q);
     return out;
 }
 
@@ -232,8 +280,18 @@ export function decodePackedGame(
     let state: KernelState;
     let q = 9 + rosterLen;
     try {
-        roster = JSON.parse(new TextDecoder().decode(buf.subarray(9, 9 + rosterLen))) as PackedGameRoster;
-        const viewLen = buf[q] | (buf[q + 1] << 8); q += 2;
+        const viewLen = buf[q] | (buf[q + 1] << 8);
+        // The PACKED roster when the writer announced one; the JSON island
+        // otherwise - a row stored before the trailer existed, or a response
+        // from a server that predates it. The fallback dies with
+        // LEGACY_ROSTER_JSON.
+        const packed = (buf[1] & GAME_RESP_FLAG_PACKED_ROSTER) !== 0
+            ? decodePackedRoster(buf, q + 2 + viewLen)
+            : null;
+        roster = packed
+            ? packed.roster as PackedGameRoster
+            : JSON.parse(new TextDecoder().decode(buf.subarray(9, 9 + rosterLen))) as PackedGameRoster;
+        q += 2;
         if (q + viewLen > buf.length || buf[q] !== VIEW_FORMAT_VERSION) return null;
         // The envelope around the blob is this file's own invention (it is
         // written by encodeGameResponse a few lines up, in TypeScript, with no C

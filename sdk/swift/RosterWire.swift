@@ -17,6 +17,16 @@
 
 import Foundation
 
+/// One seat and the name sitting in it - the roster's element, kept beside the
+/// codec that writes it rather than inside the FMSG envelope that was its first
+/// caller. The move is what makes this file compile against Foundation alone,
+/// which is what lets a test build the REAL codec instead of a copy.
+public struct MessageJoin: Codable, Sendable, Equatable {
+    public let seat: Int
+    public let name: String
+    public init(seat: Int, name: String) { self.seat = seat; self.name = name }
+}
+
 public enum RosterWire {
     /// MSG_MAX_NAME (c/src/msg_wire.h). A name is <=64 UTF-8 BYTES, not
     /// characters, and the kernel refuses a longer one outright.
