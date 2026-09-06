@@ -1,9 +1,4 @@
 import { wrap400, ExecutionParams, scheduleBotLoop } from "@shared/adapter/utils.ts";
-import { handleAttack } from "@api/common/actions/attack.ts";
-import { handleCover } from "@api/common/actions/cover.ts";
-import { handlePass } from "@api/common/actions/pass.ts";
-import { handlePickup } from "@api/common/actions/pickup.ts";
-import { handleGood } from "@api/common/actions/good.ts";
 import { verify_player_in_game } from "@api/common/common_utils.ts";
 import { corsHeaders } from "@shared/adapter/cors.ts";
 import { GAME_STATUS } from "@api/core/types.ts";
@@ -64,29 +59,11 @@ wrap400(async ({ user, body, game }: ExecutionParams) => {
         return { game, events: [] };
     }
 
-    // Verify player is in game (shared by every real move)
+    // Moves are PACKED ONLY. The JSON move path is retired: every client sends
+    // the binary envelope its guards.wasm already validated, and that path runs
+    // the move in the kernel and broadcasts the kernel's own per-viewer event
+    // streams. The JSON one re-derived those events in TypeScript, which is the
+    // duplication this endpoint no longer carries.
     verify_player_in_game(game, user_id);
-
-    let events;
-    switch (type) {
-        case "attack":
-            events = await handleAttack(game, user_id, body.cards);
-            break;
-        case "cover":
-            events = await handleCover(game, user_id, body.cover_cards, body.attack_cards);
-            break;
-        case "pass":
-            events = await handlePass(game, user_id, body.cards);
-            break;
-        case "pickup":
-            events = await handlePickup(game, user_id);
-            break;
-        case "good":
-            events = await handleGood(game, user_id);
-            break;
-        default:
-            throw new Error(`unknown action type: ${type}`);
-    }
-
-    return { game, events };
+    throw new Error(`action type "${type}" must be sent as a packed action request`);
 }, true, true, packedAction); // run_bots=true; mootIfGameOver=true (a move that lost the end-game race is a no-op, not a 400)

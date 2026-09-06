@@ -139,6 +139,23 @@ test('a cleared table refuses everything it did not name', () => {
         ['revert'], 'capacity cannot rescue a card off a table that is gone');
 });
 
+test('CLEAR spares a flight only when the card already stands where the replay starts', () => {
+    // The distinction the pickup branch turns on, and the one I got wrong first.
+    // CLEAR means "the incoming stream animates this card itself". For a card my
+    // move put on the TABLE that is a free pass: the sweep lifts it off the
+    // table, which is where it already is. For a card my move put in MY HAND it
+    // is not: the sweep carries it from the TABLE, so the web still has to fly it
+    // home first. The kernel says CLEAR for both - correctly, since it is a
+    // verdict about doom, not about flights - and anim_plan.h leaves the flight
+    // to the caller.
+    const card = C(0, 8);
+    const swept = bare({ movedCards: [card], openTable: [B(card)], tableCleared: true });
+    assert.deepEqual(animConflictVerdicts([{ card, dest: ANIM_DEST.table }], swept), ['clear'],
+        'a card my attack put on the table: the sweep takes it from where it is');
+    assert.deepEqual(animConflictVerdicts([{ card, dest: ANIM_DEST.hand }], swept), ['clear'],
+        'a card my pickup put in my hand: same verdict, but the web must fly it back first');
+});
+
 test('verdicts come back per motion, in input order', () => {
     const standing = C(0, 10), swept = C(1, 10), doomed = C(2, 10);
     const v = animConflictVerdicts([

@@ -7,12 +7,11 @@
 // synchronous kernel section (engine.ts runPackedAction). No TS Game object
 // exists on this path except the single cold materialization for the DB dual.
 import {
-    broadcastPackedEventBuffers, commitGame, executeWithGameLock,
+    broadcastPackedEventBuffers, commitGame,
     finalizeEndedGame, supabaseClient,
 } from './utils.ts';
 import { GAME_STATUS } from '@api/core/types.ts';
-import { verify_player_in_game } from '@api/common/common_utils.ts';
-import { ACTION_STATUS, AwireMove, decodeAction, REJECT_STALE_ROUND } from '@sdk/ts/wire/awire.ts';
+import { ACTION_STATUS, REJECT_STALE_ROUND } from '@sdk/ts/wire/awire.ts';
 import { getCachedGame, invalidateCachedGame } from './game_cache.ts';
 
 // A lazy import that resolves ONCE. The deferral is deliberate (a cold start must
@@ -27,11 +26,6 @@ const codecMod = lazy(() => import('@api/common/replay/codec.ts'));
 const engineMod = lazy(() => import('@sdk/ts/wasm/engine.ts'));
 const logwireMod = lazy(() => import('@sdk/ts/wire/logwire.ts'));
 const bytesMod = lazy(() => import('@sdk/ts/wire/bytes.ts'));
-const attackMod = lazy(() => import('@api/common/actions/attack.ts'));
-const coverMod = lazy(() => import('@api/common/actions/cover.ts'));
-const passMod = lazy(() => import('@api/common/actions/pass.ts'));
-const pickupMod = lazy(() => import('@api/common/actions/pickup.ts'));
-const goodMod = lazy(() => import('@api/common/actions/good.ts'));
 
 
 export interface PackedActionOutcome {
@@ -119,10 +113,13 @@ export async function executePackedAction(
             return { status: ACTION_STATUS.REJECTED, rejectCode: REJECT_STALE_ROUND, version: expectedVersion, gameStatus: row.status };
         }
 
-        // Legacy row without a blob (committed before games.state existed):
-        // decode the wire into a JS move and run the JSON pipeline once —
-        // its commit produces the blob and the game joins the packed path.
-        if (!row.state) return await legacyFallback(gameId, userId, wire, reqId);
+        // Every PLAYING row carries a state blob: the deal writes one, on both
+        // the all-ready and the add-bot branches. A row without one predates
+        // games.state, and the JSON pipeline that used to re-derive its events
+        // in TypeScript is gone, so there is nothing to fall back to.
+        if (!row.state) {
+            throw new Error(`Game ${gameId} has no state blob - it predates the packed pipeline`);
+        }
 
         // The caller's auth identity IS the player id; the seat index is the
         // kernel's name for them. Keep the legacy error priority: playing-
@@ -213,58 +210,3 @@ export async function executePackedAction(
     throw new Error(`Could not commit game ${gameId}`);
 }
 
-// Pre-blob rows only: run the move through the legacy JSON pipeline (its
-// commit writes the blob, so this fires at most once per legacy game). The
-// binary response contract still holds: a handler rejection maps to a
-// REJECTED envelope (code 0 = unspecified — the legacy path throws message
-// strings, not codes) and the end-game race maps to MOOT, exactly like the
-// kernel path.
-async function legacyFallback(
-    gameId: string, userId: string, wire: Uint8Array, reqId: string,
-): Promise<PackedActionOutcome> {
-    const move = decodeAction(wire);
-    if (!move) throw new Error('malformed action wire');
-    const { handleAttack } = await attackMod();
-    const { handleCover } = await coverMod();
-    const { handlePass } = await passMod();
-    const { handlePickup } = await pickupMod();
-    const { handleGood } = await goodMod();
-    let rejected = false;
-    const result = await executeWithGameLock(gameId, async (game) => {
-        rejected = false; // reset per CAS attempt — the op re-runs on conflict
-        verify_player_in_game(game, userId);
-        try {
-            const events = dispatchLegacy(move, game, userId,
-                { handleAttack, handleCover, handlePass, handlePickup, handleGood });
-            return { game, events };
-        } catch (e) {
-            // A validation rejection must not abort the lock as an HTTP
-            // error — surface it as the packed REJECTED status.
-            console.log(`[${reqId}][PACKED] legacy-path rejection:`, (e as Error).message);
-            rejected = true;
-            return { game, events: [] };
-        }
-    }, reqId, true);
-    if (rejected) {
-        return {
-            status: ACTION_STATUS.REJECTED, rejectCode: 0,
-            version: result.game.version ?? 0, gameStatus: result.game.status,
-        };
-    }
-    const moot = result.game.status === GAME_STATUS.GAME_OVER && result.events.length === 0;
-    return {
-        status: moot ? ACTION_STATUS.MOOT : ACTION_STATUS.APPLIED, rejectCode: 0,
-        version: result.game.version ?? 0, gameStatus: result.game.status,
-    };
-}
-
-// deno-lint-ignore no-explicit-any
-function dispatchLegacy(move: AwireMove, game: any, userId: string, h: any) {
-    switch (move.kind) {
-        case 'attack': return h.handleAttack(game, userId, move.cards);
-        case 'cover': return h.handleCover(game, userId, move.cards, move.attack_cards);
-        case 'pass': return h.handlePass(game, userId, move.cards);
-        case 'pickup': return h.handlePickup(game, userId);
-        case 'good': return h.handleGood(game, userId);
-    }
-}

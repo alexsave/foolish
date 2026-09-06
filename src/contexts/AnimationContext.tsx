@@ -564,14 +564,27 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         // Handle optimistic pickup conflicts
         if (myOptimisticPickups.length > 0) {
-            // The KERNEL decides (anim_plan.h anim_conflict_verdict). A pickup's
-            // cards landed in MY HAND, so the standing set they are judged against
-            // is my hand on the broadcast's opening board, not its table - the one
-            // input the inline version had no way to express. A card this
-            // broadcast's own trash sweep carries off comes back CLEAR rather than
-            // REVERT: the sweep animates it, and flying it back to the table first
-            // is the flicker.
-            const pickupCardsToRevert = resolveConflictMotions(
+            // The KERNEL decides WHICH pickups are doomed (anim_plan.h
+            // anim_conflict_verdict). A pickup's cards landed in MY HAND, so the
+            // standing set they are judged against is my hand on the broadcast's
+            // opening board, not its table - the one input the inline version had
+            // no way to express. A pickup the broadcast confirms is KEEP.
+            //
+            // BOTH revert AND clear fly back, and the difference from the
+            // attack/cover branch is the transport, not the rule. CLEAR means
+            // "the incoming stream animates this card itself", which spares a
+            // flight only when the card is already standing where that stream
+            // replays it from. For an attack it is: the card is on the table and
+            // the sweep lifts it off the table. For a PICKUP it is not: the card
+            // is in my hand, and the sweep carries it from the TABLE to the
+            // discard. iMessage has no such gap because a chain rebases the board
+            // to the state it vouches for before replaying; the web has no rebase
+            // step, so the return flight IS its way of standing on that board.
+            // Dropping it would leave the card in my hand while the trash
+            // animated an empty table, then vanish it when the final state lands.
+            // The FLIGHT is the caller's - anim_plan.h says so - and the web's
+            // caller needs this one.
+            const pickupVerdicts = resolveConflictMotions(
                 myOptimisticPickups.map((card) => ({ card, dest: 'hand' as const })),
                 {
                     events: message.events,
@@ -580,7 +593,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     defenderHand: 0,
                     finalUncovered: serverUncoveredAttacks,
                     pendingAttacks: 0,
-                }).revert;
+                });
+            const pickupCardsToRevert = [...pickupVerdicts.revert, ...pickupVerdicts.clear];
 
             if (pickupCardsToRevert.length > 0) {
                 // Mark all cards as reverting and clear tracking
