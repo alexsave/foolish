@@ -1,0 +1,303 @@
+<title>Foolish Call Atlas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chivo:wght@400;600;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root{
+  --ground:#E9EDEC; --ground-2:#DFE5E4; --panel:#F6F8F7; --panel-2:#EDF1F0;
+  --ink:#12171A; --ink-2:#535F62; --ink-3:#7C888B;
+  --rule:#C6CFCE; --rule-2:#D8DFDE;
+  --accent:#0C6C60; --accent-soft:rgba(12,108,96,.12);
+  --edge:rgba(18,30,32,.16); --edge-cross:rgba(12,108,96,.55);
+  --shadow:0 1px 2px rgba(15,30,32,.07),0 8px 24px rgba(15,30,32,.06);
+  --node-l:0;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#0C1012; --ground-2:#0A0D0F; --panel:#141A1C; --panel-2:#1A2124;
+    --ink:#E7ECEA; --ink-2:#93A0A2; --ink-3:#6B7679;
+    --rule:#26302F; --rule-2:#1E2628;
+    --accent:#41CFB6; --accent-soft:rgba(65,207,182,.14);
+    --edge:rgba(215,235,232,.13); --edge-cross:rgba(65,207,182,.5);
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.35);
+    --node-l:8;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0C1012; --ground-2:#0A0D0F; --panel:#141A1C; --panel-2:#1A2124;
+  --ink:#E7ECEA; --ink-2:#93A0A2; --ink-3:#6B7679;
+  --rule:#26302F; --rule-2:#1E2628;
+  --accent:#41CFB6; --accent-soft:rgba(65,207,182,.14);
+  --edge:rgba(215,235,232,.13); --edge-cross:rgba(65,207,182,.5);
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.35);
+  --node-l:8;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;background:var(--ground);color:var(--ink);
+  font-family:Chivo,"Helvetica Neue",Arial,sans-serif;
+  font-size:13px;line-height:1.45;overflow:hidden;
+  -webkit-font-smoothing:antialiased;
+}
+button,input,select{font:inherit;color:inherit}
+.mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* ---------- frame ---------- */
+#app{
+  display:grid;height:100dvh;
+  grid-template-columns:264px minmax(0,1fr) 340px;
+  grid-template-rows:auto minmax(0,1fr) auto;
+  grid-template-areas:"bar bar bar" "rail stage panel" "foot foot foot";
+}
+#bar{
+  grid-area:bar;display:flex;align-items:center;gap:14px;
+  padding:0 14px;height:52px;background:var(--panel);
+  border-bottom:1px solid var(--rule);
+}
+.brand{display:flex;align-items:baseline;gap:9px;min-width:0}
+.brand h1{
+  margin:0;font-size:15px;font-weight:800;letter-spacing:-.015em;
+  text-wrap:balance;white-space:nowrap;
+}
+.brand .sub{
+  font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-3);white-space:nowrap;
+}
+.spacer{flex:1}
+.search{position:relative;display:flex;align-items:center}
+.search input{
+  width:250px;padding:6px 26px 6px 10px;border:1px solid var(--rule);
+  border-radius:2px;background:var(--ground);font-size:12px;
+  font-family:"IBM Plex Mono",monospace;
+}
+.search input:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:transparent}
+.search .slash{
+  position:absolute;right:8px;color:var(--ink-3);font-size:10px;pointer-events:none;
+}
+.seg{display:flex;border:1px solid var(--rule);border-radius:2px;overflow:hidden}
+.seg button{
+  background:transparent;border:0;padding:6px 11px;font-size:11.5px;
+  letter-spacing:.02em;cursor:pointer;color:var(--ink-2);
+}
+.seg button+button{border-left:1px solid var(--rule)}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--ground);font-weight:600}
+.incl .lbl{
+  padding:6px 9px;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--ink-3);background:var(--panel-2);border-right:1px solid var(--rule);
+}
+.incl button+button{border-left:1px solid var(--rule)}
+.seg button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+
+/* ---------- rail ---------- */
+#rail{
+  grid-area:rail;background:var(--panel);border-right:1px solid var(--rule);
+  overflow-y:auto;display:flex;flex-direction:column;gap:0;
+}
+.block{padding:13px 14px;border-bottom:1px solid var(--rule-2)}
+.block h2{
+  margin:0 0 9px;font-size:10px;font-weight:600;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--ink-3);
+}
+.legend{display:flex;flex-direction:column;gap:2px}
+.chip{
+  display:flex;align-items:center;gap:8px;width:100%;padding:4px 6px;
+  background:transparent;border:0;border-radius:2px;cursor:pointer;text-align:left;
+}
+.chip:hover{background:var(--panel-2)}
+.chip:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.chip[data-off="1"]{opacity:.36}
+.chip .dot{width:11px;height:11px;border-radius:50%;flex:none}
+.chip .sw{width:11px;height:11px;flex:none;border-radius:1px}
+.chip .nm{flex:1;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chip .ct{font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.stats{display:grid;grid-template-columns:1fr auto;gap:3px 10px;font-size:12px}
+.stats dt{color:var(--ink-2)}
+.stats dd{margin:0;font-variant-numeric:tabular-nums;font-family:"IBM Plex Mono",monospace}
+.note{font-size:11.5px;color:var(--ink-2);line-height:1.5}
+.note p{margin:0 0 7px}
+.note p:last-child{margin:0}
+.note b{color:var(--ink);font-weight:600}
+
+/* ---------- stage ---------- */
+#stage{grid-area:stage;position:relative;background:var(--ground);overflow:hidden}
+#cv{display:block;width:100%;height:100%;cursor:grab;touch-action:none}
+#cv.drag{cursor:grabbing}
+#cv:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.tools{position:absolute;top:12px;right:12px;display:flex;flex-direction:column;gap:5px}
+.tools button{
+  width:30px;height:30px;background:var(--panel);border:1px solid var(--rule);
+  border-radius:2px;cursor:pointer;font-size:14px;line-height:1;color:var(--ink-2);
+  box-shadow:var(--shadow);
+}
+.tools button:hover{color:var(--ink);border-color:var(--ink-3)}
+.tools button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+#tip{
+  position:absolute;pointer-events:none;padding:5px 8px;background:var(--panel);
+  border:1px solid var(--rule);border-radius:2px;box-shadow:var(--shadow);
+  font-family:"IBM Plex Mono",monospace;font-size:11.5px;max-width:340px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+#tip .t2{color:var(--ink-3);font-size:10.5px}
+#hint{
+  position:absolute;left:12px;bottom:12px;padding:7px 10px;background:var(--panel);
+  border:1px solid var(--rule);border-radius:2px;font-size:11px;color:var(--ink-2);
+  box-shadow:var(--shadow);max-width:300px;
+}
+#hint b{color:var(--ink);font-weight:600}
+
+/* ---------- inspector ---------- */
+#panel{
+  grid-area:panel;background:var(--panel);border-left:1px solid var(--rule);
+  overflow-y:auto;
+}
+.pad{padding:13px 14px}
+.sel-name{
+  margin:0;font-family:"IBM Plex Mono",monospace;font-size:14px;font-weight:600;
+  line-height:1.3;word-break:break-word;
+}
+.sel-path{
+  margin:5px 0 0;font-family:"IBM Plex Mono",monospace;font-size:11px;
+  color:var(--ink-2);word-break:break-all;
+}
+.tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:9px}
+.tag{
+  display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border-radius:2px;
+  font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;font-weight:600;
+  border:1px solid var(--rule);color:var(--ink-2);
+}
+.tag .dot{width:8px;height:8px;border-radius:50%}
+.metrics{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin-top:12px;
+  background:var(--rule-2);border:1px solid var(--rule-2);
+}
+.metric{background:var(--panel);padding:8px 9px}
+.metric .k{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)}
+.metric .v{
+  font-family:"IBM Plex Mono",monospace;font-size:17px;font-weight:600;
+  font-variant-numeric:tabular-nums;line-height:1.2;
+}
+.rel h3{
+  margin:16px 0 6px;font-size:10px;letter-spacing:.13em;text-transform:uppercase;
+  color:var(--ink-3);display:flex;justify-content:space-between;align-items:baseline;
+}
+.rel h3 span{font-family:"IBM Plex Mono",monospace;letter-spacing:0;color:var(--ink-3)}
+.rel ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:1px}
+.rel li button{
+  display:flex;align-items:center;gap:7px;width:100%;padding:4px 6px;background:transparent;
+  border:0;border-radius:2px;cursor:pointer;text-align:left;font-family:"IBM Plex Mono",monospace;
+  font-size:11.5px;
+}
+.rel li button:hover{background:var(--panel-2)}
+.rel li button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.rel .dot{width:8px;height:8px;border-radius:50%;flex:none}
+.rel .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rel .cf{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);flex:none}
+.rel .cf[data-c="cross"]{color:var(--accent);font-weight:600}
+.empty{color:var(--ink-3);font-size:11.5px;padding:3px 6px}
+#results{border-top:1px solid var(--rule-2)}
+
+/* ---------- foot ---------- */
+#foot{
+  grid-area:foot;display:flex;align-items:center;gap:16px;height:28px;padding:0 14px;
+  background:var(--panel);border-top:1px solid var(--rule);
+  font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink-2);
+  white-space:nowrap;overflow:hidden;
+}
+#foot .k{color:var(--ink-3)}
+#foot b{color:var(--ink);font-weight:500}
+
+@media (max-width:1180px){
+  #app{grid-template-columns:230px minmax(0,1fr) 300px}
+  .search input{width:180px}
+}
+@media (max-width:900px){
+  #app{
+    grid-template-columns:minmax(0,1fr);
+    grid-template-rows:auto minmax(0,1fr) 42vh auto;
+    grid-template-areas:"bar" "stage" "panel" "foot";
+  }
+  #rail{display:none}
+  #bar{height:auto;flex-wrap:wrap;padding:8px 12px;gap:8px}
+  .search input{width:100%}
+  .search{flex:1}
+  #panel{border-left:0;border-top:1px solid var(--rule)}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div id="app">
+  <header id="bar">
+    <div class="brand">
+      <h1>Foolish Call Atlas</h1>
+      <span class="sub" id="counts">4,105 functions &middot; 6,926 calls</span>
+    </div>
+    <div class="spacer"></div>
+    <div class="seg incl" role="group" aria-label="Include in the map">
+      <span class="lbl">Include</span>
+      <button id="tTests" aria-pressed="false">Tests</button>
+      <button id="tStd" aria-pressed="false">Stdlib</button>
+    </div>
+    <div class="seg" role="group" aria-label="View">
+      <button id="vAuto" aria-pressed="true">Auto</button>
+      <button id="vFiles" aria-pressed="false">Files</button>
+      <button id="vFns" aria-pressed="false">Functions</button>
+    </div>
+    <div class="search">
+      <input id="q" type="search" placeholder="find a function or file" aria-label="Search functions and files" autocomplete="off" spellcheck="false">
+      <span class="slash mono">/</span>
+    </div>
+  </header>
+
+  <aside id="rail">
+    <div class="block">
+      <h2>Language</h2>
+      <div class="legend" id="langLegend"></div>
+    </div>
+    <div class="block">
+      <h2>Group &mdash; the tint</h2>
+      <div class="legend" id="catLegend"></div>
+    </div>
+    <div class="block">
+      <h2>Call edges</h2>
+      <div class="legend" id="confLegend"></div>
+    </div>
+    <div class="block">
+      <h2>Cross-language</h2>
+      <dl class="stats" id="crossStats"></dl>
+    </div>
+    <div class="block">
+      <h2>How it was read</h2>
+      <div class="note" id="method"></div>
+    </div>
+  </aside>
+
+  <main id="stage">
+    <canvas id="cv" tabindex="0" aria-label="Call graph map. Drag to pan, scroll to zoom, click a node to inspect it."></canvas>
+    <div class="tools">
+      <button id="zin" title="Zoom in" aria-label="Zoom in">+</button>
+      <button id="zout" title="Zoom out" aria-label="Zoom out">&minus;</button>
+      <button id="fit" title="Fit everything (F)" aria-label="Fit everything">&#9633;</button>
+    </div>
+    <div id="tip" hidden></div>
+    <div id="hint"><b>Drag</b> to pan, <b>scroll</b> to zoom, <b>click</b> a node for its callers and callees. Zoom out past the file discs to see the whole repo at once.</div>
+  </main>
+
+  <aside id="panel">
+    <div class="pad" id="sel"></div>
+    <div class="pad" id="results" hidden></div>
+  </aside>
+
+  <footer id="foot">
+    <span><span class="k">zoom</span> <b id="fz">1.00&times;</b></span>
+    <span><span class="k">visible</span> <b id="fv">0</b></span>
+    <span><span class="k">cursor</span> <b id="fh" class="mono">&mdash;</b></span>
+    <span class="spacer"></span>
+    <span class="k" id="fmode">auto view</span>
+  </footer>
+</div>
+
+<script id="G" type="application/json">__PAYLOAD__</script>
+<script>
+__SCRIPT__
+</script>
