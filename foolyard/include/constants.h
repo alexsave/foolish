@@ -72,7 +72,7 @@ static inline u32 event_param(u32 ev) { return ev & PARAM_MASK; }
 
 // ---------- sim sizing ----------------------------------------------------
 
-#define MAX_GAMES   512
+#define MAX_GAMES   1024
 #define MAX_CLIENTS 4096
 #define ID_LIMIT    (MAX_PARAM + 1)   // 8192: what a 13-bit param can name
 
