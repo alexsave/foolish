@@ -6,6 +6,7 @@
 
 #include "legal.h"
 #include "view.h"
+#include "strategy.h"
 
 // `chosen_at` is the view version the move was decided against, NOT the newest
 // one the client holds. A tier that sits on a decision reports the older one,
@@ -265,6 +266,34 @@ int client_pick_legal(const Game *view, int seat, u64 *rng, AwireAction *out) {
         return 1;
     }
     return 0;
+}
+
+// The same menu, chosen by a real brain instead of a coin. handwritten_prod is
+// the one roster entry that is SOUND on a masked view: it reads its own hand,
+// the table, the trump, and counts (hand_count, deck_count,
+// discard_pile_length, has_flipped) - every one of which state_put preserves
+// exactly. The belief bots would be reading {0,1} placeholders where the deck
+// and the other hands should be, and would not be playing Durak.
+int client_pick_brain(const Game *view, int seat, AwireAction *out) {
+    static LegalMoves lm;
+
+    calculate_legal_moves(view, seat, &lm);
+    if (lm.n <= 0) return 0;
+
+    int idx = handwritten_prod_strategy_choose(view, seat, &lm, NULL);
+    if (idx < 0 || idx >= lm.n) return 0;
+
+    const LegalMove *m = &lm.moves[idx];
+    if (m->type == MOVE_WAIT || m->n_cards > AWIRE_MAX_CARDS) return 0;
+
+    memset(out, 0, sizeof *out);
+    out->kind = m->type;
+    out->n = m->n_cards;
+    for (int c = 0; c < m->n_cards; c++) {
+        out->cards[c] = m->cards[c];
+        out->attacks[c] = m->attack_cards[c];
+    }
+    return 1;
 }
 
 // The X-list in client.h is the registry; a tier is added by writing the file
