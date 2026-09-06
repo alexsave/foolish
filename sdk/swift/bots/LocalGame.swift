@@ -10,6 +10,7 @@
 
 import Foundation
 import SwiftUI
+import FoolishKit
 
 @MainActor
 public final class LocalGame: ObservableObject, GameSession {

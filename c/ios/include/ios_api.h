@@ -12,10 +12,11 @@
 //
 // THE BOT HALF IS NOT HERE. fio_set_seat_strategy, fio_bot_drive_packed,
 // fio_strategy_count and fio_strategy_name are declared by
-// ios/include-bots/ios_bots_api.h and live in FoolishBots.xcframework, because
-// naming any of them links the strategy ladder - about 70% of the native kernel
-// by size. The iMessage extension plays people and links only this half. The
-// two share ONE resident game through fio_resident_game (ios/ios_internal.h).
+// ios/include-bots/CFoolishBots/ios_bots_api.h and live in
+// FoolishBots.xcframework, because naming any of them links the strategy
+// ladder - about 70% of the native kernel by size. The iMessage extension
+// plays people and links only this half. The two share ONE resident game
+// through fio_resident_game (ios/ios_internal.h).
 //
 // The one hard rule (§3): no Durak rule is ever reimplemented in Swift. Swift
 // may read a layout the kernel wrote; it may not decide anything the kernel

@@ -8,6 +8,7 @@
 // an empty events list.
 
 import Foundation
+import FoolishKit
 
 public enum BotDriveWire {
     private static let types: [MoveType] = [.attack, .cover, .pass, .pickup, .good, .wait]

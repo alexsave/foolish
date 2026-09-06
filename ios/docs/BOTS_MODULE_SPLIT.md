@@ -27,7 +27,7 @@ either one alone can be undone by link order or by dead-strip behaviour.
 |---|---|---|
 | C sources | `IOS_CORE_SRC` (`c/Makefile`) | `IOS_BOTS_SRC` |
 | C bridge TU | `c/ios/ios_api.c` | `c/ios/ios_bots_api.c` |
-| header + clang module | `c/ios/include/ios_api.h`, `CFoolish` | `c/ios/include-bots/ios_bots_api.h`, `CFoolishBots` |
+| header + clang module | `c/ios/include/ios_api.h`, `CFoolish` | `c/ios/include-bots/CFoolishBots/ios_bots_api.h`, `CFoolishBots` |
 | xcframework | `Foolish.xcframework` | `FoolishBots.xcframework` |
 | Swift module | `FoolishKit` | `FoolishBots` |
 | Swift sources | `sdk/swift/` except `bots/` | `sdk/swift/bots/` |
@@ -77,34 +77,65 @@ bots archive  442,070 B     3 octogen symbols
 so the ladder is 69% of the native kernel, and the extension no longer links
 any of it.
 
-## Finishing on a Mac
+## Finished on a Mac
 
-Everything above is verified.
-What could not be, because it needs Xcode:
+Done, on Xcode 26.2, iOS 26 simulator.
+`make ios-lib` writes both xcframeworks; `xcodegen generate` picks up the
+`FoolishBots` target; `Foolish`, `FoolishMessagesApp` and the 627 `FoolishTests`
+all build and pass.
 
-1. `cd c && make ios-lib` - builds both xcframeworks. New: it emits
-   `FoolishBots.xcframework` alongside `Foolish.xcframework` and runs
-   `archive_check.sh` on the device slice at the end.
-2. `cd ios && xcodegen generate` - picks up the new `FoolishBots` target.
-3. Build `Foolish` and `FoolishMessages`. The Swift move is mechanical but
-   unverified by a compiler:
-   - `EngineC`'s `json` and `check` (and the `e*` code constants) are now
-     `@_spi(FoolishBots) public` instead of `private`, because an extension in
-     another module cannot reach a private member. If `@_spi` gives trouble,
-     plain `public` works and is the fallback.
-   - `sdk/swift/bots/EngineC+Bots.swift` declares
-     `@_spi(FoolishBots) import FoolishKit` and `import CFoolishBots`.
-   - `LocalGame.swift` and `BotDriveWire.swift` moved unchanged; they may need
-     `import FoolishKit` added if they were relying on being in that module.
-   - `BotDrive` (the struct) deliberately stayed in `FoolishKit`'s
-     `Models.swift`: it names no C symbol, so it costs nothing there.
-4. Confirm on the built products, which is the only place it can be confirmed
-   for real:
-   ```
-   nm -a <FoolishMessagesApp.app>/Frameworks/FoolishKit.framework/FoolishKit \
-     | grep -ci octogen        # expect 0
-   ```
-   and the same over the whole `.appex`.
+The check that counts, on the built bundle:
+
+```
+$ nm -a FoolishMessagesApp.app/Frameworks/FoolishKit.framework/FoolishKit \
+    | grep -ci octogen
+0
+$ ls FoolishMessagesApp.app/Frameworks
+FoolishKit.framework
+```
+
+and the whole ladder pattern (the one `archive_check.sh` uses, not octogen
+alone), swept over every file in `FoolishMessagesApp.app` including
+`PlugIns/FoolishMessages.appex`, matches nothing.
+The same sweep over `Foolish.app` finds the ladder where it belongs:
+`Frameworks/FoolishBots.framework`, 4 octogen symbols, and 0 in that app's
+`FoolishKit`.
+
+Five things the Mac half needed that the Linux half could not have found:
+
+- **Two `module.modulemap` files, one `include/`.** Xcode copies EVERY linked
+  static xcframework's headers into the single `$(BUILT_PRODUCTS_DIR)/include`,
+  so two maps by that name are `Multiple commands produce`. The bots header and
+  its map therefore sit in `c/ios/include-bots/CFoolishBots/`, and the
+  `FoolishBots` target names that subdirectory in `HEADER_SEARCH_PATHS`.
+  The core half is untouched: `include/module.modulemap` is where Xcode looks
+  by itself.
+- **`import FoolishKit`** in `LocalGame.swift` and `BotDriveWire.swift`. Their
+  types are all FoolishKit's now; only `EngineC+Bots.swift` came with an import.
+- **Public inits on `BotAction` and `BotDrive`.** A synthesized memberwise init
+  is internal however public the stored properties are, and `BotDriveWire` -
+  the only thing that builds either - is now in another module.
+- **`@_spi(FoolishBots) public` held.** No fallback to plain `public` needed.
+- **`ios_api_smoke.c` names four bot entries** and included only `ios_api.h`,
+  which stopped declaring them. GCC on Linux made that an implicit-declaration
+  warning; clang makes it an error, so `make ios-smoke` did not build here until
+  the smoke included `ios_bots_api.h` too.
+
+Played, not just built.
+The host app deals and a bot answers - which is what proves the split's real
+hazard, one resident game across two libraries, did not happen - the tutorial
+runs, and in Messages the shipping extension opens, makes a lobby, deals a
+3-player game and plays an attack on a `FoolishKit` that links no ladder.
+`HARNESS_SCENARIO=board` and `myplay` render the same board in the harness.
+The `Release` device build of `FoolishMessagesApp`, the configuration that
+actually ships, carries zero ladder symbols in any file of the bundle; the host
+app's `Release` build carries them where they belong, in
+`FoolishBots.framework`.
+
+One environment note, not a property of the split: `make ios-archives` used
+`ar`, and a homebrew binutils on `PATH` shadows Apple's - a GNU-format archive
+that `ld` refuses with `archive member '/' not a mach-o file`. It archives with
+Apple's `libtool` on Darwin now, the same tool `ios-lib` already used.
 
 ## Two things left alone
 

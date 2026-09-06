@@ -358,6 +358,13 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.bots
         GENERATE_INFOPLIST_FILE: "YES"
+        # Both xcframeworks' headers are copied into the ONE
+        # $(BUILT_PRODUCTS_DIR)/include, so the bots half ships its header and
+        # module map in a CFoolishBots/ subdirectory - otherwise two files
+        # called module.modulemap land on the same path and the build fails
+        # with "Multiple commands produce". Xcode searches include/ on its own;
+        # the subdirectory is ours to name.
+        HEADER_SEARCH_PATHS: $(inherited) $(BUILT_PRODUCTS_DIR)/include/CFoolishBots
 
   FoolishNet:
     type: framework
@@ -380,6 +387,15 @@ targets:
     platform: iOS
     sources:
       - path: FoolishTests
+        # The snapshot references are RECORDED, not authored: swift-snapshot-
+        # testing writes them next to the test on a first run, and .gitignore
+        # keeps them out of the repo because they are per-machine. Listing them
+        # as build inputs means the project only builds on a machine where a
+        # previous run happened to leave them - delete them to re-record and
+        # every build fails with "Build input file cannot be found" before a
+        # test can run.
+        excludes:
+          - __Snapshots__/**
       - path: Fixtures
         buildPhase: resources
     dependencies:
