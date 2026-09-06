@@ -227,6 +227,23 @@ A practical reading: the live server's uniform bot slowdown is not quietly
 handing the paced-down bots a disadvantage, because the bots it actually
 ships are the deliberate kind. It would have, on `random`.
 
+### the graded version
+
+`tools/latency_ladder.py` seats a ladder of think times (50ms..2000ms,
+geometric) around one table and rotates it so each rung visits each seat once.
+For `random`, the fool rate rises monotonically along the ladder at every size
+from three players up, and is flat at two - the control:
+
+```
+np=2  n=80    expected 0.500   50ms 0.425(-1.3)  2000ms 0.575(+1.3)   [flat]
+np=4  n=160   expected 0.250   50ms 0.081(-4.9)  171ms 0.125(-3.7)  585ms 0.169(-2.4)  2000ms 0.625(+11.0)
+np=8  n=320   expected 0.125   50ms 0.013(-6.1)  85ms 0.047(-4.2)  143ms 0.050(-4.1)  243ms 0.059(-3.5)
+                                412ms 0.109(-0.8)  697ms 0.134(+0.5)  1181ms 0.225(+5.4)  2000ms 0.362(+12.8)
+```
+
+At eight players a 50ms seat is the fool 1.3% of the time and a 2000ms seat
+36.2%, against 12.5% expected, with the eight rungs almost perfectly in order.
+
 ### and the same question for a human's connection
 
 `tools/latency_test.py` asks it of clients instead of bots: four identical
