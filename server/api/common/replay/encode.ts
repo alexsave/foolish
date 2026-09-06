@@ -44,6 +44,18 @@ import {
 } from "./core.ts";
 import { decodeReplay } from "./decode.ts";
 
+// A lazy import that resolves ONCE. The deferral is deliberate (a cold start must
+// not pull the rules-wasm embed it never uses); re-RESOLVING the specifier on
+// every call was not - see the note on `lazy` in
+// server/impls/supabase/functions/_shared/adapter/utils.ts.
+const lazy = <T>(load: () => Promise<T>): (() => Promise<T>) => {
+    let mod: Promise<T> | undefined;
+    return () => (mod ??= load());
+};
+const engineMod = lazy(() => import("@sdk/ts/wasm/engine.ts"));
+const botsMod = lazy(() => import("@sdk/ts/wasm/bots.ts"));
+
+
 // Encode-input byte format — see c/src/replay.h.
 const ROUND_END = 0xff;
 const CARD_NONE = 0xff;
@@ -165,7 +177,7 @@ export async function encodeReplay(input: ReplayInput): Promise<EncodedReplay> {
   if (trump.value === ACE_VALUE) throw new Error("trump card cannot be an ace");
   const { actions, firstAttacker } = collectActions(input);
 
-  const eng = await import("@sdk/ts/wasm/engine.ts");
+  const eng = await engineMod();
   await eng.ensureEngineAsync();
 
   const bytes = eng.kernelReplayEncode(
@@ -245,7 +257,7 @@ export async function verifyRoundTripV6FromGame(
   logs: GameLog[],
   packedLogs?: Uint8Array,
 ): Promise<{ encoded: EncodedReplay; decoded: DecodedReplay }> {
-  const { kernelReplayEncodeV6FromGame } = await import("@sdk/ts/wasm/bots.ts");
+  const { kernelReplayEncodeV6FromGame } = await botsMod();
   const bytes = kernelReplayEncodeV6FromGame(game, seed, packedLogs);
   const x = bytesToBigint(bytes);
   const encoded: EncodedReplay = {

@@ -15,7 +15,7 @@ import './harness.ts';
 import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
-import { executeWithGameLock } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
+import { executeWithGameLock, loadCompleteGame } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
 import { personalize_game } from '../server/api/common/common_utils.ts';
 import { start_game } from '../server/api/common/game_lifecycle.ts';
 import { Game, AnimationEvent, PersonalGame, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY, Card } from '../server/api/core/types.ts';
@@ -148,10 +148,10 @@ if (!process.env.VALIDATION_ONLY) {
     const ri = (n: number) => Math.floor(rnd() * n);
     const pick = <T>(a: T[]): T => a[ri(a.length)];
 
-    const loadGame = async (gameId: string): Promise<Game> => {
-        const { loadCompleteGame } = await import('../server/impls/supabase/functions/_shared/adapter/utils.ts');
-        return loadCompleteGame(gameId);
-    };
+    // Top-level import, not an `await import` per iteration: the e2e runner's TS
+    // loader re-resolves a dynamic import on every call (~1.9ms) even for a module
+    // already in the registry, and this fuzzer calls it 8000 times.
+    const loadGame = (gameId: string): Promise<Game> => loadCompleteGame(gameId);
     const freshGame = async (): Promise<string> => {
         const gameId = `p${uuid().slice(0, 6)}`;
         // Three players so the game eliminates someone mid-play, producing the

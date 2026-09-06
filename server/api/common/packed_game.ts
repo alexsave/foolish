@@ -10,6 +10,18 @@
 import { GAME_STATUS, Game, PrivatePlayer } from '@api/core/types.ts';
 import { encodeGameResponse, PackedGameRoster } from '@sdk/ts/wire/view.ts';
 
+// A lazy import that resolves ONCE. The deferral is deliberate (a cold start must
+// not pull the rules-wasm embed it never uses); re-RESOLVING the specifier on
+// every call was not - see the note on `lazy` in
+// server/impls/supabase/functions/_shared/adapter/utils.ts.
+const lazy = <T>(load: () => Promise<T>): (() => Promise<T>) => {
+    let mod: Promise<T> | undefined;
+    return () => (mod ??= load());
+};
+const engineMod = lazy(() => import('@sdk/ts/wasm/engine.ts'));
+const codecMod = lazy(() => import('./replay/codec.ts'));
+
+
 export interface GamesRowForView {
     id: string;
     name: string;
@@ -89,8 +101,8 @@ export async function buildPackedGameBytes(row: GamesRowForView, userId: string)
         good_timestamp: row.good_timestamp || null,
     };
     // Lazy import: only a dealt game pulls the rules-wasm embed.
-    const { serializeViewBlob } = await import('@sdk/ts/wasm/engine.ts');
-    const { hexToBytes } = await import('./replay/codec.ts');
+    const { serializeViewBlob } = await engineMod();
+    const { hexToBytes } = await codecMod();
     const viewBlob = serializeViewBlob(hexToBytes(row.state), seat);
     return encodeGameResponse(row.version ?? 0, seat, roster, viewBlob);
 }

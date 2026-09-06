@@ -26,7 +26,7 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { applySchema, resetDb, seedGame, uuid } from './harness.ts';
-import { executeWithGameLock } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
+import { executeWithGameLock, loadCompleteGame } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
 import { start_game } from '../server/api/common/game_lifecycle.ts';
 import { lockedBotLoop } from '../server/impls/supabase/functions/_shared/adapter/bot_actions.ts';
 import { wasmBeliefProbeReset, wasmBeliefProbeDump } from '../sdk/ts/wasm/bots.ts';
@@ -43,10 +43,9 @@ before(async () => { await applySchema(); });
 beforeEach(async () => { await resetDb(); });
 after(() => {});
 
-async function loadGame(gameId: string): Promise<Game> {
-  const { loadCompleteGame } = await import('../server/impls/supabase/functions/_shared/adapter/utils.ts');
-  return loadCompleteGame(gameId);
-}
+// Top-level import, not an `await import` per call: the e2e runner's TS loader
+// re-resolves a dynamic import every time (~1.9ms) and this runs per move.
+const loadGame = (gameId: string): Promise<Game> => loadCompleteGame(gameId);
 
 test('human+octogen: octogen always sees the human’s committed moves (resident never stale)', async () => {
   const gameId = `hf${uuid().slice(0, 6)}`;

@@ -16,12 +16,23 @@ import { bigintToBytes } from "./codec.ts";
 import { DecodedReplay, SeatLog, idToCard } from "./core.ts";
 import { LogCardPair } from "@api/core/types.ts";
 
+// A lazy import that resolves ONCE. The deferral is deliberate (a cold start must
+// not pull the rules-wasm embed it never uses); re-RESOLVING the specifier on
+// every call was not - see the note on `lazy` in
+// server/impls/supabase/functions/_shared/adapter/utils.ts.
+const lazy = <T>(load: () => Promise<T>): (() => Promise<T>) => {
+    let mod: Promise<T> | undefined;
+    return () => (mod ??= load());
+};
+const engineMod = lazy(() => import("@sdk/ts/wasm/engine.ts"));
+
+
 // Byte layout: REPLAY_DEC_HDR + per-log records — see c/src/replay.h.
 const DEC_HDR = 20;
 const CARD_NONE = 0xff;
 
 export async function decodeReplay(x: bigint): Promise<DecodedReplay> {
-  const eng = await import("@sdk/ts/wasm/engine.ts");
+  const eng = await engineMod();
   await eng.ensureEngineAsync();
   const out = eng.kernelReplayDecode(bigintToBytes(x));
 

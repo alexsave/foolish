@@ -11,6 +11,14 @@ import { ACTION_STATUS, decodeActionRequest, encodeActionResponse } from "@sdk/t
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 
+// Lazy so a cold start that only 404s or rejects never pulls the packed pipeline,
+// but resolved ONCE: a dynamic import re-runs the resolver on every call, and this
+// one is on the per-action path. Same `lazy` shape as _shared/adapter/utils.ts.
+const packedActionMod = (() => {
+    let mod: Promise<typeof import('@shared/adapter/packed_action.ts')> | undefined;
+    return () => (mod ??= import('@shared/adapter/packed_action.ts'));
+})();
+
 // Packed fast path (docs/PACKED_WIRE_CUTOVER.md): the request body is the
 // binary envelope [fmt | gid_len | game id | action wire] — the exact wire
 // the client's guards.wasm validated. No JSON anywhere: the response is
@@ -23,7 +31,7 @@ const packedAction = async (req: Request, user: { id: string }, reqId: string): 
             status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
     }
-    const { executePackedAction } = await import('@shared/adapter/packed_action.ts');
+    const { executePackedAction } = await packedActionMod();
     const out = await executePackedAction(parsed.gameId, user.id, parsed.wire, reqId, parsed.intentVersion);
     // Same bot nudge as the JSON path: an APPLIED human move wakes the bots.
     // (A rejection never did on the legacy path — it threw before run_bots.)

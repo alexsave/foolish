@@ -23,6 +23,18 @@ import {
 } from '@sdk/ts/wire/view.ts';
 import { bytesToBareHex } from '@sdk/ts/wire/bytes.ts';
 
+// A lazy import that resolves ONCE. The deferral is deliberate (a cold start must
+// not pull the rules-wasm embed it never uses); re-RESOLVING the specifier on
+// every call was not - see the note on `lazy` in
+// server/impls/supabase/functions/_shared/adapter/utils.ts.
+const lazy = <T>(load: () => Promise<T>): (() => Promise<T>) => {
+    let mod: Promise<T> | undefined;
+    return () => (mod ??= load());
+};
+const engineMod = lazy(() => import('@sdk/ts/wasm/engine.ts'));
+const codecMod = lazy(() => import('./replay/codec.ts'));
+
+
 // One upsert-ready row per HUMAN participant. `view` is bare hex (no \x prefix,
 // like games.logs_packed) of the packed single-game envelope; `status` is
 // denormalized for cheap list filtering; `version` mirrors the committed
@@ -73,8 +85,8 @@ export async function buildPlayerViewRows(
     if (dealt) {
         // Lazy imports so lobby/create commits never pull the rules-wasm embed
         // (same discipline as commitGame's serializeGameState import).
-        const { serializeViewBlobs } = await import('@sdk/ts/wasm/engine.ts');
-        const { hexToBytes } = await import('./replay/codec.ts');
+        const { serializeViewBlobs } = await engineMod();
+        const { hexToBytes } = await codecMod();
         const blobs = serializeViewBlobs(hexToBytes(stateHex!), humanSeats);
         viewBlobFor = (seat) => blobs.get(seat)!;
     } else {
@@ -115,8 +127,8 @@ export async function buildSpectatorView(
 
     let viewBlob: Uint8Array;
     if (dealt) {
-        const { serializeViewBlobs } = await import('@sdk/ts/wasm/engine.ts');
-        const { hexToBytes } = await import('./replay/codec.ts');
+        const { serializeViewBlobs } = await engineMod();
+        const { hexToBytes } = await codecMod();
         viewBlob = serializeViewBlobs(hexToBytes(stateHex!), [-1]).get(-1)!;
     } else {
         const body: number[] = [];
