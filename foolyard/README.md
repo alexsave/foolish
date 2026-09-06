@@ -227,6 +227,33 @@ A practical reading: the live server's uniform bot slowdown is not quietly
 handing the paced-down bots a disadvantage, because the bots it actually
 ships are the deliberate kind. It would have, on `random`.
 
+### and the same question for a human's connection
+
+`tools/latency_test.py` asks it of clients instead of bots: four identical
+`wellbehaved` seats on a clean wire - no loss, no duplication, no jitter -
+differing only in how long they take to answer, with the lineup rotated so each
+latency sits in each seat exactly once.
+
+```
+600 finished games, 4 rotations pooled
+
+  latency   fool    share       z        (expected 0.250)
+     50ms     57    0.095    -8.8
+    200ms    100    0.167    -4.7
+    800ms    126    0.210    -2.3
+   2000ms    317    0.528    15.7
+```
+
+Strictly monotonic, and latency is the only variable: the slowest seat is the
+fool in more than half of all games, the fastest in one in ten.
+
+Read it with the sweep above, though, not on its own. These clients pick
+uniformly from the legal menu - the same policy class as `random`, the one
+speed demonstrably helps. What this measures is a *random-playing* client, so
+it is an upper bound on the effect, not an estimate of what a thoughtful human
+on a bad connection suffers. Giving a client tier a real brain is the obvious
+next step, and would turn this from an upper bound into an answer.
+
 ## determinism
 
 Same seed plus same code gives the same run, event for event. Every stream is
