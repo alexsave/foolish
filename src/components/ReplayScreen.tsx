@@ -34,7 +34,7 @@ import {
 import { splitReplayCode, decodeExtras, ReplayExtras } from '@api/common/replay/extras.ts';
 import { INFO_TYPES } from '@api/common/replay/core.ts';
 import { OracleOverlay } from './OracleOverlay';
-import { OracleController } from '../oracle/OracleController';
+import { createOracleController, IOracleController } from '../oracle/oracleControllerFactory';
 import { buildOracleJob, findDecisionIndex } from '../oracle/replayOracleInput';
 import { OracleSnapshot } from '../oracle/types';
 
@@ -552,13 +552,13 @@ const ReplayStage = ({ decoded, frames, reverses, gameId, names, times }: StageP
     // stream in and sharpen. Analysis only arms once animation settles on a
     // decision step; the fleet stays warm across steps and is torn down on
     // unmount. StrictMode-safe (start/stop bump a run generation).
-    const oracleRef = useRef<OracleController | null>(null);
+    const oracleRef = useRef<IOracleController | null>(null);
     const [oracleOpen, setOracleOpen] = useState(false);
     const [oracleMemory, setOracleMemory] = useState(true);
     const [oracleSnap, setOracleSnap] = useState<OracleSnapshot | null>(null);
     const oracleDecision = useMemo(() => findDecisionIndex(frames, stepIdx), [frames, stepIdx]);
     const getOracle = useCallback(() => {
-        if (!oracleRef.current) oracleRef.current = new OracleController();
+        if (!oracleRef.current) oracleRef.current = createOracleController();
         return oracleRef.current;
     }, []);
     useEffect(() => {

@@ -5,8 +5,11 @@
 the `wasm-oracle` Makefile target + committed `public/oracle.wasm.gz`, the
 `src/oracle/` worker fleet + controller, the `OracleOverlay` UI, en/ru/ko
 strings, the `e2e/oracle_replay.test.ts` headless suite, and the acceptance
-screenshots in `docs/screenshots/oracle-*.png`. Mode B (§8b) remains optional
-and unbuilt. This document is the original build spec; every factual claim
+screenshots in `docs/screenshots/oracle-*.png`. Mode B (§8b) is now BUILT too,
+but it is dormant: it needs cross-origin isolation, which this site does not
+send. What it measures, what it costs, and where §8b's own audit has since gone
+stale are in `docs/INFINITE_ORACLE_MODE_B.md` - read that before acting on §8b.
+This document is the original build spec; every factual claim
 about existing code carries a `file:line` anchor, verified against commit
 `cbb896d` (branch tip `1b27238`). If a line number has drifted, the
 surrounding identifiers are stable — search for them.
@@ -853,6 +856,14 @@ on replay-screen unmount). StrictMode-safe: effects must
 ---
 
 ## 8b. OPTIONAL Mode B — shared-memory wasm threads, coordination in C
+
+> **Built. See `docs/INFINITE_ORACLE_MODE_B.md` for what it actually measures**
+> (about 10% more worlds per second, and no memory saving), for the determinism
+> answer, and for the cross-origin-isolation gate that keeps it dormant on the
+> deployed site. Two claims below have gone stale and are corrected there:
+> §8b.2's "no CDN fonts" (the app loads Google Fonts now) and §8b.5's MT6
+> ("verdicts come from the solver pass octogen already runs" - the full
+> per-move probe was hoisted after all).
 
 This section is a complete recipe for moving the parallelism into C proper,
 so the TS layer keeps no cross-thread state at all. It is **optional**: Mode
