@@ -2,7 +2,6 @@ import { corsHeaders, handleCors } from './cors.ts';
 import {
     personalize_game,
     calculateEloChange,
-    calculateGameRankings,
     game_done,
     other_player,
 } from '@api/common/common_utils.ts';
@@ -1080,7 +1079,9 @@ const updateEloRatings = async (game: Game): Promise<void> => {
             }
         }
 
-        // Determine final rankings based on elimination order
+        // Determine final rankings based on elimination order. The rule is the
+        // kernel's (anim_plan.c anim_finish_rows), reached through bots.wasm.
+        const { calculateGameRankings } = await import('@api/common/finish_order.ts');
         const rankings = calculateGameRankings(game);
 
         // Safety check: ensure all players are in rankings
