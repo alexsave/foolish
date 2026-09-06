@@ -96,6 +96,8 @@ static void usage(void) {
 "  --loss PCT      packet loss (default 0)\n"
 "  --dup PCT       packet duplication (default 0)\n"
 "  --service-us N  how long one request holds a game's lock (default 200)\n"
+"  --hiccup-pct N  chance a request stalls behind a long lock hold\n"
+"  --hiccup-ms N   how long that stall lasts\n"
 "  --stall-secs N  quiet time on a live game that counts as a stall (30)\n"
 "  --kernel-pacing 0|1  bots also wait the kernel's human-watching pace (1)\n"
 "  --deep          clone and compare on every rejected move (slow)\n"
@@ -283,6 +285,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--loss")) { k.loss_pct = (u32)strtoul(v, NULL, 10); i++; }
         else if (!strcmp(a, "--dup")) { k.dup_pct = (u32)strtoul(v, NULL, 10); i++; }
         else if (!strcmp(a, "--service-us")) { k.srv_service_us = (u32)strtoul(v, NULL, 10); i++; }
+        else if (!strcmp(a, "--hiccup-pct")) { k.hiccup_pct = (u32)strtoul(v, NULL, 10); i++; }
+        else if (!strcmp(a, "--hiccup-ms")) { k.hiccup_us = (u32)(strtoul(v, NULL, 10) * MS); i++; }
         else if (!strcmp(a, "--stall-secs")) { k.stall_us = strtoull(v, NULL, 10) * SEC; i++; }
         else if (!strcmp(a, "--kernel-pacing")) { k.bot_kernel_pacing = (u8)strtoul(v, NULL, 10); i++; }
         else { fprintf(stderr, "unknown option %s\n", a); usage(); return 2; }

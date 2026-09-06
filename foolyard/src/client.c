@@ -28,6 +28,7 @@ void client_submit(World *w, ClientState *cs, const AwireAction *a, u32 chosen_a
     p->obs_version = 0;
     p->obs_chosen_at = chosen_at;
     p->obs_seq = ++cs->seq;
+    p->obs_deal = cs->view_deal;
 
     memcpy(cs->last_frame, p->body, (size_t)n);
     cs->last_frame_len = (u8)n;
@@ -63,18 +64,24 @@ static void client_check_hand(World *w, ClientState *cs, const Game *g,
     if (n < 0) n = 0;
     if (n > MAX_HAND_SIZE) n = MAX_HAND_SIZE;
 
-    if (cs->have_view && cs->hand_seq == applied && cs->hand_deal == deal) {
+    // ...and only forwards. On a datagram link the view that just arrived can
+    // be OLDER than the one it replaces, and then this comparison runs
+    // backwards through time: a card the seat legitimately DREW in a refill
+    // between the two reads as one that vanished. Six of those were the last
+    // false positive this detector had.
+    if (cs->have_view && cs->view_version >= cs->hand_version
+        && cs->hand_seq == applied && cs->hand_deal == deal) {
         for (int i = 0; i < cs->hand_n; i++) {
             int found = 0;
             for (int j = 0; j < n && !found; j++)
                 if (card_to_id(pl->hand[j]) == cs->hand[i]) found = 1;
             if (!found) {
                 inv_report(w, FIND_PHANTOM_LOSS,
-                           "client %u seat %u game %u: card id %u left the hand with no move of its own "
-                           "[v%u seq %u acked %u applied %u hand_n %u->%d defender %d status %d]",
+                           "client %u seat %u game %u: card id %u vanished between v%u and v%u "
+                           "(both at applies=%u, deal=%u), hand %u->%d, defender %d",
                            cs->id, cs->seat, cs->game_id, cs->hand[i],
-                           cs->view_version, cs->seq, cs->acked_seq, applied,
-                           cs->hand_n, n, g->defender, g->status);
+                           cs->hand_version, cs->view_version, applied, deal,
+                           cs->hand_n, n, g->defender);
                 break;
             }
         }
@@ -83,6 +90,7 @@ static void client_check_hand(World *w, ClientState *cs, const Game *g,
     for (int i = 0; i < n; i++) cs->hand[i] = (u8)card_to_id(pl->hand[i]);
     cs->hand_n = (u8)n;
     cs->hand_seq = applied;
+    cs->hand_version = cs->view_version;
     cs->hand_deal = deal;
 }
 
@@ -149,6 +157,7 @@ void client_retransmit(World *w, ClientState *cs) {
     p->obs_version = 0;
     p->obs_chosen_at = cs->pending_version;
     p->obs_seq = cs->seq;
+    p->obs_deal = cs->view_deal;
     memcpy(p->body, cs->last_frame, cs->last_frame_len);
 
     w->moves_sent++;
@@ -173,6 +182,7 @@ void client_on_packet(World *w, u32 pkt_id) {
     memcpy(cs->view, p->body, p->len);
     cs->view_len = p->len;
     cs->view_version = p->obs_version;
+    cs->view_deal = p->obs_deal;
     cs->have_view = 1;
     cs->last_view_us = sch_now_us(&w->sch);
     if (p->kind == PKT_ACK && p->ok) cs->acked_seq = cs->seq;

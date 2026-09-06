@@ -37,7 +37,7 @@ static void srv_send_view(World *w, GameSlot *s, int seat, u8 kind, u8 ok) {
     p->obs_version = s->version;
     p->obs_chosen_at = 0;
     p->obs_seq = 0;
-    p->obs_applied = s->last_seq_valid[seat] ? s->last_seq[seat] : 0;
+    p->obs_applied = s->applies[seat];
     p->obs_deal = s->deals;
     memcpy(p->body, scratch, (size_t)n);
 
@@ -156,14 +156,28 @@ static void srv_apply_move(World *w, GameSlot *s, Packet *p) {
 
     w->moves_applied++;
     w->seat_moves[seat]++;
+
+    // The move was decided in a game that has already ended and been re-dealt.
+    // Nothing on the wire identifies WHICH game a frame is for beyond the id,
+    // and the id survives the rematch, so the server cannot tell.
+    if (p->obs_deal != s->deals)
+        inv_report(w, FIND_CROSS_DEAL,
+                   "game %u seat %d: move decided on deal %u applied to deal %u",
+                   s->id, seat, p->obs_deal, s->deals);
     if (p->obs_chosen_at != version_before) w->stale_accepts++;
 
     static const char *kinds[] = {"attack", "cover", "pass", "pickup", "good"};
-    if (s->last_seq_valid[seat] && p->obs_seq <= s->last_seq[seat])
+    const char *kind = (a.kind >= 0 && a.kind <= 4) ? kinds[a.kind] : "?";
+    if (s->last_seq_valid[seat] && p->obs_seq == s->last_seq[seat])
         inv_report(w, FIND_DUP_APPLIED,
-                   "game %u seat %d: %s(n=%d) seq %u applied again (last was %u), chosen at v%u, board at v%u",
-                   s->id, seat, (a.kind >= 0 && a.kind <= 4) ? kinds[a.kind] : "?", a.n,
-                   p->obs_seq, s->last_seq[seat], p->obs_chosen_at, version_before);
+                   "game %u seat %d: %s(n=%d) seq %u applied again, chosen at v%u, board at v%u",
+                   s->id, seat, kind, a.n, p->obs_seq, p->obs_chosen_at, version_before);
+    else if (s->last_seq_valid[seat] && p->obs_seq < s->last_seq[seat])
+        inv_report(w, FIND_MOVE_LATE,
+                   "game %u seat %d: %s(n=%d) seq %u applied after seq %u had already landed",
+                   s->id, seat, kind, a.n, p->obs_seq, s->last_seq[seat]);
+
+    s->applies[seat]++;
     s->last_seq[seat] = p->obs_seq;
     s->last_seq_valid[seat] = 1;
 
@@ -229,8 +243,17 @@ void srv_on_service(World *w, u32 game_id) {
     }
     net_release(w, pkt_id);
 
-    if (s->qn) sch_schedule(&w->sch, event_of(EV_SRV_SERVICE, s->id), w->knobs.srv_service_us);
-    else       s->servicing = 0;
+    if (s->qn) {
+        // A hiccup is one request holding the game's lock far longer than
+        // usual - a GC pause, a slow bot search, a page fault. Everything
+        // queued behind it ages, and what comes off the queue next was
+        // decided against a board that has since moved a long way.
+        u64 hold = w->knobs.srv_service_us;
+        if (rng_pct(&w->rng, w->knobs.hiccup_pct)) hold += w->knobs.hiccup_us;
+        sch_schedule(&w->sch, event_of(EV_SRV_SERVICE, s->id), hold);
+    } else {
+        s->servicing = 0;
+    }
 }
 
 // The trampoline, as an event: one bot_drive cycle, then the kernel prices the
@@ -292,7 +315,7 @@ void srv_on_lobby(World *w, u32 game_id) {
         if (s->seat_client[i] < 0) bot_mask |= 1u << i;
 
     game_reset_to_lobby(&s->game, bot_mask);
-    for (int i = 0; i < MAX_PLAYERS; i++) s->last_seq_valid[i] = 0;
+    for (int i = 0; i < MAX_PLAYERS; i++) { s->last_seq_valid[i] = 0; s->applies[i] = 0; }
 
     srv_deal(w, s);
 }

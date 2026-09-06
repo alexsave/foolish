@@ -16,11 +16,13 @@
 #define FIND_VIEW_REGRESS 5   // a client accepted a view older than one it held
 #define FIND_QUEUE_FULL   6   // the per-game request backlog overflowed
 #define FIND_SEAT_MISMATCH 7  // the server applied a move for the wrong seat
-#define FIND_COUNT        8
+#define FIND_CROSS_DEAL   8   // a move decided in one game applied to the next
+#define FIND_MOVE_LATE    9   // a move applied AFTER a newer one from the same seat
+#define FIND_COUNT       10
 
 typedef struct Findings {
     u64 count[FIND_COUNT];
-    int printed;
+    int printed[FIND_COUNT];   // per KIND, so a noisy finding cannot bury a rare one
 } Findings;
 
 struct World;
