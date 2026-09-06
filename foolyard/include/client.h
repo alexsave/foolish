@@ -104,7 +104,8 @@ typedef struct ClientImpl {
     X(stale) \
     X(poller) \
     X(griefer) \
-    X(datagram)
+    X(datagram) \
+    X(thinker)
 
 #define X(name) extern const ClientImpl client_##name;
 CLIENT_TIERS
@@ -116,6 +117,10 @@ int client_tier_count(void);
 // Shared helper: pick a uniformly random legal move for `seat` in `view`.
 // Returns 0 if the seat has nothing to do.
 int client_pick_legal(const Game *view, int seat, u64 *rng, AwireAction *out);
+
+// The same menu chosen by handwritten_prod, the one brain that is sound on a
+// masked view (it reads only its own hand, the table, and counts).
+int client_pick_brain(const Game *view, int seat, AwireAction *out);
 
 void client_on_packet(struct World *w, u32 pkt_id);
 void client_on_wake(struct World *w, u32 client_id);

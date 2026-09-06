@@ -333,8 +333,12 @@ int main(int argc, char **argv) {
                lineup[i].is_client ? client_impl(lineup[i].tier)->name
                                    : bot_roster_at(lineup[i].strategy)->key,
                lineup[i].think_us / (u32)MS, lineup[i].is_client ? "" : " (bot)");
-    printf("\n  wire     %ums +%ums jitter, %u%% loss, %u%% dup\n",
-           k.base_latency_us / (u32)MS, k.jitter_us / (u32)MS, k.loss_pct, k.dup_pct);
+    if (per_game)
+        printf("\n  wire     %ums +%ums jitter, %u%% loss, %u%% dup\n",
+               k.base_latency_us / (u32)MS, k.jitter_us / (u32)MS, k.loss_pct, k.dup_pct);
+    else
+        printf("\n  wire     unused: every seat is a server-side bot, so nothing is sent.\n"
+               "           a bot seat's own timing is name@think+jitter in the lineup.\n");
 
     World w;
     world_init(&w, seed, games, n_clients ? n_clients : 1);

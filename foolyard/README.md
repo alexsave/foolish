@@ -352,12 +352,37 @@ latency sits in each seat exactly once.
 Strictly monotonic, and latency is the only variable: the slowest seat is the
 fool in more than half of all games, the fastest in one in ten.
 
-Read it with the sweep above, though, not on its own. These clients pick
-uniformly from the legal menu - the same policy class as `random`, the one
-speed demonstrably helps. What this measures is a *random-playing* client, so
-it is an upper bound on the effect, not an estimate of what a thoughtful human
-on a bad connection suffers. Giving a client tier a real brain is the obvious
-next step, and would turn this from an upper bound into an answer.
+That is an upper bound, though, not the answer: those clients pick uniformly
+from the legal menu, which is the policy class the sweep above shows speed
+helps most. The `thinker` tier is the same client with `handwritten_prod`
+choosing instead of a coin - the one roster brain that is SOUND on a masked
+view, since it reads only its own hand, the table, and counts (`hand_count`,
+`deck_count`, `discard_pile_length`, `has_flipped`), every one of which
+`state_put` preserves exactly. The belief bots would be reading `{0,1}`
+placeholders where the deck and the other hands should be.
+
+Same wire, same rotations, only the policy differs:
+
+```
+                     thinker (a real brain)      wellbehaved (random)
+np=8, expected 0.125
+    50ms             0.100 (-1.4)                0.016 (-5.9)
+   243ms             0.103 (-1.2)                0.078 (-2.5)
+   697ms             0.131 (+0.3)                0.138 (+0.7)
+  2000ms             0.181 (+3.0)                0.409 (+15.4)
+```
+
+**A real brain cuts the latency penalty by roughly four to five times, and does
+not erase it.** The shape changes too: for `thinker` only the slowest rung is
+significant (+3.8 at np=6, +3.0 at np=8), so being *slower* costs nothing and
+being genuinely *slow* costs something, while `random` is punished all the way
+along the ladder. At two players `thinker` is dead flat, 0.500/0.500.
+
+Worth noting against the bot sweep, where `handwritten` was flat everywhere:
+the same policy is flat as a server-side bot and mildly penalised as a
+networked client. The likely reason is that a client pays a round trip per move
+and can act only once per wake, where `bot_drive` bundles a cycle in place -
+plausible, and not something these runs prove.
 
 ## determinism
 

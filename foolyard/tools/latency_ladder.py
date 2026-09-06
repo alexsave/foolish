@@ -25,7 +25,7 @@ def ladder(np_, fast, slow):
     return [int(round(fast * (slow / fast) ** (i / (np_ - 1)))) for i in range(np_)]
 
 
-def run_size(brain, np_, fast, slow, games, is_client):
+def run_size(brain, np_, fast, slow, games):
     rungs = ladder(np_, fast, slow)
     fools = collections.Counter()
     total = 0
@@ -59,17 +59,14 @@ def main():
     ap.add_argument("--games", type=int, default=40, help="finished games per rotation")
     ap.add_argument("--fast", type=int, default=50)
     ap.add_argument("--slow", type=int, default=2000)
-    ap.add_argument("--client", action="store_true",
-                    help="seat wellbehaved clients on wires instead of server-side bots")
     args = ap.parse_args()
 
-    name = "wellbehaved" if args.client else args.brain
+    name = args.brain   # a bot roster key, or a client tier - seats take either
     print(f"latency ladder: {name}, {args.fast}ms..{args.slow}ms, "
           f"{args.games} games per rotation, all rotations pooled\n")
 
     for np_ in [int(x) for x in args.sizes.split(",")]:
-        rungs, fools, total = run_size(name, np_, args.fast, args.slow,
-                                       args.games, args.client)
+        rungs, fools, total = run_size(name, np_, args.fast, args.slow, args.games)
         if total == 0:
             print(f"np={np_}: no finished games")
             continue
