@@ -676,6 +676,36 @@ final class HarnessModel: ObservableObject {
         rememberPresented()
     }
 
+    /// REVIEW RIG: put a REAL sealed chain in the transcript as one that was
+    /// already there, and leave it selected — so opening it is a COLD open.
+    ///
+    /// Not the same thing as `deliver()`, and the difference is the whole reason
+    /// `HARNESS_SCENARIO=myplay` posed nothing for rounds. `deliver()` calls
+    /// `MessageGameStore.markJustSent`, and a chain this device just sent is
+    /// opened QUIETLY on purpose (`MessageTurnController.suppressOpenReplay`):
+    /// having watched your own move land, you do not want it replayed back at
+    /// you. So a scenario that stages, sends, and then reads its own bubble
+    /// cannot pose a replay at all — it opens with `openReplay events=0`.
+    ///
+    /// This is the other way a chain whose last actor is ME reaches a board:
+    /// the transcript already holds it (a second device, a relaunch, a scroll
+    /// back to it), nothing was just sent, and the open replays my own cards
+    /// out of my own hand.
+    func placeSealed(_ payload: Data, senderSeat: Int) async {
+        boardEpoch += 1
+        let who = participants[min(max(senderSeat, 0), participants.count - 1)]
+        let shot = await Self.snapshot(payload)
+        chats[currentChat].transcript.append(Msg(url: MessageEnvelope.link(payload: payload),
+                                                 senderId: who.id, senderName: who.name,
+                                                 preview: shot))
+        chats[currentChat].startNewGame = false
+        chats[currentChat].selected = nil
+        staged = nil; stagedPreview = nil
+        // NOT just-sent, and nothing staged: this bubble is history, not mine.
+        lastSentPayload = nil
+        rememberPresented()
+    }
+
     /// The bubble picture for a sealed chain — the SAME `BubbleSnapshot` entry
     /// the real extension composes its MSMessage image with, so the harness's
     /// transcript shows what a real thread would show. `peek` rather than

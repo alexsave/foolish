@@ -110,12 +110,29 @@ extension HarnessModel {
             // in the unified log: each card's `from` must be its own hand slot,
             // several points apart in x and sitting inside `hand=`, not one
             // stacked point at the container's corner.
+            //
+            // AND IT POSED NONE OF THAT UNTIL 2026-09-06. It delivered its
+            // bubble through `deliverSealed`, which stages and then presses
+            // Send - and a chain this device JUST SENT is opened quietly by
+            // design (`MessageTurnController.suppressOpenReplay`), because
+            // having watched your own move land you do not want it replayed
+            // back at you. Every run of this scenario logged
+            // `openReplay events=0`: a green run was evidence of nothing.
+            // `cold: true` puts the sealed chain in the transcript as history
+            // instead (`HarnessModel.placeSealed`), which is how a chain whose
+            // last actor is me really reaches a cold board - a relaunch, a
+            // second device, a scroll back to it.
+            //
+            // SO READ THE LOG BEFORE BELIEVING A RUN: `openReplay events=0` is
+            // this scenario failing to pose anything, not passing quietly. It
+            // now logs `events=4`, with two of the four flying `OFF-HAND` out
+            // of the hand row.
             await dealDriven(players: playersEnv, only: [.attack, .cover],
-                             steps: 5, viewAs: .lastActor)
+                             steps: 5, viewAs: .lastActor, cold: true)
 
         case "myplay-compact":
             await dealDriven(players: playersEnv, only: [.attack, .cover],
-                             steps: 5, viewAs: .lastActor)
+                             steps: 5, viewAs: .lastActor, cold: true)
             collapseForReview()
 
         case "board-sorted":
@@ -427,9 +444,13 @@ extension HarnessModel {
     ///   the transfer off the driver's own menu so it cannot spend the move
     ///   being hunted for. The only flag that re-deals (round 29).
     /// - `viewAs`: whose eyes the screenshot is taken through.
+    /// - `cold`: put the sealed chain in the transcript as HISTORY rather than
+    ///   staging and sending it. A chain this device just sent is opened
+    ///   quietly, so a scenario about what an OPEN replays has to arrive at the
+    ///   board any other way. See `HarnessModel.placeSealed`.
     private func dealDriven(players n: Int, only: [MoveType]?, steps: Int,
                             viewAs: ViewAs, stopWhenDeckEmpty: Bool = false,
-                            stopWhenCanPass: Bool = false) async {
+                            stopWhenCanPass: Bool = false, cold: Bool = false) async {
         setCount(n)
         let joins = (0..<n).map { MessageJoin(seat: $0, name: Self.nameFor($0)) }
         do {
@@ -502,7 +523,11 @@ extension HarnessModel {
                     seat = best.seat
                 }
             }
-            await deliverSealed(payload, senderSeat: lastSeat)
+            if cold {
+                await placeSealed(payload, senderSeat: lastSeat)
+            } else {
+                await deliverSealed(payload, senderSeat: lastSeat)
+            }
             // Seat the viewer explicitly - this rig is about the BOARD, not
             // about re-testing seat inference (which `seatpick` covers). The
             // nickname has to be written AFTER `become` rebinds to that

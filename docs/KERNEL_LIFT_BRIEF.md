@@ -850,7 +850,31 @@ mid-tween cannot be handed a compact height.
 identical to the manual-collapse control, and `SLOTCHECK MISMATCH n=... worst=406.0pt`
 - which had been firing on every auto-collapse - is gone.
 
-### One rig scenario is inert, and was not fixed
+### One rig scenario is inert - FIXED
+
+Fixed 2026-09-06, and confirmed on the rig itself rather than by reading.
+Before, launched on a simulator with `SIMCTL_CHILD_HARNESS_SCENARIO=myplay`, the
+unified log read `host stage` -> `host deliver` -> `openReplay events=0`: the
+scenario posed nothing at all.
+
+`dealDriven` now takes `cold:`, and `myplay` / `myplay-compact` pass it.
+Instead of staging and pressing Send, the sealed chain is put into the transcript
+as HISTORY (`HarnessModel.placeSealed`), which is how a chain whose last actor is
+me really reaches a cold board: a relaunch, a second device, a scroll back to it.
+Nothing is marked just-sent, so nothing suppresses the open.
+
+The same launch now logs `openReplay events=4`, and two of the four are
+`OFF-HAND flight … from=(271,623) … hand=(187,623)` - cards leaving MY hand row,
+which is the thing round 42 wanted to look at and the owner's 1.0(41) rule
+("when we replay OUR OWN attack, it should go FROM OUR HAND to the table").
+The scenario's comment now says outright that `openReplay events=0` is the
+failure mode, so the next reader does not take a quiet run for a pass.
+
+`arrival` with `HARNESS_ARRIVE_COLD=1 HARNESS_ARRIVE_SELF=1` still poses the same
+shape from the other direction and is what finding 1 was verified on; the two are
+not redundant - that one arrives on a live surface, this one mounts cold.
+
+The original report follows.
 
 `HARNESS_SCENARIO=myplay` was built in round 42 as "a COLD OPEN of my own move …
 the only one that arms `handHoldback`", and it no longer poses that: it opens
