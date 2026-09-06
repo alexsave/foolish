@@ -82,6 +82,24 @@ Three seams, wired in `merge.py` from the language graphs, not guessed:
 - **Rust → nothing.** `rustpoc/` is a standalone port with no FFI. That zero is
   a finding, not a gap.
 
+## The tree view
+
+The force map shows shape; it is bad at "what is actually in here". The **Tree**
+view answers that instead, with two hierarchies:
+
+- **Directories** — the repo drilled down through directory, file, function.
+  A directory that holds exactly one child directory and nothing of its own is
+  a corridor rather than a level, so `server/impls/supabase` collapses into one
+  row instead of three clicks. Every directory takes the colour of whatever
+  dominates it, so the tree reads the same way the map does.
+- **Call tree** — callees (or callers, with the direction toggle) unrolled from
+  one root, with the confidence of each edge on the row and recursion marked
+  where a function appears above itself in the same branch.
+
+The call tree's root and the selection are deliberately separate: clicking a row
+reads that function in the inspector without yanking the tree out from under
+you. `↻ start from …` in the bar re-roots when you actually want that.
+
 ## Colour
 
 Language sets the hue; the group sets the tint. So `c/src` (rules kernel) and
@@ -116,4 +134,4 @@ the source says, not what runs.
 | `merge.py` | merges the four, wires cross-language edges, assigns groups |
 | `layout.py` | force layout over the file graph, once per toggle combination |
 | `pack.py` | columnar payload |
-| `shell.html` · `app.js` · `build_html.py` | the page, its canvas renderer, and the inliner |
+| `shell.html` · `app.js` · `build_html.py` | the page, its canvas map and tree views, and the inliner |

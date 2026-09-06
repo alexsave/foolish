@@ -146,6 +146,76 @@ button,input,select{font:inherit;color:inherit}
 }
 #hint b{color:var(--ink);font-weight:600}
 
+/* ---------- tree ---------- */
+#tree{
+  position:absolute;inset:0;background:var(--ground);
+  display:flex;flex-direction:column;
+}
+#treebar{
+  display:flex;align-items:center;gap:10px;padding:9px 12px;
+  border-bottom:1px solid var(--rule);background:var(--panel);flex:none;
+}
+.linky{
+  background:transparent;border:0;padding:4px 6px;cursor:pointer;
+  font-size:11.5px;color:var(--ink-2);border-radius:2px;
+}
+.linky:hover{background:var(--panel-2);color:var(--ink)}
+.linky:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+#rootbar{
+  display:flex;align-items:center;gap:8px;padding:6px 12px;flex:none;
+  border-bottom:1px solid var(--rule-2);background:var(--panel-2);
+}
+.rootlbl{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
+.rootnm{
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12px;font-weight:600;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+#treebody{flex:1;overflow:auto;padding:6px 0 40px}
+#treebody:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.row{
+  display:flex;align-items:center;gap:7px;width:100%;
+  padding:2px 12px 2px 0;background:transparent;border:0;cursor:pointer;
+  text-align:left;font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12px;
+  color:var(--ink);line-height:1.6;
+}
+.row:hover{background:var(--panel-2)}
+.row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.row[aria-selected="true"]{background:var(--accent-soft);box-shadow:inset 2px 0 0 var(--accent)}
+/* Drawn, not typed: a glyph here depends on whichever font actually loaded. */
+.row .tw{width:13px;height:13px;flex:none;position:relative}
+.row .tw::before{
+  content:"";position:absolute;left:4px;top:2.5px;
+  border:4px solid transparent;border-left-color:var(--ink-3);
+  transform-origin:2px 4px;transition:transform .12s ease;
+}
+.row .tw.leaf::before{display:none}
+.row[aria-expanded="true"] .tw::before{transform:rotate(90deg)}
+.row .dot{width:9px;height:9px;border-radius:50%;flex:none}
+.row .sq{width:9px;height:9px;flex:none;border-radius:1px;opacity:.75}
+.row .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .dir{color:var(--ink)}
+.row .fileish{color:var(--ink-2)}
+.row .meta{
+  margin-left:auto;flex:none;font-size:10.5px;color:var(--ink-3);
+  font-variant-numeric:tabular-nums;padding-left:10px;
+}
+.row .badge{
+  flex:none;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink-3);
+}
+.row .badge[data-c="cross"]{color:var(--accent);font-weight:600}
+.row .cyc{flex:none;font-size:10px;color:var(--ink-3);font-style:italic}
+.row .where{
+  flex:none;font-size:10.5px;color:var(--ink-3);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:20ch;
+}
+.guide{
+  border-left:1px solid var(--rule-2);align-self:stretch;flex:none;
+}
+.treehint{padding:16px 18px;color:var(--ink-2);font-size:12px;max-width:60ch;line-height:1.55}
+.treehint b{color:var(--ink)}
+@media (prefers-reduced-motion:reduce){.row .tw{transition:none}}
+
 /* ---------- inspector ---------- */
 #panel{
   grid-area:panel;background:var(--panel);border-left:1px solid var(--rule);
@@ -242,6 +312,7 @@ button,input,select{font:inherit;color:inherit}
       <button id="vAuto" aria-pressed="true">Auto</button>
       <button id="vFiles" aria-pressed="false">Files</button>
       <button id="vFns" aria-pressed="false">Functions</button>
+      <button id="vTree" aria-pressed="false">Tree</button>
     </div>
     <div class="search">
       <input id="q" type="search" placeholder="find a function or file" aria-label="Search functions and files" autocomplete="off" spellcheck="false">
@@ -281,6 +352,22 @@ button,input,select{font:inherit;color:inherit}
     </div>
     <div id="tip" hidden></div>
     <div id="hint"><b>Drag</b> to pan, <b>scroll</b> to zoom, <b>click</b> a node for its callers and callees. Zoom out past the file discs to see the whole repo at once.</div>
+    <section id="tree" hidden aria-label="Hierarchy">
+      <header id="treebar">
+        <div class="seg" role="group" aria-label="Hierarchy">
+          <button id="hStruct" aria-pressed="true">Directories</button>
+          <button id="hCalls" aria-pressed="false">Call tree</button>
+        </div>
+        <div class="seg" id="dirSeg" role="group" aria-label="Call direction">
+          <button id="dOut" aria-pressed="true">Calls out</button>
+          <button id="dIn" aria-pressed="false">Callers</button>
+        </div>
+        <span class="spacer"></span>
+        <button id="treeCollapse" class="linky">Collapse all</button>
+      </header>
+      <div id="rootbar" hidden></div>
+      <div id="treebody" role="tree" tabindex="0"></div>
+    </section>
   </main>
 
   <aside id="panel">

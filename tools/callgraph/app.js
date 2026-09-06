@@ -187,6 +187,7 @@ let W = 0, H = 0, DPR = 1;
 function resize() {
   DPR = Math.min(2, window.devicePixelRatio || 1);
   W = cv.clientWidth; H = cv.clientHeight;
+  if (!W || !H) return;
   cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   measure();
@@ -222,7 +223,7 @@ function computeEgo() {
 }
 
 let raf = 0;
-function draw() { if (!raf) raf = requestAnimationFrame(render); }
+function draw() { if (st.view === "tree" || raf) return; raf = requestAnimationFrame(render); }
 
 function render() {
   raf = 0;
@@ -536,6 +537,7 @@ function select(i, quiet) {
   st.sel = i;
   computeEgo();
   renderSel();
+  if (st.view === "tree") renderTree();
   draw();
   if (i >= 0 && !quiet && mode() === "files") flyTo(X[i], Y[i], Math.max(cam.k, 1.9));
 }
@@ -610,7 +612,14 @@ function runSearch() {
     const cf = document.createElement("span"); cf.className = "cf";
     cf.textContent = G.files[G.file[i]].split("/").pop();
     b.append(nm, cf);
-    b.addEventListener("click", () => { select(i, true); flyTo(X[i], Y[i], 2.4); });
+    b.addEventListener("click", () => {
+      select(i, true);
+      if (st.view === "tree") {
+        if (tree.kind === "struct") revealSelected();
+        renderTree();
+        scrollToSelected();
+      } else flyTo(X[i], Y[i], 2.4);
+    });
     li.append(b); ul.append(li);
   }
   if (!hits.length) {
@@ -736,6 +745,329 @@ function buildMethod() {
     "invisible to all four. The map is what the source says, not what runs.</p>";
 }
 
+
+/* ------------------------------------------------------------------ tree */
+// The map answers "what shape is this codebase"; the tree answers "what is
+// actually in it, and what does this function reach". Two hierarchies: the
+// directory structure, and the call tree from whatever is selected.
+const treeEl = document.getElementById("tree");
+const treeBody = document.getElementById("treebody");
+const treeBar = { struct: document.getElementById("hStruct"),
+                  calls: document.getElementById("hCalls"),
+                  dirSeg: document.getElementById("dirSeg"),
+                  out: document.getElementById("dOut"),
+                  in: document.getElementById("dIn") };
+// `root` is what the call tree unrolls FROM; `st.sel` is what the inspector is
+// showing. Keeping them apart means clicking a row down the tree reads that
+// function without yanking the whole tree out from under you.
+const tree = { kind: "struct", dir: "out", open: new Set(), rows: 0, root: -1 };
+
+let fileMembers = null;
+function buildFileMembers() {
+  fileMembers = new Map();
+  for (let i = 0; i < N; i++) {
+    if (!VIS[i]) continue;
+    let a = fileMembers.get(G.file[i]);
+    if (!a) fileMembers.set(G.file[i], a = []);
+    a.push(i);
+  }
+  for (const a of fileMembers.values())
+    a.sort((x, y) => (G.line[x] - G.line[y]) || (G.name[x] < G.name[y] ? -1 : 1));
+}
+
+let structRoot = null;
+function buildStructure() {
+  buildFileMembers();
+  const root = { name: "", path: "", kids: new Map(), files: [], n: 0 };
+  for (const [f, members] of fileMembers) {
+    const parts = G.files[f].split("/");
+    let cur = root;
+    for (let d = 0; d < parts.length - 1; d++) {
+      const p = parts.slice(0, d + 1).join("/");
+      let k = cur.kids.get(p);
+      if (!k) cur.kids.set(p, k = { name: parts[d], path: p, kids: new Map(), files: [], n: 0 });
+      cur = k;
+    }
+    cur.files.push({ f, members, name: parts[parts.length - 1] });
+  }
+  (function tally(node) {
+    node.n = node.files.reduce((a, x) => a + x.members.length, 0);
+    for (const k of node.kids.values()) node.n += tally(k);
+    return node.n;
+  })(root);
+  // A directory with exactly one child directory and nothing else of its own
+  // is a corridor, not a level: collapse `server/impls/supabase` into one row
+  // rather than three clicks.
+  (function squash(node) {
+    for (const [p, k] of [...node.kids]) {
+      squash(k);
+      let cur = k;
+      while (cur.kids.size === 1 && cur.files.length === 0) {
+        const only = [...cur.kids.values()][0];
+        cur = { name: cur.name + "/" + only.name, path: only.path,
+                kids: only.kids, files: only.files, n: only.n };
+      }
+      if (cur !== k) { node.kids.delete(p); node.kids.set(cur.path, cur); }
+    }
+  })(root);
+  structRoot = root;
+}
+
+function mkRow(depth, opts) {
+  const b = document.createElement("button");
+  b.className = "row";
+  b.style.paddingLeft = "8px";
+  b.setAttribute("role", "treeitem");
+  for (let d = 0; d < depth; d++) {
+    const g = document.createElement("span");
+    g.className = "guide";
+    g.style.width = "14px";
+    b.append(g);
+  }
+  const tw = document.createElement("span");
+  tw.className = opts.expandable ? "tw" : "tw leaf";
+  b.append(tw);
+  if (opts.swatch) b.append(opts.swatch);
+  const nm = document.createElement("span");
+  nm.className = "nm " + (opts.cls || "");
+  nm.textContent = opts.label;
+  if (opts.title) nm.title = opts.title;
+  b.append(nm);
+  if (opts.where) {
+    const w = document.createElement("span");
+    w.className = "where";
+    w.textContent = opts.where;
+    b.append(w);
+  }
+  if (opts.cyc) {
+    const c = document.createElement("span");
+    c.className = "cyc";
+    c.textContent = "↺ already above";
+    b.append(c);
+  }
+  if (opts.badge) {
+    const g = document.createElement("span");
+    g.className = "badge";
+    g.dataset.c = opts.badge;
+    g.textContent = opts.badge;
+    b.append(g);
+  }
+  if (opts.meta) {
+    const m = document.createElement("span");
+    m.className = "meta";
+    m.textContent = opts.meta;
+    b.append(m);
+  }
+  if (opts.expandable) b.setAttribute("aria-expanded", String(!!opts.expanded));
+  if (opts.selected) b.setAttribute("aria-selected", "true");
+  b.addEventListener("click", opts.onClick);
+  tree.rows++;
+  return b;
+}
+
+function langDot(i) {
+  const d = document.createElement("span");
+  d.className = "dot";
+  d.style.background = COLOR[i];
+  return d;
+}
+function dirSwatch(node) {
+  // A directory takes the colour of whatever dominates it, so the tree carries
+  // the same language/group reading as the map.
+  const tally = new Map();
+  (function walk(nd) {
+    for (const fl of nd.files) for (const i of fl.members) {
+      const k = G.lang[i] * 100 + G.cat[i];
+      tally.set(k, (tally.get(k) || 0) + 1);
+    }
+    for (const k of nd.kids.values()) walk(k);
+  })(node);
+  let bk = -1, bv = -1;
+  for (const [k, v] of tally) if (v > bv) { bv = v; bk = k; }
+  const sq = document.createElement("span");
+  sq.className = "sq";
+  sq.style.background = bk < 0 ? CSSV["--ink-3"]
+    : css(mix(G.langs[(bk / 100) | 0], G.cats[bk % 100]));
+  return sq;
+}
+
+function toggle(key) {
+  tree.open.has(key) ? tree.open.delete(key) : tree.open.add(key);
+  renderTree();
+}
+
+function renderStruct(frag) {
+  const walk = (node, depth) => {
+    for (const k of [...node.kids.values()].sort((a, b) => a.name < b.name ? -1 : 1)) {
+      const key = "d:" + k.path, open = tree.open.has(key);
+      frag.append(mkRow(depth, {
+        expandable: true, expanded: open, swatch: dirSwatch(k), cls: "dir",
+        label: k.name + "/", meta: k.n.toLocaleString(),
+        onClick: () => toggle(key),
+      }));
+      if (open) walk(k, depth + 1);
+    }
+    for (const fl of [...node.files].sort((a, b) => a.name < b.name ? -1 : 1)) {
+      const key = "f:" + fl.f, open = tree.open.has(key);
+      frag.append(mkRow(depth, {
+        expandable: true, expanded: open, cls: "fileish", label: fl.name,
+        title: G.files[fl.f], meta: fl.members.length.toLocaleString(),
+        onClick: () => toggle(key),
+      }));
+      if (open) for (const i of fl.members) {
+        frag.append(mkRow(depth + 1, {
+          swatch: langDot(i), label: G.name[i], selected: i === st.sel,
+          title: G.files[G.file[i]] + ":" + G.line[i],
+          meta: G.line[i] ? ":" + G.line[i] : "",
+          onClick: () => { select(i, true); renderTree(); },
+        }));
+      }
+    }
+  };
+  walk(structRoot, 0);
+}
+
+function edgesOf(i) {
+  const out = [];
+  if (tree.dir === "out") {
+    for (let e = outHead[i]; e !== -1; e = outNext[e])
+      if (VIS[G.et[e]] && !st.conf.has(G.ec[e])) out.push([G.et[e], G.ec[e]]);
+  } else {
+    for (let e = inHead[i]; e !== -1; e = inNext[e])
+      if (VIS[G.es[e]] && !st.conf.has(G.ec[e])) out.push([G.es[e], G.ec[e]]);
+  }
+  out.sort((a, b) => (G.name[a[0]] < G.name[b[0]] ? -1 : 1));
+  return out;
+}
+
+function renderCalls(frag) {
+  if (tree.root < 0 || !VIS[tree.root]) tree.root = VIS[st.sel] ? st.sel : -1;
+  if (tree.root < 0) {
+    const p = document.createElement("div");
+    p.className = "treehint";
+    p.innerHTML = "<b>Pick a function first.</b> Search for one above, or open " +
+      "the directory tree and click it — the call tree unrolls from there.";
+    frag.append(p);
+    return;
+  }
+  const LIMIT = 250;
+  const walk = (i, depth, path, conf, fromFile) => {
+    const key = "c:" + path;
+    const cyclic = path.slice(0, -1).includes("/" + i + "/");
+    const kids = cyclic ? [] : edgesOf(i);
+    const open = tree.open.has(key);
+    frag.append(mkRow(depth, {
+      expandable: kids.length > 0, expanded: open, swatch: langDot(i),
+      label: G.name[i], selected: i === st.sel,
+      title: G.files[G.file[i]] + ":" + G.line[i],
+      badge: conf, cyc: cyclic,
+      where: (fromFile !== undefined && G.file[i] !== fromFile)
+        ? G.files[G.file[i]].split("/").pop() : "",
+      meta: kids.length ? kids.length.toLocaleString() : "",
+      onClick: () => {
+        st.sel = i;
+        computeEgo();
+        renderSel();
+        if (kids.length) tree.open.has(key) ? tree.open.delete(key) : tree.open.add(key);
+        renderTree();
+      },
+    }));
+    if (open && depth < 40) {
+      for (const [j, c] of kids.slice(0, LIMIT))
+        walk(j, depth + 1, path + j + "/", G.confs[c], G.file[i]);
+      if (kids.length > LIMIT) {
+        const more = document.createElement("div");
+        more.className = "treehint";
+        more.textContent = "+" + (kids.length - LIMIT) + " more not shown";
+        frag.append(more);
+      }
+    }
+  };
+  const rootPath = "/" + tree.root + "/";
+  tree.open.add("c:" + rootPath);
+  walk(tree.root, 0, rootPath, null);
+}
+
+function renderRootBar() {
+  const bar = document.getElementById("rootbar");
+  if (tree.kind !== "calls") { bar.hidden = true; return; }
+  bar.hidden = false;
+  bar.innerHTML = "";
+  const at = document.createElement("span");
+  at.className = "rootnm";
+  at.textContent = tree.root >= 0 ? G.name[tree.root] : "nothing";
+  const lbl = document.createElement("span");
+  lbl.className = "rootlbl";
+  lbl.textContent = "unrolling from";
+  bar.append(lbl, at);
+  if (st.sel >= 0 && st.sel !== tree.root) {
+    const b = document.createElement("button");
+    b.className = "linky";
+    b.textContent = "↻ start from " + G.name[st.sel];
+    b.addEventListener("click", () => {
+      tree.root = st.sel;
+      tree.open.clear();
+      renderTree();
+    });
+    bar.append(b);
+  }
+}
+
+function renderTree() {
+  if (st.view !== "tree") return;
+  tree.rows = 0;
+  const frag = document.createDocumentFragment();
+  if (tree.kind === "struct") { buildStructure(); renderStruct(frag); }
+  else renderCalls(frag);
+  treeBody.replaceChildren(frag);
+  renderRootBar();
+  document.getElementById("fz").textContent = "—";
+  document.getElementById("fv").textContent = tree.rows.toLocaleString() + " rows";
+  document.getElementById("fmode").textContent =
+    tree.kind === "struct" ? "directory tree"
+      : "call tree · " + (tree.dir === "out" ? "calls out" : "callers");
+}
+
+// Opening the tree on a selection should land on it, not at the repo root.
+function revealSelected() {
+  if (st.sel < 0 || tree.kind !== "struct") return;
+  const parts = G.files[G.file[st.sel]].split("/");
+  for (let d = 0; d < parts.length - 1; d++)
+    tree.open.add("d:" + parts.slice(0, d + 1).join("/"));
+  // squash() may have merged corridors, so open every prefix and let the
+  // renderer use the ones that exist.
+  tree.open.add("f:" + G.file[st.sel]);
+}
+
+function setTreeKind(kind) {
+  tree.kind = kind;
+  if (kind === "calls" && st.sel >= 0) tree.root = st.sel;
+  treeBar.struct.setAttribute("aria-pressed", String(kind === "struct"));
+  treeBar.calls.setAttribute("aria-pressed", String(kind === "calls"));
+  treeBar.dirSeg.hidden = kind !== "calls";
+  if (kind === "struct") revealSelected();
+  renderTree();
+  scrollToSelected();
+}
+function setTreeDir(d) {
+  tree.dir = d;
+  treeBar.out.setAttribute("aria-pressed", String(d === "out"));
+  treeBar.in.setAttribute("aria-pressed", String(d === "in"));
+  renderTree();
+}
+function scrollToSelected() {
+  const el = treeBody.querySelector('[aria-selected="true"]');
+  if (el) el.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" });
+}
+treeBar.struct.addEventListener("click", () => setTreeKind("struct"));
+treeBar.calls.addEventListener("click", () => setTreeKind("calls"));
+treeBar.out.addEventListener("click", () => setTreeDir("out"));
+treeBar.in.addEventListener("click", () => setTreeDir("in"));
+document.getElementById("treeCollapse").addEventListener("click", () => {
+  tree.open.clear();
+  renderTree();
+});
+
 /* ---------------------------------------------------------------- toggles */
 function setLayout() {
   LAY = G.layouts[layoutKey()];
@@ -756,6 +1088,7 @@ function refresh(refit) {
   buildLegends();
   if (st.q) runSearch();
   renderSel();
+  if (st.view === "tree") renderTree();
   if (refit) fit();
   draw();
 }
@@ -771,9 +1104,23 @@ function setInclude(which, on) {
 }
 function setView(v) {
   st.view = v;
-  for (const [id, val] of [["vAuto", "auto"], ["vFiles", "files"], ["vFns", "fns"]])
+  for (const [id, val] of [["vAuto", "auto"], ["vFiles", "files"],
+                           ["vFns", "fns"], ["vTree", "tree"]])
     document.getElementById(id).setAttribute("aria-pressed", String(v === val));
-  draw();
+  const isTree = v === "tree";
+  treeEl.hidden = !isTree;
+  cv.hidden = isTree;
+  document.querySelector(".tools").hidden = isTree;
+  const h = document.getElementById("hint");
+  if (h) h.hidden = isTree;
+  if (isTree) {
+    if (tree.kind === "struct") revealSelected();
+    renderTree();
+    scrollToSelected();
+  } else {
+    if (st.sel >= 0) flyTo(X[st.sel], Y[st.sel], Math.max(cam.k, lodK * 4));
+    draw();
+  }
 }
 document.getElementById("tTests").addEventListener("click",
   () => setInclude("tests", !st.tests));
@@ -782,6 +1129,7 @@ document.getElementById("tStd").addEventListener("click",
 document.getElementById("vAuto").addEventListener("click", () => setView("auto"));
 document.getElementById("vFiles").addEventListener("click", () => setView("files"));
 document.getElementById("vFns").addEventListener("click", () => setView("fns"));
+document.getElementById("vTree").addEventListener("click", () => setView("tree"));
 document.getElementById("zin").addEventListener("click", () => flyTo(cam.x, cam.y, cam.k * 1.7));
 document.getElementById("zout").addEventListener("click", () => flyTo(cam.x, cam.y, cam.k / 1.7));
 document.getElementById("fit").addEventListener("click", () => fit());
@@ -801,6 +1149,7 @@ new MutationObserver(() => { readTheme(); readVars(); buildColors(); buildLegend
 /* ------------------------------------------------------------------ boot */
 setLayout();
 buildLegends(); buildCross(); buildMethod();
+treeBar.dirSeg.hidden = true;
 resize();
 fit();
 // Open on the seam the whole repo turns around: the wasm entry point the web
