@@ -78,6 +78,12 @@ supabase/
   seed.sql                seeds the bot roster (Cordite, Espresso, Handwritten, …)
 
 c/                   pure-C Durak engine + bot arena  ← project 1
+server/                   host-neutral backend: api/ (the contract) +
+                          impls/supabase (deployed) and impls/native (a C
+                          server that links the kernel directly - NOT deployed,
+                          see docs/NATIVE_SERVER.md)
+rustpoc/                  frozen C-vs-Rust kernel benchmarks behind
+                          docs/RUST_VS_C_KERNEL.md; built by nothing
 offlinefun/               offline/PWA layer  ← project 3
 e2e/                      full-stack test suite (real server code, real Postgres)
 docs/                     design / refactor notes; ARCHITECTURE_REVIEW.md is the
