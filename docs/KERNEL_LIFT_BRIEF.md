@@ -837,3 +837,67 @@ Deleting dead code cannot change behaviour, so prove that rather than assert it:
 build every target that touches these files and diff the binaries, or failing
 that run the bot benchmarks and hold the ELO table.
 `make tests`, `make difftests` and the bot parity suites must be unchanged.
+
+## Queued: the Infinite Oracle scores the endgame wrong
+
+A real bug, measured rather than suspected, found while analysing a real game.
+Not lift work.
+Recorded here because anyone building on the Oracle needs to know which of its
+outputs to trust.
+
+In the last few plies, with the stock down to one card, the Oracle's Monte Carlo
+scores INVERT.
+
+- At the losing player's cover of the last eight, holding only the king and jack
+  of clubs, the Oracle scored **cover with the king = 1.013** (near-certain win)
+  and **cover with the jack = 2.000** (certain loss).
+  The opponent held NO clubs at all, so the two moves differ only in which club
+  she keeps, and if anything the king is the worse keep, because it puts a king
+  on the table for the opponent to throw a trump king at.
+  Played out, BOTH lose.
+- One ply earlier it rated "pick up the three eights" at **1.031**
+  (near-certain win).
+  Played out across all five worlds her belief admitted: **loses 5 for 5**.
+
+What this rules out:
+
+- Not a wiring mistake in the harness.
+  The native `og_explain` build (`-DOG_EXPLAIN_BUILD -DFOOLISH_ORACLE_BUILD`,
+  `make og_explain`) and the browser Oracle's own `public/oracle.wasm.gz` driven
+  through `src/oracle/oracleBridge.ts` produce the SAME wrong numbers.
+- Not the belief sampling.
+  The belief pool it printed was exactly correct for the position: queen of
+  hearts, nine of diamonds, queen of diamonds, king of diamonds, ace of diamonds.
+
+**HYPOTHESIS, not a measurement**: since the worlds are right and both builds
+agree, the fault is in the ROLLOUT rather than in the world sampling.
+Nothing has yet been measured inside the rollout itself to confirm that.
+
+The consequence: any analysis built on these scores in the endgame is
+unreliable.
+The hand analysis that found this stayed correct only because its verdicts
+rested on played-out games and the exact endgame solver instead of on the
+Oracle's numbers.
+
+## Queued: a replay URL fails by naming the wrong fault
+
+A papercut, not a crash, on the most natural input a person can give.
+
+`urlToGame` in `server/api/common/replay/codec.ts` recognises exactly one
+prefix, `WWW.FOOLISH.CARDS/`.
+Paste the obvious thing, a real link of the form `https://foolish.cards/<code>`,
+and the prefix does not match, so the whole string is treated as the code.
+The scheme's own letters survive the `[^A-Za-z2-7]` filter and corrupt it.
+It then fails with **"unsupported replay format version 11"**, which sends the
+reader hunting for a codec problem that does not exist.
+
+This repo has form on exactly this class of defect.
+`REPLAY_EHEADER`'s comment argues for naming what an error actually means, and
+the whole of `REPLAY_ETOOLONG` (commit `ebcc7a1`, "a game too long to code says
+so, instead of malformed input") exists because a refusal was reported as a
+corruption.
+
+**SUGGESTED SHAPE, not a decided design**: accept the full URL forms people
+actually paste, and if the code still will not decode, say that the input did
+not look like a replay code rather than naming a format version that was never
+in it.
