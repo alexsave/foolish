@@ -563,9 +563,8 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
         .from('games')
         .select(`
             *,
-            game_decks(deck),
-            player_hands(player_id, hand, awaiting_attack),
-            bot_hands(bot_id, hand, awaiting_attack, bots(strategy_key))
+            player_hands(player_id),
+            bot_hands(bot_id, bots(strategy_key))
         `)
         .eq('id', game_id)
         .single();
@@ -579,7 +578,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
     // hand tables — since commit_game stopped writing bot_hands DURING PLAY, a
     // dealt bot may have no bot_hands row, so the join-based lookup would miss its
     // strategy_key. But this only affects DEALT games: a lobby (WAITING) commit
-    // always writes p_bot_hands (see commitGame: `dealt ? null : botHands`), so a
+    // always writes p_bot_seats (see commitGame: `dealt ? null : botSeatIds`), so a
     // lobby bot always has a bot_hands row and the main JOIN's bots(strategy_key)
     // already carries it. So skip this extra round-trip for lobbies — which is
     // exactly the add/remove-bot hot path, where shaving a cold-isolate round-trip
@@ -592,29 +591,26 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
         for (const b of botRows ?? []) stratByBot.set(b.id, b.strategy_key);
     }
 
+    // NO HANDS HERE. player_hands / bot_hands are membership tables now
+    // (migration 20260906120000): the dealt state is the blob, and a WAITING
+    // game has no cards, so every hand this loop used to read was either
+    // discarded by the blob path below or already empty. Seats start empty and
+    // the blob fills them.
     const players: PrivatePlayer[] = data.players.map((player: any) => {
-        let hand: Card[], awaiting_attack: boolean, strategy_key: string;
-
-        if (player.is_ai) {
-            const botHand = data.bot_hands.find((h: any) => h.bot_id === player.player_id);
-            hand = botHand?.hand ?? [];
-            awaiting_attack = botHand?.awaiting_attack ?? false;
-            strategy_key = stratByBot.get(player.player_id) ?? botHand?.bots?.strategy_key ?? STRATEGY_KEY.RANDOM;
-        } else {
-            const playerHand = data.player_hands.find((h: any) => h.player_id === player.player_id);
-            hand = playerHand?.hand ?? [];
-            awaiting_attack = playerHand?.awaiting_attack ?? false;
-            strategy_key = STRATEGY_KEY.HUMAN;
-        }
+        const strategy_key = player.is_ai
+            ? (stratByBot.get(player.player_id)
+               ?? data.bot_hands.find((h: any) => h.bot_id === player.player_id)?.bots?.strategy_key
+               ?? STRATEGY_KEY.RANDOM)
+            : STRATEGY_KEY.HUMAN;
 
         return {
             player_id: player.player_id,
             name: player.name,
             status: player.status,
             is_ai: player.is_ai,
-            hand: hand,
-            awaiting_attack: awaiting_attack,
-            hand_length: hand.length,
+            hand: [] as Card[],
+            awaiting_attack: false,
+            hand_length: 0,
             strategy_key: strategy_key,
         } as PrivatePlayer;
     });
@@ -678,9 +674,10 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
         id: data.id,
         version: data.version ?? 0, // optimistic-concurrency token for commit_game
         name: data.name,
-        deck: data.game_decks.deck,
-        // unused but necessary for type
-        deck_length: data.game_decks.deck.length,
+        // A lobby has no deck: this path is only reached for a WAITING game
+        // (the blob path returns above), and the deck is dealt at start.
+        deck: [] as Card[],
+        deck_length: 0,
         discard_pile_length: data.discard_pile_length,
         flipped: data.flipped,
         players: players,
@@ -717,15 +714,8 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
   "table_battles": [],
   "created_at": "2025-07-01T06:51:13.74066+00:00",
   "updated_at": "2025-07-01T06:51:13.74066+00:00",
-  "game_decks": {
-    "deck": []
-  },
   "player_hands": [
-    {
-      "hand": [],
-      "player_id": "72c6ac7d-5017-4ff6-86f8-df411d7035dd"
-      "awaiting_attack": false,
-    }
+    { "player_id": "72c6ac7d-5017-4ff6-86f8-df411d7035dd" }
   ]
 }
     */
@@ -733,7 +723,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
 
 // Atomically commit the full game state via the commit_game RPC, gated on the
 // version we loaded (optimistic concurrency — replaces the old game_locks +
-// multi-statement saveCompleteGame). One DB transaction across games/game_decks/
+// multi-statement saveCompleteGame). One DB transaction across games/
 // player_hands/bot_hands → no torn reads; the version gate is the fence that makes
 // double-apply impossible. Returns 'conflict' if another writer committed first;
 // the caller reloads and retries. Logs are handled separately (idempotent).
@@ -767,21 +757,11 @@ export const commitGame = async (
         p_logs_reset = game.logs.some(l => l.log_type === LOG_TYPE.GAME_START);
     }
 
-    const humanHands = game.players
-        .filter(player => !player.is_ai)
-        .map(player => ({
-            player_id: player.player_id,
-            hand: player.hand,
-            awaiting_attack: player.awaiting_attack,
-        }));
-
-    const botHands = game.players
-        .filter(player => player.is_ai)
-        .map(player => ({
-            bot_id: player.player_id,
-            hand: player.hand,
-            awaiting_attack: player.awaiting_attack,
-        }));
+    // Membership, not hands: commit_game upserts these into player_hands /
+    // bot_hands so the tables keep answering "who is in this game" for the
+    // realtime RLS policies and the lobby load. The cards live in the blob.
+    const humanSeatIds = game.players.filter(p => !p.is_ai).map(p => p.player_id);
+    const botSeatIds = game.players.filter(p => p.is_ai).map(p => p.player_id);
 
     // Packed kernel state blob (hex) — the server's authoritative VOLATILE
     // state on reload (see loadCompleteGame). Only meaningful once the game is
@@ -797,13 +777,11 @@ export const commitGame = async (
     }
 
     // Once the game is dealt (p_state present), the packed blob is the sole
-    // authoritative store of the volatile state — the per-hand JSONB tables are
-    // NOT written anymore (that's the cut-over win: no JSONB hand serialization
-    // per move). They're still written while the game is a lobby (p_state null)
-    // so player_hands keeps doubling as the player<->game membership index that
-    // get_my_games reads, and so the pre-deal WAITING load path (which has no
-    // blob) still finds its rows. game_decks likewise: the deck lives in the
-    // blob once dealt.
+    // authoritative store of the volatile state, and the membership rows are
+    // left alone: a dealt game's roster cannot change. A lobby commit passes
+    // the current seats so player_hands keeps doubling as the player<->game
+    // membership index the realtime RLS policies and the WAITING load path
+    // read, and so removing a bot prunes its row.
     const dealt = p_state !== null;
 
     // player_views cache: the per-participant MASKED view rows, upserted INSIDE
@@ -850,9 +828,8 @@ export const commitGame = async (
         p_game_id: game.id,
         p_expected_version: expectedVersion,
         p_game: publicGame,
-        p_deck: dealt ? null : game.deck,
-        p_hands: dealt ? null : humanHands,
-        p_bot_hands: dealt ? null : botHands,
+        p_seats: dealt ? null : humanSeatIds,
+        p_bot_seats: dealt ? null : botSeatIds,
         p_state,
         p_logs_packed,
         p_logs_reset,

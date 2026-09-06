@@ -167,8 +167,9 @@ export async function handleExit({ user, body, game }: ExecutionParams): Promise
     }
 
     if (game.players.length === 0) {
+        // The membership rows cascade with the game (ON DELETE CASCADE), and
+        // game_decks is gone (migration 20260906120000), so this is one delete.
         await supabaseClient.from('games').delete().eq('id', game.id);
-        await supabaseClient.from('game_decks').delete().eq('game_id', game.id);
         return { game, events: [], deleted: true };
     }
 

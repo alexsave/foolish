@@ -100,7 +100,7 @@ if (process.env.NODE_TEST_CONTEXT) after(async () => { await teardownSuiteDb(); 
 else process.on('beforeExit', () => { void teardownSuiteDb(); });
 
 export async function resetDb(): Promise<void> {
-    await pool.query('TRUNCATE games, game_decks, player_hands, bot_hands, bots, game_snapshots, user_elo_ratings, player_views RESTART IDENTITY CASCADE');
+    await pool.query('TRUNCATE games, player_hands, bot_hands, bots, game_snapshots, user_elo_ratings, player_views RESTART IDENTITY CASCADE');
     await pool.query('TRUNCATE auth.users CASCADE');
     resetBroadcastLog();
 }
@@ -120,10 +120,9 @@ export async function seedGame(gameId: string, players: SeedPlayer[]): Promise<v
         await c.query(
             `INSERT INTO games(id,name,players,status,power_suit,first_attacker,defender,version)
              VALUES($1,$2,$3,'waiting',0,0,0,0)`, [gameId, `${gameId}`, JSON.stringify(playersJson)]);
-        await c.query('INSERT INTO game_decks(game_id,deck) VALUES($1,$2)', [gameId, JSON.stringify([])]);
         for (const p of players) {
-            if (p.is_ai) await c.query('INSERT INTO bot_hands(game_id,bot_id,hand) VALUES($1,$2,$3)', [gameId, p.id, JSON.stringify([])]);
-            else await c.query('INSERT INTO player_hands(game_id,player_id,hand) VALUES($1,$2,$3)', [gameId, p.id, JSON.stringify([])]);
+            if (p.is_ai) await c.query('INSERT INTO bot_hands(game_id,bot_id) VALUES($1,$2)', [gameId, p.id]);
+            else await c.query('INSERT INTO player_hands(game_id,player_id) VALUES($1,$2)', [gameId, p.id]);
         }
         await c.query('COMMIT');
     } catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); }

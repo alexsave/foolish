@@ -19,7 +19,6 @@ DROP TABLE IF EXISTS player_views CASCADE;
 DROP TABLE IF EXISTS chat_messages CASCADE;
 DROP TABLE IF EXISTS bot_hands CASCADE;
 DROP TABLE IF EXISTS player_hands CASCADE;
-DROP TABLE IF EXISTS game_decks CASCADE;
 DROP TABLE IF EXISTS games CASCADE;
 DROP TABLE IF EXISTS user_elo_ratings CASCADE;
 DROP TABLE IF EXISTS bots CASCADE;
@@ -82,20 +81,14 @@ CREATE TABLE games (
 );
 
 -- Game decks table - SENSITIVE: Only edge functions can access
-CREATE TABLE game_decks (
-  game_id TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
-  deck JSONB NOT NULL DEFAULT '[]'::jsonb, -- Card[] - deck cards
-  created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW()
-);
-
--- Player hands table - SENSITIVE: Players can only see their own hands
--- This table also serves as the player-game relationship table
+-- MEMBERSHIP: which humans are in which game. Named for the hands it used to
+-- carry - the dealt state is games.state, and the hand/awaiting_attack columns
+-- were write-only by the time they were dropped (migration 20260906120000).
+-- Load-bearing even though it holds no cards: the realtime RLS policies below
+-- EXISTS over it to answer "is this user in this game".
 CREATE TABLE player_hands (
   game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
   player_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  hand JSONB NOT NULL DEFAULT '[]'::jsonb, -- Card[] - player's cards
-  awaiting_attack BOOLEAN NOT NULL DEFAULT false, -- Private status for attack confirmation
   joined_at TIMESTAMP DEFAULT NOW(),
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW(),
@@ -138,11 +131,10 @@ CREATE TABLE bots (
 );
 
 -- Bot hands table - SENSITIVE: Only edge functions can access (similar to player_hands)
+-- MEMBERSHIP: which bots are in which game. See player_hands.
 CREATE TABLE bot_hands (
   game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
   bot_id UUID NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
-  hand JSONB NOT NULL DEFAULT '[]'::jsonb, -- Card[] - bot's cards
-  awaiting_attack BOOLEAN NOT NULL DEFAULT false, -- Private status for attack confirmation
   joined_at TIMESTAMP DEFAULT NOW(),
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW(),
@@ -223,7 +215,6 @@ CREATE TABLE spectator_views (
 
 CREATE INDEX idx_games_status ON games(status);
 CREATE INDEX idx_games_name ON games(name);
-CREATE INDEX idx_game_decks_game_id ON game_decks(game_id);
 CREATE INDEX idx_player_hands_game_id ON player_hands(game_id);
 CREATE INDEX idx_player_hands_player_id ON player_hands(player_id);
 CREATE INDEX idx_chat_messages_game_id ON chat_messages(game_id);
@@ -250,7 +241,6 @@ CREATE INDEX idx_player_views_player ON player_views(player_id, updated_at DESC)
 -- =============================================================================
 
 ALTER TABLE games ENABLE ROW LEVEL SECURITY;
-ALTER TABLE game_decks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE player_hands ENABLE ROW LEVEL SECURITY;
 ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_elo_ratings ENABLE ROW LEVEL SECURITY;
@@ -286,10 +276,6 @@ CREATE POLICY "Authenticated users can create games" ON games
   FOR INSERT WITH CHECK (
     (select auth.role()) = 'authenticated'
   );
-
--- Game Decks: ONLY service role can access (edge functions only)
-CREATE POLICY "Only service role can access game decks" ON game_decks
-  FOR ALL USING ((select auth.role()) = 'service_role');
 
 -- Player Hands: Players can ONLY see their own hands
 CREATE POLICY "Player hands select policy" ON player_hands
@@ -463,10 +449,6 @@ CREATE TRIGGER update_games_updated_at
   FOR EACH ROW 
   EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_game_decks_updated_at 
-  BEFORE UPDATE ON game_decks
-  FOR EACH ROW 
-  EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TRIGGER update_player_hands_updated_at 
   BEFORE UPDATE ON player_hands
@@ -544,9 +526,8 @@ CREATE OR REPLACE FUNCTION commit_game(
   p_game_id          TEXT,
   p_expected_version BIGINT,
   p_game             JSONB,
-  p_deck             JSONB,
-  p_hands            JSONB,
-  p_bot_hands        JSONB,
+  p_seats            JSONB   DEFAULT NULL,  -- human members ["uuid",...]; NULL leaves player_hands untouched (a dealt commit cannot change the roster)
+  p_bot_seats        JSONB   DEFAULT NULL,  -- bot members ["uuid",...]; NULL leaves bot_hands untouched, [] prunes every bot
   p_state            TEXT    DEFAULT NULL,  -- packed kernel state blob (hex); NULL leaves the column unchanged (never-dealt games)
   p_logs_packed      TEXT    DEFAULT NULL,  -- this move's logwire records (bare hex), appended under the version fence
   p_logs_reset       BOOLEAN DEFAULT FALSE, -- session reset (GAME_START in the records): replace instead of append
@@ -606,39 +587,31 @@ BEGIN
     RETURN jsonb_build_object('status', 'conflict');
   END IF;
 
-  IF p_deck IS NOT NULL THEN
-    INSERT INTO game_decks (game_id, deck) VALUES (p_game_id, p_deck)
-    ON CONFLICT (game_id) DO UPDATE SET deck = EXCLUDED.deck, updated_at = now();
+  -- MEMBERSHIP ONLY. These tables used to carry the hands themselves; the dealt
+  -- state is games.state and has been since the blob landed, so all that is
+  -- left here is who is in the game. player_hands is what the realtime RLS
+  -- policies EXISTS over, and the bot prune is how removing a lobby bot takes
+  -- effect without a second round-trip.
+  IF p_seats IS NOT NULL THEN
+    INSERT INTO player_hands (game_id, player_id)
+    SELECT p_game_id, s::uuid FROM jsonb_array_elements_text(p_seats) AS s
+    ON CONFLICT (game_id, player_id) DO UPDATE SET updated_at = now();
   END IF;
 
-  IF p_hands IS NOT NULL AND jsonb_array_length(p_hands) > 0 THEN
-    INSERT INTO player_hands (game_id, player_id, hand, awaiting_attack)
-    SELECT p_game_id, (h->>'player_id')::uuid, h->'hand',
-           COALESCE((h->>'awaiting_attack')::bool, false)
-    FROM jsonb_array_elements(p_hands) AS h
-    ON CONFLICT (game_id, player_id) DO UPDATE
-      SET hand = EXCLUDED.hand, awaiting_attack = EXCLUDED.awaiting_attack, updated_at = now();
-  END IF;
-
-  IF p_bot_hands IS NOT NULL THEN
-    IF jsonb_array_length(p_bot_hands) > 0 THEN
-      INSERT INTO bot_hands (game_id, bot_id, hand, awaiting_attack)
-      SELECT p_game_id, (b->>'bot_id')::uuid, b->'hand',
-             COALESCE((b->>'awaiting_attack')::bool, false)
-      FROM jsonb_array_elements(p_bot_hands) AS b
-      ON CONFLICT (game_id, bot_id) DO UPDATE
-        SET hand = EXCLUDED.hand, awaiting_attack = EXCLUDED.awaiting_attack, updated_at = now();
+  -- Guarded to lobby commits exactly as before: a dealt commit passes NULL (the
+  -- roster cannot change mid-game), and an empty array prunes every bot because
+  -- the last one was just removed.
+  IF p_bot_seats IS NOT NULL THEN
+    IF jsonb_array_length(p_bot_seats) > 0 THEN
+      INSERT INTO bot_hands (game_id, bot_id)
+      SELECT p_game_id, b::uuid FROM jsonb_array_elements_text(p_bot_seats) AS b
+      ON CONFLICT (game_id, bot_id) DO UPDATE SET updated_at = now();
     END IF;
 
-    -- Prune bot_hands for bots no longer in the roster (a removed lobby bot), so
-    -- handleExit doesn't need a separate pre-commit DELETE round-trip. Mirrors the
-    -- player_views prune below. Guarded to lobby commits: a dealt commit passes
-    -- p_bot_hands = NULL (the blob is authoritative), so mid-game bot hands are
-    -- never touched. An empty array prunes every bot (the last one was removed).
     DELETE FROM bot_hands
     WHERE game_id = p_game_id
       AND bot_id NOT IN (
-        SELECT (b->>'bot_id')::uuid FROM jsonb_array_elements(p_bot_hands) AS b
+        SELECT b::uuid FROM jsonb_array_elements_text(p_bot_seats) AS b
       );
   END IF;
 
@@ -680,7 +653,7 @@ BEGIN
 END;
 $$;
 
--- create_game: the three create-game inserts (games → game_decks → player_hands)
+-- create_game: both create-game inserts (games → player_hands membership)
 -- in one transaction / one round-trip. See migration 20260618120000.
 CREATE OR REPLACE FUNCTION create_game(
   p_game_id   TEXT,
@@ -698,11 +671,8 @@ BEGIN
   INSERT INTO games (id, name, players, status)
     VALUES (p_game_id, p_name, p_players, 'waiting');
 
-  INSERT INTO game_decks (game_id, deck)
-    VALUES (p_game_id, '[]'::jsonb);
-
-  INSERT INTO player_hands (game_id, player_id, hand, awaiting_attack)
-    VALUES (p_game_id, p_player_id, '[]'::jsonb, false);
+  INSERT INTO player_hands (game_id, player_id)
+    VALUES (p_game_id, p_player_id);
 
   -- Seed the player_views dashboard cache for the creator in the same
   -- transaction, so the new lobby is immediately readable from the client's

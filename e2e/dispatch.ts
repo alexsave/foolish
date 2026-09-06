@@ -88,7 +88,7 @@ export async function checkCardConservation(gameId: string): Promise<{ ok: boole
         for (const c of game.deck) live.push(c);
         for (const p of game.players) for (const c of p.hand) live.push(c);
     } else {
-        const deck = (await pgPool.query('SELECT deck FROM game_decks WHERE game_id=$1', [gameId])).rows[0]?.deck ?? [];
+        const deck: unknown[] = [];   // game_decks is gone; a lobby has no deck and a dealt one lives in games.state
         const ph = (await pgPool.query('SELECT hand FROM player_hands WHERE game_id=$1', [gameId])).rows;
         const bh = (await pgPool.query('SELECT hand FROM bot_hands WHERE game_id=$1', [gameId])).rows;
         for (const c of deck) live.push(c);
