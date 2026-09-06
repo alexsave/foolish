@@ -317,9 +317,12 @@ int replay_extras_link(const char *moves,
                        char *out, int cap) {
     static const char prefix[] = REPLAY_LINK_PREFIX;
     // 8 seats of arbitrary Unicode with room to spare; a roster past this is a
-    // caller bug, not a nickname.
-    unsigned char in[4096];
-    unsigned char blob[8192];
+    // caller bug, not a nickname. STATIC, not automatic: bots.wasm links with a
+    // 22,528-byte stack (c/Makefile WASM_BOT_LDFLAGS) and 12 KB of it in one
+    // frame is not a margin. The kernel is single-threaded by design, here as
+    // everywhere else.
+    static unsigned char in[4096];
+    static unsigned char blob[8192];
     int w = 0, n, bare;
 
     if (!moves || !out || cap < 1) return -REPLAY_EXTRAS_EINPUT;
