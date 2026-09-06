@@ -677,7 +677,7 @@ final class HarnessModel: ObservableObject {
     }
 
     /// REVIEW RIG: put a REAL sealed chain in the transcript as one that was
-    /// already there, and leave it selected — so opening it is a COLD open.
+    /// already there, and leave it selected - so opening it is a COLD open.
     ///
     /// Not the same thing as `deliver()`, and the difference is the whole reason
     /// `HARNESS_SCENARIO=myplay` posed nothing for rounds. `deliver()` calls
@@ -685,7 +685,7 @@ final class HarnessModel: ObservableObject {
     /// opened QUIETLY on purpose (`MessageTurnController.suppressOpenReplay`):
     /// having watched your own move land, you do not want it replayed back at
     /// you. So a scenario that stages, sends, and then reads its own bubble
-    /// cannot pose a replay at all — it opens with `openReplay events=0`.
+    /// cannot pose a replay at all - it opens with `openReplay events=0`.
     ///
     /// This is the other way a chain whose last actor is ME reaches a board:
     /// the transcript already holds it (a second device, a relaunch, a scroll
