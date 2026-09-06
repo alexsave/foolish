@@ -18,6 +18,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { kernelB32Encode, kernelReplayLink } from '../sdk/ts/wasm/bots.ts';
 
 import { game_done } from '../server/api/common/common_utils.ts';
 import { start_game } from '../server/api/common/game_lifecycle.ts';
@@ -35,8 +36,7 @@ import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
 import { ReplayInput, SeatLog, DecodedReplay, INFO_TYPES } from '../server/api/common/replay/core.ts';
 import { decodeReplay } from '../server/api/common/replay/decode.ts';
 import {
-  urlToGame, base64Decode, base64Encode, base32Encode, bytesToBigint, codeToGame, gameToUrl,
-  URL_PREFIX,
+  urlToGame, base64Decode, base64Encode, bytesToBigint,
 } from '../server/api/common/replay/codec.ts';
 import { kernelReplayEncodeV6FromGame } from '../sdk/ts/wasm/bots.ts';
 import { suiteRng } from './helpers/rng.ts';
@@ -215,7 +215,8 @@ async function roundTripGame(game: Game, np: number, where: string): Promise<boo
   const x = bytesToBigint(bytes);
   const enc = {
     x, bytes, byteLength: bytes.length,
-    base32: base32Encode(bytes), base64: base64Encode(bytes), url: gameToUrl(x),
+    base32: kernelB32Encode(bytes), base64: base64Encode(bytes),
+    url: kernelReplayLink(kernelB32Encode(bytes), []),
   };
 
   // decode through every serialization layer
@@ -225,7 +226,7 @@ async function roundTripGame(game: Game, np: number, where: string): Promise<boo
   // and every letter of `https` is in the base32 alphabet - so an unrecognised
   // prefix does not fail, it names a DIFFERENT game, which then dies in the
   // kernel under a codec error that was never the fault.
-  const bareCode = enc.url.slice(URL_PREFIX.length);
+  const bareCode = enc.base32;
   for (const pasted of [
     `https://foolish.cards/${bareCode}`,
     `https://www.foolish.cards/${bareCode}`,

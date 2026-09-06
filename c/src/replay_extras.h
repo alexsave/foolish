@@ -104,6 +104,26 @@ int replay_extras_roster_speaks(const unsigned char *in, int in_len);
 // the length written (NUL-terminated), or -REPLAY_EXTRAS_ECAP.
 #define REPLAY_LINK_PREFIX "https://foolish.cards/"
 
+// The same link in QR ALPHANUMERIC form. A QR packs an uppercase-alphanumeric
+// payload at 5.5 bits per character against byte mode's 8, so a lowercase
+// letter anywhere in the string costs a whole QR version. The moves code is
+// already RFC 4648 upper-case; the prefix is the only thing that would drop it
+// into byte mode, so this one is uppercase and drops the scheme. It is the same
+// link - a reader that resolves foolish.cards gets there either way.
+//
+// Only a QR should use it. Anything a person copies, clicks or pastes wants
+// REPLAY_LINK_PREFIX, which browsers and chat clients auto-link.
+#define REPLAY_LINK_PREFIX_QR "WWW.FOOLISH.CARDS/"
+
+// `style` picks between them: 0 = the https link, 1 = the QR form.
+#define REPLAY_LINK_STYLE_URL 0
+#define REPLAY_LINK_STYLE_QR  1
+
+int replay_extras_link_styled(const char *moves,
+                              const unsigned char *names, int names_len, int n_names,
+                              int style, char *out, int cap);
+
+// REPLAY_LINK_STYLE_URL, for the callers that never wanted a choice.
 int replay_extras_link(const char *moves,
                        const unsigned char *names, int names_len, int n_names,
                        char *out, int cap);

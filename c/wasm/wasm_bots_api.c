@@ -578,7 +578,32 @@ int wasm_replay_extras_decode(int blob_len, int player_count, int move_count) {
                                 wasm_io_ptr(), wasm_io_cap());
 }
 
-// The whole shareable link. The REPLAY buffer holds
+// base32, the way a replay integer travels as text (replay.h). Both directions
+// read the REPLAY io buffer and write the MAIN one, so the two never alias.
+//
+// replay.h has always described this alphabet as "the web's codec.ts alphabet",
+// and replay.c's own comment said a code made on the web "reads here byte for
+// byte" - which is a mirror admitting it is a mirror. The web asks for it now,
+// and there is one alphabet.
+int wasm_replay_b32_encode(int in_len) {
+    return replay_b32_encode(wasm_replay_io_ptr(), in_len,
+                             (char *)wasm_io_ptr(), wasm_io_cap());
+}
+
+// `in_len` bytes of ASCII in the replay buffer; NUL-terminated in place, since
+// the decoder wants a C string. Stops at '-' (a share link's extras suffix).
+int wasm_replay_b32_decode(int in_len) {
+    unsigned char *in = wasm_replay_io_ptr();
+    if (in_len < 0 || in_len >= wasm_replay_io_cap()) return -1;
+    in[in_len] = 0;
+    return replay_b32_decode((const char *)in, wasm_io_ptr(), wasm_io_cap());
+}
+
+// The whole shareable link, in one of two styles (REPLAY_LINK_STYLE_*): the
+// https link a person copies, or the uppercase scheme-less form a QR wants,
+// which stays in QR alphanumeric mode and so fits a smaller version. Same link.
+//
+// The REPLAY buffer holds
 // [u8 n_names][u16 roster_len][roster bytes][moves bytes], the link comes back
 // in the MAIN one.
 //
@@ -586,7 +611,7 @@ int wasm_replay_extras_decode(int blob_len, int player_count, int move_count) {
 // argument replay_extras_link wants as a C string, and a long v6 game's code
 // runs to tens of KB, which is not a thing to copy through a fixed buffer. One
 // spare byte at the end of the input is what that costs.
-int wasm_replay_link(int in_len) {
+int wasm_replay_link(int in_len, int style) {
     unsigned char *in = wasm_replay_io_ptr();
     int n_names, roster_len, p;
     if (in_len < 3 || in_len >= wasm_replay_io_cap()) return -REPLAY_EXTRAS_EINPUT;
@@ -595,9 +620,9 @@ int wasm_replay_link(int in_len) {
     p = 3;
     if (roster_len < 0 || p + roster_len > in_len) return -REPLAY_EXTRAS_EINPUT;
     in[in_len] = 0;                            // terminate the moves code in place
-    return replay_extras_link((const char *)(in + p + roster_len),
-                              in + p, roster_len, n_names,
-                              (char *)wasm_io_ptr(), wasm_io_cap());
+    return replay_extras_link_styled((const char *)(in + p + roster_len),
+                                     in + p, roster_len, n_names, style,
+                                     (char *)wasm_io_ptr(), wasm_io_cap());
 }
 
 // ---------- packed bytes -> JSON (A8/F7) ------------------------------------

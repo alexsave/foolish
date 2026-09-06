@@ -16,7 +16,8 @@ import { TutorialHintProvider, TutorialHint } from '../contexts/TutorialHintCont
 import { GameBoard } from './GameBoard';
 import { usePreventScroll } from '../hooks/usePreventScroll';
 import { animationFeed, AnimationSequenceMessage } from '../state/animationFeed';
-import { bigintToBytes, codeToGame } from '@api/common/replay/codec.ts';
+import { bigintToBytes, bytesToBigint } from '@api/common/replay/codec.ts';
+import { kernelB32Decode } from '@sdk/ts/wasm/bots.ts';
 import { decodeReplay } from '@api/common/replay/decode.ts';
 import { DecodedReplay } from '@api/common/replay/core.ts';
 import { ensureBotsAsync } from '@sdk/ts/wasm/bots.ts';
@@ -469,7 +470,7 @@ const IntroCard = ({ onStart, onSkip }: { onStart: () => void; onSkip: () => voi
 
 /* --------------------------------- root ------------------------------------ */
 const buildTutorialData = async () => {
-    const x = codeToGame(TUTORIAL_MOVES_CODE);
+    const x = bytesToBigint(kernelB32Decode(TUTORIAL_MOVES_CODE));
     await ensureBotsAsync();
     const decoded = await decodeReplay(x);
     const names = TUTORIAL_NAMES.slice(0, decoded.playerCount);

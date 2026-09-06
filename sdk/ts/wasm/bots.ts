@@ -41,7 +41,9 @@ interface BotsExports extends EngineExports {
     wasm_events_json(len: number): number;
     wasm_replay_extras_encode(in_len: number): number;
     wasm_replay_extras_decode(blob_len: number, player_count: number, move_count: number): number;
-    wasm_replay_link(in_len: number): number;
+    wasm_replay_link(in_len: number, style: number): number;
+    wasm_replay_b32_encode(in_len: number): number;
+    wasm_replay_b32_decode(in_len: number): number;
     wasm_unambiguous_cover(n_cover: number, n_battles: number, power_suit: number): number;
     wasm_clear_logs(): void;
     wasm_import_strategy_keys(): void;
@@ -1305,7 +1307,39 @@ export function kernelReplayExtrasDecode(blob: Uint8Array, playerCount: number,
  * codec's, so a phone, a watch and a browser have no business each writing it.
  * `names` must be as wide as the table; unnamed seats are ''.
  */
-export function kernelReplayLink(moves: string, names: string[]): string {
+/** replay_extras.h REPLAY_LINK_STYLE_*: the https link, or the QR form. */
+export const REPLAY_LINK = { url: 0, qr: 1 } as const;
+
+// base32, from the kernel (replay.c replay_b32_encode/decode). replay.h called
+// this alphabet "the web's codec.ts alphabet" and replay.c said a code made on
+// the web "reads here byte for byte" - a mirror documenting itself as one. The
+// web asks for it now, so there is one alphabet.
+export function kernelB32Encode(bytes: Uint8Array): string {
+    const ex = bots();
+    if (bytes.length >= ex.wasm_replay_io_cap()) throw new Error('b32: input exceeds the kernel IO buffer');
+    __mem(ex).set(bytes, ex.wasm_replay_io_ptr());
+    const w = ex.wasm_replay_b32_encode(bytes.length);
+    if (w < 0) throw new Error('b32: encode overflowed the kernel IO buffer');
+    const base = ex.wasm_io_ptr();
+    return new TextDecoder().decode(__mem(ex).slice(base, base + w));
+}
+
+// Accepts lower case, ignores characters outside the alphabet, and stops at the
+// '-' where a share link's extras suffix begins. All of that is the kernel's
+// decoder, not a convention restated here.
+export function kernelB32Decode(code: string): Uint8Array {
+    const ex = bots();
+    const inBytes = new TextEncoder().encode(code);
+    // The kernel writes a terminator one byte past the input.
+    if (inBytes.length + 1 >= ex.wasm_replay_io_cap()) throw new Error('b32: input exceeds the kernel IO buffer');
+    __mem(ex).set(inBytes, ex.wasm_replay_io_ptr());
+    const w = ex.wasm_replay_b32_decode(inBytes.length);
+    if (w < 0) throw new Error('b32: decode overflowed the kernel IO buffer');
+    const base = ex.wasm_io_ptr();
+    return __mem(ex).slice(base, base + w);
+}
+
+export function kernelReplayLink(moves: string, names: string[], style: number = REPLAY_LINK.url): string {
     const ex = bots();
     const enc = new TextEncoder();
     const movesBytes = enc.encode(moves);
@@ -1325,7 +1359,7 @@ export function kernelReplayLink(moves: string, names: string[]): string {
     // must fit the buffer with room for it.
     if (args.length >= ex.wasm_replay_io_cap()) throw new Error('extras: link arguments exceed the kernel IO buffer');
     __mem(ex).set(args, ex.wasm_replay_io_ptr());
-    const w = ex.wasm_replay_link(args.length);
+    const w = ex.wasm_replay_link(args.length, style);
     if (w < 0) throw __extrasError(w);
     const base = ex.wasm_io_ptr();
     return new TextDecoder().decode(__mem(ex).subarray(base, base + w));

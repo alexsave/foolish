@@ -57,7 +57,7 @@ export default function MessagePayloadPage() {
                 // The bytes arrive over the network here, so the module has to be
                 // ready before any of the synchronous kernel calls below.
                 await ensureBotsAsync();
-                const { base32Decode, base32Encode } = await import('@api/common/replay/codec.ts');
+                const { kernelB32Decode, kernelB32Encode } = await import('@sdk/ts/wasm/bots.ts');
                 const { viewToGame } = await import('@sdk/ts/wire/view.ts');
 
                 // The leading char is the TEXT-level format version, so the route
@@ -67,7 +67,7 @@ export default function MessagePayloadPage() {
 
                 // Decoding VALIDATES: the chain replays through the kernel, so a
                 // hand-edited payload throws here rather than half-rendering.
-                const env = kernelMsgDecode(base32Decode(text.slice(1)));
+                const env = kernelMsgDecode(kernelB32Decode(text.slice(1)));
                 // ...and leaves the game resident, which is what this reads.
                 const { view } = kernelMsgPublicView();
 
@@ -106,7 +106,7 @@ export default function MessagePayloadPage() {
                         // fio_replay_share_link, so this page and a bubble hand
                         // out the same characters. No roster here: this route
                         // has the chain's board, not its joins.
-                        replayUrl = kernelReplayLink(base32Encode(code), []);
+                        replayUrl = kernelReplayLink(kernelB32Encode(code), []);
                     } catch (e) {
                         // eslint-disable-next-line no-console
                         console.error('[m] replay code derivation failed:', e);

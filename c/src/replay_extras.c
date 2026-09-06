@@ -315,7 +315,17 @@ int replay_extras_decode(const unsigned char *blob, int blob_len,
 int replay_extras_link(const char *moves,
                        const unsigned char *names, int names_len, int n_names,
                        char *out, int cap) {
-    static const char prefix[] = REPLAY_LINK_PREFIX;
+    return replay_extras_link_styled(moves, names, names_len, n_names,
+                                     REPLAY_LINK_STYLE_URL, out, cap);
+}
+
+int replay_extras_link_styled(const char *moves,
+                              const unsigned char *names, int names_len, int n_names,
+                              int style, char *out, int cap) {
+    const char *prefix = (style == REPLAY_LINK_STYLE_QR)
+        ? REPLAY_LINK_PREFIX_QR : REPLAY_LINK_PREFIX;
+    const int prefix_len = (int)((style == REPLAY_LINK_STYLE_QR)
+        ? sizeof(REPLAY_LINK_PREFIX_QR) : sizeof(REPLAY_LINK_PREFIX)) - 1;
     // 8 seats of arbitrary Unicode with room to spare; a roster past this is a
     // caller bug, not a nickname. STATIC, not automatic: bots.wasm links with a
     // 22,528-byte stack (c/Makefile WASM_BOT_LDFLAGS) and 12 KB of it in one
@@ -330,7 +340,7 @@ int replay_extras_link(const char *moves,
     if (names_len < 0 || (names_len > 0 && !names)) return -REPLAY_EXTRAS_EINPUT;
     if (names_len > (int)sizeof(in) - 2) return -REPLAY_EXTRAS_EINPUT;
 
-    for (int i = 0; i < (int)sizeof(prefix) - 1; i++) {
+    for (int i = 0; i < prefix_len; i++) {
         if (w >= cap - 1) return -REPLAY_EXTRAS_ECAP;
         out[w++] = prefix[i];
     }

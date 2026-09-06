@@ -20,6 +20,8 @@
  * ========================================================================== */
 
 import { test } from 'node:test';
+import { bytesToBigint } from '../server/api/common/replay/codec.ts';
+import { kernelB32Decode } from '../sdk/ts/wasm/bots.ts';
 import assert from 'node:assert/strict';
 
 import { codeToGame, bigintToBytes } from '../server/api/common/replay/codec.ts';
@@ -60,7 +62,7 @@ const isLearnerStep = (frames: ReplayFrame[], i: number): boolean => {
 };
 
 const load = async () => {
-    const x = codeToGame(TUTORIAL_MOVES_CODE);
+    const x = bytesToBigint(kernelB32Decode(TUTORIAL_MOVES_CODE));
     const decoded = await decodeReplay(x);
     const frames = buildReplayFrames(bigintToBytes(x), 'tutorial', TUTORIAL_NAMES, {
         viewer: LEARNER, fool: decoded.fool,

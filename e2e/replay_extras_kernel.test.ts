@@ -52,6 +52,7 @@
  * ========================================================================== */
 
 import { test } from 'node:test';
+import { bytesToBigint } from '../server/api/common/replay/codec.ts';
 import assert from 'node:assert/strict';
 
 import {
@@ -61,10 +62,8 @@ import {
   encodeExtras, encodeExtrasBytes, encodeExtrasFromGaps, decodeExtras,
   splitReplayCode, joinReplayCode,
 } from '../server/api/common/replay/extras.ts';
-import { base32Encode, base32Decode, codeToGame } from '../server/api/common/replay/codec.ts';
-import {
-  kernelReplayExtrasEncode, kernelReplayExtrasDecode, kernelReplayLink, ensureBotsAsync,
-} from '../sdk/ts/wasm/bots.ts';
+import { codeToGame } from '../server/api/common/replay/codec.ts';
+import { kernelReplayExtrasEncode, kernelReplayExtrasDecode, kernelReplayLink, ensureBotsAsync, kernelB32Encode, kernelB32Decode } from '../sdk/ts/wasm/bots.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
@@ -177,7 +176,7 @@ test('the kernel round-trips its own blob through the URL container', async () =
   assert.equal(split.extras, extras, 'the extras half must come through byte for byte');
   // A link with names names the same game as the link without them: the reader
   // cuts at the dash, so old codes and new codes decode identically.
-  assert.equal(codeToGame(split.moves), codeToGame(MOVES), 'the game behind the link changed');
+  assert.equal(bytesToBigint(kernelB32Decode(split.moves)), bytesToBigint(kernelB32Decode(MOVES)), 'the game behind the link changed');
 
   const back = decodeExtras(split.extras!, names.length, moveTimes.length - 1);
   assert.deepEqual(back.names, names, 'the nicknames did not survive the round trip');
@@ -189,7 +188,7 @@ test('the kernel round-trips its own blob through the URL container', async () =
 
   // The raw-bytes door the server stores (game_snapshots.extras) is the same
   // blob, not a second encoding of it.
-  assert.equal(hex(encodeExtrasBytes(names, moveTimes)), hex(base32Decode(extras)),
+  assert.equal(hex(encodeExtrasBytes(names, moveTimes)), hex(kernelB32Decode(extras)),
     'the stored bytes and the URL segment disagree');
 });
 
@@ -319,18 +318,18 @@ test('the kernel writes the whole link, and an anonymous table gets the bare one
   const segment = named.slice(bare.length + 1);
   // …and the segment is exactly the codec's blob for that roster, base32'd -
   // the link builder adds nothing of its own.
-  assert.equal(segment, base32Encode(kernelReplayExtrasEncode(['Sveta', '', 'Владимир'], null, null)));
+  assert.equal(segment, kernelB32Encode(kernelReplayExtrasEncode(['Sveta', '', 'Владимир'], null, null)));
   // The reader cuts at the dash, so the game behind a named link is the game
   // behind the bare one.
   const { moves } = splitReplayCode(named.slice('https://foolish.cards/'.length));
-  assert.equal(codeToGame(moves), codeToGame(MOVES));
+  assert.equal(bytesToBigint(kernelB32Decode(moves)), bytesToBigint(kernelB32Decode(MOVES)));
 });
 
 test('the base32 the URL carries survives the trip in both directions', async () => {
   await ensureBotsAsync();
   for (const c of corpus(120, 987654321n)) {
     const bytes = kernelReplayExtrasEncode(c.names, c.startTime, c.gaps);
-    assert.equal(hex(base32Decode(base32Encode(bytes))), hex(bytes),
+    assert.equal(hex(kernelB32Decode(kernelB32Encode(bytes))), hex(bytes),
       'base32 is not the identity on an extras blob');
   }
 });

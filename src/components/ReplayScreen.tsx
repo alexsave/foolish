@@ -18,7 +18,8 @@ import { GameBoard } from './GameBoard';
 import { Telestrator } from './Telestrator';
 import { usePreventScroll } from '../hooks/usePreventScroll';
 import { animationFeed, AnimationSequenceMessage } from '../state/animationFeed';
-import { bigintToBytes, codeToGame } from '@api/common/replay/codec.ts';
+import { bigintToBytes, bytesToBigint } from '@api/common/replay/codec.ts';
+import { kernelB32Decode } from '@sdk/ts/wasm/bots.ts';
 import { decodeReplay } from '@api/common/replay/decode.ts';
 import { DecodedReplay } from '@api/common/replay/core.ts';
 import { ensureBotsAsync } from '@sdk/ts/wasm/bots.ts';
@@ -952,7 +953,7 @@ const ReplayStage = ({ decoded, frames, reverses, gameId, names, times }: StageP
 
 const buildReplayData = async (code: string, gameId: string) => {
     const { moves, extras: extrasCode } = splitReplayCode(code);
-    const x = codeToGame(moves);
+    const x = bytesToBigint(kernelB32Decode(moves));
     await ensureBotsAsync();
 
     // The kernel's own decode, for the two things the frames don't carry: who

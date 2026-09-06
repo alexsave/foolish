@@ -6,17 +6,15 @@
  * drives encode and decode (see core.ts), so the round trip is correct by
  * construction.
  *
- * This file contains everything that is INDEPENDENT of the game rules:
- *   - the exact rANS coder kernel (native BigInt — no bignum library needed)
- *   - the Coder driver (one primitive: code(weights, chosen?))
- *   - integer <-> bytes <-> base32/base64 <-> URL
- *   - URL routing (legacy short code vs. self-contained replay)
- *   - CNS subset ranking (reserved for the v2 "set-coded reveal" optimization)
+ * What is left here is what the kernel does NOT do:
+ *   - integer <-> bytes, and base64
+ *   - hex (a Postgres column format C has no reason to know)
+ *   - READING a pasted link back (urlToCode / urlToGame) and deciding a path
+ *     segment's type - replay_extras.h keeps the URL *type* platform-side
  *
- * The game-rules projection lives in the C kernel (c/src/replay.c),
- * reached through encode.ts/decode.ts + sdk/ts/wasm/engine.ts. The Coder
- * class below remains the TS-side arithmetic-coding primitive for the
- * frozen oracle (e2e/replay_ts_oracle.ts) and any rules-free side channels.
+ * Everything the kernel does do has gone to it: the rANS coder (c/src/replay.c,
+ * which always had its own), base32 (replay_b32_encode / _decode) and the link
+ * builders (replay_extras_link_styled).
  * ========================================================================== */
 
 /* ----------------------------------------------------------------------------
@@ -33,12 +31,8 @@
  * a hex column value, a base32 URL segment, or a base64 blob.
  * ------------------------------------------------------------------------- */
 
-const B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-const B32_INV: Record<string, number> = (() => {
-  const m: Record<string, number> = {};
-  for (let i = 0; i < B32.length; i++) m[B32[i]] = i;
-  return m;
-})();
+import { kernelB32Decode } from "@sdk/ts/wasm/bots.ts";
+
 const B64 =
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const B64_INV: Record<string, number> = (() => {
@@ -55,8 +49,7 @@ export function bigintToBytes(x: bigint): Uint8Array {
     out.push(Number(x & 0xffn));
     x >>= 8n;
   }
-  out.reverse(); // big-endian, minimal
-  return Uint8Array.from(out);
+  return new Uint8Array(out.reverse());
 }
 
 export function bytesToBigint(b: Uint8Array): bigint {
@@ -65,39 +58,11 @@ export function bytesToBigint(b: Uint8Array): bigint {
   return x;
 }
 
-export function base32Encode(bytes: Uint8Array): string {
-  let bits = 0,
-    value = 0,
-    out = "";
-  for (const b of bytes) {
-    value = (value << 8) | b;
-    bits += 8;
-    while (bits >= 5) {
-      out += B32[(value >>> (bits - 5)) & 31];
-      bits -= 5;
-    }
-  }
-  if (bits > 0) out += B32[(value << (5 - bits)) & 31];
-  return out;
-}
-
-export function base32Decode(s: string): Uint8Array {
-  let bits = 0,
-    value = 0;
-  const out: number[] = [];
-  for (const ch of s.toUpperCase()) {
-    const idx = B32_INV[ch];
-    if (idx === undefined) continue; // ignore stray chars
-    value = (value << 5) | idx;
-    bits += 5;
-    if (bits >= 8) {
-      out.push((value >>> (bits - 8)) & 0xff);
-      bits -= 8;
-    }
-  }
-  return Uint8Array.from(out);
-}
-
+// base32 lived here, with its alphabet. It is the kernel's
+// (replay.c replay_b32_encode/decode, reached through bots.ts kernelB32Encode /
+// kernelB32Decode) - replay.h had always described the C one as "the web's
+// codec.ts alphabet", which is a mirror naming its original.
+//
 export function base64Encode(bytes: Uint8Array): string {
   let out = "";
   for (let i = 0; i < bytes.length; i += 3) {
@@ -149,61 +114,63 @@ export function hexToBytes(hex: string): Uint8Array {
   return out;
 }
 
-export const URL_PREFIX = "WWW.FOOLISH.CARDS/";
-
-function gameToCode(x: bigint): string {
-  return base32Encode(bigintToBytes(x));
-}
-export function codeToGame(code: string): bigint {
-  return bytesToBigint(base32Decode(code));
-}
-export function gameToUrl(x: bigint): string {
-  return URL_PREFIX + gameToCode(x);
-}
-/** The public host, without the `www.` a browser hides and a person omits. */
+// The link builders lived here: URL_PREFIX, gameToCode, gameToUrl, codeToGame,
+// urlToCode, urlToGame. They are the kernel's now (replay_extras.c
+// replay_extras_link_styled, through bots.ts kernelReplayLink), which already
+// assembled the same string for the /m/ route while these built it by
+// concatenation for everything else - and built it DIFFERENTLY, uppercase and
+// scheme-less, so the same replay copied from two screens gave two links.
+//
+// Both forms survive because both are wanted, and the kernel owns the choice:
+// REPLAY_LINK.url is the https link a person copies, REPLAY_LINK.qr is the
+// uppercase scheme-less one, which stays in QR alphanumeric mode and so fits a
+// smaller QR version.
+//
 const URL_HOST = "FOOLISH.CARDS/";
 const IS_BASE32 = /^[A-Za-z2-7]+$/;
 
 /**
  * The replay code out of whatever a person pasted.
  *
- * Accepts the bare code, the printed form `WWW.FOOLISH.CARDS/<code>`, and the
- * links a browser actually hands out - `https://foolish.cards/<code>`,
- * `https://www.foolish.cards/<code>`, scheme or no scheme, trailing slash,
- * query or fragment. Whitespace anywhere is dropped: a code that survived a
- * line wrap is still that code.
+ * PARSING is what stayed on this side. The kernel BUILDS links
+ * (replay_extras_link_styled) and every builder here is gone, but nothing in C
+ * reads a link back: replay_b32_decode is deliberately tolerant - it ignores
+ * characters outside the alphabet and stops at '-' - which is right for a code
+ * and wrong for a URL, because every letter of "https" is in the base32
+ * alphabet. A prefix this does not strip does not fail; it silently names a
+ * DIFFERENT game, and that surfaces much later as "unsupported replay format
+ * version N", sending the reader after a codec bug that is not there.
  *
- * Does NOT decide whether the result is a code; see urlToGame.
+ * Accepts the bare code, the QR form `WWW.FOOLISH.CARDS/<code>`, and the links
+ * a browser hands out - `https://foolish.cards/<code>`, with or without www, a
+ * trailing slash, a query or a fragment. Does NOT decide whether the result is
+ * a code; see urlToGame.
  */
 export function urlToCode(url: string): string {
   // A query or a fragment is never part of the code.
   let s = url.trim().replace(/\s+/g, "").split(/[?#]/)[0].replace(/\/+$/, "");
   const host = s.toUpperCase().lastIndexOf(URL_HOST);
   if (host >= 0) s = s.slice(host + URL_HOST.length);
-  // Some other host, or a bare path: the code is the last path segment. A
-  // scheme's own letters are in the base32 alphabet, so leaving `https:/` on
-  // the front does not fail - it silently decodes a DIFFERENT game.
+  // Some other host, or a bare path: the code is the last path segment.
   else if (s.includes("/")) s = s.slice(s.lastIndexOf("/") + 1);
-  // an optional extras section (player names + move times, see extras.ts)
-  // follows the moves after a dash - the move integer is the prefix
+  // An optional extras section (player names + move times) follows the moves
+  // after a dash - the move code is the prefix.
   const dash = s.indexOf("-");
   if (dash >= 0) s = s.slice(0, dash);
   return s;
 }
 
+/**
+ * A pasted link or code as the moves bigint, or a throw that names the fault.
+ * The base32 itself is the kernel's (kernelB32Decode); the guard below is the
+ * part a tolerant decoder cannot do for us.
+ */
 export function urlToGame(url: string): bigint {
   const code = urlToCode(url);
-  // Name the fault by what it IS. base32Decode ignores stray characters, so
-  // input that is not a code used to decode to some other game and fail deep
-  // in the kernel as "unsupported replay format version 11" - sending the
-  // reader after a codec bug that was never there. Same principle as
-  // REPLAY_EHEADER and REPLAY_ETOOLONG in c/src/replay.h.
-  if (!IS_BASE32.test(code)) {
-    throw new Error(
-      `not a replay code: ${JSON.stringify(url)} - expected a foolish.cards link or the code out of one`,
-    );
+  if (!code || !IS_BASE32.test(code)) {
+    throw new Error(`not a replay code: ${JSON.stringify(url)}`);
   }
-  return codeToGame(code);
+  return bytesToBigint(kernelB32Decode(code));
 }
 
 /* ----------------------------------------------------------------------------

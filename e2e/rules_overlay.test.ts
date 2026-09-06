@@ -15,6 +15,8 @@
 // covered by replay_codec.test.ts; this file adds only the interleave +
 // menu/state/snapshot-stability dimensions.
 import { test } from 'node:test';
+import { bytesToBigint } from '../server/api/common/replay/codec.ts';
+import { kernelB32Decode } from '../sdk/ts/wasm/bots.ts';
 import assert from 'node:assert/strict';
 
 import { Game, GAME_STATUS, PLAYER_STATUS, PrivatePlayer, StrategyKey } from '../server/api/core/types.ts';
@@ -55,7 +57,7 @@ const mkGame = (np: number): Game => ({
 // encode is deterministic and decode∘encode is idempotent, so re-encoding the
 // same stream across an interleaved replay call must land on the same integer.
 async function tutorialReplay(): Promise<{ x: bigint; input: ReplayInput }> {
-  const dec = await decodeReplay(codeToGame(TUTORIAL_MOVES_CODE)); // real stream — replay family
+  const dec = await decodeReplay(bytesToBigint(kernelB32Decode(TUTORIAL_MOVES_CODE))); // real stream — replay family
   const n = dec.playerCount;
   const playerIds = Array.from({ length: n }, (_, i) => `p${i}`);
   const input: ReplayInput = {

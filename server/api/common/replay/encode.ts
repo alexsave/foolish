@@ -30,9 +30,7 @@ import { Card, Game, GameLog, LOG_TYPE } from "@api/core/types.ts";
 import { ACE_VALUE } from "@api/core/constants.ts";
 import {
   bytesToBigint,
-  base32Encode,
   base64Encode,
-  gameToUrl,
 } from "./codec.ts";
 import {
   INFO_TYPES,
@@ -184,13 +182,18 @@ export async function encodeReplay(input: ReplayInput): Promise<EncodedReplay> {
     marshalInput(n, cardId(trump), firstAttacker, actions, eng.__LOG_TYPE_TO_INT),
   );
   const x = bytesToBigint(bytes);
+  // base32 and the link are the kernel's (replay_b32_encode /
+  // replay_extras_link_styled). This used to concatenate a prefix constant of
+  // its own, which is how the same replay came out as two different links.
+  const { kernelB32Encode, kernelReplayLink } = await botsMod();
+  const code = kernelB32Encode(bytes);
   return {
     x,
     bytes,
     byteLength: bytes.length,
-    base32: base32Encode(bytes),
+    base32: code,
     base64: base64Encode(bytes),
-    url: gameToUrl(x),
+    url: kernelReplayLink(code, []),
   };
 }
 
@@ -257,14 +260,15 @@ export async function verifyRoundTripV6FromGame(
   logs: GameLog[],
   packedLogs?: Uint8Array,
 ): Promise<{ encoded: EncodedReplay; decoded: DecodedReplay }> {
-  const { kernelReplayEncodeV6FromGame } = await botsMod();
+  const { kernelReplayEncodeV6FromGame, kernelB32Encode, kernelReplayLink } = await botsMod();
   const bytes = kernelReplayEncodeV6FromGame(game, seed, packedLogs);
   const x = bytesToBigint(bytes);
+  const code = kernelB32Encode(bytes);
   const encoded: EncodedReplay = {
     x, bytes, byteLength: bytes.length,
-    base32: base32Encode(bytes),
+    base32: code,
     base64: base64Encode(bytes),
-    url: gameToUrl(x),
+    url: kernelReplayLink(code, []),
   };
   const decoded = await decodeReplay(x);
   checkInfoActionsMatch(

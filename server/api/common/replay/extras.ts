@@ -20,7 +20,7 @@
  * ========================================================================== */
 
 import { LogType } from "@api/core/types.ts";
-import { base32Encode, base32Decode } from "./codec.ts";
+import { kernelB32Encode, kernelB32Decode } from "@sdk/ts/wasm/bots.ts";
 import { INFO_TYPES } from "./core.ts";
 import { LOG_TYPE } from "@api/core/types.ts";
 import {
@@ -66,7 +66,7 @@ export function encodeExtrasFromGaps(
     startTime: number | null,
     gaps: number[] | null,
 ): string {
-    return base32Encode(kernelReplayExtrasEncode(names, startTime, gaps));
+    return kernelB32Encode(kernelReplayExtrasEncode(names, startTime, gaps));
 }
 
 /**
@@ -116,7 +116,7 @@ export function decodeExtras(
     playerCount: number,
     moveCount: number,
 ): ReplayExtras {
-    return kernelReplayExtrasDecode(base32Decode(extras), playerCount, moveCount);
+    return kernelReplayExtrasDecode(kernelB32Decode(extras), playerCount, moveCount);
 }
 
 /* ------------------------- extracting times server-side ------------------- */
