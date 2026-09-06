@@ -532,11 +532,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             }
 
             // Check 2: can the new defender still take our in-flight attacks?
-            // The KERNEL decides, against the hand the pass just installed - the
-            // same anim_conflict_verdict the attack/cover branch below asks, with
-            // a different defender. The inline capacity subtraction this replaces
-            // reverted the whole set on a capacity failure, so a card the
-            // broadcast itself showed on the table flew home red anyway.
+            // The same verdict, against the hand the pass just installed. The
+            // inline version reverted the WHOLE set on a capacity failure, so a
+            // card the broadcast itself showed on the table flew home red.
             if (myOptimisticAttackCovers.length > 0 && newDefenderId !== undefined) {
                 const newDefenderHandSize = finalGameState?.players?.[newDefenderId]?.hand_length ?? 0;
 

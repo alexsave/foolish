@@ -57,18 +57,13 @@ export function resolveUnconfirmedAttackCovers(
     finalGameState: GameStateLike | null | undefined,
     myOptimisticCoverKeys?: Set<string>,
 ): AttackCoverResolution {
-    // The DECISION lives in the C animation core (c/src/anim_plan.h
-    // anim_conflict_verdict), reached through resolveConflictMotions below - the
-    // whole revert-vs-keep-vs-clear choreography, hardened by the web
-    // glitch-fixing, in one implementation the phone and a Steam client share.
-    // Asserted natively (c/tests/anim_plan_test.c test_optimistic_revert) and
-    // end-to-end through this delegation by e2e/optimistic_revert.test.ts.
+    // The DECISION is the C animation core's (anim_plan.h anim_conflict_verdict),
+    // via resolveConflictMotions below. Asserted natively
+    // (c/tests/anim_plan_test.c test_optimistic_revert) and end-to-end by
+    // e2e/optimistic_revert.test.ts.
     //
-    // This is the ATTACK/COVER shape of the question: every card landed on the
-    // table, and the capacity rule measures the FINAL board's defender. It used
-    // to reach C through a second wasm entry of its own (wasm_anim_resolve);
-    // that door is gone, because two doors onto one rule is a new way for two
-    // hosts to disagree.
+    // The ATTACK/COVER shape: every card landed on the table, and capacity
+    // measures the FINAL board's defender.
     if (myOptimisticAttackCovers.length === 0) return { revert: [], merge: [], clear: [] };
 
     // Defender scalars, exactly as the old inline capacity check read them:
@@ -102,23 +97,13 @@ export const conflictEvents = (events: AnimEvent[]): AnimConflictInputs['events'
 
 /**
  * THE CONFLICT VERDICT for a set of motions, straight from the kernel
- * (anim_plan.h anim_conflict_facts + anim_conflict_verdict).
+ * (anim_plan.h anim_conflict_facts + anim_conflict_verdict). All four shapes
+ * AnimationContext asks about come through here - the three that are not
+ * attack/cover used to be inline capacity checks, with none of the rule's
+ * precedence, pool or masked-back cases.
  *
- * resolveUnconfirmedAttackCovers above is this same rule bundled for one shape.
- * AnimationContext asks it about three more: a pass judged against the next
- * defender, my attacks after a pass moved the shield, and a pickup, whose cards
- * landed in my HAND rather than on the table. Those used to be inline
- * TypeScript that checked only capacity, so they had none of the rule's
- * precedence (CLEAR before the standing sets), its pool rule or its masked-back
- * rule - which is the flicker c/src/anim_plan.h opens by describing.
- *
- * The motions and inputs are the kernel's own shapes (AnimConflictMotion /
- * AnimConflictInputs). There is no second set of types here to keep in step
- * with them, and no sweep derivation either: the events go in whole and
- * anim_conflict_sweep decides which of them took the table away.
- *
- * `pendingAttacks` defaults to the non-cover motions, which is what every
- * caller means by it; pass a value only to override.
+ * Takes the kernel's own shapes, so there is no second set of types to keep in
+ * step. `pendingAttacks` defaults to the non-cover motions.
  */
 export function resolveConflictMotions(
     motions: AnimConflictMotion[],

@@ -115,15 +115,7 @@ export interface BotRosterEntry {
 
 let rosterCache: BotRosterEntry[] | null = null;
 
-/**
- * THE BOT ROSTER, from the kernel (bot_roster.h).
- *
- * bot_roster.h says a bot's identity is kernel data and that hosts "look it up,
- * they do not restate it". This is the lookup. It replaces a hand-mirrored table
- * of STRAT_* ids here and a second key -> brain + logs map in bot_strategy.ts -
- * the third and fourth copies of a table whose own header records three separate
- * drifts, one of which silently ran a gunpowder seat on blackpowder's brain.
- */
+/** The kernel's bot roster (bot_roster.h): hosts look it up, never restate it. */
 export function kernelBotRoster(): BotRosterEntry[] {
     if (rosterCache) return rosterCache;
     const ex = bots();
@@ -145,14 +137,9 @@ export function kernelBotRoster(): BotRosterEntry[] {
 }
 
 /**
- * Brain ids by roster key, as a lookup rather than a table.
- *
- * This used to be a hand-written map of STRAT_* ids - the copy bot_roster.h's
- * history blames for a gunpowder seat silently running blackpowder's brain.
- * Reading a property now asks the kernel's roster, so `STRAT.octogen` is the id
- * octogen actually compiles to and a key the roster does not know is -1 rather
- * than a stale number. Lazy on purpose: touching it instantiates bots.wasm, and
- * a lobby-only cold start must not pay that just for an import.
+ * Brain ids by roster key - a lookup, not a mirrored table, so an unknown key
+ * is -1 rather than a stale number. Lazy: reading a property instantiates
+ * bots.wasm, and a lobby-only cold start must not pay that for an import.
  */
 export const STRAT: Record<string, number> = new Proxy({} as Record<string, number>, {
     get: (_t, key) => (typeof key === 'string' ? kernelBotStrat(key) : undefined),
@@ -506,9 +493,8 @@ export function wasmChooseMoveDirect(
 // BOT_STOP_* — c/src/bot_drive.h.
 export const BOT_STOP = { NO_ELIGIBLE: 0, ENDED: 1, EVENTS: 2, MAX: 3 } as const;
 
-// BOT_PACE_* is deliberately NOT mirrored here. A pacing class is only ever an
-// input to "how long is this worth watching", and that is one kernel call now
-// (wasmBotCycleDelayMs) rather than a reduce a host performs over the classes.
+// BOT_PACE_* is deliberately not mirrored: a pacing class is only ever an input
+// to wasmBotCycleDelayMs, which the kernel answers whole.
 export interface BotDriveAction {
     seat: number;
     move: LegalMove;
@@ -544,10 +530,9 @@ export function wasmBotEligibleMask(game: Game): number {
     const ex = bots();
     __setResident(null);
     __marshalGame(ex, game);
-    // The human mask comes from the KERNEL now. It used to be a parameter, and
-    // that was the one place the ordering genuinely bit: this is the first call
-    // of a cycle, so a host had to hand-roll an is_ai mask before the kernel had
-    // ever seen the game. marshalGame states the seat kinds, so it has.
+    // The human mask is the kernel's (game_human_mask), off the seat kinds
+    // marshalGame states. This is a cycle's first call, so it is also the one
+    // place a host would otherwise have to hand-roll that mask.
     return ex.wasm_bot_eligible_mask(ex.wasm_human_mask()) >>> 0;
 }
 
@@ -594,12 +579,9 @@ export function wasmBeliefProbeDump(): BeliefProbeRecord[] {
     return out;
 }
 
-// The whole wait for the cycle wasmBotDrive just ran, from the kernel's one
-// pacing table. Not a class-to-milliseconds converter: the host used to reduce
-// the cycle's actions to their most visible class and re-check whether a human
-// was still IN before asking, and both of those are questions about a game of
-// Durak. Call it straight after wasmBotDrive - it reads the drive the kernel
-// still has.
+// The whole wait for the cycle wasmBotDrive just ran: the max pacing class
+// across its actions, priced, and reduced for a human still IN - all three the
+// kernel's. Call it straight after the drive; it reads the one still resident.
 export function wasmBotCycleDelayMs(): number {
     return bots().wasm_bot_cycle_delay_ms();
 }
@@ -671,8 +653,7 @@ export function wasmBotDrive(
 
     const nPref = opts.prefs?.length ? writePrefs(ex, opts.prefs) : 0;
     // Seats the kernel must NOT drive: its own answer, off the kinds
-    // importStrategyKeys just stated. It was an argument, which meant the host
-    // built an is_ai mask for a question the kernel could already answer.
+    // importStrategyKeys just stated.
     const n = ex.wasm_bot_drive(ex.wasm_human_mask(), opts.maxActions ?? 0, nPref);
     if (n < 0) throw new Error('bot drive rejected its input');
 
@@ -1067,20 +1048,11 @@ export function kernelUnambiguousCover(
 }
 
 // A JS Game as its per-viewer masked view blob, [VIEW_FORMAT_VERSION | viewer |
-// masked put_state] - the kernel's own writer (view.c state_put), for a board
-// that has no durable blob to deserialize.
+// masked put_state] - view.c's own writer, for a board with no durable blob to
+// deserialize (a lobby). The TS mirror of that layout is deleted.
 //
-// This replaced a pure-TS mirror of state_put that lived in wire/view.ts
-// (writeMaskedState) so the lobby and meta paths could emit a view without
-// loading a kernel. That reason had already expired: the browser runs the WHOLE
-// kernel and fetches bots.wasm.gz as an asset (see wasm_asset.ts, "one big
-// module everywhere"), so there is no kernel-free client to protect. What a
-// second writer of the layout did buy was a way for the two to drift, caught
-// only by a parity test.
-//
-// It lives HERE rather than in engine.ts for the client's sake: engine.ts
-// carries rules_wasm.ts, a base64 embed, and pulling that into a page that
-// already loads bots.wasm would ship the kernel twice.
+// Here rather than in engine.ts: engine.ts carries rules_wasm.ts, a base64
+// embed, and a page already loading bots.wasm must not ship the kernel twice.
 export function wasmViewFromGame(game: Game, viewerSeat: number): Uint8Array {
     const ex = bots() as unknown as EngineExports;
     __setResident(null);
@@ -1648,14 +1620,11 @@ export interface AnimConflictInputs {
 
 /**
  * THE CONFLICT VERDICT per motion (anim_plan.h anim_conflict_facts +
- * anim_conflict_verdict), server transport. The one door: every shape
- * AnimationContext asks about - a pending attack/cover, a pass, my attacks
- * after a pass moved the shield, a pickup that landed in my hand - comes
- * through here.
+ * anim_conflict_verdict), server transport. One door for all four shapes
+ * AnimationContext asks about.
  *
- * The stream goes in as EVENTS. Deciding which of them sweep the table is part
- * of the rule, not part of the marshal, and it lived in TypeScript until the
- * kernel grew anim_conflict_sweep.
+ * The stream goes in as EVENTS: which of them sweep the table is part of the
+ * rule (anim_conflict_sweep), not part of the marshal.
  */
 export function animConflictVerdicts(
     motions: AnimConflictMotion[], inputs: AnimConflictInputs,
