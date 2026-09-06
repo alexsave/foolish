@@ -53,6 +53,22 @@ make            # links foolish_server against c/src/*.c
 make run        # ./foolish_server 8099
 ```
 
+**`foolish_server` builds on Linux only.**
+Stage 6 (see [`SERVER_SCALING.md`](SERVER_SCALING.md)) replaced
+thread-per-connection with an **epoll** event loop per game-worker shard, and
+`sys/epoll.h` has no macOS equivalent; no kqueue port was attempted.
+On a Mac, build and run it in a container - the `Makefile` prints this same
+one-liner if you try:
+
+```sh
+docker run --rm -it -v "$(cd ../../.. && pwd)":/repo ubuntu:24.04 bash
+#   apt-get update && apt-get install -y build-essential libsqlite3-dev libssl-dev
+#   cd /repo/server/impls/native && make && bash test.sh
+```
+
+`sem_fuzz` / `sem_fuzz_asan` (kernel-only) and `fuzz_client` (pure sockets)
+carry no epoll and build natively on macOS.
+
 Requires a C compiler + `-framework Accelerate` (macOS; some kernel strategies
 use LAPACK) + `libsqlite3` (present as a system package on Linux and macOS;
 see [`DURABILITY.md`](DURABILITY.md)) + `libssl`/`libcrypto` (OpenSSL 3.x;

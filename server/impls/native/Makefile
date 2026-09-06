@@ -3,8 +3,26 @@
 # this backend only adds a socket + an in-memory store. See README.md.
 
 KDIR   := ../../../c
+UNAME  := $(shell uname)
 CFLAGS ?= -O2 -ffast-math -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations \
           -I$(KDIR)/src -DACCELERATE_NEW_LAPACK -DCD_LEAFBOOK
+
+# PLATFORM: the server itself is LINUX-ONLY since Stage 6 replaced
+# thread-per-connection with an epoll event loop per game-worker shard
+# (SERVER_SCALING.md "Stage 6") - `sys/epoll.h` has no macOS equivalent and no
+# kqueue port was attempted. Rather than let that surface as a mystery
+# "'sys/epoll.h' file not found" three screens into a kernel build, the
+# Linux-only targets depend on `require-linux`, which says so and points at the
+# container one-liner in README.md. The kernel-only targets (sem_fuzz,
+# sem_fuzz_asan) and fuzz_client carry no epoll and still build on macOS.
+require-linux:
+	@if [ "$(UNAME)" != "Linux" ]; then \
+	  echo "server/impls/native: this target needs Linux (epoll, Stage 6 - see SERVER_SCALING.md)."; \
+	  echo "  Build and run it in a container instead - see README.md 'Build & run':"; \
+	  echo "    docker run --rm -it -v \"$$(cd ../../.. && pwd)\":/repo ubuntu:24.04 bash"; \
+	  echo "  On macOS only the kernel-linking targets build natively: make sem_fuzz"; \
+	  exit 1; \
+	fi
 # -framework Accelerate (some kernel strategies use LAPACK) is macOS-only;
 # Linux links straight against libm/libpthread. Mirrors c/Makefile's
 # `ifeq ($(shell uname),Darwin)` pattern so a plain `make` works on both.
@@ -40,7 +58,7 @@ NATIVE_SRC := ws.c conn.c
 # DURABILITY.md). Only foolish_server / foolish_server_prof link this.
 PERSIST_SRC := persist.c
 
-foolish_server: foolish_server.c $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC)
+foolish_server: foolish_server.c $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC) | require-linux
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) $(SQLITE_LDFLAGS) $(TLS_LDFLAGS)
 
 run: foolish_server
@@ -51,7 +69,7 @@ run: foolish_server
 # it needs awire_encode + view.h/state_get to build/decode real wire frames —
 # but never includes foolish_server.c itself: it is a separate process that
 # hits the server over the loopback socket, exactly like a real client.
-foolish_hammer: foolish_hammer.c $(NATIVE_SRC) $(KERNEL_SRC)
+foolish_hammer: foolish_hammer.c $(NATIVE_SRC) $(KERNEL_SRC) | require-linux
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) $(TLS_LDFLAGS)
 
 # Profiling build of the server: same sources, but -g -fno-omit-frame-pointer
@@ -61,7 +79,7 @@ foolish_hammer: foolish_hammer.c $(NATIVE_SRC) $(KERNEL_SRC)
 PROF_CFLAGS := -g -fno-omit-frame-pointer -O2 -ffast-math -Wall -Wextra \
                -Wno-unused-parameter -Wno-deprecated-declarations \
                -I$(KDIR)/src -DACCELERATE_NEW_LAPACK -DCD_LEAFBOOK
-foolish_server_prof: foolish_server.c $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC)
+foolish_server_prof: foolish_server.c $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC) | require-linux
 	$(CC) $(PROF_CFLAGS) $^ -o $@ $(LDFLAGS) $(SQLITE_LDFLAGS) $(TLS_LDFLAGS)
 
 # AddressSanitizer + UBSan build, for fuzzing the server (fuzz_client.c): catches
@@ -71,7 +89,7 @@ foolish_server_prof: foolish_server.c $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC)
 ASAN_CFLAGS := -fsanitize=address,undefined -fno-omit-frame-pointer -g -O1 \
                -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations \
                -I$(KDIR)/src -DACCELERATE_NEW_LAPACK -DCD_LEAFBOOK
-foolish_server_asan: foolish_server.c $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC)
+foolish_server_asan: foolish_server.c $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC) | require-linux
 	$(CC) $(ASAN_CFLAGS) $^ -o $@ $(LDFLAGS) $(SQLITE_LDFLAGS) $(TLS_LDFLAGS)
 
 # The adversarial fuzz client: hammers the server with malformed HTTP, junk
@@ -108,7 +126,7 @@ sem_fuzz_asan: sem_fuzz.c $(KERNEL_SRC)
 # (-ldl is quiche's only extra system dep beyond -lm -lpthread from LDFLAGS.)
 QUICHE_DIR ?= ./quiche
 QUIC_SRC   := quic_wt.c
-foolish_server_quic: foolish_server.c $(QUIC_SRC) $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC)
+foolish_server_quic: foolish_server.c $(QUIC_SRC) $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC) | require-linux
 	$(CC) $(CFLAGS) -DFOOLISH_QUIC -DFOOLISH_NO_OPENSSL -I$(QUICHE_DIR)/include \
 	  $^ -o $@ $(LDFLAGS) $(SQLITE_LDFLAGS) $(QUICHE_DIR)/lib/libquiche.a -ldl
 
@@ -120,4 +138,4 @@ wt_client: wt_client.c
 clean:
 	rm -f foolish_server foolish_hammer foolish_server_prof foolish_server_quic wt_client
 
-.PHONY: run clean
+.PHONY: run clean require-linux

@@ -31,12 +31,18 @@ quiche/
 *.db-shm
 
 # Profiling artifacts (server/impls/native/profile.sh, PROFILE_HOTPATH.md):
-# raw profiler dumps (callgrind.out*, perf.data, sample.txt) and any
-# standalone profiling binaries are local-only — commit only the digested
-# callgrind_annotate TEXT under bench_results/<label>/.
+# raw profiler dumps (callgrind.out*, perf.data, sample.txt), the
+# callgrind_annotate TEXT they digest into, and any standalone profiling
+# binaries are local-only. What IS tracked under bench_results/<label>/ is
+# the small human-readable residue: meta.txt (how the run was taken),
+# summary.txt, the *.csv tables, and the helgrind digests. The annotated.txt
+# dumps are ~1 MB of machine-specific line attribution that PROFILE_HOTPATH.md
+# already quotes the load-bearing lines of; regenerate them with profile.sh
+# when a number needs re-checking. See PROFILE_HOTPATH.md "Reading the
+# bench_results citations".
 bench_results/*/raw/
 bench_results/*/raw_cache/
-bench_results/*/annotated_cache.txt
+bench_results/*/annotated*.txt
 bench_results/eval_t2_oracle
 bench_results/eval_t3_prod
 bench_results/*.o

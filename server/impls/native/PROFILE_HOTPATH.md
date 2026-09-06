@@ -24,6 +24,20 @@ fewer) functions.
 
 T2 and T3 use the production caps `-DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64`.
 
+## Reading the `bench_results` citations
+
+Citations of the form `bench_results/<label>/annotated.txt:127` point at the
+`callgrind_annotate` output of the run named by `<label>`.
+Those files are **not tracked** - they are ~1 MB of line-by-line attribution
+that is specific to one container, one compiler build and one workload, and
+this document already quotes every line of them the argument rests on.
+What IS tracked under `bench_results/<label>/` is the residue a human reads:
+`meta.txt` (exactly how the run was taken), `summary.txt`, the `*.csv` tables,
+and the Helgrind digests.
+To re-derive an annotation, re-run the capture with `profile.sh` (each section
+below prints the exact command it used) and the file reappears at the cited
+path.
+
 ---
 
 ## T1 — the server hit path (random human clients, zero server-side bots)
