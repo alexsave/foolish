@@ -20,6 +20,7 @@
 #include "../src/view.h"
 #include "../src/json_out.h"
 #include "../src/anim_plan.h"
+#include "../src/cordite_sim.h"
 #include "../wasm/wire.h"
 #include <stdio.h>
 #include <sys/mman.h>
@@ -5683,6 +5684,81 @@ static void test_board_reads_nothing_past_what_it_was_given(void) {
 // back empty and everything silently passes. So walk the whole deck through
 // every entry that takes an id, and prove the ace of the last suit behaves like
 // the six of the first.
+// The exact endgame solver's transposition table is keyed on the POSITION, but
+// a solved value only means anything with a seat attached: +990 is "the seat I
+// asked about escapes". Nothing resets the table between two asks, so the two
+// seats of one endgame share every entry. If the stored value is not brought to
+// a common perspective, the second ask reads the first ask's proof unflipped and
+// reports the loser as the winner. solver_difftest cannot see this: it resets
+// between perspectives. So drive real endgames and ask both seats back to back.
+// MUTATION (all three checked): drop BOTH seat flips in sim_solve_rec
+// (cordite_sim.c), which is the bug as it shipped -> the warm-vs-cold check
+// fails and the zero-sum one still passes, because each cold solve is
+// self-consistent. Dropping only the probe flip, or only the store flip, fails
+// both: a single-seat search then corrupts its own entries.
+static int tt_seat_step(Game *g) {
+    for (int i = 0; i < g->num_players; i++) {
+        if (!should_bot_act(g, i)) continue;
+        LegalMoves mv; calculate_legal_moves(g, i, &mv);
+        if (mv.n == 0) continue;
+        int idx = handwritten_strategy_choose(g, i, &mv, NULL);
+        if (idx < 0 || idx >= mv.n) idx = 0;
+        const LegalMove *m = &mv.moves[idx];
+        bool ok = false;
+        switch (m->type) {
+            case MOVE_ATTACK: ok = handle_attack(g, i, m->cards, m->n_cards); break;
+            case MOVE_COVER:  ok = handle_cover (g, i, m->cards, m->attack_cards, m->n_cards); break;
+            case MOVE_PASS:   ok = handle_pass  (g, i, m->cards, m->n_cards); break;
+            case MOVE_PICKUP: ok = handle_pickup(g, i); break;
+            case MOVE_GOOD:   ok = handle_good  (g, i); break;
+            default: break;
+        }
+        if (ok) return 1;
+    }
+    return 0;
+}
+
+static void test_solver_tt_value_carries_its_seat(void) {
+    int compared = 0, zero_sum = 0, dirty_matches_clean = 0;
+    for (int gi = 0; gi < 12 && compared < 40; gi++) {
+        game_set_seed((uint32_t)(gi + 1));
+        Game g; memset(&g, 0, sizeof g);
+        g.num_players = 2;
+        for (int i = 0; i < 2; i++) {
+            g.players[i].status = PLAYER_STATUS_READY;
+            g.players[i].strategy_key = (int8_t)STRAT_HANDWRITTEN;
+            snprintf(g.players[i].player_id, sizeof g.players[i].player_id, "p%d", i);
+        }
+        start_game(&g);
+        int it = 0;
+        while (game_done(&g) < 0 && it++ < 3000 && compared < 40) {
+            int in[MAX_PLAYERS], nin = 0;
+            for (int i = 0; i < g.num_players; i++)
+                if (g.players[i].status == PLAYER_STATUS_IN) in[nin++] = i;
+            if (nin == 2 && g.deck_count == 0 && !g.has_flipped) {
+                SimState sa, sb, sc;
+                cd_sim_from_game(&sa, &g); sb = sa; sc = sa;
+                int aa = 0, ab = 0, ac = 0;
+                cd_sim_solve_reset();
+                int va       = cd_sim_solve(&sa, in[0], -2000, 2000, 2000000L, &aa);
+                int vb_dirty = cd_sim_solve(&sb, in[1], -2000, 2000, 2000000L, &ab);
+                cd_sim_solve_reset();
+                int vb_clean = cd_sim_solve(&sc, in[1], -2000, 2000, 2000000L, &ac);
+                if (!aa && !ab && !ac) {
+                    compared++;
+                    if (vb_clean == -va)      zero_sum++;
+                    if (vb_dirty == vb_clean) dirty_matches_clean++;
+                }
+            }
+            if (!tt_seat_step(&g)) break;
+        }
+    }
+    CHECK(compared >= 20, "solver TT seat check found endgames to compare");
+    CHECK(zero_sum == compared, "a resolved endgame is zero-sum across the two seats");
+    CHECK(dirty_matches_clean == compared,
+          "the second seat's value is the same with a warm table as with a cold one");
+}
+
 static void test_board_every_card_of_the_deck_crosses_both_ways(void) {
     unsigned char out[64];
     int veil_ok = 1, fan_ok = 1, table_ok = 1, laid_ok = 1;
@@ -5879,6 +5955,7 @@ int main(void) {
     test_board_degenerate_inputs();
     test_board_reads_nothing_past_what_it_was_given();
     test_board_every_card_of_the_deck_crosses_both_ways();
+    test_solver_tt_value_carries_its_seat();
 
     printf("\n%d passed, %d failed\n", n_pass, n_fail);
     return n_fail > 0 ? 1 : 0;

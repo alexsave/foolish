@@ -838,46 +838,107 @@ build every target that touches these files and diff the binaries, or failing
 that run the bot benchmarks and hold the ELO table.
 `make tests`, `make difftests` and the bot parity suites must be unchanged.
 
-## Queued: the Infinite Oracle scores the endgame wrong
+## Settled: the Infinite Oracle's endgame scores, measured
 
-A real bug, measured rather than suspected, found while analysing a real game.
-Not lift work.
-Recorded here because anyone building on the Oracle needs to know which of its
-outputs to trust.
+The queued entry here said the Oracle's Monte Carlo scores INVERT in the last
+few plies, and offered a HYPOTHESIS that the fault was in the rollout rather
+than the world sampling.
+Both halves have now been measured against ground truth.
+The inversion is not real; the pessimism about the numbers is.
 
-In the last few plies, with the stock down to one card, the Oracle's Monte Carlo
-scores INVERT.
+Reproduced with the committed harness, not a new one:
+`make og_explain`, then `OG_EXPLAIN=<file> ./build/og_explain <seed> moves deal`
+driving the recorded game (`tests/og_explain.c`, `driven_replay`).
 
-- At the losing player's cover of the last eight, holding only the king and jack
-  of clubs, the Oracle scored **cover with the king = 1.013** (near-certain win)
-  and **cover with the jack = 2.000** (certain loss).
-  The opponent held NO clubs at all, so the two moves differ only in which club
-  she keeps, and if anything the king is the worse keep, because it puts a king
-  on the table for the opponent to throw a trump king at.
-  Played out, BOTH lose.
-- One ply earlier it rated "pick up the three eights" at **1.031**
-  (near-certain win).
-  Played out across all five worlds her belief admitted: **loses 5 for 5**.
+**The ranking at the cover of the last eight is CORRECT.**
+An exhaustive minimax over the real kernel (`calculate_legal_moves` + the
+`handle_*` entries, with the exact solver taking the deck-empty tails) says:
+cover with the JACK is a proven LOSS in every world; cover with the KING is a
+proven WIN in the world where the opponent holds no trump king, and cannot be
+worse than the jack anywhere, since the jack loses everywhere.
+(Enumerated over all six placements of the last deck card among the unseen
+cards, a superset of the five the belief admits.)
+Keeping the jack is what wins there: with the trump jack drawn off the flip, a
+jack attack lets her throw the trump jack on her own rank and go out.
+So the brief's premise, "the two moves differ only in which club she keeps, and
+played out both lose", was wrong, and the Oracle preferred the right move.
 
-What this rules out:
+**The magnitude is wrong, and the cause is the rollout OPPONENT, not the axis.**
+Both numbers are the same axis: a mean finish position over the sampled worlds
+(528 and 864 here).
+Nothing mixes a proof into a frequency here.
+The king cover scores 1.013 because the rollout's opponent almost never plays
+the refutation, the trump-king throw-in onto the king she just laid down.
+`sim_trump_attack_prob` (`c/src/cordite_sim.c`) returns **0.02** whenever
+`deck_n > 0 || has_flipped`, so with one card and the flip still out it declines
+the throw 98% of the time.
+That is a faithful mirror of `trump_attack_probability` in
+`handwritten_strategy.c`, so it is the modelled opponent behaving as specified,
+not a fidelity bug.
+Truth is about 1.8 for the king cover against the Oracle's 1.013: it wins in
+the one world of five where the opponent cannot answer.
+The five worlds where the throw-in is available are 14-card endgames the exact
+solver does not resolve inside its budget, so they are read as losses from the
+line rather than asserted as proofs.
+Turning the exact leaf endgames off (`OG_BBLEAF=0`) scores every candidate at
+1.0, which is the same optimism with the exact tail removed.
 
-- Not a wiring mistake in the harness.
-  The native `og_explain` build (`-DOG_EXPLAIN_BUILD -DFOOLISH_ORACLE_BUILD`,
-  `make og_explain`) and the browser Oracle's own `public/oracle.wasm.gz` driven
-  through `src/oracle/oracleBridge.ts` produce the SAME wrong numbers.
-- Not the belief sampling.
-  The belief pool it printed was exactly correct for the position: queen of
-  hearts, nine of diamonds, queen of diamonds, king of diamonds, ace of diamonds.
+**A second, separate reason the Oracle can be wrong one ply earlier.**
+At the three uncovered eights the position has 27 legal moves.
+`og_pick_candidates` keeps at most 10 covers, ranked by the product of card
+scores, and the only FULL cover is a three-card move whose product ranks it out.
+The Oracle scores what octogen considers, so a move that is never a candidate
+cannot appear in the readout however long it converges.
 
-**HYPOTHESIS, not a measurement**: since the worlds are right and both builds
-agree, the fault is in the ROLLOUT rather than in the world sampling.
-Nothing has yet been measured inside the rollout itself to confirm that.
+Ruled out by measurement, not by argument:
 
-The consequence: any analysis built on these scores in the endgame is
-unreliable.
-The hand analysis that found this stayed correct only because its verdicts
-rested on played-out games and the exact endgame solver instead of on the
-Oracle's numbers.
+- **The leafbook.** A `-UCD_LEAFBOOK` build produces byte-identical wrong
+  numbers at all three plies.
+- **The belief pool.** The dumped pool is exactly the five cards the position
+  admits, with the queen of spades correctly pinned rather than pooled.
+- **The harness.** Native `og_explain` and the browser `oracle.wasm.gz` agree.
+
+**What WAS a real bug, and is fixed:** see the next section.
+It lives in the exact solver the Oracle leans on, it is the sign confusion the
+symptom looked like, and it is simply somewhere else.
+
+## Fixed: a solved endgame did not carry the seat it was solved for
+
+`cd_sim_solve` returns the value of a position from ONE seat's point of view:
+`+990` means "the seat I asked about escapes".
+The transposition table keyed that value on the position alone
+(`sim_fingerprint`, `c/src/cordite_sim.c`), and nothing resets the table between
+calls, so the two seats of one endgame shared every entry.
+Ask seat A, then ask seat B: B read A's proof unflipped and was told the loser
+wins.
+
+Measured on 300 handwritten games: **1747 of 1747** resolved deck-empty
+positions came back with the wrong sign for the second seat.
+The same at `CD_TT_PACK8 + CD_TT_2WAY`, at `CD_TT_BOUNDS`, at `CD_TT_TAILCACHE`,
+at `CD_TT_RANKSYM` and at `CD_TT_SUITSYM`.
+It reaches the Oracle: analysing this one 30-decision game, 864 of 869 TT hits
+read an entry stored under the other seat.
+
+`solver_difftest` could not see it, and that is structural rather than bad luck:
+it calls `cd_sim_solve_reset()` before every solve, so it never asks two seats
+of one position off one table.
+
+The fix stores the CANONICAL value, always the lower-indexed IN player's side,
+and flips it back on the way out.
+That keeps the cross-seat reuse instead of keying it away, and negating a
+fail-soft bound swaps LOWER and UPPER, which the bounds path now does.
+Guarded by `test_solver_tt_value_carries_its_seat` in `c/tests/tests.c`.
+
+Strength: paired octogen-vs-espresso runs are outcome-IDENTICAL before and
+after, at pc2 over 600 games (mean finish 1.160, 84.0% win, histogram 504/96)
+and at pc4 over 300 (1.960, 43.0%, 129/83/59/29).
+Not "within noise": the same histogram, so the fix changed no octogen decision
+in either sample.
+It is in shared solver code, so cordite, blackpowder and semtex reach it too;
+nothing beyond octogen was measured.
+
+The committed `public/oracle.wasm.gz` and `c/build/bots.wasm.gz` still carry the
+old solver: this reaches production only when they are rebuilt.
 
 ## Queued: a replay URL fails by naming the wrong fault
 
