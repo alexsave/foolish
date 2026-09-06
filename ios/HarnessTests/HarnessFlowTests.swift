@@ -45,9 +45,14 @@ final class HarnessFlowTests: XCTestCase {
 
     /// The seat with a real move on `payload` — who the human would switch to next.
     /// This is the seat-identity mock: seats are read straight off the kernel menu.
+    ///
+    /// The HUMAN menu, like HarnessModel's own handoff and `iCanAct`. A handoff
+    /// reading the raw one passes the game to a seat whose only offer is a
+    /// `good` the board will not let it make, and the run stops there with no
+    /// button on screen.
     private func actionableSeat(_ payload: Data, players n: Int) async -> Int? {
         _ = try? await kernel.decode(payload: payload, viewer: -1)
-        for s in 0..<n where await kernel.residentLegal(seat: s).contains(where: { $0.type != .wait }) {
+        for s in 0..<n where !(await kernel.residentHumanMoves(seat: s)).isEmpty {
             return s
         }
         return nil
@@ -61,7 +66,7 @@ final class HarnessFlowTests: XCTestCase {
         let c = MessageTurnController(parentPayload: parent, parent: env, mySeat: seat)  // mock identity
         await c.begin()
         if c.isOver { return nil }
-        if c.iCanAct, let mv = c.legal.first(where: { $0.type != .wait }) { await c.apply(mv) }
+        if c.iCanAct, let mv = c.humanLegal.first { await c.apply(mv) }
         guard c.canStage else { return nil }
         return try await c.stagedPayload()
     }
@@ -77,7 +82,7 @@ final class HarnessFlowTests: XCTestCase {
         let g = MessageTurnController(genesisSeed: Data(repeating: seed, count: 32),
                                       players: 2, gameId: gameId, myNickname: "You")
         await g.begin()
-        if g.iCanAct, let mv = g.legal.first(where: { $0.type != .wait }) { await g.apply(mv) }
+        if g.iCanAct, let mv = g.humanLegal.first { await g.apply(mv) }
         XCTAssertTrue(g.canStage, "a 2p genesis is always stageable (a move, or the deal to send on)")
         let deal = try await g.stagedPayload()
 
@@ -120,7 +125,7 @@ final class HarnessFlowTests: XCTestCase {
         let g = MessageTurnController(genesisSeed: Data(repeating: 3, count: 32),
                                       players: 2, gameId: 0xCAFE, myNickname: "You")
         await g.begin()
-        if g.iCanAct, let mv = g.legal.first(where: { $0.type != .wait }) { await g.apply(mv) }
+        if g.iCanAct, let mv = g.humanLegal.first { await g.apply(mv) }
         await m.stage(try await g.stagedPayload(), seat: 0)
 
         XCTAssertEqual(m.viewKey, key, "a staged move must not alter the harness view identity")
@@ -146,7 +151,7 @@ final class HarnessFlowTests: XCTestCase {
         let g = MessageTurnController(genesisSeed: Data(repeating: 5, count: 32),
                                       players: 2, gameId: 0xABCD, myNickname: "You")
         await g.begin()
-        if g.iCanAct, let mv = g.legal.first(where: { $0.type != .wait }) { await g.apply(mv) }
+        if g.iCanAct, let mv = g.humanLegal.first { await g.apply(mv) }
         await m2.stage(try await g.stagedPayload(), seat: 0)  // staged, NOT delivered
         m2.become(1)
         XCTAssertTrue(m2.transcript.isEmpty, "nothing was delivered")
@@ -172,7 +177,7 @@ final class HarnessFlowTests: XCTestCase {
         let g = MessageTurnController(genesisSeed: Data(repeating: 9, count: 32),
                                       players: 2, gameId: 0x1234, myNickname: "You")
         await g.begin()
-        if g.iCanAct, let mv = g.legal.first(where: { $0.type != .wait }) { await g.apply(mv) }
+        if g.iCanAct, let mv = g.humanLegal.first { await g.apply(mv) }
         var latest = try await g.stagedPayload()
 
         // Seat 1 is "Vera"; play until she seals a bubble, then check her name is in it.
@@ -207,7 +212,7 @@ final class HarnessFlowTests: XCTestCase {
         let g = MessageTurnController(genesisSeed: Data(repeating: 4, count: 32),
                                       players: 2, gameId: gid, myNickname: "You")
         await g.begin()
-        if g.iCanAct, let mv = g.legal.first(where: { $0.type != .wait }) {
+        if g.iCanAct, let mv = g.humanLegal.first {
             await g.apply(mv)
         }
         let payload = try await g.stagedPayload()

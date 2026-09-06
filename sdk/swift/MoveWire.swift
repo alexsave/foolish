@@ -13,6 +13,12 @@ public enum MoveWire {
     // Index → MoveType, matching MOVE_* in c/src/legal.h and MOVE_TYPE in the web.
     private static let types: [MoveType] = [.attack, .cover, .pass, .pickup, .good, .wait]
 
+    /// A move's MOVE_* index, for the kernel entries that take a move TYPE
+    /// rather than a whole move (`TurnWire.admit`). -1 for `.unknown`, which
+    /// has no kernel number. Read off the table above rather than written out
+    /// again, so there is one statement of this numbering in Swift.
+    public static func wireIndex(_ type: MoveType) -> Int { types.firstIndex(of: type) ?? -1 }
+
     private static func card(_ b: UInt8) -> Card {
         if b >= 0xFE { return Card.hidden }
         let v = Int(b); return Card(s: v / 13, v: (v % 13) + 1)

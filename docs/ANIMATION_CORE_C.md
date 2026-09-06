@@ -398,14 +398,15 @@ this board painted, which only this board can answer.
   (`HARNESS_AUTOMOVE_KIND`); the pure remainder is one `first(where:)` over a
   menu the kernel already narrowed (`fio_play_human_menu`). It is test
   scaffolding, not behaviour a second client re-derives.
-- `MessageTurnController.sentBytes(staged:host:sealed:)` - which bytes a send
-  actually put on the wire. It passes the screen-independence test but it is a
-  rule about the iMessage HOST's payload handoff (`didStartSending` can deliver
-  nil, or stale), there is no kernel concept behind it, and it selects between
-  two opaque `Data` blobs the kernel never sees. It already lives in
-  `FoolishKit` rather than in a view, so any Swift client can reuse it. If a
-  second transport ever grows the same shape, the thing to lift is the PICKER
-  (three ints in, one out), not the bytes.
+- `MessageTurnController.sentBytes(staged:host:sealed:)` - **the PICKER moved,
+  2026-09-05, exactly as this entry said it should.** The rule about which
+  bubble a send can have carried is `msg_turn_sent_source` (three ints in, one
+  answer out) and the verdict that follows from it is
+  `msg_turn_send_verdict`; `sentBytes` is now the one line that turns that
+  answer into whichever of the two `Data` blobs this device is holding. The
+  blobs still never cross, because the kernel has no opinion about a payload it
+  did not write. See "Queued: the iMessage chain layer / Item 2" in
+  `docs/KERNEL_LIFT_BRIEF.md`.
 - `MessageGameStore.handOrder(gameId:)` - the local per-game arrangement the fan
   is laid out against. It is client-local memory in the App Group container, and
   the kernel already consumes it as an input to `anim_hand_laid_out`.

@@ -952,6 +952,87 @@ int fio_msg_rebase_awire(int pending_round, int seat, const uint8_t *buf, int le
 // The MSG_E* (src/msg_wire.h) behind the last FIO_EMSG, else 0.
 int fio_last_msg_error(void);
 
+// ---------- the turn controller, as a transition function -------------------
+//
+// The decisions a chain client makes ACROSS its own suspension points: what may
+// be staged, what an arriving chain does to a staged move, what a send means,
+// and what a read publishes while a bout settlement is withheld. The RULES are
+// msg_wire.c's (msg_turn_*); these marshal, and none of them reads the resident
+// game or any other static.
+//
+// THEY CROSS AS INTS. The chain state is a bitfield because it is eight
+// booleans, and every answer is a small enum - a packed record around either
+// would be ceremony. Nothing here needs the game, so nothing here takes it.
+
+// The chain state, one bit per fact the host already holds.
+#define FIO_TURN_STAGED         (1 << 0)  // actions applied locally, not yet sent
+#define FIO_TURN_SENDING        (1 << 1)  // Send was pressed; the rebase has not resolved
+#define FIO_TURN_READY          (1 << 2)  // a base chain has been established once
+#define FIO_TURN_SUPERSEDED     (1 << 3)  // this board branches off a chain the table left
+#define FIO_TURN_RETRACTING     (1 << 4)  // a conflict retraction is in flight
+#define FIO_TURN_BOARD_WATCHING (1 << 5)  // a live board is mounted to fly one
+#define FIO_TURN_HELD           (1 << 6)  // a bout settlement is withheld until Send
+#define FIO_TURN_GENESIS        (1 << 7)  // a dealt game with no parent chain
+
+// Is there a staged bubble to send, may this seat act, is there anything to put
+// in the input field. `n_human_moves` is the count from fio_play_human_menu and
+// never the raw menu's - see msg_wire.h for what a raw count gets wrong.
+int fio_msg_turn_can_send(int state);
+int fio_msg_turn_can_act(int state, int n_human_moves);
+int fio_msg_turn_can_stage(int state, int n_human_moves);
+
+// The door every gesture comes through. `move_type` is the MOVE_* the menu wire
+// carries (3 == pickup).
+#define FIO_TURN_ADMIT_OK           0
+#define FIO_TURN_ADMIT_RETRACTING   1   // silent: one red flight long
+#define FIO_TURN_ADMIT_SUPERSEDED   2
+#define FIO_TURN_ADMIT_HELD_PICKUP  3
+int fio_msg_turn_admit(int state, int move_type, int pickup_hold);
+
+// What to do with a chain that arrived. `same_chain` is the host's byte
+// comparison against the payload this board is built on.
+#define FIO_TURN_ARRIVE_SKIP     0
+#define FIO_TURN_ARRIVE_LATCH    1
+#define FIO_TURN_ARRIVE_ADOPT    2
+#define FIO_TURN_ARRIVE_RETRACT  3
+int fio_msg_turn_arrival(int state, int same_chain);
+// The narrower duplicate guard the adopt path keeps for its direct callers.
+int fio_msg_turn_adopt_duplicate(int state, int same_chain);
+
+// WHICH BYTES WENT OUT - the picker, three facts in and one answer out. The
+// blobs never cross: the kernel has no opinion about two payloads it did not
+// write, only about which of them a send can have carried.
+#define FIO_TURN_BYTES_NONE    0
+#define FIO_TURN_BYTES_HOST    1
+#define FIO_TURN_BYTES_SEALED  2
+int fio_msg_turn_sent_source(int staged, int have_host, int have_sealed);
+
+// What the send does to this board. Ask once with `decoded` < 0; a
+// FIO_TURN_SEND_DECODE answer means "decode those bytes and ask again", and
+// every other answer is final. Every answer releases a held settlement - a
+// refusal is a refusal to rebase, never to release.
+#define FIO_TURN_SEND_FOREIGN     0
+#define FIO_TURN_SEND_NOOP        1
+#define FIO_TURN_SEND_BLIND       2
+#define FIO_TURN_SEND_DECODE      3
+#define FIO_TURN_SEND_UNREADABLE  4
+#define FIO_TURN_SEND_REBASE      5
+int fio_msg_turn_send_verdict(int staged, int have_host, int have_sealed,
+                              int host_is_sealed, int decoded);
+
+// The step whose committed board a held settlement shows, or -1 for nothing to
+// hold. `cut` is fio_evw_frames_settlement_cut's answer; pass < 0 for no cut.
+int fio_msg_turn_hold_state(int n_events, int cut);
+
+// WHAT A READ PUBLISHES. `view_would_change` is the host's comparison of the
+// board about to go up against the one already up - the only input here the
+// kernel cannot take itself, because the two views are the host's decodes.
+// Any out pointer may be NULL.
+void fio_msg_turn_publish(int state, int base_atoms_before, int staged_atoms_before,
+                          int n_open_replay, int view_would_change,
+                          int *out_show_held_view, int *out_empty_menu,
+                          int *out_anim_atoms_before, int *out_raise_veil);
+
 #ifdef __cplusplus
 }
 #endif

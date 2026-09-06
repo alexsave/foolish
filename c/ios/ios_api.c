@@ -2139,3 +2139,89 @@ int fio_msg_rebase_awire(int pending_round, int seat, const uint8_t *buf, int le
     if (!awire_decode(buf, len, &a)) return FIO_EPARSE;
     return msg_rebase_one(&g_game, g_msg_round, pending_round, seat, &a);
 }
+
+// ---------- the turn controller, as a transition function -------------------
+//
+// The chain layer's decisions ACROSS its own suspension points (msg_wire.c's
+// msg_turn_*). These marshal and nothing more: no resident game, no static, so
+// they are safe to ask from a render pass the way the board rules already are.
+//
+// The bridge's names are the kernel's values, asserted rather than trusted - a
+// bit or a verdict that drifted between the two headers would be a silent wrong
+// answer, which is the whole class of bug this section exists to prevent.
+_Static_assert(FIO_TURN_STAGED         == MSG_TURN_STAGED,         "turn bits diverged");
+_Static_assert(FIO_TURN_SENDING        == MSG_TURN_SENDING,        "turn bits diverged");
+_Static_assert(FIO_TURN_READY          == MSG_TURN_READY,          "turn bits diverged");
+_Static_assert(FIO_TURN_SUPERSEDED     == MSG_TURN_SUPERSEDED,     "turn bits diverged");
+_Static_assert(FIO_TURN_RETRACTING     == MSG_TURN_RETRACTING,     "turn bits diverged");
+_Static_assert(FIO_TURN_BOARD_WATCHING == MSG_TURN_BOARD_WATCHING, "turn bits diverged");
+_Static_assert(FIO_TURN_HELD           == MSG_TURN_HELD,           "turn bits diverged");
+_Static_assert(FIO_TURN_GENESIS        == MSG_TURN_GENESIS,        "turn bits diverged");
+_Static_assert(FIO_TURN_ADMIT_RETRACTING  == MSG_TURN_ADMIT_RETRACTING,  "admit diverged");
+_Static_assert(FIO_TURN_ADMIT_SUPERSEDED  == MSG_TURN_ADMIT_SUPERSEDED,  "admit diverged");
+_Static_assert(FIO_TURN_ADMIT_HELD_PICKUP == MSG_TURN_ADMIT_HELD_PICKUP, "admit diverged");
+_Static_assert(FIO_TURN_ARRIVE_SKIP    == MSG_TURN_ARRIVE_SKIP,    "arrival diverged");
+_Static_assert(FIO_TURN_ARRIVE_LATCH   == MSG_TURN_ARRIVE_LATCH,   "arrival diverged");
+_Static_assert(FIO_TURN_ARRIVE_ADOPT   == MSG_TURN_ARRIVE_ADOPT,   "arrival diverged");
+_Static_assert(FIO_TURN_ARRIVE_RETRACT == MSG_TURN_ARRIVE_RETRACT, "arrival diverged");
+_Static_assert(FIO_TURN_BYTES_HOST     == MSG_TURN_BYTES_HOST,     "send picker diverged");
+_Static_assert(FIO_TURN_BYTES_SEALED   == MSG_TURN_BYTES_SEALED,   "send picker diverged");
+_Static_assert(FIO_TURN_SEND_FOREIGN    == MSG_TURN_SEND_FOREIGN,    "send verdict diverged");
+_Static_assert(FIO_TURN_SEND_NOOP       == MSG_TURN_SEND_NOOP,       "send verdict diverged");
+_Static_assert(FIO_TURN_SEND_BLIND      == MSG_TURN_SEND_BLIND,      "send verdict diverged");
+_Static_assert(FIO_TURN_SEND_DECODE     == MSG_TURN_SEND_DECODE,     "send verdict diverged");
+_Static_assert(FIO_TURN_SEND_UNREADABLE == MSG_TURN_SEND_UNREADABLE, "send verdict diverged");
+_Static_assert(FIO_TURN_SEND_REBASE     == MSG_TURN_SEND_REBASE,     "send verdict diverged");
+
+int fio_msg_turn_can_send(int state) { return msg_turn_can_send(state); }
+
+int fio_msg_turn_can_act(int state, int n_human_moves) {
+    return msg_turn_can_act(state, n_human_moves);
+}
+
+int fio_msg_turn_can_stage(int state, int n_human_moves) {
+    return msg_turn_can_stage(state, n_human_moves);
+}
+
+int fio_msg_turn_admit(int state, int move_type, int pickup_hold) {
+    return msg_turn_admit(state, move_type, pickup_hold);
+}
+
+int fio_msg_turn_arrival(int state, int same_chain) {
+    return msg_turn_arrival(state, same_chain);
+}
+
+int fio_msg_turn_adopt_duplicate(int state, int same_chain) {
+    return msg_turn_adopt_duplicate(state, same_chain);
+}
+
+int fio_msg_turn_sent_source(int staged, int have_host, int have_sealed) {
+    return msg_turn_sent_source(staged, have_host, have_sealed);
+}
+
+int fio_msg_turn_send_verdict(int staged, int have_host, int have_sealed,
+                              int host_is_sealed, int decoded) {
+    return msg_turn_send_verdict(staged, have_host, have_sealed, host_is_sealed, decoded);
+}
+
+int fio_msg_turn_hold_state(int n_events, int cut) {
+    return msg_turn_hold_state(n_events, cut);
+}
+
+void fio_msg_turn_publish(int state, int base_atoms_before, int staged_atoms_before,
+                          int n_open_replay, int view_would_change,
+                          int *out_show_held_view, int *out_empty_menu,
+                          int *out_anim_atoms_before, int *out_raise_veil) {
+    MsgTurnRead in;
+    MsgTurnPublished out;
+    in.state = state;
+    in.base_atoms_before = base_atoms_before;
+    in.staged_atoms_before = staged_atoms_before;
+    in.n_open_replay = n_open_replay;
+    in.view_would_change = view_would_change;
+    msg_turn_publish(&in, &out);
+    if (out_show_held_view)    *out_show_held_view = out.show_held_view;
+    if (out_empty_menu)        *out_empty_menu = out.empty_menu;
+    if (out_anim_atoms_before) *out_anim_atoms_before = out.anim_atoms_before;
+    if (out_raise_veil)        *out_raise_veil = out.raise_veil;
+}

@@ -2,6 +2,7 @@
 // (structure vs semantics) split, and why the body is a v6 replay code.
 #include "msg_wire.h"
 #include "awire.h"
+#include "legal.h"   // MOVE_PICKUP, for the turn controller's admission door
 #include "replay.h"
 #include <string.h>
 
@@ -988,4 +989,95 @@ int msg_seat_resolve_in_lobby(const MsgJoin *joins, int n_joins,
     if (seat < 0) return -1;
     for (int i = 0; i < n_joins; i++) if (joins[i].seat == (uint8_t)seat) return seat;
     return -1;   // resolved, but this bubble's roster does not list it
+}
+
+/* ---------------------------------------------------------------------------
+ * THE TURN CONTROLLER, AS A TRANSITION FUNCTION (msg_wire.h). The decisions a
+ * chain client makes across its own suspension points. Facts in, an answer out;
+ * the host performs the effect and owns every await.
+ * ------------------------------------------------------------------------- */
+
+static int turn_has(int state, int bit) { return (state & bit) != 0; }
+
+int msg_turn_can_send(int state) {
+    return turn_has(state, MSG_TURN_STAGED) && !turn_has(state, MSG_TURN_SENDING);
+}
+
+int msg_turn_can_act(int state, int n_human_moves) {
+    return !turn_has(state, MSG_TURN_SUPERSEDED) && n_human_moves > 0;
+}
+
+int msg_turn_can_stage(int state, int n_human_moves) {
+    if (turn_has(state, MSG_TURN_SUPERSEDED)) return 0;
+    if (msg_turn_can_send(state)) return 1;
+    return turn_has(state, MSG_TURN_GENESIS) && !msg_turn_can_act(state, n_human_moves);
+}
+
+int msg_turn_admit(int state, int move_type, int pickup_hold) {
+    if (turn_has(state, MSG_TURN_RETRACTING)) return MSG_TURN_ADMIT_RETRACTING;
+    if (turn_has(state, MSG_TURN_SUPERSEDED)) return MSG_TURN_ADMIT_SUPERSEDED;
+    if (move_type == MOVE_PICKUP && pickup_hold > 0) return MSG_TURN_ADMIT_HELD_PICKUP;
+    return MSG_TURN_ADMIT_OK;
+}
+
+int msg_turn_arrival(int state, int same_chain) {
+    if (turn_has(state, MSG_TURN_READY) && same_chain) return MSG_TURN_ARRIVE_SKIP;
+    // Before the staged test below, not after: a retraction has already emptied
+    // the staged list, and a burst's second arrival must join the latch rather
+    // than adopt underneath the flight already playing.
+    if (turn_has(state, MSG_TURN_RETRACTING)) return MSG_TURN_ARRIVE_LATCH;
+    // Nothing staged, nobody mounted to fly it home, or the bytes are already
+    // gone: adopt as ever. A move the human has already SENT is not a staged
+    // move, and retracting it offers to take back a bubble the thread has.
+    if (!turn_has(state, MSG_TURN_BOARD_WATCHING)) return MSG_TURN_ARRIVE_ADOPT;
+    if (!turn_has(state, MSG_TURN_STAGED))         return MSG_TURN_ARRIVE_ADOPT;
+    if (turn_has(state, MSG_TURN_SENDING))         return MSG_TURN_ARRIVE_ADOPT;
+    return MSG_TURN_ARRIVE_RETRACT;
+}
+
+int msg_turn_adopt_duplicate(int state, int same_chain) {
+    return turn_has(state, MSG_TURN_READY) && !turn_has(state, MSG_TURN_STAGED)
+        && same_chain;
+}
+
+int msg_turn_sent_source(int staged, int have_host, int have_sealed) {
+    if (staged && have_sealed) return MSG_TURN_BYTES_SEALED;
+    if (have_host) return MSG_TURN_BYTES_HOST;
+    return MSG_TURN_BYTES_NONE;
+}
+
+int msg_turn_send_verdict(int staged, int have_host, int have_sealed,
+                          int host_is_sealed, int decoded) {
+    const int src = msg_turn_sent_source(staged, have_host, have_sealed);
+    // DID I SEAL THESE BYTES - not Rule P, which cannot answer it: a child can
+    // seal to a turn LOWER than its parent's, so ordering refused ordinary
+    // sends and left boards stuck mid-send. The sealed chain is the only one
+    // this device can vouch for; with none sealed it has no opinion, because a
+    // reload can legitimately hand it a chain it did not make.
+    if (src != MSG_TURN_BYTES_NONE && have_sealed) {
+        const int mine = (src == MSG_TURN_BYTES_SEALED) ? 1 : host_is_sealed;
+        if (!mine) return MSG_TURN_SEND_FOREIGN;
+    }
+    if (src != MSG_TURN_BYTES_NONE) {
+        if (decoded < 0) return MSG_TURN_SEND_DECODE;
+        if (!decoded) return MSG_TURN_SEND_UNREADABLE;
+    }
+    if (!staged && src == MSG_TURN_BYTES_NONE) return MSG_TURN_SEND_NOOP;
+    if (src == MSG_TURN_BYTES_NONE) return MSG_TURN_SEND_BLIND;
+    return MSG_TURN_SEND_REBASE;
+}
+
+int msg_turn_hold_state(int n_events, int cut) {
+    if (cut < 0 || n_events <= 0 || cut >= n_events) return -1;
+    return cut > 0 ? cut - 1 : 0;
+}
+
+void msg_turn_publish(const MsgTurnRead *in, MsgTurnPublished *out) {
+    if (!in || !out) return;
+    const int held   = turn_has(in->state, MSG_TURN_HELD);
+    const int staged = turn_has(in->state, MSG_TURN_STAGED);
+    out->show_held_view = held;
+    out->empty_menu = held;
+    out->anim_atoms_before = staged ? in->staged_atoms_before : in->base_atoms_before;
+    out->raise_veil = in->n_open_replay > 0 && in->view_would_change;
 }
