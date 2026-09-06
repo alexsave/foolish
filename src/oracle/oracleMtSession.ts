@@ -43,7 +43,13 @@ export function decodeVerdict(val: number): { verdict: OracleVerdict; verdictVal
  *  OG_LEAF, OG_DIFFTEST, OG_NO_WORLDSIM) are FORBIDDEN here (§8b.5 MT3): they
  *  route threads into game.c's handle_* where the benign-but-real statics
  *  (engine_last_reject, log_alloc's drop sink) live. The default fast bitboard
- *  path never enters them. */
+ *  path never enters them.
+ *
+ *  OG_W1 is FIXED here, where Mode A retunes it per batch (oracleWorker.ts). Mode
+ *  A has to: its batch size sets how often a worker posts, and so how often React
+ *  re-renders. In Mode B nothing crosses the boundary per batch - the main thread
+ *  polls a C counter on its own frame budget - so the batch size is only an inner
+ *  loop and there is nothing to adapt it to. */
 export const ORACLE_MT_ENV: Readonly<Record<string, string>> = {
     OG_KEEP1: '26', OG_KEEP2: '26', OG_W1: '24', OG_W2: '1', OG_W3: '0',
     OG_EXPLAIN_SOLVE_BUDGET: '2000000',
