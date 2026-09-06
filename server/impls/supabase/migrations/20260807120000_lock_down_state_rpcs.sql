@@ -1,16 +1,24 @@
 -- SECURITY: restrict the state-mutating SECURITY DEFINER RPCs to the service role.
 --
 -- These functions bypass RLS by design; the edge functions call them with the
--- service-role key. But Postgres grants EXECUTE to PUBLIC on every function by
--- default and nothing revoked it, so anon (not even signed in) and authenticated
--- could call them through PostgREST (POST /rest/v1/rpc/commit_game) and rewrite
--- any game's state or any player's hand. games.version is client-readable, so
--- the CAS fence is no barrier.
+-- service-role key. But PostgREST exposes them as POST /rest/v1/rpc/<name>, and
+-- both anon and authenticated hold EXECUTE: Postgres grants it to PUBLIC by
+-- default, and the live schema ALSO carries explicit GRANT ALL ... TO anon /
+-- authenticated. Nothing ever revoked either. anon is the unauthenticated role
+-- behind the anon key shipped in the web bundle, so this was reachable by anyone
+-- with no account at all, to rewrite any game's state or any player's hand.
+-- games.version is client-readable, so the CAS fence is no barrier.
+--
+-- Revoking from PUBLIC alone would leave the explicit anon grant standing and
+-- look like it worked, hence all three REVOKEs.
 --
 -- Mirrors the delete_account lockdown in 20260714120000. No client calls these
 -- RPCs, so this changes no app behavior. Idempotent. The pg_proc loop is
 -- deliberate: CREATE OR REPLACE with added DEFAULT params leaves stale overloads
 -- behind, and naming signatures would miss them.
+--
+-- e2e/db_grants.test.ts asserts the general invariant so the next such function
+-- fails CI instead of shipping open.
 
 DO $$
 DECLARE

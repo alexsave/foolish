@@ -10,6 +10,7 @@ import { registerServerValidation } from '../server.test.ts';
 import { registerLeaseValidation } from '../lease.test.ts';
 import { registerMetaValidation } from '../meta.test.ts';
 import { registerConcurrentValidation } from '../concurrent_games.test.ts';
+import { registerDbGrantsValidation } from '../db_grants.test.ts';
 
 before(async () => { await applySchema(); });
 beforeEach(async () => { await resetDb(); });
@@ -18,5 +19,6 @@ registerServerValidation();
 registerLeaseValidation();
 registerMetaValidation();
 registerConcurrentValidation();
+registerDbGrantsValidation();
 
 after(async () => { await pgPool.end(); });

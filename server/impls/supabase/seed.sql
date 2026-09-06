@@ -779,11 +779,13 @@ $$;
 
 -- SECURITY: these state-mutating RPCs are SECURITY DEFINER and bypass RLS by
 -- design (the edge functions call them with the service-role key). Postgres
--- grants EXECUTE to PUBLIC by default, so without this anon (not even signed
--- in) could call them through PostgREST and rewrite any game's state or any
--- player's hand, bypassing every app-layer check. No client calls these, so
--- locking them to the service role changes no app behavior. Same pattern as
--- delete_account. See migration 20260807120000_lock_down_state_rpcs.sql.
+-- grants EXECUTE to PUBLIC by default, so without this anon (the unauthenticated
+-- role behind the public anon key) could call them through PostgREST and rewrite
+-- any game's state or any player's hand, bypassing every app-layer check. No
+-- client calls these, so locking them to the service role changes no app
+-- behavior. Same pattern as delete_account. Revoking from PUBLIC alone is not
+-- enough: the live schema also carries explicit GRANTs to anon/authenticated.
+-- See migration 20260807120000_lock_down_state_rpcs.sql and e2e/db_grants.test.ts.
 DO $$
 DECLARE
   fn regprocedure;
