@@ -9,6 +9,7 @@
   --rule:#C6CFCE; --rule-2:#D8DFDE;
   --accent:#0C6C60; --accent-soft:rgba(12,108,96,.12);
   --edge:rgba(18,30,32,.16); --edge-cross:rgba(12,108,96,.55);
+  --edge-hard:rgba(18,30,32,.42); --warn:#B0562A;
   --shadow:0 1px 2px rgba(15,30,32,.07),0 8px 24px rgba(15,30,32,.06);
   --node-l:0;
 }
@@ -19,6 +20,7 @@
     --rule:#26302F; --rule-2:#1E2628;
     --accent:#41CFB6; --accent-soft:rgba(65,207,182,.14);
     --edge:rgba(215,235,232,.13); --edge-cross:rgba(65,207,182,.5);
+    --edge-hard:rgba(215,235,232,.36); --warn:#E08A52;
     --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.35);
     --node-l:8;
   }
@@ -29,6 +31,7 @@
   --rule:#26302F; --rule-2:#1E2628;
   --accent:#41CFB6; --accent-soft:rgba(65,207,182,.14);
   --edge:rgba(215,235,232,.13); --edge-cross:rgba(65,207,182,.5);
+  --edge-hard:rgba(215,235,232,.36); --warn:#E08A52;
   --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.35);
   --node-l:8;
 }
@@ -212,6 +215,33 @@ button,input,select{font:inherit;color:inherit}
 .guide{
   border-left:1px solid var(--rule-2);align-self:stretch;flex:none;
 }
+.cycnote{
+  font-size:11px;color:var(--ink-2);display:flex;align-items:center;gap:6px;
+}
+.cycnote i{
+  width:22px;height:0;border-top:2px dashed var(--warn);display:inline-block;
+}
+#treebody.graphmode{padding:0;display:flex;flex-direction:column;overflow:hidden}
+#gwrap{flex:1;overflow:auto;position:relative;cursor:grab}
+#gwrap.drag{cursor:grabbing}
+#gsvg{display:block}
+#gsvg .lnk{fill:none;stroke:var(--edge-hard);stroke-width:1.3}
+#gsvg .lnk.back{stroke:var(--warn);stroke-dasharray:5 4;stroke-width:1.5}
+#gsvg .lnk.cross{stroke:var(--accent);stroke-width:1.8}
+#gsvg .lnk.hot{stroke:var(--accent);stroke-width:2.2}
+#gsvg .nd rect{stroke:var(--rule);stroke-width:1;rx:3}
+#gsvg .nd text{
+  text-anchor:start;
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:11px;
+  fill:var(--ink);dominant-baseline:middle;
+}
+#gsvg .nd.sel rect{stroke:var(--accent);stroke-width:2.5}
+#gsvg .nd{cursor:pointer}
+#gsvg .nd:hover rect{stroke:var(--ink);stroke-width:2}
+#gsvg .rank{
+  font-family:Chivo,sans-serif;font-size:9px;fill:var(--ink-3);
+  letter-spacing:.12em;text-transform:uppercase;
+}
 .treehint{padding:16px 18px;color:var(--ink-2);font-size:12px;max-width:60ch;line-height:1.55}
 .treehint b{color:var(--ink)}
 @media (prefers-reduced-motion:reduce){.row .tw{transition:none}}
@@ -357,12 +387,21 @@ button,input,select{font:inherit;color:inherit}
         <div class="seg" role="group" aria-label="Hierarchy">
           <button id="hStruct" aria-pressed="true">Directories</button>
           <button id="hCalls" aria-pressed="false">Call tree</button>
+          <button id="hGraph" aria-pressed="false">Layered graph</button>
         </div>
         <div class="seg" id="dirSeg" role="group" aria-label="Call direction">
           <button id="dOut" aria-pressed="true">Calls out</button>
           <button id="dIn" aria-pressed="false">Callers</button>
         </div>
+        <div class="seg" id="depthSeg" role="group" aria-label="Depth" hidden>
+          <span class="lbl">Depth</span>
+          <button data-depth="2" aria-pressed="false">2</button>
+          <button data-depth="3" aria-pressed="true">3</button>
+          <button data-depth="4" aria-pressed="false">4</button>
+          <button data-depth="6" aria-pressed="false">6</button>
+        </div>
         <span class="spacer"></span>
+        <span id="cycnote" class="cycnote" hidden></span>
         <button id="treeCollapse" class="linky">Collapse all</button>
       </header>
       <div id="rootbar" hidden></div>
@@ -451,7 +490,8 @@ buildColors();
 let CSSV = {};
 function readVars() {
   const s = getComputedStyle(document.documentElement);
-  ["--ground", "--ink", "--ink-2", "--ink-3", "--panel", "--rule", "--edge", "--edge-cross", "--accent"]
+  ["--ground", "--ink", "--ink-2", "--ink-3", "--panel", "--rule", "--edge",
+   "--edge-cross", "--edge-hard", "--warn", "--accent"]
     .forEach(k => CSSV[k] = s.getPropertyValue(k).trim());
 }
 readVars();
@@ -1142,13 +1182,15 @@ const treeEl = document.getElementById("tree");
 const treeBody = document.getElementById("treebody");
 const treeBar = { struct: document.getElementById("hStruct"),
                   calls: document.getElementById("hCalls"),
+                  graph: document.getElementById("hGraph"),
                   dirSeg: document.getElementById("dirSeg"),
+                  depthSeg: document.getElementById("depthSeg"),
                   out: document.getElementById("dOut"),
                   in: document.getElementById("dIn") };
 // `root` is what the call tree unrolls FROM; `st.sel` is what the inspector is
 // showing. Keeping them apart means clicking a row down the tree reads that
 // function without yanking the whole tree out from under you.
-const tree = { kind: "struct", dir: "out", open: new Set(), rows: 0, root: -1 };
+const tree = { kind: "struct", dir: "out", open: new Set(), rows: 0, root: -1, depth: 3 };
 
 let fileMembers = null;
 function buildFileMembers() {
@@ -1376,9 +1418,289 @@ function renderCalls(frag) {
   walk(tree.root, 0, rootPath, null);
 }
 
+
+/* --------------------------------------------------------- layered graph */
+// A drawn hierarchy rather than an indented list: ranks running downward, one
+// row per call depth, links between them. Call graphs are not trees - a rank
+// assignment by BFS depth means any edge landing on an equal or shallower rank
+// is a BACK EDGE, i.e. a cycle, and those are drawn dashed rather than dropped.
+// Ranks run LEFT TO RIGHT, not top to bottom. Function names are wide and a
+// rank fans out hard - a top-down drawing of one is a mile wide and a few rows
+// tall, which fits on no screen. As columns, the names read straight and the
+// fan-out costs vertical scroll, which is free.
+const NODE_H = 22, ROW_GAP = 9, COL_GAP = 52, MAX_NODES = 500;
+
+let measurer = null;
+function textWidth(str) {
+  if (!measurer) {
+    const svg = svgEl("svg", { width: 0, height: 0,
+                               style: "position:absolute;visibility:hidden" });
+    measurer = svgEl("text");
+    measurer.setAttribute("font-family", "'IBM Plex Mono', ui-monospace, monospace");
+    measurer.setAttribute("font-size", "11");
+    svg.append(measurer);
+    document.body.append(svg);
+  }
+  measurer.textContent = str;
+  return measurer.getComputedTextLength();
+}
+function clipName(n) {
+  return n.length > 30 ? n.slice(0, 29) + "…" : n;
+}
+
+function buildLayered(root, dir, maxDepth) {
+  const rank = new Map([[root, 0]]);
+  const order = [root];
+  let cut = false;
+  for (let qi = 0; qi < order.length; qi++) {
+    const u = order[qi], d = rank.get(u);
+    if (d >= maxDepth) continue;
+    for (const [v] of edgesOf(u)) {
+      if (rank.has(v)) continue;
+      if (order.length >= MAX_NODES) { cut = true; break; }
+      rank.set(v, d + 1);
+      order.push(v);
+    }
+    if (cut) break;
+  }
+
+  // Rank by BFS depth, so every edge that lands on an equal or shallower rank
+  // is a back edge - a cycle. Those are kept and drawn dashed, never dropped.
+  const links = [];
+  let back = 0;
+  for (const u of order) {
+    for (const [v, c] of edgesOf(u)) {
+      if (!rank.has(v)) continue;
+      const isBack = rank.get(v) <= rank.get(u);
+      if (isBack) back++;
+      links.push({ u, v, conf: G.confs[c], back: isBack });
+    }
+  }
+  const layers = [];
+  for (const [n, r] of rank) (layers[r] || (layers[r] = [])).push(n);
+
+  const up = new Map(), down = new Map();
+  for (const l of links) {
+    if (l.back) continue;              // a cycle is what we route around, not
+    if (!up.has(l.v)) up.set(l.v, []); // a constraint on the ordering
+    if (!down.has(l.u)) down.set(l.u, []);
+    up.get(l.v).push(l.u);
+    down.get(l.u).push(l.v);
+  }
+
+  // Crossing reduction: order each rank by the median position of its
+  // neighbours in the rank before (then after), sweeping both ways.
+  const pos = new Map();
+  layers.forEach(L => L && L.forEach((n, i) => pos.set(n, i)));
+  const median = (n, side) => {
+    const nb = (side === "up" ? up : down).get(n);
+    if (!nb || !nb.length) return pos.get(n);
+    const xs = nb.map(m => pos.get(m)).sort((a, b) => a - b);
+    return xs[(xs.length - 1) >> 1];
+  };
+  for (let sweep = 0; sweep < 8; sweep++) {
+    const side = sweep % 2 ? "down" : "up";
+    const rs = layers.map((_, i) => i).filter(i => layers[i]);
+    for (const r of (side === "up" ? rs : [...rs].reverse())) {
+      layers[r].sort((a, b) => median(a, side) - median(b, side));
+      layers[r].forEach((n, i) => pos.set(n, i));
+    }
+  }
+
+  // Down the column: start on the index, then pull each node toward the median
+  // of its neighbours so a chain runs straight instead of stair-stepping, and
+  // re-separate after every pull so two boxes can never overlap.
+  const STEP = NODE_H + ROW_GAP;
+  const y = new Map();
+  for (const L of layers) if (L) L.forEach((n, i) => y.set(n, i * STEP));
+  for (let pass = 0; pass < 10; pass++) {
+    for (const L of layers) {
+      if (!L) continue;
+      for (const n of L) {
+        const nb = [...(up.get(n) || []), ...(down.get(n) || [])];
+        if (!nb.length) continue;
+        const ys = nb.map(m => y.get(m)).sort((a, b) => a - b);
+        const want = ys.length % 2 ? ys[(ys.length - 1) / 2]
+          : (ys[ys.length / 2 - 1] + ys[ys.length / 2]) / 2;
+        y.set(n, y.get(n) + (want - y.get(n)) * 0.45);
+      }
+      for (let i = 1; i < L.length; i++)
+        if (y.get(L[i]) - y.get(L[i - 1]) < STEP) y.set(L[i], y.get(L[i - 1]) + STEP);
+      for (let i = L.length - 2; i >= 0; i--)
+        if (y.get(L[i + 1]) - y.get(L[i]) < STEP) y.set(L[i], y.get(L[i + 1]) - STEP);
+    }
+  }
+
+  // Columns are as wide as their widest name.
+  const w = new Map();
+  for (const n of order) w.set(n, Math.max(40, textWidth(clipName(G.name[n])) + 20));
+  const colX = [], colW = [];
+  let cx = 16;
+  for (let r = 0; r < layers.length; r++) {
+    colW[r] = layers[r] ? Math.max(...layers[r].map(n => w.get(n))) : 0;
+    colX[r] = cx;
+    cx += colW[r] + COL_GAP;
+  }
+
+  let miny = Infinity, maxy = -Infinity;
+  for (const n of order) {
+    miny = Math.min(miny, y.get(n));
+    maxy = Math.max(maxy, y.get(n));
+  }
+  const TOP = 34;                       // room for the rank captions
+  for (const n of order) y.set(n, y.get(n) - miny + TOP + NODE_H / 2);
+
+  return { order, rank, layers, links, y, w, colX, colW, back, cut,
+           width: cx - COL_GAP + 16,
+           height: maxy - miny + TOP + NODE_H + 24 };
+}
+
+const SVGNS = "http://www.w3.org/2000/svg";
+const svgEl = (t, attrs) => {
+  const e = document.createElementNS(SVGNS, t);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
+};
+
+function renderHier(frag) {
+  if (tree.root < 0 || !VIS[tree.root]) tree.root = VIS[st.sel] ? st.sel : -1;
+  const note = document.getElementById("cycnote");
+  if (tree.root < 0) {
+    note.hidden = true;
+    const p = document.createElement("div");
+    p.className = "treehint";
+    p.innerHTML = "<b>Pick a function first.</b> The layered graph draws " +
+      "everything reachable from one function, a column per call step.";
+    frag.append(p);
+    return;
+  }
+  const L = buildLayered(tree.root, tree.dir, tree.depth);
+  tree.rows = L.order.length;
+
+  note.hidden = false;
+  note.innerHTML = "";
+  if (L.back) {
+    note.append(svgLegendDash(), document.createTextNode(
+      L.back + (L.back === 1 ? " edge" : " edges") + " back into an earlier rank"));
+  } else {
+    note.append(document.createTextNode("no cycles at this depth"));
+  }
+
+  const wrap = document.createElement("div");
+  wrap.id = "gwrap";
+  // Fit the columns to the pane; the fan-out costs height, which scrolls.
+  const paneW = Math.max(320, treeBody.clientWidth - 2);
+  const fit = Math.min(1, paneW / L.width);
+  const svg = svgEl("svg", { id: "gsvg",
+                             width: Math.round(L.width * fit),
+                             height: Math.round(L.height * fit),
+                             viewBox: "0 0 " + L.width + " " + L.height });
+  const defs = svgEl("defs");
+  for (const [id, col] of [["ah", CSSV["--edge-hard"]], ["ahb", CSSV["--warn"]],
+                           ["ahc", CSSV["--accent"]]]) {
+    const m = svgEl("marker", { id, viewBox: "0 0 8 8", refX: 7, refY: 4,
+                                markerWidth: 6, markerHeight: 6, orient: "auto" });
+    m.append(svgEl("path", { d: "M0 0 L8 4 L0 8 z", fill: col }));
+    defs.append(m);
+  }
+  svg.append(defs);
+
+  const left = n => L.colX[L.rank.get(n)];
+  const right = n => L.colX[L.rank.get(n)] + L.w.get(n);
+
+  for (let r = 0; r < L.layers.length; r++) {
+    if (!L.layers[r]) continue;
+    const t = svgEl("text", { class: "rank", x: L.colX[r], y: 18 });
+    t.textContent = r === 0 ? "root"
+      : r + (tree.dir === "out" ? " step out" : " step up");
+    svg.append(t);
+  }
+
+  const gl = svgEl("g");
+  for (const l of L.links) {
+    const y1 = L.y.get(l.u), y2 = L.y.get(l.v);
+    let d, cls = "lnk";
+    if (l.back) {
+      // A cycle returns leftward: bow it below the boxes so it reads as a
+      // return path instead of hiding under the forward links.
+      const x1 = left(l.u), x2 = right(l.v);
+      const dip = 22 + Math.min(60, Math.abs(y2 - y1) * 0.3);
+      d = "M" + x1 + " " + y1 + " C" + (x1 - dip * 1.6) + " " + (y1 + dip) + " " +
+          (x2 + dip * 1.6) + " " + (y2 + dip) + " " + x2 + " " + y2;
+      cls += " back";
+    } else {
+      const x1 = right(l.u), x2 = left(l.v), mx = (x1 + x2) / 2;
+      d = "M" + x1 + " " + y1 + " C" + mx + " " + y1 + " " + mx + " " + y2 +
+          " " + x2 + " " + y2;
+      if (l.conf === "cross") cls += " cross";
+    }
+    const p = svgEl("path", { class: cls, d });
+    p.setAttribute("marker-end", l.back ? "url(#ahb)"
+      : l.conf === "cross" ? "url(#ahc)" : "url(#ah)");
+    const title = svgEl("title");
+    title.textContent = G.name[l.u] + " → " + G.name[l.v] +
+      "  (" + l.conf + (l.back ? ", back edge — a cycle" : "") + ")";
+    p.append(title);
+    gl.append(p);
+  }
+  svg.append(gl);
+
+  for (const n of L.order) {
+    const g = svgEl("g", { class: "nd" + (n === st.sel ? " sel" : "") });
+    const x = left(n), y = L.y.get(n) - NODE_H / 2;
+    g.append(svgEl("rect", { x, y, width: L.w.get(n), height: NODE_H, rx: 3,
+                             fill: COLOR[n], "fill-opacity": dark ? 0.32 : 0.22,
+                             stroke: COLOR[n] }));
+    const t = svgEl("text", { x: x + 10, y: L.y.get(n) });
+    t.textContent = clipName(G.name[n]);
+    g.append(t);
+    const title = svgEl("title");
+    title.textContent = G.name[n] + "\n" + G.files[G.file[n]] + ":" + G.line[n];
+    g.append(title);
+    g.addEventListener("click", () => {
+      st.sel = n;
+      computeEgo();
+      renderSel();
+      renderTree();
+    });
+    svg.append(g);
+  }
+
+  if (L.cut) {
+    const p = document.createElement("div");
+    p.className = "treehint";
+    p.textContent = "Stopped at " + MAX_NODES + " functions — drop the depth " +
+      "or switch a language off to see the rest.";
+    frag.append(p);
+  }
+  wrap.append(svg);
+  frag.append(wrap);
+
+  let dragging = false, sx0 = 0, sy0 = 0, l0 = 0, t0 = 0;
+  wrap.addEventListener("pointerdown", ev => {
+    if (ev.target.closest(".nd")) return;
+    dragging = true; sx0 = ev.clientX; sy0 = ev.clientY;
+    l0 = wrap.scrollLeft; t0 = wrap.scrollTop;
+    wrap.setPointerCapture(ev.pointerId); wrap.classList.add("drag");
+  });
+  wrap.addEventListener("pointermove", ev => {
+    if (!dragging) return;
+    wrap.scrollLeft = l0 - (ev.clientX - sx0);
+    wrap.scrollTop = t0 - (ev.clientY - sy0);
+  });
+  wrap.addEventListener("pointerup", () => {
+    dragging = false; wrap.classList.remove("drag");
+  });
+}
+
+function svgLegendDash() {
+  const i = document.createElement("i");
+  return i;
+}
+
 function renderRootBar() {
   const bar = document.getElementById("rootbar");
-  if (tree.kind !== "calls") { bar.hidden = true; return; }
+  if (tree.kind === "struct") { bar.hidden = true; return; }
   bar.hidden = false;
   bar.innerHTML = "";
   const at = document.createElement("span");
@@ -1404,16 +1726,23 @@ function renderRootBar() {
 function renderTree() {
   if (st.view !== "tree") return;
   tree.rows = 0;
+  // The graph pane manages its own scrolling box; the list panes scroll as a
+  // plain document.
+  treeBody.classList.toggle("graphmode", tree.kind === "graph");
   const frag = document.createDocumentFragment();
   if (tree.kind === "struct") { buildStructure(); renderStruct(frag); }
+  else if (tree.kind === "graph") renderHier(frag);
   else renderCalls(frag);
   treeBody.replaceChildren(frag);
   renderRootBar();
   document.getElementById("fz").textContent = "—";
-  document.getElementById("fv").textContent = tree.rows.toLocaleString() + " rows";
+  document.getElementById("fv").textContent = tree.rows.toLocaleString() +
+    (tree.kind === "graph" ? " nodes" : " rows");
+  const way = tree.dir === "out" ? "calls out" : "callers";
   document.getElementById("fmode").textContent =
     tree.kind === "struct" ? "directory tree"
-      : "call tree · " + (tree.dir === "out" ? "calls out" : "callers");
+      : tree.kind === "graph" ? "layered graph · " + way + " · depth " + tree.depth
+        : "call tree · " + way;
 }
 
 // Opening the tree on a selection should land on it, not at the repo root.
@@ -1429,10 +1758,14 @@ function revealSelected() {
 
 function setTreeKind(kind) {
   tree.kind = kind;
-  if (kind === "calls" && st.sel >= 0) tree.root = st.sel;
+  if (kind !== "struct" && st.sel >= 0) tree.root = st.sel;
   treeBar.struct.setAttribute("aria-pressed", String(kind === "struct"));
   treeBar.calls.setAttribute("aria-pressed", String(kind === "calls"));
-  treeBar.dirSeg.hidden = kind !== "calls";
+  treeBar.graph.setAttribute("aria-pressed", String(kind === "graph"));
+  treeBar.dirSeg.hidden = kind === "struct";
+  treeBar.depthSeg.hidden = kind !== "graph";
+  document.getElementById("treeCollapse").hidden = kind === "graph";
+  if (kind !== "graph") document.getElementById("cycnote").hidden = true;
   if (kind === "struct") revealSelected();
   renderTree();
   scrollToSelected();
@@ -1449,6 +1782,15 @@ function scrollToSelected() {
 }
 treeBar.struct.addEventListener("click", () => setTreeKind("struct"));
 treeBar.calls.addEventListener("click", () => setTreeKind("calls"));
+treeBar.graph.addEventListener("click", () => setTreeKind("graph"));
+for (const b of treeBar.depthSeg.querySelectorAll("button")) {
+  b.addEventListener("click", () => {
+    tree.depth = +b.dataset.depth;
+    for (const o of treeBar.depthSeg.querySelectorAll("button"))
+      o.setAttribute("aria-pressed", String(o === b));
+    renderTree();
+  });
+}
 treeBar.out.addEventListener("click", () => setTreeDir("out"));
 treeBar.in.addEventListener("click", () => setTreeDir("in"));
 document.getElementById("treeCollapse").addEventListener("click", () => {
@@ -1538,6 +1880,7 @@ new MutationObserver(() => { readTheme(); readVars(); buildColors(); buildLegend
 setLayout();
 buildLegends(); buildCross(); buildMethod();
 treeBar.dirSeg.hidden = true;
+treeBar.depthSeg.hidden = true;
 resize();
 fit();
 // Open on the seam the whole repo turns around: the wasm entry point the web

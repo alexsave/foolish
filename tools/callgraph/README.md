@@ -95,6 +95,17 @@ view answers that instead, with two hierarchies:
 - **Call tree** — callees (or callers, with the direction toggle) unrolled from
   one root, with the confidence of each edge on the row and recursion marked
   where a function appears above itself in the same branch.
+- **Layered graph** — the same reachable set drawn as a node-link diagram: one
+  column per call step, links between them, depth selectable. Ranks come from
+  BFS depth, which is also what makes cycles fall out: any edge landing on an
+  equal or shallower rank is a **back edge**, drawn dashed and bowed below the
+  boxes rather than dropped, and counted in the bar. Within a rank, order is
+  the median heuristic swept both ways to cut crossings, then each node is
+  pulled toward the median of its neighbours and re-separated so a chain runs
+  straight without boxes ever overlapping. Ranks run left to right, not top
+  down: function names are wide and a rank fans out hard, so a top-down drawing
+  of one is a mile wide and three rows tall. As columns the names read
+  straight and the fan-out costs vertical scroll, which is free.
 
 The call tree's root and the selection are deliberately separate: clicking a row
 reads that function in the inspector without yanking the tree out from under

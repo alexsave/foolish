@@ -9,6 +9,7 @@
   --rule:#C6CFCE; --rule-2:#D8DFDE;
   --accent:#0C6C60; --accent-soft:rgba(12,108,96,.12);
   --edge:rgba(18,30,32,.16); --edge-cross:rgba(12,108,96,.55);
+  --edge-hard:rgba(18,30,32,.42); --warn:#B0562A;
   --shadow:0 1px 2px rgba(15,30,32,.07),0 8px 24px rgba(15,30,32,.06);
   --node-l:0;
 }
@@ -19,6 +20,7 @@
     --rule:#26302F; --rule-2:#1E2628;
     --accent:#41CFB6; --accent-soft:rgba(65,207,182,.14);
     --edge:rgba(215,235,232,.13); --edge-cross:rgba(65,207,182,.5);
+    --edge-hard:rgba(215,235,232,.36); --warn:#E08A52;
     --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.35);
     --node-l:8;
   }
@@ -29,6 +31,7 @@
   --rule:#26302F; --rule-2:#1E2628;
   --accent:#41CFB6; --accent-soft:rgba(65,207,182,.14);
   --edge:rgba(215,235,232,.13); --edge-cross:rgba(65,207,182,.5);
+  --edge-hard:rgba(215,235,232,.36); --warn:#E08A52;
   --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.35);
   --node-l:8;
 }
@@ -212,6 +215,33 @@ button,input,select{font:inherit;color:inherit}
 .guide{
   border-left:1px solid var(--rule-2);align-self:stretch;flex:none;
 }
+.cycnote{
+  font-size:11px;color:var(--ink-2);display:flex;align-items:center;gap:6px;
+}
+.cycnote i{
+  width:22px;height:0;border-top:2px dashed var(--warn);display:inline-block;
+}
+#treebody.graphmode{padding:0;display:flex;flex-direction:column;overflow:hidden}
+#gwrap{flex:1;overflow:auto;position:relative;cursor:grab}
+#gwrap.drag{cursor:grabbing}
+#gsvg{display:block}
+#gsvg .lnk{fill:none;stroke:var(--edge-hard);stroke-width:1.3}
+#gsvg .lnk.back{stroke:var(--warn);stroke-dasharray:5 4;stroke-width:1.5}
+#gsvg .lnk.cross{stroke:var(--accent);stroke-width:1.8}
+#gsvg .lnk.hot{stroke:var(--accent);stroke-width:2.2}
+#gsvg .nd rect{stroke:var(--rule);stroke-width:1;rx:3}
+#gsvg .nd text{
+  text-anchor:start;
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:11px;
+  fill:var(--ink);dominant-baseline:middle;
+}
+#gsvg .nd.sel rect{stroke:var(--accent);stroke-width:2.5}
+#gsvg .nd{cursor:pointer}
+#gsvg .nd:hover rect{stroke:var(--ink);stroke-width:2}
+#gsvg .rank{
+  font-family:Chivo,sans-serif;font-size:9px;fill:var(--ink-3);
+  letter-spacing:.12em;text-transform:uppercase;
+}
 .treehint{padding:16px 18px;color:var(--ink-2);font-size:12px;max-width:60ch;line-height:1.55}
 .treehint b{color:var(--ink)}
 @media (prefers-reduced-motion:reduce){.row .tw{transition:none}}
@@ -357,12 +387,21 @@ button,input,select{font:inherit;color:inherit}
         <div class="seg" role="group" aria-label="Hierarchy">
           <button id="hStruct" aria-pressed="true">Directories</button>
           <button id="hCalls" aria-pressed="false">Call tree</button>
+          <button id="hGraph" aria-pressed="false">Layered graph</button>
         </div>
         <div class="seg" id="dirSeg" role="group" aria-label="Call direction">
           <button id="dOut" aria-pressed="true">Calls out</button>
           <button id="dIn" aria-pressed="false">Callers</button>
         </div>
+        <div class="seg" id="depthSeg" role="group" aria-label="Depth" hidden>
+          <span class="lbl">Depth</span>
+          <button data-depth="2" aria-pressed="false">2</button>
+          <button data-depth="3" aria-pressed="true">3</button>
+          <button data-depth="4" aria-pressed="false">4</button>
+          <button data-depth="6" aria-pressed="false">6</button>
+        </div>
         <span class="spacer"></span>
+        <span id="cycnote" class="cycnote" hidden></span>
         <button id="treeCollapse" class="linky">Collapse all</button>
       </header>
       <div id="rootbar" hidden></div>
