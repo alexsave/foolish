@@ -2026,6 +2026,48 @@ private struct NewGameSetup: View {
     /// "this game link is damaged" (B1's actual bug).
     private var nameVerdict: NicknameGate.Verdict { NicknameGate.check(nickname) }
 
+    /// OUR OWN KEYBOARD, and the one thing that has to happen before this view
+    /// is swapped away. The other two name fields (`LobbyView`'s join and
+    /// `NameGateView`) carry the same pair and point back here.
+    ///
+    /// Compact is the keyboard area and cannot host a field (§3.5), so every
+    /// name field in this extension is EXPANDED - and the keyboard it raises
+    /// belongs to Messages, not to us. Nothing in here can lower it once it is
+    /// up: there is no UIApplication to ask (this target is extension-API-only,
+    /// see MessagesViewController's `onOpenURL` note) and
+    /// MSMessagesAppViewController offers no control over it. The ONE lever we
+    /// have is our own first responder - resign it while the field still
+    /// exists, and the keyboard goes down with it.
+    ///
+    /// Until now nothing did. Create game, Join and Continue each hand off to a
+    /// closure that replaces this whole view with the lobby or the board, so a
+    /// focused field was REMOVED while it was still first responder. When the
+    /// keyboard survives that, Messages lays the expanded sheet out into the
+    /// half of the screen the keyboard leaves and there is no way left to
+    /// dismiss it: the compose bar is hidden while a sheet is expanded, so
+    /// there is no field to tap and nothing to swipe. The board itself is not
+    /// damaged - roughly 500pt is still well above
+    /// `MessageTableView.collapseFraction`'s 440pt anchor, which is why it
+    /// reads as half a board rather than a broken one - but half the table and
+    /// a hand jammed against the keyboard is the whole complaint.
+    @FocusState private var nameFocused: Bool
+    /// One hand-off at a time. `handOff` defers its action by a runloop turn,
+    /// and this closes the window that opens.
+    @State private var handingOff = false
+
+    /// Drop our keyboard, THEN hand off - in that order, and not in the same
+    /// runloop turn. Resigning and calling `act()` together races the
+    /// resignation against the swap `act()` causes, which is the
+    /// removal-while-first-responder above; the hop lets SwiftUI commit the
+    /// focus change while the field is still on screen. A turn is ~16ms and
+    /// every one of these actions is a screen change, so nothing reads as lag.
+    private func handOff(_ act: @escaping () -> Void) {
+        guard !handingOff else { return }
+        handingOff = true
+        nameFocused = false
+        DispatchQueue.main.async { act(); self.handingOff = false }
+    }
+
     var body: some View {
         VStack(spacing: 16) {
             // Round-6 #17: `onTableText` (Tokens.swift) is the wool half of
@@ -2034,10 +2076,12 @@ private struct NewGameSetup: View {
             // Round-7 #1: the "Your name" label is dropped - the field's own
             // "your nickname" placeholder already says what it is, and the two
             // together were redundant. The placeholder carries it alone now.
-            TextField(FStrings.t("ios.msg.nickname_ph"), text: $nickname).textFieldStyle(.roundedBorder)
+            TextField(FStrings.t("ios.msg.nickname_ph"), text: $nickname)
+                .textFieldStyle(.roundedBorder).focused($nameFocused)
             switch nameVerdict {
             case .ok(let name):
-                FButton(FStrings.t("ios.msg.creategame"), kind: .wood) { onStart(name) }
+                // `handOff`, never `onStart` directly - see `handOff`.
+                FButton(FStrings.t("ios.msg.creategame"), kind: .wood) { handOff { onStart(name) } }
             case .empty:
                 FButton(FStrings.t("ios.msg.entername"), kind: .wood, enabled: false) {}
             case .tooLong:
@@ -2233,6 +2277,20 @@ private struct LobbyView: View {
     /// place a joiner names themselves before claiming a seat. Seeded from the
     /// stored nickname, blank if it's the neutral default.
     @State private var nickname: String
+
+    /// The join field's keyboard, and the hand-off that must outlive it. Same
+    /// pair, same reason, as `NewGameSetup` - its `nameFocused` carries the
+    /// whole story.
+    @FocusState private var nameFocused: Bool
+    @State private var handingOff = false
+
+    /// Drop our keyboard, THEN hand off. See `NewGameSetup.handOff`.
+    private func handOff(_ act: @escaping () -> Void) {
+        guard !handingOff else { return }
+        handingOff = true
+        nameFocused = false
+        DispatchQueue.main.async { act(); self.handingOff = false }
+    }
 
     /// WHERE I JUST PUT THE TICK, ahead of the chain agreeing with me.
     ///
@@ -2495,7 +2553,8 @@ private struct LobbyView: View {
                 // B1: same three-state nickname gate as NewGameSetup (see
                 // `nameVerdict`) — "Join as {name}" only appears once the
                 // field holds a valid, trimmed name.
-                TextField(FStrings.t("ios.msg.nickname_ph"), text: $nickname).textFieldStyle(.roundedBorder)
+                TextField(FStrings.t("ios.msg.nickname_ph"), text: $nickname)
+                    .textFieldStyle(.roundedBorder).focused($nameFocused)
                 switch nameVerdict {
                 case .ok(let name):
                     // Names are the only identity the payload carries (§6), so
@@ -2505,7 +2564,10 @@ private struct LobbyView: View {
                     if NicknameGate.isTaken(name, in: env.joins) {
                         FButton(FStrings.t("ios.msg.nametaken"), kind: .wood, enabled: false) {}
                     } else {
-                        FButton(FStrings.t("ios.msg.joinas", ["name": name]), kind: .wood) { onJoin(name) }
+                        // `handOff`, never `onJoin` directly - see
+                        // `NewGameSetup.handOff`.
+                        FButton(FStrings.t("ios.msg.joinas", ["name": name]),
+                                kind: .wood) { handOff { onJoin(name) } }
                     }
                 case .empty:
                     FButton(FStrings.t("ios.msg.entername"), kind: .wood, enabled: false) {}
@@ -2565,6 +2627,22 @@ private struct NameGateView: View {
 
     private var nameVerdict: NicknameGate.Verdict { NicknameGate.check(name) }
 
+    /// This screen's keyboard, and the hand-off that must outlive it. Same
+    /// pair, same reason, as `NewGameSetup` - its `nameFocused` carries the
+    /// whole story. This is the one of the three that lands on a LIVE BOARD
+    /// (§6.2 cache-loss recovery, so mid-game), which is the shape the owner
+    /// was sent a screenshot of.
+    @FocusState private var nameFocused: Bool
+    @State private var handingOff = false
+
+    /// Drop our keyboard, THEN hand off. See `NewGameSetup.handOff`.
+    private func handOff(_ act: @escaping () -> Void) {
+        guard !handingOff else { return }
+        handingOff = true
+        nameFocused = false
+        DispatchQueue.main.async { act(); self.handingOff = false }
+    }
+
     var body: some View {
         VStack(spacing: 16) {
             // Round-6 #17: `onTableText` (Tokens.swift).
@@ -2574,13 +2652,18 @@ private struct NameGateView: View {
             // both rely solely on the VStack's outer .padding() so they render the
             // same width (note 29; the field used to be inset twice, making it
             // visibly narrower than the full-width Continue button).
-            TextField(FStrings.t("ios.msg.nickname_ph"), text: $name).textFieldStyle(.roundedBorder)
+            TextField(FStrings.t("ios.msg.nickname_ph"), text: $name)
+                .textFieldStyle(.roundedBorder).focused($nameFocused)
                 .submitLabel(.done).onSubmit {
-                    if case .ok(let trimmed) = nameVerdict { onContinue(trimmed) }
+                    // The Return key resigns on its own, but it goes through
+                    // `handOff` anyway so there is ONE way off this screen.
+                    if case .ok(let trimmed) = nameVerdict { handOff { onContinue(trimmed) } }
                 }
             switch nameVerdict {
             case .ok(let trimmed):
-                FButton(FStrings.t("ios.msg.continue"), kind: .wood) { onContinue(trimmed) }
+                // `handOff`, never `onContinue` directly - see
+                // `NewGameSetup.handOff`.
+                FButton(FStrings.t("ios.msg.continue"), kind: .wood) { handOff { onContinue(trimmed) } }
             case .empty:
                 FButton(FStrings.t("ios.msg.entername"), kind: .wood, enabled: false) {}
             case .tooLong:
