@@ -1,4 +1,11 @@
 CC      ?= clang
+
+# A literal comma, so $(filter-out) patterns can name a -Wl,--flag. Defined here
+# rather than beside its first user: := expands immediately, so a definition
+# further down the file silently expands to nothing at every earlier use, and
+# the msg target's memory-pin filter spent its whole life being a no-op that
+# emitted BOTH pins and let the later one win.
+comma := ,
 # -flto links the engine, legal-move generator and bots as one unit so the
 # tiny per-ply leaf calls (can_cover, game_done, should_bot_act, card_eq,
 # hand_remove_card — 100M–300M calls in a cordite eval) inline into the rollout
@@ -782,18 +789,29 @@ wasm-guards: build/guards.wasm
 # bots.wasm, which is the same kernel plus every rung of the ladder.
 # NOT replay_steps.c: that is the step WALKER, which replays a finished code
 # through the engine to feed a replay screen. The extension has no replay
-# screen. replay.c and replay_extras.c stay, because it very much does want the
-# share URL at the end of a game - encoding a replay and walking one are two
-# different things.
+# screen.
+#
+# REPLAY IS ENCODE-ONLY HERE. replay.c and replay_extras.c stay, because the
+# extension very much does want the share URL at the end of a game - but only
+# the writing half of them ships. The exports below name the encoders and
+# nothing else, so wasm-ld drops replay_decode (the step-list decode behind a
+# replay screen), replay_b32_decode, replay_extras_decode and
+# replay_link_parse: reading a code someone else made is the WEB's job, and the
+# extension only ever writes its own. wasm/msg_exports_check.mjs fails the build
+# if a decoder comes back or an encoder goes missing.
+#
+# The one decoder that stays is not a replay: replay_decode_atoms_v6 is the FMSG
+# BODY codec (msg_wire.c calls it - a chain's body IS a v6 action run), so
+# opening a bubble needs it and it is not optional at any size.
 WASM_MSG_SRC := src/game.c src/deal_rng.c src/legal.c src/view.c src/awire.c \
                 src/evwire.c src/sha256.c src/msg_wire.c src/anim_plan.c \
                 src/replay.c src/replay_extras.c \
                 wasm/wasm_api.c wasm/wasm_msg_api.c
 
 WASM_MSG_EXPORTS := \
-  -Wl,--export=wasm_replay_extras_encode -Wl,--export=wasm_replay_extras_decode \
-  -Wl,--export=wasm_replay_b32_encode -Wl,--export=wasm_replay_b32_decode \
-  -Wl,--export=wasm_replay_link -Wl,--export=wasm_replay_link_parse \
+  -Wl,--export=wasm_replay_extras_encode \
+  -Wl,--export=wasm_replay_b32_encode \
+  -Wl,--export=wasm_replay_link \
   -Wl,--export=wasm_unambiguous_cover \
   -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal \
   -Wl,--export=wasm_msg_rule_p -Wl,--export=wasm_msg_rebase \
@@ -803,10 +821,18 @@ WASM_MSG_EXPORTS := \
   -Wl,--export=wasm_anim_conflict_verdicts \
   -Wl,--export=wasm_anim_set_transport -Wl,--export=wasm_anim_transport
 
+# The rules API, minus the one export that would drag a replay DECODER in.
+# (wasm_replay_decode is declared in wasm_api.c, which this target shares with
+# rules.wasm, so dropping it has to happen on the link line rather than in
+# WASM_MSG_EXPORTS below.)
+WASM_MSG_API_EXPORTS := $(filter-out -Wl$(comma)--export=wasm_replay_decode,$(WASM_API_EXPORTS))
+
 # The rules flags, minus its memory pin. rules.wasm freezes linear memory at
-# 196,608 B (3 pages); this set needs 272,029 B, so 5. The pin stays a pin -
-# initial == max, so the module can never grow - just at the size this source
-# set actually needs, rounded to the 64 KiB wasm page.
+# 196,608 B (3 pages); this set needs 5, which is what wasm-ld picks for itself
+# when the pin is taken off. The pin stays a pin - initial == max, so the module
+# can never grow - just at the size this source set actually needs, rounded to
+# the 64 KiB wasm page. Dropping the decoders did not buy a page back: they are
+# code, and the 5 pages are bss.
 WASM_MSG_MEM := 327680
 WASM_MSG_FLAGS := $(filter-out -Wl$(comma)--initial-memory=196608 -Wl$(comma)--max-memory=196608,$(WASM_RULES_FLAGS)) \
                   -Wl,--initial-memory=$(WASM_MSG_MEM) -Wl,--max-memory=$(WASM_MSG_MEM)
@@ -822,10 +848,11 @@ build/msgobj/%.o: wasm/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build/msgobj
 	$(WASM_CC) $(WASM_MSG_CFLAGS) -c $< -o $@
 
-build/msg.wasm: $(WASM_MSG_OBJ)
+build/msg.wasm: $(WASM_MSG_OBJ) wasm/msg_exports_check.mjs
 	@mkdir -p build
-	$(WASM_CC) $(WASM_MSG_LDFLAGS) $(WASM_API_EXPORTS) $(WASM_MSG_EXPORTS) $(WASM_MSG_OBJ) -o $@
+	$(WASM_CC) $(WASM_MSG_LDFLAGS) $(WASM_MSG_API_EXPORTS) $(WASM_MSG_EXPORTS) $(WASM_MSG_OBJ) -o $@
 	$(call wasm_postopt,$(WASM_MSG_POSTOPT),$@)
+	node wasm/msg_exports_check.mjs $@
 
 .PHONY: wasm-msg wasm-msg-size
 wasm-msg: build/msg.wasm
@@ -1014,7 +1041,6 @@ bots-wasm-explain:
 # (inlining removes functions), a companion WITHOUT the pass would have
 # different function indices and mis-map every name — hence this target runs the
 # identical pass. generate.sh re-strips this and asserts it equals build/bots.wasm.
-comma := ,
 build/named/bots.named.wasm: $(WASM_BOT_OBJ)
 	@mkdir -p build/named
 	$(WASM_CC) --target=wasm32 -nostdlib $(filter-out -Wl$(comma)--strip-all,$(WASM_BOT_LDFLAGS)) \
