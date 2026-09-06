@@ -92,6 +92,40 @@ public enum CollapseTween {
     /// collapse flip rather than an ordinary small step (a manual drag).
     public static let flipDrop: CGFloat = 60
 
+    /// THE HEIGHT THE BOX PASSES THROUGH ON ITS WAY BACK TO THE MODEL, and why
+    /// it is not simply the model's own.
+    ///
+    /// 1.0(43), owner, two reports that are one bug: "table to discard animation
+    /// still seems to have a geometry mismatch like it's using expanded coords
+    /// on a collapsed screen", and "geometry seems to be broken by the auto
+    /// collapse? then fixed by swiping to expand/collapse". Measured on the rig,
+    /// on a board that had been compact and still for three seconds after an
+    /// ARMED collapse: the board's own GeometryReader reads 243, and every
+    /// PUBLISHED frame still describes the expanded box - `handFrame` at midY
+    /// 623 rather than 217, the battle cards at y 345 rather than 142. The
+    /// settlement sweep released by Send then flew from 200pt below the bottom
+    /// of a 261pt drawer. A MANUAL collapse takes `.follow`, never touches the
+    /// box height, and measures correctly throughout - which is exactly the
+    /// difference between the two paths the owner noticed.
+    ///
+    /// The cause is that the tween ends on the height the box already rests at.
+    /// `boxHeight` runs 0 -> expanded -> (animated) target, and the target IS
+    /// the model height, so releasing the override is numerically no change at
+    /// all. SwiftUI delivered the subtree's preferences once, from the expanded
+    /// pass that opened the animation, and never had a later height change to
+    /// deliver from - the compact passes that follow all measure a size it
+    /// already believes it published.
+    ///
+    /// So the release goes through here first: half a point off the rest height,
+    /// which is a real change, then back, which is another. Sub-pixel, so
+    /// nothing on screen moves, and the second one republishes every landmark a
+    /// flight aims at against the size actually on screen.
+    public static let remeasureNudge: CGFloat = 0.5
+
+    /// The one height that ends a tween. MUST differ from `target`, or the
+    /// release publishes nothing - see `remeasureNudge`.
+    public static func handBack(target: CGFloat) -> CGFloat { target + remeasureNudge }
+
     public enum Step: Equatable {
         /// Begin the collapse: hold `from`, ease to `to` on the host's curve.
         case start(from: CGFloat, to: CGFloat)

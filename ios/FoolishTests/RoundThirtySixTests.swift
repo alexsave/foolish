@@ -68,6 +68,18 @@ final class HandLandingAnchorTests: XCTestCase {
     }
 }
 
+/// The pre-bout table. The RULE is the kernel's (c/src/anim_plan.c, pinned in
+/// c/tests/tests.c and c/ios/ios_api_smoke.c); these are the answers the board
+/// gets back through sdk/swift/PreTableWire.swift.
+///
+/// MUTATION-CHECKED, each applied on its own:
+///   coveredSweep drops the `paired` test                     -> 1 failure
+///   the wire writes a battle's cover before its attack        -> 9 failures
+///   the dense card id is computed as s*13 + v                 -> 9 failures
+///   `paired` is read from the count byte                      -> 2 failures
+///   openReplayPreBattles stops passing the prior board        -> 1 failure
+///     (MessageEventsTests.testAReopenedPickupKeepsTheCoveredPairTogether -
+///      nothing here can catch it, since these hand `prior:` in themselves)
 @MainActor
 final class PreBoutTableTests: XCTestCase {
 
@@ -148,6 +160,53 @@ final class PreBoutTableTests: XCTestCase {
         XCTAssertEqual(out.first?.defense, kingH)
     }
 
+    /// THE FLAT READING SAYS SO. It is the same cards as the real table, so no
+    /// test over the card SET can tell the two apart - which is why the kernel
+    /// reports which kind of answer it gave and this asserts it. Without the
+    /// flag a caller choosing between two tables takes the reshaped one.
+    func testAFlatReadingIsNotPassedOffAsAPairing() {
+        let sixD = card(3, 6), kingD = card(3, 13), kingH = card(1, 13)
+        let real = [BattleView(attack: sixD, defense: kingH),
+                    BattleView(attack: kingD, defense: nil)]
+        let evs = [pickup([sixD, kingD, kingH])]
+
+        let flat = PreBoutTable(evs)
+        XCTAssertEqual(flat.battles.count, 3)
+        XCTAssertFalse(flat.paired, "one cell per card is a reconstruction, not a pairing")
+        XCTAssertTrue(flat.battles.allSatisfy { $0.defense == nil })
+
+        let paired = PreBoutTable(evs, prior: view(battles: real))
+        XCTAssertEqual(paired.battles, real, "…and a real board comes back exactly")
+        XCTAssertTrue(paired.paired)
+    }
+
+    /// …and `coveredSweep` acts on it. Its doc comment has claimed since round
+    /// 16 that it refuses "the flattened one-slot-per-card shape", and it did
+    /// not: the subset test is over card identities, and a flat table names the
+    /// SAME cards as the real one, so it always passed. Swapping a correct table
+    /// for a reshaped one is the round-12 report happening mid-sequence.
+    ///
+    /// BEHAVIOUR CHANGE, deliberately: this pair of calls used to return the
+    /// flat table and now returns nil, leaving the caller on the live table it
+    /// already had - which is the right one.
+    func testCoveredSweepRefusesAReconstructionEvenWhenTheCardsMatch() {
+        let sixD = card(3, 6), kingD = card(3, 13), kingH = card(1, 13)
+        let real = [BattleView(attack: sixD, defense: kingH),
+                    BattleView(attack: kingD, defense: nil)]
+        let evs = [pickup([sixD, kingD, kingH])]
+        XCTAssertEqual(PreBoutTable.cardIds(real),
+                       PreBoutTable.cardIds(MessageTurnController.preBoutTable(evs)),
+                       "the fixture must be indistinguishable by card set, or this asserts nothing")
+        XCTAssertNil(PreBoutTable.coveredSweep(evs, current: real),
+                     "a reconstruction must never replace a real table")
+
+        // A real board still earns the swap - that is what the call is for.
+        let covered = [ev(.cover, seat: 1, cards: [kingH], state: view(battles: real)),
+                       ev(.cardsToTrash, seat: -1, cards: [sixD, kingH, kingD],
+                          state: view(battles: []))]
+        XCTAssertEqual(PreBoutTable.coveredSweep(covered, current: [real[0]]), real)
+    }
+
     /// The discard/trash side is untouched - it already walked back through the
     /// stream, and this round only taught the pickup to do the same.
     func testTheDiscardWalkIsUnchanged() {
@@ -175,7 +234,7 @@ final class ShownTableTests: XCTestCase {
     /// quickly and immediatley out".
     func testTheTableNeverGoesEmptyWhileABoutEndIsStillPending() {
         let pre = [b(9), b(10)]
-        let t = MessageTableView.shownTable(live: [], sweep: [], pending: pre)
+        let t = PreBoutTable.shownTable(live: [], sweep: [], pending: pre)
         XCTAssertEqual(t.shown, pre, "the table blinked empty between the arrival and its sweep")
         XCTAssertTrue(t.sweeping, "…and it is a sweep, so nothing on it is a drop target")
     }
@@ -184,7 +243,7 @@ final class ShownTableTests: XCTestCase {
     /// board that still has real cards on it.
     func testALiveTableOutranksBothReconstructions() {
         let live = [b(7)]
-        let t = MessageTableView.shownTable(live: live, sweep: [b(9), b(10)], pending: [b(11)])
+        let t = PreBoutTable.shownTable(live: live, sweep: [b(9), b(10)], pending: [b(11)])
         XCTAssertEqual(t.shown, live)
         XCTAssertFalse(t.sweeping)
     }
@@ -194,7 +253,7 @@ final class ShownTableTests: XCTestCase {
     /// the same thing (MessageTurnController.preBoutTable).
     func testMyOwnSweepOutranksThePendingReconstruction() {
         let sweep = [b(9), b(10)]
-        let t = MessageTableView.shownTable(live: [], sweep: sweep, pending: [b(11)])
+        let t = PreBoutTable.shownTable(live: [], sweep: sweep, pending: [b(11)])
         XCTAssertEqual(t.shown, sweep)
         XCTAssertTrue(t.sweeping)
     }
@@ -202,7 +261,7 @@ final class ShownTableTests: XCTestCase {
     /// A settled empty table is still empty, and is NOT a sweep - otherwise the
     /// grid would refuse taps on a board that is simply waiting for a move.
     func testASettledEmptyTableIsNotASweep() {
-        let t = MessageTableView.shownTable(live: [], sweep: [], pending: [])
+        let t = PreBoutTable.shownTable(live: [], sweep: [], pending: [])
         XCTAssertTrue(t.shown.isEmpty)
         XCTAssertFalse(t.sweeping)
     }

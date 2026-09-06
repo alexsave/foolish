@@ -16,8 +16,13 @@ import { legalMovesFor, applyPlayerMove } from './dispatch.ts';
 import { shouldDropStaleSequence, mergeTableBattles } from '../src/state/clientReconcile';
 import { decodeEventWire } from '../sdk/ts/wire/evwire.ts';
 import { base64ToBytes } from '../sdk/ts/wire/bytes.ts';
+import { suiteRng, type SeededRng } from './helpers/rng.ts';
 
-const pick = <T>(a: T[]): T => a[Math.floor(Math.random() * a.length)];
+// Two streams, so widening one does not renumber the other: `moves` drives the
+// game the broadcasts come from, `arrival` the reordering they are replayed in.
+const rng = suiteRng('reconcile');
+const moveRng = rng.fork('moves');
+const arrivalRng = rng.fork('arrival');
 const tkeys = (bs: any[]) => bs.flatMap((b: any) => (b.defense ? [`${b.attack.suit}-${b.attack.value}`, `${b.defense.suit}-${b.defense.value}`] : [`${b.attack.suit}-${b.attack.value}`])).sort();
 
 before(async () => { await applySchema(); });
@@ -45,7 +50,7 @@ async function driveAndCapture(): Promise<{ stream: Bcast[]; serverFinalTable: a
         if (g.status !== 'playing') break;
         const moves = legalMovesFor(g);
         if (moves.length === 0) break;
-        try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, pick(moves)) }), `s${steps}`, true); } catch { /* */ }
+        try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, moveRng.pick(moves)) }), `s${steps}`, true); } catch { /* */ }
         steps++;
     }
 
@@ -69,9 +74,9 @@ async function driveAndCapture(): Promise<{ stream: Bcast[]; serverFinalTable: a
     return { stream, serverFinalTable };
 }
 
-function replayReordered(stream: Bcast[], jitter: number): any[] {
+function replayReordered(stream: Bcast[], jitter: number, arrival: SeededRng): any[] {
     // reordered arrival: emit index spacing 2ms + uniform 0..jitter
-    const order = stream.map((b, i) => ({ b, t: i * 2 + Math.random() * jitter })).sort((x, y) => x.t - y.t).map((x) => x.b);
+    const order = stream.map((b, i) => ({ b, t: i * 2 + arrival.next() * jitter })).sort((x, y) => x.t - y.t).map((x) => x.b);
     let table: any[] = [];
     let lastApplied: number | null = null;
     for (const bc of order) {
@@ -90,12 +95,13 @@ test('client converges to the server table under heavy reordering (real broadcas
         trials++;
         // The newest broadcast the client received is authoritative for what it should end on.
         const newest = stream.reduce((a, b) => (b.version > a.version ? b : a));
-        const clientTable = replayReordered(stream, 200);
+        const clientTable = replayReordered(stream, 200, arrivalRng.fork(t));
         assert.deepEqual(tkeys(clientTable), tkeys(newest.finalTable),
-            `client table diverged from the newest authoritative broadcast under reordering`);
+            `client table diverged from the newest authoritative broadcast under reordering `
+            + `(seed=${rng.seed}, trial=${t})`);
         void serverFinalTable;
     }
-    assert.ok(trials > 0, 'expected at least one multi-broadcast game');
+    assert.ok(trials > 0, `expected at least one multi-broadcast game (seed=${rng.seed})`);
 });
 
 after(async () => { await pgPool.end(); });

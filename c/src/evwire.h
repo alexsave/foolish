@@ -135,6 +135,82 @@ void evwire_walk(const EvSnap *snaps, int n_snaps,
                  const GameLog *logs, int n_logs, int viewer,
                  EvwSink sink, void *ctx);
 
+// ---------- reading the format back -----------------------------------------
+//
+// The writer above is only half a format. Everything the kernel does with an
+// event stream downstream of serialization - emit it as JSON, ask where a turn
+// settles, whatever a later stage needs - has to walk these bytes, and a walk
+// inlined at each of those sites is the same duplication the wire exists to
+// end, just moved indoors. So the reader lives here, beside the writer, and the
+// byte offsets are written down exactly once.
+//
+// Strictness is part of the contract: a sequence that does not decode WHOLE is
+// unreadable, never a prefix. Half a sequence rendered as a whole one is worse
+// than none.
+
+#define EVW_EBADARG -1   // null/short buffer
+#define EVW_EPARSE  -2   // truncated, or a format version that is not ours
+
+// The four header bytes.
+typedef struct {
+    int version;
+    int viewer;    // seat, or -1 for a spectator sequence
+    int actor;     // seat, or -1
+    int n_events;
+} EvwHeader;
+
+// One event as it sits ON THE WIRE - undecoded, borrowed. Cards stay wire bytes
+// so a reader can still tell a redacted card (WIRE_CARD_HIDDEN) from a real one,
+// which is a distinction card_from_wire_state throws away; the snapshot stays
+// packed because decoding it costs a Game-sized slot the caller may not want.
+// Every pointer is into the caller's buffer and lives only for the sink call.
+typedef struct {
+    int type;                        // EVW_T_*
+    int seat;                        // seat, or -1
+    int msg;                         // EVW_MSG_*
+    int from, to;                    // EVW_LOC_*
+    int has_target, has_battle;
+    unsigned char target_wire;       // valid iff has_target
+    int battle;                      // valid iff has_battle
+    const unsigned char *cards_wire; // n_cards wire bytes
+    int n_cards;
+    const unsigned char *snap;       // this step's packed masked board
+    int snap_len;
+} EvwRead;
+
+typedef void (*EvwReadSink)(void *ctx, int index, const EvwRead *ev);
+
+// The header alone, without walking the events - what a caller needs BEFORE the
+// first event (the JSON emitter writes `viewer` and `actor` ahead of the array).
+// Returns 0, or EVW_EBADARG / EVW_EPARSE.
+int evwire_read_header(const unsigned char *buf, int len, EvwHeader *out);
+
+// Walk one packed sequence, handing every event to `sink` in wire order, and
+// report the trailer (the committed final board) through `out_final`. `out_hdr`
+// and `out_final` are optional. Nothing is allocated and nothing is copied.
+//
+// Returns the event count, or EVW_EBADARG / EVW_EPARSE. On an error the sink may
+// already have seen the events that decoded cleanly before it - the caller is
+// expected to discard the lot, which is what "never a partial parse" means.
+int evwire_read(const unsigned char *buf, int len,
+                EvwHeader *out_hdr,
+                const unsigned char **out_final, int *out_final_len,
+                EvwReadSink sink, void *ctx);
+
+// ---------- the settlement cut ----------------------------------------------
+
+// Where a TURN settles, over the length-prefixed FRAME stream a turn arrives as
+// (u16 LE length then one packed sequence, repeated - replay_steps_frames_v6).
+//
+// A turn is several frames because it is several actions: an iMessage bubble
+// carries everything its sender staged. The clients flatten those frames into
+// one event list, so the cut is an index into the FLATTENED list, counted across
+// frames in order.
+//
+// Returns that index, -1 when the turn ended no bout, or EVW_EPARSE for a stream
+// that is not whole. See evw_is_settlement for what is being cut and why.
+int evwire_frames_settlement_cut(const unsigned char *frames, int len);
+
 // Serialize the full sequence for `viewer` (seat index, or VIEW_SPECTATOR).
 // `logs`/`n_logs` are THIS action's kernel logs (the resident game's fresh
 // log buffer). `final_g` is the post-action (post-finalize) state for the

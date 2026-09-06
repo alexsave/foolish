@@ -49,7 +49,11 @@ import Foundation
 
 /// WHO IS WRITING. Every ledger write names one, and only `.bystander` ever
 /// stands down - the other three are the owner in one of its three shapes.
-enum ShownClaim: Equatable {
+/// The raw values are the kernel's claim codes (FIO_CLAIM_*, pinned by
+/// CountOwnershipTests): the RULE over them is `ShownWrite.allows`
+/// (c/src/anim_plan.c's anim_shown_ledger_allows), because a second client
+/// drawing this board must stand its bystanders down on the same terms.
+enum ShownClaim: Int, Equatable {
 
     /// THE RUNNING SEQUENCE, advancing or releasing its OWN ledger.
     ///
@@ -59,7 +63,7 @@ enum ShownClaim: Equatable {
     /// guard and the teardown). This is the owner by definition and is never
     /// refused - a guard here would freeze every badge for the life of the
     /// board, which is a far worse defect than the twitch.
-    case sequence
+    case sequence = 0
 
     /// ARMING A LEDGER FOR A SEQUENCE THAT IS ABOUT TO START, synchronously,
     /// before it exists to claim anything.
@@ -81,7 +85,7 @@ enum ShownClaim: Equatable {
     /// at. The write is safe because it is immediately followed by the stream
     /// that owns it: that stream claims the token, walks these counts forward
     /// from exactly here, and hands them back in its teardown.
-    case arming
+    case arming = 1
 
     /// A ROLE HAND-OFF: `syncRoles`, and nothing else.
     ///
@@ -98,7 +102,7 @@ enum ShownClaim: Equatable {
     /// Making that a bystander would silently drop the shield's flight whenever
     /// a pass landed on a board that happened to be animating - a hand-off that
     /// teleports instead, with no test anywhere to notice.
-    case handOff
+    case handOff = 2
 
     /// EVERYBODY ELSE: a live play of mine, a refusal at a door, a rejection
     /// the kernel reports. `freezeCounts`, `releaseCounts`,
@@ -111,7 +115,7 @@ enum ShownClaim: Equatable {
     /// these counts forward, and its teardown still hands them back. A board at
     /// rest - the common case, and every other caller - writes exactly as it
     /// always did.
-    case bystander
+    case bystander = 3
 }
 
 /// The board's shown-state ledger. Read freely; write only through `write`.
@@ -211,11 +215,12 @@ struct ShownLedger {
     var out: Set<Int>? { fields.out }
     var roles: MessageTableView.RoleState? { fields.roles }
 
-    /// THE RULE, as a value, so it can be asserted without a board or a
-    /// running sequence. Only a bystander ever stands down; see `ShownClaim`
-    /// for why each of the other three is the owner.
+    /// THE RULE, asked of the kernel (`ShownWrite.allows`), so it can be
+    /// asserted without a board or a running sequence and so a second client
+    /// cannot answer it differently. Only a bystander ever stands down; see
+    /// `ShownClaim` for why each of the other three is the owner.
     static func allows(_ claim: ShownClaim, sequencing: Bool) -> Bool {
-        !(claim == .bystander && sequencing)
+        ShownWrite.allows(claim: claim.rawValue, sequencing: sequencing)
     }
 
     /// THE ONE WAY TO CHANGE WHAT THE BADGES ARE SHOWING.

@@ -23,6 +23,17 @@ import SwiftUI
 @MainActor
 public final class MessageTurnController: ObservableObject {
     @Published public private(set) var view: GameView?
+    /// THE MENU, as the kernel wrote it. This is the published one - every play
+    /// the board makes is the kernel's answer over these bytes (PlayWire /
+    /// fio_play_probe) - and `legal` below is nothing but its decode, so the
+    /// rules that narrow it (the held settlement in `publish`) are applied to
+    /// one value and cannot leave the two describing different menus.
+    @Published public private(set) var legalPacked: Data = MoveWire.emptyMenu {
+        didSet { legal = MoveWire.decode(legalPacked) }
+    }
+
+    /// The same menu decoded, for the callers that read moves rather than ask
+    /// questions about a selection. Assigned ONLY by `legalPacked` above.
     @Published public private(set) var legal: [Move] = []
     /// ROUND 16 — seconds this seat must still wait before it may pick up; 0
     /// means now. The board hides Take while it is non-zero and `apply` refuses
@@ -106,17 +117,9 @@ public final class MessageTurnController: ObservableObject {
     /// non-bout-end replay (an attack/cover: those cards are still ON the table in
     /// `view`, so they measure themselves).
     ///
-    /// Two shapes, matching where the kernel's own event stream keeps the table:
-    ///  - discard / trash: the masked `state.battles` carried by the step just
-    ///    BEFORE the trash step. A clean defence's turn is grouped from the last
-    ///    cover, whose committed board still shows the full covered table
-    ///    (verified in MessageEventsTests: the cover/magic steps carry the
-    ///    battles, the cardsToTrash step carries the emptied table).
-    ///  - pickup: a single-action turn carries no earlier table snapshot, but the
-    ///    pickup step's OWN cards ARE the table cards (the kernel never masks a
-    ///    pickup, so every viewer gets real identities); lay each in its own
-    ///    uncovered slot. This is exactly how the web reconstructs a pickup's
-    ///    table for the same animation (AnimationContext: one battle per card).
+    /// Which board it comes off, and why a pickup can still fall back to one
+    /// cell per card, is the kernel's business now - see PreTableWire.swift and
+    /// c/src/anim_plan.h.
     public var openReplayPreBattles: [BattleView] {
         // The prior board goes in too - see `preBoutTable`. A single-action
         // pickup turn carries no earlier step of its own to read the real table
@@ -124,7 +127,9 @@ public final class MessageTurnController: ObservableObject {
         Self.preBoutTable(openReplayEvents, prior: openReplayPriorState)
     }
 
-    /// The rule above, as a pure function of ANY event stream.
+    /// The rule above, as a pure function of ANY event stream - and the
+    /// kernel's answer since the lift (c/src/anim_plan.c's anim_pre_bout_table,
+    /// through sdk/swift/PreTableWire.swift).
     ///
     /// ROUND 16 lifted it out of the property because the LIVE bout-end needs
     /// the same answer: when a cover ends the bout in the same kernel apply, the
@@ -133,68 +138,11 @@ public final class MessageTurnController: ObservableObject {
     /// it shows a table missing the card the player just played. The kernel's
     /// stream is the only place the covered table exists, live or on open, and
     /// there must be exactly one reading of it.
+    ///
+    /// Callers that must tell a real pairing from the flat reconstruction ask
+    /// `PreBoutTable` directly - it carries that as `paired`.
     public static func preBoutTable(_ evs: [GameEvent], prior: GameView? = nil) -> [BattleView] {
-        guard let bi = evs.firstIndex(where: {
-            $0.kind == .discard || $0.kind == .cardsToTrash || $0.kind == .pickup
-        }) else { return [] }
-        // Every card this step takes off the table - the only test a candidate
-        // table has to pass. It must account for exactly these; a board that
-        // holds more, or fewer, is describing some other moment.
-        func ids(_ bs: [BattleView]) -> Set<String> {
-            Set(bs.flatMap { [$0.attack.identity] + ($0.defense.map { [$0.identity] } ?? []) })
-        }
-        // discard / trash: walk back from the trash step to the last board that
-        // still had cards on the table - that is the table about to be swept.
-        //
-        // A PICKUP NOW WALKS THE SAME WAY, and the flat one-battle-per-card
-        // list below is its LAST resort rather than its only answer.
-        //
-        // The flat shape is a DIFFERENT GRID: a table that really held two
-        // battles with one of them covered comes back as three single-card
-        // cells. `MessageTableView.battlesArea` renders the sweep grid through
-        // the SAME FBattleGrid the live table used, deliberately keeping card
-        // identity so the cards sit still and then fly - which means handing it
-        // a differently shaped table does not cut to the new one, it ANIMATES
-        // every card into its new cell first. Owner: "when the opponent picked
-        // up 6 of diamonds, k of diamonds, k of hearts, they did not animate
-        // directly from their table positions, but seemed to spread out to an
-        // evenly spaced row, AND THEN fly to the hand. weve been over this".
-        //
-        // "We have been over this" is `MessageTableView.sweepTableForReplay`,
-        // which guards the wrong side of the problem: it prefers the board's
-        // own `lastBattles` only when they account for every picked-up card,
-        // and that is never true on a COLD OPEN (that board has rendered no
-        // table at all) and cannot be true when the arriving stream placed one
-        // of those cards itself. So the reconstruction wins in precisely the
-        // cases that matter, and the only real cure is a reconstruction that is
-        // right. That guard stays where it is - it is still the better answer
-        // when the board has a live table - it simply stops being the only
-        // thing standing between the player and a flattened grid.
-        for i in stride(from: bi, through: 0, by: -1) {
-            guard let b = evs[i].state?.battles, !b.isEmpty else { continue }
-            guard evs[bi].kind != .pickup || ids(b) == ids(pickupTable(evs[bi])) else { break }
-            return b
-        }
-        guard evs[bi].kind == .pickup else { return [] }
-        // ...and the board the kernel says this whole stream OPENED on, for the
-        // single-action pickup turn that carries no earlier step whatsoever.
-        // Same exact-account test: a prior board from before some other move is
-        // not the table being swept, and guessing would be worse than the flat
-        // reading, which is at least about the right cards.
-        if let p = prior, !p.battles.isEmpty, ids(p.battles) == ids(pickupTable(evs[bi])) {
-            return p.battles
-        }
-        return pickupTable(evs[bi])
-    }
-
-    /// The flat one-uncovered-battle-per-card reading of a pickup step: the
-    /// kernel never masks a pickup, so every viewer gets real identities and
-    /// this can always be built. It is what the web does for the same animation
-    /// (AnimationContext: one battle per card) and it is the right SET of cards
-    /// every time - it just does not know the PAIRING, which is why
-    /// `preBoutTable` now reaches for a real table first.
-    private static func pickupTable(_ ev: GameEvent) -> [BattleView] {
-        ev.cards.compactMap { $0 }.map { BattleView(attack: $0, defense: nil) }
+        PreBoutTable(evs, prior: prior).battles
     }
 
     public let mySeat: Int
@@ -326,7 +274,8 @@ public final class MessageTurnController: ObservableObject {
     // deal, undo, throw in another card instead.
     //
     // So the turn is cut in two at the kernel's own boundary
-    // (`[GameEvent].settlementStart`). The ACTION half plays as it is staged -
+    // (`MessageKernel.stagedTurn`'s settlementCut, answered by evwire.c's
+    // evwire_frames_settlement_cut). The ACTION half plays as it is staged -
     // the cover lands, the table is taken, the good is declared. The
     // SETTLEMENT half - discard, deal, roles - is held here, with the board
     // showing the state before it, until `markSent` says the bytes went out.
@@ -426,7 +375,9 @@ public final class MessageTurnController: ObservableObject {
                                                       seat: mySeat)
         else { dropHold(); return }
         let evs = turn.events
-        guard let cut = evs.settlementStart else { dropHold(); return }
+        // The cut is the kernel's, taken off the same frames these events were
+        // decoded from (evwire_frames_settlement_cut).
+        guard let cut = turn.settlementCut, cut < evs.count else { dropHold(); return }
         // The board to show while the rest is withheld. For a good the cut is
         // at index 0 - a good emits no step of its own - and the transition
         // step it lands on carries the PRE-discard board (game.c's
@@ -654,7 +605,8 @@ public final class MessageTurnController: ObservableObject {
     /// retraction's own view change is what wakes the board).
     public private(set) var conflictRetracting = false
     /// What the arriving chain will animate and where it opens - the verdict
-    /// inputs (`MessageTableView.conflictVerdict`) for the retraction. Peeked
+    /// inputs (the kernel's `anim_conflict_*`, via ConflictWire) for the
+    /// retraction. Peeked
     /// from the arriving payload BEFORE the retraction publishes, because the
     /// board must decide which staged cards fly home while the controller still
     /// stands on the OLD base. nil outside a retraction; `.unknown` when the
@@ -929,7 +881,7 @@ public final class MessageTurnController: ObservableObject {
     ///
     /// The board never asks this to decide what a player may DO - the kernel
     /// simply stops offering a transfer, so the Pass button and the drag-to-pass
-    /// disappear on their own (CardPlay reads `legal` for both). It is here for
+    /// disappear on their own (the board's kernel probe reads `legalPacked` for both). It is here for
     /// the one thing the legal menu cannot say: which RULES to teach. A
     /// podkidnoy player opening How to play must not be shown a page about
     /// passing.
@@ -1038,7 +990,6 @@ public final class MessageTurnController: ObservableObject {
             return
         }
         let v = read.view
-        let l = read.legal
         let staged = read.stagedAtomsBefore
         let held = read.hold
         // The replay code comes back with the view rather than being asked for
@@ -1075,7 +1026,7 @@ public final class MessageTurnController: ObservableObject {
         // next first attacker, so without this they could pick that attack out
         // of a hand they are not supposed to have seen yet, all still staged.
         view = heldView ?? v
-        legal = heldSettlement.isEmpty ? l : []
+        legalPacked = heldSettlement.isEmpty ? read.legalPacked : MoveWire.emptyMenu
         if code != replayCode { replayCode = code }
         if held != pickupHold { pickupHold = held }
         armHoldTicker(held)

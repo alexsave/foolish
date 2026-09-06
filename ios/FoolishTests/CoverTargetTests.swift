@@ -4,10 +4,11 @@
 // If there are multiple highest value cards that can be covered, just choose
 // one. And this doesn't apply to drag cover."
 //
-// What is under test is a CHOICE, not a rule: `bestCoverTarget` picks one entry
-// out of the kernel's own legal menu, so the menu is this file's input and the
-// legality of a cover stays where it lives (C). Every case therefore asserts on
-// the CARD that ends up covered rather than on an index - an index only means
+// What is under test is a CHOICE, not a rule: the kernel's
+// `play_best_cover_target` picks one entry out of the kernel's own legal menu,
+// so the menu is this file's input (it crosses as MoveWire bytes) and the
+// legality of a cover stays where it lives. Every case therefore asserts on the
+// CARD that ends up covered rather than on an index - an index only means
 // something relative to a table order, and "which attack did it choose" is the
 // whole question.
 
@@ -27,12 +28,19 @@ final class CoverTargetTests: XCTestCase {
          coverable.map { Move(type: .cover, cards: [card], attackCards: [$0]) })
     }
 
+    /// One kernel answer about a selection on a table.
+    private func probe(_ cards: [Card], _ t: (battles: [BattleView], legal: [Move]),
+                       trump: Suit?, target: PlayTarget = .table) -> PlayProbe {
+        PlayWire.probe(menu: MoveWire.encode(t.legal), battles: t.battles,
+                       powerSuit: trump?.rawValue ?? -1, isDefender: true,
+                       selection: cards, target: target)
+    }
+
     /// Which card the cover button would actually put the selection on.
     private func covered(_ card: Card, _ attacks: [Card], coverable: [Card],
                          trump: Suit?) -> Card? {
         let t = table(attacks, with: card, coverable: coverable)
-        guard let i = CardPlay.bestCoverTarget(cards: [card], battles: t.battles,
-                                               legal: t.legal, trumpSuit: trump) else { return nil }
+        guard let i = probe([card], t, trump: trump).bestCover else { return nil }
         return t.battles[i].attack
     }
 
@@ -51,11 +59,9 @@ final class CoverTargetTests: XCTestCase {
         let ace = c(.clubs, 13)
         let attacks = [c(.spades, 5), c(.hearts, 12), c(.diamonds, 8)]
         let t = table(attacks, with: ace, coverable: attacks)
-        let leftmost = CardPlay.coverableBattles(cards: [ace], battles: t.battles,
-                                                 legal: t.legal).sorted().first
+        let leftmost = probe([ace], t, trump: .clubs).coverable.sorted().first
         XCTAssertEqual(leftmost, 0, "fixture: the leftmost coverable is not index 0")
-        XCTAssertNotEqual(CardPlay.bestCoverTarget(cards: [ace], battles: t.battles,
-                                                   legal: t.legal, trumpSuit: .clubs), leftmost)
+        XCTAssertNotEqual(probe([ace], t, trump: .clubs).bestCover, leftmost)
     }
 
     /// "Trump is higher than non trump" - a six of trumps outranks an ace.
@@ -100,12 +106,10 @@ final class CoverTargetTests: XCTestCase {
         let card = c(.spades, 13)
         let attacks = [c(.hearts, 9), c(.clubs, 9), c(.diamonds, 9)]
         let t = table(attacks, with: card, coverable: attacks)
-        let first = CardPlay.bestCoverTarget(cards: [card], battles: t.battles,
-                                             legal: t.legal, trumpSuit: .spades)
+        let first = probe([card], t, trump: .spades).bestCover
         XCTAssertEqual(first, 0)
         for _ in 0..<20 {
-            XCTAssertEqual(CardPlay.bestCoverTarget(cards: [card], battles: t.battles,
-                                                    legal: t.legal, trumpSuit: .spades), first,
+            XCTAssertEqual(probe([card], t, trump: .spades).bestCover, first,
                            "the same table chose a different attack on a second tap")
         }
     }
@@ -131,10 +135,8 @@ final class CoverTargetTests: XCTestCase {
         let ace = c(.clubs, 13)
         let attacks = [c(.spades, 5), c(.hearts, 12), c(.diamonds, 8)]
         let t = table(attacks, with: ace, coverable: attacks)
-        let i = try XCTUnwrap(CardPlay.bestCoverTarget(cards: [ace], battles: t.battles,
-                                                       legal: t.legal, trumpSuit: .clubs))
-        let move = CardPlay.resolve(cards: [ace], target: .battle(i), isDefender: true,
-                                    battles: t.battles, legal: t.legal)
+        let i = try XCTUnwrap(probe([ace], t, trump: .clubs).bestCover)
+        let move = probe([ace], t, trump: .clubs, target: .battle(i)).move
         XCTAssertEqual(move?.type, .cover)
         XCTAssertEqual(move?.attackCards, [c(.hearts, 12)])
     }
@@ -148,12 +150,15 @@ final class CoverTargetTests: XCTestCase {
         // One legal entry per pairing, as the kernel enumerates them.
         let legal = [Move(type: .cover, cards: cards, attackCards: [attacks[0]]),
                      Move(type: .cover, cards: cards, attackCards: [attacks[1]])]
-        let i = try XCTUnwrap(CardPlay.bestCoverTarget(cards: cards, battles: battles,
-                                                       legal: legal, trumpSuit: .spades))
+        let t = (battles: battles, legal: legal)
+        let i = try XCTUnwrap(probe(cards, t, trump: .spades).bestCover)
         XCTAssertEqual(battles[i].attack, c(.hearts, 11), "did not aim at the jack")
-        XCTAssertEqual(CardPlay.resolve(cards: cards, target: .battle(i), isDefender: true,
-                                        battles: battles, legal: legal)?.attackCards,
-                       [c(.hearts, 11)])
+        // The menu names ONE attack for a two-card cover, so the wire pads the
+        // second slot with the no-card sentinel - which must never read back as
+        // a real attack. The jack is what comes home; the pad is a hidden card.
+        let played = probe(cards, t, trump: .spades, target: .battle(i)).move
+        XCTAssertEqual(played?.attackCards?.first, c(.hearts, 11))
+        XCTAssertEqual(played?.attackCards?.dropFirst().first, Card.hidden)
     }
 
     // MARK: what must NOT change
@@ -164,8 +169,7 @@ final class CoverTargetTests: XCTestCase {
         let ace = c(.clubs, 13)
         let attacks = [c(.spades, 5), c(.hearts, 12)]
         let t = table(attacks, with: ace, coverable: attacks)
-        let move = CardPlay.resolve(cards: [ace], target: .battle(0), isDefender: true,
-                                    battles: t.battles, legal: t.legal)
+        let move = probe([ace], t, trump: .clubs, target: .battle(0)).move
         XCTAssertEqual(move?.attackCards, [c(.spades, 5)],
                        "a drag onto the six was redirected to the king")
     }
@@ -176,7 +180,6 @@ final class CoverTargetTests: XCTestCase {
         let ace = c(.clubs, 13)
         let attacks = [c(.spades, 5), c(.hearts, 12), c(.diamonds, 8)]
         let t = table(attacks, with: ace, coverable: attacks)
-        XCTAssertEqual(CardPlay.coverableBattles(cards: [ace], battles: t.battles,
-                                                 legal: t.legal), [0, 1, 2])
+        XCTAssertEqual(probe([ace], t, trump: .clubs).coverable, [0, 1, 2])
     }
 }

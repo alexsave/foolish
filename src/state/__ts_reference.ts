@@ -105,11 +105,27 @@ export const shouldDropStaleSequenceTsReference = (
 };
 
 // ---- plan building (a faithful TS mirror of anim_plan.c anim_build_plan) ----
-// There was no standalone TS "original" for this — the web re-derived the same
+// There was no standalone TS "original" for this - the web re-derived the same
 // choreography inside AnimationContext's setState/timeout machinery and iOS did
-// it in Swift (preCounts + preHide). This mirror encodes the SAME algorithm so
-// the parity test guards the C build_plan and its wasm marshalling against an
-// independent implementation.
+// it in Swift. This mirror encodes the SAME algorithm so the parity test guards
+// the C build_plan and its wasm marshalling against an independent
+// implementation.
+//
+// RE-BASELINED, 2026-09-05, deliberately. The rule it mirrored - walk back from
+// the FINAL board undoing every event - is wrong, and this mirror encoded the
+// bug faithfully. Undoing a REFILL puts its cards back in the deck, but the
+// flipped trump lies UNDER the deck and is dealt last without ever being in
+// deck_count, so a refill of two off a deck of one is real and the walk-back
+// puts two back. The iMessage board never did that: it anchors on the FIRST
+// event's own board and undoes exactly one event, which is safe because a
+// stream never leads with a refill. iMessage is the spec, so that rule is the
+// kernel's now and this mirror follows it.
+//
+// The second half moved with it: a step's POST counts are that step's OWN
+// board, not a forward derivation. Committing the snapshot as the flight lands
+// is what both clients actually do (updateGameState here, GameEvent.state on
+// the phone), and the derivation cannot even express the flipped-trump refill
+// (a deck of one minus two cards is -1).
 
 export const REF_ANIM_TIME_MS = 500;
 export const REF_ANIM_GAP_MS = 25;
@@ -122,6 +138,9 @@ const REF_LOC_DECK = 0, REF_LOC_HAND = 1, REF_LOC_TABLE = 2, REF_LOC_FLIPPED = 4
 export interface RefPlanEvent {
     type: number; seat: number | null; from: number; to: number;
     mask: boolean; cards: { suit: number; value: number }[];
+    // The board this step committed (its evwire game_state). Absent only for a
+    // stream that carries no boards, which the packed wire never produces.
+    counts?: { deck: number; discard: number; hand: number[] } | null;
 }
 export interface RefPlanStep {
     type: number; seat: number; from: number; to: number; nCards: number;
@@ -166,8 +185,17 @@ export function buildAnimPlanTsReference(
     events: RefPlanEvent[], nPlayers: number,
     finalDeck: number, finalDiscard: number, finalHand: number[],
 ): RefPlan {
+    // The freeze: ONE undo off the first event's own board. The n-event walk
+    // back from the final board survives only for a stream carrying no boards.
     const cur = { deck: finalDeck, discard: finalDiscard, hand: finalHand.slice(0, nPlayers) };
-    for (let i = events.length - 1; i >= 0; i--) refUndo(events[i], cur, nPlayers);
+    const anchor = events.length > 0 ? events[0].counts : null;
+    if (anchor) {
+        cur.deck = anchor.deck; cur.discard = anchor.discard;
+        cur.hand = anchor.hand.slice(0, nPlayers);
+        refUndo(events[0], cur, nPlayers);
+    } else {
+        for (let i = events.length - 1; i >= 0; i--) refUndo(events[i], cur, nPlayers);
+    }
     const pre = { deck: cur.deck, discard: cur.discard, hand: cur.hand.slice() };
 
     const stride = REF_ANIM_TIME_MS + REF_ANIM_GAP_MS;
@@ -176,7 +204,14 @@ export function buildAnimPlanTsReference(
     const steps: RefPlanStep[] = [];
     for (let i = 0; i < events.length; i++) {
         const ev = events[i];
-        refForward(ev, cur, nPlayers);
+        // A step's post counts ARE its own board; the delta only carries the
+        // walk forward across a step that has none.
+        if (ev.counts) {
+            cur.deck = ev.counts.deck; cur.discard = ev.counts.discard;
+            cur.hand = ev.counts.hand.slice(0, nPlayers);
+        } else {
+            refForward(ev, cur, nPlayers);
+        }
         const st: RefPlanStep = {
             type: ev.type, seat: ev.seat === null ? -1 : ev.seat, from: ev.from, to: ev.to,
             nCards: ev.cards.length, durationMs: REF_ANIM_TIME_MS, startMs: i * stride,

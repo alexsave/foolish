@@ -9,6 +9,14 @@
 // here as `senderIsLocal`).
 //
 // This decides who you ARE, never what you MAY DO — legality stays in the kernel.
+//
+// THE DECISIONS ARE THE KERNEL'S NOW (msg_wire.c's msg_seat_*), so a second
+// chain client does not re-derive them; this file is what is left when they
+// leave, and the crossing itself is sdk/swift/GateWire.swift's (§7.1: the C
+// bridge stays in the SDK). It does NOT reverse game.h's "seat identity is
+// deliberately not in the state blob; it lives with the caller": no seat goes
+// into any state, and every signal these rules read - the cache, the sender,
+// the chat shape, the recorded claim name - is still handed IN by the host.
 
 import Foundation
 
@@ -44,16 +52,12 @@ public enum SeatIdentity {
                                nPlayers: Int,
                                lastActorSeat: Int,
                                chatIsDM: Bool) -> Resolution {
-        if let s = cachedSeat, s >= 0, s < nPlayers {
-            return .known(s)
-        }
-        if senderIsLocal, lastActorSeat >= 0, lastActorSeat < nPlayers {
-            return .known(lastActorSeat)            // S1: I am the last actor, exact for any N
-        }
-        if chatIsDM, nPlayers == 2, lastActorSeat >= 0, lastActorSeat < 2 {
-            return .known(1 - lastActorSeat)        // S1: DM 2p and I didn't send it ⇒ the other seat
-        }
-        return .ambiguous
+        guard let s = GateWire.seatResolve(cachedSeat: cachedSeat,
+                                           senderIsLocal: senderIsLocal,
+                                           nPlayers: nPlayers,
+                                           lastActorSeat: lastActorSeat,
+                                           chatIsDM: chatIsDM) else { return .ambiguous }
+        return .known(s)
     }
 
     /// Does this bubble's own roster DISOWN the cached seat — list it under a
@@ -75,9 +79,8 @@ public enum SeatIdentity {
     /// picked the same nickname — the same trust level §6.3 already accepts.
     public static func cacheDisownedByJoins(cachedSeat: Int?, recordedName: String?,
                                             joins: [MessageJoin]) -> Bool {
-        guard let s = cachedSeat, let mine = recordedName,
-              let listed = joins.first(where: { $0.seat == s })?.name else { return false }
-        return listed != mine
+        GateWire.seatCacheDisowned(cachedSeat: cachedSeat, recordedName: recordedName,
+                                   joins: joins)
     }
 
     /// The seat carrying this device's own recorded claim name in `joins`, if
@@ -95,8 +98,7 @@ public enum SeatIdentity {
     /// across forks, the residual IMESSAGE_SEAT_IDENTITY_V2's deferred tokens
     /// exist to close.
     public static func seatClaimedByName(recordedName: String?, joins: [MessageJoin]) -> Int? {
-        guard let mine = recordedName else { return nil }
-        return joins.first(where: { $0.name == mine })?.seat
+        GateWire.seatClaimedByName(recordedName: recordedName, joins: joins)
     }
 
     /// `resolve`, gated for a LOBBY bubble specifically (note 14, HARNESS_NOTES_R2):
@@ -119,18 +121,9 @@ public enum SeatIdentity {
                                       nPlayers: Int, lastActorSeat: Int,
                                       joins: [MessageJoin], chatIsDM: Bool,
                                       recordedName: String? = nil) -> Int? {
-        // Name recovery first (seatClaimedByName's doc): the seat carrying MY
-        // claim name in THIS bubble's roster is my seat here, even when a fork
-        // race left the numeric cache pointing at a claim that lost.
-        if let byName = seatClaimedByName(recordedName: recordedName, joins: joins) {
-            return byName
-        }
-        let cached = cacheDisownedByJoins(cachedSeat: cachedSeat, recordedName: recordedName,
-                                          joins: joins) ? nil : cachedSeat
-        switch resolve(cachedSeat: cached, senderIsLocal: senderIsLocal,
-                       nPlayers: nPlayers, lastActorSeat: lastActorSeat, chatIsDM: chatIsDM) {
-        case .known(let s): return joins.contains { $0.seat == s } ? s : nil
-        case .ambiguous:    return nil
-        }
+        GateWire.seatResolveInLobby(cachedSeat: cachedSeat, senderIsLocal: senderIsLocal,
+                                    nPlayers: nPlayers, lastActorSeat: lastActorSeat,
+                                    chatIsDM: chatIsDM, recordedName: recordedName,
+                                    joins: joins)
     }
 }

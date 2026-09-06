@@ -124,18 +124,23 @@ final class HandRearrangeDropTests: XCTestCase {
 
     // MARK: the resolver's own half
 
-    /// `CardPlay.resolve` used to answer `.hand` with an ATTACK for an attacker:
-    /// the attacker branch reads only the cards and ignored `target` entirely.
-    /// Only the boards' own `if target == .hand { return }` stood between a
-    /// rearrange and a played card.
+    /// The resolver used to answer `.hand` with an ATTACK for an attacker: the
+    /// attacker branch reads only the cards and ignored `target` entirely. Only
+    /// the boards' own `if target == .hand { return }` stood between a rearrange
+    /// and a played card. The rule is the kernel's now (play_resolve).
+    private func resolve(_ cards: [Card], _ target: PlayTarget, defender: Bool,
+                         battles: [BattleView], legal: [Move]) -> Move? {
+        PlayWire.probe(menu: MoveWire.encode(legal), battles: battles, powerSuit: 3,
+                       isDefender: defender, selection: cards, target: target).move
+    }
+
     func testAnAttackerToldTheHandPlaysNothing() {
         let six = c(0, 6)
         let legal = [Move(type: .attack, cards: [six])]
-        XCTAssertNil(CardPlay.resolve(cards: [six], target: .hand, isDefender: false,
-                                      battles: [], legal: legal))
+        XCTAssertNil(resolve([six], .hand, defender: false, battles: [], legal: legal))
         // …and the attack itself still resolves from the table, unchanged.
-        XCTAssertEqual(CardPlay.resolve(cards: [six], target: .table, isDefender: false,
-                                        battles: [], legal: legal)?.type, .attack)
+        XCTAssertEqual(resolve([six], .table, defender: false, battles: [], legal: legal)?.type,
+                       .attack)
     }
 
     /// The defender's side of the same rule, which already held - pinned so the
@@ -144,9 +149,8 @@ final class HandRearrangeDropTests: XCTestCase {
         let attack = c(0, 9), cover = c(0, 13)
         let bs = [BattleView(attack: attack, defense: nil)]
         let legal = [Move(type: .cover, cards: [cover], attackCards: [attack])]
-        XCTAssertNil(CardPlay.resolve(cards: [cover], target: .hand, isDefender: true,
-                                      battles: bs, legal: legal))
-        XCTAssertEqual(CardPlay.resolve(cards: [cover], target: .battle(0), isDefender: true,
-                                        battles: bs, legal: legal)?.type, .cover)
+        XCTAssertNil(resolve([cover], .hand, defender: true, battles: bs, legal: legal))
+        XCTAssertEqual(resolve([cover], .battle(0), defender: true, battles: bs, legal: legal)?.type,
+                       .cover)
     }
 }

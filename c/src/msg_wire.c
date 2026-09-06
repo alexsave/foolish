@@ -911,3 +911,81 @@ int msg_rematch_fool_seat(const MsgJoin *joins, int n,
     // the two answers cannot drift apart.
     return (opening + 1) % n;
 }
+
+/* ---------------------------------------------------------------------------
+ * THE CHAIN LAYER'S GATES (msg_wire.h). Pure decisions the extension used to
+ * make in Swift; nothing here reads the resident game.
+ * ------------------------------------------------------------------------- */
+
+int msg_chain_is_ahead(int a_phase, int a_round, int a_turn,
+                       int b_phase, int b_round, int b_turn) {
+    if (a_phase != b_phase) return a_phase > b_phase;
+    if (a_round != b_round) return a_round > b_round;
+    return a_turn > b_turn;
+}
+
+int msg_nickname_verdict(int n_chars, int n_bytes) {
+    if (n_chars <= 0 || n_bytes <= 0) return MSG_NAME_EMPTY;
+    if (n_chars > MSG_MAX_NAME_CHARS) return MSG_NAME_TOO_LONG;
+    if (n_bytes > MSG_MAX_NAME) return MSG_NAME_TOO_LONG;
+    return MSG_NAME_OK;
+}
+
+// One roster entry's name against a caller's, on the sealed bytes.
+static int msg_name_is(const MsgJoin *j, const char *name, int name_len) {
+    if (j->name_len != (uint8_t)name_len) return 0;
+    for (int i = 0; i < name_len; i++) if (j->name[i] != name[i]) return 0;
+    return 1;
+}
+
+int msg_name_taken(const MsgJoin *joins, int n, const char *name, int name_len) {
+    if (!joins || n <= 0 || !name || name_len < 0 || name_len > MSG_MAX_NAME) return 0;
+    for (int i = 0; i < n; i++) if (msg_name_is(&joins[i], name, name_len)) return 1;
+    return 0;
+}
+
+int msg_seat_resolve(int cached_seat, int sender_is_local, int n_players,
+                     int last_actor_seat, int chat_is_dm) {
+    if (cached_seat >= 0 && cached_seat < n_players) return cached_seat;
+    if (sender_is_local && last_actor_seat >= 0 && last_actor_seat < n_players)
+        return last_actor_seat;
+    if (chat_is_dm && n_players == 2 && last_actor_seat >= 0 && last_actor_seat < 2)
+        return 1 - last_actor_seat;
+    return -1;
+}
+
+int msg_seat_claimed_by_name(const MsgJoin *joins, int n,
+                             const char *name, int name_len) {
+    if (!joins || n <= 0 || !name || name_len <= 0 || name_len > MSG_MAX_NAME) return -1;
+    for (int i = 0; i < n; i++)
+        if (msg_name_is(&joins[i], name, name_len)) return joins[i].seat;
+    return -1;
+}
+
+int msg_seat_cache_disowned(const MsgJoin *joins, int n, int cached_seat,
+                            const char *name, int name_len) {
+    if (!joins || n <= 0 || cached_seat < 0 || !name || name_len <= 0) return 0;
+    for (int i = 0; i < n; i++) {
+        if (joins[i].seat != (uint8_t)cached_seat) continue;
+        return !msg_name_is(&joins[i], name, name_len);   // listed, under another name
+    }
+    return 0;   // this bubble names nobody at that seat - stay permissive
+}
+
+int msg_seat_resolve_in_lobby(const MsgJoin *joins, int n_joins,
+                              int cached_seat, int sender_is_local, int n_players,
+                              int last_actor_seat, int chat_is_dm,
+                              const char *name, int name_len) {
+    // Name recovery first: the seat carrying MY claim name in THIS roster is my
+    // seat here, even when a fork race left the numeric cache on a lost claim.
+    const int by_name = msg_seat_claimed_by_name(joins, n_joins, name, name_len);
+    if (by_name >= 0) return by_name;
+
+    const int cached = msg_seat_cache_disowned(joins, n_joins, cached_seat, name, name_len)
+                     ? -1 : cached_seat;
+    const int seat = msg_seat_resolve(cached, sender_is_local, n_players,
+                                      last_actor_seat, chat_is_dm);
+    if (seat < 0) return -1;
+    for (int i = 0; i < n_joins; i++) if (joins[i].seat == (uint8_t)seat) return seat;
+    return -1;   // resolved, but this bubble's roster does not list it
+}

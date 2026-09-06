@@ -221,12 +221,13 @@ public struct TableView<Session: GameSession>: View {
     private func actionBar(_ view: GameView) -> some View {
         let cards = selectedCards(view)
         let defending = view.defender == game.humanSeat
+        let probe = self.probe(view, cards, .table)
         FActionBar(
-            canAttack: !defending && CardPlay.canAttack(cards, legal: game.humanLegal),
-            canCover: defending && CardPlay.canCover(cards, battles: view.battles, legal: game.humanLegal),
-            canPass: defending && CardPlay.canPass(cards, legal: game.humanLegal),
-            canPickup: CardPlay.has(.pickup, in: game.humanLegal),
-            canDone: CardPlay.canSayGood(battles: view.battles, legal: game.humanLegal),
+            canAttack: !defending && probe.canAttack,
+            canCover: defending && probe.canCover,
+            canPass: defending && probe.canPass,
+            canPickup: game.humanLegal.contains { $0.type == .pickup },
+            canDone: probe.canSayGood,
             onAttack: { playAt(.table, cards, view) },
             onCover: { playCover(cards, view) },
             onPass: { playAt(.table, cards, view) },
@@ -263,9 +264,17 @@ public struct TableView<Session: GameSession>: View {
         playAt(target, playCards(for: card, view), view)
     }
 
-    // MARK: interaction — dumb selection; CardPlay resolves (selection, target)
-    // into one legal move (mirrors the web's determineGameAction). Every decision
-    // reads game.humanLegal — the kernel menu — never a hand-rolled rule.
+    // MARK: interaction - dumb selection; the KERNEL resolves (selection, target)
+    // into one legal move (fio_play_probe, via PlayWire). Every decision is asked
+    // of the kernel menu this session published - never a hand-rolled rule.
+
+    /// One kernel answer about the current selection, for every question this
+    /// board asks about it.
+    private func probe(_ view: GameView, _ cards: [Card], _ target: PlayTarget) -> PlayProbe {
+        PlayWire.probe(menu: game.humanLegalPacked, battles: view.battles,
+                       powerSuit: view.powerSuit, isDefender: view.defender == game.humanSeat,
+                       selection: cards, target: target)
+    }
 
     private func toggle(_ card: Card) {
         if selection.contains(card.identity) { selection.remove(card.identity) }
@@ -283,21 +292,17 @@ public struct TableView<Session: GameSession>: View {
 
     /// Resolve the selection against a drop/tap target and play it, or reject.
     private func playAt(_ target: PlayTarget, _ cards: [Card], _ view: GameView) {
-        guard let move = CardPlay.resolve(cards: cards, target: target,
-                                          isDefender: view.defender == game.humanSeat,
-                                          battles: view.battles, legal: game.humanLegal) else {
+        guard let move = probe(view, cards, target).move else {
             Haptics.fire(.reject); toast = FStrings.t("ios.reject"); return
         }
         game.play(move); selection.removeAll()
     }
 
     /// Cover button: cover the BIGGEST uncovered attack the selection can beat
-    /// (round 16 - see `CardPlay.bestCoverTarget`; the drag path names its own
-    /// target and is untouched).
+    /// (round 16 - the kernel's `play_best_cover_target`; the drag path names
+    /// its own target and is untouched).
     private func playCover(_ cards: [Card], _ view: GameView) {
-        guard let i = CardPlay.bestCoverTarget(cards: cards, battles: view.battles,
-                                               legal: game.humanLegal,
-                                               trumpSuit: view.trumpSuit) else {
+        guard let i = probe(view, cards, .table).bestCover else {
             Haptics.fire(.reject); return
         }
         playAt(.battle(i), cards, view)
@@ -305,6 +310,6 @@ public struct TableView<Session: GameSession>: View {
 
     private func coverableBattles(_ view: GameView) -> Set<Int> {
         let cards = dragCard.map { playCards(for: $0, view) } ?? selectedCards(view)
-        return CardPlay.coverableBattles(cards: cards, battles: view.battles, legal: game.humanLegal)
+        return probe(view, cards, .table).coverable
     }
 }

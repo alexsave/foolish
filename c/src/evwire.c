@@ -265,3 +265,105 @@ int evwire_serialize(const EvSnap *snaps, int n_snaps,
     out[count_at] = (unsigned char)e.n_events;
     return e.len;
 }
+
+// ---------- the reader ------------------------------------------------------
+//
+// The counterpart of put_event/put_snapshot above, and deliberately in the same
+// file: a format whose writer and reader live apart is two formats wearing one
+// name. Every offset is range-checked against the caller's `len` before it is
+// read, and a sequence that does not decode whole is refused outright.
+
+int evwire_read_header(const unsigned char *buf, int len, EvwHeader *out) {
+    if (!buf || len < 4) return EVW_EBADARG;
+    if (buf[0] != EVWIRE_FORMAT_VERSION) return EVW_EPARSE;
+    if (out) {
+        out->version  = buf[0];
+        out->viewer   = (buf[1] == EVW_SEAT_NONE) ? -1 : (int)buf[1];
+        out->actor    = (buf[2] == EVW_SEAT_NONE) ? -1 : (int)buf[2];
+        out->n_events = (int)buf[3];
+    }
+    return 0;
+}
+
+int evwire_read(const unsigned char *buf, int len,
+                EvwHeader *out_hdr,
+                const unsigned char **out_final, int *out_final_len,
+                EvwReadSink sink, void *ctx) {
+    EvwHeader h;
+    const int rc = evwire_read_header(buf, len, &h);
+    if (rc != 0) return rc;
+    if (out_hdr) *out_hdr = h;
+
+    int q = 4;
+    for (int i = 0; i < h.n_events; i++) {
+        // The fixed header, then the variable tail it describes. Both bounds
+        // are taken before a single byte of either is read.
+        if (q + 7 > len) return EVW_EPARSE;
+        EvwRead ev;
+        ev.type            = buf[q++];
+        const int seat_b   = buf[q++];
+        ev.seat            = (seat_b == EVW_SEAT_NONE) ? -1 : seat_b;
+        ev.msg             = buf[q++];
+        ev.from            = buf[q++];
+        ev.to              = buf[q++];
+        const int flags    = buf[q++];
+        ev.n_cards         = buf[q++];
+        ev.has_target      = (flags & 1) != 0;
+        ev.has_battle      = (flags & 2) != 0;
+        if (q + ev.n_cards + ev.has_target + ev.has_battle + 2 > len) return EVW_EPARSE;
+
+        ev.cards_wire = buf + q; q += ev.n_cards;
+        ev.target_wire = 0;
+        ev.battle = 0;
+        if (ev.has_target) ev.target_wire = buf[q++];
+        if (ev.has_battle) ev.battle = buf[q++];
+
+        ev.snap_len = buf[q] | (buf[q + 1] << 8); q += 2;
+        if (ev.snap_len < 0 || q + ev.snap_len > len) return EVW_EPARSE;
+        ev.snap = buf + q;
+        q += ev.snap_len;
+
+        if (sink) sink(ctx, i, &ev);
+    }
+
+    // Trailer: the committed final board - the sequence's `game`.
+    if (q + 2 > len) return EVW_EPARSE;
+    const int fin_len = buf[q] | (buf[q + 1] << 8); q += 2;
+    if (fin_len < 0 || q + fin_len > len) return EVW_EPARSE;
+    if (out_final) *out_final = buf + q;
+    if (out_final_len) *out_final_len = fin_len;
+
+    return h.n_events;
+}
+
+// The cut, counted across frames. `flat` is the running index into the
+// flattened event list every client builds from these frames; `cut` latches the
+// first settlement step and never moves again.
+typedef struct { int flat; int cut; } EvwCut;
+
+static void sink_cut(void *ctx, int index, const EvwRead *ev) {
+    EvwCut *c = (EvwCut *)ctx;
+    (void)index;
+    if (c->cut < 0 && evw_is_settlement(ev->type)) c->cut = c->flat;
+    c->flat++;
+}
+
+int evwire_frames_settlement_cut(const unsigned char *frames, int len) {
+    // A turn that animates nothing is a turn that settled nothing, which is what
+    // an empty stream honestly means - not an error.
+    if (len == 0) return -1;
+    if (!frames || len < 0) return EVW_EPARSE;
+
+    EvwCut c = { 0, -1 };
+    int p = 0;
+    while (p < len) {
+        if (p + 2 > len) return EVW_EPARSE;
+        const int flen = frames[p] | (frames[p + 1] << 8);
+        p += 2;
+        if (flen <= 0 || p + flen > len) return EVW_EPARSE;
+        const int n = evwire_read(frames + p, flen, 0, 0, 0, sink_cut, &c);
+        if (n < 0) return EVW_EPARSE;
+        p += flen;
+    }
+    return c.cut;
+}

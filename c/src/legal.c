@@ -392,11 +392,19 @@ void calculate_legal_moves(const Game *g, int bot_idx, LegalMoves *out) {
         bool said_good = (g->good_players_mask & (1u << bot_idx)) != 0;
         if (!said_good) {
             calc_regular_attack_moves(g, p, out);
-            // Bots must still say GOOD to signal "done attacking" (a bout beats
-            // only at all_good && all_covered in handle_good), so GOOD stays in
-            // the shared menu even while the table is uncovered. The human menu
-            // hides it until all-covered - that filter lives at the packed entry
-            // point (emit_legal_packed), not here, so bot play is unchanged.
+            // GOOD IS ALWAYS HERE WHILE THE SEAT HAS NOT SAID IT, uncovered
+            // table or not. It is not slack in the menu: saying good is how an
+            // attacker signals "done attacking" and LEAVES the bot loop's
+            // eligible set (it sets good_players_mask, which should_bot_act
+            // reads for a non-defender, which bot_drive_eligible_mask reads in
+            // turn). Gate it on all-covered anywhere a bot can see and a bot
+            // holding a legal throw-in could never decline one - it would be
+            // forced to keep attacking until it ran out of cards, and would
+            // stay eligible every cycle for as long as that lasted.
+            //
+            // The human rule ("no good over an uncovered attack") is a
+            // narrowing of this menu, applied by play_human_menu on the way to
+            // a board. It never touches this enumeration.
             LegalMove *m = push_move(out);
             if (m) m->type = MOVE_GOOD;
         }
@@ -438,11 +446,19 @@ void calculate_legal_moves_lite(const Game *g, int bot_idx, LegalMoves *out) {
         bool said_good = (g->good_players_mask & (1u << bot_idx)) != 0;
         if (!said_good) {
             calc_regular_attack_moves(g, p, out);
-            // Bots must still say GOOD to signal "done attacking" (a bout beats
-            // only at all_good && all_covered in handle_good), so GOOD stays in
-            // the shared menu even while the table is uncovered. The human menu
-            // hides it until all-covered - that filter lives at the packed entry
-            // point (emit_legal_packed), not here, so bot play is unchanged.
+            // GOOD IS ALWAYS HERE WHILE THE SEAT HAS NOT SAID IT, uncovered
+            // table or not. It is not slack in the menu: saying good is how an
+            // attacker signals "done attacking" and LEAVES the bot loop's
+            // eligible set (it sets good_players_mask, which should_bot_act
+            // reads for a non-defender, which bot_drive_eligible_mask reads in
+            // turn). Gate it on all-covered anywhere a bot can see and a bot
+            // holding a legal throw-in could never decline one - it would be
+            // forced to keep attacking until it ran out of cards, and would
+            // stay eligible every cycle for as long as that lasted.
+            //
+            // The human rule ("no good over an uncovered attack") is a
+            // narrowing of this menu, applied by play_human_menu on the way to
+            // a board. It never touches this enumeration.
             LegalMove *m = push_move(out);
             if (m) m->type = MOVE_GOOD;
         }
@@ -528,4 +544,223 @@ int unambiguous_cover(const Card *cover_cards, int n_cover,
     if (x.overflow || x.ambiguous || !x.have_first) return 0;
     for (int i = 0; i < n_cover; i++) out_attacks[i] = x.uncovered[x.first_perm[i]];
     return 1;
+}
+
+// ---------- the packed menu wire --------------------------------------------
+//
+// The layout is documented in legal.h. Writer and reader sit together here so a
+// byte offset that moves, moves once.
+
+int legal_menu_write(const LegalMoves *lm, int start, int count,
+                     unsigned char *out, int cap) {
+    if (!lm || !out || cap < 4) return LEGAL_WIRE_ECAP;
+    if (start < 0) start = 0;
+    if (start > lm->n) start = lm->n;
+    int end = (count < 0) ? lm->n : start + count;
+    if (end > lm->n) end = lm->n;
+    if (end < start) end = start;
+
+    // The count is written LAST, so a buffer that runs out leaves no header
+    // claiming moves that are not there.
+    unsigned char *q = out + 4;
+    for (int i = start; i < end; i++) {
+        const LegalMove *m = &lm->moves[i];
+        if ((int)(q - out) + 2 + 2 * m->n_cards > cap) return LEGAL_WIRE_ECAP;
+        *q++ = (unsigned char)m->type;
+        *q++ = (unsigned char)m->n_cards;
+        for (int j = 0; j < m->n_cards; j++) *q++ = (unsigned char)card_to_id(m->cards[j]);
+        for (int j = 0; j < m->n_cards; j++) *q++ = (unsigned char)card_to_id(m->attack_cards[j]);
+    }
+    const unsigned int n = (unsigned int)(end - start);
+    out[0] = (unsigned char)(n & 0xff);
+    out[1] = (unsigned char)((n >> 8) & 0xff);
+    out[2] = (unsigned char)((n >> 16) & 0xff);
+    out[3] = (unsigned char)((n >> 24) & 0xff);
+    return (int)(q - out);
+}
+
+int legal_menu_begin(MenuWalk *w, const unsigned char *buf, int len) {
+    if (!w) return LEGAL_WIRE_EPARSE;
+    w->buf = buf; w->len = len; w->n = 0; w->index = -1; w->q = 4;
+    if (!buf || len < 4) return LEGAL_WIRE_EPARSE;
+    w->n = (int)((unsigned)buf[0] | ((unsigned)buf[1] << 8)
+                 | ((unsigned)buf[2] << 16) | ((unsigned)buf[3] << 24));
+    if (w->n < 0) { w->n = 0; return LEGAL_WIRE_EPARSE; }
+    return w->n;
+}
+
+int legal_menu_next(MenuWalk *w, MenuMove *out) {
+    if (!w || !out || !w->buf) return LEGAL_WIRE_EPARSE;
+    if (w->index + 1 >= w->n) return 0;
+    if (w->q + 2 > w->len) return LEGAL_WIRE_EPARSE;
+    const int n_cards = w->buf[w->q + 1];
+    if (w->q + 2 + 2 * n_cards > w->len) return LEGAL_WIRE_EPARSE;
+    out->type = w->buf[w->q];
+    out->n_cards = n_cards;
+    out->cards = w->buf + w->q + 2;
+    out->attacks = w->buf + w->q + 2 + n_cards;
+    w->q += 2 + 2 * n_cards;
+    w->index++;
+    return 1;
+}
+
+// ---------- what a gesture on a board means ---------------------------------
+
+// Card identity, over the wire bytes both sides already hold. Order never
+// matters - a selection is a set - and the deck has no duplicates, so equal
+// counts plus containment is set equality.
+static int same_cards(const MenuMove *m, const unsigned char *sel, int n_sel) {
+    if (m->n_cards != n_sel) return 0;
+    for (int i = 0; i < n_sel; i++) {
+        int found = 0;
+        for (int j = 0; j < m->n_cards; j++) if (m->cards[j] == sel[i]) { found = 1; break; }
+        if (!found) return 0;
+    }
+    return 1;
+}
+
+static int covers_attack(const MenuMove *m, unsigned char attack) {
+    for (int i = 0; i < m->n_cards; i++) if (m->attacks[i] == attack) return 1;
+    return 0;
+}
+
+static unsigned char battle_attack(const PlayBoard *b, int i) { return b->table[2 * i]; }
+static int battle_is_uncovered(const PlayBoard *b, int i) {
+    return b->table[2 * i + 1] == LEGAL_WIRE_NONE;
+}
+
+// A board with no table bytes has no battles, whatever it claims.
+static int board_battles(const PlayBoard *b) {
+    if (!b->table || b->n_battles < 0) return 0;
+    return b->n_battles;
+}
+
+// How high a card stands in Durak's own order: every trump outranks every
+// non-trump, and within a class the rank decides. Ranks run 1..13, so the 100
+// is clear of any collision between the two classes.
+static int wire_strength(unsigned char card, int power_suit) {
+    const int suit = card / 13, value = card % 13 + 1;
+    return value + (suit == power_suit ? 100 : 0);
+}
+
+int play_resolve(const PlayBoard *b, const unsigned char *sel, int n_sel,
+                 int target) {
+    if (!b || !b->menu || n_sel <= 0) return -1;
+    if (target == PLAY_TARGET_HAND || target < PLAY_TARGET_HAND) return -1;
+
+    MenuWalk w;
+    MenuMove m;
+    if (legal_menu_begin(&w, b->menu, b->menu_len) < 0) return -1;
+
+    if (!b->is_defender) {
+        // Attacker: the only card play is an attack with exactly this selection
+        // (one card, or several of a rank - the kernel enumerates which). The
+        // target is not read, which is why the hand is answered above.
+        while (legal_menu_next(&w, &m) == 1)
+            if (m.type == MOVE_ATTACK && same_cards(&m, sel, n_sel)) return w.index;
+        return -1;
+    }
+
+    if (target >= 0) {
+        // Dropped on a named battle: a cover with these cards that covers THIS
+        // attack (a single cover pairs one, a multicover has it among them).
+        if (target >= board_battles(b) || !battle_is_uncovered(b, target)) return -1;
+        const unsigned char attack = battle_attack(b, target);
+        while (legal_menu_next(&w, &m) == 1)
+            if (m.type == MOVE_COVER && same_cards(&m, sel, n_sel)
+                && covers_attack(&m, attack)) return w.index;
+        return -1;
+    }
+
+    // Open table: a pass (bounce the bout) wins if one is legal with these
+    // cards, otherwise auto-target a cover - but only when it is unambiguous,
+    // i.e. exactly one menu entry uses this selection.
+    int only_cover = -1, n_covers = 0;
+    while (legal_menu_next(&w, &m) == 1) {
+        if (m.type == MOVE_PASS && same_cards(&m, sel, n_sel)) return w.index;
+        if (m.type == MOVE_COVER && same_cards(&m, sel, n_sel)
+            && n_covers++ == 0) only_cover = w.index;
+    }
+    return n_covers == 1 ? only_cover : -1;
+}
+
+uint64_t play_coverable_battles(const PlayBoard *b,
+                                const unsigned char *sel, int n_sel) {
+    if (!b || !b->menu || n_sel <= 0) return 0;
+    const int nb = board_battles(b);
+    MenuWalk w;
+    MenuMove m;
+    if (legal_menu_begin(&w, b->menu, b->menu_len) < 0) return 0;
+    uint64_t mask = 0;
+    while (legal_menu_next(&w, &m) == 1) {
+        if (m.type != MOVE_COVER || !same_cards(&m, sel, n_sel)) continue;
+        for (int i = 0; i < nb && i < 64; i++) {
+            if (!battle_is_uncovered(b, i)) continue;
+            if (covers_attack(&m, battle_attack(b, i))) mask |= (uint64_t)1 << i;
+        }
+    }
+    return mask;
+}
+
+int play_best_cover_target(const PlayBoard *b,
+                           const unsigned char *sel, int n_sel) {
+    const uint64_t mask = play_coverable_battles(b, sel, n_sel);
+    int best = -1;
+    for (int i = 0; i < 64; i++) {
+        if (!(mask & ((uint64_t)1 << i))) continue;
+        if (best < 0 || wire_strength(battle_attack(b, i), b->power_suit)
+                        > wire_strength(battle_attack(b, best), b->power_suit)) best = i;
+    }
+    return best;
+}
+
+int play_has_verb(const PlayBoard *b, int move_type,
+                  const unsigned char *sel, int n_sel) {
+    if (!b || !b->menu || n_sel <= 0) return 0;
+    MenuWalk w;
+    MenuMove m;
+    if (legal_menu_begin(&w, b->menu, b->menu_len) < 0) return 0;
+    while (legal_menu_next(&w, &m) == 1)
+        if (m.type == move_type && same_cards(&m, sel, n_sel)) return 1;
+    return 0;
+}
+
+int play_can_say_good(const PlayBoard *b) {
+    if (!b || !b->menu) return 0;
+    const int nb = board_battles(b);
+    if (nb == 0) return 0;
+    for (int i = 0; i < nb; i++) if (battle_is_uncovered(b, i)) return 0;
+    MenuWalk w;
+    MenuMove m;
+    if (legal_menu_begin(&w, b->menu, b->menu_len) < 0) return 0;
+    while (legal_menu_next(&w, &m) == 1) if (m.type == MOVE_GOOD) return 1;
+    return 0;
+}
+
+int play_human_menu(const PlayBoard *b, unsigned char *out, int cap) {
+    if (!b || !b->menu || !out || cap < 4) return LEGAL_WIRE_ECAP;
+    const int good_allowed = play_can_say_good(b);
+
+    MenuWalk w;
+    MenuMove m;
+    if (legal_menu_begin(&w, b->menu, b->menu_len) < 0) return LEGAL_WIRE_EPARSE;
+    unsigned char *p = out + 4;
+    unsigned int n = 0;
+    int rc;
+    while ((rc = legal_menu_next(&w, &m)) == 1) {
+        if (m.type == MOVE_WAIT) continue;
+        if (m.type == MOVE_GOOD && !good_allowed) continue;
+        if ((int)(p - out) + 2 + 2 * m.n_cards > cap) return LEGAL_WIRE_ECAP;
+        *p++ = (unsigned char)m.type;
+        *p++ = (unsigned char)m.n_cards;
+        for (int j = 0; j < m.n_cards; j++) *p++ = m.cards[j];
+        for (int j = 0; j < m.n_cards; j++) *p++ = m.attacks[j];
+        n++;
+    }
+    if (rc == LEGAL_WIRE_EPARSE) return LEGAL_WIRE_EPARSE;
+    out[0] = (unsigned char)(n & 0xff);
+    out[1] = (unsigned char)((n >> 8) & 0xff);
+    out[2] = (unsigned char)((n >> 16) & 0xff);
+    out[3] = (unsigned char)((n >> 24) & 0xff);
+    return (int)(p - out);
 }

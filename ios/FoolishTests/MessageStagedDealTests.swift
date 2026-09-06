@@ -12,8 +12,8 @@
 // same-rank covers over four same-rank attacks is this case, not a rule of its
 // own), and a pickup - which refills the picker too whenever the table left
 // them short of six. So the turn is cut at the kernel's own settlement boundary
-// ([GameEvent].settlementStart -> evw_is_settlement) and the second half is
-// withheld until Send.
+// (MessageKernel.stagedTurn's settlementCut -> evwire_frames_settlement_cut) and
+// the second half is withheld until Send.
 //
 // WHAT IS PINNED HERE is the property, not the split: while a move is staged,
 // NOTHING HAS COME OUT OF THE DECK. Every card the board can show its player
@@ -133,6 +133,9 @@ final class MessageStagedDealTests: XCTestCase {
                                 case .cover:  covers += 1
                                 default:      goods += 1
                                 }
+                                // `legal` is the decode of `legalPacked`, the
+                                // menu the board actually plays from, so this
+                                // is both halves of the hold at once.
                                 XCTAssertTrue(c.legal.isEmpty,
                                               "a held bout end left \(c.legal.count) moves legal - "
                                               + "the deal is hidden but still playable")
@@ -211,6 +214,32 @@ final class MessageStagedDealTests: XCTestCase {
         XCTAssertNil(c.takeReleasedSettlement(), "the release is one-shot")
     }
 
+    /// `legal` IS `legalPacked`, always. The board plays from the packed menu
+    /// (every play is the kernel's answer over it) and reads moves off the
+    /// decoded one, and the hold that empties a menu while a settlement stands
+    /// is applied to the packed value alone - so a second, independent
+    /// assignment of `legal` would be a menu the board does not play from.
+    ///
+    /// Asserted on a live board with a menu on it, so it says something: an
+    /// empty menu agrees with an empty menu whatever the derivation is.
+    func testTheDecodedMenuIsAlwaysTheDecodeOfTheOne() async throws {
+        var sawAMenu = false
+        for salt in UInt8(1)...UInt8(8) {
+            let c = MessageTurnController(genesisSeed: seed(salt), players: 2,
+                                          gameId: 93, myNickname: "P0")
+            await c.begin()
+            XCTAssertEqual(c.legal, MoveWire.decode(c.legalPacked))
+            guard let m = c.legal.first(where: { $0.type != .wait }) else { continue }
+            sawAMenu = true
+            await c.apply(m)
+            XCTAssertEqual(c.legal, MoveWire.decode(c.legalPacked),
+                           "the two published forms of the menu disagree")
+            await c.undo()
+            XCTAssertEqual(c.legal, MoveWire.decode(c.legalPacked))
+        }
+        XCTAssertTrue(sawAMenu, "fixture: no seat ever had a move to make")
+    }
+
     /// Undo DROPS the hold rather than releasing it: the move it belonged to is
     /// gone, so there is nothing to animate and nothing left to withhold.
     func testUndoDropsTheHold() async throws {
@@ -254,24 +283,65 @@ final class MessageStagedDealTests: XCTestCase {
 
     // MARK: the boundary itself
 
-    /// The cut is the kernel's (c/src/evwire.c). A settlement is the transition,
-    /// the discard, the refill and the trash sweep; a card being played is not.
-    func testTheSettlementBoundaryIsTheKernels() {
-        func ev(_ k: EventType) -> GameEvent {
-            GameEvent(type: k.rawValue, seat: 1, msg: 0, from: 1, to: 2,
-                      cards: [], target: nil, battle: nil, state: nil)
+    /// Build a frame stream by hand in the shape the kernel writes: a u16 LE
+    /// length, then `version, viewer, actor, n_events`, then one 9-byte event per
+    /// type (7 fixed bytes, no cards, an empty snapshot), then an empty trailer.
+    /// The cut is a question about TYPES and ORDER, so a stream carrying nothing
+    /// else asks it as sharply as possible.
+    private func frames(_ groups: [[EventType]]) -> Data {
+        var out = Data()
+        for g in groups {
+            let flen = 4 + g.count * 9 + 2
+            out.append(UInt8(flen & 0xff)); out.append(UInt8((flen >> 8) & 0xff))
+            out.append(1)                       // EVWIRE_FORMAT_VERSION
+            out.append(0); out.append(0)        // viewer, actor
+            out.append(UInt8(g.count))
+            for t in g {
+                out.append(UInt8(t.rawValue))
+                out.append(1)                   // seat
+                out.append(0)                   // msg
+                out.append(1); out.append(2)    // from, to
+                out.append(0)                   // flags
+                out.append(0)                   // n_cards
+                out.append(0); out.append(0)    // snap_len 0
+            }
+            out.append(0); out.append(0)        // final_len 0
         }
+        return out
+    }
+
+    /// The cut is the kernel's (evwire_frames_settlement_cut, c/src/evwire.c). A
+    /// settlement is the transition, the discard, the refill and the trash
+    /// sweep; a card being played is not.
+    ///
+    /// These are the same seven shapes `[GameEvent].settlementStart` used to be
+    /// pinned on. That extension is gone - the cut moved into C, where the rule
+    /// and the count-across-frames both live - so they are asked of the wire the
+    /// kernel actually answers over.
+    func testTheSettlementBoundaryIsTheKernels() {
+        func cut(_ types: [EventType]) -> Int? { EvWire.settlementCut(frames([types])) }
         // A cover that swept the table: the cover is the player's, the rest is not.
-        XCTAssertEqual([ev(.cover), ev(.cardsToTrash), ev(.refill)].settlementStart, 1)
-        XCTAssertEqual([ev(.cover), ev(.cover), ev(.discard), ev(.refill)].settlementStart, 2)
+        XCTAssertEqual(cut([.cover, .cardsToTrash, .refill]), 1)
+        XCTAssertEqual(cut([.cover, .cover, .discard, .refill]), 2)
         // A pickup: the sweep into the hand is the move; the refill is not.
-        XCTAssertEqual([ev(.pickup), ev(.refill), ev(.defenderMove)].settlementStart, 1)
+        XCTAssertEqual(cut([.pickup, .refill, .defenderMove]), 1)
         // A good emits no step of its own, so the whole stream is the bout end.
-        XCTAssertEqual([ev(.magicTransition), ev(.discard), ev(.refill)].settlementStart, 0)
+        XCTAssertEqual(cut([.magicTransition, .discard, .refill]), 0)
         // Ordinary play settles nothing.
-        XCTAssertNil([ev(.attackPass)].settlementStart)
-        XCTAssertNil([ev(.cover), ev(.out)].settlementStart)
-        XCTAssertNil([GameEvent]().settlementStart)
+        XCTAssertNil(cut([.attackPass]))
+        XCTAssertNil(cut([.cover, .out]))
+        XCTAssertNil(cut([]))
+    }
+
+    /// A staged turn is one frame per ACTION and the board animates the flattened
+    /// list, so the cut has to count ACROSS frames. This is the half a client
+    /// working from its own decoded list would get wrong for free, and the reason
+    /// the question is the kernel's rather than an index computed after the fact.
+    func testTheCutCountsAcrossFrames() {
+        let stream = frames([[.attackPass], [.cover, .discard, .refill]])
+        XCTAssertEqual(EvWire.decodeFrames(stream).count, 4, "the frames flatten to one list")
+        XCTAssertEqual(EvWire.settlementCut(stream), 2,
+                       "the second frame's settlement is at 2 in the flat list, not at 0")
     }
 
     // MARK: fixture

@@ -830,7 +830,7 @@ typedef struct {
 #else
 typedef struct {
     uint64_t key;     // full 64-bit fingerprint (0 => empty)
-    int16_t  value;   // exact value at this node (me-perspective, abs depth-relative)
+    int16_t  value;   // exact value at this node (player-`a` side, depth-relative)
     uint8_t  depth;   // ply depth this value was computed at (value is depth-relative)
     uint8_t  valid;
 #ifdef CD_TT_BOUNDS
@@ -973,6 +973,9 @@ static CdTTEntry *cd_tt_get(void) {
 }
 
 // 64-bit fingerprint of the value-relevant state. Two players a<b are IN.
+// It deliberately omits the SEARCHING seat: stored values are canonicalised to
+// `a`'s side (see the TT store), so both seats of one endgame share entries.
+// Keying on the seat instead would be correct too, at half the reuse.
 static uint64_t sim_fingerprint(const SimState *s, int a, int b) {
     uint64_t h = s->hand[a] * 0x9E3779B97F4A7C15ull;
     h ^= (s->hand[b] + 0x7F4A7C15ull) * 0xC2B2AE3D27D4EB4Full;
@@ -1481,8 +1484,9 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
         e = &tbl[key & tmask];
 #endif
         if (e->valid && e->key == CD_TT_KEYTAG(key)) {
-            // stored value is depth-relative to e->depth; re-base to this depth.
-            int v = e->value;
+            // Stored value is CANONICAL (player-`a` perspective) and depth-relative
+            // to e->depth: flip to S->me's side, then re-base to this depth.
+            int v = (S->me == b) ? -(int)e->value : (int)e->value;
             if (v > 0) v = v - (1000 - e->depth) + (1000 - depth);
             else if (v < 0) v = v + (1000 - e->depth) - (1000 - depth);
 #ifdef CD_TT_TRACE
@@ -1675,7 +1679,7 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
             }
 #endif
             e->key = CD_TT_KEYTAG(key);
-            e->value = (int16_t)best;
+            e->value = (int16_t)(S->me == b ? -best : best);   // canonical: `a` side
             e->depth = (uint8_t)depth;
             e->valid = 1;
         }
@@ -1685,6 +1689,9 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
         int bnd = (best > alpha0 && best < beta0) ? TT_EXACT
                 : (best >= beta0)                 ? TT_LOWER
                 :                                   TT_UPPER;   /* best <= alpha0 */
+        // Canonicalise to the `a` side: negating a value swaps LOWER and UPPER.
+        int canon = (S->me == b) ? -best : best;
+        if (S->me == b && bnd != TT_EXACT) bnd = (bnd == TT_LOWER) ? TT_UPPER : TT_LOWER;
         int tc = __builtin_popcountll(s->hand[a]) + __builtin_popcountll(s->hand[b]);
         if (bnd == TT_EXACT || tc >= CD_TT_BOUND_MINCARDS) {
             CdTTEntry *slot;
@@ -1721,7 +1728,7 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
                 }
 #endif
                 slot->key = CD_TT_KEYTAG(key);
-                slot->value = (int16_t)best;
+                slot->value = (int16_t)canon;
                 slot->depth = (uint8_t)depth;
                 slot->valid = 1;
                 slot->bound = (uint8_t)bnd;
@@ -1734,7 +1741,8 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
 
 // Public entry: exact value of position `s` from `me`'s perspective, with the
 // given window and budget. Returns the value; sets *aborted if budget/depth
-// blew. Clears the TT each call (positions across calls are unrelated).
+// blew. The TT is NOT cleared here: callers reuse it across positions and
+// across seats, which is why stored values are seat-canonical.
 int cd_sim_solve(SimState *s, int me, int alpha, int beta, long budget, int *aborted) {
     long b = budget;
     return cd_sim_solve_d(s, me, alpha, beta, &b, 0, aborted);

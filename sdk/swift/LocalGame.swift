@@ -36,6 +36,9 @@ public final class LocalGame: ObservableObject, GameSession {
     /// The human seat's current legal-move menu (kernel-computed). The board
     /// derives every enable-state from this — never a hand-rolled rule (§3).
     @Published public private(set) var humanLegal: [Move] = []
+    /// The same menu as the kernel wrote it. The board's play rules read the
+    /// wire (PlayWire), not the decode - see GameSession.
+    @Published public private(set) var humanLegalPacked: Data = MoveWire.emptyMenu
     /// Seats with a pending action right now (bitmask) — drives per-seat
     /// "thinking" marks. Kernel-computed (fio_actor_mask).
     @Published public private(set) var actorMask: Int = 0
@@ -183,7 +186,11 @@ public final class LocalGame: ObservableObject, GameSession {
         if let v = try? await engine.state(viewer: humanSeat) { view = v }
         // Publish the human's legal menu too, so the board's enable-states are
         // always kernel-driven and synchronous to read in view bodies.
-        humanLegal = (try? await engine.legalMoves(seat: humanSeat)) ?? []
+        // One kernel read, published as both forms so they cannot describe
+        // different menus.
+        let packed = (try? await engine.legalPackedData(seat: humanSeat)) ?? MoveWire.emptyMenu
+        humanLegalPacked = packed
+        humanLegal = MoveWire.decode(packed)
         actorMask = (try? await engine.actorMask()) ?? 0
     }
 

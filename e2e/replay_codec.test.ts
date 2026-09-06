@@ -38,6 +38,7 @@ import {
   urlToGame, base64Decode, base64Encode, base32Encode, bytesToBigint, codeToGame, gameToUrl,
 } from '../server/api/common/replay/codec.ts';
 import { kernelReplayEncodeV6FromGame } from '../sdk/ts/wasm/bots.ts';
+import { suiteRng } from './helpers/rng.ts';
 import { __setDealSeedOverride, isReplayTooLong } from '../sdk/ts/wasm/engine.ts';
 
 const hexToBytes = (h: string) => Uint8Array.from(h.match(/../g)!.map((b) => parseInt(b, 16)));
@@ -62,53 +63,9 @@ if (!process.env.E2E_VERBOSE) {
 const GAMES_PER_PC = Number(process.env.REPLAY_GAMES_PER_PC ?? 20);
 const MAX_ACTIONS = 100000;
 
-/* ---- the run seed -------------------------------------------------------
- * Which bot acts first at a shared state used to come from Math.random, so
- * every run played 140 DIFFERENT games and a red one was not re-runnable. It
- * cost a day: the coverage job on main went red on a game nobody could play
- * again (`replay: malformed encode input`, ~0.1% of the `random`-bot games).
- *
- * So the stream is the kernel's own strategy LCG (c/src/game.c
- * random_strategy_random), seeded from the environment. CI plays the same
- * games every run; a human widens the search with REPLAY_CODEC_SEED=<n>.
- *
- * The DEFAULT is chosen for what it covers, not for passing: seed 6 reaches the
- * long-game refusal below (an 8-player `random` game of 1077 logs), so the path
- * that broke CI is exercised on every run instead of once a fortnight.
- */
-const CODEC_SEED = Number(process.env.REPLAY_CODEC_SEED ?? 6);
-const REPRO = `REPLAY_CODEC_SEED=${CODEC_SEED} REPLAY_GAMES_PER_PC=${GAMES_PER_PC}`;
-const mkLcg = (seed: number) => {
-  let s = (seed >>> 0) || 1;
-  return () => {
-    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
-    return s / 4294967296;
-  };
-};
-/** Pin Math.random for the body, and put the real one back even if it throws. */
-async function seeded<T>(fn: () => Promise<T>): Promise<T> {
-  const real = Math.random;
-  Math.random = mkLcg(CODEC_SEED);
-  try { return await fn(); } finally { Math.random = real; }
-}
-
-/* c/src/game.h MAX_LOGS. A game that reaches it stopped being recorded (the
- * remaining logs were dropped), so v6 refuses it outright (REPLAY_ETOOLONG) and
- * that game has no code at all: the owner's call, documented in replay.h, and
- * the same skip c/tests/replay_difftest.c and c/ios/ios_api_smoke.c take.
- *
- * The harness checks the ceiling ITSELF rather than catching the refusal,
- * because a caught refusal is a blank cheque: any encoder fault that happened
- * to be reported as the same code would be skipped forever. Here only games
- * this test can SEE are over the cap get skipped, and every other throw is a
- * failure. If the two ever disagree, roundTripGame says so by name.
- *
- * MUTATION-CHECKED: `&& false` on the predicate below (i.e. no skip at all)
- * reproduces the original red job exactly - "v6 encode failed on a 1077-log 8p
- * game (np=8 game=10 strategy=random, REPLAY_CODEC_SEED=6 ...)" - and reports
- * the same game on every re-run, which is the point of the seed. */
-const KERNEL_MAX_LOGS = 1024;
-const overranTheLogBuffer = (game: Game) => game.logs.length >= KERNEL_MAX_LOGS;
+// The deal is already pinned per game (seedCounter below); this is the other
+// half - the order eligible bots act in. Both seeded, so a red run replays.
+const rng = suiteRng('replay_codec');
 
 const mkPlayer = (i: number, strategy: StrategyKey): PrivatePlayer => ({
   player_id: `bot_${i}`,
@@ -143,11 +100,16 @@ const mkGame = (np: number, strategy: StrategyKey): Game => ({
 // Seeded, because the v6 producer re-derives the deal FROM the seed. Without
 // the override the TS engine deals from its own RNG and the kernel rebuilds a
 // different game ("logged attack not in menu").
+//
+// The counter keeps every game in a run on a different deal; the suite seed is
+// mixed in so sweeping E2E_SEED_REPLAY_CODEC sweeps the DEALS too, not just the
+// order the bots act in. Same games per seed, every run.
 let seedCounter = 0;
 async function playRandomGame(np: number, strategy: StrategyKey): Promise<Game | null> {
   const game = mkGame(np, strategy);
+  const salt = rng.int(256);
   const seed = Array.from({ length: 32 },
-    (_, i) => ((i * 53 + (++seedCounter) * 89 + np * 13) & 0xff).toString(16).padStart(2, '0')).join('');
+    (_, i) => (((i * 53 + (++seedCounter) * 89 + np * 13) ^ salt) & 0xff).toString(16).padStart(2, '0')).join('');
   __setDealSeedOverride(hexToBytes(seed));
   try {
     start_game(game);
@@ -165,11 +127,7 @@ async function playRandomGame(np: number, strategy: StrategyKey): Promise<Game |
       }
     }
     if (eligible.length === 0) return null;
-    const order = [...eligible];
-    for (let i = order.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [order[i], order[j]] = [order[j], order[i]];
-    }
+    const order = rng.shuffle([...eligible]);
     let acted = false;
     for (const p of order) {
       if (await processBotAction(game, p)) {
@@ -241,16 +199,15 @@ async function roundTripGame(game: Game, np: number, where: string): Promise<voi
   try {
     bytes = kernelReplayEncodeV6FromGame(game, hexToBytes(game.game_seed!));
   } catch (e) {
-    // The one refusal that is not a fault, reached anyway: the caller's ceiling
-    // check let a game through that the kernel calls too long, so the two
-    // disagree about MAX_LOGS. Say that, rather than let the next reader read
-    // it as a codec bug.
+    // The caller's ceiling let through a game the kernel calls too long, so the
+    // two disagree about MAX_LOGS. Say so, rather than let the next reader take
+    // it for a codec fault.
     if (isReplayTooLong(e)) {
-      throw new Error(`KERNEL_MAX_LOGS (${KERNEL_MAX_LOGS}) no longer matches c/src/game.h MAX_LOGS: `
-        + `the kernel refused a ${game.logs.length}-log ${np}p game as too long (${where}, ${REPRO})`);
+      throw new Error(`MAX_LOGS (${MAX_LOGS}) no longer matches c/src/game.h: the kernel `
+        + `refused a ${game.logs.length}-log ${np}p game as too long (${where}, seed=${rng.seed})`);
     }
     throw new Error(`v6 encode failed on a ${game.logs.length}-log ${np}p game `
-      + `(${where}, ${REPRO}): ${(e as Error).message}`);
+      + `(${where}, seed=${rng.seed}): ${(e as Error).message}`);
   }
   const x = bytesToBigint(bytes);
   const enc = {
@@ -261,8 +218,8 @@ async function roundTripGame(game: Game, np: number, where: string): Promise<voi
   // decode through every serialization layer
   const xUrl = urlToGame(enc.url);
   const xB64 = bytesToBigint(base64Decode(enc.base64));
-  assert.equal(xUrl, enc.x, 'serialization round-trip mismatch (url)');
-  assert.equal(xB64, enc.x, 'serialization round-trip mismatch (base64)');
+  assert.equal(xUrl, enc.x, `serialization round-trip mismatch (url) (np=${np}, seed=${rng.seed})`);
+  assert.equal(xB64, enc.x, `serialization round-trip mismatch (base64) (np=${np}, seed=${rng.seed})`);
 
   // The decode is the game the engine actually played — compared on the INFO
   // actions, which is the honest common denominator between the two streams.
@@ -278,14 +235,14 @@ async function roundTripGame(game: Game, np: number, where: string): Promise<voi
   const dec = await decodeReplay(enc.x);
   const infoOf = (ls: SeatLog[]) => ls.filter((l) => INFO_TYPES.includes(l.log_type));
   assert.equal(diffStreams(infoOf(normOriginal(game)), infoOf(normDecoded(dec))), null,
-    'info-action stream mismatch');
+    `info-action stream mismatch (np=${np}, seed=${rng.seed})`);
 
   // elimination order / fool / discard must match too
   const elim = game.elimination_order.map((pid) => game.players.findIndex((p) => p.player_id === pid));
-  assert.deepEqual(elim, dec.eliminationOrder, 'elimination mismatch');
+  assert.deepEqual(elim, dec.eliminationOrder, `elimination mismatch (np=${np}, seed=${rng.seed})`);
   const fool = game.players.findIndex((p) => p.player_id === game_done(game));
-  assert.equal(fool, dec.fool, 'fool mismatch');
-  assert.equal(game.discard_pile_length, dec.discardPileLength, 'discard pile mismatch');
+  assert.equal(fool, dec.fool, `fool mismatch (np=${np}, seed=${rng.seed})`);
+  assert.equal(game.discard_pile_length, dec.discardPileLength, `discard pile mismatch (np=${np}, seed=${rng.seed})`);
 
   // The replay screen must be able to replay this code. It used to fold the log
   // stream into boards itself, and this asserted the fold's arithmetic (one step
@@ -401,56 +358,63 @@ export function registerReplayValidation(): void {
   // A few short engine games round-trip byte-exact (engine<->replay drift guard).
   test('replay codec round-trips short engine games byte-exact (2..4 players)', async () => {
     let played = 0;
-    await seeded(async () => {
-      for (let np = 2; np <= 4; np++) {
-        for (let g = 0; g < 2; g++) {
-          const strategy = (g % 2 === 0 ? 'random' : 'handwritten') as StrategyKey;
-          const game = await playRandomGame(np, strategy);
-          if (!game || overranTheLogBuffer(game)) continue;
-          played++;
-          await roundTripGame(game, np, `np=${np} game=${g} strategy=${strategy}`);
-        }
+    for (let np = 2; np <= 4; np++) {
+      for (let g = 0; g < 2; g++) {
+        const strategy = (g % 2 === 0 ? 'random' : 'handwritten') as StrategyKey;
+        const game = await playRandomGame(np, strategy);
+        if (!game) continue;
+        played++;
+        await roundTripGame(game, np, `np=${np} game=${g} strategy=${strategy}`);
       }
-    });
-    assert.ok(played > 0, `at least one short game completed (${REPRO})`);
+    }
+    assert.ok(played > 0, 'at least one short game completed');
   });
 }
 
 if (!process.env.VALIDATION_ONLY) registerReplayValidation();
 
+// v6 refuses to encode a session whose log outran the kernel's MAX_LOGS
+// (c/src/game.h, 1024) - the stream is truncated at that point, so there is no
+// honest code to cut, and production accepts that a game that long gets no share
+// code. This branch's kernel reports that documented refusal as REPLAY_EINPUT,
+// the same code a genuinely malformed input gets, so the refusal cannot be told
+// from a fault by its code. Recognise it by the condition instead, BEFORE
+// encoding: the game itself says how many logs it has. A too-long game is
+// skipped and counted; anything else that raises EINPUT still fails.
+// (origin/main's ebcc7a1 gives the refusal its own code, REPLAY_ETOOLONG; when
+// that lands here this check is superseded by skipping on the code.)
+const MAX_LOGS = 1024;
+
 if (!process.env.VALIDATION_ONLY) test(`replay codec round-trips engine-played games (${GAMES_PER_PC}/player-count, 2..8 players)`, async () => {
   let totalGames = 0;
   let stalled = 0;
   let tooLong = 0;
-  process.stderr.write(`[replay_codec] ${REPRO}\n`);
-  await seeded(async () => {
-    for (let np = 2; np <= 8; np++) {
-      for (let g = 0; g < GAMES_PER_PC; g++) {
-        // Alternate fast strategies for distribution diversity: random explores
-        // the legal-move space (correctness), handwritten produces realistic game
-        // shapes. (cordite is omitted - its MCTS rollouts are far too slow for a
-        // codec test, and add no coverage the log stream doesn't already get.)
-        const strategy = (g % 2 === 0 ? 'random' : 'handwritten') as StrategyKey;
-        const game = await playRandomGame(np, strategy);
-        if (!game) {
-          stalled++;
-          continue;
-        }
-        // The build's ceiling, not a codec fault: this game was never fully
-        // recorded, so it has no v6 code. `random` bots at 7-8 seats reach it
-        // about once per thousand games.
-        if (overranTheLogBuffer(game)) {
-          tooLong++;
-          continue;
-        }
-        totalGames++;
-        await roundTripGame(game, np, `np=${np} game=${g} strategy=${strategy}`);
+  for (let np = 2; np <= 8; np++) {
+    for (let g = 0; g < GAMES_PER_PC; g++) {
+      // Alternate fast strategies for distribution diversity: random explores
+      // the legal-move space (correctness), handwritten produces realistic game
+      // shapes. (cordite is omitted — its MCTS rollouts are far too slow for a
+      // codec test, and add no coverage the log stream doesn't already get.)
+      const strategy = (g % 2 === 0 ? 'random' : 'handwritten') as StrategyKey;
+      const game = await playRandomGame(np, strategy);
+      if (!game) {
+        stalled++;
+        continue;
       }
+      if (game.logs.length >= MAX_LOGS) {
+        tooLong++;
+        continue;
+      }
+      totalGames++;
+      await roundTripGame(game, np, `np=${np} game=${g} strategy=${strategy}`);
     }
-  });
-  assert.ok(totalGames > 0, `no games completed (stalled=${stalled}, ${REPRO})`);
+  }
+  // eslint-disable-next-line no-console
+  console.log(`[replay codec] ${totalGames} games round-tripped, ${stalled} stalled, `
+    + `${tooLong} past MAX_LOGS (no code by design), seed=${rng.seed}`);
+  assert.ok(totalGames > 0, `no games completed (stalled=${stalled}, seed=${rng.seed})`);
   // A ceiling that swallowed the suite would otherwise pass silently.
   assert.ok(tooLong <= totalGames * 0.05,
     `${tooLong} of ${totalGames + tooLong} games overran the log buffer: `
-    + `the harness is skipping its own coverage (${REPRO})`);
+    + `the harness is skipping its own coverage (seed=${rng.seed})`);
 });

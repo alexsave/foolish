@@ -1,7 +1,7 @@
 // FActionBar.swift — the action buttons, matching the WEB ActionButtons: a
 // VERTICAL stack of small wooden pills on the RIGHT (Attack / Cover / Pass / Take
 // / Good), plus an optional Undo used only by the iMessage board once a move is
-// staged. EVERY enable state is driven by the kernel's legal menu (via CardPlay),
+// staged. EVERY enable state is driven by the kernel's legal menu (via PlayWire),
 // never hand-computed (§3). A card is played by selecting it and tapping a button,
 // by tapping a target battle, or by dragging.
 

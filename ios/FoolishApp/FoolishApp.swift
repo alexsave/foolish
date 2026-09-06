@@ -15,6 +15,14 @@ struct FoolishApp: App {
     // app stays fully usable offline (guest-first, §2).
     @StateObject private var auth = AuthService()
 
+    init() {
+        // Online play goes through the server: a card's confirmation is its own
+        // later broadcast, so a card the newest news does not mention is still
+        // in the post rather than rejected (anim_plan.h). The iMessage extension
+        // is the other case and declares CHAIN in its own entry point.
+        AnimTransport.declare(.server)
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()

@@ -44,7 +44,7 @@ final class UnstartedReplayTests: XCTestCase {
     /// The veil is up: a replay is outstanding and it has something to hide.
     func testAnOutstandingReplayWithAMoveOpensTheWindow() {
         XCTAssertEqual(
-            MessageTableView.unstartedReplay(replayPending: true, events: oneEvent)?.count, 1,
+            Veil.unstartedReplay(replayPending: true, events: oneEvent)?.count, 1,
             "a tapped bubble with a move to replay must veil it until the sequence starts")
     }
 
@@ -55,7 +55,7 @@ final class UnstartedReplayTests: XCTestCase {
     /// badges never reach their real values.
     func testAStartedReplayClosesTheWindow() {
         XCTAssertNil(
-            MessageTableView.unstartedReplay(replayPending: false, events: oneEvent),
+            Veil.unstartedReplay(replayPending: false, events: oneEvent),
             "once the replay has started the veil must come down - the animator owns "
             + "the cards now, and a window that stays open hides them for the life "
             + "of the board")
@@ -67,12 +67,12 @@ final class UnstartedReplayTests: XCTestCase {
     /// nothing scheduled to bring them back.
     func testABubbleThatCarriesNoMoveVeilsNothing() {
         XCTAssertNil(
-            MessageTableView.unstartedReplay(replayPending: true, events: []),
+            Veil.unstartedReplay(replayPending: true, events: []),
             "an empty stream has nothing to hide for")
     }
 
     /// Both off is the ordinary settled board, and stays shut.
     func testASettledBoardHasNoWindow() {
-        XCTAssertNil(MessageTableView.unstartedReplay(replayPending: false, events: []))
+        XCTAssertNil(Veil.unstartedReplay(replayPending: false, events: []))
     }
 }

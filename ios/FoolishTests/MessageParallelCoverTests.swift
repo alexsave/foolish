@@ -100,8 +100,7 @@ final class MessageParallelCoverTests: XCTestCase {
         let covers = events.filter { $0.kind == .cover }
         XCTAssertEqual(covers.count, 2, "the kernel emits one COVER event per card")
 
-        let groups = MessageTableView.parallelGroups(events)
-        let coverGroups = groups.filter { $0.first?.kind == .cover }
+        let coverGroups = AnimBeats(events).beats.filter { $0.kind == .cover }
         XCTAssertEqual(coverGroups.count, 1, "the two cards were played as two beats")
         XCTAssertEqual(coverGroups.first?.count, 2, "both cards must fly in one beat")
     }
@@ -124,8 +123,7 @@ final class MessageParallelCoverTests: XCTestCase {
                                         joins: joins, base: bout.base)
         XCTAssertEqual(events.filter { $0.kind == .cover }.count, 2,
                        "both covers are in this bubble")
-        let coverGroups = MessageTableView.parallelGroups(events)
-            .filter { $0.first?.kind == .cover }
+        let coverGroups = AnimBeats(events).beats.filter { $0.kind == .cover }
         XCTAssertEqual(coverGroups.map(\.count), [2])
     }
 
@@ -135,7 +133,7 @@ final class MessageParallelCoverTests: XCTestCase {
     /// This is the case the grouping must not eat. Round 16 made a bubble state
     /// how much of the chain it added, and `lastMoveEvents` cuts on exactly
     /// that - so the second bubble's stream contains one cover, and there is
-    /// nothing for `parallelGroups` to merge it with. Drop the delta and this
+    /// nothing for the grouping to merge it with. Drop the delta and this
     /// test fails: the second open would carry both covers and fly them as one.
     func testTwoBubblesWithOneCoverEachEachAnimateOnlyTheirOwn() async throws {
         let k = MessageKernel.shared
@@ -151,8 +149,8 @@ final class MessageParallelCoverTests: XCTestCase {
         let eventsA = await k.lastMoveEvents(viewer: 0, atomsBefore: bout.base)
         XCTAssertEqual(eventsA.filter { $0.kind == .cover }.count, 1,
                        "bubble A carries one cover")
-        XCTAssertEqual(MessageTableView.parallelGroups(eventsA)
-                        .filter { $0.first?.kind == .cover }.map(\.count), [1])
+        XCTAssertEqual(AnimBeats(eventsA).beats
+                        .filter { $0.kind == .cover }.map(\.count), [1])
 
         // Bubble B: the second cover, sent after it.
         try await k.apply(seat: bout.def, move: bout.covers[1])
@@ -164,8 +162,8 @@ final class MessageParallelCoverTests: XCTestCase {
         let eventsB = await k.lastMoveEvents(viewer: 0, atomsBefore: envA.turn)
         XCTAssertEqual(eventsB.filter { $0.kind == .cover }.count, 1,
                        "opening bubble B replayed bubble A's cover too")
-        XCTAssertEqual(MessageTableView.parallelGroups(eventsB)
-                        .filter { $0.first?.kind == .cover }.map(\.count), [1],
+        XCTAssertEqual(AnimBeats(eventsB).beats
+                        .filter { $0.kind == .cover }.map(\.count), [1],
                        "the second bubble must animate its own cover alone")
     }
 
@@ -180,24 +178,24 @@ final class MessageParallelCoverTests: XCTestCase {
                       cards: [], target: nil, battle: nil, state: nil)
         }
         // Same seat, adjacent covers -> one beat.
-        XCTAssertEqual(MessageTableView.parallelGroups(
-            [ev(.cover, seat: 1), ev(.cover, seat: 1)]).map(\.count), [2])
+        XCTAssertEqual(AnimBeats(
+            [ev(.cover, seat: 1), ev(.cover, seat: 1)]).beats.map(\.count), [2])
         // Different seat -> two beats (a pass moved the shield mid-turn).
-        XCTAssertEqual(MessageTableView.parallelGroups(
-            [ev(.cover, seat: 1), ev(.cover, seat: 2)]).map(\.count), [1, 1])
+        XCTAssertEqual(AnimBeats(
+            [ev(.cover, seat: 1), ev(.cover, seat: 2)]).beats.map(\.count), [1, 1])
         // NOT adjacent -> two beats. A bout that closed between two covers puts
         // its discard in the way, and the covers belong to different bouts.
-        XCTAssertEqual(MessageTableView.parallelGroups(
-            [ev(.cover, seat: 1), ev(.discard, seat: -1), ev(.cover, seat: 1)]).map(\.count),
+        XCTAssertEqual(AnimBeats(
+            [ev(.cover, seat: 1), ev(.discard, seat: -1), ev(.cover, seat: 1)]).beats.map(\.count),
             [1, 1, 1])
         // A cover's own consequences keep their beats.
-        XCTAssertEqual(MessageTableView.parallelGroups(
+        XCTAssertEqual(AnimBeats(
             [ev(.cover, seat: 1), ev(.cover, seat: 1),
-             ev(.discard, seat: -1), ev(.refill, seat: 0)]).map(\.count),
+             ev(.discard, seat: -1), ev(.refill, seat: 0)]).beats.map(\.count),
             [2, 1, 1])
         // Nothing else groups, however adjacent.
-        XCTAssertEqual(MessageTableView.parallelGroups(
-            [ev(.refill, seat: 0), ev(.refill, seat: 0)]).map(\.count), [1, 1])
-        XCTAssertEqual(MessageTableView.parallelGroups([]).count, 0)
+        XCTAssertEqual(AnimBeats(
+            [ev(.refill, seat: 0), ev(.refill, seat: 0)]).beats.map(\.count), [1, 1])
+        XCTAssertEqual(AnimBeats([]).beats.count, 0)
     }
 }

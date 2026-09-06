@@ -30,7 +30,14 @@ import XCTest
 
 final class SequenceTeardownTests: XCTestCase {
 
-    private let a = "a", b = "b", c = "c"
+    // REAL card identities, because the veil now speaks the kernel's dense ids
+    // (anim_veil_teardown / anim_veil_handover over a u64 bitset) and a card
+    // that is not a card has no bit. The labels were always arbitrary - what
+    // these tests assert is the set relationship - so this is the same
+    // expectation with cards that can actually be dealt.
+    private let a = Card(s: 0, v: 6).identity
+    private let b = Card(s: 1, v: 9).identity
+    private let c = Card(s: 3, v: 13).identity
 
     /// THE INVARIANT THE BUG RESTS ON, asked of the animator itself: a card that
     /// has been OPENED is beyond `clearPreHidden`'s reach. This is not a defect -
@@ -62,8 +69,8 @@ final class SequenceTeardownTests: XCTestCase {
     /// revealing those is the double animation the token guard exists to
     /// prevent - but it must hand its own opens ON.
     func testASupersededSequenceHandsItsOpensOnInsteadOfDroppingThem() {
-        let owed = MessageTableView.sequenceTeardown(opened: [a, b], orphaned: [c],
-                                                     isNewest: false)
+        let owed = Veil.teardown(opened: [a, b], orphaned: [c],
+                                 isNewest: false)
         XCTAssertTrue(owed.reveal.isEmpty,
                       "a superseded sequence revealed cards the newer one may be about to fly")
         XCTAssertEqual(owed.carry, [a, b, c],
@@ -74,8 +81,8 @@ final class SequenceTeardownTests: XCTestCase {
     /// every orphan handed to it. Nothing may still be carried afterwards -
     /// there is no later sequence to carry it to.
     func testTheLastSequenceStandingRevealsEverythingOwed() {
-        let owed = MessageTableView.sequenceTeardown(opened: [a], orphaned: [b, c],
-                                                     isNewest: true)
+        let owed = Veil.teardown(opened: [a], orphaned: [b, c],
+                                 isNewest: true)
         XCTAssertEqual(owed.reveal, [a, b, c],
                        "the last sequence left a card hidden that nothing will ever fly")
         XCTAssertTrue(owed.carry.isEmpty, "the debt was carried past the last sequence")
@@ -87,11 +94,11 @@ final class SequenceTeardownTests: XCTestCase {
     func testAChainOfSupersedesLosesNothing() {
         var carried: Set<String> = []
         for opened in [Set([a]), Set([b])] {
-            carried = MessageTableView.sequenceTeardown(opened: opened, orphaned: carried,
-                                                        isNewest: false).carry
+            carried = Veil.teardown(opened: opened, orphaned: carried,
+                                    isNewest: false).carry
         }
-        let final = MessageTableView.sequenceTeardown(opened: [c], orphaned: carried,
-                                                      isNewest: true)
+        let final = Veil.teardown(opened: [c], orphaned: carried,
+                                  isNewest: true)
         XCTAssertEqual(final.reveal, [a, b, c],
                        "a card opened two sequences ago never came back")
         XCTAssertTrue(final.carry.isEmpty)
@@ -178,18 +185,19 @@ final class SequenceTeardownTests: XCTestCase {
     /// nowhere, excluded from a centred fan. `apply` is awaited, so the whole
     /// kernel round trip is a window a second tap fits inside.
     func testASecondPlayHandsBackTheVeilItDisowns() {
-        let owed = MessageTableView.veilHandover(standing: ["first"], placing: ["second"])
-        XCTAssertEqual(owed.reveal, ["first"],
+        let first = Card(s: 2, v: 4).identity, second = Card(s: 3, v: 2).identity
+        let owed = Veil.handover(standing: [first], placing: [second])
+        XCTAssertEqual(owed.reveal, [first],
                        "the play that lost the ledger kept its veil - its card is laid out nowhere")
-        XCTAssertEqual(owed.veil, ["second"])
+        XCTAssertEqual(owed.veil, [second])
     }
 
     /// …and a card BOTH plays name (a re-play of the same selection) is not
     /// flashed back into the fan on the way past: it is veiled either way.
     func testACardCarriedIntoTheNewPlayIsNotRevealedOnTheWay() {
-        let owed = MessageTableView.veilHandover(standing: ["a", "b"], placing: ["b", "c"])
-        XCTAssertEqual(owed.reveal, ["a"], "only the disowned card comes back")
-        XCTAssertFalse(owed.reveal.contains("b"), "a card the new play also veils must not flash in")
-        XCTAssertEqual(owed.veil, ["b", "c"])
+        let owed = Veil.handover(standing: [a, b], placing: [b, c])
+        XCTAssertEqual(owed.reveal, [a], "only the disowned card comes back")
+        XCTAssertFalse(owed.reveal.contains(b), "a card the new play also veils must not flash in")
+        XCTAssertEqual(owed.veil, [b, c])
     }
 }

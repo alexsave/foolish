@@ -104,27 +104,31 @@ final class Round4Tests: XCTestCase {
         BattleView(attack: attack, defense: defense)
     }
 
+    /// The kernel's own human menu (fio_play_human_menu), over a menu built by
+    /// hand - a board hands in the menu it was published, so a menu is an input.
+    private func humanMoves(_ battles: [BattleView], _ legal: [Move]) -> [Move] {
+        PlayWire.humanMoves(menu: MoveWire.encode(legal), battles: battles)
+    }
+
     /// The kernel always offers GOOD; the board must not, while anything on
     /// the table is still uncovered. An attacker with nothing to throw in is
     /// then left with NO move — which is correct, and is the state that froze
     /// an 8-player auto-run whose turn handoff was reading the raw menu.
     func testGoodIsWithheldUntilTheTableIsFullyCovered() {
         let uncovered = [battle(Card(s: 0, v: 10), nil)]
-        XCTAssertTrue(CardPlay.humanMoves(battles: uncovered,
-                                          legal: [Move(type: .good, cards: [])]).isEmpty,
+        XCTAssertTrue(humanMoves(uncovered, [Move(type: .good, cards: [])]).isEmpty,
                       "an attacker cannot say good over an uncovered attack")
 
         let covered = [battle(Card(s: 0, v: 10), Card(s: 0, v: 12))]
-        XCTAssertEqual(CardPlay.humanMoves(battles: covered,
-                                           legal: [Move(type: .good, cards: [])]).count, 1,
+        XCTAssertEqual(humanMoves(covered, [Move(type: .good, cards: [])]).count, 1,
                        "…and can once every attack is covered")
     }
 
     /// `wait` is never a move, and an empty table is not "fully covered" — a
     /// bout nobody has opened has nothing to say good about.
     func testWaitIsNeverOfferedAndAnEmptyTableIsNotCovered() {
-        XCTAssertTrue(CardPlay.humanMoves(battles: [], legal: [Move(type: .wait, cards: [])]).isEmpty)
-        XCTAssertTrue(CardPlay.humanMoves(battles: [], legal: [Move(type: .good, cards: [])]).isEmpty)
+        XCTAssertTrue(humanMoves([], [Move(type: .wait, cards: [])]).isEmpty)
+        XCTAssertTrue(humanMoves([], [Move(type: .good, cards: [])]).isEmpty)
     }
 
     /// Every other move passes through untouched — the gate is about `good`
@@ -133,7 +137,7 @@ final class Round4Tests: XCTestCase {
         let uncovered = [battle(Card(s: 0, v: 10), nil)]
         let legal = [Move(type: .good, cards: []), Move(type: .wait, cards: []),
                      Move(type: .pickup, cards: []), Move(type: .cover, cards: [Card(s: 0, v: 12)])]
-        let out = CardPlay.humanMoves(battles: uncovered, legal: legal)
+        let out = humanMoves(uncovered, legal)
         XCTAssertEqual(Set(out.map(\.type)), [.pickup, .cover])
     }
 }

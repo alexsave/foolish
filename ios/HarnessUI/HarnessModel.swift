@@ -534,9 +534,7 @@ final class HarnessModel: ObservableObject {
         // actually stuck — only this handoff was.
         for step in 1...n {
             let seat = (localIndex + step) % n
-            let legal = await MessageKernel.shared.residentLegal(seat: seat)
-            guard let view = await MessageKernel.shared.residentView(viewer: seat) else { continue }
-            if !CardPlay.humanMoves(battles: view.battles, legal: legal).isEmpty {
+            if !(await MessageKernel.shared.residentHumanMoves(seat: seat)).isEmpty {
                 become(seat); return
             }
         }
@@ -562,9 +560,8 @@ final class HarnessModel: ObservableObject {
         let n = participants.count
         for step in 1...n {                       // prefer a seat that is NOT me
             let seat = (localIndex + step) % n
-            let legal = await MessageKernel.shared.residentLegal(seat: seat)
-            guard let view = await MessageKernel.shared.residentView(viewer: seat),
-                  let move = CardPlay.humanMoves(battles: view.battles, legal: legal).first else { continue }
+            guard let move = (await MessageKernel.shared.residentHumanMoves(seat: seat)).first
+            else { continue }
             let ctrl = MessageTurnController(parentPayload: bytes, parent: env, mySeat: seat)
             await ctrl.begin()
             await ctrl.apply(move)

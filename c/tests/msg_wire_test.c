@@ -3025,6 +3025,95 @@ static void print_holdcheck(const char *hex) {
     printf("holdcheck: this machine's clock is %u\n", (unsigned)(time(NULL) & 0xffff));
 }
 
+// ---------- the chain layer's gates ----------------------------------------
+//
+// The four decisions the iMessage extension used to make in Swift
+// (StaleBranchGate.isAhead, NicknameGate, SeatIdentity). They are here because
+// the SECOND chain client should not re-derive them, and what is pinned is the
+// two places each one is deliberately not the obvious thing: the gate compares
+// round above turn and fails open on a tie, and the seat rules refuse the
+// 2-player inference outside a DM.
+//
+// MUTATION-CHECKED, each applied to c/src/msg_wire.c on its own:
+//   is_ahead compares turn above round                        -> 2 failures
+//   is_ahead treats a tie as ahead (>= on turn)               -> 1 failure
+//   msg_seat_resolve drops the chat_is_dm guard               -> 1 failure
+//   msg_seat_resolve takes a cached seat out of range         -> 1 failure
+//   msg_seat_cache_disowned calls a missing join a disownment -> 1 failure
+//   resolve_in_lobby skips the membership check               -> 1 failure
+//
+// The nickname verdict's two caps are NOT order-sensitive - both answer
+// TOO_LONG - so swapping them is not a mutation this or any test can see, and
+// the order in the code is documentation rather than behaviour.
+static void test_chain_gates(void) {
+    // ---- the stale-branch gate ----
+    CHECK(msg_chain_is_ahead(3, 0, 0, 2, 9, 99) == 1, "a finished chain outranks a live one");
+    CHECK(msg_chain_is_ahead(2, 2, 0, 2, 1, 99) == 1,
+          "ROUND is asked above TURN: a chain a whole bout further on is ahead even "
+          "when the bout-closing fold left it with fewer atoms");
+    CHECK(msg_chain_is_ahead(2, 1, 99, 2, 2, 0) == 0, "…and not the other way round");
+    CHECK(msg_chain_is_ahead(2, 1, 5, 2, 1, 4) == 1, "within a round, atoms decide");
+    CHECK(msg_chain_is_ahead(2, 1, 5, 2, 1, 5) == 0,
+          "A TIE IS NOT AHEAD - the 1.0(40) report was a legal move refused as stale "
+          "because two bubbles carried the same state");
+
+    // ---- the nickname gate ----
+    CHECK(msg_nickname_verdict(0, 0) == MSG_NAME_EMPTY, "nothing typed");
+    CHECK(msg_nickname_verdict(1, 1) == MSG_NAME_OK, "one letter is a name");
+    CHECK(msg_nickname_verdict(MSG_MAX_NAME_CHARS, MSG_MAX_NAME) == MSG_NAME_OK,
+          "both caps are inclusive");
+    CHECK(msg_nickname_verdict(MSG_MAX_NAME_CHARS + 1, 20) == MSG_NAME_TOO_LONG,
+          "a long run of one-byte characters no badge can show");
+    CHECK(msg_nickname_verdict(8, MSG_MAX_NAME + 1) == MSG_NAME_TOO_LONG,
+          "…and a short name the SEAL would refuse: 'Владимир' is 8 letters and 16 bytes, "
+          "which is the whole reason there are two caps");
+
+    // ---- names in a roster ----
+    const char *abc[] = { "Alex", "Bob", "Cindy" };
+    MsgJoin j[MSG_MAX_JOINS];
+    joins_of(j, abc, 3);
+    CHECK(msg_name_taken(j, 3, "Bob", 3) == 1, "a seated name is taken");
+    CHECK(msg_name_taken(j, 3, "Bo", 2) == 0, "a PREFIX is not the name");
+    CHECK(msg_name_taken(j, 3, "Bobb", 4) == 0, "…and neither is a longer one");
+    CHECK(msg_name_taken(j, 3, "Dana", 4) == 0, "a free name is free");
+    CHECK(msg_name_taken(0, 3, "Bob", 3) == 0, "no roster, nothing taken");
+
+    // ---- which seat am I ----
+    CHECK(msg_seat_resolve(2, 0, 4, 0, 0) == 2, "the cache is the first answer");
+    CHECK(msg_seat_resolve(9, 0, 4, 1, 0) == -1,
+          "a cached seat out of range is treated as absent, never as a seat");
+    CHECK(msg_seat_resolve(-1, 1, 5, 3, 0) == 3, "I sent it, so I am its last actor");
+    CHECK(msg_seat_resolve(-1, 0, 2, 0, 1) == 1, "a DM 2p bubble I did not send is the other seat");
+    CHECK(msg_seat_resolve(-1, 0, 2, 0, 0) == -1,
+          "…and in a GROUP chat it is ambiguous: a third member is one tap from being "
+          "seated on somebody's face-up hand");
+    CHECK(msg_seat_resolve(-1, 0, 3, 0, 1) == -1, "3 players and no signal is ambiguous");
+
+    // ---- the claim name ----
+    CHECK(msg_seat_claimed_by_name(j, 3, "Cindy", 5) == 2, "my claim name finds my seat");
+    CHECK(msg_seat_claimed_by_name(j, 3, "Dana", 4) == -1, "a name nobody holds finds nothing");
+    CHECK(msg_seat_claimed_by_name(j, 3, "", 0) == -1, "no recorded name, no scan");
+
+    CHECK(msg_seat_cache_disowned(j, 3, 1, "Bob", 3) == 0, "the roster agrees with the cache");
+    CHECK(msg_seat_cache_disowned(j, 3, 1, "Alex", 4) == 1,
+          "seat 1 is somebody else now - a claim race this device lost");
+    CHECK(msg_seat_cache_disowned(j, 3, 7, "Bob", 3) == 0,
+          "a seat this bubble names nobody at is NOT a disownment - stay permissive");
+    CHECK(msg_seat_cache_disowned(j, 3, 1, "", 0) == 0, "no recorded name, no disownment");
+
+    // ---- the lobby gate ----
+    CHECK(msg_seat_resolve_in_lobby(j, 3, 1, 0, 3, 0, 0, "Bob", 3) == 1,
+          "cached, listed, and named as me");
+    CHECK(msg_seat_resolve_in_lobby(j, 3, 1, 0, 3, 0, 0, "Cindy", 5) == 2,
+          "the NAME recovers the seat when the numeric cache lost its race");
+    CHECK(msg_seat_resolve_in_lobby(j, 2, 2, 0, 3, 0, 0, 0, 0) == -1,
+          "resolved to a seat this OLDER lobby bubble does not list yet - not mine here, "
+          "which is what keeps Start off a bubble that predates my join");
+    CHECK(msg_seat_resolve_in_lobby(j, 3, 1, 0, 3, 0, 0, "Alex", 4) == 0,
+          "a disowned cache falls through to the name, which finds seat 0");
+    CHECK(msg_seat_resolve_in_lobby(j, 3, -1, 0, 3, 0, 0, 0, 0) == -1, "no signal, not mine");
+}
+
 int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1], "--fixture")) { print_fixtures(); return 0; }
     if (argc > 1 && !strcmp(argv[1], "--fixture4")) { print_fixtures4(); return 0; }
@@ -3067,6 +3156,7 @@ int main(int argc, char **argv) {
     test_bubble_delta();
     test_nothing_bubble();
     test_roster_key();
+    test_chain_gates();
     test_rematch_opening();
     test_fool_penalty_wire();
     test_forced_opening_replay();

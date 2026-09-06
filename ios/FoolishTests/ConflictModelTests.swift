@@ -5,15 +5,26 @@
 //
 // Two layers under test, matching where the model lives:
 //
-//   THE VERDICT (ConflictModel.swift), pure: per card, revert / keep / clear
-//   against what the arriving chain vouches for. This is the web's trichotomy
-//   (c/src/anim_plan.h anim_resolve_unconfirmed_attack_covers) re-grounded on
-//   the only inputs the phone has - the arriving replay's stream and its
-//   opening board - and getting any leg of it wrong reproduces a bug the web
-//   already paid for: a false REVERT is the "card flew home and popped
-//   straight back" flicker, a false KEEP is the silent swap the owner rejected,
-//   and a missing CLEAR is the "someone picked my card up and it flew back to
-//   my hand" flicker by name.
+//   THE VERDICT, per card: revert / keep / clear against what the arriving
+//   chain vouches for. The rule itself is the KERNEL's now
+//   (c/src/anim_plan.c anim_conflict_*, crossed by sdk/swift/ConflictWire.swift)
+//   and is asserted natively in c/tests/tests.c; what these cases pin is the
+//   same behaviour AS THE BOARD REACHES IT, through the wire. Getting any leg
+//   of it wrong reproduces a bug the web already paid for: a false REVERT is
+//   the "card flew home and popped straight back" flicker, a false KEEP is the
+//   silent swap the owner rejected, and a missing CLEAR is the "someone picked
+//   my card up and it flew back to my hand" flicker by name.
+//
+//   MUTATION-CHECKED across the crossing, each applied alone and reverted:
+//     the facts appended AFTER the group sizes (a shifted wire) -> 6 failures
+//     CLEAR decoded as KEEP                                     -> 2 failures
+//     the reversal flight not flipped end for end               -> 1 failure
+//     the dense card id off by one (drop the -1)                -> 0 failures
+//       BEFORE testEveryCardInTheDeckCrossesAsItself existed, which is why that
+//       case is there: an id scheme that disagrees with the kernel's is
+//       invisible in the middle of the deck (both sides of every comparison go
+//       through it) and only bites at the last card, where it walks off the end
+//       -> 1 failure with it.
 //
 //   THE RETRACTION HANDSHAKE (MessageTurnController.offerArrival /
 //   finishConflictAdopt): an arrival over a staged move publishes the OLD base
@@ -29,13 +40,26 @@ import XCTest
 @MainActor
 final class ConflictModelTests: XCTestCase {
 
+    /// THE TRANSPORT IS PART OF THE QUESTION. The kernel refuses to answer a
+    /// verdict until a host says which client it is (anim_plan.h), and every
+    /// board in this target is the iMessage one, whose messages carry the whole
+    /// game in a total order. The app declares this in its own entry point;
+    /// a test process has no entry point, so it declares it here.
+    override func setUp() {
+        super.setUp()
+        AnimTransport.declare(.chain)
+    }
+
     private func c(_ suit: Int, _ v: Int) -> Card { Card(s: suit, v: v) }
 
+    /// The facts stated directly. `table` is a row of uncovered attacks unless
+    /// a test builds its own battles.
     private func facts(moved: [Card] = [], table: [Card] = [],
-                       myHand: [Card] = []) -> ConflictFacts {
-        ConflictFacts(incomingMoved: Set(moved.map(\.identity)),
-                      tableAtOpen: Set(table.map(\.identity)),
-                      myHandAtOpen: Set(myHand.map(\.identity)))
+                       myHand: [Card] = [],
+                       battles: [BattleView]? = nil) -> ConflictFacts {
+        ConflictFacts(moved: moved,
+                      openTable: battles ?? table.map { BattleView(attack: $0, defense: nil) },
+                      myHand: myHand)
     }
 
     // MARK: - the verdict
@@ -47,9 +71,7 @@ final class ConflictModelTests: XCTestCase {
     /// next, with nothing to say it was mine or why it went").
     func testAStagedCardTheArrivalKnowsNothingOfFliesHome() {
         let mine = c(0, 9)
-        XCTAssertEqual(MessageTableView.conflictVerdict(id: mine.identity, dest: .table,
-                                                        facts: facts(table: [c(1, 7)])),
-                       .revert)
+        XCTAssertEqual(facts(table: [c(1, 7)]).verdict(mine, dest: .table), .revert)
     }
 
     /// THE CLEAR LEG, the one the catalogue says to get right first, checked
@@ -60,9 +82,7 @@ final class ConflictModelTests: XCTestCase {
     /// someone picked it up, and it flew back to my hand" flicker.
     func testACardTheArrivingReplayItselfMovesNeverFliesHomeFirst() {
         let seven = c(2, 7)
-        XCTAssertEqual(MessageTableView.conflictVerdict(id: seven.identity, dest: .table,
-                                                        facts: facts(moved: [seven],
-                                                                     table: [seven])),
+        XCTAssertEqual(facts(moved: [seven], table: [seven]).verdict(seven, dest: .table),
                        .clear)
     }
 
@@ -72,11 +92,43 @@ final class ConflictModelTests: XCTestCase {
     /// clear-flicker one board later - this is what keeps a burst of arrivals
     /// that each EXTEND the animating chain from theatrically un-playing moves
     /// that really happened.
+    /// THE TRANSPORT IS A REAL INPUT ON THIS SIDE TOO. The kernel answers the
+    /// shared tests either way, but the question at the end of the verdict -
+    /// is "not accounted for" conclusive? - is one this app has to have
+    /// declared. Unset, the kernel returns FIO_ETRANSPORT and this
+    /// reader turns it into NO plan, which is loud, rather than quietly
+    /// reverting or quietly keeping.
+    ///
+    /// MUTATION: give AnimTransport a default (declare `.chain` inside
+    /// `ConflictPlan.ask`) and the middle assertion fails - a client that never
+    /// says would inherit iMessage's answer without anyone noticing.
+    func testAVerdictNeedsSomebodyToHaveSaidWhichClientThisIs() {
+        let mine = c(0, 9)
+        let f = facts(table: [c(1, 7)])
+        XCTAssertEqual(AnimTransport.current, .chain, "setUp declared it, and it reads back")
+
+        AnimTransport.declare(.chain)
+        XCTAssertEqual(f.verdict(mine, dest: .table), .revert,
+                       "a chain is complete, so a card it does not account for is doomed")
+
+        AnimTransport.undeclare()         // FIO_TRANSPORT_UNSET - no Swift case for it
+        XCTAssertNil(AnimTransport.current, "nothing has said")
+        XCTAssertEqual(ConflictPlan([[ConflictMotion(card: mine, dest: .table)]], facts: f),
+                       .empty,
+                       "no transport, no plan - the reader degrades to no animation rather "
+                       + "than to somebody else's answer")
+        AnimTransport.declare(.chain)
+    }
+
     func testACardTheNewestBoardVouchesForStaysPut() {
-        let ace = c(3, 14)
-        XCTAssertEqual(MessageTableView.conflictVerdict(id: ace.identity, dest: .table,
-                                                        facts: facts(table: [ace])),
-                       .keep)
+        let king = c(3, 13)
+        XCTAssertEqual(facts(table: [king]).verdict(king, dest: .table), .keep)
+        // BOTH SIDES of a battle stand. A cover read as "not on the table"
+        // would be false-reverted off a table that is holding it.
+        let cover = c(2, 11)
+        XCTAssertEqual(facts(battles: [BattleView(attack: king, defense: cover)])
+                        .verdict(cover, dest: .table),
+                       .keep, "the cover on a standing battle is standing too")
     }
 
     /// A masked back has no identity to conflict on and no persistent view to
@@ -84,21 +136,19 @@ final class ConflictModelTests: XCTestCase {
     /// card out of a badge - the same class of wrongness as a deal flying from
     /// the pile onto the table.
     func testAMaskedBackIsKeptNotConjured() {
-        XCTAssertEqual(MessageTableView.conflictVerdict(id: nil, dest: .pool,
-                                                        facts: .unknown),
-                       .keep)
-        XCTAssertEqual(MessageTableView.conflictVerdict(id: nil, dest: .table,
-                                                        facts: .unknown),
-                       .keep)
+        XCTAssertEqual(ConflictFacts.unknown.verdict(nil, dest: .pool), .keep)
+        XCTAssertEqual(ConflictFacts.unknown.verdict(nil, dest: .table), .keep)
+        XCTAssertEqual(ConflictFacts.unknown.verdict(Card.hidden, dest: .table), .keep,
+                       "a card back is the same case as no card at all")
     }
 
     /// A card that went into a POOL (the discard pile, an opponent's badge) is
     /// bookkeeping: even a chain that vouches for nothing does not justify
     /// flying ghosts back out of a pile.
     func testAPoolDestinationIsBookkeepingNotAFlight() {
-        XCTAssertEqual(MessageTableView.conflictVerdict(id: c(0, 6).identity, dest: .pool,
-                                                        facts: .unknown),
-                       .keep)
+        XCTAssertEqual(ConflictFacts.unknown.verdict(c(0, 6), dest: .pool), .keep)
+        XCTAssertEqual(ConflictFacts.unknown.verdict(c(0, 6), dest: .table), .revert,
+                       "…while an unvouched-for table card does fly, so this is not 'keep all'")
     }
 
     /// The standing check reads the side of the board the motion actually
@@ -108,12 +158,32 @@ final class ConflictModelTests: XCTestCase {
     /// set, not the table set) - and the mirror must hold too.
     func testMyHandDestChecksMyHandNotTheTable() {
         let picked = c(1, 11)
-        XCTAssertEqual(MessageTableView.conflictVerdict(id: picked.identity, dest: .myHand,
-                                                        facts: facts(table: [picked])),
-                       .revert, "the arriving TABLE showing it does not vouch for my HAND holding it")
-        XCTAssertEqual(MessageTableView.conflictVerdict(id: picked.identity, dest: .myHand,
-                                                        facts: facts(myHand: [picked])),
-                       .keep)
+        XCTAssertEqual(facts(table: [picked]).verdict(picked, dest: .myHand), .revert,
+                       "the arriving TABLE showing it does not vouch for my HAND holding it")
+        XCTAssertEqual(facts(myHand: [picked]).verdict(picked, dest: .myHand), .keep)
+        XCTAssertEqual(facts(myHand: [picked]).verdict(picked, dest: .table), .revert,
+                       "…and the mirror: my hand does not vouch for a table spot")
+    }
+
+    /// EVERY CARD CROSSES AS ITSELF. The identity a card travels on is the
+    /// kernel's dense id (`card_to_id`), and a Swift encoding that disagrees
+    /// with it is invisible through most of the deck - both sides of every
+    /// comparison go through the same encoder, so a consistent relabelling
+    /// still answers correctly - and then walks off the end at the last card,
+    /// where the kernel reads a corrupt wire and hands back an unreadable
+    /// chain. An unreadable chain KEEPS everything, so the failure mode is the
+    /// silent swap: nothing flies home, ever. Hence the whole deck, and hence
+    /// the second assertion, which is the one that bites.
+    func testEveryCardInTheDeckCrossesAsItself() {
+        for s in 0...3 {
+            for v in 1...13 {
+                let card = c(s, v)
+                XCTAssertEqual(facts(table: [card]).verdict(card, dest: .table), .keep,
+                               "\(card.identity) is standing on the opening table")
+                XCTAssertEqual(ConflictFacts.unknown.verdict(card, dest: .table), .revert,
+                               "\(card.identity) is disowned by a chain that vouches for nothing")
+            }
+        }
     }
 
     // MARK: - where each motion put its card
@@ -123,22 +193,25 @@ final class ConflictModelTests: XCTestCase {
     /// pickup - like a discard - lands in a pool with no per-card view. A wrong
     /// mapping sends the standing check to the wrong side of the board.
     func testWhereEachKindOfMotionPutItsCard() {
-        XCTAssertEqual(MessageTableView.conflictDest(of: .attackPass, seat: 2, mySeat: 0), .table)
-        XCTAssertEqual(MessageTableView.conflictDest(of: .cover, seat: 2, mySeat: 0), .table)
-        XCTAssertEqual(MessageTableView.conflictDest(of: .pickup, seat: 0, mySeat: 0), .myHand)
-        XCTAssertEqual(MessageTableView.conflictDest(of: .refill, seat: 0, mySeat: 0), .myHand)
-        XCTAssertEqual(MessageTableView.conflictDest(of: .refill, seat: 2, mySeat: 0), .pool)
-        XCTAssertEqual(MessageTableView.conflictDest(of: .pickup, seat: 2, mySeat: 0), .pool)
-        XCTAssertEqual(MessageTableView.conflictDest(of: .cardsToTrash, seat: -1, mySeat: 0), .pool)
+        XCTAssertEqual(ConflictDest(of: .attackPass, seat: 2, mySeat: 0), .table)
+        XCTAssertEqual(ConflictDest(of: .cover, seat: 2, mySeat: 0), .table)
+        XCTAssertEqual(ConflictDest(of: .pickup, seat: 0, mySeat: 0), .myHand)
+        XCTAssertEqual(ConflictDest(of: .refill, seat: 0, mySeat: 0), .myHand)
+        XCTAssertEqual(ConflictDest(of: .refill, seat: 2, mySeat: 0), .pool)
+        XCTAssertEqual(ConflictDest(of: .pickup, seat: 2, mySeat: 0), .pool)
+        XCTAssertEqual(ConflictDest(of: .cardsToTrash, seat: -1, mySeat: 0), .pool)
     }
 
     // MARK: - the facts
 
     /// The facts are read off the same opening every arrival already carries:
-    /// the stream's non-nil cards (masked entries cannot be named and must not
-    /// crash the read), the opening table BOTH SIDES of each battle, and my
-    /// hand. Dropping a defense card from the table set would false-revert a
-    /// standing cover; naming masked cards is impossible by construction.
+    /// the stream's cards, the opening table BOTH SIDES of each battle, and my
+    /// hand. They are OPAQUE - the sets live in the kernel now
+    /// (anim_conflict_facts) so there is only one of them - so what they say is
+    /// asserted the only way it is ever read: through a verdict. Dropping a
+    /// defense card from the table set would false-revert a standing cover;
+    /// naming a masked card is impossible by construction and must not throw
+    /// the read off the cards around it.
     func testTheFactsReadTheStreamAndTheOpeningBoard() {
         let atk = c(0, 6), def = c(0, 9), moved = c(2, 12), inHand = c(3, 8)
         let prior = GameView(status: 1, numPlayers: 2, powerSuit: 1, deckCount: 10,
@@ -156,9 +229,18 @@ final class ConflictModelTests: XCTestCase {
         let ev = GameEvent(type: EventType.pickup.rawValue, seat: 1, msg: 0, from: 2, to: 1,
                            cards: [moved, nil], target: nil, battle: nil, state: nil)
         let f = ConflictFacts(events: [ev], prior: prior)
-        XCTAssertEqual(f.incomingMoved, [moved.identity])
-        XCTAssertEqual(f.tableAtOpen, [atk.identity, def.identity])
-        XCTAssertEqual(f.myHandAtOpen, [inHand.identity])
+
+        XCTAssertEqual(f.verdict(moved, dest: .table), .clear,
+                       "the stream's own card is read off its events")
+        XCTAssertEqual(f.verdict(atk, dest: .table), .keep,
+                       "the opening table's attack stands")
+        XCTAssertEqual(f.verdict(def, dest: .table), .keep,
+                       "…and so does the cover on it")
+        XCTAssertEqual(f.verdict(inHand, dest: .myHand), .keep,
+                       "my hand on the opening board is read too")
+        XCTAssertEqual(f.verdict(c(1, 5), dest: .table), .revert,
+                       "a card the opening names nowhere is disowned - the masked "
+                       + "entry beside `moved` named nothing and moved nothing else")
     }
 
     // MARK: - the reversal steps

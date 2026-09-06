@@ -193,79 +193,67 @@ int json_view_from_packed(const unsigned char *buf, int len, int viewer,
     return json_state_of(g, viewer, out, cap);
 }
 
-// ---------- the packed evwire reader ----------------------------------------
+// ---------- the packed evwire sequence, as JSON -----------------------------
 //
-// The counterpart of evwire.c's sink_packed, and deliberately in the same
-// repository sentence as it: a format with a writer here and a reader in
-// TypeScript is two formats wearing one name, which is exactly how the web's
-// mirror came to need a parity test to stay true.
+// The layout is NOT here. evwire.c owns both halves of its format now
+// (evwire_read), so this file is what it should always have been: a rendering
+// of somebody else's structs. A byte offset that moved would move in one place.
 //
 // Field order and value conventions match ios_api.c's fio_ev_sink exactly (raw
 // ints, EVW_LOC_NONE as 255, seat -1 for none, a masked card as null), so the
 // two hosts read one shape.
 
-int json_events_from_packed(const unsigned char *buf, int len, char *out, int cap) {
-    if (!buf || len < 4) return JSON_EBADARG;
-    if (buf[0] != EVWIRE_FORMAT_VERSION) return JSON_EPARSE;
+typedef struct { J *j; int viewer; } EvJson;
 
-    const int viewer = (buf[1] == EVW_SEAT_NONE) ? -1 : (int)buf[1];
-    const int actor  = (buf[2] == EVW_SEAT_NONE) ? -1 : (int)buf[2];
-    const int n_events = (int)buf[3];
-    int q = 4;
+static void json_ev_sink(void *ctx, int index, const EvwRead *ev) {
+    EvJson *e = (EvJson *)ctx;
+    J *j = e->j;
+
+    if (index) j_putc(j, ',');
+    j_puts(j, "{\"type\":");  j_puti(j, ev->type);
+    j_puts(j, ",\"seat\":");  j_puti(j, ev->seat);
+    j_puts(j, ",\"msg\":");   j_puti(j, ev->msg);
+    j_puts(j, ",\"from\":");  j_puti(j, ev->from);
+    j_puts(j, ",\"to\":");    j_puti(j, ev->to);
+    j_puts(j, ",\"cards\":[");
+    for (int c = 0; c < ev->n_cards; c++) {
+        if (c) j_putc(j, ',');
+        const unsigned char b = ev->cards_wire[c];
+        // The DEAL/REFILL redaction, already applied by the writer: a card
+        // bound for someone else's hand crossed as WIRE_CARD_HIDDEN and stays
+        // a card back here. There is nothing to leak - it never came.
+        if (b == WIRE_CARD_HIDDEN) j_puts(j, "null");
+        else j_card(j, card_from_wire_state(b));
+    }
+    j_putc(j, ']');
+    if (ev->has_target) { j_puts(j, ",\"target\":"); j_card(j, card_from_wire_state(ev->target_wire)); }
+    if (ev->has_battle) { j_puts(j, ",\"battle\":"); j_puti(j, ev->battle); }
+    j_puts(j, ",\"state\":");
+    json_state(j, slot_decode(ev->snap), e->viewer);
+    j_putc(j, '}');
+}
+
+int json_events_from_packed(const unsigned char *buf, int len, char *out, int cap) {
+    EvwHeader h;
+    int rc = evwire_read_header(buf, len, &h);
+    if (rc == EVW_EBADARG) return JSON_EBADARG;
+    if (rc != 0) return JSON_EPARSE;
 
     J j; j_init(&j, out, cap);
-    j_puts(&j, "{\"viewer\":"); j_puti(&j, viewer);
-    j_puts(&j, ",\"actor\":");  j_puti(&j, actor);
+    j_puts(&j, "{\"viewer\":"); j_puti(&j, h.viewer);
+    j_puts(&j, ",\"actor\":");  j_puti(&j, h.actor);
     j_puts(&j, ",\"events\":[");
 
-    for (int i = 0; i < n_events; i++) {
-        if (q + 7 > len) return JSON_EPARSE;
-        const int type    = buf[q++];
-        const int seat_b  = buf[q++];
-        const int msg     = buf[q++];
-        const int from    = buf[q++];
-        const int to      = buf[q++];
-        const int flags   = buf[q++];
-        const int n_cards = buf[q++];
-        const int has_target = (flags & 1) != 0;
-        const int has_battle = (flags & 2) != 0;
-        if (q + n_cards + has_target + has_battle + 2 > len) return JSON_EPARSE;
-
-        if (i) j_putc(&j, ',');
-        j_puts(&j, "{\"type\":");  j_puti(&j, type);
-        j_puts(&j, ",\"seat\":");  j_puti(&j, seat_b == EVW_SEAT_NONE ? -1 : seat_b);
-        j_puts(&j, ",\"msg\":");   j_puti(&j, msg);
-        j_puts(&j, ",\"from\":");  j_puti(&j, from);
-        j_puts(&j, ",\"to\":");    j_puti(&j, to);
-        j_puts(&j, ",\"cards\":[");
-        for (int c = 0; c < n_cards; c++) {
-            if (c) j_putc(&j, ',');
-            const unsigned char b = buf[q++];
-            // The DEAL/REFILL redaction, already applied by the writer: a card
-            // bound for someone else's hand crossed as WIRE_CARD_HIDDEN and
-            // stays a card back here. There is nothing to leak — it never came.
-            if (b == WIRE_CARD_HIDDEN) j_puts(&j, "null");
-            else j_card(&j, card_from_wire_state(b));
-        }
-        j_putc(&j, ']');
-        if (has_target) { j_puts(&j, ",\"target\":"); j_card(&j, card_from_wire_state(buf[q++])); }
-        if (has_battle) { j_puts(&j, ",\"battle\":"); j_puti(&j, buf[q++]); }
-
-        const int snap_len = buf[q] | (buf[q + 1] << 8); q += 2;
-        if (snap_len < 0 || q + snap_len > len) return JSON_EPARSE;
-        j_puts(&j, ",\"state\":");
-        json_state(&j, slot_decode(buf + q), viewer);
-        q += snap_len;
-        j_putc(&j, '}');
-    }
+    EvJson e = { &j, h.viewer };
+    const unsigned char *final_buf = 0;
+    int final_len = 0;
+    if (evwire_read(buf, len, 0, &final_buf, &final_len, json_ev_sink, &e) < 0)
+        return JSON_EPARSE;
     j_putc(&j, ']');
 
-    // Trailer: the committed final board — the sequence's `game`.
-    if (q + 2 > len) return JSON_EPARSE;
-    const int fin_len = buf[q] | (buf[q + 1] << 8); q += 2;
-    if (fin_len < 0 || q + fin_len > len) return JSON_EPARSE;
+    // Trailer: the committed final board - the sequence's `game`.
     j_puts(&j, ",\"game\":");
-    json_state(&j, slot_decode(buf + q), viewer);
+    json_state(&j, slot_decode(final_buf), h.viewer);
     j_putc(&j, '}');
 
     return j_finish(&j);

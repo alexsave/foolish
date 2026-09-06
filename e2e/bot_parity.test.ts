@@ -30,24 +30,11 @@ import {
 import { RandomBotStrategy, setRandomSeed } from '../offlinefun/localtest/frozen/random_strategy.ts';
 import { HandwrittenBotStrategy } from '../offlinefun/localtest/frozen/handwritten_strategy.ts';
 import { SimpleHeuristicStrategy } from '../offlinefun/localtest/frozen/simple_heuristic_strategy.ts';
+// The kernel's dedicated strategy LCG (c/src/game.c), shared with every other
+// seeded suite.
+import { mkLcg, mkLcgU32 } from './helpers/rng.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
-
-// The kernel's dedicated strategy LCG (c/src/game.c).
-const mkLcg = (seed: number) => {
-  let s = (seed >>> 0) || 1;
-  return () => {
-    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
-    return s / 4294967296;
-  };
-};
-const mkLcgU32 = (seed: number) => {
-  let s = (seed >>> 0) || 1;
-  return () => {
-    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
-    return s;
-  };
-};
 
 // Seat strategy keys matter: espresso's opponent modeling branches on
 // whether an opponent is the 'random' bot, so alternate games mix keys to

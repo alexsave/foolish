@@ -94,6 +94,11 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // A CHAIN, not a broadcast: every bubble carries the whole game in a
+        // total order, so a newer chain is the complete truth and a card it does
+        // not account for is doomed. The kernel has no default for this
+        // (anim_plan.h) and every board built below reads it.
+        AnimTransport.declare(.chain)
         FlightRecorder.begin("style \(presentationStyle == .compact ? "compact" : "expanded")")
         prefsSink = FPrefs.shared.objectWillChange.sink { [weak self] _ in
             // objectWillChange fires BEFORE the value lands, so read it next turn.

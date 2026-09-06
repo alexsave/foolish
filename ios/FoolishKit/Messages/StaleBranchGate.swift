@@ -62,6 +62,8 @@
 // plays." This gate is where that happens, because it is already the only
 // reader and the only writer of `MessageGameStore.latestChain`, and it is a
 // pure enum a test can drive with real sealed chains. See `record` below.
+//
+// The kernel calls cross through sdk/swift/GateWire.swift (§7.1).
 import Foundation
 
 public enum StaleBranchGate {
@@ -87,33 +89,14 @@ public enum StaleBranchGate {
         }
     }
 
-    /// Does `known` show MORE of the game than `mine`? Lexicographic over
-    /// (phase, round, turn), STRICTLY: a tie is not ahead, which is the whole
-    /// of the fix.
-    ///
-    /// ROUND is compared above TURN and not below it, because the two do not
-    /// move together. `turn` counts ATOMS and the atom stream is re-derived on
-    /// every seal, so a bout-closing action folds that bout's pending goods
-    /// into the one round_end atom that replaces them - a chain can complete a
-    /// round and come back with the same atom count as its parent, or fewer.
-    /// Round is monotonic where turn is not, so it is asked first.
-    ///
-    /// THE ONE PLACE THIS FAILS OPEN ON PURPOSE. That same fold means a chain
-    /// that is genuinely ahead can tie on turn within one round ("parent +
-    /// good" vs "parent + good + cover" seal to the same turn - msg_rule_p's
-    /// own comment). This says "not ahead" there and the board stays playable.
-    /// That is the direction this gate is required to fail in: its own header
-    /// says a false positive is "a game that cannot be played, which is a far
-    /// worse defect than the one this prevents", and it is what the owner hit.
-    /// The chain that is really ahead still wins the moment it ARRIVES - Rule
-    /// P rule 4 ranks a child over its parent and `maybeAdoptIncoming` adopts
-    /// it - so the window is one bubble wide, and a stale BRANCH (the cheat
-    /// this gate is for) is never in it: a branch off an older bubble has
-    /// strictly fewer atoms, so it loses on `turn` with nothing folded.
+    /// Does `known` show MORE of the game than `mine`? The kernel's
+    /// (msg_chain_is_ahead), because a chain-based client that re-derived it
+    /// would have to re-derive two things that are not obvious: that ROUND is
+    /// compared above TURN, and that a TIE IS NOT AHEAD. See msg_wire.h for
+    /// both, and for where it deliberately fails open.
     public static func isAhead(_ known: Progress, of mine: Progress) -> Bool {
-        if known.phase != mine.phase { return known.phase > mine.phase }
-        if known.round != mine.round { return known.round > mine.round }
-        return known.turn > mine.turn
+        GateWire.chainIsAhead(phase: known.phase, round: known.round, turn: known.turn,
+                              thanPhase: mine.phase, round: mine.round, turn: mine.turn)
     }
 
     /// The gate's answer: is this board a read-only branch, and what is the
@@ -127,8 +110,7 @@ public enum StaleBranchGate {
         public let newest: Data?
     }
 
-    /// `MSG_PHASE_FINISHED` (c/src/msg_wire.h), named once rather than written
-    /// as a bare 3 at the site that asks.
+    /// `MSG_PHASE_FINISHED`, from the kernel rather than written as a bare 3.
     ///
     /// The wire makes this claim CHECKABLE rather than merely stated: msg_wire.c
     /// decode refuses a chain whose header and body disagree about being over -
@@ -137,7 +119,7 @@ public enum StaleBranchGate {
     /// about a game, it is a fact the kernel replayed the body to confirm, which
     /// is the standard anything gating storage against a possibly-hostile sender
     /// has to meet.
-    static let finishedPhase = 3
+    static let finishedPhase = GateWire.finishedPhase
 
     /// Note `payload` as the newest chain seen for this game - OR, when the
     /// game it carries is over, drop the note entirely (round 43).

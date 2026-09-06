@@ -20,6 +20,7 @@
 // A card byte: 0..51 = suit*13 + (value-1); 0xFE hidden; 0xFF none.
 
 import Foundation
+import CFoolish
 
 public enum EvWire {
     private static let WIRE_HIDDEN: UInt8 = 0xFE
@@ -49,16 +50,44 @@ public enum EvWire {
     /// A short or malformed buffer stops the walk and returns what was whole,
     /// the same degrade-to-less-animation discipline `decode` keeps.
     public static func decodeFrames(_ bytes: Data) -> [GameEvent] {
+        frames(bytes).flatMap(decode)
+    }
+
+    /// The same run SPLIT rather than flattened - one Data per frame, with the
+    /// u16 length prefix stripped, in play order.
+    ///
+    /// A frame is one STEP, and that is the only thing that counts steps: a step
+    /// emits any number of events, including none (a good that does not close
+    /// the bout), so a caller asking "how far back does this stream reach" must
+    /// count frames and never events. `lastMoveEventsWithPrior` is that caller.
+    public static func frames(_ bytes: Data) -> [Data] {
         let b = [UInt8](bytes)
-        var p = 0, out: [GameEvent] = []
+        var p = 0, out: [Data] = []
         while p + 2 <= b.count {
             let len = Int(b[p]) | (Int(b[p + 1]) << 8)
             p += 2
             guard len > 0, p + len <= b.count else { break }
-            out.append(contentsOf: decode(Data(b[p..<p + len])))
+            out.append(Data(b[p..<p + len]))
             p += len
         }
         return out
+    }
+
+    /// THE BOARD A STEP COMMITTED - one frame's trailer (evwire.h: the
+    /// viewer-masked final state written after the last event).
+    ///
+    /// Not the same thing as the last event's snapshot, and better for the one
+    /// question that asks it: a step with NO events still commits a board, and
+    /// that is exactly the case (a bare good) where a client most needs to know
+    /// what the table looked like. nil for a frame that does not decode whole.
+    public static func finalState(_ frame: Data) -> GameView? {
+        let b = [UInt8](frame)
+        let r = parse(b)
+        guard r.whole, r.p + 2 <= b.count else { return nil }
+        let len = Int(b[r.p]) | (Int(b[r.p + 1]) << 8)
+        let at = r.p + 2
+        guard len > 0, at + len <= b.count else { return nil }
+        return MaskedView.decode(Data(b[at..<at + len]), viewer: r.viewer)
     }
 
     /// Decode ONE packed evwire frame (a single replay_steps_frames_v6 frame,
@@ -67,7 +96,15 @@ public enum EvWire {
     /// buffer - a corrupt frame degrades to "no animation", never a crash, the
     /// same discipline the rest of the wire readers keep.
     public static func decode(_ bytes: Data) -> [GameEvent] {
-        let b = [UInt8](bytes)
+        parse([UInt8](bytes)).events
+    }
+
+    /// The frame walk both readers share: the events, the frame's viewer, the
+    /// offset the trailer starts at, and whether every declared event decoded.
+    /// `whole` is what makes the trailer safe to read - an offset produced by a
+    /// walk that gave up early points at nothing in particular.
+    private static func parse(_ b: [UInt8])
+        -> (events: [GameEvent], viewer: Int, p: Int, whole: Bool) {
         var p = 0
         func u8() -> Int? { guard p < b.count else { return nil }; defer { p += 1 }; return Int(b[p]) }
         func u16() -> Int? {
@@ -76,44 +113,67 @@ public enum EvWire {
         }
 
         guard let version = u8(), version == EVWIRE_VERSION,
-              let viewer = u8(), let _actor = u8(), let n = u8() else { return [] }
+              let viewer = u8(), let _actor = u8(), let n = u8()
+        else { return ([], -1, 0, false) }
         _ = _actor   // the good-players insertion order; the board does not need it
 
         var events: [GameEvent] = []
         events.reserveCapacity(n)
+        func partial() -> ([GameEvent], Int, Int, Bool) { (events, viewer, p, false) }
         for _ in 0..<n {
             guard let type = u8(), let seatByte = u8(), let msg = u8(),
                   let from = u8(), let to = u8(), let flags = u8(), let nCards = u8()
-            else { return events }
+            else { return partial() }
 
             var cards: [Card?] = []
             cards.reserveCapacity(nCards)
             for _ in 0..<nCards {
-                guard let cb = u8() else { return events }
+                guard let cb = u8() else { return partial() }
                 cards.append(card(UInt8(cb)))
             }
 
             var target: Card?
-            if flags & 1 != 0 { guard let tb = u8() else { return events }; target = card(UInt8(tb)) }
+            if flags & 1 != 0 { guard let tb = u8() else { return partial() }; target = card(UInt8(tb)) }
             var battle: Int?
-            if flags & 2 != 0 { guard let bb = u8() else { return events }; battle = bb }
+            if flags & 2 != 0 { guard let bb = u8() else { return partial() }; battle = bb }
 
             // Each event carries the viewer-masked board AS OF this step (view.c
             // put_state), decoded with the same MaskedView reader residentView
             // uses - so a multi-event step (a pickup's PICKUP + refill draws +
             // defender change) can settle counts step by step, never a jump.
-            guard let snapLen = u16() else { return events }
+            guard let snapLen = u16() else { return partial() }
             var snap: GameView?
             if snapLen > 0, p + snapLen <= b.count {
                 snap = MaskedView.decode(Data(b[p..<p + snapLen]), viewer: viewer)
             }
+            guard p + snapLen <= b.count else { return partial() }
             p += snapLen
 
             events.append(GameEvent(type: type, seat: seatByte == 0xFF ? -1 : seatByte,
                                     msg: msg, from: from, to: to, cards: cards,
                                     target: target, battle: battle, state: snap))
         }
-        return events
+        return (events, viewer, p, true)
+    }
+
+    /// WHERE A TURN SETTLES, over the same frame stream `decodeFrames` reads:
+    /// the index, into the flattened event list, of the first step that belongs
+    /// to the bout end rather than to the move that caused it. nil when the turn
+    /// ended no bout.
+    ///
+    /// The kernel answers it (fio_evw_frames_settlement_cut). Both the rule -
+    /// which step types a bout end owns - and the counting ACROSS frames are
+    /// facts about the wire, and a client that worked them out from its own
+    /// decoded list would be re-deriving the second one every time it flattened.
+    ///
+    /// Ask it of the SAME bytes `decodeFrames` was given, in the same breath: the
+    /// cut indexes the list those bytes produce and nothing else.
+    public static func settlementCut(_ bytes: Data) -> Int? {
+        let cut = bytes.withUnsafeBytes { raw -> Int32 in
+            fio_evw_frames_settlement_cut(raw.bindMemory(to: UInt8.self).baseAddress,
+                                          Int32(bytes.count))
+        }
+        return cut >= 0 ? Int(cut) : nil
     }
 
     /// c/src/evwire.h EVWIRE_FORMAT_VERSION.

@@ -62,9 +62,9 @@ final class HoldbackTests: XCTestCase {
     /// tap: a card in my hand toggles on, then off.
     func testTappingAHandCardStillToggles() {
         let h = hand()
-        let on = MessageTableView.selectionAfterTap([], card: h[1], hand: h)
+        let on = Veil.selectionAfterTap([], card: h[1], hand: h)
         XCTAssertEqual(on, [h[1].identity])
-        let off = MessageTableView.selectionAfterTap(on, card: h[1], hand: h)
+        let off = Veil.selectionAfterTap(on, card: h[1], hand: h)
         XCTAssertTrue(off.isEmpty)
     }
 
@@ -78,11 +78,11 @@ final class HoldbackTests: XCTestCase {
         let h = hand()
         let played = Card(s: 3, v: 14)              // flew out on the open replay
         XCTAssertFalse(h.map(\.identity).contains(played.identity))
-        XCTAssertTrue(MessageTableView.selectionAfterTap([], card: played, hand: h).isEmpty,
+        XCTAssertTrue(Veil.selectionAfterTap([], card: played, hand: h).isEmpty,
                       "a card the kernel hand does not contain can never be selected")
         // …and it cannot be smuggled in alongside a real selection either.
         let live: Set<String> = [h[0].identity]
-        XCTAssertEqual(MessageTableView.selectionAfterTap(live, card: played, hand: h), live)
+        XCTAssertEqual(Veil.selectionAfterTap(live, card: played, hand: h), live)
     }
 
     /// The invariant, not just the tap: an identity that has since LEFT my hand
@@ -95,9 +95,13 @@ final class HoldbackTests: XCTestCase {
     /// above still passes - which is the point of having both.
     func testAStaleIdentityIsSweptOutOfTheSelection() {
         let h = hand()
-        let gone = Card(s: 3, v: 14).identity
-        let next = MessageTableView.selectionAfterTap([gone, h[0].identity],
-                                                      card: h[2], hand: h)
+        // A REAL card that is simply not in this hand. It used to be `v: 14`,
+        // which no deck holds - and the sweep would then have "passed" for the
+        // wrong reason once the rule became the kernel's, because a card with no
+        // dense id has no bit to sweep.
+        let gone = Card(s: 3, v: 13).identity
+        let next = Veil.selectionAfterTap([gone, h[0].identity],
+                                          card: h[2], hand: h)
         XCTAssertFalse(next.contains(gone), "a card that left my hand may not stay selected")
         XCTAssertEqual(next, [h[0].identity, h[2].identity])
     }
@@ -114,7 +118,7 @@ final class HoldbackTests: XCTestCase {
         let src = try source("FoolishKit/Boards/MessageTableView.swift")
         let head = try XCTUnwrap(src.range(of: "private func hand(_ view: GameView"))
         let fn = String(src[head.lowerBound...].prefix(2500))
-        XCTAssertTrue(fn.contains("locked: Set(handHoldback.map(\\.identity))"),
+        XCTAssertTrue(fn.contains("locked: Set(fanHoldback.map(\\.identity))"),
                       "the fan must be told which cards are held, or they stay draggable")
     }
 
@@ -160,12 +164,12 @@ final class HoldbackTests: XCTestCase {
     /// of the two halves no longer a spelling test.
     func testTheHeldCardsAreStillDrawnInTheFan() throws {
         let src = try source("FoolishKit/Boards/MessageTableView.swift")
-        XCTAssertTrue(src.contains("hidden: Self.fanVeil(veiled: veiledCardIds, holdback: handHoldback)"),
+        XCTAssertTrue(src.contains("hidden: Veil.fan(veiled: veiledCardIds, holdback: fanHoldback)"),
                       "the fan's hidden set must still be the veil MINUS the held cards")
         let held = Card(s: 0, v: 6)
-        XCTAssertFalse(MessageTableView.fanVeil(veiled: [held.identity, "x"], holdback: [held])
-                           .contains(held.identity),
-                       "a held card is drawn in the fan, veiled or not")
+        XCTAssertFalse(Veil.fan(veiled: [held.identity, "x"], holdback: [held])
+                                .contains(held.identity),
+                                "a held card is drawn in the fan, veiled or not")
     }
 
     // MARK: 2 - the row-jump trace counts the hand the fan lays out
@@ -178,10 +182,15 @@ final class HoldbackTests: XCTestCase {
     /// the row change the `fan-rows` trace could not see.
     func testTheLaidCountIncludesWhatTheHoldbackIsHolding() {
         let h = hand()
-        let held = [Card(s: 3, v: 14), Card(s: 3, v: 11)]
-        XCTAssertEqual(MessageTableView.laidCount(hand: h, holding: held, deferred: []), 5,
+        // REAL cards, and that now matters: the count is the kernel's
+        // (anim_laid_count) over dense ids, so a value outside 1...13 is not a
+        // card at all and is not laid out. This used to read `v: 14`, which the
+        // old Swift set algebra counted happily because it only ever compared
+        // identity STRINGS.
+        let held = [Card(s: 3, v: 13), Card(s: 3, v: 11)]
+        XCTAssertEqual(HandLayout.laidCount(hand: h, holding: held, deferred: []), 5,
                        "the fan lays out the hand PLUS the holdback, so the row split is taken on 5")
-        XCTAssertEqual(MessageTableView.laidCount(hand: h, holding: [], deferred: []), 3,
+        XCTAssertEqual(HandLayout.laidCount(hand: h, holding: [], deferred: []), 3,
                        "…and the count drops when the holdback lets go - the row change "
                        + "the trace exists to explain")
     }
@@ -191,8 +200,8 @@ final class HoldbackTests: XCTestCase {
     /// cannot quietly drop it.
     func testADeferredSlotIsNotLaidOut() {
         let h = hand()
-        XCTAssertEqual(MessageTableView.laidCount(hand: h, holding: [],
-                                                  deferred: [h[0].identity]), 2)
+        XCTAssertEqual(HandLayout.laidCount(hand: h, holding: [],
+                                            deferred: [h[0].identity]), 2)
     }
 
     /// A card the kernel hand has already got back is not counted twice. Same
@@ -201,7 +210,7 @@ final class HoldbackTests: XCTestCase {
     /// what the row split is taken on.
     func testAHeldCardTheHandAlreadyHasIsNotDoubled() {
         let h = hand()
-        XCTAssertEqual(MessageTableView.laidCount(hand: h, holding: [h[1]], deferred: []), 3)
+        XCTAssertEqual(HandLayout.laidCount(hand: h, holding: [h[1]], deferred: []), 3)
     }
 
     /// Both ends of the trace read the SAME function. The `.onChange` body
@@ -215,11 +224,11 @@ final class HoldbackTests: XCTestCase {
     /// this fails.
     func testTheTraceAndItsTriggerAreTheSameArithmetic() throws {
         let src = try source("FoolishKit/Boards/MessageTableView.swift")
-        XCTAssertTrue(src.contains("let laidHandCount = Self.laidCount("),
+        XCTAssertTrue(src.contains("let laidHandCount = HandLayout.laidCount("),
                       "the trigger must count the hand the fan lays out")
         let onChange = try XCTUnwrap(src.range(of: ".onChange(of: laidHandCount)"))
         let block = String(src[onChange.upperBound...].prefix(1400))
-        XCTAssertTrue(block.contains("Self.laidCount("),
+        XCTAssertTrue(block.contains("HandLayout.laidCount("),
                       "the live re-read must be the same function as the trigger")
         XCTAssertFalse(block.contains("hand.filter { !deferred.contains"),
                        "…not its own copy of a slightly different sum")
@@ -240,11 +249,11 @@ final class HoldbackTests: XCTestCase {
     /// MUTANT: change `<=` to `<` and the first assertion fails; change it to
     /// `>=` and the last one fails.
     func testOnlyTheVeilThatCouldHaveRaisedItMayTakeItDown() {
-        XCTAssertTrue(MessageTableView.holdbackIsMine(armedAt: 7, teardownAt: 7),
+        XCTAssertTrue(Veil.holdbackIsMine(armedAt: 7, teardownAt: 7),
                       "a stream is handed the same epoch its own open stamped")
-        XCTAssertTrue(MessageTableView.holdbackIsMine(armedAt: 4, teardownAt: 7),
+        XCTAssertTrue(Veil.holdbackIsMine(armedAt: 4, teardownAt: 7),
                       "a later teardown rescues an older holdback - the whole point")
-        XCTAssertFalse(MessageTableView.holdbackIsMine(armedAt: 8, teardownAt: 7),
+        XCTAssertFalse(Veil.holdbackIsMine(armedAt: 8, teardownAt: 7),
                        "a superseded teardown must not wipe the holdback its replacement armed")
     }
 
@@ -294,5 +303,151 @@ final class HoldbackTests: XCTestCase {
         XCTAssertTrue(String(src[empty.upperBound...].prefix(1600))
                         .contains("releaseHoldback(raisedBy: veiledAt)"),
                       "a stream that came back empty flies nothing and must let go too")
+    }
+
+    // MARK: 4 (1.0(43)) - the fan opens on six cards, it does not grow into them
+    //
+    // MUTATIONS RUN for this section, each against the test that names it:
+    //   1. `fanHoldback` returns `armed` unconditionally (i.e. the shipped
+    //      behaviour) -> testTheVeilAnswersTheHoldbackBeforeItIsArmed fails.
+    //   2. the veil asks with `max(mySeat, 0)` -> testASpectatorHoldsNothingBack.
+    //   3. the open window returns `pending` alone -> testAStandingHoldback… (1st).
+    //   4. the open window returns `armed + pending` -> testAStandingHoldback… (2nd).
+    //   5. `laidHandCount` reads `handHoldback` again ->
+    //      testNothingThatDrawsReadsTheArmedHoldbackDirectly.
+    //   6. the veil's window never shuts (`controller.openReplayEvents` in place
+    //      of `unstartedReplay`) -> same test, on the changed call.
+
+    /// One placement of mine, the shape an open replay of my own attack carries.
+    private func myAttack(_ card: Card, seat: Int = 0) -> [GameEvent] {
+        [GameEvent(type: EventType.attackPass.rawValue, seat: seat, msg: 0, from: 0, to: 0,
+                   cards: [card], target: nil, battle: nil, state: nil)]
+    }
+
+    /// THE BUG. Owner, 1.0(43): "we shouldn't start with 5 cards, fade the one I
+    /// threw back in and rearrange animation, then throw it out. The visual
+    /// should START with the 6 cards, and just fly the one."
+    ///
+    /// `handHoldback` is armed by `replayLastMoveOnOpen`, which runs from the
+    /// view's `onChange` - a paint after the board's first. So on that first
+    /// paint the fan was handed the kernel hand alone and the played card faded
+    /// in and re-centred the row a moment later. While the veil's window is
+    /// open the answer has to come from the controller, exactly as `pendingOpen`
+    /// does for the counts.
+    ///
+    /// MUTANT: return `armed` unconditionally (i.e. read `handHoldback`
+    /// directly, as every render site did) and this fails - the fan opens at
+    /// five. Driven against the rig too: with the mutant the unified log carries
+    /// `fan-rows ... laid=6 hand=5 held=1 ... seq=0` on a cold open of my own
+    /// attack, and an `onChange` only fires on a CHANGE, so a line there at all
+    /// is the count having been 5 for the paints before it. With the fix that
+    /// line is gone and the only `fan-rows` left is the drop to 5 as the card
+    /// leaves.
+    func testTheVeilAnswersTheHoldbackBeforeItIsArmed() {
+        let played = Card(s: 0, v: 6)
+        let held = MessageTableView.fanHoldback(unstarted: myAttack(played),
+                                                armed: [], mySeat: 0)
+        XCTAssertEqual(held.map(\.identity), [played.identity],
+                       "the card I played must be in the fan on the FIRST paint, not one later")
+    }
+
+    /// …and once the sequence has taken over, the armed holdback is the answer -
+    /// it is the one that SHRINKS as each group's flight is built
+    /// (`hand lets go`), and a veil that kept answering would put the cards back
+    /// as fast as the stream let them go.
+    func testAStartedReplayHandsTheAnswerToTheArmedHoldback() {
+        let played = Card(s: 0, v: 6)
+        XCTAssertTrue(MessageTableView.fanHoldback(unstarted: nil, armed: [], mySeat: 0).isEmpty,
+                      "window shut and nothing armed: the fan lays the kernel hand")
+        XCTAssertEqual(MessageTableView.fanHoldback(unstarted: nil, armed: [played], mySeat: 0)
+                        .map(\.identity), [played.identity],
+                       "window shut: the armed holdback answers on its own")
+    }
+
+    /// A SEAT-LESS viewer places nothing. Spectating IS seat -1, and the kernel
+    /// spends -1 on "no particular player" as well as on "no seat", so the veil
+    /// passes `mySeat` straight through and this rule is `myPlacedCards`' own -
+    /// pinned here because the veil now asks it a paint earlier than the arming
+    /// ever did, and because it is what makes the guardless call site correct.
+    ///
+    /// MUTANT: make the veil's seat `max(mySeat, 0)` (the obvious "clean up the
+    /// negative" edit) and this fails - a spectator's fan grows seat 0's card.
+    func testASpectatorHoldsNothingBack() throws {
+        let played = Card(s: 0, v: 6)
+        XCTAssertTrue(MessageTableView.fanHoldback(unstarted: myAttack(played, seat: 0),
+                                                   armed: [], mySeat: -1).isEmpty,
+                      "a viewer with no seat played nothing, so the fan holds nothing back")
+        // …and the veil really does hand the seat over unguarded, which is the
+        // half that makes the line above load-bearing rather than academic.
+        // Anchored INSIDE the property: `mySeat: controller.mySeat` is spelt
+        // four times in this file and a whole-file search would pass on any of
+        // the other three.
+        let src = try source("FoolishKit/Boards/MessageTableView.swift")
+        let head = try XCTUnwrap(src.range(of: "private var fanHoldback: [Card] {"))
+        let body = String(src[head.lowerBound...].prefix(200))
+        XCTAssertTrue(body.contains("mySeat: controller.mySeat)"),
+                      "the veil asks with my real seat; -1 is the spectator and the kernel knows it")
+    }
+
+    /// The handoff must be a UNION, not a swap. A second bubble raising a fresh
+    /// veil over a sequence that is still flying MY cards must not pull those
+    /// cards out of the fan mid-flight; and a card both sides name appears once,
+    /// because the fan places by index and a duplicate identity is two cards in
+    /// one slot.
+    ///
+    /// MUTANT: return `pending` alone when the window is open and the first
+    /// assertion fails; return `armed + pending` unfiltered and the second does.
+    func testAStandingHoldbackSurvivesAFreshVeil() {
+        let flying = Card(s: 1, v: 9), arriving = Card(s: 2, v: 12)
+        let both = MessageTableView.fanHoldback(unstarted: myAttack(arriving),
+                                                armed: [flying], mySeat: 0)
+        XCTAssertEqual(both.map(\.identity), [flying.identity, arriving.identity],
+                       "a card still in flight keeps its slot when a new veil goes up")
+        let same = MessageTableView.fanHoldback(unstarted: myAttack(flying),
+                                                armed: [flying], mySeat: 0)
+        XCTAssertEqual(same.map(\.identity), [flying.identity],
+                       "a card both sides name is held ONCE - the fan places by index")
+    }
+
+    /// AND NOTHING THAT DRAWS MAY READ THE ARMED STATE. The value tests above
+    /// are worth nothing if a render site goes on asking `handHoldback`
+    /// directly: that site is the one that opens at five. So the arming, the
+    /// two teardown rescues and the fly-time `removeAll` are the ONLY mentions
+    /// left, and every one of them is a WRITE or the rescue's own guard.
+    ///
+    /// MUTANT: put `holding: handHoldback` back into `laidHandCount` (the
+    /// `fan-rows` trigger, which is the value the rig reads the bug off) and
+    /// this fails.
+    func testNothingThatDrawsReadsTheArmedHoldbackDirectly() throws {
+        let src = try source("FoolishKit/Boards/MessageTableView.swift")
+        // Every line naming it, minus the prose that describes it and the
+        // traces that print it (a log is not a layout input).
+        let mentions = src.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { $0.contains("handHoldback") && !$0.contains("handHoldbackAt") }
+            .filter { !$0.hasPrefix("//") && !$0.contains("AnimLog.say(") && !$0.hasPrefix("+ \"") }
+        // What is left: the declaration, the veil's own read of it, the arming,
+        // the fly-time `removeAll` (a read and a write on two lines) and the
+        // rescue's guard and clear. Nothing that lays anything out.
+        let allowed = [
+            "@State private var handHoldback: [Card] = []",
+            "Self.fanHoldback(unstarted: unstartedReplay, armed: handHoldback,",
+            "handHoldback = isSpectating ? []",
+            "if !handHoldback.isEmpty {",
+            "if !left.isEmpty, self.handHoldback.contains(where: { left.contains($0.identity) }) {",
+            "self.handHoldback.removeAll { left.contains($0.identity) }",
+            "guard !handHoldback.isEmpty else { return }",
+            "handHoldback = []",
+        ]
+        XCTAssertEqual(mentions.count, allowed.count,
+                       "a mention was added or removed: \(mentions)")
+        for line in mentions {
+            XCTAssertTrue(allowed.contains(line),
+                          "`\(line)` reads the armed holdback - a render site must ask "
+                          + "`fanHoldback`, which answers on the board's FIRST paint")
+        }
+        // Belt: the property really is what the render sites ask.
+        XCTAssertTrue(src.contains("private var fanHoldback: [Card] {"),
+                      "the veil's answer must exist to be asked")
     }
 }

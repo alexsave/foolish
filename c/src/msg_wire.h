@@ -307,9 +307,13 @@
 
 // Was 12: the App Store review's B1 (docs/APP_REVIEW_NOTES.md) found that cap
 // too tight for a byte-counted UTF-8 name — "Владимир" (8 letters, 16 bytes)
-// silently failed to seal. Owner's round-5 call: allow up to 64 bytes; the
-// Swift UI separately caps at 16 characters (not this layer's job).
+// silently failed to seal. Owner's round-5 call: allow up to 64 bytes.
 #define MSG_MAX_NAME     64
+// …and the DISPLAY cap that rides beside it: a name can clear 64 bytes and
+// still be a run of 1-byte characters no lobby row or seat badge has room for.
+// Not the wire's business, but it is the same decision as the byte cap and the
+// two are asked together (msg_nickname_verdict), so they are named together.
+#define MSG_MAX_NAME_CHARS 16
 #define MSG_MAX_JOINS    MAX_PLAYERS
 #define MSG_SEED_LEN     FOOLISH_SEED_LEN   // 32 — the ChaCha key width
 #define MSG_PARENT_LEN   8
@@ -802,5 +806,103 @@ int msg_rematch_opening(const MsgJoin *joins, int n,
 // This is what a lobby shows: "if nobody else joins, <name> is attacked first".
 int msg_rematch_fool_seat(const MsgJoin *joins, int n,
                           uint32_t carry_key, uint8_t carry_fool);
+
+// ---------- the chain layer's gates ----------------------------------------
+//
+// A CHAIN-BASED CLIENT'S FOUR SMALL DECISIONS: is this board a branch off an
+// old bubble, is this nickname usable, is it taken, and which seat am I? They
+// were Swift (ios/FoolishKit/Messages/{StaleBranchGate,NicknameGate,
+// SeatIdentity}.swift), where the extension is the only thing that has ever
+// asked them. They are here so the second chain client does not re-derive them;
+// what stayed behind is the async orchestration around them, which is the
+// host's.
+//
+// Everything here is a pure function of ints and a roster. None of it reads the
+// resident game, and none of it puts seat identity into the state blob - game.h
+// says seat identity "lives with the caller" and it still does: the caller
+// hands its own cache, its own sender signal and its own chat shape IN.
+
+// DOES `a` SHOW MORE OF THE GAME THAN `b`? Lexicographic over (phase, round,
+// turn), STRICTLY - a tie is not ahead.
+//
+// ROUND is compared above TURN and not below it, because the two do not move
+// together: `turn` counts ATOMS and the atom stream is re-derived on every
+// seal, so a bout-closing action folds that bout's pending goods into the one
+// round_end atom that replaces them, and a chain can complete a round and come
+// back with the same atom count as its parent or fewer. Round is monotonic
+// where turn is not, so it is asked first.
+//
+// IT FAILS OPEN ON PURPOSE. That same fold means a chain that is genuinely
+// ahead can tie on turn within one round ("parent + good" against "parent +
+// good + cover" seal to the same turn), and this answers "not ahead" there. A
+// false positive is a game that cannot be played, which is far worse than the
+// branch it would prevent - and the chain that is really ahead still wins the
+// moment it ARRIVES, because Rule P ranks a child over its parent. A stale
+// BRANCH is never in that window: it has strictly fewer atoms and loses on
+// turn with nothing folded.
+int msg_chain_is_ahead(int a_phase, int a_round, int a_turn,
+                       int b_phase, int b_round, int b_turn);
+
+// A NICKNAME, JUDGED. `n_chars` is the trimmed name's character count and
+// `n_bytes` its UTF-8 byte count - both counted by the host, because trimming
+// and grapheme clustering are Unicode work a C kernel has no business doing;
+// the CAPS and their precedence are here so a client cannot drift from the one
+// the seal enforces (MSG_MAX_NAME). Rejects rather than truncates, deliberately.
+#define MSG_NAME_OK        0
+#define MSG_NAME_EMPTY     1
+#define MSG_NAME_TOO_LONG  2
+int msg_nickname_verdict(int n_chars, int n_bytes);
+
+// Is `name` already held by a seat in this roster? Names are the only identity
+// a payload carries, so the seat picker, the disown check and the lobby's
+// "(you)" tag all lean on them - and they can only lean as far as names are
+// unique WITHIN a chain, which is what the Join button gates on. Exact match on
+// the sealed bytes.
+int msg_name_taken(const MsgJoin *joins, int n, const char *name, int name_len);
+
+// WHICH SEAT AM I? The three §6 layers, highest priority first, over signals
+// the caller supplies. Returns the seat, or -1 for "ambiguous" - which is not
+// an error but the honest answer, and means ask the human.
+//
+//   1. the cache, set with certainty at create/join time. A cached seat outside
+//      0..n_players is treated as absent: a stale row from another game must
+//      never seat somebody out of range.
+//   2. the sender signal - if THIS device sent the bubble I am its last actor,
+//      exact for any n. In a 2-player game I am the OTHER seat when I did not
+//      send it, but only in a DM: that inference's premise is "only two humans
+//      can be holding a phone in this thread", and in a group chat a third
+//      member is one tap away from being seated on somebody's face-up hand.
+//   3. otherwise ambiguous.
+int msg_seat_resolve(int cached_seat, int sender_is_local, int n_players,
+                     int last_actor_seat, int chat_is_dm);
+
+// The seat carrying MY OWN recorded claim name in this roster, or -1. Per-chain
+// names are unique and only this device seals its own, so when a fork race
+// leaves the numeric cache pointing at a claim that LOST, the winning chain
+// still carries the name at whichever claim survived. `name_len` <= 0 means the
+// caller has no recorded name and the scan is skipped.
+int msg_seat_claimed_by_name(const MsgJoin *joins, int n,
+                             const char *name, int name_len);
+
+// Does this bubble's roster DISOWN the cached seat - list it under a different
+// name than the one this device recorded when it claimed it? True only when
+// both sides are present and they differ: either missing is permissive, and the
+// range check and the fallbacks above still apply. It happens in exactly one
+// situation, a seat-claim race this device lost, where trusting the cache would
+// seat it on somebody else's hand face-up.
+int msg_seat_cache_disowned(const MsgJoin *joins, int n, int cached_seat,
+                            const char *name, int name_len);
+
+// msg_seat_resolve, gated for a LOBBY bubble: a resolved seat only counts as
+// mine if this bubble's OWN roster contains it. Correct for a live board, where
+// every chain carries every seated player forward, and wrong for a lobby - an
+// older WAITING bubble reopened after I have since joined still resolves my
+// cached seat although that bubble's joins predate the join, which granted
+// Start to somebody the lobby does not list. -1 covers both "ambiguous" and
+// "resolved, but not in this bubble's joins".
+int msg_seat_resolve_in_lobby(const MsgJoin *joins, int n_joins,
+                              int cached_seat, int sender_is_local, int n_players,
+                              int last_actor_seat, int chat_is_dm,
+                              const char *name, int name_len);
 
 #endif

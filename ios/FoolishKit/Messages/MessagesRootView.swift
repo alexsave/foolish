@@ -263,7 +263,7 @@ public struct MessagesRootView: View {
                 try? await Task.sleep(nanoseconds: 1_200_000_000)
                 collapsing = false
                 CollapseTween.isTweening = false
-                boxHeight = 0
+                await handBackToModel()
             }
         // The host settled TALLER than the snap this tween started on. Ease up
         // rather than rest short of the drawer and expose the wool under it -
@@ -276,6 +276,21 @@ public struct MessagesRootView: View {
         case .follow:
             boxHeight = 0
         }
+    }
+
+    /// End the tween and hand the box back to the model - THROUGH a height
+    /// that is not the one it rests at, or the release publishes nothing and
+    /// every landmark stays measured on the expanded board. The rule and the
+    /// owner's two reports it answers are `CollapseTween.remeasureNudge`.
+    @MainActor
+    private func handBackToModel() async {
+        // Nothing overriding the model box: `follow` already released it (a
+        // manual drag mid-tween), and a nudge here would put a compact height
+        // back onto a drawer that has moved on.
+        guard boxHeight > 0 else { return }
+        boxHeight = CollapseTween.handBack(target: boxHeight)
+        try? await Task.sleep(nanoseconds: 32_000_000)   // a frame, for that layout to land
+        boxHeight = 0
     }
 
     public var body: some View {

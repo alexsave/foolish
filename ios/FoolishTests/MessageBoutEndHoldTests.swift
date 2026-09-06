@@ -27,8 +27,7 @@ final class MessageBoutEndHoldTests: XCTestCase {
     }
 
     private func holds(_ kinds: [EventType]) -> [Bool] {
-        let groups = MessageTableView.parallelGroups(kinds.map { ev($0) })
-        return (0..<groups.count).map { MessageTableView.holdsAfter(groups, $0) }
+        AnimBeats(kinds.map { ev($0) }).beats.map(\.holds)
     }
 
     // MARK: the rule
@@ -42,11 +41,10 @@ final class MessageBoutEndHoldTests: XCTestCase {
     /// A MULTI-CARD cover is one group, so it holds once - after both cards have
     /// flown, not between them (which would break round 16's parallel covers).
     func testAMultiCardCoverHoldsOnceAfterTheWholeGroup() {
-        let events = [ev(.cover), ev(.cover), ev(.discard)]
-        let groups = MessageTableView.parallelGroups(events)
-        XCTAssertEqual(groups.map(\.count), [2, 1], "the two cards are one beat")
-        XCTAssertTrue(MessageTableView.holdsAfter(groups, 0))
-        XCTAssertFalse(MessageTableView.holdsAfter(groups, 1))
+        let groups = AnimBeats([ev(.cover), ev(.cover), ev(.discard)])
+        XCTAssertEqual(groups.beats.map(\.count), [2, 1], "the two cards are one beat")
+        XCTAssertTrue(groups.beats[0].holds)
+        XCTAssertFalse(groups.beats[1].holds)
     }
 
     /// Notices between the cover and the trash do not break the pair. A cover
@@ -84,8 +82,7 @@ final class MessageBoutEndHoldTests: XCTestCase {
         XCTAssertEqual(holds([.pickup, .refill]), [false, false])
         XCTAssertEqual(holds([.deal, .deal, .flipped]), [false, false, false])
         XCTAssertEqual(holds([]), [])
-        XCTAssertFalse(MessageTableView.holdsAfter([[ev(.cover)], [ev(.discard)]], -1))
-        XCTAssertFalse(MessageTableView.holdsAfter([[ev(.cover)], [ev(.discard)]], 2))
+        XCTAssertEqual(AnimBeats([]).beats.count, 0, "an empty stream has no beats to hold after")
     }
 
     /// The hold is a REAL duration - long enough to read a card, and it scales
@@ -200,17 +197,21 @@ final class MessageBoutEndHoldTests: XCTestCase {
         guard let found = try await findClosingCover() else {
             throw XCTSkip("no 2p game in 40 reached a cover that closed its own bout")
         }
-        let taken = try XCTUnwrap(MessageTableView.coveredSweep(found.events,
-                                                               current: found.priorBattles),
+        let taken = try XCTUnwrap(PreBoutTable.coveredSweep(found.events,
+                                                           current: found.priorBattles),
                                   "the kernel's covered table must be accepted")
         XCTAssertTrue(taken.contains { $0.defense == found.card })
 
         // A board holding a card the stream never mentions is NOT swapped out.
+        // `stranger` is deliberately not a card of any deck, which the kernel
+        // now answers as its own case: a cell it cannot NAME crosses as
+        // FIO_TABLE_UNKNOWN and is never accounted for, so the refusal holds for
+        // a card that has no dense id just as it does for one that has.
         let stranger = Card(s: 9, v: 9)
-        XCTAssertNil(MessageTableView.coveredSweep(
+        XCTAssertNil(PreBoutTable.coveredSweep(
             found.events, current: found.priorBattles + [BattleView(attack: stranger, defense: nil)]))
         // …and an empty stream is nothing to swap TO.
-        XCTAssertNil(MessageTableView.coveredSweep([], current: found.priorBattles))
+        XCTAssertNil(PreBoutTable.coveredSweep([], current: found.priorBattles))
     }
 
     /// …and the rule fires on that real stream, not only on synthesized kinds.
@@ -218,13 +219,12 @@ final class MessageBoutEndHoldTests: XCTestCase {
         guard let found = try await findClosingCover() else {
             throw XCTSkip("no 2p game in 40 reached a cover that closed its own bout")
         }
-        let groups = MessageTableView.parallelGroups(found.events)
-        let ci = try XCTUnwrap(groups.firstIndex { $0.first?.kind == .cover })
-        XCTAssertTrue(MessageTableView.holdsAfter(groups, ci),
+        let groups = AnimBeats(found.events).beats
+        let ci = try XCTUnwrap(groups.firstIndex { $0.kind == .cover })
+        XCTAssertTrue(groups[ci].holds,
                       "a cover that closed its bout must hold before the sweep")
         for i in 0..<groups.count where i != ci {
-            XCTAssertFalse(MessageTableView.holdsAfter(groups, i),
-                           "only the cover holds")
+            XCTAssertFalse(groups[i].holds, "only the cover holds")
         }
     }
 }

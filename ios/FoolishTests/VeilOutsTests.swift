@@ -35,18 +35,18 @@ final class VeilOutsTests: XCTestCase {
             .appendingPathComponent(path), encoding: .utf8)
     }
 
-    // MARK: 1 - `veiledCards`: three sources, unioned
+    // MARK: 1 - `Veil.veiled`: three sources, unioned
 
     /// The ordinary board. Nothing animating, no replay outstanding, no move of
     /// mine in flight - and therefore nothing veiled. This is the state the
     /// board spends almost all of its life in, so it is the one that has to be
     /// provably free of every source.
     func testARestingBoardVeilsNothing() {
-        XCTAssertTrue(MessageTableView.veiledCards(hidden: [], pendingOpen: nil,
-                                                   handBeforeMyMove: nil, myHand: nil).isEmpty)
-        XCTAssertTrue(MessageTableView.veiledCards(hidden: [], pendingOpen: nil,
-                                                   handBeforeMyMove: nil,
-                                                   myHand: [six, nine, queen]).isEmpty,
+        XCTAssertTrue(Veil.veiled(hidden: [], pendingOpen: nil,
+                                  handBeforeMyMove: nil, myHand: nil).isEmpty)
+        XCTAssertTrue(Veil.veiled(hidden: [], pendingOpen: nil,
+                                  handBeforeMyMove: nil,
+                                  myHand: [six, nine, queen]).isEmpty,
                       "a hand alone veils nothing - it takes a move to do that")
     }
 
@@ -57,8 +57,8 @@ final class VeilOutsTests: XCTestCase {
     /// fails - and on a device that is every in-flight card painted twice, once
     /// as a ghost and once in place.
     func testTheAnimatorsHiddenSetPassesThrough() {
-        let out = MessageTableView.veiledCards(hidden: [six.identity], pendingOpen: nil,
-                                               handBeforeMyMove: nil, myHand: nil)
+        let out = Veil.veiled(hidden: [six.identity], pendingOpen: nil,
+                              handBeforeMyMove: nil, myHand: nil)
         XCTAssertEqual(out, [six.identity])
     }
 
@@ -70,8 +70,8 @@ final class VeilOutsTests: XCTestCase {
     ///
     /// MUTANT: drop the `pendingOpen` union and this fails.
     func testAnUnstartedReplayVeilsItsTouchedCards() {
-        let out = MessageTableView.veiledCards(hidden: [], pendingOpen: [nine.identity],
-                                               handBeforeMyMove: nil, myHand: nil)
+        let out = Veil.veiled(hidden: [], pendingOpen: [nine.identity],
+                              handBeforeMyMove: nil, myHand: nil)
         XCTAssertEqual(out, [nine.identity])
     }
 
@@ -81,10 +81,10 @@ final class VeilOutsTests: XCTestCase {
     /// function's - which is why the counts half of `pendingOpen` is not an
     /// input to the veil at all.
     func testAReplayThatTouchesNoCardsVeilsNothing() {
-        let empty = MessageTableView.veiledCards(hidden: [six.identity], pendingOpen: [],
-                                                 handBeforeMyMove: nil, myHand: nil)
-        let none = MessageTableView.veiledCards(hidden: [six.identity], pendingOpen: nil,
-                                                handBeforeMyMove: nil, myHand: nil)
+        let empty = Veil.veiled(hidden: [six.identity], pendingOpen: [],
+                                handBeforeMyMove: nil, myHand: nil)
+        let none = Veil.veiled(hidden: [six.identity], pendingOpen: nil,
+                               handBeforeMyMove: nil, myHand: nil)
         XCTAssertEqual(empty, none)
     }
 
@@ -96,9 +96,9 @@ final class VeilOutsTests: XCTestCase {
     /// MUTANT: union the whole hand rather than the difference and this fails -
     /// on a device, my entire hand vanishes the instant I take.
     func testACardThisMoveGaveMeIsVeiled() {
-        let out = MessageTableView.veiledCards(hidden: [], pendingOpen: nil,
-                                               handBeforeMyMove: [six.identity],
-                                               myHand: [six, nine])
+        let out = Veil.veiled(hidden: [], pendingOpen: nil,
+                              handBeforeMyMove: [six.identity],
+                              myHand: [six, nine])
         XCTAssertEqual(out, [nine.identity], "only the card that was not there before")
     }
 
@@ -107,10 +107,10 @@ final class VeilOutsTests: XCTestCase {
     /// every id survives - the handoff between them is invisible precisely
     /// because nothing arbitrates.
     func testAllThreeSourcesUnionRatherThanOverride() {
-        let out = MessageTableView.veiledCards(hidden: [six.identity],
-                                               pendingOpen: [nine.identity],
-                                               handBeforeMyMove: [],
-                                               myHand: [queen])
+        let out = Veil.veiled(hidden: [six.identity],
+                              pendingOpen: [nine.identity],
+                              handBeforeMyMove: [],
+                              myHand: [queen])
         XCTAssertEqual(out, [six.identity, nine.identity, queen.identity])
     }
 
@@ -121,9 +121,9 @@ final class VeilOutsTests: XCTestCase {
     ///
     /// MUTANT: `ids.subtract(before)` anywhere in this function and it fails.
     func testThePreMoveHandOnlyEverAdds() {
-        let out = MessageTableView.veiledCards(hidden: [six.identity], pendingOpen: nil,
-                                               handBeforeMyMove: [six.identity, nine.identity],
-                                               myHand: [six])
+        let out = Veil.veiled(hidden: [six.identity], pendingOpen: nil,
+                              handBeforeMyMove: [six.identity, nine.identity],
+                              myHand: [six])
         XCTAssertEqual(out, [six.identity],
                        "a card already hidden for its flight stays hidden")
     }
@@ -131,10 +131,10 @@ final class VeilOutsTests: XCTestCase {
     /// A pre-move hand that has since LOST cards (I attacked) adds nothing at
     /// all - the difference is taken in one direction only.
     func testCardsThatLeftMyHandAreNotVeiled() {
-        let out = MessageTableView.veiledCards(hidden: [], pendingOpen: nil,
-                                               handBeforeMyMove: [six.identity, nine.identity,
-                                                                  queen.identity],
-                                               myHand: [six])
+        let out = Veil.veiled(hidden: [], pendingOpen: nil,
+                              handBeforeMyMove: [six.identity, nine.identity,
+                                                 queen.identity],
+                              myHand: [six])
         XCTAssertTrue(out.isEmpty)
     }
 
@@ -145,11 +145,11 @@ final class VeilOutsTests: XCTestCase {
     /// `nil` and `[]` are the two states of one optional and they mean opposite
     /// things here.
     func testAnEmptyPreMoveHandIsNotTheSameAsNoMove() {
-        let all = MessageTableView.veiledCards(hidden: [], pendingOpen: nil,
-                                               handBeforeMyMove: [], myHand: [six, nine])
+        let all = Veil.veiled(hidden: [], pendingOpen: nil,
+                              handBeforeMyMove: [], myHand: [six, nine])
         XCTAssertEqual(all, [six.identity, nine.identity])
-        let none = MessageTableView.veiledCards(hidden: [], pendingOpen: nil,
-                                                handBeforeMyMove: nil, myHand: [six, nine])
+        let none = Veil.veiled(hidden: [], pendingOpen: nil,
+                               handBeforeMyMove: nil, myHand: [six, nine])
         XCTAssertTrue(none.isEmpty)
     }
 
@@ -159,19 +159,19 @@ final class VeilOutsTests: XCTestCase {
     /// the guard `let hand = controller.view?.me?.hand` in the accessor, and
     /// a spectator has no move of their own to be mid-flight anyway.
     func testWithNoHandTheLivePlaySourceIsSilent() {
-        let out = MessageTableView.veiledCards(hidden: [six.identity], pendingOpen: nil,
-                                               handBeforeMyMove: [], myHand: nil)
+        let out = Veil.veiled(hidden: [six.identity], pendingOpen: nil,
+                              handBeforeMyMove: [], myHand: nil)
         XCTAssertEqual(out, [six.identity])
     }
 
-    // MARK: 2 - `flyingNow`: hidden \ preHidden
+    // MARK: 2 - `Veil.flying`: hidden \ preHidden
 
     /// The one derivation four places rest on. `preHide` puts a card in both
     /// sets; `openSlots` takes it out of `preHidden` alone as its own step
     /// begins, so the difference is exactly what is in the air.
     func testFlyingIsTheVeilMinusWhatHasNotStarted() {
-        let out = MessageTableView.flyingNow(hidden: [six.identity, nine.identity],
-                                             preHidden: [nine.identity])
+        let out = Veil.flying(hidden: [six.identity, nine.identity],
+                              preHidden: [nine.identity])
         XCTAssertEqual(out, [six.identity])
     }
 
@@ -180,7 +180,7 @@ final class VeilOutsTests: XCTestCase {
     /// fan slot - the "in anticipation" shift round-6 bug 10 was about.
     func testAVeilWithNoStepRunningFliesNothing() {
         let ids: Set<String> = [six.identity, nine.identity]
-        XCTAssertTrue(MessageTableView.flyingNow(hidden: ids, preHidden: ids).isEmpty)
+        XCTAssertTrue(Veil.flying(hidden: ids, preHidden: ids).isEmpty)
     }
 
     /// AND AT REST, EVERY HIDDEN CARD READS AS FLYING. `preHidden` empties at a
@@ -190,7 +190,7 @@ final class VeilOutsTests: XCTestCase {
     /// what `strandedAtRest` counts - recorded here as the function's honest
     /// answer, not as desirable.
     func testAStrandedHiddenCardReadsAsFlyingForever() {
-        XCTAssertEqual(MessageTableView.flyingNow(hidden: [six.identity], preHidden: []),
+        XCTAssertEqual(Veil.flying(hidden: [six.identity], preHidden: []),
                        [six.identity])
     }
 
@@ -198,8 +198,8 @@ final class VeilOutsTests: XCTestCase {
     /// never exceed `hidden`. (`preHide` writes both sets, so this is unreachable
     /// today; pinned so a future writer of one set alone cannot widen the answer.)
     func testFlyingIsAlwaysWithinTheVeil() {
-        let out = MessageTableView.flyingNow(hidden: [six.identity],
-                                             preHidden: [nine.identity, queen.identity])
+        let out = Veil.flying(hidden: [six.identity],
+                              preHidden: [nine.identity, queen.identity])
         XCTAssertEqual(out, [six.identity])
     }
 
@@ -210,8 +210,8 @@ final class VeilOutsTests: XCTestCase {
     /// from then my present cards would slide left "in anticipation" while other
     /// seats' steps played.
     func testAVeiledCardReservesNoSlot() {
-        let out = MessageTableView.handSlotDeferred(veiled: [six.identity], flying: [],
-                                                    holdback: [])
+        let out = Veil.handSlotDeferred(veiled: [six.identity], flying: [],
+                                        holdback: [])
         XCTAssertEqual(out, [six.identity])
     }
 
@@ -221,8 +221,8 @@ final class VeilOutsTests: XCTestCase {
     /// MUTANT: drop `.subtracting(flying)` and the incoming card has no slot to
     /// land in - every deal flies to the fan's edge and snaps.
     func testTheCardInTheAirKeepsItsSlot() {
-        let out = MessageTableView.handSlotDeferred(veiled: [six.identity, nine.identity],
-                                                    flying: [nine.identity], holdback: [])
+        let out = Veil.handSlotDeferred(veiled: [six.identity, nine.identity],
+                                        flying: [nine.identity], holdback: [])
         XCTAssertEqual(out, [six.identity])
     }
 
@@ -235,8 +235,8 @@ final class VeilOutsTests: XCTestCase {
     /// the round-42 report, my own replayed attack flying from a hand that has
     /// already closed over it.
     func testAHeldCardKeepsItsSlotEvenWhollyVeiled() {
-        let out = MessageTableView.handSlotDeferred(veiled: [six.identity, nine.identity],
-                                                    flying: [], holdback: [nine])
+        let out = Veil.handSlotDeferred(veiled: [six.identity, nine.identity],
+                                        flying: [], holdback: [nine])
         XCTAssertEqual(out, [six.identity])
     }
 
@@ -244,16 +244,16 @@ final class VeilOutsTests: XCTestCase {
     /// id is in both subtrahends. Two subtractions of one id is still one id
     /// removed; recorded because that overlap is a real frame, not a hypothetical.
     func testHeldAndFlyingAtOnceIsStillJustNotDeferred() {
-        let out = MessageTableView.handSlotDeferred(veiled: [six.identity, nine.identity],
-                                                    flying: [nine.identity], holdback: [nine])
+        let out = Veil.handSlotDeferred(veiled: [six.identity, nine.identity],
+                                        flying: [nine.identity], holdback: [nine])
         XCTAssertEqual(out, [six.identity])
     }
 
     /// A holdback card that is not veiled at all changes nothing. (The normal
     /// state a beat after a teardown: the veil is down, the fan still holds.)
     func testAnUnveiledHoldbackIsInert() {
-        let out = MessageTableView.handSlotDeferred(veiled: [six.identity], flying: [],
-                                                    holdback: [nine, queen])
+        let out = Veil.handSlotDeferred(veiled: [six.identity], flying: [],
+                                        holdback: [nine, queen])
         XCTAssertEqual(out, [six.identity])
     }
 
@@ -262,9 +262,9 @@ final class VeilOutsTests: XCTestCase {
     /// and everything `pendingOpen` names defers - which is what stops the fan
     /// reserving width for cards the replay has not delivered.
     func testAnArrivalsFirstPaintDefersEverythingItTouches() {
-        let veiled = MessageTableView.veiledCards(hidden: [], pendingOpen: [six.identity],
-                                                  handBeforeMyMove: nil, myHand: nil)
-        let out = MessageTableView.handSlotDeferred(veiled: veiled, flying: [], holdback: [])
+        let veiled = Veil.veiled(hidden: [], pendingOpen: [six.identity],
+                                 handBeforeMyMove: nil, myHand: nil)
+        let out = Veil.handSlotDeferred(veiled: veiled, flying: [], holdback: [])
         XCTAssertEqual(out, [six.identity])
     }
 
@@ -278,8 +278,8 @@ final class VeilOutsTests: XCTestCase {
             for flying in Self.subsets(of: ids) {
                 for held in Self.subsets(of: ids) {
                     let cards = [six, nine, queen].filter { held.contains($0.identity) }
-                    let out = MessageTableView.handSlotDeferred(veiled: veiled, flying: flying,
-                                                                holdback: cards)
+                    let out = Veil.handSlotDeferred(veiled: veiled, flying: flying,
+                                                    holdback: cards)
                     XCTAssertTrue(out.isSubset(of: veiled),
                                   "deferred \(out.sorted()) escaped veil \(veiled.sorted())")
                 }
@@ -287,16 +287,16 @@ final class VeilOutsTests: XCTestCase {
         }
     }
 
-    // MARK: 4 - `fanVeil`, and its relationship to the deferral
+    // MARK: 4 - `Veil.fan`, and its relationship to the deferral
 
     /// What the fan itself draws nothing for: the veil minus the held cards.
     func testTheFanUnveilsWhatTheHoldbackHolds() {
-        let out = MessageTableView.fanVeil(veiled: [six.identity, nine.identity], holdback: [nine])
+        let out = Veil.fan(veiled: [six.identity, nine.identity], holdback: [nine])
         XCTAssertEqual(out, [six.identity])
     }
 
     /// THE PAIR'S INVARIANT: the fan never withholds a slot from a card it is
-    /// drawing. `handSlotDeferred` is `fanVeil` minus the cards in the air, so
+    /// drawing. `handSlotDeferred` is `Veil.fan` minus the cards in the air, so
     /// it is always a subset - a deferred-but-drawn card would be a card laid
     /// out at somebody else's slot, which is the "hand rows twitch" family.
     func testEveryDeferredCardIsAlsoOneTheFanIsNotDrawing() {
@@ -305,10 +305,10 @@ final class VeilOutsTests: XCTestCase {
             for flying in Self.subsets(of: ids) {
                 for held in Self.subsets(of: ids) {
                     let cards = [six, nine, queen].filter { held.contains($0.identity) }
-                    let deferred = MessageTableView.handSlotDeferred(veiled: veiled,
-                                                                     flying: flying,
-                                                                     holdback: cards)
-                    let hidden = MessageTableView.fanVeil(veiled: veiled, holdback: cards)
+                    let deferred = Veil.handSlotDeferred(veiled: veiled,
+                                                         flying: flying,
+                                                         holdback: cards)
+                    let hidden = Veil.fan(veiled: veiled, holdback: cards)
                     XCTAssertTrue(deferred.isSubset(of: hidden),
                                   "deferred \(deferred.sorted()) is not within drawn-nothing "
                                   + "\(hidden.sorted())")
@@ -317,17 +317,17 @@ final class VeilOutsTests: XCTestCase {
         }
     }
 
-    // MARK: 5 - `gridVeil`: the battle grid's two sets
+    // MARK: 5 - `Veil.grid`: the battle grid's two sets
 
     /// NOT SWEEPING, the live table: the grid honours the hand veil, and the
     /// sweep sets are not consulted at all. Junk in all three of them to prove
     /// it - this is the branch where they mean nothing.
     func testTheLiveGridReadsTheHandVeilAndNothingElse() {
-        let g = MessageTableView.gridVeil(sweeping: false, veiled: [six.identity],
-                                          sweptFlown: [nine.identity],
-                                          sweepUnplaced: [queen.identity],
-                                          sweepArriving: [queen.identity],
-                                          flying: [six.identity])
+        let g = Veil.grid(sweeping: false, veiled: [six.identity],
+                          sweptFlown: [nine.identity],
+                          sweepUnplaced: [queen.identity],
+                          sweepArriving: [queen.identity],
+                          flying: [six.identity])
         XCTAssertEqual(g.hidden, [six.identity])
         XCTAssertEqual(g.flyingNow, [six.identity])
     }
@@ -341,10 +341,10 @@ final class VeilOutsTests: XCTestCase {
     /// then went to discard". Pass `sweepUnplaced` alone and every swept card
     /// stays on the table beside its own ghost.
     func testTheSweepGridHidesBothEndsOfTheSequence() {
-        let g = MessageTableView.gridVeil(sweeping: true, veiled: [],
-                                          sweptFlown: [six.identity],
-                                          sweepUnplaced: [nine.identity],
-                                          sweepArriving: [], flying: [])
+        let g = Veil.grid(sweeping: true, veiled: [],
+                          sweptFlown: [six.identity],
+                          sweepUnplaced: [nine.identity],
+                          sweepArriving: [], flying: [])
         XCTAssertEqual(g.hidden, [six.identity, nine.identity])
     }
 
@@ -355,10 +355,10 @@ final class VeilOutsTests: XCTestCase {
     /// MUTANT: pass `flying` on this branch too and the attack under a card that
     /// is being carried to the discard rotates as it goes.
     func testASweepTiltsOnlyForACardArrivingOnIt() {
-        let g = MessageTableView.gridVeil(sweeping: true, veiled: [],
-                                          sweptFlown: [six.identity], sweepUnplaced: [],
-                                          sweepArriving: [nine.identity],
-                                          flying: [six.identity, queen.identity])
+        let g = Veil.grid(sweeping: true, veiled: [],
+                          sweptFlown: [six.identity], sweepUnplaced: [],
+                          sweepArriving: [nine.identity],
+                          flying: [six.identity, queen.identity])
         XCTAssertEqual(g.flyingNow, [nine.identity])
     }
 
@@ -366,7 +366,7 @@ final class VeilOutsTests: XCTestCase {
     /// reason round 45 did not collapse them: A PICKUP.
     ///
     /// The picked-up card lives in TWO places at once - on the table it is being
-    /// swept from, and in the hand it is arriving into. `veiledCards` hides it
+    /// swept from, and in the hand it is arriving into. `Veil.veiled` hides it
     /// for the hand's sake from the instant the sequence starts. If the sweep
     /// grid honoured that, the table copy would vanish before its own flight
     /// ever lifted it: the card would be gone from the table, absent from the
@@ -374,16 +374,16 @@ final class VeilOutsTests: XCTestCase {
     /// identity is hidden on one grid and drawn on the other, and no single set
     /// can say both.
     func testAPickedUpCardIsVeiledInTheHandAndDrawnOnTheSweep() {
-        let veiled = MessageTableView.veiledCards(hidden: [six.identity], pendingOpen: nil,
-                                                  handBeforeMyMove: nil, myHand: nil)
-        let sweeping = MessageTableView.gridVeil(sweeping: true, veiled: veiled,
-                                                 sweptFlown: [], sweepUnplaced: [],
-                                                 sweepArriving: [], flying: [])
+        let veiled = Veil.veiled(hidden: [six.identity], pendingOpen: nil,
+                                 handBeforeMyMove: nil, myHand: nil)
+        let sweeping = Veil.grid(sweeping: true, veiled: veiled,
+                                 sweptFlown: [], sweepUnplaced: [],
+                                 sweepArriving: [], flying: [])
         XCTAssertFalse(sweeping.hidden.contains(six.identity),
                        "the table copy must stay up until its own flight lifts it")
-        let live = MessageTableView.gridVeil(sweeping: false, veiled: veiled,
-                                             sweptFlown: [], sweepUnplaced: [],
-                                             sweepArriving: [], flying: [])
+        let live = Veil.grid(sweeping: false, veiled: veiled,
+                             sweptFlown: [], sweepUnplaced: [],
+                             sweepArriving: [], flying: [])
         XCTAssertTrue(live.hidden.contains(six.identity),
                       "…and the same id IS hidden on the live grid, in the same paint")
     }
@@ -392,9 +392,9 @@ final class VeilOutsTests: XCTestCase {
     /// the settled middle of a bout-end hold, where the whole pre-bout table
     /// simply sits there.
     func testASweepAtRestDrawsItsWholeTable() {
-        let g = MessageTableView.gridVeil(sweeping: true, veiled: [six.identity, nine.identity],
-                                          sweptFlown: [], sweepUnplaced: [],
-                                          sweepArriving: [], flying: [six.identity])
+        let g = Veil.grid(sweeping: true, veiled: [six.identity, nine.identity],
+                          sweptFlown: [], sweepUnplaced: [],
+                          sweepArriving: [], flying: [six.identity])
         XCTAssertTrue(g.hidden.isEmpty)
         XCTAssertTrue(g.flyingNow.isEmpty)
     }
@@ -408,17 +408,17 @@ final class VeilOutsTests: XCTestCase {
     /// subtraction beside the named one.
     func testTheBoardAsksTheseFunctionsRatherThanRepeatingThem() throws {
         let src = try source("FoolishKit/Boards/MessageTableView.swift")
-        for call in ["Self.veiledCards(hidden: animator.hidden",
-                     "Self.handSlotDeferred(veiled: veiledCardIds",
-                     "Self.fanVeil(veiled: veiledCardIds, holdback: handHoldback)",
-                     "Self.gridVeil(sweeping: sweeping, veiled: veiledCardIds"] {
+        for call in ["Veil.veiled(hidden: animator.hidden",
+                     "Veil.handSlotDeferred(veiled: veiledCardIds",
+                     "Veil.fan(veiled: veiledCardIds, holdback: fanHoldback)",
+                     "Veil.grid(sweeping: sweeping, veiled: veiledCardIds"] {
             XCTAssertTrue(src.contains(call), "the board no longer calls \(call)")
         }
         // …and the inline forms they replaced are gone, so there is one answer.
         XCTAssertFalse(src.contains("animator.hidden.subtracting(animator.preHidden)"),
-                       "\"flying right now\" has a name (`flyingNow`) - do not re-derive it")
+                                  "\"flying right now\" has a name (`Veil.flying`) - do not re-derive it")
         XCTAssertFalse(src.contains("sweeping ? sweepHidden"),
-                       "the grid's two sets come from `gridVeil`, not a ternary per argument")
+                                  "the grid's two sets come from `Veil.grid`, not a ternary per argument")
     }
 
     /// The DEBUG grid trace must report the SAME hidden set the grid is given.
@@ -428,7 +428,7 @@ final class VeilOutsTests: XCTestCase {
     func testTheGridTraceReportsTheSetTheGridWasGiven() throws {
         let src = try source("FoolishKit/Boards/MessageTableView.swift")
         XCTAssertTrue(src.contains("Self.traceGrid(sweeping: sweeping, shown: shown,\n"
-                                   + "                       hidden: grid.hidden,"),
+                                  + "                       hidden: grid.hidden,"),
                       "the trace must read the same value the grid does")
         XCTAssertTrue(src.contains("hidden: grid.hidden,\n"),
                       "…which is the grid's own argument")
@@ -439,13 +439,13 @@ final class VeilOutsTests: XCTestCase {
 
     /// `sweepTableIds` was a `@State` cache of the identities in `sweepBattles`,
     /// written beside it at the only two sites that touch either. Round 45 made
-    /// it computed off `sweepIds`, so this is what the cache used to hold.
+    /// it computed off `PreBoutTable.cardIds`, so this is what the cache used to hold.
     func testTheSweptTableIsEveryCardOnIt() {
         let uncovered = BattleView(attack: six, defense: nil)
         let covered = BattleView(attack: nine, defense: queen)
-        XCTAssertEqual(MessageTableView.sweepIds([uncovered, covered]),
-                       [six.identity, nine.identity, queen.identity])
-        XCTAssertTrue(MessageTableView.sweepIds([]).isEmpty,
+        XCTAssertEqual(PreBoutTable.cardIds([uncovered, covered]),
+                                  [six.identity, nine.identity, queen.identity])
+        XCTAssertTrue(PreBoutTable.cardIds([]).isEmpty,
                       "a dropped sweep holds no ids - what `dropSweep` used to assign by hand")
     }
 
@@ -454,8 +454,8 @@ final class VeilOutsTests: XCTestCase {
     /// sites; a fourth writer reaching for `compactMap` over a two-element array
     /// would be a silently different set.)
     func testAnUncoveredAttackContributesOnlyItself() {
-        XCTAssertEqual(MessageTableView.sweepIds([BattleView(attack: six, defense: nil)]),
-                       [six.identity])
+        XCTAssertEqual(PreBoutTable.cardIds([BattleView(attack: six, defense: nil)]),
+                                  [six.identity])
     }
 
     /// THE INVARIANT THE COLLAPSE RESTS ON: `sweepBattles` is written in exactly
@@ -470,18 +470,21 @@ final class VeilOutsTests: XCTestCase {
         let src = try source("FoolishKit/Boards/MessageTableView.swift")
         let writes = src.components(separatedBy: "sweepBattles = ").count - 1
         XCTAssertEqual(writes, 2,
-                       "`sweepBattles` must be written only by `setSweep` and `dropSweep` - "
-                       + "`sweepTableIds` is derived from it")
-        XCTAssertTrue(src.contains("private var sweepTableIds: Set<String> { Self.sweepIds(sweepBattles) }"),
+                                  "`sweepBattles` must be written only by `setSweep` and `dropSweep` - "
+                                  + "`sweepTableIds` is derived from it")
+        XCTAssertTrue(src.contains(
+            "private var sweepTableIds: Set<String> { PreBoutTable.cardIds(sweepBattles) }"),
                       "…and derived, not cached")
     }
 
-    /// The FIVE sites that used to spell the derivation out now ask one
-    /// function: `setSweep`, `sweepTableIds`, `coveredSweep`'s subset test and
+    /// The FIVE sites that used to spell the derivation out now ask the kernel:
+    /// `setSweep`, `sweepTableIds`, `coveredSweep`'s subset test and
     /// `sweepTableForReplay`'s two. The subset tests are the ones that matter -
     /// each decides whether one reconstruction of the pre-bout table "accounts
     /// for" another, and a set built one card differently drops a covered pair
-    /// off the table mid-sequence.
+    /// off the table mid-sequence. There is now no way to build one differently:
+    /// it is anim_table_card_ids, once, and the board never names a battle's
+    /// cards itself.
     ///
     /// `traceGrid`'s own walk is deliberately NOT folded in: it counts per SLOT
     /// (a card drawn twice is two), which is a different question from the set
@@ -489,9 +492,9 @@ final class VeilOutsTests: XCTestCase {
     func testTheSweptIdsHaveOneDerivation() throws {
         let src = try source("FoolishKit/Boards/MessageTableView.swift")
         XCTAssertFalse(src.contains("func ids(_ bs: [BattleView])"),
-                       "`coveredSweep` must ask `sweepIds`, not carry its own copy")
-        XCTAssertEqual(src.components(separatedBy: "b.attack.identity] + (b.defense.map").count - 1, 1,
-                       "the flatMap that names a battle's cards belongs in `sweepIds` alone")
+                                  "`coveredSweep` must ask the kernel, not carry its own copy")
+        XCTAssertFalse(src.contains("b.attack.identity] + (b.defense.map"),
+                                  "naming a battle's cards belongs to `PreBoutTable.cardIds` alone")
     }
 
     // MARK: - helpers

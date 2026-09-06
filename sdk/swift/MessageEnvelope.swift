@@ -234,16 +234,10 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
         // kernel (msg_pass_allowed): Swift never learns which formats carry a
         // variant byte.
         let passing = b[63] != 0
-        let nJoins = Int(b[64])
-        var joins: [MessageJoin] = []
-        var q = HDR
-        for _ in 0..<nJoins {
-            guard q + 2 <= b.count else { return nil }
-            let seat = Int(b[q]); let nl = Int(b[q + 1]); q += 2
-            guard q + nl <= b.count else { return nil }
-            let name = String(decoding: b[q..<q + nl], as: UTF8.self); q += nl
-            joins.append(MessageJoin(seat: seat, name: name))
-        }
+        // The roster, through the one codec that also WRITES it (RosterWire) -
+        // n_joins sits at 64, so the tail starts one byte earlier than HDR.
+        guard let roster = RosterWire.decode(b, at: HDR - 1) else { return nil }
+        let joins = roster.joins
         return MessageEnvelope(phase: phase, turn: turn, round: round, nPlayers: nPlayers,
                                lastActorSeat: last, gameId: String(gid),
                                parent8: parent8, digest: digest, sentAt: sentAt,
@@ -315,11 +309,25 @@ public actor MessageKernel {
         return MaskedView.decode(data, viewer: viewer)
     }
 
-    /// The legal moves for `seat` on the resident game (kernel-computed). Empty
-    /// on no game or none legal.
+    /// The legal moves for `seat` on the resident game (kernel-computed), as the
+    /// kernel's own bytes. The board's play rules take the menu as an input
+    /// (PlayWire / fio_play_probe), so this is the form that travels.
+    public func residentLegalPacked(seat: Int) -> Data {
+        packedCall({ fio_legal_packed(Int32(seat), $0, $1) }) ?? MoveWire.emptyMenu
+    }
+
+    /// The same menu decoded. Empty on no game or none legal.
     public func residentLegal(seat: Int) -> [Move] {
-        guard let data = packedCall({ fio_legal_packed(Int32(seat), $0, $1) }) else { return [] }
-        return MoveWire.decode(data)
+        MoveWire.decode(residentLegalPacked(seat: seat))
+    }
+
+    /// The moves a HUMAN may make at `seat` on the resident game - the kernel
+    /// menu narrowed by fio_play_human_menu (no `wait`, no `good` over an
+    /// uncovered attack). ONE actor call, so the menu and the table it is
+    /// narrowed against cannot come from two different chains.
+    public func residentHumanMoves(seat: Int) -> [Move] {
+        guard let view = residentView(viewer: seat) else { return [] }
+        return PlayWire.humanMoves(menu: residentLegalPacked(seat: seat), battles: view.battles)
     }
 
     /// Call a packed-bytes-emitting C function into a growing buffer (mirrors
@@ -397,11 +405,13 @@ public actor MessageKernel {
     /// kernel would not take the pair (which simply means no penalty rides).
     @discardableResult
     public func armRematchCarry(joins: [MessageJoin], foolSeat: Int) -> Bool {
-        let joinsJSON = (try? JSONEncoder().encode(joins))
-            .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        let packed = RosterWire.encode(joins)
         var key: UInt32 = 0
         var idx: Int32 = 0
-        let rc = joinsJSON.withCString { jp in fio_msg_carry(jp, Int32(foolSeat), &key, &idx) }
+        let rc = packed.withUnsafeBytes { p in
+            fio_msg_carry(p.bindMemory(to: UInt8.self).baseAddress, Int32(packed.count),
+                          Int32(foolSeat), &key, &idx)
+        }
         guard rc == 0, key != 0 else { fio_msg_set_carry(0, -1); return false }
         return fio_msg_set_carry(key, idx) == 0
     }
@@ -412,10 +422,10 @@ public actor MessageKernel {
     /// may ask on every render.
     public func penaltyFoolSeat(joins: [MessageJoin],
                                 carryKey: UInt32, carryFool: Int) -> Int? {
-        let joinsJSON = (try? JSONEncoder().encode(joins))
-            .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
-        let s = joinsJSON.withCString { jp in
-            fio_msg_penalty_fool_seat(jp, carryKey, Int32(carryFool))
+        let packed = RosterWire.encode(joins)
+        let s = packed.withUnsafeBytes { p in
+            fio_msg_penalty_fool_seat(p.bindMemory(to: UInt8.self).baseAddress,
+                                      Int32(packed.count), carryKey, Int32(carryFool))
         }
         return s >= 0 ? Int(s) : nil
     }
@@ -430,11 +440,11 @@ public actor MessageKernel {
     @discardableResult
     public func startRematchDeal(joins: [MessageJoin],
                                  carryKey: UInt32, carryFool: Int) throws -> Int? {
-        let joinsJSON = (try? JSONEncoder().encode(joins))
-            .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        let packed = RosterWire.encode(joins)
         var opening: Int32 = -1
-        let rc = joinsJSON.withCString { jp in
-            fio_msg_start_rematch(jp, carryKey, Int32(carryFool), &opening)
+        let rc = packed.withUnsafeBytes { p in
+            fio_msg_start_rematch(p.bindMemory(to: UInt8.self).baseAddress, Int32(packed.count),
+                                  carryKey, Int32(carryFool), &opening)
         }
         guard rc == 0 else { throw MessageEnvelope.Failure.damaged(code: Int(rc)) }
         return opening >= 0 ? Int(opening) : nil
@@ -571,12 +581,13 @@ public actor MessageKernel {
                                                            resident: resident)
             }
         }
-        let joinsJSON = String(data: try JSONEncoder().encode(joins), encoding: .utf8) ?? "[]"
+        let packed = RosterWire.encode(joins)
         var parent = [UInt8](repeating: 0, count: 8)
         parent.replaceSubrange(0..<min(8, parent8.count), with: parent8.prefix(8))
         var out = [UInt8](repeating: 0, count: 8 * 1024)
-        let n = joinsJSON.withCString { jp in
-            fio_msg_encode(Int32(phase), Int32(lastActorSeat), gameId, parent, jp,
+        let n = packed.withUnsafeBytes { p in
+            fio_msg_encode(Int32(phase), Int32(lastActorSeat), gameId, parent,
+                           p.bindMemory(to: UInt8.self).baseAddress, Int32(packed.count),
                            Int32(sentAt & 0xffff), &out, Int32(out.count))
         }
         guard n > 0 else { throw MessageEnvelope.Failure.damaged(code: Int(fio_last_msg_error())) }
@@ -594,7 +605,10 @@ public actor MessageKernel {
     /// One board, read in one breath - see `readBoard` for why that matters.
     public struct BoardRead: Sendable {
         public let view: GameView?
-        public let legal: [Move]
+        /// The seat's menu as the KERNEL's bytes. Not a decode: a board hands
+        /// these on to the play rules (PlayWire / fio_play_probe), and its own
+        /// [Move] view of them is derived once, downstream.
+        public let legalPacked: Data
         public let stagedAtomsBefore: Int
         /// Seconds the seat must still wait before it may pick up; 0 = now.
         public let hold: Int
@@ -671,7 +685,7 @@ public actor MessageKernel {
         try rebuild(base, replaying: moves, seat: seat)
         let v = residentView(viewer: seat)
         return BoardRead(view: v,
-                         legal: residentLegal(seat: seat),
+                         legalPacked: residentLegalPacked(seat: seat),
                          stagedAtomsBefore: stagedAtomsBefore(),
                          hold: sentAt == 0 ? 0 : pickupHold(seat: seat, sentAt: sentAt, now: now),
                          replayCode: v?.isOver == true ? residentReplayCode() : nil)
@@ -679,14 +693,25 @@ public actor MessageKernel {
 
     /// The event stream for the moves STAGED on `base`, with the boundary they
     /// were cut at - one actor call, same argument as `readBoard`. The board
-    /// splits this at its settlement to decide what a staged turn may show
+    /// withholds everything from `settlementCut` onward until Send
     /// (`MessageTurnController.captureSettlement`), and a stream that described
     /// somebody else's chain would withhold the wrong half of it.
-    public func stagedTurn(_ base: SealBase, replaying moves: [Move],
-                           seat: Int) throws -> (atomsBefore: Int, events: [GameEvent]) {
+    ///
+    /// `settlementCut` is the kernel's, over these exact frames
+    /// (evwire_frames_settlement_cut); nil means the turn ended no bout and
+    /// there is nothing to hold.
+    public func stagedTurn(_ base: SealBase, replaying moves: [Move], seat: Int)
+        throws -> (atomsBefore: Int, events: [GameEvent], settlementCut: Int?) {
         try rebuild(base, replaying: moves, seat: seat)
         let before = stagedAtomsBefore()
-        return (before, lastMoveEvents(viewer: seat, atomsBefore: before))
+        // The PACKED bytes, read twice: once into events, once for the cut
+        // (EvWire.settlementCut -> evwire_frames_settlement_cut). Two reads of
+        // one buffer, in one actor call - a second trip in here to fetch the cut
+        // would be a suspension point between the stream and the boundary it is
+        // cut at, and the note on `readBoard` says what lands in those.
+        guard let packed = lastMovePacked(viewer: seat, atomsBefore: before)
+        else { return (before, [], nil) }
+        return (before, EvWire.decodeFrames(packed), EvWire.settlementCut(packed))
     }
 
     /// The same stream at a boundary the CALLER already knows (the board's
@@ -880,7 +905,19 @@ public actor MessageKernel {
     /// [] if there is no game, it is not v6-encodable, or the group produced
     /// nothing to animate.
     public func lastMoveEvents(viewer: Int, atomsBefore: Int = -1) -> [GameEvent] {
-        guard let code = residentReplayCode() else { return [] }
+        guard let packed = lastMovePacked(viewer: viewer, atomsBefore: atomsBefore)
+        else { return [] }
+        return EvWire.decodeFrames(packed)
+    }
+
+    /// The same stream still PACKED - the frame bytes the kernel wrote, before
+    /// anything decoded them. `stagedTurn` needs them twice (the events, and the
+    /// settlement cut the kernel reads off the same frames), and a decode throws
+    /// away what the second question is asked of.
+    /// nil if there is no game, it is not v6-encodable, or the turn animates
+    /// nothing.
+    private func lastMovePacked(viewer: Int, atomsBefore: Int) -> Data? {
+        guard let code = residentReplayCode() else { return nil }
         let packed = code.withCString { (cstr: UnsafePointer<CChar>) -> Data? in
             packedCall { out, cap in
                 out.withMemoryRebound(to: UInt8.self, capacity: Int(cap)) { u8 in
@@ -888,8 +925,8 @@ public actor MessageKernel {
                 }
             }
         }
-        guard let packed, !packed.isEmpty else { return [] }
-        return EvWire.decodeFrames(packed)
+        guard let packed, !packed.isEmpty else { return nil }
+        return packed
     }
 
     /// THIS BUBBLE'S ANIMATIONS, AND THE BOARD THEY START FROM.
@@ -912,25 +949,43 @@ public actor MessageKernel {
     /// repoints the resident game, and the second read would describe a different
     /// chain than the first (see `resealFromBase`).
     ///
-    /// SELF-CHECKING. The extra read must come back as exactly one more step than
-    /// the plain one; anything else means the step/atom mapping is not what is
-    /// assumed here and the prior board is reported as `nil` rather than guessed
-    /// at. A nil prior is not a failure - it is what every caller did before this
-    /// existed, and the board falls back to seeding from the first frame.
+    /// COUNTED IN FRAMES, TAKEN FROM THE TRAILER. Both halves are about the same
+    /// fact: a step is a FRAME and emits any number of events, including none.
+    /// Counting events instead made the self-check reject every bubble whose
+    /// previous step did not emit exactly one - a bare good emits none, a
+    /// bout-closing cover emits several - and the board then fell back to the
+    /// flat one-cell-per-card table and re-arranged the grid an instant before
+    /// the cards flew (measured: 26 of 1291 sweeps in c/tests/tests.c, 16 of
+    /// them reshaping; 5 and 5 now, and those 5 are a pickup the test build's
+    /// MAX_LOG_PAIRS under-names rather than a missing prior).
+    ///
+    /// The board itself comes from the extra frame's TRAILER (EvWire.finalState),
+    /// which is the state that step COMMITTED - defined even for a step that
+    /// emitted no events, where there is no snapshot to read at all.
+    ///
+    /// The self-check stays: the extra read must come back as exactly one more
+    /// FRAME than the plain one, or the step/atom mapping is not what is assumed
+    /// here and the prior is reported as `nil` rather than guessed at. A nil
+    /// prior is not a failure - it is what every caller did before this existed,
+    /// and the board falls back to seeding from the first frame.
     ///
     /// `atomsBefore < 1` has no earlier step to ask for (the bubble is the first
     /// move on a fresh deal, or the deal itself), so it skips the second read.
     public func lastMoveEventsWithPrior(viewer: Int, atomsBefore: Int)
         -> (events: [GameEvent], prior: GameView?) {
-        let events = lastMoveEvents(viewer: viewer, atomsBefore: atomsBefore)
+        let packed = lastMovePacked(viewer: viewer, atomsBefore: atomsBefore)
+        let events = packed.map(EvWire.decodeFrames) ?? []
         // An EMPTY stream is worth a prior board too, and is in fact the case
         // that needs one most: a `good` that does not close the bout emits no
         // step at all, so the only thing a board can be told about it is the
         // difference between two role states.
-        guard atomsBefore >= 1 else { return (events, nil) }
-        let withPrior = lastMoveEvents(viewer: viewer, atomsBefore: atomsBefore - 1)
-        guard withPrior.count == events.count + 1 else { return (events, nil) }
-        return (events, withPrior.first?.state)
+        guard atomsBefore >= 1,
+              let earlier = lastMovePacked(viewer: viewer, atomsBefore: atomsBefore - 1)
+        else { return (events, nil) }
+        let mine = packed.map { EvWire.frames($0).count } ?? 0
+        let back = EvWire.frames(earlier)
+        guard back.count == mine + 1, let first = back.first else { return (events, nil) }
+        return (events, EvWire.finalState(first))
     }
 
     /// Rule P (§7.2). <0 `a` wins, >0 `b`, 0 the same chain. Delivery order is

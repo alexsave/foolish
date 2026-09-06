@@ -443,7 +443,7 @@ public struct FHandFan: View {
     ///
     /// The hand's whole TOP ROW lies inside the battle grid. The resting centre
     /// of hand slot 4, (170,150), is a point the player is holding a card at,
-    /// and `BoardDrop.target` answers `.battle(0)` for it. `CardPlay.resolve`
+    /// and `BoardDrop.target` answers `.battle(0)` for it. the kernel's `play_resolve`
     /// then ignores the target entirely for an attacker and returns the plain
     /// attack - the card is played. That is the owner's "it seems to trigger
     /// attack", and it is compact-only because that is the only place the two
@@ -497,25 +497,18 @@ public struct FHandFan: View {
     /// from `body` on every evaluation.
     private var displayCards: [Card] { Self.displayOrder(cards: cards, order: order) }
 
-    /// The reconcile itself, static + pure so it can be asserted directly (the
-    /// same contract as the web's displayedHand, src/state/clientReconcile.ts):
-    /// only cards actually in `cards` render; `order` decides the relative
-    /// order of the ones it knows; unknown cards append in kernel order; stale
-    /// ids (played cards the sticky memory still remembers) and duplicates
-    /// drop out by construction.
+    /// The reconcile itself (the same contract as the web's displayedHand,
+    /// src/state/clientReconcile.ts): only cards actually in `cards` render;
+    /// `order` decides the relative order of the ones it knows; unknown cards
+    /// append in kernel order; stale ids (played cards the sticky memory still
+    /// remembers) and duplicates drop out by construction.
+    ///
+    /// ONE DERIVATION. This is `HandLayout.laidOut` with nothing deferred -
+    /// c/src/anim_plan.c's anim_hand_laid_out - because the board asks the same
+    /// question with a deferral set, and two readings of "where do my cards sit"
+    /// is how the round-12 deal landed in the wrong slot.
     public static func displayOrder(cards: [Card], order: [String]) -> [Card] {
-        guard !order.isEmpty else { return cards }
-        let byId = Dictionary(uniqueKeysWithValues: cards.map { ($0.identity, $0) })
-        var seen = Set<String>()
-        var result: [Card] = []
-        result.reserveCapacity(cards.count)
-        for id in order {
-            if let c = byId[id], seen.insert(id).inserted { result.append(c) }
-        }
-        for c in cards where !seen.contains(c.identity) {
-            result.append(c); seen.insert(c.identity)
-        }
-        return result
+        HandLayout.laidOut(hand: cards, deferred: [], order: order)
     }
 
     /// THE LOCAL ARRANGEMENT AFTER SEEING `cards` — grow-only, and the whole

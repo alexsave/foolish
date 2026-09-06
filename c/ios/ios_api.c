@@ -189,24 +189,14 @@ static int emit_legal_packed(const Game *g, int seat, char *out, int cap) {
     calculate_legal_moves(g, seat, &lm);
     // NOTE: GOOD is intentionally NOT filtered here. The kernel menu stays the
     // full legal set (so fio_actor_mask and this packed menu agree, and bots see
-    // GOOD as always). The owner's "a human only gets Good once the table is
-    // fully covered, and it disappears when someone throws in" rule is enforced
-    // in the UI (CardPlay.canSayGood = has(.good) && all covered), and the
-    // "your move with no live button" status case is handled in the board's
-    // status logic, not by rewriting the kernel's legal set.
-    if (cap < 4) return FIO_ECAP;
-    unsigned char *q = (unsigned char *)out;
-    unsigned int n = (unsigned int)lm.n;
-    *q++ = n & 0xff; *q++ = (n >> 8) & 0xff; *q++ = (n >> 16) & 0xff; *q++ = (n >> 24) & 0xff;
-    for (int i = 0; i < lm.n; i++) {
-        const LegalMove *m = &lm.moves[i];
-        if ((int)((char *)q - out) + 2 + 2 * m->n_cards > cap) return FIO_ECAP;
-        *q++ = (unsigned char)m->type;
-        *q++ = (unsigned char)m->n_cards;
-        for (int j = 0; j < m->n_cards; j++) *q++ = (unsigned char)card_to_id(m->cards[j]);
-        for (int j = 0; j < m->n_cards; j++) *q++ = (unsigned char)card_to_id(m->attack_cards[j]);
-    }
-    return (int)((char *)q - out);
+    // GOOD as always - it is how a seat leaves the eligible set, see legal.c).
+    // The owner's "a human only gets Good once the table is fully covered, and
+    // it disappears when someone throws in" rule is a narrowing applied on the
+    // way to a board (play_can_say_good / play_human_menu), and the "your move
+    // with no live button" status case is handled in the board's status logic,
+    // not by rewriting the kernel's legal set.
+    const int n = legal_menu_write(&lm, 0, -1, (unsigned char *)out, cap);
+    return n == LEGAL_WIRE_ECAP ? FIO_ECAP : n;
 }
 
 // The resident game's masked view for `viewer`, as the packed state wire
@@ -233,6 +223,95 @@ int fio_legal_from_packed(const uint8_t *buf, int len, int seat, char *out, int 
     if (tmp.num_players < 2 || tmp.num_players > MAX_PLAYERS) return FIO_EPARSE;
     if (seat < 0 || seat >= tmp.num_players) return FIO_EBADARG;
     return emit_legal_packed(&tmp, seat, out, cap);
+}
+
+// ---------- what a gesture on a board means (the board rules) ---------------
+//
+// The rules between a finger and a move - which menu entry a drop resolves to,
+// which battles a selection could cover, which one the Cover button aims at,
+// which moves a human may make at all. They live in legal.c (play_*); this is
+// the crossing.
+//
+// THESE READ NOTHING BUT THEIR ARGUMENTS. Not the resident game, not a static -
+// which is what makes them safe to call from a SwiftUI render pass, where the
+// resident game is behind an actor and unreachable. What a board asks about is
+// its own PUBLISHED pair anyway: the menu it was handed and the table it was
+// handed, which for the iMessage board is sometimes deliberately not the live
+// position (an empty menu while a bout settlement is held back). See the note
+// on PlayBoard in legal.h.
+
+// Fill a PlayBoard from the crossing arguments. `table` is 2 bytes per battle,
+// the attack then its cover or LEGAL_WIRE_NONE.
+static PlayBoard fio_play_board(const uint8_t *menu, int menu_len,
+                                const uint8_t *table, int n_battles,
+                                int power_suit, int is_defender) {
+    PlayBoard b;
+    b.menu = menu; b.menu_len = menu_len;
+    b.table = table; b.n_battles = n_battles;
+    b.power_suit = power_suit; b.is_defender = is_defender;
+    return b;
+}
+
+// ONE ANSWER, so a board cannot paint a highlight that the release then
+// refuses: the resolved move, the coverable set and the button states all come
+// out of one walk of one menu. Layout (LE):
+//
+//   0   u8    flags: 1 = attack legal with this selection, 2 = pass legal,
+//                    4 = this seat may say good
+//   1   i8    the battle the Cover button aims at, -1 for none
+//   2   u64   bitmask of battles this selection could cover
+//   10  ...   the resolved move as a ONE-ENTRY menu wire (count 0 or 1), so
+//             MoveWire decodes it with no second format
+int fio_play_probe(const uint8_t *menu, int menu_len,
+                   const uint8_t *table, int n_battles,
+                   int power_suit, int is_defender,
+                   const uint8_t *sel, int n_sel, int target,
+                   char *out, int cap) {
+    if (!menu || menu_len < 0 || n_battles < 0 || n_sel < 0) return FIO_EBADARG;
+    if (cap < FIO_PLAY_PROBE_HEAD + 4) return FIO_ECAP;
+    const PlayBoard b = fio_play_board(menu, menu_len, table, n_battles,
+                                       power_suit, is_defender);
+
+    const uint64_t mask = play_coverable_battles(&b, sel, n_sel);
+    const int best = play_best_cover_target(&b, sel, n_sel);
+    const int idx  = play_resolve(&b, sel, n_sel, target);
+
+    unsigned char *q = (unsigned char *)out;
+    q[0] = (unsigned char)((play_has_verb(&b, MOVE_ATTACK, sel, n_sel) ? 1 : 0)
+                         | (play_has_verb(&b, MOVE_PASS,   sel, n_sel) ? 2 : 0)
+                         | (play_can_say_good(&b)                      ? 4 : 0));
+    q[1] = (unsigned char)(signed char)best;
+    for (int i = 0; i < 8; i++) q[2 + i] = (unsigned char)((mask >> (8 * i)) & 0xff);
+
+    // The move itself, copied straight off the menu it was found on.
+    unsigned char *m = q + FIO_PLAY_PROBE_HEAD;
+    m[0] = m[1] = m[2] = m[3] = 0;
+    if (idx < 0) return FIO_PLAY_PROBE_HEAD + 4;
+
+    MenuWalk w;
+    MenuMove mm;
+    if (legal_menu_begin(&w, menu, menu_len) < 0) return FIO_PLAY_PROBE_HEAD + 4;
+    while (legal_menu_next(&w, &mm) == 1 && w.index != idx) { }
+    if (w.index != idx) return FIO_PLAY_PROBE_HEAD + 4;
+    if (FIO_PLAY_PROBE_HEAD + 4 + 2 + 2 * mm.n_cards > cap) return FIO_ECAP;
+    m[0] = 1;
+    m[4] = (unsigned char)mm.type;
+    m[5] = (unsigned char)mm.n_cards;
+    for (int i = 0; i < mm.n_cards; i++) m[6 + i] = mm.cards[i];
+    for (int i = 0; i < mm.n_cards; i++) m[6 + mm.n_cards + i] = mm.attacks[i];
+    return FIO_PLAY_PROBE_HEAD + 4 + 2 + 2 * mm.n_cards;
+}
+
+// The moves a HUMAN may make on this board, as the same menu wire in.
+int fio_play_human_menu(const uint8_t *menu, int menu_len,
+                        const uint8_t *table, int n_battles,
+                        char *out, int cap) {
+    if (!menu || menu_len < 0 || n_battles < 0) return FIO_EBADARG;
+    const PlayBoard b = fio_play_board(menu, menu_len, table, n_battles, -1, 0);
+    const int n = play_human_menu(&b, (unsigned char *)out, cap);
+    if (n == LEGAL_WIRE_ECAP) return FIO_ECAP;
+    if (n < 0) return FIO_EPARSE;
+    return n;
 }
 
 // ---------- animation events (§4.4 / A3) -----------------------------------
@@ -451,94 +530,536 @@ int fio_last_events_json(int viewer, char *out, int cap) {
 
 // ---------- animation core (c/src/anim_plan.h) -----------------------------
 //
-// The plan/policy the web already runs through wasm, exposed to Swift. The plan
-// builder consumes the SAME evwire_walk output j_events emits (EVW_T_*/EVW_LOC_*
-// numbering is identical to ANIM_EVT_*/ANIM_LOC_*, so the EvwEvent copies
-// straight into an AnimEvent), so a plan is derived from exactly the events the
-// board would otherwise re-walk. No allocation: the events and their cards live
-// in file-static scratch (this file is single-threaded by contract).
+// The layout is documented once, in ios_api.h. Like fio_beats_packed, this
+// reads nothing but its arguments: the stream crosses WITH the question because
+// a board animates the stream it was HANDED (a staged bout end is cut in half
+// and the settlement withheld), and because a SwiftUI body cannot await the
+// actor the resident game lives behind.
 
-typedef struct { AnimEvent *ev; Card *pool; int cap_ev; int cap_pool; int n; int pool_n; } FioPlanCtx;
+_Static_assert(FIO_PLAN_SEATS == MAX_PLAYERS,
+               "the plan wire's seat block must be the kernel's table size");
 
-static void fio_plan_sink(void *ctx, const EvwEvent *e) {
-    FioPlanCtx *c = (FioPlanCtx *)ctx;
-    if (c->n >= c->cap_ev) return;
-    if (e->n_cards > 0 && c->pool_n + e->n_cards > c->cap_pool) return;
-    AnimEvent *a = &c->ev[c->n];
-    a->type = e->type;   // EVW_T_* == ANIM_EVT_*
-    a->seat = e->seat;   // -1 == ANIM_SEAT_NONE
-    a->from = e->from;   // EVW_LOC_* == ANIM_LOC_*
-    a->to   = e->to;
-    a->mask_cards = e->mask_cards;
-    a->cards = &c->pool[c->pool_n];
-    a->n_cards = e->n_cards;
-    for (int i = 0; i < e->n_cards; i++) c->pool[c->pool_n++] = e->cards[i];
-    c->n++;
-}
+int fio_anim_plan_packed(const uint8_t *in, int len, char *out, int cap) {
+    if (!in || !out || len < 5) return FIO_EBADARG;
+    if (in[0] != FIO_PLAN_VERSION) return FIO_EPARSE;
+    const int np = in[1];
+    const int n = in[2];
+    if (np < 2 || np > MAX_PLAYERS) return FIO_EPARSE;
+    if (n > ANIM_MAX_STEPS) return FIO_ECAP;
 
-int fio_anim_plan_json(int viewer, char *out, int cap) {
-    if (!g_has_game) return FIO_ENOGAME;
-
-    // Walk the viewer's last-move events into AnimEvent[] (same snapshots as
-    // j_events), then build the plan against the resident (final) board's counts.
-    EvSnap refs[FIO_MAX_SNAPS];
-    for (int i = 0; i < g_n_snaps; i++) {
-        refs[i].g = (const Game *)(const void *)g_snaps[i].bytes;
-        refs[i].tag = g_snap_tags[i];
-        refs[i].aux = g_snap_aux[i];
-    }
-    static AnimEvent s_ev[ANIM_MAX_STEPS];
-    static Card s_pool[ANIM_MAX_STEPS * ANIM_MAX_CARDS];
-    FioPlanCtx ctx = { s_ev, s_pool, ANIM_MAX_STEPS,
-                       (int)(sizeof(s_pool)/sizeof(s_pool[0])), 0, 0 };
-    evwire_walk(refs, g_n_snaps, g_game.logs + g_last_event_log_start,
-                g_game.num_logs - g_last_event_log_start, viewer, fio_plan_sink, &ctx);
-
-    const int np = g_game.num_players;
+    int p = 5;
+    if (p + np > len) return FIO_EPARSE;
     int final_hand[MAX_PLAYERS];
-    for (int s = 0; s < np; s++) final_hand[s] = g_game.players[s].hand_count;
+    for (int s = 0; s < np; s++) final_hand[s] = in[p++];
+
+    static AnimPlanEvent evs[ANIM_MAX_STEPS];
+    static int  hands[ANIM_MAX_STEPS][MAX_PLAYERS];
+    static Card pool[ANIM_MAX_CARD_POOL];
+    int n_pool = 0;
+    for (int i = 0; i < n; i++) {
+        // The WHOLE event is bounded before any of it is read - the counts that
+        // decide its length (n_cards, n_ids) first, then the extent they imply.
+        // A bound checked after the reads it guards is not a bound; an optimiser
+        // is free to sink the loads past it.
+        if (p + 6 > len) return FIO_EPARSE;
+        const int n_cards = in[p + 4], n_ids = in[p + 5];
+        if (n_cards > ANIM_MAX_CARDS || n_ids > n_cards) return FIO_ECAP;
+        if (p + 9 + np + n_ids > len) return FIO_EPARSE;
+        if (n_pool + n_ids > ANIM_MAX_CARD_POOL) return FIO_ECAP;
+        const int type = in[p], seat = in[p + 1], from = in[p + 2], to = in[p + 3];
+        const int has_counts = in[p + 6], deck = in[p + 7], discard = in[p + 8];
+        p += 9;
+        for (int s = 0; s < np; s++) hands[i][s] = in[p + s];
+        p += np;
+        Card *ids = &pool[n_pool];
+        for (int k = 0; k < n_ids; k++) {
+            if (in[p + k] >= 52) return FIO_EPARSE;
+            ids[k] = card_of_id(in[p + k]);
+        }
+        n_pool += n_ids;
+        p += n_ids;
+        evs[i].type = type;
+        evs[i].seat = (seat == 0xFF) ? ANIM_SEAT_NONE : seat;
+        evs[i].from = from;
+        evs[i].to = to;
+        evs[i].cards = ids;
+        evs[i].n_cards = n_cards;
+        // Only REAL identities travel; a viewer-masked step lists none, and the
+        // veil must leave its cards alone rather than veil a back.
+        evs[i].mask_cards = (n_ids < n_cards);
+        evs[i].has_counts = has_counts ? 1 : 0;
+        evs[i].deck = deck;
+        evs[i].discard = discard;
+        evs[i].hand = hands[i];
+    }
 
     static AnimPlan plan;
-    const int rc = anim_build_plan(s_ev, ctx.n, np, g_game.deck_count,
-                                   g_game.discard_pile_length, final_hand, &plan);
+    const int rc = anim_build_plan(evs, n, np, in[3], in[4], final_hand, &plan);
+    if (rc == ANIM_ECAP) return FIO_ECAP;
     if (rc != ANIM_EOK) return FIO_EBADARG;
 
-    J j; j_init(&j, out, cap);
-    j_puts(&j, "{\"durationMs\":"); j_puti(&j, ANIM_TIME_MS);
-    j_puts(&j, ",\"gapMs\":");      j_puti(&j, ANIM_GAP_MS);
-    j_puts(&j, ",\"totalMs\":");    j_puti(&j, plan.total_ms);
-    j_puts(&j, ",\"nPlayers\":");   j_puti(&j, np);
-    j_puts(&j, ",\"pre\":{\"deck\":"); j_puti(&j, plan.pre.deck);
-    j_puts(&j, ",\"discard\":");    j_puti(&j, plan.pre.discard);
-    j_puts(&j, ",\"hand\":[");
-    for (int s = 0; s < np; s++) { if (s) j_putc(&j, ','); j_puti(&j, plan.pre.hand[s]); }
-    j_puts(&j, "]},\"veil\":[");
-    for (int i = 0; i < plan.n_veil; i++) { if (i) j_putc(&j, ','); j_puti(&j, plan.veil_ids[i]); }
-    j_puts(&j, "],\"steps\":[");
+    const int need = FIO_PLAN_HEAD + plan.n_steps * FIO_PLAN_STRIDE + plan.n_veil;
+    if (cap < need) return FIO_ECAP;
+    unsigned char *q = (unsigned char *)out;
+    for (int i = 0; i < need; i++) q[i] = 0;
+    q[0] = FIO_PLAN_VERSION;
+    q[1] = (unsigned char)plan.n_steps;
+    q[2] = (unsigned char)np;
+    q[3] = (unsigned char)plan.n_veil;
+    for (int i = 0; i < 4; i++) q[4 + i] = (unsigned char)((plan.total_ms >> (8 * i)) & 0xff);
+    q[8] = (unsigned char)plan.pre.deck;
+    q[9] = (unsigned char)plan.pre.discard;
+    for (int s = 0; s < np; s++) q[10 + s] = (unsigned char)plan.pre.hand[s];
     for (int i = 0; i < plan.n_steps; i++) {
         const AnimPlanStep *st = &plan.steps[i];
-        if (i) j_putc(&j, ',');
-        j_puts(&j, "{\"type\":");   j_puti(&j, st->type);
-        j_puts(&j, ",\"seat\":");   j_puti(&j, st->seat);
-        j_puts(&j, ",\"from\":");   j_puti(&j, st->from);
-        j_puts(&j, ",\"to\":");     j_puti(&j, st->to);
-        j_puts(&j, ",\"nCards\":"); j_puti(&j, st->n_cards);
-        j_puts(&j, ",\"durationMs\":"); j_puti(&j, st->duration_ms);
-        j_puts(&j, ",\"startMs\":");     j_puti(&j, st->start_ms);
-        j_puts(&j, ",\"deck\":");        j_puti(&j, st->deck);
-        j_puts(&j, ",\"discard\":");     j_puti(&j, st->discard);
-        j_puts(&j, ",\"inFlightFromDeck\":");  j_puti(&j, st->in_flight_from_deck);
-        j_puts(&j, ",\"inFlightToFlipped\":"); j_puti(&j, st->in_flight_to_flipped);
-        j_puts(&j, ",\"hand\":[");
-        for (int s = 0; s < np; s++) { if (s) j_putc(&j, ','); j_puti(&j, st->hand[s]); }
-        j_puts(&j, "]}");
+        unsigned char *e = q + FIO_PLAN_HEAD + i * FIO_PLAN_STRIDE;
+        e[0] = (unsigned char)st->type;
+        e[1] = (unsigned char)(st->seat < 0 ? 0xFF : st->seat);
+        e[2] = (unsigned char)st->from;
+        e[3] = (unsigned char)st->to;
+        e[4] = (unsigned char)st->n_cards;
+        e[5] = (unsigned char)(st->duration_ms & 0xff);
+        e[6] = (unsigned char)((st->duration_ms >> 8) & 0xff);
+        for (int k = 0; k < 4; k++) e[7 + k] = (unsigned char)((st->start_ms >> (8 * k)) & 0xff);
+        e[11] = (unsigned char)st->deck;
+        e[12] = (unsigned char)st->discard;
+        e[13] = (unsigned char)st->in_flight_from_deck;
+        e[14] = (unsigned char)st->in_flight_to_flipped;
+        for (int s = 0; s < np; s++) e[15 + s] = (unsigned char)st->hand[s];
     }
-    j_puts(&j, "]}");
-    return j_finish(&j);
+    unsigned char *v = q + FIO_PLAN_HEAD + plan.n_steps * FIO_PLAN_STRIDE;
+    for (int i = 0; i < plan.n_veil; i++) v[i] = plan.veil_ids[i];
+    return need;
 }
 
 int fio_anim_should_drop_stale(int has_last, int last, int has_incoming, int incoming) {
     return anim_should_drop_stale(has_last, last, has_incoming, incoming);
+}
+
+// ---------- the shape of a sequence ----------------------------------------
+//
+// The layout is documented once, in ios_api.h. Reads nothing but its arguments:
+// the stream crosses WITH the question because the board's stream is often not
+// the resident game's (a staged bout end is cut in half and the settlement
+// withheld), and because a SwiftUI body cannot await the actor it lives behind.
+
+// Every dense id the input names, across the whole stream. A turn is at most
+// ANIM_MAX_BEATS events and no event names more cards than a full table sweep.
+#define FIO_BEATS_MAX_IDS 1024
+
+int fio_beats_packed(const uint8_t *in, int len, char *out, int cap) {
+    if (!in || !out || len < 2) return FIO_EBADARG;
+    if (in[0] != FIO_BEATS_VERSION) return FIO_EPARSE;
+    const int n = in[1];
+    if (n > ANIM_MAX_BEATS) return FIO_ECAP;
+
+    AnimBeatEvent evs[ANIM_MAX_BEATS];
+    Card ids[FIO_BEATS_MAX_IDS];
+    int n_ids = 0, p = 2;
+    for (int i = 0; i < n; i++) {
+        if (p + 5 > len) return FIO_EPARSE;
+        const int type = in[p];
+        const int seat = in[p + 1];
+        const int has_good = in[p + 2];
+        const int good = in[p + 3];
+        const int k = in[p + 4];
+        p += 5;
+        if (p + k > len) return FIO_EPARSE;
+        if (n_ids + k > FIO_BEATS_MAX_IDS) return FIO_ECAP;
+        evs[i].type = type;
+        evs[i].seat = (seat == 0xFF) ? ANIM_SEAT_NONE : seat;
+        evs[i].cards = &ids[n_ids];
+        evs[i].n_cards = k;
+        evs[i].mask_cards = 0;   // only real identities are ever listed
+        evs[i].good_mask = has_good ? good : ANIM_NO_MASK;
+        for (int c = 0; c < k; c++) {
+            if (in[p + c] >= 52) return FIO_EPARSE;
+            ids[n_ids + c] = card_of_id(in[p + c]);
+        }
+        n_ids += k;
+        p += k;
+    }
+
+    AnimBeats b;
+    const int r = anim_build_beats(evs, n, &b);
+    if (r == ANIM_ECAP) return FIO_ECAP;
+    if (r < 0) return FIO_EBADARG;
+    if (cap < FIO_BEATS_HEAD + b.n_beats * FIO_BEATS_STRIDE) return FIO_ECAP;
+
+    unsigned char *q = (unsigned char *)out;
+    q[0] = FIO_BEATS_VERSION;
+    q[1] = (unsigned char)b.n_beats;
+    q[2] = (unsigned char)(b.first_good_mask == ANIM_NO_MASK ? 0 : 1);
+    q[3] = (unsigned char)(b.first_good_mask == ANIM_NO_MASK ? 0 : b.first_good_mask);
+    for (int i = 0; i < 8; i++) q[4 + i] = (unsigned char)((b.placed_ids >> (8 * i)) & 0xff);
+    for (int g = 0; g < b.n_beats; g++) {
+        const AnimBeat *bt = &b.beats[g];
+        unsigned char *e = q + FIO_BEATS_HEAD + g * FIO_BEATS_STRIDE;
+        e[0] = (unsigned char)bt->first;
+        e[1] = (unsigned char)bt->n_events;
+        e[2] = (unsigned char)bt->type;
+        e[3] = (unsigned char)(bt->seat < 0 ? 0xFF : bt->seat);
+        e[4] = (unsigned char)bt->flags;
+        e[5] = (unsigned char)(bt->outs_mask & 0xff);
+        e[6] = (unsigned char)(bt->attack_pass_seats & 0xff);
+        e[7] = (unsigned char)(bt->good_mask == ANIM_NO_MASK ? 0 : 1);
+        e[8] = (unsigned char)(bt->good_mask == ANIM_NO_MASK ? 0 : bt->good_mask);
+        for (int i = 0; i < 8; i++) e[9 + i] = (unsigned char)((bt->placed_ids >> (8 * i)) & 0xff);
+    }
+    return FIO_BEATS_HEAD + b.n_beats * FIO_BEATS_STRIDE;
+}
+
+// ---------- the pre-bout table ---------------------------------------------
+//
+// The layout is documented once, in ios_api.h. Like fio_beats_packed this reads
+// nothing but its arguments, and the prior board travels with the stream
+// because a single-action pickup turn has no earlier board of its own.
+
+_Static_assert(FIO_PRETABLE_NONE == ANIM_TABLE_NONE,
+               "one 'no card here' byte for a table, not two");
+_Static_assert(ANIM_TABLE_NONE == LEGAL_WIRE_NONE,
+               "…and it is the same byte the menu wire and PlayBoard use");
+
+// One table off the wire: `n` battles at `p`, bounded against `end`. Returns
+// the bytes consumed, or -1 for a table that runs off the buffer or names a
+// card that is not one.
+static int pretable_read(const uint8_t *p, const uint8_t *end, int n) {
+    if (n < 0 || p + 2 * n > end) return -1;
+    for (int i = 0; i < 2 * n; i++)
+        if (p[i] >= 52 && p[i] != ANIM_TABLE_NONE) return -1;
+    return 2 * n;
+}
+
+int fio_pre_bout_table_packed(const uint8_t *in, int len, char *out, int cap) {
+    if (!in || !out || len < 3) return FIO_EBADARG;
+    if (in[0] != FIO_PRETABLE_VERSION) return FIO_EPARSE;
+    const int n = in[1];
+    if (n > ANIM_MAX_STEPS) return FIO_ECAP;
+    const uint8_t *end = in + len;
+
+    int p = 2;
+    const int prior_n = (in[p] == FIO_PRETABLE_NONE) ? ANIM_NO_BOARD : in[p];
+    p++;
+    const uint8_t *prior = in + p;
+    if (prior_n > 0) {
+        const int took = pretable_read(in + p, end, prior_n);
+        if (took < 0) return FIO_EPARSE;
+        p += took;
+    }
+
+    static AnimPreEvent evs[ANIM_MAX_STEPS];
+    for (int i = 0; i < n; i++) {
+        // The WHOLE event is bounded before any of it is read - the counts that
+        // decide its length first, then the extent they imply. A bound checked
+        // after the reads it guards is not a bound.
+        if (in + p + 2 > end) return FIO_EPARSE;
+        const int type = in[p];
+        const int n_bat = (in[p + 1] == FIO_PRETABLE_NONE) ? ANIM_NO_BOARD : in[p + 1];
+        p += 2;
+        evs[i].type = type;
+        evs[i].n_battles = n_bat;
+        evs[i].battles = in + p;
+        if (n_bat > 0) {
+            const int took = pretable_read(in + p, end, n_bat);
+            if (took < 0) return FIO_EPARSE;
+            p += took;
+        }
+        if (in + p + 1 > end) return FIO_EPARSE;
+        const int n_cards = in[p];
+        p++;
+        if (in + p + n_cards > end) return FIO_EPARSE;
+        for (int k = 0; k < n_cards; k++) if (in[p + k] >= 52) return FIO_EPARSE;
+        evs[i].n_cards = n_cards;
+        evs[i].cards = in + p;
+        p += n_cards;
+    }
+
+    static AnimPreTable t;
+    const int rc = anim_pre_bout_table(evs, n, prior_n, prior, &t);
+    if (rc == ANIM_ECAP) return FIO_ECAP;
+    if (rc < 0) return FIO_EBADARG;
+
+    const int need = FIO_PRETABLE_HEAD + 2 * t.n_battles;
+    if (cap < need) return FIO_ECAP;
+    unsigned char *q = (unsigned char *)out;
+    q[0] = FIO_PRETABLE_VERSION;
+    q[1] = (unsigned char)t.n_battles;
+    q[2] = (unsigned char)(t.paired ? 1 : 0);
+    for (int i = 0; i < 2 * t.n_battles; i++) q[FIO_PRETABLE_HEAD + i] = t.battles[i];
+    return need;
+}
+
+// ---------- the conflict model --------------------------------------------
+
+// THE TRANSPORT (anim_plan.h), said once by the host. This library is linked by
+// the iMessage extension, whose messages each carry the whole game in a total
+// order, and by the iOS app, whose online play is confirmed by a later server
+// broadcast - so it cannot be a constant here, and the kernel refuses to guess.
+int fio_set_transport(int transport) { return anim_set_transport(transport); }
+int fio_transport(void) { return anim_transport(); }
+
+int fio_conflict_dest(int event_type, int seat, int my_seat) {
+    return anim_conflict_dest(event_type, seat, my_seat);
+}
+
+// One dense card id off the wire: FIO_CONFLICT_NONE is "no identity here", and
+// anything else off the deck is a corrupt wire rather than a case.
+static int conflict_id(uint8_t b, int *out) {
+    if (b == FIO_CONFLICT_NONE) { *out = ANIM_CARD_NONE; return 1; }
+    if (b >= 52) return 0;
+    *out = b;
+    return 1;
+}
+
+int fio_conflict_packed(const uint8_t *in, int len, char *out, int cap) {
+    if (!in || !out || len < 2) return FIO_EBADARG;
+    if (in[0] != FIO_CONFLICT_VERSION) return FIO_EPARSE;
+    const uint8_t *end = in + len;
+    int p = 1;
+
+    // Every count is bounded before the extent it implies is read - a bound
+    // checked after the reads it guards is not a bound.
+    static int moved[ANIM_MAX_CONFLICT_MOTIONS];
+    if (in + p + 1 > end) return FIO_EPARSE;
+    const int n_moved = in[p++];
+    if (n_moved > ANIM_MAX_CONFLICT_MOTIONS) return FIO_ECAP;
+    if (in + p + n_moved > end) return FIO_EPARSE;
+    for (int i = 0; i < n_moved; i++) {
+        if (!conflict_id(in[p + i], &moved[i])) return FIO_EPARSE;
+    }
+    p += n_moved;
+
+    if (in + p + 1 > end) return FIO_EPARSE;
+    const int n_bat = (in[p] == FIO_CONFLICT_NONE) ? 0 : in[p];
+    p++;
+    const uint8_t *table = in + p;
+    if (in + p + 2 * n_bat > end) return FIO_EPARSE;
+    // Either slot may be FIO_CONFLICT_NONE - an uncovered attack, or a card the
+    // viewer cannot name. Both contribute nothing to the standing set; anything
+    // else off the deck is a corrupt wire.
+    for (int i = 0; i < 2 * n_bat; i++) {
+        if (table[i] >= 52 && table[i] != FIO_CONFLICT_NONE) return FIO_EPARSE;
+    }
+    p += 2 * n_bat;
+
+    if (in + p + 1 > end) return FIO_EPARSE;
+    const int n_hand = in[p++];
+    const uint8_t *hand = in + p;
+    if (in + p + n_hand > end) return FIO_EPARSE;
+    for (int i = 0; i < n_hand; i++) if (hand[i] >= 52) return FIO_EPARSE;
+    p += n_hand;
+
+    if (in + p + 1 > end) return FIO_EPARSE;
+    const int n_groups = in[p++];
+    if (n_groups > ANIM_MAX_CONFLICT_GROUPS) return FIO_ECAP;
+    if (in + p + n_groups > end) return FIO_EPARSE;
+    static int groups[ANIM_MAX_CONFLICT_GROUPS];
+    int n_motions = 0;
+    for (int g = 0; g < n_groups; g++) {
+        groups[g] = in[p + g];
+        n_motions += groups[g];
+    }
+    p += n_groups;
+    if (n_motions > ANIM_MAX_CONFLICT_MOTIONS) return FIO_ECAP;
+    if (in + p + 2 * n_motions > end) return FIO_EPARSE;
+
+    static AnimConflictMotion motions[ANIM_MAX_CONFLICT_MOTIONS];
+    for (int i = 0; i < n_motions; i++) {
+        if (!conflict_id(in[p + 2 * i], &motions[i].card_id)) return FIO_EPARSE;
+        const int dest = in[p + 2 * i + 1];
+        if (dest != FIO_CONFLICT_DEST_TABLE && dest != FIO_CONFLICT_DEST_MY_HAND
+            && dest != FIO_CONFLICT_DEST_POOL) return FIO_EPARSE;
+        motions[i].dest = dest;
+    }
+
+    AnimConflictFacts facts;
+    if (anim_conflict_facts(moved, n_moved, table, n_bat, hand, n_hand, &facts) != ANIM_EOK) {
+        return FIO_EBADARG;
+    }
+    static AnimConflictPlan plan;
+    const int rc = anim_conflict_reversal(motions, n_motions, groups, n_groups, &facts, &plan);
+    if (rc == ANIM_ECAP) return FIO_ECAP;
+    if (rc == ANIM_ETRANSPORT) return FIO_ETRANSPORT;
+    if (rc < 0) return FIO_EBADARG;
+
+    const int need = 2 + plan.n_verdicts + 1 + plan.n_steps + plan.n_order;
+    if (cap < need) return FIO_ECAP;
+    unsigned char *q = (unsigned char *)out;
+    int w = 0;
+    q[w++] = FIO_CONFLICT_VERSION;
+    q[w++] = (unsigned char)plan.n_verdicts;
+    for (int i = 0; i < plan.n_verdicts; i++) q[w++] = plan.verdicts[i];
+    q[w++] = (unsigned char)plan.n_steps;
+    for (int i = 0; i < plan.n_steps; i++) q[w++] = (unsigned char)plan.step_count[i];
+    for (int i = 0; i < plan.n_order; i++) q[w++] = (unsigned char)plan.order[i];
+    return w;
+}
+
+// ---- the board's sets and small rules -------------------------------------
+// Thin crossings: the rule is anim_plan.c's, and every one of these is a set or
+// a scalar, so nothing here parses a record.
+
+uint64_t fio_veil_veiled(uint64_t hidden, uint64_t pending_open,
+                         int has_hand_before, uint64_t hand_before,
+                         int has_my_hand, uint64_t my_hand) {
+    return anim_veil_veiled(hidden, pending_open, has_hand_before, hand_before,
+                            has_my_hand, my_hand);
+}
+
+uint64_t fio_veil_flying(uint64_t hidden, uint64_t pre_hidden) {
+    return anim_veil_flying(hidden, pre_hidden);
+}
+
+uint64_t fio_veil_hand_slot_deferred(uint64_t veiled, uint64_t flying, uint64_t holdback) {
+    return anim_veil_hand_slot_deferred(veiled, flying, holdback);
+}
+
+uint64_t fio_veil_fan(uint64_t veiled, uint64_t holdback) {
+    return anim_veil_fan(veiled, holdback);
+}
+
+void fio_veil_grid(int sweeping, uint64_t veiled,
+                   uint64_t swept_flown, uint64_t sweep_unplaced,
+                   uint64_t sweep_arriving, uint64_t flying,
+                   uint64_t *out_hidden, uint64_t *out_flying) {
+    anim_veil_grid(sweeping, veiled, swept_flown, sweep_unplaced, sweep_arriving,
+                   flying, out_hidden, out_flying);
+}
+
+void fio_veil_teardown(uint64_t opened, uint64_t orphaned, int is_newest,
+                       uint64_t *out_reveal, uint64_t *out_carry) {
+    anim_veil_teardown(opened, orphaned, is_newest, out_reveal, out_carry);
+}
+
+void fio_veil_handover(uint64_t standing, uint64_t placing,
+                       uint64_t *out_reveal, uint64_t *out_veil) {
+    anim_veil_handover(standing, placing, out_reveal, out_veil);
+}
+
+int fio_veil_unstarted_replay(int replay_pending, int n_events) {
+    return anim_veil_unstarted_replay(replay_pending, n_events);
+}
+
+int fio_holdback_is_mine(int armed_at, int teardown_at) {
+    return anim_holdback_is_mine(armed_at, teardown_at);
+}
+
+uint64_t fio_selection_after_tap(uint64_t selection, int card_id, uint64_t hand) {
+    return anim_selection_after_tap(selection, card_id, hand);
+}
+
+int fio_is_placement(int event_type) { return anim_is_placement(event_type); }
+
+int fio_is_my_placement(int event_type, int seat, int my_seat) {
+    return anim_is_my_placement(event_type, seat, my_seat);
+}
+
+int fio_fan_cards(const uint8_t *hand, int n_hand, const uint8_t *held, int n_held,
+                  char *out, int cap) {
+    if (!out || cap < 0) return FIO_EBADARG;
+    const int rc = anim_fan_cards(hand, n_hand, held, n_held, (unsigned char *)out, cap);
+    if (rc == ANIM_ECAP) return FIO_ECAP;
+    return rc < 0 ? FIO_EBADARG : rc;
+}
+
+int fio_laid_count(const uint8_t *hand, int n_hand, const uint8_t *held, int n_held,
+                   uint64_t deferred) {
+    const int rc = anim_laid_count(hand, n_hand, held, n_held, deferred);
+    if (rc == ANIM_ECAP) return FIO_ECAP;
+    return rc < 0 ? FIO_EBADARG : rc;
+}
+
+int fio_hand_laid_out(const uint8_t *cards, int n_cards, uint64_t deferred,
+                      const uint8_t *order, int n_order, char *out, int cap) {
+    if (!out || cap < 0) return FIO_EBADARG;
+    const int rc = anim_hand_laid_out(cards, n_cards, deferred, order, n_order,
+                                      (unsigned char *)out, cap);
+    if (rc == ANIM_ECAP) return FIO_ECAP;
+    return rc < 0 ? FIO_EBADARG : rc;
+}
+
+uint64_t fio_table_card_ids(const uint8_t *table, int n_battles) {
+    return anim_table_card_ids(table, n_battles);
+}
+
+int fio_table_covers(const uint8_t *outer, int n_outer, const uint8_t *inner, int n_inner) {
+    const int rc = anim_table_covers(outer, n_outer, inner, n_inner);
+    return rc < 0 ? FIO_EBADARG : rc;
+}
+
+int fio_covered_sweep_accepts(int paired, const uint8_t *pre, int n_pre,
+                              const uint8_t *cur, int n_cur) {
+    const int rc = anim_covered_sweep_accepts(paired, pre, n_pre, cur, n_cur);
+    return rc < 0 ? FIO_EBADARG : rc;
+}
+
+int fio_shown_table(int n_live, int n_sweep, int n_pending, int *out_sweeping) {
+    return anim_shown_table(n_live, n_sweep, n_pending, out_sweeping);
+}
+
+int fio_finish_rows(const uint8_t *elimination, int n_elim, int game_over,
+                    int n_players, int my_seat, char *out, int cap) {
+    if (!out) return FIO_EBADARG;
+    AnimFinishRow rows[MAX_PLAYERS];
+    const int n = anim_finish_rows(elimination, n_elim, game_over, n_players,
+                                   my_seat, rows, MAX_PLAYERS);
+    if (n == ANIM_ECAP) return FIO_ECAP;
+    if (n < 0) return FIO_EBADARG;
+    const int need = FIO_FINISH_HEAD + 3 * n;
+    if (cap < need) return FIO_ECAP;
+    unsigned char *q = (unsigned char *)out;
+    int w = 0;
+    q[w++] = FIO_FINISH_VERSION;
+    q[w++] = (unsigned char)n;
+    q[w++] = (unsigned char)n_players;
+    for (int i = 0; i < n; i++) {
+        q[w++] = (unsigned char)rows[i].place;
+        q[w++] = (unsigned char)rows[i].seat;
+        q[w++] = (unsigned char)rows[i].is_you;
+    }
+    return w;
+}
+
+int fio_shown_ledger_allows(int claim, int sequencing) {
+    return anim_shown_ledger_allows(claim, sequencing);
+}
+
+int fio_badge_drops_as_cards_leave(int type) {
+    return anim_badge_drops_as_cards_leave(type);
+}
+
+static int fio_roles_answer(int changed, const AnimRoles *r, int *out) {
+    if (!changed) return 0;
+    out[0] = r->defender;
+    out[1] = r->first_attacker;
+    out[2] = r->good_mask;
+    return 1;
+}
+
+int fio_roles_goods_opening(int shown_defender, int shown_first_attacker,
+                            int shown_good_mask, int first_good_mask, int *out) {
+    if (!out) return FIO_EBADARG;
+    const AnimRoles shown = { shown_defender, shown_first_attacker, shown_good_mask };
+    AnimRoles r;
+    return fio_roles_answer(anim_goods_opening(shown, first_good_mask, &r), &r, out);
+}
+
+int fio_roles_goods_cleared(int shown_defender, int shown_first_attacker,
+                            int shown_good_mask, int step_good_mask, int *out) {
+    if (!out) return FIO_EBADARG;
+    const AnimRoles shown = { shown_defender, shown_first_attacker, shown_good_mask };
+    AnimRoles r;
+    return fio_roles_answer(anim_goods_cleared(shown, step_good_mask, &r), &r, out);
+}
+
+int fio_roles_pass_hand_off(int shown_defender, int shown_first_attacker,
+                            int shown_good_mask, int attack_pass_seats,
+                            int final_defender, int *out) {
+    if (!out) return FIO_EBADARG;
+    const AnimRoles shown = { shown_defender, shown_first_attacker, shown_good_mask };
+    AnimRoles r;
+    return fio_roles_answer(
+        anim_pass_hand_off(shown, (unsigned)attack_pass_seats, final_defender, &r), &r, out);
 }
 
 int fio_last_reject(void) { return g_last_reject; }
@@ -1151,6 +1672,14 @@ int fio_last_replay_error(void) { return g_last_replay_error; }
 // extension asks the kernel rather than switching on the type itself.
 int fio_evw_is_settlement(int type) { return evw_is_settlement(type); }
 
+// THE CUT, over the frame stream fio_replay_last_events_packed just handed
+// back. The clients flatten those frames into one event list, so the answer is
+// an index into the FLATTENED list; the walk across frames is in evwire.c and
+// this is one line so it stays that way.
+int fio_evw_frames_settlement_cut(const unsigned char *frames, int len) {
+    return evwire_frames_settlement_cut(frames, len);
+}
+
 // Where THIS DEVICE's own staged run starts in the resident game's atom stream
 // - the same question msg_seal answers for the bubble delta, asked for the
 // animation instead of for the wire, and answered from the same log mark.
@@ -1321,42 +1850,43 @@ int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, i
     return fio_msg_pack(&e, digest, out, cap);
 }
 
-// joins: [{"seat":0,"name":"Sveta"},...] → e->joins / e->n_joins. Shared by the
-// action seal (fio_msg_encode) and the empty-body lobby seal
-// (fio_msg_encode_waiting). Returns FIO_EOK or FIO_EPARSE.
-static int fio_parse_joins(const char *joins_json, MsgEnvelope *e) {
-    const char *p = joins_json;
-    while (*p && *p != '[') p++;
-    if (*p != '[') return FIO_EPARSE;
-    p++;
-    while (*p) {
-        while (*p == ' ' || *p == ',') p++;
-        if (*p == ']' || !*p) break;
-        if (*p != '{') return FIO_EPARSE;
-        if (e->n_joins >= MSG_MAX_JOINS) return FIO_EPARSE;
-        const char *sp = find_key(p, "seat");
-        const char *np = find_key(p, "name");
-        if (!sp || !np || *np != '"') return FIO_EPARSE;
-        MsgJoin *jn = &e->joins[e->n_joins];
-        jn->seat = (uint8_t)atoi(sp);
-        np++;
-        int n = 0;
-        while (*np && *np != '"' && n < MSG_MAX_NAME) jn->name[n++] = *np++;
-        if (*np != '"') return FIO_EPARSE;   // > MSG_MAX_NAME bytes, or unterminated
-        jn->name_len = (uint8_t)n;
-        e->n_joins++;
-        const char *close = strchr(p, '}');
-        if (!close) return FIO_EPARSE;
-        p = close + 1;
+// A ROSTER, PACKED - byte for byte the tail fio_msg_decode_packed hands BACK:
+//   n_joins(1), then n_joins x { seat(1), name_len(1), name[name_len] }
+// One layout for the roster in both directions, so a host that can read one can
+// write one. It used to arrive as [{"seat":0,"name":"Sveta"},...] and be parsed
+// here, which made the roster the last JSON on any path that matters.
+//
+// Every record is BOUNDED BEFORE IT IS READ, and the blob must be consumed
+// EXACTLY: trailing bytes mean the caller and the kernel disagree about what a
+// roster is, and a roster read short is a different table. Returns FIO_EOK or
+// FIO_EPARSE.
+static int fio_read_joins(const uint8_t *b, int len, MsgEnvelope *e) {
+    if (!b || len < 1) return FIO_EPARSE;
+    const int n = b[0];
+    if (n > MSG_MAX_JOINS) return FIO_EPARSE;
+    int p = 1;
+    for (int i = 0; i < n; i++) {
+        if (p + 2 > len) return FIO_EPARSE;
+        const int seat = b[p];
+        const int name_len = b[p + 1];
+        if (name_len > MSG_MAX_NAME) return FIO_EPARSE;
+        if (p + 2 + name_len > len) return FIO_EPARSE;
+        MsgJoin *jn = &e->joins[i];
+        jn->seat = (uint8_t)seat;
+        jn->name_len = (uint8_t)name_len;
+        if (name_len > 0) memcpy(jn->name, b + p + 2, (size_t)name_len);
+        p += 2 + name_len;
     }
+    if (p != len) return FIO_EPARSE;
+    e->n_joins = (uint8_t)n;
     return FIO_EOK;
 }
 
 int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
-                   const uint8_t parent8[8], const char *joins_json,
+                   const uint8_t parent8[8], const uint8_t *joins, int joins_len,
                    int sent_at, uint8_t *out, int cap) {
     if (!g_has_game) return FIO_ENOGAME;
-    if (!out || cap <= 0 || !joins_json) return FIO_EBADARG;
+    if (!out || cap <= 0 || !joins || joins_len < 1) return FIO_EBADARG;
     if (!g_has_deal_seed) return FIO_ENOSEED;   // no seed, no serverless game
     g_last_msg_error = 0;
 
@@ -1392,7 +1922,7 @@ int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
     if (parent8) memcpy(e.parent8, parent8, MSG_PARENT_LEN);
     memcpy(e.seed, g_deal_seed, FOOLISH_SEED_LEN);
 
-    const int jrc = fio_parse_joins(joins_json, &e);
+    const int jrc = fio_read_joins(joins, joins_len, &e);
     if (jrc != FIO_EOK) return jrc;
 
     static unsigned char body[1024];   // a v6 body measures ~68 B at 8 players
@@ -1410,13 +1940,13 @@ int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
 
 // ---------- Rule F: the fool's penalty ------------------------------------
 
-// Parse a joins JSON into a bare array, the shape msg_roster_key wants. Shares
-// fio_parse_joins so the two entries below cannot read a roster differently
-// from the way a seal writes one.
-static int fio_joins_of(const char *joins_json, MsgJoin *out, int *n_out) {
+// A packed roster as a bare array, the shape msg_roster_key wants. Shares
+// fio_read_joins so the entries below cannot read a roster differently from the
+// way a seal writes one.
+static int fio_joins_of(const uint8_t *joins, int joins_len, MsgJoin *out, int *n_out) {
     static MsgEnvelope tmp;   // static: MsgEnvelope is large, and this is a
     msg_envelope_init(&tmp);  // single-threaded actor (see the file header)
-    const int rc = fio_parse_joins(joins_json, &tmp);
+    const int rc = fio_read_joins(joins, joins_len, &tmp);
     if (rc != FIO_EOK) return rc;
     if (tmp.n_joins < 2 || tmp.n_joins > MSG_MAX_JOINS) return FIO_EBADARG;
     for (int i = 0; i < tmp.n_joins; i++) out[i] = tmp.joins[i];
@@ -1424,12 +1954,12 @@ static int fio_joins_of(const char *joins_json, MsgJoin *out, int *n_out) {
     return FIO_EOK;
 }
 
-int fio_msg_carry(const char *joins_json, int fool_seat,
+int fio_msg_carry(const uint8_t *joins_packed, int joins_len, int fool_seat,
                   uint32_t *key_out, int *fool_index_out) {
-    if (!joins_json || !key_out || !fool_index_out) return FIO_EBADARG;
+    if (!joins_packed || !key_out || !fool_index_out) return FIO_EBADARG;
     MsgJoin joins[MSG_MAX_JOINS];
     int n = 0;
-    const int rc = fio_joins_of(joins_json, joins, &n);
+    const int rc = fio_joins_of(joins_packed, joins_len, joins, &n);
     if (rc != FIO_EOK) return rc;
     if (fool_seat < 0 || fool_seat >= n) return FIO_EBADARG;
 
@@ -1443,6 +1973,77 @@ int fio_msg_carry(const char *joins_json, int fool_seat,
     return FIO_EOK;
 }
 
+// ---------- the chain layer's gates (msg_wire.h) ---------------------------
+//
+// Nothing here decides anything: each entry reads the packed roster through the
+// one reader a seal uses and hands the rule its arguments.
+
+int fio_msg_chain_is_ahead(int a_phase, int a_round, int a_turn,
+                           int b_phase, int b_round, int b_turn) {
+    return msg_chain_is_ahead(a_phase, a_round, a_turn, b_phase, b_round, b_turn);
+}
+
+int fio_nickname_verdict(int n_chars, int n_bytes) {
+    return msg_nickname_verdict(n_chars, n_bytes);
+}
+
+int fio_name_max_bytes(void) { return MSG_MAX_NAME; }
+int fio_name_max_chars(void) { return MSG_MAX_NAME_CHARS; }
+
+int fio_seat_resolve(int cached_seat, int sender_is_local, int n_players,
+                     int last_actor_seat, int chat_is_dm) {
+    return msg_seat_resolve(cached_seat, sender_is_local, n_players,
+                            last_actor_seat, chat_is_dm);
+}
+
+// The roster every gate below takes, read once. A blob that does not read is
+// an EMPTY roster rather than an error: these gates all fail open, and a caller
+// that cannot read its own bubble has already lost the argument elsewhere.
+//
+// NOT fio_joins_of, which is the rematch key's reader and demands two or more
+// players. A lobby with ONE join is the ordinary case here - it is the bubble
+// the creator sends - and a gate that refused it would put the Join button
+// back on every fresh invite.
+static int fio_gate_joins(const uint8_t *joins, int joins_len, MsgJoin *out) {
+    static MsgEnvelope tmp;   // static for the same reason fio_joins_of is
+    msg_envelope_init(&tmp);
+    if (!joins || fio_read_joins(joins, joins_len, &tmp) != FIO_EOK) return 0;
+    for (int i = 0; i < tmp.n_joins; i++) out[i] = tmp.joins[i];
+    return tmp.n_joins;
+}
+
+int fio_roster_name_taken(const uint8_t *joins, int joins_len,
+                          const uint8_t *name, int name_len) {
+    MsgJoin js[MSG_MAX_JOINS];
+    const int n = fio_gate_joins(joins, joins_len, js);
+    return msg_name_taken(js, n, (const char *)name, name_len);
+}
+
+int fio_seat_claimed_by_name(const uint8_t *joins, int joins_len,
+                             const uint8_t *name, int name_len) {
+    MsgJoin js[MSG_MAX_JOINS];
+    const int n = fio_gate_joins(joins, joins_len, js);
+    return msg_seat_claimed_by_name(js, n, (const char *)name, name_len);
+}
+
+int fio_seat_cache_disowned(const uint8_t *joins, int joins_len, int cached_seat,
+                            const uint8_t *name, int name_len) {
+    MsgJoin js[MSG_MAX_JOINS];
+    const int n = fio_gate_joins(joins, joins_len, js);
+    return msg_seat_cache_disowned(js, n, cached_seat, (const char *)name, name_len);
+}
+
+int fio_seat_resolve_in_lobby(const uint8_t *joins, int joins_len,
+                              int cached_seat, int sender_is_local, int n_players,
+                              int last_actor_seat, int chat_is_dm,
+                              const uint8_t *name, int name_len) {
+    MsgJoin js[MSG_MAX_JOINS];
+    const int n = fio_gate_joins(joins, joins_len, js);
+    return msg_seat_resolve_in_lobby(js, n, cached_seat, sender_is_local, n_players,
+                                     last_actor_seat, chat_is_dm,
+                                     (const char *)name, name_len);
+}
+
 int fio_msg_set_carry(uint32_t key, int fool_index) {
     if (key == 0 || fool_index < 0 || fool_index >= MSG_MAX_JOINS) {
         g_msg_carry_key = 0;
@@ -1454,22 +2055,23 @@ int fio_msg_set_carry(uint32_t key, int fool_index) {
     return FIO_EOK;
 }
 
-int fio_msg_penalty_fool_seat(const char *joins_json, uint32_t carry_key, int carry_fool) {
-    if (!joins_json) return -1;
+int fio_msg_penalty_fool_seat(const uint8_t *joins_packed, int joins_len,
+                              uint32_t carry_key, int carry_fool) {
+    if (!joins_packed) return -1;
     MsgJoin joins[MSG_MAX_JOINS];
     int n = 0;
-    if (fio_joins_of(joins_json, joins, &n) != FIO_EOK) return -1;
+    if (fio_joins_of(joins_packed, joins_len, joins, &n) != FIO_EOK) return -1;
     const uint8_t fool = (carry_fool < 0 || carry_fool > 0xFF)
                        ? (uint8_t)MSG_NO_FOOL : (uint8_t)carry_fool;
     return msg_rematch_fool_seat(joins, n, carry_key, fool);
 }
 
-int fio_msg_start_rematch(const char *joins_json, uint32_t carry_key,
+int fio_msg_start_rematch(const uint8_t *joins_packed, int joins_len, uint32_t carry_key,
                           int carry_fool, int *opening_out) {
-    if (!joins_json || !opening_out) return FIO_EBADARG;
+    if (!joins_packed || !opening_out) return FIO_EBADARG;
     MsgJoin joins[MSG_MAX_JOINS];
     int n = 0;
-    const int rc = fio_joins_of(joins_json, joins, &n);
+    const int rc = fio_joins_of(joins_packed, joins_len, joins, &n);
     if (rc != FIO_EOK) return rc;
 
     const uint8_t fool = (carry_fool < 0 || carry_fool > 0xFF)

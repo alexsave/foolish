@@ -44,7 +44,7 @@ batch 7, not built now) · `[A]` = answered, no code.
 | 30 | Suit icon in card corner shouldn't depend on rank width (10 offsets it) | `FCard.corner` VStack centers the suit under the rank text | [2] |
 | 31 | Harness should simulate exact iPhone SE measurements, centered, rounded, divot | Harness fills the window; no fixed stage | [5] |
 | 32 | Pickup → undo still allows you to stage | Harness `staged` (and the real extension's inserted bubble) survives an undo that empties `pending`; `stageNow` no-ops instead of retracting | [1] |
-| 33 | Drag verb hint ("attack"/"cover"/"pass") like react | Not built; `CardPlay.resolve` can answer it live | [4] |
+| 33 | Drag verb hint ("attack"/"cover"/"pass") like react | Not built; the kernel's `play_resolve` can answer it live | [4] |
 | 34 | Pass drag: don't highlight the pass card; open + highlight a new empty slot | Drop preview only highlights coverable battles; no pass affordance | [4] |
 | 35 | It's "pickup" not Take! | `FStrings` en `"pickup": "Take"` | [1] |
 | 36 | Good can flash: cards appear in hand, fade, re-fly from deck | State renders the refilled hand before `BoardAnimator.hidden` is set (the hide happens per-step after frame polling) | [3] |

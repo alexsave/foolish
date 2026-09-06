@@ -36,6 +36,38 @@ public enum MoveWire {
         return out
     }
 
+    /// THE MENU, WRITTEN. The twin of `decode` below, so a caller holding
+    /// decoded moves can hand them back to the kernel to be asked a question
+    /// about (`PlayWire`, whose rules take the menu as bytes). Production never
+    /// needs it - every board is handed the kernel's own bytes and passes those
+    /// straight on - so its user is the test that builds a menu by hand, which
+    /// is exactly the thing that must not grow a second copy of this layout.
+    ///
+    /// A cover naming fewer attack cards than cover cards pads with the
+    /// no-card sentinel, which reads back as `Card.hidden` and can never equal
+    /// a real attack. `.unknown` moves cannot be written and are dropped.
+    public static func encode(_ moves: [Move]) -> Data {
+        func byte(_ c: Card) -> UInt8 { c.isHidden ? 0xFE : UInt8(c.s * 13 + (c.v - 1)) }
+        // Filtered BEFORE the header is written, so the count can never
+        // promise an entry the loop then declines to write.
+        let writable = moves.compactMap { m in types.firstIndex(of: m.type).map { ($0, m) } }
+        var out: [UInt8] = []
+        let n = UInt32(writable.count)
+        out.append(contentsOf: [UInt8(n & 0xFF), UInt8((n >> 8) & 0xFF),
+                                UInt8((n >> 16) & 0xFF), UInt8((n >> 24) & 0xFF)])
+        for (t, m) in writable {
+            out.append(UInt8(t))
+            out.append(UInt8(m.cards.count))
+            out.append(contentsOf: m.cards.map(byte))
+            let attacks = m.attackCards ?? []
+            for i in 0..<m.cards.count { out.append(i < attacks.count ? byte(attacks[i]) : 0xFE) }
+        }
+        return Data(out)
+    }
+
+    /// A menu with no moves on it - the four-byte header alone.
+    public static let emptyMenu = Data([0, 0, 0, 0])
+
     public static func decode(_ data: Data) -> [Move] {
         let b = [UInt8](data)
         guard b.count >= 4 else { return [] }

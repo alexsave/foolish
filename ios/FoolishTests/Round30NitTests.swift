@@ -23,15 +23,15 @@ final class Round30NitTests: XCTestCase {
     /// asserted rather than inferred from where a line sits in a loop.
     func testOnlyCardsLEAVINGAHandDropTheBadgeEarly() {
         for kind in [EventType.attackPass, .cover] {
-            XCTAssertTrue(MessageTableView.badgeDropsAsCardsLeave(kind),
+            XCTAssertTrue(AnimBeats.badgeDropsAsCardsLeave(kind),
                           "\(kind) takes cards OUT of a hand - the badge drops as they lift")
         }
         for kind in [EventType.pickup, .refill, .deal] {
-            XCTAssertFalse(MessageTableView.badgeDropsAsCardsLeave(kind),
+            XCTAssertFalse(AnimBeats.badgeDropsAsCardsLeave(kind),
                            "\(kind) puts cards INTO a hand - the badge waits for them to land")
         }
         for kind in [EventType.discard, .cardsToTrash, .magicTransition, .out] {
-            XCTAssertFalse(MessageTableView.badgeDropsAsCardsLeave(kind),
+            XCTAssertFalse(AnimBeats.badgeDropsAsCardsLeave(kind),
                            "\(kind) moves nobody's hand")
         }
     }

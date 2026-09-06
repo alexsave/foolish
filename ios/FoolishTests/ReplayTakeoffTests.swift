@@ -47,8 +47,12 @@ final class ReplayTakeoffTests: XCTestCase {
     /// the case every other board in the app is in, so it is the one that must
     /// be provably free.
     func testWithNothingHeldTheFanGetsTheHandUnchanged() {
-        let hand = [c(0, 6), c(1, 11), c(2, 14)]
-        XCTAssertEqual(MessageTableView.fanCards(hand, holding: []), hand)
+        // REAL cards: the fan is laid out by the kernel now (anim_fan_cards
+        // over dense ids), and a value outside 1...13 is not a card. This read
+        // `c(2, 14)` while the rule was Swift set algebra over identity strings,
+        // which never asked whether the card could exist.
+        let hand = [c(0, 6), c(1, 11), c(2, 13)]
+        XCTAssertEqual(HandLayout.fanCards(hand, holding: []), hand)
     }
 
     /// THE FIRST HALF. The cards that left are back in the fan, so the layout
@@ -56,7 +60,7 @@ final class ReplayTakeoffTests: XCTestCase {
     func testHeldCardsRejoinTheFan() {
         let hand = [c(0, 6), c(1, 11)]
         let held = [c(2, 7), c(2, 8)]
-        let laid = MessageTableView.fanCards(hand, holding: held)
+        let laid = HandLayout.fanCards(hand, holding: held)
         XCTAssertEqual(laid.count, 4)
         XCTAssertEqual(Set(laid.map(\.identity)), Set((hand + held).map(\.identity)))
         XCTAssertEqual(Array(laid.prefix(2)), hand, "the present hand keeps its order")
@@ -70,7 +74,7 @@ final class ReplayTakeoffTests: XCTestCase {
     func testAHoldbackNeverDoublesACardTheHandStillHolds() {
         let seven = c(2, 7)
         let hand = [c(0, 6), seven]
-        let laid = MessageTableView.fanCards(hand, holding: [seven, c(2, 8)])
+        let laid = HandLayout.fanCards(hand, holding: [seven, c(2, 8)])
         XCTAssertEqual(laid.count, 3, "the 7 is in hand already - it is held ONCE")
         XCTAssertEqual(laid.map(\.identity).sorted(),
                        [c(0, 6), seven, c(2, 8)].map(\.identity).sorted())
@@ -80,8 +84,8 @@ final class ReplayTakeoffTests: XCTestCase {
     /// An empty hand is the genesis / just-went-out board, and it must still be
     /// able to hold a departure back.
     func testAnEmptyHandStillHolds() {
-        XCTAssertEqual(MessageTableView.fanCards([], holding: [c(0, 6)]).count, 1)
-        XCTAssertTrue(MessageTableView.fanCards([], holding: []).isEmpty)
+        XCTAssertEqual(HandLayout.fanCards([], holding: [c(0, 6)]).count, 1)
+        XCTAssertTrue(HandLayout.fanCards([], holding: []).isEmpty)
     }
 
     // MARK: - what gets held
@@ -96,11 +100,11 @@ final class ReplayTakeoffTests: XCTestCase {
             ev(.attackPass, seat: 3, cards: theirs.map { $0 }),
             ev(.attackPass, seat: 1, cards: mine.map { $0 }),
         ]
-        XCTAssertEqual(MessageTableView.myPlacedCards(events, mySeat: 1).map(\.identity),
+        XCTAssertEqual(HandLayout.myPlacedCards(events, mySeat: 1).map(\.identity),
                        mine.map(\.identity))
-        XCTAssertEqual(MessageTableView.myPlacedCards(events, mySeat: 3).map(\.identity),
+        XCTAssertEqual(HandLayout.myPlacedCards(events, mySeat: 3).map(\.identity),
                        theirs.map(\.identity))
-        XCTAssertTrue(MessageTableView.myPlacedCards(events, mySeat: 0).isEmpty)
+        XCTAssertTrue(HandLayout.myPlacedCards(events, mySeat: 0).isEmpty)
     }
 
     /// A COVER is a placement too - it leaves my hand exactly like an attack,
@@ -109,7 +113,7 @@ final class ReplayTakeoffTests: XCTestCase {
     func testACoverIsHeldLikeAnAttack() {
         let king = c(0, 13)
         let events = [ev(.cover, seat: 2, cards: [king])]
-        XCTAssertEqual(MessageTableView.myPlacedCards(events, mySeat: 2).map(\.identity),
+        XCTAssertEqual(HandLayout.myPlacedCards(events, mySeat: 2).map(\.identity),
                        [king.identity])
     }
 
@@ -122,12 +126,12 @@ final class ReplayTakeoffTests: XCTestCase {
             ev(.refill, seat: 1, cards: [c(0, 6)]),
             ev(.deal, seat: 1, cards: [c(0, 7)]),
         ]
-        XCTAssertTrue(MessageTableView.myPlacedCards(events, mySeat: 1).isEmpty)
-        XCTAssertFalse(MessageTableView.isPlacement(.refill))
-        XCTAssertFalse(MessageTableView.isPlacement(.deal))
-        XCTAssertTrue(MessageTableView.isPlacement(.attackPass))
-        XCTAssertTrue(MessageTableView.isPlacement(.defenderMove))
-        XCTAssertTrue(MessageTableView.isPlacement(.cover))
+        XCTAssertTrue(HandLayout.myPlacedCards(events, mySeat: 1).isEmpty)
+        XCTAssertFalse(HandLayout.isPlacement(.refill))
+        XCTAssertFalse(HandLayout.isPlacement(.deal))
+        XCTAssertTrue(HandLayout.isPlacement(.attackPass))
+        XCTAssertTrue(HandLayout.isPlacement(.defenderMove))
+        XCTAssertTrue(HandLayout.isPlacement(.cover))
     }
 
     /// The kernel REDACTS cards that are not the viewer's (`GameEvent.cards`
@@ -136,7 +140,7 @@ final class ReplayTakeoffTests: XCTestCase {
     /// phantom slot.
     func testRedactedCardsAreSkipped() {
         let events = [ev(.attackPass, seat: 1, cards: [nil, c(0, 7), nil])]
-        XCTAssertEqual(MessageTableView.myPlacedCards(events, mySeat: 1).map(\.identity),
+        XCTAssertEqual(HandLayout.myPlacedCards(events, mySeat: 1).map(\.identity),
                        [c(0, 7).identity])
     }
 
@@ -150,7 +154,7 @@ final class ReplayTakeoffTests: XCTestCase {
             ev(.refill, seat: 0, cards: [c(3, 6)]),
             ev(.cover, seat: 0, cards: [d]),
         ]
-        XCTAssertEqual(MessageTableView.myPlacedCards(events, mySeat: 0).map(\.identity),
+        XCTAssertEqual(HandLayout.myPlacedCards(events, mySeat: 0).map(\.identity),
                        [a, b, d].map(\.identity))
     }
 }

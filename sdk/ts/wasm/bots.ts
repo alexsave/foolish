@@ -63,6 +63,27 @@ interface BotsExports extends EngineExports {
     wasm_anim_resolve(nPending: number, nServer: number, nEvents: number,
                       defender: number, defenderHand: number, finalUncovered: number): number;
     wasm_anim_build_plan(nEvents: number, nPlayers: number, finalDeck: number, finalDiscard: number): number;
+    wasm_anim_set_transport(transport: number): number;
+    wasm_anim_transport(): number;
+}
+
+// ANIM_TRANSPORT_* (c/src/anim_plan.h).
+export const ANIM_TRANSPORT_UNSET = 0;
+export const ANIM_TRANSPORT_CHAIN = 1;
+export const ANIM_TRANSPORT_SERVER = 2;
+
+/** Which transport this module is set to, for diagnostics: a wrong-mode bug
+ *  looks exactly like an animation bug. The setter is deliberately not exported
+ *  as a public knob - a host states its transport at init, in `bots()`. */
+export function animTransport(): number { return bots().wasm_anim_transport(); }
+
+/** THE ONE PLACE A TEST MAY MOVE IT. The two transports have to be provable
+ *  against the same input in the same process (the FMSG suites already drive
+ *  chain behaviour through this module), and that cannot be done without
+ *  putting it back afterwards. */
+export function __setAnimTransport(transport: number): void {
+    const rc = bots().wasm_anim_set_transport(transport);
+    if (rc < 0) throw new Error(`anim_set_transport error ${rc}`);
 }
 
 // Mirrors STRAT_* in c/src/strategy.h (only the ids the server uses).
@@ -177,6 +198,13 @@ function bots(): BotsExports {
     const instance = new WebAssembly.Instance(module, {});
     const ex = instance.exports as unknown as BotsExports;
     ex.wasm_init();
+    // THE TRANSPORT, said once (anim_plan.h). Every host that reaches the
+    // kernel through this module is the server shape: a card's confirmation is
+    // its own later broadcast, so "the newest news does not mention my card"
+    // means the receipt is in the post, not that it was rejected. The kernel
+    // has no default for this and errors rather than guessing, which is what
+    // keeps a new host from silently inheriting iMessage's answer.
+    ex.wasm_anim_set_transport(ANIM_TRANSPORT_SERVER);
     exportsCache = ex;
     // bots.wasm is a superset of rules.wasm — adopt the engine slot so a bot
     // turn's choose and its follow-up action run on one instance, enabling
@@ -1355,15 +1383,22 @@ export interface AnimPlan {
 }
 
 /** anim_build_plan, in C: a decoded viewer sequence -> the timed plan (count-
- *  freeze + veil + durations). Provided for iOS/Steam parity and completeness;
- *  the web's React queue currently renders its own pacing (a TODO seam — see
- *  docs/ANIMATION_CORE_C.md). `events[].seat` may be null for a seat-less event. */
+ *  freeze + veil + durations). `events[].seat` may be null for a seat-less event.
+ *
+ *  EVERY EVENT CARRIES THE BOARD IT COMMITTED (`counts`, from its own evwire
+ *  game_state). That is not optional detail: the freeze is one undo off the
+ *  FIRST event's board, and a caller that omits the boards gets the fallback -
+ *  the walk back over every event, which reads the deck one card high whenever
+ *  the flipped trump was drawn. See c/src/anim_plan.h. */
 export function animBuildPlan(
-    events: { type: number; seat: number | null; from: number; to: number; mask: boolean; cards: Card[] }[],
+    events: {
+        type: number; seat: number | null; from: number; to: number; mask: boolean; cards: Card[];
+        counts?: { deck: number; discard: number; hand: number[] } | null;
+    }[],
     nPlayers: number, finalDeck: number, finalDiscard: number, finalHand: number[],
 ): AnimPlan {
     const ex = bots();
-    if (events.length > 64) throw new Error('anim: plan exceeds ABI cap');
+    if (events.length > 128) throw new Error('anim: plan exceeds ABI cap');
     const buf = __mem(ex);
     const base = ex.wasm_io_ptr();
     let p = base;
@@ -1376,25 +1411,34 @@ export function animBuildPlan(
         buf[p++] = e.mask ? 1 : 0;
         buf[p++] = e.cards.length & 0xff;
         for (const c of e.cards) buf[p++] = __wireStateCard(c);
+        buf[p++] = e.counts ? 1 : 0;
+        buf[p++] = (e.counts?.deck ?? 0) & 0xff;
+        buf[p++] = (e.counts?.discard ?? 0) & 0xff;
+        for (let s = 0; s < nPlayers; s++) buf[p++] = (e.counts?.hand[s] ?? 0) & 0xff;
     }
     const len = ex.wasm_anim_build_plan(events.length, nPlayers, finalDeck, finalDiscard);
     if (len < 0) throw new Error(`anim_build_plan error ${len}`);
     const out = __mem(ex);
     let q = ex.wasm_io_ptr();
     const rd16 = () => { const v = out[q] | (out[q + 1] << 8); q += 2; return v; };
+    // Wall time and step offsets are wide: a full-length stream runs past 65535 ms.
+    const rd32 = () => {
+        const v = (out[q] | (out[q + 1] << 8) | (out[q + 2] << 16) | (out[q + 3] << 24)) >>> 0;
+        q += 4; return v;
+    };
     const nSteps = out[q++];
     const np = out[q++];
     const preDeck = rd16(), preDiscard = rd16();
     const preHand: number[] = [];
     for (let s = 0; s < np; s++) preHand.push(rd16());
-    const totalMs = rd16();
+    const totalMs = rd32();
     const nVeil = out[q++];
     const veilIds: number[] = [];
     for (let i = 0; i < nVeil; i++) veilIds.push(out[q++]);
     const steps: AnimPlanStep[] = [];
     for (let i = 0; i < nSteps; i++) {
         const type = out[q++], seat = out[q++], from = out[q++], to = out[q++], nCards = out[q++];
-        const durationMs = rd16(), startMs = rd16(), deck = rd16(), discard = rd16();
+        const durationMs = rd16(), startMs = rd32(), deck = rd16(), discard = rd16();
         const inFlightFromDeck = out[q++], inFlightToFlipped = out[q++];
         const hand: number[] = [];
         for (let s = 0; s < np; s++) hand.push(rd16());
