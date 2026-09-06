@@ -15,7 +15,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  canAttack, canCoverCards, validateAttack, validatePass, validatePickup, validateCover,
+  canAttack, canCoverCards, canPickup, validateAttack, validatePass, validatePickup, validateCover,
 } from '../src/utils/gameValidation.ts';
 import {
   PersonalGame, PublicPlayer, Card, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
@@ -119,6 +119,21 @@ test('validatePickup throws only on an empty table', () => {
     () => validatePickup(mkGame([6, 6], [{ attack: C(0, 7), defense: null }], { selfSeat: 1 })),
     'a defender can scoop a non-empty table',
   );
+});
+
+// The Take button's enable state. The board used to spell this out itself - "I
+// am the defender and the table is not empty" - which is handle_pickup's rule
+// written a second time, and written short: it had no notion of a game that has
+// already ended, so a finished board still offered Take.
+test('canPickup is the defender, a non-empty table, and a game still playing', () => {
+  const table = [{ attack: C(0, 7), defense: null }];
+  assert.equal(canPickup(mkGame([6, 6], table, { selfSeat: 1 })), true, 'the defender may scoop a non-empty table');
+  assert.equal(canPickup(mkGame([6, 6], [], { selfSeat: 1 })), false, 'an empty table has nothing to take');
+  assert.equal(canPickup(mkGame([6, 6], table, { selfSeat: 0 })), false, 'an attacker never takes');
+
+  const over = mkGame([6, 6], table, { selfSeat: 1 });
+  over.status = GAME_STATUS.GAME_OVER;
+  assert.equal(canPickup(over), false, 'a finished game offers nothing - the clause the hand-written gate lacked');
 });
 
 test('validateCover throws on an empty table and on an illegal cover, else passes', () => {

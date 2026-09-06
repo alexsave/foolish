@@ -29,6 +29,13 @@ export const canAttack = (game: PersonalGame, cards: Card[]): boolean =>
 export const canPass = (game: PersonalGame, cards: Card[]): boolean =>
     guards.canPass(game, cards);
 
+// May this seat take the table? The Take button's enable state, which the board
+// used to spell out as "I am the defender and the table is not empty". That is
+// handle_pickup's rule (c/src/game.c), and the kernel carries a third clause the
+// hand-written one did not: the game must still be PLAYING.
+export const canPickup = (game: PersonalGame): boolean =>
+    guards.canPickup(game);
+
 // The seat that BECOMES the defender after the current defender passes / the
 // bout ends — skips eliminated seats exactly like the server rotation. Used by
 // the optimistic pass animation so its predicted defender matches the server's.

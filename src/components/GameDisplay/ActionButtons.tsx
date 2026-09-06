@@ -10,7 +10,7 @@ import { useEffect, useRef } from "react";
 import { Text } from "../Text";
 import { canCoverPair } from "../../wasm/clientGuards";
 import { kernelUnambiguousCover } from "@sdk/ts/wasm/bots.ts";
-import { canAttack, canPass, canCoverCards } from "../../utils/gameValidation";
+import { canAttack, canPass, canCoverCards, canPickup } from "../../utils/gameValidation";
 import { useStyles } from "../../contexts/StyleContext";
 import { useTutorialHint } from "../../contexts/TutorialHintContext";
 
@@ -155,7 +155,7 @@ export const ActionButtons = () => {
     const rawAttack = !!(game && !isDefending && canAttack(game, selectedCards));
     const rawPass = !!(game && isDefending && canPass(game, selectedCards));
     const rawCover = !!(game && isDefending && canCoverCards(game, selectedCards));
-    const rawPickup = !!(game && isDefending && (game?.table_battles.length ?? 0) > 0);
+    const rawPickup = !!(game && canPickup(game));
 
     const shouldShowGoodButton = rawGood && !pressedActions['good'];
     const shouldShowAttackButton = rawAttack && !pressedActions['attack'];
