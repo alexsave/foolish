@@ -13,6 +13,8 @@
  *   - the PERSONALIZATION invariant: a viewer's stream never carries another
  *     player's hand identities, and DEAL/REFILL identities reach only the
  *     receiving seat (assertNoLeaks, on the raw bytes);
+ *   - a COVER event's target card and battle index agree - the two adjacent
+ *     optional bytes a reader could take in either order;
  *   - the stream DECODES, and the game it decodes to mirrors the committed
  *     state;
  *   - the kernel's masked log export decodes to the right GameLog shapes;
@@ -91,7 +93,7 @@ function assertNoLeaks(bytes: Uint8Array, viewer: number, numPlayers: number): v
     }
   };
 
-  let checked = 0;
+  let checked = 0, covers = 0;
   for (const ev of seq.events) {
     // 1 = deal, 9 = refill (EVW_T_*); a card bound for someone else's hand.
     if ((ev.type === 1 || ev.type === 9) && ev.seat !== viewer) {
@@ -100,16 +102,37 @@ function assertNoLeaks(bytes: Uint8Array, viewer: number, numPlayers: number): v
       }
     }
     noForeignHand(ev.state, `event ${ev.type}`);
+
+    // A COVER is the one event that carries BOTH optional trailer fields - the
+    // covered attack card and the battle index it landed in (evwire.c's
+    // ENGINE_HOOK_COVER emit). They are two adjacent single bytes behind one
+    // flags byte, so a reader that takes them in the wrong order still decodes
+    // the whole stream and still masks every hand: the leak scan above cannot
+    // see it, and neither can a shape check. Tying them together is what makes
+    // the order observable - the target must be the attack card sitting in the
+    // battle the event names.
+    if (ev.type === 5) {
+      assert.ok(ev.target != null, 'a cover names the card it covered');
+      assert.ok(ev.battle != null, 'a cover names the battle it landed in');
+      const b = ev.state.battles[ev.battle!];
+      assert.ok(b, `cover battle index ${ev.battle} is on the board (${ev.state.battles.length} battles)`);
+      assert.deepEqual(
+        b.attack, ev.target,
+        `cover target ${JSON.stringify(ev.target)} is battle ${ev.battle}'s attack ${JSON.stringify(b.attack)}`,
+      );
+      covers++;
+    }
     checked++;
   }
   noForeignHand(seq.game, 'trailer');
   assert.equal(checked, seq.events.length, 'every event was scanned');
   assert.ok(numPlayers >= 2);
+  return covers;
 }
 
 test('every packed stream is leak-free, decodable, and mirrors the committed state', () => {
   const GAMES = Number(process.env.PARITY_GAMES || 24);
-  let moves = 0, ends = 0;
+  let moves = 0, ends = 0, coversChecked = 0;
 
   for (let g = 0; g < GAMES; g++) {
     const numPlayers = 2 + (g % 4); // 2..5 players (36-card deck) - plus 6 below
@@ -162,7 +185,7 @@ test('every packed stream is leak-free, decodable, and mirrors the committed sta
 
       for (const viewer of [...humanSeats, -1]) {
         const cBytes = run.events.get(viewer)!;
-        assertNoLeaks(cBytes, viewer, game.players.length);
+        coversChecked += assertNoLeaks(cBytes, viewer, game.players.length);
 
         const decoded = decodeEventWire(cBytes, roster, { preGood, prevGoodTs: preGoodTs, now: () => 4242 });
         assert.ok(decoded, 'stream decodes');
@@ -178,7 +201,10 @@ test('every packed stream is leak-free, decodable, and mirrors the committed sta
   }
 
   assert.ok(moves > 100, `enough moves exercised (${moves})`);
-  console.error(`[packed-wire] moves=${moves} ends=${ends}`);
+  // A cover is the only event with both trailer bytes, so the check above is
+  // only worth anything if covers actually happened.
+  assert.ok(coversChecked > 100, `enough covers cross-checked (${coversChecked})`);
+  console.error(`[packed-wire] moves=${moves} ends=${ends} covers=${coversChecked}`);
 
   // An illegal wire is rejected: the defender may not attack.
   {

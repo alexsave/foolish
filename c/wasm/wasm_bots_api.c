@@ -18,7 +18,6 @@
 #include "bot_roster.h"
 #include "replay_steps.h"
 #include "view.h"
-#include "json_out.h"
 #include "replay_extras.h"
 #include <string.h>
 #include <stdlib.h>
@@ -509,3 +508,50 @@ int wasm_bot_drive(int human_mask, int max_actions, int n_pref) {
     }
     return g_drv.n;
 }
+
+// ---------- replay steps (docs/C_CORE_CONSOLIDATION.md F4.2 / A5) -----------
+// A v6 code, replayed through the REAL engine, serialized as the SAME packed
+// evwire frames live play broadcasts — so a replay screen decodes and renders
+// what it already decodes and renders, with no replay-side projection.
+//
+// Lives in bots.wasm, not rules.wasm, and not by preference: replay_steps.c's
+// decoded-action buffer alone is ~272 KB, while rules.wasm's whole linear
+// memory is PINNED at 196,608 B (--initial-memory == --max-memory). It is 1.4x
+// the module before anything else. Per the standing steer, the fix is one big
+// module everywhere rather than shrinking the replay to fit the small one
+// (docs/C_CORE_CONSOLIDATION.md A10 / RULES_GUARDS_WASM_MEMORY_PLAN.md).
+//
+// The code goes in the REPLAY io buffer (it is a replay input, like every other
+// wasm_replay_* call); the frames come back in the MAIN io buffer, so the two
+// never alias.
+extern unsigned char *wasm_replay_io_ptr(void);
+extern int wasm_replay_io_cap(void);
+extern int wasm_io_cap(void);
+
+static int g_rs_n_frames, g_rs_next_step;
+
+int wasm_replay_events(int viewer, int from, int code_len) {
+    g_rs_n_frames = 0;
+    g_rs_next_step = from;
+    return replay_steps_frames_v6(wasm_replay_io_ptr(), code_len,
+                                  viewer < 0 ? VIEW_SPECTATOR : viewer, from, 0,
+                                  wasm_io_ptr(), wasm_io_cap(),
+                                  &g_rs_n_frames, &g_rs_next_step);
+}
+int wasm_replay_events_n(void)    { return g_rs_n_frames; }
+int wasm_replay_events_next(void) { return g_rs_next_step; }
+
+// Steps the code replays to (the deal + one per action). Sizes the scrubber.
+int wasm_replay_step_count(int code_len) {
+    return replay_steps_count_v6(wasm_replay_io_ptr(), code_len, 0);
+}
+
+// What each step is: 4 bytes per step into the MAIN io buffer (the code is in
+// the replay buffer, as for every wasm_replay_* call, so the two never alias).
+// A whole game's index is steps*4 bytes — a couple of KB — so unlike the frames
+// this needs no chunking.
+int wasm_replay_step_index(int code_len) {
+    return replay_steps_index_v6(wasm_replay_io_ptr(), code_len, 0,
+                                 wasm_io_ptr(), wasm_io_cap());
+}
+

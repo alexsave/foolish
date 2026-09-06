@@ -103,8 +103,8 @@ function checkView(game: Game, blob: Uint8Array, seat: number, version: number, 
             vp.hand!.forEach((c, j) => assert.deepEqual({ suit: c.s, value: c.v }, game.players[i].hand[j],
                                                         `${tag}: own hand card ${j} real`));
         } else {
-            // The kernel says "hand":null for a seat that is not the viewer.
-            // NOTE what this does and does not prove: json_out.c emits null
+            // The decoder says hand: null for a seat that is not the viewer.
+            // NOTE what this does and does not prove: packed_read.ts emits null
             // BECAUSE the seat is not the viewer, not because the bytes were
             // hidden, so a payload full of real identities would satisfy it
             // too. It pins the decoder's contract, nothing about the masking.
@@ -160,8 +160,8 @@ function checkView(game: Game, blob: Uint8Array, seat: number, version: number, 
 // THE MASKING ITSELF, ON THE BYTES
 // ---------------------------------------------------------------------------
 // checkView above asserts "seat i hand masked for viewer s" - and cannot fail.
-// It reads the blob back with kernelViewFromPacked, and json_out.c emits
-// "hand":null for any seat that is not the viewer BECAUSE it is not the viewer,
+// It reads the blob back with kernelViewFromPacked, which reports
+// hand: null for any seat that is not the viewer BECAUSE it is not the viewer,
 // not because the bytes were hidden. So the identities could all be sitting in
 // the payload and that assertion would still pass. The file header has claimed
 // this invariant since it was written; nothing was checking it.

@@ -33,10 +33,10 @@ export interface ViewRoster {
 }
 
 // This file used to carry a parseMaskedState that read view.c's layout byte for
-// byte — the offsets existed twice, here and in C, and a parity test was what
-// kept them honest. The kernel reads its own format now (src/json_out.c, reached
-// through kernelViewFromPacked), so the only thing left here is the part the
-// kernel structurally cannot do: joining the board to the roster.
+// byte. That reader is now wire/packed_read.ts (reached through
+// kernelViewFromPacked) - one place, shared with the event stream, rather than
+// inlined here. What is left in this file is the part the kernel structurally
+// cannot do: joining the board to the roster.
 
 // Reconstruct the good_players array (insertion-ordered) from the mask.
 // The pre-known order survives; at most ONE player can be newly added per
@@ -296,7 +296,7 @@ export function decodePackedGame(
         // The envelope around the blob is this file's own invention (it is
         // written by encodeGameResponse a few lines up, in TypeScript, with no C
         // twin), so reading it here duplicates nothing. The BLOB inside it is
-        // view.c's, and that goes to the kernel. Skip [fmt | viewer].
+        // view.c's. Skip [fmt | viewer].
         state = kernelViewFromPacked(buf.subarray(q + 2, q + viewLen), seat);
     } catch {
         return null; // truncated/corrupt payload — caller treats as unreadable

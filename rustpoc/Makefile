@@ -15,7 +15,7 @@ KSRC_PLAYOUT = $(KSRC_LEGAL) ../c/src/cordite_sim.c
 TT_FLAGS     = -DCD_TT_BITS=12 -DCD_TT_2WAY -DCD_TT_PACK8
 KSRC_WIRE    = ../c/src/game.c ../c/src/deal_rng.c ../c/src/legal.c \
                ../c/src/replay.c ../c/src/replay_steps.c ../c/src/view.c \
-               ../c/src/awire.c ../c/src/evwire.c ../c/src/json_out.c \
+               ../c/src/awire.c ../c/src/evwire.c \
                ../c/src/sha256.c ../c/src/msg_wire.c
 
 build:

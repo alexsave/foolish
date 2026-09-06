@@ -17,6 +17,9 @@
 import { Card, Battle, Game } from '@api/core/types.ts';
 import { LegalMove } from '@api/core/bot_interfaces.ts';
 import { loadWasmGz, loadWasmGzAsync } from './wasm_asset.ts';
+import {
+    KernelState, KernelSequence, kernelViewFromPacked, kernelEventsFromPacked,
+} from '@sdk/ts/wire/packed_read.ts';
 
 // view.h: mask every hand and the deck.
 const VIEW_SPECTATOR = -1;
@@ -37,8 +40,6 @@ interface BotsExports extends EngineExports {
     wasm_replay_events_next(): number;
     wasm_replay_step_count(code_len: number): number;
     wasm_replay_step_index(code_len: number): number;
-    wasm_view_json(len: number, viewer: number): number;
-    wasm_events_json(len: number): number;
     wasm_replay_extras_encode(in_len: number): number;
     wasm_replay_extras_decode(blob_len: number, player_count: number, move_count: number): number;
     wasm_replay_link(in_len: number, style: number): number;
@@ -1085,106 +1086,22 @@ export function kernelMsgPublicView(): { view: KernelState } {
     if (blob[0] !== VIEW_FORMAT_VERSION) {
         throw new Error(`view: format ${blob[0]}, this build reads ${VIEW_FORMAT_VERSION}`);
     }
-    // Serialized by the kernel, read back by the kernel. It used to hand the
-    // blob to a TS parser, which meant this one call crossed the wire format
-    // twice in two different implementations of it.
     return { view: kernelViewFromPacked(blob.subarray(2), VIEW_SPECTATOR) };
 }
 
 // ---------------------------------------------------------------------------
-// Packed bytes -> objects, decoded by the kernel (A8/F7)
+// Packed bytes -> objects
 //
-// The door the web's wire decode goes through now. The TS that used to read
-// these formats shadowed view.c and evwire.c byte for byte and was kept true by
-// a parity test; the layout lives in C alone now, and this asks it for objects.
-// iOS has always worked this way — src/json_out.c is literally the same code.
-//
-// What comes back is RAW: ints where the kernel has ints, seats where the
-// kernel has seats, null for a masked card. It is not the view model. Identity
-// (player_id/name/is_ai), good-order, timestamps and message prose are joined on
-// afterwards by the host, because the kernel does not have them and says so —
-// see wire/view.ts's viewToGame, which is where that join stayed.
-//
-// Buffer discipline mirrors the kernel side: the packed input goes to the REPLAY
-// io buffer, the JSON comes back in the MAIN one, so the two never alias.
+// The door the web's wire decode goes through. The decoders themselves are in
+// wire/packed_read.ts, in TypeScript, and re-exported here because every caller
+// already imports this module - see that file's header for why they are not in
+// C any more and what keeps them honest.
 // ---------------------------------------------------------------------------
 
-// json_out.h's negative returns.
-const JSON_EBADARG = -1, JSON_ECAP = -3, JSON_EPARSE = -4;
-
-function __jsonError(code: number, what: string): Error {
-    switch (code) {
-        case JSON_EBADARG: return new Error(`${what}: bad argument (empty payload, or a viewer seat off the board)`);
-        case JSON_ECAP:    return new Error(`${what}: decoded JSON exceeds the kernel IO buffer`);
-        case JSON_EPARSE:  return new Error(`${what}: not a readable payload (truncated, or a format this build does not read)`);
-        default:           return new Error(`${what}: kernel error ${code}`);
-    }
-}
-
-function __jsonCall(bytes: Uint8Array, what: string, run: (ex: BotsExports) => number): unknown {
-    const ex = bots();
-    __mem(ex).set(bytes, ex.wasm_replay_io_ptr());
-    const len = run(ex);
-    if (len < 0) throw __jsonError(len, what);
-    const base = ex.wasm_io_ptr();
-    // subarray, not slice: decoded and handed to JSON.parse immediately, before
-    // any other kernel call can touch the buffer.
-    return JSON.parse(new TextDecoder().decode(__mem(ex).subarray(base, base + len)));
-}
-
-/** One seat's masked hand as the kernel emits it — null entries are card backs. */
-export interface KernelCard { s: number; v: number }
-
-export interface KernelPlayerState {
-    seat: number; name: string; status: number; handCount: number;
-    awaitingAttack: boolean; strategyKey: number;
-    hand: KernelCard[] | null;   // null for every seat that is not the viewer
-}
-
-/** A viewer-masked board, exactly as src/json_out.c's json_state writes it. */
-export interface KernelState {
-    status: number; numPlayers: number; powerSuit: number;
-    deckCount: number; discardCount: number; hasFlipped: boolean;
-    firstAttacker: number; defender: number; viewer: number;
-    goodMask: number; hasGoodTs: boolean; gameOver: number;
-    flipped: KernelCard | null;
-    battles: { attack: KernelCard; defense: KernelCard | null }[];
-    eliminationOrder: number[];
-    players: KernelPlayerState[];
-}
-
-export interface KernelEvent {
-    type: number; seat: number; msg: number; from: number; to: number;
-    cards: (KernelCard | null)[];
-    target?: KernelCard;
-    battle?: number;
-    state: KernelState;
-}
-
-export interface KernelSequence {
-    viewer: number; actor: number;
-    events: KernelEvent[];
-    game: KernelState;
-}
-
-/**
- * Decode a packed masked view blob (view.c's state_get layout) into the board it
- * describes. `viewer` is the seat whose hand is real in the blob, or -1 for the
- * spectator feed. Throws on an unreadable payload — never returns a partial board.
- */
-export function kernelViewFromPacked(blob: Uint8Array, viewer: number): KernelState {
-    return __jsonCall(blob, 'kernelViewFromPacked',
-                      ex => ex.wasm_view_json(blob.length, viewer)) as KernelState;
-}
-
-/**
- * Decode a packed evwire sequence (the bytes live play broadcasts and a replay
- * frame carries) into its events, each with the board as of that step.
- */
-export function kernelEventsFromPacked(bytes: Uint8Array): KernelSequence {
-    return __jsonCall(bytes, 'kernelEventsFromPacked',
-                      ex => ex.wasm_events_json(bytes.length)) as KernelSequence;
-}
+export type {
+    KernelCard, KernelPlayerState, KernelState, KernelEvent, KernelSequence,
+} from '@sdk/ts/wire/packed_read.ts';
+export { kernelViewFromPacked, kernelEventsFromPacked };
 
 /* ---------------- the replay code's extras blob (c/src/replay_extras.h) ------
  *

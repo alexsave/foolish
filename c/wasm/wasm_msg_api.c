@@ -1,6 +1,6 @@
-// The kernel bridge shared by every host that is NOT a bot runner: the replay
-// codec, the share link, the packed->JSON decoders and the one-tap cover
-// resolver.
+// The kernel bridge shared by every host that is NOT a bot runner: the share
+// link (base32, both link styles, and reading one back), the replay code's
+// extras blob, and the one-tap cover resolver.
 //
 // Split out of wasm_bots_api.c, which had grown two halves with nothing in
 // common. The bot half (roster, strategy dispatch, the drive cycle, the belief
@@ -14,9 +14,8 @@
 #include "game.h"
 #include "wire.h"
 #include "legal.h"
-#include "replay_steps.h"
 #include "view.h"
-#include "json_out.h"
+#include "replay.h"
 #include "replay_extras.h"
 #include <string.h>
 
@@ -25,52 +24,6 @@ extern int wasm_io_cap(void);
 extern unsigned char *wasm_replay_io_ptr(void);
 extern int wasm_replay_io_cap(void);
 extern Game *wasm_game_ptr_internal(void);
-
-// ---------- replay steps (docs/C_CORE_CONSOLIDATION.md F4.2 / A5) -----------
-// A v6 code, replayed through the REAL engine, serialized as the SAME packed
-// evwire frames live play broadcasts — so a replay screen decodes and renders
-// what it already decodes and renders, with no replay-side projection.
-//
-// Lives in bots.wasm, not rules.wasm, and not by preference: replay_steps.c's
-// decoded-action buffer alone is ~272 KB, while rules.wasm's whole linear
-// memory is PINNED at 196,608 B (--initial-memory == --max-memory). It is 1.4x
-// the module before anything else. Per the standing steer, the fix is one big
-// module everywhere rather than shrinking the replay to fit the small one
-// (docs/C_CORE_CONSOLIDATION.md A10 / RULES_GUARDS_WASM_MEMORY_PLAN.md).
-//
-// The code goes in the REPLAY io buffer (it is a replay input, like every other
-// wasm_replay_* call); the frames come back in the MAIN io buffer, so the two
-// never alias.
-extern unsigned char *wasm_replay_io_ptr(void);
-extern int wasm_replay_io_cap(void);
-extern int wasm_io_cap(void);
-
-static int g_rs_n_frames, g_rs_next_step;
-
-int wasm_replay_events(int viewer, int from, int code_len) {
-    g_rs_n_frames = 0;
-    g_rs_next_step = from;
-    return replay_steps_frames_v6(wasm_replay_io_ptr(), code_len,
-                                  viewer < 0 ? VIEW_SPECTATOR : viewer, from, 0,
-                                  wasm_io_ptr(), wasm_io_cap(),
-                                  &g_rs_n_frames, &g_rs_next_step);
-}
-int wasm_replay_events_n(void)    { return g_rs_n_frames; }
-int wasm_replay_events_next(void) { return g_rs_next_step; }
-
-// Steps the code replays to (the deal + one per action). Sizes the scrubber.
-int wasm_replay_step_count(int code_len) {
-    return replay_steps_count_v6(wasm_replay_io_ptr(), code_len, 0);
-}
-
-// What each step is: 4 bytes per step into the MAIN io buffer (the code is in
-// the replay buffer, as for every wasm_replay_* call, so the two never alias).
-// A whole game's index is steps*4 bytes — a couple of KB — so unlike the frames
-// this needs no chunking.
-int wasm_replay_step_index(int code_len) {
-    return replay_steps_index_v6(wasm_replay_io_ptr(), code_len, 0,
-                                 wasm_io_ptr(), wasm_io_cap());
-}
 
 // ---------- the replay code's extras blob (#113) -----------------------------
 //
@@ -148,30 +101,6 @@ int wasm_replay_link(int in_len, int style) {
     return replay_extras_link_styled((const char *)(in + p + roster_len),
                                      in + p, roster_len, n_names, style,
                                      (char *)wasm_io_ptr(), wasm_io_cap());
-}
-
-// ---------- packed bytes -> JSON (A8/F7) ------------------------------------
-//
-// The browser's way into the kernel's decoders. The web used to read these two
-// formats with hand-written TypeScript that shadowed view.c and evwire.c byte
-// for byte, kept true by a parity test — i.e. the layout existed twice and a
-// change meant editing both. Now the layout exists once, here, and the client
-// asks for objects. iOS already worked this way (ios_api.c); this is the same
-// C, reached through a different door.
-//
-// Buffer discipline matches every other blob-in/blob-out export on this module:
-// the packed input goes in the REPLAY io buffer, the JSON comes back in the MAIN
-// one, so the two never alias. Both return bytes written (the caller reads that
-// many from wasm_io_ptr) or a negative JSON_E* code.
-
-int wasm_view_json(int len, int viewer) {
-    return json_view_from_packed(wasm_replay_io_ptr(), len, viewer,
-                                 (char *)wasm_io_ptr(), wasm_io_cap());
-}
-
-int wasm_events_json(int len) {
-    return json_events_from_packed(wasm_replay_io_ptr(), len,
-                                   (char *)wasm_io_ptr(), wasm_io_cap());
 }
 
 // ---------- one-tap cover resolution (A7/F9) --------------------------------

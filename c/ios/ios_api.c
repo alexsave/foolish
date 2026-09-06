@@ -1,10 +1,11 @@
 // ios_api.c — implementation of the Swift-visible bridge (see ios/include/ios_api.h).
 //
 // One static Game, no threads inside (the Swift EngineC wrapper serializes every
-// call onto a single queue). Everything Swift reads leaves here as JSON built by
-// the tiny appender below; the one move Swift sends arrives as JSON parsed by the
-// tiny scanner below. No Durak rule lives here — this file only marshals to and
-// from game.c / legal.c / view.c / replay.c (docs/IOS_APP_DESIGN.md §3, §16.0).
+// call onto a single queue). Everything crosses as the kernel's own packed bytes
+// — the same wire the wasm build hands the web — and Swift decodes them
+// directly (MaskedView / MoveWire / awire). There is no JSON here any more. No
+// Durak rule lives here either: this file only marshals to and from
+// game.c / legal.c / view.c / replay.c (docs/IOS_APP_DESIGN.md §3, §16.0).
 
 #include "ios_api.h"
 
@@ -22,20 +23,10 @@
 #include "anim_plan.h"
 #include "awire.h"
 #include "sha256.h"
-#include "json_out.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-// This file used to carry its own JSON appender and board emitter. They live in
-// src/json_out.c now, because the web needed exactly the same decode and the
-// only alternative was a third implementation of the layout (A8/F7). The error
-// codes line up so json_out's returns pass straight through untranslated —
-// pinned here rather than trusted.
-_Static_assert(JSON_EBADARG == FIO_EBADARG, "json_out/ios error codes diverged");
-_Static_assert(JSON_ECAP    == FIO_ECAP,    "json_out/ios error codes diverged");
-_Static_assert(JSON_EPARSE  == FIO_EPARSE,  "json_out/ios error codes diverged");
 
 // ---------- the one game --------------------------------------------------
 
@@ -128,58 +119,18 @@ static int fio_roster_idx(int strategy_id) {
 // checks strategy_key == STRAT_RANDOM to mirror the TS bot's random-opponent
 // special case). Seats default to the `random` entry, matching the old
 // strategy_key == 0 == STRAT_RANDOM default: a seat nobody assigned but that
-// fio_bot_step_json(-1) drives anyway still plays random, as before.
+// a bot drive with no assignment still plays random, as before.
 static int8_t g_seat_roster[MAX_PLAYERS];
 
 // ---------- legal moves ----------------------------------------------------
 
-static const char *move_type_name(int t) {
-    switch (t) {
-        case MOVE_ATTACK: return "attack";
-        case MOVE_COVER:  return "cover";
-        case MOVE_PASS:   return "pass";
-        case MOVE_PICKUP: return "pickup";
-        case MOVE_GOOD:   return "good";
-        case MOVE_WAIT:   return "wait";
-        default:          return "unknown";
-    }
-}
-
-// Emit one LegalMove as a JSON object (no leading comma).
-static void emit_move_obj(J *j, const LegalMove *m) {
-    j_puts(j, "{\"type\":"); j_putstr(j, move_type_name(m->type));
-    j_puts(j, ",\"cards\":[");
-    for (int c = 0; c < m->n_cards; c++) { if (c) j_putc(j, ','); j_card(j, m->cards[c]); }
-    j_putc(j, ']');
-    if (m->type == MOVE_COVER) {
-        j_puts(j, ",\"attackCards\":[");
-        for (int c = 0; c < m->n_cards; c++) { if (c) j_putc(j, ','); j_card(j, m->attack_cards[c]); }
-        j_putc(j, ']');
-    }
-    j_putc(j, '}');
-}
-
-static int emit_legal_of(const Game *g, int seat, char *out, int cap) {
-    LegalMoves moves;
-    calculate_legal_moves(g, seat, &moves);
-    J j; j_init(&j, out, cap);
-    j_putc(&j, '[');
-    for (int i = 0; i < moves.n; i++) { if (i) j_putc(&j, ','); emit_move_obj(&j, &moves.moves[i]); }
-    j_putc(&j, ']');
-    return j_finish(&j);
-}
-
-int fio_legal_moves_json(int seat, char *out, int cap) {
-    if (!g_has_game) return FIO_ENOGAME;
-    if (seat < 0 || seat >= g_game.num_players) return FIO_EBADARG;
-    return emit_legal_of(&g_game, seat, out, cap);
-}
+// (move_type_name went with the JSON emitters: the packed wire carries the
+// MOVE_* integer and the host names it.)
 
 // ---------- packed emitters (no JSON — the packed kernel wire) --------------
 //
 // Client and server are kernel-to-kernel, so these hand out the SAME bytes the
-// wasm build does and Swift decodes them directly (MaskedView / MoveWire). The
-// _json twins above are being retired (owner: wipe the JSON).
+// wasm build does and Swift decodes them directly (MaskedView / MoveWire).
 
 // The seat's legal moves as the packed move wire — identical layout to
 // wasm_export_moves: u32 count, then per move {type, n_cards, cards[n_cards],
@@ -326,184 +277,17 @@ int fio_play_human_menu(const uint8_t *menu, int menu_len,
 // legacy the day it was written.
 //
 // So: the same kernel hooks that feed the web's evwire feed this too
-// (evwire_walk, the one derivation), and Swift gets JSON — never packed bytes,
-// per this file's bridge rule.
-
-#define FIO_MAX_SNAPS 48
-#define GAME_PREFIX_SIZE (__builtin_offsetof(Game, num_logs))
-typedef struct { _Alignas(8) unsigned char bytes[GAME_PREFIX_SIZE]; } FioSnapSlot;
-
-static FioSnapSlot g_snaps[FIO_MAX_SNAPS];
-static int         g_snap_tags[FIO_MAX_SNAPS];
-static int         g_snap_aux[FIO_MAX_SNAPS];
-static int         g_n_snaps = 0;
-// Where the last apply's / drive's own logs begin in the resident game log.
-static int         g_last_event_log_start = 0;
-
-// state_put/put_state only read prefix fields, which is exactly what a slot
-// holds — so a slot can stand in for a Game when an event is rendered.
-static void fio_snap_cb(const Game *g, int tag, int aux) {
-    if (g_n_snaps >= FIO_MAX_SNAPS) return;
-    memcpy(g_snaps[g_n_snaps].bytes, g, GAME_PREFIX_SIZE);
-    g_snap_tags[g_n_snaps] = tag;
-    g_snap_aux[g_n_snaps] = aux;
-    g_n_snaps++;
-}
-
-static void fio_snaps_reset(void) { g_n_snaps = 0; }
-
-// The JSON sink for evwire_walk. Mirrors the evwire field names so the Swift
-// decoder and the web's decoder describe the same event.
-typedef struct { J *j; int n; int viewer; } FioEvCtx;
-
-static void fio_ev_sink(void *ctx, const EvwEvent *ev) {
-    FioEvCtx *c = (FioEvCtx *)ctx;
-    if (c->n++) j_putc(c->j, ',');
-    j_puts(c->j, "{\"type\":");   j_puti(c->j, ev->type);
-    j_puts(c->j, ",\"seat\":");   j_puti(c->j, ev->seat);
-    j_puts(c->j, ",\"msg\":");    j_puti(c->j, ev->msg);
-    j_puts(c->j, ",\"from\":");   j_puti(c->j, ev->from);
-    j_puts(c->j, ",\"to\":");     j_puti(c->j, ev->to);
-    j_puts(c->j, ",\"cards\":[");
-    for (int i = 0; i < ev->n_cards; i++) {
-        if (i) j_putc(c->j, ',');
-        // The DEAL/REFILL redaction: a card bound for someone else's hand is a
-        // card back. The kernel masks it; the app cannot leak what it never got.
-        if (ev->mask_cards) j_puts(c->j, "null");
-        else j_card(c->j, ev->cards[i]);
-    }
-    j_putc(c->j, ']');
-    if (ev->has_target) { j_puts(c->j, ",\"target\":"); j_card(c->j, ev->target); }
-    if (ev->has_battle) { j_puts(c->j, ",\"battle\":"); j_puti(c->j, ev->battle); }
-    // The board AS OF this step, masked for this viewer — the same thing the
-    // web's evwire carries per event (the `snap_len` payload) and commits when
-    // the step's animation lands. Without it a multi-action cycle could only be
-    // drawn at its final state, and the only way back to the intermediate boards
-    // would be for the client to re-derive them — which is precisely what
-    // BoardDiff.swift was cancelled for (§16.B4).
-    if (ev->snap) { j_puts(c->j, ",\"state\":"); json_state(c->j, ev->snap, c->viewer); }
-    j_putc(c->j, '}');
-}
-
-// Emit the events captured since the last reset, as seen by `viewer`.
+// (evwire_walk, the one derivation), and Swift decodes the packed sequence.
 //
-// `log_start` is where THIS action's logs begin. The wasm bridge can hand
-// evwire the whole log buffer because it clears it per call (it re-marshals
-// the game every time); this file keeps ONE resident Game whose log is the
-// game's entire history — the replay encoder and the belief bots both read it
-// — so the fresh entries are sliced off, never cleared.
-static void j_events(J *j, int viewer, int log_start) {
-    EvSnap refs[FIO_MAX_SNAPS];
-    for (int i = 0; i < g_n_snaps; i++) {
-        refs[i].g = (const Game *)(const void *)g_snaps[i].bytes;
-        refs[i].tag = g_snap_tags[i];
-        refs[i].aux = g_snap_aux[i];
-    }
-    FioEvCtx ctx = { j, 0, viewer };
-    j_putc(j, '[');
-    evwire_walk(refs, g_n_snaps, g_game.logs + log_start, g_game.num_logs - log_start,
-                viewer, fio_ev_sink, &ctx);
-    j_putc(j, ']');
-}
+// Nothing is captured on the APPLY path any more. This bridge used to keep 48
+// Game-prefix snapshot slots and arm engine_snap_hook around every
+// fio_apply_awire so it could render the move's events on demand; the app never
+// asked. It animates from the chain instead (fio_replay_last_events_packed,
+// which replays through replay_steps.c and arms its own hook), so the slots were
+// filled on every move and read by nobody.
 
-// ---------- a tiny JSON move parser ---------------------------------------
-//
-// Only the exact move shape is parsed: {"type":"attack","cards":[{"s":0,"v":6}],
-// "attackCards":[...]}. Not a general JSON parser — a scanner that pulls the
-// "type" token and the {s,v} pairs out of the named arrays. Anything malformed
-// returns a parse failure and the move is refused (never guessed).
-
-// Point `p` just past the value of key `"<key>"` (past the following ':'), or
-// return NULL if the key is absent.
-static const char *find_key(const char *json, const char *key) {
-    char pat[32];
-    int n = snprintf(pat, sizeof(pat), "\"%s\"", key);
-    if (n <= 0 || n >= (int)sizeof(pat)) return NULL;
-    const char *p = strstr(json, pat);
-    if (!p) return NULL;
-    p += n;
-    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
-    if (*p != ':') return NULL;
-    p++;
-    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
-    return p;
-}
-
-// Parse a leading integer (optional '-') at *p, advancing *p past it.
-static long scan_int(const char **p) {
-    long sign = 1, v = 0;
-    if (**p == '-') { sign = -1; (*p)++; }
-    while (**p >= '0' && **p <= '9') { v = v * 10 + (**p - '0'); (*p)++; }
-    return sign * v;
-}
-
-// Parse the array of {"s":..,"v":..} objects that is the value at `arr` (which
-// must point at a '['). Fills up to `cap` cards; returns the count, or -1 on
-// malformed input. Stops at the matching ']'.
-static int parse_card_array(const char *arr, Card *out, int cap) {
-    if (!arr || *arr != '[') return -1;
-    const char *p = arr + 1;
-    int n = 0;
-    for (;;) {
-        while (*p == ' ' || *p == ',' || *p == '\n' || *p == '\t' || *p == '\r') p++;
-        if (*p == ']') return n;
-        if (*p != '{') return -1;
-        const char *sp = find_key(p, "s");
-        const char *vp = find_key(p, "v");
-        if (!sp || !vp) return -1;
-        long s = scan_int(&sp);
-        long v = scan_int(&vp);
-        if (n >= cap) return -1;
-        out[n].suit  = (int8_t)s;
-        out[n].value = (int8_t)v;
-        n++;
-        // advance p past this object's closing '}'
-        const char *close = strchr(p, '}');
-        if (!close) return -1;
-        p = close + 1;
-    }
-}
-
-// {"type":"cover","cards":[...],"attackCards":[...]} -> AwireAction.
-// Factored out of fio_apply_json so the FMSG rebase path parses a move exactly
-// the way the play path does — two parsers would be two move languages.
-static int fio_move_to_awire(const char *move_json, AwireAction *out) {
-    const char *tp = find_key(move_json, "type");
-    if (!tp || *tp != '"') return FIO_EPARSE;
-    tp++;
-    char type[16] = {0};
-    int ti = 0;
-    while (*tp && *tp != '"' && ti < (int)sizeof(type) - 1) type[ti++] = *tp++;
-
-    Card cards[MAX_MOVE_CARDS], acards[MAX_MOVE_CARDS];
-    int nc = 0, nac = 0;
-    const char *cp = find_key(move_json, "cards");
-    if (cp) { nc = parse_card_array(cp, cards, MAX_MOVE_CARDS); if (nc < 0) return FIO_EPARSE; }
-    const char *ap = find_key(move_json, "attackCards");
-    if (ap) { nac = parse_card_array(ap, acards, MAX_MOVE_CARDS); if (nac < 0) return FIO_EPARSE; }
-
-    if      (!strcmp(type, "attack")) out->kind = AWIRE_ATTACK;
-    else if (!strcmp(type, "pass"))   out->kind = AWIRE_PASS;
-    else if (!strcmp(type, "pickup")) out->kind = AWIRE_PICKUP;
-    else if (!strcmp(type, "good"))   out->kind = AWIRE_GOOD;
-    else if (!strcmp(type, "cover")) {
-        if (nac != nc) return FIO_EPARSE;
-        out->kind = AWIRE_COVER;
-    } else return FIO_EPARSE;
-
-    if (out->kind == AWIRE_PICKUP || out->kind == AWIRE_GOOD) { out->n = 0; return FIO_EOK; }
-    if (nc > AWIRE_MAX_CARDS) return FIO_EPARSE;
-    out->n = nc;
-    for (int i = 0; i < nc; i++) {
-        out->cards[i] = cards[i];
-        if (out->kind == AWIRE_COVER) out->attacks[i] = acards[i];
-    }
-    return FIO_EOK;
-}
-
-// The client sends the awire action bytes (no JSON move) — fio_apply_awire is the
-// one apply entry now. The FMSG rebase path still parses a move from JSON via
-// fio_move_to_awire (above); a plain apply never does.
+// The client sends the awire action bytes — fio_apply_awire is the one apply
+// entry, and the FMSG rebase path (fio_msg_rebase_awire) reads the same frame.
 int fio_apply_awire(int actor_seat, const uint8_t *buf, int len) {
     if (!g_has_game) return FIO_ENOGAME;
     if (!buf || len <= 0) return FIO_EBADARG;
@@ -511,23 +295,13 @@ int fio_apply_awire(int actor_seat, const uint8_t *buf, int len) {
     AwireAction a;
     if (!awire_decode(buf, len, &a)) return FIO_EPARSE;
 
-    fio_snaps_reset();
-    g_last_event_log_start = g_game.num_logs;
-    engine_snap_hook = fio_snap_cb;
     engine_last_reject = ENGINE_REJECT_NONE;
     bool ok = awire_apply(&g_game, actor_seat, &a);   // the kernel owns the switch
-    engine_snap_hook = 0;
-    if (!ok) { fio_snaps_reset(); g_last_reject = engine_last_reject; return FIO_EREJECT; }
+    if (!ok) { g_last_reject = engine_last_reject; return FIO_EREJECT; }
     g_last_reject = 0;
     return FIO_EOK;
 }
 
-int fio_last_events_json(int viewer, char *out, int cap) {
-    if (!g_has_game) return FIO_ENOGAME;
-    J j; j_init(&j, out, cap);
-    j_events(&j, viewer, g_last_event_log_start);
-    return j_finish(&j);
-}
 
 // ---------- animation core (c/src/anim_plan.h) -----------------------------
 //
@@ -1209,74 +983,12 @@ int fio_game_over(void) {
 // and drifted from the canonical cycle. Everything drives through the packed
 // fio_bot_drive_packed now — the same cycle the app and website run.)
 
-// Emit one applied action: the move's fields, plus its seat and pacing class.
-static void j_drive_action(J *j, const BotDriveAction *a) {
-    const LegalMove *m = &a->move;
-    j_puts(j, "{\"seat\":");  j_puti(j, a->seat);
-    j_puts(j, ",\"pace\":");  j_puti(j, a->pacing_class);
-    j_puts(j, ",\"type\":");  j_putstr(j, move_type_name(m->type));
-    j_puts(j, ",\"cards\":[");
-    for (int c = 0; c < m->n_cards; c++) { if (c) j_putc(j, ','); j_card(j, m->cards[c]); }
-    j_putc(j, ']');
-    if (m->type == MOVE_COVER) {
-        j_puts(j, ",\"attackCards\":[");
-        for (int c = 0; c < m->n_cards; c++) { if (c) j_putc(j, ','); j_card(j, m->attack_cards[c]); }
-        j_putc(j, ']');
-    }
-    j_putc(j, '}');
-}
 
-int fio_bot_drive_json(int human_mask, char *out, int cap) {
-    if (!g_has_game) return FIO_ENOGAME;
-
-    // Events for the WHOLE cycle: the hooks accumulate across the bundled
-    // actions, which is exactly the sequence the board should play.
-    fio_snaps_reset();
-    const int log_start = g_game.num_logs;
-    g_last_event_log_start = log_start;
-    engine_snap_hook = fio_snap_cb;
-
-    static BotDriveOut drv;   // ~1KB of LegalMoves; not a stack citizen
-    bot_drive(&g_game, (uint32_t)human_mask, BOT_DRIVE_MAX_ACTIONS, 0, 0, &drv);
-
-    engine_snap_hook = 0;
-
-    // A human still in the game is what makes a pause worth taking. Offline
-    // that is the seat the app is playing; a spectate/replay drive passes
-    // human_mask = 0 and gets the bots-only pace.
-    int humans_present = 0;
-    for (int seat = 0; seat < g_game.num_players; seat++)
-        if ((human_mask & (1 << seat)) && g_game.players[seat].status == PLAYER_STATUS_IN)
-            humans_present = 1;
-
-    // The cycle waits for the most visible thing that happened in it.
-    int pace = BOT_PACE_NONE;
-    for (int i = 0; i < drv.n; i++)
-        if (drv.actions[i].pacing_class > pace) pace = drv.actions[i].pacing_class;
-
-    // The lowest human seat is the viewer — offline that is the seat the app
-    // plays. A spectate/replay drive (human_mask 0) watches as a spectator.
-    int viewer = VIEW_SPECTATOR;
-    for (int seat = 0; seat < g_game.num_players; seat++)
-        if (human_mask & (1 << seat)) { viewer = seat; break; }
-
-    J j; j_init(&j, out, cap);
-    j_puts(&j, "{\"actions\":[");
-    for (int i = 0; i < drv.n; i++) { if (i) j_putc(&j, ','); j_drive_action(&j, &drv.actions[i]); }
-    j_puts(&j, "],\"events\":");
-    j_events(&j, viewer, log_start);
-    j_puts(&j, ",\"stop\":");    j_puti(&j, drv.stop);
-    j_puts(&j, ",\"ended\":");   j_puti(&j, drv.ended);
-    j_puts(&j, ",\"delayMs\":"); j_puti(&j, bot_pacing_ms(pace, humans_present));
-    j_putc(&j, '}');
-    return j_finish(&j);
-}
-
-// PACKED bot-drive — same one kernel cycle, result packed instead of JSON:
+// PACKED bot-drive — one kernel cycle, packed:
 //   u32 n_actions, per action {seat, pace, type, n_cards, cards[], attacks[]},
 //   then i32 stop, i32 ended, i32 delayMs (LE).
 // Events are NOT carried (the app doesn't consume them until B4 animation; they
-// come back as packed evwire then). Owner: wipe the JSON.
+// come back as packed evwire then).
 static void le_i32(unsigned char **q, int v) {
     unsigned int u = (unsigned int)v;
     *(*q)++ = u & 0xff; *(*q)++ = (u >> 8) & 0xff; *(*q)++ = (u >> 16) & 0xff; *(*q)++ = (u >> 24) & 0xff;
@@ -1315,22 +1027,23 @@ int fio_strategy_count(void) { return bot_roster_offline_count(); }
 int fio_strategy_name(int id, char *out, int cap) {
     const BotRosterEntry *e = bot_roster_at(fio_roster_idx(id));
     if (!e) return FIO_ENOSTRAT;
-    J j; j_init(&j, out, cap);
-    j_puts(&j, e->key);
-    return j_finish(&j);
+    if (!out || cap <= 0) return FIO_EBADARG;
+    // A bare NUL-terminated key, not a JSON string - it never was one, it just
+    // borrowed json_out's bounded appender to get the cap check for free.
+    const int n = (int)strlen(e->key);
+    if (n + 1 > cap) return FIO_ECAP;
+    memcpy(out, e->key, (size_t)n + 1);
+    return n;
 }
 
 // ---------- replays (§16.C) ------------------------------------------------
 //
-// DECODE is implemented: base32 (RFC 4648 uppercase, no padding — the web's
-// codec.ts alphabet) → the replay integer bytes → replay_decode() → JSON. This
-// is byte-parity with the server by construction (shared replay.c), so a
-// web-generated code plays natively. ENCODE (share-your-game) still needs the
-// encode.ts log→action synthesis and lands later this milestone.
+// DECODE is implemented: base32 (RFC 4648 uppercase, no padding) → the replay
+// integer bytes → replay_decode() → the packed step wire. This is byte-parity
+// with the server by construction (shared replay.c), so a web-generated code
+// plays natively.
 
 // base32 lives in replay.c (replay_b32_decode / replay_b32_encode).
-
-// Decode one wire card byte into JSON: null / hidden {-1,-1} / real {s,v}.
 
 // card → wire byte (suit*13 + value-1).
 static unsigned char wire_of(Card c) {
@@ -1463,36 +1176,6 @@ int fio_replay_share_link(const char *moves,
     return n;
 }
 
-// A replay, as the event stream the board already animates.
-//
-// This is the whole point of A5 for the app: a v6 code plays natively STEP FOR
-// STEP because the kernel rebuilds the game and plays it back through the
-// engine (replay_steps.c), so these are the same events — same shape, same
-// per-step `state`, same redaction — that fio_bot_drive_json and
-// fio_last_events_json emit for live play. Swift decodes them with the
-// GameEvent it already has; there is no replay-specific rendering path to
-// write, and nothing to keep in step with live play, because it IS live play.
-//
-// v6 only: a v5 code returns FIO_EREPLAY with REPLAY_EVERSION (v5 hides the
-// deal, so there is no game to rebuild). Callers wanting the flat log listing
-// have fio_replay_decode_packed.
-int fio_replay_events_json(const char *code, int viewer, char *out, int cap) {
-    if (!code) return FIO_EBADARG;
-    g_last_replay_error = 0;
-
-    static unsigned char intbuf[16384];
-    int ilen = replay_b32_decode(code, intbuf, sizeof(intbuf));
-    if (ilen < 0) return FIO_ECAP;
-
-    J j;
-    j_init(&j, out, cap);
-    j_putc(&j, '[');
-    FioEvCtx ctx = { &j, 0, viewer };
-    int r = replay_steps_v6(intbuf, ilen, viewer, 0, fio_ev_sink, &ctx);
-    if (r < 0) { g_last_replay_error = -r; return FIO_EREPLAY; }
-    j_putc(&j, ']');
-    return j_finish(&j);
-}
 
 // The animations of the chain's LAST TURN, as packed evwire frames — the "what
 // just happened" an iMessage receiver sees on opening a bubble. Same packed
@@ -2082,21 +1765,9 @@ int fio_msg_rule_p(const uint8_t *a, int a_len, const uint8_t *b, int b_len) {
     return msg_rule_p(&ka, &kb);
 }
 
-int fio_msg_rebase(int pending_round, int seat, const char *move_json) {
-    if (!g_has_game) return FIO_ENOGAME;
-    if (!move_json) return FIO_EBADARG;
-    if (g_msg_round < 0) return FIO_ENOGAME;   // nothing adopted to rebase onto
-    if (seat < 0 || seat >= g_game.num_players) return FIO_EBADARG;
-
-    AwireAction a;
-    const int rc = fio_move_to_awire(move_json, &a);
-    if (rc != FIO_EOK) return rc;
-    return msg_rebase_one(&g_game, g_msg_round, pending_round, seat, &a);
-}
-
-// Rule R over the AWIRE frame — the JSON-free twin of fio_msg_rebase, and the one
-// Swift actually calls (the phone stages moves as awire, never JSON; the pending
-// ledger holds them the same way). Same contract as wasm_msg_rebase: decode the
+// Rule R over the AWIRE frame - the one rebase entry (the phone stages moves as
+// awire and the pending ledger holds them the same way; the JSON twin this used
+// to shadow is deleted). Same contract as wasm_msg_rebase: decode the
 // action, then msg_rebase_one against the adopted chain's round (g_msg_round, set
 // by the last fio_msg_decode_packed). Returns MSG_REBASE_* (0 re-applied and
 // APPLIED to the resident game, 1 discarded by the round guard, 2 discarded as

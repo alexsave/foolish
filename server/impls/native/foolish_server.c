@@ -1631,7 +1631,7 @@ static void h_state(Req *r, Conn *conn) {
 }
 
 // A plain status int (0 waiting / 1 playing / 2 over), for smoke tests that used
-// to read it off the JSON view. Not json_out — just an integer.
+// to read it off a JSON view. Just an integer.
 static void h_status(Req *r, Conn *conn) {
     char gid[ID_LEN + 1] = {0};
     const char *gp = strstr(r->query, "game_id=");

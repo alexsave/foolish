@@ -32,7 +32,7 @@ CFLAGS += -DCD_LEAFBOOK
 
 # The engine + all heuristic / Monte-Carlo bots. Linked into every binary.
 CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_steps.c \
-            src/replay_extras.c src/view.c src/awire.c src/json_out.c \
+            src/replay_extras.c src/view.c src/awire.c \
             src/evwire.c src/random_strategy.c src/espresso_strategy.c \
             src/handwritten_strategy.c src/robusta_strategy.c \
             src/firecracker_strategy.c src/gunpowder_strategy.c \
@@ -535,7 +535,6 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_replay_events -Wl,--export=wasm_replay_events_n \
   -Wl,--export=wasm_replay_events_next -Wl,--export=wasm_replay_step_count \
   -Wl,--export=wasm_replay_step_index \
-  -Wl,--export=wasm_view_json -Wl,--export=wasm_events_json \
   -Wl,--export=wasm_replay_extras_encode \
   -Wl,--export=wasm_replay_extras_decode \
   -Wl,--export=wasm_replay_link \
@@ -781,19 +780,20 @@ wasm-guards: build/guards.wasm
 # Cut as a measurement of the floor: how small is the kernel when the host is a
 # chat extension rather than a server. Compare `make wasm-msg-size` against
 # bots.wasm, which is the same kernel plus every rung of the ladder.
+# NOT replay_steps.c: that is the step WALKER, which replays a finished code
+# through the engine to feed a replay screen. The extension has no replay
+# screen. replay.c and replay_extras.c stay, because it very much does want the
+# share URL at the end of a game - encoding a replay and walking one are two
+# different things.
 WASM_MSG_SRC := src/game.c src/deal_rng.c src/legal.c src/view.c src/awire.c \
                 src/evwire.c src/sha256.c src/msg_wire.c src/anim_plan.c \
-                src/json_out.c src/replay.c src/replay_steps.c \
-                src/replay_extras.c wasm/wasm_api.c wasm/wasm_msg_api.c
+                src/replay.c src/replay_extras.c \
+                wasm/wasm_api.c wasm/wasm_msg_api.c
 
 WASM_MSG_EXPORTS := \
-  -Wl,--export=wasm_replay_events -Wl,--export=wasm_replay_events_n \
-  -Wl,--export=wasm_replay_events_next \
-  -Wl,--export=wasm_replay_step_count -Wl,--export=wasm_replay_step_index \
   -Wl,--export=wasm_replay_extras_encode -Wl,--export=wasm_replay_extras_decode \
   -Wl,--export=wasm_replay_b32_encode -Wl,--export=wasm_replay_b32_decode \
   -Wl,--export=wasm_replay_link -Wl,--export=wasm_replay_link_parse \
-  -Wl,--export=wasm_view_json -Wl,--export=wasm_events_json \
   -Wl,--export=wasm_unambiguous_cover \
   -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal \
   -Wl,--export=wasm_msg_rule_p -Wl,--export=wasm_msg_rebase \
@@ -804,11 +804,10 @@ WASM_MSG_EXPORTS := \
   -Wl,--export=wasm_anim_set_transport -Wl,--export=wasm_anim_transport
 
 # The rules flags, minus its memory pin. rules.wasm freezes linear memory at
-# 196,608 B; replay_steps.c's decoded-action buffer alone is ~272 KB, which is
-# why the replay walker was put in bots.wasm rather than rules.wasm in the first
-# place. The pin stays a pin here - initial == max, so the module can never
-# grow - just at the size this source set actually needs.
-WASM_MSG_MEM := 786432
+# 196,608 B (3 pages); this set needs 272,029 B, so 5. The pin stays a pin -
+# initial == max, so the module can never grow - just at the size this source
+# set actually needs, rounded to the 64 KiB wasm page.
+WASM_MSG_MEM := 327680
 WASM_MSG_FLAGS := $(filter-out -Wl$(comma)--initial-memory=196608 -Wl$(comma)--max-memory=196608,$(WASM_RULES_FLAGS)) \
                   -Wl,--initial-memory=$(WASM_MSG_MEM) -Wl,--max-memory=$(WASM_MSG_MEM)
 WASM_MSG_CFLAGS  := $(filter-out -Wl%,$(WASM_MSG_FLAGS))
@@ -889,7 +888,7 @@ wasm-msg-size: build/msg.wasm
 # not CC=. CI ships the committed .gz rather than rebuilding, so the committed
 # artifact is the baseline to reproduce before you touch it.
 WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_steps.c \
-                src/replay_extras.c src/view.c src/awire.c src/json_out.c \
+                src/replay_extras.c src/view.c src/awire.c \
                 src/evwire.c src/sha256.c src/msg_wire.c src/anim_plan.c \
                 src/random_strategy.c \
                 src/espresso_strategy.c src/handwritten_strategy.c \
