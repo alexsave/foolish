@@ -20,157 +20,18 @@
  * ========================================================================== */
 
 /* ----------------------------------------------------------------------------
- * 1. rANS KERNEL  (range Asymmetric Numeral System over a single BigInt)
+ * BYTES, BASE32/BASE64, HEX, URL ROUTING
  * ----------------------------------------------------------------------------
- * A "symbol" is a choice of option k out of n, where option i has integer
- * weight w[i] > 0, total M = sum(w), and cumulative cum[k] = sum(w[0..k-1]).
- * The realized symbol costs ~log2(M / w[k]) bits.
+ * The rANS arithmetic coder used to sit above this line - a full second
+ * implementation of the one in c/src/replay.c. It was kept for a frozen
+ * differential oracle, e2e/replay_ts_oracle.ts, which no longer exists; the
+ * class had no caller anywhere, in production or in a test. The kernel codes
+ * replays (wasm_replay_encode / _decode / _encode_v6), and there is no second
+ * coder now.
  *
- * push (encode) is LIFO; pop (decode) is FIFO. So to encode a forward sequence
- * of choices we push them in REVERSE, and the decoder pops them FORWARD.
- * A conforming decoder ends with x === 0n.
- * -------------------------------------------------------------------------- */
-
-function ransPush(x: bigint, cum: number, w: number, M: number): bigint {
-  const W = BigInt(w);
-  const r = x % W; // x mod w
-  const q = x / W; // x div w
-  return q * BigInt(M) + BigInt(cum) + r;
-}
-
-function ransPop(
-  x: bigint,
-  weights: number[],
-): { index: number; x: bigint } {
-  let M = 0;
-  for (const w of weights) M += w;
-  const r = Number(x % BigInt(M)); // r < M (safe: keep M < 2^53)
-  let acc = 0;
-  let k = 0;
-  // find the interval [cum[k], cum[k]+w[k]) that contains r
-  for (; k < weights.length; k++) {
-    if (r < acc + weights[k]) break;
-    acc += weights[k];
-  }
-  if (k >= weights.length) k = weights.length - 1; // defensive
-  const nx = (x / BigInt(M)) * BigInt(weights[k]) + BigInt(r - acc);
-  return { index: k, x: nx };
-}
-
-/* ----------------------------------------------------------------------------
- * 2. THE CODER  (drives the engine in either direction)
- * ----------------------------------------------------------------------------
- * The engine calls exactly one method at every point where information enters
- * the game — a player's decision OR a hidden card becoming known (a "reveal"):
- *
- *     const index = coder.code(weights, chosenIndexInEncodeMode);
- *
- *   ENCODE: you are replaying a KNOWN game. The engine computes the legal-move
- *           menu, finds the index of the move that was actually played, and
- *           passes it as `chosen`. code() records it and returns it unchanged.
- *   DECODE: you are reconstructing the game from the integer. The engine
- *           computes the SAME menu, calls code(weights) with no `chosen`, gets
- *           back the index, and applies that move.
- *
- * Because the menu (options + weights + order) is a pure function of the public
- * game state, both directions see identical menus and stay in lockstep.
- * -------------------------------------------------------------------------- */
-
-interface RecordedChoice {
-  weights: number[];
-  chosen: number;
-}
-
-export class Coder {
-  readonly mode: "encode" | "decode";
-  private recorded: RecordedChoice[] = []; // encode only
-  private x: bigint = 0n; // decode only
-
-  private constructor(mode: "encode" | "decode", x: bigint) {
-    this.mode = mode;
-    this.x = x;
-  }
-
-  static forEncode(): Coder {
-    return new Coder("encode", 0n);
-  }
-  static forDecode(x: bigint): Coder {
-    return new Coder("decode", x);
-  }
-
-  /** The single primitive. weights: positive integers. */
-  code(weights: number[], chosen?: number): number {
-    if (weights.length === 0) throw new Error("empty menu");
-    if (weights.length === 1) {
-      // forced move: 0 bits, nothing to code, but keep both sides symmetric
-      return 0;
-    }
-    if (this.mode === "encode") {
-      if (chosen === undefined || chosen < 0 || chosen >= weights.length)
-        throw new Error("encode: chosen index out of range");
-      this.recorded.push({ weights: weights.slice(), chosen });
-      return chosen;
-    } else {
-      const { index, x } = ransPop(this.x, weights);
-      this.x = x;
-      return index;
-    }
-  }
-
-  /** Uniform menu of n options. */
-  codeUniform(n: number, chosen?: number): number {
-    if (n === 1) return 0;
-    return this.code(new Array(n).fill(1), chosen);
-  }
-
-  /** ENCODE: collapse the recorded choices into the final integer. */
-  finishEncode(): bigint {
-    if (this.mode !== "encode") throw new Error("not in encode mode");
-    let x = 0n;
-    for (let i = this.recorded.length - 1; i >= 0; i--) {
-      const c = this.recorded[i];
-      let M = 0,
-        cum = 0;
-      for (let j = 0; j < c.weights.length; j++) {
-        if (j < c.chosen) cum += c.weights[j];
-        M += c.weights[j];
-      }
-      x = ransPush(x, cum, c.weights[c.chosen], M);
-    }
-    return x;
-  }
-
-  /** DECODE: a conforming game consumes the integer exactly. Check AFTER the
-   *  engine has run to its own terminal state (the integer does NOT tell the
-   *  engine when to stop — the rules do). */
-  residueIsZero(): boolean {
-    return this.x === 0n;
-  }
-
-  /** Diagnostics: ideal (information-theoretic) size of the encoded choices. */
-  idealBits(): number {
-    let bits = 0;
-    for (const c of this.recorded) {
-      let M = 0;
-      for (const w of c.weights) M += w;
-      bits += Math.log2(M / c.weights[c.chosen]);
-    }
-    return bits;
-  }
-}
-
-
-/* ----------------------------------------------------------------------------
- * 3. INTEGER <-> BYTES <-> BASE32 / BASE64 <-> URL
- * ----------------------------------------------------------------------------
- * base32 = RFC 4648 uppercase alphabet (A-Z, 2-7), NO padding. Every character
- * is in the QR "alphanumeric" set, as are '.' and '/' and uppercase letters in
- * the prefix — so the whole URL encodes in QR alphanumeric mode (5.5 bits/char,
- * much denser than byte mode). Use QR error-correction level L for smallest QR.
- *
- * base64 = RFC 4648 standard alphabet, no padding — denser as on-screen text
- * and the natural form for a future DB column. Both wrap the same bytes.
- * -------------------------------------------------------------------------- */
+ * What is left is genuinely host-shaped and has no C twin: turning bytes into
+ * a hex column value, a base32 URL segment, or a base64 blob.
+ * ------------------------------------------------------------------------- */
 
 const B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 const B32_INV: Record<string, number> = (() => {
@@ -178,7 +39,6 @@ const B32_INV: Record<string, number> = (() => {
   for (let i = 0; i < B32.length; i++) m[B32[i]] = i;
   return m;
 })();
-
 const B64 =
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const B64_INV: Record<string, number> = (() => {
@@ -362,29 +222,3 @@ const LEGACY_MAX_LEN = 7;
 export function classifyPathSegment(seg: string): "shortcode" | "replay" {
   return seg.length > LEGACY_MAX_LEN ? "replay" : "shortcode";
 }
-
-/* ----------------------------------------------------------------------------
- * 5. CNS — combinatorial number system (reserved for v2 set-coded reveal)
- * ----------------------------------------------------------------------------
- * Colexicographic rank/unrank of a k-subset of [0, m). Lets you reveal a
- * player's acquired hand as an UNORDERED set in exactly log2(C(m,k)) bits.
- * C(52,26) < 2^53, so plain numbers are safe up to a 52-card deck.
- * -------------------------------------------------------------------------- */
-
-const COMB: number[][] = (() => {
-  const N = 64;
-  const c: number[][] = Array.from({ length: N }, () => new Array(N).fill(0));
-  for (let n = 0; n < N; n++) {
-    c[n][0] = 1;
-    for (let k = 1; k <= n; k++)
-      c[n][k] = c[n - 1][k - 1] + (k <= n - 1 ? c[n - 1][k] : 0);
-  }
-  return c;
-})();
-
-export function comb(n: number, k: number): number {
-  if (k < 0 || k > n) return 0;
-  return COMB[n][k];
-}
-
-
