@@ -33,6 +33,10 @@ const char *inv_name(int kind);
 // server/impls/native/sem_fuzz.c (conservation_ok).
 int inv_conservation(const Game *g, char *why, int whycap);
 
+// The O(seats) half: right NUMBER of cards, no tally. Catches creation and
+// destruction, misses a duplicate that replaced another card.
+int inv_card_count(const Game *g, char *why, int whycap);
+
 void inv_report(struct World *w, int kind, const char *fmt, ...);
 void inv_sweep(struct World *w);
 void inv_print(struct World *w);

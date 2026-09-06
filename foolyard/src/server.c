@@ -67,9 +67,15 @@ static void srv_after_change(World *w, GameSlot *s, int skip_seat) {
     s->version++;
     s->last_change_us = sch_now_us(&w->sch);
 
-    char why[96];
-    if (s->game.status != GAME_STATUS_WAITING && !inv_conservation(&s->game, why, sizeof why))
-        inv_report(w, FIND_CONSERVATION, "game %u v%u: %s", s->id, s->version, why);
+    if (w->knobs.checks && s->game.status != GAME_STATUS_WAITING) {
+        char why[96];
+        int full = (w->knobs.checks >= 2) || ((s->version & 15) == 0);
+        int ok = full ? inv_conservation(&s->game, why, sizeof why)
+                      : inv_card_count(&s->game, why, sizeof why);
+        if (!ok)
+            inv_report(w, FIND_CONSERVATION, "game %u v%u%s: %s",
+                       s->id, s->version, full ? "" : " (count)", why);
+    }
 
     if (s->game.status == GAME_STATUS_GAME_OVER && !s->lobby_armed) {
         s->lobby_armed = 1;
@@ -96,6 +102,14 @@ static void srv_wake_bots(World *w, GameSlot *s) {
         if (humans & (1u << seat)) continue;
         BotSeat *b = &s->bots[seat];
         if (b->armed) continue;
+
+        // Only a seat that can actually act. Arming one that cannot used to
+        // start its think timer against a board it was not playing on, so when
+        // a later change did make it eligible its move could land SOONER than
+        // its own think time - a head start it never earned. Eligibility can
+        // only change with the board, and every board change comes back
+        // through here, so nothing is missed by waiting.
+        if (!should_bot_act(&s->game, seat)) { b->waiting = 1; continue; }
 
         b->armed = 1;
         b->waiting = 0;
