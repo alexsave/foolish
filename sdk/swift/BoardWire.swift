@@ -150,6 +150,15 @@ public enum Veil {
         return (hidden: CardSet.identities(hidden), flyingNow: CardSet.identities(air))
     }
 
+    /// What the pre-bout grid is still waiting for: of everything a replay
+    /// places, the cards that grid holds a slot for. The board asks this TWICE,
+    /// a paint apart - once while it is rendering the pending table and once as
+    /// the sequence that flies onto it starts - and they must be the same
+    /// answer, which is why it is the kernel's and not each caller's.
+    public static func sweepUnplaced(placed: Set<String>, table: Set<String>) -> Set<String> {
+        CardSet.identities(fio_veil_sweep_unplaced(CardSet.bits(placed), CardSet.bits(table)))
+    }
+
     /// What a finishing sequence owes the board: which opened-but-unflown cards
     /// to reveal now, and which to leave for whoever is still running.
     public static func teardown(opened: Set<String>, orphaned: Set<String>,

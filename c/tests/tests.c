@@ -5205,6 +5205,7 @@ static void test_the_transport_is_the_only_thing_the_two_clients_disagree_about(
 //   5  anim_veil_hand_slot_deferred drops the holdback term   -> 3
 //   6  anim_veil_fan returns `veiled` whole                   -> 2
 //   7  anim_veil_grid uses `veiled` on the sweeping branch    -> 2
+//  7b  anim_veil_sweep_unplaced returns `placed` whole      -> 2
 //   8  anim_veil_teardown carries the orphans, not its opens  -> 2
 //   9  ...reveals on a superseded sequence                    -> 1
 //  10  anim_veil_handover reveals the placing cards too       -> 2
@@ -5345,6 +5346,36 @@ static void test_board_veil_grid_answers_off_different_state_when_sweeping(void)
     // find somewhere to put the other.
     anim_veil_grid(0, BSET(six), 0, 0, 0, 0, NULL, NULL);
     CHECK(1, "a NULL out is not a crash");
+}
+
+static void test_board_veil_sweep_unplaced_is_what_the_grid_holds_a_slot_for(void) {
+    const unsigned char six = BID(0, 6), nine = BID(1, 9), ace = BID(3, 13);
+    const unsigned char last = BID(3, 14), first = BID(0, 2);
+
+    // The bout-ending cover: the replay places it, the pre-bout grid holds its
+    // slot, so it is un-arrived and the grid hides it. Get this wrong and the
+    // attack under it opens TILTED and straightens before the cover flies.
+    CHECK(anim_veil_sweep_unplaced(BSET(nine), BSET(six) | BSET(nine)) == BSET(nine),
+          "a placed card the grid holds a slot for is what the grid is waiting for");
+
+    // The attack it lands ON is already lying there - placed by an EARLIER
+    // bubble, not this replay - so it stays visible and gets swept.
+    CHECK((anim_veil_sweep_unplaced(BSET(nine), BSET(six) | BSET(nine)) & BSET(six)) == 0,
+          "a card already on the table is not waiting for anything");
+
+    // A PICKUP's cards go to a hand, not onto this grid. Without the
+    // intersection they would be veiled on a table they never land on, and the
+    // sweep would carry off a table with holes in it.
+    CHECK(anim_veil_sweep_unplaced(BSET(ace), BSET(six) | BSET(nine)) == 0,
+          "a placement the grid has no slot for is elsewhere, not un-arrived");
+
+    CHECK(anim_veil_sweep_unplaced(0, BSET(six)) == 0, "a replay that places nothing waits for nothing");
+    CHECK(anim_veil_sweep_unplaced(BSET(six), 0) == 0, "no table, nothing to wait on");
+
+    // Both ends of the deck, per the note at the top of this block.
+    CHECK(anim_veil_sweep_unplaced(BSET(first) | BSET(last), BSET(first) | BSET(last))
+              == (BSET(first) | BSET(last)),
+          "card 0 and card 51 cross intact");
 }
 
 static void test_board_veil_teardown_and_handover(void) {
@@ -6365,6 +6396,7 @@ int main(void) {
     test_board_veil_flying_is_hidden_minus_pre_hidden();
     test_board_veil_the_fan_never_withholds_a_slot_it_draws();
     test_board_veil_grid_answers_off_different_state_when_sweeping();
+    test_board_veil_sweep_unplaced_is_what_the_grid_holds_a_slot_for();
     test_board_veil_teardown_and_handover();
     test_board_veil_small_decisions();
     test_board_selection_may_only_name_cards_in_my_hand();

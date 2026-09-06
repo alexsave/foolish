@@ -879,9 +879,42 @@ public struct MessageTableView: View {
                              events: controller.openReplayEvents)
     }
 
-    private var pendingOpen: (ids: Set<String>, counts: AnimPlan.Counts)? {
+    /// `placed` is what this replay will put DOWN on the table - the third
+    /// thing the window has to answer, and for the same reason as the other two:
+    /// `setSweep` derives it (`AnimBeats(events).placed`) from the `onChange`
+    /// that starts the sequence, which is a paint after `battlesArea` has
+    /// already drawn the pre-bout table this window renders. See
+    /// `pendingSweepUnplaced`.
+    private var pendingOpen: (ids: Set<String>, counts: AnimPlan.Counts, placed: Set<String>)? {
         guard let events = unstartedReplay, let view = controller.view else { return nil }
-        return (controller.openReplayTouchedCardIds, AnimPlan(events, finalView: view).pre)
+        return (controller.openReplayTouchedCardIds, AnimPlan(events, finalView: view).pre,
+                AnimBeats(events).placed)
+    }
+
+    /// WHAT THE PENDING PRE-BOUT TABLE IS STILL WAITING FOR - the cards it holds
+    /// a slot for that this replay has not flown in yet.
+    ///
+    /// `battlesArea` renders that table synchronously while the window is open,
+    /// so a bout-ending cover's board does not blink empty. But the veil for it
+    /// lived only in `sweepUnplaced`, which `setSweep` writes from the
+    /// `onChange` a paint LATER - so on the paint in between the table drew the
+    /// cover already lying on its attack, and the pair opened TILTED. The rig
+    /// films the whole thing (owner, 1.0(47): "I briefly saw the uncovered cards
+    /// animate from rotated back to straight, then rotate back as my cover cards
+    /// flew to cover"):
+    ///
+    ///     grid sweeping=true cells=1 pairs=1 visible=2 hidden=0 tilt=1   <-- opens tilted
+    ///     veil preHide [2-12,3-11]
+    ///     grid sweeping=true cells=1 pairs=1 visible=1 hidden=1 tilt=0   <-- straightens
+    ///     grid sweeping=true cells=1 pairs=1 visible=1 hidden=1 tilt=1   <-- tilts again
+    ///
+    /// Same rule as `setSweep`'s, asked one paint earlier, so the handoff to the
+    /// state it writes changes nothing on screen.
+    /// THE RULE IS THE KERNEL'S (`Veil.sweepUnplaced`), and `setSweep` asks it
+    /// too - the whole point is that the two paints cannot answer differently.
+    static func pendingSweepUnplaced(placed: Set<String>, table: [BattleView]) -> Set<String> {
+        table.isEmpty ? [] : Veil.sweepUnplaced(placed: placed,
+                                                table: PreBoutTable.cardIds(table))
     }
 
     /// Every card the board must render as not-yet-there: what is in flight
@@ -1688,7 +1721,8 @@ public struct MessageTableView: View {
     private static var lastGridTrace = ""
     static func traceGrid(sweeping: Bool, shown: [BattleView], hidden: Set<String>,
                           atRest: Bool = false, preHidden: Set<String> = [],
-                          veil: Set<String> = []) {
+                          veil: Set<String> = [], flyingNow: Set<String> = [],
+                          arriving: Set<String> = []) {
         let pairs = shown.filter { $0.defense != nil }.count
         let visible = shown.reduce(0) { n, b in
             n + (hidden.contains(b.attack.identity) ? 0 : 1)
@@ -1749,7 +1783,34 @@ public struct MessageTableView: View {
         // it remained on the table". So this is the LAST KNOWN state, for a
         // scenario to read at rest, not a tally of moments.
         sweepVisibleNow = sweeping ? visible : 0
-        let line = "grid sweeping=\(sweeping) cells=\(shown.count) pairs=\(pairs) visible=\(visible) hidden=\(hidden.count)"
+        // THE TILT, as the grid itself will compute it this paint. A covered
+        // attack lies across only once its cover is flying or landed, so on the
+        // FIRST paint of an open that is about to replay a cover this must be 0:
+        // a pair that opens tilted has to straighten before the cover flies, and
+        // that straighten-then-tilt is the flash the veil exists to prevent.
+        // Read off `FBattleGrid.coverTilted` rather than restated, so the line
+        // cannot drift from what is drawn.
+        let tiltedNow = Set(shown.compactMap { b -> String? in
+            FBattleGrid.coverTilted(defense: b.defense, hidden: hidden, flyingNow: flyingNow)
+                ? b.defense?.identity : nil
+        })
+        let tilted = tiltedNow.count
+        // THE FLASH, AS A NUMBER. A pair that lay across on one paint and is
+        // upright on the next, with its cover still to ARRIVE, is the defect
+        // itself: the board drew the cover already landed, then had to take the
+        // tilt back before flying it in. Owner, 1.0(47): "I briefly saw the
+        // uncovered cards animate from rotated back to straight, then rotate
+        // back as my cover cards flew to cover."
+        //
+        // The `arriving` term is what keeps a SWEEP honest - a pair untilts
+        // legitimately as it is carried off to the discard, and that cover is
+        // leaving, not arriving. Must be 0 for a whole run.
+        for id in Self.lastTilted.subtracting(tiltedNow) where arriving.contains(id) {
+            tiltFlashes += 1
+            AnimLog.say("TILT-FLASH \(id) straightened with its cover still to arrive")
+        }
+        Self.lastTilted = tiltedNow
+        let line = "grid sweeping=\(sweeping) cells=\(shown.count) pairs=\(pairs) visible=\(visible) hidden=\(hidden.count) tilt=\(tilted)"
             + (atRest && veiled > 0 ? "  <-- \(veiled) VANISHED AT REST" : "")
         if line != lastGridTrace { lastGridTrace = line; AnimLog.say(line) }
     }
@@ -1775,6 +1836,12 @@ public struct MessageTableView: View {
     /// screen, which is the defect itself - filmed as the deck badge going
     /// 9 -> 12 -> 9 with nothing about the deck happening.
     public private(set) static var backwardsPaints = 0
+    /// Pairs that lay across and then straightened while their cover had still
+    /// not arrived - the tilt flash, counted rather than eyeballed. Must be 0.
+    public private(set) static var tiltFlashes = 0
+    /// The defenses drawn tilted on the previous paint, which is the only thing
+    /// a flash can be measured against.
+    static var lastTilted: Set<String> = []
     /// Cards sitting on the table that the board is not drawing, at rest -
     /// INCLUDING the ones pre-hidden for a flight that is about to land, which
     /// is most of them. See the note at the counter for why that matters.
@@ -1884,10 +1951,10 @@ public struct MessageTableView: View {
         // shows is `sweepTableForReplay()` - the one the sweep itself is about
         // to use - so the cards carry the same identities across the handoff and
         // nothing is created or destroyed at all.
+        let pendingTable = view.battles.isEmpty && sweepBattles.isEmpty
+            && pendingOpen != nil ? sweepTableForReplay() : []
         let table = PreBoutTable.shownTable(
-            live: view.battles, sweep: sweepBattles,
-            pending: view.battles.isEmpty && sweepBattles.isEmpty
-                && pendingOpen != nil ? sweepTableForReplay() : [])
+            live: view.battles, sweep: sweepBattles, pending: pendingTable)
         let sweeping = table.sweeping
         let shown = table.shown
         // ROUND 20: the sweep grid hides BOTH ends of the sequence - what has
@@ -1897,8 +1964,16 @@ public struct MessageTableView: View {
         // cannot answer the question differently. They were two copies of the
         // same pair of ternaries, and the trace is the only thing that says
         // which cards the table is withholding.
+        // …AND WHAT IT HAS NOT ARRIVED YET, on that same first paint: while the
+        // pending table is the one being drawn, `sweepUnplaced` is still empty
+        // (see `pendingSweepUnplaced`). Unioned rather than switched, because
+        // the two windows abut: the state is written by the very `onChange`
+        // that closes the pending one.
+        let pendingUnplacedNow = sweepUnplaced.union(
+            Self.pendingSweepUnplaced(placed: pendingOpen?.placed ?? [], table: pendingTable))
         let grid = Veil.grid(sweeping: sweeping, veiled: veiledCardIds,
-                             sweptFlown: sweptFlownIds, sweepUnplaced: sweepUnplaced,
+                             sweptFlown: sweptFlownIds,
+                             sweepUnplaced: pendingUnplacedNow,
                              sweepArriving: sweepArriving,
                              flying: Veil.flying(hidden: animator.hidden,
                                                  preHidden: animator.preHidden))
@@ -1912,7 +1987,13 @@ public struct MessageTableView: View {
         Self.traceGrid(sweeping: sweeping, shown: shown,
                        hidden: grid.hidden,
                        atRest: !BoardAnimator.isSequencing && settled,
-                       preHidden: animator.preHidden, veil: animator.hidden)
+                       preHidden: animator.preHidden, veil: animator.hidden,
+                       flyingNow: grid.flyingNow,
+                       // What is coming DOWN onto this grid: on a sweep the
+                       // un-arrived set, on a live table everything the veil is
+                       // still holding (nothing ever leaves that grid - a card
+                       // on its way off goes through the sweep one).
+                       arriving: sweeping ? pendingUnplacedNow : grid.hidden)
         #endif
         // note 34: a pass preview shows the ghost slot instead of a cover highlight.
         // Never while sweeping (the cards are leaving, not a drop target).
@@ -4159,7 +4240,11 @@ public struct MessageTableView: View {
         // Off the ARGUMENT, not off `sweepTableIds`, though the two are now the
         // same value: a setter reading back the state it wrote one line earlier
         // is a habit that only works while the write is synchronous.
-        sweepUnplaced = unplaced.intersection(PreBoutTable.cardIds(battles))
+        //
+        // The SAME kernel rule `battlesArea` already applied to the pending
+        // table one paint ago (`pendingSweepUnplaced`). Two intersections
+        // written out twice is how those two paints came to disagree.
+        sweepUnplaced = Self.pendingSweepUnplaced(placed: unplaced, table: battles)
         sweepArriving = []
     }
 

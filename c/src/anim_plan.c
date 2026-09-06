@@ -839,6 +839,10 @@ void anim_veil_grid(int sweeping, uint64_t veiled,
     if (out_flying) *out_flying = f;
 }
 
+uint64_t anim_veil_sweep_unplaced(uint64_t placed, uint64_t table) {
+    return placed & table;
+}
+
 void anim_veil_teardown(uint64_t opened, uint64_t orphaned, int is_newest,
                         uint64_t *out_reveal, uint64_t *out_carry) {
     if (out_reveal) *out_reveal = is_newest ? (opened | orphaned) : 0;
