@@ -34,7 +34,9 @@ void random_strategy_set_seed(uint32_t s);
 void og_reload_flags(void);                 /* FOOLISH_ORACLE_BUILD hook, reused */
 Game *wasm_game_ptr_internal(void);         /* the shared resident game */
 extern unsigned char *wasm_io_ptr(void);
-extern void (*engine_snap_hook)(const Game *g, int tag, int aux);  /* game.c */
+/* engine_snap_hook is declared by game.h, which is _Thread_local since the
+   kernel's shared globals moved per-thread; re-declaring it here without the
+   qualifier is a hard error, and the include already supplies it. */
 
 /* The shared control block the MT5 accumulate hook (octogen_strategy.c) feeds. */
 OgMtControl g_ogmt;
