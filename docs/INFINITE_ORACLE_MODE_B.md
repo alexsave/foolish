@@ -52,18 +52,22 @@ TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx --test --test-concurrency=
 BENCH_THREADS=6 BENCH_SECONDS=4 TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx scripts/oracle_bench.mts
 ```
 
-## Finding 1: the speedup is about 10%, not a multiple
+## Finding 1: the speedup is 10-20%, not a multiple
 
-Measured on an 8-core Apple M-series, octogen choose-calls per second at `OG_W1=24`, same decision, same thread count in both modes:
+Measured on an 8-core Apple M-series, octogen choose-calls per second at `OG_W1=24`, same decision, same thread count in both modes, 5 s per mode:
 
 | Threads | Mode A | Mode B | Mode B / Mode A |
 |---|---|---|---|
-| 1 | 9,380 /s | 10,133 /s | 1.08x |
-| 3 | 26,509 /s | 29,231 /s | 1.10x |
-| 6 | 37,570 /s | 41,328 /s | 1.10x |
+| 1 | 5,082 /s | 6,155 /s | 1.21x |
+| 3 | 12,862 /s | 14,961 /s | 1.16x |
+| 6 | 18,846 /s | 22,398 /s | 1.19x |
+
+Four repeats at 4 threads gave 1.17x, 1.16x, 1.18x, 1.37x; one 6-thread repeat on a busy machine gave 0.96x.
+Call it **1.1x to 1.2x**, and treat any single run as noise.
+Absolute rates move with the machine and with which decision the fixture lands on, so only the ratio is worth carrying between kernels.
 
 Both modes scale with thread count the same way, because Mode A's fleet is already N OS threads.
-What Mode B removes is the **per-batch** overhead - the marshal, the strategy-key write, the log import, the JSON dump and its parse - and at a ~40 ms batch that is worth roughly a tenth of the time.
+What Mode B removes is the **per-batch** overhead - the marshal, the strategy-key write, the log import, the JSON dump and its parse - and at a ~40 ms batch that is worth about a sixth of the time.
 §8b.8 predicted exactly this ("unlikely at ~25 Hz total").
 The number is the number: Mode B is a real but modest throughput win, not a step change.
 
@@ -95,8 +99,8 @@ Measured, three runs of the same decision at 3 threads, 2 s each, worst per-cand
 
 | | run-to-run spread |
 |---|---|
-| Mode B | 0.0004 - 0.0007 |
-| Mode A | 0.0003 - 0.0013 |
+| Mode B | 0.0004 - 0.0027 |
+| Mode A | 0.0003 - 0.0041 |
 
 Row ORDER was identical across every run in both modes.
 That is well inside the +- the overlay renders, and far inside anything a user could act on differently.
