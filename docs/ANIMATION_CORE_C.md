@@ -214,20 +214,19 @@ order), with `fio_conflict_dest` beside it, decoded by
 | `src/state/optimisticOverlay.ts` / `authoritativeVersion.ts` | **remain** — a React-registered provider and a per-game version store; state plumbing, not policy |
 | `src/utils/animationUtils.ts` `getCardKey`/`createCardEventString` | **remain** — used by the wrappers to marshal; the dedup key's C twin is `anim_event_key` |
 
-## Deferred TS deletion (parity soak)
+## Deferred TS deletion (parity soak) - DONE
 
-Per the owner: the original TS bodies are **not deleted yet**. They are preserved
-verbatim in `src/state/__ts_reference.ts` (`*TsReference` exports +
-`buildAnimPlanTsReference`) and `e2e/anim_core_parity.test.ts` drives **both** the
-C core and the original TS over the same generated (real evwire sequences from
-seeded engine games) + hostile/edge inputs, asserting identical outputs. Once
-parity has held in CI, these die:
+The soak held, so the three things it was holding open are gone:
+`src/state/__ts_reference.ts`, `e2e/anim_core_parity.test.ts`, and the
+reference-pointer comments in the three runtime wrappers.
 
-- `src/state/__ts_reference.ts` (the whole file)
-- `e2e/anim_core_parity.test.ts` (its job done)
-- the reference-pointer comments in the three runtime wrappers
-
-The runtime delegation and the C-twin unit tests stay.
+The runtime delegation and the C-twin unit tests stay: the policies are asserted
+natively by `c/tests/anim_plan_test.c` (`test_optimistic_animation`,
+`test_optimistic_revert`, `test_reconcile`, plus plan building) and end-to-end
+through the delegations by `e2e/optimistic_animation.test.ts`,
+`e2e/optimistic_revert.test.ts` and `e2e/reconcile.test.ts`.
+There is no longer a second TS implementation for a C answer to be compared
+against, which was the point.
 
 ## The TODO seam: `AnimationContext` queue + optimistic synthesis
 
@@ -306,8 +305,9 @@ See `c/src/anim_plan.h`'s corrected opening and `ConflictModel.swift`'s header.
   decrement the deck badge (it stays "in the deck system"). The trump lying UNDER
   the deck is also why the freeze cannot undo a refill - see the plan-building
   note above. Held against the kernel's own boards in
-  `e2e/anim_core_parity.test.ts` and `ios/FoolishTests/MessageCountWindingTests`,
-  both of which insist the freeze IS the board before the sequence.
+  `c/tests/tests.c` `test_the_freeze_is_the_board_before_every_move` and
+  `ios/FoolishTests/MessageCountWindingTests`, both of which insist the freeze IS
+  the board before the sequence.
 
 ## The transport: one rule, two clients, one question
 
@@ -375,7 +375,7 @@ that shape; it is pinned in `anim_plan_test.c` rather than left implicit.
 | `e2e/optimistic_animation.test.ts` | `test_optimistic_animation` | yes — `optimistic_animation.test.ts` now runs through the C bridge |
 | `e2e/optimistic_revert.test.ts` | `test_optimistic_revert` | yes — `optimistic_revert.test.ts` (real games) through the C bridge |
 | `e2e/reconcile.test.ts` | `test_reconcile` | yes — `reconcile.test.ts` (real broadcasts, reordered) through the C bridge |
-| (new — the choreography no TS test covered) | `test_plan_building` + `test_plan_anchors_on_the_first_events_own_board` | `e2e/anim_core_parity.test.ts` (C == TS ref, + the freeze IS the board before), `tests.c` `test_the_freeze_is_the_board_before_every_move` |
+| (new - the choreography no TS test covered) | `test_plan_building` + `test_plan_anchors_on_the_first_events_own_board` | `tests.c` `test_the_freeze_is_the_board_before_every_move` |
 
 ## What stayed in Swift, and why
 

@@ -61,9 +61,6 @@ export function resolveUnconfirmedAttackCovers(
     // This wrapper marshals the fields C needs and maps the returned indices back
     // to Cards. Asserted natively (c/tests/anim_plan_test.c test_optimistic_revert)
     // and end-to-end through this delegation by e2e/optimistic_revert.test.ts.
-    // The original TS body is preserved in src/state/__ts_reference.ts and proven
-    // identical to this delegation by e2e/anim_core_parity.test.ts, until the
-    // deferred TS deletion (docs/ANIMATION_CORE_C.md).
     if (myOptimisticAttackCovers.length === 0) return { revert: [], merge: [], clear: [] };
 
     const pending = myOptimisticAttackCovers.map((card) => ({

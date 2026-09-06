@@ -4,7 +4,7 @@ import { useServer } from '../contexts/ServerContext';
 import { useAnimation } from '../contexts/AnimationContext';
 import { useGame } from '../contexts/GameContext';
 import { useAuth } from '../contexts/AuthContext';
-import { canCover } from '@api/common/common_utils.ts';
+import { canCoverPair } from '../wasm/clientGuards';
 import { canPass } from '../utils/gameValidation';
 import { kernelUnambiguousCover } from '@sdk/ts/wasm/bots.ts';
 
@@ -66,7 +66,7 @@ export const KeyboardInputHandler = () => {
                 // Single card cover - find which attack it can cover
                 const uncoveredBattles = game.table_battles.filter(battle => !battle.defense);
                 const validTargets = uncoveredBattles.filter(battle => 
-                    canCover(battle.attack, selectedCards[0], game.power_suit)
+                    canCoverPair(battle.attack, selectedCards[0], game.power_suit)
                 );
                 
                 if (validTargets.length === 1) {

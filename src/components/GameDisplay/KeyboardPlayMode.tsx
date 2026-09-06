@@ -49,7 +49,7 @@ import { useServer } from '../../contexts/ServerContext';
 import { useAnimation } from '../../contexts/AnimationContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useGame } from '../../contexts/GameContext';
-import { canCover } from '@api/common/common_utils.ts';
+import { canCoverPair } from '../../wasm/clientGuards';
 import { canAttack, canPass, canCoverCards } from '../../utils/gameValidation';
 import { kernelUnambiguousCover } from '@sdk/ts/wasm/bots.ts';
 
@@ -289,7 +289,7 @@ export const KeyboardPlayMode = () => {
                 // defender: decide cover vs pass vs target-selection
                 const coverable: CoverTarget[] = (g.table_battles || [])
                     .map((b, i) => ({ b, i }))
-                    .filter(({ b }) => !b.defense && canCover(b.attack, card, g.power_suit))
+                    .filter(({ b }) => !b.defense && canCoverPair(b.attack, card, g.power_suit))
                     .map(({ b, i }) => ({ kind: 'cover', attack: b.attack, battleIndex: i }));
                 const passOK = canPass(g, [card]);
 

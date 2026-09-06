@@ -26,9 +26,6 @@ interface AnimEvent {
  * key for its `.card`, hands the cards to C, and maps the returned indices back
  * to the keys to release. Asserted natively (c/tests/anim_plan_test.c
  * test_optimistic_animation) and end-to-end via e2e/optimistic_animation.test.ts.
- * The original TS body lives in src/state/__ts_reference.ts and is proven
- * identical to this delegation by e2e/anim_core_parity.test.ts, until the
- * deferred TS deletion (docs/ANIMATION_CORE_C.md).
  *
  * Pure: returns the optimistic-map keys to release; no side effects.
  */

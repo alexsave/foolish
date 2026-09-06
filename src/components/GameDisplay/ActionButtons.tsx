@@ -8,7 +8,7 @@ import { CardFace } from "./CardFace";
 import { TexturedSurface } from "../TexturedSurface";
 import { useEffect, useRef } from "react";
 import { Text } from "../Text";
-import { canCover as canCoverUtil } from "@api/common/common_utils.ts";
+import { canCoverPair } from "../../wasm/clientGuards";
 import { kernelUnambiguousCover } from "@sdk/ts/wasm/bots.ts";
 import { canAttack, canPass, canCoverCards } from "../../utils/gameValidation";
 import { useStyles } from "../../contexts/StyleContext";
@@ -210,7 +210,7 @@ export const ActionButtons = () => {
 
         if (selectedCards.length === 1) {
             const validTarget = uncoveredBattles.find(battle =>
-                canCoverUtil(battle.attack, selectedCards[0], game.power_suit)
+                canCoverPair(battle.attack, selectedCards[0], game.power_suit)
             );
             if (validTarget) {
                 setActionPressed('cover', true);
