@@ -164,8 +164,11 @@ analyse-test:
 # ---------- iOS static library / xcframework (docs/IOS_APP_DESIGN.md §16.A1) --
 #
 # Builds ../ios/vendor/Foolish.xcframework from the SAME CORE_SRC every native
-# binary uses, plus ios/ios_api.c (the Swift-visible bridge, ios/include/
-# ios_api.h). This is macOS + Xcode ONLY (needs xcrun/libtool/xcodebuild and
+# binary uses, plus the Swift-visible bridge (ios/ios_api.c + ios/ios_bots_api.c,
+# declared by ios/include/ios_api.h). The bridge is TWO objects on purpose: this
+# archive links per object, so keeping every bot reference in ios_bots_api.c is
+# what lets a binary that never drives a bot leave the strategy ladder behind
+# (see ios/ios_internal.h). This is macOS + Xcode ONLY (needs xcrun/libtool/xcodebuild and
 # the iOS SDKs). On Linux/CI, `make ios-smoke` exercises the identical bridge
 # natively (clang) — it is the portable proof that new->legal->apply->state and
 # a full game run through the Swift entry points.
@@ -178,7 +181,7 @@ analyse-test:
 IOS_MIN_VERSION := 15.0
 IOS_CAPS   := -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_MOVE_CARDS=28 \
               -DMAX_LEGAL_MOVES=4096 -DCD_LEAFBOOK
-IOS_SRC    := $(CORE_SRC) ios/ios_api.c
+IOS_SRC    := $(CORE_SRC) ios/ios_api.c ios/ios_bots_api.c
 IOS_CFLAGS := -O2 -Isrc -Iios/include $(IOS_CAPS)
 
 # $(1)=target-triple  $(2)=sdk name  $(3)=output dir
@@ -216,7 +219,9 @@ ios-lib:
 # points. Fast (< 1s). This is the M-A keystone check runnable without a Mac.
 ios-smoke:
 	@mkdir -p build
-	$(CC) $(IOS_CFLAGS) ios/ios_api_smoke.c ios/ios_api.c $(CORE_SRC) -lm -o build/ios_smoke
+	$(CC) $(IOS_CFLAGS) -c ios/ios_api.c -o build/ios_api.o
+	./ios/split_check.sh build/ios_api.o
+	$(CC) $(IOS_CFLAGS) ios/ios_api_smoke.c ios/ios_api.c ios/ios_bots_api.c $(CORE_SRC) -lm -o build/ios_smoke
 	./build/ios_smoke
 
 # Monte-Carlo the iMessage SWIFT layer's decisions over the real kernel
@@ -228,7 +233,7 @@ ios-smoke:
 .PHONY: msg-flow-sim
 msg-flow-sim:
 	@mkdir -p build
-	$(CC) $(IOS_CFLAGS) tests/msg_flow_sim.c ios/ios_api.c $(CORE_SRC) -lm -o build/msg_flow_sim
+	$(CC) $(IOS_CFLAGS) tests/msg_flow_sim.c ios/ios_api.c ios/ios_bots_api.c $(CORE_SRC) -lm -o build/msg_flow_sim
 	./build/msg_flow_sim 300 9 0
 	./build/msg_flow_sim 300 8 1
 	./build/msg_flow_sim 300 4 1
@@ -243,7 +248,7 @@ msg-flow-sim:
 .PHONY: ios-goldens
 ios-goldens:
 	@mkdir -p build
-	$(CC) $(IOS_CFLAGS) ios/ios_goldens.c ios/ios_api.c $(CORE_SRC) -lm -o build/ios_goldens
+	$(CC) $(IOS_CFLAGS) ios/ios_goldens.c ios/ios_api.c ios/ios_bots_api.c $(CORE_SRC) -lm -o build/ios_goldens
 	@mkdir -p ../ios/Fixtures
 	./build/ios_goldens > ../ios/Fixtures/goldens.json
 	@echo "wrote ../ios/Fixtures/goldens.json"

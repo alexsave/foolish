@@ -8,6 +8,7 @@
 // game.c / legal.c / view.c / replay.c (docs/IOS_APP_DESIGN.md §3, §16.0).
 
 #include "ios_api.h"
+#include "ios_internal.h"
 
 #include "game.h"
 #include "legal.h"
@@ -15,9 +16,6 @@
 #include "replay.h"
 #include "replay_steps.h"
 #include "replay_extras.h"
-#include "strategy.h"
-#include "bot_roster.h"
-#include "bot_drive.h"
 #include "evwire.h"
 #include "msg_wire.h"
 #include "anim_plan.h"
@@ -95,32 +93,6 @@ static uint8_t  g_msg_carry_fool = MSG_NO_FOOL;
 // game (game.h GAME_RULE_NO_PASS is what a variant costs, not what a default
 // does).
 static int8_t g_msg_rules = 0;
-
-// ---------- strategy roster (offline bots, §7.2) --------------------------
-//
-// The roster itself lives in the kernel (src/bot_roster.c) — one table shared
-// with the server and every future client, so a bot named "cordite" here is
-// the same brain at the same tuning as the website's cordite. This file used
-// to carry its own copy, which mapped the player-facing rungs at the arena
-// variants of handwritten/espresso and applied no tuning knobs at all; both
-// bugs are gone with the table (docs/C_CORE_CONSOLIDATION.md §3.1, §4.1).
-//
-// A FIO strategy id is an index into the OFFLINE projection of the roster (the
-// picker's rungs in strength order, docs/IOS_BOT_NAMING.md §1) — not a raw
-// roster index and not a STRAT_* id, so the ids stay stable as unshipped
-// research brains come and go from the table.
-static int fio_roster_idx(int strategy_id) {
-    return bot_roster_offline_at(strategy_id);
-}
-
-// Per-seat roster index for the seats fio_set_seat_strategy assigned.
-// players[].strategy_key cannot carry this: it holds a STRAT_* id by
-// kernel-wide convention and the kernel reads it (espresso_prod_strategy.c
-// checks strategy_key == STRAT_RANDOM to mirror the TS bot's random-opponent
-// special case). Seats default to the `random` entry, matching the old
-// strategy_key == 0 == STRAT_RANDOM default: a seat nobody assigned but that
-// a bot drive with no assignment still plays random, as before.
-static int8_t g_seat_roster[MAX_PLAYERS];
 
 // ---------- legal moves ----------------------------------------------------
 
@@ -869,7 +841,6 @@ int fio_new_game(const uint8_t *seed, int seed_len, int n_players) {
     int8_t strategies[MAX_PLAYERS];
     for (int i = 0; i < n_players; i++) {
         strategies[i] = STRATEGY_KEY_HUMAN;  // all human until fio_set_seat_strategy
-        g_seat_roster[i] = (int8_t)bot_roster_find("random");
         snprintf(g_game.players[i].player_id, sizeof(g_game.players[i].player_id), "p%d", i);
     }
     game_seat_and_deal(&g_game, strategies, n_players);
@@ -947,18 +918,13 @@ int fio_passing_allowed(void) {
     return (g_msg_rules & GAME_RULE_NO_PASS) ? 0 : 1;
 }
 
-int fio_set_seat_strategy(int seat, int strategy_id) {
-    if (!g_has_game) return FIO_ENOGAME;
-    if (seat < 0 || seat >= g_game.num_players) return FIO_EBADARG;
-    int idx = fio_roster_idx(strategy_id);
-    const BotRosterEntry *e = bot_roster_at(idx);
-    if (!e) return FIO_ENOSTRAT;
-    g_seat_roster[seat] = (int8_t)idx;
-    g_game.players[seat].strategy_key = (int8_t)e->strat;
-    return FIO_EOK;
-}
-
 int fio_has_game(void) { return g_has_game; }
+
+// The resident game, for the bridge's OTHER translation unit (ios_bots_api.c).
+// An accessor rather than an exported `g_game` so this file stays its owner and
+// "is there a game" keeps one answer - see ios_internal.h for why the split
+// exists at all.
+Game *fio_resident_game(void) { return g_has_game ? &g_game : 0; }
 
 // A server packed-view blob decodes to a GameView in pure Swift (MaskedView),
 // and legal moves from that blob come through the PACKED fio_legal_from_packed
@@ -977,63 +943,6 @@ int fio_actor_mask(void) {
 int fio_game_over(void) {
     if (!g_has_game) return FIO_ENOGAME;
     return game_done(&g_game);
-}
-
-// (The legacy fio_bot_step_json is gone: it re-implemented the handle_* dispatch
-// and drifted from the canonical cycle. Everything drives through the packed
-// fio_bot_drive_packed now — the same cycle the app and website run.)
-
-
-// PACKED bot-drive — one kernel cycle, packed:
-//   u32 n_actions, per action {seat, pace, type, n_cards, cards[], attacks[]},
-//   then i32 stop, i32 ended, i32 delayMs (LE).
-// Events are NOT carried (the app doesn't consume them until B4 animation; they
-// come back as packed evwire then).
-static void le_i32(unsigned char **q, int v) {
-    unsigned int u = (unsigned int)v;
-    *(*q)++ = u & 0xff; *(*q)++ = (u >> 8) & 0xff; *(*q)++ = (u >> 16) & 0xff; *(*q)++ = (u >> 24) & 0xff;
-}
-int fio_bot_drive_packed(int human_mask, char *out, int cap) {
-    if (!g_has_game) return FIO_ENOGAME;
-    static BotDriveOut drv;
-    bot_drive(&g_game, (uint32_t)human_mask, BOT_DRIVE_MAX_ACTIONS, 0, 0, &drv);
-    const int delay_ms = bot_cycle_delay_ms(&g_game, (uint32_t)human_mask, &drv);
-
-    if (cap < 4) return FIO_ECAP;
-    unsigned char *q = (unsigned char *)out;
-    unsigned int n = (unsigned int)drv.n;
-    *q++ = n & 0xff; *q++ = (n >> 8) & 0xff; *q++ = (n >> 16) & 0xff; *q++ = (n >> 24) & 0xff;
-    for (int i = 0; i < drv.n; i++) {
-        const BotDriveAction *a = &drv.actions[i];
-        const LegalMove *m = &a->move;
-        if ((int)((char *)q - out) + 4 + 2 * m->n_cards + 12 > cap) return FIO_ECAP;
-        *q++ = (unsigned char)a->seat;
-        *q++ = (unsigned char)a->pacing_class;
-        *q++ = (unsigned char)m->type;
-        *q++ = (unsigned char)m->n_cards;
-        for (int c = 0; c < m->n_cards; c++) *q++ = (unsigned char)card_to_id(m->cards[c]);
-        for (int c = 0; c < m->n_cards; c++) *q++ = (unsigned char)card_to_id(m->attack_cards[c]);
-    }
-    le_i32(&q, drv.stop);
-    le_i32(&q, drv.ended);
-    le_i32(&q, delay_ms);
-    return (int)((char *)q - out);
-}
-
-// ---------- strategies -----------------------------------------------------
-
-int fio_strategy_count(void) { return bot_roster_offline_count(); }
-
-int fio_strategy_name(int id, char *out, int cap) {
-    const BotRosterEntry *e = bot_roster_at(fio_roster_idx(id));
-    if (!e) return FIO_ENOSTRAT;
-    if (!out || cap <= 0) return FIO_EBADARG;
-    // A bare NUL-terminated key, not a JSON string - it never was one, it just
-    // borrowed json_out's bounded appender to get the cap check for free.
-    const int n = (int)strlen(e->key);
-    if (n + 1 > cap) return FIO_ECAP;
-    memcpy(out, e->key, (size_t)n + 1);
-    return n;
 }
 
 // ---------- replays (§16.C) ------------------------------------------------
@@ -1500,7 +1409,6 @@ int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, i
     g_msg_rules = msg_pass_allowed(&e) ? 0 : (int8_t)GAME_RULE_NO_PASS;
     memcpy(g_deal_seed, e.seed, FOOLISH_SEED_LEN);
     g_has_deal_seed = 1;
-    for (int i = 0; i < e.n_players; i++) g_seat_roster[i] = (int8_t)bot_roster_find("random");
 
     return fio_msg_pack(&e, digest, out, cap);
 }
