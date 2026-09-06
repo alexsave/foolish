@@ -188,7 +188,9 @@ The brief enumerated six placements of the last deck card; the analyser enumerat
 Every test was mutation-checked: the thing it guards was broken on purpose, the suite was seen to fail, and the break was reverted.
 The mutations are listed in each test file's header and were run as a batch (`scratchpad/mutate.py` in the session): a swapped deal card, a pinned card that stays pinned after it is played, a world missing a slot, an exact solve scored for the wrong seat, a world shuffle that ignores its seed, a reader that reads past the end, a bot scratch shared across threads, a writer that forgets the deep flag, a hypergeometric without its denominator, swapped DECLINED and CHANCE, and a header claiming one node too many.
 
-<!-- MUTATION_NUMBERS -->
+The first batch of twelve caught ten as designed and exposed two tests that did not test: "a different seed gives different bytes" stayed green with the world shuffle ignoring its seed (handwritten draws its own RNG from the same seed and moved the bytes anyway), and flipping the struct-level finished-board leaf of the exact play changed nothing (with the stock at one card the bitboard solver takes every tail, so that leaf is dead there).
+Both were fixed by testing the thing itself: the sampler has a direct test, and the proof mutation is the sign of the value the solver hands back.
+Re-run, both are caught: twelve of twelve.
 
 ## Prior art
 
