@@ -5,7 +5,7 @@
 //
 // bench_e2e_move.ts already times the full server path (load → kernel → CAS
 // commit) but only for cheap HUMAN moves. This times the same path driven by
-// the belief/Monte-Carlo bots — octogen/semtex/cordite/fulminate — where the
+// the belief/Monte-Carlo bots — octogen/cordite/blackpowder/firecracker — where the
 // kernel deliberation dominates. Per decision it brackets the whole production
 // pipeline: loadCompleteGame (real row read) → belief hydrate (if wired) →
 // kernel choose (marshal + belief + MC) → apply → CAS commit_game. The only
@@ -19,7 +19,7 @@ import './harness.ts';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
 import { executeWithGameLock } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
 import { start_game } from '../server/api/common/game_lifecycle.ts';
-import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
+import { botStrategyKeys, calculateLegalMoves, resolveBotStrategy } from '../server/api/common/bot_strategy.ts';
 import { processBotActionPacked, shouldBotActCore } from '../server/api/common/pure_bot_actions.ts';
 import { __setBotSeedSource, __botsWasmMB, __botsWasmBytes } from '../sdk/ts/wasm/bots.ts';
 import { __setKernelSeedSource, __kernelWasmMB, __kernelWasmBytes } from '../sdk/ts/wasm/engine.ts';
@@ -30,7 +30,19 @@ import { AnimationEvent, Game, GAME_STATUS, PLAYER_STATUS } from '../server/api/
 
 const say = (l: string) => process.stdout.write(l + '\n'); // harness silences console.log
 const JSON_OUT = process.env.BENCH_JSON === '1';
-const BOTS = (process.env.BENCH_BOTS || 'octogen,semtex,cordite,fulminate').split(',').map(s => s.trim()).filter(Boolean);
+// Shipped bots only. The old default named semtex/fulminate, culled from the
+// roster and never linked into bots.wasm: they resolved to `random` and this
+// bench dutifully reported a Monte-Carlo bot's latency as sub-millisecond
+// (metrics.yml calls those the "phantom -80%/-28% deltas"). A benchmark that
+// silently measures a different bot is worse than one that does not run, so
+// unknown keys are refused below rather than defaulted away.
+const BOTS = (process.env.BENCH_BOTS || 'octogen,cordite,blackpowder,firecracker').split(',').map(s => s.trim()).filter(Boolean);
+const UNKNOWN_BOTS = BOTS.filter(k => resolveBotStrategy(k) === null);
+if (UNKNOWN_BOTS.length > 0) {
+    throw new Error(`BENCH_BOTS names ${UNKNOWN_BOTS.join(', ')}, which the bot registry cannot `
+        + `dispatch — they would be benched as 'random' under their own names. `
+        + `Known keys: ${botStrategyKeys().join(', ')}`);
+}
 const MOVES = Number(process.env.BENCH_BOT_MOVES || 25);
 
 const mkLcgU32 = (seed: number) => { let s = (seed >>> 0) || 1; return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s; }; };

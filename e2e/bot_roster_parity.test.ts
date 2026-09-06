@@ -259,6 +259,60 @@ test('roster == TS registry, and the knobs are the roster\'s alone', () => {
     }
 });
 
+// A bot NAME in CI is a claim about what is being measured. memory.yml's
+// edge-serve job spent months driving `semtex`/`fulminate` — keys culled from
+// the roster and never linked into bots.wasm — which getBotStrategy resolved to
+// `random`: the cheapest bot in the tree, measured against the edge memory
+// budget and reported green under the expensive bots' names (issue #111). The
+// job's own guard could not catch it, because `random` makes real moves and the
+// guard only asked for moves.
+//
+// So hold the keysets to the roster HERE, where it costs no CI minutes and no
+// edge runtime. Text, like the rest of this file: it must fail on the commit
+// that culls a bot, not on the next run that happens to boot a stack.
+function parseWorkflowKeysets(): string[][] {
+    const yml = read('.github/workflows/memory.yml');
+    const m = /^\s*for keys in ([^;]+); do\s*$/m.exec(yml);
+    if (!m) {
+        throw new Error('memory.yml no longer has a `for keys in ...; do` loop — '
+            + 'if the edge-serve gate moved, move this guard with it');
+    }
+    return m[1].trim().split(/\s+/).map(set => set.split(','));
+}
+
+test('memory.yml drives bots that this tree actually ships', () => {
+    const roster = parseCRoster();
+    const registry = parseTsRegistry();
+    const keysets = parseWorkflowKeysets();
+
+    assert.ok(keysets.length > 0, 'the edge-serve gate drives no bots at all');
+
+    for (const keys of keysets) {
+        assert.ok(keys.length >= 2, `keyset ${keys.join(',')} seats fewer than 2 players`);
+        for (const key of keys) {
+            const entry = roster.find(r => r.key === key);
+            assert.ok(entry, `memory.yml drives '${key}', which is not in the C roster `
+                + `(c/src/bot_roster.c). It resolves to 'random', and the job measures that.`);
+            // In the roster is not enough: the SERVER seats bots through the TS
+            // registry, and a key it does not carry takes the same silent
+            // fallback even though the kernel knows the name.
+            assert.ok(registry.has(key), `memory.yml drives '${key}', which the C roster knows `
+                + `but the TS registry (server/api/common/bot_strategy.ts) does not — the edge `
+                + `runtime seats 'random' for it.`);
+        }
+    }
+
+    // The gate exists to reproduce production memory kills, which only the
+    // Monte-Carlo bots can produce. A keyset of nothing but cheap bots would
+    // satisfy every check above and still measure nothing.
+    const MONTE_CARLO = new Set(['firecracker', 'blackpowder', 'cordite', 'octogen']);
+    for (const keys of keysets) {
+        assert.ok(keys.some(k => MONTE_CARLO.has(k)),
+            `keyset ${keys.join(',')} has no Monte-Carlo bot in it: nothing in that game can `
+            + `reach the edge memory budget the job exists to guard`);
+    }
+});
+
 test('seed.sql seeds exactly the roster\'s `seeded` set', () => {
     const roster = parseCRoster();
     const expected = roster.filter(r => r.seeded).map(r => r.key).sort();
