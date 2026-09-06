@@ -122,6 +122,14 @@ int main(int argc, char **argv) {
     for (int i = 0; i < 2000; i++) {
         MsgEnvelope e;
         memset(&e, 0, sizeof(e));
+        // "no opening seat" / "no carried fool" are 0xFF sentinels, not 0, and
+        // msg_encode refuses a non-rematch format that claims either (see
+        // msg_wire.c's fmt_has_rematch guard). A plain memset leaves both at 0,
+        // which reads as "seat 0" and is rejected with MSG_EFORMAT - so set the
+        // sentinels explicitly. (These fields postdate this bench's first run;
+        // see rustpoc/README.md on re-validating before trusting a number.)
+        e.opening = MSG_NO_OPENING;
+        e.carry_fool = MSG_NO_FOOL;
         e.format = MSG_FORMAT_V6;
         e.flags = 0;
         e.n_players = (uint8_t)(2 + game_random_u32() % 7);
