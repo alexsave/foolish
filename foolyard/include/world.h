@@ -9,6 +9,7 @@
 #include "client.h"
 #include "server.h"
 #include "invariant.h"
+#include "trace.h"
 
 typedef struct Knobs {
     u32 base_latency_us;
@@ -32,6 +33,7 @@ typedef struct Knobs {
 
     u8  deep;              // clone-and-compare every rejected move
     u8  csv;               // machine-readable per-seat lines for the sweep driver
+    u8  trace;             // one line per scheduler pop, plus what it did
     u8  verbose;
 } Knobs;
 

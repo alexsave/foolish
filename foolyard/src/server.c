@@ -6,6 +6,7 @@
 
 #include "awire.h"
 #include "bot_drive.h"
+#include "bot_roster.h"
 #include "legal.h"
 #include "view.h"
 
@@ -75,6 +76,8 @@ static void srv_after_change(World *w, GameSlot *s, int skip_seat) {
         w->finished++;
         int fool = game_done(&s->game);
         if (fool >= 0 && fool < MAX_PLAYERS) w->fools[fool]++;
+        trace_line(w, "    GAME OVER g%u  fool = seat %d  (rematch in %.1fs)",
+                   s->id, fool, (double)w->knobs.lobby_delay_us / 1e6);
         sch_schedule(&w->sch, event_of(EV_SRV_LOBBY, s->id), w->knobs.lobby_delay_us);
     }
 
@@ -96,8 +99,9 @@ static void srv_wake_bots(World *w, GameSlot *s) {
 
         b->armed = 1;
         b->waiting = 0;
-        sch_schedule(&w->sch, event_of(EV_SRV_BOT, bot_param(s->id, (u32)seat)),
-                     b->think_us + rng_below(&w->rng, b->jitter_us + 1));
+        u64 in = b->think_us + rng_below(&w->rng, b->jitter_us + 1);
+        sch_schedule(&w->sch, event_of(EV_SRV_BOT, bot_param(s->id, (u32)seat)), in);
+        trace_line(w, "    arm g%u seat %d in %.3fs", s->id, seat, (double)in / 1e6);
     }
 }
 
@@ -116,6 +120,16 @@ static void srv_deal(World *w, GameSlot *s) {
     s->deals++;
     w->deals++;
     s->lobby_armed = 0;
+
+    trace_line(w, "    DEAL #%u g%u  trump %s  first %d  defender %d  deck %d",
+               s->deals, s->id, trace_suit(s->game.power_suit),
+               s->game.first_attacker, s->game.defender, s->game.deck_count);
+    for (int i = 0; i < n; i++)
+        trace_line(w, "      seat %d %-12s think %ums  hand %s", i,
+                   s->seat_client[i] >= 0 ? "(client)" : bot_roster_at(
+                       bot_roster_find_by_strat(s->bots[i].strategy))->key,
+                   s->bots[i].think_us / 1000,
+                   trace_cards(s->game.players[i].hand, s->game.players[i].hand_count));
 
     srv_after_change(w, s, -1);
     srv_wake_bots(w, s);
@@ -277,6 +291,17 @@ void srv_on_bot(World *w, u32 param) {
 
     BotDriveOut drv;
     if (bot_drive(&s->game, hold_mask, BOT_DRIVE_MAX_ACTIONS, NULL, 0, &drv) < 0) return;
+
+    for (int i = 0; i < drv.n; i++) {
+        const BotDriveAction *act = &drv.actions[i];
+        trace_line(w, "    PLAY g%u seat %d  %-6s %s   -> hand %d, defender %d, table %d",
+                   s->id, act->seat, trace_move_kind(act->move.type),
+                   trace_cards(act->move.cards, act->move.n_cards),
+                   s->game.players[act->seat].hand_count,
+                   s->game.defender, s->game.num_battles);
+    }
+    if (drv.n == 0)
+        trace_line(w, "    park g%u seat %u  nothing to do", game_id, seat);
 
     int changed = (drv.n > 0 || drv.ended >= 0);
     if (changed) {
