@@ -1566,10 +1566,11 @@ public struct MessageTableView: View {
     /// uncovered attack). The dev auto-player and HarnessModel's turn handoff
     /// have to agree on it: a handoff reading the raw menu passes the game to a
     /// seat whose only offer is a good this board will not let it make.
-    private func humanMoves() -> [Move] {
-        PlayWire.humanMoves(menu: controller.legalPacked,
-                            battles: controller.view?.battles ?? [])
-    }
+    ///
+    /// The CONTROLLER narrows it, off the same bytes and in the same breath as
+    /// the board they describe (`humanLegal`), so this board and `iCanAct`
+    /// cannot be looking at two different menus.
+    private func humanMoves() -> [Move] { controller.humanLegal }
 
     private func autoPlayIfAsked(waitForBoard: Bool = false) async {
         let devAutoMove = FileManager.default

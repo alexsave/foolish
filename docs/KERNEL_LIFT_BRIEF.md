@@ -314,12 +314,17 @@ If the diff ever grows a second one, the split has been drawn in the wrong place
 `anim_resolve_unconfirmed_attack_covers` and `anim_conflict_verdict` then stop
 being two rules and become one rule with one transport-dependent question.
 
-## Queued: the iMessage chain layer
+## Queued: the iMessage chain layer - BOTH ITEMS DONE
 
 Third in the queue, after the determinism pass and the transport mode.
 Owner's instinct was that all of `ios/FoolishKit/Messages` (2,388 lines) should be
 C.
 Measured, it splits three ways, and only two of them are worth doing.
+
+Both landed 2026-09-05: the gates (Item 1) and the turn controller (Item 2).
+What is left in that directory is the third way - the Messages framework, the
+App Group storage and the captions - which the next section says should not move
+and still should not.
 
 ### Does not move, and should not
 
@@ -363,7 +368,76 @@ One wrinkle on `SeatIdentity`: `game.h` states that seat identity "is
 deliberately not in the state blob; it lives with the caller."
 Moving it reverses a documented decision, so do it consciously or leave it.
 
-### Item 2: the turn controller as a transition function.  The one with leverage
+### Item 2: the turn controller as a transition function - DONE
+
+Landed 2026-09-05, in the shape specified below.
+`msg_wire.c` grew a `msg_turn_*` section - ten rules over an eight-bit chain
+state - and `MessageTurnController` now asks them instead of stating them.
+Nothing about the awaits moved, because nothing about the awaits could.
+
+What crossed, and what each one is deliberately not the obvious thing:
+
+- **What may be staged.**
+  `msg_turn_can_send` / `can_act` / `can_stage`.
+  `can_act` counts the HUMAN menu (`play_human_menu`), which is the one real
+  behaviour change in the lift: `iCanAct` counted the raw menu, and the raw menu
+  always offers `good` because a bot needs to say good over an uncovered attack
+  to leave the eligible set.
+  A seat whose only offer is a good the board will not let it make was reading
+  as a seat with a move, and the board drew an action bar with no live button in
+  it.
+  The controller now publishes `humanLegal` beside `legal`, narrowed off the
+  same bytes in the same assignment, so the two cannot describe different menus.
+- **The admission door.**
+  `msg_turn_admit`, one verdict for the three refusals `apply` makes.
+  The ORDER between them is the rule: the retraction is asked first because it
+  is the silent one.
+- **What an arrival does to a staged move.**
+  `msg_turn_arrival`, four outcomes, each of them a bug this extension has had:
+  a duplicate delivery red-retracting a move nobody superseded, a burst's second
+  arrival adopting underneath the flight meant to precede it, a retraction
+  offering to take back a bubble the thread already has.
+  Plus `msg_turn_adopt_duplicate`, the deliberately narrower guard the adopt
+  path keeps for its direct callers.
+- **What a send means.**
+  `msg_turn_sent_source` (the picker - three facts in, one answer out) and
+  `msg_turn_send_verdict` (what follows from it).
+  The verdict is asked once, and again after the decode when the first answer is
+  `DECODE`, which keeps the host's one await where it belongs.
+  `docs/ANIMATION_CORE_C.md` had left `sentBytes` as "liftable and deliberately
+  left" with the note that the thing to lift was the PICKER and not the bytes;
+  that is what happened, and the two `Data` blobs still never cross.
+- **What is withheld, and what a read publishes.**
+  `msg_turn_hold_state` (the step whose board a held settlement shows, and why a
+  `good`'s cut of 0 answers 0 rather than an error) and `msg_turn_publish` (the
+  held view, the EMPTY menu, the animation boundary, the veil).
+
+That last one closes half of a finding recorded further down this file.
+"An untested load-bearing rule: the empty menu under a held settlement" says
+stage 2 mutated away both halves of the rule and the whole suite stayed green.
+Both halves are now `msg_turn_publish` outs, and mutating either one to a
+constant fails `msg_wire_test` - `publish never publishes the empty menu` and
+`publish never shows the held view`, one failure each, against a baseline of
+zero.
+What is still missing is the FIXTURE the finding actually asks for - a
+defender's cover that empties their own hand, driven through a real controller -
+so the finding stays open; what has changed is that the rule is no longer
+un-guarded anywhere.
+
+Everything crosses as ints.
+The chain state is eight booleans and every answer is a small enum, so a packed
+record around either would be the ceremony the "No JSON" section warns about,
+and `ios_api.c` carries `_Static_assert`s that the bridge's names and the
+kernel's values have not drifted.
+`TurnWire.swift` is the crossing, beside the other wire decoders; no app-layer
+file imports `CFoolish`.
+
+Mutation-checked: fifteen mutations to `msg_wire.c`, each applied on its own
+against a zero-failure baseline and listed with its failure count in
+`c/tests/msg_wire_test.c` above `test_turn_controller`, and six more to the
+Swift crossing listed in `ios/FoolishTests/TurnWireTests.swift`.
+
+The original assessment follows.
 
 `MessageTurnController` (474) is not a pure function - it is a state machine over
 time.
@@ -427,7 +501,7 @@ Not fixed with stage 5 because the same prior ALSO seeds the role marks, where
 "the first event of the previous step" is deliberate.
 So this is a change with two consumers and wants its own look.
 
-### An untested load-bearing rule: the empty menu under a held settlement
+### An untested load-bearing rule: the empty menu under a held settlement - HALF CLOSED
 
 While a bout settlement is withheld, the board publishes an EMPTY legal menu so
 the player cannot act on a deal they have not been shown.
@@ -443,6 +517,15 @@ hand, which no fixture reaches.
 Stage 2 removed the duplication the rule could hide behind rather than faking a
 test.
 Writing the missing fixture is the actual fix.
+
+Half of it closed with Item 2 (2026-09-05).
+Both halves are `msg_turn_publish` outs now, and mutating either to a constant
+costs 2 failures each in `msg_wire_test` - so the RULE is guarded where it is
+stated.
+The FIXTURE is still missing, and it is the fixture this finding is really about:
+nothing yet drives a defender's own hand empty through a controller and watches
+what the board is allowed to offer afterwards.
+That is the remaining work, and it is a Swift-side one.
 
 ### A CI flake: edge-serve 502s under the real memory budget
 

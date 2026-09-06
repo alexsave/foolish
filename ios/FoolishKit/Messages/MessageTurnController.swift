@@ -16,6 +16,14 @@
 //
 // It decides NOTHING about rules: every legal-move set and every apply is the
 // kernel's answer (via MessageKernel, the single actor over the static Game).
+//
+// …and since the lift, nothing about the TURN either. What may be staged, what
+// an arriving chain does to a staged move, what a send means and what a read
+// publishes are msg_wire.c's `msg_turn_*`, reached through TurnWire. What is
+// left here is the part C cannot own - the suspension points. The awaits, the
+// one-slot resident game, the order the assignments land in: those are Swift's,
+// and every historical bug in this file was one of them rather than a wrong
+// rule.
 
 import Foundation
 import SwiftUI
@@ -29,12 +37,26 @@ public final class MessageTurnController: ObservableObject {
     /// rules that narrow it (the held settlement in `publish`) are applied to
     /// one value and cannot leave the two describing different menus.
     @Published public private(set) var legalPacked: Data = MoveWire.emptyMenu {
-        didSet { legal = MoveWire.decode(legalPacked) }
+        didSet {
+            legal = MoveWire.decode(legalPacked)
+            // …and the menu AS A HUMAN MAY PLAY IT, off the same bytes and the
+            // view `publish` assigned one line earlier. See `humanLegal`.
+            humanLegal = PlayWire.humanMoves(menu: legalPacked, battles: view?.battles ?? [])
+        }
     }
 
     /// The same menu decoded, for the callers that read moves rather than ask
     /// questions about a selection. Assigned ONLY by `legalPacked` above.
     @Published public private(set) var legal: [Move] = []
+
+    /// THE MENU MINUS WHAT A HUMAN MAY NOT DO - the kernel's own narrowing
+    /// (fio_play_human_menu): no `wait`, and no `good` while an attack is still
+    /// uncovered. It is what `iCanAct` counts, because the raw menu ALWAYS
+    /// offers good - a bot needs it to leave the eligible set - and a seat whose
+    /// only offer is a good the board will not let it make is not a seat with a
+    /// move. Assigned by `legalPacked` above, off the same bytes, so the two can
+    /// never describe different menus.
+    @Published public private(set) var humanLegal: [Move] = []
     /// ROUND 16 — seconds this seat must still wait before it may pick up; 0
     /// means now. The board hides Take while it is non-zero and `apply` refuses
     /// a pickup, so the owner's "guarded by the kernel, as well as by the UI"
@@ -376,19 +398,17 @@ public final class MessageTurnController: ObservableObject {
         else { dropHold(); return }
         let evs = turn.events
         // The cut is the kernel's, taken off the same frames these events were
-        // decoded from (evwire_frames_settlement_cut).
-        guard let cut = turn.settlementCut, cut < evs.count else { dropHold(); return }
-        // The board to show while the rest is withheld. For a good the cut is
-        // at index 0 - a good emits no step of its own - and the transition
-        // step it lands on carries the PRE-discard board (game.c's
-        // ENGINE_HOOK_MAGIC_TRANSITION fires before anything moves), which is
-        // exactly the state being asked for. Otherwise it is the state the
-        // acting step committed: the cover on the table, the table taken.
-        let held = cut > 0 ? evs[cut - 1].state : evs[cut].state
+        // decoded from (evwire_frames_settlement_cut), and so is the STEP whose
+        // board is shown while the rest is withheld (`msg_turn_hold_state`, and
+        // see msg_wire.h for why a `good`'s cut of 0 answers 0 rather than an
+        // error).
+        guard let cut = turn.settlementCut,
+              let at = TurnWire.holdState(events: evs.count, cut: cut)
+        else { dropHold(); return }
         // No snapshot to hold on means no honest way to show a half-applied
         // turn, so don't: a whole animation is a far smaller problem than a
         // board rendered from a state nobody vouched for.
-        guard let held else { dropHold(); return }
+        guard let held = evs[at].state else { dropHold(); return }
         heldSettlement = Array(evs[cut...])
         heldView = held
         stagedAnimation = Array(evs[..<cut])
@@ -411,17 +431,34 @@ public final class MessageTurnController: ObservableObject {
     /// Called synchronously from the send signal, ahead of the async rebase.
     public func markSending() { if !sending { sending = true } }
 
-    public var canSend: Bool { !pending.isEmpty && !sending }
+    /// THIS DEVICE'S TURN, as the kernel's bits (TurnWire.State). Every staging
+    /// decision below is msg_wire.c's answer over this value, so a second chain
+    /// client meets the rules rather than re-deriving them.
+    var chainState: TurnWire.State {
+        var s: TurnWire.State = []
+        if !pending.isEmpty          { s.insert(.staged) }
+        if sending                   { s.insert(.sending) }
+        if ready                     { s.insert(.ready) }
+        if superseded                { s.insert(.superseded) }
+        if conflictRetracting        { s.insert(.retracting) }
+        if boardWatching             { s.insert(.boardWatching) }
+        if !heldSettlement.isEmpty   { s.insert(.held) }
+        if isGenesis                 { s.insert(.genesis) }
+        return s
+    }
+
+    public var canSend: Bool { TurnWire.canSend(chainState) }
     /// Is there a sendable bubble right now? Either I've staged a move
     /// (`canSend`), OR it's a fresh genesis where I have no legal move — i.e. I
     /// dealt the game but I'm not the first attacker, so the ONLY way the game
     /// progresses is to send the deal to whoever IS the first attacker. Without
     /// this, a creator who doesn't hold the lowest trump is stuck on a board with
     /// no move and no send (B4 bug: "Start game" left you unable to send).
-    public var canStage: Bool { !superseded && (canSend || (isGenesis && !iCanAct)) }
-    public var iCanAct: Bool {
-        !superseded && !legal.contains { $0.type == .wait } && !legal.isEmpty
-    }
+    /// The rule is `msg_turn_can_stage`.
+    public var canStage: Bool { TurnWire.canStage(chainState, humanMoves: humanLegal.count) }
+    /// `msg_turn_can_act`, over the HUMAN menu - see `humanLegal` for why the
+    /// raw one is the wrong count.
+    public var iCanAct: Bool { TurnWire.canAct(chainState, humanMoves: humanLegal.count) }
 
     /// ROUND 20: this board is a BRANCH OFF AN OLD BUBBLE. A chain that beats it
     /// under Rule P has already been through this device, so whatever is played
@@ -659,56 +696,37 @@ public final class MessageTurnController: ObservableObject {
     /// runs only when the board reports the reversal landed.
     public func offerArrival(payload: Data, parent: MessageEnvelope,
                              quietOpen: Bool = false) async {
-        // A DUPLICATE OF THE CHAIN I AM ALREADY ON is not an arrival, staged
-        // moves or not. `adopt`'s own guard skips duplicates only with nothing
-        // staged (with pending moves it conservatively rebuilt, a shrug from
-        // before the conflict model existed) - but under the conflict model
-        // that shrug would RED-RETRACT my staged move because Messages
-        // re-delivered a bubble, which is a retraction with nothing to retract
-        // for. The staged moves were composed against exactly these bytes;
-        // they stand.
-        if ready, basePayload == payload {
+        // WHERE THIS ARRIVAL GOES is the kernel's answer (`msg_turn_arrival`),
+        // over this controller's own bits. Four outcomes, and each of them is
+        // a bug this extension has already had:
+        //
+        //   SKIP - a duplicate of the chain I am ALREADY on is not an arrival,
+        //     staged moves or not. Retracting there red-flies a move because
+        //     Messages re-delivered a bubble, with nothing to retract for.
+        //   LATCH - mid-retraction, only the latch moves. Asked BEFORE the
+        //     staged test, because the retraction has already emptied `pending`
+        //     and a burst's second arrival would otherwise adopt UNDERNEATH the
+        //     flight, the finish then putting the older chain on top of it.
+        //   ADOPT - nothing staged, nobody mounted to fly it, or the bytes are
+        //     already gone. A move the human has SENT is not a staged move, and
+        //     retracting it offers to take back a bubble the thread has.
+        //   RETRACT - the commonest real conflict, and the theatre it deserves.
+        //
+        // A sequence still in FLIGHT is the board's own conflict, reversed from
+        // its recorded motions; the controller fronts only the case where the
+        // MODEL has to walk back first.
+        switch TurnWire.arrival(chainState, sameChain: basePayload == payload) {
+        case .skip:
             AnimLog.say("offerArrival skipped - already on this chain (pending=\(pending.count))")
             return
-        }
-        // MID-RETRACTION, only the latch moves - newest wins, one retraction
-        // suffices. Checked BEFORE the pending guard below, because the
-        // retraction has already emptied `pending`: without this order a burst's
-        // second arrival would fall through to a plain adopt UNDERNEATH the
-        // retraction, and the finish would then adopt the older latched chain
-        // ON TOP of it - the board walking backwards one bubble
-        // (ConflictModelTests.testANewerArrivalMidRetractionWinsTheLatch caught
-        // exactly that).
-        if conflictRetracting {
+        case .latch:
             conflictLatch = (payload, parent, quietOpen)
             return
-        }
-        // No staged moves, or nobody mounted to fly them home: adopt as ever.
-        // A sequence still in flight is the BOARD's conflict (it reverses it
-        // from its own recorded motions before playing the arrival - see
-        // MessageTableView.replayLastMoveOnOpen); the controller only fronts
-        // the case where the MODEL itself must walk back first.
-        // A MOVE THE HUMAN HAS ALREADY SENT IS NOT A STAGED MOVE.
-        //
-        // `sending` stands from the send signal until `markSent` resolves it,
-        // and it is exactly the window in which the bytes are already gone but
-        // this controller has not caught up. Retracting there offers to take
-        // back a bubble the thread already has - the owner, on a sent pickup
-        // followed by an ordinary one-card throw-in: "Somehow this caused an
-        // UNDO animation of the previous pickup! ... The state shown in the
-        // bubble of the simple one card throw in by my opponent clearly
-        // indicated that my card count was such that I had picked up. My pickup
-        // definitely wasn't superceded."
-        //
-        // Whatever the arriving chain says about my move, its own replay is the
-        // honest account of it; a red flight first is theatre for a retraction
-        // that never happened. This is the floor under the substitution in
-        // `markSent`: that stops `pending` being stranded in the first place,
-        // and this stops the burst that lands DURING the send window from
-        // retracting on the way past.
-        guard boardWatching, !pending.isEmpty, !sending else {
+        case .adopt:
             await adopt(payload: payload, parent: parent, quietOpen: quietOpen)
             return
+        case .retract:
+            break
         }
         conflictLatch = (payload, parent, quietOpen)
         conflictRetracting = true
@@ -802,7 +820,7 @@ public final class MessageTurnController: ObservableObject {
         // pending-nonempty duplicate no longer reaches here from the routing
         // layer at all - `offerArrival` skips it outright, keeping the staged
         // move - so this guard's narrowness only matters for direct callers.)
-        if ready, pending.isEmpty, basePayload == payload {
+        if TurnWire.adoptIsDuplicate(chainState, sameChain: basePayload == payload) {
             AnimLog.say("adopt skipped - already on this chain")
             return
         }
@@ -996,37 +1014,49 @@ public final class MessageTurnController: ObservableObject {
         // when the link is tapped: it is a question about a particular game, and
         // on tap it would be whatever game the engine happened to hold by then.
         let code = read.replayCode
+        // WHAT THIS READ PUBLISHES is the kernel's answer (`msg_turn_publish`),
+        // taken once and applied to every value below, so the veil, the board,
+        // the menu and the animation boundary cannot come from four readings of
+        // the same facts.
+        //
+        // THE HELD SETTLEMENT is both of the first two outs. While one stands
+        // the board a staged move produced is the kernel's pre-settlement
+        // snapshot, and NOTHING is legal. Both halves matter: the view is what
+        // keeps the deal out of sight, the empty menu is what stops the same
+        // player acting on it anyway - a defender whose last cover swept the
+        // table becomes the next first attacker, so without it they could pick
+        // that attack out of a hand they are not supposed to have seen yet,
+        // with the whole turn still retractable.
+        //
+        // THE VEIL goes up only when the view is actually about to change. The
+        // one thing that takes it down is the board's
+        // `.onChange(of: controller.view)`, and SwiftUI does not fire onChange
+        // for an assignment of an EQUAL value - so arming it over an unchanged
+        // board (a duplicate delivery of the chain already on screen was the
+        // reproduced case) stranded every card in `openReplayTouchedCardIds`
+        // behind `pendingOpen` forever: laid out in its slot, opacity 0, on a
+        // board otherwise correct ("the attack flies, lands, then disappears",
+        // 1.0(19) on device).
+        let out = TurnWire.publish(chainState,
+                                   baseAtomsBefore: baseAtomsBefore,
+                                   stagedAtomsBefore: staged,
+                                   openReplay: openReplay?.count ?? 0,
+                                   viewWouldChange: (heldView ?? v) != view)
+        let published = out.showHeldView ? (heldView ?? v) : v
         if let evs = openReplay {
             openReplayEvents = evs
             openReplayPriorState = priorState
             // Raised in the same breath as the view it describes: the paint that
             // first shows this chain must already know which cards are still to
             // fly, and must never see one without the other.
-            //
-            // …and ONLY when that view is actually about to change. The one
-            // thing that takes this veil down is the board's
-            // `.onChange(of: controller.view)` (flyBoutEndToDiscard's defer), and
-            // SwiftUI does not fire onChange for an assignment of an EQUAL
-            // value. So arming it while publishing an unchanged board - a
-            // duplicate delivery of the chain already on screen was the
-            // reproduced case - stranded every card in `openReplayTouchedCardIds`
-            // behind `pendingOpen` forever: laid out in its slot, opacity 0, on
-            // a board whose state was otherwise correct ("the attack flies,
-            // lands, then disappears", 1.0(19) on device). A veil nothing will
-            // consume must never go up.
-            replayPending = !evs.isEmpty && (heldView ?? v) != view
+            replayPending = out.raiseVeil
         }
         residentOver = v?.isOver ?? false
-        animAtomsBefore = pending.isEmpty ? baseAtomsBefore : staged
-        // THE HELD SETTLEMENT: while one stands, the board a staged move
-        // produced is the kernel's pre-settlement snapshot, and NOTHING is
-        // legal. Both halves matter. The view is what keeps the deal out of
-        // sight; the empty menu is what stops the same player from acting on
-        // it anyway - a defender whose last cover swept the table becomes the
-        // next first attacker, so without this they could pick that attack out
-        // of a hand they are not supposed to have seen yet, all still staged.
-        view = heldView ?? v
-        legalPacked = heldSettlement.isEmpty ? read.legalPacked : MoveWire.emptyMenu
+        animAtomsBefore = out.animAtomsBefore
+        // `view` before `legalPacked`, because the menu's own `didSet` narrows
+        // itself against the board just published (see `humanLegal`).
+        view = published
+        legalPacked = out.emptyMenu ? MoveWire.emptyMenu : read.legalPacked
         if code != replayCode { replayCode = code }
         if held != pickupHold { pickupHold = held }
         armHoldTicker(held)
@@ -1077,33 +1107,32 @@ public final class MessageTurnController: ObservableObject {
     /// has to infer from nothing happening.
     @discardableResult
     public func apply(_ move: Move) async -> Bool {
-        // Mid-retraction the chain on screen is being replaced: a move staged
-        // now would be composed against a base the latched arrival is about to
-        // supersede, and would itself need retracting a breath later. The
-        // window is one red flight long; the tap simply does nothing, exactly
-        // as it would have a frame later when the arrival's board is up.
-        guard !conflictRetracting else { return false }
+        // THE DOOR, and the kernel keeps it (`msg_turn_admit`). Three refusals,
+        // and the order between them is the rule: the retraction is asked FIRST
+        // because it is the SILENT one - the window is one red flight long and
+        // the tap simply does nothing, exactly as it would a frame later with
+        // the arrival's board up. The other two announce themselves, because the
+        // board raised a veil over the played card synchronously before this was
+        // called and only a view change or a `rejectTick` ever takes it down.
+        //
+        // Both are enforced here as well as displayed: the buttons are already
+        // gone, so this only fires on a path the UI does not draw - a drop
+        // gesture, the dev harness, a future shortcut - which is exactly why it
+        // is a rule and not a button state.
+        switch TurnWire.admit(chainState, move: move, pickupHold: pickupHold) {
+        case .retracting:
+            return false
+        case .superseded, .heldPickup:
+            lastChangeWasUndo = false
+            sending = false
+            lastRejectReason = 0
+            rejectTick += 1
+            return false
+        case .ok:
+            break
+        }
         lastChangeWasUndo = false
         sending = false
-        // ROUND 20: a board branching off an old bubble may not be played on.
-        // Enforced here as well as displayed (`superseded` stands `iCanAct`
-        // down, which is what takes the buttons and the drop targets away) for
-        // the same reason the pickup hold below is: this is the one door every
-        // gesture, every dev path and every future shortcut has to come through.
-        if superseded {
-            lastRejectReason = 0
-            rejectTick += 1
-            return false
-        }
-        // ROUND 16: the hold, enforced and not merely displayed. The button is
-        // already hidden while `pickupHold` stands, so this only fires on a path
-        // the UI does not draw (a drop gesture, the dev harness, a future
-        // shortcut) - which is exactly why it is here and not only there.
-        if move.type == .pickup, pickupHold > 0 {
-            lastRejectReason = 0
-            rejectTick += 1
-            return false
-        }
         do {
             try await kernel.apply(seat: mySeat, move: move)
             pending.append(move)
@@ -1174,8 +1203,17 @@ public final class MessageTurnController: ObservableObject {
     /// `nonisolated` because it is pure: three values in, one out, no actor
     /// state touched. That is what lets a test enumerate the input space
     /// without a controller and without hopping to the main actor.
+    ///
+    /// THE CHOICE IS THE KERNEL'S (`msg_turn_sent_source`); the BLOBS are not.
+    /// A payload the kernel never wrote is not something it can have an opinion
+    /// about, so what crosses is three booleans and what comes back is which of
+    /// the two this device is holding - and this line does the holding.
     nonisolated static func sentBytes(staged: Bool, host: Data?, sealed: Data?) -> Data? {
-        staged ? (sealed ?? host) : host
+        switch TurnWire.sentSource(staged: staged, host: host != nil, sealed: sealed != nil) {
+        case .sealed: return sealed
+        case .host:   return host
+        case .none:   return nil
+        }
     }
 
     public func markSent(payload: Data? = nil) async {
@@ -1256,8 +1294,23 @@ public final class MessageTurnController: ObservableObject {
         // all eight combinations of (staged, host nil, sealed nil). The two
         // trail notes keep their names: they are what the owner greps a device
         // dump for, and they still separate the two ways the host let us down.
-        let sent = Self.sentBytes(staged: !pending.isEmpty, host: payload, sealed: lastSealed)
-        if !pending.isEmpty {
+        let staged = !pending.isEmpty
+        let sent = Self.sentBytes(staged: staged, host: payload, sealed: lastSealed)
+        // WHAT THE SEND DOES TO THIS BOARD - one verdict from the kernel
+        // (`msg_turn_send_verdict`), asked over the same three facts the picker
+        // above took plus the one comparison only this side can make. Asked
+        // once here and once after the decode below, which is the only await it
+        // owes; the facts are stated in ONE place so the two asks cannot differ
+        // by anything but the decode.
+        let verdictNow: (Bool?) -> TurnWire.SendVerdict = { [lastSealed] decoded in
+            TurnWire.sendVerdict(staged: staged,
+                                 host: payload != nil,
+                                 sealed: lastSealed != nil,
+                                 hostIsSealed: payload != nil && payload == lastSealed,
+                                 decoded: decoded)
+        }
+        var verdict = verdictNow(nil)
+        if staged {
             if let mine = lastSealed, mine != payload {
                 if let host = payload {
                     FlightRecorder.note("send-substituted",
@@ -1303,7 +1356,7 @@ public final class MessageTurnController: ObservableObject {
         // build, and the conservative move is to leave the board alone. Nil
         // `lastSealed` means this controller has sealed nothing yet and has no
         // opinion - a reload can legitimately hand it a chain it did not make.
-        if let sent, let mine = lastSealed, sent != mine {
+        if verdict == .foreign, let sent, let mine = lastSealed {
             // WHAT differed, not just that something did. Equal lengths with a
             // differing prefix is a STALE chain (the value-transport hazard the
             // substitution above covers); different lengths is a different game
@@ -1365,9 +1418,10 @@ public final class MessageTurnController: ObservableObject {
         // emptying `pending` on the way to a base it never reaches: that is the
         // same walk backwards, with no race needed to produce it at all.
         var adopted: MessageEnvelope?
-        if let sent {
+        if verdict == .decode, let sent {
             adopted = try? await kernel.decode(payload: sent, viewer: mySeat)
-            guard adopted != nil else {
+            verdict = verdictNow(adopted != nil)
+            if verdict == .unreadable {
                 FlightRecorder.note("send-unreadable", "kept the board on its staged move")
                 AnimLog.say("markSent: the sent bytes will not decode - board unchanged")
                 // The board keeps its staged move, but not its held settlement
@@ -1382,20 +1436,21 @@ public final class MessageTurnController: ObservableObject {
         // `sending` is cleared before the guard below: one left standing by an
         // ordinary early return is an Undo pill that never comes back.
         sending = false
-        let hadPending = !pending.isEmpty
-        guard hadPending || sent != nil else { return }
-        // NO BYTES AT ALL, AND MOVES STILL STAGED: keep them. This is the shape
-        // the report above walked in on, and the answer is the same one a
-        // refusal gets - the staged moves are what the board is DRAWN from, so
-        // dropping them without a base to replace them walks the board back by
-        // exactly the move the player just watched. Only reachable now if a
-        // seal never happened (`lastSealed` nil with `pending` full), which the
-        // staging path does not allow; kept as the floor under a value that has
-        // gone missing once already.
+        // NO BYTES AT ALL. With nothing staged there was no send of ours to
+        // account for (NOOP) and nothing is held. WITH MOVES STAGED, keep them
+        // (BLIND): the answer a refusal gets, and for the same reason - the
+        // staged moves are what the board is DRAWN from, so dropping them
+        // without a base to replace them walks the board back by exactly the
+        // move the player just watched. Only reachable if a seal never happened
+        // (`lastSealed` nil with `pending` full), which the staging path does
+        // not allow; kept as the floor under a value that has gone missing once
+        // already.
         guard let sent else {
-            FlightRecorder.note("send-blind", "kept the staged move - no chain to rebase onto")
-            releaseHoldForSend()
-            await refresh()
+            if verdict == .blind {
+                FlightRecorder.note("send-blind", "kept the staged move - no chain to rebase onto")
+                releaseHoldForSend()
+                await refresh()
+            }
             return
         }
         pending = []

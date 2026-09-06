@@ -905,4 +905,221 @@ int msg_seat_resolve_in_lobby(const MsgJoin *joins, int n_joins,
                               int last_actor_seat, int chat_is_dm,
                               const char *name, int name_len);
 
+// ---------- the turn controller, as a transition function -------------------
+//
+// A turn on a chain is not "make a move and pass the phone". Several seats can
+// be legal at once, so the model is STAGE A CHAIN: a device establishes a base,
+// applies one or more of its own actions locally, and seals the result into a
+// bubble the human - never the code - presses Send on. The controller that
+// drives that (ios/FoolishKit/Messages/MessageTurnController.swift) is a state
+// machine over time, and its suspension points belong to the host: an actor
+// hop, a decode, a paint. Those stay where they are.
+//
+// The DECISIONS ACROSS them are here. Every rule below is a pure function of
+// facts the host already holds - is anything staged, has Send been pressed, is
+// a board mounted, is a settlement withheld - and answers what to do rather
+// than doing it; the host performs the effect. That is the division bot_drive.h
+// already draws: the kernel says which action and how long to wait, and the
+// caller decides only how to wait.
+//
+// WHY IT IS WORTH MOVING. Staging is where this extension's worst bugs have
+// lived, and each was one rule stated in two places and drifting: a send that
+// walked the board backwards, a duplicate delivery red-retracting a move nobody
+// had superseded, an arrival adopted underneath the retraction meant to precede
+// it. A second chain client re-deriving these from outside meets all of them
+// again.
+
+// THE CHAIN STATE, as bits. Every one is a fact about THIS DEVICE's turn, not
+// about the game: the game is the state blob, and none of it is read here.
+#define MSG_TURN_STAGED         (1 << 0)  // actions applied locally, not yet sent
+#define MSG_TURN_SENDING        (1 << 1)  // Send was pressed; the rebase has not resolved
+#define MSG_TURN_READY          (1 << 2)  // a base chain has been established once
+#define MSG_TURN_SUPERSEDED     (1 << 3)  // this board branches off a chain the table left
+#define MSG_TURN_RETRACTING     (1 << 4)  // a conflict retraction is in flight
+#define MSG_TURN_BOARD_WATCHING (1 << 5)  // a live board is mounted to fly one
+#define MSG_TURN_HELD           (1 << 6)  // a bout settlement is withheld until Send
+#define MSG_TURN_GENESIS        (1 << 7)  // a dealt game with no parent chain
+
+// Is there a staged bubble to send? Not "may I play": a send is about bytes in
+// the input field, and the send window (MSG_TURN_SENDING) has already claimed
+// them - an Undo pill surviving into it offers to retract what cannot be
+// retracted.
+int msg_turn_can_send(int state);
+
+// MAY THIS SEAT ACT AT ALL - over the HUMAN menu, never the raw one.
+//
+// `n_human_moves` is the count from play_human_menu: the kernel's menu minus
+// `wait` and minus `good` while an attack is still uncovered. The raw menu
+// always offers GOOD, because a bot needs to say good over an uncovered attack
+// to leave the eligible set (legal.c), and a human may not. A handoff counting
+// the RAW menu calls it this seat's move when its only offer is a good the
+// board will not let it make, and the run stops with no button on screen.
+// legal.h's play_human_menu note is the other half of this sentence.
+int msg_turn_can_act(int state, int n_human_moves);
+
+// Is there a bubble to put in the input field? Either I staged one, or this is
+// a fresh genesis on which I have no move at all - I dealt the game and am not
+// the first attacker, so the only way it progresses is to send the deal on.
+int msg_turn_can_stage(int state, int n_human_moves);
+
+// ---- the door every gesture comes through ----------------------------------
+//
+// Enforced as well as displayed. The board already hides what these refuse, so
+// this only fires on a path the UI does not draw - a drop gesture, the dev
+// harness, a future shortcut - which is exactly why it is a rule and not a
+// button state.
+#define MSG_TURN_ADMIT_OK           0
+// The chain on screen is being replaced; a move staged now would be composed
+// against a base the latched arrival is about to supersede. SILENT: the window
+// is one red flight long, and the tap simply does nothing.
+#define MSG_TURN_ADMIT_RETRACTING   1
+#define MSG_TURN_ADMIT_SUPERSEDED   2
+#define MSG_TURN_ADMIT_HELD_PICKUP  3   // the pickup hold has not lapsed
+int msg_turn_admit(int state, int move_type, int pickup_hold);
+
+// ---- a chain that ARRIVED --------------------------------------------------
+//
+// `same_chain` is the host's byte comparison of the arriving payload against
+// the one this board is built on.
+//
+// SKIP KEEPS THE STAGED MOVES. A re-delivery of the chain I am already on is
+// not an arrival: those moves were composed against exactly these bytes, and
+// retracting them in red because the host handed the same bubble over twice is
+// a retraction with nothing to retract for.
+//
+// LATCH IS CHECKED BEFORE THE STAGED TEST, because a retraction has already
+// emptied the staged list: without that order a burst's second arrival falls
+// through to a plain adopt UNDERNEATH the retraction, and the finish then
+// adopts the older latched chain on top of it - the board walking backwards one
+// bubble.
+#define MSG_TURN_ARRIVE_SKIP     0  // the chain I am already on - staged moves stand
+#define MSG_TURN_ARRIVE_LATCH    1  // a retraction is already flying; newest wins the latch
+#define MSG_TURN_ARRIVE_ADOPT    2  // fold it in now
+#define MSG_TURN_ARRIVE_RETRACT  3  // fly the staged cards home first, then adopt
+int msg_turn_arrival(int state, int same_chain);
+
+// The narrower duplicate guard the ADOPT path keeps for its direct callers. It
+// differs from MSG_TURN_ARRIVE_SKIP on purpose: with moves staged the resident
+// game is base+pending, and re-adopting rebuilds it, which is the behaviour
+// every duplicate got before the routing verdict above existed. Nothing reaches
+// adopt in that shape from the routing layer any more.
+int msg_turn_adopt_duplicate(int state, int same_chain);
+
+// ---- what a send means -----------------------------------------------------
+//
+// WHICH BYTES WENT OUT. The host's Send signal can arrive without its payload,
+// and it can arrive with a STALE one. Both were reported from a device and each
+// was fixed on its own in a different round, as two layers that silently
+// disagreed. They are one sentence:
+//
+//   WITH MOVES STAGED, OUR OWN SEALED CHAIN IS THE BUBBLE.
+//   WITH NOTHING STAGED, ONLY THE HOST CAN SAY.
+//
+// Staged, there is exactly one bubble in the input field and this device sealed
+// it, so a send signal can only be that bubble going out, whatever bytes came
+// along for the ride. Unstaged there is no such claim, and that is also the
+// shape a genuinely foreign signal arrives in.
+//
+// THE BYTES NEVER CROSS - the kernel has no opinion about two opaque blobs it
+// did not write. This is the picker: three facts in, one answer out.
+#define MSG_TURN_BYTES_NONE    0
+#define MSG_TURN_BYTES_HOST    1
+#define MSG_TURN_BYTES_SEALED  2
+int msg_turn_sent_source(int staged, int have_host, int have_sealed);
+
+// WHAT THE SEND DOES TO THIS BOARD, from those same facts plus one comparison
+// the host makes on the blobs (`host_is_sealed`) and, on a second ask, whether
+// the bytes decoded.
+//
+// Ask once with `decoded` < 0. MSG_TURN_SEND_DECODE means "these are ours to
+// adopt - decode them and ask again"; every other answer is final and no decode
+// is owed. That two-step keeps the host's one await where it belongs and still
+// leaves the branching here.
+//
+// EVERY ANSWER RELEASES THE HELD SETTLEMENT. Send is the only releaser there
+// is: once the host reports it, the move can no longer be undone and its bubble
+// can no longer be deleted, so withholding past that point is a board no tap
+// can move and no arrival can unstick. A refusal is a refusal to REBASE, never
+// a refusal to release. MSG_TURN_SEND_NOOP is the exception that proves it -
+// nothing was staged, so nothing is held.
+#define MSG_TURN_SEND_FOREIGN     0  // not our bytes: keep the base and the staged moves
+#define MSG_TURN_SEND_NOOP        1  // nothing staged and no bytes - no send of ours
+#define MSG_TURN_SEND_BLIND       2  // staged, but no chain to rebase onto: keep the moves
+#define MSG_TURN_SEND_DECODE      3  // decode the bytes and ask again
+#define MSG_TURN_SEND_UNREADABLE  4  // they will not decode: keep the board on its staged move
+#define MSG_TURN_SEND_REBASE      5  // adopt them as the new base and drop the staged moves
+//
+// WHY A REFUSAL KEEPS THE STAGED MOVES. They are what the board is DRAWN from,
+// so dropping them while declining to rebase walks the board back by exactly
+// the move the player just watched - a smaller version of the complaint the
+// refusal exists to prevent. Re-deriving the sent bytes instead was rejected: a
+// re-seal stamps a fresh send clock, so it would be a DIFFERENT chain with a
+// digest nobody in the thread has.
+int msg_turn_send_verdict(int staged, int have_host, int have_sealed,
+                          int host_is_sealed, int decoded);
+
+// ---- what is withheld ------------------------------------------------------
+//
+// A staged move is not a move. It sits in the input field until the human
+// presses Send, and until then it can be undone - or the bubble simply deleted,
+// which no amount of hiding an Undo button prevents. So a staged move must
+// never TELL its player anything they could act on, and all three bout-closing
+// moves DEAL: the last good owed, a cover that empties the defender's hand, and
+// a pickup that refills the picker. The turn is cut at the kernel's own
+// settlement boundary and the second half is withheld until Send. Recipients
+// need none of this: their bubble carries the whole turn and they were never in
+// a position to take it back.
+
+// THE STEP WHOSE COMMITTED BOARD A HELD SETTLEMENT SHOWS, or -1 when this turn
+// has nothing to hold. `cut` is evwire_frames_settlement_cut's answer over the
+// same frames these events were decoded from; pass it < 0 for "no cut".
+//
+// For a `good` the cut is at 0 - a good emits no step of its own - and the
+// transition step it lands on carries the PRE-discard board, because game.c
+// fires ENGINE_HOOK_MAGIC_TRANSITION before anything moves. That is exactly the
+// state being asked for, so index 0 is the answer rather than an error.
+// Otherwise it is the state the ACTING step committed: the cover on the table,
+// the table taken.
+int msg_turn_hold_state(int n_events, int cut);
+
+// ---- what a read publishes -------------------------------------------------
+//
+// A BOARD PUBLISHES A SNAPSHOT, SOMETIMES A DOCTORED ONE. While a settlement is
+// withheld the board shows the state BEFORE it and publishes an EMPTY menu, and
+// both halves matter. The view is what keeps the deal out of sight; the empty
+// menu is what stops the same player acting on it anyway - a defender whose
+// last cover swept the table becomes the next first attacker, and without it
+// they could pick that attack out of a hand they have not been shown, with the
+// whole turn still retractable. legal.h's PlayBoard note is why every board
+// rule takes the published pair as an input rather than re-deriving it.
+typedef struct {
+    int state;                // MSG_TURN_* bits
+    int base_atoms_before;    // the adopted chain's own boundary (-1 = unknown)
+    int staged_atoms_before;  // the kernel's log mark for the staged turn
+    int n_open_replay;        // events this open will animate (0 = not an open)
+    int view_would_change;    // does the board about to be published differ from the one up
+} MsgTurnRead;
+
+typedef struct {
+    int show_held_view;    // publish the withheld snapshot instead of the live board
+    int empty_menu;        // publish an EMPTY menu
+    int anim_atoms_before; // where the animation now on screen starts
+    int raise_veil;        // hide the cards this open will move, before the first paint
+} MsgTurnPublished;
+
+// WHERE THE ANIMATION STARTS is the one arithmetic here, and getting it wrong
+// is a re-run rather than a crash: too high a base drops the front of my own
+// turn, too low replays the move before it. With nothing staged, what is on
+// screen is the bubble I opened and that bubble states its own boundary. Once I
+// have staged moves the resident game is that bubble PLUS my actions, so the
+// boundary is the KERNEL's mark for them - not the adopted chain's atom count,
+// which can exceed the re-derived stream once my move supersedes a pending
+// good, and then lands past the end of it.
+//
+// THE VEIL GOES UP ONLY WHEN THE VIEW IS ABOUT TO CHANGE. The one thing that
+// takes it down is the board's own view-change handler, and a host that does
+// not fire that for an equal assignment would strand every veiled card - laid
+// out in its slot, invisible, on a board that is otherwise correct.
+void msg_turn_publish(const MsgTurnRead *in, MsgTurnPublished *out);
+
 #endif

@@ -3114,6 +3114,219 @@ static void test_chain_gates(void) {
     CHECK(msg_seat_resolve_in_lobby(j, 3, -1, 0, 3, 0, 0, 0, 0) == -1, "no signal, not mine");
 }
 
+// ---------- the turn controller as a transition function --------------------
+//
+// The decisions MessageTurnController used to make in Swift across its own
+// awaits: what may be staged, what an arriving chain does to it, what a send
+// means, and what a read publishes while a settlement is withheld.
+//
+// What is pinned is the places each rule is deliberately not the obvious thing.
+// The staging gate counts the HUMAN menu, because the raw one always offers a
+// `good` a human may not make. The arrival verdict asks about the retraction
+// BEFORE the staged moves, because a retraction has already emptied them. The
+// send picker prefers OUR OWN sealed chain over the host's payload whenever
+// anything is staged, which is what makes a stale host payload a rebase rather
+// than a refusal. The held settlement publishes an empty menu as well as an
+// older board, and it is the menu half that stops a player acting on a deal
+// they have not been shown.
+//
+// MUTATION-CHECKED, each applied to c/src/msg_wire.c on its own, with the
+// unmutated baseline run first and reporting 0:
+//   can_act ignores SUPERSEDED                              -> 1 failure
+//   can_stage drops the genesis clause                      -> 1 failure
+//   admit asks SUPERSEDED before RETRACTING                 -> 1 failure
+//   admit drops the pickup hold                             -> 1 failure
+//   arrival asks RETRACTING after the staged test           -> 1 failure
+//   arrival drops the same-chain SKIP                       -> 1 failure
+//   arrival retracts during the send window                 -> 1 failure
+//   adopt_duplicate ignores the staged moves                -> 1 failure
+//   sent_source prefers the host's bytes when staged        -> 4 failures
+//   send_verdict calls a stale host payload FOREIGN         -> 6 failures
+//   hold_state returns cut-1 with no clamp at 0             -> 1 failure
+//   publish never publishes the empty menu                  -> 1 failure
+//   publish never shows the held view                       -> 1 failure
+//   publish raises the veil without view_would_change       -> 1 failure
+//   publish always animates from the base boundary          -> 1 failure
+static void test_turn_controller(void) {
+    // ---- what may be staged ----
+    const int live = MSG_TURN_READY;
+    CHECK(msg_turn_can_send(live | MSG_TURN_STAGED) == 1, "a staged bubble is sendable");
+    CHECK(msg_turn_can_send(live) == 0, "nothing staged, nothing to send");
+    CHECK(msg_turn_can_send(live | MSG_TURN_STAGED | MSG_TURN_SENDING) == 0,
+          "the send window has already claimed those bytes - no second send, no undo");
+
+    CHECK(msg_turn_can_act(live, 3) == 1, "three human moves is a turn");
+    CHECK(msg_turn_can_act(live, 0) == 0, "an empty HUMAN menu is not a turn, however "
+          "many entries the raw one has");
+    CHECK(msg_turn_can_act(live | MSG_TURN_SUPERSEDED, 3) == 0,
+          "a board branching off an old bubble is read-only");
+
+    CHECK(msg_turn_can_stage(live | MSG_TURN_STAGED, 0) == 1, "staged, so stageable");
+    CHECK(msg_turn_can_stage(live | MSG_TURN_GENESIS, 0) == 1,
+          "a genesis with no move of my own still has the DEAL to send on - without "
+          "this the creator who does not open is stuck on a board with no send");
+    CHECK(msg_turn_can_stage(live | MSG_TURN_GENESIS, 2) == 0,
+          "…but a genesis I can play on waits for me to play");
+    CHECK(msg_turn_can_stage(live, 2) == 0, "a continuation with nothing staged stages nothing");
+    CHECK(msg_turn_can_stage(live | MSG_TURN_STAGED | MSG_TURN_SUPERSEDED, 0) == 0,
+          "superseded stands the whole send path down");
+
+    // ---- the door every gesture comes through ----
+    CHECK(msg_turn_admit(live, MOVE_ATTACK, 0) == MSG_TURN_ADMIT_OK, "an ordinary attack");
+    CHECK(msg_turn_admit(live | MSG_TURN_RETRACTING | MSG_TURN_SUPERSEDED, MOVE_ATTACK, 0)
+          == MSG_TURN_ADMIT_RETRACTING,
+          "the retraction is asked FIRST because it is the SILENT refusal - a toast for "
+          "a tap in a one-flight window is noise, and the board's veil comes down on the "
+          "arrival either way");
+    CHECK(msg_turn_admit(live | MSG_TURN_SUPERSEDED, MOVE_ATTACK, 0)
+          == MSG_TURN_ADMIT_SUPERSEDED, "a stale branch may not be played on");
+    CHECK(msg_turn_admit(live, MOVE_PICKUP, 7) == MSG_TURN_ADMIT_HELD_PICKUP,
+          "the pickup hold is enforced, not merely displayed");
+    CHECK(msg_turn_admit(live, MOVE_PICKUP, 0) == MSG_TURN_ADMIT_OK, "…and it lapses");
+    CHECK(msg_turn_admit(live, MOVE_COVER, 7) == MSG_TURN_ADMIT_OK,
+          "the hold is about picking up, not about playing");
+
+    // ---- a chain that arrived ----
+    const int watching = live | MSG_TURN_BOARD_WATCHING;
+    CHECK(msg_turn_arrival(watching | MSG_TURN_STAGED, 1) == MSG_TURN_ARRIVE_SKIP,
+          "a re-delivery of the chain I am ALREADY on keeps my staged moves - they were "
+          "composed against exactly these bytes");
+    CHECK(msg_turn_arrival(MSG_TURN_STAGED, 1) == MSG_TURN_ARRIVE_ADOPT,
+          "…but only once a base has been established; before that there is nothing to "
+          "compare against");
+    CHECK(msg_turn_arrival(watching | MSG_TURN_RETRACTING, 0) == MSG_TURN_ARRIVE_LATCH,
+          "mid-retraction only the latch moves, and it moves although the retraction has "
+          "already emptied the staged list - newest wins");
+    CHECK(msg_turn_arrival(watching | MSG_TURN_STAGED, 0) == MSG_TURN_ARRIVE_RETRACT,
+          "a chain landing over a staged move is visibly retracted first");
+    CHECK(msg_turn_arrival(live | MSG_TURN_STAGED, 0) == MSG_TURN_ARRIVE_ADOPT,
+          "no board mounted, no theatre");
+    CHECK(msg_turn_arrival(watching, 0) == MSG_TURN_ARRIVE_ADOPT, "nothing staged to retract");
+    CHECK(msg_turn_arrival(watching | MSG_TURN_STAGED | MSG_TURN_SENDING, 0)
+          == MSG_TURN_ARRIVE_ADOPT,
+          "a move the human has already SENT is not a staged move - retracting it offers "
+          "to take back a bubble the thread already has");
+
+    CHECK(msg_turn_adopt_duplicate(live, 1) == 1, "the chain already resident");
+    CHECK(msg_turn_adopt_duplicate(live | MSG_TURN_STAGED, 1) == 0,
+          "with moves staged the resident game is base+pending, so a direct adopt rebuilds");
+    CHECK(msg_turn_adopt_duplicate(0, 1) == 0, "nothing adopted yet is not a duplicate");
+
+    // ---- which bytes went out ----
+    CHECK(msg_turn_sent_source(1, 1, 1) == MSG_TURN_BYTES_SEALED,
+          "staged: OUR OWN sealed chain is the bubble, whatever the host handed over");
+    CHECK(msg_turn_sent_source(1, 0, 1) == MSG_TURN_BYTES_SEALED,
+          "…including when the host's payload never arrived");
+    CHECK(msg_turn_sent_source(1, 1, 0) == MSG_TURN_BYTES_HOST,
+          "staged with nothing sealed - only the host can say");
+    CHECK(msg_turn_sent_source(1, 0, 0) == MSG_TURN_BYTES_NONE, "staged and blind");
+    CHECK(msg_turn_sent_source(0, 1, 1) == MSG_TURN_BYTES_HOST,
+          "UNSTAGED: the sealed chain makes no claim on a bubble I did not just stage");
+    CHECK(msg_turn_sent_source(0, 0, 1) == MSG_TURN_BYTES_NONE, "…so a lone seal is not a send");
+    CHECK(msg_turn_sent_source(0, 1, 0) == MSG_TURN_BYTES_HOST, "unstaged, host only");
+    CHECK(msg_turn_sent_source(0, 0, 0) == MSG_TURN_BYTES_NONE, "no bytes at all");
+
+    // ---- what a send does ----
+    // 1.0(26): the signal arrives with NO payload while a move is staged. It
+    // must rebase onto our own sealed chain, not empty `pending` and leave the
+    // base where it stood - that un-plays the staged move, and the board then
+    // reads its own table clearing as a bout end and animates the bubble BEFORE
+    // the one just sent.
+    CHECK(msg_turn_send_verdict(1, 0, 1, 0, -1) == MSG_TURN_SEND_DECODE,
+          "staged, bytesless: our sealed chain is the bubble and it is ours to decode");
+    CHECK(msg_turn_send_verdict(1, 0, 1, 0, 1) == MSG_TURN_SEND_REBASE, "…and to rebase onto");
+    // 1.0(36): the signal arrives with a STALE payload. It took the refusal
+    // below instead, which stranded the withheld settlement and left the staged
+    // move to be red-retracted by the next arrival ("Somehow this caused an UNDO
+    // animation of the previous pickup").
+    CHECK(msg_turn_send_verdict(1, 1, 1, 0, -1) == MSG_TURN_SEND_DECODE,
+          "staged with a STALE host payload is not foreign - ours substitutes");
+    CHECK(msg_turn_send_verdict(1, 1, 1, 0, 1) == MSG_TURN_SEND_REBASE, "…and rebases");
+    CHECK(msg_turn_send_verdict(0, 1, 1, 0, -1) == MSG_TURN_SEND_FOREIGN,
+          "UNSTAGED with a payload that is not the chain we sealed - a reload's chain, "
+          "left alone");
+    CHECK(msg_turn_send_verdict(1, 0, 0, 0, -1) == MSG_TURN_SEND_BLIND,
+          "staged with no chain at all: KEEP the moves - dropping them without a base to "
+          "replace them walks the board back by the move just watched");
+    CHECK(msg_turn_send_verdict(0, 0, 0, 0, -1) == MSG_TURN_SEND_NOOP,
+          "nothing staged and no bytes was not a send of ours");
+    CHECK(msg_turn_send_verdict(0, 0, 1, 0, -1) == MSG_TURN_SEND_NOOP,
+          "a sealed chain nobody sent is still not a send");
+    CHECK(msg_turn_send_verdict(1, 1, 0, 0, 0) == MSG_TURN_SEND_UNREADABLE,
+          "bytes that will not decode leave the board on its staged move");
+    CHECK(msg_turn_send_verdict(0, 1, 0, 0, 1) == MSG_TURN_SEND_REBASE,
+          "unstaged with a host payload and nothing sealed - no opinion, so adopt it");
+
+    // The whole input space, for the structural claims. FOREIGN unreachable
+    // while anything is staged is the 1.0(36) fix stated as an invariant: with
+    // a move staged, the bytes that went out are always our own.
+    for (int staged = 0; staged < 2; staged++)
+    for (int host = 0; host < 2; host++)
+    for (int sealed = 0; sealed < 2; sealed++)
+    for (int same = 0; same < 2; same++) {
+        const int first = msg_turn_send_verdict(staged, host, sealed, same, -1);
+        const int src = msg_turn_sent_source(staged, host, sealed);
+        CHECK(!(staged && first == MSG_TURN_SEND_FOREIGN),
+              "FOREIGN with moves staged (%d/%d/%d/%d) - the send path can only refuse a "
+              "chain this device did not seal", staged, host, sealed, same);
+        CHECK((first == MSG_TURN_SEND_DECODE) == (src != MSG_TURN_BYTES_NONE
+                                                  && first != MSG_TURN_SEND_FOREIGN),
+              "a decode is owed exactly when there are bytes we vouch for (%d/%d/%d/%d)",
+              staged, host, sealed, same);
+        CHECK((first == MSG_TURN_SEND_NOOP) == (!staged && src == MSG_TURN_BYTES_NONE),
+              "NOOP is nothing staged and no bytes, and only that (%d/%d/%d/%d)",
+              staged, host, sealed, same);
+        if (first != MSG_TURN_SEND_DECODE) continue;
+        CHECK(msg_turn_send_verdict(staged, host, sealed, same, 1) == MSG_TURN_SEND_REBASE,
+              "a decode that reads rebases (%d/%d/%d/%d)", staged, host, sealed, same);
+        CHECK(msg_turn_send_verdict(staged, host, sealed, same, 0) == MSG_TURN_SEND_UNREADABLE,
+              "a decode that fails keeps the board (%d/%d/%d/%d)", staged, host, sealed, same);
+    }
+
+    // ---- what is withheld ----
+    CHECK(msg_turn_hold_state(4, 2) == 1,
+          "the ACTING step's committed board: the cover on the table, the table taken");
+    CHECK(msg_turn_hold_state(3, 0) == 0,
+          "a GOOD emits no step of its own, so the cut lands on the transition step - which "
+          "carries the PRE-discard board, and that is the state being asked for");
+    CHECK(msg_turn_hold_state(3, -1) == -1, "no cut, nothing to hold");
+    CHECK(msg_turn_hold_state(3, 3) == -1, "a cut past the end holds nothing");
+    CHECK(msg_turn_hold_state(0, 0) == -1, "no events, nothing to hold");
+
+    // ---- what a read publishes ----
+    MsgTurnRead r;
+    MsgTurnPublished p;
+    memset(&r, 0, sizeof r);
+
+    r.state = live | MSG_TURN_STAGED | MSG_TURN_HELD;
+    r.base_atoms_before = 45; r.staged_atoms_before = 51;
+    r.n_open_replay = 0; r.view_would_change = 1;
+    msg_turn_publish(&r, &p);
+    CHECK(p.show_held_view == 1, "a withheld settlement shows the board BEFORE it");
+    CHECK(p.empty_menu == 1,
+          "…and publishes an EMPTY menu, which is the half that stops the same player "
+          "picking an attack out of a hand they have not been shown yet");
+    CHECK(p.anim_atoms_before == 51,
+          "with moves staged the animation starts at the KERNEL's mark, not the adopted "
+          "chain's atom count - which can land past the end of the re-derived stream");
+    CHECK(p.raise_veil == 0, "no open replay, no veil");
+
+    r.state = live;
+    msg_turn_publish(&r, &p);
+    CHECK(p.show_held_view == 0 && p.empty_menu == 0, "with nothing held the board is the board");
+    CHECK(p.anim_atoms_before == 45, "and the animation starts where the bubble says");
+
+    r.state = live | MSG_TURN_STAGED;
+    r.n_open_replay = 3;
+    msg_turn_publish(&r, &p);
+    CHECK(p.raise_veil == 1, "cards to animate over a board about to change: veil them");
+    r.view_would_change = 0;
+    msg_turn_publish(&r, &p);
+    CHECK(p.raise_veil == 0,
+          "a veil nothing will take down must never go up - the board's view-change "
+          "handler is its only consumer, and an unchanged board fires none");
+}
+
 int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1], "--fixture")) { print_fixtures(); return 0; }
     if (argc > 1 && !strcmp(argv[1], "--fixture4")) { print_fixtures4(); return 0; }
@@ -3157,6 +3370,7 @@ int main(int argc, char **argv) {
     test_nothing_bubble();
     test_roster_key();
     test_chain_gates();
+    test_turn_controller();
     test_rematch_opening();
     test_fool_penalty_wire();
     test_forced_opening_replay();
