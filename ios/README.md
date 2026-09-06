@@ -99,20 +99,24 @@ make ios-goldens    # regenerates ios/Fixtures/goldens.json
 Swift `EngineGoldenTests` then assert the built `libfoolish.a` reproduces
 `goldens.json` byte-for-byte.
 
-Some **Swift** is provable without a Mac too. Two codecs are Foundation-only by
-design, so `npm run test:swift-parity` compiles them with a real Swift toolchain
-and asserts their bytes against the TypeScript side:
+Some **Swift** is provable without a Mac too. The client-server envelope's
+packed roster (`sdk/swift/PackedBytes.swift` + `RosterWire.swift` +
+`EnvelopeRoster.swift`) is Foundation-only by design, so
+`npm run test:swift-parity` compiles it with a real Swift toolchain and asserts
+its bytes against `sdk/ts/wire/roster.ts`. The server writes those bytes and
+only the phone reads them, so without this job the two halves are never compiled
+in the same place. CI runs it on Linux inside the official `swift:` image - see
+the `swift-parity` job in `.github/workflows/ios.yml`. Any other Swift file that
+can be kept free of `CFoolish` can be gated the same way.
 
-- the replay link's nicknames (`sdk/swift/Base32.swift` +
-  `sdk/swift/ReplayExtras.swift`) against `server/api/common/replay/extras.ts`;
-- the client-server envelope's packed roster (`sdk/swift/PackedBytes.swift` +
-  `RosterWire.swift` + `EnvelopeRoster.swift`) against `sdk/ts/wire/roster.ts` -
-  the server writes those bytes and only the phone reads them, so without this
-  job the two halves are never compiled in the same place.
-
-CI runs both on Linux inside the official `swift:` image - see the
-`swift-parity` job in `.github/workflows/ios.yml`. Any other Swift file that can
-be kept free of `CFoolish` can be gated the same way.
+The replay link's nicknames used to be gated there too, as a second
+Foundation-only codec. They are not Swift any more: #113 moved that format into
+the kernel (`c/src/replay_extras.c`), so `sdk/swift/ReplayExtras.swift` is a
+`CFoolish` wrapper like the rest of `sdk/swift/`, and what proves it is
+`e2e/replay_extras_kernel.test.ts` - which measures the kernel against the
+format as shipped rather than against a sibling implementation of it.
+`Base32.swift` stays Foundation-only; what keeps it there is the `/m/` bubble
+payload, not the parity job.
 
 ## Layout
 

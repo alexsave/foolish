@@ -1004,7 +1004,7 @@ That is the whole of items 3 and 4: use the layout that exists.
 Watch the name budget when doing it - names are <=64 UTF-8 bytes and there is a
 12-byte display cap from the App Store review pass; a length-prefixed byte string
 handles both without the escaping rules JSON drags in, and
-`e2e/imessage_replay_names.test.ts` already gates a Swift/TypeScript name codec
+`e2e/packed_roster_wire.test.ts` already gates a Swift/TypeScript name codec
 byte-for-byte, so there is a pattern and a test shape to copy.
 
 ### 1. `MessageGameStore` - App Group storage, 7 sites

@@ -19,6 +19,7 @@
 #include "replay_steps.h"
 #include "view.h"
 #include "json_out.h"
+#include "replay_extras.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -470,6 +471,7 @@ int wasm_bot_drive(int human_mask, int max_actions, int n_pref) {
 // wasm_replay_* call); the frames come back in the MAIN io buffer, so the two
 // never alias.
 extern unsigned char *wasm_replay_io_ptr(void);
+extern int wasm_replay_io_cap(void);
 extern int wasm_io_cap(void);
 
 static int g_rs_n_frames, g_rs_next_step;
@@ -497,6 +499,50 @@ int wasm_replay_step_count(int code_len) {
 int wasm_replay_step_index(int code_len) {
     return replay_steps_index_v6(wasm_replay_io_ptr(), code_len, 0,
                                  wasm_io_ptr(), wasm_io_cap());
+}
+
+// ---------- the replay code's extras blob (#113) -----------------------------
+//
+// The nicknames and per-move timing behind the dash in a share link. One
+// encoder, reached from here by the web and the server and from ios_api.c by
+// the phone; there is no second one to drift from.
+//
+// Same buffer discipline as every other blob-in/blob-out export: the packed
+// argument goes in the REPLAY io buffer, the answer comes back in the MAIN one.
+// `player_count` and `move_count` on the way back are the decoded moves', not
+// the blob's - it carries neither.
+
+int wasm_replay_extras_encode(int in_len) {
+    return replay_extras_encode(wasm_replay_io_ptr(), in_len,
+                                wasm_io_ptr(), wasm_io_cap());
+}
+
+int wasm_replay_extras_decode(int blob_len, int player_count, int move_count) {
+    return replay_extras_decode(wasm_replay_io_ptr(), blob_len,
+                                player_count, move_count,
+                                wasm_io_ptr(), wasm_io_cap());
+}
+
+// The whole shareable link. The REPLAY buffer holds
+// [u8 n_names][u16 roster_len][roster bytes][moves bytes], the link comes back
+// in the MAIN one.
+//
+// The moves code goes LAST so it can be NUL-terminated in place - it is the one
+// argument replay_extras_link wants as a C string, and a long v6 game's code
+// runs to tens of KB, which is not a thing to copy through a fixed buffer. One
+// spare byte at the end of the input is what that costs.
+int wasm_replay_link(int in_len) {
+    unsigned char *in = wasm_replay_io_ptr();
+    int n_names, roster_len, p;
+    if (in_len < 3 || in_len >= wasm_replay_io_cap()) return -REPLAY_EXTRAS_EINPUT;
+    n_names = in[0];
+    roster_len = in[1] | (in[2] << 8);
+    p = 3;
+    if (roster_len < 0 || p + roster_len > in_len) return -REPLAY_EXTRAS_EINPUT;
+    in[in_len] = 0;                            // terminate the moves code in place
+    return replay_extras_link((const char *)(in + p + roster_len),
+                              in + p, roster_len, n_names,
+                              (char *)wasm_io_ptr(), wasm_io_cap());
 }
 
 // ---------- packed bytes -> JSON (A8/F7) ------------------------------------

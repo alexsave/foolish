@@ -6,7 +6,7 @@ name: memory
 #                old-space, and bots.wasm memory bounded + flat across all MC
 #                bot families.
 #   edge-serve — the gold-path repro: the REAL edge runtime (supabase
-#                functions serve) drives semtex/octogen/cordite/fulminate
+#                functions serve) drives cordite/octogen/blackpowder/firecracker
 #                decisions via e2e/edge_memtest and must return 200 with no
 #                worker memory kill in the runtime logs.
 
@@ -92,8 +92,6 @@ jobs:
           # against a real local edge runtime.
           supabase --workdir server/impls functions serve --no-verify-jwt > serve.log 2>&1 &
           serve_pid=$!
-          timeout 90 bash -c 'until curl -sf -o /dev/null --max-time 30 "http://127.0.0.1:54321/functions/v1/memtest?games=0"; do sleep 2; done'
-
           # Say what the fault WAS, and keep the evidence. The runtime's own log
           # reaches serve.log through the CLI's log stream, which lags the HTTP
           # response, so settle before reading it - the old step catted serve.log
@@ -112,7 +110,28 @@ jobs:
               || echo "functions serve (pid $serve_pid) has EXITED - it takes the edge runtime container with it"
           }
 
-          for keys in semtex,octogen cordite,semtex fulminate,octogen; do
+          # Readiness must exercise the REAL path, not a trivial one. `?games=0`
+          # only proved that SOME worker answered: with policy = "oneshot" every
+          # request gets a fresh worker, so the next request still compiled the
+          # whole bot module graph cold, and requests in the first seconds after
+          # startup 502 while identical ones seconds later return 200 (measured
+          # against a real local stack). Warm on one real bot move instead -
+          # module graph, bots.wasm and a kernel decision - and only then start
+          # measuring. A gate that never comes up is diagnosed like any other
+          # fault here, rather than failing the step with nothing to read.
+          if ! timeout 180 bash -c 'until curl -sf -o /dev/null --max-time 60 "http://127.0.0.1:54321/functions/v1/memtest?keys=cordite,octogen&maxmoves=1"; do sleep 2; done'; then
+            echo "::error::the edge runtime never served a real bot decision within 180s"
+            diagnose
+            exit 1
+          fi
+
+          # The bots this gate names must be bots this tree SHIPS. It used to
+          # name semtex/fulminate, culled from c/src/bot_roster.c and never
+          # linked into bots.wasm: getBotStrategy resolved them to `random`, and
+          # the job spent that whole time measuring the cheapest bot in the tree
+          # against the edge budget while reporting the expensive ones green
+          # (issue #111). These four are in the roster, linked, and seeded.
+          for keys in cordite,octogen blackpowder,octogen cordite,firecracker; do
             body=$(curl -s --max-time 120 -w $'\n%{http_code}' "http://127.0.0.1:54321/functions/v1/memtest?keys=$keys&maxmoves=8")
             code=$(printf '%s' "$body" | tail -n1)
             json=$(printf '%s' "$body" | sed '$d')
@@ -128,6 +147,7 @@ jobs:
               case "$code" in
                 546) echo "::error::$keys hit the edge runtime's worker resource limit (546 WORKER_LIMIT) - this IS the memory/CPU class this job guards" ;;
                 503) echo "::error::$keys could not boot a worker (503 BOOT_ERROR)" ;;
+                400) echo "::error::$keys names a bot this build cannot dispatch (400 from memtest, which refuses an unknown key rather than seating 'random'). Fix the keyset, or the roster: $json" ;;
                 500) echo "::error::$keys threw inside the worker (500)" ;;
                 502) echo "::error::$keys got 502 from Kong: the edge runtime container was not answering. Infrastructure, not a bot memory kill - see whether functions serve is still alive below" ;;
                 *)   echo "::error::$keys returned $code" ;;
@@ -144,6 +164,20 @@ jobs:
               diagnose
               exit 1
             fi
+            # LIVENESS is not IDENTITY. `random` satisfies moves:[1-9] perfectly,
+            # which is how this loop kept passing on bots that had been culled
+            # out of the tree. memtest now reports the strategy each seat
+            # was actually DISPATCHED under (`seats`), and refuses an unknown key
+            # with a 400 rather than quietly seating `random`. Assert the report
+            # names the bots we asked for - so the next cull fails this job
+            # instead of silently re-opening #111.
+            for k in ${keys//,/ }; do
+              if ! printf '%s' "$json" | grep -qE "\"strategy\":\"$k\""; then
+                echo "::error::$keys ran, but no seat reports strategy '$k' - the key resolved to something else (a culled bot falls back to 'random'). Response: $json"
+                diagnose
+                exit 1
+              fi
+            done
           done
           # Catch the swallowed failure class directly in the runtime log:
           # a memory kill, a missing gz asset, or any bot-processing throw.

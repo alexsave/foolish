@@ -51,7 +51,8 @@ export default function MessagePayloadPage() {
                 // splitting decode out to dodge that would be a second kernel in
                 // the tree. The browser fetches it as a static asset — one
                 // tracked binary, no base64 twin to drift (see wasm_asset.ts).
-                const { kernelMsgDecode, kernelMsgPublicView, kernelResidentReplayCodeV6, ensureBotsAsync } =
+                const { kernelMsgDecode, kernelMsgPublicView, kernelResidentReplayCodeV6,
+                        kernelReplayLink, ensureBotsAsync } =
                     await import('@sdk/ts/wasm/bots.ts');
                 // The bytes arrive over the network here, so the module has to be
                 // ready before any of the synchronous kernel calls below.
@@ -100,7 +101,12 @@ export default function MessagePayloadPage() {
                 if (env.phase === 3) {
                     try {
                         const code = kernelResidentReplayCodeV6(env.seed);
-                        replayUrl = `https://foolish.cards/${base32Encode(code)}`;
+                        // The kernel writes the whole link, prefix included
+                        // (c/src/replay_extras.h) - the phone's own
+                        // fio_replay_share_link, so this page and a bubble hand
+                        // out the same characters. No roster here: this route
+                        // has the chain's board, not its joins.
+                        replayUrl = kernelReplayLink(base32Encode(code), []);
                     } catch (e) {
                         // eslint-disable-next-line no-console
                         console.error('[m] replay code derivation failed:', e);

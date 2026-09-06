@@ -195,18 +195,20 @@ function diffStreams(a: SeatLog[], b: SeatLog[]): string | null {
 // bought was covering the games v6 refuses — which trimming the dead goods took
 // to 0.05% of 8-player games. A game longer than that gets no code at all
 // (owner's call), so there is nothing left for a second encoder to do.
-async function roundTripGame(game: Game, np: number, where: string): Promise<void> {
+//
+// Returns false for the one outcome that is a REFUSAL and not a failure: a game
+// whose session log outran the kernel's MAX_LOGS gets no code at all, by build
+// design. The KERNEL decides that, by its own MAX_LOGS; this file no longer
+// carries a copy of that build parameter to guess with. Every other encode
+// error is a fault and throws.
+async function roundTripGame(game: Game, np: number, where: string): Promise<boolean> {
   let bytes: Uint8Array;
   try {
     bytes = kernelReplayEncodeV6FromGame(game, hexToBytes(game.game_seed!));
   } catch (e) {
-    // The caller's ceiling let through a game the kernel calls too long, so the
-    // two disagree about MAX_LOGS. Say so, rather than let the next reader take
-    // it for a codec fault.
-    if (isReplayTooLong(e)) {
-      throw new Error(`MAX_LOGS (${MAX_LOGS}) no longer matches c/src/game.h: the kernel `
-        + `refused a ${game.logs.length}-log ${np}p game as too long (${where}, seed=${rng.seed})`);
-    }
+    // The documented refusal (REPLAY_ETOOLONG), reported by the kernel itself.
+    // Not an assertion failure: there is nothing to round-trip.
+    if (isReplayTooLong(e)) return false;
     throw new Error(`v6 encode failed on a ${game.logs.length}-log ${np}p game `
       + `(${where}, seed=${rng.seed}): ${(e as Error).message}`);
   }
@@ -327,6 +329,7 @@ async function roundTripGame(game: Game, np: number, where: string): Promise<voi
       );
     }
   }
+  return true;
 }
 
 // Owns the replay validation scenarios; the fast runner
@@ -370,6 +373,38 @@ export function registerReplayValidation(): void {
     }
   });
 
+  // The suite skips a game the kernel refuses as too long (roundTripGame ->
+  // false). That skip is only honest if the refusal is TOLD APART from a real
+  // fault, so pin both directions against the shipped kernel: an over-long log
+  // stream is recognisable as the documented refusal, and a genuinely malformed
+  // encode input is NOT — it still throws something the suite fails on.
+  test('the kernel names an over-long game a refusal, not a malformed input', async () => {
+    const game = await playRandomGame(3, 'random');
+    assert.ok(game, 'needed one finished game to build the fixture from');
+    const seed = hexToBytes(game!.game_seed!);
+    // The real game encodes — so anything below is about the log count alone.
+    assert.ok(kernelReplayEncodeV6FromGame(game!, seed).length > 0);
+
+    // Past MAX_LOGS, whatever the kernel was built with: the import clamp is
+    // 3072 logs (MAX_KERNEL_LOGS), so this overruns every shipped setting.
+    const tooLong = { ...game!, logs: [...game!.logs] };
+    const last = tooLong.logs[tooLong.logs.length - 1];
+    while (tooLong.logs.length <= 3072) tooLong.logs.push(last);
+    assert.throws(
+      () => kernelReplayEncodeV6FromGame(tooLong as Game, seed),
+      (e: unknown) => isReplayTooLong(e),
+      'an over-long session log must come back as the documented refusal',
+    );
+
+    // A malformed input must NOT look like the refusal, or the skip would
+    // swallow real codec faults. No logs at all: nothing to encode.
+    assert.throws(
+      () => kernelReplayEncodeV6FromGame({ ...game!, logs: [] } as Game, seed),
+      (e: unknown) => e instanceof Error && !isReplayTooLong(e),
+      'a malformed encode input must not be mistaken for the too-long refusal',
+    );
+  });
+
   // A few short engine games round-trip byte-exact (engine<->replay drift guard).
   test('replay codec round-trips short engine games byte-exact (2..4 players)', async () => {
     let played = 0;
@@ -378,8 +413,10 @@ export function registerReplayValidation(): void {
         const strategy = (g % 2 === 0 ? 'random' : 'handwritten') as StrategyKey;
         const game = await playRandomGame(np, strategy);
         if (!game) continue;
-        played++;
-        await roundTripGame(game, np, `np=${np} game=${g} strategy=${strategy}`);
+        // A game the kernel refuses as too long has no code to compare; it is
+        // not a byte-exactness failure. Rare at 2..4 seats, but the outcome is
+        // legal at every seat count, so do not count it as a game played.
+        if (await roundTripGame(game, np, `np=${np} game=${g} strategy=${strategy}`)) played++;
       }
     }
     assert.ok(played > 0, 'at least one short game completed');
@@ -389,16 +426,18 @@ export function registerReplayValidation(): void {
 if (!process.env.VALIDATION_ONLY) registerReplayValidation();
 
 // v6 refuses to encode a session whose log outran the kernel's MAX_LOGS
-// (c/src/game.h, 1024) - the stream is truncated at that point, so there is no
-// honest code to cut, and production accepts that a game that long gets no share
-// code. This branch's kernel reports that documented refusal as REPLAY_EINPUT,
-// the same code a genuinely malformed input gets, so the refusal cannot be told
-// from a fault by its code. Recognise it by the condition instead, BEFORE
-// encoding: the game itself says how many logs it has. A too-long game is
-// skipped and counted; anything else that raises EINPUT still fails.
-// (origin/main's ebcc7a1 gives the refusal its own code, REPLAY_ETOOLONG; when
-// that lands here this check is superseded by skipping on the code.)
-const MAX_LOGS = 1024;
+// (c/src/game.h) - the stream is truncated at that point, so there is no honest
+// code to cut, and production accepts that a game that long gets no share code.
+// The refusal has its own code, REPLAY_ETOOLONG (ebcc7a1), so it can be told
+// apart from a genuinely malformed input by the code alone: roundTripGame
+// returns false for it and throws for everything else. A too-long game is
+// skipped and counted here; anything that raises EINPUT still fails the suite.
+//
+// This is why the suite does NOT pre-screen on a log count of its own. MAX_LOGS
+// is a BUILD PARAMETER (c/Makefile overrides it per artifact), so a copy of it
+// here would be a second source of truth that drifts silently - and it can only
+// ever guess, since the kernel counts the logs it imported, not the JS objects
+// this file holds. Ask the encoder; it is the one that knows.
 
 if (!process.env.VALIDATION_ONLY) test(`replay codec round-trips engine-played games (${GAMES_PER_PC}/player-count, 2..8 players)`, async () => {
   let totalGames = 0;
@@ -416,17 +455,13 @@ if (!process.env.VALIDATION_ONLY) test(`replay codec round-trips engine-played g
         stalled++;
         continue;
       }
-      if (game.logs.length >= MAX_LOGS) {
-        tooLong++;
-        continue;
-      }
-      totalGames++;
-      await roundTripGame(game, np, `np=${np} game=${g} strategy=${strategy}`);
+      if (await roundTripGame(game, np, `np=${np} game=${g} strategy=${strategy}`)) totalGames++;
+      else tooLong++;
     }
   }
   // eslint-disable-next-line no-console
   console.log(`[replay codec] ${totalGames} games round-tripped, ${stalled} stalled, `
-    + `${tooLong} past MAX_LOGS (no code by design), seed=${rng.seed}`);
+    + `${tooLong} refused as too long (no code by design), seed=${rng.seed}`);
   assert.ok(totalGames > 0, `no games completed (stalled=${stalled}, seed=${rng.seed})`);
   // A ceiling that swallowed the suite would otherwise pass silently.
   assert.ok(tooLong <= totalGames * 0.05,

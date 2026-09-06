@@ -32,7 +32,7 @@ CFLAGS += -DCD_LEAFBOOK
 
 # The engine + all heuristic / Monte-Carlo bots. Linked into every binary.
 CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_steps.c \
-            src/view.c src/awire.c src/json_out.c \
+            src/replay_extras.c src/view.c src/awire.c src/json_out.c \
             src/evwire.c src/random_strategy.c src/espresso_strategy.c \
             src/handwritten_strategy.c src/robusta_strategy.c \
             src/firecracker_strategy.c src/gunpowder_strategy.c \
@@ -533,6 +533,9 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_replay_events_next -Wl,--export=wasm_replay_step_count \
   -Wl,--export=wasm_replay_step_index \
   -Wl,--export=wasm_view_json -Wl,--export=wasm_events_json \
+  -Wl,--export=wasm_replay_extras_encode \
+  -Wl,--export=wasm_replay_extras_decode \
+  -Wl,--export=wasm_replay_link \
   -Wl,--export=wasm_unambiguous_cover \
   -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal \
   -Wl,--export=wasm_msg_rule_p -Wl,--export=wasm_msg_rebase \
@@ -805,7 +808,7 @@ wasm-guards: build/guards.wasm
 # not CC=. CI ships the committed .gz rather than rebuilding, so the committed
 # artifact is the baseline to reproduce before you touch it.
 WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_steps.c \
-                src/view.c src/awire.c src/json_out.c \
+                src/replay_extras.c src/view.c src/awire.c src/json_out.c \
                 src/evwire.c src/sha256.c src/msg_wire.c src/anim_plan.c \
                 src/random_strategy.c \
                 src/espresso_strategy.c src/handwritten_strategy.c \

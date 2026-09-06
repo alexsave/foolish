@@ -6,9 +6,8 @@ name: ios
 #                          the architecture lint, on any clang box.
 #   swift-parity         - the Swift codecs that have a TypeScript twin,
 #                          compiled by a REAL Swift toolchain and diffed byte
-#                          for byte (see the job's own comment): the
-#                          replay-link nicknames, and the packed roster the
-#                          client-server envelope now carries.
+#                          for byte (see the job's own comment): the packed
+#                          roster the client-server envelope carries.
 #
 # The Xcode build+test half (FoolishTests, HarnessTests) is deliberately NOT
 # here - see the note at the bottom of this file.
@@ -43,15 +42,15 @@ jobs:
 
   # ---- Portable: the cross-language codecs, both languages at once ----------
   #
-  # e2e/imessage_replay_names.test.ts compiles the REAL Swift encoder
-  # (sdk/swift/Base32.swift + sdk/swift/ReplayExtras.swift) and asserts its blob
-  # is byte-identical to what the TypeScript encoder/decoder
-  # (server/api/common/replay/extras.ts) produce for the same roster. That
-  # equality is the only thing stopping the two implementations drifting on the
-  # name-trimming rule, which is the one part of the format with any judgement
-  # in it.
+  # This job used to run a second file, e2e/imessage_replay_names.test.ts, which
+  # compiled the Swift replay-names encoder and diffed it against the TypeScript
+  # one. There is nothing left to diff: #113 made that format the kernel's
+  # (c/src/replay_extras.c) and deleted both copies. What replaced it needs no
+  # Swift toolchain and rides the ordinary e2e suite -
+  # e2e/replay_extras_kernel.test.ts, which measures the kernel against the
+  # format as shipped rather than against a sibling implementation.
   #
-  # e2e/packed_roster_wire.test.ts is the same shape for the client-server
+  # e2e/packed_roster_wire.test.ts is the client-server
   # envelope's packed roster: it compiles sdk/swift/{PackedBytes,RosterWire,
   # EnvelopeRoster}.swift - the production decoder the app runs - and asserts
   # both that it reads what the SERVER's TypeScript encoder writes, and that

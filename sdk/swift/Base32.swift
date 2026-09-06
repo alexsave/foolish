@@ -1,11 +1,11 @@
-// Base32 - the URL layer's alphabet, shared by the /m/ bubble payload (§4.3),
-// the §12 replay code and the replay names blob (ReplayExtras).
+// Base32 - the URL layer's alphabet, shared by the /m/ bubble payload (§4.3)
+// and the §12 replay code.
 //
 // Lifted out of MessageEnvelope.swift unchanged. It lives alone because it is
-// the one piece of that file with no CFoolish in it, and a Foundation-only file
-// can be compiled by itself - which is what lets the cross-language round trip
-// (e2e/imessage_replay_names.test.ts) feed the REAL encoder's output to the
-// REAL web decoder instead of pinning a hand-copied fixture.
+// the one piece of that file with no CFoolish in it, which is what let a
+// Foundation-only test compile it by itself; the replay names blob it was split
+// out for is the kernel's now (#113), and what keeps this file is the /m/
+// bubble payload.
 import Foundation
 
 /// RFC 4648 base32, uppercase, no padding - the same alphabet the replay codec

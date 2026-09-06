@@ -16,6 +16,7 @@
 #include "../src/bot_drive.h"
 #include "../src/replay.h"
 #include "../src/replay_steps.h"
+#include "../src/replay_extras.h"
 #include "../src/evwire.h"
 #include "../src/view.h"
 #include "../src/json_out.h"
@@ -5908,6 +5909,285 @@ static void test_board_every_card_of_the_deck_crosses_both_ways(void) {
 // packed - write n_nodes + 1 in the header -> the read-to-the-last-byte check
 // fails.
 
+// ---------- the replay code's extras blob (#113) -----------------------------
+//
+// The nicknames and per-move timing behind the dash in a share link. It used to
+// be encoded in TypeScript and again in Swift; it is one implementation here
+// now, and every host calls it. The cross-language half of the guard - that
+// these bytes are the bytes already on the wire, so old links still decode - is
+// e2e/replay_extras_kernel.test.ts, which measures the kernel against the
+// format frozen in e2e/helpers/extras_format_v2.ts. What is left for this file
+// is the layout itself and the refusals.
+//
+// MUTATIONS RUN (each reverted, each failing at least one case below): version
+// 3 instead of 2 (36 failures); the name trim cutting at a flat 48 bytes
+// instead of backing off to a code-point boundary (3); the NUL kept instead of
+// stripped (1); the ECAP guard on the names loop removed (many); roster_speaks
+// always yes (4); the decoder's gap-count check removed (1); the scale
+// exponent pinned to the bias instead of fitted (many).
+//
+// The trim mutation is worth a note: it passed the first version of this file.
+// 48 is a multiple of both 4 and 2, so a roster of emoji and Cyrillic never
+// puts the budget line INSIDE a character and a byte-wise cut agrees with a
+// code-point-wise one on every case there was. It takes one ASCII byte in front
+// of 3-byte kana to tell them apart.
+
+// Build the packed argument blob: flags, roster, timing.
+static int extras_args(unsigned char *out, const char *const *names, int n_names,
+                       const double *start, const double *gaps, int n_gaps) {
+    int w = 0;
+    out[w++] = (unsigned char)((n_names > 0 ? REPLAY_EXTRAS_FLAG_NAMES : 0)
+                             | (start ? REPLAY_EXTRAS_FLAG_TIMES : 0));
+    if (n_names > 0) {
+        out[w++] = (unsigned char)n_names;
+        for (int i = 0; i < n_names; i++) {
+            int len = (int)strlen(names[i]);
+            out[w++] = (unsigned char)(len & 0xff);
+            out[w++] = (unsigned char)((len >> 8) & 0xff);
+            memcpy(out + w, names[i], (size_t)len);
+            w += len;
+        }
+    }
+    if (start) {
+        unsigned long long bits;
+        memcpy(&bits, start, 8);
+        for (int i = 0; i < 8; i++) out[w++] = (unsigned char)((bits >> (8 * i)) & 0xff);
+        out[w++] = (unsigned char)(n_gaps & 0xff);
+        out[w++] = (unsigned char)((n_gaps >> 8) & 0xff);
+        for (int i = 0; i < n_gaps; i++) {
+            memcpy(&bits, &gaps[i], 8);
+            for (int k = 0; k < 8; k++) out[w++] = (unsigned char)((bits >> (8 * k)) & 0xff);
+        }
+    }
+    return w;
+}
+
+static void test_extras_blob_is_the_layout_it_claims(void) {
+    // Version, flags, then one NUL-terminated UTF-8 name per seat. Written out
+    // by hand because this is the wire, and a round-trip test would agree with
+    // any layout at all as long as both ends agreed.
+    const char *names[] = { "Ann", "", "Bo" };
+    unsigned char in[256], out[256];
+    int n_in = extras_args(in, names, 3, 0, 0, 0);
+    int n = replay_extras_encode(in, n_in, out, sizeof(out));
+    const unsigned char want[] = { 2, 1, 'A','n','n',0, 0, 'B','o',0 };
+    CHECK(n == (int)sizeof(want), "extras: names-only blob is 10 bytes");
+    CHECK(n == (int)sizeof(want) && memcmp(out, want, sizeof(want)) == 0,
+          "extras: [version][flags] then one NUL-terminated name per seat");
+}
+
+static void test_extras_round_trips_names_and_timing(void) {
+    const char *names[] = { "Sveta", "\xd0\x92\xd0\xbb\xd0\xb0\xd0\xb4", "" };
+    double start = 1750000000.0;
+    double gaps[] = { 0.05, 2.0, 90.0, 0.0, 3600.0 };
+    unsigned char in[512], blob[512], back[4096];
+    int n_in = extras_args(in, names, 3, &start, gaps, 5);
+    int n = replay_extras_encode(in, n_in, blob, sizeof(blob));
+    CHECK(n > 0, "extras: encode succeeded");
+    CHECK(blob[0] == REPLAY_EXTRAS_VERSION, "extras: version byte is 2");
+    CHECK(blob[1] == (REPLAY_EXTRAS_FLAG_NAMES | REPLAY_EXTRAS_FLAG_TIMES),
+          "extras: both sections flagged");
+    // 2 header + "Sveta\0" + 8-byte Cyrillic + NUL + empty NUL + 1 scale + 5
+    // start + one byte per gap: the size is a function of the roster and the
+    // MOVE COUNT, never of how big the gaps are.
+    CHECK(n == 2 + 6 + 9 + 1 + 6 + 5, "extras: one byte per move whatever the tempo");
+
+    int m = replay_extras_decode(blob, n, 3, 5, back, sizeof(back));
+    CHECK(m > 0, "extras: decode succeeded");
+    int p = 0;
+    int flags = back[p++], n_names = back[p++];
+    CHECK(flags == (REPLAY_EXTRAS_FLAG_NAMES | REPLAY_EXTRAS_FLAG_TIMES), "extras: decoded flags");
+    CHECK(n_names == 3, "extras: three seats came back");
+    for (int i = 0; i < 3; i++) {
+        int len = back[p] | (back[p + 1] << 8);
+        p += 2;
+        CHECK(len == (int)strlen(names[i]) && memcmp(back + p, names[i], (size_t)len) == 0,
+              "extras: a seat's name survived the round trip");
+        p += len;
+    }
+    double t0;
+    unsigned long long bits = 0;
+    for (int i = 7; i >= 0; i--) bits = (bits << 8) | back[p + i];
+    memcpy(&t0, &bits, 8);
+    p += 8;
+    CHECK(t0 == start, "extras: the start time is the second it was given");
+    int n_gaps = back[p] | (back[p + 1] << 8);
+    p += 2;
+    CHECK(n_gaps == 5, "extras: five gaps came back");
+    for (int i = 0; i < 5; i++) {
+        double g;
+        bits = 0;
+        for (int k = 7; k >= 0; k--) bits = (bits << 8) | back[p + k];
+        memcpy(&g, &bits, 8);
+        p += 8;
+        double err = g - gaps[i];
+        if (err < 0) err = -err;
+        CHECK(err <= gaps[i] * 0.08 + 1e-12, "extras: a gap came back inside the curve's 7%");
+    }
+}
+
+static void test_extras_time_curve_is_scale_free(void) {
+    // A simulation stepping in nanoseconds and a correspondence game pausing for
+    // a week get the same one byte per move: the unit is stored per blob.
+    const double scales[] = { 1e-9, 1e-3, 1.0, 86400.0 * 7 };
+    for (int s = 0; s < 4; s++) {
+        double start = 1750000000.0;
+        double gaps[4];
+        unsigned char in[256], blob[256], back[512];
+        for (int i = 0; i < 4; i++) gaps[i] = (double)(i + 1) * 3.0 * scales[s];
+        int n_in = extras_args(in, 0, 0, &start, gaps, 4);
+        int n = replay_extras_encode(in, n_in, blob, sizeof(blob));
+        CHECK(n == 2 + 6 + 4, "extras: blob size does not move with the tempo");
+        int m = replay_extras_decode(blob, n, 0, 4, back, sizeof(back));
+        CHECK(m > 0, "extras: a timing-only blob decodes");
+        int p = 1 + 1 + 8 + 2;                 // flags, n_names, start, n_gaps
+        for (int i = 0; i < 4; i++) {
+            double g;
+            unsigned long long bits = 0;
+            for (int k = 7; k >= 0; k--) bits = (bits << 8) | back[p + k];
+            memcpy(&g, &bits, 8);
+            p += 8;
+            double err = g - gaps[i];
+            if (err < 0) err = -err;
+            CHECK(err <= gaps[i] * 0.08, "extras: the curve holds at this scale");
+        }
+    }
+}
+
+static void test_extras_name_budget_cuts_whole_code_points(void) {
+    // 48 UTF-8 BYTES, trimmed by whole code points. A clown face is 4 bytes, so
+    // sixteen of them are 64 and exactly twelve survive - a byte-wise trim would
+    // keep 48 bytes and sever the thirteenth.
+    const char *clown16 =
+        "\xf0\x9f\xa4\xa1\xf0\x9f\xa4\xa1\xf0\x9f\xa4\xa1\xf0\x9f\xa4\xa1"
+        "\xf0\x9f\xa4\xa1\xf0\x9f\xa4\xa1\xf0\x9f\xa4\xa1\xf0\x9f\xa4\xa1"
+        "\xf0\x9f\xa4\xa1\xf0\x9f\xa4\xa1\xf0\x9f\xa4\xa1\xf0\x9f\xa4\xa1"
+        "\xf0\x9f\xa4\xa1\xf0\x9f\xa4\xa1\xf0\x9f\xa4\xa1\xf0\x9f\xa4\xa1";
+    // Cyrillic is 2 bytes a letter: 32 letters is 64 bytes, 24 survive.
+    const char *vlad4 =
+        "\xd0\x92\xd0\xbb\xd0\xb0\xd0\xb4\xd0\xb8\xd0\xbc\xd0\xb8\xd1\x80"
+        "\xd0\x92\xd0\xbb\xd0\xb0\xd0\xb4\xd0\xb8\xd0\xbc\xd0\xb8\xd1\x80"
+        "\xd0\x92\xd0\xbb\xd0\xb0\xd0\xb4\xd0\xb8\xd0\xbc\xd0\xb8\xd1\x80"
+        "\xd0\x92\xd0\xbb\xd0\xb0\xd0\xb4\xd0\xb8\xd0\xbc\xd0\xb8\xd1\x80";
+    // …and THE CASE THAT SEPARATES THE TWO RULES. 48 is a multiple of both 4 and
+    // 2, so neither name above ever puts the budget line inside a character: a
+    // byte-wise trim would agree with a code-point-wise one on both. This one
+    // does not - one ASCII byte then 3-byte kana, so byte 48 falls two bytes
+    // into a character and the honest cut is 46.
+    const char *ascii_kana =
+        "A\xe3\x81\x95\xe3\x81\x95\xe3\x81\x95\xe3\x81\x95\xe3\x81\x95"
+        "\xe3\x81\x95\xe3\x81\x95\xe3\x81\x95\xe3\x81\x95\xe3\x81\x95"
+        "\xe3\x81\x95\xe3\x81\x95\xe3\x81\x95\xe3\x81\x95\xe3\x81\x95"
+        "\xe3\x81\x95\xe3\x81\x95\xe3\x81\x95\xe3\x81\x95\xe3\x81\x95";
+    const char *names[] = { clown16, vlad4, ascii_kana, "Bob" };
+    unsigned char in[512], blob[512];
+    int n_in = extras_args(in, names, 4, 0, 0, 0);
+    int n = replay_extras_encode(in, n_in, blob, sizeof(blob));
+    CHECK(n == 2 + 49 + 49 + 47 + 4, "extras: three over-budget names cut to their own boundaries");
+    CHECK(memcmp(blob + 2, clown16, 48) == 0 && blob[2 + 48] == 0,
+          "extras: the clown roster kept 12 whole code points");
+    CHECK(memcmp(blob + 2 + 49, vlad4, 48) == 0 && blob[2 + 49 + 48] == 0,
+          "extras: the Cyrillic name kept 24 whole letters");
+    CHECK(memcmp(blob + 2 + 98, ascii_kana, 46) == 0 && blob[2 + 98 + 46] == 0,
+          "extras: a budget line inside a character backs off to 46, not 48");
+    // The seat after a trimmed name must still be its own seat.
+    CHECK(memcmp(blob + 2 + 98 + 47, "Bob", 4) == 0, "extras: the trim did not desynchronize the roster");
+}
+
+static void test_extras_a_nul_is_a_terminator_not_a_character(void) {
+    // A nickname carrying a NUL would end its own field early and shift every
+    // seat after it. It is stripped, never escaped - which is exactly why a
+    // NUL-terminated list is safe for arbitrary Unicode.
+    unsigned char in[64], blob[64];
+    int w = 0;
+    in[w++] = REPLAY_EXTRAS_FLAG_NAMES;
+    in[w++] = 2;
+    in[w++] = 3; in[w++] = 0; in[w++] = 'a'; in[w++] = 0; in[w++] = 'b';
+    in[w++] = 3; in[w++] = 0; in[w++] = 'B'; in[w++] = 'o'; in[w++] = 'b';
+    int n = replay_extras_encode(in, w, blob, sizeof(blob));
+    const unsigned char want[] = { 2, 1, 'a','b',0, 'B','o','b',0 };
+    CHECK(n == (int)sizeof(want) && memcmp(blob, want, sizeof(want)) == 0,
+          "extras: an embedded NUL is stripped, not passed through");
+}
+
+static void test_extras_roster_speaks_only_when_it_has_something_to_say(void) {
+    // An all-anonymous table decodes to the same "P1"/"P2" a reader already
+    // shows, so the segment would buy nothing and the link stays byte-identical
+    // to what every build before names emitted.
+    const char *anon[] = { "", "", "" };
+    const char *one[] = { "", "Bo", "" };
+    const char *nuls[] = { "", "" };
+    unsigned char in[128];
+    int n = extras_args(in, anon, 3, 0, 0, 0);
+    CHECK(!replay_extras_roster_speaks(in, n), "extras: an anonymous table says nothing");
+    n = extras_args(in, one, 3, 0, 0, 0);
+    CHECK(replay_extras_roster_speaks(in, n), "extras: one named seat is worth a segment");
+    n = extras_args(in, nuls, 2, 0, 0, 0);
+    CHECK(!replay_extras_roster_speaks(in, n), "extras: an empty roster says nothing");
+    // A name of nothing but NULs reaches the wire empty, so it says nothing either.
+    unsigned char nul_only[] = { REPLAY_EXTRAS_FLAG_NAMES, 1, 2, 0, 0, 0 };
+    CHECK(!replay_extras_roster_speaks(nul_only, (int)sizeof(nul_only)),
+          "extras: a name of NULs is a name of nothing");
+    unsigned char no_flag[] = { 0 };
+    CHECK(!replay_extras_roster_speaks(no_flag, 1), "extras: no names section, nothing to say");
+}
+
+static void test_extras_refuses_what_it_cannot_read(void) {
+    unsigned char out[512];
+    unsigned char trunc[] = { 2 };
+    unsigned char future[] = { 7, 1, 0, 0 };
+    unsigned char no_times[] = { 2, REPLAY_EXTRAS_FLAG_TIMES, 64, 0 };
+    unsigned char unterminated[] = { 2, REPLAY_EXTRAS_FLAG_NAMES, 'A', 'n', 'n' };
+    CHECK(replay_extras_decode(trunc, 1, 0, 0, out, sizeof(out)) == -REPLAY_EXTRAS_EHEADER,
+          "extras: a one-byte blob is a truncated header");
+    CHECK(replay_extras_decode(future, 4, 1, 0, out, sizeof(out)) == -REPLAY_EXTRAS_EVERSION,
+          "extras: a future version is refused, not guessed at");
+    CHECK(replay_extras_decode(no_times, 4, 0, 3, out, sizeof(out)) == -REPLAY_EXTRAS_ETIMES,
+          "extras: a times section with no header is refused");
+    CHECK(replay_extras_decode(unterminated, 5, 1, 0, out, sizeof(out)) == -REPLAY_EXTRAS_ENAME,
+          "extras: a name that runs off the end is refused");
+
+    // Three gaps asked to cover five hundred moves: corrupt, not merely short.
+    double start = 1750000000.0, gaps[3] = { 1, 2, 3 };
+    unsigned char in[128], blob[128];
+    int n_in = extras_args(in, 0, 0, &start, gaps, 3);
+    int n = replay_extras_encode(in, n_in, blob, sizeof(blob));
+    CHECK(replay_extras_decode(blob, n, 0, 500, out, sizeof(out)) == -REPLAY_EXTRAS_EGAPS,
+          "extras: a gap count that cannot cover the moves is refused");
+    // …but the blob is fine read against the move count it was written for.
+    CHECK(replay_extras_decode(blob, n, 0, 3, out, sizeof(out)) > 0,
+          "extras: the same blob reads clean at its own move count");
+
+    // A malformed ARGUMENT blob is refused too - the encoder never reads past
+    // what it was handed.
+    unsigned char bad_args[] = { REPLAY_EXTRAS_FLAG_NAMES, 2, 9, 0, 'x' };
+    CHECK(replay_extras_encode(bad_args, (int)sizeof(bad_args), out, sizeof(out))
+              == -REPLAY_EXTRAS_EINPUT,
+          "extras: a roster claiming more bytes than it has is refused");
+}
+
+static void test_extras_never_writes_past_its_buffer(void) {
+    const char *names[] = { "Ann", "Bob", "Cyd" };
+    unsigned char in[128], blob[64];
+    int n_in = extras_args(in, names, 3, 0, 0, 0);
+    int full = replay_extras_encode(in, n_in, blob, sizeof(blob));
+    CHECK(full > 0, "extras: the roster fits a generous buffer");
+    for (int cap = 0; cap < full; cap++) {
+        unsigned char guard[80];
+        memset(guard, 0xAB, sizeof(guard));
+        int r = replay_extras_encode(in, n_in, guard, cap);
+        CHECK(r < 0, "extras: a short buffer is refused, never half-filled");
+        int clean = 1;
+        for (int i = cap < 0 ? 0 : cap; i < (int)sizeof(guard); i++)
+            if (guard[i] != 0xAB) clean = 0;
+        CHECK(clean, "extras: nothing was written past the cap");
+    }
+    unsigned char back[4096];
+    for (int cap = 0; cap < 6; cap++)
+        CHECK(replay_extras_decode(blob, full, 3, 0, back, cap) < 0,
+              "extras: decode refuses a buffer it cannot fill");
+}
+
 static void test_analyse_hypergeom(void) {
     double s36 = 0, s52 = 0;
     for (int k = 0; k <= CARDS_PER_PLAYER; k++) { s36 += analyse_hypergeom(36, 9, k); s52 += analyse_hypergeom(52, 13, k); }
@@ -6179,6 +6459,14 @@ int main(void) {
     test_board_reads_nothing_past_what_it_was_given();
     test_board_every_card_of_the_deck_crosses_both_ways();
     test_solver_tt_value_carries_its_seat();
+    test_extras_blob_is_the_layout_it_claims();
+    test_extras_round_trips_names_and_timing();
+    test_extras_time_curve_is_scale_free();
+    test_extras_name_budget_cuts_whole_code_points();
+    test_extras_a_nul_is_a_terminator_not_a_character();
+    test_extras_roster_speaks_only_when_it_has_something_to_say();
+    test_extras_refuses_what_it_cannot_read();
+    test_extras_never_writes_past_its_buffer();
     test_analyse_hypergeom();
     test_analyse_verdict_rule();
     test_analyse_belief_holds_on_played_games();

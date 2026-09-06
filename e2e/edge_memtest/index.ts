@@ -1,12 +1,20 @@
 // LOCAL edge-runtime memory/CPU diagnostic. To use: cp this file to
 // server/impls/supabase/functions/memtest/index.ts (memory.yml does this), run
 // `supabase --workdir server/impls functions serve`, then
-// curl "http://127.0.0.1:54321/functions/v1/memtest?keys=semtex,octogen&maxmoves=8".
+// curl "http://127.0.0.1:54321/functions/v1/memtest?keys=cordite,octogen&maxmoves=8".
 // Lives OUTSIDE the functions tree so deploys can never ship it.
 // LOCAL-ONLY diagnostic (never deploy): imports the full bot stack and plays
 // bot-vs-bot games in-memory — no DB — to reproduce the production
 // "Memory limit exceeded" kills under the real edge runtime via
-// `supabase functions serve`. Query: ?keys=semtex,octogen&games=1
+// `supabase functions serve`. Query: ?keys=cordite,octogen&games=1
+//
+// A key this build cannot dispatch is a 400, never a game. The whole point of
+// this diagnostic is to measure a NAMED bot under the edge budget, and an
+// unknown key used to resolve to `random` (getBotStrategy's fallback) and play
+// 8 cheap moves that looked exactly as green as the real thing — for three
+// keysets naming two bots that had been culled from the tree (issue #111). The
+// response now says which strategy each seat actually ran, so the caller can
+// assert identity rather than liveness.
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 
 // Static side-effect imports of the whole bot stack. REQUIRED: post-A10 the
@@ -22,14 +30,31 @@ import '../../../../api/core/constants.ts';
 import '../../../../../sdk/ts/wasm/engine.ts';
 import '../../../../api/common/common_utils.ts';
 import '../../../../../sdk/ts/wasm/bots.ts';
-import '../../../../api/common/bot_strategy.ts';
 import '../../../../api/common/pure_bot_actions.ts';
 import '../../../../api/common/game_lifecycle.ts';
+// bot_strategy's entry in the list above, as a NAMED import: same staging
+// effect, and the key -> strategy resolution below needs the bindings.
+import { botStrategyKeys, resolveBotStrategy } from '../../../../api/common/bot_strategy.ts';
 
 serve(async (req: Request) => {
     const url = new URL(req.url);
-    const keys = (url.searchParams.get('keys') ?? 'semtex,octogen').split(',');
+    const keys = (url.searchParams.get('keys') ?? 'cordite,octogen').split(',');
     const games = Number(url.searchParams.get('games') ?? '1');
+
+    // Identity, before anything is measured. Resolve every key STRICTLY: an
+    // unknown one is the caller's bug, and answering it with a `random` game
+    // would report a bot that does not exist as healthy.
+    const seats = keys.map((key, seat) => ({ seat, key, strategy: resolveBotStrategy(key)?.name ?? null }));
+    const unknown = seats.filter((s) => s.strategy === null).map((s) => s.key);
+    if (unknown.length > 0) {
+        console.log(`[memtest] unknown bot key(s): ${unknown.join(', ')}`);
+        return new Response(JSON.stringify({
+            ok: false,
+            error: 'unknown bot key',
+            unknown,
+            known: botStrategyKeys(),
+        }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+    }
     const t0 = Date.now();
     const out: Record<string, unknown>[] = [];
 
@@ -99,7 +124,10 @@ serve(async (req: Request) => {
         out.push({ game: gi, done, moves });
         console.log(`[memtest] game ${gi} (${keys.join(' vs ')}): done=${done} moves=${moves} elapsed=${Date.now() - t0}ms`);
     }
-    return new Response(JSON.stringify({ ok: true, out, ms: Date.now() - t0 }), {
+    // `seats` is the identity half of the report: the strategy each seat was
+    // actually dispatched under, not the key the caller typed. A gate that
+    // greps for its own bot names in here cannot be satisfied by `random`.
+    return new Response(JSON.stringify({ ok: true, seats, out, ms: Date.now() - t0 }), {
         headers: { 'Content-Type': 'application/json' },
     });
 });

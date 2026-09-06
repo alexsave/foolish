@@ -35,9 +35,9 @@ public enum RosterWire {
     public static let maxJoins = 8
 
     /// The roster as bytes. Over-long names are trimmed by whole UNICODE
-    /// SCALARS so the result is always valid UTF-8 - the same discipline
-    /// ReplayExtras.nameBytes keeps, and for the same reason: a severed
-    /// multi-byte sequence is worse than a shorter name.
+    /// SCALARS so the result is always valid UTF-8 - the same discipline the
+    /// replay extras codec keeps (c/src/replay_extras.c), and for the same
+    /// reason: a severed multi-byte sequence is worse than a shorter name.
     ///
     /// Deliberately not throwing on a long name. The kernel's cap is a refusal
     /// and a refused seal is a bubble that never goes out; the display cap is 12
