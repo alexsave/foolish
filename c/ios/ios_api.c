@@ -13,6 +13,7 @@
 #include "view.h"
 #include "replay.h"
 #include "replay_steps.h"
+#include "replay_extras.h"
 #include "strategy.h"
 #include "bot_roster.h"
 #include "bot_drive.h"
@@ -1449,6 +1450,17 @@ int fio_replay_share_code_b32(char *out, int cap) {
         // share still beats no share, and v5 encodes from the logs alone.
     }
     return fio_replay_encode_b32(out, cap);
+}
+
+// The whole shareable link, prefix and all (ios_api.h). Pure function of its
+// arguments - no resident game - so a caller may reach it from anywhere.
+int fio_replay_share_link(const char *moves,
+                          const unsigned char *names, int names_len, int n_names,
+                          char *out, int cap) {
+    int n = replay_extras_link(moves, names, names_len, n_names, out, cap);
+    if (n == -REPLAY_EXTRAS_ECAP) return FIO_ECAP;
+    if (n < 0) return FIO_EBADARG;
+    return n;
 }
 
 // A replay, as the event stream the board already animates.

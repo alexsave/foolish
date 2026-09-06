@@ -6,6 +6,7 @@
 //         -DMAX_MOVE_CARDS=28 ios/ios_api_smoke.c ios/ios_api.c <CORE_SRC> -lm
 #include "ios_api.h"
 #include "replay.h"   // the codec version this build stamps (-Isrc)
+#include "replay_extras.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -1310,6 +1311,62 @@ static int nine_player_cap_check(void) {
     return 0;
 }
 
+// The whole share link (#113): the phone's path through fio_replay_share_link,
+// run wherever clang runs. The FORMAT is proved against the shipped bytes in
+// e2e/replay_extras_kernel.test.ts; what this adds is that the bridge builds
+// the link the extension puts in a bubble - prefix, moves untouched, one dash,
+// base32 after it, and nothing at all when the table is anonymous.
+static int extras_link_check(void) {
+    const char *moves = "MZXW6YTBOI7654321ABCDEFG";
+    const char *bare = REPLAY_LINK_PREFIX "MZXW6YTBOI7654321ABCDEFG";
+    // Two seats: "Ann" and a Cyrillic name, packed [u16 len][bytes] each.
+    static const unsigned char roster[] = {
+        3, 0, 'A', 'n', 'n',
+        8, 0, 0xd0, 0x92, 0xd0, 0xbb, 0xd0, 0xb0, 0xd0, 0xb4,
+    };
+    char out[512];
+    unsigned char blob[256], want[256], args[64];
+    int blen = (int)strlen(bare);
+    int n = fio_replay_share_link(moves, roster, (int)sizeof(roster), 2, out, sizeof(out));
+    if (n < 0) { printf("FAIL share link err=%d\n", n); return 1; }
+    if ((int)strlen(out) != n) { printf("FAIL share link length disagrees with its string\n"); return 1; }
+    if (strncmp(out, bare, (size_t)blen) != 0 || out[blen] != '-') {
+        printf("FAIL share link disturbed the bare link: %s\n", out); return 1;
+    }
+    // The segment decodes back to the blob the codec would write for that roster.
+    {
+        int b = replay_b32_decode(out + blen + 1, blob, sizeof(blob));
+        int w = 0, nw;
+        args[w++] = REPLAY_EXTRAS_FLAG_NAMES;
+        args[w++] = 2;
+        for (int i = 0; i < (int)sizeof(roster); i++) args[w++] = roster[i];
+        nw = replay_extras_encode(args, w, want, sizeof(want));
+        if (nw < 0 || b < nw || memcmp(blob, want, (size_t)nw) != 0) {
+            printf("FAIL share link segment is not the codec's blob (b=%d nw=%d)\n", b, nw);
+            return 1;
+        }
+    }
+    // An anonymous table gets the bare link, byte for byte what every build
+    // before names emitted.
+    {
+        static const unsigned char anon[] = { 0, 0, 0, 0 };
+        n = fio_replay_share_link(moves, anon, (int)sizeof(anon), 2, out, sizeof(out));
+        if (n != blen || strcmp(out, bare) != 0) {
+            printf("FAIL anonymous table wrote a segment: %s\n", out); return 1;
+        }
+    }
+    n = fio_replay_share_link(moves, 0, 0, 0, out, sizeof(out));
+    if (n != blen || strcmp(out, bare) != 0) {
+        printf("FAIL empty roster wrote a segment: %s\n", out); return 1;
+    }
+    // A buffer too small for the bare link is refused rather than truncated.
+    if (fio_replay_share_link(moves, roster, (int)sizeof(roster), 2, out, 4) != FIO_ECAP) {
+        printf("FAIL share link accepted a buffer it cannot fill\n"); return 1;
+    }
+    printf("share link OK (%d chars bare)\n", blen);
+    return 0;
+}
+
 int main(void) {
     unsigned char seed[32];
     for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(i * 7 + 1);
@@ -1454,6 +1511,7 @@ int main(void) {
     if (pretable_wire_check() != 0) return 1;
     if (conflict_wire_check() != 0) return 1;
     if (board_rules_check() != 0) return 1;
+    if (extras_link_check() != 0) return 1;
 
     printf("SMOKE OK\n");
     return 0;
