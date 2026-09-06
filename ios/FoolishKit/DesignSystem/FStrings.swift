@@ -68,7 +68,15 @@ public enum FStrings {
     public static func t(_ key: String, _ args: [String: String] = [:]) -> String {
         let lang = activeLang
         var s = table[lang]?[key] ?? table["en"]?[key] ?? key
-        for (k, v) in args { s = s.replacingOccurrences(of: "{\(k)}", with: v) }
+        // Sorted, because sequential replacement is order-sensitive: a value
+        // containing "{otherKey}" would or would not be substituted depending on
+        // which key ran first, and Dictionary order is a per-launch accident.
+        // No call site relies on that today; sorting makes it impossible to
+        // start relying on it by accident.
+        for k in args.keys.sorted() {
+            guard let v = args[k] else { continue }
+            s = s.replacingOccurrences(of: "{\(k)}", with: v)
+        }
         return s
     }
 

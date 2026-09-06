@@ -180,11 +180,20 @@ public final class MessageGameStore {
         return map
     }
 
+    // SORTED, not dictionary order. Swift seeds Dictionary hashing per PROCESS,
+    // so `for (k, v) in map` walks a different order on every launch and the
+    // same store state serialized to different bytes each time. The reader
+    // rebuilds a dictionary and does not care, so nothing is broken today - but
+    // an ordered byte format whose order is a per-launch accident cannot be
+    // diffed, hashed, checksummed or asserted on, and someone will eventually
+    // want to do one of those. The keys are unique, so sorting them is a total
+    // order at no meaningful cost. Same for persistLatest and persistHandOrders.
     private func persistSeats(_ map: [String: SeatRow]) {
         var w = PackedWriter()
         w.u8(Self.storeFormat)
         w.u16(map.count)
-        for (gameId, row) in map {
+        for gameId in map.keys.sorted() {
+            guard let row = map[gameId] else { continue }
             w.text(gameId); w.text(row.chatKey); w.u8(row.seat)
         }
         defaults?.set(w.data, forKey: seatsKey)
@@ -349,8 +358,18 @@ public final class MessageGameStore {
     static let latestChainCap = 32
 
     private func evictOldestLatestBeyondCap(_ map: inout [String: LatestRow]) {
+        // The tie-break is the key, not dictionary order. `min(by:)` returns the
+        // first minimum IN ITERATION ORDER, and iteration order is a per-launch
+        // accident - so when two chains shared an updatedAt (two writes inside
+        // one Date() sample, which is what a burst of arrivals looks like) the
+        // choice of WHICH LIVE GAME to delete was decided by the hash seed.
+        // Deleting a player's game is not a coin-flip's business.
         while map.count > Self.latestChainCap,
-              let oldest = map.min(by: { $0.value.updatedAt < $1.value.updatedAt }) {
+              let oldest = map.min(by: {
+                  $0.value.updatedAt != $1.value.updatedAt
+                      ? $0.value.updatedAt < $1.value.updatedAt
+                      : $0.key < $1.key
+              }) {
             map.removeValue(forKey: oldest.key)
         }
     }
@@ -380,7 +399,8 @@ public final class MessageGameStore {
         var w = PackedWriter()
         w.u8(Self.storeFormat)
         w.u16(map.count)
-        for (key, row) in map {
+        for key in map.keys.sorted() {
+            guard let row = map[key] else { continue }
             w.text(key); w.f64(row.updatedAt); w.blob([UInt8](row.chain))
         }
         defaults?.set(w.data, forKey: latestKey)
@@ -553,7 +573,8 @@ public final class MessageGameStore {
         var w = PackedWriter()
         w.u8(Self.storeFormat)
         w.u16(map.count)
-        for (gameId, row) in map {
+        for gameId in map.keys.sorted() {
+            guard let row = map[gameId] else { continue }
             w.text(gameId); w.f64(row.updatedAt)
             w.blob8(row.order.compactMap(CardSet.idOf))
         }
