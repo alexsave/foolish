@@ -49,11 +49,20 @@ CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_steps.
             src/sha256.c src/msg_wire.c src/anim_plan.c src/analyse.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 
-.PHONY: all clean tests print-core
+.PHONY: all clean tests print-core print-wasm-src
 # Emit the core engine+strategy source list (used by tools/tt_divergence.sh to
 # build cnitro_eval at arbitrary -DCD_TT_BITS without duplicating the list).
 print-core:
 	@echo $(CORE_SRC)
+# Emit every C source compiled into a SHIPPED wasm module, for
+# scripts/check_wasm_freshness.sh. Read out of the real WASM_*_SRC lists rather
+# than copied into the script: a second copy of this list is how the artifact
+# and the sources it is built from drift apart in the first place. Not the same
+# set as CORE_SRC - the native CLI mains (main_elo.c, main_showcase.c) are in
+# neither wasm module, and a change to one of them must not be read as a stale
+# artifact.
+print-wasm-src:
+	@echo $(sort $(WASM_RULES_SRC) $(WASM_GUARDS_SRC) $(WASM_BOT_SRC) $(WASM_ORACLE_MT_SRC))
 all: build/cnitro_eval build/cnitro_elo build/cnitro_replay build/cnitro_showcase build/cnitro_tests build/cnitro_gen
 
 # Generic compile rule for sources under src/ (build/%.o: src/%.c).
