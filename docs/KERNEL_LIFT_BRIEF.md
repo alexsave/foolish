@@ -1283,7 +1283,32 @@ nothing beyond octogen was measured.
 The committed `public/oracle.wasm.gz` and `c/build/bots.wasm.gz` still carry the
 old solver: this reaches production only when they are rebuilt.
 
-## Queued: a replay URL fails by naming the wrong fault
+## Fixed: a replay URL failed by naming the wrong fault
+
+Fixed 2026-09-06, in the shape the report suggested.
+`urlToCode` now takes the code out of the link forms people actually paste:
+scheme or no scheme, `www.` or not, a trailing slash, a query, a fragment, the
+printed `WWW.FOOLISH.CARDS/` form, a bare code, and any of those wrapped in
+whitespace.
+Some other host falls back to the last path segment.
+When what is left is not base32, `urlToGame` refuses it as
+**"not a replay code"** instead of handing `base32Decode` - which ignores stray
+characters - a string that decodes to a DIFFERENT game and dies later under a
+codec error that was never the fault.
+
+Both halves are covered, and both were mutation-checked against the unfixed
+codec: `e2e/replay_codec_edges.test.ts` walks eleven pasted forms and six
+non-codes (2 of 8 failed on the old code, naming the exact defect), and the
+property test in `e2e/replay_codec.test.ts` re-reads every game it encodes
+through three pasted forms of that game's own link, so no replay code is frozen
+as a fixture anywhere.
+
+Note what is deliberately NOT refused: a well-formed base32 string that is not a
+real code (`helloworld`) still reaches the decoder, because nothing about it says
+otherwise and a length heuristic would be a guess.
+The decoder's error is then honestly about the bytes it was given.
+
+The original report follows.
 
 A papercut, not a crash, on the most natural input a person can give.
 

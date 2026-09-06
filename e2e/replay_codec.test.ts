@@ -36,6 +36,7 @@ import { ReplayInput, SeatLog, DecodedReplay, INFO_TYPES } from '../server/api/c
 import { decodeReplay } from '../server/api/common/replay/decode.ts';
 import {
   urlToGame, base64Decode, base64Encode, base32Encode, bytesToBigint, codeToGame, gameToUrl,
+  URL_PREFIX,
 } from '../server/api/common/replay/codec.ts';
 import { kernelReplayEncodeV6FromGame } from '../sdk/ts/wasm/bots.ts';
 import { suiteRng } from './helpers/rng.ts';
@@ -217,6 +218,20 @@ async function roundTripGame(game: Game, np: number, where: string): Promise<voi
 
   // decode through every serialization layer
   const xUrl = urlToGame(enc.url);
+  // ...including the link a person actually pastes. A browser hands out
+  // https://foolish.cards/<code>, never the printed WWW.FOOLISH.CARDS/ form,
+  // and every letter of `https` is in the base32 alphabet - so an unrecognised
+  // prefix does not fail, it names a DIFFERENT game, which then dies in the
+  // kernel under a codec error that was never the fault.
+  const bareCode = enc.url.slice(URL_PREFIX.length);
+  for (const pasted of [
+    `https://foolish.cards/${bareCode}`,
+    `https://www.foolish.cards/${bareCode}`,
+    `foolish.cards/${bareCode}?utm_source=imessage`,
+  ]) {
+    assert.equal(urlToGame(pasted), enc.x,
+      `a pasted link named a different game (np=${np}, seed=${rng.seed}): ${pasted}`);
+  }
   const xB64 = bytesToBigint(base64Decode(enc.base64));
   assert.equal(xUrl, enc.x, `serialization round-trip mismatch (url) (np=${np}, seed=${rng.seed})`);
   assert.equal(xB64, enc.x, `serialization round-trip mismatch (base64) (np=${np}, seed=${rng.seed})`);

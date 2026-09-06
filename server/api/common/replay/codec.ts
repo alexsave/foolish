@@ -300,14 +300,50 @@ export function codeToGame(code: string): bigint {
 export function gameToUrl(x: bigint): string {
   return URL_PREFIX + gameToCode(x);
 }
-export function urlToGame(url: string): bigint {
-  const i = url.toUpperCase().indexOf(URL_PREFIX);
-  let code = i >= 0 ? url.slice(i + URL_PREFIX.length) : url;
+/** The public host, without the `www.` a browser hides and a person omits. */
+const URL_HOST = "FOOLISH.CARDS/";
+const IS_BASE32 = /^[A-Za-z2-7]+$/;
+
+/**
+ * The replay code out of whatever a person pasted.
+ *
+ * Accepts the bare code, the printed form `WWW.FOOLISH.CARDS/<code>`, and the
+ * links a browser actually hands out - `https://foolish.cards/<code>`,
+ * `https://www.foolish.cards/<code>`, scheme or no scheme, trailing slash,
+ * query or fragment. Whitespace anywhere is dropped: a code that survived a
+ * line wrap is still that code.
+ *
+ * Does NOT decide whether the result is a code; see urlToGame.
+ */
+export function urlToCode(url: string): string {
+  // A query or a fragment is never part of the code.
+  let s = url.trim().replace(/\s+/g, "").split(/[?#]/)[0].replace(/\/+$/, "");
+  const host = s.toUpperCase().lastIndexOf(URL_HOST);
+  if (host >= 0) s = s.slice(host + URL_HOST.length);
+  // Some other host, or a bare path: the code is the last path segment. A
+  // scheme's own letters are in the base32 alphabet, so leaving `https:/` on
+  // the front does not fail - it silently decodes a DIFFERENT game.
+  else if (s.includes("/")) s = s.slice(s.lastIndexOf("/") + 1);
   // an optional extras section (player names + move times, see extras.ts)
-  // follows the moves after a dash — the move integer is the prefix
-  const dash = code.indexOf("-");
-  if (dash >= 0) code = code.slice(0, dash);
-  return codeToGame(code.replace(/[^A-Za-z2-7]/g, ""));
+  // follows the moves after a dash - the move integer is the prefix
+  const dash = s.indexOf("-");
+  if (dash >= 0) s = s.slice(0, dash);
+  return s;
+}
+
+export function urlToGame(url: string): bigint {
+  const code = urlToCode(url);
+  // Name the fault by what it IS. base32Decode ignores stray characters, so
+  // input that is not a code used to decode to some other game and fail deep
+  // in the kernel as "unsupported replay format version 11" - sending the
+  // reader after a codec bug that was never there. Same principle as
+  // REPLAY_EHEADER and REPLAY_ETOOLONG in c/src/replay.h.
+  if (!IS_BASE32.test(code)) {
+    throw new Error(
+      `not a replay code: ${JSON.stringify(url)} - expected a foolish.cards link or the code out of one`,
+    );
+  }
+  return codeToGame(code);
 }
 
 /* ----------------------------------------------------------------------------

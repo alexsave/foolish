@@ -43,6 +43,52 @@ test('gameToUrl / urlToGame wrap and unwrap a moves bigint', () => {
   }
 });
 
+// The link a person pastes is the one a browser hands them - https://, a real
+// host, maybe a tracking query - not the printed WWW.FOOLISH.CARDS/ form. Every
+// letter of `https` is in the base32 alphabet, so a prefix that is not
+// recognised does not fail: it silently names a DIFFERENT game, which then dies
+// deep in the kernel as "unsupported replay format version N" and sends the
+// reader hunting for a codec bug that is not there.
+test('urlToGame reads the link forms a person actually pastes', () => {
+  const x = 2n ** 61n + 12345n;
+  const code = gameToUrl(x).slice(URL_PREFIX.length);
+  const forms = [
+    code,
+    `WWW.FOOLISH.CARDS/${code}`,
+    `https://foolish.cards/${code}`,
+    `https://www.foolish.cards/${code}`,
+    `http://foolish.cards/${code}`,
+    `https://foolish.cards/${code}/`,
+    `foolish.cards/${code}`,
+    `https://foolish.cards/${code}?utm_source=imessage`,
+    `https://foolish.cards/${code}#top`,
+    `https://foolish.cards/${code}-SOMEEXTRAS`,
+    `  https://foolish.cards/${code}\n`,
+  ];
+  for (const pasted of forms) {
+    assert.equal(urlToGame(pasted), x, `pasted link named a different game: ${JSON.stringify(pasted)}`);
+  }
+});
+
+test('urlToGame refuses input that is not a replay code, and says so', () => {
+  // base32Decode ignores stray characters, so without a guard each of these
+  // decodes to SOME game and fails later under a name that is about the codec.
+  for (const junk of [
+    '',
+    'WWW.FOOLISH.CARDS/',
+    'https://foolish.cards/',
+    'https://foolish.cards/MZXW6YTB0189',   // 0/1/8/9 are not in the alphabet
+    'MZXW6YTB!!',
+    'https://foolish.cards/hello world!',
+  ]) {
+    assert.throws(
+      () => urlToGame(junk),
+      /not a replay code/,
+      `non-code input decoded instead of refusing: ${JSON.stringify(junk)}`,
+    );
+  }
+});
+
 test('encodeExtras with names but no move-times yields a decodable names-only blob', () => {
   const names = ['Alice', 'Bob', 'Céline'];
   const extras = encodeExtras(names, null);
