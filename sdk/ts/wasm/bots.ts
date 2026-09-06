@@ -1066,6 +1066,30 @@ export function kernelUnambiguousCover(
     return { coverCards: [...coverCards], attackCards };
 }
 
+// A JS Game as its per-viewer masked view blob, [VIEW_FORMAT_VERSION | viewer |
+// masked put_state] - the kernel's own writer (view.c state_put), for a board
+// that has no durable blob to deserialize.
+//
+// This replaced a pure-TS mirror of state_put that lived in wire/view.ts
+// (writeMaskedState) so the lobby and meta paths could emit a view without
+// loading a kernel. That reason had already expired: the browser runs the WHOLE
+// kernel and fetches bots.wasm.gz as an asset (see wasm_asset.ts, "one big
+// module everywhere"), so there is no kernel-free client to protect. What a
+// second writer of the layout did buy was a way for the two to drift, caught
+// only by a parity test.
+//
+// It lives HERE rather than in engine.ts for the client's sake: engine.ts
+// carries rules_wasm.ts, a base64 embed, and pulling that into a page that
+// already loads bots.wasm would ship the kernel twice.
+export function wasmViewFromGame(game: Game, viewerSeat: number): Uint8Array {
+    const ex = bots() as unknown as EngineExports;
+    __setResident(null);
+    __marshalGame(ex, game);
+    const base = ex.wasm_io_ptr();
+    const len = ex.wasm_view_serialize(viewerSeat);
+    return __mem(ex).slice(base, base + len);
+}
+
 // The PUBLIC view of the game the last kernelMsgDecode adopted — every hand as
 // backs, the deck masked. What /m/ renders for a stranger with a link, and what
 // the bubble snapshot shows (it lands in notifications and on lock screens, so

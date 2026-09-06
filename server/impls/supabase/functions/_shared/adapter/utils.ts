@@ -326,6 +326,11 @@ export const broadcastAnimationEvents = async (game: Game, events: AnimationEven
     // each a fully-masked packed stream from the TS event-wire encoder —
     // byte-identical to what the kernel's wasm_events_serialize emits on the
     // packed action path, parity-tested in e2e.
+    //
+    // The per-step boards are masked by the KERNEL (wasm_view_serialize),
+    // reached from evwire itself. This is the one caller that still encodes
+    // events in JS - the meta and lobby actions, where there is no packed
+    // producer.
     const version = game.version ?? 0;
     // Self-describing extras (see PackedPayloadExtra): this JS path carries
     // the lobby/meta actions where the roster itself changes, so recipients

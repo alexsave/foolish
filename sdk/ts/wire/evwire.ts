@@ -13,8 +13,8 @@
 import { AnimationEvent, ANIMATION_EVENT_TYPE, Card, Game, PersonalGame, PublicGame } from "@api/core/types.ts";
 import { SUIT_MAP, VALUE_MAP } from "@api/core/constants.ts";
 import { WIRE_HIDDEN, wireCard } from "./awire.ts";
-import { ViewDecodeCtx, ViewRoster, viewToGame, writeMaskedState } from "./view.ts";
-import { KernelState, kernelEventsFromPacked } from "@sdk/ts/wasm/bots.ts";
+import { ViewDecodeCtx, ViewRoster, viewToGame } from "./view.ts";
+import { KernelState, kernelEventsFromPacked, wasmViewFromGame } from "@sdk/ts/wasm/bots.ts";
 
 export const EVWIRE_FORMAT_VERSION = 1;
 export const EVW_SEAT_NONE = 0xff;
@@ -218,15 +218,15 @@ export function encodeEventWire(
         for (const c of cards) out.push(mask ? WIRE_HIDDEN : wireCard(c));
         if (hasTarget) out.push(wireCard(ev.target_card!));
         if (hasBattle) out.push(ev.battle_index! & 0xff);
-        // Per-step snapshot, masked for this viewer.
-        const snap: number[] = [];
-        writeMaskedState(ev.game_state, viewerSeat, snap);
+        // Per-step snapshot, masked for this viewer. The 2-byte
+        // [VIEW_FORMAT_VERSION | viewer] header the blob carries is the
+        // envelope's, not the snapshot's, so it is trimmed here.
+        const snap = wasmViewFromGame(ev.game_state as Game, viewerSeat).subarray(2);
         out.push(snap.length & 0xff, (snap.length >> 8) & 0xff);
-        out.push(...snap);
+        for (const b of snap) out.push(b);
     }
-    const fin: number[] = [];
-    writeMaskedState(finalGame, viewerSeat, fin);
+    const fin = wasmViewFromGame(finalGame, viewerSeat).subarray(2);
     out.push(fin.length & 0xff, (fin.length >> 8) & 0xff);
-    out.push(...fin);
+    for (const b of fin) out.push(b);
     return new Uint8Array(out);
 }

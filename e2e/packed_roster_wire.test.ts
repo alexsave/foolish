@@ -42,8 +42,9 @@ import {
 import {
     GAME_RESP_FORMAT, GAME_RESP_FLAG_PACKED_ROSTER, LEGACY_ROSTER_JSON,
     VIEW_FORMAT_VERSION, PackedGameRoster,
-    encodeGameResponse, decodePackedGame, writeMaskedState,
+    encodeGameResponse, decodePackedGame,
 } from '../sdk/ts/wire/view.ts';
+import { wasmViewFromGame } from '../sdk/ts/wasm/bots.ts';
 import {
     ROSTER_MAX_NAME_BYTES, ROSTER_WIRE_FORMAT,
     encodePackedRoster, decodePackedRoster, encodeRosterNames, rosterNameBytes,
@@ -85,10 +86,12 @@ const rosterFor = (game: Game): PackedGameRoster => ({
     good_timestamp: game.good_timestamp ?? null,
 });
 
+// The kernel's own writer (wasm_view_serialize), which already emits the
+// [VIEW_FORMAT_VERSION | viewer | masked put_state] envelope. It replaced the
+// pure-TS mirror this used to call, so what the frozen build-43 encoder is
+// compared against is the format's one definition.
 function viewBlobFor(game: Game, seat: number): Uint8Array {
-    const body: number[] = [];
-    writeMaskedState(game, seat, body);
-    return Uint8Array.from([VIEW_FORMAT_VERSION, seat < 0 ? 0xff : seat, ...body]);
+    return wasmViewFromGame(game, seat);
 }
 
 // ---------------------------------------------------------------------------

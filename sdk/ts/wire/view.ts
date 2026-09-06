@@ -314,48 +314,13 @@ export function decodePackedGame(
 }
 
 // ---------------------------------------------------------------------------
-// Byte writer — the TS mirror of view.c state_put(masked). Used by the
-// evwire TS encoder so JS-path broadcasts (bot loop, meta) are byte-identical
-// to the kernel's own serialization. `game` is a full server Game.
+// The masked put_state WRITER used to live here, as a pure-TS mirror of
+// view.c, so the lobby and meta paths could emit a view without loading a
+// kernel. It is gone. The kernel writes its own format (wasm_view_serialize,
+// via bots.ts wasmViewFromGame), and a second writer of a byte layout kept
+// honest only by a parity test is exactly the thing that silently desyncs.
+//
+// The reason it existed had already expired: the browser runs the WHOLE kernel
+// and fetches bots.wasm.gz as an asset (wasm_asset.ts, "one big module
+// everywhere"), so there was no kernel-free client left to protect.
 // ---------------------------------------------------------------------------
-
-export function writeMaskedState(game: Game, viewerSeat: number, out: number[]): void {
-    out.push(G_STATUS_TO_INT[game.status] ?? 0);
-    out.push(game.players.length & 0xff);
-    out.push(game.power_suit & 0xff);
-    out.push(game.first_attacker & 0xff);
-    out.push(game.defender & 0xff);
-    out.push(game.discard_pile_length & 0xff, (game.discard_pile_length >> 8) & 0xff);
-    out.push(game.flipped ? 1 : 0);
-    // Canonical no-flip byte — mirrors view.c state_put exactly.
-    out.push(game.flipped ? wireCard(game.flipped) : WIRE_HIDDEN);
-    let mask = 0;
-    for (const pid of game.good_players ?? []) {
-        const s = game.players.findIndex(p => p.player_id === pid);
-        // The s >= 0 guard is load-bearing: 1 << -1 is 1 << 31 in JS and
-        // would phantom-set seat 31 for a good entry whose player left.
-        if (s >= 0) mask |= 1 << s;
-    }
-    out.push(mask & 0xff, (mask >> 8) & 0xff, (mask >> 16) & 0xff, (mask >> 24) & 0xff);
-    out.push(game.good_timestamp !== null && game.good_timestamp !== undefined ? 1 : 0);
-    out.push(game.deck.length & 0xff, (game.deck.length >> 8) & 0xff);
-    for (let i = 0; i < game.deck.length; i++) out.push(WIRE_HIDDEN);
-    out.push(game.table_battles.length & 0xff);
-    for (const b of game.table_battles) {
-        out.push(wireCard(b.attack));
-        out.push(b.defense ? wireCard(b.defense) : WIRE_NONE);
-    }
-    for (let i = 0; i < game.players.length; i++) {
-        const p = game.players[i];
-        const visible = i === viewerSeat;
-        out.push(P_STATUS_TO_INT[p.status] ?? 0);
-        out.push(visible && p.awaiting_attack ? 1 : 0);
-        out.push(p.hand.length & 0xff);
-        for (const c of p.hand) out.push(visible ? wireCard(c) : WIRE_HIDDEN);
-    }
-    out.push(game.elimination_order.length & 0xff);
-    for (const pid of game.elimination_order) {
-        const s = game.players.findIndex(p => p.player_id === pid);
-        out.push(s & 0xff);
-    }
-}

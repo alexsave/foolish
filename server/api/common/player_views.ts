@@ -15,11 +15,11 @@
 // per-seat blob comes from wasm_view_serialize (engine.serializeViewBlobs, ONE
 // deserialize for all seats). A lobby (WAITING) game has no kernel blob and no
 // hidden information (empty hands, empty deck), so its view is written by the
-// pure-TS mirror of the same kernel format (writeMaskedState) — the identical
+// the kernel's own writer for both (wasm_view_serialize) — the identical
 // path get_game uses for blob-less rows.
 import { GAME_STATUS, Game } from '@api/core/types.ts';
 import {
-    VIEW_FORMAT_VERSION, encodeGameResponse, writeMaskedState, PackedGameRoster,
+    encodeGameResponse, PackedGameRoster,
 } from '@sdk/ts/wire/view.ts';
 import { bytesToBareHex } from '@sdk/ts/wire/bytes.ts';
 
@@ -32,6 +32,10 @@ const lazy = <T>(load: () => Promise<T>): (() => Promise<T>) => {
     return () => (mod ??= load());
 };
 const engineMod = lazy(() => import('@sdk/ts/wasm/engine.ts'));
+// The lobby view goes through the BOTS module, not the rules one: it is the
+// same view.c writer either way, and this keeps one shim (wasmViewFromGame)
+// rather than one per module.
+const botsMod = lazy(() => import('@sdk/ts/wasm/bots.ts'));
 const codecMod = lazy(() => import('./replay/codec.ts'));
 
 
@@ -81,23 +85,24 @@ export async function buildPlayerViewRows(
     // (a stale one would leak a finished session's hands).
     const dealt = stateHex !== null && game.status !== GAME_STATUS.WAITING;
 
+    // Both branches are the kernel's wasm_view_serialize now. They differ only
+    // in where the board comes from: a dealt game has a durable blob, a lobby
+    // has none and goes in as the JS Game. The lobby branch used to be a pure-TS
+    // mirror of view.c's state_put (writeMaskedState) precisely to keep the
+    // rules-wasm embed off this path - it is gone, and the cost of that is a
+    // rules.wasm instantiate on a lobby read.
+    //
+    // Lazy imports so the embed is still pulled only when a view is actually
+    // built (same discipline as commitGame's serializeGameState import).
     let viewBlobFor: (seat: number) => Uint8Array;
     if (dealt) {
-        // Lazy imports so lobby/create commits never pull the rules-wasm embed
-        // (same discipline as commitGame's serializeGameState import).
         const { serializeViewBlobs } = await engineMod();
         const { hexToBytes } = await codecMod();
         const blobs = serializeViewBlobs(hexToBytes(stateHex!), humanSeats);
         viewBlobFor = (seat) => blobs.get(seat)!;
     } else {
-        viewBlobFor = (seat) => {
-            const body: number[] = [];
-            writeMaskedState(game, seat, body);
-            // Wrap with the [VIEW_FORMAT_VERSION | viewer | masked put_state]
-            // header the kernel's wasm_view_serialize also emits, so both paths
-            // produce a byte-identical envelope decodePackedGame can read.
-            return Uint8Array.from([VIEW_FORMAT_VERSION, seat & 0xff, ...body]);
-        };
+        const { wasmViewFromGame } = await botsMod();
+        viewBlobFor = (seat) => wasmViewFromGame(game, seat);
     }
 
     const rows: PlayerViewRow[] = [];
@@ -118,7 +123,7 @@ export async function buildPlayerViewRows(
 // packed envelope decodePackedGame yields a PublicGame (no self) from. Masking
 // stays in the C kernel for a dealt game: wasm_view_serialize(-1) (VIEW_SPECTATOR)
 // via serializeViewBlobs([-1]); a lobby has no kernel state, so the pure-TS
-// view.c mirror writeMaskedState(game, -1) produces the identical bytes.
+// kernel takes the JS Game instead (wasmViewFromGame).
 export async function buildSpectatorView(
     game: Game, stateHex: string | null, version: number,
 ): Promise<string> {
@@ -131,9 +136,8 @@ export async function buildSpectatorView(
         const { hexToBytes } = await codecMod();
         viewBlob = serializeViewBlobs(hexToBytes(stateHex!), [-1]).get(-1)!;
     } else {
-        const body: number[] = [];
-        writeMaskedState(game, -1, body); // -1 => no seat visible (all card-backs)
-        viewBlob = Uint8Array.from([VIEW_FORMAT_VERSION, 0xff, ...body]);
+        const { wasmViewFromGame } = await botsMod();
+        viewBlob = wasmViewFromGame(game, -1); // -1 => no seat visible
     }
     return bytesToBareHex(encodeGameResponse(version, -1, roster, viewBlob));
 }
