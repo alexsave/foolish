@@ -765,6 +765,81 @@ build/named/guards.named.wasm: $(WASM_GUARDS_OBJ)
 wasm-guards: build/guards.wasm
 	node wasm/embed.mjs build/guards.wasm ../sdk/ts/wasm/guards_wasm.ts GUARDS_WASM_B64 --gzip
 
+# ---------- msg module: the iMessage extension's kernel, and nothing else ----
+#
+# What a message thread actually needs: the rules, the chain envelope, the
+# animation core, and the replay codec that turns a finished game into a share
+# link. NOT a single bot - an iMessage game is two people, and the extension
+# (ios/FoolishMessages) never drives a seat. NOT the bot roster, the belief
+# probe, the knob table or the strategy dispatch that go with them.
+#
+# It is also the only host that uses the PRE/POST-SETTLEMENT SPLIT: it plays the
+# action, holds the settlement back (evwire_frames_settlement_cut) and releases
+# it on Send, so a bout end does not spoil itself in the composer. That lives in
+# evwire.c, which is here.
+#
+# Cut as a measurement of the floor: how small is the kernel when the host is a
+# chat extension rather than a server. Compare `make wasm-msg-size` against
+# bots.wasm, which is the same kernel plus every rung of the ladder.
+WASM_MSG_SRC := src/game.c src/deal_rng.c src/legal.c src/view.c src/awire.c \
+                src/evwire.c src/sha256.c src/msg_wire.c src/anim_plan.c \
+                src/json_out.c src/replay.c src/replay_steps.c \
+                src/replay_extras.c wasm/wasm_api.c wasm/wasm_msg_api.c
+
+WASM_MSG_EXPORTS := \
+  -Wl,--export=wasm_replay_events -Wl,--export=wasm_replay_events_n \
+  -Wl,--export=wasm_replay_events_next \
+  -Wl,--export=wasm_replay_step_count -Wl,--export=wasm_replay_step_index \
+  -Wl,--export=wasm_replay_extras_encode -Wl,--export=wasm_replay_extras_decode \
+  -Wl,--export=wasm_replay_b32_encode -Wl,--export=wasm_replay_b32_decode \
+  -Wl,--export=wasm_replay_link -Wl,--export=wasm_replay_link_parse \
+  -Wl,--export=wasm_view_json -Wl,--export=wasm_events_json \
+  -Wl,--export=wasm_unambiguous_cover \
+  -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal \
+  -Wl,--export=wasm_msg_rule_p -Wl,--export=wasm_msg_rebase \
+  -Wl,--export=wasm_msg_pickup_hold \
+  -Wl,--export=wasm_anim_should_drop_stale -Wl,--export=wasm_anim_stale_optimistic \
+  -Wl,--export=wasm_anim_build_plan -Wl,--export=wasm_anim_finish_rows \
+  -Wl,--export=wasm_anim_conflict_verdicts \
+  -Wl,--export=wasm_anim_set_transport -Wl,--export=wasm_anim_transport
+
+# The rules flags, minus its memory pin. rules.wasm freezes linear memory at
+# 196,608 B; replay_steps.c's decoded-action buffer alone is ~272 KB, which is
+# why the replay walker was put in bots.wasm rather than rules.wasm in the first
+# place. The pin stays a pin here - initial == max, so the module can never
+# grow - just at the size this source set actually needs.
+WASM_MSG_MEM := 786432
+WASM_MSG_FLAGS := $(filter-out -Wl$(comma)--initial-memory=196608 -Wl$(comma)--max-memory=196608,$(WASM_RULES_FLAGS)) \
+                  -Wl,--initial-memory=$(WASM_MSG_MEM) -Wl,--max-memory=$(WASM_MSG_MEM)
+WASM_MSG_CFLAGS  := $(filter-out -Wl%,$(WASM_MSG_FLAGS))
+WASM_MSG_LDFLAGS := --target=wasm32 -nostdlib $(filter -Wl%,$(WASM_MSG_FLAGS))
+WASM_MSG_POSTOPT ?= $(if $(strip $(WASM_POSTOPT)),$(WASM_POSTOPT),-Oz)
+WASM_MSG_OBJ := $(addprefix build/msgobj/,$(notdir $(WASM_MSG_SRC:.c=.o)))
+
+build/msgobj/%.o: src/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
+	@mkdir -p build/msgobj
+	$(WASM_CC) $(WASM_MSG_CFLAGS) -c $< -o $@
+build/msgobj/%.o: wasm/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
+	@mkdir -p build/msgobj
+	$(WASM_CC) $(WASM_MSG_CFLAGS) -c $< -o $@
+
+build/msg.wasm: $(WASM_MSG_OBJ)
+	@mkdir -p build
+	$(WASM_CC) $(WASM_MSG_LDFLAGS) $(WASM_API_EXPORTS) $(WASM_MSG_EXPORTS) $(WASM_MSG_OBJ) -o $@
+	$(call wasm_postopt,$(WASM_MSG_POSTOPT),$@)
+
+.PHONY: wasm-msg wasm-msg-size
+wasm-msg: build/msg.wasm
+
+# The number this target exists to produce.
+wasm-msg-size: build/msg.wasm
+	@printf 'msg.wasm    raw %7d  gzip %7d\n' \
+	  $$(wc -c < build/msg.wasm) $$(gzip -9 -c build/msg.wasm | wc -c)
+	@[ -f build/bots.wasm ] && printf 'bots.wasm   raw %7d  gzip %7d\n' \
+	  $$(wc -c < build/bots.wasm) $$(gzip -9 -c build/bots.wasm | wc -c) || true
+	@[ -f build/rules.wasm ] && printf 'rules.wasm  raw %7d  gzip %7d\n' \
+	  $$(wc -c < build/rules.wasm) $$(gzip -9 -c build/rules.wasm | wc -c) || true
+
 # Bot module: the rules kernel PLUS every algorithmic bot strategy and the
 # choose-move bridge. A superset of rules.wasm, loaded only where bots run
 # (edge functions' bot turns, offline harnesses) so the pure rules path keeps
@@ -825,7 +900,7 @@ WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_st
                 src/handwritten_prod_strategy.c \
                 src/octogen_strategy.c \
                 src/bot_knobs.c src/bot_roster.c src/bot_drive.c \
-                wasm/wasm_api.c wasm/wasm_bots_api.c
+                wasm/wasm_api.c wasm/wasm_bots_api.c wasm/wasm_msg_api.c
 
 # PER-FILE opt (a mix one clang invocation can't express): the profiled hot MC
 # core is built at -O3, everything else at -Oz. -O3 on those five files cuts the
