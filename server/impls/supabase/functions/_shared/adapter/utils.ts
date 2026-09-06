@@ -385,7 +385,7 @@ export interface ExecutionParams {
 // Fire-and-forget bot drive AFTER the HTTP response (see the CRITICAL note
 // at the call site below): EdgeRuntime.waitUntil keeps the isolate alive
 // until the loop settles; the strategy stack is lazily imported so
-// lightweight functions never pay for it. Shared by the JSON path (wrap400)
+// lightweight functions never pay for it. Shared by the generic wrap400 path
 // and the packed action path.
 export const scheduleBotLoop = (game_id: string, reqId: string): void => {
     const botLoop = botActionsMod()
@@ -483,8 +483,10 @@ export const wrap400 = (
 
             // handle spectating here too 
             const personalizeStart = Date.now();
-            // Masking is the kernel's (personalViewOf -> view.c state_put).
-            const personalized_result = await (await playerViewsMod()).personalViewOf(result, user.id);
+            // Masking is the kernel's (packedViewOf -> view.c state_put), and the
+            // result leaves as the PACKED envelope - the same bytes player_views
+            // stores and `create` returns - not as a JSON game.
+            const personalized_result = await (await playerViewsMod()).packedViewOf(result, user.id);
             console.log(`[${reqId}][WRAP400] personalize took ${Date.now() - personalizeStart}ms`);
 
             // Note: Animation events are now broadcasted automatically by executeWithGameLock
@@ -520,10 +522,10 @@ export const wrap400 = (
             // Create standardized response and return immediately
             const responseTime = Date.now() - requestStartTime;
             console.log(`[${reqId}][WRAP400] ========== RETURNING RESPONSE (total: ${responseTime}ms) ==========`);
-            return new Response(JSON.stringify(personalized_result), {
+            return new Response(personalized_result as unknown as BodyInit, {
                 headers: {
                     ...corsHeaders,
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/octet-stream'
                 }
             });
         } catch (e: any) {

@@ -437,23 +437,23 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     const createGame = useCallback(async (): Promise<{ game_id: string }> => {
         // create now returns the caller's PACKED view buffer (like get_game) —
-        // decode it with the shared codec, the same path loadGame uses. A JSON
-        // body is the legacy fallback. The server persists the game to the DB in
-        // the background AFTER responding, so this returns as soon as the lobby is
-        // built (no create_game round-trip on the critical path).
+        // decode it with the shared codec, the same path loadGame uses. There is
+        // no JSON body to fall back to any more - the server has one answer. The
+        // server persists the game to the DB in the background AFTER responding,
+        // so this returns as soon as the lobby is built (no create_game
+        // round-trip on the critical path).
         const { data, error } = await supabase.functions.invoke('create', { body: {} });
         if (error) throw error;
 
-        let game: PersonalGame;
-        if (typeof Blob !== 'undefined' && data instanceof Blob) {
-            const decoded = decodePackedGame(new Uint8Array(await data.arrayBuffer()));
-            if (!decoded) throw new Error('create: unreadable packed response');
-            game = { ...(decoded.game as PersonalGame), self: (decoded.game as PersonalGame).self ?? null };
-        } else {
-            const fetched: any = data;
-            if (!fetched || fetched.error || !fetched.id) throw new Error(fetched?.error || 'create failed');
-            game = { ...fetched, self: fetched.self ?? null };
-        }
+        const bytes = typeof Blob !== 'undefined' && data instanceof Blob
+            ? new Uint8Array(await data.arrayBuffer())
+            : data instanceof ArrayBuffer ? new Uint8Array(data) : null;
+        const decoded = bytes ? decodePackedGame(bytes) : null;
+        if (!decoded) throw new Error('create: unreadable packed response');
+        const game: PersonalGame = {
+            ...(decoded.game as PersonalGame),
+            self: (decoded.game as PersonalGame).self ?? null,
+        };
 
         setGameId(game.id);
         setGames(prev => ({ ...prev, [game.id]: mergeGameData(game.id, game, prev) }));
@@ -469,8 +469,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             type: 'join',
             game_id: gameId,
         }, {
-            onSuccess: (data) => {
-                setGameId(data.data.id);
+            onSuccess: (game) => {
+                setGameId(game.id);
                 // Remove from spectator mode when joining
                 setSpectatorGames(prev => {
                     const newSet = new Set(prev);
@@ -488,9 +488,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
                 // Subscribe to the game's chat (the gu- animation channel is
                 // owned by RealtimeAnimationFeed)
-                subscribeToChatMessages(data.data.id).catch(console.error);
-                // Load chat history with game data
-                loadChatHistory(data.data.id, data.data).catch(console.error);
+                subscribeToChatMessages(game.id).catch(console.error);
+                loadChatHistory(game.id).catch(console.error);
             }
         })
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -522,7 +521,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             bot_id: botId,
             player_id: playerId
         }, {
-            onSuccess: (data) => {
+            onSuccess: () => {
                 // If user removed themselves (not a bot), mark as spectating and switch channels
                 if (!botId) {
                     setSpectatorGames(prev => new Set(prev).add(gameId));
@@ -669,7 +668,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         //setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, game, prev) }));
 
         // Load chat history with game data
-        loadChatHistory(gameId, game).catch(console.error);
+        loadChatHistory(gameId).catch(console.error);
 
         if (game.self) {
             // Player is in the game - remove from spectator mode if present
@@ -719,7 +718,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
     }
 
-    const loadChatHistory = async (gameId: string, gameData?: PersonalGame): Promise<void> => {
+    const loadChatHistory = async (gameId: string): Promise<void> => {
         try {
             const { data, error } = await supabase
                 .from('chat_messages')
@@ -1159,24 +1158,37 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const invokeGameFunctions = async <T = any>(
+    // The lobby / meta transport. The REQUEST is still JSON ({type, game_id, ...}
+    // is a command, not game state), but the RESPONSE is the packed view
+    // envelope - the same bytes `create` returns, player_views stores and the
+    // realtime feed pushes - so no game state crosses this wire as JSON.
+    // functions-js hands an octet-stream response back as a Blob.
+    const invokeGameFunctions = async (
         functionName: string,
         body: any = {},
         options: {
-            onSuccess?: (data: T) => void;
+            onSuccess?: (game: PersonalGame | PublicGame) => void;
             onError?: (error: any) => void;
         } = {}
     ): Promise<{ game_id: string }> => {
         try {
-            const data = await supabase.functions.invoke(functionName, { body })
+            const { data } = await supabase.functions.invoke(functionName, { body });
 
-            if (!data.data || !data.data.id) {
+            let bytes: Uint8Array | null = null;
+            if (typeof Blob !== 'undefined' && data instanceof Blob) {
+                bytes = new Uint8Array(await data.arrayBuffer());
+            } else if (data instanceof ArrayBuffer) {
+                bytes = new Uint8Array(data);
+            }
+            const game = bytes ? decodePackedGame(bytes)?.game ?? null : null;
+
+            if (!game || !game.id) {
                 throw new Error(`Invalid response from ${functionName}: missing game ID`);
             }
 
-            const game_id = data.data.id;
+            const game_id = game.id;
 
-            options.onSuccess?.(data as T);
+            options.onSuccess?.(game);
 
             return { game_id };
 

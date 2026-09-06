@@ -98,6 +98,24 @@ export async function personalViewOf(
     return out;
 }
 
+// ONE VIEWER'S VIEW of a game as the PACKED envelope - the same bytes
+// buildPlayerViewRows stores in player_views and `create` hands back, so an
+// edge response, a cache row and a realtime push are all one format.
+//
+// This is personalViewOf stopping one step earlier: both build the viewer's
+// masked blob with the kernel's own writer (wasmViewFromGame -> view.c
+// state_put); this one encodes the envelope around it instead of decoding the
+// blob back into a JS Game so it can be JSON.stringify'd. A seat the game does
+// not contain (a spectator, or a player who just exited) yields seat -1, the
+// fully-masked spectator envelope, exactly as before.
+export async function packedViewOf(game: Game, player_id: string): Promise<Uint8Array> {
+    const { wasmViewFromGame } = await botsMod();
+    const seat = game.players.findIndex(p => p.player_id === player_id);
+    // `version` is the row's optimistic-concurrency token, not part of the
+    // board, so it rides the envelope header rather than the blob.
+    return encodeGameResponse(game.version ?? 0, seat, rosterOf(game), wasmViewFromGame(game, seat));
+}
+
 // The per-player view rows for a committed game. `stateHex` is the packed kernel
 // blob this commit persisted (games.state) or null for a never-dealt lobby;
 // `version` is the committed games.version the rows should carry. Bots are
