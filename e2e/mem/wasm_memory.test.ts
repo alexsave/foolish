@@ -107,7 +107,7 @@ test('guards.wasm linear memory is pinned flat at 1 page', () => {
     assert.equal(max, 1, `guards.wasm max memory is ${max} pages; expected a hard 1-page pin`);
 });
 
-test("bots.wasm declared INITIAL memory is 37 pages (static buffers, not the runtime TT)", () => {
+test("bots.wasm declared INITIAL memory is 36 pages (static buffers, not the runtime TT)", () => {
     // bots.wasm can't be pinned — it bump-allocates a per-family transposition
     // table at runtime (see the flat-across-families test below). So we assert
     // the INITIAL declared memory only: the static (data + bss) footprint the
@@ -124,31 +124,29 @@ test("bots.wasm declared INITIAL memory is 37 pages (static buffers, not the run
     //                                    the browser's base64 twin)
     // Sum ~= 36 pages (2.36 MiB). The SOLVER's hot working set still stays in L1
     // at runtime (32 KiB TT + book, docs/L1_SPEND_PLAN.md §6); this is the cold
-    // static image, and the edge runtime maps it lazily. A regression UP from 37
+    // static image, and the edge runtime maps it lazily. A regression UP from 36
     // (a new static buffer, or the stack creeping up) trips this. Read straight
     // from the shipped gz artifact.
     //
-    // TODO: GET THIS BACK TO 36. It was 36 for the whole of the memory-crunch
-    // work and went to 37 at 6d863b5 (the animation core moving to C), where it
-    // has stayed. The extra page is very nearly empty: measured on the objects
-    // this build links,
+    // 36 AGAIN, AND BY 2.5 KiB. This budget was 37 from 6d863b5 (the animation
+    // core moving to C) until fccdb8f, where dropping replay format v9 and the
+    // retrodiction machinery freed ~9 KiB of statics and the image fell back
+    // under the line. The standing TODO that asked for exactly this is
+    // therefore retired. Measured with llvm-nm on the objects this build links:
     //
-    //   named statics   2,343,266 B   (35.76 pages)
+    //   named statics   2,334,176 B   (35.62 pages, 297 symbols)
     //   shadow stack       22,528 B   (-Wl,-z,stack-size=22528, --stack-first)
     //   ------------------------------
-    //   total           2,365,794 B   = 36.10 pages -> 37 declared
+    //   total           2,356,704 B   = 35.96 pages -> 36 declared
     //
-    // so the image crosses the 36-page line by 6,498 BYTES and buys a whole
-    // 64 KiB page to hold them. Note anim_plan.o contributes no static buffers
-    // at all (it is pure code) — 6d863b5 is where the cumulative image crossed,
-    // not what put a buffer there, so there is no single thing to revert.
-    // Clawing back ~6.5 KiB anywhere below __heap_base drops it to 36: the
-    // shadow stack and the four 136 KiB scratch Games are the places to look
-    // first. Raised deliberately, not silently, so the tripwire keeps working
-    // in the meantime.
+    // which leaves 2,592 BYTES under the 36-page line. That is the whole margin:
+    // one new static buffer bigger than ~2.5 KiB below __heap_base puts the page
+    // straight back, and this test is what will say so. If it has to go to 37
+    // again, raise it deliberately here rather than quietly, the way it was
+    // raised and then paid back the first time.
     const wasm = new Uint8Array(gunzipSync(readFileSync(resolve('sdk/ts/wasm/bots.wasm.gz'))));
     const { min } = memLimits(wasm);
-    assert.equal(min, 37, `bots.wasm initial memory is ${min} pages (${min * PAGE}B); expected 37 (the deliberate static buffers — IO cap, solver working set, FMSG scratch games). Going UP is a regression; going DOWN to 36 is the standing TODO above — retire the budget here when you get there.`);
+    assert.equal(min, 36, `bots.wasm initial memory is ${min} pages (${min * PAGE}B); expected 36 (the deliberate static buffers — IO cap, solver working set, FMSG scratch games). Going UP is a regression: there are only ~2.5 KiB of static room under the 36-page line, so look for a new buffer below __heap_base.`);
 });
 
 test('loading the bot kernel (read + gunzip + instantiate) fits a 64MB-old-space node', () => {
