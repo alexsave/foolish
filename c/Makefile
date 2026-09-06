@@ -524,6 +524,7 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_set_game_key -Wl,--export=wasm_import_strategy_keys \
   -Wl,--export=wasm_set_strategy_seed -Wl,--export=wasm_reload_bot_flags \
   -Wl,--export=wasm_choose_move \
+  -Wl,--export=wasm_bot_roster_dump \
   -Wl,--export=wasm_bot_drive -Wl,--export=wasm_bot_eligible_mask \
   -Wl,--export=wasm_bot_pacing_ms -Wl,--export=wasm_bot_drive_log_start \
   -Wl,--export=wasm_export_logs_masked_from \

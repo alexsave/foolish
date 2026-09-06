@@ -117,6 +117,49 @@ char *getenv(const char *name) {
     return 0;
 }
 
+extern unsigned char *wasm_io_ptr(void);
+
+// THE BOT ROSTER (bot_roster.h), for hosts that used to restate it.
+//
+// bot_roster.h opens by saying a bot's identity is kernel data and that hosts
+// "look it up, they do not restate it" - and names bot_strategy.ts as a
+// consumer. It was not one: the TS registry held its own key -> brain map and
+// its own logs flag, and sdk/ts/wasm/bots.ts held a hand-mirrored table of the
+// STRAT_* ids. That is the third copy the header's own history says has already
+// drifted three separate ways, including a gunpowder seat that silently played
+// blackpowder because two tables disagreed about an index.
+//
+// One call dumps the whole table, so a host never asks per entry and never
+// caches an index. Writes to g_io, per entry:
+//   u8 linked, u8 strat, u8 uses_logs, u8 seeded, u8 offline, u8 tier,
+//   u8 key_len, key_len x u8 key bytes (no NUL)
+// Returns the entry count, or -1 if the buffer could not hold the table.
+int wasm_bot_roster_dump(void) {
+    const int n = bot_roster_count();
+    unsigned char *io = wasm_io_ptr();
+    int q = 0;
+    for (int i = 0; i < n; i++) {
+        const BotRosterEntry *e = bot_roster_at(i);
+        if (!e) return -1;
+        int klen = 0;
+        while (e->key[klen]) klen++;
+        if (klen > 255) return -1;
+        // 7 header bytes + the key; IO_CAP is orders of magnitude above a
+        // ten-row table, but a caller that shrank it gets a refusal, not a
+        // truncated roster that would look like a bot going missing.
+        if (q + 7 + klen > WASM_IO_CAP) return -1;
+        io[q++] = (unsigned char)(bot_roster_linked(i) ? 1 : 0);
+        io[q++] = (unsigned char)e->strat;
+        io[q++] = e->uses_logs;
+        io[q++] = e->seeded;
+        io[q++] = e->offline;
+        io[q++] = e->tier;
+        io[q++] = (unsigned char)klen;
+        for (int k = 0; k < klen; k++) io[q++] = (unsigned char)e->key[k];
+    }
+    return n;
+}
+
 // Key and value are NUL-terminated strings at the start of the IO buffer
 // (key first, value right after its NUL). Setting an existing key replaces it.
 extern unsigned char *wasm_io_ptr(void);

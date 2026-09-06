@@ -51,6 +51,7 @@ interface BotsExports extends EngineExports {
     wasm_reload_bot_flags(): void;
     wasm_set_strategy_seed(s: number): void;
     wasm_choose_move(strat: number, botIdx: number): number;
+    wasm_bot_roster_dump(): number;
     // The drive cycle (docs/C_CORE_CONSOLIDATION.md F2/F3)
     wasm_bot_eligible_mask(humanMask: number): number;
     wasm_bot_pacing_ms(pacingClass: number, humansPresent: number): number;
@@ -94,21 +95,77 @@ export function __setAnimTransport(transport: number): void {
 // espresso/handwritten map to the *_PROD mirrors of the production TS bots;
 // the kernel's un-suffixed variants (ids 1/2) are the arena/cordite-rollout
 // versions, which drifted slightly and stay frozen for cordite's sake.
-export const STRAT = {
-    random: 0,
-    espresso: 15,
-    handwritten: 16,
-    firecracker: 4,
-    blackpowder: 6,
-    cordite: 7,
-    simple_heuristic: 10,
-    champion: 11,
-    ultimate_champion: 12,
-    hacker: 13,
-    fulminate: 14,
-    semtex: 18,
-    octogen: 20,
-} as const;
+/** One row of the kernel's bot roster (c/src/bot_roster.c ROSTER). */
+export interface BotRosterEntry {
+    key: string;
+    /** STRAT_* brain id (strategy.h). */
+    strat: number;
+    /** Belief bot: the session log must be hydrated before it chooses. */
+    usesLogs: boolean;
+    /** This build links the brain, so it can actually be run here. */
+    linked: boolean;
+    /** Seeded as a live bot on the site (seed.sql). */
+    seeded: boolean;
+    /** Shown in the offline picker. */
+    offline: boolean;
+    /** Strength order, 1 = weakest; 0 = unranked. */
+    tier: number;
+}
+
+let rosterCache: BotRosterEntry[] | null = null;
+
+/**
+ * THE BOT ROSTER, from the kernel (bot_roster.h).
+ *
+ * bot_roster.h says a bot's identity is kernel data and that hosts "look it up,
+ * they do not restate it". This is the lookup. It replaces a hand-mirrored table
+ * of STRAT_* ids here and a second key -> brain + logs map in bot_strategy.ts -
+ * the third and fourth copies of a table whose own header records three separate
+ * drifts, one of which silently ran a gunpowder seat on blackpowder's brain.
+ */
+export function kernelBotRoster(): BotRosterEntry[] {
+    if (rosterCache) return rosterCache;
+    const ex = bots();
+    const n = ex.wasm_bot_roster_dump();
+    if (n < 0) throw new Error('bot_roster: the kernel refused to dump the table');
+    const buf = __mem(ex);
+    let q = ex.wasm_io_ptr();
+    const out: BotRosterEntry[] = [];
+    for (let i = 0; i < n; i++) {
+        const linked = buf[q++] !== 0, strat = buf[q++], usesLogs = buf[q++] !== 0;
+        const seeded = buf[q++] !== 0, offline = buf[q++] !== 0, tier = buf[q++];
+        const klen = buf[q++];
+        let key = '';
+        for (let k = 0; k < klen; k++) key += String.fromCharCode(buf[q++]);
+        out.push({ key, strat, usesLogs, linked, seeded, offline, tier });
+    }
+    rosterCache = out;
+    return out;
+}
+
+/**
+ * Brain ids by roster key, as a lookup rather than a table.
+ *
+ * This used to be a hand-written map of STRAT_* ids - the copy bot_roster.h's
+ * history blames for a gunpowder seat silently running blackpowder's brain.
+ * Reading a property now asks the kernel's roster, so `STRAT.octogen` is the id
+ * octogen actually compiles to and a key the roster does not know is -1 rather
+ * than a stale number. Lazy on purpose: touching it instantiates bots.wasm, and
+ * a lobby-only cold start must not pay that just for an import.
+ */
+export const STRAT: Record<string, number> = new Proxy({} as Record<string, number>, {
+    get: (_t, key) => (typeof key === 'string' ? kernelBotStrat(key) : undefined),
+    has: (_t, key) => typeof key === 'string' && kernelBotStrat(key) >= 0,
+    ownKeys: () => kernelBotRoster().map((e) => e.key),
+    getOwnPropertyDescriptor: (_t, key) => (typeof key === 'string' && kernelBotStrat(key) >= 0
+        ? { enumerable: true, configurable: true, value: kernelBotStrat(key) }
+        : undefined),
+});
+
+/** The STRAT_* brain id the kernel's roster gives this key, or -1. */
+export function kernelBotStrat(key: string): number {
+    return kernelBotRoster().find((e) => e.key === key)?.strat ?? -1;
+}
 
 let exportsCache: BotsExports | null = null;
 
@@ -315,7 +372,9 @@ function importStrategyKeys(ex: BotsExports, game: Game): void {
     const q = ex.wasm_io_ptr();
     for (let i = 0; i < game.players.length; i++) {
         const key = (game.players[i] as { strategy_key?: string }).strategy_key;
-        const id = key !== undefined && key in STRAT ? STRAT[key as keyof typeof STRAT] : -1;
+        // The kernel names its own brains (bot_roster.h); -1 for a key it has
+        // no entry for (human, and anything a host invented).
+        const id = key !== undefined ? kernelBotStrat(key) : -1;
         buf[q + i] = id & 0xff;
     }
     ex.wasm_import_strategy_keys();
