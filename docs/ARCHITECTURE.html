@@ -1,0 +1,1094 @@
+<meta charset="utf-8">
+<title>Foolish Architecture</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{
+  --bg:#0b0e13; --panel:#11151d; --panel2:#161b25; --line:#232b38; --line2:#2e3746;
+  --text:#c9d3e0; --dim:#8391a6; --faint:#5b6678; --bright:#eef3fa;
+  --accent:#f2a63b; --accent-dim:#a9752a;
+  --kernel:#4fb3cf; --wire:#6f97f0; --backend:#8fce7a; --client:#e07bb0;
+  --apple:#b58ae6; --codec:#e08a5a; --bots:#d0d060;
+  --shadow:0 6px 24px rgba(0,0,0,.4);
+}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){
+    --bg:#f3f1ea; --panel:#faf9f5; --panel2:#eeece3; --line:#dcd8cc; --line2:#c9c4b4;
+    --text:#2b2f38; --dim:#5f6675; --faint:#8a8f9c; --bright:#12151b;
+    --accent:#b9741a; --accent-dim:#8a5714;
+    --kernel:#2b7f97; --wire:#3a5fc0; --backend:#4f8f3a; --client:#b0447f;
+    --apple:#7b4fbf; --codec:#b05e2a; --bots:#8a8a20;
+    --shadow:0 6px 20px rgba(80,70,40,.14);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0b0e13; --panel:#11151d; --panel2:#161b25; --line:#232b38; --line2:#2e3746;
+  --text:#c9d3e0; --dim:#8391a6; --faint:#5b6678; --bright:#eef3fa;
+  --accent:#f2a63b; --accent-dim:#a9752a;
+  --kernel:#4fb3cf; --wire:#6f97f0; --backend:#8fce7a; --client:#e07bb0;
+  --apple:#b58ae6; --codec:#e08a5a; --bots:#d0d060;
+  --shadow:0 6px 24px rgba(0,0,0,.4);
+}
+:root[data-theme="light"]{
+  --bg:#f3f1ea; --panel:#faf9f5; --panel2:#eeece3; --line:#dcd8cc; --line2:#c9c4b4;
+  --text:#2b2f38; --dim:#5f6675; --faint:#8a8f9c; --bright:#12151b;
+  --accent:#b9741a; --accent-dim:#8a5714;
+  --kernel:#2b7f97; --wire:#3a5fc0; --backend:#4f8f3a; --client:#b0447f;
+  --apple:#7b4fbf; --codec:#b05e2a; --bots:#8a8a20;
+  --shadow:0 6px 20px rgba(80,70,40,.14);
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0; background:var(--bg); color:var(--text);
+  font:16px/1.62 -apple-system,'SF Pro Text','Segoe UI',Helvetica,Arial,sans-serif;
+}
+.wrap{max-width:960px; margin:0 auto; padding:0 20px 96px}
+a{color:var(--accent); text-decoration:none}
+a:hover{text-decoration:underline}
+a:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:2px}
+h1,h2,h3{font-family:'PT Serif',Georgia,'Times New Roman',serif; color:var(--bright); text-wrap:balance; line-height:1.2}
+h1{font-size:2.5rem; margin:.2em 0 .25em; font-weight:700}
+h2{font-size:1.7rem; margin:.1em 0 .5em}
+h3{font-size:1.18rem; margin:2em 0 .5em}
+p{max-width:72ch; margin:.9em 0}
+li{max-width:70ch; margin:.35em 0}
+strong{color:var(--bright); font-weight:600}
+.mono, code, pre, .eyebrow, .chip, .stat b, table{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+code{font-size:.86em; background:var(--panel2); border:1px solid var(--line); border-radius:4px; padding:.08em .32em; white-space:nowrap}
+pre{background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px 16px; overflow-x:auto; font-size:.8rem; line-height:1.55}
+pre code{background:none; border:none; padding:0; white-space:pre; font-size:1em}
+header.hero{padding:64px 0 8px; border-bottom:1px solid var(--line); margin-bottom:8px}
+.kicker{font-family:'JetBrains Mono',ui-monospace,monospace; font-size:.72rem; letter-spacing:.22em; text-transform:uppercase; color:var(--accent)}
+.sub{color:var(--dim); font-size:1.06rem; max-width:64ch}
+.meta{color:var(--faint); font-size:.78rem; margin-top:14px; font-family:'JetBrains Mono',ui-monospace,monospace}
+.stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; margin:26px 0 6px}
+.stat{background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px}
+.stat b{display:block; color:var(--bright); font-size:1.12rem; font-variant-numeric:tabular-nums}
+.stat span{color:var(--dim); font-size:.74rem; letter-spacing:.02em}
+nav.toc{margin:30px 0 6px}
+nav.toc ol{display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:6px 18px; margin:10px 0 0; padding:0; counter-reset:toc}
+nav.toc li{list-style:none; font-size:.88rem}
+nav.toc li a{color:var(--text)}
+nav.toc li a:hover{color:var(--accent)}
+nav.toc li::before{counter-increment:toc; content:counter(toc,decimal-leading-zero); color:var(--faint); font-family:'JetBrains Mono',ui-monospace,monospace; font-size:.72rem; margin-right:.6em}
+section{margin-top:64px; scroll-margin-top:24px}
+.eyebrow{font-size:.7rem; letter-spacing:.2em; text-transform:uppercase; color:var(--dim); margin-bottom:8px}
+.eyebrow b{color:var(--accent); font-weight:600}
+.lead{font-size:1.07rem; color:var(--bright)}
+.tw{overflow-x:auto; margin:1.1em 0; border:1px solid var(--line); border-radius:8px}
+table{border-collapse:collapse; width:100%; font-size:.8rem; line-height:1.5; min-width:560px}
+th{background:var(--panel2); color:var(--dim); text-align:left; font-weight:600; letter-spacing:.04em; font-size:.72rem; text-transform:uppercase}
+th,td{padding:8px 12px; border-bottom:1px solid var(--line); vertical-align:top; font-variant-numeric:tabular-nums}
+tbody tr:last-child td{border-bottom:none}
+td{background:var(--panel)}
+.note{background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:6px; padding:12px 16px; margin:1.2em 0; font-size:.92rem; color:var(--text)}
+.note.now{border-left-color:var(--kernel)}
+figure{margin:1.6em 0; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px 14px 10px; box-shadow:var(--shadow)}
+figure svg{display:block; max-width:100%; height:auto; margin:0 auto}
+.figwide{overflow-x:auto; -webkit-overflow-scrolling:touch}
+.figwide svg{min-width:1120px}
+figcaption{color:var(--dim); font-size:.8rem; margin:10px 6px 4px; max-width:none; line-height:1.5}
+svg text{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; fill:var(--text)}
+svg .t2{font-size:10px; fill:var(--dim)}
+svg .t3{font-size:10px; fill:var(--faint); letter-spacing:.14em}
+svg .tb{fill:var(--bright); font-weight:600}
+svg .box{fill:var(--panel2); stroke:var(--line2); stroke-width:1.2; rx:6}
+svg .grp{fill:none; stroke:var(--line2); stroke-width:1; stroke-dasharray:5 4; rx:10}
+svg .ln{stroke:var(--faint); stroke-width:1.3; fill:none}
+svg .lnd{stroke:var(--faint); stroke-width:1.2; fill:none; stroke-dasharray:4 4}
+svg .hk{stroke:var(--kernel)} svg .hw{stroke:var(--wire)} svg .hb{stroke:var(--backend)}
+svg .hc{stroke:var(--client)} svg .ha{stroke:var(--apple)} svg .hr{stroke:var(--codec)}
+svg .ho{stroke:var(--bots)} svg .hx{stroke:var(--accent); stroke-width:1.6}
+svg .fk{fill:var(--kernel)} svg .fb{fill:var(--backend)} svg .fa{fill:var(--apple)}
+svg .fc{fill:var(--client)} svg .fr{fill:var(--codec)} svg .fx{fill:var(--accent)}
+svg .fw{fill:var(--wire)}
+.legend{display:flex; flex-wrap:wrap; gap:8px 16px; margin:.6em 0 0; font-size:.72rem; color:var(--dim); font-family:'JetBrains Mono',ui-monospace,monospace}
+.legend i{display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; vertical-align:-1px; border:1px solid var(--line2)}
+.chip{display:inline-block; font-size:.68rem; letter-spacing:.06em; border:1px solid var(--line2); border-radius:999px; padding:.1em .6em; color:var(--dim); vertical-align:2px}
+hr.sep{border:none; border-top:1px solid var(--line); margin:56px 0}
+footer{margin-top:80px; border-top:1px solid var(--line); padding-top:24px; color:var(--faint); font-size:.8rem}
+footer ul{columns:2; column-gap:30px; padding-left:18px; margin:.6em 0}
+footer li{font-size:.78rem; font-family:'JetBrains Mono',ui-monospace,monospace}
+@media (max-width:640px){
+  h1{font-size:1.9rem} h2{font-size:1.4rem}
+  header.hero{padding-top:40px}
+  footer ul{columns:1}
+}
+@media (prefers-reduced-motion: no-preference){
+  html{scroll-behavior:smooth}
+}
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=PT+Serif:wght@400;700&family=JetBrains+Mono:wght@400;600&display=swap">
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="kicker">foolish.cards · дурак · system architecture</div>
+  <h1>Foolish Architecture</h1>
+  <p class="sub">A Durak card game that is secretly one C kernel wearing five costumes: a web app, a Supabase
+  backend, an iPhone app, a serverless iMessage game, and a replay format that fits a whole match in a QR code.
+  This document maps every subsystem and the byte-level contracts that hold them together.</p>
+  <div class="meta">branch claude/durak-rules-redesign-sswk56 @ c79bb84f · 2026-08-25 · sources: repo tree + docs/*</div>
+  <div class="stats">
+    <div class="stat"><b>~140k</b><span>lines across c / src / server / ios / sdk / e2e</span></div>
+    <div class="stat"><b>1 kernel</b><span>45k LOC of C — the only rules implementation</span></div>
+    <div class="stat"><b>66 KB</b><span>gzipped wasm module that runs everything</span></div>
+    <div class="stat"><b>14.8 µs</b><span>server compute per move (was 45.9)</span></div>
+    <div class="stat"><b>~96 B</b><span>authoritative game-state blob</span></div>
+    <div class="stat"><b>1.0 (21)</b><span>iMessage app — live on the App Store</span></div>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Contents">
+  <ol>
+    <li><a href="#doctrine">The doctrine — one kernel, four layers</a></li>
+    <li><a href="#topology">Topology — the three tracks</a></li>
+    <li><a href="#kernel">The C kernel (cnitro)</a></li>
+    <li><a href="#wasm">WASM artifacts &amp; memory discipline</a></li>
+    <li><a href="#wire">The wire — six packed formats</a></li>
+    <li><a href="#backend">The Supabase track</a></li>
+    <li><a href="#bots">Bots — the ladder and the loop</a></li>
+    <li><a href="#replay">The replay codec</a></li>
+    <li><a href="#client">The web client</a></li>
+    <li><a href="#oracle">The Infinite Oracle</a></li>
+    <li><a href="#apple">Apple platforms &amp; the serverless track</a></li>
+    <li><a href="#testing">Testing — the parity lattice</a></li>
+    <li><a href="#playbook">The performance playbook</a></li>
+  </ol>
+</nav>
+
+<!-- ============================================================ -->
+<section id="doctrine">
+  <div class="eyebrow"><b>§1</b> · доктрина / the one idea</div>
+  <h2>One kernel, four layers</h2>
+  <p class="lead">The whole system hangs off a single principle applied without compromise:
+  <strong>the domain logic has exactly one implementation, in a portable compiled language, and it runs
+  unchanged in every environment.</strong></p>
+  <p>The game rules live once, in C (<code>c/src/game.c</code> + <code>legal.c</code> + <code>view.c</code> +
+  <code>replay.c</code>). That C compiles to WebAssembly for the browser, the Deno edge functions, and Node
+  tests — and to a native static library for iPhone. There is no TypeScript copy of the rules "for the
+  client" and no separate server implementation; the TS and Swift that remain are thin marshaling bridges.
+  WASM is what makes the shared core <em>real</em> instead of aspirational: most "isomorphic" code sharing
+  degrades into two implementations that drift, but a compiled kernel guarded by byte-level parity tests
+  cannot drift, because there is only one set of bytes.</p>
+  <p>Everything decomposes into four layers (<code>docs/ARCHITECTURE_AS_A_PATTERN.md</code>):</p>
+  <div class="tw"><table>
+    <thead><tr><th>Layer</th><th>What it is</th><th>Where it lives</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Core</strong></td><td>pure <code>reduce(state, command) → events</code>, validation, legality</td><td><code>game.c</code> / <code>legal.c</code> — compiled once, runs everywhere</td></tr>
+      <tr><td><strong>Contract</strong></td><td>packed byte formats for state, commands, events, views</td><td><code>awire</code> / <code>evwire</code> / <code>view</code> / <code>logwire</code> / <code>msg_wire</code> / replay codec (§5)</td></tr>
+      <tr><td><strong>Projections</strong></td><td><code>project(state, viewer) → bytes</code> — the <em>only</em> serializer; redaction lives here</td><td><code>view.c</code> — "you only see your own hand" is a C function, not a TS filter</td></tr>
+      <tr><td><strong>Shell</strong></td><td>HTTP, DB, sockets, auth, rendering — all impure, all deliberately dumb</td><td>edge functions, React components, SwiftUI views</td></tr>
+    </tbody>
+  </table></div>
+  <p>Before the TypeScript engine was deleted, a differential harness replayed <strong>~100,000 mirrored
+  actions plus ~30,000 adversarial probes</strong> through both engines with identical seeds and
+  byte-compared states, logs, events and rejection messages: zero divergence. The retired TS lives on,
+  frozen verbatim, as the oracle in an ongoing parity lattice (§12). In textbook terms this is
+  event-sourced + CQRS + functional-core — with the novel last mile that the write model is a portable
+  compiled artifact, so the same validator runs on the client and buys optimistic UI and offline play for
+  free from the same machine code.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="topology">
+  <div class="eyebrow"><b>§2</b> · карта / network topology</div>
+  <h2>Three tracks, one kernel</h2>
+  <p class="lead">Games flow over three transport tracks that never share state: a Supabase-backed
+  authoritative-server track, a fully serverless iMessage track where the message <em>is</em> the game, and a
+  local track where the opponent lives on your own device. Every box on the map runs the same C kernel.
+  First, the whole machine on one map — scroll it sideways on a phone:</p>
+
+  <figure>
+    <div class="figwide">
+    <svg viewBox="0 0 1360 920" role="img" aria-label="Master map of the whole system: the web, iOS, iMessage and watch clients with their internal components; the Supabase platform, Apple Messages and replay codes as transports; the shared C kernel band with its compiled artifacts; and the parity test layer underneath.">
+      <defs>
+        <marker id="arM" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L8,4 L0,8 z" fill="var(--faint)"/>
+        </marker>
+      </defs>
+
+      <!-- band labels -->
+      <text class="t3" x="24" y="26">CLIENTS</text>
+      <text class="t3" x="24" y="380">TRANSPORTS</text>
+      <text class="t3" x="24" y="672">THE KERNEL</text>
+      <text class="t3" x="24" y="824">THE PROOF</text>
+
+      <!-- ================= CLIENTS ================= -->
+      <!-- Web client -->
+      <rect class="grp hc" x="20" y="40" width="470" height="300" rx="10"/>
+      <text class="tb" x="36" y="66">Web client — Next.js · React 19</text>
+      <rect class="box" x="36" y="88" width="210" height="48" rx="6"/>
+      <text x="141" y="108" text-anchor="middle" style="font-size:11px">GameBoard</text>
+      <text class="t2" x="141" y="124" text-anchor="middle">one board — live·replay·tutorial·/m/</text>
+      <rect class="box" x="36" y="146" width="210" height="48" rx="6"/>
+      <text x="141" y="166" text-anchor="middle" style="font-size:11px">Optimistic overlay</text>
+      <text class="t2" x="141" y="182" text-anchor="middle">3 verdicts — decided in anim_plan.c</text>
+      <rect class="box" x="36" y="204" width="210" height="48" rx="6"/>
+      <text x="141" y="224" text-anchor="middle" style="font-size:11px">Procedural textures</text>
+      <text class="t2" x="141" y="240" text-anchor="middle">fern · wool · wood → IndexedDB</text>
+      <rect class="box" x="36" y="262" width="210" height="48" rx="6"/>
+      <text x="141" y="282" text-anchor="middle" style="font-size:11px">Replay screen</text>
+      <text class="t2" x="141" y="298" text-anchor="middle">VHS transport · telestrator</text>
+      <rect class="box hw" x="262" y="88" width="210" height="48" rx="6"/>
+      <text x="367" y="108" text-anchor="middle" style="font-size:11px">guards.wasm</text>
+      <text class="t2" x="367" y="124" text-anchor="middle">sync UI gating · 6.4 KB</text>
+      <rect class="box hx" x="262" y="146" width="210" height="48" rx="6"/>
+      <text x="367" y="166" text-anchor="middle" style="font-size:11px">bots.wasm</text>
+      <text class="t2" x="367" y="182" text-anchor="middle">the full kernel · KernelGate</text>
+      <rect class="box hw" x="262" y="204" width="210" height="48" rx="6"/>
+      <text x="367" y="224" text-anchor="middle" style="font-size:11px">Oracle fleet</text>
+      <text class="t2" x="367" y="240" text-anchor="middle">≤8 workers · oracle.wasm</text>
+      <rect class="box" x="262" y="262" width="210" height="48" rx="6"/>
+      <text x="367" y="282" text-anchor="middle" style="font-size:11px">/m/ page</text>
+      <text class="t2" x="367" y="298" text-anchor="middle">iMessage read-only view</text>
+
+      <!-- iOS app -->
+      <rect class="grp ha" x="510" y="40" width="280" height="300" rx="10"/>
+      <text class="tb" x="526" y="66">iOS app — unsubmitted</text>
+      <rect class="box" x="526" y="88" width="248" height="48" rx="6"/>
+      <text x="650" y="108" text-anchor="middle" style="font-size:11px">FoolishNet</text>
+      <text class="t2" x="650" y="124" text-anchor="middle">packed actions · view rows</text>
+      <rect class="box" x="526" y="146" width="248" height="48" rx="6"/>
+      <text x="650" y="166" text-anchor="middle" style="font-size:11px">LocalGame — offline bots</text>
+      <text class="t2" x="650" y="182" text-anchor="middle">full ladder · one bot_drive call</text>
+      <rect class="box" x="526" y="204" width="248" height="48" rx="6"/>
+      <text x="650" y="224" text-anchor="middle" style="font-size:11px">FoolishKit + sdk/swift</text>
+      <text class="t2" x="650" y="240" text-anchor="middle">pure marshalling — no rules</text>
+      <rect class="box ha" x="526" y="262" width="248" height="48" rx="6"/>
+      <text x="650" y="282" text-anchor="middle" style="font-size:11px">Foolish.xcframework</text>
+      <text class="t2" x="650" y="298" text-anchor="middle">native kernel — no wasm</text>
+
+      <!-- iMessage -->
+      <rect class="grp ha" x="810" y="40" width="280" height="300" rx="10"/>
+      <text class="tb" x="826" y="66">Foolish Messages — LIVE · 1.0 (21)</text>
+      <rect class="box" x="826" y="88" width="248" height="48" rx="6"/>
+      <text x="950" y="108" text-anchor="middle" style="font-size:11px">MessagesRootView</text>
+      <text class="t2" x="950" y="124" text-anchor="middle">board · lobby · staged send</text>
+      <rect class="box" x="826" y="146" width="248" height="48" rx="6"/>
+      <text x="950" y="166" text-anchor="middle" style="font-size:11px">MessageKernel</text>
+      <text class="t2" x="950" y="182" text-anchor="middle">seal · decode = replay · Rule P</text>
+      <rect class="box" x="826" y="204" width="248" height="48" rx="6"/>
+      <text x="950" y="224" text-anchor="middle" style="font-size:11px">Seat identity</text>
+      <text class="t2" x="950" y="240" text-anchor="middle">cache → inference → spectator</text>
+      <rect class="box ha" x="826" y="262" width="248" height="48" rx="6"/>
+      <text x="950" y="282" text-anchor="middle" style="font-size:11px">Foolish.xcframework</text>
+      <text class="t2" x="950" y="298" text-anchor="middle">no network — lint-enforced</text>
+
+      <!-- watchOS -->
+      <rect class="grp ha" x="1110" y="40" width="230" height="300" rx="10"/>
+      <text class="tb" x="1126" y="66">watchOS — parked</text>
+      <rect class="box" x="1126" y="88" width="198" height="48" rx="6" stroke-dasharray="4 3"/>
+      <text x="1225" y="108" text-anchor="middle" style="font-size:11px">spec: Option H</text>
+      <text class="t2" x="1225" y="124" text-anchor="middle">crown hand lane · glyph cards</text>
+      <rect class="box" x="1126" y="146" width="198" height="48" rx="6" stroke-dasharray="4 3"/>
+      <text x="1225" y="166" text-anchor="middle" style="font-size:11px">Supabase track (planned)</text>
+      <text class="t2" x="1225" y="182" text-anchor="middle">reuses Net + kernel views</text>
+
+      <!-- ================= TRANSPORTS ================= -->
+      <!-- Supabase -->
+      <rect class="grp hb" x="20" y="392" width="640" height="250" rx="10"/>
+      <text class="tb" x="36" y="418">Supabase — the authoritative track</text>
+      <rect class="box" x="36" y="438" width="290" height="64" rx="6"/>
+      <text x="181" y="460" text-anchor="middle" style="font-size:11px">5 edge functions</text>
+      <text class="t2" x="181" y="476" text-anchor="middle">action (binary) · meta · create</text>
+      <text class="t2" x="181" y="490" text-anchor="middle">bot-heartbeat · delete-account</text>
+      <rect class="box" x="344" y="438" width="290" height="64" rx="6"/>
+      <text x="489" y="460" text-anchor="middle" style="font-size:11px">Realtime</text>
+      <text class="t2" x="489" y="476" text-anchor="middle">per-player + spectator channels</text>
+      <text class="t2" x="489" y="490" text-anchor="middle">{v, s, base64(evwire)}</text>
+      <rect class="box" x="36" y="516" width="290" height="100" rx="6"/>
+      <text x="181" y="538" text-anchor="middle" style="font-size:11px">Postgres</text>
+      <text class="t2" x="181" y="556" text-anchor="middle">games.state blob ~96 B · version CAS</text>
+      <text class="t2" x="181" y="571" text-anchor="middle">round_epoch · bot leases · column grants</text>
+      <text class="t2" x="181" y="586" text-anchor="middle">player_views / spectator_views</text>
+      <text class="t2" x="181" y="601" text-anchor="middle">game_snapshots (replays forever)</text>
+      <rect class="box ho" x="344" y="516" width="290" height="100" rx="6"/>
+      <text x="489" y="538" text-anchor="middle" style="font-size:11px">Leased bot loop</text>
+      <text class="t2" x="489" y="556" text-anchor="middle">bump + pg_cron 10 s scan</text>
+      <text class="t2" x="489" y="571" text-anchor="middle">TTL 25 s · CPU bail 1.7 of 2 s</text>
+      <text class="t2" x="489" y="586" text-anchor="middle">kernel bot_drive · pacing 3000/300 ms</text>
+      <text class="t2" x="489" y="601" text-anchor="middle">commits like a human move</text>
+
+      <!-- /m/ handoff chip -->
+      <rect class="box hc" x="668" y="432" width="130" height="60" rx="6" stroke-dasharray="4 3"/>
+      <text x="733" y="456" text-anchor="middle" style="font-size:11px">URL preview</text>
+      <text class="t2" x="733" y="472" text-anchor="middle">→ /m/ read-only</text>
+
+      <!-- Apple Messages -->
+      <rect class="box hb" x="810" y="432" width="280" height="70" rx="6"/>
+      <text class="tb" x="950" y="458" text-anchor="middle">Apple Messages</text>
+      <text class="t2" x="950" y="476" text-anchor="middle">delivery only · no server, no state</text>
+      <text class="t2" x="950" y="491" text-anchor="middle">envelope P95 ≤ 328 chars (cap 5,000)</text>
+
+      <!-- Replay codes -->
+      <rect class="box hr" x="1110" y="522" width="230" height="110" rx="6"/>
+      <text class="tb" x="1225" y="548" text-anchor="middle">Replay codes</text>
+      <text class="t2" x="1225" y="568" text-anchor="middle">rANS integer → base32 URL / QR</text>
+      <text class="t2" x="1225" y="583" text-anchor="middle">v6 — every hidden card known</text>
+      <text class="t2" x="1225" y="598" text-anchor="middle">decode = replay through the engine</text>
+      <text class="t2" x="1225" y="613" text-anchor="middle">plays in any browser</text>
+
+      <!-- arrows: clients <-> transports -->
+      <line class="ln" x1="210" y1="340" x2="195" y2="392" marker-end="url(#arM)"/>
+      <text class="t2" x="30" y="352">packed awire POST</text>
+      <text class="t2" x="30" y="366">+ intent_version</text>
+      <line class="ln" x1="452" y1="392" x2="432" y2="342" marker-end="url(#arM)"/>
+      <text class="t2" x="462" y="366">evwire + view rows back</text>
+      <line class="ln" x1="600" y1="340" x2="612" y2="392" marker-end="url(#arM)"/>
+      <text class="t2" x="622" y="366">Swift — same bytes</text>
+      <line class="ln" x1="950" y1="340" x2="950" y2="432" marker-end="url(#arM)" marker-start="url(#arM)"/>
+      <text class="t2" x="960" y="390">FMSG sealed envelope</text>
+      <line class="lnd" x1="810" y1="462" x2="802" y2="462" marker-end="url(#arM)"/>
+
+      <!-- arrows: into replay codes -->
+      <line class="ln" x1="662" y1="566" x2="1106" y2="576" marker-end="url(#arM)"/>
+      <text class="t2" x="700" y="556">game_snapshots — share codes</text>
+      <line class="ln" x1="1050" y1="502" x2="1150" y2="520" marker-end="url(#arM)"/>
+      <text class="t2" x="958" y="514">finished bubble</text>
+
+      <!-- ================= KERNEL ================= -->
+      <rect class="box hk" x="20" y="680" width="1320" height="120" rx="8"/>
+      <text class="tb" x="36" y="708">c/src — cnitro · the one C rules kernel (45k LOC)</text>
+      <text class="t2" x="36" y="728">game · legal · view (masking) · replay + replay_steps · awire · evwire · logwire · msg_wire · anim_plan · deal_rng (ChaCha20) · bot_roster + bot_drive · 24 bot brains · bitboard sim · exact solver + leafbook</text>
+      <rect class="box hx" x="36" y="744" width="180" height="34" rx="5"/>
+      <text class="t2" x="126" y="765" text-anchor="middle">bots.wasm · 66 KB gz</text>
+      <rect class="box" x="228" y="744" width="160" height="34" rx="5"/>
+      <text class="t2" x="308" y="765" text-anchor="middle">guards.wasm · 6.4 KB</text>
+      <rect class="box" x="400" y="744" width="150" height="34" rx="5"/>
+      <text class="t2" x="475" y="765" text-anchor="middle">rules.wasm · 37 KB</text>
+      <rect class="box" x="562" y="744" width="180" height="34" rx="5"/>
+      <text class="t2" x="652" y="765" text-anchor="middle">oracle.wasm · 8 MiB TT</text>
+      <rect class="box" x="754" y="744" width="190" height="34" rx="5"/>
+      <text class="t2" x="849" y="765" text-anchor="middle">Foolish.xcframework</text>
+      <rect class="box" x="956" y="744" width="180" height="34" rx="5"/>
+      <text class="t2" x="1046" y="765" text-anchor="middle">native arena tools</text>
+      <line class="ln" x1="340" y1="642" x2="340" y2="680" marker-end="url(#arM)"/>
+      <line class="ln" x1="1220" y1="632" x2="1220" y2="680" marker-end="url(#arM)"/>
+
+      <!-- ================= PROOF ================= -->
+      <rect class="grp ho" x="20" y="834" width="1320" height="70" rx="8"/>
+      <text class="tb" x="36" y="862">The parity lattice</text>
+      <text class="t2" x="36" y="882">e2e on real Postgres · packed-wire byte parity · bot parity vs frozen TS oracles · native difftests · FMSG tamper matrix · fuzz + memory gates · roster parity · md5-reproducible wasm builds</text>
+    </svg>
+    </div>
+    <figcaption>The whole machine on one map. Top: the four clients and what lives inside each — note the
+    kernel artifact at the bottom of every column (wasm on the web, the native xcframework on Apple).
+    Middle: the three transports — Supabase for authoritative multiplayer, Apple Messages carrying the whole
+    game in each bubble, and replay codes as a transport in their own right. Bottom: the one C kernel every
+    box compiles in, and the parity layer that makes a single source of truth safe to bet on.</figcaption>
+  </figure>
+
+  <figure>
+    <svg viewBox="0 0 940 640" role="img" aria-label="Full network topology: the serverless iMessage track, the Supabase-backed track with web, iOS and watch clients, and the shared C kernel compiled into every node.">
+      <defs>
+        <marker id="ar1" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L8,4 L0,8 z" fill="var(--faint)"/>
+        </marker>
+      </defs>
+      <!-- serverless group -->
+      <rect class="grp" x="20" y="24" width="900" height="180" rx="10"/>
+      <text class="t3" x="36" y="48">SERVERLESS TRACK — iMESSAGE · NO BACKEND, THE MESSAGE IS THE GAME</text>
+      <rect class="box ha" x="40" y="66" width="210" height="56" rx="6"/>
+      <text class="tb" x="145" y="90" text-anchor="middle">Foolish Messages</text>
+      <text class="t2" x="145" y="107" text-anchor="middle">iMessage extension · your device</text>
+      <rect class="box hb" x="365" y="66" width="210" height="56" rx="6"/>
+      <text class="tb" x="470" y="90" text-anchor="middle">Apple Messages</text>
+      <text class="t2" x="470" y="107" text-anchor="middle">delivery only · no state</text>
+      <rect class="box ha" x="690" y="66" width="210" height="56" rx="6"/>
+      <text class="tb" x="795" y="90" text-anchor="middle">Foolish Messages</text>
+      <text class="t2" x="795" y="107" text-anchor="middle">opponent's device</text>
+      <line class="ln" x1="250" y1="94" x2="365" y2="94" marker-end="url(#ar1)" marker-start="url(#ar1)"/>
+      <line class="ln" x1="575" y1="94" x2="690" y2="94" marker-end="url(#ar1)" marker-start="url(#ar1)"/>
+      <text class="t2" x="307" y="86" text-anchor="middle">sealed envelope</text>
+      <rect class="box hc" x="365" y="146" width="210" height="42" rx="6"/>
+      <text x="470" y="163" text-anchor="middle" style="font-size:11px">foolish.cards/m/&lt;payload&gt;</text>
+      <text class="t2" x="470" y="178" text-anchor="middle">read-only view · Mac &amp; Android</text>
+      <line class="ln" x1="470" y1="122" x2="470" y2="146" marker-end="url(#ar1)"/>
+
+      <!-- supabase group -->
+      <rect class="grp" x="20" y="228" width="900" height="316" rx="10"/>
+      <text class="t3" x="36" y="252">SUPABASE-BACKED TRACK — AUTHORITATIVE SERVER, REAL-TIME MULTIPLAYER</text>
+      <rect class="box" x="365" y="266" width="210" height="40" rx="6"/>
+      <text x="470" y="283" text-anchor="middle" style="font-size:11px">On-device bots</text>
+      <text class="t2" x="470" y="297" text-anchor="middle">offline play · native kernel</text>
+      <line class="ln" x1="470" y1="306" x2="470" y2="326" marker-end="url(#ar1)"/>
+      <rect class="box hc" x="55" y="326" width="210" height="56" rx="6"/>
+      <text class="tb" x="160" y="350" text-anchor="middle">Web client</text>
+      <text class="t2" x="160" y="367" text-anchor="middle">Next.js · browser · bots.wasm</text>
+      <rect class="box ha" x="365" y="326" width="210" height="56" rx="6"/>
+      <text class="tb" x="470" y="350" text-anchor="middle">iOS app</text>
+      <text class="t2" x="470" y="367" text-anchor="middle">native SwiftUI client</text>
+      <rect class="box ha" x="675" y="326" width="210" height="56" rx="6" stroke-dasharray="5 4"/>
+      <text class="tb" x="780" y="350" text-anchor="middle">watchOS app</text>
+      <text class="t2" x="780" y="367" text-anchor="middle">planned — scaffold only</text>
+      <line class="ln" x1="160" y1="382" x2="380" y2="436" marker-end="url(#ar1)"/>
+      <line class="ln" x1="470" y1="382" x2="470" y2="430" marker-end="url(#ar1)"/>
+      <line class="lnd" x1="780" y1="382" x2="560" y2="436"/>
+      <text class="t2" x="285" y="422">binary action POST · realtime views back</text>
+      <rect class="box hb" x="300" y="430" width="340" height="60" rx="6"/>
+      <text class="tb" x="470" y="454" text-anchor="middle">Supabase</text>
+      <text class="t2" x="470" y="471" text-anchor="middle">5 edge functions · Postgres (CAS) · Realtime</text>
+      <rect class="box ho" x="330" y="508" width="280" height="42" rx="6"/>
+      <text x="470" y="525" text-anchor="middle" style="font-size:11px">Server-side bots</text>
+      <text class="t2" x="470" y="540" text-anchor="middle">leased loop · pg_cron heartbeat</text>
+      <line class="ln" x1="470" y1="508" x2="470" y2="490" marker-end="url(#ar1)"/>
+
+      <!-- m -> web bridge -->
+      <line class="lnd" x1="390" y1="188" x2="180" y2="326"/>
+      <text class="t2" x="150" y="252">served by the web app —</text>
+      <text class="t2" x="150" y="266">no game state crosses</text>
+
+      <!-- kernel bar -->
+      <rect class="box hk" x="20" y="572" width="900" height="48" rx="8"/>
+      <text class="tb" x="470" y="592" text-anchor="middle">c/src — the one C rules kernel</text>
+      <text class="t2" x="470" y="609" text-anchor="middle">compiled into every box above · wasm in the browser and on the edge · static library on Apple devices</text>
+    </svg>
+    <figcaption>The full topology. The two networked tracks never touch: the iMessage island has no path to
+    Supabase (the watch and web have no way onto Apple Messages; Supabase has no way to send an iMessage).
+    The only bridges are read-only funnels — the <code>/m/</code> spectator page and a replay link on the
+    finished-game bubble. What every track shares is the kernel itself.</figcaption>
+  </figure>
+  <div class="legend">
+    <span><i style="background:var(--apple)"></i>Apple platforms</span>
+    <span><i style="background:var(--client)"></i>web client</span>
+    <span><i style="background:var(--backend)"></i>backend / delivery</span>
+    <span><i style="background:var(--bots)"></i>bots</span>
+    <span><i style="background:var(--kernel)"></i>the C kernel</span>
+  </div>
+  <ul>
+    <li><strong>Supabase track</strong> — web today, iOS written and awaiting its first end-to-end staging run,
+    watchOS specced. Authoritative state in Postgres, moves as packed bytes, fan-out over Realtime (§6).</li>
+    <li><strong>Serverless track</strong> — the iMessage extension. Every bubble carries the entire game;
+    each device independently re-validates the whole history by replaying it through the kernel (§11).
+    Live on the App Store as its own product.</li>
+    <li><strong>Local track</strong> — offline play against on-device bots on iOS (the full ladder up to
+    octogen, driven natively through one kernel call per cycle). In the browser the same consolidated
+    module powers replays, the tutorial, and the Oracle rather than a shipped offline mode.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="kernel">
+  <div class="eyebrow"><b>§3</b> · ядро / the c kernel</div>
+  <h2>cnitro — the engine that is the game</h2>
+  <p class="lead">The kernel under <code>c/</code> (codename <em>cnitro</em>, ~45k lines) began as a bot
+  research lab and became the production rules engine. Every live move on the server, every button gate in
+  the browser, every iMessage bubble, and every replay runs its machine code.</p>
+  <div class="tw"><table>
+    <thead><tr><th>Module</th><th>Responsibility</th></tr></thead>
+    <tbody>
+      <tr><td><code>game.c / game.h</code></td><td>The engine: deal, defender rotation, draws, eliminations, the log stream. Two independent thread-local LCGs (game + strategy RNG, same recurrence as the retired TS) so arena threads never race. Fires <code>engine_snap_hook</code> at exactly the points the old TS handlers cloned state for animation snapshots.</td></tr>
+      <tr><td><code>legal.c</code></td><td><code>calculate_legal_moves</code> — legality and enumeration, preserving the TS emission ordering so "first matching" stays deterministic everywhere.</td></tr>
+      <tr><td><code>view.c</code></td><td>Per-viewer projection (<code>state_put</code>) with hand masking — the only serializer, so redaction cannot be forgotten (§5).</td></tr>
+      <tr><td><code>replay.c / replay_steps.c</code></td><td>The rANS whole-game codec (2,040 lines) and the two-pass code→playable-game reconstruction that lets any client replay a shared code through the real engine (§8).</td></tr>
+      <tr><td><code>awire.c / evwire.c / logwire</code></td><td>Packed wire codecs: actions in, per-viewer animation-event streams out, session log records (§5).</td></tr>
+      <tr><td><code>msg_wire.c</code></td><td>The FMSG iMessage envelope — the serverless track's entire protocol (§11).</td></tr>
+      <tr><td><code>anim_plan.c</code></td><td>The animation <em>policy</em> core — stale-broadcast dropping, optimistic reconciliation, flight planning — ported from the web client so a phone and a browser can never disagree about what animates (§9).</td></tr>
+      <tr><td><code>deal_rng.c</code></td><td>ChaCha20 (RFC 8439) for the reproducible 32-byte-seeded deal; integer-only, so identical on x86, arm64 and wasm32.</td></tr>
+      <tr><td><code>bot_roster.c / bot_drive.c / bot_knobs.c</code></td><td>The one table mapping bot key → brain → tuning knobs, the drive cycle (fair pick, silent-action bundling, stop conditions), and the pacing table (3000&nbsp;ms with humans watching, 300&nbsp;ms bots-only) — shared by server, phone and browser (§7).</td></tr>
+      <tr><td><code>*_strategy.c / cordite_sim.c / leafbook</code></td><td>24 bot brains from <code>random</code> to <code>octogen</code>, the ~200-byte bitboard rollout engine, the exact endgame solver and its precomputed leaf book (§7).</td></tr>
+    </tbody>
+  </table></div>
+  <p>Deck rules are settled constants: <strong>2–5 players play 36 cards, 6+ play 52</strong>, hardcoded in
+  <code>card.h</code>. Time and randomness are injected — the kernel never reads a clock, and determinism is
+  load-bearing: it is what makes replays exact, the iMessage chain re-validatable, and the parity harnesses
+  meaningful. The native build (<code>make all</code>) also produces the research fleet:
+  <code>cnitro_eval</code>, <code>cnitro_elo</code> (mixed-pool Elo arena), <code>cnitro_replay</code>,
+  <code>cnitro_showcase</code> (scores all-cordite games for <em>drama</em>), plus training-data generators
+  for the distillation and value-net research tracks.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="wasm">
+  <div class="eyebrow"><b>§4</b> · артефакты / wasm artifacts</div>
+  <h2>One source, tailored artifacts — currently one big module</h2>
+  <p class="lead">The kernel ships as WebAssembly for every non-Apple host. The build system can specialize
+  per call site, but while the kernel surface is under heavy development the deployed shape is deliberately
+  consolidated: <strong>one big module with everything in it</strong> does the real work everywhere.</p>
+
+  <div class="note now"><strong>Current state.</strong> <code>bots.wasm</code> — rules, views, all wire
+  codecs, the replay codec, and every shipped bot brain in one 158&nbsp;KB module (66&nbsp;KB gzipped) —
+  "adopts the engine slot" on load and serves the <em>entire</em> kernel API on a single instance, in the
+  browser, on the Deno edge, and in Node tests. The client runs the whole kernel now, not a rules subset.
+  The smaller specialized builds still exist around it (the 6&nbsp;KB validate-only guards module that
+  gates the UI synchronously, the rules-only embed, the spendthrift Oracle build), and per-call-site
+  specialization remains the documented target shape once the surface stabilizes.</div>
+
+  <figure>
+    <svg viewBox="0 0 940 410" role="img" aria-label="Build fan-out: one C source compiles into the consolidated bots.wasm, the guards and rules modules, the oracle build, the iOS xcframework, and the native arena tools.">
+      <defs>
+        <marker id="ar2" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L8,4 L0,8 z" fill="var(--faint)"/>
+        </marker>
+      </defs>
+      <rect class="box hk" x="28" y="120" width="230" height="150" rx="8"/>
+      <text class="tb" x="143" y="160" text-anchor="middle">c/src — one C source</text>
+      <text class="t2" x="143" y="180" text-anchor="middle">game · legal · view · replay</text>
+      <text class="t2" x="143" y="196" text-anchor="middle">wire codecs · anim core</text>
+      <text class="t2" x="143" y="212" text-anchor="middle">24 bot brains · solver · leafbook</text>
+      <text class="t2" x="143" y="240" text-anchor="middle">-Oz · no LTO · no fast-math</text>
+      <text class="t2" x="143" y="256" text-anchor="middle">export allow-lists · wasm-opt</text>
+
+      <rect class="box hx" x="340" y="20" width="572" height="50" rx="6"/>
+      <text class="tb" x="356" y="41">bots.wasm — the everything module · 158 KB → 66 KB gz</text>
+      <text class="t2" x="356" y="58">rules + views + codecs + replay + shipped bots · browser, Deno edge, Node — adopts the engine slot</text>
+      <rect class="box hw" x="340" y="82" width="572" height="50" rx="6"/>
+      <text class="tb" x="356" y="103">guards.wasm — 6.4 KB · validate-only</text>
+      <text class="t2" x="356" y="120">one pinned 64 KiB page (L1-sized) · synchronous client UI gating</text>
+      <rect class="box hw" x="340" y="144" width="572" height="50" rx="6"/>
+      <text class="tb" x="356" y="165">rules.wasm — 37 KB · rules-only embed</text>
+      <text class="t2" x="356" y="182">gzip+base64 TS embed, 3 pinned pages · the specialized server build</text>
+      <rect class="box hr" x="340" y="206" width="572" height="50" rx="6"/>
+      <text class="tb" x="356" y="227">oracle.wasm — 167 KB · the analysis build</text>
+      <text class="t2" x="356" y="244">TT20 = 8 MiB solver table, 256 KiB stack · browser worker fleet only</text>
+      <rect class="box ha" x="340" y="268" width="572" height="50" rx="6"/>
+      <text class="tb" x="356" y="289">Foolish.xcframework — native static library</text>
+      <text class="t2" x="356" y="306">same sources, wide human-game caps · iOS app + iMessage extension, no wasm on Apple</text>
+      <rect class="box ho" x="340" y="330" width="572" height="50" rx="6"/>
+      <text class="tb" x="356" y="351">native tools — cnitro_eval / elo / replay / showcase</text>
+      <text class="t2" x="356" y="368">-O3 -flto arena builds · difftests · millions of games for bot research</text>
+
+      <line class="ln" x1="258" y1="150" x2="340" y2="45" marker-end="url(#ar2)"/>
+      <line class="ln" x1="258" y1="170" x2="340" y2="107" marker-end="url(#ar2)"/>
+      <line class="ln" x1="258" y1="190" x2="340" y2="169" marker-end="url(#ar2)"/>
+      <line class="ln" x1="258" y1="210" x2="340" y2="231" marker-end="url(#ar2)"/>
+      <line class="ln" x1="258" y1="230" x2="340" y2="293" marker-end="url(#ar2)"/>
+      <line class="ln" x1="258" y1="250" x2="340" y2="355" marker-end="url(#ar2)"/>
+    </svg>
+    <figcaption>The build fan-out. One source, different <code>-D</code> caps and export allow-lists per
+    artifact. The consolidated <code>bots.wasm</code> (amber) is the current workhorse on web and edge; the
+    others are tailored variants around it.</figcaption>
+  </figure>
+
+  <h3>Shipping mechanics</h3>
+  <ul>
+    <li><strong>The big module ships as a real binary asset</strong> (<code>bots.wasm.gz</code>), not a base64
+    embed — a static file on the edge, a fetched asset in the browser, with three runtime "doors" in
+    <code>sdk/ts/wasm/wasm_asset.ts</code>. A base64 twin briefly existed and was deleted: two carriers of
+    the same bytes is exactly how an embed once went stale for weeks while tests passed against the wrong
+    kernel.</li>
+    <li><strong>The small modules are gzip+base64 TS embeds</strong> generated by <code>c/wasm/embed.mjs</code> —
+    one single-line literal (V8 folds chunked <code>+</code> concatenation into ~300&nbsp;MB of transient
+    garbage, which once killed edge workers during import), exported as a take-once function so the decoded
+    string isn't pinned for the isolate's lifetime.</li>
+    <li><strong>Build flags are doctrine:</strong> <code>-Oz</code> cuts every module ~40% for zero warm-perf
+    cost; LTO is banned (wasm-ld LTO silently corrupts the indirect-function table — caught by the fuzz
+    suite); <code>-ffast-math</code> is banned (floats must stay IEEE-identical to the TS oracles); explicit
+    export allow-lists replaced <code>--export-all</code> so the linker can dead-code-eliminate; a post-link
+    <code>wasm-opt</code> pass recovers cross-object inlining for −6.4% size. A clean rebuild reproduces the
+    committed binary md5-identically — a byte delta means <em>your change</em>, not the compiler.</li>
+  </ul>
+
+  <h3>Memory as a build-time invariant</h3>
+  <p>Every static buffer is sized from a measured maximum (~63,000 instrumented games), capped at ~1.4–2×
+  the observed worst case, and — on the pinned modules — enforced by
+  <code>--initial-memory == --max-memory</code>, so a buffer over budget <strong>fails the link</strong>,
+  not production. Overflow always degrades cleanly (a bounds-checked error, a dropped animation frame, a
+  loud <code>--stack-first</code> trap), never corrupts.</p>
+  <div class="tw"><table>
+    <thead><tr><th>Module</th><th>Before</th><th>Now</th><th>How</th></tr></thead>
+    <tbody>
+      <tr><td>guards.wasm</td><td>256 KiB</td><td><strong>64 KiB — 1 page, pinned</strong></td><td>validate-only compile; the page is L1d-sized on Graviton</td></tr>
+      <tr><td>rules.wasm</td><td>3.31 MiB</td><td><strong>192 KiB — 3 pages, pinned</strong></td><td>arena overlay aliasing replay scratch over action scratch (provably never live together), stack 64→32 KiB after a canary measured 14.3 KiB worst-case</td></tr>
+      <tr><td>bots.wasm</td><td>5.13 MiB</td><td><strong>~1.37 MiB peak</strong></td><td>stack 256→64 KiB, streaming chooser, replay↔solver overlay, io overlay; grows once when the solver's 32 KiB TT warms</td></tr>
+    </tbody>
+  </table></div>
+  <p>The security pass over the same boundary (<code>docs/SECURITY_WASM_BOUNDARY.md</code>) hardened the
+  marshaling surface as defense-in-depth: every count clamped, every card sanitized, subset enumerators
+  bounded (a hostile hand could previously wedge a request in ~2<sup>n</sup> recursion), verified by a fuzz
+  gate of ~1,500 wild games plus ~14,000 malformed-game bot decisions — at zero measurable cost. A stale
+  third copy of the wasm bridges under <code>supabase/functions/_shared/wasm/</code> is vestigial: nothing
+  imports it; the live modules live in <code>sdk/ts/wasm/</code>.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="wire">
+  <div class="eyebrow"><b>§5</b> · протокол / the contract layer</div>
+  <h2>The wire — six packed formats</h2>
+  <p class="lead">Game state is a C buffer end to end. JavaScript and Swift objects exist only at the render
+  boundary and the DB edge; everything in between is kernel-produced packed bytes, little-endian, with a
+  card as one byte (<code>suit·13 + value−1</code>, <code>0xFE</code> hidden, <code>0xFF</code> none).</p>
+  <div class="tw"><table>
+    <thead><tr><th>Format</th><th>Direction</th><th>What it carries</th></tr></thead>
+    <tbody>
+      <tr><td><code>awire</code> v1</td><td>client → server</td><td>A move: <code>[kind][n][cards…][covers…]</code>. The bytes guards.wasm validated are the exact bytes the server kernel applies — one decoder compiled into both. Request envelope v2 adds <code>intent_version</code> (u32) for the stale-round guard; the response is 7 bytes: <code>[fmt][APPLIED|REJECTED|MOOT][reject_code][version]</code>. Kernel reject codes occupy 0–21; server-edge codes live above (<code>REJECT_STALE_ROUND = 100</code>) so a client can tell rules from policy by the code alone.</td></tr>
+      <tr><td><code>view</code> v1</td><td>server → client</td><td>The per-viewer masked state, produced only by <code>view.c</code>: deck and other hands as <code>0xFE</code> with counts preserved, other seats' intent flags zeroed, battles public. One envelope (<code>[magic][flags][seat][version][roster JSON][masked state]</code>) serves the create response, the <code>player_views</code> cache rows, and the spectator rows alike.</td></tr>
+      <tr><td><code>evwire</code> v1</td><td>server → client</td><td>The animation-event stream, personalized in C per recipient: per event a type / seat / message code / from→to locations / cards (deal &amp; refill identities masked unless yours) — and <em>its own masked snapshot</em>, so the client materializes state per step and never reconstructs it. This one stream drives live play, replays, the tutorial, and iMessage bubbles.</td></tr>
+      <tr><td><code>logwire</code> v1</td><td>persistence</td><td>Headerless session-log records, deliberately concatenable so <code>commit_game</code> appends by plain hex string concat under the version fence — exactly-once by construction. Draw identities are masked <em>before</em> the bytes reach the DB, so the stored stream is safe to feed bot beliefs: the no-cheating contract, structurally.</td></tr>
+      <tr><td>replay v6</td><td>share codes</td><td>A finished game as one rANS-coded integer (§8).</td></tr>
+      <tr><td>FMSG v1</td><td>iMessage</td><td>The whole game in a message URL (§11).</td></tr>
+    </tbody>
+  </table></div>
+  <p>The masking rule is worth stating as policy: <strong>the server never materializes an unmasked object on
+  the hot path.</strong> Hidden data leaves the kernel already redacted, and the DB side matches — row-level
+  security cannot hide a column, so a migration replaced the games-table RLS policy with column-level
+  SELECT grants that simply omit <code>state</code>, <code>game_seed</code> and <code>logs_packed</code>.
+  The masked path is the only path.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="backend">
+  <div class="eyebrow"><b>§6</b> · сервер / the supabase track</div>
+  <h2>Five edge functions, one CAS, no locks</h2>
+  <p class="lead">The backend is a stateless shell around the kernel: five Deno edge functions, a Postgres
+  schema built around a ~96-byte state blob, optimistic concurrency instead of locks, and Realtime fan-out
+  of pre-masked byte streams.</p>
+  <p>The deployable lives in <code>server/impls/supabase/</code>; platform-agnostic game logic sits above it
+  in <code>server/api/</code> (no Deno, no HTTP), and a proof-of-concept native C server
+  (<code>server/impls/native/</code>) demonstrates the API is host-agnostic. A machine-checked layering test
+  enforces the one-way DAG <code>core → sdk → common → adapter</code> — the adapter is swappable because
+  nothing below it may know the vendor exists.</p>
+  <div class="tw"><table>
+    <thead><tr><th>Function</th><th>Contract</th></tr></thead>
+    <tbody>
+      <tr><td><code>action</code></td><td>All five moves plus the bot nudge, dispatching on body type — with a binary fast path for <code>application/octet-stream</code> packed actions. Replaced six per-move functions.</td></tr>
+      <tr><td><code>meta</code></td><td>Lobby verbs: start / join / exit / continue / add-bot / rearrange / rename. One line of real code around <code>handleMetaAction</code>.</td></tr>
+      <tr><td><code>create</code></td><td>Returns the creator's packed view envelope <em>before persisting</em> — the DB write rides <code>EdgeRuntime.waitUntil</code> with retries, taking a ~594 ms cold round-trip off perceived latency.</td></tr>
+      <tr><td><code>bot-heartbeat</code></td><td>Two modes on one URL: SCAN (from pg_cron) and DRIVE (per game). §7.</td></tr>
+      <tr><td><code>delete-account</code></td><td>App Store / Play data-deletion compliance: auth → PII-scrub RPC → auth-user delete.</td></tr>
+    </tbody>
+  </table></div>
+
+  <figure>
+    <svg viewBox="0 0 940 340" role="img" aria-label="Life of a move: tap, guards.wasm validation, binary POST, JWT verify and seat mapping, kernel apply and mask, CAS commit with retry, realtime broadcast, client-side decode and reconciliation.">
+      <defs>
+        <marker id="ar3" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L8,4 L0,8 z" fill="var(--faint)"/>
+        </marker>
+      </defs>
+      <rect class="box hc" x="24" y="46" width="130" height="66" rx="6"/>
+      <text class="tb" x="89" y="74" text-anchor="middle">tap a card</text>
+      <text class="t2" x="89" y="91" text-anchor="middle">optimistic flight starts</text>
+      <rect class="box hw" x="188" y="46" width="180" height="66" rx="6"/>
+      <text class="tb" x="278" y="68" text-anchor="middle">guards.wasm</text>
+      <text class="t2" x="278" y="85" text-anchor="middle">validates → awire bytes</text>
+      <text class="t2" x="278" y="100" text-anchor="middle">+ intent_version</text>
+      <rect class="box hb" x="402" y="46" width="200" height="66" rx="6"/>
+      <text class="tb" x="502" y="68" text-anchor="middle">action fn</text>
+      <text class="t2" x="502" y="85" text-anchor="middle">local JWKS JWT verify</text>
+      <text class="t2" x="502" y="100" text-anchor="middle">seat = players.indexOf(uid)</text>
+      <rect class="box hk" x="636" y="46" width="280" height="66" rx="6"/>
+      <text class="tb" x="776" y="68" text-anchor="middle">kernel — one wasm section</text>
+      <text class="t2" x="776" y="85" text-anchor="middle">blob in → validate + apply → finalize win</text>
+      <text class="t2" x="776" y="100" text-anchor="middle">→ new blob + per-viewer masked evwire</text>
+      <line class="ln" x1="154" y1="79" x2="188" y2="79" marker-end="url(#ar3)"/>
+      <line class="ln" x1="368" y1="79" x2="402" y2="79" marker-end="url(#ar3)"/>
+      <text class="t2" x="385" y="66" text-anchor="middle">POST</text>
+      <line class="ln" x1="602" y1="79" x2="636" y2="79" marker-end="url(#ar3)"/>
+
+      <rect class="box hb" x="636" y="180" width="280" height="66" rx="6"/>
+      <text class="tb" x="776" y="204" text-anchor="middle">commit_game — CAS</text>
+      <text class="t2" x="776" y="221" text-anchor="middle">UPDATE … WHERE version = expected</text>
+      <text class="t2" x="776" y="236" text-anchor="middle">one txn: blob · views · log concat</text>
+      <line class="ln" x1="776" y1="112" x2="776" y2="180" marker-end="url(#ar3)"/>
+      <path class="lnd" d="M636 213 C 560 213 560 130 630 108" marker-end="url(#ar3)"/>
+      <text class="t2" x="556" y="160" text-anchor="middle">conflict:</text>
+      <text class="t2" x="556" y="174" text-anchor="middle">reload, redo ≤5</text>
+
+      <rect class="box hb" x="330" y="180" width="220" height="66" rx="6"/>
+      <text class="tb" x="440" y="204" text-anchor="middle">Realtime broadcast</text>
+      <text class="t2" x="440" y="221" text-anchor="middle">{v, s, b64(evwire)} per player</text>
+      <text class="t2" x="440" y="236" text-anchor="middle">+ spectator channel · one POST</text>
+      <line class="ln" x1="636" y1="213" x2="550" y2="213" marker-end="url(#ar3)"/>
+
+      <rect class="box hc" x="24" y="180" width="240" height="66" rx="6"/>
+      <text class="tb" x="144" y="204" text-anchor="middle">client reconcile</text>
+      <text class="t2" x="144" y="221" text-anchor="middle">decode at the render boundary</text>
+      <text class="t2" x="144" y="236" text-anchor="middle">version gate · optimistic overlay</text>
+      <line class="ln" x1="330" y1="213" x2="264" y2="213" marker-end="url(#ar3)"/>
+      <text class="t2" x="470" y="290" text-anchor="middle">server compute 14.8 µs/move (was 45.9) · 5.1 ms end-to-end · the 500 ms card flight dominates what a player feels</text>
+    </svg>
+    <figcaption>Life of a move. One synchronous wasm section does load–validate–apply–finalize–mask; the
+    commit is a compare-and-swap on a version counter (no lock is ever held across compute); broadcasts carry
+    the committed version so clients drop reordered deliveries.</figcaption>
+  </figure>
+
+  <h3>Persistence</h3>
+  <ul>
+    <li><strong>The blob is authoritative.</strong> Once dealt, <code>games.state</code> (~96 bytes hex) is
+    the game; the JSONB hand tables stop being written and persist only for lobbies. <code>game_seed</code>
+    (32-byte ChaCha seed) and <code>logs_packed</code> are server-only columns hidden by grants.</li>
+    <li><strong><code>commit_game</code> is one 14-parameter RPC</strong> committing blob, view caches,
+    spectator view, log append and round-epoch stamp in a single version-fenced transaction. Callers retry
+    conflicts up to 5 times. A per-isolate LRU cache (256 games), fenced by the same version, removes one of
+    the two DB round-trips per move — "a stale entry costs one conflict and a reload, never a wrong
+    write."</li>
+    <li><strong>The stale-round guard</strong>: a move carries the version its author saw
+    (<code>intent_version</code>); if that predates <code>round_epoch</code> — the version at which the
+    current round began — the move targeted a battle that no longer exists and is rejected as stale rather
+    than re-validated into the fresh round (the "revert, then it plays anyway" ghost). Round-scoped, not
+    version-scoped, so legitimate cross-version throw-ins still flow.</li>
+    <li><strong>Identity is deliberately minimal</strong>: username → SHA-256 → 16 hex chars →
+    <code>@foolish.cards</code> pseudo-email, guest-first, mirrored byte-for-byte on iOS. Edge auth verifies
+    JWTs locally against the project JWKS (asymmetric algorithms only — the alg-confusion defense) to keep
+    supabase-js out of the cold-start boot graph. Personal identity never enters the kernel blob; the
+    caller's auth id <em>is</em> the player id, and a seat is just its array index.</li>
+  </ul>
+  <p>Realtime holds no websocket on the server: one REST POST fans out every recipient's envelope —
+  per-player channels for masked streams, a public spectator channel, Postgres-changes on the
+  <code>player_views</code> cache (RLS-enforced per row) for state, and a chat channel. Bots are skipped;
+  they have no clients.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="bots">
+  <div class="eyebrow"><b>§7</b> · боты / bots</div>
+  <h2>The ladder, the loop, and the no-cheating contract</h2>
+  <p class="lead">Bots are real players: rows in the DB with a strategy key, the same wire, the same CAS.
+  Every algorithmic brain is C, and the strongest ones are belief-constrained determinized Monte-Carlo
+  players under a strict contract — <strong>no LLM, no neural net, no reading hidden state.</strong> The bot
+  sees exactly what an attentive human sees, and derives the rest.</p>
+
+  <h3>The ladder</h3>
+  <p><code>c/src/bot_roster.c</code> is the single table mapping key → brain → knobs → seeded/offline flags —
+  consumed by the server, the phone and the browser, and parity-policed so "the phone and the site run
+  different bots" cannot recur (it did once: iOS ran cordite at the arena budget). The player-facing ladder
+  renders strength as air distance to the Kremlin:</p>
+  <div class="tw"><table>
+    <thead><tr><th>Rung</th><th>Key</th><th>Brain</th></tr></thead>
+    <tbody>
+      <tr><td>Miami</td><td><code>random</code></td><td>Uniform over the legal-move list.</td></tr>
+      <tr><td>New York</td><td><code>handwritten</code></td><td>Lowest-first heuristic, an exact mirror of the retired TS bot.</td></tr>
+      <tr><td>Seoul</td><td><code>robusta</code></td><td>The first Monte-Carlo bot — public-info sampling.</td></tr>
+      <tr><td>Madrid</td><td><code>firecracker</code></td><td>Robusta's MC with a smarter rollout policy.</td></tr>
+      <tr><td>Vienna</td><td><code>blackpowder</code></td><td>Belief-constrained determinized MC + exact 2-player endgame solver.</td></tr>
+      <tr><td>St.&nbsp;Petersburg</td><td><code>cordite</code></td><td>Blackpowder's successor: bitboard rollouts, common random numbers, loss-avoiding root solver, rank-floor inference.</td></tr>
+      <tr><td>Moscow</td><td><code>octogen</code></td><td>The shipped apex — cordite's line with an extended exact-solve window; provably never worse than its predecessor.</td></tr>
+    </tbody>
+  </table></div>
+  <p>How the strong ones think, in one paragraph: rebuild a <em>belief</em> from the public log every call
+  (cards publicly picked up and not yet replayed are pinned to their holder; the flipped trump's taker is
+  known by rule; a defender who picked up with one attack uncovered demonstrably had no cover — applied to 3
+  of 4 sampled worlds as a mixture, so a bluffing human misleads most worlds but never all); sample
+  determinized worlds consistent with that belief; evaluate every candidate move on the <em>same</em> worlds
+  with the same RNG stream (a paired test — world-luck cancels); and once the deck is empty heads-up, stop
+  sampling and <em>solve</em>: the unseen pool is the opponent's hand by pure deduction, and an exact
+  alpha-beta with a 32&nbsp;KiB packed transposition table plus a ~27&nbsp;KiB precomputed leaf book plays
+  the endgame perfectly. The C rewrite made each decision roughly <strong>15× faster</strong> than the TS
+  original — banked as latency, not strength, because budget sweeps showed the deployed search already sits
+  at its saturation knee (2×/4× worlds moved win rate 40.0% → 40.0% → 39.0%).</p>
+
+  <h3>The server loop</h3>
+  <figure>
+    <svg viewBox="0 0 940 260" role="img" aria-label="The bot loop: the action function nudges after every human move, pg_cron scans every 10 seconds, both feed a leased loop that drives the kernel's bot_drive and commits like a human move.">
+      <defs>
+        <marker id="ar4" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L8,4 L0,8 z" fill="var(--faint)"/>
+        </marker>
+      </defs>
+      <rect class="box hb" x="28" y="30" width="264" height="62" rx="6"/>
+      <text class="tb" x="160" y="55" text-anchor="middle">action fn — the nudge</text>
+      <text class="t2" x="160" y="72" text-anchor="middle">after every human move, waitUntil</text>
+      <rect class="box hb" x="28" y="150" width="264" height="76" rx="6"/>
+      <text class="tb" x="160" y="174" text-anchor="middle">pg_cron · every 10 s</text>
+      <text class="t2" x="160" y="191" text-anchor="middle">SCAN stalled games → one self-POST</text>
+      <text class="t2" x="160" y="206" text-anchor="middle">per game = a fresh 2 s CPU budget</text>
+      <rect class="box ho" x="356" y="80" width="264" height="96" rx="6"/>
+      <text class="tb" x="488" y="106" text-anchor="middle">leased loop</text>
+      <text class="t2" x="488" y="124" text-anchor="middle">lease TTL 25 s · renewed each cycle</text>
+      <text class="t2" x="488" y="139" text-anchor="middle">token-fenced · CPU bail at 1.7 of 2 s</text>
+      <text class="t2" x="488" y="154" text-anchor="middle">wall ≤ 120 s · cached move on CAS retry</text>
+      <rect class="box hk" x="682" y="80" width="234" height="96" rx="6"/>
+      <text class="tb" x="799" y="106" text-anchor="middle">kernel bot_drive</text>
+      <text class="t2" x="799" y="124" text-anchor="middle">fair pick among eligible bots</text>
+      <text class="t2" x="799" y="139" text-anchor="middle">pacing: 3000 ms with humans</text>
+      <text class="t2" x="799" y="154" text-anchor="middle">300 ms bots-only</text>
+      <line class="ln" x1="292" y1="61" x2="380" y2="90" marker-end="url(#ar4)"/>
+      <line class="ln" x1="292" y1="185" x2="380" y2="160" marker-end="url(#ar4)"/>
+      <line class="ln" x1="620" y1="128" x2="682" y2="128" marker-end="url(#ar4)"/>
+      <text class="t2" x="470" y="230" text-anchor="middle">→ each chosen move commits and broadcasts exactly like a human move — same CAS, same wire</text>
+    </svg>
+    <figcaption>Exactly-one bot driver per game, with TTL recovery: an auto-expiring lease means a hard-killed
+    isolate blocks its game for at most 25 seconds, while a healthy loop renews and drives up to two minutes
+    per segment. Belief bots hydrate straight from the masked packed log — no JS decode, no hidden data.</figcaption>
+  </figure>
+</section>
+
+<!-- ============================================================ -->
+<section id="replay">
+  <div class="eyebrow"><b>§8</b> · повтор / the replay codec</div>
+  <h2>A whole game in a QR code</h2>
+  <p class="lead">A finished game is entropy-coded into a single integer and base32'd into a URL short enough
+  for QR alphanumeric mode. The trick: derived events cost zero bits, because the decoder doesn't parse a
+  recording — it <em>re-plays the game through the engine</em> and only pays for the genuinely random
+  bits.</p>
+
+  <figure>
+    <svg viewBox="0 0 940 200" role="img" aria-label="Replay pipeline: finished game, rANS encode, one integer, base32 URL and QR, decode by replaying through the engine, evwire frames into the live decoder.">
+      <defs>
+        <marker id="ar5" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L8,4 L0,8 z" fill="var(--faint)"/>
+        </marker>
+      </defs>
+      <rect class="box hb" x="20" y="46" width="128" height="76" rx="6"/>
+      <text class="tb" x="84" y="80" text-anchor="middle">finished</text>
+      <text class="tb" x="84" y="96" text-anchor="middle">game</text>
+      <rect class="box hr" x="178" y="46" width="170" height="76" rx="6"/>
+      <text class="tb" x="263" y="72" text-anchor="middle">replay_encode_v6</text>
+      <text class="t2" x="263" y="89" text-anchor="middle">rANS · derived events free</text>
+      <text class="t2" x="263" y="104" text-anchor="middle">hidden cards revealed inline</text>
+      <rect class="box hr" x="378" y="46" width="128" height="76" rx="6"/>
+      <text class="tb" x="442" y="80" text-anchor="middle">one integer</text>
+      <text class="t2" x="442" y="97" text-anchor="middle">→ base32</text>
+      <rect class="box hw" x="536" y="46" width="150" height="76" rx="6"/>
+      <text class="tb" x="611" y="72" text-anchor="middle">URL / QR</text>
+      <text class="t2" x="611" y="89" text-anchor="middle">foolish.cards/&lt;code&gt;</text>
+      <text class="t2" x="611" y="104" text-anchor="middle">alphanumeric mode</text>
+      <rect class="box hk" x="716" y="46" width="204" height="76" rx="6"/>
+      <text class="tb" x="818" y="72" text-anchor="middle">decode = replay</text>
+      <text class="t2" x="818" y="89" text-anchor="middle">rebuild deck · replay through the</text>
+      <text class="t2" x="818" y="104" text-anchor="middle">real engine → live evwire frames</text>
+      <line class="ln" x1="148" y1="84" x2="178" y2="84" marker-end="url(#ar5)"/>
+      <line class="ln" x1="348" y1="84" x2="378" y2="84" marker-end="url(#ar5)"/>
+      <line class="ln" x1="506" y1="84" x2="536" y2="84" marker-end="url(#ar5)"/>
+      <line class="ln" x1="686" y1="84" x2="716" y2="84" marker-end="url(#ar5)"/>
+      <text class="t2" x="470" y="166" text-anchor="middle">the server proves the round trip byte-for-byte before persisting · one kernel call both encodes and verifies</text>
+    </svg>
+    <figcaption>The pipeline. Because playback re-runs the same engine that played the game, replay frames
+    are the <em>same packed evwire bytes</em> live play broadcasts, decoded by the same client decoder — on
+    web and on iOS alike.</figcaption>
+  </figure>
+
+  <ul>
+    <li><strong>Format 6 knows everything.</strong> The v5 line deferred hidden-card identities and
+    reconstructed them by retrodiction plus a complement backfill once the fool was known — exact at game
+    end, a guess mid-game, and the guess once made the Oracle judge a provably forced move as a mistake. v6
+    entropy-codes each hidden card inline at the moment it's dealt or drawn, uniform over the still-unseen
+    pool; with dead "goods" trimmed, a 1,024-record log covers all but 0.05% of 8-player games, measured
+    over 139,515.</li>
+    <li><strong>Playback is a VHS deck</strong> (<code>ReplayScreen.tsx</code>): the real game board fed by
+    the decoded frames, with a scrubber, bout skips, a speed dial whose <code>1×</code> honors recorded
+    timing (a three-day sulk between moves really takes three days, countdown on screen), a reveal-eye that
+    shows every seat's exact hand (the code is replayed once per seat and each seat's own frames are read —
+    exact by construction), and a telestrator pen for commentary. Stepping backward inverts flights for
+    presentation only; the committed board is always the kernel's.</li>
+    <li><strong>The tutorial is a replay</strong>: a frozen code of a real engine-played game (seed 211 of
+    1,500 searched, scored so the learner personally performs every taught move) with narration on top —
+    the fourth consumer of the same pipeline after live play, replays, and iMessage bubbles.</li>
+    <li>An optional extras blob packs player names and per-move timing spanning nanoseconds to weeks; bots
+    carry a reserved name prefix so bot-vs-human survives the name-only codec. <code>/history</code> decodes
+    every finished game from its snapshot row — re-watchable forever.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="client">
+  <div class="eyebrow"><b>§9</b> · клиент / the web client</div>
+  <h2>A thin shell that computes its own pixels</h2>
+  <p class="lead">The Next.js client (React 19, App Router) owns rendering, optimism and atmosphere — and
+  almost nothing else. It gates every button through the kernel, reconciles broadcasts through logic that
+  now lives in C, and ships <strong>zero texture files</strong>: every surface is computed in the browser
+  and cached in IndexedDB.</p>
+  <ul>
+    <li><strong>KernelGate:</strong> the provider tree awaits the wasm kernel before rendering anything —
+    realtime decode is synchronous, so "probably warm" isn't good enough. One <code>GameBoard</code>
+    composition serves four state sources: live play, replays, the tutorial, and the iMessage
+    <code>/m/</code> page, each supplying a different implementation of the same read surface.</li>
+    <li><strong>Optimism with three verdicts:</strong> a tapped card flies immediately; when the
+    authoritative broadcast arrives, each pending card resolves to <em>revert</em> (never accepted — fly it
+    home), <em>merge</em> (accepted, its own broadcast still in flight — keep it injected), or <em>clear</em>
+    (accepted and already swept off by this broadcast's own pickup — drop silently, the incoming events
+    animate it). Out-of-order broadcasts drop by version; reconnects re-apply unconfirmed cards over the
+    REST resync. All three decisions now delegate to <code>anim_plan.c</code> through the wasm bridge, with
+    the original TS preserved verbatim as a parity oracle — a phone and a browser disagreeing here would
+    fork the feed.</li>
+    <li><strong>Kernel-gated input:</strong> <code>guards.wasm</code> instantiates once behind the load
+    screen (~1 ms), after which every affordance — buttons, drag targets, keyboard play, one-tap cover — is
+    a synchronous wasm call. Opponents marshal as placeholder cards; provably safe because no validator
+    inspects another player's card identities, only counts. There is also a complete second input path:
+    arrow-key navigation with a cursor, built entirely on the shared read surface and the
+    <code>data-*</code> attributes the board already exposes.</li>
+    <li><strong>Procedural atmosphere:</strong> a Barnsley-fern IFS fractal card back (a million iterations,
+    CPU compute → WebGL points → PNG blob, 2D-canvas fallback), woven-wool background, parametric wood
+    grain, seeded concrete — each cached three deep (module blob URL → in-flight promise → IndexedDB, with
+    a deadline race because iOS Safari can hang <code>indexedDB.open()</code> forever). Selecting Russian
+    flips the whole app to a sharp-edged Soviet theme — square corners, hard shadows, a red-and-gold SVG
+    card back, hand-drawn flag icons — driven by language, through CSS attribute selectors, a programmatic
+    style context, and a parallel icon set. Localization is a ~348-key union type in en/ru/ko, so a missing
+    translation is a compile error.</li>
+    <li><strong>Routes:</strong> <code>/</code> auth, <code>/dashboard</code>, <code>/:game_id</code> —
+    which doubles as the replay route (a path segment longer than any game id <em>is</em> a replay code),
+    <code>/leaderboard</code> (humans and bots on one Elo ladder), <code>/history</code>,
+    <code>/tutorial</code>, <code>/m/[payload]</code> (§11), plus policy pages. A parked PWA/service-worker
+    layer sits in <code>offlinefun/</code>, excluded from the build; its live half is the headless bot-arena
+    harness and the frozen TS strategy oracles.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="oracle">
+  <div class="eyebrow"><b>§10</b> · оракул / the infinite oracle</div>
+  <h2>Unbounded analysis in a browser tab</h2>
+  <p class="lead">Pause a replay on a decision, press the crystal ball, and octogen — the strongest shipped
+  bot — deliberates <em>in your browser</em> over that exact position, scoring the played move and every
+  alternative as error bars visibly shrink.</p>
+  <p>The design inverts the server's economics: the shipped modules were squeezed byte-by-byte because a
+  server handles many games; the replay page is one user, one position, hundreds of megabytes and minutes of
+  attention. So <code>oracle.wasm</code> spends freely — an 8&nbsp;MiB transposition table (a strength knob,
+  256× the server's), a full-size stack, and a fleet of up to 8 web workers, each with its own instance,
+  streaming Monte-Carlo batches into a Welford accumulator until standard error converges
+  (n&nbsp;&gt;&nbsp;65,536 and SE&nbsp;&lt;&nbsp;0.005, hard cap 180&nbsp;s). The shipped modules stay
+  byte-for-byte untouched.</p>
+  <p>Two honesty rules are load-bearing. The Oracle reasons from <strong>the acting seat's view</strong> —
+  a v6 replay knows every hidden card, but draw identities are re-masked before they reach the bot, because
+  handing it the truth "would not be a better analysis, it would be a different game — one where the bot
+  cheats." And its verdicts stay humble where the math does: chess.com-style move classes (best → blunder)
+  ride adjusted deltas, exact-solver verdicts are labeled as such, and the one thing it cannot do —
+  cyclic deck-empty endgames whose game graph loops through pickups — is documented as the boundary of the
+  whole approach (retrograde analysis over ~37M positions solves them offline; a browser tab does not).
+  The UI is a vintage car-stereo equalizer faceplate: amber segment displays, a memory toggle, EQ bargraphs
+  for convergence. It is also the seed of a chess.com-style paid Game Review tier — with the stated tension
+  that a client-side oracle is not server-meterable, so the web paywall must meter the service via issued
+  tokens, not the bits.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="apple">
+  <div class="eyebrow"><b>§11</b> · яблоко / apple platforms</div>
+  <h2>Native kernel, serverless messages</h2>
+  <p class="lead">On Apple platforms the kernel drops the wasm costume: the same C sources build into
+  <code>Foolish.xcframework</code>, linked statically by a shared <code>FoolishKit</code> framework. Two
+  products ride it — a full iOS app (Supabase track + offline bots, not yet submitted) and the
+  <strong>Foolish Messages iMessage app, live on the App Store</strong> at 1.0, build 21.</p>
+
+  <h3>The serverless track — the message is the game</h3>
+  <figure>
+    <svg viewBox="0 0 940 250" role="img" aria-label="The iMessage chain: device A replays the chain, plays a move and reseals an envelope of seed plus replay code plus parent hash; Apple Messages delivers it; device B decodes by replaying and answers the same way.">
+      <defs>
+        <marker id="ar6" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L8,4 L0,8 z" fill="var(--faint)"/>
+        </marker>
+      </defs>
+      <rect class="box ha" x="28" y="46" width="266" height="110" rx="6"/>
+      <text class="tb" x="161" y="72" text-anchor="middle">Device A</text>
+      <text class="t2" x="161" y="92" text-anchor="middle">decode chain = replay through kernel</text>
+      <text class="t2" x="161" y="107" text-anchor="middle">play a move · reseal envelope:</text>
+      <text class="t2" x="161" y="124" text-anchor="middle">32 B seed (the future) + v6 code (the past)</text>
+      <text class="t2" x="161" y="139" text-anchor="middle">+ parent hash · human presses Send</text>
+      <rect class="box hb" x="360" y="66" width="220" height="70" rx="6"/>
+      <text class="tb" x="470" y="92" text-anchor="middle">Apple Messages</text>
+      <text class="t2" x="470" y="110" text-anchor="middle">delivery only · no server, no state</text>
+      <rect class="box ha" x="646" y="46" width="266" height="110" rx="6"/>
+      <text class="tb" x="779" y="72" text-anchor="middle">Device B</text>
+      <text class="t2" x="779" y="92" text-anchor="middle">adopt newest chain by Rule P</text>
+      <text class="t2" x="779" y="107" text-anchor="middle">(round, turn, joins — resolved in kernel)</text>
+      <text class="t2" x="779" y="124" text-anchor="middle">open-replay veil animates the move</text>
+      <text class="t2" x="779" y="139" text-anchor="middle">reply reseals the chain</text>
+      <line class="ln" x1="294" y1="86" x2="360" y2="86" marker-end="url(#ar6)"/>
+      <line class="ln" x1="580" y1="86" x2="646" y2="86" marker-end="url(#ar6)"/>
+      <line class="ln" x1="646" y1="120" x2="580" y2="120" marker-start="url(#ar6)"/>
+      <line class="ln" x1="360" y1="120" x2="294" y2="120" marker-start="url(#ar6)"/>
+      <text class="t2" x="470" y="52" text-anchor="middle">sealed envelope — P95 192 / 240 / 328 base32 chars at 2 / 4 / 8 players (cap: 5,000)</text>
+      <text class="t2" x="470" y="200" text-anchor="middle">validation IS replay: a hand-edited payload fails to replay and is rejected whole — there is no partial trust</text>
+    </svg>
+    <figcaption>The FMSG envelope: <em>seed = the future, replay code = the past.</em> Each device re-deals
+    the true deck from the 32-byte seed and re-applies only the recorded actions through the public kernel
+    handlers, so every device independently re-derives — and therefore re-validates — the entire game.</figcaption>
+  </figure>
+  <ul>
+    <li><strong>No identity, by construction.</strong> There are no accounts and Apple's participant UUIDs
+    are per-device-per-conversation, so the only on-wire identity is a self-reported nickname. A device
+    resolves "which seat am I" from an App Group cache written at claim time, then sender inference, and
+    otherwise renders the public spectator board — never a guess. The extension is provably networkless: a
+    lint script fails the build if it ever links a network stack.</li>
+    <li><strong>Lobbies and races are kernel problems.</strong> Every chat shape routes through a WAITING
+    lobby (the "DM deals immediately" shortcut was deleted as a deck-reroll hole); racing sends resolve by
+    Rule P in <code>msg_wire.c</code> — at equal round and turn, more joins wins. Fair-tempo rules (a
+    15-second pickup hold via a wire-carried clock; a stall-breaker any impatient device can invoke through
+    the ordinary public API) need no protocol extensions.</li>
+    <li><strong>The first rules variant lives here:</strong> podkidnoy (throw-in only, no pass) vs the
+    default perevodnoy (transfer). One kernel bit whose zero is the classic game, read by the engine, the
+    enumerator and the rollout sim — the UI needed no gate at all because every affordance already comes
+    from the kernel's own menu. The replay codec pins the mode as a probability-model bit; the FMSG header
+    respends its reserved byte as a rules byte; the lobby renders it as a wooden checkbox where whoever
+    changes the rule cannot start the game.</li>
+    <li><strong>The web handoff</strong>: macOS Messages runs no iOS extensions and Android sees a raw URL,
+    so the link <em>is</em> a page — <code>/m/&lt;payload&gt;</code> decodes by replaying the chain and
+    renders the kernel's spectator view (masking is <code>view.c</code>'s decision, not the page's), with a
+    server-rendered unfurl so a Slack or Messages preview can title the game without running JS. Finished
+    bubbles funnel to a replay link and the App Store.</li>
+    <li><strong>The rest of the fleet:</strong> the host app implements the full Supabase track
+    byte-for-byte (packed actions with <code>intent_version</code>, view-cache subscriptions) and offline
+    play against the entire on-device ladder — one kernel call per bot cycle, pacing included; procedural
+    textures are ported but baked at build time (an extension's memory ceiling made runtime generation a
+    crash suspect). watchOS is a designed-and-parked scaffold. A never-shipped harness app mounts the real
+    extension UI with a fake 8-participant transcript, because Apple's simulator can't.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="testing">
+  <div class="eyebrow"><b>§12</b> · паритет / testing</div>
+  <h2>The parity lattice</h2>
+  <p class="lead">The architecture's enabling discipline: wherever two implementations of one truth exist, a
+  mechanical gate proves they agree — and wherever a second <em>carrier</em> of the same bytes existed, it
+  was deleted rather than gated.</p>
+  <ul>
+    <li><strong>The e2e suite runs the deployed code.</strong> ~80 files drive the real
+    <code>_shared</code> handlers, the verbatim <code>commit_game</code> and lease plpgsql, and the exact
+    client reconciliation modules the React contexts import, against a real Postgres — only PostgREST and
+    Realtime are shimmed by a ~180-line <code>pg</code> adapter. The fuzz and rearrange suites have found
+    and fixed real card-duplication exploits; the seven documented client races run in both delivery orders
+    with pinned deals.</li>
+    <li><strong>Byte-level parity gates:</strong> packed-wire parity proves the C pipeline's state blobs,
+    logs and per-recipient event streams byte-identical to the legacy JS path (and asserts on the raw bytes
+    that no viewer's stream ever carries another hand); the state codec round-trips 36,787 seeded states
+    losslessly; guards.wasm must return the exact verdict of the server kernel; bot parity replays the
+    frozen TS strategy oracles move-for-move against the kernel with pinned RNG streams; roster parity keeps
+    the three copies of the bot table in agreement; iMessage fixtures are sealed by the native kernel and
+    decoded by the wasm one.</li>
+    <li><strong>Native difftests</strong> mirror the critical ones inside C itself: bitboard sim vs struct
+    engine, bitboard solver vs struct solver, replay round trips, the FMSG tamper matrix, and the animation
+    core's C twins of the React animation-quality tests.</li>
+    <li><strong>Regression suites for production war stories:</strong> a memory suite guards the two
+    "Memory limit exceeded" outages (the base64-concat parse blowup; solver-scratch growth) and asserts
+    kernel memory is <em>exactly flat</em> once warm; a layering test machine-checks the four-tier
+    dependency DAG; kernel coverage floors (90% line / 74% branch over the core) and server/client
+    coverage gates run in CI.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="playbook">
+  <div class="eyebrow"><b>§13</b> · дисциплина / the playbook</div>
+  <h2>The performance discipline, in five moves</h2>
+  <p class="lead">Nearly every optimization in the system is an instance of one rule: <strong>prove what this
+  exact deployment doesn't need, collapse the program to fit, and enforce the collapse at build time.</strong></p>
+  <div class="tw"><table>
+    <thead><tr><th>Move</th><th>Anchor in this repo</th></tr></thead>
+    <tbody>
+      <tr><td><strong>1 · Optimize the binding constraint only</strong></td><td>Perceived latency is the 500 ms card flight, not compute; the server residue is DB round trips; cordite's strength curve sits at its saturation knee, so the 15× speedup was banked as latency.</td></tr>
+      <tr><td><strong>2 · Turn limits into build-time invariants</strong></td><td>Pinned linear memory makes an over-budget buffer fail the link; static asserts guard arena overlays; caps overflow into clean errors, never corruption.</td></tr>
+      <tr><td><strong>3 · Specialize the artifact</strong></td><td>Tailored modules per call site from one source; export allow-lists enable dead-code elimination; hot files at <code>-O3</code>, cold code built for size — cold edge workers never tier past the baseline compiler anyway. (The current consolidated module is a deliberate, temporary inversion of this move while the kernel surface grows.)</td></tr>
+      <tr><td><strong>4 · Fit data to the machine and the boundary</strong></td><td>guards pinned to one L1-sized page; the solver TT packed 16→8 bytes, 2-way, one cache line per bucket — 1 MiB → 32 KiB as a strength-neutral ladder; a card crosses every boundary as 1 byte.</td></tr>
+      <tr><td><strong>5 · Exploit liveness and stability</strong></td><td>Never-concurrent buffers alias the same address; state stays resident across a bot's choose→apply; a version-fenced cache skips the DB load; replay's derived events cost zero bits; the leaf book terminates solved subtrees outright.</td></tr>
+    </tbody>
+  </table></div>
+  <p>And the process beneath the tactics: every optimization measured before and after with a real harness;
+  every one reversible via a knob; every one gated by correctness tests (the fuzz suite is <em>why</em>
+  aggression was safe); and after each win the budget is re-pinned lower, so the ratchet only turns one
+  way.</p>
+</section>
+
+<footer>
+  <p><strong>Primary sources</strong> — the design docs this document condenses:</p>
+  <ul>
+    <li>docs/ARCHITECTURE_AS_A_PATTERN.md</li>
+    <li>docs/ARCHITECTURE_REVIEW.md</li>
+    <li>docs/PROTOCOL.md · PACKED_WIRE_CUTOVER.md · STATE_BLOB_CUTOVER.md</li>
+    <li>docs/C_CORE_CONSOLIDATION.md · RULES_DUPLICATION_FINDINGS.md</li>
+    <li>docs/WASM_L1_BUDGET.md · BOTS_WASM_MEMORY_PLAN.md</li>
+    <li>docs/SECURITY_WASM_BOUNDARY.md · SOLVER_TT_WORKING_SET_PLAN.md</li>
+    <li>docs/REPLAY_FORMAT6_HIDDEN_STATE.md · A5_WEB_HANDOFF.md</li>
+    <li>docs/INFINITE_ORACLE_DESIGN.md · ORACLE_MONETIZATION_ENGINEERING.md</li>
+    <li>docs/IMESSAGE_GAME_DESIGN.md · IMESSAGE_BODY_CODEC.md</li>
+    <li>docs/IMESSAGE_SEAT_IDENTITY_V2.md · IMESSAGE_LOBBY_V3.md</li>
+    <li>docs/IOS_APP_DESIGN.md · WATCHOS_SPEC.md · PODKIDNOY.md</li>
+    <li>c/README.md · c/CORDITE.md · c/BLACKPOWDER.md · c/OCTOGEN.md · c/LEAFBOOK.md</li>
+    <li>e2e/README.md · sdk/README.md · ios/README.md</li>
+  </ul>
+  <p>Generated 2026-08-25 from branch <code>claude/durak-rules-redesign-sswk56</code> @ <code>c79bb84f</code>.</p>
+</footer>
+
+</div>
