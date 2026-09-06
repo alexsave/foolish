@@ -77,15 +77,23 @@ const mcJob = () => jobAt(FIX_MC.np, FIX_MC.seed, FIX_MC.idx);
 const exactJob = () => jobAt(FIX_EXACT.np, FIX_EXACT.seed, FIX_EXACT.idx);
 
 /** Mode A over one instance: batch until every candidate has `minN` worlds, or
- *  the batch / wall-clock cap runs out. Returns the live accumulator. */
-async function modeA(job: OracleJob, minN: number, batchCap: number, msCap: number) {
+ *  the batch cap runs out. Returns the live accumulator.
+ *
+ *  Deliberately NOT wall-clock bounded. A time cap here would let a slow runner
+ *  gather less evidence, and since the comparison tolerance below is derived
+ *  from the counts the run actually reached, less evidence means a wider
+ *  tolerance - the assertion would quietly weaken exactly when the machine is
+ *  least able to earn it, and the test would still be green. `batchCap` and the
+ *  convergence break bound this loop on their own; measured, the heavy caller
+ *  reaches its full 20000-world target in ~5s, so the 25s cap this replaced
+ *  never fired. It is the fixed batch count INFINITE_ORACLE_MODE_B.md asks for. */
+async function modeA(job: OracleJob, minN: number, batchCap: number) {
     const inst = new OracleInstance();
     await inst.init(ORACLE_BYTES);
     inst.writeEnv({ ...ORACLE_MT_ENV });
     const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey });
-    const end = Date.now() + msCap;
     let batches = 0;
-    for (let b = 0; b < batchCap && Date.now() < end; b++) {
+    for (let b = 0; b < batchCap; b++) {
         const r = inst.analyzeOnce(job.gameBlob, job.seat, job.logsWire, job.memoryOn, 1009 + b * 7919);
         if (!('record' in r)) continue;
         acc.add(r.record);
@@ -131,7 +139,7 @@ test('§8b.7-1 Mode A and Mode B converge to the same per-candidate means', asyn
         // Mode A is single-instance here, so it is asked to match Mode B's world
         // count only up to a cap - past ~20k worlds the standard error is already
         // an order of magnitude below the tolerance and the rest is CI minutes.
-        const { acc } = await modeA(job, Math.min(minN, 20000), 20000, 25000);
+        const { acc } = await modeA(job, Math.min(minN, 20000), 20000);
         const aRows = acc.candidates(false).filter((c) => c.mean != null);
         const aByKey = new Map(aRows.map((c) => [c.key, c]));
         const aMinN = Math.min(...aRows.map((c) => c.n));
@@ -232,7 +240,7 @@ test('§8b.7-5 exact endgame: Mode B reaches Mode A verdicts off per-thread tabl
         const b = rig.session.readCandidates(job, exact);
         assert.ok(b.length >= 8, `the exact fixture is a wide decision (${b.length} candidates)`);
 
-        const { acc } = await modeA(job, 1, 8, 30000);
+        const { acc } = await modeA(job, 1, 8);
         const aRows = acc.candidates(true);
         const aByKey = new Map(aRows.map((c) => [c.key, c]));
 
