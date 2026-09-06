@@ -997,23 +997,24 @@ int wasm_anim_stale_optimistic(int n_opt, int n_table, int n_named) {
 // THE CONFLICT VERDICT, per motion (anim_plan.h anim_conflict_facts +
 // anim_conflict_verdict), for the SERVER transport.
 //
-// wasm_anim_resolve below answers the same question for one shape only - my
-// pending attacks and covers, all of which landed on the TABLE, judged against
-// the final board's defender. AnimationContext asks it three more times with
-// different inputs: a pass judged against the NEXT defender's hand, my attacks
-// judged against the defender a pass just installed, and my pickups, which
-// landed in MY HAND rather than on the table. Those three re-derived the rule
-// in TypeScript instead of asking for it, so they missed the precedence
-// (CLEAR before the standing sets), the pool rule and the masked back.
+// ONE DOOR. AnimationContext asks this question four times - about a pending
+// attack/cover, about a pass judged against the NEXT defender, about my attacks
+// after a pass moved the shield, and about a pickup, whose cards landed in MY
+// HAND rather than on the table - and only the first used to reach C. The other
+// three re-derived the rule in TypeScript and so had none of its precedence
+// (CLEAR before the standing sets), its pool rule or its masked-back rule.
+// A second wasm entry for the first shape (wasm_anim_resolve) is gone with
+// them: two doors onto one rule is a new way for two hosts to disagree.
 //
-// This entry is the rule itself with every input as an argument, so all four
-// callers ask the same C. It mirrors fio_conflict_packed's input order (the
-// phone's door onto the same rule) minus the group/reversal half, which is
-// chain-only.
+// The arriving stream comes in AS ITS EVENTS, not as a pre-digested swept set.
+// Deciding which events sweep - and therefore whether the table was cleared,
+// which short-circuits the server transport's hope - is the rule's own job
+// (anim_conflict_sweep), and it was the last piece of it still written in
+// TypeScript.
 //
 // g_io in:
-//   u8 n_moved, then n_moved x u8 dense id the arriving stream moves
-//     (ANIM_TABLE_NONE for a masked back - it names nothing)
+//   u8 n_events, then per event: u8 type (ANIM_EVT_*), u8 mask, u8 n_cards,
+//     n_cards x u8 dense id
 //   u8 n_open_battles, then 2 x that u8: the opening table (attack, then its
 //     cover or ANIM_TABLE_NONE). BOTH sides stand.
 //   u8 n_my_hand, then that many u8 dense ids: my hand on that board
@@ -1021,16 +1022,38 @@ int wasm_anim_stale_optimistic(int n_opt, int n_table, int n_named) {
 //     u8 dest (ANIM_DEST_*), u8 is_cover
 // g_io out (overwrites): n_motions x u8 verdict (ANIM_CONFLICT_*).
 // Returns the motion count, or a negative ANIM_E*.
-int wasm_anim_conflict_verdicts(int table_cleared, int pending_attacks,
-                                int defender_hand, int final_uncovered) {
+int wasm_anim_conflict_verdicts(int pending_attacks, int defender_hand,
+                                int final_uncovered) {
     int p = 0;
-    const int n_moved = g_io[p++];
-    if (n_moved > ANIM_MAX_CARDS) return ANIM_ECAP;
-    static int moved[ANIM_MAX_CARDS];
-    for (int i = 0; i < n_moved; i++) {
-        const unsigned char b = g_io[p++];
-        moved[i] = (b == ANIM_TABLE_NONE) ? ANIM_CARD_NONE : (int)b;
+    const int n_events = g_io[p++];
+    if (n_events > ANIM_MAX_STEPS) return ANIM_ECAP;
+    static Card ev_cards[ANIM_MAX_CARD_POOL];
+    static AnimEvent events[ANIM_MAX_STEPS];
+    int cpool = 0;
+    for (int e = 0; e < n_events; e++) {
+        events[e].type = g_io[p++];
+        events[e].mask_cards = g_io[p++] ? 1 : 0;
+        const int nc = g_io[p++];
+        if (nc > ANIM_MAX_CARDS || cpool + nc > (int)(sizeof ev_cards / sizeof ev_cards[0]))
+            return ANIM_ECAP;
+        events[e].seat = ANIM_SEAT_NONE;
+        events[e].from = ANIM_LOC_NONE;
+        events[e].to = ANIM_LOC_NONE;
+        events[e].cards = &ev_cards[cpool];
+        events[e].n_cards = nc;
+        for (int k = 0; k < nc; k++) {
+            const unsigned char b = g_io[p++];
+            ev_cards[cpool++] = (b == ANIM_TABLE_NONE) ? CARD_NONE : card_of_id((int)b);
+        }
     }
+
+    int table_cleared = 0;
+    static int moved[ANIM_MAX_CARD_POOL];
+    const int n_moved = anim_conflict_sweep(events, n_events, moved,
+                                            (int)(sizeof moved / sizeof moved[0]),
+                                            &table_cleared);
+    if (n_moved < 0) return n_moved;
+
     const int n_bat = g_io[p++];
     if (n_bat > MAX_BATTLES) return ANIM_ECAP;
     const unsigned char *table = &g_io[p];
@@ -1077,64 +1100,6 @@ int wasm_anim_conflict_verdicts(int table_cleared, int pending_attacks,
 // setter and not a compile-time constant.
 int wasm_anim_set_transport(int transport) { return anim_set_transport(transport); }
 int wasm_anim_transport(void) { return anim_transport(); }
-
-// resolveUnconfirmedAttackCovers (optimisticConflicts.ts). g_io in:
-//   pending: n_pending x { u8 wire card, u8 is_cover }
-//   server:  n_server  x u8 wire card
-//   events:  n_events  x { u8 type, u8 n_cards, n_cards x u8 wire card }
-// Scalars: defender (0xFF none via -1), defender_hand, final_uncovered.
-// g_io out (overwrites): u8 n_revert, u8 n_merge, u8 n_clear, then the three
-// index lists (each a byte into pending). Returns bytes written, or -ANIM_E*.
-int wasm_anim_resolve(int n_pending, int n_server, int n_events,
-                      int defender, int defender_hand, int final_uncovered) {
-    if (n_pending < 0 || n_pending > ANIM_MAX_CARDS) return ANIM_EBADARG;
-    if (n_server < 0 || n_server > ANIM_MAX_TABLE_INPUT) return ANIM_ECAP;
-    if (n_events < 0 || n_events > ANIM_MAX_STEPS) return ANIM_ECAP;
-    static AnimPending pending[ANIM_MAX_CARDS];
-    static Card server[ANIM_MAX_TABLE_INPUT];
-    // Event card storage: borrow a flat pool; each AnimEvent points into it.
-    static Card ev_cards[ANIM_MAX_CARD_POOL];
-    static AnimEvent events[ANIM_MAX_STEPS];
-    int p = 0, cpool = 0;
-    for (int i = 0; i < n_pending; i++) {
-        pending[i].card = card_from_wire_pair(g_io[p++]);
-        pending[i].is_cover = g_io[p++] ? 1 : 0;
-    }
-    for (int i = 0; i < n_server; i++) server[i] = card_from_wire_pair(g_io[p++]);
-    for (int e = 0; e < n_events; e++) {
-        int type = g_io[p++];
-        int nc = g_io[p++];
-        if (nc < 0 || nc > ANIM_MAX_CARDS || cpool + nc > (int)(sizeof(ev_cards)/sizeof(ev_cards[0])))
-            return ANIM_ECAP;
-        events[e].type = type;
-        events[e].seat = ANIM_SEAT_NONE;
-        events[e].from = ANIM_LOC_NONE;
-        events[e].to = ANIM_LOC_NONE;
-        events[e].mask_cards = 0;
-        events[e].cards = &ev_cards[cpool];
-        events[e].n_cards = nc;
-        for (int k = 0; k < nc; k++) ev_cards[cpool++] = card_from_wire_pair(g_io[p++]);
-    }
-    AnimFinalState fin;
-    for (int i = 0; i < MAX_PLAYERS; i++) fin.hand_length[i] = 0;
-    fin.defender = defender;   // caller passes -1 for "none"
-    fin.n_players = MAX_PLAYERS;
-    if (defender >= 0 && defender < MAX_PLAYERS) fin.hand_length[defender] = defender_hand;
-    fin.final_uncovered_attacks = final_uncovered;
-
-    static AnimResolve r;
-    int rc = anim_resolve_unconfirmed_attack_covers(pending, n_pending, server, n_server,
-                                                    events, n_events, &fin, &r);
-    if (rc != ANIM_EOK) return rc;
-    int o = 0;
-    g_io[o++] = (unsigned char)r.n_revert;
-    g_io[o++] = (unsigned char)r.n_merge;
-    g_io[o++] = (unsigned char)r.n_clear;
-    for (int i = 0; i < r.n_revert; i++) g_io[o++] = (unsigned char)r.revert[i];
-    for (int i = 0; i < r.n_merge; i++)  g_io[o++] = (unsigned char)r.merge[i];
-    for (int i = 0; i < r.n_clear; i++)  g_io[o++] = (unsigned char)r.clear[i];
-    return o;
-}
 
 // anim_build_plan (the count-freeze + veil + timing). g_io in:
 //   [0 .. n_players)   final_hand counts (u8 each)

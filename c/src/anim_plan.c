@@ -583,13 +583,12 @@ int anim_resolve_unconfirmed_attack_covers(const AnimPending *pending, int n_pen
     AnimConflictFacts f;
     f.incoming_moved = f.table_at_open = f.my_hand_at_open = 0;
     int table_cleared = 0;
-    for (int e = 0; e < n_events; e++) {
-        if (events[e].type != ANIM_EVT_PICKUP && events[e].type != ANIM_EVT_CARDS_TO_TRASH)
-            continue;
-        table_cleared = 1;
-        for (int k = 0; k < events[e].n_cards; k++)
-            if (events[e].cards) f.incoming_moved |= conflict_bit(card_to_id(events[e].cards[k]));
-    }
+    int moved[ANIM_MAX_CARD_POOL];
+    const int n_moved = anim_conflict_sweep(events, n_events, moved,
+                                            (int)(sizeof moved / sizeof moved[0]),
+                                            &table_cleared);
+    if (n_moved < 0) return n_moved;
+    for (int i = 0; i < n_moved; i++) f.incoming_moved |= conflict_bit(moved[i]);
     for (int i = 0; i < n_server_table; i++)
         f.table_at_open |= conflict_bit(card_to_id(server_table[i]));
 
@@ -636,6 +635,35 @@ int anim_resolve_unconfirmed_attack_covers(const AnimPending *pending, int n_pen
 // See anim_plan.h. The three sets are u64 bitsets over dense card ids, so every
 // membership test here is one shift and one and.
 
+
+// The sweep, from the arriving stream's own events. See anim_plan.h: the
+// "pickup or trash" test is the rule that sets table_cleared, so it is written
+// once here and both doors onto the conflict model come through it. It used to
+// be inline in anim_resolve_unconfirmed_attack_covers, which meant the web's
+// wasm entry re-derived it in TypeScript.
+int anim_conflict_sweep(const AnimEvent *events, int n_events,
+                        int *moved_out, int cap, int *table_cleared_out) {
+    if (n_events < 0 || (n_events > 0 && !events)) return ANIM_EBADARG;
+    if (cap < 0 || (cap > 0 && !moved_out)) return ANIM_EBADARG;
+    int cleared = 0, n = 0;
+    for (int e = 0; e < n_events; e++) {
+        if (events[e].type != ANIM_EVT_PICKUP && events[e].type != ANIM_EVT_CARDS_TO_TRASH)
+            continue;
+        // The sweep happened even if it named no card this viewer can see.
+        cleared = 1;
+        if (!events[e].cards) continue;
+        // A masked back names nothing, so it cannot make anything CLEAR.
+        if (events[e].mask_cards) continue;
+        for (int k = 0; k < events[e].n_cards; k++) {
+            const int id = card_to_id(events[e].cards[k]);
+            if (id < 0 || id >= 52) continue;
+            if (n >= cap) return ANIM_ECAP;
+            moved_out[n++] = id;
+        }
+    }
+    if (table_cleared_out) *table_cleared_out = cleared;
+    return n;
+}
 
 int anim_conflict_facts(const int *moved_ids, int n_moved,
                         const unsigned char *open_table, int n_open_battles,

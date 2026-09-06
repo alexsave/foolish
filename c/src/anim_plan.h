@@ -614,6 +614,21 @@ typedef struct {
     uint64_t my_hand_at_open;   // identities in MY hand on that board
 } AnimConflictFacts;
 
+// THE ARRIVING STREAM'S SWEEP, derived from its own events: which identities it
+// moves, and whether it took the table away.
+//
+// A pickup or a trash names the cards it carries off, and those are exactly the
+// ones a revert would fly home out of somebody else's hand; anything else moves
+// nothing this rule cares about. That "pickup or trash" test IS the rule - it
+// decides table_cleared, which short-circuits the server transport's hope - so
+// it is stated once, here, and every caller derives its facts through it rather
+// than restating the two event types.
+//
+// `moved_out` receives up to `cap` dense ids (a masked back names nothing and is
+// dropped). Returns the number written, or ANIM_ECAP / ANIM_EBADARG.
+int anim_conflict_sweep(const AnimEvent *events, int n_events,
+                        int *moved_out, int cap, int *table_cleared_out);
+
 // Build the facts from what an arrival already carries. `moved_ids` are the
 // stream's cards (ANIM_CARD_NONE entries are masked backs, which name nothing
 // and are dropped); `open_table` is the opening board's table in the 2-bytes-

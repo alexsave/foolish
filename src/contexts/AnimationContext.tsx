@@ -13,7 +13,8 @@ import { base64ToBytes } from '@sdk/ts/wire/bytes.ts';
 import { getTableCards, cardsIntersection, getCardKeyPlayerId, createCardEventString, getCardKey } from '../utils/animationUtils';
 import { animationFeed } from '../state/animationFeed';
 import { staleOptimisticKeysOnTable } from '../state/optimisticAnimation';
-import { resolveUnconfirmedAttackCovers, resolveConflictMotions } from '../state/optimisticConflicts';
+import { resolveUnconfirmedAttackCovers, resolveConflictMotions, conflictEvents } from '../state/optimisticConflicts';
+import { ANIM_DEST } from '@sdk/ts/wasm/bots.ts';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { shouldDropStaleSequence } from '../state/clientReconcile';
 import { noteAuthoritativeVersion } from '../state/authoritativeVersion';
@@ -451,9 +452,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             // is CLEAR and one standing on its opening table is KEEP, and reverting
             // either is the flicker c/src/anim_plan.h opens by describing.
             const passCardsToRevert = resolveConflictMotions(
-                passCards.map((card) => ({ card, dest: 'table' as const })),
+                passCards.map((card) => ({ card, dest: ANIM_DEST.table })),
                 {
-                    events: message.events,
+                    events: conflictEvents(message.events),
                     openTable: serverState?.table_battles ?? [],
                     myHand: serverState?.self?.hand ?? [],
                     defenderHand: nextDefenderHandSize,
@@ -542,11 +543,11 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 const doomed = resolveConflictMotions(
                     myOptimisticAttackCovers.map((card) => ({
                         card,
-                        dest: 'table' as const,
+                        dest: ANIM_DEST.table,
                         isCover: myOptimisticCoverKeys.has(getCardKey(card)),
                     })),
                     {
-                        events: message.events,
+                        events: conflictEvents(message.events),
                         openTable: serverState?.table_battles ?? [],
                         myHand: serverState?.self?.hand ?? [],
                         defenderHand: newDefenderHandSize,
@@ -585,9 +586,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             // The FLIGHT is the caller's - anim_plan.h says so - and the web's
             // caller needs this one.
             const pickupVerdicts = resolveConflictMotions(
-                myOptimisticPickups.map((card) => ({ card, dest: 'hand' as const })),
+                myOptimisticPickups.map((card) => ({ card, dest: ANIM_DEST.hand })),
                 {
-                    events: message.events,
+                    events: conflictEvents(message.events),
                     openTable: serverState?.table_battles ?? [],
                     myHand: serverState?.self?.hand ?? [],
                     defenderHand: 0,

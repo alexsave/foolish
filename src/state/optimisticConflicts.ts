@@ -16,8 +16,10 @@
 
 import { Card } from '@api/core/types.ts';
 import { getCardKey } from '../utils/animationUtils';
-import { animConflictVerdicts, ANIM_DEST, AnimConflictVerdict } from '@sdk/ts/wasm/bots.ts';
-import { Battle } from '@api/core/types.ts';
+import {
+    animConflictVerdicts, animEventTypeCode, ANIM_DEST,
+    AnimConflictInputs, AnimConflictMotion, AnimConflictVerdict,
+} from '@sdk/ts/wasm/bots.ts';
 
 export interface AttackCoverResolution {
     /** Optimistic attack/cover cards to fly back to hand (genuinely never accepted). */
@@ -79,11 +81,11 @@ export function resolveUnconfirmedAttackCovers(
     const r = resolveConflictMotions(
         myOptimisticAttackCovers.map((card) => ({
             card,
-            dest: 'table' as const,
+            dest: ANIM_DEST.table,
             isCover: myOptimisticCoverKeys ? myOptimisticCoverKeys.has(getCardKey(card)) : false,
         })),
         {
-            events,
+            events: conflictEvents(events),
             openTable: serverTableCards.map((attack) => ({ attack, defense: null })),
             myHand: [],
             defenderHand,
@@ -93,32 +95,10 @@ export function resolveUnconfirmedAttackCovers(
     return { revert: r.revert, merge: r.keep, clear: r.clear };
 }
 
-/** One optimistic motion awaiting a verdict: which card, and where it landed. */
-export interface PendingMotion {
-    card: Card;
-    /** 'table' for an attack/cover/pass; 'hand' for a pickup. */
-    dest: 'table' | 'hand';
-    /** The defender's own play. Capacity is an ATTACK rule and excludes it. */
-    isCover?: boolean;
-}
-
-/** What the arriving broadcast shows, as the conflict rule reads it. */
-export interface BroadcastContext {
-    /** The broadcast's animation events. */
-    events: AnimEvent[];
-    /** The table of the board it opens on. */
-    openTable: Battle[];
-    /** My hand on that board. */
-    myHand: Card[];
-    /** The hand size the capacity rule measures against - the FINAL defender for
-     *  a pending attack, the NEXT defender for a pass being judged. */
-    defenderHand: number;
-    /** Uncovered attacks that board shows. */
-    finalUncovered: number;
-    /** My still-unconfirmed attacks, covers excluded. Defaults to the number of
-     *  non-cover motions passed in. */
-    pendingAttacks?: number;
-}
+/** The app's animation events as the kernel reads them: a type code and the
+ *  cards. Which of them SWEEP is the kernel's call, not this file's. */
+export const conflictEvents = (events: AnimEvent[]): AnimConflictInputs['events'] =>
+    events.map((e) => ({ type: animEventTypeCode(e.type), cards: e.cards ?? [] }));
 
 /**
  * THE CONFLICT VERDICT for a set of motions, straight from the kernel
@@ -131,41 +111,30 @@ export interface BroadcastContext {
  * TypeScript that checked only capacity, so they had none of the rule's
  * precedence (CLEAR before the standing sets), its pool rule or its masked-back
  * rule - which is the flicker c/src/anim_plan.h opens by describing.
+ *
+ * The motions and inputs are the kernel's own shapes (AnimConflictMotion /
+ * AnimConflictInputs). There is no second set of types here to keep in step
+ * with them, and no sweep derivation either: the events go in whole and
+ * anim_conflict_sweep decides which of them took the table away.
+ *
+ * `pendingAttacks` defaults to the non-cover motions, which is what every
+ * caller means by it; pass a value only to override.
  */
 export function resolveConflictMotions(
-    motions: PendingMotion[], ctx: BroadcastContext,
+    motions: AnimConflictMotion[],
+    inputs: Omit<AnimConflictInputs, 'pendingAttacks'> & { pendingAttacks?: number },
 ): { revert: Card[]; keep: Card[]; clear: Card[] } {
     const out: { revert: Card[]; keep: Card[]; clear: Card[] } = { revert: [], keep: [], clear: [] };
     if (motions.length === 0) return out;
 
-    // What the arriving stream MOVES is its sweep: a pickup or a trash names the
-    // cards it carries off. Same derivation the bundled entry makes in C.
-    const SWEEPS = new Set(['pickup', 'cards_to_trash']);
-    const movedCards: Card[] = [];
-    let tableCleared = false;
-    for (const evt of ctx.events) {
-        if (!evt.type || !SWEEPS.has(evt.type)) continue;
-        tableCleared = true;
-        for (const c of evt.cards ?? []) movedCards.push(c);
-    }
-
-    const verdicts: AnimConflictVerdict[] = animConflictVerdicts(
-        motions.map((m) => ({
-            card: m.card,
-            dest: m.dest === 'hand' ? ANIM_DEST.hand : ANIM_DEST.table,
-            isCover: m.isCover,
-        })),
-        {
-            movedCards,
-            openTable: ctx.openTable,
-            myHand: ctx.myHand,
-            tableCleared,
-            pendingAttacks: ctx.pendingAttacks ?? motions.filter((m) => !m.isCover).length,
-            defenderHand: ctx.defenderHand,
-            finalUncovered: ctx.finalUncovered,
-        });
-
-    verdicts.forEach((v, i) => out[v === 'keep' ? 'keep' : v].push(motions[i].card));
+    const verdicts: AnimConflictVerdict[] = animConflictVerdicts(motions, {
+        ...inputs,
+        pendingAttacks: inputs.pendingAttacks ?? motions.filter((m) => !m.isCover).length,
+    });
+    verdicts.forEach((v, i) => {
+        const card = motions[i].card;
+        if (card) out[v === 'keep' ? 'keep' : v].push(card);
+    });
     return out;
 }
 

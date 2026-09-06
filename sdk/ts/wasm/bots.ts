@@ -66,8 +66,8 @@ interface BotsExports extends EngineExports {
     wasm_anim_stale_optimistic(nOpt: number, nTable: number, nNamed: number): number;
     wasm_anim_build_plan(nEvents: number, nPlayers: number, finalDeck: number, finalDiscard: number): number;
     wasm_anim_finish_rows(nElim: number, gameOver: number, nPlayers: number, mySeat: number): number;
-    wasm_anim_conflict_verdicts(tableCleared: number, pendingAttacks: number,
-                                defenderHand: number, finalUncovered: number): number;
+    wasm_anim_conflict_verdicts(pendingAttacks: number, defenderHand: number,
+                                finalUncovered: number): number;
     wasm_anim_set_transport(transport: number): number;
     wasm_anim_transport(): number;
 }
@@ -1592,16 +1592,24 @@ export interface AnimConflictMotion {
     isCover?: boolean;
 }
 
+/** One event of the arriving broadcast, as the conflict rule reads it. Which
+ *  events SWEEP - and so whether the table was cleared - is the kernel's to
+ *  decide (anim_conflict_sweep); this hands it the stream, not a verdict. */
+export interface AnimConflictEvent {
+    type: number;            // ANIM_EVT_* (animEventTypeCode)
+    cards?: (Card | null)[];
+    masked?: boolean;        // viewer-masked backs: they name nothing
+}
+
 /** What the arriving broadcast vouches for, and the server transport's extra
  *  question (anim_plan.h AnimServerHope). */
 export interface AnimConflictInputs {
-    /** Cards the arriving stream itself moves - its pickup/trash sweep. */
-    movedCards: (Card | null)[];
+    /** The arriving stream's own events. The sweep is derived from these. */
+    events: AnimConflictEvent[];
     /** The table of the board it opens on; both sides of a battle stand. */
     openTable: Battle[];
     /** My hand on that board. */
     myHand: Card[];
-    tableCleared: boolean;
     pendingAttacks: number;
     defenderHand: number;
     finalUncovered: number;
@@ -1609,13 +1617,14 @@ export interface AnimConflictInputs {
 
 /**
  * THE CONFLICT VERDICT per motion (anim_plan.h anim_conflict_facts +
- * anim_conflict_verdict), server transport.
+ * anim_conflict_verdict), server transport. The one door: every shape
+ * AnimationContext asks about - a pending attack/cover, a pass, my attacks
+ * after a pass moved the shield, a pickup that landed in my hand - comes
+ * through here.
  *
- * `animResolveUnconfirmed` below answers this for one shape - pending
- * attacks/covers that all landed on the table, against the final board's
- * defender. This is the same rule with every input open, for the callers that
- * ask it about a pass, about the defender a pass just installed, or about cards
- * that landed in my hand.
+ * The stream goes in as EVENTS. Deciding which of them sweep the table is part
+ * of the rule, not part of the marshal, and it lived in TypeScript until the
+ * kernel grew anim_conflict_sweep.
  */
 export function animConflictVerdicts(
     motions: AnimConflictMotion[], inputs: AnimConflictInputs,
@@ -1624,8 +1633,14 @@ export function animConflictVerdicts(
     const ex = bots();
     const buf = __mem(ex);
     let p = ex.wasm_io_ptr();
-    buf[p++] = inputs.movedCards.length & 0xff;
-    for (const c of inputs.movedCards) buf[p++] = c ? __wireStateCard(c) : ANIM_TABLE_NONE;
+    buf[p++] = inputs.events.length & 0xff;
+    for (const e of inputs.events) {
+        const cards = e.cards ?? [];
+        buf[p++] = e.type & 0xff;
+        buf[p++] = e.masked ? 1 : 0;
+        buf[p++] = cards.length & 0xff;
+        for (const c of cards) buf[p++] = c ? __wireStateCard(c) : ANIM_TABLE_NONE;
+    }
     buf[p++] = inputs.openTable.length & 0xff;
     for (const b of inputs.openTable) {
         buf[p++] = __wireStateCard(b.attack);
@@ -1640,8 +1655,7 @@ export function animConflictVerdicts(
         buf[p++] = m.isCover ? 1 : 0;
     }
     const n = ex.wasm_anim_conflict_verdicts(
-        inputs.tableCleared ? 1 : 0, inputs.pendingAttacks,
-        inputs.defenderHand, inputs.finalUncovered);
+        inputs.pendingAttacks, inputs.defenderHand, inputs.finalUncovered);
     if (n < 0) throw new Error(`anim_conflict_verdicts error ${n}`);
     const out = __mem(ex);
     const ob = ex.wasm_io_ptr();

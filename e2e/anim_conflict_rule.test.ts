@@ -40,8 +40,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-    animConflictVerdicts, ANIM_DEST, ANIM_TRANSPORT_SERVER, __setAnimTransport,
-    AnimConflictMotion, AnimConflictInputs,
+    animConflictVerdicts, animEventTypeCode, ANIM_DEST, ANIM_TRANSPORT_SERVER,
+    __setAnimTransport, AnimConflictMotion, AnimConflictInputs,
 } from '../sdk/ts/wasm/bots.ts';
 import { Card, Battle } from '../server/api/core/types.ts';
 
@@ -54,10 +54,17 @@ __setAnimTransport(ANIM_TRANSPORT_SERVER);
 
 /** Inputs with nothing vouched for: every card reverts unless a rule saves it. */
 const bare = (over: Partial<AnimConflictInputs> = {}): AnimConflictInputs => ({
-    movedCards: [], openTable: [], myHand: [],
-    tableCleared: false, pendingAttacks: 0, defenderHand: 6, finalUncovered: 0,
+    events: [], openTable: [], myHand: [],
+    pendingAttacks: 0, defenderHand: 6, finalUncovered: 0,
     ...over,
 });
+
+// A sweep, as the stream states it. tableCleared and the moved set are no longer
+// inputs: the kernel derives both from these events (anim_conflict_sweep), which
+// is the point of this shape - a test cannot hand the rule a table it says was
+// cleared by a stream that never swept it.
+const sweep = (...cards: Card[]) => [{ type: animEventTypeCode('pickup'), cards }];
+const trash = (...cards: Card[]) => [{ type: animEventTypeCode('cards_to_trash'), cards }];
 
 test('CLEAR beats the standing sets - the precedence the TS copies had no notion of', () => {
     // The card is BOTH moved by the arriving stream (a pickup sweeps it) and
@@ -67,7 +74,7 @@ test('CLEAR beats the standing sets - the precedence the TS copies had no notion
     const card = C(0, 9);
     const v = animConflictVerdicts(
         [{ card, dest: ANIM_DEST.table }],
-        bare({ movedCards: [card], openTable: [B(card)], tableCleared: true }));
+        bare({ events: sweep(card), openTable: [B(card)] }));
     assert.deepEqual(v, ['clear'], 'a card the incoming stream moves is CLEAR');
 });
 
@@ -135,7 +142,7 @@ test('a cleared table refuses everything it did not name', () => {
     // the sweep did not name never reached it.
     assert.deepEqual(
         animConflictVerdicts([{ card: C(1, 6), dest: ANIM_DEST.table }],
-            bare({ tableCleared: true, defenderHand: 52 })),
+            bare({ events: trash(), defenderHand: 52 })),
         ['revert'], 'capacity cannot rescue a card off a table that is gone');
 });
 
@@ -149,11 +156,43 @@ test('CLEAR spares a flight only when the card already stands where the replay s
     // verdict about doom, not about flights - and anim_plan.h leaves the flight
     // to the caller.
     const card = C(0, 8);
-    const swept = bare({ movedCards: [card], openTable: [B(card)], tableCleared: true });
+    const swept = bare({ events: sweep(card), openTable: [B(card)] });
     assert.deepEqual(animConflictVerdicts([{ card, dest: ANIM_DEST.table }], swept), ['clear'],
         'a card my attack put on the table: the sweep takes it from where it is');
     assert.deepEqual(animConflictVerdicts([{ card, dest: ANIM_DEST.hand }], swept), ['clear'],
         'a card my pickup put in my hand: same verdict, but the web must fly it back first');
+});
+
+test('the SWEEP is the kernel\'s to name: only a pickup or a trash clears the table', () => {
+    // The rule that used to live in TypeScript as `new Set(['pickup',
+    // 'cards_to_trash'])`. A stream of ordinary placements moves nothing and
+    // clears nothing, so a card it does not account for is judged on capacity
+    // alone - it is NOT doomed by a table that was never swept.
+    const card = C(2, 6);
+    const fits = { pendingAttacks: 1, finalUncovered: 0, defenderHand: 6 };
+
+    const busy = [
+        { type: animEventTypeCode('attack_pass'), cards: [C(0, 3)] },
+        { type: animEventTypeCode('cover'), cards: [C(1, 4)] },
+        { type: animEventTypeCode('refill'), cards: [C(3, 2)] },
+    ];
+    assert.deepEqual(
+        animConflictVerdicts([{ card, dest: ANIM_DEST.table }], bare({ events: busy, ...fits })),
+        ['keep'], 'no sweep in the stream, so capacity still has the last word');
+
+    // The same stream with a trash appended: now the table IS gone, and the
+    // card the trash did not name never reached it.
+    assert.deepEqual(
+        animConflictVerdicts([{ card, dest: ANIM_DEST.table }],
+            bare({ events: [...busy, ...trash(C(0, 3))], ...fits })),
+        ['revert'], 'a sweep short-circuits hope, even with room to spare');
+
+    // A sweep that names the card itself is CLEAR, not REVERT - and the kernel
+    // reads that off the same events.
+    assert.deepEqual(
+        animConflictVerdicts([{ card, dest: ANIM_DEST.table }],
+            bare({ events: [...busy, ...trash(card)], ...fits })),
+        ['clear'], 'the sweep carries this very card off');
 });
 
 test('verdicts come back per motion, in input order', () => {
@@ -163,8 +202,8 @@ test('verdicts come back per motion, in input order', () => {
         { card: standing, dest: ANIM_DEST.table },
         { card: swept, dest: ANIM_DEST.table },
     ], bare({
-        movedCards: [swept], openTable: [B(standing)],
-        tableCleared: true, pendingAttacks: 1, defenderHand: 0,
+        events: sweep(swept), openTable: [B(standing)],
+        pendingAttacks: 1, defenderHand: 0,
     }));
     assert.deepEqual(v, ['revert', 'keep', 'clear'], 'one verdict per motion, in order');
 });
