@@ -231,7 +231,7 @@ if (!process.env.VALIDATION_ONLY) {
         await assert.rejects(runMeta(gameId, h1, { type: 'update-name', game_id: gameId, new_name: 'x'.repeat(51) }), /50 characters/i);
     });
 
-    test('create_game RPC — creates games + game_decks + player_hands in one call', async () => {
+    test('create_game RPC — creates games + player_hands membership in one call', async () => {
         const gameId = `c${uuid().slice(0, 5)}`;
         const creator = uuid();
         await pgPool.query('INSERT INTO auth.users(id) VALUES($1) ON CONFLICT DO NOTHING', [creator]);

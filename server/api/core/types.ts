@@ -129,7 +129,7 @@ export interface PublicPlayer {
 
 export interface PrivatePlayer extends PublicPlayer {
     hand: Card[];
-    awaiting_attack: boolean; // private info stored in player_hands table
+    awaiting_attack: boolean; // private turn state; lives in the kernel blob
     strategy_key: string; // strategy key for bots so we don't need to load the bot table too. just "human" for players
 }
 

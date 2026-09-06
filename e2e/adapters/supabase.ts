@@ -77,7 +77,7 @@ export const e2ePool = pool;
 
 // Primary-key columns per table, for upsert conflict targets when not specified.
 const PK: Record<string, string> = {
-    games: 'id', game_decks: 'game_id', player_hands: 'game_id,player_id',
+    games: 'id', player_hands: 'game_id,player_id',
     bot_hands: 'game_id,bot_id', bots: 'id',
     user_elo_ratings: 'user_id', game_snapshots: 'id',
 };
@@ -86,7 +86,7 @@ type Result = { data: any; error: any };
 const ok = (data: any): Result => ({ data, error: null });
 
 // Build the nested object loadCompleteGame expects from its PostgREST embed:
-//   games row + game_decks(object) + player_hands[] + bot_hands[].bots.
+//   games row + player_hands[] + bot_hands[].bots.
 // No game_logs: the production select doesn't embed them (logs are loaded
 // lazily, only at game end), so the shim shouldn't pay for them either.
 async function loadGamesEmbed(id: string): Promise<Result> {
@@ -95,13 +95,12 @@ async function loadGamesEmbed(id: string): Promise<Result> {
         await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
         const g = (await c.query('SELECT * FROM games WHERE id=$1', [id])).rows[0];
         if (!g) { await c.query('ROLLBACK'); return { data: null, error: { code: 'PGRST116', message: 'no rows' } }; }
-        const deck = (await c.query('SELECT deck FROM game_decks WHERE game_id=$1', [id])).rows[0] ?? { deck: [] };
-        const ph = (await c.query('SELECT player_id, hand, awaiting_attack FROM player_hands WHERE game_id=$1', [id])).rows;
+        const ph = (await c.query('SELECT player_id FROM player_hands WHERE game_id=$1', [id])).rows;
         const bh = (await c.query(
-            `SELECT bh.bot_id, bh.hand, bh.awaiting_attack, jsonb_build_object('strategy_key', b.strategy_key) AS bots
+            `SELECT bh.bot_id, jsonb_build_object('strategy_key', b.strategy_key) AS bots
              FROM bot_hands bh JOIN bots b ON b.id = bh.bot_id WHERE bh.game_id=$1`, [id])).rows;
         await c.query('COMMIT');
-        return ok({ ...g, game_decks: deck, player_hands: ph, bot_hands: bh });
+        return ok({ ...g, player_hands: ph, bot_hands: bh });
     } catch (e) {
         try { await c.query('ROLLBACK'); } catch { /* */ }
         return { data: null, error: e };

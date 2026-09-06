@@ -87,13 +87,11 @@ export async function checkCardConservation(gameId: string): Promise<{ ok: boole
         });
         for (const c of game.deck) live.push(c);
         for (const p of game.players) for (const c of p.hand) live.push(c);
-    } else {
-        const deck = (await pgPool.query('SELECT deck FROM game_decks WHERE game_id=$1', [gameId])).rows[0]?.deck ?? [];
-        const ph = (await pgPool.query('SELECT hand FROM player_hands WHERE game_id=$1', [gameId])).rows;
-        const bh = (await pgPool.query('SELECT hand FROM bot_hands WHERE game_id=$1', [gameId])).rows;
-        for (const c of deck) live.push(c);
-        for (const r of [...ph, ...bh]) for (const c of (r.hand ?? [])) live.push(c);
     }
+    // No `else`: without a blob the game is a lobby, and a lobby holds no cards.
+    // This used to sum player_hands.hand / bot_hands.hand / game_decks.deck,
+    // which were dropped as write-only (migration 20260906120000) - and for a
+    // lobby they were empty anyway, so the conservation sum is unchanged.
     if (g.flipped) live.push(g.flipped);
     for (const b of (g.table_battles ?? [])) { live.push(b.attack); if (b.defense) live.push(b.defense); }
 
