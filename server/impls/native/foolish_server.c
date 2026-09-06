@@ -1429,14 +1429,15 @@ static void h_create(Req *r, Conn *conn) {
     pthread_mutex_unlock(&g_registry_lock);   // registry work done; the rest is s->lock-only
 
     snprintf(s->owner, sizeof s->owner, "%s", user_id);
-    // Seat 0 = creator. Identity lives here; the kernel state is dealt at start.
-    Game *g = &s->game; g->num_players = 1; g->status = GAME_STATUS_WAITING;
+    // Seat 0 = creator, seated by the same kernel call every other join uses.
+    // Identity lives here; the board is dealt at start.
+    Game *g = &s->game;
+    g->status = GAME_STATUS_WAITING;   // a fresh slot is zeroed, so say what it is
+    game_lobby_seat(g, STRATEGY_KEY_HUMAN);
     snprintf(s->seat_user[0], ID_LEN + 1, "%s", user_id);
     snprintf(s->seat_name[0], 24, "%s", username);
     snprintf(g->players[0].name, 24, "%s", username);
     snprintf(g->players[0].player_id, 24, "%s", user_id);
-    g->players[0].status = PLAYER_STATUS_IDLE;
-    g->players[0].strategy_key = STRATEGY_KEY_HUMAN;   // the creator is a human seat
     game_mark_dirty(s);
     char out[80]; snprintf(out, sizeof out, "{\"game_id\":\"%s\"}", s->id);
     pthread_mutex_unlock(&s->lock);
@@ -1460,55 +1461,45 @@ static void h_meta(Req *r, Conn *conn) {
 
     Game *g = &s->game;
     if (!strcmp(type, "join")) {
-        if (seat_of(s, user_id) < 0 && g->num_players < MAX_PLAYERS && g->status == GAME_STATUS_WAITING) {
-            int i = g->num_players++;
+        // Whether there is room, and what a human seat starts as, are the
+        // kernel's (game_lobby_seat). Identity is this server's.
+        const int i = seat_of(s, user_id) < 0 ? game_lobby_seat(g, STRATEGY_KEY_HUMAN) : -1;
+        if (i >= 0) {
             snprintf(s->seat_user[i], ID_LEN + 1, "%s", user_id);
             snprintf(s->seat_name[i], 24, "%s", username);
             snprintf(g->players[i].name, 24, "%s", username);
             snprintf(g->players[i].player_id, 24, "%s", user_id);
-            g->players[i].status = PLAYER_STATUS_IDLE;
-            g->players[i].strategy_key = STRATEGY_KEY_HUMAN;   // a human seat
         }
     } else if (!strcmp(type, "add-bot")) {
         char skey[24] = {0}; if (!json_str(r->body, "strategy", skey, sizeof skey)) snprintf(skey, sizeof skey, "random");
-        if (g->num_players < MAX_PLAYERS && g->status == GAME_STATUS_WAITING) {
-            int i = g->num_players++;
+        int ridx = bot_roster_find(skey);
+        if (ridx < 0) ridx = bot_roster_find("random");
+        const BotRosterEntry *entry = bot_roster_at(ridx);
+        // Same seating rule, the other kind: game_lobby_seat lands a bot READY
+        // because a bot always is. That asymmetry used to be written out here.
+        //
+        // The kind is the roster entry's OWN `.strat` - a STRAT_* brain id by
+        // kernel-wide convention (strategy.h), NOT the roster ARRAY INDEX
+        // bot_roster_find returns. Passing the index here once meant
+        // bot_drive.c read it back as a brain: a seat that matched no entry
+        // never moved at all (octogen), and one that collided with another
+        // entry's id silently played that bot instead (gunpowder's index 6 is
+        // STRAT_BLACKPOWDER).
+        const int i = game_lobby_seat(g, entry ? (int)entry->strat : (int)STRAT_RANDOM);
+        if (i >= 0) {
             s->seat_ready[i] = true;
-            int ridx = bot_roster_find(skey);
-            if (ridx < 0) ridx = bot_roster_find("random");
-            const BotRosterEntry *entry = bot_roster_at(ridx);
             snprintf(s->seat_name[i], 24, "%%%s %d", skey, i);
             snprintf(g->players[i].name, 24, "%s", s->seat_name[i]);
             snprintf(g->players[i].player_id, 24, "bot%d", i);
-            g->players[i].status = PLAYER_STATUS_READY;
-            // Stage 4 fix: the kernel's own seat-kind convention is a
-            // STRAT_* brain id (strategy.h), NOT a bot_roster.h array
-            // index — bot_drive.c's choose_move says so directly
-            // ("Seats carry a STRAT_* id by kernel-wide convention... the
-            // roster entry is resolved back from the brain" via
-            // bot_roster_find_by_strat). This used to store `ridx` (the
-            // roster INDEX bot_roster_find returns) here directly, which
-            // bot_drive.c then read back AS IF it were a STRAT_* id —
-            // silently either matching no roster entry at all (that seat's
-            // bot_drive_eligible check always fails: BOT_STOP_NO_ELIGIBLE
-            // forever, a game with a bot in it that never moves — confirmed
-            // by a standalone repro for "octogen": bot_roster_find_by_strat
-            // (its roster index, 9) resolves to -1, since no roster entry's
-            // own `.strat` happens to be 9) or, for a few names, matching a
-            // DIFFERENT roster entry's `.strat` and silently running THAT
-            // bot's brain instead (e.g. "gunpowder"'s index (6) equals
-            // "blackpowder"'s STRAT_BLACKPOWDER (6) — a gunpowder seat would
-            // have silently played blackpowder). The roster entry's OWN
-            // `.strat` field is the actual kernel brain id; use it.
-            g->players[i].strategy_key = entry ? (int8_t)entry->strat : (int8_t)STRAT_RANDOM;
         }
     } else if (!strcmp(type, "start")) {
-        int me = seat_of(s, user_id);
-        if (me >= 0) { s->seat_ready[me] = true; g->players[me].status = PLAYER_STATUS_READY; }
-        // Deal once every seated human is ready (bots are always ready) and 2+ seated.
-        bool all = g->num_players >= 2;
-        for (int i = 0; i < g->num_players; i++) if (!seat_is_bot(g, i) && !s->seat_ready[i]) all = false;
-        if (all && g->status == GAME_STATUS_WAITING) {
+        const int me = seat_of(s, user_id);
+        if (me >= 0) { s->seat_ready[me] = true; game_lobby_ready(g, me); }
+        // Whether a lobby may deal is game_lobby_can_deal's. This used to be
+        // ">= 2 seats and every non-bot seat's seat_ready flag", which is the
+        // same answer only because bots are seated READY - a coincidence of
+        // two implementations that one implementation need not rely on.
+        if (game_lobby_can_deal(g)) {
             unsigned char seed[32]; for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(next_rand() ^ (i * 131 + (int)g_seq));
             // No g_kernel_lock (Stage 5, see "Locking" above): the deal RNG
             // state game_set_deal_seed_bytes/game_seat_and_deal touch is
@@ -1522,15 +1513,21 @@ static void h_meta(Req *r, Conn *conn) {
             start_bot_loop(s);             // the game-loop paces bot play from here
         }
     } else if (!strcmp(type, "continue")) {
-        // Reset the kernel to the lobby for a rematch (identities kept, re-dealt
-        // on start). The host owns only this lobby transition; game-over was the
-        // kernel's to declare.
-        g->status = GAME_STATUS_WAITING;
+        // The rematch reset is game_reset_to_lobby's (game.c) - identities kept,
+        // re-dealt on start. This branch used to spell out its own, and spelled
+        // it SHORT: it set the seat statuses and the game status and left the
+        // board fields (deck, discard, flipped, trump, battles, eliminations,
+        // goods) standing until the next deal cleared them. Between the two, /ws
+        // serves that state to the lobby, so the finished round's table was
+        // still on screen. The host keeps only what is genuinely host state:
+        // seat_ready.
+        unsigned int bot_mask = 0;
         for (int i = 0; i < g->num_players; i++) {
             bool ai = seat_is_bot(g, i);
+            if (ai) bot_mask |= 1u << i;
             s->seat_ready[i] = ai;
-            g->players[i].status = ai ? PLAYER_STATUS_READY : PLAYER_STATUS_IDLE;
         }
+        game_reset_to_lobby(g, bot_mask);
     }
     // Every branch above either mutates the roster/lobby state or is a no-op
     // (an already-seated join, a re-ready), and bumping on a no-op is
@@ -1634,7 +1631,7 @@ static void h_state(Req *r, Conn *conn) {
 }
 
 // A plain status int (0 waiting / 1 playing / 2 over), for smoke tests that used
-// to read it off the JSON view. Not json_out — just an integer.
+// to read it off a JSON view. Just an integer.
 static void h_status(Req *r, Conn *conn) {
     char gid[ID_LEN + 1] = {0};
     const char *gp = strstr(r->query, "game_id=");

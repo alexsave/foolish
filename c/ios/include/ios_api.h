@@ -2,21 +2,24 @@
 //
 // This header IS the bridge contract.
 //
-// CORRECTED, 2026-09-05. It used to say, per docs/IOS_APP_DESIGN.md §16.0 "the
-// JSON bridge rule", that Swift never parses the kernel's packed binary formats
-// and that every piece of state crosses as JSON. Task #17 deliberately made that
-// false: production Swift decodes the PACKED wire for the masked view, the legal
-// menu, the replay and the message envelope (sdk/swift/MaskedView.swift,
-// DecodedReplay.swift, EvWire.swift, MessageEnvelope.swift), and
-// fio_state_json / fio_apply_json / fio_msg_decode_json were deleted outright.
+// EVERYTHING CROSSES AS PACKED BYTES. Swift decodes the wire directly for the
+// masked view, the legal menu, the replay and the message envelope
+// (sdk/swift/MaskedView.swift, DecodedReplay.swift, EvWire.swift,
+// MessageEnvelope.swift), and a new entry point here emits packed bytes into a
+// caller-provided buffer. docs/IOS_APP_DESIGN.md §16.0 once said the opposite,
+// that Swift never parses a binary format; it is wrong and this header is the
+// contract.
 //
-// The rule that actually survived is narrower, and it is the one that matters:
-// NO DURAK RULE IS REIMPLEMENTED IN SWIFT. Swift may read a layout the kernel
-// wrote; it may not decide anything the kernel could decide. A new entry point
-// here should emit PACKED bytes into a caller-provided buffer by default - JSON
-// only where a human reads the output.
+// THE BOT HALF IS NOT HERE. fio_set_seat_strategy, fio_bot_drive_packed,
+// fio_strategy_count and fio_strategy_name are declared by
+// ios/include-bots/ios_bots_api.h and live in FoolishBots.xcframework, because
+// naming any of them links the strategy ladder - about 70% of the native kernel
+// by size. The iMessage extension plays people and links only this half. The
+// two share ONE resident game through fio_resident_game (ios/ios_internal.h).
 //
-// The one hard rule (§3): no Durak rule is ever reimplemented in Swift. Whose
+// The one hard rule (§3): no Durak rule is ever reimplemented in Swift. Swift
+// may read a layout the kernel wrote; it may not decide anything the kernel
+// could decide. Whose
 // turn, legal moves, capacity checks, refills — every rules question is
 // answered here, through the C kernel (game.c / legal.c / view.c / replay.c).
 // Swift renders state and forwards intents.
@@ -45,7 +48,7 @@ extern "C" {
 #define FIO_EBADARG     -1   // null pointer / bad player count / bad seat
 #define FIO_ENOGAME     -2   // no game created yet
 #define FIO_ECAP        -3   // output buffer too small
-#define FIO_EPARSE      -4   // could not parse the input JSON move
+#define FIO_EPARSE      -4   // input bytes did not decode (bad frame / format)
 #define FIO_EREJECT     -5   // move was rejected by the kernel (see fio_last_reject)
 #define FIO_ENOSTRAT    -6   // unknown strategy id
 #define FIO_EREPLAY     -7   // replay encode/decode failed (see fio_last_replay_error)
@@ -61,7 +64,8 @@ extern "C" {
 // reproducible on any platform (deal_rng.h). Fewer than 32 bytes falls back to
 // the legacy 32-bit LCG seed (first 4 bytes, little-endian) — used only by the
 // golden fixtures that pin the legacy stream. All seats start as human
-// (strategy 0); assign bots afterwards with fio_set_seat_strategy.
+// (strategy 0); assign bots afterwards with fio_set_seat_strategy
+// (ios_bots_api.h - a different library, see the note at the top).
 // n_players must be 2..8. Returns FIO_EOK or a negative error.
 int fio_new_game(const uint8_t *seed, int seed_len, int n_players);
 
@@ -97,30 +101,18 @@ int fio_set_passing(int passing);
 // The resident game's rules, as the same 1/0. 1 when nothing has said otherwise.
 int fio_passing_allowed(void);
 
-// Assign a strategy to a seat (offline bots). strategy_id is a FIO strategy id
-// (0..fio_strategy_count()-1, see fio_strategy_name). Seat 0 is conventionally
-// the local human but nothing enforces that. Safe to call any time before the
-// seat is asked to choose. Returns FIO_EOK or a negative error.
-int fio_set_seat_strategy(int seat, int strategy_id);
-
 // True once fio_new_game has succeeded.
 int fio_has_game(void);
 
 // ---------- observation ----------------------------------------------------
 
 // (Server packed-view blobs decode to a GameView in pure Swift via MaskedView,
-// and their legal moves come through the PACKED fio_legal_from_packed — so the
-// JSON packed-view bridges and the unused spectator-JSON reader are gone with
-// the JSON surface.)
+// and their legal moves come through the PACKED fio_legal_from_packed.)
 
-// Legal moves available to `seat` right now, as a JSON array. Empty array []
-// when the seat has no pending action.
-int fio_legal_moves_json(int seat, char *out, int cap);
-
-// PACKED (no-JSON) twins — the kernel wire Swift decodes directly (MaskedView /
-// MoveWire). fio_state_packed: the resident masked view (view.c state_put).
+// The kernel wire Swift decodes directly (MaskedView / MoveWire).
+// fio_state_packed: the resident masked view (view.c state_put).
 // fio_legal_packed / fio_legal_from_packed: legal moves (wasm_export_moves
-// layout) from the resident game or a server packed view. Owner: wipe the JSON.
+// layout) from the resident game or a server packed view.
 int fio_state_packed(int viewer, char *out, int cap);
 int fio_legal_packed(int seat, char *out, int cap);
 int fio_legal_from_packed(const uint8_t *buf, int len, int seat, char *out, int cap);
@@ -180,14 +172,9 @@ int fio_play_human_menu(const uint8_t *menu, int menu_len,
                         const uint8_t *table, int n_battles,
                         char *out, int cap);
 // Apply an awire action frame ([kind, n, cards, attacks]) — THE apply entry
-// (a plain move never crosses as JSON). Returns FIO_EREJECT on an illegal move
+// Returns FIO_EREJECT on an illegal move
 // (see fio_last_reject).
 int fio_apply_awire(int actor_seat, const uint8_t *buf, int len);
-
-// Drive one bot cycle, result packed (no JSON, no events): u32 n_actions, per
-// action {seat, pace, type, n_cards, cards[], attacks[]}, then i32 stop, ended,
-// delayMs (LE). The BotDriveWire Swift decoder reads it.
-int fio_bot_drive_packed(int human_mask, char *out, int cap);
 
 // Bitmask over seats (bit i => seat i has a pending legal action right now).
 // Mirrors should_bot_act across all seats — the single source of "whose turn".
@@ -198,48 +185,12 @@ int fio_game_over(void);
 
 // ---------- intents --------------------------------------------------------
 
-// (A move applies through fio_apply_awire, above — the JSON apply entry is gone.
-// The FMSG rebase path still parses a move from JSON, internally, via
-// fio_move_to_awire; see fio_msg_rebase.)
+// (A move applies through fio_apply_awire, above; the FMSG rebase path reads the
+// same frame - see fio_msg_rebase_awire.)
 
 // Kernel rejection reason from the last fio_apply_awire that returned
 // FIO_EREJECT (an ENGINE_REJECT_* value from game.h), else 0.
 int fio_last_reject(void);
-
-// The animation events of the LAST fio_apply_awire / fio_bot_drive_json, as seen
-// by `viewer` (a seat, or -1 for a spectator), e.g.
-//   [{"type":5,"seat":3,"msg":4,"from":1,"to":2,"cards":[...],
-//     "target":{...},"battle":0}]
-// type/msg/from/to are EVW_* codes (c/src/evwire.h) — the SAME event
-// stream the website plays, derived once in the kernel (evwire_walk). This is
-// why `BoardDiff.swift` is cancelled: a client never works out which card flew
-// where (docs/C_CORE_CONSOLIDATION.md F4). `cards` entries are null where the
-// kernel redacted them (a card dealt/drawn into someone else's hand).
-// Returns bytes written, or a negative error. fio_bot_drive_json already
-// includes its cycle's events inline; this is the apply-path companion.
-//
-// TODO(delete): JSON. We don't want JSON crossing this boundary — clients drive
-// animations off the PACKED replay/event stream (fio_replay_decode_packed ->
-// DecodedReplay.logs, the LOG_* steps). Delete this once the last JSON consumer
-// is off it.
-int fio_last_events_json(int viewer, char *out, int cap);
-
-// Drive the bot cycle (docs/C_CORE_CONSOLIDATION.md F2/F3): apply 0..n bot
-// actions and stop on the same conditions as the website's loop — game over, a
-// visible action landed, or no bot can act. Silent actions (a `good` that does
-// not end the bout) bundle into one cycle instead of costing a delay each.
-// `human_mask` is a bitmask of seats the kernel must NOT drive; a human being
-// able to act is NOT a stop condition (bots throw in while you deliberate,
-// exactly as they do online).
-//
-// Emits:
-//   {"actions":[{"seat":i,"pace":c,"type":...,"cards":[...]}...],
-//    "stop":s,"ended":foolSeatOr-1,"delayMs":ms}
-//
-// `delayMs` is how long the host should wait before the next cycle — the one
-// pacing table (bot_pacing_ms), not a Swift constant. Returns bytes written
-// (always > 0; "actions" may be empty), or a negative error.
-int fio_bot_drive_json(int human_mask, char *out, int cap);
 
 // ---------- animation core (c/src/anim_plan.h) -----------------------------
 //
@@ -606,32 +557,22 @@ int fio_finish_rows(const uint8_t *elimination, int n_elim, int game_over,
 #define FIO_CLAIM_BYSTANDER  3
 int fio_shown_ledger_allows(int claim, int sequencing);
 
-// ---------- strategies (offline bot roster, §7.2) --------------------------
-
-// Number of exposed offline strategies.
-int fio_strategy_count(void);
-// Name of strategy `id` (e.g. "espresso"), written to `out`. Bytes written or negative.
-int fio_strategy_name(int id, char *out, int cap);
-
 // ---------- replays (§7.3) -------------------------------------------------
 
 // Encode the CURRENT game's history into a replay integer, base32-ish encoded
 // into `out` as the short shareable code (foolish.cards/<code>). Bytes written
-// or negative. (v5 codec; byte-parity with the server's shared C — replay.c.)
-int fio_replay_encode_b32(char *out, int cap);
-
-// Same, as a v6 code: the exact game including every hidden card, where v5's
-// decoder has to retrodict the hands. Prefer this — it is what the site
-// produces, and the Oracle reads real hands instead of guesses.
+// or negative. Byte-parity with the server's shared C (replay.c): the code
+// carries the exact game including every hidden card.
 //
 // Takes no seed: the kernel kept the one fio_new_game was given. Returns
-// FIO_ENOSEED if this game was dealt without a wide seed (its deal cannot be
-// re-derived) — fall back to fio_replay_encode_b32 then, and only then.
+// FIO_ENOSEED if this game was dealt without a wide seed - its deal cannot be
+// re-derived, and there is no second format to fall back to.
 int fio_replay_encode_v6_b32(char *out, int cap);
 
-// The one a CLIENT should call: the best code this game can produce (v6 when its
-// deal is re-derivable, else v5), so choosing a replay format never becomes app
-// code. The two calls above are for tests that must pin a format.
+// The one a CLIENT should call: the best code this game can produce, so choosing
+// a replay format never becomes app code. One format survives, so this is a
+// pass-through to the call above; it stays a separate entry point because the
+// choice must not migrate into Swift.
 int fio_replay_share_code_b32(char *out, int cap);
 
 // THE WHOLE SHAREABLE LINK: `https://foolish.cards/<moves>`, plus
@@ -658,26 +599,10 @@ int fio_replay_share_link(const char *moves,
                           char *out, int cap);
 
 // Decode a shareable `code` into the step list as the RAW replay.h DECODE binary
-// (20-byte header + n_logs records; Swift parses it with DecodedReplay.decode) —
-// no JSON crosses the boundary. Does NOT touch the current game. Bytes written or
+// (20-byte header + n_logs records; Swift parses it with DecodedReplay.decode).
+// Does NOT touch the current game. Bytes written or
 // negative; on FIO_EREPLAY see fio_last_replay_error().
 int fio_replay_decode_packed(const char *code, unsigned char *out, int cap);
-
-// Play a v6 `code` back and return the animation events, masked for `viewer`
-// (a seat, or -1 to spectate) — the SAME GameEvent stream live play emits
-// (fio_bot_drive_json / fio_last_events_json), each event carrying its step's
-// board in `state`. A shared code therefore renders on the real table with the
-// real animations and no replay-specific code (docs/C_CORE_CONSOLIDATION.md
-// A5): the kernel rebuilds the game and replays it through the engine.
-//
-// Does NOT touch the current game. Bytes written or negative; v5 codes fail
-// with FIO_EREPLAY / REPLAY_EVERSION — they hide the deal, so there is no game
-// to rebuild (use fio_replay_decode_packed for those).
-//
-// TODO(delete): JSON. Clients drive animations off the PACKED replay stream
-// (fio_replay_decode_packed -> DecodedReplay.logs, the LOG_* steps), never JSON.
-// Delete once the last JSON consumer is off it.
-int fio_replay_events_json(const char *code, int viewer, char *out, int cap);
 
 // The animations of the chain's LAST BUBBLE, as PACKED evwire frames (each
 // preceded by a u16 LE length, in play order), masked for `viewer` - what an
@@ -696,7 +621,7 @@ int fio_replay_events_json(const char *code, int viewer, char *out, int cap);
 // drawn/picked-up cards carry real
 // identities, everyone else's are hidden - the same packed evwire live play
 // broadcasts and the website renders, so a reopen animates through the kernel,
-// not a client-side view diff. No JSON (§zero-JSON): Swift reads them with
+// not a client-side view diff. Swift reads them with
 // EvWire.decodeFrames. Bytes written (0 if the turn produced nothing), or
 // negative - including when `cap` could not hold the whole turn, which is an
 // error rather than a silently truncated animation. v6 only (v5 hides the
@@ -769,7 +694,7 @@ int fio_msg_staged_atoms_before(void);
 // loudly — validation IS replay, and there is no partial recovery (§7.3).
 //
 // The envelope metadata is handed back as a PACKED fixed-layout blob (Swift
-// parses it with MessageEnvelope.decode) — no JSON, no embedded state / moves
+// parses it with MessageEnvelope.decode) — no embedded state / moves
 // (read those via fio_state_packed / fio_legal_packed). Layout:
 //   phase(1) n_players(1) last_actor_seat(1) round(1) turn(u16 LE) game_id(u64 LE)
 //   parent8(8) digest(32) sent_at(u16 LE) n_new(1) opening(1) carry_key(u32 LE)
@@ -816,8 +741,8 @@ int fio_msg_last_body_version(void);
 // UTF-8 bytes (round-5 B1, docs/APP_REVIEW_NOTES.md - was 12, too tight for a
 // byte-counted Cyrillic name). Names are the only identity a payload carries
 // (no participant UUID ever goes in - they do not transfer across devices, §6).
-// It crossed as JSON until the roster was the last JSON left anywhere that
-// matters; the layout is unchanged, only the direction is new.
+// One layout for the roster in both directions: a host that can read one can
+// write one.
 //
 // `sent_at` is the SEND CLOCK: this device's unix seconds mod 65536, which seals
 // a format-3 envelope, or 0 to seal format 2 exactly as before. It is a
@@ -964,12 +889,10 @@ int fio_msg_rule_p(const uint8_t *a, int a_len, const uint8_t *b, int b_len);
 #define FIO_REBASE_REAPPLY         0
 #define FIO_REBASE_DISCARD_ROUND   1
 #define FIO_REBASE_DISCARD_ILLEGAL 2
-int fio_msg_rebase(int pending_round, int seat, const char *move_json);
 
-// Rule R over the AWIRE frame (kind,n,cards[,attacks]) — the JSON-free entry the
-// Swift extension uses (its pending ledger holds moves as awire, never JSON).
-// Identical verdicts to fio_msg_rebase; `buf`/`len` is the same action frame
-// fio_apply_awire takes.
+// Rule R over the AWIRE frame (kind,n,cards[,attacks]) — the entry the Swift
+// extension uses (its pending ledger holds moves as awire). `buf`/`len` is the
+// same action frame fio_apply_awire takes.
 int fio_msg_rebase_awire(int pending_round, int seat, const uint8_t *buf, int len);
 
 // The MSG_E* (src/msg_wire.h) behind the last FIO_EMSG, else 0.

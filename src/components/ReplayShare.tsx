@@ -3,7 +3,8 @@ import { QRCodeSVG } from 'qrcode.react';
 import supabase from '../backend/Connector';
 import { PersonalGame, PublicGame } from '@api/core/types.ts';
 import { Text } from './Text';
-import { base32Encode, hexToBytes, URL_PREFIX } from '@api/common/replay/codec.ts';
+import { hexToBytes } from '@api/common/replay/codec.ts';
+import { kernelB32Encode, kernelReplayLink, REPLAY_LINK } from '@sdk/ts/wasm/bots.ts';
 import { useStyles } from '../contexts/StyleContext';
 import { useTexture, getTextureStyle } from './TexturedSurface';
 
@@ -11,10 +12,16 @@ import { useTexture, getTextureStyle } from './TexturedSurface';
  * Post-game replay sharing. The server compresses the finished session at
  * game end (server/api/common/replay/) into one game_snapshots row,
  * stored binary: `moves` (the rANS move integer) and `extras` (player names +
- * per-move timing). The share code is derived here — base32(moves), with
- * '-' + base32(extras) appended when the checkbox is on. Uppercase base32
- * keeps the QR in alphanumeric mode, a full version smaller than base64 in
- * byte mode. RLS lets exactly the game's participants read the row.
+ * per-move timing). The code is base32(moves), with '-' + base32(extras) when
+ * the checkbox is on, and both the base32 and the link around it come from the
+ * kernel (replay_b32_encode, replay_extras_link_styled) rather than being
+ * assembled here.
+ *
+ * The QR and the clipboard get DIFFERENT forms of the same link. Uppercase
+ * base32 with a scheme-less prefix keeps the QR in alphanumeric mode, a full
+ * version smaller than byte mode; what a person copies wants the https form,
+ * which a browser or a chat client auto-links. RLS lets exactly the game's
+ * participants read the row.
  */
 
 interface ReplayShareProps {
@@ -70,13 +77,23 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ game }) => {
 
     const view = useMemo(() => {
         if (!snapshot) return null;
-        const movesCode = base32Encode(snapshot.moves);
+        const movesCode = kernelB32Encode(snapshot.moves);
         const hasExtras = snapshot.extras !== null && snapshot.extras.length > 0;
         const code =
             withExtras && hasExtras
-                ? `${movesCode}-${base32Encode(snapshot.extras!)}`
+                ? `${movesCode}-${kernelB32Encode(snapshot.extras!)}`
                 : movesCode;
-        return { url: URL_PREFIX + code, hasExtras };
+        // Two forms of ONE link, both built by the kernel
+        // (replay_extras_link_styled). The QR takes the uppercase scheme-less
+        // one, which stays in QR alphanumeric mode and so fits a smaller
+        // version - that is the whole reason the uppercase form exists. What a
+        // person copies takes the https one, which a browser or a chat client
+        // will actually auto-link.
+        return {
+            url: kernelReplayLink(code, [], REPLAY_LINK.url),
+            qr: kernelReplayLink(code, [], REPLAY_LINK.qr),
+            hasExtras,
+        };
     }, [snapshot, withExtras]);
 
     const handleCopy = async () => {
@@ -132,7 +149,7 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ game }) => {
             >
                 {view ? (
                     <QRCodeSVG
-                        value={view.url}
+                        value={view.qr}
                         size={160}
                         level="L"
                         fgColor="#000"

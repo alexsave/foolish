@@ -7,6 +7,8 @@
 #include "ios_api.h"
 #include "replay.h"   // the codec version this build stamps (-Isrc)
 #include "replay_extras.h"
+#include "evwire.h"   // the packed event reader - see smoke_walk_frames
+#include "view.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -18,10 +20,8 @@ static char buf[1 << 16];
 // menu the current move was picked out of.
 static char evbuf[1 << 18];
 
-// How many times `needle` occurs in `s` (non-overlapping).
-
 // A PACKED ROSTER (ios_api.h): n_joins(1) then n_joins x {seat, name_len, name}.
-// The smoke builds one wherever it used to write a joins JSON literal.
+// The smoke builds one for every roster it needs.
 typedef struct { int seat; const char *name; } SmokeJoin;
 static int pack_joins(unsigned char *out, int cap, const SmokeJoin *js, int n) {
     int p = 0;
@@ -36,13 +36,6 @@ static int pack_joins(unsigned char *out, int cap, const SmokeJoin *js, int n) {
         p += nl;
     }
     return p;
-}
-
-static int count_of(const char *s, const char *needle) {
-    int n = 0;
-    size_t len = strlen(needle);
-    for (const char *p = strstr(s, needle); p; p = strstr(p + len, needle)) n++;
-    return n;
 }
 
 // From the PACKED legal wire (fio_legal_packed: u32 count, then per move
@@ -76,6 +69,88 @@ static int pick_move_awire(const unsigned char *packed, int len, unsigned char *
     return o;
 }
 
+
+// ---------- reading the packed event frames --------------------------------
+//
+// fio_replay_last_events_packed emits u16-LE-length-prefixed evwire frames.
+// Everything below goes through the KERNEL's own reader (evwire_read) and its
+// own state decoder (view.c's state_get), so no byte offset is restated here -
+// this walker cannot drift from the format the way the strstr checks it
+// replaces could not detect drift at all.
+//
+// `viewer` is the seat the frames were masked for (-1 spectating). Returns the
+// event count, or -1 with a printed reason. Every event must carry a snapshot;
+// in each snapshot every seat that is NOT the viewer must have a masked hand,
+// and *real_seen is set when the viewer's own hand came back real - so a run
+// that masked EVERYTHING (the failure mode a leak test cannot see) still fails.
+static Game g_smoke_board;
+
+// state_get's masked decode turns WIRE_CARD_HIDDEN into the {0,1} placeholder.
+static int smoke_is_masked_card(Card c) { return c.suit == 0 && c.value == 1; }
+
+typedef struct { int viewer; int n; int bad; int real_seen; } SmokeEvCtx;
+
+static void smoke_ev_sink(void *ctx, int index, const EvwRead *ev) {
+    SmokeEvCtx *c = (SmokeEvCtx *)ctx;
+    (void)index;
+    c->n++;
+    if (!ev->snap || ev->snap_len <= 0) {
+        printf("FAIL packed events: an event carried no per-step board\n");
+        c->bad = 1;
+        return;
+    }
+    memset(&g_smoke_board, 0, sizeof g_smoke_board);
+    state_get(&g_smoke_board, ev->snap, /*masked=*/1);
+    for (int p = 0; p < g_smoke_board.num_players; p++) {
+        const Player *pl = &g_smoke_board.players[p];
+        if (p == c->viewer) {
+            for (int i = 0; i < pl->hand_count; i++)
+                if (!smoke_is_masked_card(pl->hand[i])) c->real_seen = 1;
+            continue;
+        }
+        // A hand of two or more identical cards is not a hand - it is the
+        // placeholder, repeated. That is what a masked hand looks like after
+        // state_get, and a real one can never look like it.
+        int masked = 1;
+        for (int i = 0; i < pl->hand_count; i++)
+            if (!smoke_is_masked_card(pl->hand[i])) masked = 0;
+        if (!masked) {
+            printf("FAIL packed events: seat %d's hand came back real to viewer %d\n",
+                   p, c->viewer);
+            c->bad = 1;
+            return;
+        }
+    }
+}
+
+static int smoke_walk_frames(const unsigned char *frames, int len, int viewer,
+                             int *real_seen_out) {
+    SmokeEvCtx c = { viewer, 0, 0, 0 };
+    int q = 0;
+    while (q + 2 <= len) {
+        const int flen = frames[q] | (frames[q + 1] << 8);
+        q += 2;
+        if (flen <= 0 || q + flen > len) { printf("FAIL packed events: truncated frame\n"); return -1; }
+        EvwHeader h;
+        if (evwire_read_header(frames + q, flen, &h) != 0) {
+            printf("FAIL packed events: unreadable frame header\n");
+            return -1;
+        }
+        if (h.viewer != viewer) {
+            printf("FAIL packed events: frame masked for %d, asked for %d\n", h.viewer, viewer);
+            return -1;
+        }
+        if (evwire_read(frames + q, flen, 0, 0, 0, smoke_ev_sink, &c) < 0) {
+            printf("FAIL packed events: frame did not decode whole\n");
+            return -1;
+        }
+        if (c.bad) return -1;
+        q += flen;
+    }
+    if (real_seen_out) *real_seen_out = c.real_seen;
+    return c.n;
+}
+
 // Replay round-trip over MANY seeds and player counts.
 //
 // The single-seed round-trip at the end of main() is not enough: it hid a bug
@@ -97,7 +172,7 @@ static int replay_sweep(void) {
     if (strat < 0) { printf("FAIL replay sweep: no handwritten rung\n"); return 1; }
 
     const int counts[] = { 2, 3, 4, 6 };
-    int checked = 0, skipped = 0, v6_checked = 0, ev_checked = 0;
+    int checked = 0, skipped = 0, ev_checked = 0;
     for (int ci = 0; ci < (int)(sizeof(counts) / sizeof(counts[0])); ci++) {
         for (int s = 0; s < 12; s++) {
             int players = counts[ci];
@@ -114,39 +189,17 @@ static int replay_sweep(void) {
             int fool = fio_game_over();
             if (fool < 0) { printf("FAIL sweep p=%d seed=%d did not finish\n", players, s); return 1; }
 
-            static char code[8192];
-            int clen = fio_replay_encode_b32(code, sizeof(code));
-            if (clen < 0) {
-                // A game longer than MAX_LOGS cannot be encoded at all — a
-                // documented build limit, not an encoder fault (the same skip
-                // as tests/replay_difftest.c).
-                if (fio_last_replay_error() == REPLAY_ETOOLONG) { skipped++; continue; }
-                printf("FAIL sweep encode p=%d seed=%d err=%d detail=%d steps=%d\n",
-                       players, s, clen, fio_last_replay_error(), steps);
-                return 1;
-            }
-            if (fio_replay_decode_packed(code, (unsigned char *)buf, sizeof(buf)) < 0) {
-                printf("FAIL sweep decode p=%d seed=%d err=%d\n", players, s, fio_last_replay_error());
-                return 1;
-            }
-            // replay.h DECODE binary: fool is byte[4] (0xFF → -1).
-            int decoded_fool = (unsigned char)buf[4] == 0xFF ? -1 : (unsigned char)buf[4];
-            if (decoded_fool != fool) {
-                printf("FAIL sweep fool mismatch p=%d seed=%d decoded=%d game=%d\n",
-                       players, s, decoded_fool, fool);
-                return 1;
-            }
-
-            // Same game as v6 (A4): these games are dealt from a 32-byte seed,
-            // so the kernel can re-derive the deal and the share carries exact
-            // hands. Goes through fio_replay_share_code_b32 — the call the app
-            // actually makes — so this proves the format CHOICE too, not just
-            // the encoder: a seeded game must come out as v6.
+            // These games are dealt from a 32-byte seed, so the kernel can
+            // re-derive the deal and the share carries exact hands. Goes through
+            // fio_replay_share_code_b32 - the call the app actually makes.
             static char code6[8192];
             int c6 = fio_replay_share_code_b32(code6, sizeof(code6));
             if (c6 < 0) {
-                printf("FAIL sweep v6 encode p=%d seed=%d err=%d detail=%d\n",
-                       players, s, c6, fio_last_replay_error());
+                // A game longer than MAX_LOGS cannot be encoded at all - a
+                // documented build limit, not an encoder fault.
+                if (fio_last_replay_error() == REPLAY_ETOOLONG) { skipped++; continue; }
+                printf("FAIL sweep encode p=%d seed=%d err=%d detail=%d steps=%d\n",
+                       players, s, c6, fio_last_replay_error(), steps);
                 return 1;
             }
             if (fio_replay_decode_packed(code6, (unsigned char *)buf, sizeof(buf)) < 0) {
@@ -154,11 +207,12 @@ static int replay_sweep(void) {
                        fio_last_replay_error());
                 return 1;
             }
-            // The seeded encoder's version has moved with the codec: v7 added
-            // the pass-mode bit, v8 the forced-opening bit, and 10 is the same
-            // wire again under the corrected deal order (replay.h). That last
-            // one is not additive - it retired 5 through 8 outright - so a
-            // fresh encode must be 10 and nothing else.
+            // The version has moved with the codec: 7 added the pass-mode bit,
+            // 8 the forced-opening bit, and 10 is the same wire again under the
+            // corrected deal order. None of those were additive - each retired
+            // its predecessors outright, and dropping the retrodiction line took
+            // 9 with them (replay.h) - so a fresh encode must be 10 and nothing
+            // else.
             if ((unsigned char)buf[0] != REPLAY_FORMAT_VERSION_V10) {   // version is byte[0]
                 printf("FAIL sweep v6 version p=%d seed=%d got=%d\n", players, s,
                        (unsigned char)buf[0]);
@@ -168,46 +222,32 @@ static int replay_sweep(void) {
                 printf("FAIL sweep v6 fool mismatch p=%d seed=%d\n", players, s);
                 return 1;
             }
-            // No hidden card survives a v6 decode — that is the whole point.
-            if (strstr(buf, "\"s\":-1")) {
-                printf("FAIL sweep v6 leaked a hidden card p=%d seed=%d\n", players, s);
-                return 1;
-            }
             // A5: the same code plays back as the board's own animation events
             // — the kernel rebuilds the game and replays it (replay_steps.c),
-            // so this is the live stream, not a replay-shaped imitation.
-            static char ev[1 << 20];
-            int elen = fio_replay_events_json(code6, -1, ev, sizeof(ev));
+            // so this is the live stream, not a replay-shaped imitation. Every
+            // event carries its step's board (the A3 amendment): without it a
+            // replay could only be drawn at its final state. Spectating, so no
+            // seat's hand may come back real.
+            static unsigned char ev[1 << 20];
+            int elen = fio_replay_last_events_packed(code6, -1, 0, ev, sizeof(ev));
             if (elen < 0) {
                 printf("FAIL sweep v6 events p=%d seed=%d err=%d detail=%d\n",
                        players, s, elen, fio_last_replay_error());
                 return 1;
             }
-            if (!strstr(ev, "\"type\":")) {
+            int n_ev = smoke_walk_frames(ev, elen, -1, 0);
+            if (n_ev < 0) { printf("  (p=%d seed=%d)\n", players, s); return 1; }
+            if (n_ev == 0) {
                 printf("FAIL sweep v6 events empty p=%d seed=%d\n", players, s);
                 return 1;
             }
-            // Every event carries its step's board (the A3 amendment) — without
-            // it a replay could only be drawn at its final state.
-            if (!strstr(ev, "\"state\":")) {
-                printf("FAIL sweep v6 events carry no per-step state p=%d seed=%d\n",
-                       players, s);
-                return 1;
-            }
-            // Spectating: no seat's hand may come back real.
-            if (strstr(ev, "\"hand\":[")) {
-                printf("FAIL sweep v6 events leaked a hand to a spectator p=%d seed=%d\n",
-                       players, s);
-                return 1;
-            }
             ev_checked++;
-            v6_checked++;
             checked++;
         }
     }
-    printf("replay sweep OK (%d games round-tripped, %d as v6 with exact hands, "
+    printf("replay sweep OK (%d games round-tripped with exact hands, "
            "%d replayed as live events, %d skipped as over-long)\n",
-           checked, v6_checked, ev_checked, skipped);
+           checked, ev_checked, skipped);
     return 0;
 }
 
@@ -292,16 +332,15 @@ static int fmsg_check(void) {
     int seat = -1;
     for (int s = 0; s < 4; s++) if (mask & (1 << s)) { seat = s; break; }
     if (seat >= 0) {
-        if (fio_legal_moves_json(seat, buf, sizeof(buf)) < 0) { printf("FAIL fmsg legal\n"); return 1; }
-        const char *st = strchr(buf, '{');
-        int depth = 0; const char *en = st;
-        for (; *en; en++) { if (*en == '{') depth++; else if (*en == '}' && --depth == 0) { en++; break; } }
-        char move[2048]; const size_t mn = (size_t)(en - st);
-        memcpy(move, st, mn); move[mn] = 0;
+        const int lrc = fio_legal_packed(seat, buf, sizeof(buf));
+        if (lrc < 0) { printf("FAIL fmsg legal\n"); return 1; }
+        unsigned char move[64];
+        const int mn = pick_move_awire((const unsigned char *)buf, lrc, move);
+        if (mn == 0) { printf("FAIL fmsg legal: eligible seat with no concrete move\n"); return 1; }
 
         // Rule R on the adopted chain: the same move, composed against THIS
         // round, must RE-APPLY — nothing has moved on under it.
-        const int v = fio_msg_rebase(adopted_round, seat, move);
+        const int v = fio_msg_rebase_awire(adopted_round, seat, move, mn);
         if (v != FIO_REBASE_REAPPLY && v != FIO_REBASE_DISCARD_ILLEGAL) {
             printf("FAIL fmsg rebase verdict %d\n", v); return 1;
         }
@@ -320,15 +359,9 @@ static int fmsg_check(void) {
     // the next round, which is legal per the kernel and not what the player
     // chose. Only reachable once a round HAS closed under us.
     if (adopted_round > 0) {
-        const int stale = fio_msg_rebase(adopted_round - 1, 0, "{\"type\":\"good\"}");
-        if (stale != FIO_REBASE_DISCARD_ROUND) {
-            printf("FAIL fmsg round guard: got %d, want %d\n", stale, FIO_REBASE_DISCARD_ROUND);
-            return 1;
-        }
-        // The awire twin (what Swift calls) must reach the SAME guard verdict on
-        // the SAME action — "good" is awire {kind=4, n=0}. Re-adopt first (the
-        // JSON rebase above cloned onto the resident game).
+        // Re-adopt first: the rebase above cloned onto the resident game.
         if (fio_msg_decode_packed(pay, n, mb, sizeof(buf)) <= 0) { printf("FAIL fmsg re-adopt (awire)\n"); return 1; }
+        // "good" is awire {kind=4, n=0}.
         const unsigned char good_awire[2] = { 4, 0 };
         const int stale_w = fio_msg_rebase_awire(adopted_round - 1, 0, good_awire, 2);
         if (stale_w != FIO_REBASE_DISCARD_ROUND) {
@@ -1437,8 +1470,8 @@ int main(void) {
     }
 
     // Drive the game to completion: at each step, if seat 0 (human) is eligible,
-    // play its first legal move via apply_json; then let bots step.
-    int steps = 0, ev_moves = 0, ev_total = 0;
+    // play its first legal move via the awire path; then let bots step.
+    int steps = 0;
     while (fio_game_over() < 0 && steps++ < 5000) {
         int mask = fio_actor_mask();
         if (mask & 1) {
@@ -1453,24 +1486,6 @@ int main(void) {
             int r = fio_apply_awire(0, aw, al);
             if (r == FIO_EREJECT) { printf("human reject code=%d\n", fio_last_reject()); break; }
             if (r < 0) { printf("human apply error r=%d\n", r); break; }
-
-            // The animation plan for the move just applied (§16.B4): the human's
-            // own card flies by the kernel's plan exactly as a bot's does, and
-            // fio_apply_awire arms the same snapshot hook as the JSON path. Every
-            // event must carry "state" — the board AS OF that step, masked for
-            // this viewer — because a cycle that applied several actions is
-            // otherwise only drawable at its final state (the reason
-            // BoardDiff.swift was cancelled).
-            int el = fio_last_events_json(0, evbuf, sizeof(evbuf));
-            if (el < 0) { printf("FAIL last_events err=%d\n", el); return 1; }
-            int n_ev = count_of(evbuf, "{\"type\":");
-            int n_state = count_of(evbuf, "\"state\":{");
-            if (n_ev != n_state) {
-                printf("FAIL events: %d events but %d carried state\n", n_ev, n_state);
-                return 1;
-            }
-            ev_moves++;
-            ev_total += n_ev;
         } else {
             // not the human's turn: drive the bots one cycle (all seats but 0).
             if (fio_bot_drive_packed(1, buf, sizeof(buf)) < 0) break;
@@ -1481,15 +1496,33 @@ int main(void) {
     printf("game over after %d steps, fool seat = %d\n", steps, fool);
     if (fool < 0) { printf("FAIL game did not finish\n"); return 1; }
 
-    printf("events: %d moves produced %d events, all carrying per-step state\n", ev_moves, ev_total);
-    if (ev_moves == 0 || ev_total == 0) { printf("FAIL no animation events observed\n"); return 1; }
+    // The animation plan for the game just played (§16.B4): the human's own card
+    // flies by the kernel's plan exactly as a bot's does. Read it back the way
+    // the app does - off the chain, as packed evwire (fio_replay_last_events_packed
+    // replays through replay_steps.c) - masked for SEAT 0 this time, so the walker
+    // checks the other half of the rule: the viewer's own hand comes back real
+    // while every other seat's is the placeholder.
+    {
+        static char vcode[8192];
+        const int vc = fio_replay_share_code_b32(vcode, sizeof(vcode));
+        if (vc < 0) { printf("FAIL events: share code err=%d detail=%d\n", vc, fio_last_replay_error()); return 1; }
+        const int el = fio_replay_last_events_packed(vcode, 0, 0,
+                                                    (unsigned char *)evbuf, sizeof(evbuf));
+        if (el < 0) { printf("FAIL events err=%d detail=%d\n", el, fio_last_replay_error()); return 1; }
+        int real_seen = 0;
+        const int n_ev = smoke_walk_frames((const unsigned char *)evbuf, el, 0, &real_seen);
+        if (n_ev < 0) return 1;
+        if (n_ev == 0) { printf("FAIL no animation events observed\n"); return 1; }
+        if (!real_seen) { printf("FAIL events: seat 0 never saw its own hand\n"); return 1; }
+        printf("events: %d packed events, all carrying per-step state, masked for seat 0\n", n_ev);
+    }
 
     { int fsl = fio_state_packed(0, buf, sizeof(buf)); printf("final state packed %d bytes\n", fsl); }
 
     // Replay round-trip (§16.C): encode the finished game to a base32 code,
     // decode it back, and check the decoded fool matches the game's fool.
     static char code[8192];
-    int clen = fio_replay_encode_b32(code, sizeof(code));
+    int clen = fio_replay_share_code_b32(code, sizeof(code));
     if (clen < 0) { printf("FAIL replay encode err=%d detail=%d\n", clen, fio_last_replay_error()); return 1; }
     printf("replay code (%d chars): %.60s%s\n", clen, code, clen > 60 ? "..." : "");
     int dlen = fio_replay_decode_packed(code, (unsigned char *)buf, sizeof(buf));

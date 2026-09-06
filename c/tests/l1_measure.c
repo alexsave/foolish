@@ -63,18 +63,45 @@ static unsigned char wire_of(Card c) {
     return (unsigned char)(c.suit * 13 + (c.value - 1));
 }
 
-// makeSource mirror (identical to tests/replay_difftest.c).
+// The true initial hands, captured at deal time - the game itself forgets them
+// (draw_card splices each played card out) and the encode input needs them.
+static unsigned char g_init_hand[MAX_PLAYERS][CARDS_PER_PLAYER];
+static int g_init_len[MAX_PLAYERS];
+
+// The marshalled encode input (replay.h): header, the reveal stream, then the
+// action stream. The reveals are the initial deal seat-major followed by each
+// drawn stock card in draw order, minus the face-up flip (which IS the header
+// trump and is never listed).
+//
+// This measures what the module's own marshalled entry (wasm_replay_encode_v6)
+// is handed. Production encodes through replay_encode_v6_from_game, whose input
+// is 32 bytes of seed - but both drive the same coder over the same atoms, so
+// the choice-log and bignum peaks below are the peaks either way.
 static int build_encode_input(const GameLog *logs, int num_logs, bool truncated,
                               int np, Card flipped, int first_attacker,
                               unsigned char *out) {
     if (truncated) return -1;
     int trump_id = flipped.suit * 13 + (flipped.value - 1);
-    int q = 5;
+    unsigned char flip_wire = wire_of(flipped);
+
+    static unsigned char reveals[MAX_PLAYERS * CARDS_PER_PLAYER + MAX_DECK];
+    int nr = 0;
+    for (int s = 0; s < np; s++)
+        for (int k = 0; k < g_init_len[s]; k++) reveals[nr++] = g_init_hand[s][k];
+
+    int q = 7;
     int n_actions = 0;
     for (int i = 0; i < num_logs; i++) {
         const GameLog *l = &logs[i];
         bool info = l->log_type == LOG_ATTACK || l->log_type == LOG_COVER
                  || l->log_type == LOG_PASS || l->log_type == LOG_PICKUP;
+        if (l->log_type == LOG_DRAW) {
+            for (int j = 0; j < l->num_pairs; j++) {
+                unsigned char w = wire_of(l->pairs[j].primary);
+                if (w > 51) return -1;                  // a masked log cannot be encoded
+                if (w != flip_wire) reveals[nr++] = w;  // skip the flip
+            }
+        }
         if (info) {
             out[q++] = (unsigned char)l->log_type;
             out[q++] = (unsigned char)l->player_idx;
@@ -93,11 +120,19 @@ static int build_encode_input(const GameLog *logs, int num_logs, bool truncated,
             n_actions++;
         }
     }
+
+    // Splice the reveals in front of the actions.
+    memmove(out + 7 + nr, out + 7, (size_t)(q - 7));
+    memcpy(out + 7, reveals, (size_t)nr);
+    q += nr;
+
     out[0] = (unsigned char)np;
     out[1] = (unsigned char)trump_id;
     out[2] = (unsigned char)first_attacker;
     out[3] = (unsigned char)(n_actions & 0xff);
     out[4] = (unsigned char)((n_actions >> 8) & 0xff);
+    out[5] = (unsigned char)(nr & 0xff);
+    out[6] = (unsigned char)((nr >> 8) & 0xff);
     return q;
 }
 
@@ -119,6 +154,11 @@ static bool play_game(Game *g, int np, int strat, uint32_t seed) {
     start_game(g);
     MAXX(mx_snaps_deal, g_snap_count);
     observe_state(g);
+    for (int i = 0; i < np; i++) {
+        g_init_len[i] = g->players[i].hand_count;
+        for (int k = 0; k < g_init_len[i]; k++)
+            g_init_hand[i][k] = wire_of(g->players[i].hand[k]);
+    }
 
     static LegalMoves moves;
     int actions = 0;
@@ -180,12 +220,14 @@ int main(int argc, char **argv) {
                 MAXX(mx_logs_game, g.num_logs);
                 for (int li = 0; li < g.num_logs; li++) MAXX(mx_pairs, g.logs[li].num_pairs);
                 bool truncated = g.num_logs >= MAX_LOGS;
+                int fa = replay_first_attacker_from_logs(g.logs, g.num_logs);
+                if (fa < 0) continue;
                 int in_len = build_encode_input(g.logs, g.num_logs, truncated,
-                                                np, g.flipped, g.first_attacker, g_enc_in);
+                                                np, g.flipped, fa, g_enc_in);
                 if (in_len < 0) continue;
                 MAXX(mx_enc_in, in_len);
                 replay_stat_max_rec = 0; replay_stat_max_bn = 0;
-                int blob = replay_encode(g_enc_in, in_len, g_enc_out, ENC_CAP);
+                int blob = replay_encode_v6(g_enc_in, in_len, g_enc_out, ENC_CAP);
                 if (blob > 0) {
                     MAXX(mx_blob, blob); encoded++;
                     MAXX(mx_rec, replay_stat_max_rec); MAXX(mx_bn, replay_stat_max_bn);

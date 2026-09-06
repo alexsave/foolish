@@ -3,15 +3,18 @@
 //
 //   npx tsx offlinefun/localtest/semtex_replay_url.ts [pc] [maxGames] [seed0]
 //
-// The encoded game is verified with verifyRoundTrip before printing, so the
-// URL is guaranteed to decode on the site.
+// The encoded game is verified with verifyRoundTripV6FromGame before printing,
+// so the URL is guaranteed to decode on the site - the same one kernel call the
+// server makes at game end.
 import { calculateLegalMoves, getBotStrategy } from '@api/common/bot_strategy.ts';
 import { shouldBotActCore, executeBotMove } from '@api/common/pure_bot_actions.ts';
 import { game_done } from '@api/common/common_utils.ts';
 import { start_game } from '@api/common/game_lifecycle.ts';
 import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS } from '@api/core/types.ts';
-import { encodeReplay, verifyRoundTrip } from '@api/common/replay/encode.ts';
+import { verifyRoundTripV6FromGame } from '@api/common/replay/encode.ts';
 import { encodeExtras, joinReplayCode, moveTimesFromLogs } from '@api/common/replay/extras.ts';
+
+const hexToBytes = (h: string) => Uint8Array.from(h.match(/../g)!.map((b) => parseInt(b, 16)));
 
 let _seed = 424242;
 Math.random = () => { _seed = (_seed * 1664525 + 1013904223) % 4294967296; return _seed / 4294967296; };
@@ -87,12 +90,8 @@ const playOne = async (seed: number): Promise<Game | null> => {
         const heroPos = heroOut >= 0 ? heroOut + 1 : pc;
         if (heroPos !== 1) continue;   // want a semtex WIN
 
-        const input = {
-            playerIds: g.players.map(p => p.player_id),
-            logs: g.logs,
-            flipped: g.flipped,
-        };
-        const { encoded } = await verifyRoundTrip(input as never);
+        const { encoded } = await verifyRoundTripV6FromGame(
+            g as never, hexToBytes(g.game_seed!), g.logs as never);
         const names = g.players.map(p => p.name!);
         const extras = encodeExtras(names, moveTimesFromLogs(g.logs as never));
         const full = joinReplayCode(encoded.base32, extras);

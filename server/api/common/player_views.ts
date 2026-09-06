@@ -15,11 +15,11 @@
 // per-seat blob comes from wasm_view_serialize (engine.serializeViewBlobs, ONE
 // deserialize for all seats). A lobby (WAITING) game has no kernel blob and no
 // hidden information (empty hands, empty deck), so its view is written by the
-// pure-TS mirror of the same kernel format (writeMaskedState) — the identical
+// the kernel's own writer for both (wasm_view_serialize) — the identical
 // path get_game uses for blob-less rows.
 import { GAME_STATUS, Game } from '@api/core/types.ts';
 import {
-    VIEW_FORMAT_VERSION, encodeGameResponse, writeMaskedState, PackedGameRoster,
+    encodeGameResponse, PackedGameRoster,
 } from '@sdk/ts/wire/view.ts';
 import { bytesToBareHex } from '@sdk/ts/wire/bytes.ts';
 
@@ -32,6 +32,11 @@ const lazy = <T>(load: () => Promise<T>): (() => Promise<T>) => {
     return () => (mod ??= load());
 };
 const engineMod = lazy(() => import('@sdk/ts/wasm/engine.ts'));
+// The lobby view goes through the BOTS module, not the rules one: it is the
+// same view.c writer either way, and this keeps one shim (wasmViewFromGame)
+// rather than one per module.
+const botsMod = lazy(() => import('@sdk/ts/wasm/bots.ts'));
+const viewMod = lazy(() => import('@sdk/ts/wire/view.ts'));
 const codecMod = lazy(() => import('./replay/codec.ts'));
 
 
@@ -59,6 +64,58 @@ function rosterOf(game: Game): PackedGameRoster {
     };
 }
 
+// ONE PLAYER'S VIEW of a game, as the JSON shape the legacy endpoints return.
+//
+// Masking is the kernel's (view.c state_put, through wasmViewFromGame): which
+// hands a viewer may see, and that the deck travels as a count and never as
+// cards. common_utils personalize_game said the same thing a second time, in
+// JS-object form, and e2e/view_codec.test.ts existed to hold the two equal -
+// which is the shape of a duplication, not of a test.
+//
+// A seat the game does not contain yields the spectator PublicGame, exactly as
+// before. `version` is the caller's: it is the row's optimistic-concurrency
+// token, not part of the board, and the blob does not carry it.
+export async function personalViewOf(
+    game: Game, player_id: string,
+): Promise<PersonalGame | PublicGame> {
+    const { wasmViewFromGame, kernelViewFromPacked } = await botsMod();
+    const { viewToGame } = await viewMod();
+    const seat = game.players.findIndex(p => p.player_id === player_id);
+    const blob = wasmViewFromGame(game, seat);
+    // The blob leads with [VIEW_FORMAT_VERSION | viewer]; the board follows.
+    const view = kernelViewFromPacked(blob.subarray(2), seat);
+    const out = viewToGame(view, {
+        id: game.id,
+        name: game.name,
+        players: game.players.map(p => ({
+            player_id: p.player_id, name: p.name, is_ai: p.is_ai,
+            strategy_key: p.strategy_key,
+        })),
+    }, seat, { preGood: game.good_players ?? [], prevGoodTs: game.good_timestamp ?? null });
+    // Column-authoritative fields the board blob has no opinion on.
+    out.version = game.version;
+    out.status = game.status;
+    return out;
+}
+
+// ONE VIEWER'S VIEW of a game as the PACKED envelope - the same bytes
+// buildPlayerViewRows stores in player_views and `create` hands back, so an
+// edge response, a cache row and a realtime push are all one format.
+//
+// This is personalViewOf stopping one step earlier: both build the viewer's
+// masked blob with the kernel's own writer (wasmViewFromGame -> view.c
+// state_put); this one encodes the envelope around it instead of decoding the
+// blob back into a JS Game so it can be JSON.stringify'd. A seat the game does
+// not contain (a spectator, or a player who just exited) yields seat -1, the
+// fully-masked spectator envelope, exactly as before.
+export async function packedViewOf(game: Game, player_id: string): Promise<Uint8Array> {
+    const { wasmViewFromGame } = await botsMod();
+    const seat = game.players.findIndex(p => p.player_id === player_id);
+    // `version` is the row's optimistic-concurrency token, not part of the
+    // board, so it rides the envelope header rather than the blob.
+    return encodeGameResponse(game.version ?? 0, seat, rosterOf(game), wasmViewFromGame(game, seat));
+}
+
 // The per-player view rows for a committed game. `stateHex` is the packed kernel
 // blob this commit persisted (games.state) or null for a never-dealt lobby;
 // `version` is the committed games.version the rows should carry. Bots are
@@ -81,23 +138,24 @@ export async function buildPlayerViewRows(
     // (a stale one would leak a finished session's hands).
     const dealt = stateHex !== null && game.status !== GAME_STATUS.WAITING;
 
+    // Both branches are the kernel's wasm_view_serialize now. They differ only
+    // in where the board comes from: a dealt game has a durable blob, a lobby
+    // has none and goes in as the JS Game. The lobby branch used to be a pure-TS
+    // mirror of view.c's state_put (writeMaskedState) precisely to keep the
+    // rules-wasm embed off this path - it is gone, and the cost of that is a
+    // rules.wasm instantiate on a lobby read.
+    //
+    // Lazy imports so the embed is still pulled only when a view is actually
+    // built (same discipline as commitGame's serializeGameState import).
     let viewBlobFor: (seat: number) => Uint8Array;
     if (dealt) {
-        // Lazy imports so lobby/create commits never pull the rules-wasm embed
-        // (same discipline as commitGame's serializeGameState import).
         const { serializeViewBlobs } = await engineMod();
         const { hexToBytes } = await codecMod();
         const blobs = serializeViewBlobs(hexToBytes(stateHex!), humanSeats);
         viewBlobFor = (seat) => blobs.get(seat)!;
     } else {
-        viewBlobFor = (seat) => {
-            const body: number[] = [];
-            writeMaskedState(game, seat, body);
-            // Wrap with the [VIEW_FORMAT_VERSION | viewer | masked put_state]
-            // header the kernel's wasm_view_serialize also emits, so both paths
-            // produce a byte-identical envelope decodePackedGame can read.
-            return Uint8Array.from([VIEW_FORMAT_VERSION, seat & 0xff, ...body]);
-        };
+        const { wasmViewFromGame } = await botsMod();
+        viewBlobFor = (seat) => wasmViewFromGame(game, seat);
     }
 
     const rows: PlayerViewRow[] = [];
@@ -118,7 +176,7 @@ export async function buildPlayerViewRows(
 // packed envelope decodePackedGame yields a PublicGame (no self) from. Masking
 // stays in the C kernel for a dealt game: wasm_view_serialize(-1) (VIEW_SPECTATOR)
 // via serializeViewBlobs([-1]); a lobby has no kernel state, so the pure-TS
-// view.c mirror writeMaskedState(game, -1) produces the identical bytes.
+// kernel takes the JS Game instead (wasmViewFromGame).
 export async function buildSpectatorView(
     game: Game, stateHex: string | null, version: number,
 ): Promise<string> {
@@ -131,9 +189,8 @@ export async function buildSpectatorView(
         const { hexToBytes } = await codecMod();
         viewBlob = serializeViewBlobs(hexToBytes(stateHex!), [-1]).get(-1)!;
     } else {
-        const body: number[] = [];
-        writeMaskedState(game, -1, body); // -1 => no seat visible (all card-backs)
-        viewBlob = Uint8Array.from([VIEW_FORMAT_VERSION, 0xff, ...body]);
+        const { wasmViewFromGame } = await botsMod();
+        viewBlob = wasmViewFromGame(game, -1); // -1 => no seat visible
     }
     return bytesToBareHex(encodeGameResponse(version, -1, roster, viewBlob));
 }

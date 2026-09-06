@@ -27,7 +27,7 @@ import assert from 'node:assert/strict';
 
 import { applySchema, resetDb, seedGame, uuid } from './harness.ts';
 import { executeWithGameLock, loadCompleteGame } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
-import { start_game } from '../server/api/common/game_lifecycle.ts';
+import { packedProducts, start_game_packed } from '../server/api/common/game_lifecycle.ts';
 import { lockedBotLoop } from '../server/impls/supabase/functions/_shared/adapter/bot_actions.ts';
 import { wasmBeliefProbeReset, wasmBeliefProbeDump } from '../sdk/ts/wasm/bots.ts';
 import { game_done } from '../server/api/common/common_utils.ts';
@@ -57,7 +57,7 @@ test('human+octogen: octogen always sees the human’s committed moves (resident
     { id: botId, name: 'Octo', is_ai: true, strategy_key: 'octogen' },
   ]);
   await executeWithGameLock(gameId,
-    async (g: Game) => ({ game: g, events: start_game(g) as AnimationEvent[] }), 'start', false);
+    async (g: Game) => ({ game: g, events: [], packed: packedProducts(start_game_packed(g)) }), 'start', false);
 
   // Every public card the human has committed so far (attack/cover/pass cards).
   const humanCards = new Set<string>();
@@ -74,7 +74,7 @@ test('human+octogen: octogen always sees the human’s committed moves (resident
       const pm = humanMoves[guard % humanMoves.length];
       for (const c of pm.move.cards ?? []) humanCards.add(cid(c));
       await executeWithGameLock(gameId,
-        async (g: Game) => ({ game: g, events: applyPlayerMove(g, pm) }), `h${guard}`, true);
+        async (g: Game) => ({ game: g, ...applyPlayerMove(g, pm) }), `h${guard}`, true);
     } else {
       // Octogen's turn — the REAL bot loop (fresh reload each cycle, human IN).
       // Arm per drive segment rather than once for the game: the probe's ring is

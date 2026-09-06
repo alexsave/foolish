@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
 import { executeWithGameLock, loadCompleteGame } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
 import { verify_player_in_game } from '../server/api/common/common_utils.ts';
-import { start_game } from '../server/api/common/game_lifecycle.ts';
+import { packedProducts, start_game_packed } from '../server/api/common/game_lifecycle.ts';
 import { Game, AnimationEvent, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, PrivatePlayer, Card } from '../server/api/core/types.ts';
 import { handleAttack } from '../server/api/common/actions/attack.ts';
 import { handleCover } from '../server/api/common/actions/cover.ts';
@@ -117,7 +117,7 @@ async function freshGame(): Promise<string> {
         { id: uuid(), name: 'H1', is_ai: false, strategy_key: 'human' },
         { id: uuid(), name: 'B0', is_ai: true, strategy_key: 'random' },
     ]);
-    await executeWithGameLock(gameId, async (g) => ({ game: g, events: start_game(g) as AnimationEvent[] }), 'start', false);
+    await executeWithGameLock(gameId, async (g) => ({ game: g, events: [], packed: packedProducts(start_game_packed(g)) }), 'start', false);
     return gameId;
 }
 
@@ -164,7 +164,7 @@ test('adversarial fuzz: no illegal/malformed input ever duplicates or loses a ca
         // 35% legal move to keep the game evolving through phases; else adversarial.
         if (rnd() < 0.35) {
             const moves = legalMovesFor(g);
-            if (moves.length) { try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, pick(moves)) }), `m${i}`, true); } catch { /* */ } }
+            if (moves.length) { try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, ...applyPlayerMove(gg, pick(moves)) }), `m${i}`, true); } catch { /* */ } }
             continue;
         }
 

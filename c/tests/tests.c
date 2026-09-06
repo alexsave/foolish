@@ -19,7 +19,6 @@
 #include "../src/replay_extras.h"
 #include "../src/evwire.h"
 #include "../src/view.h"
-#include "../src/json_out.h"
 #include "../src/anim_plan.h"
 #include "../src/cordite_sim.h"
 #include "../src/analyse.h"
@@ -1650,6 +1649,109 @@ static void test_bot_roster_choose_scopes_knobs(void) {
     CHECK(all_ok, "every offline rung dispatches to a linked brain");
 }
 
+/* ---------------- reading a pasted replay link -------------------------- */
+
+static void test_link_parse(void) {
+    char out[128];
+    const char *code = "MZXW6YTB";
+
+    // Every form a person actually pastes must name the SAME game. The web's
+    // urlToCode carried these cases; they are the kernel's now.
+    static const char *forms[] = {
+        "MZXW6YTB",
+        "WWW.FOOLISH.CARDS/MZXW6YTB",
+        "www.foolish.cards/MZXW6YTB",
+        "https://foolish.cards/MZXW6YTB",
+        "https://www.foolish.cards/MZXW6YTB",
+        "http://foolish.cards/MZXW6YTB",
+        "https://foolish.cards/MZXW6YTB/",
+        "foolish.cards/MZXW6YTB",
+        "https://foolish.cards/MZXW6YTB?utm_source=imessage",
+        "https://foolish.cards/MZXW6YTB#top",
+        "https://foolish.cards/MZXW6YTB-SOMEEXTRAS",
+        "  https://foolish.cards/MZXW6YTB\n",
+    };
+    int all = 1;
+    for (int i = 0; i < (int)(sizeof forms / sizeof forms[0]); i++) {
+        const int n = replay_link_parse(forms[i], out, (int)sizeof out);
+        if (n != 8 || strcmp(out, code) != 0) { all = 0; break; }
+    }
+    CHECK(all, "every pasted link form names the same code");
+
+    // The guard a tolerant decoder cannot give you. Each of these would
+    // otherwise decode to SOME game and die later under a codec error.
+    static const char *junk[] = {
+        "",
+        "WWW.FOOLISH.CARDS/",
+        "https://foolish.cards/",
+        "https://foolish.cards/MZXW6YTB0189",   // 0 1 8 9 are not in the alphabet
+        "MZXW6YTB!!",
+        "https://foolish.cards/hello world!",
+    };
+    int refused = 1;
+    for (int i = 0; i < (int)(sizeof junk / sizeof junk[0]); i++)
+        if (replay_link_parse(junk[i], out, (int)sizeof out) >= 0) { refused = 0; break; }
+    CHECK(refused, "input that is not a replay code is refused, never decoded");
+
+    CHECK(replay_link_parse(0, out, (int)sizeof out) < 0, "a NULL link is refused");
+    CHECK(replay_link_parse("MZXW6YTB", out, 4) == -REPLAY_EXTRAS_ECAP, "a short buffer says ECAP");
+
+    // A link that quotes another one still names its own game.
+    CHECK(replay_link_parse("see https://foolish.cards/AAAA vs foolish.cards/MZXW6YTB",
+                            out, (int)sizeof out) == 8 && strcmp(out, code) == 0,
+          "the LAST host occurrence wins");
+}
+
+/* ---------------- L1: the lobby is the kernel's ------------------------- */
+
+static void test_lobby(void) {
+    Game g;
+    memset(&g, 0, sizeof g);
+    g.status = GAME_STATUS_WAITING;
+
+    CHECK(game_lobby_can_deal(&g) == 0, "an empty lobby cannot deal");
+
+    const int h0 = game_lobby_seat(&g, STRATEGY_KEY_HUMAN);
+    CHECK(h0 == 0, "the first seat is 0");
+    CHECK(g.players[0].status == PLAYER_STATUS_IDLE, "a human sits down IDLE - they must ready up");
+    CHECK(game_lobby_can_deal(&g) == 0, "one seat is not a game of Durak");
+
+    const int b1 = game_lobby_seat(&g, STRAT_RANDOM);
+    CHECK(b1 == 1, "the second seat is 1");
+    CHECK(g.players[1].status == PLAYER_STATUS_READY, "a bot sits down READY - it always is");
+    CHECK(g.players[1].strategy_key == STRAT_RANDOM, "the seat carries the brain it was given");
+    CHECK(game_lobby_can_deal(&g) == 0, "the human has still not readied");
+
+    CHECK(game_lobby_ready(&g, 0) == 1, "readying an IDLE seat changes it");
+    CHECK(game_lobby_ready(&g, 0) == 0, "readying it again changes nothing");
+    CHECK(game_lobby_can_deal(&g) == 1, "two seats, both READY: deal");
+
+    CHECK(game_lobby_ready(&g, 9) == 0, "an out-of-range seat is refused, not written");
+    CHECK(game_lobby_ready(&g, -1) == 0, "a negative seat is refused");
+
+    Game full;
+    memset(&full, 0, sizeof full);
+    full.status = GAME_STATUS_WAITING;
+    int seated_in_order = 1;
+    for (int i = 0; i < MAX_PLAYERS; i++)
+        if (game_lobby_seat(&full, STRAT_RANDOM) != i) seated_in_order = 0;
+    CHECK(seated_in_order, "seats fill in order up to the cap");
+    CHECK(game_lobby_seat(&full, STRAT_RANDOM) == -1, "a full lobby seats nobody");
+
+    full.status = GAME_STATUS_PLAYING;
+    CHECK(game_lobby_seat(&full, STRATEGY_KEY_HUMAN) == -1, "a game in play seats nobody");
+    CHECK(game_lobby_ready(&full, 0) == 0, "a game in play readies nobody");
+    CHECK(game_lobby_can_deal(&full) == 0, "a game in play is not a lobby waiting to deal");
+
+    Game over;
+    memset(&over, 0, sizeof over);
+    over.status = GAME_STATUS_WAITING;
+    game_lobby_seat(&over, STRAT_RANDOM);
+    game_lobby_seat(&over, STRAT_RANDOM);
+    over.players[1].status = PLAYER_STATUS_OUT;
+    CHECK(game_lobby_can_deal(&over) == 0, "a seat that is not READY blocks the deal, whatever it is");
+}
+
 /* ------------------------- bot drive cycle (F2/F3) ----------------------- */
 
 // An n-player game dealt from a pinned wide seed, so the sweeps below are
@@ -1684,6 +1786,47 @@ static void test_bot_pacing_table(void) {
     CHECK(bot_pacing_ms(BOT_PACE_NONE, 1) == 0 && bot_pacing_ms(BOT_PACE_NONE, 0) == 0,
           "nothing applied, nothing to wait for");
     CHECK(bot_pacing_ms(999, 1) == 0, "an unknown class does not invent a delay");
+}
+
+// The two steps in FRONT of the table, which every host used to do by hand:
+// reduce a cycle's actions to their most visible class, and decide whether a
+// human is still IN. bot_cycle_delay_ms exists so that reduction has one
+// answer, and the web host was the last one still re-deriving it in TypeScript.
+static void test_bot_cycle_delay(void) {
+    Game g;
+    make_seeded_game(&g, 3, 1);
+    // Seat 0 human and IN; seats 1-2 bots.
+    uint32_t human = 1u << 0;
+
+    BotDriveOut drv;
+    memset(&drv, 0, sizeof(drv));
+    CHECK(bot_cycle_delay_ms(&g, human, &drv) == 0, "an empty cycle is worth no wait at all");
+
+    // The MAX across the cycle, not the first or the last: a bundled passive
+    // followed by a visible move must be priced as the move.
+    drv.n = 2;
+    drv.actions[0].pacing_class = BOT_PACE_BUNDLED_PASSIVE;
+    drv.actions[1].pacing_class = BOT_PACE_MOVE;
+    CHECK(bot_cycle_delay_ms(&g, human, &drv) == 3000, "the cycle is priced by its most visible action");
+    drv.actions[0].pacing_class = BOT_PACE_ROUND_TRANSITION;
+    drv.actions[1].pacing_class = BOT_PACE_BUNDLED_PASSIVE;
+    CHECK(bot_cycle_delay_ms(&g, human, &drv) == 3000, "order does not matter - it is a max, not a last");
+
+    // All-silent stays free, which is the whole point of bundling.
+    drv.actions[0].pacing_class = BOT_PACE_BUNDLED_PASSIVE;
+    CHECK(bot_cycle_delay_ms(&g, human, &drv) == 0, "a cycle of silent goods costs nothing");
+
+    // Humans present is about who is still IN, not who has a seat. The same
+    // cycle in the same game paces at 300ms once the only human is out.
+    drv.actions[0].pacing_class = BOT_PACE_MOVE;
+    CHECK(bot_cycle_delay_ms(&g, human, &drv) == 3000, "a human still IN sets the tempo");
+    g.players[0].status = PLAYER_STATUS_OUT;
+    CHECK(bot_cycle_delay_ms(&g, human, &drv) == 300, "a human who is OUT is not watching a turn order");
+    g.players[0].status = PLAYER_STATUS_IN;
+    CHECK(bot_cycle_delay_ms(&g, 0, &drv) == 300, "no human seats at all is a bots-only game");
+
+    CHECK(bot_cycle_delay_ms(0, human, &drv) == 0 && bot_cycle_delay_ms(&g, human, 0) == 0,
+          "a missing game or drive is 0, never a guess");
 }
 
 // Every roster entry must name a DISTINCT brain: bot_drive resolves a seat's
@@ -1838,7 +1981,7 @@ static void test_bot_drive_deterministic(void) {
 // itself, which is what bot_drive does.
 //
 // Found by e2e/bot_drive_parity.test.ts (a 1-action cycle reported 12 events);
-// it hit the server's drive AND fio_bot_drive_json, so the guard lives here,
+// it hit the server's drive AND the iOS bridge's, so the guard lives here,
 // where both get it.
 static int g_snaps_seen;
 static void counting_snap_cb(const Game *g, int tag, int aux) {
@@ -2342,246 +2485,6 @@ static void test_replay_step_index_refuses_a_small_buffer(void) {
     int r = replay_steps_index_v6(code, enc, 0, idx, (int)sizeof idx);
     CHECK(r < 0, "an index that does not fit is an error, not a truncation");
 }
-
-// ---------- json_out (A8/F7): packed bytes -> JSON --------------------------
-//
-// The web used to read view.c and evwire.c with hand-written TypeScript that
-// shadowed them byte for byte. These pin the C that replaced it. The invariant
-// that matters is NOT "the JSON looks plausible" — it is that decoding the
-// packed bytes says exactly what the live board says, because that equality is
-// the entire reason the mirror could be deleted.
-
-// Identity is deliberately not in the state blob (game.h), so a from-packed
-// decode cannot know names or strategy keys and emits ""/0. Strip them from the
-// live game so the two sides are comparable on what the blob actually carries.
-static void jt_strip_identity(Game *g) {
-    for (int i = 0; i < g->num_players; i++) {
-        g->players[i].name[0] = 0;
-        g->players[i].strategy_key = 0;
-    }
-}
-
-// A packed masked view must decode to the SAME JSON the live game emits, for
-// every viewer and for the spectator. This is the web's whole decode path in one
-// assertion: if these two ever disagree, the browser is drawing a board the
-// kernel does not have.
-static void test_json_view_from_packed_says_what_the_live_board_says(void) {
-    static unsigned char blob[65536];
-    static char from_packed[65536], from_live[65536];
-
-    for (int np = 2; np <= 6; np++) {
-        unsigned char seed[FOOLISH_SEED_LEN];
-        for (int i = 0; i < FOOLISH_SEED_LEN; i++) seed[i] = (unsigned char)(i * 17 + np * 3 + 1);
-        game_set_seed((uint32_t)(np * 101 + 7));
-        random_strategy_set_seed((uint32_t)(np * 101 + 7));
-        game_set_deal_seed_bytes(seed, FOOLISH_SEED_LEN);
-
-        Game g;
-        memset(&g, 0, sizeof g);
-        g.num_players = (int8_t)np;
-        for (int i = 0; i < np; i++) g.players[i].status = PLAYER_STATUS_READY;
-        start_game(&g);
-        jt_strip_identity(&g);
-
-        // Every seat, plus the spectator.
-        for (int viewer = -1; viewer < np; viewer++) {
-            const int v = (viewer < 0) ? VIEW_SPECTATOR : viewer;
-            int n = state_put(&g, v, blob);
-            CHECK(n > 0, "the board serializes to a masked blob");
-
-            int a = json_view_from_packed(blob, n, v, from_packed, (int)sizeof from_packed);
-            int b = json_state_of(&g, v, from_live, (int)sizeof from_live);
-            CHECK(a > 0 && b > 0, "both sides emit JSON");
-            if (a <= 0 || b <= 0) return;
-            CHECK(a == b && memcmp(from_packed, from_live, (size_t)a) == 0,
-                  "a packed view decodes to exactly the live board's JSON");
-        }
-    }
-}
-
-// The masking survives the round trip. A spectator's decoded JSON must carry no
-// hand at all: json_state emits "hand":null for every seat that is not the
-// viewer, so a real card array anywhere in a spectator decode is a leak.
-static void test_json_view_from_packed_leaks_no_hand_to_a_spectator(void) {
-    static unsigned char blob[65536];
-    static char out[65536];
-
-    unsigned char seed[FOOLISH_SEED_LEN];
-    for (int i = 0; i < FOOLISH_SEED_LEN; i++) seed[i] = (unsigned char)(i * 5 + 41);
-    game_set_seed(4242);
-    random_strategy_set_seed(4242);
-    game_set_deal_seed_bytes(seed, FOOLISH_SEED_LEN);
-
-    Game g;
-    memset(&g, 0, sizeof g);
-    g.num_players = 4;
-    for (int i = 0; i < 4; i++) g.players[i].status = PLAYER_STATUS_READY;
-    start_game(&g);
-
-    int n = state_put(&g, VIEW_SPECTATOR, blob);
-    int r = json_view_from_packed(blob, n, VIEW_SPECTATOR, out, (int)sizeof out);
-    CHECK(r > 0, "a spectator view decodes");
-    if (r <= 0) return;
-    CHECK(strstr(out, "\"hand\":[") == NULL,
-          "a spectator decode contains no hand array — every seat is a count");
-    CHECK(strstr(out, "\"hand\":null") != NULL, "and the seats say so explicitly");
-
-    // The viewer's own seat, by contrast, must show its real cards — otherwise
-    // the assertion above would pass on a decoder that simply emits nothing.
-    n = state_put(&g, 1, blob);
-    r = json_view_from_packed(blob, n, 1, out, (int)sizeof out);
-    CHECK(r > 0 && strstr(out, "\"hand\":[") != NULL,
-          "but seat 1's own decode shows seat 1's real hand");
-}
-
-// The packed evwire reader against the real thing: frames the kernel actually
-// serialized, from a game the engine actually played. The trailer is the anchor
-// — it must be the same final board the live game emits — because a reader that
-// drifts by one byte anywhere in the event loop lands the trailer somewhere else
-// and cannot reproduce it.
-static void test_json_events_from_packed_reads_the_frames_the_kernel_wrote(void) {
-    static unsigned char code[1 << 20];
-    static unsigned char frames[1 << 18];
-    static char out[1 << 18];
-
-    Game g;
-    unsigned char seed[FOOLISH_SEED_LEN];
-    if (!rs_play_seeded(&g, 3, 71, seed)) { CHECK(0, "seeded game plays out"); return; }
-    int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
-                                         code, (int)sizeof code);
-    if (enc <= 0) { CHECK(0, "the played game encodes as v6"); return; }
-
-    int n_frames = 0, next = 0;
-    int wrote = replay_steps_frames_v6(code, enc, VIEW_SPECTATOR, 0, 0,
-                                       frames, (int)sizeof frames, &n_frames, &next);
-    CHECK(wrote > 0 && n_frames > 0, "the code replays to packed evwire frames");
-    if (wrote <= 0 || n_frames <= 0) return;
-
-    int q = 0, decoded = 0, with_state = 0;
-    for (int f = 0; f < n_frames; f++) {
-        const int flen = frames[q] | (frames[q + 1] << 8); q += 2;
-        int r = json_events_from_packed(frames + q, flen, out, (int)sizeof out);
-        CHECK(r > 0, "every frame the kernel wrote, the kernel reads back as JSON");
-        if (r <= 0) return;
-        // A spectator frame: viewer -1, and the sequence carries its trailer.
-        CHECK(strstr(out, "\"viewer\":-1") == out + 1, "the frame's viewer survives the header");
-        CHECK(strstr(out, "\"game\":") != NULL, "and the committed final board rides as the trailer");
-        // Per-event boards are the whole point of the format (A3/§16.B4).
-        if (strstr(out, "\"state\":") != NULL) with_state++;
-        q += flen;
-        decoded++;
-    }
-    CHECK(decoded == n_frames, "every frame decoded");
-    CHECK(with_state > 0, "and the events carry their per-step boards");
-}
-
-// The trailer is the real anchor: decode the LAST frame of a finished game and
-// insist its `game` is byte-identical to the JSON the finished game itself
-// emits. This is what makes the test above more than a shape check — it pins the
-// reader's cursor arithmetic to a value it cannot fake.
-static void test_json_events_trailer_is_the_board_the_engine_ended_on(void) {
-    static unsigned char code[1 << 20];
-    static unsigned char frames[1 << 18];
-    static char out[1 << 18];
-    static char live[65536];
-
-    Game g;
-    unsigned char seed[FOOLISH_SEED_LEN];
-    if (!rs_play_seeded(&g, 3, 71, seed)) { CHECK(0, "seeded game plays out"); return; }
-    int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
-                                         code, (int)sizeof code);
-    if (enc <= 0) { CHECK(0, "the played game encodes as v6"); return; }
-
-    const int steps = replay_steps_count_v6(code, enc, 0);
-    CHECK(steps > 0, "the code reports its step count");
-    if (steps <= 0) return;
-
-    // Pull the final step's frame.
-    int n_frames = 0, next = 0;
-    int wrote = replay_steps_frames_v6(code, enc, VIEW_SPECTATOR, steps - 1, 0,
-                                       frames, (int)sizeof frames, &n_frames, &next);
-    if (wrote <= 0 || n_frames < 1) { CHECK(0, "the last step serializes"); return; }
-
-    const int flen = frames[0] | (frames[1] << 8);
-    int r = json_events_from_packed(frames + 2, flen, out, (int)sizeof out);
-    CHECK(r > 0, "the last frame decodes");
-    if (r <= 0) return;
-
-    jt_strip_identity(&g);
-    int b = json_state_of(&g, VIEW_SPECTATOR, live, (int)sizeof live);
-    CHECK(b > 0, "the finished game emits its board");
-    if (b <= 0) return;
-
-    const char *trailer = strstr(out, "\"game\":");
-    CHECK(trailer != NULL, "the decode has a trailer");
-    if (!trailer) return;
-    trailer += 7; // past "game":
-    CHECK(strncmp(trailer, live, (size_t)b) == 0,
-          "the trailer is byte-identical to the board the engine actually ended on");
-}
-
-// A truncated or foreign payload is UNREADABLE, never a partial parse. The web
-// treats a null decode as "cannot read this", and half a sequence rendered as a
-// whole one would be worse than no sequence at all.
-static void test_json_events_refuses_a_truncated_or_foreign_payload(void) {
-    static unsigned char code[1 << 20];
-    static unsigned char frames[1 << 18];
-    static char out[1 << 18];
-
-    Game g;
-    unsigned char seed[FOOLISH_SEED_LEN];
-    if (!rs_play_seeded(&g, 3, 71, seed)) { CHECK(0, "seeded game plays out"); return; }
-    int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
-                                         code, (int)sizeof code);
-    if (enc <= 0) { CHECK(0, "the played game encodes as v6"); return; }
-
-    int n_frames = 0, next = 0;
-    int wrote = replay_steps_frames_v6(code, enc, VIEW_SPECTATOR, 0, 0,
-                                       frames, (int)sizeof frames, &n_frames, &next);
-    if (wrote <= 0 || n_frames < 1) { CHECK(0, "frames serialize"); return; }
-    const int flen = frames[0] | (frames[1] << 8);
-    unsigned char *frame = frames + 2;
-
-    CHECK(json_events_from_packed(frame, flen, out, (int)sizeof out) > 0,
-          "the whole frame reads (the control)");
-
-    // A foreign format version.
-    unsigned char v = frame[0];
-    frame[0] = (unsigned char)(v + 7);
-    CHECK(json_events_from_packed(frame, flen, out, (int)sizeof out) == JSON_EPARSE,
-          "a foreign format version is refused, not guessed at");
-    frame[0] = v;
-
-    // Every truncation. Not one sampled length — a reader whose bounds check is
-    // wrong is usually wrong at one specific offset.
-    //
-    // Each prefix is copied into an EXACTLY-sized heap buffer, which is the only
-    // way this proves anything. Handing the reader `frame` with a short `len`
-    // leaves the real bytes sitting right after it, so an over-read walks into
-    // the next frame, stays inside the array, and every bound here passes while
-    // the reader is in fact reading memory it was not given. Measured: deleting
-    // a bounds check does not fail this test on a static buffer. Sized to the
-    // byte, an over-read is a heap overflow — caught under ASAN
-    // (docs/SECURITY_WASM_BOUNDARY.md is the standard this holds the reader to),
-    // and the frames the browser hands us are exactly-sized too.
-    for (int len = 1; len < flen; len++) {
-        unsigned char *exact = (unsigned char *)malloc((size_t)len);
-        CHECK(exact != NULL, "the truncation probe allocates");
-        if (!exact) return;
-        memcpy(exact, frame, (size_t)len);
-        int r = json_events_from_packed(exact, len, out, (int)sizeof out);
-        free(exact);
-        CHECK(r < 0, "a truncated sequence is unreadable, never a partial parse");
-        if (r >= 0) return;
-    }
-
-    // And a cap too small to hold the answer says so rather than emitting JSON
-    // that would parse as a smaller, wrong sequence.
-    char tiny[32];
-    CHECK(json_events_from_packed(frame, flen, tiny, (int)sizeof tiny) == JSON_ECAP,
-          "an output buffer too small is an error, not truncated JSON");
-}
-
 
 // ---------- the packed evwire READER ----------------------------------------
 //
@@ -3219,51 +3122,68 @@ static void test_replay_v6_refuses_an_overflowed_log(void) {
     CHECK(r == -REPLAY_ETOOLONG, "a full log buffer refuses as ETOOLONG, not EINPUT");
 }
 
-static void test_replay_steps_refuses_v5(void) {
-    static unsigned char v5[1 << 16];
-    static unsigned char in[1 << 16];
-    Game g;
+// EVERY RETIRED VERSION IS REFUSED, LOUDLY. The codec has had ten formats and
+// exactly one of them decodes; the others are not merely unsupported, they
+// describe games this kernel would not play (the deal order changed under 5..8,
+// and 9 hid the deal and had its hands retrodicted by complement). A code
+// carrying one of those numbers must come back as REPLAY_EVERSION with the
+// version in the detail - never as a quietly different game, and never as some
+// other error that sends a reader hunting through the coder.
+//
+// The version is the FIRST symbol, coded uniform over REPLAY_VERSION_ALPHABET,
+// so a decoder reads it as `x % 16` (coder_uniform's all-ones pop). That makes
+// the smallest code carrying version v the single byte v itself, which is what
+// this walks - every number in the alphabet, not just the ones that were once
+// real, because an unknown FUTURE version has to fail the same way.
+//
+// MUTATION-CHECKED: adding `|| version == 9` back to decode_impl's guard fails
+// this ("version 9 is refused"), and so does dropping the g_err_detail
+// assignment ("the refusal names the version").
+static void test_replay_refuses_every_retired_version(void) {
+    static unsigned char out[1 << 16];
+    char msg[160];
+    for (int v = 0; v < REPLAY_VERSION_ALPHABET; v++) {
+        if (v == REPLAY_FORMAT_VERSION_V10) continue;
+        const unsigned char code[1] = { (unsigned char)v };
+
+        int r = replay_decode(code, 1, out, (int)sizeof out);
+        snprintf(msg, sizeof msg, "version %d is refused (got %d)", v, r);
+        CHECK(r == -REPLAY_EVERSION, msg);
+        snprintf(msg, sizeof msg, "the refusal names version %d (detail %d)",
+                 v, replay_last_error_detail());
+        CHECK(replay_last_error_detail() == v, msg);
+
+        // The same through the two readers a share code actually reaches: the
+        // atom decoder the FMSG body uses, and the step rebuilder the replay
+        // screen uses. Neither may render a frame of a code it cannot read.
+        ReplayHeader hdr;
+        memset(&hdr, 0, sizeof hdr);
+        int a = replay_decode_atoms_v6(code, 1, &hdr, 0, 0);
+        snprintf(msg, sizeof msg, "version %d refused by the atom decoder (got %d)", v, a);
+        CHECK(a == -REPLAY_EVERSION, msg);
+
+        RsTestCtx ctx;
+        memset(&ctx, 0, sizeof ctx);
+        int st = replay_steps_v6(code, 1, VIEW_SPECTATOR, 0, rs_test_sink, &ctx);
+        snprintf(msg, sizeof msg, "version %d refused by replay_steps (got %d)", v, st);
+        CHECK(st == -REPLAY_EVERSION, msg);
+        CHECK(ctx.n_events == 0, "a refused code renders nothing");
+    }
+
+    // And the surviving version is not swept up by the guard: a real code still
+    // decodes. Without this the loop above passes just as well against a decoder
+    // that refuses everything.
+    static Game g;
+    static unsigned char real[1 << 16];
     unsigned char seed[FOOLISH_SEED_LEN];
     if (!rs_play_seeded(&g, 4, 4242, seed)) { CHECK(0, "seeded game plays out"); return; }
-
-    // A real v5 code for the same game: version byte 5 through the v5 encoder.
-    int fa = replay_first_attacker_from_logs(g.logs, g.num_logs);
-    int pos = 0;
-    in[pos++] = 4;
-    in[pos++] = (unsigned char)card_to_id(g.flipped);
-    in[pos++] = (unsigned char)(fa < 0 ? 0 : fa);
-    int n_actions = 0, count_at = pos;
-    in[pos++] = 0; in[pos++] = 0;
-    for (int i = 0; i < g.num_logs; i++) {
-        const GameLog *l = &g.logs[i];
-        int kind = -1;
-        if (l->log_type == LOG_ATTACK) kind = LOG_ATTACK;
-        else if (l->log_type == LOG_COVER) kind = LOG_COVER;
-        else if (l->log_type == LOG_PASS) kind = LOG_PASS;
-        else if (l->log_type == LOG_PICKUP) kind = LOG_PICKUP;
-        else continue;
-        in[pos++] = (unsigned char)kind;
-        in[pos++] = (unsigned char)(l->player_idx < 0 ? 0xFF : l->player_idx);
-        in[pos++] = (unsigned char)l->num_pairs;
-        for (int p = 0; p < l->num_pairs; p++) {
-            in[pos++] = (unsigned char)card_to_id(l->pairs[p].primary);
-            in[pos++] = card_is_none(l->pairs[p].target)
-                        ? (unsigned char)REPLAY_CARD_NONE
-                        : (unsigned char)card_to_id(l->pairs[p].target);
-        }
-        n_actions++;
-    }
-    in[count_at] = (unsigned char)(n_actions & 0xff);
-    in[count_at + 1] = (unsigned char)((n_actions >> 8) & 0xff);
-
-    int enc = replay_encode(in, pos, v5, (int)sizeof v5);
-    if (enc <= 0) return;  // the v5 oracle is frozen; if it will not encode, nothing to assert
-
-    RsTestCtx ctx;
-    memset(&ctx, 0, sizeof ctx);
-    int r = replay_steps_v6(v5, enc, VIEW_SPECTATOR, 0, rs_test_sink, &ctx);
-    CHECK(r == -REPLAY_EVERSION, "a v5 code is refused: it hides the deal");
-    CHECK(ctx.n_events == 0, "a refused code renders nothing");
+    int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 30,
+                                         real, (int)sizeof real);
+    CHECK(enc > 0, "the played game has a code");
+    if (enc <= 0) return;
+    int dec = replay_decode(real, enc, out, (int)sizeof out);
+    CHECK(dec > 0, "a v10 code still decodes");
+    CHECK(dec > 0 && out[0] == REPLAY_FORMAT_VERSION_V10, "and says so");
 }
 
 /* ---------------- A6: reset to lobby is one transform -------------------- */
@@ -6323,18 +6243,16 @@ int main(void) {
     test_replay_step_index_reports_a_pending_good();
     test_replay_steps_replays_a_deal_with_no_trump();
     test_replay_step_index_refuses_a_small_buffer();
-    test_json_view_from_packed_says_what_the_live_board_says();
-    test_json_view_from_packed_leaks_no_hand_to_a_spectator();
-    test_json_events_from_packed_reads_the_frames_the_kernel_wrote();
-    test_json_events_trailer_is_the_board_the_engine_ended_on();
-    test_json_events_refuses_a_truncated_or_foreign_payload();
     test_evwire_read_round_trips_the_writers_own_events();
     test_evwire_read_refuses_a_malformed_sequence();
     test_evwire_frames_settlement_cut();
-    test_replay_steps_refuses_v5();
+    test_replay_refuses_every_retired_version();
     test_replay_v6_refuses_an_overflowed_log();
     test_bot_drive_preferred();
+    test_link_parse();
+    test_lobby();
     test_bot_pacing_table();
+    test_bot_cycle_delay();
     test_bot_roster_strat_unique();
     test_bot_drive_basic();
     test_bot_drive_bundles_only_silent();

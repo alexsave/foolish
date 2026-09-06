@@ -1,7 +1,8 @@
 // Showcase generator. Plays all-cordite games (big brain vs big brain),
 // SCORES each one for drama as it plays (free — hand sizes, lead changes and
 // the fool are all known without any codec), and dumps only the top-K most
-// dramatic games as JSON (one per line, highest score first). A TS translator
+// dramatic games as JSON lines (one per line, highest score first) - a
+// research tool's output format, never a wire. A TS translator
 // (tests/cordite_showcase.ts) encodes the first finalist that round-trips into
 // a self-contained replay URL.
 //

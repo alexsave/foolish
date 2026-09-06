@@ -462,7 +462,7 @@ int anim_pre_bout_table(const AnimPreEvent *events, int n_events,
 
 // Canonical dedup key — the C twin of createCardEventString
 // (src/utils/animationUtils.ts). Two events collide iff they name the same
-// (type, card, from, to, seat). The web keys on a JSON string that includes the
+// (type, card, from, to, seat). The web keys on a string that includes the
 // player_id; a plan is per-viewer, so the only actor whose optimistic key can
 // collide with a confirming broadcast is the local seat, and we carry the seat
 // in place of the uuid. Packs into a u64 so a set of keys needs no allocation.
@@ -613,6 +613,21 @@ typedef struct {
     uint64_t table_at_open;     // identities standing on its opening table
     uint64_t my_hand_at_open;   // identities in MY hand on that board
 } AnimConflictFacts;
+
+// THE ARRIVING STREAM'S SWEEP, derived from its own events: which identities it
+// moves, and whether it took the table away.
+//
+// A pickup or a trash names the cards it carries off, and those are exactly the
+// ones a revert would fly home out of somebody else's hand; anything else moves
+// nothing this rule cares about. That "pickup or trash" test IS the rule - it
+// decides table_cleared, which short-circuits the server transport's hope - so
+// it is stated once, here, and every caller derives its facts through it rather
+// than restating the two event types.
+//
+// `moved_out` receives up to `cap` dense ids (a masked back names nothing and is
+// dropped). Returns the number written, or ANIM_ECAP / ANIM_EBADARG.
+int anim_conflict_sweep(const AnimEvent *events, int n_events,
+                        int *moved_out, int cap, int *table_cleared_out);
 
 // Build the facts from what an arrival already carries. `moved_ids` are the
 // stream's cards (ANIM_CARD_NONE entries are masked backs, which name nothing

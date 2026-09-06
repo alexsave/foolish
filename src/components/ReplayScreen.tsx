@@ -18,7 +18,8 @@ import { GameBoard } from './GameBoard';
 import { Telestrator } from './Telestrator';
 import { usePreventScroll } from '../hooks/usePreventScroll';
 import { animationFeed, AnimationSequenceMessage } from '../state/animationFeed';
-import { bigintToBytes, codeToGame } from '@api/common/replay/codec.ts';
+import { bigintToBytes, bytesToBigint } from '@api/common/replay/codec.ts';
+import { kernelB32Decode } from '@sdk/ts/wasm/bots.ts';
 import { decodeReplay } from '@api/common/replay/decode.ts';
 import { DecodedReplay } from '@api/common/replay/core.ts';
 import { ensureBotsAsync } from '@sdk/ts/wasm/bots.ts';
@@ -583,7 +584,7 @@ const ReplayStage = ({ decoded, frames, reverses, gameId, names, times }: StageP
     const publishSeq = useRef(0);
     const publishStep = useCallback(
         (i: number) => {
-            const seq: AnimationSequenceMessage = JSON.parse(JSON.stringify(frames[i].seq));
+            const seq: AnimationSequenceMessage = structuredClone(frames[i].seq);
             seq.sequence_id = `replay-${i}-${++publishSeq.current}-${Math.random().toString(36).slice(2)}`;
             seq.timestamp = Date.now();
             (seq.events[0] as any)._nonce = seq.sequence_id; // defeat content dedup
@@ -608,7 +609,7 @@ const ReplayStage = ({ decoded, frames, reverses, gameId, names, times }: StageP
         (i: number) => {
             const rev = reverses[i];
             if (!rev) return;
-            const seq: AnimationSequenceMessage = JSON.parse(JSON.stringify(rev));
+            const seq: AnimationSequenceMessage = structuredClone(rev);
             seq.sequence_id = `replay-rev-${i}-${++publishSeq.current}-${Math.random().toString(36).slice(2)}`;
             seq.timestamp = Date.now();
             if (seq.events[0]) (seq.events[0] as any)._nonce = seq.sequence_id;
@@ -952,7 +953,7 @@ const ReplayStage = ({ decoded, frames, reverses, gameId, names, times }: StageP
 
 const buildReplayData = async (code: string, gameId: string) => {
     const { moves, extras: extrasCode } = splitReplayCode(code);
-    const x = codeToGame(moves);
+    const x = bytesToBigint(kernelB32Decode(moves));
     await ensureBotsAsync();
 
     // The kernel's own decode, for the two things the frames don't carry: who

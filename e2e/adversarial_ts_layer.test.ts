@@ -15,7 +15,7 @@ import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
 import { executeWithGameLock, loadCompleteGame } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
 import { handleMetaAction } from '../server/impls/supabase/functions/_shared/adapter/meta_actions.ts';
 import { game_done, verify_player_in_game } from '../server/api/common/common_utils.ts';
-import { start_game } from '../server/api/common/game_lifecycle.ts';
+import { packedProducts, start_game_packed } from '../server/api/common/game_lifecycle.ts';
 import { handleAttack } from '../server/api/common/actions/attack.ts';
 import { handleCover } from '../server/api/common/actions/cover.ts';
 import { handlePass } from '../server/api/common/actions/pass.ts';
@@ -33,7 +33,7 @@ async function freshLobby(id: string, started = true): Promise<void> {
     { id: H1, name: 'Bob', is_ai: false, strategy_key: 'human' },
     { id: H2, name: 'Carol', is_ai: false, strategy_key: 'human' },
   ]);
-  if (started) await executeWithGameLock(id, async (g) => ({ game: g, events: start_game(g) as AnimationEvent[] }), 'start', false);
+  if (started) await executeWithGameLock(id, async (g) => ({ game: g, events: [], packed: packedProducts(start_game_packed(g)) }), 'start', false);
 }
 
 // The real action-endpoint dispatch (mirrors action/index.ts): it uses the
@@ -105,7 +105,7 @@ test('add-bot flood is capped at MAX_PLAYERS (no oversized-lobby crash)', async 
   const g = await loadCompleteGame(id);
   assert.ok(g.players.length <= 8, `lobby capped, got ${g.players.length}`);
   // Even if an oversized lobby somehow existed (corrupt row, pre-fix data),
-  // start_game must reject cleanly rather than crash the deal.
+  // the deal must reject cleanly rather than crash.
   const oversized: any = {
     ...g, status: GAME_STATUS.WAITING,
     players: Array.from({ length: 30 }, (_, i) => ({
@@ -113,7 +113,7 @@ test('add-bot flood is capped at MAX_PLAYERS (no oversized-lobby crash)', async 
       hand: [], awaiting_attack: false, hand_length: 0, strategy_key: 'random',
     })),
   };
-  assert.throws(() => start_game(oversized), /Cannot start|max/i, 'oversized start rejects, not crashes');
+  assert.throws(() => start_game_packed(oversized), /Cannot start|max/i, 'oversized start rejects, not crashes');
 });
 
 // ---------------------------------------------------------------------------

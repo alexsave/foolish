@@ -722,7 +722,7 @@ for rendering; transport = play/pause/step/scrub (VHS feel per web
 `ReplayScreen.tsx`).
 
 **C2. Encode/share.** On Win screen and finished offline games:
-`fio_replay_encode_b32` → `https://foolish.cards/<code>`; share sheet
+`fio_replay_share_code_b32` → `https://foolish.cards/<code>`; share sheet
 (`ShareLink`) + QR (CoreImage `CIQRCodeGenerator`, quiet zone 4 modules,
 render at 512px). Assert in tests: encode→decode round-trip equals final
 state; and one **cross-platform fixture** — a committed web-generated code

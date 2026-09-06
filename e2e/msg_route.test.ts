@@ -6,28 +6,28 @@
 // because the page forgot to render one.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { kernelMsgDecode, kernelMsgPublicView } from '../sdk/ts/wasm/bots.ts';
-import { base32Encode, base32Decode } from '../server/api/common/replay/codec.ts';
+import { kernelMsgDecode, kernelMsgPublicView, kernelB32Encode, kernelB32Decode } from '../sdk/ts/wasm/bots.ts';
+
 import { viewToGame } from '../sdk/ts/wire/view.ts';
 
 const FIXTURE = 'f7020002efcdab89674523010a0000030001000000000000000079d87206410d37d302c19dfb6cacbc8bebf879d242622082315709cc0f183788030004416e6e300104416e6e310204416e6e320a00012951da5bef3096f9f7bf2cfb58d013f6d7fa';
 const bytes = Uint8Array.from(FIXTURE.match(/../g)!.map(b => parseInt(b, 16)));
 
 test('the URL round-trips through base32 (the codec the whole product shares)', () => {
-    const link = '1' + base32Encode(bytes);
+    const link = '1' + kernelB32Encode(bytes);
     assert.equal(link[0], '1', 'the text-level version dispatches before any binary');
-    assert.deepEqual(base32Decode(link.slice(1)), bytes);
+    assert.deepEqual(kernelB32Decode(link.slice(1)), bytes);
     // QR-alphanumeric-safe and URL-safe: no padding, no case games.
     assert.match(link.slice(1), /^[A-Z2-7]+$/);
 });
 
 test('the page fits well inside MSMessage.url (5,000 chars)', () => {
-    const link = `https://foolish.cards/m/1${base32Encode(bytes)}`;
+    const link = `https://foolish.cards/m/1${kernelB32Encode(bytes)}`;
     assert.ok(link.length < 5000, `${link.length} chars`);
 });
 
 test('a stranger with the link sees the table and NO hand', () => {
-    const env = kernelMsgDecode(base32Decode(base32Encode(bytes)));
+    const env = kernelMsgDecode(kernelB32Decode(kernelB32Encode(bytes)));
     const { view } = kernelMsgPublicView();
     const roster = {
         id: 'imessage', name: 'iMessage game',

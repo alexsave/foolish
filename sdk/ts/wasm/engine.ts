@@ -69,6 +69,9 @@ interface EngineExports {
     wasm_good(p: number): number;
     wasm_transition(): number;
     wasm_refill(): number;
+    wasm_reset_to_lobby(botMask: number): number;
+    wasm_import_strategy_keys(): void;
+    wasm_human_mask(): number;
     wasm_game_done(): number;
     wasm_should_act(i: number): number;
     wasm_next_player(cur: number): number;
@@ -77,7 +80,6 @@ interface EngineExports {
     wasm_export_moves(start: number, max: number): number;
     wasm_replay_io_ptr(): number;
     wasm_replay_io_cap(): number;
-    wasm_replay_encode(len: number): number;
     wasm_replay_encode_v6(len: number): number;
     wasm_replay_decode(len: number): number;
     wasm_replay_error_detail(): number;
@@ -383,6 +385,25 @@ function marshalGame(ex: EngineExports, game: Game): void {
         buf[q++] = s & 0xff;
     }
     ex.wasm_import_state();
+    // SEAT KINDS, every marshal, right behind the state. game_human_mask reads
+    // them, so once they are here the kernel can answer "which seats may I
+    // drive" - and no host has to build an is_ai mask in order to ask.
+    //
+    // They are NOT in the state wire itself: state_put/state_get are shared with
+    // the DURABLE blob, so a byte added there would re-interpret every persisted
+    // games.state row while its version byte still read 2.
+    //
+    // A bot goes in as 0, not its real STRAT_* id: resolving that means
+    // kernelBotStrat, which lives in bots.ts (a cycle from here) and instantiates
+    // bots.wasm, which the rules-only paths must not pay for. Only the SIGN
+    // matters to game_human_mask. bots.ts re-imports the exact brains on the
+    // paths that actually run a strategy, where espresso's opponent modelling
+    // needs to know which opponent is `random`.
+    {
+        const io = ex.wasm_io_ptr();
+        for (let i = 0; i < game.players.length; i++) buf[io + i] = game.players[i].is_ai ? 0 : 0xff;
+        ex.wasm_import_strategy_keys();
+    }
     // wasm_import_state drops the deterministic-deck flag (the transient IO
     // format doesn't carry it). Re-assert it for seed-dealt games so the bot
     // path — which marshals a JS Game rather than loading the durable blob —
@@ -392,6 +413,43 @@ function marshalGame(ex: EngineExports, game: Game): void {
     // draws scrambled it). game.deterministic_deck is set from the blob on load
     // (deserializeGameState) and at the deal (game_lifecycle).
     if (game.deterministic_deck) ex.wasm_set_deterministic_deck(1);
+}
+
+// END OF GAME, decided and applied by the kernel (wasm_finalize_win): is the
+// game over, and if so park every seat the way a finished game parks them -
+// GAME_OVER, bots READY, humans IDLE, hands kept for the win screen.
+//
+// The edge's check_win_sync was this written in TypeScript, on top of
+// common_utils game_done. Its comment said the kernel was out of reach because
+// "the edge would have to swallow the guards.wasm embed, and check_win_sync
+// would have to become async" - but the reach is to the ENGINE, which utils.ts
+// already loads lazily for commitGame and finalizeEndedGame, and the call site
+// was already inside an async function.
+//
+// Returns true if the game ended (and `game` has been parked), false otherwise.
+export function kernelFinalizeWin(game: Game): boolean {
+    const ex = engine();
+    residentFor = null;
+    marshalGame(ex, game);
+    let aiMask = 0;
+    game.players.forEach((p, i) => { if (p.is_ai) aiMask |= 1 << i; });
+    const fool = ex.wasm_finalize_win(aiMask >>> 0);
+    if (fool < 0) return false;
+    const base = ex.wasm_io_ptr();
+    ex.wasm_export_state();
+    applyStateToGame(game, parseState(mem(ex), base), null);
+    return true;
+}
+
+// The seats the kernel must NOT drive, as a bitmask (game.c game_human_mask).
+// Valid straight after any marshal - marshalGame states the kinds. A game
+// loaded from a durable BLOB has none (identity stays with the caller,
+// game.h), so that path's host still owns the question.
+export function kernelHumanMask(game: Game): number {
+    const ex = engine();
+    residentFor = null;
+    marshalGame(ex, game);
+    return ex.wasm_human_mask() >>> 0;
 }
 
 export interface KernelState {
@@ -930,7 +988,8 @@ type KernelAction =
     | { kind: 'good'; seat: number }
     | { kind: 'start' }
     | { kind: 'transition' }
-    | { kind: 'refill' };
+    | { kind: 'refill' }
+    | { kind: 'reset_lobby'; botMask: number };
 
 // Test hook: differential harnesses inject a deterministic seed source so
 // kernel draws replay the exact sequence a seeded Math.random produced.
@@ -1031,6 +1090,7 @@ function runKernel(game: Game, action: KernelAction): KernelRun {
         case 'start': ok = ex.wasm_start_game(); break;
         case 'transition': ok = ex.wasm_transition(); break;
         case 'refill': ok = ex.wasm_refill(); break;
+        case 'reset_lobby': ok = ex.wasm_reset_to_lobby(action.botMask); break;
     }
 
     if (!ok) return { ok: false, reason: ex.wasm_reject_reason(), post: null, logs: [], snaps: [] };
@@ -1053,201 +1113,6 @@ function runKernel(game: Game, action: KernelAction): KernelRun {
     return { ok: true, reason: 0, post, logs, snaps };
 }
 
-// Synthesize the production AnimationEvent stream from the kernel's hook
-// snapshots + logs. Every event's game_state is the full intermediate Game,
-// exactly as the TS handlers captured with cloneGame.
-function buildEvents(game: Game, run: KernelRun, ctx: { reason?: string; actorId?: string | null }): AnimationEvent[] {
-    const events: AnimationEvent[] = [];
-    const name = (seat: number) => game.players[seat].name;
-    const pid = (seat: number) => game.players[seat].player_id;
-
-    // The good_players/good_timestamp of intermediate snapshots: reconstruct
-    // per snapshot from its own mask, with the same insertion-order rule as
-    // the live object.
-    const preGood = game.good_players;
-    const preGoodTs = game.good_timestamp;
-    const snapGame = (s: Snapshot) =>
-        stateToGame(s.state, game, preGood, ctx.actorId ?? null, preGoodTs ?? nowMs());
-
-    // Sequential readers for per-type logs (each DRAW/COVER hook consumes the
-    // next matching log).
-    const drawLogs = run.logs.filter(l => l.type === LOG_TYPE.DRAW);
-    const coverLogs = run.logs.filter(l => l.type === LOG_TYPE.COVER);
-    const discardLog = run.logs.find(l => l.type === LOG_TYPE.DISCARD);
-    let drawI = 0, coverI = 0;
-
-    for (const s of run.snaps) {
-        switch (s.tag) {
-            case HOOK.ATTACK: {
-                const log = run.logs.find(l => l.type === LOG_TYPE.ATTACK);
-                const cards = log ? log.pairs.map(p => p.primary) : [];
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.ATTACK_PASS,
-                    player_id: pid(s.aux),
-                    cards,
-                    from_location: 'hand',
-                    to_location: 'table',
-                    message: `${name(s.aux)} attacked with ${cardList(cards)}`,
-                    game_state: snapGame(s),
-                });
-                break;
-            }
-            case HOOK.PASS: {
-                const log = run.logs.find(l => l.type === LOG_TYPE.PASS);
-                const cards = log ? log.pairs.map(p => p.primary) : [];
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.ATTACK_PASS,
-                    player_id: pid(s.aux),
-                    cards,
-                    from_location: 'hand',
-                    to_location: 'table',
-                    message: `${name(s.aux)} passed with ${cardList(cards)}`,
-                    game_state: snapGame(s),
-                });
-                break;
-            }
-            case HOOK.OUT:
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.OUT,
-                    player_id: pid(s.aux),
-                    message: `${name(s.aux)} is out`,
-                    game_state: snapGame(s),
-                });
-                break;
-            case HOOK.COVER: {
-                const log = coverLogs[coverI++];
-                const cover = log.pairs[0].primary;
-                const attack = log.pairs[0].target!;
-                const defenderSeat = seatCoveredBy(run, s);
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.COVER,
-                    player_id: pid(defenderSeat),
-                    cards: [cover],
-                    target_card: attack,
-                    battle_index: s.aux,
-                    from_location: 'hand',
-                    to_location: 'table',
-                    message: `${name(defenderSeat)} covered ${cardDisplay(attack)} with ${cardDisplay(cover)}`,
-                    game_state: snapGame(s),
-                });
-                break;
-            }
-            case HOOK.DISCARD: {
-                const cards = discardLog ? discardLog.pairs.map(p => p.primary) : [];
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.DISCARD,
-                    cards,
-                    from_location: 'table',
-                    to_location: 'discard',
-                    message: `${cards.length} cards discarded`,
-                    game_state: snapGame(s),
-                });
-                break;
-            }
-            case HOOK.TRASH: {
-                const cards = discardLog ? discardLog.pairs.map(p => p.primary) : [];
-                if (cards.length > 0) {
-                    events.push({
-                        type: ANIMATION_EVENT_TYPE.CARDS_TO_TRASH,
-                        cards,
-                        from_location: 'table',
-                        to_location: 'discard',
-                        message: `${cards.length} cards discarded`,
-                        game_state: snapGame(s),
-                    });
-                }
-                break;
-            }
-            case HOOK.DRAW: {
-                const log = drawLogs[drawI++];
-                const cards = log.pairs.map(p => p.primary); // real identities for the recipient
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.REFILL,
-                    player_id: pid(s.aux),
-                    cards,
-                    from_location: 'deck',
-                    to_location: 'hand',
-                    message: `${name(s.aux)} drew ${cards.length} cards`,
-                    game_state: snapGame(s),
-                });
-                break;
-            }
-            case HOOK.DEFENDER_MOVE:
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.DEFENDER_MOVE,
-                    player_id: pid(s.aux),
-                    message: `${name(s.aux)} is now the defender`,
-                    game_state: snapGame(s),
-                });
-                break;
-            case HOOK.PICKUP: {
-                const log = run.logs.find(l => l.type === LOG_TYPE.PICKUP);
-                const cards = log ? log.pairs.map(p => p.primary) : [];
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.PICKUP,
-                    player_id: pid(s.aux),
-                    cards,
-                    from_location: 'table',
-                    to_location: 'hand',
-                    message: `${name(s.aux)} picked up ${cards.length} cards`,
-                    game_state: snapGame(s),
-                });
-                break;
-            }
-            case HOOK.MAGIC_TRANSITION: {
-                const reason = ctx.reason ?? transitionReason(s.state, game);
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
-                    message: `${reason} - proceeding to next round`,
-                    game_state: snapGame(s),
-                });
-                break;
-            }
-            case HOOK.START_MAGIC:
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
-                    message: `All players ready - starting game!`,
-                    game_state: snapGame(s),
-                });
-                break;
-            case HOOK.DEAL:
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.DEAL,
-                    player_id: pid(s.aux),
-                    cards: s.state.players[s.aux].hand,
-                    from_location: 'deck',
-                    to_location: 'hand',
-                    game_state: snapGame(s),
-                });
-                break;
-            case HOOK.FLIPPED:
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.FLIPPED,
-                    cards: [s.state.flipped!],
-                    from_location: 'deck',
-                    to_location: 'flipped',
-                    game_state: snapGame(s),
-                });
-                break;
-            case HOOK.START_DEFENDER: {
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.DEFENDER_MOVE,
-                    player_id: pid(s.aux),
-                    game_state: snapGame(s),
-                });
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
-                    message: `Player ${name(s.state.firstAttacker)} is the first attacker, wait for them to attack`,
-                    game_state: snapGame(s),
-                });
-                break;
-            }
-        }
-    }
-    return events;
-}
-
-// The seat that performed a cover is the defender at snapshot time.
 function seatCoveredBy(_run: KernelRun, s: Snapshot): number {
     return s.state.defender;
 }
@@ -1346,10 +1211,15 @@ function execute(game: Game, action: KernelAction, actorId: string | null, ctx: 
         const attacks = action.kind === 'cover' ? action.attacks : null;
         throw rejectionError(game, run.reason, actorId ?? '', cards, attacks, action.kind);
     }
-    const events = buildEvents(game, run, { ...ctx, actorId });
+    // NO JS event synthesis. The kernel serializes its own per-viewer event
+    // streams (wasm_events_serialize -> exportPackedProducts), and every
+    // production broadcast now carries those bytes; a second derivation here,
+    // from the same snapshots, was the duplication this campaign exists to
+    // remove. What is left is the marshalling: apply the kernel's state to the
+    // JS Game and append its logs.
     applyStateToGame(game, run.post!, actorId);
     appendLogs(game, run.logs, preFlipped, game.flipped);
-    return events;
+    return [];
 }
 
 // Run the action against the kernel purely for the accept/reject verdict —
@@ -1406,6 +1276,17 @@ export function kernelStartGame(game: Game): AnimationEvent[] {
 
 export function kernelRoundTransition(game: Game, reason: string): AnimationEvent[] {
     return execute(game, { kind: 'transition' }, null, { reason });
+}
+
+// The rematch reset: a finished game back to its lobby. The whole reset is
+// c/src/game.c's game_reset_to_lobby - which seats come back READY, which
+// volatile round fields are cleared, and (the bit the edge used to get wrong)
+// that the good-players set is cleared HERE rather than left for the next deal.
+// Mutates `game` in place, like every other kernel action on this path.
+export function kernelResetToLobby(game: Game): void {
+    let botMask = 0;
+    game.players.forEach((p, i) => { if (p.is_ai) botMask |= 1 << i; });
+    execute(game, { kind: 'reset_lobby', botMask }, null);
 }
 
 // The old refillPlayerHandsWithEvents compatibility wrapper (kernelRefill)
@@ -1466,29 +1347,27 @@ export function isReplayTooLong(e: unknown): boolean {
     return e instanceof Error && e.message === REPLAY_TOO_LONG;
 }
 
-// Mirrors REPLAY_E* in replay.h. Messages match the TS reference's throws,
-// except the conservation desync (the reference interpolated the live
-// counts; the kernel reports only the code) and the C-side-only
-// EINPUT/ECAP/ETOOLONG.
+// Mirrors REPLAY_E* in replay.h. The NUMBERS are the wire between the two
+// files, so 3, 8 and 9 are a deliberate hole: they belonged to the retired
+// retrodiction format (no single fool, fresh card not unseen, hidden count
+// underflow) and are unreachable now, but closing the gap would re-point every
+// later code onto a different message.
 function replayError(negCode: number, detail: number): Error {
     switch (-negCode) {
         case 1: return new Error(`unsupported replay format version ${detail}`);
         case 2: return new Error('invalid replay: leftover data after game end');
-        case 3: return new Error('invalid replay: no single fool');
         case 4: return new Error('replay guard: too many events');
         case 5: return new Error('replay desync: no legal moves');
         case 6: return new Error('replay desync: conservation');
-        case 7: return new Error('replay desync: known card');
-        case 8: return new Error('replay desync: fresh card');
-        case 9: return new Error('replay desync: hidden count');
-        case 10: return new Error('replay desync: no fresh card');
-        case 11: return new Error('replay desync: fresh card not feasible');
+        case 7: return new Error('replay desync: played card not in hand');
+        case 10: return new Error('replay desync: the unseen pool is empty');
+        case 11: return new Error('replay desync: a supplied reveal is not unseen');
         case 12: return new Error(
             `replay desync: logged ${LOG_TYPE_FROM_INT[detail >> 16] ?? (detail >> 16)} not in menu of ${detail & 0xffff}`);
         case 13: return new Error('replay desync: round end not in menu');
         case 14: return new Error('replay desync: attack continuation');
         case 15: return new Error('replay desync: pass continuation');
-        case 16: return new Error('incomplete game: logs ended before the fool was known');
+        case 16: return new Error('incomplete replay: the actions ran out before the coded atom count');
         case 17: return new Error('replay desync: logs continue after the game ended');
         case 18: return new Error('empty menu');
         case 19: return new Error('encode: chosen index out of range');
@@ -1508,7 +1387,7 @@ function replayError(negCode: number, detail: number): Error {
     }
 }
 
-type ReplayOp = 'encode' | 'encode_v6' | 'decode';
+type ReplayOp = 'encode_v6' | 'decode';
 
 function kernelReplayRun(input: Uint8Array, op: ReplayOp): Uint8Array {
     const ex = engine();
@@ -1516,19 +1395,14 @@ function kernelReplayRun(input: Uint8Array, op: ReplayOp): Uint8Array {
     const base = ex.wasm_replay_io_ptr();
     mem(ex).set(input, base);
     const r = op === 'decode' ? ex.wasm_replay_decode(input.length)
-        : op === 'encode_v6' ? ex.wasm_replay_encode_v6(input.length)
-        : ex.wasm_replay_encode(input.length);
+        : ex.wasm_replay_encode_v6(input.length);
     if (r < 0) throw replayError(r, ex.wasm_replay_error_detail());
     return mem(ex).slice(base, base + r);
 }
 
-export function kernelReplayEncode(input: Uint8Array): Uint8Array {
-    return kernelReplayRun(input, 'encode');
-}
-
-// Format 6 (hidden-state-lossless, partial-game — c/src/replay.h). Input
-// carries the real hidden cards; decode is version-dispatched (kernelReplayDecode
-// handles v6 transparently).
+// The marshalled encoder (c/src/replay.h): an action stream plus the real
+// hidden cards. Production encodes through kernelReplayEncodeV6FromGame
+// (bots.ts) instead, which reads both off a resident game.
 export function kernelReplayEncodeV6(input: Uint8Array): Uint8Array {
     return kernelReplayRun(input, 'encode_v6');
 }

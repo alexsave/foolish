@@ -13,11 +13,8 @@
 // Run: npx tsx --test e2e/msg_full_game.test.ts
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-    kernelMsgDecode, kernelMsgSeal, kernelMsgRebase, kernelMsgLegalMoves,
-    kernelMsgPublicView, kernelResidentReplayCodeV6, MSG_REBASE_REAPPLY,
-} from '../sdk/ts/wasm/bots.ts';
-import { base32Encode, classifyPathSegment } from '../server/api/common/replay/codec.ts';
+import { kernelMsgDecode, kernelMsgSeal, kernelMsgRebase, kernelMsgLegalMoves, kernelMsgPublicView, kernelResidentReplayCodeV6, MSG_REBASE_REAPPLY, kernelB32Encode } from '../sdk/ts/wasm/bots.ts';
+import { classifyPathSegment } from '../server/api/common/replay/codec.ts';
 
 const AWIRE = { attack: 0, cover: 1, pass: 2, pickup: 3, good: 4 } as const;
 const wireCard = (c: { suit: number; value: number }) => c.suit * 13 + (c.value - 1);
@@ -131,7 +128,7 @@ test('a FINISHED envelope\'s own seed derives a real replay code — the /m/ pag
     // The resulting URL (https://foolish.cards/<b32>) must actually route to
     // the replay screen, not the legacy authenticated shortcode path — the
     // same classifier the site's own [game_id] page uses.
-    const b32 = base32Encode(code);
+    const b32 = kernelB32Encode(code);
     assert.equal(classifyPathSegment(b32), 'replay',
                 'the derived code must be long enough to route to ReplayScreen');
 });

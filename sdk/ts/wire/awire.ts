@@ -62,7 +62,15 @@ export function encodeAction(move: AwireMove): Uint8Array {
 }
 
 // awire bytes -> move, mirroring awire_decode's strictness (null on any
-// malformed payload). Used by the legacy-fallback server path and tests.
+// malformed payload).
+//
+// No production caller left: the server's legacy-fallback path was its last one
+// and is retired (moves are packed only). What it still is, and why it stays, is
+// the ORACLE the encoder is fuzzed against - e2e/awire_codec.test.ts round-trips
+// 3,000 generated moves through encode -> decode -> encode, which is how
+// encodeAction (very much live) is held to the format. Same role the frozen TS
+// bot oracles play for the kernel's move choice. It is not a second
+// implementation anything runs on.
 export function decodeAction(buf: Uint8Array): AwireMove | null {
     if (buf.length < 2) return null;
     const kind = buf[0], n = buf[1];

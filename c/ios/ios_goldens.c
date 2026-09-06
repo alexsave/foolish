@@ -1,4 +1,5 @@
-// ios_goldens.c — emits ios/Fixtures/goldens.json (§16.A3). Drives ~20 seeded
+// ios_goldens.c — emits ios/Fixtures/goldens.json (§16.A3), a test fixture the
+// Swift suite reads. Drives ~20 seeded
 // games PURELY through the Swift-facing bridge (fio_*), with a fully
 // deterministic "lowest eligible seat plays its first legal move" policy, and
 // records the exact bridge output. The Swift EngineGoldenTests (§16.A6) replay
@@ -28,7 +29,7 @@ static uint64_t fnv1a(uint64_t h, const char *s, int n) {
 
 // First packed legal move -> its awire action frame, so the golden is DRIVEN
 // through the same packed path the app ships (EngineC.apply -> fio_apply_awire),
-// not the JSON one. Mirrors Swift MoveWire.encodeAction exactly.
+// Mirrors Swift MoveWire.encodeAction exactly.
 // packed layout (fio_legal_packed): u32 count, then per move
 //   type(1) n(1) cards[n] attacks[n]; kinds align with AWIRE_* (attack0..good4).
 static int first_move_awire(const unsigned char *packed, int len, unsigned char *out) {
@@ -59,7 +60,7 @@ int main(void) {
         if (fio_new_game(seed, 32, N_PLAYERS) != FIO_EOK) { fprintf(stderr, "new_game failed\n"); return 1; }
 
         // Deal fingerprint: the initial masked PACKED state for viewer 0
-        // (view.c state_put — the wire the app ships, no JSON surface).
+        // (view.c state_put — the wire the app ships).
         int dealLen = fio_state_packed(0, buf, sizeof(buf));
         uint64_t dealHash = fnv1a(1469598103934665603ULL, buf, dealLen);
 
@@ -86,7 +87,7 @@ int main(void) {
             int seat = -1;
             for (int s = 0; s < N_PLAYERS; s++) if (mask & (1 << s)) { seat = s; break; }
             if (seat < 0) break;
-            // Drive through the PACKED path the app ships (no JSON apply). Bail
+            // Drive through the PACKED path the app ships. Bail
             // loudly rather than silently freezing a half-played golden.
             int lrc = fio_legal_packed(seat, legal, sizeof(legal));
             if (lrc < 0) { fprintf(stderr, "goldens: legal menu did not fit (rc=%d)\n", lrc); return 1; }

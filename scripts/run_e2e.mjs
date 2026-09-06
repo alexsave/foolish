@@ -33,6 +33,13 @@ import { spawn } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// Inherited by every per-file child node:test spawns. It keeps the test's own
+// prints off fd 1, which in a child is node's v8-serialized report wire - see
+// scripts/e2e_child_stdout.mjs for what the parent does with a print it finds
+// wedged between two frames.
+const STDOUT_GUARD = fileURLToPath(new URL('./e2e_child_stdout.mjs', import.meta.url));
 
 const E2E_DIR = 'e2e';
 
@@ -67,7 +74,8 @@ const overlap = (process.env.E2E_LANES || 'overlap') === 'overlap';
 function lane(name, laneFiles, width, buffered) {
     if (laneFiles.length === 0) return Promise.resolve(0);
     const child = spawn(process.execPath, [
-        '--import', 'tsx', '--test', `--test-concurrency=${width}`,
+        '--import', 'tsx', '--import', STDOUT_GUARD,
+        '--test', `--test-concurrency=${width}`,
         '--experimental-test-module-mocks', ...laneFiles,
     ], {
         env: { ...process.env, TSX_TSCONFIG_PATH: 'e2e/tsconfig.json' },

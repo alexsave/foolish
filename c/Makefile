@@ -1,4 +1,11 @@
 CC      ?= clang
+
+# A literal comma, so $(filter-out) patterns can name a -Wl,--flag. Defined here
+# rather than beside its first user: := expands immediately, so a definition
+# further down the file silently expands to nothing at every earlier use, and
+# the msg target's memory-pin filter spent its whole life being a no-op that
+# emitted BOTH pins and let the later one win.
+comma := ,
 # -flto links the engine, legal-move generator and bots as one unit so the
 # tiny per-ply leaf calls (can_cover, game_done, should_bot_act, card_eq,
 # hand_remove_card — 100M–300M calls in a cordite eval) inline into the rollout
@@ -32,7 +39,7 @@ CFLAGS += -DCD_LEAFBOOK
 
 # The engine + all heuristic / Monte-Carlo bots. Linked into every binary.
 CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_steps.c \
-            src/replay_extras.c src/view.c src/awire.c src/json_out.c \
+            src/replay_extras.c src/view.c src/awire.c \
             src/evwire.c src/random_strategy.c src/espresso_strategy.c \
             src/handwritten_strategy.c src/robusta_strategy.c \
             src/firecracker_strategy.c src/gunpowder_strategy.c \
@@ -105,12 +112,11 @@ build/apply_difftest: tests/apply_difftest.c $(CORE_OBJ)
 	$(CC) $(CFLAGS) tests/apply_difftest.c $(CORE_OBJ) -o $@ $(LDFLAGS)
 build/solver_difftest: tests/solver_difftest.c $(CORE_OBJ)
 	$(CC) $(CFLAGS) tests/solver_difftest.c $(CORE_OBJ) -o $@ $(LDFLAGS)
-# Replay-codec round trip against real engine games (native mirror of
-# e2e/replay_codec.test.ts; also part of `make difftests`).
-build/replay_difftest: tests/replay_difftest.c $(CORE_OBJ)
-	$(CC) $(CFLAGS) tests/replay_difftest.c $(CORE_OBJ) -o $@ $(LDFLAGS)
-# Format-6 (partial-game, hidden-state-lossless) round trip + losslessness +
-# mid-game + size (docs/IMESSAGE_GAME_DESIGN.md §16 option 3).
+# Replay-codec round trip against real engine games (the native mirror of
+# e2e/replay_codec.test.ts): losslessness, mid-game cuts, size
+# (docs/IMESSAGE_GAME_DESIGN.md §16 option 3). It absorbed the old
+# replay_difftest, which drove the same games through the retired retrodiction
+# encoder and asserted the same full-stream fidelity.
 build/replay_v6_test: tests/replay_v6_test.c $(CORE_OBJ)
 	$(CC) $(CFLAGS) tests/replay_v6_test.c $(CORE_OBJ) -o $@ $(LDFLAGS)
 # FMSG v1 envelope (the iMessage payload): round-trip, replay fidelity, tamper
@@ -122,14 +128,13 @@ build/msg_wire_test: tests/msg_wire_test.c $(CORE_OBJ)
 # building. The owner's headline ask — the quality tests live in C now.
 build/anim_plan_test: tests/anim_plan_test.c $(CORE_OBJ)
 	$(CC) $(CFLAGS) tests/anim_plan_test.c $(CORE_OBJ) -o $@ $(LDFLAGS)
-difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/solver_difftest build/replay_difftest build/replay_v6_test build/anim_plan_test
+difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/solver_difftest build/replay_v6_test build/anim_plan_test
 	./build/sim_difftest 4 1000 && ./build/apply_difftest 4 200 && \
 	./build/msg_wire_test 20 && \
 	./build/anim_plan_test && \
 	./build/solver_difftest 2 40 "" 200000 && \
 	./build/solver_difftest 3 40 "" 200000 && \
 	./build/solver_difftest 4 40 "" 200000 && \
-	./build/replay_difftest 40 && \
 	./build/replay_v6_test 40 && \
 	$(MAKE) analyse-test
 
@@ -157,8 +162,11 @@ analyse-test:
 # ---------- iOS static library / xcframework (docs/IOS_APP_DESIGN.md §16.A1) --
 #
 # Builds ../ios/vendor/Foolish.xcframework from the SAME CORE_SRC every native
-# binary uses, plus ios/ios_api.c (the Swift-visible bridge, ios/include/
-# ios_api.h). This is macOS + Xcode ONLY (needs xcrun/libtool/xcodebuild and
+# binary uses, plus the Swift-visible bridge (ios/ios_api.c + ios/ios_bots_api.c,
+# declared by ios/include/ios_api.h). The bridge is TWO objects on purpose: this
+# archive links per object, so keeping every bot reference in ios_bots_api.c is
+# what lets a binary that never drives a bot leave the strategy ladder behind
+# (see ios/ios_internal.h). This is macOS + Xcode ONLY (needs xcrun/libtool/xcodebuild and
 # the iOS SDKs). On Linux/CI, `make ios-smoke` exercises the identical bridge
 # natively (clang) — it is the portable proof that new->legal->apply->state and
 # a full game run through the Swift entry points.
@@ -171,37 +179,96 @@ analyse-test:
 IOS_MIN_VERSION := 15.0
 IOS_CAPS   := -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_MOVE_CARDS=28 \
               -DMAX_LEGAL_MOVES=4096 -DCD_LEAFBOOK
-IOS_SRC    := $(CORE_SRC) ios/ios_api.c
-IOS_CFLAGS := -O2 -Isrc -Iios/include $(IOS_CAPS)
+# TWO libraries, not one, and this is the whole reason the C bridge is two
+# translation units. Foolish.xcframework is STATIC, so ld pulls it in per
+# object: while one archive held both halves, FoolishKit (a dynamic framework
+# with a public botDrive on EngineC) exported a bot entry, which is a dead-strip
+# root, which linked bot_drive -> bot_roster -> all 21 strategies including
+# octogen. FoolishKit ships inside FoolishMessagesApp, so octogen shipped in the
+# iMessage bundle.
+#
+# Split at the archive, the ladder has nowhere to ride. The extension links only
+# the core; the host app links both.
+#
+# The split is BY REFERENCE, not by taste: the core set below names no strategy
+# symbol at all (random_strategy_set_seed is defined in game.c, not a strategy
+# file), so nothing in it can drag one in.
+IOS_CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c \
+                src/replay_steps.c src/replay_extras.c src/view.c src/awire.c \
+                src/evwire.c src/sha256.c src/msg_wire.c src/anim_plan.c \
+                ios/ios_api.c
+IOS_BOTS_SRC := $(filter-out $(IOS_CORE_SRC),$(CORE_SRC)) ios/ios_bots_api.c
 
-# $(1)=target-triple  $(2)=sdk name  $(3)=output dir
+# Everything, for the host-side smoke/golden binaries that want one link line.
+IOS_SRC    := $(IOS_CORE_SRC) $(IOS_BOTS_SRC)
+IOS_CFLAGS := -O2 -Isrc -Iios/include -Iios/include-bots $(IOS_CAPS)
+
+# $(1)=target-triple  $(2)=sdk name  $(3)=output dir  $(4)=lib name  $(5)=sources
 define IOS_BUILD_SLICE
-	@mkdir -p $(3)/obj
-	@for s in $(IOS_SRC); do \
-	  o=$(3)/obj/$$(basename $$s .c).o; \
+	@mkdir -p $(3)/obj-$(4)
+	@for s in $(5); do \
+	  o=$(3)/obj-$(4)/$$(basename $$s .c).o; \
 	  echo "  CC[$(2)] $$s"; \
 	  xcrun -sdk $(2) clang -target $(1) $(IOS_CFLAGS) -c $$s -o $$o || exit 1; \
 	done
-	libtool -static -o $(3)/libfoolish.a $(3)/obj/*.o
+	libtool -static -o $(3)/lib$(4).a $(3)/obj-$(4)/*.o
+endef
+
+# Both libraries for one slice.
+define IOS_BUILD_BOTH
+	$(call IOS_BUILD_SLICE,$(1),$(2),$(3),foolish,$(IOS_CORE_SRC))
+	$(call IOS_BUILD_SLICE,$(1),$(2),$(3),foolishbots,$(IOS_BOTS_SRC))
 endef
 
 .PHONY: ios-lib ios-smoke
 ios-lib:
 	@echo "== device slice (arm64) =="
-	$(call IOS_BUILD_SLICE,arm64-apple-ios$(IOS_MIN_VERSION),iphoneos,build/ios/device)
+	$(call IOS_BUILD_BOTH,arm64-apple-ios$(IOS_MIN_VERSION),iphoneos,build/ios/device)
 	@echo "== simulator slices (arm64 + x86_64) =="
-	$(call IOS_BUILD_SLICE,arm64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim-arm64)
-	$(call IOS_BUILD_SLICE,x86_64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim-x86_64)
+	$(call IOS_BUILD_BOTH,arm64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim-arm64)
+	$(call IOS_BUILD_BOTH,x86_64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim-x86_64)
 	@mkdir -p build/ios/sim
 	lipo -create build/ios/sim-arm64/libfoolish.a build/ios/sim-x86_64/libfoolish.a \
 	     -output build/ios/sim/libfoolish.a
-	@rm -rf ../ios/vendor/Foolish.xcframework
+	lipo -create build/ios/sim-arm64/libfoolishbots.a build/ios/sim-x86_64/libfoolishbots.a \
+	     -output build/ios/sim/libfoolishbots.a
+	@rm -rf ../ios/vendor/Foolish.xcframework ../ios/vendor/FoolishBots.xcframework
 	@mkdir -p ../ios/vendor
 	xcodebuild -create-xcframework \
 	  -library build/ios/device/libfoolish.a -headers ios/include \
 	  -library build/ios/sim/libfoolish.a    -headers ios/include \
 	  -output ../ios/vendor/Foolish.xcframework
-	@echo "wrote ../ios/vendor/Foolish.xcframework"
+	xcodebuild -create-xcframework \
+	  -library build/ios/device/libfoolishbots.a -headers ios/include-bots \
+	  -library build/ios/sim/libfoolishbots.a    -headers ios/include-bots \
+	  -output ../ios/vendor/FoolishBots.xcframework
+	@echo "wrote ../ios/vendor/Foolish.xcframework + FoolishBots.xcframework"
+	@./ios/archive_check.sh build/ios/device/libfoolish.a build/ios/device/libfoolishbots.a
+
+# The two shipped iOS libraries, built and checked WITHOUT a Mac.
+#
+# `make ios-lib` needs xcrun/libtool/xcodebuild; this builds the same two source
+# lists with the host compiler into the same two archives, so the split's real
+# invariants are testable on Linux and in CI:
+#   1. the CORE archive defines no strategy-ladder symbol (ios/archive_check.sh)
+#   2. core + bots still share ONE resident game (ios/one_game_check.c)
+# (1) is the one that keeps octogen out of the iMessage bundle. (2) is what
+# would break silently if the split were done carelessly.
+.PHONY: ios-archives
+ios-archives:
+	@mkdir -p build/ios-a/core build/ios-a/bots
+	@for s in $(IOS_CORE_SRC); do \
+	  $(CC) $(IOS_CFLAGS) -c $$s -o build/ios-a/core/$$(basename $$s .c).o || exit 1; done
+	@for s in $(IOS_BOTS_SRC); do \
+	  $(CC) $(IOS_CFLAGS) -c $$s -o build/ios-a/bots/$$(basename $$s .c).o || exit 1; done
+	@ar rcs build/ios-a/libfoolish.a     build/ios-a/core/*.o
+	@ar rcs build/ios-a/libfoolishbots.a build/ios-a/bots/*.o
+	@printf 'core %s B   bots %s B\n' \
+	  $$(wc -c < build/ios-a/libfoolish.a) $$(wc -c < build/ios-a/libfoolishbots.a)
+	./ios/archive_check.sh build/ios-a/libfoolish.a build/ios-a/libfoolishbots.a
+	$(CC) $(IOS_CFLAGS) ios/one_game_check.c \
+	  build/ios-a/libfoolishbots.a build/ios-a/libfoolish.a -lm -o build/ios-a/one_game
+	./build/ios-a/one_game
 
 # Portable bridge smoke test (Linux/CI-friendly). Compiles the bridge + core
 # fresh at the iOS caps (self-consistent struct layout — never mix cap sets)
@@ -209,7 +276,9 @@ ios-lib:
 # points. Fast (< 1s). This is the M-A keystone check runnable without a Mac.
 ios-smoke:
 	@mkdir -p build
-	$(CC) $(IOS_CFLAGS) ios/ios_api_smoke.c ios/ios_api.c $(CORE_SRC) -lm -o build/ios_smoke
+	$(CC) $(IOS_CFLAGS) -c ios/ios_api.c -o build/ios_api.o
+	./ios/split_check.sh build/ios_api.o
+	$(CC) $(IOS_CFLAGS) ios/ios_api_smoke.c ios/ios_api.c ios/ios_bots_api.c $(CORE_SRC) -lm -o build/ios_smoke
 	./build/ios_smoke
 
 # Monte-Carlo the iMessage SWIFT layer's decisions over the real kernel
@@ -221,7 +290,7 @@ ios-smoke:
 .PHONY: msg-flow-sim
 msg-flow-sim:
 	@mkdir -p build
-	$(CC) $(IOS_CFLAGS) tests/msg_flow_sim.c ios/ios_api.c $(CORE_SRC) -lm -o build/msg_flow_sim
+	$(CC) $(IOS_CFLAGS) tests/msg_flow_sim.c ios/ios_api.c ios/ios_bots_api.c $(CORE_SRC) -lm -o build/msg_flow_sim
 	./build/msg_flow_sim 300 9 0
 	./build/msg_flow_sim 300 8 1
 	./build/msg_flow_sim 300 4 1
@@ -236,7 +305,7 @@ msg-flow-sim:
 .PHONY: ios-goldens
 ios-goldens:
 	@mkdir -p build
-	$(CC) $(IOS_CFLAGS) ios/ios_goldens.c ios/ios_api.c $(CORE_SRC) -lm -o build/ios_goldens
+	$(CC) $(IOS_CFLAGS) ios/ios_goldens.c ios/ios_api.c ios/ios_bots_api.c $(CORE_SRC) -lm -o build/ios_goldens
 	@mkdir -p ../ios/Fixtures
 	./build/ios_goldens > ../ios/Fixtures/goldens.json
 	@echo "wrote ../ios/Fixtures/goldens.json"
@@ -487,10 +556,12 @@ WASM_API_EXPORTS := \
   -Wl,--export=wasm_start_game -Wl,--export=wasm_attack -Wl,--export=wasm_cover \
   -Wl,--export=wasm_pass -Wl,--export=wasm_pickup -Wl,--export=wasm_good \
   -Wl,--export=wasm_transition -Wl,--export=wasm_refill \
+  -Wl,--export=wasm_reset_to_lobby -Wl,--export=wasm_human_mask \
+  -Wl,--export=wasm_import_strategy_keys \
   -Wl,--export=wasm_game_done -Wl,--export=wasm_should_act \
   -Wl,--export=wasm_next_player -Wl,--export=wasm_can_cover \
   -Wl,--export=wasm_replay_io_ptr -Wl,--export=wasm_replay_io_cap \
-  -Wl,--export=wasm_replay_encode -Wl,--export=wasm_replay_decode \
+  -Wl,--export=wasm_replay_decode \
   -Wl,--export=wasm_replay_encode_v6 \
   -Wl,--export=wasm_replay_error_detail \
   -Wl,--export=wasm_legal_moves -Wl,--export=wasm_export_moves \
@@ -521,28 +592,31 @@ WASM_API_EXPORTS := \
 WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_setenv_from_io -Wl,--export=wasm_clearenv \
   -Wl,--export=wasm_import_logs -Wl,--export=wasm_clear_logs \
-  -Wl,--export=wasm_set_game_key -Wl,--export=wasm_import_strategy_keys \
+  -Wl,--export=wasm_set_game_key \
   -Wl,--export=wasm_set_strategy_seed -Wl,--export=wasm_reload_bot_flags \
   -Wl,--export=wasm_choose_move \
+  -Wl,--export=wasm_bot_roster_dump \
   -Wl,--export=wasm_bot_drive -Wl,--export=wasm_bot_eligible_mask \
-  -Wl,--export=wasm_bot_pacing_ms -Wl,--export=wasm_bot_drive_log_start \
+  -Wl,--export=wasm_bot_cycle_delay_ms -Wl,--export=wasm_bot_drive_log_start \
   -Wl,--export=wasm_export_logs_masked_from \
   -Wl,--export=wasm_events_serialize_from \
   -Wl,--export=wasm_replay_encode_v6_from_game \
   -Wl,--export=wasm_replay_events -Wl,--export=wasm_replay_events_n \
   -Wl,--export=wasm_replay_events_next -Wl,--export=wasm_replay_step_count \
   -Wl,--export=wasm_replay_step_index \
-  -Wl,--export=wasm_view_json -Wl,--export=wasm_events_json \
   -Wl,--export=wasm_replay_extras_encode \
   -Wl,--export=wasm_replay_extras_decode \
   -Wl,--export=wasm_replay_link \
+  -Wl,--export=wasm_replay_b32_encode -Wl,--export=wasm_replay_b32_decode \
+  -Wl,--export=wasm_replay_link_parse \
   -Wl,--export=wasm_unambiguous_cover \
   -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal \
   -Wl,--export=wasm_msg_rule_p -Wl,--export=wasm_msg_rebase \
   -Wl,--export=wasm_msg_pickup_hold \
   -Wl,--export=wasm_anim_should_drop_stale -Wl,--export=wasm_anim_stale_optimistic \
-  -Wl,--export=wasm_anim_resolve -Wl,--export=wasm_anim_build_plan \
+  -Wl,--export=wasm_anim_build_plan \
   -Wl,--export=wasm_anim_finish_rows \
+  -Wl,--export=wasm_anim_conflict_verdicts \
   -Wl,--export=wasm_anim_set_transport -Wl,--export=wasm_anim_transport \
   -Wl,--export=wasm_belief_probe_reset -Wl,--export=wasm_belief_probe_dump
 
@@ -759,6 +833,101 @@ build/named/guards.named.wasm: $(WASM_GUARDS_OBJ)
 wasm-guards: build/guards.wasm
 	node wasm/embed.mjs build/guards.wasm ../sdk/ts/wasm/guards_wasm.ts GUARDS_WASM_B64 --gzip
 
+# ---------- msg module: the iMessage extension's kernel, and nothing else ----
+#
+# What a message thread actually needs: the rules, the chain envelope, the
+# animation core, and the replay codec that turns a finished game into a share
+# link. NOT a single bot - an iMessage game is two people, and the extension
+# (ios/FoolishMessages) never drives a seat. NOT the bot roster, the belief
+# probe, the knob table or the strategy dispatch that go with them.
+#
+# It is also the only host that uses the PRE/POST-SETTLEMENT SPLIT: it plays the
+# action, holds the settlement back (evwire_frames_settlement_cut) and releases
+# it on Send, so a bout end does not spoil itself in the composer. That lives in
+# evwire.c, which is here.
+#
+# Cut as a measurement of the floor: how small is the kernel when the host is a
+# chat extension rather than a server. Compare `make wasm-msg-size` against
+# bots.wasm, which is the same kernel plus every rung of the ladder.
+# NOT replay_steps.c: that is the step WALKER, which replays a finished code
+# through the engine to feed a replay screen. The extension has no replay
+# screen.
+#
+# REPLAY IS ENCODE-ONLY HERE. replay.c and replay_extras.c stay, because the
+# extension very much does want the share URL at the end of a game - but only
+# the writing half of them ships. The exports below name the encoders and
+# nothing else, so wasm-ld drops replay_decode (the step-list decode behind a
+# replay screen), replay_b32_decode, replay_extras_decode and
+# replay_link_parse: reading a code someone else made is the WEB's job, and the
+# extension only ever writes its own. wasm/msg_exports_check.mjs fails the build
+# if a decoder comes back or an encoder goes missing.
+#
+# The one decoder that stays is not a replay: replay_decode_atoms_v6 is the FMSG
+# BODY codec (msg_wire.c calls it - a chain's body IS a v6 action run), so
+# opening a bubble needs it and it is not optional at any size.
+WASM_MSG_SRC := src/game.c src/deal_rng.c src/legal.c src/view.c src/awire.c \
+                src/evwire.c src/sha256.c src/msg_wire.c src/anim_plan.c \
+                src/replay.c src/replay_extras.c \
+                wasm/wasm_api.c wasm/wasm_msg_api.c
+
+WASM_MSG_EXPORTS := \
+  -Wl,--export=wasm_replay_extras_encode \
+  -Wl,--export=wasm_replay_b32_encode \
+  -Wl,--export=wasm_replay_link \
+  -Wl,--export=wasm_unambiguous_cover \
+  -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal \
+  -Wl,--export=wasm_msg_rule_p -Wl,--export=wasm_msg_rebase \
+  -Wl,--export=wasm_msg_pickup_hold \
+  -Wl,--export=wasm_anim_should_drop_stale -Wl,--export=wasm_anim_stale_optimistic \
+  -Wl,--export=wasm_anim_build_plan -Wl,--export=wasm_anim_finish_rows \
+  -Wl,--export=wasm_anim_conflict_verdicts \
+  -Wl,--export=wasm_anim_set_transport -Wl,--export=wasm_anim_transport
+
+# The rules API, minus the one export that would drag a replay DECODER in.
+# (wasm_replay_decode is declared in wasm_api.c, which this target shares with
+# rules.wasm, so dropping it has to happen on the link line rather than in
+# WASM_MSG_EXPORTS below.)
+WASM_MSG_API_EXPORTS := $(filter-out -Wl$(comma)--export=wasm_replay_decode,$(WASM_API_EXPORTS))
+
+# The rules flags, minus its memory pin. rules.wasm freezes linear memory at
+# 196,608 B (3 pages); this set needs 5, which is what wasm-ld picks for itself
+# when the pin is taken off. The pin stays a pin - initial == max, so the module
+# can never grow - just at the size this source set actually needs, rounded to
+# the 64 KiB wasm page. Dropping the decoders did not buy a page back: they are
+# code, and the 5 pages are bss.
+WASM_MSG_MEM := 327680
+WASM_MSG_FLAGS := $(filter-out -Wl$(comma)--initial-memory=196608 -Wl$(comma)--max-memory=196608,$(WASM_RULES_FLAGS)) \
+                  -Wl,--initial-memory=$(WASM_MSG_MEM) -Wl,--max-memory=$(WASM_MSG_MEM)
+WASM_MSG_CFLAGS  := $(filter-out -Wl%,$(WASM_MSG_FLAGS))
+WASM_MSG_LDFLAGS := --target=wasm32 -nostdlib $(filter -Wl%,$(WASM_MSG_FLAGS))
+WASM_MSG_POSTOPT ?= $(if $(strip $(WASM_POSTOPT)),$(WASM_POSTOPT),-Oz)
+WASM_MSG_OBJ := $(addprefix build/msgobj/,$(notdir $(WASM_MSG_SRC:.c=.o)))
+
+build/msgobj/%.o: src/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
+	@mkdir -p build/msgobj
+	$(WASM_CC) $(WASM_MSG_CFLAGS) -c $< -o $@
+build/msgobj/%.o: wasm/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
+	@mkdir -p build/msgobj
+	$(WASM_CC) $(WASM_MSG_CFLAGS) -c $< -o $@
+
+build/msg.wasm: $(WASM_MSG_OBJ) wasm/msg_exports_check.mjs
+	@mkdir -p build
+	$(WASM_CC) $(WASM_MSG_LDFLAGS) $(WASM_MSG_API_EXPORTS) $(WASM_MSG_EXPORTS) $(WASM_MSG_OBJ) -o $@
+	$(call wasm_postopt,$(WASM_MSG_POSTOPT),$@)
+	node wasm/msg_exports_check.mjs $@
+
+.PHONY: wasm-msg wasm-msg-size
+wasm-msg: build/msg.wasm
+
+# The number this target exists to produce.
+wasm-msg-size: build/msg.wasm
+	@printf 'msg.wasm    raw %7d  gzip %7d\n' \
+	  $$(wc -c < build/msg.wasm) $$(gzip -9 -c build/msg.wasm | wc -c)
+	@[ -f build/bots.wasm ] && printf 'bots.wasm   raw %7d  gzip %7d\n' \
+	  $$(wc -c < build/bots.wasm) $$(gzip -9 -c build/bots.wasm | wc -c) || true
+	@[ -f build/rules.wasm ] && printf 'rules.wasm  raw %7d  gzip %7d\n' \
+	  $$(wc -c < build/rules.wasm) $$(gzip -9 -c build/rules.wasm | wc -c) || true
+
 # Bot module: the rules kernel PLUS every algorithmic bot strategy and the
 # choose-move bridge. A superset of rules.wasm, loaded only where bots run
 # (edge functions' bot turns, offline harnesses) so the pure rules path keeps
@@ -808,7 +977,7 @@ wasm-guards: build/guards.wasm
 # not CC=. CI ships the committed .gz rather than rebuilding, so the committed
 # artifact is the baseline to reproduce before you touch it.
 WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_steps.c \
-                src/replay_extras.c src/view.c src/awire.c src/json_out.c \
+                src/replay_extras.c src/view.c src/awire.c \
                 src/evwire.c src/sha256.c src/msg_wire.c src/anim_plan.c \
                 src/random_strategy.c \
                 src/espresso_strategy.c src/handwritten_strategy.c \
@@ -819,7 +988,7 @@ WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_st
                 src/handwritten_prod_strategy.c \
                 src/octogen_strategy.c \
                 src/bot_knobs.c src/bot_roster.c src/bot_drive.c \
-                wasm/wasm_api.c wasm/wasm_bots_api.c
+                wasm/wasm_api.c wasm/wasm_bots_api.c wasm/wasm_msg_api.c
 
 # PER-FILE opt (a mix one clang invocation can't express): the profiled hot MC
 # core is built at -O3, everything else at -Oz. -O3 on those five files cuts the
@@ -934,7 +1103,6 @@ bots-wasm-explain:
 # (inlining removes functions), a companion WITHOUT the pass would have
 # different function indices and mis-map every name — hence this target runs the
 # identical pass. generate.sh re-strips this and asserts it equals build/bots.wasm.
-comma := ,
 build/named/bots.named.wasm: $(WASM_BOT_OBJ)
 	@mkdir -p build/named
 	$(WASM_CC) --target=wasm32 -nostdlib $(filter-out -Wl$(comma)--strip-all,$(WASM_BOT_LDFLAGS)) \
@@ -1062,14 +1230,14 @@ coverage:
 	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/sim_difftest.c   -o covbuild/sim_difftest    -lm
 	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/apply_difftest.c -o covbuild/apply_difftest  -lm
 	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/solver_difftest.c -o covbuild/solver_difftest -lm
-	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/replay_difftest.c -o covbuild/replay_difftest -lm
+	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/replay_v6_test.c  -o covbuild/replay_v6_test  -lm
 	./covbuild/cnitro_tests
 	./covbuild/sim_difftest 4 100
 	./covbuild/apply_difftest 4 50
 	./covbuild/solver_difftest 2 40 "" 5000
 	./covbuild/solver_difftest 3 40 "" 5000
 	./covbuild/solver_difftest 4 40 "" 5000
-	./covbuild/replay_difftest 10
+	./covbuild/replay_v6_test 10
 	gcovr --root . $(COV_FILTERS) --txt \
 	      --fail-under-line $(COV_LINE_MIN) --fail-under-branch $(COV_BRANCH_MIN)
 

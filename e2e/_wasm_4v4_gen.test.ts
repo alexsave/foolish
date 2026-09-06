@@ -14,10 +14,10 @@ import { start_game_packed } from '../server/api/common/game_lifecycle.ts';
 import { runPackedGameAction, applyKernelStateToGame, __setDealSeedOverride } from '../sdk/ts/wasm/engine.ts';
 import { encodeAction } from '../sdk/ts/wire/awire.ts';
 import { logsFromKernelExport, decodeLogs } from '../sdk/ts/wire/logwire.ts';
-import { wasmChooseMoveDirect, __ensureBots, STRAT } from '../sdk/ts/wasm/bots.ts';
+import { wasmChooseMoveDirect, __ensureBots, STRAT, kernelB32Encode } from '../sdk/ts/wasm/bots.ts';
 import { shouldBotActCore } from '../server/api/common/pure_bot_actions.ts';
 import { kernelReplayEncodeV6FromGame } from '../sdk/ts/wasm/bots.ts';
-import { base32Encode, bytesToBigint, gameToUrl } from '../server/api/common/replay/codec.ts';
+import { bytesToBigint, gameToUrl } from '../server/api/common/replay/codec.ts';
 import { encodeExtras, joinReplayCode, moveTimesFromLogs } from '../server/api/common/replay/extras.ts';
 import { PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from '../server/api/core/types.ts';
 
@@ -110,7 +110,7 @@ test('generate a kernel-path 4v4 octogen-win record', { skip: !process.env.OGX_G
             const hx = (h: string) => Uint8Array.from(h.match(/../g)!.map((b) => parseInt(b, 16)));
             const bytes = kernelReplayEncodeV6FromGame(g as never, hx((g as any).game_seed));
             const encoded = { bytes, x: bytesToBigint(bytes), byteLength: bytes.length,
-                base32: base32Encode(bytes), url: gameToUrl(bytesToBigint(bytes)) };
+                base32: kernelB32Encode(bytes), url: gameToUrl(bytesToBigint(bytes)) };
             const extras = encodeExtras(g.players.map((p: any) => p.name), moveTimesFromLogs(gameLogs as never));
             url = `WWW.FOOLISH.CARDS/${joinReplayCode(encoded.base32, extras)}`;
         } catch (e: any) { process.stderr.write(`attempt ${a}: url encode failed: ${e.message}\n`); }

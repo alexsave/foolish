@@ -11,7 +11,7 @@ import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
 import { executeWithGameLock, loadCompleteGame } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
-import { start_game } from '../server/api/common/game_lifecycle.ts';
+import { packedProducts, start_game_packed } from '../server/api/common/game_lifecycle.ts';
 import { AnimationEvent } from '../server/api/core/types.ts';
 import { legalMovesFor, applyPlayerMove, checkCardConservation } from './dispatch.ts';
 import { suiteRng } from './helpers/rng.ts';
@@ -27,7 +27,7 @@ async function startedGame(): Promise<string> {
         { id: uuid(), name: 'H', is_ai: false, strategy_key: 'human' },
         { id: uuid(), name: 'B', is_ai: true, strategy_key: 'random' },
     ]);
-    await executeWithGameLock(gameId, async (g) => ({ game: g, events: start_game(g) as AnimationEvent[] }), 'start', false);
+    await executeWithGameLock(gameId, async (g) => ({ game: g, events: [], packed: packedProducts(start_game_packed(g)) }), 'start', false);
     return gameId;
 }
 
@@ -43,7 +43,7 @@ export function registerConcurrentValidation(): void {
                 if (g.status !== 'playing') break;
                 const moves = legalMovesFor(g);
                 if (moves.length === 0) break;
-                try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, pick(moves)) }), `${gameId}-${step}`, true); }
+                try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, ...applyPlayerMove(gg, pick(moves)) }), `${gameId}-${step}`, true); }
                 catch (e: any) { if (/deadlock/i.test(String(e.message))) errors.push(`DEADLOCK ${gameId}`); }
                 const chk = await checkCardConservation(gameId);
                 if (!chk.ok) errors.push(`${gameId}@${step}: ${chk.detail}`);
@@ -72,7 +72,7 @@ if (!process.env.VALIDATION_ONLY) {
                           : { id: uuid(), name: 'B', is_ai: true, strategy_key: 'random' },
             ];
             await seedGame(gameId, players);
-            await executeWithGameLock(gameId, async (g) => ({ game: g, events: start_game(g) as AnimationEvent[] }), 'start', false);
+            await executeWithGameLock(gameId, async (g) => ({ game: g, events: [], packed: packedProducts(start_game_packed(g)) }), 'start', false);
         }
 
         const errors: string[] = [];
@@ -87,7 +87,7 @@ if (!process.env.VALIDATION_ONLY) {
                 const moves = legalMovesFor(g);
                 if (moves.length === 0) break;
                 try {
-                    await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, pick(moves)) }), `${gameId}-${steps}`, true);
+                    await executeWithGameLock(gameId, async (gg) => ({ game: gg, ...applyPlayerMove(gg, pick(moves)) }), `${gameId}-${steps}`, true);
                 } catch (e: any) {
                     const msg = String(e.message);
                     if (/deadlock/i.test(msg)) errors.push(`DEADLOCK ${gameId}: ${msg}`);

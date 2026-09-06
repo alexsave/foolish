@@ -371,6 +371,38 @@ int  game_done(const Game *g);   // returns loser index, or -1
 // seat by passing 0 regardless of who is marked human.
 uint32_t game_human_mask(const Game *g);
 
+// ---- the lobby (docs/SERVER_LIFECYCLE_CONSOLIDATION.md L1) ----------------
+//
+// Both servers hand-rolled these three, with a byte-identical start predicate
+// and no kernel call between them. They are decisions about a game of Durak -
+// who may sit down, when a lobby is allowed to deal - so they are the kernel's.
+// What stays with the host is identity (names, ids, tokens) and its own
+// bookkeeping, exactly as elsewhere.
+
+// Seat one player in a WAITING game. `strategy_key` is the seat's KIND:
+// STRATEGY_KEY_HUMAN, or a bot's STRAT_* brain id.
+//
+// A human lands IDLE and has to ready up; a bot lands READY, because a bot
+// always is. That asymmetry is the lobby's one rule about kinds and it was
+// written out at four call sites across two servers.
+//
+// Returns the new seat index, or -1 if the game is not WAITING or is full. The
+// host writes name/player_id into the returned seat.
+int game_lobby_seat(Game *g, int strategy_key);
+
+// Mark a seated player READY. Returns 1 if that changed anything, else 0
+// (an out-of-range seat, or a game that is no longer WAITING).
+int game_lobby_ready(Game *g, int seat);
+
+// May this lobby deal? Two or more seats, all of them READY.
+//
+// The predicate both servers spelled out for themselves. The web said
+// "every player READY and >= 2"; the native server said ">= 2 and every
+// non-bot seat's seat_ready flag", which is the same thing only because
+// bots are seated READY - a coincidence of two implementations that a
+// single one does not have to rely on.
+int game_lobby_can_deal(const Game *g);
+
 // Seat `n` players and DEAL, in one kernel call — the whole "go from a lobby to a
 // dealt board" the hosts used to hand-roll. Sets the seat count; if
 // `strategy_keys` is non-NULL, writes each seat's kind (STRATEGY_KEY_HUMAN, or a

@@ -1,30 +1,30 @@
 /* =============================================================================
- * foolish.cards — whole-game replay format v1: shared types & wire constants
+ * foolish.cards - whole-game replay format: shared types & wire constants
  * =============================================================================
- * The replay RULES ENGINE — the deterministic public-state replayer that
- * both encode and decode drive — lives in the C kernel
- * (c/src/replay.c), the same codebase as the production game rules it
- * mirrors (game.c / card.h). TS holds only marshaling (encode.ts /
- * decode.ts via sdk/ts/wasm/engine.ts) and these shared types.
+ * The replay RULES ENGINE - the deterministic replayer that both encode and
+ * decode drive - lives in the C kernel (c/src/replay.c), the same codebase as
+ * the production game rules it mirrors (game.c / card.h). TS holds only
+ * marshaling (encode.ts / decode.ts via sdk/ts/wasm/engine.ts) and these
+ * shared types.
  *
- * The original TS implementation is preserved verbatim as the frozen v5
- * spec / differential-test oracle in e2e/replay_ts_oracle.ts;
- * e2e/replay_codec.test.ts polices byte-exact agreement between it and the
- * kernel on real engine-played games. Never change the wire format in one
- * place: bump the version in replay.h AND freeze the old path.
+ * e2e/replay_codec.test.ts drives the kernel over real engine-played games and
+ * checks every code decodes back to the game that was played. Never change the
+ * wire format in one place: bump the version in replay.h AND decide what
+ * happens to every code already cut.
  * ========================================================================== */
 
 import { Card, LOG_TYPE, LogType, LogCardPair } from "@api/core/types.ts";
 
 // Wire-format constants. The kernel (c/src/replay.h REPLAY_FORMAT_*)
 // is authoritative; these mirrors exist for TS-side pre-checks and tests.
-// The retrodiction line (public DRAW logs, hands recovered once the fool is
-// known). Was 5 until the deal-order fix retired every code cut before it.
-export const FORMAT_VERSION = 9;
-// The inline-reveal line: hidden-state-lossless, partial-game (c/src/replay.h
-// REPLAY_FORMAT_VERSION_V10, docs/REPLAY_FORMAT6_HIDDEN_STATE.md). Was 6, then
-// 7 (pass-mode bit), then 8 (forced-opening bit), and is now 10 for the same
-// reason: the bytes did not change, the rules under them did.
+// The ONE format: inline reveals, hidden-state-lossless, partial-game
+// (c/src/replay.h REPLAY_FORMAT_VERSION_V10,
+// docs/REPLAY_FORMAT6_HIDDEN_STATE.md). Was 6, then 7 (pass-mode bit), then 8
+// (forced-opening bit), and is now 10 for a reason that is not a wire change at
+// all: the bytes did not move, the deal order under them did. The retrodiction
+// line that ran alongside it (public DRAW logs, hands recovered by complement
+// once the fool was known - 5, renumbered 9) is gone entirely; a code carrying
+// any other version is refused, never re-read.
 export const FORMAT_VERSION_V6 = 10;
 export const VERSION_ALPHABET = 16; // room for 15 future versions before a re-think
 

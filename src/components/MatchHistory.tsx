@@ -13,7 +13,8 @@ import { decodeReplay } from '@api/common/replay/decode.ts';
 import { ensureBotsAsync } from '@sdk/ts/wasm/bots.ts';
 import { decodeExtras, joinReplayCode } from '@api/common/replay/extras.ts';
 import { INFO_TYPES } from '@api/common/replay/core.ts';
-import { base32Encode, bytesToBigint, hexToBytes } from '@api/common/replay/codec.ts';
+import { bytesToBigint, hexToBytes } from '@api/common/replay/codec.ts';
+import { kernelB32Encode } from '@sdk/ts/wasm/bots.ts';
 
 /**
  * Match history: every finished game the signed-in user played, straight from
@@ -109,7 +110,7 @@ export const MatchHistory: React.FC = () => {
                         const movesBytes = hexToBytes(row.moves as string);
                         const extrasBytes = row.extras ? hexToBytes(row.extras as string) : null;
                         const extrasCode = extrasBytes && extrasBytes.length > 0
-                            ? base32Encode(extrasBytes)
+                            ? kernelB32Encode(extrasBytes)
                             : null;
                         const d = await decodeReplay(bytesToBigint(movesBytes));
 
@@ -135,7 +136,7 @@ export const MatchHistory: React.FC = () => {
 
                         decoded.push({
                             id: row.id as string,
-                            code: joinReplayCode(base32Encode(movesBytes), extrasCode),
+                            code: joinReplayCode(kernelB32Encode(movesBytes), extrasCode),
                             createdAt: parseUtcTimestamp(row.created_at as string),
                             playerCount: d.playerCount,
                             names: names ?? playerIds.map((_, seat) => `#${seat + 1}`),

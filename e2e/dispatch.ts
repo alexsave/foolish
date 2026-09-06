@@ -6,7 +6,9 @@
 import { Game, AnimationEvent, PLAYER_STATUS } from '../server/api/core/types.ts';
 import { LegalMove } from '../server/api/core/bot_interfaces.ts';
 import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
-import { executeBotMove } from '../server/api/common/pure_bot_actions.ts';
+import { runPackedGameAction, applyKernelStateToGame } from '../sdk/ts/wasm/engine.ts';
+import { packedProducts, PackedDealProducts } from '../server/api/common/game_lifecycle.ts';
+import { AwireMove, encodeAction } from '../sdk/ts/wire/awire.ts';
 import { pgPool } from './harness.ts';
 // Top-level, not `await import`ed inside checkCardConservation: that runs once
 // per move in server/fuzz/pass_parity/concurrent_games, and the e2e runner's TS
@@ -31,12 +33,38 @@ export function legalMovesFor(game: Game, allow?: (playerId: string) => boolean)
     return out;
 }
 
-// Apply via the REAL executeBotMove (returns false on a validation race, which
-// commits as a harmless no-op — exactly how the live bot loop tolerates races).
-export function applyPlayerMove(game: Game, pm: PlayerMove): AnimationEvent[] {
-    const player = game.players.find((p) => p.player_id === pm.playerId)!;
-    const ev = executeBotMove(game, player, pm.move);
-    return ev || [];
+// Apply through the REAL packed pipeline - the one production runs. The move
+// goes in as the same awire bytes a client sends, the kernel applies it, and the
+// kernel's own per-viewer event streams come back as the products
+// executeWithGameLock commits and broadcasts. There is no JS AnimationEvent
+// stage any more, on this path or in production.
+//
+// A rejection returns no products, which commits as a harmless no-op - exactly
+// how the live loop tolerates a validation race.
+export function applyPlayerMove(game: Game, pm: PlayerMove): PackedMoveResult {
+    const seat = game.players.findIndex((p) => p.player_id === pm.playerId);
+    if (seat < 0) return { events: [] };
+    let aiMask = 0;
+    const humanSeats: number[] = [];
+    game.players.forEach((p, i) => { if (p.is_ai) aiMask |= 1 << i; else humanSeats.push(i); });
+
+    const wire = encodeAction(moveToAwire(pm.move));
+    const run = runPackedGameAction(game, seat, wire, aiMask, humanSeats);
+    if (!run.ok) return { events: [] };
+    applyKernelStateToGame(game, run.post, pm.playerId);
+    return { events: [], packed: packedProducts(run) };
+}
+
+export interface PackedMoveResult { events: AnimationEvent[]; packed?: PackedDealProducts }
+
+// A LegalMove is the enumerator's shape; awire is the wire's. The two differ
+// only in field names.
+function moveToAwire(move: LegalMove): AwireMove {
+    return {
+        kind: move.type as AwireMove['kind'],
+        cards: move.cards,
+        attack_cards: move.attack_cards,
+    } as AwireMove;
 }
 
 // Card conservation, read straight from the committed DB (independent of the

@@ -6,178 +6,31 @@
  * drives encode and decode (see core.ts), so the round trip is correct by
  * construction.
  *
- * This file contains everything that is INDEPENDENT of the game rules:
- *   - the exact rANS coder kernel (native BigInt — no bignum library needed)
- *   - the Coder driver (one primitive: code(weights, chosen?))
- *   - integer <-> bytes <-> base32/base64 <-> URL
- *   - URL routing (legacy short code vs. self-contained replay)
- *   - CNS subset ranking (reserved for the v2 "set-coded reveal" optimization)
+ * What is left here is what the kernel does NOT do:
+ *   - integer <-> bytes, and base64
+ *   - hex (a Postgres column format C has no reason to know)
+ *   - READING a pasted link back (urlToCode / urlToGame) and deciding a path
+ *     segment's type - replay_extras.h keeps the URL *type* platform-side
  *
- * The game-rules projection lives in the C kernel (c/src/replay.c),
- * reached through encode.ts/decode.ts + sdk/ts/wasm/engine.ts. The Coder
- * class below remains the TS-side arithmetic-coding primitive for the
- * frozen oracle (e2e/replay_ts_oracle.ts) and any rules-free side channels.
+ * Everything the kernel does do has gone to it: the rANS coder (c/src/replay.c,
+ * which always had its own), base32 (replay_b32_encode / _decode) and the link
+ * builders (replay_extras_link_styled).
  * ========================================================================== */
 
 /* ----------------------------------------------------------------------------
- * 1. rANS KERNEL  (range Asymmetric Numeral System over a single BigInt)
+ * BYTES, BASE32/BASE64, HEX, URL ROUTING
  * ----------------------------------------------------------------------------
- * A "symbol" is a choice of option k out of n, where option i has integer
- * weight w[i] > 0, total M = sum(w), and cumulative cum[k] = sum(w[0..k-1]).
- * The realized symbol costs ~log2(M / w[k]) bits.
+ * The rANS arithmetic coder used to sit above this line - a full second
+ * implementation of the one in c/src/replay.c. It was kept for a frozen
+ * differential oracle, e2e/replay_ts_oracle.ts, which no longer exists; the
+ * class had no caller anywhere, in production or in a test. The kernel codes
+ * replays (wasm_replay_encode_v6 / _decode), and there is no second
+ * coder now.
  *
- * push (encode) is LIFO; pop (decode) is FIFO. So to encode a forward sequence
- * of choices we push them in REVERSE, and the decoder pops them FORWARD.
- * A conforming decoder ends with x === 0n.
- * -------------------------------------------------------------------------- */
+ * What is left is genuinely host-shaped and has no C twin: turning bytes into
+ * a hex column value, a base32 URL segment, or a base64 blob.
+ * ------------------------------------------------------------------------- */
 
-function ransPush(x: bigint, cum: number, w: number, M: number): bigint {
-  const W = BigInt(w);
-  const r = x % W; // x mod w
-  const q = x / W; // x div w
-  return q * BigInt(M) + BigInt(cum) + r;
-}
-
-function ransPop(
-  x: bigint,
-  weights: number[],
-): { index: number; x: bigint } {
-  let M = 0;
-  for (const w of weights) M += w;
-  const r = Number(x % BigInt(M)); // r < M (safe: keep M < 2^53)
-  let acc = 0;
-  let k = 0;
-  // find the interval [cum[k], cum[k]+w[k]) that contains r
-  for (; k < weights.length; k++) {
-    if (r < acc + weights[k]) break;
-    acc += weights[k];
-  }
-  if (k >= weights.length) k = weights.length - 1; // defensive
-  const nx = (x / BigInt(M)) * BigInt(weights[k]) + BigInt(r - acc);
-  return { index: k, x: nx };
-}
-
-/* ----------------------------------------------------------------------------
- * 2. THE CODER  (drives the engine in either direction)
- * ----------------------------------------------------------------------------
- * The engine calls exactly one method at every point where information enters
- * the game — a player's decision OR a hidden card becoming known (a "reveal"):
- *
- *     const index = coder.code(weights, chosenIndexInEncodeMode);
- *
- *   ENCODE: you are replaying a KNOWN game. The engine computes the legal-move
- *           menu, finds the index of the move that was actually played, and
- *           passes it as `chosen`. code() records it and returns it unchanged.
- *   DECODE: you are reconstructing the game from the integer. The engine
- *           computes the SAME menu, calls code(weights) with no `chosen`, gets
- *           back the index, and applies that move.
- *
- * Because the menu (options + weights + order) is a pure function of the public
- * game state, both directions see identical menus and stay in lockstep.
- * -------------------------------------------------------------------------- */
-
-interface RecordedChoice {
-  weights: number[];
-  chosen: number;
-}
-
-export class Coder {
-  readonly mode: "encode" | "decode";
-  private recorded: RecordedChoice[] = []; // encode only
-  private x: bigint = 0n; // decode only
-
-  private constructor(mode: "encode" | "decode", x: bigint) {
-    this.mode = mode;
-    this.x = x;
-  }
-
-  static forEncode(): Coder {
-    return new Coder("encode", 0n);
-  }
-  static forDecode(x: bigint): Coder {
-    return new Coder("decode", x);
-  }
-
-  /** The single primitive. weights: positive integers. */
-  code(weights: number[], chosen?: number): number {
-    if (weights.length === 0) throw new Error("empty menu");
-    if (weights.length === 1) {
-      // forced move: 0 bits, nothing to code, but keep both sides symmetric
-      return 0;
-    }
-    if (this.mode === "encode") {
-      if (chosen === undefined || chosen < 0 || chosen >= weights.length)
-        throw new Error("encode: chosen index out of range");
-      this.recorded.push({ weights: weights.slice(), chosen });
-      return chosen;
-    } else {
-      const { index, x } = ransPop(this.x, weights);
-      this.x = x;
-      return index;
-    }
-  }
-
-  /** Uniform menu of n options. */
-  codeUniform(n: number, chosen?: number): number {
-    if (n === 1) return 0;
-    return this.code(new Array(n).fill(1), chosen);
-  }
-
-  /** ENCODE: collapse the recorded choices into the final integer. */
-  finishEncode(): bigint {
-    if (this.mode !== "encode") throw new Error("not in encode mode");
-    let x = 0n;
-    for (let i = this.recorded.length - 1; i >= 0; i--) {
-      const c = this.recorded[i];
-      let M = 0,
-        cum = 0;
-      for (let j = 0; j < c.weights.length; j++) {
-        if (j < c.chosen) cum += c.weights[j];
-        M += c.weights[j];
-      }
-      x = ransPush(x, cum, c.weights[c.chosen], M);
-    }
-    return x;
-  }
-
-  /** DECODE: a conforming game consumes the integer exactly. Check AFTER the
-   *  engine has run to its own terminal state (the integer does NOT tell the
-   *  engine when to stop — the rules do). */
-  residueIsZero(): boolean {
-    return this.x === 0n;
-  }
-
-  /** Diagnostics: ideal (information-theoretic) size of the encoded choices. */
-  idealBits(): number {
-    let bits = 0;
-    for (const c of this.recorded) {
-      let M = 0;
-      for (const w of c.weights) M += w;
-      bits += Math.log2(M / c.weights[c.chosen]);
-    }
-    return bits;
-  }
-}
-
-
-/* ----------------------------------------------------------------------------
- * 3. INTEGER <-> BYTES <-> BASE32 / BASE64 <-> URL
- * ----------------------------------------------------------------------------
- * base32 = RFC 4648 uppercase alphabet (A-Z, 2-7), NO padding. Every character
- * is in the QR "alphanumeric" set, as are '.' and '/' and uppercase letters in
- * the prefix — so the whole URL encodes in QR alphanumeric mode (5.5 bits/char,
- * much denser than byte mode). Use QR error-correction level L for smallest QR.
- *
- * base64 = RFC 4648 standard alphabet, no padding — denser as on-screen text
- * and the natural form for a future DB column. Both wrap the same bytes.
- * -------------------------------------------------------------------------- */
-
-const B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-const B32_INV: Record<string, number> = (() => {
-  const m: Record<string, number> = {};
-  for (let i = 0; i < B32.length; i++) m[B32[i]] = i;
-  return m;
-})();
 
 const B64 =
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -195,8 +48,7 @@ export function bigintToBytes(x: bigint): Uint8Array {
     out.push(Number(x & 0xffn));
     x >>= 8n;
   }
-  out.reverse(); // big-endian, minimal
-  return Uint8Array.from(out);
+  return new Uint8Array(out.reverse());
 }
 
 export function bytesToBigint(b: Uint8Array): bigint {
@@ -205,39 +57,11 @@ export function bytesToBigint(b: Uint8Array): bigint {
   return x;
 }
 
-export function base32Encode(bytes: Uint8Array): string {
-  let bits = 0,
-    value = 0,
-    out = "";
-  for (const b of bytes) {
-    value = (value << 8) | b;
-    bits += 8;
-    while (bits >= 5) {
-      out += B32[(value >>> (bits - 5)) & 31];
-      bits -= 5;
-    }
-  }
-  if (bits > 0) out += B32[(value << (5 - bits)) & 31];
-  return out;
-}
-
-export function base32Decode(s: string): Uint8Array {
-  let bits = 0,
-    value = 0;
-  const out: number[] = [];
-  for (const ch of s.toUpperCase()) {
-    const idx = B32_INV[ch];
-    if (idx === undefined) continue; // ignore stray chars
-    value = (value << 5) | idx;
-    bits += 5;
-    if (bits >= 8) {
-      out.push((value >>> (bits - 8)) & 0xff);
-      bits -= 8;
-    }
-  }
-  return Uint8Array.from(out);
-}
-
+// base32 lived here, with its alphabet. It is the kernel's
+// (replay.c replay_b32_encode/decode, reached through bots.ts kernelB32Encode /
+// kernelB32Decode) - replay.h had always described the C one as "the web's
+// codec.ts alphabet", which is a mirror naming its original.
+//
 export function base64Encode(bytes: Uint8Array): string {
   let out = "";
   for (let i = 0; i < bytes.length; i += 3) {
@@ -289,62 +113,25 @@ export function hexToBytes(hex: string): Uint8Array {
   return out;
 }
 
-export const URL_PREFIX = "WWW.FOOLISH.CARDS/";
-
-function gameToCode(x: bigint): string {
-  return base32Encode(bigintToBytes(x));
-}
-export function codeToGame(code: string): bigint {
-  return bytesToBigint(base32Decode(code));
-}
-export function gameToUrl(x: bigint): string {
-  return URL_PREFIX + gameToCode(x);
-}
-/** The public host, without the `www.` a browser hides and a person omits. */
-const URL_HOST = "FOOLISH.CARDS/";
-const IS_BASE32 = /^[A-Za-z2-7]+$/;
-
-/**
- * The replay code out of whatever a person pasted.
- *
- * Accepts the bare code, the printed form `WWW.FOOLISH.CARDS/<code>`, and the
- * links a browser actually hands out - `https://foolish.cards/<code>`,
- * `https://www.foolish.cards/<code>`, scheme or no scheme, trailing slash,
- * query or fragment. Whitespace anywhere is dropped: a code that survived a
- * line wrap is still that code.
- *
- * Does NOT decide whether the result is a code; see urlToGame.
- */
-export function urlToCode(url: string): string {
-  // A query or a fragment is never part of the code.
-  let s = url.trim().replace(/\s+/g, "").split(/[?#]/)[0].replace(/\/+$/, "");
-  const host = s.toUpperCase().lastIndexOf(URL_HOST);
-  if (host >= 0) s = s.slice(host + URL_HOST.length);
-  // Some other host, or a bare path: the code is the last path segment. A
-  // scheme's own letters are in the base32 alphabet, so leaving `https:/` on
-  // the front does not fail - it silently decodes a DIFFERENT game.
-  else if (s.includes("/")) s = s.slice(s.lastIndexOf("/") + 1);
-  // an optional extras section (player names + move times, see extras.ts)
-  // follows the moves after a dash - the move integer is the prefix
-  const dash = s.indexOf("-");
-  if (dash >= 0) s = s.slice(0, dash);
-  return s;
-}
-
-export function urlToGame(url: string): bigint {
-  const code = urlToCode(url);
-  // Name the fault by what it IS. base32Decode ignores stray characters, so
-  // input that is not a code used to decode to some other game and fail deep
-  // in the kernel as "unsupported replay format version 11" - sending the
-  // reader after a codec bug that was never there. Same principle as
-  // REPLAY_EHEADER and REPLAY_ETOOLONG in c/src/replay.h.
-  if (!IS_BASE32.test(code)) {
-    throw new Error(
-      `not a replay code: ${JSON.stringify(url)} - expected a foolish.cards link or the code out of one`,
-    );
-  }
-  return codeToGame(code);
-}
+// The link builders lived here: URL_PREFIX, gameToCode, gameToUrl, codeToGame,
+// urlToCode, urlToGame. They are the kernel's now (replay_extras.c
+// replay_extras_link_styled, through bots.ts kernelReplayLink), which already
+// assembled the same string for the /m/ route while these built it by
+// concatenation for everything else - and built it DIFFERENTLY, uppercase and
+// scheme-less, so the same replay copied from two screens gave two links.
+//
+// Both forms survive because both are wanted, and the kernel owns the choice:
+// REPLAY_LINK.url is the https link a person copies, REPLAY_LINK.qr is the
+// uppercase scheme-less one, which stays in QR alphanumeric mode and so fits a
+// smaller QR version.
+//
+// urlToCode and urlToGame lived here: strip the prefix, refuse anything that
+// is not base32, then decode. Both are the kernel's now (replay_extras.c
+// replay_link_parse, through bots.ts kernelReplayLinkParse) - building a link
+// and reading one back are two halves of one format, and the refusal is the
+// half a tolerant decoder cannot do.
+//
+// classifyPathSegment stays: replay_extras.h keeps the URL *type* platform-side.
 
 /* ----------------------------------------------------------------------------
  * 4. ROUTING  (legacy short code vs. self-contained replay)
@@ -362,29 +149,3 @@ const LEGACY_MAX_LEN = 7;
 export function classifyPathSegment(seg: string): "shortcode" | "replay" {
   return seg.length > LEGACY_MAX_LEN ? "replay" : "shortcode";
 }
-
-/* ----------------------------------------------------------------------------
- * 5. CNS — combinatorial number system (reserved for v2 set-coded reveal)
- * ----------------------------------------------------------------------------
- * Colexicographic rank/unrank of a k-subset of [0, m). Lets you reveal a
- * player's acquired hand as an UNORDERED set in exactly log2(C(m,k)) bits.
- * C(52,26) < 2^53, so plain numbers are safe up to a 52-card deck.
- * -------------------------------------------------------------------------- */
-
-const COMB: number[][] = (() => {
-  const N = 64;
-  const c: number[][] = Array.from({ length: N }, () => new Array(N).fill(0));
-  for (let n = 0; n < N; n++) {
-    c[n][0] = 1;
-    for (let k = 1; k <= n; k++)
-      c[n][k] = c[n - 1][k - 1] + (k <= n - 1 ? c[n - 1][k] : 0);
-  }
-  return c;
-})();
-
-export function comb(n: number, k: number): number {
-  if (k < 0 || k > n) return 0;
-  return COMB[n][k];
-}
-
-

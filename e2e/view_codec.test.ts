@@ -3,8 +3,13 @@
 // per-viewer masking) -> encodeGameResponse envelope -> decodePackedGame (the
 // client's render-boundary materialization). The decoded JS game must equal
 // personalize_game(game, pid) — the retired JSON path's output — on every
-// shared field, for every seat and for the spectator; and the raw view blob
-// must never carry another player's hand identities.
+// shared field, for every seat and for the spectator.
+//
+// The raw view blob must also never carry another player's hand identities.
+// That line stood in this header for a long time with nothing checking it: the
+// per-seat assertion in checkView reads the blob back through the kernel's own
+// decoder, which reports a non-viewer hand as null regardless of the bytes. The
+// invariant is now asserted where it lives, on the bytes.
 //
 // Pure kernel + TS codec test — needs no Postgres.
 
@@ -98,9 +103,14 @@ function checkView(game: Game, blob: Uint8Array, seat: number, version: number, 
             vp.hand!.forEach((c, j) => assert.deepEqual({ suit: c.s, value: c.v }, game.players[i].hand[j],
                                                         `${tag}: own hand card ${j} real`));
         } else {
-            // The kernel says "hand":null for a seat that is not the viewer —
-            // the count is real, the identities never crossed.
-            assert.equal(vp.hand, null, `${tag}: seat ${i} hand masked for viewer ${seat}`);
+            // The decoder says hand: null for a seat that is not the viewer.
+            // NOTE what this does and does not prove: packed_read.ts emits null
+            // BECAUSE the seat is not the viewer, not because the bytes were
+            // hidden, so a payload full of real identities would satisfy it
+            // too. It pins the decoder's contract, nothing about the masking.
+            // The masking itself is asserted on the bytes, in "a masked view
+            // does not depend on the hands it is masking" below.
+            assert.equal(vp.hand, null, `${tag}: seat ${i} reported as null for viewer ${seat}`);
         }
     });
     assert.equal(state.deckCount, game.deck.length, `${tag}: deck length real`);
@@ -145,6 +155,63 @@ function checkView(game: Game, blob: Uint8Array, seat: number, version: number, 
         assert.ok(!('self' in dg), `${tag}: spectator view is a PublicGame — no self`);
     }
 }
+
+// ---------------------------------------------------------------------------
+// THE MASKING ITSELF, ON THE BYTES
+// ---------------------------------------------------------------------------
+// checkView above asserts "seat i hand masked for viewer s" - and cannot fail.
+// It reads the blob back with kernelViewFromPacked, which reports
+// hand: null for any seat that is not the viewer BECAUSE it is not the viewer,
+// not because the bytes were hidden. So the identities could all be sitting in
+// the payload and that assertion would still pass. The file header has claimed
+// this invariant since it was written; nothing was checking it.
+//
+// Measured, with state_put's masked-hand memset replaced by the real cards:
+// twelve of the other seats' actual card ids present in a seat-0 view, and the
+// whole suite green - view_codec, client, packed_wire_stream,
+// packed_roster_wire, server, action_handlers, meta, 47 assertions.
+//
+// The invariant here is layout-free, which matters because the TS mirror of
+// that layout is deliberately gone: A MASKED VIEW MUST NOT DEPEND ON WHAT IT IS
+// MASKING. Change a hand the viewer cannot see, and the bytes it receives must
+// be identical. Any leak - ordered, unordered, partial - changes them.
+test('a masked view does not depend on the hands it is masking', () => {
+    let compared = 0;
+    for (let g = 0; g < 6; g++) {
+        const game = mkLobby(2 + (g % 5));
+        moveSeed = (g * 7919 + 3) >>> 0;
+        start_game(game);
+        game.status = GAME_STATUS.PLAYING;
+
+        for (let viewer = -1; viewer < game.players.length; viewer++) {
+            const before = serializeViewBlob(serializeGameState(game), viewer);
+
+            // Rewrite every hand the viewer may NOT see, keeping the counts
+            // (a count is public and legitimately in the blob).
+            const saved = game.players.map((p) => p.hand.slice());
+            game.players.forEach((p, i) => {
+                if (i === viewer) return;
+                p.hand = p.hand.map((c, j) => ({
+                    // A different identity, still inside the card space.
+                    suit: (c.suit + 1 + j) % 4,
+                    value: ((c.value + 5 + j) % 13) + 1,
+                }));
+            });
+            const after = serializeViewBlob(serializeGameState(game), viewer);
+            game.players.forEach((p, i) => { p.hand = saved[i]; });
+
+            assert.deepEqual([...after], [...before],
+                `game ${g} viewer ${viewer}: the view changed when a hidden hand changed`);
+            compared++;
+
+            // And the counts really were non-trivial - a game with empty hands
+            // would satisfy the above for the wrong reason.
+            const hidden = game.players.reduce((n, p, i) => n + (i === viewer ? 0 : p.hand.length), 0);
+            assert.ok(hidden > 0, `game ${g} viewer ${viewer}: nothing was actually being masked`);
+        }
+    }
+    assert.ok(compared >= 20, `expected a spread of viewers, got ${compared}`);
+});
 
 test('view codec: blob -> serializeViewBlob -> encodeGameResponse -> decodePackedGame equals personalize_game for every seat + spectator', () => {
     const GAMES = Number(process.env.VIEW_GAMES || 10);

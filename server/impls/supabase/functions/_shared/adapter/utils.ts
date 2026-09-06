@@ -1,8 +1,6 @@
 import { corsHeaders, handleCors } from './cors.ts';
 import {
-    personalize_game,
     calculateEloChange,
-    game_done,
     other_player,
 } from '@api/common/common_utils.ts';
 import { Card, Game, GAME_STATUS, PLAYER_STATUS, PersonalGame, PrivatePlayer, PublicGame, PlayerHand, UserEloRating, BotHand, AnimationEvent, PublicAnimationEvent, PersonalAnimationEvent, ANIMATION_EVENT_TYPE, GameLog, LOG_TYPE, STRATEGY_KEY } from '@api/core/types.ts';
@@ -81,6 +79,10 @@ export interface PackedOpProducts {
     logsHex: string | null;
     nEvents: number;
     events: Map<number, Uint8Array>; // viewer seat (-1 spectator) -> evwire bytes
+    // Envelope extras, for the one packed producer whose broadcast changes the
+    // ROSTER (an add-bot that auto-starts): recipients must not have to depend
+    // on an already-loaded, possibly stale roster to decode the deal.
+    extra?: PackedPayloadExtra;
 }
 
 interface GameOpResult { game: Game; events: AnimationEvent[]; deleted?: boolean; packed?: PackedOpProducts }
@@ -119,7 +121,14 @@ export const executeWithGameLock = async (game_id: string, operation: (game: Gam
         // no DB writes — so the committed state below is already final. The
         // packed path did the equivalent inside the kernel (wasm_finalize_win).
         const packed = result.packed;
-        const game_ended = packed ? packed.ended : check_win_sync(result.game);
+        // Both halves are the kernel's: the packed path already finalized
+        // inside wasm_apply_action, and the JS path (meta actions, which carry
+        // no packed products) asks wasm_finalize_win for the same verdict and
+        // the same parking rather than restating it here.
+        const packed_or_kernel = packed
+            ? packed.ended
+            : (await engineMod()).kernelFinalizeWin(result.game);
+        const game_ended = packed_or_kernel;
 
         // Atomic, version-gated commit of the whole game state.
         const commit = await commitGame(result.game, expectedVersion,
@@ -152,7 +161,7 @@ export const executeWithGameLock = async (game_id: string, operation: (game: Gam
         if (packed ? packed.nEvents > 0 : result.events.length > 0) {
             console.log(`[${reqId}][TXN] Broadcasting ${packed ? packed.nEvents : result.events.length} events after commit`);
             const broadcast = packed
-                ? broadcastPackedEventBuffers(result.game, packed.events, reqId)
+                ? broadcastPackedEventBuffers(result.game, packed.events, reqId, packed.extra)
                 : broadcastAnimationEvents(result.game, result.events, reqId);
             broadcast.catch(err =>
                 console.error(`[${reqId}] Error broadcasting events:`, err));
@@ -280,9 +289,11 @@ export const packedSequencePayload = (bytes: Uint8Array, version: number, extra?
 });
 
 // Broadcast kernel-serialized per-viewer event buffers (the packed action
-// path and the packed bot loop). No r/m envelope extras: a move can't change
-// the roster, and its messages rebuild from codes client-side.
-export const broadcastPackedEventBuffers = async (game: Game, buffers: Map<number, Uint8Array>, reqId: string = 'unknown'): Promise<void> => {
+// path, the packed bot loop, and the packed deal). A move carries no r/m
+// envelope extras - it cannot change the roster, and its messages rebuild from
+// codes client-side - but a deal bundled with a roster change does, so the
+// extras are a parameter rather than an assumption.
+export const broadcastPackedEventBuffers = async (game: Game, buffers: Map<number, Uint8Array>, reqId: string = 'unknown', extra?: PackedPayloadExtra): Promise<void> => {
     const version = game.version ?? 0;
     const messages: BroadcastMessage[] = [];
     for (let seat = 0; seat < game.players.length; seat++) {
@@ -293,7 +304,7 @@ export const broadcastPackedEventBuffers = async (game: Game, buffers: Map<numbe
             messages.push({
                 topic: `gu-${game.id}-${p.player_id}`,
                 event: 'animation_events',
-                payload: packedSequencePayload(bytes, version),
+                payload: packedSequencePayload(bytes, version, extra),
             });
         }
     }
@@ -302,7 +313,7 @@ export const broadcastPackedEventBuffers = async (game: Game, buffers: Map<numbe
         messages.push({
             topic: `game-${game.id}`,
             event: 'animation_events',
-            payload: packedSequencePayload(spectator, version),
+            payload: packedSequencePayload(spectator, version, extra),
         });
     }
     await broadcastMessages(messages, reqId);
@@ -320,6 +331,11 @@ export const broadcastAnimationEvents = async (game: Game, events: AnimationEven
     // each a fully-masked packed stream from the TS event-wire encoder —
     // byte-identical to what the kernel's wasm_events_serialize emits on the
     // packed action path, parity-tested in e2e.
+    //
+    // The per-step boards are masked by the KERNEL (wasm_view_serialize),
+    // reached from evwire itself. This is the one caller that still encodes
+    // events in JS - the meta and lobby actions, where there is no packed
+    // producer.
     const version = game.version ?? 0;
     // Self-describing extras (see PackedPayloadExtra): this JS path carries
     // the lobby/meta actions where the roster itself changes, so recipients
@@ -369,7 +385,7 @@ export interface ExecutionParams {
 // Fire-and-forget bot drive AFTER the HTTP response (see the CRITICAL note
 // at the call site below): EdgeRuntime.waitUntil keeps the isolate alive
 // until the loop settles; the strategy stack is lazily imported so
-// lightweight functions never pay for it. Shared by the JSON path (wrap400)
+// lightweight functions never pay for it. Shared by the generic wrap400 path
 // and the packed action path.
 export const scheduleBotLoop = (game_id: string, reqId: string): void => {
     const botLoop = botActionsMod()
@@ -467,8 +483,11 @@ export const wrap400 = (
 
             // handle spectating here too 
             const personalizeStart = Date.now();
-            const personalized_result = personalize_game(result, user.id);
-            console.log(`[${reqId}][WRAP400] personalize_game took ${Date.now() - personalizeStart}ms`);
+            // Masking is the kernel's (packedViewOf -> view.c state_put), and the
+            // result leaves as the PACKED envelope - the same bytes player_views
+            // stores and `create` returns - not as a JSON game.
+            const personalized_result = await (await playerViewsMod()).packedViewOf(result, user.id);
+            console.log(`[${reqId}][WRAP400] personalize took ${Date.now() - personalizeStart}ms`);
 
             // Note: Animation events are now broadcasted automatically by executeWithGameLock
             // for game_id operations. For game creation (no game_id), we still need to broadcast here.
@@ -503,10 +522,10 @@ export const wrap400 = (
             // Create standardized response and return immediately
             const responseTime = Date.now() - requestStartTime;
             console.log(`[${reqId}][WRAP400] ========== RETURNING RESPONSE (total: ${responseTime}ms) ==========`);
-            return new Response(JSON.stringify(personalized_result), {
+            return new Response(personalized_result as unknown as BodyInit, {
                 headers: {
                     ...corsHeaders,
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/octet-stream'
                 }
             });
         } catch (e: any) {
@@ -872,12 +891,13 @@ export const commitGame = async (
 
 // private message to specific user
 export const broadcastToGameUser = async (game: Game, messageType: string, baseMessage: any, user_id: string): Promise<void> => {
+    const { personalViewOf } = await playerViewsMod();
     await broadcastMessages([{
         topic: `gu-${game.id}-${user_id}`,
         event: messageType,
         payload: {
             ...baseMessage,
-            game: personalize_game(game, user_id)
+            game: await personalViewOf(game, user_id)
         }
     }]);
 }
@@ -885,26 +905,10 @@ export const broadcastToGameUser = async (game: Game, messageType: string, baseM
 
 // Functions moved to common_utils.ts
 
-// true if game is over
-const check_win_sync = (game: Game): boolean => {
-    const the_fool = game_done(game);
-    if (the_fool === null) {
-        return false
-    }
-    // Set game status to GAME_OVER to show win screen
-    game.status = GAME_STATUS.GAME_OVER;
-
-    // set all players to idle but keep their hands for display
-    game.players.forEach((player: PrivatePlayer) => {
-        if (player.is_ai) {
-            player.status = PLAYER_STATUS.READY;
-        } else {
-            player.status = PLAYER_STATUS.IDLE;
-        }
-    });
-
-    return true;
-}
+// check_win_sync lived here: game_done, then GAME_OVER and the seat parking,
+// all in TypeScript. It is wasm_finalize_win's, reached through
+// engine.ts kernelFinalizeWin - the same call the packed path already made
+// inside the kernel.
 
 // Load the CURRENT session's log as its RAW PACKED BYTES for the belief/memory
 // bots. The hot path (loadCompleteGame) leaves game.logs empty so a move only
@@ -973,9 +977,9 @@ export const finalizeEndedGame = async (game: Game): Promise<void> => {
     if (sessionLogs.length === 0) packedLogBytes = undefined;
 
     // Compress the finished session into a replay snapshot (game_snapshots
-    // row) and retire its logs. verifyRoundTrip both encodes and proves the
-    // encoding decodes back to the exact action sequence — only on success do
-    // we retire the packed session log.
+    // row) and retire its logs. verifyRoundTripV6FromGame both encodes and
+    // proves the encoding decodes back to the exact action sequence - only on
+    // success do we retire the packed session log.
     try {
         // Lazy import: the replay codec is only needed here, at game end.
         const { verifyRoundTripV6FromGame } = await replayEncodeMod();

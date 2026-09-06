@@ -17,7 +17,7 @@
 //   (applyAction, kernelLegalMoves). No index into a resident menu is ever
 //   held across calls — wasm_apply_action takes wire bytes, not a menu index.
 //
-//   REPLAY family — live only inside ONE wasm_replay_encode/decode call:
+//   REPLAY family - live only inside ONE replay encode/decode call:
 //     g_rec   (RecChoice[]) the rANS choice log
 //     g_bn    (Bn)          the bignum accumulator
 //     g_replay_io (REPLAY_IO_CAP) the replay blob in/out

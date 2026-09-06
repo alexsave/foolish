@@ -509,6 +509,55 @@ int wasm_refill(void) {
     return 1;
 }
 
+// Seat KINDS, from g_io: one byte per seat, STRATEGY_KEY_HUMAN (-1, as 0xff)
+// for a human or a STRAT_* brain id for a bot. Lives here rather than in the
+// bots bridge because game_human_mask below reads exactly this, and the rules
+// module answers that question too.
+//
+// espresso's opponent modelling also branches on a specific brain (whether an
+// opponent is `random`), which is why the exact id and not just the sign is
+// carried on the paths that run a strategy.
+void wasm_import_strategy_keys(void) {
+    const unsigned char *q = g_io;
+    for (int i = 0; i < g_game.num_players; i++)
+        g_game.players[i].strategy_key = (int8_t)q[i];
+}
+
+// The seats a host must NOT drive (game.c game_human_mask), so no host rebuilds
+// an is_ai mask of its own before every call that wants one.
+//
+// Only meaningful once the seat kinds have been said. They do NOT ride in the
+// state wire: state_put/state_get are shared with the DURABLE blob
+// (wasm_state_serialize is [version][flag][state_put(VIEW_UNMASKED)]), so a
+// byte added for this would silently re-interpret every persisted games.state
+// row while the version byte still read 2. The kinds arrive through
+// wasm_import_strategy_keys instead, which marshalGame now always calls - see
+// the note there. A blob-loaded game has no kinds at all (identity stays with
+// the caller, game.h), so its host still owns the question.
+int wasm_human_mask(void) {
+    return (int)game_human_mask(&g_game);
+}
+
+// The rematch reset: a finished game back to its lobby, ready to deal again.
+// `bot_mask` is the seats that come back READY (the bots); everyone else lands
+// IDLE and has to ready up.
+//
+// game_reset_to_lobby has existed in game.c since the lifecycle consolidation
+// and had no caller outside a unit test, while BOTH hosts kept their own copy:
+// the edge's handleContinue and the browser's optimistic resetToLobby, which
+// had to "match byte-for-byte on the public fields or the user sees a snap".
+// They already disagreed - handleContinue left good_players/good_timestamp set
+// and leaned on the next deal to clear them, so between the reset and the deal
+// the lobby showed stale good state. The kernel settles that the client's way,
+// and adopting it here is that fix.
+//
+// No begin_action(): a reset emits no logs and no animation snapshots. It is
+// the board being put away, not a move.
+int wasm_reset_to_lobby(int bot_mask) {
+    game_reset_to_lobby(&g_game, (unsigned int)bot_mask);
+    return 1;
+}
+
 // ---------- packed wire pipeline (docs/PACKED_WIRE_CUTOVER.md) --------------
 //
 // One call per client move: the action-wire bytes the browser validated with
@@ -663,23 +712,20 @@ int wasm_replay_io_cap(void) { return REPLAY_IO_CAP; }
 // Defense in depth: the TS bridge already checks lengths against
 // wasm_replay_io_cap, but a hostile/stale caller must get a clean error,
 // never reads past the replay buffer.
-int wasm_replay_encode(int in_len) {
-    if (in_len < 0 || in_len > REPLAY_IO_CAP) return -REPLAY_ECAP;
-    return replay_encode(g_replay_io, in_len, g_replay_io, REPLAY_IO_CAP);
-}
 int wasm_replay_decode(int in_len) {
     if (in_len < 0 || in_len > REPLAY_IO_CAP) return -REPLAY_ECAP;
     return replay_decode(g_replay_io, in_len, g_replay_io, REPLAY_IO_CAP);
 }
-// Format 6 (hidden-state-lossless, partial-game — replay.h). Same in-place
-// contract; decode is version-dispatched so wasm_replay_decode handles v6 too.
+// The marshalled encoder (replay.h): an action stream plus the real hidden
+// cards. Same in-place contract.
 int wasm_replay_encode_v6(int in_len) {
     if (in_len < 0 || in_len > REPLAY_IO_CAP) return -REPLAY_ECAP;
     return replay_encode_v6(g_replay_io, in_len, g_replay_io, REPLAY_IO_CAP);
 }
 
-// Format 6 from the RESIDENT game (replay.h replay_encode_v6_from_game) — the
-// one v6 producer, the same call the phone makes through fio_replay_encode_v6_b32.
+// A replay from the RESIDENT game (replay.h replay_encode_v6_from_game) - the
+// production producer, the same call the phone makes through
+// fio_replay_encode_v6_b32.
 // The host stages the game exactly as a bot decision does (wasm_import_state
 // then wasm_import_logs) and puts the deal seed at the front of the replay IO
 // buffer; the kernel re-derives the deal from the seed and reads the actions
@@ -974,6 +1020,105 @@ int wasm_anim_stale_optimistic(int n_opt, int n_table, int n_named) {
     return n;
 }
 
+// THE CONFLICT VERDICT, per motion (anim_plan.h anim_conflict_facts +
+// anim_conflict_verdict), for the SERVER transport.
+//
+// ONE DOOR. AnimationContext asks this question four times - about a pending
+// attack/cover, about a pass judged against the NEXT defender, about my attacks
+// after a pass moved the shield, and about a pickup, whose cards landed in MY
+// HAND rather than on the table - and only the first used to reach C. The other
+// three re-derived the rule in TypeScript and so had none of its precedence
+// (CLEAR before the standing sets), its pool rule or its masked-back rule.
+// A second wasm entry for the first shape (wasm_anim_resolve) is gone with
+// them: two doors onto one rule is a new way for two hosts to disagree.
+//
+// The arriving stream comes in AS ITS EVENTS, not as a pre-digested swept set.
+// Deciding which events sweep - and therefore whether the table was cleared,
+// which short-circuits the server transport's hope - is the rule's own job
+// (anim_conflict_sweep), and it was the last piece of it still written in
+// TypeScript.
+//
+// g_io in:
+//   u8 n_events, then per event: u8 type (ANIM_EVT_*), u8 mask, u8 n_cards,
+//     n_cards x u8 dense id
+//   u8 n_open_battles, then 2 x that u8: the opening table (attack, then its
+//     cover or ANIM_TABLE_NONE). BOTH sides stand.
+//   u8 n_my_hand, then that many u8 dense ids: my hand on that board
+//   u8 n_motions, then per motion: u8 dense id (or ANIM_TABLE_NONE),
+//     u8 dest (ANIM_DEST_*), u8 is_cover
+// g_io out (overwrites): n_motions x u8 verdict (ANIM_CONFLICT_*).
+// Returns the motion count, or a negative ANIM_E*.
+int wasm_anim_conflict_verdicts(int pending_attacks, int defender_hand,
+                                int final_uncovered) {
+    int p = 0;
+    const int n_events = g_io[p++];
+    if (n_events > ANIM_MAX_STEPS) return ANIM_ECAP;
+    static Card ev_cards[ANIM_MAX_CARD_POOL];
+    static AnimEvent events[ANIM_MAX_STEPS];
+    int cpool = 0;
+    for (int e = 0; e < n_events; e++) {
+        events[e].type = g_io[p++];
+        events[e].mask_cards = g_io[p++] ? 1 : 0;
+        const int nc = g_io[p++];
+        if (nc > ANIM_MAX_CARDS || cpool + nc > (int)(sizeof ev_cards / sizeof ev_cards[0]))
+            return ANIM_ECAP;
+        events[e].seat = ANIM_SEAT_NONE;
+        events[e].from = ANIM_LOC_NONE;
+        events[e].to = ANIM_LOC_NONE;
+        events[e].cards = &ev_cards[cpool];
+        events[e].n_cards = nc;
+        for (int k = 0; k < nc; k++) {
+            const unsigned char b = g_io[p++];
+            ev_cards[cpool++] = (b == ANIM_TABLE_NONE) ? CARD_NONE : card_of_id((int)b);
+        }
+    }
+
+    int table_cleared = 0;
+    static int moved[ANIM_MAX_CARD_POOL];
+    const int n_moved = anim_conflict_sweep(events, n_events, moved,
+                                            (int)(sizeof moved / sizeof moved[0]),
+                                            &table_cleared);
+    if (n_moved < 0) return n_moved;
+
+    const int n_bat = g_io[p++];
+    if (n_bat > MAX_BATTLES) return ANIM_ECAP;
+    const unsigned char *table = &g_io[p];
+    p += 2 * n_bat;
+    const int n_hand = g_io[p++];
+    if (n_hand > ANIM_MAX_CARDS) return ANIM_ECAP;
+    const unsigned char *hand = &g_io[p];
+    p += n_hand;
+
+    AnimConflictFacts facts;
+    const int fr = anim_conflict_facts(moved, n_moved, table, n_bat, hand, n_hand, &facts);
+    if (fr != ANIM_EOK) return fr;
+
+    const int n_motions = g_io[p++];
+    if (n_motions > ANIM_MAX_CARDS) return ANIM_ECAP;
+    // Read every motion out before writing any verdict back: the output
+    // overwrites the input buffer they are still sitting in.
+    static unsigned char m_id[ANIM_MAX_CARDS], m_dest[ANIM_MAX_CARDS], m_cover[ANIM_MAX_CARDS];
+    for (int i = 0; i < n_motions; i++) {
+        m_id[i] = g_io[p++];
+        m_dest[i] = g_io[p++];
+        m_cover[i] = g_io[p++];
+    }
+
+    AnimServerHope hope;
+    hope.table_cleared = table_cleared;
+    hope.pending_attacks = pending_attacks;
+    hope.defender_hand = defender_hand;
+    hope.final_uncovered = final_uncovered;
+    for (int i = 0; i < n_motions; i++) {
+        hope.is_cover = m_cover[i];
+        const int id = (m_id[i] == ANIM_TABLE_NONE) ? ANIM_CARD_NONE : (int)m_id[i];
+        const int v = anim_conflict_verdict(id, m_dest[i], &facts, &hope);
+        if (v < 0) return v;
+        g_io[i] = (unsigned char)v;
+    }
+    return n_motions;
+}
+
 // THE TRANSPORT (anim_plan.h), said once by the host. Every wasm host is the
 // server shape - a browser, an edge function, a test harness driving either -
 // but the kernel will not assume that, so bots.ts states it at module init.
@@ -981,64 +1126,6 @@ int wasm_anim_stale_optimistic(int n_opt, int n_table, int n_named) {
 // setter and not a compile-time constant.
 int wasm_anim_set_transport(int transport) { return anim_set_transport(transport); }
 int wasm_anim_transport(void) { return anim_transport(); }
-
-// resolveUnconfirmedAttackCovers (optimisticConflicts.ts). g_io in:
-//   pending: n_pending x { u8 wire card, u8 is_cover }
-//   server:  n_server  x u8 wire card
-//   events:  n_events  x { u8 type, u8 n_cards, n_cards x u8 wire card }
-// Scalars: defender (0xFF none via -1), defender_hand, final_uncovered.
-// g_io out (overwrites): u8 n_revert, u8 n_merge, u8 n_clear, then the three
-// index lists (each a byte into pending). Returns bytes written, or -ANIM_E*.
-int wasm_anim_resolve(int n_pending, int n_server, int n_events,
-                      int defender, int defender_hand, int final_uncovered) {
-    if (n_pending < 0 || n_pending > ANIM_MAX_CARDS) return ANIM_EBADARG;
-    if (n_server < 0 || n_server > ANIM_MAX_TABLE_INPUT) return ANIM_ECAP;
-    if (n_events < 0 || n_events > ANIM_MAX_STEPS) return ANIM_ECAP;
-    static AnimPending pending[ANIM_MAX_CARDS];
-    static Card server[ANIM_MAX_TABLE_INPUT];
-    // Event card storage: borrow a flat pool; each AnimEvent points into it.
-    static Card ev_cards[ANIM_MAX_CARD_POOL];
-    static AnimEvent events[ANIM_MAX_STEPS];
-    int p = 0, cpool = 0;
-    for (int i = 0; i < n_pending; i++) {
-        pending[i].card = card_from_wire_pair(g_io[p++]);
-        pending[i].is_cover = g_io[p++] ? 1 : 0;
-    }
-    for (int i = 0; i < n_server; i++) server[i] = card_from_wire_pair(g_io[p++]);
-    for (int e = 0; e < n_events; e++) {
-        int type = g_io[p++];
-        int nc = g_io[p++];
-        if (nc < 0 || nc > ANIM_MAX_CARDS || cpool + nc > (int)(sizeof(ev_cards)/sizeof(ev_cards[0])))
-            return ANIM_ECAP;
-        events[e].type = type;
-        events[e].seat = ANIM_SEAT_NONE;
-        events[e].from = ANIM_LOC_NONE;
-        events[e].to = ANIM_LOC_NONE;
-        events[e].mask_cards = 0;
-        events[e].cards = &ev_cards[cpool];
-        events[e].n_cards = nc;
-        for (int k = 0; k < nc; k++) ev_cards[cpool++] = card_from_wire_pair(g_io[p++]);
-    }
-    AnimFinalState fin;
-    for (int i = 0; i < MAX_PLAYERS; i++) fin.hand_length[i] = 0;
-    fin.defender = defender;   // caller passes -1 for "none"
-    fin.n_players = MAX_PLAYERS;
-    if (defender >= 0 && defender < MAX_PLAYERS) fin.hand_length[defender] = defender_hand;
-    fin.final_uncovered_attacks = final_uncovered;
-
-    static AnimResolve r;
-    int rc = anim_resolve_unconfirmed_attack_covers(pending, n_pending, server, n_server,
-                                                    events, n_events, &fin, &r);
-    if (rc != ANIM_EOK) return rc;
-    int o = 0;
-    g_io[o++] = (unsigned char)r.n_revert;
-    g_io[o++] = (unsigned char)r.n_merge;
-    g_io[o++] = (unsigned char)r.n_clear;
-    for (int i = 0; i < r.n_revert; i++) g_io[o++] = (unsigned char)r.revert[i];
-    for (int i = 0; i < r.n_merge; i++)  g_io[o++] = (unsigned char)r.merge[i];
-    for (int i = 0; i < r.n_clear; i++)  g_io[o++] = (unsigned char)r.clear[i];
-    return o;
-}
 
 // anim_build_plan (the count-freeze + veil + timing). g_io in:
 //   [0 .. n_players)   final_hand counts (u8 each)

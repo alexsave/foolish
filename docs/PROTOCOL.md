@@ -28,8 +28,8 @@ public), in `ios/Config/*.xcconfig`.
 | Function | Purpose | Body | Response |
 | --- | --- | --- | --- |
 | `create` | new game | `{}` (JSON) | **binary** enveloped packed game (octet-stream, §5) |
-| `action` | ALL moves | **binary** packed action (§4) OR JSON `{game_id,type:'bump'}` | binary 7-byte response (§4) |
-| `meta` | lobby ops | JSON `{type, game_id, …}` (§7) | JSON `{ data: { id, … } }` |
+| `action` | ALL moves | **binary** packed action (§4) OR JSON `{game_id,type:'bump'}` | binary 7-byte response (§4) for a packed move; **binary** enveloped packed game (§5) for `bump` |
+| `meta` | lobby ops | JSON `{type, game_id, …}` (§7) | **binary** enveloped packed game (octet-stream, §5) |
 
 ### 2.1 create → game id + seat (RESOLVED)
 
@@ -77,8 +77,11 @@ rejects cross-round moves. Response (7 bytes, `action/index.ts:17`):
 
 **Client must request the RAW body** (not JSON-decoded) for this binary response.
 
-The `bump` nudge (`ServerContext.tsx:649`) is a JSON `action` body
+The `bump` nudge (`ServerContext.tsx:653`) is a JSON `action` body
 `{ game_id, type: 'bump' }`, fired when the game has AI players.
+It does not go through the packed branch, so it comes back through the generic
+`wrap400` tail: the caller's enveloped packed game (§5), which every bump caller
+discards - the nudge is the point, not the answer.
 
 ## 5. The enveloped packed game (RESOLVED byte layout)
 
@@ -136,8 +139,17 @@ session in the Keychain. Guest-first: no wall before play.
 
 ## 7. `meta` actions (RESOLVED)
 
-`{type, game_id, …}` → `{ data: { id, … } }`. The seat is NOT returned explicitly
-— the client reads it from the masked view (§5). Types (`meta_actions.ts`):
+`{type, game_id, …}` → the caller's **enveloped packed game** (§5), the same
+bytes `create` returns, `player_views.view` stores and the realtime feed pushes.
+The REQUEST stays JSON because it is a command, not game state; no game state
+crosses this wire as JSON in either direction. A caller who left the game (or was
+never in it) gets the seat -1 spectator envelope.
+
+The web decodes it with `decodePackedGame` (`ServerContext.invokeGameFunctions`)
+and reads `game.id`. iOS uses supabase-swift's `Void` `invoke(_:options:)`
+overload, which never decodes a body, so it is unaffected. The seat is NOT
+returned explicitly - the client reads it from the masked view (§5). Types
+(`meta_actions.ts`):
 
 - `join {game_id}` — appends the caller to `game.players` (seat = new array
   index); the `player_views` feed then delivers their masked view.

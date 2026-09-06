@@ -4,13 +4,13 @@
  * Plays random legal games with the REAL server engine (the same
  * handleAttack/handleCover/... the edge functions run), then:
  *
- *   game.logs -> encodeReplay -> bigint -> bytes -> base32/base64
- *            -> decodeReplay (public-state replayer, decode direction)
+ *   game + deal seed -> kernelReplayEncodeV6FromGame -> bigint -> bytes
+ *                    -> base32/base64 -> decodeReplay
  *
- * and asserts the decoded stream reproduces the ENTIRE original log stream —
- * not just the coded actions but every derived DISCARD / DRAW /
- * DEFENDER_CHANGE / PLAYER_OUT, byte for byte. Any rules drift between the
- * server engine and _shared/common/replay/core.ts shows up here as a hard failure.
+ * and asserts the decoded stream reproduces every information-bearing action of
+ * the game that was played, plus its elimination order, fool and discard count.
+ * Any rules drift between the server engine and the kernel's replay projection
+ * (c/src/replay.c) shows up here as a hard failure.
  *
  * This is a pure codec/engine test — no Postgres, no harness.
  * Games-per-player-count is REPLAY_GAMES_PER_PC (default 20).
@@ -18,6 +18,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import {
+  kernelB32Encode, kernelReplayLink, kernelB32Decode, kernelReplayLinkParse,
+} from '../sdk/ts/wasm/bots.ts';
 
 import { game_done } from '../server/api/common/common_utils.ts';
 import { start_game } from '../server/api/common/game_lifecycle.ts';
@@ -32,11 +35,10 @@ import {
 } from '../server/api/core/types.ts';
 import { shouldBotActCore, processBotAction } from '../server/api/common/pure_bot_actions.ts';
 import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
-import { ReplayInput, SeatLog, DecodedReplay, INFO_TYPES } from '../server/api/common/replay/core.ts';
+import { SeatLog, DecodedReplay, INFO_TYPES } from '../server/api/common/replay/core.ts';
 import { decodeReplay } from '../server/api/common/replay/decode.ts';
 import {
-  urlToGame, base64Decode, base64Encode, base32Encode, bytesToBigint, codeToGame, gameToUrl,
-  URL_PREFIX,
+  base64Decode, base64Encode, bytesToBigint,
 } from '../server/api/common/replay/codec.ts';
 import { kernelReplayEncodeV6FromGame } from '../sdk/ts/wasm/bots.ts';
 import { suiteRng } from './helpers/rng.ts';
@@ -52,6 +54,12 @@ import {
   moveTimesFromLogs,
 } from '../server/api/common/replay/extras.ts';
 import { buildReplayFrames, REPLAY_STEP } from '../src/replay/frames';
+
+// A pasted link as the moves bigint: the kernel strips and refuses
+// (replay_link_parse), the kernel decodes (replay_b32_decode). Composed here
+// rather than in the product, which never needed the bigint form.
+const urlToGame = (url: string): bigint =>
+    bytesToBigint(kernelB32Decode(kernelReplayLinkParse(url)));
 
 // The engine logs play-by-play; silence it so the test reporter stays readable.
 if (!process.env.E2E_VERBOSE) {
@@ -141,10 +149,9 @@ async function playRandomGame(np: number, strategy: StrategyKey): Promise<Game |
   return game;
 }
 
-/* normalize both streams to a comparable shape. GOOD presses are implied in
- * format v4 — the decoder neither stores nor reproduces them — so they are
- * stripped from the original before comparing. Everything else (including
- * every derived DISCARD/DRAW/DEFENDER_CHANGE/PLAYER_OUT) must match. */
+/* normalize both streams to a comparable shape. GOOD presses are implied - the
+ * decoder derives them rather than storing them - so they are stripped from the
+ * original before comparing. */
 function normOriginal(game: Game): SeatLog[] {
   const seatOf = (pid: string | null) =>
     pid === null ? null : game.players.findIndex((p) => p.player_id === pid);
@@ -215,7 +222,8 @@ async function roundTripGame(game: Game, np: number, where: string): Promise<boo
   const x = bytesToBigint(bytes);
   const enc = {
     x, bytes, byteLength: bytes.length,
-    base32: base32Encode(bytes), base64: base64Encode(bytes), url: gameToUrl(x),
+    base32: kernelB32Encode(bytes), base64: base64Encode(bytes),
+    url: kernelReplayLink(kernelB32Encode(bytes), []),
   };
 
   // decode through every serialization layer
@@ -225,7 +233,7 @@ async function roundTripGame(game: Game, np: number, where: string): Promise<boo
   // and every letter of `https` is in the base32 alphabet - so an unrecognised
   // prefix does not fail, it names a DIFFERENT game, which then dies in the
   // kernel under a codec error that was never the fault.
-  const bareCode = enc.url.slice(URL_PREFIX.length);
+  const bareCode = enc.base32;
   for (const pasted of [
     `https://foolish.cards/${bareCode}`,
     `https://www.foolish.cards/${bareCode}`,
@@ -339,9 +347,11 @@ export function registerReplayValidation(): void {
   // of its own — e2e/tutorial_game.test.ts, which replays it rather than just
   // decoding it — registered into this same fast runner by
   // e2e/validation/tutorial_validation.test.ts.
-  test('kernel decode rejects garbage and future versions cleanly', async () => {
-    // version 7 header: the smallest integer whose version field is neither the
-    // frozen v5 nor the additive v6 (both are now supported); 7 stays unknown.
+  test('kernel decode rejects garbage and retired versions cleanly', async () => {
+    // The version is the first symbol, coded uniform over 16, so the integer 7
+    // IS a version-7 header. Seven is one of the retired formats (it predates
+    // the deal-order fix), and the kernel refuses it by number rather than
+    // trying to read it - c/tests/tests.c walks the whole alphabet.
     await assert.rejects(
       () => decodeReplay(7n),
       /unsupported replay format version 7/,

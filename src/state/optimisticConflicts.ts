@@ -16,7 +16,10 @@
 
 import { Card } from '@api/core/types.ts';
 import { getCardKey } from '../utils/animationUtils';
-import { animResolveUnconfirmed, animEventTypeCode } from '@sdk/ts/wasm/bots.ts';
+import {
+    animConflictVerdicts, animEventTypeCode, ANIM_DEST,
+    AnimConflictInputs, AnimConflictMotion, AnimConflictVerdict,
+} from '@sdk/ts/wasm/bots.ts';
 
 export interface AttackCoverResolution {
     /** Optimistic attack/cover cards to fly back to hand (genuinely never accepted). */
@@ -54,36 +57,70 @@ export function resolveUnconfirmedAttackCovers(
     finalGameState: GameStateLike | null | undefined,
     myOptimisticCoverKeys?: Set<string>,
 ): AttackCoverResolution {
-    // The DECISION lives in the C animation core (c/src/anim_plan.h
-    // anim_resolve_unconfirmed_attack_covers), reached through the wasm bridge —
-    // the whole revert-vs-keep-vs-clear choreography, hardened by the web
-    // glitch-fixing, in one implementation the phone and a Steam client share.
-    // This wrapper marshals the fields C needs and maps the returned indices back
-    // to Cards. Asserted natively (c/tests/anim_plan_test.c test_optimistic_revert)
-    // and end-to-end through this delegation by e2e/optimistic_revert.test.ts.
+    // The DECISION is the C animation core's (anim_plan.h anim_conflict_verdict),
+    // via resolveConflictMotions below. Asserted natively
+    // (c/tests/anim_plan_test.c test_optimistic_revert) and end-to-end by
+    // e2e/optimistic_revert.test.ts.
+    //
+    // The ATTACK/COVER shape: every card landed on the table, and capacity
+    // measures the FINAL board's defender.
     if (myOptimisticAttackCovers.length === 0) return { revert: [], merge: [], clear: [] };
 
-    const pending = myOptimisticAttackCovers.map((card) => ({
-        card,
-        isCover: myOptimisticCoverKeys ? myOptimisticCoverKeys.has(getCardKey(card)) : false,
-    }));
-    const bridgeEvents = events.map((evt) => ({ type: animEventTypeCode(evt.type), cards: evt.cards ?? [] }));
-
     // Defender scalars, exactly as the old inline capacity check read them:
-    // an undefined defender yields a 0 hand size (defender = -1 for the C side).
-    const defender = finalGameState?.defender !== undefined ? finalGameState.defender : -1;
+    // an undefined defender yields a 0 hand size.
     const defenderHand = finalGameState?.defender !== undefined
         ? (finalGameState.players?.[finalGameState.defender]?.hand_length ?? 0)
         : 0;
     const finalUncovered = finalGameState?.table_battles?.filter((b) => !b.defense).length ?? 0;
 
-    const r = animResolveUnconfirmed(pending, serverTableCards, bridgeEvents,
-        { defender, defenderHand, finalUncovered });
-    return {
-        revert: r.revert.map((i) => pending[i].card),
-        merge: r.merge.map((i) => pending[i].card),
-        clear: r.clear.map((i) => pending[i].card),
-    };
+    const r = resolveConflictMotions(
+        myOptimisticAttackCovers.map((card) => ({
+            card,
+            dest: ANIM_DEST.table,
+            isCover: myOptimisticCoverKeys ? myOptimisticCoverKeys.has(getCardKey(card)) : false,
+        })),
+        {
+            events: conflictEvents(events),
+            openTable: serverTableCards.map((attack) => ({ attack, defense: null })),
+            myHand: [],
+            defenderHand,
+            finalUncovered,
+        });
+    // `merge` is this caller's word for the rule's KEEP.
+    return { revert: r.revert, merge: r.keep, clear: r.clear };
+}
+
+/** The app's animation events as the kernel reads them: a type code and the
+ *  cards. Which of them SWEEP is the kernel's call, not this file's. */
+export const conflictEvents = (events: AnimEvent[]): AnimConflictInputs['events'] =>
+    events.map((e) => ({ type: animEventTypeCode(e.type), cards: e.cards ?? [] }));
+
+/**
+ * THE CONFLICT VERDICT for a set of motions, straight from the kernel
+ * (anim_plan.h anim_conflict_facts + anim_conflict_verdict). All four shapes
+ * AnimationContext asks about come through here - the three that are not
+ * attack/cover used to be inline capacity checks, with none of the rule's
+ * precedence, pool or masked-back cases.
+ *
+ * Takes the kernel's own shapes, so there is no second set of types to keep in
+ * step. `pendingAttacks` defaults to the non-cover motions.
+ */
+export function resolveConflictMotions(
+    motions: AnimConflictMotion[],
+    inputs: Omit<AnimConflictInputs, 'pendingAttacks'> & { pendingAttacks?: number },
+): { revert: Card[]; keep: Card[]; clear: Card[] } {
+    const out: { revert: Card[]; keep: Card[]; clear: Card[] } = { revert: [], keep: [], clear: [] };
+    if (motions.length === 0) return out;
+
+    const verdicts: AnimConflictVerdict[] = animConflictVerdicts(motions, {
+        ...inputs,
+        pendingAttacks: inputs.pendingAttacks ?? motions.filter((m) => !m.isCover).length,
+    });
+    verdicts.forEach((v, i) => {
+        const card = motions[i].card;
+        if (card) out[v === 'keep' ? 'keep' : v].push(card);
+    });
+    return out;
 }
 
 // Re-export so callers can key by card without another import.

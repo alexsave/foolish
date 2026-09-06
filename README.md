@@ -224,14 +224,13 @@ rendered by `src/replay/`) encodes a complete finished game into a single intege
 using **rANS entropy coding**, then base32s it into a URL
 (`WWW.FOOLISH.CARDS/<code>`) chosen specifically to stay inside QR alphanumeric
 mode. One shared driver runs both encode and decode, derived events (deals,
-draws, discards) cost zero bits, hidden cards are encoded lazily with a
-hypergeometric model, and an optional blob packs player names + per-move timing
-spanning nanoseconds to weeks. The rules projection lives in the same C kernel
-as the production game rules (the original TS implementation is frozen as a
-differential-test oracle), the format is version-frozen (v2–v5), the server
-verifies the round-trip byte-for-byte before persisting, and playback is a
-VHS-style transport that can even deduce and reveal the loser's never-played
-cards by complement.
+draws, discards) cost zero bits, every hidden card's identity is entropy-coded
+inline at the moment it is dealt or drawn, and an optional blob packs player
+names + per-move timing spanning nanoseconds to weeks. The rules projection
+lives in the same C kernel as the production game rules, the server verifies
+the round-trip byte-for-byte before persisting, and playback is a VHS-style
+transport that shows the loser's never-played cards exactly - the code carries
+them, so nothing is deduced.
 
 ### 3. Procedural rendering + offline-first PWA
 

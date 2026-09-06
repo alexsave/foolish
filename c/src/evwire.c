@@ -59,9 +59,9 @@ static void put_event(Emit *e, int type, int seat, int msg, int from, int to,
 //
 // evwire_walk below turns (hook snapshots + this action's logs) into the event
 // sequence, and hands each event to a SINK. The packed evwire writer is one
-// sink; the iOS bridge's JSON emitter is another (docs/C_CORE_CONSOLIDATION.md
-// F4). Which card flies where is therefore derived exactly once, whatever the
-// destination — a second derivation per platform is the whole finding.
+// sink; the settlement cut is another (docs/C_CORE_CONSOLIDATION.md F4). Which
+// card flies where is therefore derived exactly once, whatever the destination -
+// a second derivation per platform is the whole finding.
 
 static void sink_packed(void *ctx, const EvwEvent *ev) {
     Emit *e = (Emit *)ctx;
@@ -258,7 +258,7 @@ int evwire_serialize(const EvSnap *snaps, int n_snaps,
                 0, CARD_NONE, 0, 0, final_g);
     }
 
-    // Trailer: the committed final state (the JSON payload's `game`).
+    // Trailer: the committed final state (the sequence's `game`).
     put_snapshot(&e, final_g);
 
     if (e.fail || e.n_events > 255) return -1;

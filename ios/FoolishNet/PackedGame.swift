@@ -14,22 +14,22 @@
 //   [1]      flags: bit0 = isPlayer, bit1 = a PACKED roster trailer follows
 //   [2]      seat (when isPlayer), else -1
 //   [3..6]   u32 LE version
-//   [7..8]   u16 LE legacy roster JSON length (0 once the island is gone)
-//   [9..]    legacy roster JSON
+//   [7..8]   u16 LE roster_len, always 0 (see below)
 //   [q]      u16 LE view length      (q = 9 + rosterLen)
 //   [q+2]    VIEW_FORMAT_VERSION = 1
 //   [q+3]    viewer seat
 //   [q+4..]  masked state (view.c state_put layout) — handed to the kernel
-//   [q+viewLen..] packed roster (EnvelopeRoster), present iff flags bit1
+//   [q+viewLen..] packed roster (EnvelopeRoster), REQUIRED
 //
-// THE ROSTER IS PACKED NOW. It was the last JSON on any path that mattered, and
-// it moved to bytes without a coordinated deploy: the server appends the packed
-// roster AFTER the view blob and announces it in a flag bit, so build 1.0(43) -
-// which reads bit0, ignores the rest of the flags byte, and bounds the view blob
-// without ever looking past it - still sees exactly the payload it always saw.
-// The JSON island below is the fallback for a stored player_views row written
-// before that deploy; it dies in one commit with the server's LEGACY_ROSTER_JSON
-// (sdk/ts/wire/view.ts). See docs/KERNEL_LIFT_BRIEF.md item 4.
+// WHY roster_len IS ALWAYS ZERO. It used to be the length of a JSON roster
+// island sitting at byte 9, and that island moved to bytes without a
+// coordinated deploy: the server appended the packed roster AFTER the view blob
+// and announced it in a flag bit, so build 1.0(43) - which reads bit0, ignores
+// the rest of the flags byte, and bounds the view blob without ever looking
+// past it - kept seeing exactly the payload it always saw while the field caught
+// up. The island is no longer written, so the field is now a zero that keeps
+// every later offset where it was. An envelope with no trailer does not decode.
+// See docs/KERNEL_LIFT_BRIEF.md item 4.
 
 import Foundation
 import FoolishKit
@@ -50,35 +50,11 @@ public enum PackedGame {
     /// flags bit1 — the packed roster trailer is present.
     private static let flagPackedRoster: UInt8 = 2
 
-    // ---- the legacy JSON island, and nothing else, lives below --------------
-    // Only reachable for an envelope written before the trailer existed (a
-    // stored player_views row for an idle game). Delete this, and the branch
-    // that calls it, when the server stops writing the island.
-    struct Roster: Decodable {
-        let id: String
-        let name: String
-        let players: [RosterPlayer]
-        let status: String
-        let good_players: [String]?
-        let good_timestamp: Double?
-    }
-    struct RosterPlayer: Decodable { let player_id: String; let name: String; let is_ai: Bool }
-
-    /// The legacy island as an EnvelopeRoster, so the decoder below has one
-    /// shape to read whichever way the bytes arrived.
-    private static func legacyRoster(_ bytes: Data) -> EnvelopeRoster? {
-        guard let r = try? JSONDecoder().decode(Roster.self, from: bytes) else { return nil }
-        let status: Int
-        switch r.status {
-        case "waiting":   status = GameStatus.waiting.rawValue
-        case "game_over": status = GameStatus.gameOver.rawValue
-        default:          status = GameStatus.playing.rawValue
-        }
-        return EnvelopeRoster(
-            id: r.id, name: r.name, status: status,
-            players: r.players.map { EnvelopeRoster.Player(playerId: $0.player_id, name: $0.name, isAI: $0.is_ai) },
-            goodPlayers: r.good_players ?? [], goodTimestamp: r.good_timestamp)
-    }
+    // (A JSON roster island used to sit at byte 9 and be decoded here with a
+    // Codable struct, for envelopes written before the packed trailer existed.
+    // The server does not write it any more - roster_len is 0 - so an envelope
+    // without a trailer is unreadable rather than JSON-parsed, exactly as the
+    // web's decodePackedGame now treats it.)
 
     /// Decode an enveloped packed-game buffer. Returns nil on a malformed/short
     /// payload (the caller treats it as unreadable, like the web).
@@ -99,19 +75,16 @@ public enum PackedGame {
         let stateStart = q + 2
         let stateBytes = Data(b[stateStart..<(q + viewLen)])
 
-        // THE ROSTER, IN BYTES. The trailer sits past the view blob; the JSON
-        // island is read only when no trailer was announced.
-        let roster: EnvelopeRoster
-        if (b[1] & flagPackedRoster) != 0, let packed = EnvelopeRoster.decode(b, at: q + viewLen) {
-            roster = packed.roster
-        } else if let legacy = legacyRoster(Data(b[9..<(9 + rosterLen)])) {
-            roster = legacy
-        } else {
-            return nil
-        }
+        // THE ROSTER, IN BYTES: the trailer past the view blob, and nothing
+        // else. An envelope that announces no trailer was written before the
+        // trailer existed and is unreadable - a table with no names is worse
+        // than a load error, because the caller cannot tell it went wrong.
+        guard (b[1] & flagPackedRoster) != 0,
+              let packed = EnvelopeRoster.decode(b, at: q + viewLen) else { return nil }
+        let roster = packed.roster
 
-        // Decode the masked state directly in Swift — no kernel JSON round-trip
-        // (owner: wipe the JSON; client↔server is packed kernel wire).
+        // Decode the masked state directly in Swift - client and server are
+        // kernel-to-kernel and the bytes are the contract.
         guard let raw = MaskedView.decode(stateBytes, viewer: seat) else { return nil }
 
         // Merge the roster's real names / is_ai (the masked state carries neither).

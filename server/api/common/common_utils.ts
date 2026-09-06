@@ -190,10 +190,13 @@ export const shouldBotActCore = (game: Game, bot: PrivatePlayer, botIndex: numbe
 }
 
 // Kernel twin: game_done in c/src/game.c (e2e/wasm_engine.test.ts polices the
-// parity). No browser caller; this serves the Supabase edge's synchronous
-// check_win_sync and the Node harnesses, neither of which can reach
-// clientGuards - the edge would have to swallow the guards.wasm embed, and
-// check_win_sync would have to become async.
+// parity).
+//
+// NO PRODUCTION CALLER. This served the edge's check_win_sync, which is gone -
+// that path asks wasm_finalize_win now. What is left is the Node harnesses and
+// the parity tests, for which this is the independent TS oracle: the thing the
+// kernel is checked AGAINST, like the frozen bot strategies. Keep it that way;
+// a caller that wants the answer should ask the kernel.
 export const game_done = (game: Game): string | null => {
     // only one 1 left, everyone else is out
     const in_players = game.players.filter(player => player.status === PLAYER_STATUS.IN);
@@ -223,6 +226,15 @@ export const other_player = (player: PrivatePlayer): PublicPlayer => {
     };
 }
 
+// Kernel twin: view.c state_put (masked), reached through
+// player_views.ts personalViewOf.
+//
+// NO PRODUCTION CALLER. Every endpoint that used to build a viewer's game here
+// asks the kernel now. What is left is the independent TS oracle
+// e2e/view_codec.test.ts checks the kernel's masked view against, field by
+// field - the same role game_done and get_next_player_index play above. That
+// test is only worth anything while this stays independent, so do not
+// reimplement it on the kernel, and do not wire it back into a response.
 export const personalize_game = (game: Game, player_id: string): PersonalGame | PublicGame => {
     // everything except game_decks , added self
     const self = game.players.find(player => player.player_id === player_id)!;

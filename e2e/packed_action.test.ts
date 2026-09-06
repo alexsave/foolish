@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 
 import { applySchema, resetDb, seedGame, uuid, pgPool, broadcastLog } from './harness.ts';
 import { executeWithGameLock, loadCompleteGame } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
-import { start_game } from '../server/api/common/game_lifecycle.ts';
+import { packedProducts, start_game_packed } from '../server/api/common/game_lifecycle.ts';
 import { verify_player_in_game } from '../server/api/common/common_utils.ts';
 import { AnimationEvent, ANIMATION_EVENT_TYPE, Game } from '../server/api/core/types.ts';
 import { handleAttack } from '../server/api/common/actions/attack.ts';
@@ -49,7 +49,7 @@ async function newPackedGame(humans: number, bots = 0): Promise<Seeded> {
     for (let i = 0; i < humans; i++) players.push({ id: uuid(), name: `H${i}`, is_ai: false, strategy_key: 'human' });
     for (let i = 0; i < bots; i++) players.push({ id: uuid(), name: `B${i}`, is_ai: true, strategy_key: 'random' });
     await seedGame(gameId, players);
-    await executeWithGameLock(gameId, async (g) => ({ game: g, events: start_game(g) as AnimationEvent[] }), 'start', false);
+    await executeWithGameLock(gameId, async (g) => ({ game: g, events: [], packed: packedProducts(start_game_packed(g)) }), 'start', false);
     const row = (await pgPool.query('SELECT state, status FROM games WHERE id=$1', [gameId])).rows[0];
     assert.equal(row.status, 'playing', 'game started');
     assert.ok(row.state, 'started game has a committed state blob (packed path precondition)');

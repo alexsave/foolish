@@ -6,27 +6,26 @@
 // only the packaging is consolidated. Each handler mutates params.game and returns
 // {game, events}; executeWithGameLock (via wrap400) does the commit.
 
-import { ExecutionParams, broadcastToGameUser, PackedOpProducts } from './utils.ts';
+import { ExecutionParams, broadcastToGameUser, PackedPayloadExtra } from './utils.ts';
 import { ANIMATION_EVENT_TYPE, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, SERVER_EVENT_TYPE, AnimationEvent, Game } from '@api/core/types.ts';
 import { cloneGame, verify_player_in_game } from '@api/common/common_utils.ts';
-import { start_game, start_game_packed } from '@api/common/game_lifecycle.ts';
+import { packedProducts, start_game_packed } from '@api/common/game_lifecycle.ts';
 import { MAX_PLAYERS } from '@api/core/constants.ts';
 import { handleRearrangeHand as applyRearrangeHand } from '@api/common/actions/rearrange.ts';
-import { runPackedRearrange, PackedRunOk } from '@sdk/ts/wasm/engine.ts';
+import { runPackedRearrange, PackedRunOk, kernelResetToLobby } from '@sdk/ts/wasm/engine.ts';
 import { bytesToHex } from '@api/common/replay/codec.ts';
 import { bytesToBareHex } from '@sdk/ts/wire/bytes.ts';
 import { logsFromKernelExport } from '@sdk/ts/wire/logwire.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
 
 // Kernel run -> the commit/broadcast products executeWithGameLock consumes.
-const packedProducts = (run: PackedRunOk): PackedOpProducts => ({
-    ended: run.ended,
-    stateHex: bytesToHex(run.stateBlob),
-    logsHex: run.logsWire.length > 2
-        ? bytesToBareHex(logsFromKernelExport(run.logsWire, Date.now()))
-        : null,
-    nEvents: run.nEvents,
-    events: run.events,
+// The roster, for a broadcast that changes it. Recipients decode the deal
+// against this rather than against whatever roster they happen to hold.
+const rosterExtra = (game: Game): PackedPayloadExtra => ({
+    r: {
+        name: game.name,
+        players: game.players.map(p => ({ player_id: p.player_id, name: p.name, is_ai: p.is_ai })),
+    },
 });
 
 const supabaseClient = createClient(
@@ -123,7 +122,11 @@ export async function handleAddBot({ body, game, user, botsPrefetch }: Execution
 
     const allPlayersReady = game.players.every(p => p.status === PLAYER_STATUS.READY) && game.players.length >= 2;
     if (allPlayersReady) {
-        return { game, events: start_game(game) };
+        // Kernel-packed deal, like handleStart's branch. This one bundles a
+        // ROSTER change (the bot just joined), so the broadcast carries it -
+        // which is the only thing that used to keep this start on the JS
+        // AnimationEvent path and its TypeScript re-encoder.
+        return { game, events: [], packed: packedProducts(start_game_packed(game), rosterExtra(game)) };
     }
 
     return { game, events: [{
@@ -200,22 +203,15 @@ export function handleContinue({ user, game }: ExecutionParams): Result {
     if (winner) message = `Player ${winner.name} won! Game reset for another round`;
     else if (fool) message = `Player ${fool.name} was the fool! Game reset for another round`;
 
-    game.status = GAME_STATUS.WAITING;
-    game.players.forEach(player => {
-        player.status = player.is_ai ? PLAYER_STATUS.READY : PLAYER_STATUS.IDLE;
-        player.hand = [];
-        player.hand_length = 0;
-        player.awaiting_attack = false;
-    });
-
-    game.deck = [];
-    game.discard_pile_length = 0;
-    game.flipped = null;
-    game.power_suit = 0;
-    game.first_attacker = 0;
-    game.defender = 0;
-    game.table_battles = [];
-    game.elimination_order = [];
+    // The reset itself is the kernel's (c/src/game.c game_reset_to_lobby): which
+    // seats come back READY, which volatile round fields are cleared, and that
+    // the good-players set is cleared HERE rather than left for the next deal.
+    // That last one is a fix, not a port - this handler used to leave
+    // good_players/good_timestamp set, so the lobby it broadcast still showed
+    // the finished round's goods until the next deal cleared them. The browser's
+    // optimistic mirror always cleared them, which is why the snap was invisible
+    // until you looked.
+    kernelResetToLobby(game);
 
     return { game, events: [{
         type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,

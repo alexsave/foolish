@@ -58,10 +58,13 @@ So:
   `fio_anim_plan_json` is the case in point: its only caller in the entire repo
   is the C smoke test, so Stage 4 replaces it with a packed twin and deletes it
   rather than leaving two plans that can disagree.
-- `c/src/json_out.c` is the ONE exception and stays.
-  It is how non-Swift hosts (the web, through wasm) read the kernel's formats,
-  and it is a reader of packed bytes rather than a second format.
-  Refactoring it is fine; growing it for a Swift caller is not.
+- `c/src/json_out.c` used to be the ONE exception, on the grounds that it was
+  how non-Swift hosts (the web, through wasm) read the kernel's formats.
+  It is deleted: no JSON crosses any host boundary now.
+  The web reads the two packed formats in `sdk/ts/wire/packed_read.ts` instead.
+  That is a byte layout stated twice, which this brief otherwise forbids, and it
+  is the deliberate price of the exception going away - see that file's header.
+  Do not add a JSON emitter back for a new host; give it a packed layout.
 - `docs/ANIMATION_CORE_C.md`'s "Mac session" checklist opens by telling you to
   call `fio_anim_plan_json` and decode it with `Codable`.
   That step is stale and this rule overrides it.
@@ -125,8 +128,8 @@ Do not run `xcodegen generate` by hand without restoring
 |---|---|
 | the animation core | `c/src/anim_plan.{c,h}` |
 | the event wire (writer, and now the reader) | `c/src/evwire.{c,h}` |
+| the web's reader for the two packed formats | `sdk/ts/wire/packed_read.ts` |
 | legality and the move menu | `c/src/legal.{c,h}` |
-| JSON emission for hosts | `c/src/json_out.{c,h}` |
 | the iOS bridge | `c/ios/ios_api.c`, `c/ios/include/ios_api.h` |
 | C tests | `c/tests/tests.c` |
 | the Swift board | `ios/FoolishKit/Boards/MessageTableView.swift` |

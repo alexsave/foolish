@@ -33,10 +33,10 @@ export interface ViewRoster {
 }
 
 // This file used to carry a parseMaskedState that read view.c's layout byte for
-// byte — the offsets existed twice, here and in C, and a parity test was what
-// kept them honest. The kernel reads its own format now (src/json_out.c, reached
-// through kernelViewFromPacked), so the only thing left here is the part the
-// kernel structurally cannot do: joining the board to the roster.
+// byte. That reader is now wire/packed_read.ts (reached through
+// kernelViewFromPacked) - one place, shared with the event stream, rather than
+// inlined here. What is left in this file is the part the kernel structurally
+// cannot do: joining the board to the roster.
 
 // Reconstruct the good_players array (insertion-ordered) from the mask.
 // The pre-known order survives; at most ONE player can be newly added per
@@ -123,35 +123,27 @@ export function viewToGame(
 // get_game packed response envelope:
 //   u8 fmt | u8 flags (bit0 = caller is a player, bit1 = a PACKED roster
 //   trailer follows the view blob) | u8 my_seat (0xFF spectator) | u32 LE
-//   version | u16 LE roster_len | roster JSON (identity + the
-//   column-authoritative fields the blob omits) | u16 LE view_len | masked view
+//   version | u16 LE roster_len (always 0) | u16 LE view_len | masked view
 //   blob ([VIEW_FORMAT_VERSION | viewer | masked put_state])
-//   | packed roster trailer (encodePackedRoster), present iff flags bit1
+//   | packed roster trailer (encodePackedRoster), required
 //
-// THE TRAILER, AND WHY IT IS A TRAILER. The roster island is JSON, it is the
-// last JSON on any path that matters, and the owner does not want it. It cannot
-// simply be replaced: merging a PR here deploys the server IMMEDIATELY while the
-// iOS client ships through the App Store, so build 1.0(43) is reading these
-// bytes in users' hands the moment this lands - and the same envelope is STORED
-// in player_views.view / spectator_views.view, a column rather than a request,
-// so there is no caller to negotiate a format with. What every shipped reader
-// does have in common is that it reads a PREFIX: it takes flags bit0 and
-// ignores the rest of that byte, and it bounds the view blob with
-// `q + viewLen <= length` and ignores whatever follows. So the packed roster is
-// appended AFTER the view blob and announced in a flag bit both existing
-// decoders discard. Byte 0 through the end of the view blob is unchanged, byte
-// for byte, from what this function emitted before - which is what
-// e2e/packed_roster_wire.test.ts pins, with a frozen replica of the 1.0(43)
-// decoder reading it.
+// WHY THE ROSTER IS A TRAILER AND NOT A FIELD. It used to be an island of JSON
+// sitting at roster_len, and it could not simply be replaced in place: merging
+// here deploys the server IMMEDIATELY while the iOS client ships through the
+// App Store, and the same envelope is STORED in
+// player_views.view / spectator_views.view - a column rather than a request, so
+// there was no caller to negotiate a format with. What every shipped reader had
+// in common is that it reads a PREFIX: it takes flags bit0 and ignores the rest
+// of that byte, and it bounds the view blob with `q + viewLen <= length` and
+// ignores whatever follows. So the packed roster went in AFTER the view blob,
+// announced in a flag bit older decoders discard, and both forms shipped at once
+// while the field caught up.
 //
-// HOW THE JSON DIES, IN ONE COMMIT. Flip LEGACY_ROSTER_JSON to false (the island
-// becomes a zero-length segment), then delete the JSON branch here, the JSON
-// fallback in decodePackedGame, and the `Roster` Codable in
-// ios/FoolishNet/PackedGame.swift. The condition is BOTH of: no client older
-// than the first build that reads the trailer is still in the field, AND every
-// stored player_views/spectator_views row has been rewritten since this
-// deployed - an idle game keeps the row it was last committed with, and a row
-// written before this deploy carries no trailer at all.
+// The island is now gone: roster_len is written as 0 and the trailer is
+// mandatory. A payload without the flag no longer decodes at all - see
+// decodePackedGame. The u16 at bytes 7-8 stays so every offset after it is
+// unchanged, and e2e/packed_roster_wire.test.ts still pins the prefix with a
+// frozen replica of the 1.0(43) decoder.
 // ---------------------------------------------------------------------------
 
 export const GAME_RESP_FORMAT = 1;
@@ -161,15 +153,7 @@ export const GAME_RESP_FLAG_PLAYER = 0x01;
 /** flags bit1 - a packed roster trailer follows the view blob. */
 export const GAME_RESP_FLAG_PACKED_ROSTER = 0x02;
 
-/**
- * Whether the legacy JSON roster island is still written. TRUE while readers
- * that can only read the island are in the field; see "HOW THE JSON DIES"
- * above. A build constant and not an env switch on purpose: which bytes the
- * server emits is a property of the build, not of a running instance.
- */
-export const LEGACY_ROSTER_JSON = true;
-
-// The roster JSON rides the identity/presentation fields, same split as
+// The roster carries the identity/presentation fields, same split as
 // engine.ts's RosterTemplate: ids/names/is_ai, good order + timestamp value,
 // and the column-authoritative game status.
 export interface PackedGameRoster extends ViewRoster {
@@ -181,13 +165,13 @@ export interface PackedGameRoster extends ViewRoster {
 export function encodeGameResponse(
     version: number, seat: number, roster: PackedGameRoster, viewBlob: Uint8Array,
 ): Uint8Array {
-    const rosterBytes = LEGACY_ROSTER_JSON
-        ? new TextEncoder().encode(JSON.stringify(roster))
-        : new Uint8Array(0);
     const trailer = encodePackedRoster(roster);
-    // Both length fields are u16 — enforce, never wrap (a silent & 0xff
-    // truncation would desync the whole envelope). Real payloads are ~½KB.
-    if (rosterBytes.length > 0xffff) throw new Error(`view: roster JSON ${rosterBytes.length}B exceeds the u16 cap`);
+    // The island the roster used to ride in is a zero-length segment now - the
+    // roster IS the packed trailer. Bytes 7-8 stay a u16 length so the
+    // envelope's shape is unchanged and every offset below still lines up.
+    const rosterBytes = new Uint8Array(0);
+    // u16 — enforce, never wrap (a silent & 0xff truncation would desync the
+    // whole envelope). Real payloads are ~½KB.
     if (viewBlob.length > 0xffff) throw new Error(`view: view blob ${viewBlob.length}B exceeds the u16 cap`);
     const out = new Uint8Array(3 + 4 + 2 + rosterBytes.length + 2 + viewBlob.length + trailer.length);
     let q = 0;
@@ -207,64 +191,6 @@ export function encodeGameResponse(
     return out;
 }
 
-// ---------------------------------------------------------------------------
-// get_my_games packed response: u8 fmt | u8 n_games | per game:
-//   u8 kind (1 = packed single-game envelope, 0 = personalize_game JSON for
-//   lobbies/legacy rows) | u32 LE byte length | the bytes.
-// ---------------------------------------------------------------------------
-
-export const GAMES_LIST_FORMAT = 1;
-
-export interface GamesListEntry { kind: 0 | 1; bytes: Uint8Array }
-
-export function encodeGamesList(entries: GamesListEntry[]): Uint8Array {
-    if (entries.length > 255) throw new Error(`view: ${entries.length} games exceeds the list cap`);
-    let total = 2;
-    for (const e of entries) total += 5 + e.bytes.length;
-    const out = new Uint8Array(total);
-    let q = 0;
-    out[q++] = GAMES_LIST_FORMAT;
-    out[q++] = entries.length;
-    for (const e of entries) {
-        out[q++] = e.kind;
-        out[q++] = e.bytes.length & 0xff;
-        out[q++] = (e.bytes.length >> 8) & 0xff;
-        out[q++] = (e.bytes.length >> 16) & 0xff;
-        out[q++] = (e.bytes.length >> 24) & 0xff;
-        out.set(e.bytes, q); q += e.bytes.length;
-    }
-    return out;
-}
-
-// Decode + materialize the dashboard list — packed entries through
-// decodePackedGame, JSON entries parsed directly. Unreadable entries are
-// skipped (matching the server's skip-on-load-failure behavior), an unknown
-// envelope returns null.
-export function decodePackedGamesList(
-    buf: Uint8Array, now?: () => number,
-): (PersonalGame | PublicGame)[] | null {
-    if (buf.length < 2 || buf[0] !== GAMES_LIST_FORMAT) return null;
-    const n = buf[1];
-    const games: (PersonalGame | PublicGame)[] = [];
-    let q = 2;
-    for (let i = 0; i < n; i++) {
-        if (q + 5 > buf.length) return null;
-        const kind = buf[q++];
-        const len = (buf[q] | (buf[q + 1] << 8) | (buf[q + 2] << 16) | (buf[q + 3] << 24)) >>> 0; q += 4;
-        if (q + len > buf.length) return null;
-        const bytes = buf.subarray(q, q + len); q += len;
-        try {
-            if (kind === 1) {
-                const decoded = decodePackedGame(bytes, now);
-                if (decoded) games.push(decoded.game);
-            } else {
-                games.push(JSON.parse(new TextDecoder().decode(bytes)));
-            }
-        } catch { /* skip unreadable entry */ }
-    }
-    return games;
-}
-
 // Decode + materialize in one step — the client's render-boundary JS
 // conversion for an authoritative fetch. Returns null on an unknown format.
 export function decodePackedGame(
@@ -281,22 +207,22 @@ export function decodePackedGame(
     let q = 9 + rosterLen;
     try {
         const viewLen = buf[q] | (buf[q + 1] << 8);
-        // The PACKED roster when the writer announced one; the JSON island
-        // otherwise - a row stored before the trailer existed, or a response
-        // from a server that predates it. The fallback dies with
-        // LEGACY_ROSTER_JSON.
-        const packed = (buf[1] & GAME_RESP_FLAG_PACKED_ROSTER) !== 0
-            ? decodePackedRoster(buf, q + 2 + viewLen)
-            : null;
-        roster = packed
-            ? packed.roster as PackedGameRoster
-            : JSON.parse(new TextDecoder().decode(buf.subarray(9, 9 + rosterLen))) as PackedGameRoster;
+        // The roster is the packed trailer, and ONLY the packed trailer. A
+        // payload without the flag was written before the trailer existed - an
+        // idle game's cached player_views row, or an older server - and it is
+        // UNREADABLE now rather than JSON-parsed, because the island it used to
+        // carry is gone. Callers already treat null as unreadable, and the next
+        // commit on that game rewrites its row.
+        if ((buf[1] & GAME_RESP_FLAG_PACKED_ROSTER) === 0) return null;
+        const packed = decodePackedRoster(buf, q + 2 + viewLen);
+        if (!packed) return null;
+        roster = packed.roster as PackedGameRoster;
         q += 2;
         if (q + viewLen > buf.length || buf[q] !== VIEW_FORMAT_VERSION) return null;
         // The envelope around the blob is this file's own invention (it is
         // written by encodeGameResponse a few lines up, in TypeScript, with no C
         // twin), so reading it here duplicates nothing. The BLOB inside it is
-        // view.c's, and that goes to the kernel. Skip [fmt | viewer].
+        // view.c's. Skip [fmt | viewer].
         state = kernelViewFromPacked(buf.subarray(q + 2, q + viewLen), seat);
     } catch {
         return null; // truncated/corrupt payload — caller treats as unreadable
@@ -314,48 +240,13 @@ export function decodePackedGame(
 }
 
 // ---------------------------------------------------------------------------
-// Byte writer — the TS mirror of view.c state_put(masked). Used by the
-// evwire TS encoder so JS-path broadcasts (bot loop, meta) are byte-identical
-// to the kernel's own serialization. `game` is a full server Game.
+// The masked put_state WRITER used to live here, as a pure-TS mirror of
+// view.c, so the lobby and meta paths could emit a view without loading a
+// kernel. It is gone. The kernel writes its own format (wasm_view_serialize,
+// via bots.ts wasmViewFromGame), and a second writer of a byte layout kept
+// honest only by a parity test is exactly the thing that silently desyncs.
+//
+// The reason it existed had already expired: the browser runs the WHOLE kernel
+// and fetches bots.wasm.gz as an asset (wasm_asset.ts, "one big module
+// everywhere"), so there was no kernel-free client left to protect.
 // ---------------------------------------------------------------------------
-
-export function writeMaskedState(game: Game, viewerSeat: number, out: number[]): void {
-    out.push(G_STATUS_TO_INT[game.status] ?? 0);
-    out.push(game.players.length & 0xff);
-    out.push(game.power_suit & 0xff);
-    out.push(game.first_attacker & 0xff);
-    out.push(game.defender & 0xff);
-    out.push(game.discard_pile_length & 0xff, (game.discard_pile_length >> 8) & 0xff);
-    out.push(game.flipped ? 1 : 0);
-    // Canonical no-flip byte — mirrors view.c state_put exactly.
-    out.push(game.flipped ? wireCard(game.flipped) : WIRE_HIDDEN);
-    let mask = 0;
-    for (const pid of game.good_players ?? []) {
-        const s = game.players.findIndex(p => p.player_id === pid);
-        // The s >= 0 guard is load-bearing: 1 << -1 is 1 << 31 in JS and
-        // would phantom-set seat 31 for a good entry whose player left.
-        if (s >= 0) mask |= 1 << s;
-    }
-    out.push(mask & 0xff, (mask >> 8) & 0xff, (mask >> 16) & 0xff, (mask >> 24) & 0xff);
-    out.push(game.good_timestamp !== null && game.good_timestamp !== undefined ? 1 : 0);
-    out.push(game.deck.length & 0xff, (game.deck.length >> 8) & 0xff);
-    for (let i = 0; i < game.deck.length; i++) out.push(WIRE_HIDDEN);
-    out.push(game.table_battles.length & 0xff);
-    for (const b of game.table_battles) {
-        out.push(wireCard(b.attack));
-        out.push(b.defense ? wireCard(b.defense) : WIRE_NONE);
-    }
-    for (let i = 0; i < game.players.length; i++) {
-        const p = game.players[i];
-        const visible = i === viewerSeat;
-        out.push(P_STATUS_TO_INT[p.status] ?? 0);
-        out.push(visible && p.awaiting_attack ? 1 : 0);
-        out.push(p.hand.length & 0xff);
-        for (const c of p.hand) out.push(visible ? wireCard(c) : WIRE_HIDDEN);
-    }
-    out.push(game.elimination_order.length & 0xff);
-    for (const pid of game.elimination_order) {
-        const s = game.players.findIndex(p => p.player_id === pid);
-        out.push(s & 0xff);
-    }
-}

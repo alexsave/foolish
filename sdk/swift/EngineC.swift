@@ -24,14 +24,14 @@ public actor EngineC {
     public init() {}
 
     // ios_api.h error codes, restated so we never depend on how C macros import.
-    private static let eOK: Int32 = 0
-    private static let eBadArg: Int32 = -1
-    private static let eNoGame: Int32 = -2
-    private static let eCap: Int32 = -3
-    private static let eParse: Int32 = -4
-    private static let eReject: Int32 = -5
-    private static let eNoStrat: Int32 = -6
-    private static let eReplay: Int32 = -7
+    @_spi(FoolishBots) public static let eOK: Int32 = 0
+    @_spi(FoolishBots) public static let eBadArg: Int32 = -1
+    @_spi(FoolishBots) public static let eNoGame: Int32 = -2
+    @_spi(FoolishBots) public static let eCap: Int32 = -3
+    @_spi(FoolishBots) public static let eParse: Int32 = -4
+    @_spi(FoolishBots) public static let eReject: Int32 = -5
+    @_spi(FoolishBots) public static let eNoStrat: Int32 = -6
+    @_spi(FoolishBots) public static let eReplay: Int32 = -7
 
     // MARK: lifecycle
 
@@ -42,10 +42,6 @@ public actor EngineC {
             fio_new_game(raw.bindMemory(to: UInt8.self).baseAddress, Int32(seed.count), Int32(players))
         }
         try Self.check(rc)
-    }
-
-    public func setSeatStrategy(seat: Int, strategyId: Int) throws {
-        try Self.check(fio_set_seat_strategy(Int32(seat), Int32(strategyId)))
     }
 
     public func hasGame() -> Bool { fio_has_game() != 0 }
@@ -88,53 +84,21 @@ public actor EngineC {
         try Self.check(rc)
     }
 
-    /// Drive one eligible bot seat (any seat but `humanSeat`). Returns the
-    /// move it made, or nil when it is the human's turn / the game is over.
-    ///
-    /// Deprecated for the app's bot loop: it drives the FIRST eligible seat and
-    /// cannot bundle silent actions. `botDrive` is the cycle the website runs.
-    /// Run one bot cycle (docs/C_CORE_CONSOLIDATION.md F2/F3): the kernel picks
-    /// fairly among simultaneously-eligible bots, applies 0..n actions, bundles
-    /// the silent ones, and hands back how long to wait. `humanSeats` are the
-    /// seats the kernel must not drive — note that a human being able to act is
-    /// NOT a stop condition, so bots throw in while the player deliberates,
-    /// exactly as they do online.
-    public func botDrive(humanSeats: [Int]) throws -> BotDrive {
-        var mask: Int32 = 0
-        for s in humanSeats where s >= 0 { mask |= (1 << Int32(s)) }
-        return BotDriveWire.decode(try json { fio_bot_drive_packed(mask, $0, $1) })
-    }
-
-    /// The animation events of the LAST apply/botDrive. Not carried on the packed
+    /// The animation events of the LAST apply / bot drive. Not carried on the packed
     /// wire yet — the app doesn't consume them until the B4 animation lands, at
     /// which point they return as packed evwire. Empty for now (owner: wipe JSON).
     public func lastEvents(viewer: Int) throws -> [GameEvent] {
         []
     }
 
-    // MARK: strategies
-
-    public func strategyCount() -> Int { Int(fio_strategy_count()) }
-
-    /// The offline bot roster (id + name). The strategy table is static C data
-    /// with no game state, so this is safe to read synchronously off the actor —
-    /// the Home/bot-picker needs it before any game exists (§6, §7.2).
-    public nonisolated static func roster() -> [(id: Int, name: String)] {
-        var out: [(id: Int, name: String)] = []
-        let n = Int(fio_strategy_count())
-        var buf = [CChar](repeating: 0, count: 64)
-        for i in 0..<n {
-            let w = fio_strategy_name(Int32(i), &buf, 64)
-            let name = w > 0 ? String(decoding: buf.prefix(Int(w)).map { UInt8(bitPattern: $0) }, as: UTF8.self) : "bot \(i)"
-            out.append((id: i, name: name))
-        }
-        return out
-    }
-
-    public func strategyName(_ id: Int) throws -> String {
-        let d = try json { fio_strategy_name(Int32(id), $0, $1) }
-        return String(decoding: d, as: UTF8.self)
-    }
+    // MARK: bots
+    //
+    // setSeatStrategy / botDrive / strategyCount / strategyName / roster are NOT
+    // here: they are in the FoolishBots module (sdk/swift/bots/), because a
+    // public method on this actor is an exported symbol of a dynamic framework,
+    // and exporting one of those links the whole strategy ladder into anything
+    // that links FoolishKit - the iMessage extension included. See
+    // sdk/swift/bots/EngineC+Bots.swift.
 
     // MARK: online packed-view decode (§16.D4)
 
@@ -208,9 +172,16 @@ public actor EngineC {
 
     // MARK: - plumbing
 
-    /// Call a JSON-emitting C function into a growing buffer. On FIO_ECAP the
+    /// Call a buffer-filling C function into a growing buffer. On FIO_ECAP the
     /// buffer doubles and retries; any other negative code throws.
-    private func json(_ call: (UnsafeMutablePointer<CChar>, Int32) -> Int32) throws -> Data {
+    ///
+    /// @_spi rather than private because the BOT half of the bridge lives in a
+    /// different module (FoolishBots, sdk/swift/bots/) so that naming a bot
+    /// entry point does not link the strategy ladder into the iMessage
+    /// extension - see c/ios/include-bots/ios_bots_api.h. An extension in
+    /// another module cannot reach a private member, and this is plumbing
+    /// rather than API, so it is exposed to that module and to nothing else.
+    @_spi(FoolishBots) public func json(_ call: (UnsafeMutablePointer<CChar>, Int32) -> Int32) throws -> Data {
         var cap = 16 * 1024
         while true {
             var buf = [CChar](repeating: 0, count: cap)
@@ -225,7 +196,7 @@ public actor EngineC {
         }
     }
 
-    private static func check(_ code: Int32) throws {
+    @_spi(FoolishBots) public static func check(_ code: Int32) throws {
         switch code {
         case let c where c >= 0: return
         case eBadArg:  throw EngineError.badArg

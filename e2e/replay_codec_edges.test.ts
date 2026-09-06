@@ -7,14 +7,22 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import {
+  kernelB32Encode, kernelB32Decode, kernelReplayLink, REPLAY_LINK, kernelReplayLinkParse,
+} from '../sdk/ts/wasm/bots.ts';
 
 import {
-  bytesToHex, hexToBytes, classifyPathSegment, gameToUrl, urlToGame,
-  URL_PREFIX, codeToGame,
+  bytesToHex, hexToBytes, classifyPathSegment, bytesToBigint, bigintToBytes,
 } from '../server/api/common/replay/codec.ts';
 import {
   encodeExtras, decodeExtras, splitReplayCode, joinReplayCode,
 } from '../server/api/common/replay/extras.ts';
+
+// A pasted link as the moves bigint: the kernel strips and refuses
+// (replay_link_parse), the kernel decodes (replay_b32_decode). Composed here
+// rather than in the product, which never needed the bigint form.
+const urlToGame = (url: string): bigint =>
+    bytesToBigint(kernelB32Decode(kernelReplayLinkParse(url)));
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
@@ -32,26 +40,34 @@ test('classifyPathSegment splits legacy shortcodes from long replay codes', () =
   assert.equal(classifyPathSegment('12345678'), 'replay', '8+ chars is a replay code');
 });
 
-test('gameToUrl / urlToGame wrap and unwrap a moves bigint', () => {
+// The link is BUILT by the kernel now (replay_extras_link_styled, through
+// kernelReplayLink) in two forms, and read back here. Both must name the same
+// game: they are one link, and the uppercase scheme-less one exists only so a
+// QR stays in alphanumeric mode.
+test('both kernel link styles wrap a moves bigint that urlToGame unwraps', () => {
   for (const x of [0n, 1n, 123456789n, 2n ** 40n + 7n]) {
-    const url = gameToUrl(x);
-    assert.ok(url.includes(URL_PREFIX), 'url carries the public prefix');
-    assert.equal(urlToGame(url), x, `round-trips ${x}`);
-    // The bare code (prefix stripped) also decodes via codeToGame.
-    const bare = url.slice(url.indexOf(URL_PREFIX) + URL_PREFIX.length);
-    assert.equal(codeToGame(bare), x, 'bare code decodes to the same bigint');
+    const code = kernelB32Encode(bigintToBytes(x));
+    const url = kernelReplayLink(code, [], REPLAY_LINK.url);
+    const qr = kernelReplayLink(code, [], REPLAY_LINK.qr);
+    assert.ok(url.startsWith('https://foolish.cards/'), `https form: ${url}`);
+    assert.ok(qr.startsWith('WWW.FOOLISH.CARDS/'), `qr form: ${qr}`);
+    assert.ok(/^[0-9A-Z $%*+\-./:]+$/.test(qr), `the QR form must stay in QR alphanumeric mode: ${qr}`);
+    assert.equal(urlToGame(url), x, `https form round-trips ${x}`);
+    assert.equal(urlToGame(qr), x, `qr form round-trips ${x}`);
+    assert.equal(bytesToBigint(kernelB32Decode(code)), x, 'bare code decodes to the same bigint');
   }
 });
 
 // The link a person pastes is the one a browser hands them - https://, a real
-// host, maybe a tracking query - not the printed WWW.FOOLISH.CARDS/ form. Every
+// host, maybe a tracking query - as well as the QR's WWW.FOOLISH.CARDS/ form.
+// Every
 // letter of `https` is in the base32 alphabet, so a prefix that is not
 // recognised does not fail: it silently names a DIFFERENT game, which then dies
 // deep in the kernel as "unsupported replay format version N" and sends the
 // reader hunting for a codec bug that is not there.
 test('urlToGame reads the link forms a person actually pastes', () => {
   const x = 2n ** 61n + 12345n;
-  const code = gameToUrl(x).slice(URL_PREFIX.length);
+  const code = kernelB32Encode(bigintToBytes(x));
   const forms = [
     code,
     `WWW.FOOLISH.CARDS/${code}`,
@@ -71,7 +87,7 @@ test('urlToGame reads the link forms a person actually pastes', () => {
 });
 
 test('urlToGame refuses input that is not a replay code, and says so', () => {
-  // base32Decode ignores stray characters, so without a guard each of these
+  // The kernel's decoder ignores stray characters, so without a guard each of these
   // decodes to SOME game and fails later under a name that is about the codec.
   for (const junk of [
     '',

@@ -13,7 +13,8 @@ import { base64ToBytes } from '@sdk/ts/wire/bytes.ts';
 import { getTableCards, cardsIntersection, getCardKeyPlayerId, createCardEventString, getCardKey } from '../utils/animationUtils';
 import { animationFeed } from '../state/animationFeed';
 import { staleOptimisticKeysOnTable } from '../state/optimisticAnimation';
-import { resolveUnconfirmedAttackCovers } from '../state/optimisticConflicts';
+import { resolveUnconfirmedAttackCovers, resolveConflictMotions, conflictEvents } from '../state/optimisticConflicts';
+import { ANIM_DEST } from '@sdk/ts/wasm/bots.ts';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { shouldDropStaleSequence } from '../state/clientReconcile';
 import { noteAuthoritativeVersion } from '../state/authoritativeVersion';
@@ -432,44 +433,38 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             const finalGameState = message.game || serverState;
             const nextDefenderHandSize = finalGameState?.players?.[nextDefenderId]?.hand_length ?? 0;
 
-            const optimisticPassCards = Array.from(optimisticAnimations.current.keys())
-                .filter(key => {
-                    try {
-                        const parsed = JSON.parse(key);
-                        return parsed.type === 'attack_pass' &&
-                            parsed.player_id === myPlayerId &&
-                            optimisticCardPositions.current.has(getCardKey(parsed.card));
-                    } catch {
-                        return false;
+            // My still-pending pass cards.
+            const passCards: Card[] = [];
+            optimisticAnimations.current.forEach((timestamp, key) => {
+                try {
+                    const parsed = JSON.parse(key);
+                    if (parsed.type === 'attack_pass' && parsed.player_id === myPlayerId
+                        && optimisticCardPositions.current.has(getCardKey(parsed.card))) {
+                        passCards.push(parsed.card);
                     }
-                })
-                .length;
+                } catch (e) { }
+            });
 
-            // Kernel PASS_CAPACITY mirror: the next defender must hold every
-            // table card plus the passed ones. serverUncoveredAttacks comes
-            // from the broadcast's FINAL game_state, which already contains
-            // the rival attack/pass cards — adding the events' card counts on
-            // top double-counted them and false-reverted legal passes.
-            const totalAttacksIfPassSucceeds = serverUncoveredAttacks + optimisticPassCards;
+            // The KERNEL decides (anim_plan.h anim_conflict_verdict), against the
+            // NEXT defender's hand - the seat this pass hands the shield to. This
+            // used to be an inline capacity subtraction, which had none of the
+            // rule's precedence: a pass card the broadcast's own sweep carries off
+            // is CLEAR and one standing on its opening table is KEEP, and reverting
+            // either is the flicker c/src/anim_plan.h opens by describing.
+            const passCardsToRevert = resolveConflictMotions(
+                passCards.map((card) => ({ card, dest: ANIM_DEST.table })),
+                {
+                    events: conflictEvents(message.events),
+                    openTable: serverState?.table_battles ?? [],
+                    myHand: serverState?.self?.hand ?? [],
+                    defenderHand: nextDefenderHandSize,
+                    finalUncovered: serverUncoveredAttacks,
+                }).revert;
 
-            if (totalAttacksIfPassSucceeds > nextDefenderHandSize) {
+            if (passCardsToRevert.length > 0) {
                 passIsInvalid = true;
 
-                // Collect pass cards to revert
-                const passCardsToRevert: Card[] = [];
-                optimisticAnimations.current.forEach((timestamp, key) => {
-                    try {
-                        const parsed = JSON.parse(key);
-                        if (parsed.type === 'attack_pass' && parsed.player_id === myPlayerId) {
-                            const cardId = getCardKey(parsed.card);
-                            if (optimisticCardPositions.current.has(cardId)) {
-                                passCardsToRevert.push(parsed.card);
-                            }
-                        }
-                    } catch (e) { }
-                });
-
-                if (passCardsToRevert.length > 0) {
+                {
                     passCardsToRevert.forEach(card => {
                         const cardId = getCardKey(card);
                         revertingCards.current.add(cardId);
@@ -537,17 +532,27 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             }
 
             // Check 2: can the new defender still take our in-flight attacks?
+            // The same verdict, against the hand the pass just installed. The
+            // inline version reverted the WHOLE set on a capacity failure, so a
+            // card the broadcast itself showed on the table flew home red.
             if (myOptimisticAttackCovers.length > 0 && newDefenderId !== undefined) {
                 const newDefenderHandSize = finalGameState?.players?.[newDefenderId]?.hand_length ?? 0;
 
-                // Kernel DEFENDER_CAPACITY mirror: uncovered + our cards must
-                // fit the new defender's hand. serverUncoveredAttacks is from
-                // the FINAL game_state, which already includes the passed
-                // cards — adding the pass event's count double-counted them.
-                const totalAttacksAfterPass = serverUncoveredAttacks + myOptimisticAttackCovers.length;
+                const doomed = resolveConflictMotions(
+                    myOptimisticAttackCovers.map((card) => ({
+                        card,
+                        dest: ANIM_DEST.table,
+                        isCover: myOptimisticCoverKeys.has(getCardKey(card)),
+                    })),
+                    {
+                        events: conflictEvents(message.events),
+                        openTable: serverState?.table_battles ?? [],
+                        myHand: serverState?.self?.hand ?? [],
+                        defenderHand: newDefenderHandSize,
+                        finalUncovered: serverUncoveredAttacks,
+                    }).revert;
 
-                if (totalAttacksAfterPass > newDefenderHandSize) {
-                    // Revert all optimistic attacks
+                if (doomed.length > 0) {
                     revertOptimisticAttackCovers();
 
                     // Remove from merge list
@@ -558,23 +563,37 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         // Handle optimistic pickup conflicts
         if (myOptimisticPickups.length > 0) {
-            // Two scenarios:
-            // 1. Server shows cards still on table (attack came in) - revert to table
-            // 2. Server sends cards_to_trash/discard (good was played) - revert to table before trash
-
-            const hasCardsToTrash = message.events.some((evt: any) =>
-                evt.type === 'cards_to_trash' || evt.type === 'discard'
-            );
-
-            let pickupCardsToRevert: Card[] = [];
-
-            if (hasCardsToTrash) {
-                // Good was played - ALL optimistic pickups need to be reverted
-                pickupCardsToRevert = myOptimisticPickups;
-            } else if (serverTableCards.length > 0) {
-                // Attack came in - only revert cards that are still on table
-                pickupCardsToRevert = cardsIntersection(myOptimisticPickups, serverTableCards);
-            }
+            // The KERNEL decides WHICH pickups are doomed (anim_plan.h
+            // anim_conflict_verdict). A pickup's cards landed in MY HAND, so the
+            // standing set they are judged against is my hand on the broadcast's
+            // opening board, not its table - the one input the inline version had
+            // no way to express. A pickup the broadcast confirms is KEEP.
+            //
+            // BOTH revert AND clear fly back, and the difference from the
+            // attack/cover branch is the transport, not the rule. CLEAR means
+            // "the incoming stream animates this card itself", which spares a
+            // flight only when the card is already standing where that stream
+            // replays it from. For an attack it is: the card is on the table and
+            // the sweep lifts it off the table. For a PICKUP it is not: the card
+            // is in my hand, and the sweep carries it from the TABLE to the
+            // discard. iMessage has no such gap because a chain rebases the board
+            // to the state it vouches for before replaying; the web has no rebase
+            // step, so the return flight IS its way of standing on that board.
+            // Dropping it would leave the card in my hand while the trash
+            // animated an empty table, then vanish it when the final state lands.
+            // The FLIGHT is the caller's - anim_plan.h says so - and the web's
+            // caller needs this one.
+            const pickupVerdicts = resolveConflictMotions(
+                myOptimisticPickups.map((card) => ({ card, dest: ANIM_DEST.hand })),
+                {
+                    events: conflictEvents(message.events),
+                    openTable: serverState?.table_battles ?? [],
+                    myHand: serverState?.self?.hand ?? [],
+                    defenderHand: 0,
+                    finalUncovered: serverUncoveredAttacks,
+                    pendingAttacks: 0,
+                });
+            const pickupCardsToRevert = [...pickupVerdicts.revert, ...pickupVerdicts.clear];
 
             if (pickupCardsToRevert.length > 0) {
                 // Mark all cards as reverting and clear tracking
@@ -1034,7 +1053,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 baseState = magicTransitionEvent.game_state;
             } else if (pickupEvent?.cards) {
                 // Reconstruct state with cards on table (before pickup)
-                baseState = serverStateForRevert ? JSON.parse(JSON.stringify(serverStateForRevert)) : null;
+                baseState = serverStateForRevert ? structuredClone(serverStateForRevert) : null;
                 if (baseState && pickupEvent.cards) {
                     // Put the cards back on the table as uncovered attacks
                     baseState.table_battles = pickupEvent.cards.map((card: Card) => ({
@@ -1049,7 +1068,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             baseState = serverStateForRevert;
         }
 
-        const stateWithOptimistic = baseState ? JSON.parse(JSON.stringify(baseState)) : null;
+        const stateWithOptimistic = baseState ? structuredClone(baseState) : null;
 
         // Check if we have pass reverts - they need original defender value
         const hasPassReverts = revertEvents.some(rev =>

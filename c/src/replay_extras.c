@@ -312,10 +312,74 @@ int replay_extras_decode(const unsigned char *blob, int blob_len,
 
 // ---------- the whole shareable link ----------------------------------------
 
+// The replay code out of a pasted link. See replay_extras.h for why stripping
+// is its own step and not something replay_b32_decode can be trusted to do.
+static int b32_char(char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '2' && c <= '7');
+}
+
+static char up(char c) { return (c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : c; }
+
+int replay_link_parse(const char *url, char *out, int cap) {
+    static const char host[] = "FOOLISH.CARDS/";
+    const int host_len = (int)sizeof(host) - 1;
+    int start, end, i, n, last_host = -1, last_slash = -1;
+
+    if (!url || !out || cap < 1) return -REPLAY_EXTRAS_EINPUT;
+
+    // Trim surrounding whitespace, then cut at a query or a fragment. Interior
+    // whitespace is not stripped: a code never contains any, so a link with a
+    // space in the middle is not one link, and silently gluing it would name
+    // some other game.
+    start = 0;
+    while (url[start] && (url[start] == ' ' || url[start] == '\t'
+                       || url[start] == '\n' || url[start] == '\r')) start++;
+    end = start;
+    while (url[end] && url[end] != '?' && url[end] != '#') end++;
+    while (end > start && (url[end - 1] == ' ' || url[end - 1] == '\t'
+                        || url[end - 1] == '\n' || url[end - 1] == '\r')) end--;
+    // Trailing slashes are not part of the code.
+    while (end > start && url[end - 1] == '/') end--;
+
+    // The LAST host occurrence, so a link that quotes another one still names
+    // its own game; otherwise the last path segment.
+    for (i = start; i + host_len <= end; i++) {
+        int k = 0;
+        while (k < host_len && up(url[i + k]) == host[k]) k++;
+        if (k == host_len) last_host = i + host_len;
+    }
+    for (i = start; i < end; i++) if (url[i] == '/') last_slash = i + 1;
+    if (last_host >= 0) start = last_host;
+    else if (last_slash >= 0) start = last_slash;
+
+    // An extras section rides behind a dash; the moves code is the prefix.
+    for (i = start; i < end; i++) if (url[i] == '-') { end = i; break; }
+
+    n = end - start;
+    if (n <= 0) return -REPLAY_EXTRAS_EINPUT;
+    if (n >= cap) return -REPLAY_EXTRAS_ECAP;
+    for (i = 0; i < n; i++) {
+        if (!b32_char(url[start + i])) return -REPLAY_EXTRAS_EINPUT;
+        out[i] = url[start + i];
+    }
+    out[n] = 0;
+    return n;
+}
+
 int replay_extras_link(const char *moves,
                        const unsigned char *names, int names_len, int n_names,
                        char *out, int cap) {
-    static const char prefix[] = REPLAY_LINK_PREFIX;
+    return replay_extras_link_styled(moves, names, names_len, n_names,
+                                     REPLAY_LINK_STYLE_URL, out, cap);
+}
+
+int replay_extras_link_styled(const char *moves,
+                              const unsigned char *names, int names_len, int n_names,
+                              int style, char *out, int cap) {
+    const char *prefix = (style == REPLAY_LINK_STYLE_QR)
+        ? REPLAY_LINK_PREFIX_QR : REPLAY_LINK_PREFIX;
+    const int prefix_len = (int)((style == REPLAY_LINK_STYLE_QR)
+        ? sizeof(REPLAY_LINK_PREFIX_QR) : sizeof(REPLAY_LINK_PREFIX)) - 1;
     // 8 seats of arbitrary Unicode with room to spare; a roster past this is a
     // caller bug, not a nickname. STATIC, not automatic: bots.wasm links with a
     // 22,528-byte stack (c/Makefile WASM_BOT_LDFLAGS) and 12 KB of it in one
@@ -330,7 +394,7 @@ int replay_extras_link(const char *moves,
     if (names_len < 0 || (names_len > 0 && !names)) return -REPLAY_EXTRAS_EINPUT;
     if (names_len > (int)sizeof(in) - 2) return -REPLAY_EXTRAS_EINPUT;
 
-    for (int i = 0; i < (int)sizeof(prefix) - 1; i++) {
+    for (int i = 0; i < prefix_len; i++) {
         if (w >= cap - 1) return -REPLAY_EXTRAS_ECAP;
         out[w++] = prefix[i];
     }

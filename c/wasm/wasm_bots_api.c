@@ -18,7 +18,6 @@
 #include "bot_roster.h"
 #include "replay_steps.h"
 #include "view.h"
-#include "json_out.h"
 #include "replay_extras.h"
 #include <string.h>
 #include <stdlib.h>
@@ -117,6 +116,49 @@ char *getenv(const char *name) {
     return 0;
 }
 
+extern unsigned char *wasm_io_ptr(void);
+
+// THE BOT ROSTER (bot_roster.h), for hosts that used to restate it.
+//
+// bot_roster.h opens by saying a bot's identity is kernel data and that hosts
+// "look it up, they do not restate it" - and names bot_strategy.ts as a
+// consumer. It was not one: the TS registry held its own key -> brain map and
+// its own logs flag, and sdk/ts/wasm/bots.ts held a hand-mirrored table of the
+// STRAT_* ids. That is the third copy the header's own history says has already
+// drifted three separate ways, including a gunpowder seat that silently played
+// blackpowder because two tables disagreed about an index.
+//
+// One call dumps the whole table, so a host never asks per entry and never
+// caches an index. Writes to g_io, per entry:
+//   u8 linked, u8 strat, u8 uses_logs, u8 seeded, u8 offline, u8 tier,
+//   u8 key_len, key_len x u8 key bytes (no NUL)
+// Returns the entry count, or -1 if the buffer could not hold the table.
+int wasm_bot_roster_dump(void) {
+    const int n = bot_roster_count();
+    unsigned char *io = wasm_io_ptr();
+    int q = 0;
+    for (int i = 0; i < n; i++) {
+        const BotRosterEntry *e = bot_roster_at(i);
+        if (!e) return -1;
+        int klen = 0;
+        while (e->key[klen]) klen++;
+        if (klen > 255) return -1;
+        // 7 header bytes + the key; IO_CAP is orders of magnitude above a
+        // ten-row table, but a caller that shrank it gets a refusal, not a
+        // truncated roster that would look like a bot going missing.
+        if (q + 7 + klen > WASM_IO_CAP) return -1;
+        io[q++] = (unsigned char)(bot_roster_linked(i) ? 1 : 0);
+        io[q++] = (unsigned char)e->strat;
+        io[q++] = e->uses_logs;
+        io[q++] = e->seeded;
+        io[q++] = e->offline;
+        io[q++] = e->tier;
+        io[q++] = (unsigned char)klen;
+        for (int k = 0; k < klen; k++) io[q++] = (unsigned char)e->key[k];
+    }
+    return n;
+}
+
 // Key and value are NUL-terminated strings at the start of the IO buffer
 // (key first, value right after its NUL). Setting an existing key replaces it.
 extern unsigned char *wasm_io_ptr(void);
@@ -200,12 +242,8 @@ void wasm_clear_logs(void) { wasm_game_ptr_internal()->num_logs = 0; }
 // TS side still calls it once per decision, so the export stays.
 void wasm_set_game_key(unsigned int key) { (void)key; }
 
-void wasm_import_strategy_keys(void) {
-    Game *g = wasm_game_ptr_internal();
-    const unsigned char *q = wasm_io_ptr();
-    for (int i = 0; i < g->num_players; i++)
-        g->players[i].strategy_key = (int8_t)q[i];
-}
+// wasm_import_strategy_keys moved to wasm_api.c: the seat kinds are what
+// game_human_mask reads, and the rules module needs them too.
 
 // ---------- strategy dispatch ----------------------------------------------
 
@@ -274,11 +312,28 @@ int wasm_bot_eligible_mask(int human_mask) {
     return (int)bot_drive_eligible_mask(wasm_game_ptr_internal(), (uint32_t)human_mask);
 }
 
-// class -> milliseconds, from the ONE pacing table. Exported rather than
-// mirrored in TS: the whole point of F3 is that the site and the phone cannot
-// answer "how long is this worth watching" differently.
-int wasm_bot_pacing_ms(int pacing_class, int humans_present) {
-    return bot_pacing_ms(pacing_class, humans_present);
+// The last cycle wasm_bot_drive applied, kept so the delay below can be asked
+// about it without the host shipping the actions back in.
+static BotDriveOut g_drv;
+
+// The whole wait for the cycle that wasm_bot_drive just ran, in one call.
+//
+// The export used to be bot_pacing_ms itself - class in, milliseconds out - and
+// every host then did the two steps in front of it by hand: reduce the cycle's
+// actions to their most visible pacing class, and re-check whether a human is
+// still IN. That is the reduction bot_cycle_delay_ms was added to end (see its
+// comment in bot_drive.c); the TS host was the last one still doing it. Now the
+// host owns only the loop and the actual sleep.
+//
+// Who is human is the kernel's too (game_human_mask), off the seat kinds every
+// marshal states - so the host is left owning only the loop and the sleep.
+//
+// Reads the SAME g_drv wasm_bot_drive just filled, so it is only meaningful
+// straight after a drive; before the first one g_drv is zeroed, which reduces
+// to BOT_PACE_NONE and a delay of 0.
+int wasm_bot_cycle_delay_ms(void) {
+    Game *g = wasm_game_ptr_internal();
+    return bot_cycle_delay_ms(g, game_human_mask(g), &g_drv);
 }
 
 // Opens ONE action scope for the whole cycle: resets the snapshot buffer and
@@ -425,7 +480,6 @@ static void drive_seed_hook(const Game *g, int seat, int phase) {
 }
 
 int wasm_bot_drive(int human_mask, int max_actions, int n_pref) {
-    static BotDriveOut drv;
     Game *g = wasm_game_ptr_internal();
     if (decode_prefs(wasm_io_ptr(), n_pref) < 0) return -1;
 
@@ -435,16 +489,16 @@ int wasm_bot_drive(int human_mask, int max_actions, int n_pref) {
     // (wasm_choose_move) seeds itself through the TS bridge, as it always has.
     bot_drive_pre_action_hook = drive_seed_hook;
     int n = bot_drive(g, (uint32_t)human_mask, max_actions,
-                      n_pref > 0 ? g_pref : 0, n_pref, &drv);
+                      n_pref > 0 ? g_pref : 0, n_pref, &g_drv);
     bot_drive_pre_action_hook = 0;
     if (n < 0) return -1;
 
     unsigned char *out = wasm_io_ptr();
-    *out++ = (unsigned char)drv.stop;
-    *out++ = (unsigned char)(signed char)drv.ended;
-    *out++ = (unsigned char)drv.n;
-    for (int i = 0; i < drv.n; i++) {
-        const BotDriveAction *a = &drv.actions[i];
+    *out++ = (unsigned char)g_drv.stop;
+    *out++ = (unsigned char)(signed char)g_drv.ended;
+    *out++ = (unsigned char)g_drv.n;
+    for (int i = 0; i < g_drv.n; i++) {
+        const BotDriveAction *a = &g_drv.actions[i];
         *out++ = (unsigned char)a->seat;
         *out++ = a->pacing_class;
         *out++ = (unsigned char)a->move.type;
@@ -452,7 +506,7 @@ int wasm_bot_drive(int human_mask, int max_actions, int n_pref) {
         for (int c = 0; c < a->move.n_cards; c++) *out++ = wire_from_card(a->move.cards[c]);
         for (int c = 0; c < a->move.n_cards; c++) *out++ = wire_from_card(a->move.attack_cards[c]);
     }
-    return drv.n;
+    return g_drv.n;
 }
 
 // ---------- replay steps (docs/C_CORE_CONSOLIDATION.md F4.2 / A5) -----------
@@ -501,116 +555,3 @@ int wasm_replay_step_index(int code_len) {
                                  wasm_io_ptr(), wasm_io_cap());
 }
 
-// ---------- the replay code's extras blob (#113) -----------------------------
-//
-// The nicknames and per-move timing behind the dash in a share link. One
-// encoder, reached from here by the web and the server and from ios_api.c by
-// the phone; there is no second one to drift from.
-//
-// Same buffer discipline as every other blob-in/blob-out export: the packed
-// argument goes in the REPLAY io buffer, the answer comes back in the MAIN one.
-// `player_count` and `move_count` on the way back are the decoded moves', not
-// the blob's - it carries neither.
-
-int wasm_replay_extras_encode(int in_len) {
-    return replay_extras_encode(wasm_replay_io_ptr(), in_len,
-                                wasm_io_ptr(), wasm_io_cap());
-}
-
-int wasm_replay_extras_decode(int blob_len, int player_count, int move_count) {
-    return replay_extras_decode(wasm_replay_io_ptr(), blob_len,
-                                player_count, move_count,
-                                wasm_io_ptr(), wasm_io_cap());
-}
-
-// The whole shareable link. The REPLAY buffer holds
-// [u8 n_names][u16 roster_len][roster bytes][moves bytes], the link comes back
-// in the MAIN one.
-//
-// The moves code goes LAST so it can be NUL-terminated in place - it is the one
-// argument replay_extras_link wants as a C string, and a long v6 game's code
-// runs to tens of KB, which is not a thing to copy through a fixed buffer. One
-// spare byte at the end of the input is what that costs.
-int wasm_replay_link(int in_len) {
-    unsigned char *in = wasm_replay_io_ptr();
-    int n_names, roster_len, p;
-    if (in_len < 3 || in_len >= wasm_replay_io_cap()) return -REPLAY_EXTRAS_EINPUT;
-    n_names = in[0];
-    roster_len = in[1] | (in[2] << 8);
-    p = 3;
-    if (roster_len < 0 || p + roster_len > in_len) return -REPLAY_EXTRAS_EINPUT;
-    in[in_len] = 0;                            // terminate the moves code in place
-    return replay_extras_link((const char *)(in + p + roster_len),
-                              in + p, roster_len, n_names,
-                              (char *)wasm_io_ptr(), wasm_io_cap());
-}
-
-// ---------- packed bytes -> JSON (A8/F7) ------------------------------------
-//
-// The browser's way into the kernel's decoders. The web used to read these two
-// formats with hand-written TypeScript that shadowed view.c and evwire.c byte
-// for byte, kept true by a parity test — i.e. the layout existed twice and a
-// change meant editing both. Now the layout exists once, here, and the client
-// asks for objects. iOS already worked this way (ios_api.c); this is the same
-// C, reached through a different door.
-//
-// Buffer discipline matches every other blob-in/blob-out export on this module:
-// the packed input goes in the REPLAY io buffer, the JSON comes back in the MAIN
-// one, so the two never alias. Both return bytes written (the caller reads that
-// many from wasm_io_ptr) or a negative JSON_E* code.
-
-int wasm_view_json(int len, int viewer) {
-    return json_view_from_packed(wasm_replay_io_ptr(), len, viewer,
-                                 (char *)wasm_io_ptr(), wasm_io_cap());
-}
-
-int wasm_events_json(int len) {
-    return json_events_from_packed(wasm_replay_io_ptr(), len,
-                                   (char *)wasm_io_ptr(), wasm_io_cap());
-}
-
-// ---------- one-tap cover resolution (A7/F9) --------------------------------
-//
-// The one-gesture cover affordance, decided in the kernel beside legal.c so the
-// web drag, phone tap-commit, watch chooser and iMessage share one resolver
-// (docs/C_CORE_CONSOLIDATION.md F9). Self-contained — reads neither the resident
-// game nor any marshal, only the handful of cards the caller passes, so it is
-// cheap enough to call on a hover:
-//   cards_a  = the selected cover cards (n_cover wire bytes)
-//   cards_b  = the table battles, 2 wire bytes each (attack, then defense or
-//              WIRE_CARD_NONE) — the resolver picks out the uncovered ones
-//   power_suit is the argument
-// On an unambiguous cover, io_ptr receives n_cover attack wire bytes aligned to
-// the cover cards and the return is n_cover; otherwise 0 (caller places manually).
-extern unsigned char *wasm_cards_a_ptr(void);
-extern unsigned char *wasm_cards_b_ptr(void);
-// The shared card buffers (g_in_raw_a/b) are MAX_IN_CARDS=128 wide in wasm_api.c;
-// this local cap must not exceed that. cards_a holds cover cards, cards_b holds
-// 2 bytes per battle, so battles cap at half.
-#define UC_WIRE_MAX 128
-
-int wasm_unambiguous_cover(int n_cover, int n_battles, int power_suit) {
-    if (n_cover <= 0 || n_cover > UC_WIRE_MAX) return 0;
-    if (n_battles < 0 || n_battles > UC_WIRE_MAX / 2) return 0;
-
-    const unsigned char *cov = wasm_cards_a_ptr();
-    const unsigned char *bat = wasm_cards_b_ptr();
-
-    Card cover[UC_WIRE_MAX];
-    for (int i = 0; i < n_cover; i++) cover[i] = card_from_wire_state(cov[i]);
-
-    Battle battles[UC_WIRE_MAX / 2];
-    for (int i = 0; i < n_battles; i++) {
-        battles[i].attack = card_from_wire_state(bat[2 * i]);
-        unsigned char d = bat[2 * i + 1];
-        battles[i].defense = (d == WIRE_CARD_NONE) ? CARD_NONE : card_from_wire_state(d);
-    }
-
-    Card out[UC_WIRE_MAX];
-    int r = unambiguous_cover(cover, n_cover, battles, n_battles, power_suit, out);
-    if (r <= 0) return 0;
-
-    unsigned char *io = wasm_io_ptr();
-    for (int i = 0; i < n_cover; i++) io[i] = wire_from_card(out[i]);
-    return n_cover;
-}

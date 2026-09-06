@@ -223,6 +223,36 @@ uint32_t game_human_mask(const Game *g) {
     return m;
 }
 
+int game_lobby_seat(Game *g, int strategy_key) {
+    if (!g || g->status != GAME_STATUS_WAITING) return -1;
+    if (g->num_players < 0 || g->num_players >= MAX_PLAYERS) return -1;
+    const int i = g->num_players++;
+    Player *p = &g->players[i];
+    p->strategy_key = (int8_t)strategy_key;
+    // A bot is ready the moment it sits down; a human has to say so.
+    p->status = (strategy_key == STRATEGY_KEY_HUMAN)
+        ? PLAYER_STATUS_IDLE : PLAYER_STATUS_READY;
+    p->hand_count = 0;
+    p->awaiting_attack = false;
+    return i;
+}
+
+int game_lobby_ready(Game *g, int seat) {
+    if (!g || g->status != GAME_STATUS_WAITING) return 0;
+    if (seat < 0 || seat >= g->num_players) return 0;
+    if (g->players[seat].status == PLAYER_STATUS_READY) return 0;
+    g->players[seat].status = PLAYER_STATUS_READY;
+    return 1;
+}
+
+int game_lobby_can_deal(const Game *g) {
+    if (!g || g->status != GAME_STATUS_WAITING) return 0;
+    if (g->num_players < 2) return 0;
+    for (int i = 0; i < g->num_players; i++)
+        if (g->players[i].status != PLAYER_STATUS_READY) return 0;
+    return 1;
+}
+
 void game_seat_and_deal(Game *g, const int8_t *strategy_keys, int n) {
     if (!g || n < 2 || n > MAX_PLAYERS) return;
     g->num_players = (int8_t)n;
@@ -398,7 +428,7 @@ static void deal_initial(Game *g) {
 // is unreachable from bot_drive/awire_apply/game_seat_and_deal and never
 // mutated during concurrent play; it stays a plain global, matching the
 // single-threaded replay-tooling callers that do touch it (cnitro_replay,
-// replay_difftest, replay_v6_test — none of which are multi-threaded).
+// replay_v6_test - none of which are multi-threaded).
 static int g_forced_first_attacker = -1;
 
 void game_force_first_attacker(int seat) { g_forced_first_attacker = seat; }

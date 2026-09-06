@@ -1,6 +1,6 @@
 import { Game } from '@api/core/types.ts';
 import { kernelLegalMoves } from '@sdk/ts/wasm/engine.ts';
-import { STRAT, wasmChooseMove, wasmChooseMoveDirect } from '@sdk/ts/wasm/bots.ts';
+import { kernelBotRoster, wasmChooseMove, wasmChooseMoveDirect } from '@sdk/ts/wasm/bots.ts';
 import { BotStrategy, LegalMove } from '@api/core/bot_interfaces.ts';
 
 // Re-export interfaces for backwards compatibility
@@ -68,25 +68,38 @@ export class WasmBotStrategy implements BotStrategy {
 // hands us, and whether to hydrate the session log first. `env` survives as a
 // per-call override (bot_knobs.h) for harnesses that need a fast budget.
 
-export const BOT_STRATEGIES: Map<string, BotStrategy> = new Map<string, BotStrategy>([
-    ['random', new WasmBotStrategy('random', STRAT.random)],
-    ['handwritten', new WasmBotStrategy('handwritten', STRAT.handwritten)],
-    ['simple_heuristic', new WasmBotStrategy('simple_heuristic', STRAT.simple_heuristic)],
-    // logs: espresso's discard memory reads LOG_DISCARD; cordite and the other
-    // belief bots build their belief from the full public log.
-    ['espresso', new WasmBotStrategy('espresso', STRAT.espresso, { logs: true })],
-    // Ladder rungs Medium/Hard (Durak Bot Ordnance Chart). firecracker is
-    // robusta's public-info MC with an espresso rollout; blackpowder is the
-    // belief-constrained MC with an exact endgame solver. Both rebuild card
-    // memory from the public session log, so logs: true hydrates game.belief_logs
-    // before they choose (strategyUsesLogs).
-    ['firecracker', new WasmBotStrategy('firecracker', STRAT.firecracker, { logs: true })],
-    ['blackpowder', new WasmBotStrategy('blackpowder', STRAT.blackpowder, { logs: true })],
-    // cordite's CD_BUDGET/CD_RACE and octogen's OG_TRUMP_KEEP now come from
-    // the roster (c/src/bot_roster.c), which documents them.
-    ['cordite', new WasmBotStrategy('cordite', STRAT.cordite, { logs: true })],
-    ['octogen', new WasmBotStrategy('octogen', STRAT.octogen, { logs: true })],
-]);
+// Built FROM the kernel's roster (bot_roster.c), not restated beside it. Every
+// row this build can actually run becomes a dispatchable strategy, carrying the
+// kernel's own brain id and logs flag - so a bot added, retuned or reordered in
+// C reaches the server without a second edit here. The map stays mutable
+// because registerBotStrategy below lets a harness add one the kernel has no
+// entry for.
+//
+// Lazily: touching it instantiates bots.wasm, and a lobby-only cold start must
+// not pay that.
+let REGISTRY: Map<string, BotStrategy> | null = null;
+
+function registry(): Map<string, BotStrategy> {
+    if (REGISTRY) return REGISTRY;
+    REGISTRY = new Map<string, BotStrategy>();
+    for (const e of kernelBotRoster()) {
+        // The SEEDED set - the bots seed.sql actually creates on the site, and
+        // the only keys a production seat can carry. Not `linked`: robusta and
+        // gunpowder are offline-only rungs that this build can run but the site
+        // never deals, and e2e/bot_roster_parity.test.ts holds that they must
+        // not acquire a registration by accident. espresso is the same case and
+        // is not even linked here (FOOLISH_SEEDED_BOTS_ONLY), so registering it
+        // bought a seat that would have played the first legal move under
+        // espresso's name.
+        if (!e.seeded) continue;
+        REGISTRY.set(e.key, new WasmBotStrategy(e.key, e.strat, { logs: e.usesLogs }));
+    }
+    return REGISTRY;
+}
+
+/** @deprecated Prefer resolveBotStrategy / getBotStrategy; this materializes
+ *  the kernel roster as a Map for the few callers that iterate it. */
+export const BOT_STRATEGIES = { get: (k: string) => registry().get(k), set: (k: string, v: BotStrategy) => registry().set(k, v), keys: () => registry().keys() };
 
 // Lets a harness register a strategy that is not in the table above. The
 // offlinefun research harnesses use it, so it STAYS (the `console`/`gpt` I/O
