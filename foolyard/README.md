@@ -113,6 +113,7 @@ to `CLIENT_TIERS` in `include/client.h`, and it can be seated.
 | `stale` | decides the instant it sees a board, then sits on the decision |
 | `poller` | no subscription at all: `GET /state` on a timer, the pre-`/ws` path |
 | `griefer` | connects, watches, never plays |
+| `datagram` | the WebTransport path: unordered, droppable QUIC DATAGRAM pushes |
 
 Every one picks uniformly from `calculate_legal_moves`, exactly as
 `foolish_hammer`'s ws worker does. Play strength is not the point.
@@ -133,6 +134,8 @@ only exist once there is a wire.
 | `view_regression` | a client adopted a view older than one it held |
 | `queue_overflow` | a game's request backlog overflowed |
 | `seat_mismatch` | a frame arrived for a seat it does not own |
+| `cross_deal_apply` | a move decided in one game applied to the next after a rematch |
+| `move_applied_late` | a seat's earlier move applied after its later one |
 
 `stall` doubles as a product question rather than a bug report. Foolish has no
 turn clock, so one seat that declines to act holds its table forever:
@@ -171,6 +174,75 @@ that arrives 4-9 versions late lands in a **later bout the client never saw**
 and says good there - silently forfeiting a throw-in the player still had.
 Invisible from the client, and a concrete argument for an idempotency key on
 the action path.
+
+## turning everything up at once
+
+Every tier, two datagram seats, 5% loss, 6% duplication, 700ms of jitter, a
+server that stutters, and rematches churning through:
+
+```sh
+./foolyard --games 8 --secs 900 \
+  --lineup datagram@120,datagram@400,resender@200,stale@900,reconnect@150,laggy@600,random@80,octogen@200 \
+  --loss 5 --dup 6 --jitter 700 --latency 80 --hiccup-pct 12 --hiccup-ms 900 --seed 42
+```
+
+```
+  moves      10479 sent, 5939 applied, 4641 rejected, 4487 applied against a board the mover had not seen
+  packets    57516 sent, 2912 dropped, 3243 duplicated, 3125 overtaken
+
+  conservation         0
+  mutation_on_reject   0
+  stall                4
+  phantom_hand_loss    0
+  duplicate_applied    103
+  view_regression      3125
+  cross_deal_apply     0
+  move_applied_late    26
+```
+
+**The kernel does not flinch.** Zero conservation failures and zero
+mutations-on-reject across 10,479 moves, 4,487 of them decided against a board
+the mover had never seen. Everything below is the transport around it.
+
+### a lost push strands a seat forever
+
+All four stalls are a **datagram** seat, with `subscribed 0x3f` - everyone
+still connected, nobody disconnected, the seat simply never learns it is its
+turn. A QUIC DATAGRAM push is not retransmitted, there is no connection reset
+to trigger a reconnect, the protocol is push-only, and the client never polls.
+Dropping only the loss knob and changing nothing else:
+
+```
+loss 0%:  27 dealt, 19 finished,  1 stall
+loss 5%:  17 dealt,  9 finished,  4 stalls
+```
+
+Lost pushes halve the throughput of the whole table.
+
+### ...and even with no loss at all
+
+That one remaining stall at **0% loss** is the sharper version. Nothing was
+dropped. The pushes simply arrived out of order, and on an unordered transport
+a client's state is whichever push landed *last*, not the newest one. It read a
+stale board, concluded it was not its turn, and waited forever for a push that
+can never come - because the board cannot change until it acts.
+
+Neither failure exists on the `/ws` path, where TCP ordering and connection
+resets between them cover both cases. Both are properties of push-only over an
+unreliable, unordered transport, and both would want the same fix: a sequence
+number on the push so a client can see a gap, or an idle timer that re-reads
+state.
+
+### moves applied out of the order they were made
+
+```
+[  19.595s] move_applied_late  game 4 seat 0: pickup(n=0) seq 11 applied after seq 12 had already landed
+[  48.808s] move_applied_late  game 0 seat 0: attack(n=1) seq 67 applied after seq 68 had already landed
+```
+
+Not duplicates - a seat's *earlier* move arriving behind its later one and
+being applied anyway, because nothing in the frame says which came first. Only
+reachable on the unordered path.
 
 ## the speed matchup
 

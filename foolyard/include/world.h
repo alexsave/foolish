@@ -17,6 +17,8 @@ typedef struct Knobs {
     u32 dup_pct;
 
     u32 srv_service_us;    // time the per-game lock is held for one request
+    u32 hiccup_pct;        // chance a request stalls behind a long lock hold
+    u32 hiccup_us;         // how long that hold lasts
 
     // On: bots also wait the kernel's own pacing, the way the live server
     // slows them so a human can follow. Off: a seat waits only its own

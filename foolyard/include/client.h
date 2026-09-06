@@ -38,6 +38,7 @@ typedef struct ClientState {
     u8  view[VIEW_MAX];
     u16 view_len;
     u32 view_version;
+    u32 view_deal;      // which deal the held view belongs to
     u8  have_view;
     u64 last_view_us;
 
@@ -47,6 +48,7 @@ typedef struct ClientState {
     u8  hand[MAX_HAND_SIZE];
     u8  hand_n;
     u32 hand_seq;
+    u32 hand_version;
     u32 hand_deal;
 
     // A move decided but not yet on the wire. Several tiers sit on one: that
@@ -101,7 +103,8 @@ typedef struct ClientImpl {
     X(resender) \
     X(stale) \
     X(poller) \
-    X(griefer)
+    X(griefer) \
+    X(datagram)
 
 #define X(name) extern const ClientImpl client_##name;
 CLIENT_TIERS

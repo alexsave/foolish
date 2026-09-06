@@ -38,6 +38,10 @@ typedef struct GameSlot {
 
     u32 last_seq[MAX_PLAYERS];
     u8  last_seq_valid[MAX_PLAYERS];
+    // Monotonic count of moves actually applied for each seat. last_seq is the
+    // CLIENT's counter and can go backwards when the wire reorders, so it
+    // cannot key "has this seat's hand had a reason to change".
+    u32 applies[MAX_PLAYERS];
 
     u64 last_change_us;
     u8  stalled;      // reported once per quiet episode, not once per sweep

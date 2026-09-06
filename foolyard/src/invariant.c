@@ -7,7 +7,7 @@
 #include "card.h"
 #include "legal.h"
 
-#define INV_PRINT_CAP 40
+#define INV_PRINT_CAP 8   // lines per finding kind
 
 static const char *g_names[FIND_COUNT] = {
     "conservation",
@@ -18,6 +18,8 @@ static const char *g_names[FIND_COUNT] = {
     "view_regression",
     "queue_overflow",
     "seat_mismatch",
+    "cross_deal_apply",
+    "move_applied_late",
 };
 
 const char *inv_name(int kind) {
@@ -32,8 +34,11 @@ void inv_print(World *w) {
     for (int i = 0; i < FIND_COUNT; i++)
         printf("  %-20s %llu\n", inv_name(i), (unsigned long long)w->findings.count[i]);
 
-    if (w->findings.printed >= INV_PRINT_CAP)
-        printf("  (report output capped at %d lines)\n", INV_PRINT_CAP);
+    for (int i = 0; i < FIND_COUNT; i++)
+        if (w->findings.count[i] > (u64)w->findings.printed[i]) {
+            printf("  (each kind printed at most %d times)\n", INV_PRINT_CAP);
+            break;
+        }
     printf("  %s\n", total ? "FAIL" : "clean");
 }
 
@@ -74,8 +79,8 @@ void inv_sweep(World *w) {
 
 void inv_report(World *w, int kind, const char *fmt, ...) {
     w->findings.count[kind]++;
-    if (w->findings.printed >= INV_PRINT_CAP) return;
-    w->findings.printed++;
+    if (w->findings.printed[kind] >= INV_PRINT_CAP) return;
+    w->findings.printed[kind]++;
 
     fprintf(stderr, "[%8.3fs] %-18s ", (double)sch_now_us(&w->sch) / 1e6, inv_name(kind));
     va_list ap;
