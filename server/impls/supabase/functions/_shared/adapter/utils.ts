@@ -1,6 +1,5 @@
 import { corsHeaders, handleCors } from './cors.ts';
 import {
-    personalize_game,
     calculateEloChange,
     other_player,
 } from '@api/common/common_utils.ts';
@@ -484,8 +483,9 @@ export const wrap400 = (
 
             // handle spectating here too 
             const personalizeStart = Date.now();
-            const personalized_result = personalize_game(result, user.id);
-            console.log(`[${reqId}][WRAP400] personalize_game took ${Date.now() - personalizeStart}ms`);
+            // Masking is the kernel's (personalViewOf -> view.c state_put).
+            const personalized_result = await (await playerViewsMod()).personalViewOf(result, user.id);
+            console.log(`[${reqId}][WRAP400] personalize took ${Date.now() - personalizeStart}ms`);
 
             // Note: Animation events are now broadcasted automatically by executeWithGameLock
             // for game_id operations. For game creation (no game_id), we still need to broadcast here.
@@ -889,12 +889,13 @@ export const commitGame = async (
 
 // private message to specific user
 export const broadcastToGameUser = async (game: Game, messageType: string, baseMessage: any, user_id: string): Promise<void> => {
+    const { personalViewOf } = await playerViewsMod();
     await broadcastMessages([{
         topic: `gu-${game.id}-${user_id}`,
         event: messageType,
         payload: {
             ...baseMessage,
-            game: personalize_game(game, user_id)
+            game: await personalViewOf(game, user_id)
         }
     }]);
 }

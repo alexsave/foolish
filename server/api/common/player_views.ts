@@ -36,6 +36,7 @@ const engineMod = lazy(() => import('@sdk/ts/wasm/engine.ts'));
 // same view.c writer either way, and this keeps one shim (wasmViewFromGame)
 // rather than one per module.
 const botsMod = lazy(() => import('@sdk/ts/wasm/bots.ts'));
+const viewMod = lazy(() => import('@sdk/ts/wire/view.ts'));
 const codecMod = lazy(() => import('./replay/codec.ts'));
 
 
@@ -61,6 +62,40 @@ function rosterOf(game: Game): PackedGameRoster {
         good_players: game.good_players ?? [],
         good_timestamp: game.good_timestamp ?? null,
     };
+}
+
+// ONE PLAYER'S VIEW of a game, as the JSON shape the legacy endpoints return.
+//
+// Masking is the kernel's (view.c state_put, through wasmViewFromGame): which
+// hands a viewer may see, and that the deck travels as a count and never as
+// cards. common_utils personalize_game said the same thing a second time, in
+// JS-object form, and e2e/view_codec.test.ts existed to hold the two equal -
+// which is the shape of a duplication, not of a test.
+//
+// A seat the game does not contain yields the spectator PublicGame, exactly as
+// before. `version` is the caller's: it is the row's optimistic-concurrency
+// token, not part of the board, and the blob does not carry it.
+export async function personalViewOf(
+    game: Game, player_id: string,
+): Promise<PersonalGame | PublicGame> {
+    const { wasmViewFromGame, kernelViewFromPacked } = await botsMod();
+    const { viewToGame } = await viewMod();
+    const seat = game.players.findIndex(p => p.player_id === player_id);
+    const blob = wasmViewFromGame(game, seat);
+    // The blob leads with [VIEW_FORMAT_VERSION | viewer]; the board follows.
+    const view = kernelViewFromPacked(blob.subarray(2), seat);
+    const out = viewToGame(view, {
+        id: game.id,
+        name: game.name,
+        players: game.players.map(p => ({
+            player_id: p.player_id, name: p.name, is_ai: p.is_ai,
+            strategy_key: p.strategy_key,
+        })),
+    }, seat, { preGood: game.good_players ?? [], prevGoodTs: game.good_timestamp ?? null });
+    // Column-authoritative fields the board blob has no opinion on.
+    out.version = game.version;
+    out.status = game.status;
+    return out;
 }
 
 // The per-player view rows for a committed game. `stateHex` is the packed kernel

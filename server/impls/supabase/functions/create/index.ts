@@ -2,8 +2,8 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { corsHeaders, handleCors } from "@shared/adapter/cors.ts";
 import { getAuthenticatedUser } from "@shared/adapter/auth.ts";
 import { Game, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from "@api/core/types.ts";
-import { createId, personalize_game } from "@api/common/common_utils.ts";
-import { buildPlayerViewRows, buildSpectatorView } from "@api/common/player_views.ts";
+import { createId } from "@api/common/common_utils.ts";
+import { buildPlayerViewRows, buildSpectatorView, personalViewOf } from "@api/common/player_views.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
@@ -101,7 +101,7 @@ serve(async (req: Request): Promise<Response> => {
                 headers: { ...corsHeaders, 'Content-Type': 'application/octet-stream' },
             });
         }
-        return new Response(JSON.stringify(personalize_game(dbGameData, user_id)), {
+        return new Response(JSON.stringify(await personalViewOf(dbGameData, user_id)), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
     } catch (e: any) {

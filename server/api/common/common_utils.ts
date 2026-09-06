@@ -226,6 +226,15 @@ export const other_player = (player: PrivatePlayer): PublicPlayer => {
     };
 }
 
+// Kernel twin: view.c state_put (masked), reached through
+// player_views.ts personalViewOf.
+//
+// NO PRODUCTION CALLER. Every endpoint that used to build a viewer's game here
+// asks the kernel now. What is left is the independent TS oracle
+// e2e/view_codec.test.ts checks the kernel's masked view against, field by
+// field - the same role game_done and get_next_player_index play above. That
+// test is only worth anything while this stays independent, so do not
+// reimplement it on the kernel, and do not wire it back into a response.
 export const personalize_game = (game: Game, player_id: string): PersonalGame | PublicGame => {
     // everything except game_decks , added self
     const self = game.players.find(player => player.player_id === player_id)!;
