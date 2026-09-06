@@ -58,9 +58,7 @@ const char *trace_event_name(u32 type) {
     return type < 8 ? n[type] : "?";
 }
 
-void trace_line(World *w, const char *fmt, ...) {
-    if (!w->knobs.trace) return;
-
+void trace_emit(World *w, const char *fmt, ...) {
     printf("%10.3f  ", (double)sch_now_us(&w->sch) / 1e6);
     va_list ap;
     va_start(ap, fmt);

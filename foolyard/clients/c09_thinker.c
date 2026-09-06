@@ -11,8 +11,7 @@ static void settings(ClientState *cs) {
 
 static void on_view(ClientCtx *ctx) {
     ClientState *cs = ctx->cs;
-    AwireAction probe;
-    if (!client_pick_brain(ctx->view, ctx->seat, &probe)) return;
+    if (!should_bot_act(ctx->view, ctx->seat)) return;
 
     ctx->want_wake = 1;
     ctx->wake_delay_us = cs->think_us + rng_below(&cs->rng, cs->think_jitter_us + 1);
