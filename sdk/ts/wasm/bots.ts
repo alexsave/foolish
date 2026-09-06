@@ -58,6 +58,17 @@ interface BotsExports extends EngineExports {
     wasm_belief_probe_dump(): number;
     // Animation core (c/src/anim_plan.h) — the platform-independent animation
     // policy the web pure modules (src/state/*) delegate to. bots-only.
+    // What a gesture on a board means (c/src/legal.h play_*). Pure-argument
+    // rules: they read the PlayBoard out of g_io and never touch the resident
+    // game, so no other caller's marshal can disturb them.
+    wasm_play_resolve(nMenu: number, nBattles: number, powerSuit: number,
+                      isDefender: number, nSel: number, target: number): number;
+    wasm_play_coverable(nMenu: number, nBattles: number, powerSuit: number,
+                        isDefender: number, nSel: number): number;
+    wasm_play_best_cover_target(nMenu: number, nBattles: number, powerSuit: number,
+                                isDefender: number, nSel: number): number;
+    wasm_play_can_say_good(nMenu: number, nBattles: number, powerSuit: number,
+                           isDefender: number): number;
     wasm_anim_should_drop_stale(hasLast: number, last: number, hasIncoming: number, incoming: number): number;
     wasm_anim_stale_optimistic(nOpt: number, nTable: number, nNamed: number): number;
     wasm_anim_resolve(nPending: number, nServer: number, nEvents: number,
@@ -990,6 +1001,146 @@ export function kernelUnambiguousCover(
     const attackCards: Card[] = [];
     for (let i = 0; i < n; i++) attackCards.push(__cardFromWire(out[io + i]));
     return { coverCards: [...coverCards], attackCards };
+}
+
+// ---------------------------------------------------------------------------
+// What a gesture on a board means (c/src/legal.h play_*).
+//
+// The board rules take a PUBLISHED PAIR - the menu the kernel enumerated for a
+// seat, and the table it was enumerated on - and read nothing else. That is
+// what makes them safe from a render pass: unlike kernelMenuWire below, they
+// never touch the resident game, so no other caller's marshal can move the
+// ground under them.
+// ---------------------------------------------------------------------------
+
+/** The board a gesture is being read against (legal.h PlayBoard). */
+export interface PlayBoard {
+    /** The packed menu wire for this seat, from kernelMenuWire. */
+    menu: Uint8Array;
+    /** The table the menu was enumerated on. */
+    battles: Battle[];
+    powerSuit: number;
+    isDefender: boolean;
+}
+
+/** legal.h PLAY_TARGET_*: where a gesture ended, when it is not a battle index. */
+export const PLAY_TARGET_HAND = -2;
+export const PLAY_TARGET_TABLE = -1;
+
+// legal.h LEGAL_WIRE_NONE. NOT engine.ts's WIRE_NONE (0xff): the menu wire and
+// the PlayBoard table spell "no card" 0xfe, and a 0xff here would make
+// battle_is_uncovered false for every open battle - a board where nothing is
+// ever coverable, failing silently.
+const LEGAL_WIRE_NONE = 0xfe;
+
+/** Lay a PlayBoard into g_io and return the byte counts the entries need. */
+function writePlayBoard(ex: BotsExports, b: PlayBoard, sel: Card[]): { nMenu: number; nBattles: number } {
+    const mem = __mem(ex);
+    const base = ex.wasm_io_ptr();
+    mem.set(b.menu, base);
+    let q = base + b.menu.length;
+    for (const battle of b.battles) {
+        mem[q++] = __wireLogCard(battle.attack);
+        mem[q++] = battle.defense ? __wireLogCard(battle.defense) : LEGAL_WIRE_NONE;
+    }
+    for (const c of sel) mem[q++] = __wireLogCard(c);
+    return { nMenu: b.menu.length, nBattles: b.battles.length };
+}
+
+/** The move a resolved gesture names. */
+export interface PlayResolved {
+    /** The index into the seat's menu. */
+    index: number;
+    move: LegalMove;
+}
+
+/**
+ * legal.h play_resolve: which menu entry this gesture resolves to, or null when
+ * it names no legal move. `target` is a battle index, or PLAY_TARGET_TABLE for
+ * open table / PLAY_TARGET_HAND for a drop back in the hand (always a
+ * rearrange, never a play).
+ */
+export function playResolve(b: PlayBoard, sel: Card[], target: number): PlayResolved | null {
+    if (sel.length === 0) return null;
+    const ex = bots();
+    const { nMenu, nBattles } = writePlayBoard(ex, b, sel);
+    const index = ex.wasm_play_resolve(nMenu, nBattles, b.powerSuit, b.isDefender ? 1 : 0,
+                                       sel.length, target);
+    if (index < 0) return null;
+    // Re-fetch: a wasm call can grow (and detach) the buffer.
+    const out = __mem(ex);
+    let q = ex.wasm_io_ptr();
+    const type = __MOVE_TYPE[out[q++]] as LegalMove['type'];
+    const k = out[q++];
+    if (type === 'pickup' || type === 'good' || type === 'wait') return { index, move: { type } };
+    const cards: Card[] = [];
+    for (let i = 0; i < k; i++) cards.push(__cardFromWire(out[q++]));
+    if (type === 'cover') {
+        const attack_cards: Card[] = [];
+        for (let i = 0; i < k; i++) attack_cards.push(__cardFromWire(out[q++]));
+        return { index, move: { type, cards, attack_cards } };
+    }
+    return { index, move: { type, cards } };
+}
+
+/** legal.h play_coverable_battles: which battle indices this selection could
+ *  legally cover - the drop-target highlight. */
+export function playCoverableBattles(b: PlayBoard, sel: Card[]): number[] {
+    if (sel.length === 0) return [];
+    const ex = bots();
+    const { nMenu, nBattles } = writePlayBoard(ex, b, sel);
+    const n = ex.wasm_play_coverable(nMenu, nBattles, b.powerSuit, b.isDefender ? 1 : 0, sel.length);
+    if (n < 0) return [];
+    const out = __mem(ex);
+    const io = ex.wasm_io_ptr();
+    const hit: number[] = [];
+    for (let i = 0; i < n && i < 64; i++) {
+        if (out[io + (i >> 3)] & (1 << (i & 7))) hit.push(i);
+    }
+    return hit;
+}
+
+/** legal.h play_best_cover_target: the battle index the COVER BUTTON aims at,
+ *  or -1. The highest attack the selection beats, trumps outranking everything,
+ *  ties to the leftmost - not the leftmost match. */
+export function playBestCoverTarget(b: PlayBoard, sel: Card[]): number {
+    if (sel.length === 0) return -1;
+    const ex = bots();
+    const { nMenu, nBattles } = writePlayBoard(ex, b, sel);
+    return ex.wasm_play_best_cover_target(nMenu, nBattles, b.powerSuit,
+                                          b.isDefender ? 1 : 0, sel.length);
+}
+
+/** legal.h play_can_say_good: may this seat end the bout yet? The kernel menu
+ *  always offers GOOD (bots need it), but a human may not end a bout over an
+ *  uncovered attack, and an empty table has no bout to end. */
+export function playCanSayGood(b: PlayBoard): boolean {
+    const ex = bots();
+    const { nMenu, nBattles } = writePlayBoard(ex, b, []);
+    return ex.wasm_play_can_say_good(nMenu, nBattles, b.powerSuit, b.isDefender ? 1 : 0) !== 0;
+}
+
+/**
+ * The packed menu wire the kernel enumerates for `seat` on `game` - the input
+ * every play_* rule above reads.
+ *
+ * This one DOES use the resident game, so it inherits the resident-slot rule:
+ * it clears the resident mark, marshals, enumerates and copies the bytes out
+ * in one synchronous run with no await inside, so no other caller can marshal
+ * a different game in between. Callers should cache the result per committed
+ * state rather than call it per frame - a full cover enumeration is not cheap,
+ * which is exactly why the play_* rules take the menu rather than the game.
+ */
+export function kernelMenuWire(game: Game, seat: number): Uint8Array {
+    const ex = bots();
+    __setResident(null);
+    __marshalGame(ex as unknown as EngineExports, game);
+    const n = ex.wasm_legal_moves(seat);
+    // One chunk always suffices: the worst-case entry is 2 + 2 * MAX_MOVE_CARDS
+    // bytes and MAX_LEGAL_MOVES of those fit inside the module's IO buffer.
+    const len = ex.wasm_export_moves(0, n);
+    const base = ex.wasm_io_ptr();
+    return __mem(ex).slice(base, base + len);
 }
 
 // The PUBLIC view of the game the last kernelMsgDecode adopted — every hand as

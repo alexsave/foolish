@@ -4,7 +4,8 @@ import { useServer } from '../contexts/ServerContext';
 import { useAnimation } from '../contexts/AnimationContext';
 import { useGame } from '../contexts/GameContext';
 import { useAuth } from '../contexts/AuthContext';
-import { canCover } from '@api/common/common_utils.ts';
+import { playBoardFor } from '../wasm/playMenu';
+import { playCoverableBattles } from '@sdk/ts/wasm/bots.ts';
 import { canPass } from '../utils/gameValidation';
 import { kernelUnambiguousCover } from '@sdk/ts/wasm/bots.ts';
 
@@ -63,15 +64,14 @@ export const KeyboardInputHandler = () => {
 
         try {
             if (selectedCards.length === 1) {
-                // Single card cover - find which attack it can cover
-                const uncoveredBattles = game.table_battles.filter(battle => !battle.defense);
-                const validTargets = uncoveredBattles.filter(battle => 
-                    canCover(battle.attack, selectedCards[0], game.power_suit)
-                );
-                
+                // Single card cover - which attack it can cover is the kernel's
+                // answer (legal.h play_coverable_battles), off this seat's menu.
+                const pb = playBoardFor(game);
+                const validTargets = pb ? playCoverableBattles(pb, [selectedCards[0]]) : [];
+
                 if (validTargets.length === 1) {
                     // Card can only cover one specific attack - allow cover action
-                    await cover([selectedCards[0]], [validTargets[0].attack]);
+                    await cover([selectedCards[0]], [game.table_battles[validTargets[0]].attack]);
                     setSelectedCards([]); // Clear selection after successful action
                 } else {
                     console.error('Cover is ambiguous or invalid');

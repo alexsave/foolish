@@ -49,7 +49,8 @@ import { useServer } from '../../contexts/ServerContext';
 import { useAnimation } from '../../contexts/AnimationContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useGame } from '../../contexts/GameContext';
-import { canCover } from '@api/common/common_utils.ts';
+import { playBoardFor } from '../../wasm/playMenu';
+import { playCoverableBattles } from '@sdk/ts/wasm/bots.ts';
 import { canAttack, canPass, canCoverCards } from '../../utils/gameValidation';
 import { kernelUnambiguousCover } from '@sdk/ts/wasm/bots.ts';
 
@@ -287,10 +288,12 @@ export const KeyboardPlayMode = () => {
                     return;
                 }
                 // defender: decide cover vs pass vs target-selection
-                const coverable: CoverTarget[] = (g.table_battles || [])
-                    .map((b, i) => ({ b, i }))
-                    .filter(({ b }) => !b.defense && canCover(b.attack, card, g.power_suit))
-                    .map(({ b, i }) => ({ kind: 'cover', attack: b.attack, battleIndex: i }));
+                // Which battles this card could cover is the kernel's answer
+                // (legal.h play_coverable_battles), read off the menu the kernel
+                // enumerated for this seat.
+                const pb = playBoardFor(g);
+                const coverable: CoverTarget[] = (pb ? playCoverableBattles(pb, [card]) : [])
+                    .map((i) => ({ kind: 'cover', attack: (g.table_battles || [])[i].attack, battleIndex: i }));
                 const passOK = canPass(g, [card]);
 
                 if (coverable.length === 0 && passOK) { s.fire('pass', s.pass([card])); return; }

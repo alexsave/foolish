@@ -8,7 +8,8 @@ import { CardFace } from "./CardFace";
 import { TexturedSurface } from "../TexturedSurface";
 import { useEffect, useRef } from "react";
 import { Text } from "../Text";
-import { canCover as canCoverUtil } from "@api/common/common_utils.ts";
+import { playBoardFor } from "../../wasm/playMenu";
+import { playCanSayGood, playBestCoverTarget } from "@sdk/ts/wasm/bots.ts";
 import { kernelUnambiguousCover } from "@sdk/ts/wasm/bots.ts";
 import { canAttack, canPass, canCoverCards } from "../../utils/gameValidation";
 import { useStyles } from "../../contexts/StyleContext";
@@ -148,9 +149,13 @@ export const ActionButtons = () => {
     // TODO(ios-parity): iMessage board hides Take while cards are selected
     // (defender) and Good while cards are selected (attacker); consider matching
     // here.
-    const rawGood = !!(!isDefending &&
-        (game?.table_battles.length ?? 0) > 0 &&
-        (game?.table_battles.every(battle => battle.defense) ?? false) &&
+    // May this seat say good? The kernel answers it (legal.h play_can_say_good):
+    // the menu always offers GOOD because bots need it, and the rule that a
+    // human may not end a bout over an uncovered attack is the board's, not
+    // legality's. The good_players check stays here - it is about THIS viewer
+    // having already said it, which is not a fact about the board.
+    const playBoard = playBoardFor(game);
+    const rawGood = !!(!isDefending && playBoard && playCanSayGood(playBoard) &&
         !(game?.good_players?.includes(user_id ?? '') ?? false));
     const rawAttack = !!(game && !isDefending && canAttack(game, selectedCards));
     const rawPass = !!(game && isDefending && canPass(game, selectedCards));
@@ -206,12 +211,14 @@ export const ActionButtons = () => {
     };
 
     const handleCoverClick = () => {
-        const uncoveredBattles = game.table_battles.filter(battle => !battle.defense);
-
         if (selectedCards.length === 1) {
-            const validTarget = uncoveredBattles.find(battle =>
-                canCoverUtil(battle.attack, selectedCards[0], game.power_suit)
-            );
+            // WHICH attack the button aims at is the kernel's rule
+            // (legal.h play_best_cover_target): the highest attack this card
+            // beats, trumps outranking everything, ties to the leftmost. The web
+            // used to take the first match, which is not a rule at all - it is
+            // the order the attackers happened to throw in.
+            const target = playBoard ? playBestCoverTarget(playBoard, selectedCards) : -1;
+            const validTarget = target >= 0 ? game.table_battles[target] : undefined;
             if (validTarget) {
                 setActionPressed('cover', true);
                 cover([selectedCards[0]], [validTarget.attack]).then(() => {

@@ -534,6 +534,8 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_replay_step_index \
   -Wl,--export=wasm_view_json -Wl,--export=wasm_events_json \
   -Wl,--export=wasm_unambiguous_cover \
+  -Wl,--export=wasm_play_resolve -Wl,--export=wasm_play_coverable \
+  -Wl,--export=wasm_play_best_cover_target -Wl,--export=wasm_play_can_say_good \
   -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal \
   -Wl,--export=wasm_msg_rule_p -Wl,--export=wasm_msg_rebase \
   -Wl,--export=wasm_msg_pickup_hold \

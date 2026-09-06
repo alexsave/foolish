@@ -1121,6 +1121,106 @@ int wasm_anim_build_plan(int n_events, int n_players, int final_deck, int final_
     return o;
 }
 
+// ---------- what a gesture on a board means (legal.h play_*) -------------------
+//
+// The board rules read NOTHING but their arguments - no resident game, no
+// session log - so they run in any module that exports them and, unlike
+// wasm_legal_moves below, they cannot be disturbed by another caller's
+// marshal. That is the property that lets a render pass call them.
+//
+// Every entry takes the same PlayBoard through g_io:
+//   [0 .. n_menu)                      the packed menu wire for this seat
+//   [n_menu .. +2*n_battles)           the table, 2 bytes per battle
+//   [n_menu + 2*n_battles .. +n_sel)   the selection, one wire card each
+// and the scalars as arguments.
+
+static PlayBoard play_board_from_io(int n_menu, int n_battles, int power_suit,
+                                    int is_defender) {
+    PlayBoard b;
+    b.menu = g_io;
+    b.menu_len = n_menu;
+    b.table = g_io + n_menu;
+    b.n_battles = n_battles;
+    b.power_suit = power_suit;
+    b.is_defender = is_defender;
+    return b;
+}
+
+// Does this g_io layout fit the buffer? A caller that miscounts gets a refusal
+// rather than a read off the end of the module's memory.
+static int play_io_fits(int n_menu, int n_battles, int n_sel) {
+    if (n_menu < 0 || n_battles < 0 || n_sel < 0) return 0;
+    if (n_battles > MAX_BATTLES) return 0;
+    return n_menu + 2 * n_battles + n_sel <= IO_CAP;
+}
+
+// legal.h play_resolve. Returns the menu index the gesture names, or -1.
+// On a hit g_io is OVERWRITTEN with the entry the index points at:
+//   u8 type, u8 n_cards, n_cards x u8 card, n_cards x u8 attack
+// so the caller gets the move itself without a second crossing.
+int wasm_play_resolve(int n_menu, int n_battles, int power_suit, int is_defender,
+                      int n_sel, int target) {
+    if (!play_io_fits(n_menu, n_battles, n_sel)) return -1;
+    const PlayBoard b = play_board_from_io(n_menu, n_battles, power_suit, is_defender);
+    unsigned char sel[MAX_MOVE_CARDS];
+    if (n_sel > MAX_MOVE_CARDS) return -1;
+    for (int i = 0; i < n_sel; i++) sel[i] = g_io[n_menu + 2 * n_battles + i];
+
+    const int idx = play_resolve(&b, sel, n_sel, target);
+    if (idx < 0) return idx;
+
+    // Walk back to the entry so the caller can act on it. The walk reads the
+    // menu still sitting in g_io, so the copy out happens after it is found.
+    MenuWalk w;
+    MenuMove m;
+    if (legal_menu_begin(&w, b.menu, b.menu_len) < 0) return -1;
+    while (legal_menu_next(&w, &m) == 1) {
+        if (w.index != idx) continue;
+        unsigned char out[2 + 2 * MAX_MOVE_CARDS];
+        int q = 0;
+        out[q++] = (unsigned char)m.type;
+        out[q++] = (unsigned char)m.n_cards;
+        for (int i = 0; i < m.n_cards; i++) out[q++] = m.cards[i];
+        for (int i = 0; i < m.n_cards; i++) out[q++] = m.attacks ? m.attacks[i] : LEGAL_WIRE_NONE;
+        for (int i = 0; i < q; i++) g_io[i] = out[i];
+        return idx;
+    }
+    return -1;
+}
+
+// legal.h play_coverable_battles. Writes the battle-index bitmask to g_io as 8
+// little-endian bytes and returns the battle count, or -1.
+int wasm_play_coverable(int n_menu, int n_battles, int power_suit, int is_defender,
+                        int n_sel) {
+    if (!play_io_fits(n_menu, n_battles, n_sel)) return -1;
+    if (n_sel > MAX_MOVE_CARDS) return -1;
+    const PlayBoard b = play_board_from_io(n_menu, n_battles, power_suit, is_defender);
+    unsigned char sel[MAX_MOVE_CARDS];
+    for (int i = 0; i < n_sel; i++) sel[i] = g_io[n_menu + 2 * n_battles + i];
+    const uint64_t mask = play_coverable_battles(&b, sel, n_sel);
+    for (int i = 0; i < 8; i++) g_io[i] = (unsigned char)((mask >> (8 * i)) & 0xff);
+    return n_battles;
+}
+
+// legal.h play_best_cover_target. The battle index the cover button aims at,
+// or -1. g_io is left alone.
+int wasm_play_best_cover_target(int n_menu, int n_battles, int power_suit,
+                                int is_defender, int n_sel) {
+    if (!play_io_fits(n_menu, n_battles, n_sel)) return -1;
+    if (n_sel > MAX_MOVE_CARDS) return -1;
+    const PlayBoard b = play_board_from_io(n_menu, n_battles, power_suit, is_defender);
+    unsigned char sel[MAX_MOVE_CARDS];
+    for (int i = 0; i < n_sel; i++) sel[i] = g_io[n_menu + 2 * n_battles + i];
+    return play_best_cover_target(&b, sel, n_sel);
+}
+
+// legal.h play_can_say_good. 1 if this seat may end the bout, else 0.
+int wasm_play_can_say_good(int n_menu, int n_battles, int power_suit, int is_defender) {
+    if (!play_io_fits(n_menu, n_battles, 0)) return 0;
+    const PlayBoard b = play_board_from_io(n_menu, n_battles, power_suit, is_defender);
+    return play_can_say_good(&b);
+}
+
 // ---------- legal moves --------------------------------------------------------
 // u32 n, then per move: u8 type, u8 n_cards, n_cards x u8 wire-card cards,
 // n_cards x u8 wire-card attack_cards (zeroed for non-cover moves).
