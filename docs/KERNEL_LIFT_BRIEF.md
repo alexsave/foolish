@@ -162,46 +162,137 @@ own on-disk data is still JSON).
 Read that section before starting an eighth stage.
 It exists so the campaign closes as finished rather than abandoned.
 
-## Queued for after the lift: the determinism pass
+## The determinism pass - DONE
 
-Not part of this campaign.
-Recorded here so it is not lost, and so nobody starts it early.
+Landed 2026-09-05, in two halves.
+The first half (the seven e2e suites, `e2e/helpers/rng.ts`, the first
+`scripts/check_determinism.mjs`) went in with the lift.
+The second half is this one, and it is what closes the section.
 
 The invariant, in the owner's words: **the only true nondeterministic randomness
 should be when we seed a live game.**
-That is already the design - one crypto draw per game at the deal
-(`injectDealSeed`, `sdk/ts/wasm/engine.ts`), with mid-game engine randomness and
-bot decisions both reseeded deterministically from the deal seed, so a whole game
-replays from it.
-The bot seed folds in the never-client-visible deal seed on purpose, so a
-Monte Carlo bot's rollout stream is reproducible only to the server that holds it.
 
-What is not yet true is that anything enforces it.
-The comments in `engine.ts` and `bots.ts` record that per-move `Math.random`
-reseeding was there once and was removed, so this has been broken before.
+That is now true, and enforced.
+`sdk/ts/wasm/engine.ts`'s `crypto.getRandomValues` in `injectDealSeed` is the one
+draw on the game path - 32 bytes, once, saved to `games.game_seed`, with mid-game
+engine randomness and bot decisions both reseeded from it.
+The bot seed folds in the never-client-visible deal seed on purpose, so a Monte
+Carlo bot's rollout stream is reproducible only to the server that holds it.
 
-The work, when it is picked up:
+### What the second half changed
 
-1. Seven e2e suites still shuffle with `Math.random`, so they run a different
-   experiment every run and a failure hands the reader no repro:
-   `concurrent_games`, `meta`, `attack_cover_parity`, `server`, `reconcile`,
-   `resilience`, and whatever remains of `replay_codec`.
-   `bot_parity.test.ts` already does it correctly - it patches `Math.random` with
-   an LCG and restores it afterwards.
-   That is the house pattern; hoist its `mkLcg` into a shared `e2e/` helper
-   rather than inventing a second one.
-2. Seed from an env var with a fixed default, print the seed, and name it in
-   failure messages.
-   Seeding must not shrink what a suite explores - same number of trials, just
-   reproducible.
-3. A CI gate over `e2e/`, `sdk/` and `server/`.
-   `sdk/` has zero real calls today (every hit there is a comment about the ones
-   that were removed, so the check must match calls and not the string).
-   `server/` has exactly one, `meta_actions.ts`'s random lobby bot, which should
-   stay and should be allowlisted by name with its reason beside it - lobby
-   composition is not gameplay, and the chosen bot is recorded in the game.
-   Do NOT extend the gate to `src/` (cosmetic textures, React keys, error ids) or
-   `offlinefun/` (research arenas, where randomness is the point).
+**Three ids stopped being drawn.**
+A session log row got `crypto.randomUUID()` when it was appended
+(`appendLogs`, `sdk/ts/wasm/engine.ts`), another when the packed wire was decoded
+back into rows (`decodeLogs`, `sdk/ts/wire/logwire.ts`), and a third in
+`addLog` (`server/api/common/common_utils.ts`).
+They are `derivedUuid(namespace, seq)` now - `sdk/ts/wire/detid.ts`, a
+UUID-shaped string that is a pure function of its inputs.
+Nothing ever read those ids for a decision, which is why they could be derived;
+what the entropy cost was the ability to compare one run of a game against
+another, and `decodeLogs` not being a pure function of the bytes it decodes.
+
+**The engine's clock became pinnable.**
+`__setEngineClock` sits beside `__setDealSeedOverride` and covers the three
+`Date.now()` reads that reach game state (a log row's `created_at`, and the two
+`good_timestamp` stamps).
+The clock still runs live in production - those are real timestamps the replay
+extras read per-move timing off - but a test can now say which one.
+
+**The e2e harness stopped drawing player and game ids.**
+`e2e/harness.ts`'s `uuid()` was `crypto.randomUUID()`, so every suite that seeds
+a game ran a different experiment each run, and a red
+"game m4a3f2, player 9c1e... rejected" named nothing anyone could re-run.
+It derives from the suite seed and the test file now.
+The file is in the namespace because `node --test` gives each file its own
+process: without it, two files hand the shared Postgres the same ids.
+This also un-broke `fuzz.test.ts`, which advertises a `FUZZ_SEED` and was
+quietly mixing entropic player ids into the stream that seed was meant to pin.
+
+**Four `qsort` comparators became total orders.**
+`cmp_by_elo` (`c/src/main_elo.c`), `cmp_desc` (`c/src/main_showcase.c`) and
+`cmp_bsz` (`c/tools/leafbook/build_book.c`) returned 0 on a tie, and `qsort` is
+neither stable nor consistent between libcs.
+The `build_book.c` one is the one that matters: that order is the order the CHD
+displacement search walks its buckets, so it decides the exact bytes of the
+committed `c/src/leafbook_data.h` - `make leafbook` on a Mac and on the Linux CI
+box produced two different books from identical inputs.
+
+**One test's verdict stopped depending on the wall clock.**
+`ios/FoolishTests/PickupHoldTests.swift` asserted `env.sentAt != 0`, and
+`clockNow()` is unix seconds `& 0xffff`, so 0 is a legal stamp for one second
+out of every 65536 - a red run on correct code roughly every 18.2 hours.
+
+**Four Swift order-from-a-Dictionary sites became ordered.**
+`MessageGameStore`'s three `persist*` writers serialized a `[String: Row]` in
+per-launch hash order, so the same store state produced different bytes on every
+launch; its `latestChain` eviction picked which live game to delete by hash order
+whenever two chains shared an `updatedAt`; `MessagesViewController`'s transition
+waiters resumed in hash order despite being keyed by a sequence number; and
+`FStrings.t` substituted placeholders in hash order.
+
+### The gate
+
+`scripts/check_determinism.mjs` runs in `validate.yml` before anything that needs
+a database.
+It is four rules now, each with its own scope:
+
+- `Math.random`, `randomUUID`, `getRandomValues`/`randomBytes` - every file in
+  `e2e/`, `sdk/` and `server/`.
+- a clock read (`Date.now`, `new Date()`, `performance.now`) - e2e **test files**
+  only. A server must read a clock, and none of that decides a card; what must
+  not happen is a test whose verdict depends on the machine's clock. Benches and
+  harnesses under `e2e/` are out for the same reason.
+
+It matches calls rather than the string, so the comments in `engine.ts` and
+`bots.ts` that record the removed per-move reseeds do not trip it, and the
+`bot_parity` pattern (assigning `Math.random` a seeded LCG) is an assignment, not
+a draw.
+`src/` stays out (cosmetic textures, React keys, error ids) and `offlinefun/`
+stays out (research arenas, where randomness is the point).
+
+Allowlisting is per (rule, file) with an expected count and a reason.
+Adding a draw to an allowed file still fails, and an entry whose calls have gone
+away also fails, so the list cannot rot into a blanket permission.
+`e2e/determinism_gate.test.ts` runs the scanner over fixtures that break each
+rule and over the shapes it must not flag, so the gate has been watched going
+red.
+
+### What is deliberately still entropic
+
+- **The deal seed** (`sdk/ts/wasm/engine.ts`). The one draw. Everything protects it.
+- **`createId()`** (`server/api/common/common_utils.ts`) - the game id is also the
+  code a player shares to join, so it must be unguessable. It is
+  `randomUUID().slice(0, 6)`, i.e. 24 bits, which collides at a few thousand live
+  games: **widen it, do not derive it.**
+- **`gen_random_uuid()` for `bot_lease_token`** (`seed.sql`) - a lease holder
+  token.
+- **JWT expiry against the real clock** (`auth.ts`) - that is what expiry means.
+- **The iMessage create/rematch seed and game id**
+  (`ios/FoolishKit/Messages/MessagesRootView.swift`) - the file's own comment
+  records why: a guessable or rerollable seed let the creator reroll by tapping
+  New game until the deal was good.
+- **Two correlation tokens on the live server** (`utils.ts`) - a broadcast
+  envelope sequence id and a request-id log prefix, neither compared nor ordered
+  by.
+- **`meta_actions.ts`'s lobby bot pick** - TEMPORARY, and allowlisted by name.
+  See "Queued: the iOS lobby needs the bot picker".
+- **`UUID()` for per-test UserDefaults suite names** (11 iOS test files) - the
+  UUID never enters an assertion; a fixed name would make those tests
+  order-dependent, which is strictly worse.
+
+### Two things found and NOT fixed
+
+`server/impls/native/foolish_server.c` seeds its deal with
+`rand()` after `srand(time(NULL) ^ getpid())` - about 32 bits of predictable
+entropy against the TS path's 256 crypto bits.
+It is the local dev/reference server, so it is not a live hole today; if it ever
+faces users it is a card-prediction one.
+
+`ios/FoolishApp/AppCoordinator.swift`'s `makeSeed()` splats a millisecond
+timestamp across 32 bytes for the OFFLINE vs-bot deal.
+Offline play has no adversary, so it is fine where it is - but it looks exactly
+like the iMessage seed and is not one.
 
 ## Queued: the transport mode, and the conflict rule that reads it - DONE
 
