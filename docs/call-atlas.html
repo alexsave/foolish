@@ -238,6 +238,7 @@ button,input,select{font:inherit;color:inherit}
 #gsvg .nd.sel rect{stroke:var(--accent);stroke-width:2.5}
 #gsvg .nd{cursor:pointer}
 #gsvg .nd:hover rect{stroke:var(--ink);stroke-width:2}
+#gsvg .rank.here{fill:var(--accent);font-weight:700}
 #gsvg .rank{
   font-family:Chivo,sans-serif;font-size:9px;fill:var(--ink-3);
   letter-spacing:.12em;text-transform:uppercase;
@@ -1357,9 +1358,9 @@ function renderStruct(frag) {
   walk(structRoot, 0);
 }
 
-function edgesOf(i) {
+function edgesOf(i, dir) {
   const out = [];
-  if (tree.dir === "out") {
+  if ((dir || tree.dir) === "out") {
     for (let e = outHead[i]; e !== -1; e = outNext[e])
       if (VIS[G.et[e]] && !st.conf.has(G.ec[e])) out.push([G.et[e], G.ec[e]]);
   } else {
@@ -1448,50 +1449,68 @@ function clipName(n) {
   return n.length > 30 ? n.slice(0, 29) + "…" : n;
 }
 
-function buildLayered(root, dir, maxDepth) {
+function buildLayered(root, maxDepth) {
+  // Signed ranks. The root sits at 0; its callees walk to +1, +2 … and its
+  // callers to -1, -2 …, so the whole drawing reads one way: calls flow
+  // rightward, and everything to the left of a box called it.
   const rank = new Map([[root, 0]]);
   const order = [root];
   let cut = false;
-  for (let qi = 0; qi < order.length; qi++) {
-    const u = order[qi], d = rank.get(u);
-    if (d >= maxDepth) continue;
-    for (const [v] of edgesOf(u)) {
-      if (rank.has(v)) continue;
-      if (order.length >= MAX_NODES) { cut = true; break; }
-      rank.set(v, d + 1);
-      order.push(v);
+  const grow = (dir, sign, budget) => {
+    const q = [root];
+    for (let qi = 0; qi < q.length; qi++) {
+      const u = q[qi], d = rank.get(u);
+      if (Math.abs(d) >= maxDepth) continue;
+      if (u !== root && Math.sign(d) !== sign) continue;   // stay on our side
+      for (const [v] of edgesOf(u, dir)) {
+        if (rank.has(v)) continue;
+        if (order.length >= budget) { cut = true; return; }
+        rank.set(v, d + sign);
+        order.push(v);
+        q.push(v);
+      }
     }
-    if (cut) break;
-  }
+  };
+  // Half the budget each way, so a wide callee side can never squeeze the
+  // callers off the drawing entirely.
+  grow("out", 1, MAX_NODES / 2);
+  grow("in", -1, MAX_NODES);
 
-  // Rank by BFS depth, so every edge that lands on an equal or shallower rank
-  // is a back edge - a cycle. Those are kept and drawn dashed, never dropped.
+  // Every edge between two kept nodes, in the one direction a call has. An
+  // edge that does not move rightward is a BACK EDGE - a cycle - and is drawn
+  // rather than dropped.
   const links = [];
   let back = 0;
+  const seen = new Set();
   for (const u of order) {
-    for (const [v, c] of edgesOf(u)) {
+    for (const [v, c] of edgesOf(u, "out")) {
       if (!rank.has(v)) continue;
+      const k = u + ">" + v;
+      if (seen.has(k)) continue;
+      seen.add(k);
       const isBack = rank.get(v) <= rank.get(u);
       if (isBack) back++;
       links.push({ u, v, conf: G.confs[c], back: isBack });
     }
   }
-  const layers = [];
-  for (const [n, r] of rank) (layers[r] || (layers[r] = [])).push(n);
+
+  // Columns are the ranks present, left to right.
+  const ranks = [...new Set(rank.values())].sort((a, b) => a - b);
+  const col = new Map(ranks.map((r, i) => [r, i]));
+  const layers = ranks.map(() => []);
+  for (const [n, r] of rank) layers[col.get(r)].push(n);
 
   const up = new Map(), down = new Map();
   for (const l of links) {
-    if (l.back) continue;              // a cycle is what we route around, not
-    if (!up.has(l.v)) up.set(l.v, []); // a constraint on the ordering
+    if (l.back) continue;
+    if (!up.has(l.v)) up.set(l.v, []);
     if (!down.has(l.u)) down.set(l.u, []);
     up.get(l.v).push(l.u);
     down.get(l.u).push(l.v);
   }
 
-  // Crossing reduction: order each rank by the median position of its
-  // neighbours in the rank before (then after), sweeping both ways.
   const pos = new Map();
-  layers.forEach(L => L && L.forEach((n, i) => pos.set(n, i)));
+  layers.forEach(L => L.forEach((n, i) => pos.set(n, i)));
   const median = (n, side) => {
     const nb = (side === "up" ? up : down).get(n);
     if (!nb || !nb.length) return pos.get(n);
@@ -1500,22 +1519,18 @@ function buildLayered(root, dir, maxDepth) {
   };
   for (let sweep = 0; sweep < 8; sweep++) {
     const side = sweep % 2 ? "down" : "up";
-    const rs = layers.map((_, i) => i).filter(i => layers[i]);
-    for (const r of (side === "up" ? rs : [...rs].reverse())) {
-      layers[r].sort((a, b) => median(a, side) - median(b, side));
-      layers[r].forEach((n, i) => pos.set(n, i));
+    const idx = layers.map((_, i) => i);
+    for (const c of (side === "up" ? idx : [...idx].reverse())) {
+      layers[c].sort((a, b) => median(a, side) - median(b, side));
+      layers[c].forEach((n, i) => pos.set(n, i));
     }
   }
 
-  // Down the column: start on the index, then pull each node toward the median
-  // of its neighbours so a chain runs straight instead of stair-stepping, and
-  // re-separate after every pull so two boxes can never overlap.
   const STEP = NODE_H + ROW_GAP;
   const y = new Map();
-  for (const L of layers) if (L) L.forEach((n, i) => y.set(n, i * STEP));
+  for (const L of layers) L.forEach((n, i) => y.set(n, i * STEP));
   for (let pass = 0; pass < 10; pass++) {
     for (const L of layers) {
-      if (!L) continue;
       for (const n of L) {
         const nb = [...(up.get(n) || []), ...(down.get(n) || [])];
         if (!nb.length) continue;
@@ -1531,15 +1546,14 @@ function buildLayered(root, dir, maxDepth) {
     }
   }
 
-  // Columns are as wide as their widest name.
   const w = new Map();
   for (const n of order) w.set(n, Math.max(40, textWidth(clipName(G.name[n])) + 20));
   const colX = [], colW = [];
   let cx = 16;
-  for (let r = 0; r < layers.length; r++) {
-    colW[r] = layers[r] ? Math.max(...layers[r].map(n => w.get(n))) : 0;
-    colX[r] = cx;
-    cx += colW[r] + COL_GAP;
+  for (let c = 0; c < layers.length; c++) {
+    colW[c] = layers[c].length ? Math.max(...layers[c].map(n => w.get(n))) : 0;
+    colX[c] = cx;
+    cx += colW[c] + COL_GAP;
   }
 
   let miny = Infinity, maxy = -Infinity;
@@ -1547,10 +1561,10 @@ function buildLayered(root, dir, maxDepth) {
     miny = Math.min(miny, y.get(n));
     maxy = Math.max(maxy, y.get(n));
   }
-  const TOP = 34;                       // room for the rank captions
+  const TOP = 34;
   for (const n of order) y.set(n, y.get(n) - miny + TOP + NODE_H / 2);
 
-  return { order, rank, layers, links, y, w, colX, colW, back, cut,
+  return { order, rank, ranks, col, layers, links, y, w, colX, colW, back, cut,
            width: cx - COL_GAP + 16,
            height: maxy - miny + TOP + NODE_H + 24 };
 }
@@ -1569,12 +1583,13 @@ function renderHier(frag) {
     note.hidden = true;
     const p = document.createElement("div");
     p.className = "treehint";
-    p.innerHTML = "<b>Pick a function first.</b> The layered graph draws " +
-      "everything reachable from one function, a column per call step.";
+    p.innerHTML = "<b>Pick a function first.</b> The layered graph puts it in " +
+      "the middle, everything that calls it to the left, everything it calls " +
+      "to the right — a column per call step, calls always flowing rightward.";
     frag.append(p);
     return;
   }
-  const L = buildLayered(tree.root, tree.dir, tree.depth);
+  const L = buildLayered(tree.root, tree.depth);
   tree.rows = L.order.length;
 
   note.hidden = false;
@@ -1605,14 +1620,15 @@ function renderHier(frag) {
   }
   svg.append(defs);
 
-  const left = n => L.colX[L.rank.get(n)];
-  const right = n => L.colX[L.rank.get(n)] + L.w.get(n);
+  const left = n => L.colX[L.col.get(L.rank.get(n))];
+  const right = n => left(n) + L.w.get(n);
 
-  for (let r = 0; r < L.layers.length; r++) {
-    if (!L.layers[r]) continue;
-    const t = svgEl("text", { class: "rank", x: L.colX[r], y: 18 });
-    t.textContent = r === 0 ? "root"
-      : r + (tree.dir === "out" ? " step out" : " step up");
+  for (let c = 0; c < L.layers.length; c++) {
+    if (!L.layers[c].length) continue;
+    const r = L.ranks[c];
+    const t = svgEl("text", { class: "rank" + (r === 0 ? " here" : ""),
+                              x: L.colX[c], y: 18 });
+    t.textContent = r === 0 ? "here" : r < 0 ? (-r) + " calling in" : r + " called out";
     svg.append(t);
   }
 
@@ -1738,11 +1754,10 @@ function renderTree() {
   document.getElementById("fz").textContent = "—";
   document.getElementById("fv").textContent = tree.rows.toLocaleString() +
     (tree.kind === "graph" ? " nodes" : " rows");
-  const way = tree.dir === "out" ? "calls out" : "callers";
   document.getElementById("fmode").textContent =
     tree.kind === "struct" ? "directory tree"
-      : tree.kind === "graph" ? "layered graph · " + way + " · depth " + tree.depth
-        : "call tree · " + way;
+      : tree.kind === "graph" ? "layered graph · in and out · depth " + tree.depth
+        : "call tree · " + (tree.dir === "out" ? "calls out" : "callers");
 }
 
 // Opening the tree on a selection should land on it, not at the repo root.
@@ -1762,7 +1777,7 @@ function setTreeKind(kind) {
   treeBar.struct.setAttribute("aria-pressed", String(kind === "struct"));
   treeBar.calls.setAttribute("aria-pressed", String(kind === "calls"));
   treeBar.graph.setAttribute("aria-pressed", String(kind === "graph"));
-  treeBar.dirSeg.hidden = kind === "struct";
+  treeBar.dirSeg.hidden = kind !== "calls";   // the graph shows both at once
   treeBar.depthSeg.hidden = kind !== "graph";
   document.getElementById("treeCollapse").hidden = kind === "graph";
   if (kind !== "graph") document.getElementById("cycnote").hidden = true;
