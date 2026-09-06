@@ -11,15 +11,25 @@
 //
 // Envelope layout (GAME_RESP_FORMAT = 1):
 //   [0]      magic = 1
-//   [1]      flags: bit0 = isPlayer
+//   [1]      flags: bit0 = isPlayer, bit1 = a PACKED roster trailer follows
 //   [2]      seat (when isPlayer), else -1
 //   [3..6]   u32 LE version
-//   [7..8]   u16 LE roster JSON length
-//   [9..]    roster JSON (PackedGameRoster)
+//   [7..8]   u16 LE legacy roster JSON length (0 once the island is gone)
+//   [9..]    legacy roster JSON
 //   [q]      u16 LE view length      (q = 9 + rosterLen)
 //   [q+2]    VIEW_FORMAT_VERSION = 1
 //   [q+3]    viewer seat
 //   [q+4..]  masked state (view.c state_put layout) — handed to the kernel
+//   [q+viewLen..] packed roster (EnvelopeRoster), present iff flags bit1
+//
+// THE ROSTER IS PACKED NOW. It was the last JSON on any path that mattered, and
+// it moved to bytes without a coordinated deploy: the server appends the packed
+// roster AFTER the view blob and announces it in a flag bit, so build 1.0(43) -
+// which reads bit0, ignores the rest of the flags byte, and bounds the view blob
+// without ever looking past it - still sees exactly the payload it always saw.
+// The JSON island below is the fallback for a stored player_views row written
+// before that deploy; it dies in one commit with the server's LEGACY_ROSTER_JSON
+// (sdk/ts/wire/view.ts). See docs/KERNEL_LIFT_BRIEF.md item 4.
 
 import Foundation
 import FoolishKit
@@ -37,6 +47,13 @@ public enum PackedGame {
     private static let magic: UInt8 = 1            // GAME_RESP_FORMAT
     private static let viewFormatVersion: UInt8 = 1 // VIEW_FORMAT_VERSION
 
+    /// flags bit1 — the packed roster trailer is present.
+    private static let flagPackedRoster: UInt8 = 2
+
+    // ---- the legacy JSON island, and nothing else, lives below --------------
+    // Only reachable for an envelope written before the trailer existed (a
+    // stored player_views row for an idle game). Delete this, and the branch
+    // that calls it, when the server stops writing the island.
     struct Roster: Decodable {
         let id: String
         let name: String
@@ -46,6 +63,22 @@ public enum PackedGame {
         let good_timestamp: Double?
     }
     struct RosterPlayer: Decodable { let player_id: String; let name: String; let is_ai: Bool }
+
+    /// The legacy island as an EnvelopeRoster, so the decoder below has one
+    /// shape to read whichever way the bytes arrived.
+    private static func legacyRoster(_ bytes: Data) -> EnvelopeRoster? {
+        guard let r = try? JSONDecoder().decode(Roster.self, from: bytes) else { return nil }
+        let status: Int
+        switch r.status {
+        case "waiting":   status = GameStatus.waiting.rawValue
+        case "game_over": status = GameStatus.gameOver.rawValue
+        default:          status = GameStatus.playing.rawValue
+        }
+        return EnvelopeRoster(
+            id: r.id, name: r.name, status: status,
+            players: r.players.map { EnvelopeRoster.Player(playerId: $0.player_id, name: $0.name, isAI: $0.is_ai) },
+            goodPlayers: r.good_players ?? [], goodTimestamp: r.good_timestamp)
+    }
 
     /// Decode an enveloped packed-game buffer. Returns nil on a malformed/short
     /// payload (the caller treats it as unreadable, like the web).
@@ -58,7 +91,6 @@ public enum PackedGame {
         let rosterLen = Int(b[7]) | (Int(b[8]) << 8)
         guard 9 + rosterLen + 2 <= b.count else { return nil }
 
-        guard let roster = try? JSONDecoder().decode(Roster.self, from: Data(b[9..<(9 + rosterLen)])) else { return nil }
         var q = 9 + rosterLen
         let viewLen = Int(b[q]) | (Int(b[q + 1]) << 8)
         q += 2
@@ -67,14 +99,19 @@ public enum PackedGame {
         let stateStart = q + 2
         let stateBytes = Data(b[stateStart..<(q + viewLen)])
 
+        // THE ROSTER, IN BYTES. The trailer sits past the view blob; the JSON
+        // island is read only when no trailer was announced.
+        let roster: EnvelopeRoster
+        if (b[1] & flagPackedRoster) != 0, let packed = EnvelopeRoster.decode(b, at: q + viewLen) {
+            roster = packed.roster
+        } else if let legacy = legacyRoster(Data(b[9..<(9 + rosterLen)])) {
+            roster = legacy
+        } else {
+            return nil
+        }
+
         // Decode the masked state directly in Swift — no kernel JSON round-trip
         // (owner: wipe the JSON; client↔server is packed kernel wire).
-        //
-        // TRUE OF THE STATE, NOT OF THE ROSTER. The segment above is still
-        // JSON, and it is the last of it anywhere: the FMSG roster went packed
-        // (sdk/swift/RosterWire.swift) but this envelope is the SERVER's, so
-        // changing it means changing the server's encoder and deploying both in
-        // lockstep. Deliberately left - see docs/KERNEL_LIFT_BRIEF.md.
         guard let raw = MaskedView.decode(stateBytes, viewer: seat) else { return nil }
 
         // Merge the roster's real names / is_ai (the masked state carries neither).
@@ -86,15 +123,8 @@ public enum PackedGame {
         // games.status (carried in the roster) is column-authoritative over the
         // blob's copy — the same rule the web applies (view.ts decodePackedGame).
         // Without it a WAITING lobby's blob decodes as a playing board.
-        let statusInt: Int = {
-            switch roster.status {
-            case "waiting":   return GameStatus.waiting.rawValue
-            case "game_over": return GameStatus.gameOver.rawValue
-            default:          return GameStatus.playing.rawValue
-            }
-        }()
         let view = GameView(
-            status: statusInt, numPlayers: raw.numPlayers, powerSuit: raw.powerSuit,
+            status: roster.status, numPlayers: raw.numPlayers, powerSuit: raw.powerSuit,
             deckCount: raw.deckCount, discardCount: raw.discardCount, hasFlipped: raw.hasFlipped,
             firstAttacker: raw.firstAttacker, defender: raw.defender, viewer: raw.viewer,
             goodMask: raw.goodMask, gameOver: raw.gameOver, flipped: raw.flipped,

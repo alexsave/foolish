@@ -912,7 +912,7 @@ A geometry oracle - "no flight may take off from a point outside the board" -
 would have caught findings 2 and 3 on any of the collapse runs the rig has been
 making for rounds.
 
-## Queued: the JSON that is left - THREE OF FOUR DONE
+## Queued: the JSON that is left - ALL FOUR DONE
 
 Landed 2026-09-05.
 
@@ -929,17 +929,43 @@ Landed 2026-09-05.
   `PackedWriter`/`PackedReader` bytes behind a format byte; the keys and the
   filename were bumped, so the old JSON is never read rather than migrated, and
   the old `replays.json` is left on disk rather than deleted.
-- **4 (the client-server envelope) NOT DONE, and deliberately.**
-  `ios/FoolishNet/PackedGame.swift`'s roster island is the last JSON, and it is
-  the SERVER's envelope (`GAME_RESP_FORMAT`): changing it means changing the
-  server's encoder and deploying both in lockstep, which the owner's "try not to
-  change wire format if you can - only the ondisk container" rules out.
-  The file now says so at the site instead of claiming the whole payload is
-  packed.
-  When it IS picked up, the work is the server's encoder emitting the same
-  `n_joins/seat/name_len/name` shape plus `is_ai` and the game's id/name/status,
-  and `PackedGame.decode` reading it with `PackedReader`; it needs a coordinated
-  deploy or a version byte in the envelope, not a client change.
+- **4 (the client-server envelope) DONE**, by the version-byte route this entry
+  named rather than the coordinated deploy it ruled out.
+  The server's encoder (`encodeGameResponse`, `sdk/ts/wire/view.ts`) writes the
+  packed roster - the kernel's `n_joins/seat/name_len/name` block plus `is_ai`,
+  `player_id` and the game's id/name/status/good-players/good-timestamp - and
+  `PackedGame.decode` reads it with `PackedReader` through
+  `sdk/swift/EnvelopeRoster.swift`.
+  `sdk/ts/wire/roster.ts` is the TypeScript twin of `RosterWire.swift`, not a
+  third codec: the names block is byte-identical and a test compiles both
+  encoders to prove it.
+
+  **THE PACKED ROSTER IS A TRAILER, AND THAT IS THE WHOLE DESIGN.**
+  Merging a PR here deploys the server immediately; the client ships through the
+  App Store, and 1.0(43) was in the field when this landed.
+  Worse, the envelope is not only a response - it is STORED, in
+  `player_views.view` and `spectator_views.view`, where there is no request to
+  negotiate a format on and no way to know which client will read the row.
+  So the roster is appended AFTER the view blob and announced in flags bit1.
+  Every shipped reader takes bit0 and ignores the rest of that byte, and bounds
+  the view blob with `q + viewLen <= length` without ever looking past it, so
+  byte 0 through the end of the view blob is unchanged - byte for byte - and an
+  installed client cannot tell.
+  `e2e/packed_roster_wire.test.ts` carries a frozen replica of the 1.0(43)
+  encoder AND decoder and asserts exactly that; emitting the packed roster in
+  the island's place fails three of its tests.
+
+  **The JSON island is still written, and dies in ONE commit.**
+  Flip `LEGACY_ROSTER_JSON` to false in `sdk/ts/wire/view.ts`, then delete the
+  JSON branch there, the fallback in `PackedGame.decode` and its `Roster`
+  Codable.
+  The condition is BOTH of: no pre-trailer client left in the field, AND every
+  stored `player_views`/`spectator_views` row rewritten since the deploy - an
+  idle game keeps the row it was last committed with, and a row written before
+  this carries no trailer at all, which is the only reason the client-side JSON
+  fallback still exists.
+  A test already proves an island-free envelope decodes, so the deletion commit
+  is genuinely one commit.
 
 The original spec follows.
 

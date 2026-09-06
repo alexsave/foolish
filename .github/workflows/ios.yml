@@ -4,9 +4,11 @@ name: ios
 #
 #   bridge-linux         - the C engine bridge smoke test, goldens freshness and
 #                          the architecture lint, on any clang box.
-#   replay-names-parity  - the Swift replay-names encoder compiled by a REAL
-#                          Swift toolchain and diffed against the TypeScript
-#                          decoder byte for byte (see the job's own comment).
+#   swift-parity         - the Swift codecs that have a TypeScript twin,
+#                          compiled by a REAL Swift toolchain and diffed byte
+#                          for byte (see the job's own comment): the
+#                          replay-link nicknames, and the packed roster the
+#                          client-server envelope now carries.
 #
 # The Xcode build+test half (FoolishTests, HarnessTests) is deliberately NOT
 # here - see the note at the bottom of this file.
@@ -39,7 +41,7 @@ jobs:
       - name: Architecture lint (§4, §16.E1)
         run: bash ios/scripts/lint_architecture.sh
 
-  # ---- Portable: the replay-link nicknames codec, both languages at once ----
+  # ---- Portable: the cross-language codecs, both languages at once ----------
   #
   # e2e/imessage_replay_names.test.ts compiles the REAL Swift encoder
   # (sdk/swift/Base32.swift + sdk/swift/ReplayExtras.swift) and asserts its blob
@@ -48,6 +50,14 @@ jobs:
   # equality is the only thing stopping the two implementations drifting on the
   # name-trimming rule, which is the one part of the format with any judgement
   # in it.
+  #
+  # e2e/packed_roster_wire.test.ts is the same shape for the client-server
+  # envelope's packed roster: it compiles sdk/swift/{PackedBytes,RosterWire,
+  # EnvelopeRoster}.swift - the production decoder the app runs - and asserts
+  # both that it reads what the SERVER's TypeScript encoder writes, and that
+  # RosterWire.encode and encodeRosterNames emit the same names block byte for
+  # byte. The server writes those bytes and only the phone reads them, so
+  # without this job the two halves are never compiled in the same place.
   #
   # It needs a Swift compiler, and without one it SKIPS ITSELF. The full e2e
   # suite already runs this file inside coverage.yml (coverage:e2e globs
@@ -67,7 +77,7 @@ jobs:
   #
   # No Postgres: this test touches no database (its own header says so), so it
   # deliberately does NOT ride along on the heavy coverage/validate jobs.
-  replay-names-parity:
+  swift-parity:
     runs-on: ubuntu-latest
     container: swift:6.2.4-noble
     steps:
@@ -92,7 +102,7 @@ jobs:
       # own first line with "Illegal option -o pipefail" and never runs the
       # test. Redirect instead of piping, so the runner's exit status is the
       # one being checked.
-      - name: Swift <-> TypeScript replay-names parity
+      - name: Swift <-> TypeScript codec parity
         run: |
           set -eu
           npm run test:swift-parity > parity.log 2>&1 || { cat parity.log; exit 1; }
@@ -100,7 +110,7 @@ jobs:
           # node's runner reports skips as a pass, so assert the count itself.
           # Matches both the TAP ("# skipped 0") and the spec reporter's line.
           grep -q 'skipped 0' parity.log || {
-            echo "::error::the Swift/TypeScript replay-names parity test SKIPPED - it proved nothing"
+            echo "::error::a Swift/TypeScript codec parity test SKIPPED - it proved nothing"
             exit 1
           }
 
