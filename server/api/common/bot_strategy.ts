@@ -95,11 +95,41 @@ export const registerBotStrategy = (strategyKey: string, strategy: BotStrategy) 
     BOT_STRATEGIES.set(strategyKey, strategy);
 }
 
-// Get strategy by key
+// Strict lookup: the registered strategy for this key, or null. No fallback.
+//
+// The kernel is strict about exactly this (wasm_choose_move: an unknown or
+// unlinked strat returns -1, "never a silent fallback to random"), but the TS
+// layer resolves the key BEFORE the kernel ever sees it, so that guarantee
+// cannot fire for a key the registry does not know. Anything that MEASURES a
+// named bot — a benchmark, a memory gate, an arena — must resolve through this
+// and refuse an unknown key, or it is measuring `random` under another name and
+// reporting it green (issue #111: the edge-memory CI gate did exactly that,
+// unnoticed, for every one of the bots it named).
+export function resolveBotStrategy(strategyKey: string): BotStrategy | null {
+    return BOT_STRATEGIES.get(strategyKey) ?? null;
+}
+
+// The keys the registry can actually dispatch. For an error message that names
+// the alternatives rather than making the reader grep for them.
+export const botStrategyKeys = (): string[] => [...BOT_STRATEGIES.keys()];
+
+// Warned-about keys, so a bot seat with a bad key does not log once per turn
+// for the life of the game.
+const warnedUnknownKeys = new Set<string>();
+
+// Get strategy by key, for the PLAY path: a seat whose key the registry does
+// not know still has to take its turn, so this keeps the random fallback. What
+// it no longer does is keep it QUIET — a typo'd strategy_key used to become a
+// random bot with no signal anywhere, on the leaderboard included.
 export function getBotStrategy(strategyKey: string): BotStrategy {
     const strategy = BOT_STRATEGIES.get(strategyKey);
     if (!strategy) {
-        // Fall back to random strategy if unknown
+        if (!warnedUnknownKeys.has(strategyKey)) {
+            warnedUnknownKeys.add(strategyKey);
+            console.warn(`[bot_strategy] unknown strategy_key ${JSON.stringify(strategyKey)} — `
+                + `falling back to 'random'. It will PLAY like random and score like random. `
+                + `Known keys: ${botStrategyKeys().join(', ')}`);
+        }
         return BOT_STRATEGIES.get('random')!;
     }
     return strategy;

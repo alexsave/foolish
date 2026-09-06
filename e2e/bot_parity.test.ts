@@ -20,7 +20,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { game_done } from '../server/api/common/common_utils.ts';
 import { start_game } from '../server/api/common/game_lifecycle.ts';
-import { calculateLegalMoves, BotStrategy, LegalMove } from '../server/api/common/bot_strategy.ts';
+import {
+    calculateLegalMoves, BotStrategy, LegalMove,
+    getBotStrategy, resolveBotStrategy, botStrategyKeys,
+} from '../server/api/common/bot_strategy.ts';
 import { shouldBotActCore, executeBotMove } from '../server/api/common/pure_bot_actions.ts';
 import { STRAT, wasmChooseMove, wasmChooseMoveDirect, __setBotSeedSource } from '../sdk/ts/wasm/bots.ts';
 import { __setKernelSeedSource } from '../sdk/ts/wasm/engine.ts';
@@ -155,3 +158,46 @@ for (const { name, ts, strat, pin } of CASES) {
     assert.ok(decisions > 3000, `exercised ${decisions} decisions`);
   });
 }
+
+// The parity above proves the kernel plays each brain the way the TS original
+// did. This proves the layer in front of it seats the brain you ASKED for.
+//
+// getBotStrategy answers an unknown key with `random` — a seat has to take its
+// turn — and that fallback used to be completely silent, which is how a CI gate
+// measured `random` under two culled bots' names for months (issue #111) and
+// how any typo'd strategy_key becomes a random bot on the Elo ladder with no
+// signal. The kernel refuses to do this (wasm_choose_move returns -1 for an
+// unknown strat, never `random`); the TS layer resolves the key first, so the
+// kernel's guarantee never gets the chance.
+test('an unknown bot key is refused by the strict resolver and announced by the fallback', () => {
+    // Every registered key resolves to ITSELF — not to a neighbour, not to
+    // `random`. This is the property the whole registry exists to provide.
+    for (const key of botStrategyKeys()) {
+        assert.equal(resolveBotStrategy(key)?.name, key, `${key} resolves to a different strategy`);
+        assert.equal(getBotStrategy(key).name, key, `${key} resolves to a different strategy`);
+    }
+
+    // A culled bot (semtex/fulminate were real once) and a name that never
+    // existed are the same thing to the registry: not dispatchable.
+    for (const dead of ['semtex', 'fulminate', 'totallyfakebot', '', 'RANDOM']) {
+        assert.equal(resolveBotStrategy(dead), null,
+            `resolveBotStrategy('${dead}') must be null — a measurement harness that seats it `
+            + `would be measuring 'random' under another bot's name`);
+    }
+
+    // The play path still returns a usable strategy, and now says so out loud.
+    const warnings: string[] = [];
+    const realWarn = console.warn;
+    console.warn = (...a: unknown[]) => { warnings.push(a.join(' ')); };
+    try {
+        assert.equal(getBotStrategy('semtex').name, 'random', 'a seat must still get a playable bot');
+        // Once per key, not once per turn: a bot seat chooses hundreds of times.
+        getBotStrategy('semtex');
+        getBotStrategy('semtex');
+    } finally {
+        console.warn = realWarn;
+    }
+    assert.equal(warnings.length, 1, `expected exactly one warning per unknown key, got ${warnings.length}`);
+    assert.match(warnings[0], /semtex/, 'the warning must name the key that was not found');
+    assert.match(warnings[0], /random/, 'the warning must say what it fell back to');
+});

@@ -116,7 +116,12 @@ function e2eAndMemory() {
     for (let i = 0; i < reps; i++) {
       const out = runNode(['e2e/bench_bot_e2e.ts'], {
         BENCH_JSON: '1',
-        BENCH_BOTS: process.env.BENCH_BOTS || 'octogen,semtex,cordite,fulminate',
+        // Shipped, dispatchable bots (see metrics.yml's BENCH_BOTS note): a
+        // key the wasm build does not dispatch is benched as `random` under
+        // that bot's name. semtex/fulminate sat in this default long after
+        // they were culled, which is where the phantom deltas came from.
+        // bench_bot_e2e.ts now refuses an unknown key outright.
+        BENCH_BOTS: process.env.BENCH_BOTS || 'octogen,cordite,blackpowder,firecracker',
         BENCH_BOT_MOVES: process.env.BENCH_BOT_MOVES || '25',
       });
       // bench prints exactly one JSON line; take the last non-empty line.
