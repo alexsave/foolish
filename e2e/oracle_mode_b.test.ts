@@ -146,12 +146,17 @@ test('§8b.7-1 Mode A and Mode B converge to the same per-candidate means', asyn
             if (d > worst) { worst = d; worstKey = c.key; }
         }
         assert.equal(matched, b.length, `every Mode B candidate has a Mode A twin (${matched}/${b.length})`);
-        // Independent seed streams, so a tolerance rather than equality. 0.05
-        // finish positions is far inside what a real difference in what is being
-        // computed would produce: a wrong seat's verdict, a mis-indexed
-        // accumulator or a lost batch class each move a row by >= 0.3.
-        assert.ok(worst < 0.05, `worst |A-B| = ${worst.toFixed(4)} on ${worstKey}`);
-        console.log(`  §8b.7-1: ${matched} candidates matched, worst |A-B| = ${worst.toFixed(4)} (A n>=${aMinN}, B n>=${minN})`);
+        // Independent seed streams, so a tolerance rather than equality - and a
+        // tolerance derived from the world counts the run actually reached, not
+        // a constant, because a slow CI box reaches fewer of them and a constant
+        // would be a flake waiting to happen. Five combined standard errors at
+        // the finish-position spread Mode A measures (~1.2), floored at 0.05.
+        // A real difference in what is being computed - a wrong seat's verdict,
+        // a mis-indexed accumulator, a lost batch class - moves a row by >= 0.3
+        // and stays caught at every n this ever runs at.
+        const tol = Math.max(0.05, 5 * Math.sqrt(1.44 / aMinN + 1.44 / minN));
+        assert.ok(worst < tol, `worst |A-B| = ${worst.toFixed(4)} on ${worstKey} (tolerance ${tol.toFixed(4)})`);
+        console.log(`  §8b.7-1: ${matched} candidates matched, worst |A-B| = ${worst.toFixed(4)} < ${tol.toFixed(4)} (A n>=${aMinN}, B n>=${minN})`);
     } finally { await rig.close(); }
 });
 
