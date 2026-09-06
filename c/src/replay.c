@@ -1,10 +1,9 @@
-// Whole-game replay codec - see replay.h for the two format lines it carries
-// (9, the retrodiction line; 10, the inline-reveal line). This is a bit-exact
-// port of the TS reference: the menus, weights, and probability model are WIRE
-// FORMAT - never change them without bumping the version and keeping the old
-// code path. The RULES the projection replays are wire format too, for the same
-// reason and with less warning: the deal order was fixed in August 2026 and
-// that alone retired versions 5 through 8 (docs/DEAL_ORDER.md).
+// Whole-game replay codec - see replay.h for the one format it carries (10, the
+// inline-reveal line) and the nine that came before it. The menus, weights and
+// probability model are WIRE FORMAT - never change them without bumping the
+// version and keeping the old code path. The RULES the projection replays are
+// wire format too, for the same reason and with less warning: the deal order was
+// fixed in August 2026 and that alone retired five versions (docs/DEAL_ORDER.md).
 //
 // Everything the projection shares with the real rules comes from the
 // kernel: can_cover (game.c), the deck-size boundary min_value_for and
@@ -13,14 +12,11 @@
 // replay-specific by nature — the full-state engine has no notion of a
 // spectator's information set — but it now lives beside the engine it
 // mirrors and is difftested against real engine games (tests/
-// replay_difftest.c, e2e/replay_codec.test.ts).
+// replay_v6_test.c, e2e/replay_codec.test.ts).
 //
 // JS-isms mirrored deliberately (wire format!):
 //   - geo() masks its shift count to 5 bits, like the JS `>>` operator: a
 //     player holding 32+ matching cards wraps the geometric decay.
-//   - The binomial table is exact u64; every reachable call has n <= 51, so
-//     the values equal the float64 reference's (all < 2^53, exact there).
-//   - ID_QUANT is a power of two, so the quantization divisions are exact.
 //
 // Single-threaded by design (like the wasm bridge): the coder, model and
 // bignum scratch are plain statics. Do not call from OMP arena workers.
@@ -33,17 +29,6 @@
 
 static int g_err_detail = 0;
 int replay_last_error_detail(void) { return g_err_detail; }
-
-// Which of the two format lines a version belongs to. Membership, not a
-// threshold: the deal-order fix renumbered both lines at once, so the
-// inline-reveal line is now 10 while the retrodiction line it outranks is 9
-// (replay.h). Retired versions are listed so this reads as the family it is.
-static int fmt_inline_reveals(int format) {
-    return format == REPLAY_FORMAT_VERSION_V10
-        || format == REPLAY_FORMAT_VERSION_V6      // retired: pre-fix deal order
-        || format == REPLAY_FORMAT_VERSION_V7      // retired
-        || format == REPLAY_FORMAT_VERSION_V8;     // retired
-}
 
 /* =============================== bignum ================================== */
 // Little-endian u32 limbs. rANS only ever multiplies-accumulates by, and
@@ -243,45 +228,19 @@ static bool coder_finish(Coder *c, Bn *x) {
     return true;
 }
 
-/* ============================== binomials ================================ */
-
-static uint64_t g_comb[52][52];
-static bool g_comb_ready = false;
-
-static void comb_init(void) {
-    if (g_comb_ready) return;
-    for (int n = 0; n < 52; n++) {
-        g_comb[n][0] = 1;
-        for (int k = 1; k <= n; k++)
-            g_comb[n][k] = g_comb[n - 1][k - 1] + (k <= n - 1 ? g_comb[n - 1][k] : 0);
-        for (int k = n + 1; k < 52; k++) g_comb[n][k] = 0;
-    }
-    g_comb_ready = true;
-}
-
-static uint64_t comb64(int n, int k) {
-    if (n < 0 || n >= 52 || k < 0 || k > n) return 0;
-    return g_comb[n][k];
-}
-
 /* ============================ weight profile ============================= */
 // FROZEN wire format (core.ts V1) - bump the format version to change.
 
 #define V1_COVER             6
-#define V1_COVER_FRESH       3
 #define V1_PASS              16
-#define V1_PASS_FRESH        4
 #define V1_PICKUP            2
 #define V1_ATTACK            2
-#define V1_ATTACK_FRESH_LEAD 2
-#define V1_ATTACK_FRESH      1
 #define V1_ROUND_END         3
 // A pending good only ever ends a cut stream, so it is rare against round_end
 // (which carries every completed bout). Low weight = it costs the atoms that
 // share its menu almost nothing.
 #define V1_GOOD              1
 #define V1_STOP              1
-#define V1_ID_QUANT          16384
 
 // JS `>>` masks the shift count to 5 bits; a 32+ position wraps. Wire format.
 static uint32_t geo(uint32_t base, int pos) {
@@ -302,9 +261,10 @@ typedef struct {
     int trump_id;
     int power_suit;
     bool status[MAX_PLAYERS];        // true = IN
-    uint64_t known[MAX_PLAYERS];     // revealed cards currently in hand
-    int unknown[MAX_PLAYERS];        // count of hidden cards in hand
-    uint64_t unseen;                 // never-revealed cards (stock + hidden)
+    uint64_t known[MAX_PLAYERS];     // the seat's hand - every card of it, since
+                                     // the format reveals each one as it is
+                                     // dealt or drawn
+    uint64_t unseen;                 // never-revealed cards == the face-down stock
     int deck_count;                  // face-down stock (excludes the flip)
     bool flipped_held;               // trump card still waiting under the stock
     RBattle battles[RMAX_BATTLES];
@@ -316,7 +276,7 @@ typedef struct {
     int discard;
     // Pending "good" declarations (engine: good_players_mask). Every other
     // action clears it, so a good only survives to the end of a cut stream —
-    // which is exactly why it needs a wire atom at all. v6 only.
+    // which is exactly why it needs a wire atom at all.
     uint32_t good_mask;
     // Decode log stream, written as it happens (NULL while encoding — the
     // stream is derived output, never read back by the run itself).
@@ -324,15 +284,12 @@ typedef struct {
     int out_pos, out_cap;
     uint32_t out_logs;
     int err;
-    // ---- Format 6/7 only (0 / NULL for v5) ----
-    int format;                // 5 (default), 6, or 7
     int pass_allowed;          // the pass-mode bit: 1 perevodnoy, 0 podkidnoy. It
                                // GATES THE MENU (build_top_menu), which is the
                                // coder's probability model - so it must be read
                                // off the code before a single atom is decoded,
                                // and a code decoded under the wrong mode is not
-                               // the same game. 1 for the retrodiction line,
-                               // which carries no bit.
+                               // the same game.
     Coder *rev_coder;          // coder reached from draw_for to code reveals
     const unsigned char *rev;  // encode: real hidden card ids (deal + draws)
     int rev_n, rev_pos;        // reveal stream length / cursor
@@ -351,7 +308,8 @@ static Card id_to_card(int id) {
 
 /* ---------------------------- the atom sink ------------------------------ */
 // Only replay_decode_atoms_v6 installs this; every other path through apply_*
-// (v5, and both encode directions) leaves it null and pays nothing. It fires
+// (both encode directions, and a plain decode) leaves it null and pays nothing.
+// It fires
 // from inside the deal/draw/apply_* points because those are where a move is
 // fully RESOLVED — the coder above them still holds only a menu index.
 
@@ -370,7 +328,7 @@ static void atom_out(int kind, int seat, const int *ids, int n, int target_id) {
 }
 
 static int hand_len(const RModel *m, int s) {
-    return __builtin_popcountll(m->known[s]) + m->unknown[s];
+    return __builtin_popcountll(m->known[s]);
 }
 
 static int stock_total(const RModel *m) {
@@ -432,34 +390,12 @@ static int sorted_known(const RModel *m, int s, int8_t *out) {
     return n;
 }
 
-#define PRED_ANY   0
-#define PRED_VALUE 1
-#define PRED_BEATS 2
-#define PRED_TABLE 3
-typedef struct { int kind; int v; int atk; const bool *tv; } Pred;
-
-static bool pred_ok(const RModel *m, Pred p, int id) {
-    switch (p.kind) {
-        case PRED_ANY:   return true;
-        case PRED_VALUE: return id_value(id) == p.v;
-        case PRED_BEATS: return beats(m, id, p.atk);
-        case PRED_TABLE: return p.tv[id_value(id)];
-    }
-    return false;
-}
-
-static int unseen_matching(const RModel *m, Pred p, int8_t *out) {
-    int n = 0;
-    for (int id = 0; id < 52; id++)
-        if (((m->unseen >> id) & 1ull) && pred_ok(m, p, id)) out[n++] = (int8_t)id;
-    pref_sort(m, out, n);
-    return n;
-}
-
+// Every card is revealed as it is dealt or drawn, so "unseen" is exactly the
+// face-down stock and nothing else. That equality is the model's whole
+// invariant: break it and the reveal pool the coder divides by is wrong, which
+// desyncs the integer rather than producing a wrong card.
 static void check_conservation(RModel *m) {
-    int u = 0;
-    for (int s = 0; s < m->n; s++) u += m->unknown[s];
-    if (__builtin_popcountll(m->unseen) != m->deck_count + u)
+    if (__builtin_popcountll(m->unseen) != m->deck_count)
         m->err = REPLAY_ECONSERVATION;
 }
 
@@ -468,15 +404,6 @@ static void take_known(RModel *m, int seat, int id) {
     uint64_t bit = 1ull << id;
     if (!(m->known[seat] & bit)) { m->err = REPLAY_EKNOWN; return; }
     m->known[seat] &= ~bit;
-    m->unseen &= ~bit;  // no-op (known => already seen); keep symmetric
-}
-
-static void take_fresh(RModel *m, int seat, int id) {
-    uint64_t bit = 1ull << id;
-    if (!(m->unseen & bit)) { m->err = REPLAY_EFRESH; return; }
-    m->unseen &= ~bit;
-    if (m->unknown[seat] <= 0) { m->err = REPLAY_EHIDDEN; return; }
-    m->unknown[seat]--;
 }
 
 /* ---------------------------- output stream ----------------------------- */
@@ -515,7 +442,7 @@ static int table_pairs(const RModel *m, unsigned char (*pairs)[2]) {
 
 /* --------------------------- derived cascades --------------------------- */
 
-static int code_reveal(RModel *m, Coder *c, int seat);  // format 6, defined below
+static int code_reveal(RModel *m, Coder *c, int seat);  // defined below
 
 // Port of refillPlayerHandsWithEvents semantics (kernel refill_player_hands
 // projected onto public state). Emits DRAW logs; players who end the refill
@@ -526,15 +453,10 @@ static void draw_for(RModel *m, int seat) {
     while (hand_len(m, seat) < CARDS_PER_PLAYER) {
         if (m->deck_count > 0) {
             m->deck_count--;
-            if (fmt_inline_reveals(m->format)) {
-                // reveal the real drawn card inline (unseen now == stock).
-                int id = code_reveal(m, m->rev_coder, seat);
-                if (m->err) return;
-                pairs[nd][0] = (unsigned char)id;
-            } else {
-                m->unknown[seat]++;
-                pairs[nd][0] = REPLAY_CARD_HIDDEN;
-            }
+            // reveal the real drawn card inline (unseen == the stock).
+            int id = code_reveal(m, m->rev_coder, seat);
+            if (m->err) return;
+            pairs[nd][0] = (unsigned char)id;
             pairs[nd][1] = REPLAY_CARD_NONE;
             nd++;
         } else if (m->flipped_held) {
@@ -570,11 +492,11 @@ static void refill(RModel *m) {
 
     // First attacker, then clockwise SKIPPING the defender, then the defender
     // last (game.c refill_player_hands carries the why). The order is load
-    // bearing here in a way it is nowhere else: v6 reveals each drawn card
+    // bearing here in a way it is nowhere else: each drawn card is revealed
     // inline at the moment it is dealt, so a decoder that walks the table in a
     // different order hands the right cards to the wrong seats and desyncs the
-    // whole arithmetic stream from there on. This is the reason pre-v9 codes
-    // are rejected instead of re-read.
+    // whole arithmetic stream from there on. This is the reason the pre-fix
+    // versions are rejected instead of re-read.
     const int defender = m->defender;
     int p = m->first_attacker;
     bool visited[MAX_PLAYERS] = { false };
@@ -750,13 +672,20 @@ static void apply_round_end(RModel *m) {
 #define OPT_ROUND_END 4
 #define OPT_GOOD      5
 
-typedef struct { int8_t kind; int8_t a; int8_t id; } Opt;  // a: battle or seat; id -1 = fresh
+typedef struct { int8_t kind; int8_t a; int8_t id; } Opt;  // a: battle or seat; id: the card
 
 // The top-level menu — FIXED order (wire format!): for each seat ascending —
-// defender: covers (battle asc; known cards in preference order, then
-// fresh), pass (preference order, then fresh), pickup; attacker: attacks
-// (preference order, then fresh). round_end appended once everything is
-// covered. Mirrors the validate* rules, deliberately erring permissive.
+// defender: covers (battle asc, cards in preference order), pass (preference
+// order), pickup; attacker: attacks (preference order). round_end appended once
+// everything is covered. Mirrors the validate* rules, deliberately erring
+// permissive.
+//
+// THE FRESH OPTIONS WENT WITH THE RETRODICTION LINE. Each block used to end in
+// one extra "some card this seat holds but nobody has seen" entry, whose
+// identity a hypergeometric sub-menu then coded. Every hand is fully revealed
+// here, so `unknown` was always zero, every one of those guards was always
+// false, and the whole hypergeometric/complement apparatus under them was
+// unreachable in a shipping code.
 static int build_top_menu(RModel *m, Opt *opts, uint32_t *weights) {
     int n_opts = 0;
 #define ADD(K, A, ID, W) do { \
@@ -781,7 +710,6 @@ static int build_top_menu(RModel *m, Opt *opts, uint32_t *weights) {
     }
 
     int8_t kn[52];
-    int8_t scratch[52];
 
     for (int seat = 0; seat < m->n; seat++) {
         if (!m->status[seat]) continue;
@@ -797,10 +725,6 @@ static int build_top_menu(RModel *m, Opt *opts, uint32_t *weights) {
                 for (int i = 0; i < nk; i++) {
                     if (beats(m, kn[i], atk))
                         ADD(OPT_COVER, b, kn[i], geo(V1_COVER, pos++));
-                }
-                if (m->unknown[seat] > 0
-                    && unseen_matching(m, (Pred){ PRED_BEATS, 0, atk, 0 }, scratch) > 0) {
-                    ADD(OPT_COVER, b, -1, V1_COVER_FRESH);
                 }
             }
             // pass / perevod (validatePass: nothing covered, one rank on the
@@ -822,14 +746,12 @@ static int build_top_menu(RModel *m, Opt *opts, uint32_t *weights) {
             // an index across the two modes, because the mode is read out of the
             // code itself before the first atom.
             //
-            // It costs plenty, though. The FRESH option below is offered whenever
-            // the defender holds an unknown card of a matching rank, so this
-            // block is non-empty at very nearly every first defender decision of
-            // every bout - and moving it re-points pickup, every later seat's
-            // attacks and every good in all of those states. That is a second
-            // format renumber inside a week (the deal-order fix already spent
-            // that break, docs/DEAL_ORDER.md) or, far worse, old codes decoding
-            // silently as different moves.
+            // It costs plenty, though. This block is non-empty at very nearly
+            // every first defender decision of every bout - and moving it
+            // re-points pickup, every later seat's attacks and every good in all
+            // of those states. That is a second format renumber inside a week
+            // (the deal-order fix already spent that break, docs/DEAL_ORDER.md)
+            // or, far worse, old codes decoding silently as different moves.
             //
             // Splicing also keeps this menu's convention the same as legal.c's,
             // which gates the pass inside calc_pass_moves rather than reordering
@@ -848,10 +770,6 @@ static int build_top_menu(RModel *m, Opt *opts, uint32_t *weights) {
                         if (id_value(kn[i]) == v)
                             ADD(OPT_PASS, 0, kn[i], geo(V1_PASS, pos++));
                     }
-                    if (m->unknown[seat] > 0
-                        && unseen_matching(m, (Pred){ PRED_VALUE, v, 0, 0 }, scratch) > 0) {
-                        ADD(OPT_PASS, 0, -1, V1_PASS_FRESH);
-                    }
                 }
             }
             // pickup (validatePickup: any non-empty table)
@@ -865,8 +783,6 @@ static int build_top_menu(RModel *m, Opt *opts, uint32_t *weights) {
                     int pos = 0;
                     for (int i = 0; i < nk; i++)
                         ADD(OPT_ATTACK, seat, kn[i], geo(V1_ATTACK, pos++));
-                    if (m->unknown[seat] > 0 && m->unseen != 0)
-                        ADD(OPT_ATTACK, seat, -1, V1_ATTACK_FRESH_LEAD);
                 }
             } else if (uncovered + 1 <= def_hand) {
                 int nk = sorted_known(m, seat, kn);
@@ -874,10 +790,6 @@ static int build_top_menu(RModel *m, Opt *opts, uint32_t *weights) {
                 for (int i = 0; i < nk; i++) {
                     if (tv[id_value(kn[i])])
                         ADD(OPT_ATTACK, seat, kn[i], geo(V1_ATTACK, pos++));
-                }
-                if (m->unknown[seat] > 0
-                    && unseen_matching(m, (Pred){ PRED_TABLE, 0, 0, tv }, scratch) > 0) {
-                    ADD(OPT_ATTACK, seat, -1, V1_ATTACK_FRESH);
                 }
             }
         }
@@ -909,8 +821,8 @@ static int build_top_menu(RModel *m, Opt *opts, uint32_t *weights) {
 }
 
 // Continuation menus for multi-card ATTACK / PASS atoms: index 0 is always
-// STOP, then known cards in preference order, then fresh (-1). Constraints
-// are validated against the state at atom START, with `count` cards chosen.
+// STOP, then the seat's cards in preference order. Constraints are validated
+// against the state at atom START, with `count` cards chosen.
 static int build_attack_cont(const RModel *m, int seat, bool first_attack, int v0,
                              const bool *tv, int uncovered_before, int count,
                              int8_t *out) {
@@ -922,9 +834,6 @@ static int build_attack_cont(const RModel *m, int seat, bool first_attack, int v
         bool ok = first_attack ? id_value(kn[i]) == v0 : tv[id_value(kn[i])];
         if (ok) out[n++] = kn[i];
     }
-    Pred p = first_attack ? (Pred){ PRED_VALUE, v0, 0, 0 } : (Pred){ PRED_TABLE, 0, 0, tv };
-    int8_t scratch[52];
-    if (m->unknown[seat] > 0 && unseen_matching(m, p, scratch) > 0) out[n++] = -1;
     return n;
 }
 
@@ -936,53 +845,16 @@ static int build_pass_cont(const RModel *m, int seat, int v0, int next_seat,
     int nk = sorted_known(m, seat, kn);
     for (int i = 0; i < nk; i++)
         if (id_value(kn[i]) == v0) out[n++] = kn[i];
-    int8_t scratch[52];
-    if (m->unknown[seat] > 0
-        && unseen_matching(m, (Pred){ PRED_VALUE, v0, 0, 0 }, scratch) > 0) out[n++] = -1;
     return n;
 }
 
-/* -------------------------- fresh-card identity -------------------------- */
-// Hypergeometric "best of the player's u hidden cards out of the U unseen"
-// weights C(U-1-j, u-1) over the preference-ordered feasible list, quantized
-// to ID_QUANT, clamped >= 1. Uniform fallback when u < 2.
-
-static int code_fresh(RModel *m, Coder *c, int seat, Pred pred, int actual_id) {
-    int8_t feas[52];
-    int nf = unseen_matching(m, pred, feas);
-    if (nf == 0) { m->err = REPLAY_ENOFRESH; return -1; }
-    int chosen = -1;
-    if (c->encode) {
-        for (int j = 0; j < nf; j++)
-            if (feas[j] == actual_id) { chosen = j; break; }
-        if (chosen < 0) { m->err = REPLAY_ENOTFEAS; return -1; }
-    }
-    int U = __builtin_popcountll(m->unseen);
-    int u = m->unknown[seat];
-    uint32_t w[52];
-    if (u >= 2) {
-        uint64_t scale = comb64(U - 1, u - 1) / V1_ID_QUANT + 1;
-        for (int j = 0; j < nf; j++) {
-            uint64_t cw = (U - 1 - j >= u - 1) ? comb64(U - 1 - j, u - 1) : 0;
-            uint64_t q = cw / scale;
-            w[j] = q >= 1 ? (uint32_t)q : 1;
-        }
-    } else {
-        for (int j = 0; j < nf; j++) w[j] = 1;
-    }
-    int k = coder_code(c, w, nf, chosen);
-    if (c->err) { m->err = c->err; return -1; }
-    return feas[k];
-}
-
-/* --------------------------- format 6 helpers --------------------------- */
+/* ------------------------------ the reveal ------------------------------ */
 // Reveal ONE hidden card to `seat`, coded uniform over the unseen pool (a
 // uniformly shuffled deck makes the next dealt/drawn card uniform over what is
 // still unseen). The pool is enumerated in ascending id — a canonical order
 // both directions reproduce. Encode pulls the real id from m->rev; decode reads
-// it out of the integer. The card moves unseen -> known[seat]; unknown[] is
-// never touched, so in v6 every hand is fully known and the v5 reveal /
-// hypergeometric / complement machinery is simply never reached.
+// it out of the integer. The card moves unseen -> known[seat], which is what
+// makes every hand in the model an exact hand.
 static int code_reveal(RModel *m, Coder *c, int seat) {
     int8_t pool[52];
     int U = 0;
@@ -1005,7 +877,7 @@ static int code_reveal(RModel *m, Coder *c, int seat) {
 }
 
 // LEB128-style varint over the coder (8 bits/byte via coder_uniform(256)); used
-// for the v6 atom count. Encode reads *val; decode builds it.
+// for the header's atom count. Encode reads *val; decode builds it.
 static void code_varint(Coder *c, uint32_t *val) {
     if (c->encode) {
         uint32_t v = *val;
@@ -1031,16 +903,16 @@ static void code_varint(Coder *c, uint32_t *val) {
 /* ------------------------------ info source ------------------------------ */
 // Encode-side reader over the action stream, from either of two sources:
 //
-//   BYTES — the marshaled action bytes (replay.h format), for replay_encode /
+//   BYTES - the marshaled action bytes (replay.h format), for
 //     replay_encode_v6. Here the player_id -> seat mapping and the round_end
 //     synthesis stay caller-side.
 //   LOGS  — a played game's own GameLog array, for replay_encode_v6_from_game.
 //     Seats are already seats and the round_end rule is applied here, so no
 //     action ever has to be marshaled into a buffer at all.
 //
-// Everything downstream (find_top_index, run_replay, run_replay_v6, the coder,
-// the model) reads only the loaded fields, so it never learns which source it
-// is on — that is the point of keeping this behind one struct.
+// Everything downstream (find_top_index, run_replay_v6, the coder, the model)
+// reads only the loaded fields, so it never learns which source it is on - that
+// is the point of keeping this behind one struct.
 
 typedef struct {
     const unsigned char *buf;   // BYTES source; NULL on the LOGS source
@@ -1074,10 +946,9 @@ static unsigned char rep_wire_of(Card c) {
 
 // Is this log an atom, and which kind? The action stream is the info logs
 // (attack/cover/pass/pickup) plus a round_end marker for every DISCARD directly
-// preceded by a GOOD — a rule that had four independent copies (encode.ts
-// collectV6, ios_api.c build_encode_input, tests/replay_difftest.c,
-// tests/replay_v6_test.c). This is the kernel's copy; `i` indexes `logs`
-// because the round_end rule reads the PREVIOUS log.
+// preceded by a GOOD - a rule that had four independent copies across the TS
+// producer, the iOS bridge and two native tests. This is the kernel's copy; `i`
+// indexes `logs` because the round_end rule reads the PREVIOUS log.
 //
 // GOOD is the subtle one. Most GOODs are NOT atoms:
 //   * a GOOD run that ends in a DISCARD is the bout closing — that whole run
@@ -1120,8 +991,8 @@ int replay_atoms_before_log(const GameLog *logs, int num_logs, int cut_log) {
     return n;
 }
 
-// Atoms a game's logs would produce, capped at max_atoms. v6 codes the count
-// into the header before the stream runs, so it must be known up front.
+// Atoms a game's logs would produce, capped at max_atoms. The count goes into
+// the header before the stream runs, so it must be known up front.
 static int count_atoms_from_logs(const GameLog *logs, int num_logs, int max_atoms) {
     int n = 0;
     for (int i = 0; i < num_logs && n < max_atoms; i++)
@@ -1227,14 +1098,17 @@ static int find_top_index(RModel *m, const Opt *opts, int n_opts, const Src *s) 
         m->err = REPLAY_EROUNDEND;
         return -1;
     }
+    // Every option names a real card, so a logged card the model does not have
+    // in that hand simply matches nothing and falls through to ENOTINMENU. That
+    // is the honest answer: there is no longer a "some unseen card" option for a
+    // mismatch to land on and be coded as.
     switch (s->kind) {
         case LOG_ATTACK: {
             int id0 = s->pairs[0][0];
-            bool want_known = (m->known[s->seat] >> id0) & 1ull;
             for (int i = 0; i < n_opts; i++) {
                 const Opt *o = &opts[i];
                 if (o->kind != OPT_ATTACK || o->a != s->seat) continue;
-                if (want_known ? o->id == id0 : o->id < 0) return i;
+                if (o->id == id0) return i;
             }
             break;
         }
@@ -1250,21 +1124,19 @@ static int find_top_index(RModel *m, const Opt *opts, int n_opts, const Src *s) 
                 }
             }
             int cov = s->pairs[0][0];
-            bool want_known = (m->known[m->defender] >> cov) & 1ull;
             for (int i = 0; i < n_opts; i++) {
                 const Opt *o = &opts[i];
                 if (o->kind != OPT_COVER || o->a != b_idx) continue;
-                if (want_known ? o->id == cov : o->id < 0) return i;
+                if (o->id == cov) return i;
             }
             break;
         }
         case LOG_PASS: {
             int id0 = s->pairs[0][0];
-            bool want_known = (m->known[m->defender] >> id0) & 1ull;
             for (int i = 0; i < n_opts; i++) {
                 const Opt *o = &opts[i];
                 if (o->kind != OPT_PASS) continue;
-                if (want_known ? o->id == id0 : o->id < 0) return i;
+                if (o->id == id0) return i;
             }
             break;
         }
@@ -1297,16 +1169,8 @@ static void atom_attack(RModel *m, Coder *c, const Src *s, Opt opt) {
     }
     int8_t ids[REPLAY_MAX_PAIRS];
     int n_ids = 0;
-    int id0;
-    if (opt.id >= 0) {
-        id0 = opt.id;
-        take_known(m, seat, id0);
-    } else {
-        Pred p = first_attack ? (Pred){ PRED_ANY, 0, 0, 0 } : (Pred){ PRED_TABLE, 0, 0, tv };
-        id0 = code_fresh(m, c, seat, p, s ? s->pairs[0][0] : -1);
-        if (m->err) return;
-        take_fresh(m, seat, id0);
-    }
+    int id0 = opt.id;
+    take_known(m, seat, id0);
     if (m->err) return;
     ids[n_ids++] = (int8_t)id0;
     int v0 = id_value(id0);
@@ -1320,11 +1184,9 @@ static void atom_attack(RModel *m, Coder *c, const Src *s, Opt opt) {
         if (s) {
             if (n_ids < s->n_pairs) {
                 int next_card = s->pairs[n_ids][0];
-                bool want_known = (m->known[seat] >> next_card) & 1ull;
                 int found = -1;
-                for (int j = 0; j < n_cont; j++) {
-                    if (want_known ? cont[j] == next_card : cont[j] < 0) { found = j; break; }
-                }
+                for (int j = 0; j < n_cont; j++)
+                    if (cont[j] == next_card) { found = j; break; }
                 cont_chosen = 1 + found;
                 if (cont_chosen == 0) { m->err = REPLAY_EATTCONT; return; }
             } else {
@@ -1337,17 +1199,8 @@ static void atom_attack(RModel *m, Coder *c, const Src *s, Opt opt) {
         int k = coder_code(c, cw, 1 + n_cont, cont_chosen);
         if (c->err) { m->err = c->err; return; }
         if (k == 0) break;
-        int pick = cont[k - 1];
-        int id;
-        if (pick >= 0) {
-            id = pick;
-            take_known(m, seat, id);
-        } else {
-            Pred p = first_attack ? (Pred){ PRED_VALUE, v0, 0, 0 } : (Pred){ PRED_TABLE, 0, 0, tv };
-            id = code_fresh(m, c, seat, p, s ? s->pairs[n_ids][0] : -1);
-            if (m->err) return;
-            take_fresh(m, seat, id);
-        }
+        int id = cont[k - 1];
+        take_known(m, seat, id);
         if (m->err) return;
         if (n_ids >= REPLAY_MAX_PAIRS) { m->err = REPLAY_ECAP; return; }
         ids[n_ids++] = (int8_t)id;
@@ -1355,19 +1208,10 @@ static void atom_attack(RModel *m, Coder *c, const Src *s, Opt opt) {
     apply_attack(m, seat, ids, n_ids);
 }
 
-static void atom_cover(RModel *m, Coder *c, const Src *s, Opt opt) {
+static void atom_cover(RModel *m, Opt opt) {
     int b = opt.a;
-    int atk = m->battles[b].attack;
-    int cover_id;
-    if (opt.id >= 0) {
-        cover_id = opt.id;
-        take_known(m, m->defender, cover_id);
-    } else {
-        cover_id = code_fresh(m, c, m->defender, (Pred){ PRED_BEATS, 0, atk, 0 },
-                              s ? s->pairs[0][0] : -1);
-        if (m->err) return;
-        take_fresh(m, m->defender, cover_id);
-    }
+    int cover_id = opt.id;
+    take_known(m, m->defender, cover_id);
     if (m->err) return;
     apply_cover(m, b, cover_id);
 }
@@ -1379,16 +1223,8 @@ static void atom_pass(RModel *m, Coder *c, const Src *s, Opt opt) {
     int next_seat = next_in(m, m->defender);
     int8_t ids[REPLAY_MAX_PAIRS];
     int n_ids = 0;
-    int id0;
-    if (opt.id >= 0) {
-        id0 = opt.id;
-        take_known(m, seat, id0);
-    } else {
-        id0 = code_fresh(m, c, seat, (Pred){ PRED_VALUE, v0, 0, 0 },
-                         s ? s->pairs[0][0] : -1);
-        if (m->err) return;
-        take_fresh(m, seat, id0);
-    }
+    int id0 = opt.id;
+    take_known(m, seat, id0);
     if (m->err) return;
     ids[n_ids++] = (int8_t)id0;
     for (;;) {
@@ -1398,11 +1234,9 @@ static void atom_pass(RModel *m, Coder *c, const Src *s, Opt opt) {
         if (s) {
             if (n_ids < s->n_pairs) {
                 int next_card = s->pairs[n_ids][0];
-                bool want_known = (m->known[seat] >> next_card) & 1ull;
                 int found = -1;
-                for (int j = 0; j < n_cont; j++) {
-                    if (want_known ? cont[j] == next_card : cont[j] < 0) { found = j; break; }
-                }
+                for (int j = 0; j < n_cont; j++)
+                    if (cont[j] == next_card) { found = j; break; }
                 cont_chosen = 1 + found;
                 if (cont_chosen == 0) { m->err = REPLAY_EPASSCONT; return; }
             } else {
@@ -1415,17 +1249,8 @@ static void atom_pass(RModel *m, Coder *c, const Src *s, Opt opt) {
         int k = coder_code(c, cw, 1 + n_cont, cont_chosen);
         if (c->err) { m->err = c->err; return; }
         if (k == 0) break;
-        int pick = cont[k - 1];
-        int id;
-        if (pick >= 0) {
-            id = pick;
-            take_known(m, seat, id);
-        } else {
-            id = code_fresh(m, c, seat, (Pred){ PRED_VALUE, v0, 0, 0 },
-                            s ? s->pairs[n_ids][0] : -1);
-            if (m->err) return;
-            take_fresh(m, seat, id);
-        }
+        int id = cont[k - 1];
+        take_known(m, seat, id);
         if (m->err) return;
         if (n_ids >= REPLAY_MAX_PAIRS) { m->err = REPLAY_ECAP; return; }
         ids[n_ids++] = (int8_t)id;
@@ -1439,22 +1264,17 @@ static void atom_pass(RModel *m, Coder *c, const Src *s, Opt opt) {
 // the integer. This symmetry is the round-trip guarantee.
 
 static void model_init(RModel *m, int n, int trump_id, int first_attacker,
-                       unsigned char *out, int out_pos, int out_cap, int format) {
+                       unsigned char *out, int out_pos, int out_cap) {
     memset(m, 0, sizeof *m);
     m->n = n;
     m->trump_id = trump_id;
     m->power_suit = trump_id / 13;
-    m->format = format;
-    m->pass_allowed = 1;   // perevodnoy default; a v7 decode overrides from the mode bit
+    m->pass_allowed = 1;   // perevodnoy default; the decode overrides from the mode bit
     int min_v = min_value_for(n);  // THE deck rule — card.h, shared with game.c
     int deck_size = 4 * (ACE_VALUE - min_v + 1);
-    for (int s = 0; s < n; s++) {
-        m->status[s] = true;
-        // The inline-reveal line deals the initial hands explicitly
-        // (code_reveal), so they start empty and are filled before the first
-        // atom; the retrodiction line leaves them hidden.
-        m->unknown[s] = fmt_inline_reveals(format) ? 0 : CARDS_PER_PLAYER;
-    }
+    // Hands start EMPTY: the initial deal is coded card by card (deal_hand_v6)
+    // before the first atom, so there is no such thing as a hidden holding here.
+    for (int s = 0; s < n; s++) m->status[s] = true;
     m->deck_count = deck_size - n * CARDS_PER_PLAYER - 1;
     m->flipped_held = true;
     m->first_attacker = first_attacker;
@@ -1474,56 +1294,18 @@ static void model_init(RModel *m, int n, int trump_id, int first_attacker,
 static Opt g_opts[MENU_CAP];
 static uint32_t g_weights[MENU_CAP];
 
-static void run_replay(RModel *m, Coder *c, Src *s) {
-    int atoms = 0;
-    while (in_count(m) > 1) {
-        if (++atoms > REPLAY_MAX_ATOMS) { m->err = REPLAY_EATOMS; return; }
-        check_conservation(m);
-        if (m->err) return;
-
-        int n_opts = build_top_menu(m, g_opts, g_weights);
-        if (m->err) return;
-        if (n_opts == 0) { m->err = REPLAY_ENOMOVES; return; }
-
-        int chosen = -1;
-        if (s) {
-            if (src_exhausted(s)) { m->err = REPLAY_EINCOMPLETE; return; }
-            int perr = src_load(s, m->n);
-            if (perr) { m->err = perr; return; }
-            chosen = find_top_index(m, g_opts, n_opts, s);
-            if (m->err) return;
-        }
-        int k = coder_code(c, g_weights, n_opts, chosen);
-        if (c->err) { m->err = c->err; return; }
-        Opt opt = g_opts[k];
-
-        switch (opt.kind) {
-            case OPT_ATTACK:    atom_attack(m, c, s, opt); break;
-            case OPT_COVER:     atom_cover(m, c, s, opt); break;
-            case OPT_PASS:      atom_pass(m, c, s, opt); break;
-            case OPT_PICKUP:    apply_pickup(m); break;
-            case OPT_ROUND_END: apply_round_end(m); break;
-            case OPT_GOOD:      apply_good(m, opt.a); break;
-        }
-        if (m->err) return;
-        if (c->err) { m->err = c->err; return; }
-
-        if (s) src_advance(s);
-    }
-    if (s && !src_exhausted(s)) m->err = REPLAY_ELOGSAFTER;
-}
-
-// Format 6 driver. Deals every seat's real initial hand (coded reveals, emitted
-// as one LOG_DRAW per seat), then runs exactly `n_atoms` top-level decisions —
-// so the stream may stop MID-GAME. Hidden cards are coded as they are dealt or
+// The driver. Deals every seat's real initial hand (coded reveals, emitted as
+// one LOG_DRAW per seat), then runs exactly `n_atoms` top-level decisions - so
+// the stream may stop MID-GAME. Hidden cards are coded as they are dealt or
 // drawn (draw_for reaches the coder via m->rev_coder), so no reveal is ever
-// deferred and the decoded stream is fully identity-resolved. Shares every menu,
-// weight, atom and cascade with v5 — only card *revelation* moves earlier.
+// deferred and the decoded stream is fully identity-resolved.
+//
 // Deal one seat's CARDS_PER_PLAYER-card initial hand. A hand is a SET, so we
 // code it as an ASCENDING combination — each card uniform over the unseen cards
 // with a strictly larger id than the last — which spends no bits on within-hand
-// order (v5's ~log2(6!) per hand of slack). Draws stay single-card ordered
-// reveals (a draw is genuinely time-ordered). Emitted as one LOG_DRAW per seat.
+// order (the ~log2(6!) per hand an ordered deal would waste). Draws stay
+// single-card ordered reveals (a draw is genuinely time-ordered). Emitted as one
+// LOG_DRAW per seat.
 static void deal_hand_v6(RModel *m, Coder *c, int seat) {
     int real[CARDS_PER_PLAYER];
     if (c->encode) {
@@ -1598,7 +1380,7 @@ static void run_replay_v6(RModel *m, Coder *c, Src *s, uint32_t n_atoms) {
 
         switch (opt.kind) {
             case OPT_ATTACK:    atom_attack(m, c, s, opt); break;
-            case OPT_COVER:     atom_cover(m, c, s, opt); break;
+            case OPT_COVER:     atom_cover(m, opt); break;
             case OPT_PASS:      atom_pass(m, c, s, opt); break;
             case OPT_PICKUP:    apply_pickup(m); break;
             case OPT_ROUND_END: apply_round_end(m); break;
@@ -1622,52 +1404,6 @@ static int trump_alphabet(int n, int8_t *out) {
     for (int suit = 0; suit < 4; suit++)
         for (int v = min_v; v < ACE_VALUE; v++) out[cnt++] = (int8_t)(suit * 13 + (v - 1));
     return cnt;
-}
-
-int replay_encode(const unsigned char *in, int in_len,
-                  unsigned char *out, int out_cap) {
-    g_err_detail = 0;
-    comb_init();
-    if (in_len < 5) return -REPLAY_EINPUT;
-    int n = in[0], trump_id = in[1], fa = in[2];
-    if (n < 2 || n > MAX_PLAYERS) return -REPLAY_EINPUT;
-    if (trump_id > 51) return -REPLAY_EINPUT;
-    if (fa >= n) return -REPLAY_EINPUT;
-    int n_actions = in[3] | (in[4] << 8);
-
-    Src s;
-    memset(&s, 0, sizeof s);
-    s.buf = in;
-    s.len = in_len;
-    s.pos = 5;
-    s.count = n_actions;
-
-    Coder c;
-    memset(&c, 0, sizeof c);
-    c.encode = true;
-
-    coder_uniform(&c, REPLAY_VERSION_ALPHABET, REPLAY_FORMAT_VERSION_V9);
-    coder_uniform(&c, 7, n - 2);
-    int8_t alpha[48];
-    int alen = trump_alphabet(n, alpha);
-    int t = -1;
-    for (int i = 0; i < alen; i++)
-        if (alpha[i] == trump_id) { t = i; break; }
-    if (t < 0) return -REPLAY_EHEADER;  // trump not in alphabet (incl. aces)
-    coder_uniform(&c, alen, t);
-    coder_uniform(&c, n, fa);
-    if (c.err) return -c.err;
-
-    RModel *m = &g_model;
-    model_init(m, n, trump_id, fa, 0, 0, 0, REPLAY_FORMAT_VERSION_V9);
-    run_replay(m, &c, &s);
-    if (m->err) return -m->err;
-    if (c.err) return -c.err;
-
-    if (!coder_finish(&c, &g_bn)) return -REPLAY_ECAP;
-    int len = bn_to_bytes_be(&g_bn, out, out_cap);
-    if (len < 0) return -REPLAY_ECAP;
-    return len;
 }
 
 // The lowest-trump seat of the DEALT hands, read straight off the reveal
@@ -1695,9 +1431,9 @@ static int reveal_lowest_trump_seat(const unsigned char *reveals, int n_reveals,
     return lowest_p;
 }
 
-// The v6 header + run, shared by both producers. Everything above this differs
+// The header + run, shared by both producers. Everything above this differs
 // only in where the actions and the reveals came from; from here down there is
-// one v6 encoder, so the two entry points cannot drift on the wire format.
+// one encoder, so the two entry points cannot drift on the wire format.
 static int encode_v6_run(int n, int trump_id, int fa, int n_actions,
                          int pass_allowed,
                          const unsigned char *reveals, int n_reveals,
@@ -1706,11 +1442,11 @@ static int encode_v6_run(int n, int trump_id, int fa, int n_actions,
     memset(&c, 0, sizeof c);
     c.encode = true;
 
-    // v8's forced-opening bit is decided HERE, from the deal itself, not from a
+    // The forced-opening bit is decided HERE, from the deal itself, not from a
     // caller's claim: an opener that is not the seat the reveals derive was
     // imposed (the fool's penalty), and one that is, was not. A deal with no
     // trump at all derives nothing, so nothing was overridden as far as a
-    // replay can tell - that case stays on v6's existing no-trump path, where
+    // replay can tell - that case stays on the no-trump path, where
     // replay_steps already hands the recorded seat back to the engine.
     const int derived = reveal_lowest_trump_seat(reveals, n_reveals, n, trump_id);
     const int forced  = (derived >= 0 && derived != fa) ? 1 : 0;
@@ -1737,7 +1473,7 @@ static int encode_v6_run(int n, int trump_id, int fa, int n_actions,
     if (c.err) return -c.err;
 
     RModel *m = &g_model;
-    model_init(m, n, trump_id, fa, 0, 0, 0, REPLAY_FORMAT_VERSION_V10);
+    model_init(m, n, trump_id, fa, 0, 0, 0);
     m->pass_allowed = pass_allowed ? 1 : 0;
     m->rev = reveals;
     m->rev_n = n_reveals;
@@ -1755,7 +1491,6 @@ static int encode_v6_run(int n, int trump_id, int fa, int n_actions,
 int replay_encode_v6(const unsigned char *in, int in_len,
                      unsigned char *out, int out_cap) {
     g_err_detail = 0;
-    comb_init();
     if (in_len < 7) return -REPLAY_EINPUT;
     int n = in[0], trump_id = in[1], fa = in[2];
     if (n < 2 || n > MAX_PLAYERS) return -REPLAY_EINPUT;
@@ -1853,7 +1588,6 @@ static int deal_reveals_from_seed(const unsigned char *seed, int seed_len, int n
 int replay_encode_v6_from_game(const Game *g, const unsigned char *seed, int seed_len,
                                int max_atoms, unsigned char *out, int out_cap) {
     g_err_detail = 0;
-    comb_init();
     if (!g || !seed || seed_len < FOOLISH_SEED_LEN) return -REPLAY_EINPUT;
     if (g->num_logs >= MAX_LOGS) return -REPLAY_ETOOLONG;  // overflowed → untrusted
     int n = g->num_players;
@@ -1910,7 +1644,6 @@ int replay_encode_v6_from_game(const Game *g, const unsigned char *seed, int see
 static int decode_impl(const unsigned char *in, int in_len,
                        unsigned char *out, int out_cap, ReplayHeader *hdr) {
     g_err_detail = 0;
-    comb_init();
     if (in_len < 0 || in_len > REPLAY_MAX_INT_BYTES) return -REPLAY_ECAP;
     if (out && out_cap < REPLAY_DEC_HDR) return -REPLAY_ECAP;
     if (!bn_from_bytes_be(&g_bn, in, in_len)) return -REPLAY_ECAP;
@@ -1920,22 +1653,21 @@ static int decode_impl(const unsigned char *in, int in_len,
     c.encode = false;
     c.x = &g_bn;
 
-    // Exactly two versions decode: the deal-order fix retired 5, 6, 7 and 8
-    // wholesale (replay.h), and a retired code is refused rather than re-read
-    // because the game it describes is not the game this kernel would play.
+    // EXACTLY ONE VERSION DECODES (replay.h). Versions 5 through 9 are all
+    // refused rather than re-read: the deal-order fix means the game those
+    // bytes describe is not the game this kernel would play, and 9 hid the deal
+    // besides. Refusing is the point - a loud "this was played under older
+    // rules" beats a quiet fiction - and the version travels in the detail so
+    // the message can name it.
     int version = coder_uniform(&c, REPLAY_VERSION_ALPHABET, -1);
-    if (version != REPLAY_FORMAT_VERSION_V9 && version != REPLAY_FORMAT_VERSION_V10) {
+    if (version != REPLAY_FORMAT_VERSION_V10) {
         g_err_detail = version;
         return -REPLAY_EVERSION;
     }
-    // The inline-reveal line carries a pass-mode bit right after the version
-    // symbol; the retrodiction line carries none and is perevodnoy by
-    // definition.
-    int pass_allowed = 1;
-    if (version == REPLAY_FORMAT_VERSION_V10) {
-        pass_allowed = coder_uniform(&c, 2, -1);
-        if (c.err) return -c.err;
-    }
+    // The pass-mode bit, right after the version symbol: it decides the MENU
+    // every later symbol is an index into, so it is read before anything else.
+    int pass_allowed = coder_uniform(&c, 2, -1);
+    if (c.err) return -c.err;
     int n = coder_uniform(&c, 7, -1) + 2;
     int8_t alpha[48];
     int alen = trump_alphabet(n, alpha);
@@ -1943,40 +1675,31 @@ static int decode_impl(const unsigned char *in, int in_len,
     int first_attacker = coder_uniform(&c, n, -1);
     if (c.err) return -c.err;
     // The forced-opening bit, and the derived seat that comes with it when set
-    // (replay.h). The retrodiction line carries neither and is never forced.
-    int forced_opening = 0, derived_opening = -1;
-    if (version == REPLAY_FORMAT_VERSION_V10) {
-        forced_opening = coder_uniform(&c, 2, -1);
+    // (replay.h).
+    int forced_opening = coder_uniform(&c, 2, -1);
+    if (c.err) return -c.err;
+    int derived_opening = -1;
+    if (forced_opening) {
+        derived_opening = coder_uniform(&c, n, -1);
         if (c.err) return -c.err;
-        if (forced_opening) {
-            derived_opening = coder_uniform(&c, n, -1);
-            if (c.err) return -c.err;
-        }
     }
 
     RModel *m = &g_model;
     model_init(m, n, trump_id, first_attacker, out, REPLAY_DEC_HDR,
-               out ? out_cap : 0, version);
+               out ? out_cap : 0);
     m->pass_allowed = pass_allowed;
-    if (fmt_inline_reveals(version)) {
-        uint32_t atoms = 0;
-        code_varint(&c, &atoms);
-        if (c.err) return -c.err;
-        run_replay_v6(m, &c, 0, atoms);
-    } else {
-        run_replay(m, &c, 0);
-    }
+    uint32_t atoms = 0;
+    code_varint(&c, &atoms);
+    if (c.err) return -c.err;
+    run_replay_v6(m, &c, 0, atoms);
     if (m->err) return -m->err;
     if (!bn_is_zero(&g_bn)) return -REPLAY_ELEFTOVER;
-    // The retrodiction line requires a single fool; an inline-reveal code may
-    // legitimately be a mid-game cut where >1 players are still IN - then there
-    // is no fool yet (out[4] = 0xFF).
+    // A code may legitimately be a mid-game cut where >1 players are still IN -
+    // then there is no fool yet (out[4] = 0xFF).
     int fool = -1;
     if (in_count(m) == 1) {
         for (int seat = 0; seat < n; seat++)
             if (m->status[seat]) fool = seat;
-    } else if (version == REPLAY_FORMAT_VERSION_V9) {
-        return -REPLAY_ENOFOOL;
     }
 
     if (hdr) {
@@ -2030,12 +1753,6 @@ int replay_decode_atoms_v6(const unsigned char *in, int in_len,
     g_atom_sink = 0;
     g_atom_ctx  = 0;
     if (r < 0) return r;
-    // The retrodiction line hides the deal, so its atoms are not a deck and
-    // cannot rebuild a Game. Only the inline-reveal line carries the real deal.
-    if (!fmt_inline_reveals(hdr->version)) {
-        g_err_detail = hdr->version;
-        return -REPLAY_EVERSION;
-    }
     return REPLAY_EOK;
 }
 

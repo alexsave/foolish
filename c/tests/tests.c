@@ -3122,51 +3122,68 @@ static void test_replay_v6_refuses_an_overflowed_log(void) {
     CHECK(r == -REPLAY_ETOOLONG, "a full log buffer refuses as ETOOLONG, not EINPUT");
 }
 
-static void test_replay_steps_refuses_v5(void) {
-    static unsigned char v5[1 << 16];
-    static unsigned char in[1 << 16];
-    Game g;
+// EVERY RETIRED VERSION IS REFUSED, LOUDLY. The codec has had ten formats and
+// exactly one of them decodes; the others are not merely unsupported, they
+// describe games this kernel would not play (the deal order changed under 5..8,
+// and 9 hid the deal and had its hands retrodicted by complement). A code
+// carrying one of those numbers must come back as REPLAY_EVERSION with the
+// version in the detail - never as a quietly different game, and never as some
+// other error that sends a reader hunting through the coder.
+//
+// The version is the FIRST symbol, coded uniform over REPLAY_VERSION_ALPHABET,
+// so a decoder reads it as `x % 16` (coder_uniform's all-ones pop). That makes
+// the smallest code carrying version v the single byte v itself, which is what
+// this walks - every number in the alphabet, not just the ones that were once
+// real, because an unknown FUTURE version has to fail the same way.
+//
+// MUTATION-CHECKED: adding `|| version == 9` back to decode_impl's guard fails
+// this ("version 9 is refused"), and so does dropping the g_err_detail
+// assignment ("the refusal names the version").
+static void test_replay_refuses_every_retired_version(void) {
+    static unsigned char out[1 << 16];
+    char msg[160];
+    for (int v = 0; v < REPLAY_VERSION_ALPHABET; v++) {
+        if (v == REPLAY_FORMAT_VERSION_V10) continue;
+        const unsigned char code[1] = { (unsigned char)v };
+
+        int r = replay_decode(code, 1, out, (int)sizeof out);
+        snprintf(msg, sizeof msg, "version %d is refused (got %d)", v, r);
+        CHECK(r == -REPLAY_EVERSION, msg);
+        snprintf(msg, sizeof msg, "the refusal names version %d (detail %d)",
+                 v, replay_last_error_detail());
+        CHECK(replay_last_error_detail() == v, msg);
+
+        // The same through the two readers a share code actually reaches: the
+        // atom decoder the FMSG body uses, and the step rebuilder the replay
+        // screen uses. Neither may render a frame of a code it cannot read.
+        ReplayHeader hdr;
+        memset(&hdr, 0, sizeof hdr);
+        int a = replay_decode_atoms_v6(code, 1, &hdr, 0, 0);
+        snprintf(msg, sizeof msg, "version %d refused by the atom decoder (got %d)", v, a);
+        CHECK(a == -REPLAY_EVERSION, msg);
+
+        RsTestCtx ctx;
+        memset(&ctx, 0, sizeof ctx);
+        int st = replay_steps_v6(code, 1, VIEW_SPECTATOR, 0, rs_test_sink, &ctx);
+        snprintf(msg, sizeof msg, "version %d refused by replay_steps (got %d)", v, st);
+        CHECK(st == -REPLAY_EVERSION, msg);
+        CHECK(ctx.n_events == 0, "a refused code renders nothing");
+    }
+
+    // And the surviving version is not swept up by the guard: a real code still
+    // decodes. Without this the loop above passes just as well against a decoder
+    // that refuses everything.
+    static Game g;
+    static unsigned char real[1 << 16];
     unsigned char seed[FOOLISH_SEED_LEN];
     if (!rs_play_seeded(&g, 4, 4242, seed)) { CHECK(0, "seeded game plays out"); return; }
-
-    // A real v5 code for the same game: version byte 5 through the v5 encoder.
-    int fa = replay_first_attacker_from_logs(g.logs, g.num_logs);
-    int pos = 0;
-    in[pos++] = 4;
-    in[pos++] = (unsigned char)card_to_id(g.flipped);
-    in[pos++] = (unsigned char)(fa < 0 ? 0 : fa);
-    int n_actions = 0, count_at = pos;
-    in[pos++] = 0; in[pos++] = 0;
-    for (int i = 0; i < g.num_logs; i++) {
-        const GameLog *l = &g.logs[i];
-        int kind = -1;
-        if (l->log_type == LOG_ATTACK) kind = LOG_ATTACK;
-        else if (l->log_type == LOG_COVER) kind = LOG_COVER;
-        else if (l->log_type == LOG_PASS) kind = LOG_PASS;
-        else if (l->log_type == LOG_PICKUP) kind = LOG_PICKUP;
-        else continue;
-        in[pos++] = (unsigned char)kind;
-        in[pos++] = (unsigned char)(l->player_idx < 0 ? 0xFF : l->player_idx);
-        in[pos++] = (unsigned char)l->num_pairs;
-        for (int p = 0; p < l->num_pairs; p++) {
-            in[pos++] = (unsigned char)card_to_id(l->pairs[p].primary);
-            in[pos++] = card_is_none(l->pairs[p].target)
-                        ? (unsigned char)REPLAY_CARD_NONE
-                        : (unsigned char)card_to_id(l->pairs[p].target);
-        }
-        n_actions++;
-    }
-    in[count_at] = (unsigned char)(n_actions & 0xff);
-    in[count_at + 1] = (unsigned char)((n_actions >> 8) & 0xff);
-
-    int enc = replay_encode(in, pos, v5, (int)sizeof v5);
-    if (enc <= 0) return;  // the v5 oracle is frozen; if it will not encode, nothing to assert
-
-    RsTestCtx ctx;
-    memset(&ctx, 0, sizeof ctx);
-    int r = replay_steps_v6(v5, enc, VIEW_SPECTATOR, 0, rs_test_sink, &ctx);
-    CHECK(r == -REPLAY_EVERSION, "a v5 code is refused: it hides the deal");
-    CHECK(ctx.n_events == 0, "a refused code renders nothing");
+    int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 30,
+                                         real, (int)sizeof real);
+    CHECK(enc > 0, "the played game has a code");
+    if (enc <= 0) return;
+    int dec = replay_decode(real, enc, out, (int)sizeof out);
+    CHECK(dec > 0, "a v10 code still decodes");
+    CHECK(dec > 0 && out[0] == REPLAY_FORMAT_VERSION_V10, "and says so");
 }
 
 /* ---------------- A6: reset to lobby is one transform -------------------- */
@@ -6229,7 +6246,7 @@ int main(void) {
     test_evwire_read_round_trips_the_writers_own_events();
     test_evwire_read_refuses_a_malformed_sequence();
     test_evwire_frames_settlement_cut();
-    test_replay_steps_refuses_v5();
+    test_replay_refuses_every_retired_version();
     test_replay_v6_refuses_an_overflowed_log();
     test_bot_drive_preferred();
     test_link_parse();

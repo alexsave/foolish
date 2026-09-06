@@ -975,9 +975,9 @@ export const finalizeEndedGame = async (game: Game): Promise<void> => {
     if (sessionLogs.length === 0) packedLogBytes = undefined;
 
     // Compress the finished session into a replay snapshot (game_snapshots
-    // row) and retire its logs. verifyRoundTrip both encodes and proves the
-    // encoding decodes back to the exact action sequence — only on success do
-    // we retire the packed session log.
+    // row) and retire its logs. verifyRoundTripV6FromGame both encodes and
+    // proves the encoding decodes back to the exact action sequence - only on
+    // success do we retire the packed session log.
     try {
         // Lazy import: the replay codec is only needed here, at game end.
         const { verifyRoundTripV6FromGame } = await replayEncodeMod();

@@ -954,95 +954,15 @@ int fio_game_over(void) {
 
 // base32 lives in replay.c (replay_b32_decode / replay_b32_encode).
 
-// card → wire byte (suit*13 + value-1).
-static unsigned char wire_of(Card c) {
-    if (card_is_none(c)) return REPLAY_CARD_NONE;
-    if (c.suit < 0 || c.value < 0) return REPLAY_CARD_HIDDEN;
-    return (unsigned char)(c.suit * 13 + (c.value - 1));
-}
-
-// makeSource (encode.ts / replay_difftest.c build_encode_input): the info logs
-// (attack/cover/pass/pickup) plus a round_end marker for every DISCARD directly
-// preceded by a GOOD. Header = [n][trump_id][first_attacker][u16 n_actions].
-// Failure returns are -REPLAY_E*, so the caller can tell the build's documented
-// ceiling (ETOOLONG, which every caller skips) from a real fault.
-static int build_encode_input(const Game *g, unsigned char *out, int cap) {
-    if (g->num_logs >= MAX_LOGS) return -REPLAY_ETOOLONG;   // overflowed → untrusted
-    int trump_id = g->flipped.suit * 13 + (g->flipped.value - 1);
-    int q = 5, n_actions = 0;
-    for (int i = 0; i < g->num_logs; i++) {
-        const GameLog *l = &g->logs[i];
-        int info = l->log_type == LOG_ATTACK || l->log_type == LOG_COVER
-                || l->log_type == LOG_PASS || l->log_type == LOG_PICKUP;
-        if (info) {
-            if (q + 3 + l->num_pairs * 2 > cap) return -REPLAY_EINPUT;
-            out[q++] = (unsigned char)l->log_type;
-            out[q++] = (unsigned char)l->player_idx;
-            out[q++] = (unsigned char)l->num_pairs;
-            for (int jx = 0; jx < l->num_pairs; jx++) {
-                out[q++] = wire_of(l->pairs[jx].primary);
-                out[q++] = wire_of(l->pairs[jx].target);
-            }
-            n_actions++;
-        } else if (l->log_type == LOG_DISCARD && i > 0 && g->logs[i - 1].log_type == LOG_GOOD) {
-            if (q + 3 > cap) return -REPLAY_EINPUT;
-            out[q++] = (unsigned char)REPLAY_ROUND_END;
-            out[q++] = 0xFF;
-            out[q++] = 0;
-            n_actions++;
-        }
-    }
-    out[0] = (unsigned char)g->num_players;
-    out[1] = (unsigned char)trump_id;
-    // Header slot 2 is "the seat that made the OPENING attack" — the decoder
-    // seeds its model with it and, on the first atom, offers attack options to
-    // that seat alone (replay.c build_top_menu). g->first_attacker cannot be
-    // used: it is set at the deal (lowest trump) but then REASSIGNED on every
-    // bout transition (game.c), so by the time a finished game is encoded it
-    // holds the LAST round's attacker. Whenever the game's last attacker was
-    // not its first, the opening ATTACK log had no matching menu option and
-    // encode died with REPLAY_ENOTINMENU on step 0 — ~50% of 2p and ~75% of 4p
-    // finished games. Derive it from the log, as the other three encoders
-    // already do (tests/replay_difftest.c, tests/replay_v6_test.c,
-    // _shared/common/replay/encode.ts). NOTE: fio_state_json's read of
-    // g->first_attacker is correct and must stay — a live view wants the
-    // CURRENT round's attacker.
-    int first_attacker = -1;
-    for (int i = 0; i < g->num_logs && first_attacker < 0; i++)
-        if (g->logs[i].log_type == LOG_ATTACK) first_attacker = g->logs[i].player_idx;
-    if (first_attacker < 0) return -REPLAY_EINPUT;   // no attack logged → nothing to encode
-    out[2] = (unsigned char)first_attacker;
-    out[3] = (unsigned char)(n_actions & 0xff);
-    out[4] = (unsigned char)((n_actions >> 8) & 0xff);
-    return q;
-}
-
-// v5: no seed needed, and no exact hidden state — a decoder retrodicts the
-// hands. Kept for games this process did not deal from a wide seed.
-int fio_replay_encode_b32(char *out, int cap) {
-    if (!g_has_game) return FIO_ENOGAME;
-    g_last_replay_error = 0;
-    static unsigned char encin[65536];
-    static unsigned char encout[16384];
-    int inlen = build_encode_input(&g_game, encin, sizeof(encin));
-    if (inlen < 0) { g_last_replay_error = -inlen; return FIO_EREPLAY; }
-    int enclen = replay_encode(encin, inlen, encout, sizeof(encout));
-    if (enclen < 0) { g_last_replay_error = -enclen; return FIO_EREPLAY; }
-    int w = replay_b32_encode(encout, enclen, out, cap);
-    if (w < 0) return FIO_ECAP;
-    return w;
-}
-
-// v6: the exact game, hidden state and all. One kernel call — the deal seed was
-// kept at fio_new_game, the actions are this game's own logs, and the reveal
-// stream is re-derived inside the kernel, so the app assembles nothing. This is
-// the same replay_encode_v6_from_game the server calls through
-// wasm_replay_encode_v6_from_game; an offline share is now byte-identical in
-// KIND to one the site produces, and the Oracle gets exact hands instead of
-// v5's retrodiction.
+// The exact game, hidden state and all. One kernel call - the deal seed was kept
+// at fio_new_game, the actions are this game's own logs, and the reveal stream
+// is re-derived inside the kernel, so the app assembles nothing. This is the
+// same replay_encode_v6_from_game the server calls through
+// wasm_replay_encode_v6_from_game, so an offline share and a site share are the
+// same code.
 //
-// Returns FIO_ENOSEED for a game dealt without a wide seed (nothing to
-// re-derive) — the caller should fall back to fio_replay_encode_b32.
+// Returns FIO_ENOSEED for a game dealt without a wide seed: its deal cannot be
+// re-derived, and there is no second format to fall back to any more.
 int fio_replay_encode_v6_b32(char *out, int cap) {
     if (!g_has_game) return FIO_ENOGAME;
     if (!g_has_deal_seed) return FIO_ENOSEED;
@@ -1056,22 +976,22 @@ int fio_replay_encode_v6_b32(char *out, int cap) {
     return w;
 }
 
-// The best code this game can produce — v6 when its deal can be re-derived,
-// else v5. WHICH FORMAT TO SHARE IS NOT AN APP DECISION: the server already
-// makes exactly this choice (finalizeEndedGame prefers v6 and falls back to v5),
-// and if it lived in Swift then the watch, the iMessage extension and every
-// later client would each reimplement the same three lines and drift on them.
-// The explicit fio_replay_encode_b32 / _v6_b32 stay for callers that must pin
-// one format (tests, fixtures).
+// THE call a client makes for a share code. It is a straight pass-through today
+// because there is one replay format left, and it stays a separate entry point
+// because WHICH FORMAT TO SHARE IS NOT AN APP DECISION: if that choice lived in
+// Swift then the watch, the iMessage extension and every later client would each
+// reimplement it and drift.
+//
+// It used to fall back to the retrodiction encoder when the deal could not be
+// re-derived, and that fallback is deliberately gone rather than replaced. A
+// retrodicted code is not a shorter recording of this game - it is a DIFFERENT
+// game, one whose hidden hands the decoder guesses by complement - so shipping
+// one under a share button trades a visible failure for an invisible lie. A
+// game with no re-derivable deal now returns FIO_ENOSEED, and the caller shows
+// that. (Swift always deals through fio_new_game with 32 bytes, so this is the
+// unreachable branch made honest, not a capability withdrawn.)
 int fio_replay_share_code_b32(char *out, int cap) {
-    if (!g_has_game) return FIO_ENOGAME;
-    if (g_has_deal_seed) {
-        int w = fio_replay_encode_v6_b32(out, cap);
-        if (w >= 0) return w;
-        // v6 could not be built for this game (see fio_last_replay_error): a
-        // share still beats no share, and v5 encodes from the logs alone.
-    }
-    return fio_replay_encode_b32(out, cap);
+    return fio_replay_encode_v6_b32(out, cap);
 }
 
 // The whole shareable link, prefix and all (ios_api.h). Pure function of its

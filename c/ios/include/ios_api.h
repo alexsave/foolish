@@ -577,21 +577,18 @@ int fio_strategy_name(int id, char *out, int cap);
 
 // Encode the CURRENT game's history into a replay integer, base32-ish encoded
 // into `out` as the short shareable code (foolish.cards/<code>). Bytes written
-// or negative. (v5 codec; byte-parity with the server's shared C — replay.c.)
-int fio_replay_encode_b32(char *out, int cap);
-
-// Same, as a v6 code: the exact game including every hidden card, where v5's
-// decoder has to retrodict the hands. Prefer this — it is what the site
-// produces, and the Oracle reads real hands instead of guesses.
+// or negative. Byte-parity with the server's shared C (replay.c): the code
+// carries the exact game including every hidden card.
 //
 // Takes no seed: the kernel kept the one fio_new_game was given. Returns
-// FIO_ENOSEED if this game was dealt without a wide seed (its deal cannot be
-// re-derived) — fall back to fio_replay_encode_b32 then, and only then.
+// FIO_ENOSEED if this game was dealt without a wide seed - its deal cannot be
+// re-derived, and there is no second format to fall back to.
 int fio_replay_encode_v6_b32(char *out, int cap);
 
-// The one a CLIENT should call: the best code this game can produce (v6 when its
-// deal is re-derivable, else v5), so choosing a replay format never becomes app
-// code. The two calls above are for tests that must pin a format.
+// The one a CLIENT should call: the best code this game can produce, so choosing
+// a replay format never becomes app code. One format survives, so this is a
+// pass-through to the call above; it stays a separate entry point because the
+// choice must not migrate into Swift.
 int fio_replay_share_code_b32(char *out, int cap);
 
 // THE WHOLE SHAREABLE LINK: `https://foolish.cards/<moves>`, plus

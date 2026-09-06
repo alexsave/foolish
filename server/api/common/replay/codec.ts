@@ -24,7 +24,7 @@
  * implementation of the one in c/src/replay.c. It was kept for a frozen
  * differential oracle, e2e/replay_ts_oracle.ts, which no longer exists; the
  * class had no caller anywhere, in production or in a test. The kernel codes
- * replays (wasm_replay_encode / _decode / _encode_v6), and there is no second
+ * replays (wasm_replay_encode_v6 / _decode), and there is no second
  * coder now.
  *
  * What is left is genuinely host-shaped and has no C twin: turning bytes into

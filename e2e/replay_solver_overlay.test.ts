@@ -2,10 +2,10 @@
 //
 // bots.wasm aliases its replay-call scratch (g_rec / g_bn / g_replay_io,
 // 90.5 KiB) INTO the solver arena solve_ws — the two are never live at once
-// (wasm_choose_move vs wasm_replay_encode/decode are non-nesting top-level
-// exports). This test is the one check that aliasing uniquely needs: it drives
-// BOTH families on the SAME adopted bots.wasm instance, interleaved, and proves
-// neither corrupts the other. If the overlay offsets ever collide with live
+// (wasm_choose_move vs the replay encode/decode exports are non-nesting
+// top-level exports). This test is the one check that aliasing uniquely needs:
+// it drives BOTH families on the SAME adopted bots.wasm instance, interleaved,
+// and proves neither corrupts the other. If the overlay offsets ever collide with live
 // solver state — or a future edit makes replay read before it writes — the
 // encode after a solver burst diverges and this fails.
 //
@@ -19,9 +19,11 @@ import { start_game } from '../server/api/common/game_lifecycle.ts';
 import { Game, GAME_STATUS, PLAYER_STATUS, PrivatePlayer, StrategyKey } from '../server/api/core/types.ts';
 import { shouldBotActCore, processBotAction } from '../server/api/common/pure_bot_actions.ts';
 import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
-import { ReplayInput } from '../server/api/common/replay/core.ts';
-import { encodeReplay } from '../server/api/common/replay/encode.ts';
 import { decodeReplay } from '../server/api/common/replay/decode.ts';
+import { kernelReplayEncodeV6FromGame } from '../sdk/ts/wasm/bots.ts';
+import { bytesToBigint } from '../server/api/common/replay/codec.ts';
+
+const hexToBytes = (h: string) => Uint8Array.from(h.match(/../g)!.map((b) => parseInt(b, 16)));
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
 
@@ -83,24 +85,25 @@ test('M8: replay encode is byte-identical before and after a solver burst on the
   for (let np = 2; np <= 6 && !game; np++) game = await playToEnd(np, 'octogen' as StrategyKey);
   assert.ok(game, 'could not produce a finished game to encode');
 
-  const input: ReplayInput = {
-    playerIds: game.players.map((p) => p.player_id),
-    logs: game.logs,
-    flipped: game.flipped,
-  };
+  // The production producer: the kernel re-derives the deal from the game's own
+  // seed and reads the actions out of its logs, so one call writes the whole
+  // choice log (g_rec) and bignum (g_bn) - which is the aliased memory this test
+  // exists to watch. `game` is the same object every time, so the ONLY way two
+  // encodes of it differ is corruption.
+  const seed = hexToBytes(game.game_seed!);
+  const encode = () => bytesToBigint(kernelReplayEncodeV6FromGame(game!, seed));
 
-  const e1 = await encodeReplay(input);          // encode #1
+  const e1 = encode();                            // encode #1
   await hammerSolver();                           // scribble all over solve_ws == the replay scratch
-  const e2 = await encodeReplay(input);           // encode #2 — same input, post-burst
+  const e2 = encode();                            // encode #2 - same input, post-burst
 
-  assert.equal(e2.x, e1.x, 'encode diverged after a solver burst — overlay corruption');
-  assert.equal(e2.base32, e1.base32, 'encode base32 diverged after a solver burst');
+  assert.equal(e2, e1, 'encode diverged after a solver burst - overlay corruption');
 
   // And the reverse direction: a decode sandwiched by solver work must be stable
   // and reproduce encode #1 (proves decode re-inits its scratch each call too).
-  const d1 = await decodeReplay(e1.x);
+  const d1 = await decodeReplay(e1);
   await hammerSolver();
-  const d2 = await decodeReplay(e1.x);
+  const d2 = await decodeReplay(e1);
   assert.equal(d2.logs.length, d1.logs.length, 'decode length diverged after a solver burst');
   assert.deepEqual(
     d2.logs.map((l) => [l.log_type, l.seat, l.card_pairs.length]),
@@ -118,8 +121,7 @@ test('M8: replay encode is byte-identical before and after a solver burst on the
         const p = g.players[i];
         if (shouldBotActCore(g, p, i)) { await processBotAction(g, p); break; }
       }
-      const en = await encodeReplay(input);
-      assert.equal(en.x, e1.x, `encode diverged mid-game at burst ${k} step ${step}`);
+      assert.equal(encode(), e1, `encode diverged mid-game at burst ${k} step ${step}`);
     }
   }
 });

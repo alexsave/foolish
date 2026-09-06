@@ -4,13 +4,13 @@
  * Plays random legal games with the REAL server engine (the same
  * handleAttack/handleCover/... the edge functions run), then:
  *
- *   game.logs -> encodeReplay -> bigint -> bytes -> base32/base64
- *            -> decodeReplay (public-state replayer, decode direction)
+ *   game + deal seed -> kernelReplayEncodeV6FromGame -> bigint -> bytes
+ *                    -> base32/base64 -> decodeReplay
  *
- * and asserts the decoded stream reproduces the ENTIRE original log stream —
- * not just the coded actions but every derived DISCARD / DRAW /
- * DEFENDER_CHANGE / PLAYER_OUT, byte for byte. Any rules drift between the
- * server engine and _shared/common/replay/core.ts shows up here as a hard failure.
+ * and asserts the decoded stream reproduces every information-bearing action of
+ * the game that was played, plus its elimination order, fool and discard count.
+ * Any rules drift between the server engine and the kernel's replay projection
+ * (c/src/replay.c) shows up here as a hard failure.
  *
  * This is a pure codec/engine test — no Postgres, no harness.
  * Games-per-player-count is REPLAY_GAMES_PER_PC (default 20).
@@ -35,7 +35,7 @@ import {
 } from '../server/api/core/types.ts';
 import { shouldBotActCore, processBotAction } from '../server/api/common/pure_bot_actions.ts';
 import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
-import { ReplayInput, SeatLog, DecodedReplay, INFO_TYPES } from '../server/api/common/replay/core.ts';
+import { SeatLog, DecodedReplay, INFO_TYPES } from '../server/api/common/replay/core.ts';
 import { decodeReplay } from '../server/api/common/replay/decode.ts';
 import {
   base64Decode, base64Encode, bytesToBigint,
@@ -149,10 +149,9 @@ async function playRandomGame(np: number, strategy: StrategyKey): Promise<Game |
   return game;
 }
 
-/* normalize both streams to a comparable shape. GOOD presses are implied in
- * format v4 — the decoder neither stores nor reproduces them — so they are
- * stripped from the original before comparing. Everything else (including
- * every derived DISCARD/DRAW/DEFENDER_CHANGE/PLAYER_OUT) must match. */
+/* normalize both streams to a comparable shape. GOOD presses are implied - the
+ * decoder derives them rather than storing them - so they are stripped from the
+ * original before comparing. */
 function normOriginal(game: Game): SeatLog[] {
   const seatOf = (pid: string | null) =>
     pid === null ? null : game.players.findIndex((p) => p.player_id === pid);
@@ -348,9 +347,11 @@ export function registerReplayValidation(): void {
   // of its own — e2e/tutorial_game.test.ts, which replays it rather than just
   // decoding it — registered into this same fast runner by
   // e2e/validation/tutorial_validation.test.ts.
-  test('kernel decode rejects garbage and future versions cleanly', async () => {
-    // version 7 header: the smallest integer whose version field is neither the
-    // frozen v5 nor the additive v6 (both are now supported); 7 stays unknown.
+  test('kernel decode rejects garbage and retired versions cleanly', async () => {
+    // The version is the first symbol, coded uniform over 16, so the integer 7
+    // IS a version-7 header. Seven is one of the retired formats (it predates
+    // the deal-order fix), and the kernel refuses it by number rather than
+    // trying to read it - c/tests/tests.c walks the whole alphabet.
     await assert.rejects(
       () => decodeReplay(7n),
       /unsupported replay format version 7/,
