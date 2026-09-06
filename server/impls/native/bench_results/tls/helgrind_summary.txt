@@ -1,0 +1,66 @@
+Stage 3 (OpenSSL TLS) — Helgrind race-check.
+
+Scope: this run targets the NEW concurrency this stage introduces — the
+shared, read-only-after-setup SSL_CTX (g_tls_ctx) plus a fresh
+per-connection SSL* (conn_tls_accept) touched only by that connection's own
+servicing thread. It is run with --no-db on purpose: persistence's own
+locking (game_persist_snapshot's dirty-set + snapshot handoff) was already
+Helgrind-verified in Stage 2 (see ../durability/helgrind_summary.txt), TLS
+touches neither persist.c nor persist.h at all (confirmed by inspection —
+see DURABILITY.md's updated "Seam left for Stage 3" section), and running
+without a persist_thread also means the ONE previously-documented benign
+residual (a pthread_cond_timedwait "dubious: associated lock is not held"
+report inside glibc/pthread internals at persist_thread's own kill-time
+teardown — see durability/helgrind_summary.txt) cannot appear here, since
+that thread never starts. This run is a clean, targeted look at the TLS
+I/O path in isolation.
+
+Command:
+  valgrind --tool=helgrind --history-level=approx \
+    ./foolish_server <port> --no-db --tls --cert=<test.crt> --key=<test.key> --game-workers=4
+
+Driven by (back to back, same run):
+  foolish_hammer --host=127.0.0.1 --port=<port> --games=4 --seats=4 --conns=8 --secs=8 --mode=mixed --tls
+  foolish_hammer --host=127.0.0.1 --port=<port> --games=4 --seats=2         --secs=8 --mode=ws    --tls
+
+--mode=mixed exercises SSL_accept + per-request SSL_read/SSL_write across
+the one-shot HTTP endpoints (/auth, /create, /meta, /action, /state,
+/status) through the work-queue worker pools — i.e. many different worker
+threads each doing their own conn_tls_accept + SSL_read/SSL_write against
+their own connection's SSL*, all sharing the one g_tls_ctx concurrently.
+--mode=ws exercises the SAME conn_tls_accept + SSL_read/SSL_write path but
+on ws_conn_thread's dedicated per-connection threads instead, over
+persistent WSS connections carrying real awire moves — the hot path this
+stage cared most about getting right (see TLS.md's "why WSS, not just
+HTTPS" note).
+
+kill -TERM on the valgrind PID once both traffic phases complete, same
+technique SERVER_SCALING.md's T2a and DURABILITY.md's Stage 2 Helgrind runs
+used (`timeout` forks an untraced child, so it can't end a helgrind capture
+cleanly).
+
+=== Result ===
+
+  ==PID== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 102034 from 168)
+
+Zero "Possible data race" reports (grep-verified against the raw capture).
+The large suppressed count is valgrind's own built-in suppressions firing
+against OpenSSL's internal atomic/lock-free bookkeeping (constant-time
+crypto primitives and its own internal reference counting do a lot of
+atomic traffic that Helgrind ships default suppressions for) — none of
+those are new/unsuppressed reports, and none are in this codebase's own
+code. No custom --suppressions file was used or needed.
+
+Traffic actually flowed during the capture (both hammer runs completed and
+printed real summaries — status codes 200/400 from the mixed run, and real
+applied(ok=true) moves + a real TLS handshake per WS reconnect from the ws
+run), so this is a genuine exercised-concurrency result, not a report from
+an idle process.
+
+=== Verdict ===
+
+Clean. The g_tls_ctx-shared / per-connection-SSL* model (conn_tls_accept
+allocating a fresh SSL* per connection off the one shared, read-only
+SSL_CTX, touched only by that connection's own thread thereafter) shows no
+Helgrind-detected race across either the one-shot HTTP work-queue path or
+the persistent WS path.

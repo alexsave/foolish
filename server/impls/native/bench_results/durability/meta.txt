@@ -1,0 +1,38 @@
+Stage 2 (SQLite WAL write-behind persistence) — DB-on vs --no-db overhead.
+Box: same Linux, 4-core container SERVER_SCALING.md's T2a numbers used
+(shared/multi-tenant — see its own noise caveat, which applies here too).
+
+Client: foolish_hammer --mode=ws (WS+legal hammer — real /ws round trips,
+every submitted move genuinely legal, same tool T2a's sweep used).
+Server: foolish_server, shipped defaults (--game-workers=4 --meta-workers=0
+--create-workers=1), varying only --db=<path> --persist-interval-ms=75 vs
+--no-db. Fresh server process per trial, fresh (empty) DB file per db_on
+trial. 12s load window (matches T2a Deliverable 3's methodology).
+
+Commands (per trial; port/db path varied per run — see run.sh below):
+  ./foolish_server <port> --db=<path> --persist-interval-ms=75   # db_on
+  ./foolish_server <port> --no-db                                # no_db
+  ./foolish_hammer --host=127.0.0.1 --port=<port> --games=<G> --seats=4 \
+      --secs=12 --mode=ws
+  # games=8  -> 32 conns
+  # games=40 -> 160 conns
+
+3 trials per (variant, conns) point. Raw per-trial numbers:
+persist_overhead.csv (variant,conns,games,seats,trial,applied_per_s,
+mean_us,p50_us,p90_us,p99_us,max_us — mean/p50/p90/p99/max are the WS
+round-trip latency percentiles foolish_hammer's own
+"latency_summary_us:" line reports).
+
+Driver script (not committed — scratch, reconstructable from the commands
+above): a small bash loop starting one server + one hammer run per line of
+the table below, killing the server with kill -9 between trials (matches
+this stage's own "no clean shutdown assumed" posture) and always using a
+fresh DB file for each db_on trial.
+
+See DURABILITY.md "Stage 2 — persistence" for the digested table and the
+interpretation (throughput dominated by this box's own run-to-run noise;
+latency percentiles nearly identical DB-on vs off; DB-on's per-trial max
+latency runs higher in 2 of 3 trials at each connection count, plausibly a
+small, real tail-latency cost from the persistence thread's SQLite
+transaction — noted honestly, not hidden, and not overclaimed given the
+sample size).
