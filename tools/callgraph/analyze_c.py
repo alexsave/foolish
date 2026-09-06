@@ -26,6 +26,12 @@ CONFIGS = [
     ("default", ["-DCD_LEAFBOOK", "-DACCELERATE_NEW_LAPACK"]),
     ("oracle-mt", ["-DCD_LEAFBOOK", "-DACCELERATE_NEW_LAPACK",
                    "-DFOOLISH_ORACLE_MT", "-DFOOLISH_ORACLE_BUILD", "-DLEGAL_STATS"]),
+    # The bots-wasm overlay build, which is where octogen_strategy.c's
+    # wasm_og_explain_* exports live - the accessors the oracle UI reads over
+    # the wasm boundary. Without this configuration they are not in the tree at
+    # all, and the TypeScript that calls them dead-ends.
+    ("og-explain", ["-DCD_LEAFBOOK", "-DACCELERATE_NEW_LAPACK",
+                    "-DOG_EXPLAIN_BUILD", "-DCD_WASM_OVERLAY"]),
 ]
 
 nodes = {}

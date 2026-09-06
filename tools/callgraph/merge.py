@@ -15,7 +15,8 @@ RULES = [
     # Every .sql file is the database tier, including the schema dump e2e/ uses.
     ("server",   [r"\.sql$"]),
     ("test",     [r"(^|/)(tests?|e2e)/", r"(^|/)[A-Za-z_]*Tests?/", r"\.test\.[a-z]+$", r"_test\.[a-z]+$", r"(^|/)test_"]),
-    ("tools",    [r"^c/tools/", r"^scripts/", r"^next\.config", r"^[a-z_.]+\.(m?js|ts)$", r"^offlinefun/", r"^ios/Tools/", r"/bin/", r"^rustpoc/rs/src/bin/"]),
+    ("tools",    [r"^c/tools/", r"^scripts/", r"^tools/", r"^next\.config",
+                  r"^[a-z_.]+\.(m?js|ts)$", r"^offlinefun/", r"^ios/Tools/", r"/bin/", r"^rustpoc/rs/src/bin/"]),
     ("bridge",   [r"^c/wasm/", r"^c/ios/", r"^sdk/ts/wasm/", r"^src/wasm/", r"^sdk/swift/"]),
     ("imessage", [r"^ios/FoolishMessages/", r"^ios/FoolishKit/Messages/"]),
     ("server",   [r"^server/", r"supabase"]),
@@ -184,6 +185,18 @@ for (s_, t), conf in edges.items():
         cand = ts_by_short.get(short, [])
         if len(cand) == 1:
             hit, why = cand[0], "low"
+        elif "." in what and 1 < len(cand) <= 16:
+            # An interface method with several implementations:
+            # `BotStrategy.chooseMove` is every strategy class,
+            # `IOracleController.start` is both controllers. That is dispatch,
+            # not an external symbol, so every implementation gets an edge and
+            # the ambiguity is recorded rather than thrown away. Only QUALIFIED
+            # names qualify - matching a bare `get` or `close` on its short name
+            # would connect the world to itself.
+            for c in cand:
+                new_edges[(s_, c)] = "low"
+            resolved["dispatch"] += 1
+            continue
     if hit:
         resolved[why] += 1
         new_edges[(s_, hit)] = why if conf == "med" else conf

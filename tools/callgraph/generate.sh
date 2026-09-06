@@ -23,7 +23,7 @@ WORK="${CALLGRAPH_WORK:-$(mktemp -d)}"
 mkdir -p "$WORK"
 echo "repo=$REPO  work=$WORK  out=$OUT"
 
-echo "[1/5] parsing C  (clang AST, every TU in two build configurations)"
+echo "[1/5] parsing C  (clang AST, every TU in three build configurations)"
 python3 "$HERE/analyze_c.py" "$REPO" "$WORK/c.json"
 
 echo "[1/5] parsing TypeScript  (compiler API + checker)"

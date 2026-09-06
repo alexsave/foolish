@@ -23,7 +23,7 @@ four. Set `CALLGRAPH_WORK=some/dir` to keep the intermediate JSON around.
 
 | language | method | resolution |
 | --- | --- | --- |
-| C | `clang -ast-dump=json`, every `.c` parsed **twice** — the default build and `-DFOOLISH_ORACLE_MT` — and the two readings unioned | clang's own, exact |
+| C | `clang -ast-dump=json`, every `.c` parsed under **three** build configurations and the readings unioned | clang's own, exact |
 | TypeScript | the TypeScript compiler API with its checker | exact, except body-less declarations (below) |
 | Swift | a hand-written lexical parser | **by name** — approximate |
 | Rust | the `syn` crate's full AST | by name, plus named closures |
@@ -31,10 +31,13 @@ four. Set `CALLGRAPH_WORK=some/dir` to keep the intermediate JSON around.
 
 Three of those want spelling out.
 
-**C parses twice on purpose.** `c/wasm/wasm_oracle_mt.c` is wrapped in
+**C parses three times on purpose.** `c/wasm/wasm_oracle_mt.c` is wrapped in
 `#ifdef FOOLISH_ORACLE_MT` from its first line to its last, and
 `octogen_strategy.c` and `wasm_bots_api.c` each gate a block on the same define.
-A single-configuration parse silently drops all of it. Defines that *remove*
+A third configuration, `OG_EXPLAIN_BUILD` + `CD_WASM_OVERLAY`, is the only one
+in which `octogen_strategy.c` defines `wasm_og_explain_ptr` and its siblings —
+the accessors the oracle UI reads across the wasm boundary. A
+single-configuration parse silently drops all of it. Defines that *remove*
 code (`GUARDS_VALIDATE_ONLY`, `DEAL_RNG_DISABLED`, `FOOLISH_SEEDED_BOTS_ONLY`)
 are deliberately not set: the union should be the largest honest view of the
 tree.
