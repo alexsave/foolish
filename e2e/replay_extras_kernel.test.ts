@@ -308,6 +308,12 @@ test('the kernel writes the whole link, and an anonymous table gets the bare one
   assert.equal(kernelReplayLink(MOVES, ['', '', '']), bare, 'an anonymous table wrote a segment');
   assert.equal(kernelReplayLink(MOVES, ['\u0000', '']), bare, 'a name of NULs is a name of nothing');
 
+  // A long game's v6 code runs to tens of KB of base32; the link builder must
+  // carry it whole rather than through some fixed buffer of its own.
+  const long = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'.repeat(600);   // 19,200 chars
+  assert.equal(kernelReplayLink(long, []), `https://foolish.cards/${long}`);
+  assert.ok(kernelReplayLink(long, ['Ann', 'Bo']).startsWith(`https://foolish.cards/${long}-`));
+
   const named = kernelReplayLink(MOVES, ['Sveta', '', 'Владимир']);
   assert.ok(named.startsWith(bare + '-'), `the roster disturbed the link: ${named}`);
   const segment = named.slice(bare.length + 1);

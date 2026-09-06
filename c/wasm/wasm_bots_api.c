@@ -471,6 +471,7 @@ int wasm_bot_drive(int human_mask, int max_actions, int n_pref) {
 // wasm_replay_* call); the frames come back in the MAIN io buffer, so the two
 // never alias.
 extern unsigned char *wasm_replay_io_ptr(void);
+extern int wasm_replay_io_cap(void);
 extern int wasm_io_cap(void);
 
 static int g_rs_n_frames, g_rs_next_step;
@@ -523,22 +524,24 @@ int wasm_replay_extras_decode(int blob_len, int player_count, int move_count) {
 }
 
 // The whole shareable link. The REPLAY buffer holds
-// [u16 moves_len][moves bytes][u8 n_names][n_names x [u16 len][bytes]]; the
-// link comes back in the MAIN one. The moves code is copied out first because
-// replay_extras_link takes a C string and the buffer is not NUL-terminated.
+// [u8 n_names][u16 roster_len][roster bytes][moves bytes], the link comes back
+// in the MAIN one.
+//
+// The moves code goes LAST so it can be NUL-terminated in place - it is the one
+// argument replay_extras_link wants as a C string, and a long v6 game's code
+// runs to tens of KB, which is not a thing to copy through a fixed buffer. One
+// spare byte at the end of the input is what that costs.
 int wasm_replay_link(int in_len) {
-    static char moves[4096];
-    const unsigned char *in = wasm_replay_io_ptr();
-    int moves_len, n_names, p;
-    if (in_len < 3) return -REPLAY_EXTRAS_EINPUT;
-    moves_len = in[0] | (in[1] << 8);
-    if (moves_len < 0 || moves_len >= (int)sizeof(moves) || 2 + moves_len + 1 > in_len)
-        return -REPLAY_EXTRAS_EINPUT;
-    for (int i = 0; i < moves_len; i++) moves[i] = (char)in[2 + i];
-    moves[moves_len] = 0;
-    p = 2 + moves_len;
-    n_names = in[p++];
-    return replay_extras_link(moves, in + p, in_len - p, n_names,
+    unsigned char *in = wasm_replay_io_ptr();
+    int n_names, roster_len, p;
+    if (in_len < 3 || in_len >= wasm_replay_io_cap()) return -REPLAY_EXTRAS_EINPUT;
+    n_names = in[0];
+    roster_len = in[1] | (in[2] << 8);
+    p = 3;
+    if (roster_len < 0 || p + roster_len > in_len) return -REPLAY_EXTRAS_EINPUT;
+    in[in_len] = 0;                            // terminate the moves code in place
+    return replay_extras_link((const char *)(in + p + roster_len),
+                              in + p, roster_len, n_names,
                               (char *)wasm_io_ptr(), wasm_io_cap());
 }
 

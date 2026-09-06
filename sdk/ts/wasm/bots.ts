@@ -1243,16 +1243,20 @@ export function kernelReplayLink(moves: string, names: string[]): string {
     const enc = new TextEncoder();
     const movesBytes = enc.encode(moves);
     const encoded = names.map(n => enc.encode(n));
-    let n = 2 + movesBytes.length + 1;
-    for (const b of encoded) n += 2 + b.length;
-    const args = new Uint8Array(n);
+    let rosterLen = 0;
+    for (const b of encoded) rosterLen += 2 + b.length;
+    // [u8 n_names][u16 roster_len][roster][moves] - the code last, so the kernel
+    // can NUL-terminate it in place instead of copying it out.
+    const args = new Uint8Array(3 + rosterLen + movesBytes.length);
     const dv = new DataView(args.buffer);
     let q = 0;
-    dv.setUint16(q, movesBytes.length, true); q += 2;
-    args.set(movesBytes, q); q += movesBytes.length;
     args[q++] = encoded.length;
+    dv.setUint16(q, rosterLen, true); q += 2;
     for (const b of encoded) { dv.setUint16(q, b.length, true); q += 2; args.set(b, q); q += b.length; }
-    if (args.length > ex.wasm_replay_io_cap()) throw new Error('extras: link arguments exceed the kernel IO buffer');
+    args.set(movesBytes, q);
+    // The kernel writes a terminator one byte past the input, so the arguments
+    // must fit the buffer with room for it.
+    if (args.length >= ex.wasm_replay_io_cap()) throw new Error('extras: link arguments exceed the kernel IO buffer');
     __mem(ex).set(args, ex.wasm_replay_io_ptr());
     const w = ex.wasm_replay_link(args.length);
     if (w < 0) throw __extrasError(w);
