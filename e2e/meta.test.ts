@@ -14,7 +14,7 @@ import { executeWithGameLock, loadCompleteGame } from '../server/impls/supabase/
 import { handleMetaAction, handleContinue } from '../server/impls/supabase/functions/_shared/adapter/meta_actions.ts';
 import { GAME_STATUS, PLAYER_STATUS } from '../server/api/core/types.ts';
 import { resetToLobby } from '../src/state/clientReconcile.ts';
-import { checkCardConservation } from './dispatch.ts';
+import { applyPlayerMove, checkCardConservation, legalMovesFor } from './dispatch.ts';
 import { suiteRng } from './helpers/rng.ts';
 
 // Only one test here draws: the rematch scenario plays a dealt game out with
@@ -244,7 +244,6 @@ if (!process.env.VALIDATION_ONLY) {
     // rematches could never start, post-continue join/exit bricked every
     // load with a seat-count mismatch, and the old seats' hands leaked).
     test('meta:continue — full rematch on a dealt game: blob cleared, lobby mutable, restart works', async () => {
-        const { legalMovesFor, applyPlayerMove } = await import('./dispatch.ts');
         const gameId = `m${uuid().slice(0, 5)}`;
         const h1 = uuid(), h2 = uuid(), h3 = uuid();
         await seedGame(gameId, [

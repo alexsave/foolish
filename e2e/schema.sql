@@ -18,9 +18,15 @@ DROP SCHEMA IF EXISTS realtime CASCADE;
 CREATE SCHEMA realtime;
 
 -- Roles the seed's RLS policies target (`TO authenticated` / `TO service_role`).
-DO $$ BEGIN CREATE ROLE anon; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE ROLE service_role; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+-- Roles are CLUSTER-global, so these are the one thing in this file that two
+-- test files still share. unique_violation, not just duplicate_object: when the
+-- files run in parallel the loser of a race blocks on pg_authid's unique index
+-- and is told 23505 after the winner commits, rather than 42710 for a role that
+-- already existed when it looked. Each EXCEPTION block is its own subtransaction,
+-- so catching it leaves the rest of the shim intact.
+DO $$ BEGIN CREATE ROLE anon; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
+DO $$ BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
+DO $$ BEGIN CREATE ROLE service_role; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
 
 -- Real Supabase grants client roles USAGE on public; the recreated schema
 -- here is owner-only by default. Without this, SET ROLE authenticated can't
