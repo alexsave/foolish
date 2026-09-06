@@ -211,9 +211,15 @@ static void emit_finalist(const Finalist *f) {
     printf("]}\n");
 }
 
+/* Descending score, ties broken by the finalist's own seed - a total order, so
+ * the emitted jsonl is the same on every libc. qsort is not stable, and equal
+ * scores are common here because the score is a small integer-ish quantity. */
 static int cmp_desc(const void *a, const void *b) {
-    double sa = ((const Finalist *)a)->score, sb = ((const Finalist *)b)->score;
-    return sa < sb ? 1 : sa > sb ? -1 : 0;
+    const Finalist *fa = (const Finalist *)a, *fb = (const Finalist *)b;
+    if (fa->score < fb->score) return 1;
+    if (fa->score > fb->score) return -1;
+    if (fa->seed != fb->seed) return fa->seed < fb->seed ? -1 : 1;
+    return fa->np < fb->np ? -1 : fa->np > fb->np ? 1 : 0;
 }
 
 int main(int argc, char **argv) {

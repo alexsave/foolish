@@ -260,12 +260,17 @@ static void test_roundtrip(int games, uint32_t seed0) {
 
             MsgEnvelope e;
             env_init(&e, seed, np);
-        // ROUND 16: stamp the seed bubble with THIS MACHINE's clock, so a board
-        // opened from it is a board whose last attack just happened - which is
-        // the only way a seeded fixture can exercise the 15-second pickup hold.
-        // A 0 here (what every other seal in this file uses) is a format-2
-        // chain, and a format-2 chain holds nobody.
-        e.sent_at = (uint16_t)(time(NULL) & 0xffff);
+        // A NONZERO stamp, because a 0 here (what every other seal in this file
+        // uses) is a format-2 chain and this loop is meant to cover the
+        // clock-bearing formats. It is derived from the game's own seed rather
+        // than read from time(NULL): nothing below asks about the pickup hold -
+        // the compared field list a few lines down excludes sent_at, and the
+        // roundtrip is byte-for-byte against what this same value encoded - so
+        // the clock only made the test's INPUTS unreproducible. The payload
+        // printers further down (--twocover, --lastdefense, --fatboard) still
+        // stamp real time, and should: a human opening those on a phone is
+        // exactly how the 15-second hold gets exercised.
+        e.sent_at = (uint16_t)((seed0 + (uint32_t)(gi * 31 + np) * 7u) | 1u);
             const int over = game_done(&played) >= 0 || played.status == GAME_STATUS_GAME_OVER;
             e.phase = over ? MSG_PHASE_FINISHED : MSG_PHASE_LIVE;
             static unsigned char body[1024];
