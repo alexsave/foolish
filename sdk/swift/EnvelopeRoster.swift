@@ -81,7 +81,9 @@ public struct EnvelopeRoster: Sendable, Equatable {
         for (i, join) in names.joins.enumerated() {
             // The block is seat-indexed by construction; a gap would silently
             // rename somebody, so refuse it rather than guess.
-            guard join.seat == i, let pid = r.blob8(), let isAI = r.u8() else { return nil }
+            // A u16 length on the id, not the kernel's u8: the id is a field
+            // THIS side invents and has no trim rule to fall back on.
+            guard join.seat == i, let pid = r.blob(), let isAI = r.u8() else { return nil }
             players.append(Player(playerId: String(decoding: pid, as: UTF8.self),
                                   name: join.name, isAI: isAI != 0))
         }
@@ -90,7 +92,7 @@ public struct EnvelopeRoster: Sendable, Equatable {
         var good: [String] = []
         good.reserveCapacity(nGood)
         for _ in 0..<nGood {
-            guard let id = r.blob8() else { return nil }
+            guard let id = r.blob() else { return nil }
             good.append(String(decoding: id, as: UTF8.self))
         }
 

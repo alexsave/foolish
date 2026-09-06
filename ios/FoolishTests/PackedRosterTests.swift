@@ -41,11 +41,11 @@ final class PackedRosterTests: XCTestCase {
             w.blob8(Array(n.utf8))
         }
         for i in 0..<names.count {               // identity, same seats, same order
-            w.blob8(Array(ids[i].utf8))
+            w.blob(Array(ids[i].utf8))           // u16: an id has no trim rule
             w.u8(isAI[i] ? 1 : 0)
         }
         w.u8(good.count)
-        for g in good { w.blob8(Array(g.utf8)) }
+        for g in good { w.blob(Array(g.utf8)) }
         if let ts {
             w.u8(1)
             w.f64(ts)

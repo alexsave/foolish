@@ -181,7 +181,10 @@ export function encodePackedRoster(roster: PackedRoster): Uint8Array {
     const players = roster.players.slice(0, ROSTER_MAX_JOINS);
     writeNames(w, players.map(p => p.name));
     for (const p of players) {
-        w.blob8(new TextEncoder().encode(p.player_id));
+        // u16, not the kernel's u8: an id is a field THIS side invents, and it
+        // has no trim rule to fall back on the way a name does. A u8 would turn
+        // an unexpectedly long id into a throw on every commit for that game.
+        w.text(p.player_id);
         w.u8(p.is_ai ? 1 : 0);
     }
     // good_players is an ORDER, not a set, and it may name a player who has
@@ -189,7 +192,7 @@ export function encodePackedRoster(roster: PackedRoster): Uint8Array {
     const good = roster.good_players ?? [];
     if (good.length > 0xff) throw new Error(`roster: ${good.length} good players exceeds the u8 count`);
     w.u8(good.length);
-    for (const id of good) w.blob8(new TextEncoder().encode(id));
+    for (const id of good) w.text(id);
     if (roster.good_timestamp === null || roster.good_timestamp === undefined) {
         w.u8(0);
     } else {
@@ -226,7 +229,7 @@ export function decodePackedRoster(
     }
     const players: PackedRosterPlayer[] = [];
     for (let i = 0; i < n; i++) {
-        const pid = r.text8();
+        const pid = r.text();
         const isAi = r.u8();
         if (pid === null || isAi === null) return null;
         players.push({ player_id: pid, name: names[i], is_ai: isAi !== 0 });
@@ -235,7 +238,7 @@ export function decodePackedRoster(
     if (nGood === null) return null;
     const good: string[] = [];
     for (let i = 0; i < nGood; i++) {
-        const id2 = r.text8();
+        const id2 = r.text();
         if (id2 === null) return null;
         good.push(id2);
     }

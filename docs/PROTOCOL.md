@@ -99,8 +99,8 @@ The `bump` nudge (`ServerContext.tsx:649`) is a JSON `action` body
          u8 ROSTER_WIRE_FORMAT (1)
          u16 LE len + id | u16 LE len + name | u8 status (0 waiting, 1 playing, 2 game_over)
          u8 n, then n x { u8 seat, u8 name_len, name[] }      <- the kernel's own block
-         n x { u8 id_len, player_id[], u8 is_ai }             <- same seats, same order
-         u8 n_good, n_good x { u8 id_len, player_id[] }
+         n x { u16 LE id_len, player_id[], u8 is_ai }         <- same seats, same order
+         u8 n_good, n_good x { u16 LE id_len, player_id[] }
          u8 has_ts, then f64 LE good_timestamp when has_ts
 ```
 
