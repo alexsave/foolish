@@ -21,6 +21,8 @@
 // timestamp - ride ALONGSIDE the names block rather than inside it, so the
 // kernel's shape stays the kernel's shape.
 
+import { GAME_STATUS } from "@api/core/types.ts";
+
 // MSG_MAX_NAME (c/src/msg_wire.h) - a name is <=64 UTF-8 BYTES, not characters.
 export const ROSTER_MAX_NAME_BYTES = 64;
 // MSG_MAX_JOINS == MAX_PLAYERS.
@@ -31,10 +33,11 @@ export const ROSTER_MAX_JOINS = 8;
 // and falls back, rather than reading a field that moved.
 export const ROSTER_WIRE_FORMAT = 1;
 
-// game.status, packed. The strings are the server's (GAME_STATUS); the ints are
-// this wire's, and they match view.c's G_STATUS ordering so a reader that
-// already has that table needs no second one.
-export const ROSTER_STATUS: readonly string[] = ['waiting', 'playing', 'game_over'];
+// game.status, packed. The strings are the server's own GAME_STATUS - taken
+// from it rather than spelled out again - and the ints match view.c's G_STATUS
+// ordering, so a reader that already has that table needs no second one.
+export const ROSTER_STATUS: readonly string[] =
+    [GAME_STATUS.WAITING, GAME_STATUS.PLAYING, GAME_STATUS.GAME_OVER];
 
 /** One seat, as the envelope carries it. */
 export interface PackedRosterPlayer {
