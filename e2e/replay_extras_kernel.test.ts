@@ -63,7 +63,7 @@ import {
 } from '../server/api/common/replay/extras.ts';
 import { base32Encode, base32Decode, codeToGame } from '../server/api/common/replay/codec.ts';
 import {
-  kernelReplayExtrasEncode, kernelReplayExtrasDecode, ensureBotsAsync,
+  kernelReplayExtrasEncode, kernelReplayExtrasDecode, kernelReplayLink, ensureBotsAsync,
 } from '../sdk/ts/wasm/bots.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
@@ -294,6 +294,30 @@ test('the time curve holds from 1ns to a week, one byte per move either way', as
     // and byte for byte what the format has always written for these gaps
     assert.equal(hex(blob), hex(frozenEncodeExtras(null, 1750000000, gaps)));
   }
+});
+
+test('the kernel writes the whole link, and an anonymous table gets the bare one', async () => {
+  await ensureBotsAsync();
+  const MOVES = 'MZXW6YTBOI7654321ABCDEFG';
+  const bare = `https://foolish.cards/${MOVES}`;
+  // A link is the prefix, the code, and - only when somebody is named - a dash
+  // and the extras segment. The bare form is what every build before names
+  // emitted, so an anonymous table must still produce it character for
+  // character; anything else silently changes what people already have.
+  assert.equal(kernelReplayLink(MOVES, []), bare);
+  assert.equal(kernelReplayLink(MOVES, ['', '', '']), bare, 'an anonymous table wrote a segment');
+  assert.equal(kernelReplayLink(MOVES, ['\u0000', '']), bare, 'a name of NULs is a name of nothing');
+
+  const named = kernelReplayLink(MOVES, ['Sveta', '', 'Владимир']);
+  assert.ok(named.startsWith(bare + '-'), `the roster disturbed the link: ${named}`);
+  const segment = named.slice(bare.length + 1);
+  // …and the segment is exactly the codec's blob for that roster, base32'd -
+  // the link builder adds nothing of its own.
+  assert.equal(segment, base32Encode(kernelReplayExtrasEncode(['Sveta', '', 'Владимир'], null, null)));
+  // The reader cuts at the dash, so the game behind a named link is the game
+  // behind the bare one.
+  const { moves } = splitReplayCode(named.slice('https://foolish.cards/'.length));
+  assert.equal(codeToGame(moves), codeToGame(MOVES));
 });
 
 test('the base32 the URL carries survives the trip in both directions', async () => {

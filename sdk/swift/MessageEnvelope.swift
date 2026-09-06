@@ -154,22 +154,24 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
     /// a tap lands on the web replay page (Infinite Oracle) on any platform — the
     /// ecosystem funnel. `code` is `fio_replay_share_code_b32`'s output.
     public static func replayLink(code: String) -> URL {
-        URL(string: "https://foolish.cards/" + code)!
+        URL(string: ReplayExtras.bare(code))!
     }
 
     /// …with the table's NICKNAMES attached, so the web replay shows "Sveta" and
-    /// "Misha" instead of "P1" and "P2" (ReplayExtras). `names` is seat-ordered
-    /// and must be exactly as long as the game has players - the reader counts
-    /// seats from the decoded moves, not from this blob.
+    /// "Misha" instead of "P1" and "P2". `names` is seat-ordered and must be
+    /// exactly as long as the game has players - the reader counts seats from
+    /// the decoded moves, not from this blob.
     ///
-    /// It is one function and not a mutation of `replayLink` because the names
-    /// are not the moves encoder's to give: the code comes out of
-    /// fio_replay_share_code_b32, which knows the cards and not the people, and
-    /// the roster comes off the FMSG chain's joins. The kernel joins them
-    /// (fio_replay_extras_link); the https:// wrapper around the result is the
-    /// one thing here that is Swift's.
+    /// THE STRING IS THE KERNEL'S; ONLY THE `URL` VALUE IS SWIFT'S. This used to
+    /// say the opposite - that joining a code to a roster was "a URL concern,
+    /// and the URL layer is the one thing here that is Swift's" - and #113
+    /// reversed it on the campaign's own test: a watch would build exactly the
+    /// same characters. The prefix is a constant, the dash is already the
+    /// codec's (replay_b32_decode stops at it), and the roster's trimming rule
+    /// is a format. What is genuinely per-platform is the `URL` type, not the
+    /// text inside it, so the boundary sits here and nowhere higher.
     public static func replayLink(code: String, names: [String]) -> URL {
-        replayLink(code: ReplayExtras.code(moves: code, names: names))
+        URL(string: ReplayExtras.link(moves: code, names: names))!
     }
 
     /// Decode + validate + ADOPT: the chain is replayed through the kernel, so

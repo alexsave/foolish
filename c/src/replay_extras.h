@@ -83,4 +83,29 @@ int replay_extras_decode(const unsigned char *blob, int blob_len,
 // packed blob as `replay_extras_encode`.
 int replay_extras_roster_speaks(const unsigned char *in, int in_len);
 
+// ---------- the whole shareable link ----------------------------------------
+//
+// `https://foolish.cards/<base32 moves>` and, when the roster says anything,
+// `-<base32 extras>` after it. This is the string a client puts in front of a
+// person, built here rather than concatenated per platform: the prefix is a
+// constant, the dash is already this codec's (replay_b32_decode stops at it),
+// and gluing them would give the same answer on a watch, a phone and a browser.
+// What stays platform-side is the URL *type*, not the string that goes into it.
+//
+// `moves` is a base32 code (ASCII, NUL-free, so a C string is the right shape
+// for one). `names` is a dense SEAT-ORDERED roster, `n_names` entries of
+// [u16 len][len UTF-8 bytes] - never C strings, because a nickname is arbitrary
+// Unicode and a NUL is not its terminator. It must be as wide as the table: a
+// reader takes the seat count from the decoded moves and then reads exactly
+// that many names, so a short roster desynchronizes its parse. Unnamed seats
+// are zero-length.
+//
+// A roster the codec cannot encode costs the NAMES, never the link. Returns
+// the length written (NUL-terminated), or -REPLAY_EXTRAS_ECAP.
+#define REPLAY_LINK_PREFIX "https://foolish.cards/"
+
+int replay_extras_link(const char *moves,
+                       const unsigned char *names, int names_len, int n_names,
+                       char *out, int cap);
+
 #endif

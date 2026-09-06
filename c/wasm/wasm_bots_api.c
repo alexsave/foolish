@@ -522,6 +522,26 @@ int wasm_replay_extras_decode(int blob_len, int player_count, int move_count) {
                                 wasm_io_ptr(), wasm_io_cap());
 }
 
+// The whole shareable link. The REPLAY buffer holds
+// [u16 moves_len][moves bytes][u8 n_names][n_names x [u16 len][bytes]]; the
+// link comes back in the MAIN one. The moves code is copied out first because
+// replay_extras_link takes a C string and the buffer is not NUL-terminated.
+int wasm_replay_link(int in_len) {
+    static char moves[4096];
+    const unsigned char *in = wasm_replay_io_ptr();
+    int moves_len, n_names, p;
+    if (in_len < 3) return -REPLAY_EXTRAS_EINPUT;
+    moves_len = in[0] | (in[1] << 8);
+    if (moves_len < 0 || moves_len >= (int)sizeof(moves) || 2 + moves_len + 1 > in_len)
+        return -REPLAY_EXTRAS_EINPUT;
+    for (int i = 0; i < moves_len; i++) moves[i] = (char)in[2 + i];
+    moves[moves_len] = 0;
+    p = 2 + moves_len;
+    n_names = in[p++];
+    return replay_extras_link(moves, in + p, in_len - p, n_names,
+                              (char *)wasm_io_ptr(), wasm_io_cap());
+}
+
 // ---------- packed bytes -> JSON (A8/F7) ------------------------------------
 //
 // The browser's way into the kernel's decoders. The web used to read these two

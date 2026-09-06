@@ -15,6 +15,7 @@
 // [B^(v-0.5), B^(v+0.5)) contains x - and can only differ where the true value
 // sits within ~1e-12 of a bucket edge, on a quantization already 7% coarse.
 #include "replay_extras.h"
+#include "replay.h"   // replay_b32_encode - the code and the link share one alphabet
 #include <stdint.h>
 #include <string.h>
 
@@ -307,4 +308,47 @@ int replay_extras_decode(const unsigned char *blob, int blob_len,
     }
 
     return w;
+}
+
+// ---------- the whole shareable link ----------------------------------------
+
+int replay_extras_link(const char *moves,
+                       const unsigned char *names, int names_len, int n_names,
+                       char *out, int cap) {
+    static const char prefix[] = REPLAY_LINK_PREFIX;
+    // 8 seats of arbitrary Unicode with room to spare; a roster past this is a
+    // caller bug, not a nickname.
+    unsigned char in[4096];
+    unsigned char blob[8192];
+    int w = 0, n, bare;
+
+    if (!moves || !out || cap < 1) return -REPLAY_EXTRAS_EINPUT;
+    if (n_names < 0 || n_names > 255) return -REPLAY_EXTRAS_EINPUT;
+    if (names_len < 0 || (names_len > 0 && !names)) return -REPLAY_EXTRAS_EINPUT;
+    if (names_len > (int)sizeof(in) - 2) return -REPLAY_EXTRAS_EINPUT;
+
+    for (int i = 0; i < (int)sizeof(prefix) - 1; i++) {
+        if (w >= cap - 1) return -REPLAY_EXTRAS_ECAP;
+        out[w++] = prefix[i];
+    }
+    for (int i = 0; moves[i]; i++) {
+        if (w >= cap - 1) return -REPLAY_EXTRAS_ECAP;
+        out[w++] = moves[i];
+    }
+    out[w] = 0;
+    bare = w;
+    if (n_names == 0) return bare;
+
+    in[0] = REPLAY_EXTRAS_FLAG_NAMES;
+    in[1] = (unsigned char)n_names;
+    for (int i = 0; i < names_len; i++) in[2 + i] = names[i];
+    if (!replay_extras_roster_speaks(in, names_len + 2)) return bare;
+
+    n = replay_extras_encode(in, names_len + 2, blob, sizeof(blob));
+    if (n < 0) return bare;                    // decoration: a bad roster costs the names, never the link
+    if (w >= cap - 2) return -REPLAY_EXTRAS_ECAP;
+    out[w++] = '-';
+    n = replay_b32_encode(blob, n, out + w, cap - w);
+    if (n < 0) { out[bare] = 0; return bare; }
+    return w + n;
 }

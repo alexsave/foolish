@@ -41,6 +41,7 @@ interface BotsExports extends EngineExports {
     wasm_events_json(len: number): number;
     wasm_replay_extras_encode(in_len: number): number;
     wasm_replay_extras_decode(blob_len: number, player_count: number, move_count: number): number;
+    wasm_replay_link(in_len: number): number;
     wasm_unambiguous_cover(n_cover: number, n_battles: number, power_suit: number): number;
     wasm_clear_logs(): void;
     wasm_import_strategy_keys(): void;
@@ -1227,6 +1228,36 @@ export function kernelReplayExtrasDecode(blob: Uint8Array, playerCount: number,
         for (let i = 0; i < nGaps; i++) { moveGaps.push(dv.getFloat64(q, true)); q += 8; }
     }
     return { names: namesOut, startTime, moveGaps };
+}
+
+/**
+ * THE WHOLE SHAREABLE LINK for a finished game: `https://foolish.cards/<moves>`
+ * plus `-<base32 extras>` when the roster says anything, and the bare link when
+ * nobody at the table is named. Built in the kernel rather than concatenated
+ * here (c/src/replay_extras.h) - the prefix is a constant and the dash is the
+ * codec's, so a phone, a watch and a browser have no business each writing it.
+ * `names` must be as wide as the table; unnamed seats are ''.
+ */
+export function kernelReplayLink(moves: string, names: string[]): string {
+    const ex = bots();
+    const enc = new TextEncoder();
+    const movesBytes = enc.encode(moves);
+    const encoded = names.map(n => enc.encode(n));
+    let n = 2 + movesBytes.length + 1;
+    for (const b of encoded) n += 2 + b.length;
+    const args = new Uint8Array(n);
+    const dv = new DataView(args.buffer);
+    let q = 0;
+    dv.setUint16(q, movesBytes.length, true); q += 2;
+    args.set(movesBytes, q); q += movesBytes.length;
+    args[q++] = encoded.length;
+    for (const b of encoded) { dv.setUint16(q, b.length, true); q += 2; args.set(b, q); q += b.length; }
+    if (args.length > ex.wasm_replay_io_cap()) throw new Error('extras: link arguments exceed the kernel IO buffer');
+    __mem(ex).set(args, ex.wasm_replay_io_ptr());
+    const w = ex.wasm_replay_link(args.length);
+    if (w < 0) throw __extrasError(w);
+    const base = ex.wasm_io_ptr();
+    return new TextDecoder().decode(__mem(ex).subarray(base, base + w));
 }
 
 /**

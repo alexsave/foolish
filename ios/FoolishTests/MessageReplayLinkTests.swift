@@ -103,11 +103,15 @@ final class MessageReplayLinkTests: XCTestCase {
     ///
     /// Asserted against the WIRE BYTES rather than by decoding with a Swift
     /// decoder, because there is no Swift decoder and writing one here would
-    /// only prove this file agrees with itself. The layout is extras.ts's:
-    /// version 2, flags bit0 = names, then exactly one NUL-terminated UTF-8 name
-    /// per seat. The other half of this - that the real web decoder reads what
-    /// the real Swift encoder writes, trimming rule and all - is
-    /// e2e/imessage_replay_names.test.ts.
+    /// only prove this file agrees with itself. The layout is
+    /// c/src/replay_extras.h's: version 2, flags bit0 = names, then exactly
+    /// one NUL-terminated UTF-8 name per seat.
+    ///
+    /// THIS IS THE LIVE PATH, end to end: a finished chain, the controller
+    /// the extension really runs, its own `replayURL`, the bytes a friend's
+    /// browser will read. The format's other half - that these bytes are the
+    /// bytes every earlier build wrote, so old links still decode - is
+    /// e2e/replay_extras_kernel.test.ts.
     func testTheLinkCarriesTheTableNicknames() async throws {
         let c = try await finishedController()
         let code = try XCTUnwrap(c.replayCode)
@@ -148,9 +152,13 @@ final class MessageReplayLinkTests: XCTestCase {
     /// the segment would be bytes for nothing - and a link byte-identical to what
     /// earlier builds produced is one less thing that can behave differently.
     func testAnAnonymousTableEmitsTheCodeUnchanged() {
-        XCTAssertEqual(ReplayExtras.code(moves: "MOVES", names: []), "MOVES")
-        XCTAssertEqual(ReplayExtras.code(moves: "MOVES", names: ["", ""]), "MOVES")
-        XCTAssertNotEqual(ReplayExtras.code(moves: "MOVES", names: ["", "Bo"]), "MOVES",
+        let bare = "https://foolish.cards/MOVES"
+        XCTAssertEqual(ReplayExtras.link(moves: "MOVES", names: []), bare)
+        XCTAssertEqual(ReplayExtras.link(moves: "MOVES", names: ["", ""]), bare)
+        XCTAssertEqual(ReplayExtras.bare("MOVES"), bare)
+        XCTAssertEqual(MessageEnvelope.replayLink(code: "MOVES").absoluteString, bare,
+                       "the no-names link is the same string it always was")
+        XCTAssertNotEqual(ReplayExtras.link(moves: "MOVES", names: ["", "Bo"]), bare,
                           "one named seat is still worth carrying")
     }
 
@@ -207,6 +215,42 @@ final class MessageReplayLinkTests: XCTestCase {
             XCTAssertEqual(nowDecodes?.isComplete, false,
                            "the engine is holding an unfinished game, which is the point")
         }
+    }
+
+    /// A ROSTER OF REAL NAMES, through the real bridge. The seats a chat fills
+    /// are not ASCII: Cyrillic, kana, an emoji with a skin tone, and a name that
+    /// is over the 48-byte budget. This is the case a byte-wise trim gets wrong
+    /// - a thumbs-up with a skin tone is one grapheme and two code points, and
+    /// the budget line falls inside one here - so it is asserted on the WIRE
+    /// BYTES the browser will read, not on a Swift round trip.
+    func testAUnicodeRosterCrossesTheBridgeIntact() {
+        let over = "A" + String(repeating: "\u{1F44D}\u{1F3FD}", count: 7)  // 57 bytes
+        let names = ["Владимир", "さくら", over, ""]
+        let code = ReplayExtras.link(moves: "MOVES", names: names)
+        let halves = code.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
+        guard halves.count == 2 else { return XCTFail("no names segment: \(code)") }
+        XCTAssertEqual(String(halves[0]), "https://foolish.cards/MOVES",
+                       "the roster disturbed the link in front of it")
+        let blob = try? XCTUnwrap(Base32.decode(String(halves[1])))
+        guard let blob else { return XCTFail("the segment is not base32") }
+
+        var want: [UInt8] = [2, 1]
+        for name in names {
+            // 48 UTF-8 bytes, cut on a code-point boundary. Expressed here as
+            // the rule, not as a hand-copied byte string: a fixture would agree
+            // with a wrong trim as readily as a right one.
+            var kept = Array(name.utf8)
+            if kept.count > 48 {
+                var k = 48
+                while k > 0 && (kept[k] & 0xC0) == 0x80 { k -= 1 }
+                kept = Array(kept[0..<k])
+            }
+            want += kept + [0]
+        }
+        XCTAssertEqual([UInt8](blob), want)
+        // …and the over-budget seat really was trimmed, or this proves nothing.
+        XCTAssertLessThan(Array(over.utf8).count, 64)
+        XCTAssertGreaterThan(Array(over.utf8).count, 48)
     }
 
     /// The link is named in every language the extension speaks. A missing key

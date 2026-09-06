@@ -634,24 +634,28 @@ int fio_replay_encode_v6_b32(char *out, int cap);
 // code. The two calls above are for tests that must pin a format.
 int fio_replay_share_code_b32(char *out, int cap);
 
-// The share code with the table's NICKNAMES attached: `moves` unchanged, then
-// '-' and the base32 of the extras blob (c/src/replay_extras.h). Falls back to
-// `moves` alone when the roster says nothing - an all-anonymous table decodes
-// to the same "P1"/"P2" a reader already shows, so the segment would buy
-// nothing and the link stays byte-identical to what every build before names
-// emitted.
+// THE WHOLE SHAREABLE LINK: `https://foolish.cards/<moves>`, plus
+// `-<base32 extras>` when the roster says anything (c/src/replay_extras.h).
+// Falls back to the bare link when nobody at the table is named - an
+// all-anonymous roster decodes to the same "P1"/"P2" a reader already shows, so
+// the segment would buy nothing and the link stays byte-identical to what every
+// build before names emitted.
+//
+// The STRING is the kernel's and only the URL value is the platform's: the
+// prefix is a constant, the dash is already this codec's (replay_b32_decode
+// stops at it), and a watch would build the same characters.
 //
 // `names` is a dense SEAT-ORDERED roster, `n_names` entries of
 // [u16 len][len UTF-8 bytes] - never C strings, because a nickname is arbitrary
 // Unicode and a NUL is not its terminator. It must be as wide as the table: a
 // reader takes the seat count from the decoded moves and then reads exactly
 // that many names, so a short roster desynchronizes its parse. Unnamed seats
-// are zero-length.
+// are zero-length; `n_names` 0 asks for the bare link.
 //
 // Does NOT touch the current game. Bytes written or negative.
-int fio_replay_extras_link(const char *moves,
-                           const unsigned char *names, int names_len, int n_names,
-                           char *out, int cap);
+int fio_replay_share_link(const char *moves,
+                          const unsigned char *names, int names_len, int n_names,
+                          char *out, int cap);
 
 // Decode a shareable `code` into the step list as the RAW replay.h DECODE binary
 // (20-byte header + n_logs records; Swift parses it with DecodedReplay.decode) —
