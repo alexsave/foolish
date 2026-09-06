@@ -23,7 +23,18 @@ expensive computation.
 §0 calls the whole thing "worth paying for as a conversion product, not a
 business by itself", and the only Durak move-analysis product in the market.
 
-### The tension the next agent must resolve consciously
+### DEFERRED: do not stall on any of this
+
+Owner, on the tension below: "the business decisions can wait, I just want this
+ready."
+
+So build the tool so it WORKS and measure what it costs.
+Do not choose client-side versus server-metered, do not pick a price, and do not
+trim the analysis to fit an economic model nobody has committed to.
+Record the measured cost and let the decision be made with it in hand.
+The section below is context for why the number matters, not a gate.
+
+### The tension, for context
 
 The plan's economics assume **"the analysis runs on the buyer's own CPU"** with
 **COGS = an edge-function token check**.
