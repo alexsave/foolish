@@ -477,6 +477,11 @@ void fio_veil_grid(int sweeping, uint64_t veiled,
                    uint64_t sweep_arriving, uint64_t flying,
                    uint64_t *out_hidden, uint64_t *out_flying);
 
+// What that grid has not been flown YET: the replay's placements, narrowed to
+// the cards the grid holds a slot for. Asked twice a paint apart - see
+// anim_plan.h.
+uint64_t fio_veil_sweep_unplaced(uint64_t placed, uint64_t table);
+
 // What a finishing sequence owes the board (reveal now / carry on), and what a
 // new play owes the one it replaces (take that veil down / raise mine).
 void fio_veil_teardown(uint64_t opened, uint64_t orphaned, int is_newest,

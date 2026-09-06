@@ -141,19 +141,6 @@ public struct FBattleGrid: View {
             .accessibilityHidden(true)
     }
 
-    /// Should the attacked card lie across (tilted)? Exactly when it has a
-    /// defender AND that defender is really on the table — not in flight, and
-    /// not queued for a flight the board has not started yet. Pulled out of the
-    /// view body so the sequence this got wrong can be asserted directly:
-    /// upright on arrival, upright while the cover flies, tilted only once it
-    /// lands. The caller owns what goes in `hidden`; see MessageTableView's
-    /// `veiledCardIds`, which is why this needs no second "have we settled yet"
-    /// input to stay honest on the first paint.
-    public static func coverLanded(defense: Card?, hidden: Set<String>) -> Bool {
-        guard let d = defense else { return false }
-        return !hidden.contains(d.identity)
-    }
-
     /// Round-7 #7: should the attacked card lie across YET, given that a cover
     /// should tilt IN LOCKSTEP with the covering card's flight rather than
     /// snapping only once it lands. True the moment the cover's flight starts
@@ -166,8 +153,17 @@ public struct FBattleGrid: View {
     ///   - flying (hidden, flyingNow)   -> tilted    (rotates WITH the cover)
     ///   - landed (not hidden)          -> tilted
     ///
-    /// With an empty `flyingNow` this collapses to `coverLanded` exactly, so a
-    /// static board (MessageBoardView / a settled table) is unchanged.
+    /// THE ONLY TILT RULE. `coverLanded` used to stand beside it as the
+    /// no-flight case; round 7 gave the board this one and left that one with
+    /// no caller and a test suite of its own, so the suite went on passing
+    /// while the rule the board actually asks grew a first-paint hole
+    /// (`MessageTableView.pendingSweepUnplaced`). With an empty `flyingNow`
+    /// this IS that rule, so a static board (MessageBoardView, a settled table,
+    /// a bubble snapshot) is unchanged by its going.
+    ///
+    /// The caller owns what goes in `hidden`; see `MessageTableView.veiledCardIds`
+    /// and `Veil.grid`, which is why this needs no second "have we settled yet"
+    /// input to stay honest on the first paint.
     public static func coverTilted(defense: Card?, hidden: Set<String>, flyingNow: Set<String>) -> Bool {
         guard let d = defense else { return false }
         return !hidden.contains(d.identity) || flyingNow.contains(d.identity)

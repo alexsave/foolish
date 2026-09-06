@@ -776,6 +776,16 @@ void anim_veil_grid(int sweeping, uint64_t veiled,
                     uint64_t sweep_arriving, uint64_t flying,
                     uint64_t *out_hidden, uint64_t *out_flying);
 
+// WHAT THE PRE-BOUT GRID IS STILL WAITING FOR: of everything a replay PLACES,
+// the cards that grid actually holds a slot for. Both callers are the same
+// board a paint apart - the one that renders the pending table before the
+// sequence starts, and the setter that starts it - and a board that answered
+// this only at the second one drew a bout-ending cover already lying on its
+// attack, so the pair opened TILTED and had to straighten before the cover flew
+// in. A card the grid has no slot for is not "un-arrived", it is elsewhere:
+// intersecting is what keeps a pickup's hand-bound cards out of the sweep's veil.
+uint64_t anim_veil_sweep_unplaced(uint64_t placed, uint64_t table);
+
 // WHAT A FINISHING SEQUENCE OWES THE BOARD. The newest sequence is the last one
 // standing, so it reveals its own opens and every orphan handed to it. A
 // SUPERSEDED one reveals nothing - its replacement has pre-hidden cards of its

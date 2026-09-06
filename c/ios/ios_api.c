@@ -672,6 +672,10 @@ void fio_veil_grid(int sweeping, uint64_t veiled,
                    flying, out_hidden, out_flying);
 }
 
+uint64_t fio_veil_sweep_unplaced(uint64_t placed, uint64_t table) {
+    return anim_veil_sweep_unplaced(placed, table);
+}
+
 void fio_veil_teardown(uint64_t opened, uint64_t orphaned, int is_newest,
                        uint64_t *out_reveal, uint64_t *out_carry) {
     anim_veil_teardown(opened, orphaned, is_newest, out_reveal, out_carry);

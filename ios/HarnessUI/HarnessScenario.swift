@@ -188,7 +188,21 @@ extension HarnessModel {
 
         case "arrival":
             // A move arriving on a board that is already open (round 17).
-            await arrivalOnOpenBoard(players: playersEnv)
+            //
+            // `coverend` NEEDS A THIRD SEAT, and posed nothing at all without
+            // one. The move it waits for is a cover that spends the defender's
+            // LAST cards while the deck can still refill (see the note in
+            // `arrivalOnOpenBoard`) - and at two seats a defender only runs out
+            // once the deck has, so the same move ends the GAME instead and the
+            // wait never comes in. Forty re-deals of that is forty coin tosses
+            // of a two-headed coin: every run logged nothing, and a green run
+            // was evidence of nothing, the same trap `myplay` fell into. Three
+            // seats is the shape the comment there already called "the commoner
+            // by far"; an explicit HARNESS_PLAYERS still wins.
+            let arriveKind = ProcessInfo.processInfo.environment["HARNESS_ARRIVE_KIND"]
+            let asked = ProcessInfo.processInfo.environment["HARNESS_PLAYERS"] != nil
+            await arrivalOnOpenBoard(players: arriveKind == "coverend" && !asked
+                                        ? max(3, playersEnv) : playersEnv)
 
         case "pass":
             // ROUND 29: CHANNEL A OF THE TRANSFER - MY OWN pass, staged.
@@ -1066,7 +1080,12 @@ extension HarnessModel {
             // Must be 0 - anything else is a card laid out nowhere, which the
             // CENTRED fan renders as a row at the wrong width and centre. See
             // `MessageTableView.veilStandingNow`.
-            + "VEIL-STILL-UP: \(MessageTableView.veilStandingNow)")
+            + "VEIL-STILL-UP: \(MessageTableView.veilStandingNow) "
+            // ROUND 47: a pair that lay across and then straightened while its
+            // cover had still to arrive. The bout-ending cover replay opened
+            // with the cover already on its attack, so the pair had to untilt
+            // before the cover flew in. Must be 0.
+            + "TILT-FLASHES: \(MessageTableView.tiltFlashes)")
         // THE CONFLICT ORACLE (1.0(28)): did the conflict machinery engage?
         // `retractions` counts staged moves visibly retracted (an ARRIVE_STAGED
         // run must show >= 1 or the model never fired); `red-flights` counts
