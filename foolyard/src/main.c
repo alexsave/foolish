@@ -270,6 +270,21 @@ static void report(World *w, const SeatSpec *lineup, int n_seats, u64 events, u6
     }
     printf("\n");
 
+    // A seat that believes it is connected but that the server never recorded
+    // a subscription for. On a datagram link the /wt session handshake is as
+    // droppable as any other frame, and nothing retries it - so the client
+    // waits forever for pushes the server was never going to send. Pollers are
+    // excluded: they deliberately never subscribe.
+    u32 silent = 0;
+    for (u32 i = 0; i < w->n_clients; i++) {
+        ClientState *cs = &w->clients[i];
+        if (cs->used && cs->connected && !cs->no_push
+            && !w->games[cs->game_id].seat_subscribed[cs->seat]) silent++;
+    }
+    if (silent)
+        printf("  silent     %u client seat(s) connected but never subscribed "
+               "(a dropped upgrade nothing retries)\n", silent);
+
     inv_print(w);
 }
 
