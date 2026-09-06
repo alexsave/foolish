@@ -40,7 +40,16 @@ final class PickupHoldTests: XCTestCase {
 
     func testASealStampsTheClockAndItSurvivesTheRoundTrip() async throws {
         let (_, env) = try await attackedDefender()
-        XCTAssertNotEqual(env.sentAt, 0, "a sealed bubble carries no send clock")
+        // clockNow() is unix seconds & 0xffff, so 0 is a LEGAL stamp - for one
+        // second out of every 65536, roughly once every 18.2 hours. Asserting
+        // "not zero" unconditionally made this test's verdict a function of the
+        // machine's wall clock: correct code, red run, no repro. Skip that one
+        // second rather than pretend it cannot arrive. The delta check below is
+        // what actually proves the stamp is this device's clock, and it holds
+        // across the wrap.
+        if MessageKernel.clockNow() != 0 {
+            XCTAssertNotEqual(env.sentAt, 0, "a sealed bubble carries no send clock")
+        }
         XCTAssertEqual(env.sentAt, env.sentAt & 0xffff, "the clock is not 16-bit")
         // Within a minute of this machine's own clock, in the same wrapped unit.
         let now = MessageKernel.clockNow()

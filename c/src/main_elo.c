@@ -160,12 +160,18 @@ static void update_elos_from_game(const int *seat_strats, const int *rankings, i
     COMPS[seat_strats[rankings[num_players - 1]]].durak++;
 }
 
+/* Descending Elo, ties broken by competitor index so the order is TOTAL.
+ * qsort is not stable and libcs disagree about what they do with equal
+ * elements, so returning 0 here made the leaderboard machine-dependent: the
+ * same run printed one order on macOS and another on the Linux CI box. Two
+ * competitors sitting on the same Elo is not exotic - it is the state every
+ * pool starts in. */
 static int cmp_by_elo(const void *a, const void *b) {
     int ia = *(const int *)a;
     int ib = *(const int *)b;
     if (COMPS[ib].elo > COMPS[ia].elo) return 1;
     if (COMPS[ib].elo < COMPS[ia].elo) return -1;
-    return 0;
+    return ia < ib ? -1 : ia > ib ? 1 : 0;
 }
 
 static void print_snapshot(int game_no, double t) {

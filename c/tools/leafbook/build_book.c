@@ -136,10 +136,20 @@ static int cmp_bucket_size(const void *pa, const void *pb, void *ctx) {
     const int *sz = (const int *)ctx;
     return sz[*(const int *)pb] - sz[*(const int *)pa];   // descending
 }
-// portable desc sort of bucket ids by size (no qsort_r dependency)
+// Portable desc sort of bucket ids by size (no qsort_r dependency), ties broken
+// by bucket id so the order is TOTAL. This matters more here than anywhere else
+// in the tree: the order is the order the CHD displacement search walks the
+// buckets, so it decides which displacement each bucket gets and therefore the
+// exact bytes of the committed src/leafbook_data.h. Returning 0 on a tie left
+// that to whatever qsort the host libc ships - and equal bucket sizes are the
+// common case at ~5 keys/bucket - so `make leafbook` on a Mac and on the Linux
+// CI box produced two different books from identical inputs. Both are correct
+// perfect hashes; only one of them matches the file in git.
 static int *g_bsz;
 static int cmp_bsz(const void *a, const void *b) {
-    return g_bsz[*(const int *)b] - g_bsz[*(const int *)a];
+    int ia = *(const int *)a, ib = *(const int *)b;
+    if (g_bsz[ib] != g_bsz[ia]) return g_bsz[ib] - g_bsz[ia];
+    return ia < ib ? -1 : ia > ib ? 1 : 0;
 }
 
 int main(void) {

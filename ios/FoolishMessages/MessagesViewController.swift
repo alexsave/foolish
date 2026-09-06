@@ -295,7 +295,12 @@ final class MessagesViewController: MSMessagesAppViewController {
         FlightRecorder.note("style", presentationStyle == .compact ? "compact" : "expanded")
         let waiters = transitionWaiters
         transitionWaiters.removeAll()
-        waiters.values.forEach { $0.resume() }
+        // In KEY order, which is why the key is a monotonic sequence number.
+        // `waiters.values` walks the dictionary, and Swift seeds Dictionary
+        // hashing per process - so the waiters woke in an order that had nothing
+        // to do with the order they parked in, and which send or collapse path
+        // resumed first changed from launch to launch.
+        for seq in waiters.keys.sorted() { waiters[seq]?.resume() }
     }
 
     /// Wait until the in-flight presentation-style transition finishes

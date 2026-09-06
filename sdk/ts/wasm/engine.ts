@@ -31,6 +31,7 @@ import { takeRULES_WASM_B64 } from './rules_wasm.ts';
 // (unlike node:zlib), keeps engine()'s sync instantiate (unlike async
 // DecompressionStream), and needs no npm/import-map on the Deno edge.
 import { gunzip } from './gunzip.ts';
+import { derivedUuid } from '../wire/detid.ts';
 
 // ---------------------------------------------------------------------------
 // Instantiation
@@ -619,7 +620,7 @@ function applyStateToGame(game: Game, ks: KernelState, actorId: string | null): 
     }
     // good_timestamp: the kernel tracks presence; the wall-clock value is
     // presentation (set when a cover completes the table, kept otherwise).
-    game.good_timestamp = ks.hasGoodTs ? (preGoodTs ?? Date.now()) : null;
+    game.good_timestamp = ks.hasGoodTs ? (preGoodTs ?? nowMs()) : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -641,8 +642,12 @@ export function appendLogs(game: Game, kernelLogs: KernelLog[], preFlipped: Card
             }));
         }
         game.logs.push({
-            id: crypto.randomUUID(),
-            created_at: new Date().toISOString(),
+            // Derived, not drawn: the id is (game id, position in this game's
+            // log list). Nothing reads it for a decision - common_utils.ts
+            // clones it and that is all - so the entropy bought nothing and
+            // cost the ability to diff two replays of one game.
+            id: derivedUuid(game.id, game.logs.length),
+            created_at: new Date(nowMs()).toISOString(),
             game_id: game.id,
             log_type: kl.type,
             player_id: kl.playerIdx >= 0 ? game.players[kl.playerIdx].player_id : null,
@@ -847,7 +852,7 @@ export function materializeKernelGame(post: KernelState, roster: RosterTemplate,
         deck_length: roster.deck_length,
         players: roster.players,
     } as unknown as Game;
-    const game = stateToGame(post, template, roster.good_players, actorId, roster.good_timestamp ?? Date.now());
+    const game = stateToGame(post, template, roster.good_players, actorId, roster.good_timestamp ?? nowMs());
     game.deck_length = game.deck.length;
     return game;
 }
@@ -931,6 +936,17 @@ type KernelAction =
 // kernel draws replay the exact sequence a seeded Math.random produced.
 let seedSource: (() => number) | null = null;
 export function __setKernelSeedSource(fn: (() => number) | null): void { seedSource = fn; }
+
+// The engine's wall clock, in one place. Two things in the state it produces
+// are real timestamps rather than derived values — a log row's created_at and
+// good_timestamp — and both are genuine product data, so they keep reading a
+// clock live. What was missing is that a test could not pin it, which meant
+// replaying one game twice produced two states that differ in fields the game
+// never decided. __setEngineClock is the clock's counterpart to
+// __setDealSeedOverride: pin it and a replay is byte-comparable.
+let clockSource: (() => number) | null = null;
+export function __setEngineClock(fn: (() => number) | null): void { clockSource = fn; }
+const nowMs = (): number => (clockSource ? clockSource() : Date.now());
 
 // Test hook: pin the 32-byte deal seed so a deal reproduces a KNOWN game (used
 // by the determinism suite to replay one deal across processes). Null clears it
@@ -1051,7 +1067,7 @@ function buildEvents(game: Game, run: KernelRun, ctx: { reason?: string; actorId
     const preGood = game.good_players;
     const preGoodTs = game.good_timestamp;
     const snapGame = (s: Snapshot) =>
-        stateToGame(s.state, game, preGood, ctx.actorId ?? null, preGoodTs ?? Date.now());
+        stateToGame(s.state, game, preGood, ctx.actorId ?? null, preGoodTs ?? nowMs());
 
     // Sequential readers for per-type logs (each DRAW/COVER hook consumes the
     // next matching log).

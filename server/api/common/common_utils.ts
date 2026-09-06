@@ -5,6 +5,7 @@
 import { Card, Game, GAME_STATUS, PersonalGame, PLAYER_STATUS, PrivatePlayer, PublicPlayer, PublicGame, Battle, LogCardPair } from "@api/core/types.ts";
 import { GameLog, UnsavedGameLog } from '@api/core/types.ts';
 import { VALUE_MAP, SUIT_MAP } from '@api/core/constants.ts';
+import { derivedUuid } from '@sdk/ts/wire/detid.ts';
 
 // Fast deep clone for Game objects - avoids expensive JSON.parse(JSON.stringify())
 const cloneCard = (card: Card): Card => ({ suit: card.suit, value: card.value });
@@ -303,10 +304,16 @@ export const calculateGameRankings = (game: Game): string[] => {
 
 // Helper function to add a log to the game's pending logs
 // This is what action handlers should call instead of saving directly to DB
+//
+// The id is DERIVED from (game id, position in the log list) rather than drawn.
+// Nothing reads it - cloneGameLog above copies it and that is the only mention
+// in the codebase - so the entropy bought nothing, and it cost the ability to
+// compare one run of a game against another. Same rule as appendLogs in
+// sdk/ts/wasm/engine.ts; see sdk/ts/wire/detid.ts for why.
 export const addLog = (game: Game, log: UnsavedGameLog): void => {
     const savedLog: GameLog = {
         ...log,
-        id: crypto.randomUUID(),
+        id: derivedUuid(game.id, game.logs.length),
         created_at: new Date().toISOString()
     };
     game.logs.push(savedLog);
