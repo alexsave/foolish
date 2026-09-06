@@ -1,7 +1,10 @@
 // common_utils.ts is imported by BOTH the server and the client (it is
 // deliberately kernel-free). The e2e game flow exercises its hot paths, but
-// the guard/throw branches, the spectator projection, and the scoring helpers
-// (ELO, rankings) went untested. These are all pure functions.
+// the guard/throw branches, the spectator projection, and the ELO helper went
+// untested. These are all pure functions.
+//
+// The finish order is NOT here any more: it is the kernel's, and it is tested
+// against the kernel in e2e/finish_order.test.ts.
 //
 // Pure test — needs no Postgres.
 
@@ -12,7 +15,7 @@ import {
   cloneGame, get_next_player_index, canCover, cardDisplay, card_comp, getCardValue,
   validate_defender_status, verify_card_array, verify_cards_in_players_hand,
   game_done, verify_player_in_game, other_player, personalize_game,
-  calculateEloChange, calculateGameRankings, addLog,
+  calculateEloChange, addLog,
 } from '../server/api/common/common_utils.ts';
 import {
   Game, PrivatePlayer, Card, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, LOG_TYPE,
@@ -122,14 +125,6 @@ test('calculateEloChange is symmetric and zero at equal ratings', () => {
   const favLoss = calculateEloChange(2000, 1000, 0);
   assert.ok(favWin >= 0 && favWin < 5, 'favourite gains little on a win');
   assert.ok(favLoss < favWin, 'favourite loses more than it would gain');
-});
-
-test('calculateGameRankings: elimination order first, fool last, deduped', () => {
-  const g = mkGame([mkPlayer(0, []), mkPlayer(1, []), mkPlayer(2, [])]);
-  // p1 then p2 got out (with a duplicate to exercise the dedupe); p0 is the fool.
-  g.elimination_order = ['p1', 'p2', 'p2'];
-  const ranks = calculateGameRankings(g);
-  assert.deepEqual(ranks, ['p1', 'p2', 'p0'], 'winners in elimination order, fool last, no dupes');
 });
 
 test('addLog stamps an id + created_at and appends to the game log', () => {

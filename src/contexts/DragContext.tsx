@@ -4,7 +4,7 @@ import { useServer } from './ServerContext';
 import { useAnimation } from './AnimationContext';
 import { useAuth } from './AuthContext';
 import { useGame } from './GameContext';
-import { canCover } from '@api/common/common_utils.ts';
+import { canCoverPair } from '../wasm/clientGuards';
 import { reorderHand } from '../state/clientReconcile';
 import { canAttack, canPass as canPassValidation } from '../utils/gameValidation';
 import { kernelUnambiguousCover } from '@sdk/ts/wasm/bots.ts';
@@ -77,7 +77,7 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
                     // Single card cover — only if it actually beats the
                     // target (the kernel rejects CANNOT_COVER; without this
                     // check an illegal drop fired a doomed request)
-                    if (!canCover(tableCardUnderCursor.attack, cardsToUse[0], game.power_suit)) {
+                    if (!canCoverPair(tableCardUnderCursor.attack, cardsToUse[0], game.power_suit)) {
                         return { type: 'invalid' as const };
                     }
                     return { type: 'cover' as const, targetCard: tableCardUnderCursor.attack };
@@ -96,7 +96,7 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
                     // Single card - check which uncovered attacks this card can actually cover
                     const uncoveredBattles = game.table_battles.filter(battle => !battle.defense);
                     const validTargets = uncoveredBattles.filter(battle => 
-                        canCover(battle.attack, cardsToUse[0], game.power_suit)
+                        canCoverPair(battle.attack, cardsToUse[0], game.power_suit)
                     );
                     
                     if (validTargets.length === 1) {

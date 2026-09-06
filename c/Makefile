@@ -542,6 +542,7 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_msg_pickup_hold \
   -Wl,--export=wasm_anim_should_drop_stale -Wl,--export=wasm_anim_stale_optimistic \
   -Wl,--export=wasm_anim_resolve -Wl,--export=wasm_anim_build_plan \
+  -Wl,--export=wasm_anim_finish_rows \
   -Wl,--export=wasm_anim_set_transport -Wl,--export=wasm_anim_transport \
   -Wl,--export=wasm_belief_probe_reset -Wl,--export=wasm_belief_probe_dump
 

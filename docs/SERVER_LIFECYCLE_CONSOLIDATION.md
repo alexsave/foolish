@@ -40,7 +40,7 @@ Findings, ranked by leverage (shared-across-hosts × no-kernel-home × bug-risk)
 |---|---|---|---|
 | L1 | **Lobby/seating state machine** — join (seat + human kind), add-bot (seat cap + roster pick + kind), set-ready, the `all-ready ∧ ≥2 → deal` start predicate, exit | **N + T** | **NEW.** No kernel entry exists; both servers hand-roll it, with a byte-identical start predicate. Propose a kernel lobby module (§4.1). |
 | L2 | **Rematch reset** — `game_over → waiting` board clear | **N** | **REGRESSION.** F6's `game_reset_to_lobby` exists and is used by web/iOS; the native server calls it **0 times** and hand-rolls a PARTIAL reset that leaves stale `good`/board state in the lobby — the exact bug F6 fixed (§4.2). One-line fix. |
-| L3 | **End-of-game result** — winner / fool / placements from `elimination_order` | **N + T** | Kernel has `game_done` (fool only); hosts recompute the rest. Add `game_result` (§4.3). |
+| L3 | **End-of-game result** - winner / fool / placements from `elimination_order` | **N** | **PARTLY DONE for the web.** `anim_finish_rows` now answers the placements and the web reaches it through `server/api/common/finish_order.ts`; the native server still has no ranking. `game_result` (§4.3) would finish it. |
 | L4 | **"Does this game need a bot to act?"** predicate | **N + T** | Kernel already has the pieces (`bot_drive_eligible_mask` + `game_done`); expose one convenience wrapper (§4.4). |
 | L5 | **Scoring math** — elimination→rankings, pairwise Elo delta, base-1000 | **T + S** | Three copies of one formula (+ the `main_elo.c` CLI). PURE and kernel-able, BUT the doctrine lists Elo as a host non-goal — a boundary call, not a slam dunk (§4.5). |
 | L6 | **Initial lobby construction** — seat-0 / WAITING / empty-board literal | **N + T** | Folds into L1 as `game_create_lobby` (§4.6). |
@@ -175,10 +175,13 @@ counts zero.
 
 ### 4.3 L3 — end-of-game result (winner / fool / placements)
 
-The kernel exposes `game_done` (the fool seat, or -1). Hosts want more: TS
-`handleContinue` and `check_win_sync` (`utils.ts`) recompute winner
-(`elimination_order[0]`) and fool (still-`IN` seat) from the elimination order;
-the native server surfaces status but not a ranking. One pure derivation:
+The kernel exposes `game_done` (the fool seat, or -1) and, since the finish-order
+convergence, `anim_finish_rows` for the placements - which the web's single TS
+ranker `server/api/common/finish_order.ts` now calls, replacing the two copies in
+`calculateGameRankings` and `WinScreen`.
+What is left is the native server, which surfaces status but not a ranking, and
+the winner/fool recomputation in `handleContinue` and `check_win_sync`
+(`utils.ts`). One pure derivation would finish it:
 
 ```c
 typedef struct { int8_t winner, fool; int8_t placements[MAX_PLAYERS]; } GameResult;
