@@ -31,7 +31,21 @@ static unsigned char *g_brk = 0;
 
 static unsigned long align16(unsigned long v) { return (v + 15ul) & ~15ul; }
 
+#ifdef FOOLISH_ORACLE_MT
+// Mode B (docs/INFINITE_ORACLE_DESIGN.md §8b, MT1): under shared-memory threads
+// each thread bump-allocates its own transposition table, so g_brk (and the
+// memory.grow it drives) must be serialized. A one-byte spinlock; memory.grow
+// itself is atomic on shared memory, only the bump pointer needs guarding.
+static unsigned char g_brk_lock = 0;
+static void brk_lock(void)   { while (__atomic_exchange_n(&g_brk_lock, 1, __ATOMIC_ACQUIRE)) { } }
+static void brk_unlock(void) { __atomic_store_n(&g_brk_lock, 0, __ATOMIC_RELEASE); }
+#else
+static void brk_lock(void)   { }
+static void brk_unlock(void) { }
+#endif
+
 void *malloc(size_t n) {
+    brk_lock();
     if (!g_brk) g_brk = &__heap_base;
     unsigned long need = align16(n);
     unsigned char *cur_end = (unsigned char *)(__builtin_wasm_memory_size(0) * 65536ul);
@@ -41,11 +55,12 @@ void *malloc(size_t n) {
         // inflates every worker's linear memory for nothing, and the edge
         // budget charges buffer SIZE, not touched pages.
         unsigned long grow_pages = (need + 65535ul) / 65536ul + 2ul;
-        if (__builtin_wasm_memory_grow(0, grow_pages) == (unsigned long)-1) return 0;
+        if (__builtin_wasm_memory_grow(0, grow_pages) == (unsigned long)-1) { brk_unlock(); return 0; }
         cur_end = (unsigned char *)(__builtin_wasm_memory_size(0) * 65536ul);
     }
     void *p = g_brk;
     g_brk += need;
+    brk_unlock();
     return p;
 }
 

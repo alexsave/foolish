@@ -41,6 +41,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stddef.h>
+#ifdef FOOLISH_ORACLE_MT
+#include "legal.h"
+#include "oracle_mt.h"     // Mode B: the shared accumulator this file feeds (MT5)
+#endif
 
 // ---------- small utils ------------------------------------------------
 
@@ -985,6 +989,17 @@ static void og_ex_emit(const Game *g, int bot_idx, const LegalMoves *moves,
                        int chosen_idx, int solver_applied, int solver_win_idx);
 #endif  // OG_EXPLAIN_BUILD
 
+#if defined(FOOLISH_ORACLE_MT) && !defined(OG_EXPLAIN_BUILD)
+// Mode B (docs/INFINITE_ORACLE_DESIGN.md §8b.5, MT6) reuses the exact-verdict
+// probe below but not the JSON dump, so declare just the verdict state the probe
+// fills. Thread-local: every thread runs its own probe over the same position
+// off its own transposition table, so there is no cross-thread race on these
+// and no cross-thread reuse of a seat-perspective solver value.
+enum { OG_EX_NONE_V = 2000001, OG_EX_UNKNOWN_V = 2000002, OG_EX_ILLEGAL_V = 2000003 };
+static _Thread_local int og_ex_solve_applied = 0;
+static _Thread_local int og_ex_verdict[600];
+#endif
+
 // ---------- root endgame solve (win take + loss avoid) ---------------------
 
 // Solve every root move with a full window when 2 players remain and the
@@ -1065,7 +1080,32 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
         cd_sim_solve_reset();                       // cold TT for the real solve
         random_strategy_set_seed(og_ex_rng_save);   // unperturbed strategy RNG
     }
-#endif  // OG_EXPLAIN_BUILD
+#elif defined(FOOLISH_ORACLE_MT)
+    // Mode B: the SAME verdict probe (MT6), gated on the shared defuse flag
+    // instead of og_explain_on(). Runs per-thread over the shared position, off
+    // this thread's own transposition table, into thread-local state. Once the
+    // controller decides the position is unprovable at budget it sets
+    // defuse_probe and this expensive per-choose solve is skipped, so later
+    // batches are pure-MC-priced.
+    if (bbsolve && !__atomic_load_n(&g_ogmt.defuse_probe, __ATOMIC_RELAXED)) {
+        og_ex_solve_applied = 1;
+        uint32_t og_ex_rng_save = random_strategy_rng_get();
+        int cap = (int)(sizeof(og_ex_verdict) / sizeof(og_ex_verdict[0]));
+        for (int i = 0; i < moves->n && i < cap; i++) {
+            SimState child = root_sim;
+            if (!cd_sim_apply_root_move(&child, bot_idx, &moves->moves[i])) {
+                og_ex_verdict[i] = OG_EX_ILLEGAL_V; continue;
+            }
+            int ab = 0;
+            const char *ebs = getenv("OG_EXPLAIN_SOLVE_BUDGET");
+            long eb = ebs ? (long)atoi(ebs) : 4000000L;
+            int v = cd_sim_solve_d(&child, bot_idx, -2000, 2000, &eb, 1, &ab);
+            og_ex_verdict[i] = (ab || eb <= 0) ? OG_EX_UNKNOWN_V : v;
+        }
+        cd_sim_solve_reset();
+        random_strategy_set_seed(og_ex_rng_save);
+    }
+#endif  // OG_EXPLAIN_BUILD / FOOLISH_ORACLE_MT
 
     Solver S;
     S.budget  = OG_SOLVE_BUDGET;
@@ -1155,6 +1195,94 @@ typedef struct {
     int idx[OG_MAX_CANDS];
     int n;
 } Candidates;
+
+#ifdef FOOLISH_ORACLE_MT
+// Mode B helpers (docs/INFINITE_ORACLE_DESIGN.md §8b.5, MT5). One thread
+// CAS-publishes the candidate descriptor table for this generation; every later
+// batch, on any thread, is CHECKED against it before its per-candidate scores
+// are folded in.
+//
+// The check is not ceremony. Candidate ENUMERATION is deterministic
+// (og_pick_candidates, no RNG), but its input is not: forced_loss comes from the
+// budget-bounded root endgame solve, which runs off a per-thread transposition
+// table, so two threads can legitimately reach this point with different
+// candidate SETS. Summing those under a shared index would average two different
+// moves into one bar. A disagreeing batch is dropped and counted instead.
+_Static_assert(OG_MAX_CANDS <= OG_MT_MAX_CANDS, "candidate table too small for Mode B");
+
+static void og_mt_pack_desc(const LegalMoves *moves, const Candidates *C,
+                            OgMtCand *out, int *n_out) {
+    int n = C->n; if (n > OG_MT_MAX_CANDS) n = OG_MT_MAX_CANDS;
+    memset(out, 0, sizeof(OgMtCand) * (size_t)OG_MT_MAX_CANDS);
+    for (int i = 0; i < n; i++) {
+        const LegalMove *m = &moves->moves[C->idx[i]];
+        OgMtCand *d = &out[i];
+        d->type = (uint8_t)m->type;
+        int nc = m->n_cards; if (nc > OG_MT_MAX_CARDS) nc = OG_MT_MAX_CARDS;
+        d->n_cards = (uint8_t)nc;
+        for (int k = 0; k < nc; k++)
+            d->cards[k] = (uint8_t)(((m->cards[k].suit & 0xf) << 4) | (m->cards[k].value & 0xf));
+        if (m->type == MOVE_COVER) {
+            d->n_targets = (uint8_t)nc;
+            for (int k = 0; k < nc; k++)
+                d->targets[k] = (uint8_t)(((m->attack_cards[k].suit & 0xf) << 4) | (m->attack_cards[k].value & 0xf));
+        }
+    }
+    *n_out = n;
+}
+
+// Publish-or-agree. Returns 1 when this batch may contribute, 0 when it must be
+// dropped (a disagreeing candidate set, or a generation that moved underneath).
+static int og_mt_commit_desc(const LegalMoves *moves, const Candidates *C) {
+    OgMtCand local[OG_MT_MAX_CANDS];
+    int n = 0;
+    og_mt_pack_desc(moves, C, local, &n);
+
+    uint32_t st = 0;
+    if (__atomic_compare_exchange_n(&g_ogmt.cand_state, &st, 1u, 0,
+                                    __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
+        g_ogmt.n_candidates = n;
+        memcpy(g_ogmt.cand, local, sizeof(local));
+        __atomic_store_n(&g_ogmt.cand_state, 2u, __ATOMIC_RELEASE);
+        return 1;
+    }
+    // Someone else is publishing or has published. A bounded spin covers the
+    // memcpy window; anything longer means the generation moved, drop the batch.
+    for (int spin = 0; spin < 1000000 &&
+         __atomic_load_n(&g_ogmt.cand_state, __ATOMIC_ACQUIRE) == 1u; spin++) { }
+    if (__atomic_load_n(&g_ogmt.cand_state, __ATOMIC_ACQUIRE) != 2u) return 0;
+    if (g_ogmt.n_candidates != n) {
+        __atomic_add_fetch(&g_ogmt.desc_mismatch, 1u, __ATOMIC_RELAXED);
+        return 0;
+    }
+    const unsigned char *a = (const unsigned char *)g_ogmt.cand;
+    const unsigned char *b = (const unsigned char *)local;
+    for (size_t i = 0; i < sizeof(local); i++) {
+        if (a[i] != b[i]) {
+            __atomic_add_fetch(&g_ogmt.desc_mismatch, 1u, __ATOMIC_RELAXED);
+            return 0;
+        }
+    }
+    return 1;
+}
+
+// Copy this thread's exact endgame verdicts into the shared table. Verdicts are
+// per-thread because the probe's budget is; a thread that PROVED something
+// overwrites a thread that gave up, never the reverse, so a published win/loss
+// is always a real proof.
+static void og_mt_capture_verdicts(const Candidates *C) {
+    if (!og_ex_solve_applied) return;
+    __atomic_store_n(&g_ogmt.solver_applied, 1u, __ATOMIC_RELAXED);
+    for (int i = 0; i < C->n && i < OG_MT_MAX_CANDS; i++) {
+        int v = og_ex_verdict[C->idx[i]];
+        if (v == OG_EX_NONE_V || v == OG_EX_UNKNOWN_V) {
+            int cur = __atomic_load_n(&g_ogmt.verdict[i], __ATOMIC_RELAXED);
+            if (cur != 0 && cur != OG_EX_NONE_V && cur != OG_EX_UNKNOWN_V) continue;
+        }
+        __atomic_store_n(&g_ogmt.verdict[i], v, __ATOMIC_RELAXED);
+    }
+}
+#endif  // FOOLISH_ORACLE_MT
 
 static void og_ranked_insert(int *idxs, double *keys, int *n, int cap,
                              int idx, double key) {
@@ -1534,6 +1662,18 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
             og_ex_emit(g, bot_idx, moves, &lb, NULL, NULL, NULL, NULL, NULL, 0, 0, -1);
         }
 #endif
+#ifdef FOOLISH_ORACLE_MT
+        // Degenerate emit site: one legal move, nothing to sample. Publish the
+        // descriptor so the overlay has a row, and count the batch.
+        {
+            Candidates TC; TC.n = 1; TC.idx[0] = 0;
+            og_ex_solve_applied = 0;
+            if (og_mt_commit_desc(moves, &TC)) {
+                __atomic_store_n(&g_ogmt.chosen, 0, __ATOMIC_RELAXED);
+                __atomic_fetch_add(&g_ogmt.batches, 1u, __ATOMIC_RELAXED);
+            }
+        }
+#endif
         return 0;
     }
 
@@ -1624,6 +1764,10 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
         for (int i = 0; i < (int)(sizeof(og_ex_verdict)/sizeof(og_ex_verdict[0])); i++)
             og_ex_verdict[i] = OG_EX_NONE_V;
     }
+#elif defined(FOOLISH_ORACLE_MT)
+    og_ex_solve_applied = 0;
+    for (int i = 0; i < (int)(sizeof(og_ex_verdict)/sizeof(og_ex_verdict[0])); i++)
+        og_ex_verdict[i] = OG_EX_NONE_V;
 #endif
     int solved = og_no_solve ? -1
                : og_try_endgame_solve(g, bot_idx, moves, &B, forced_loss, &n_safe);
@@ -1633,6 +1777,19 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
             Candidates EC; og_pick_candidates(g, moves, forced_loss, &EC);
             og_ex_emit(g, bot_idx, moves, &B, &EC, NULL, NULL, NULL, forced_loss,
                        solved, og_ex_solve_applied, solved);
+        }
+#endif
+#ifdef FOOLISH_ORACLE_MT
+        // Proven win: octogen returns the winning move directly (no MC). Publish
+        // the candidate table + verdicts so the controller shows the exact panel.
+        {
+            Candidates EC; og_pick_candidates(g, moves, forced_loss, &EC);
+            if (og_mt_commit_desc(moves, &EC)) {
+                og_mt_capture_verdicts(&EC);
+                for (int i = 0; i < EC.n; i++)
+                    if (EC.idx[i] == solved) { __atomic_store_n(&g_ogmt.chosen, i, __ATOMIC_RELAXED); break; }
+                __atomic_fetch_add(&g_ogmt.batches, 1u, __ATOMIC_RELAXED);
+            }
         }
 #endif
         game_rng_set(saved_rng);
@@ -1652,6 +1809,12 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
             og_ex_emit(g, bot_idx, moves, &B, &C, NULL, NULL, NULL, forced_loss,
                        0, og_ex_solve_applied, -1);
 #endif
+#ifdef FOOLISH_ORACLE_MT
+        if (og_mt_commit_desc(moves, &C)) {
+            og_mt_capture_verdicts(&C);
+            __atomic_fetch_add(&g_ogmt.batches, 1u, __ATOMIC_RELAXED);
+        }
+#endif
         game_rng_set(saved_rng); return 0;
     }
     if (C.n == 1) {
@@ -1659,6 +1822,13 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
         if (og_explain_on())
             og_ex_emit(g, bot_idx, moves, &B, &C, NULL, NULL, NULL, forced_loss,
                        C.idx[0], og_ex_solve_applied, -1);
+#endif
+#ifdef FOOLISH_ORACLE_MT
+        if (og_mt_commit_desc(moves, &C)) {
+            og_mt_capture_verdicts(&C);
+            __atomic_store_n(&g_ogmt.chosen, 0, __ATOMIC_RELAXED);
+            __atomic_fetch_add(&g_ogmt.batches, 1u, __ATOMIC_RELAXED);
+        }
 #endif
         game_rng_set(saved_rng); return C.idx[0];
     }
@@ -1851,6 +2021,26 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
     if (og_explain_on())
         og_ex_emit(g, bot_idx, moves, &B, &C, score, nsim, alive, forced_loss,
                    chosen, og_ex_solve_applied, -1);
+#endif
+#ifdef FOOLISH_ORACLE_MT
+    // MT5 (docs/INFINITE_ORACLE_DESIGN.md §8b.5): fold this batch's per-candidate
+    // rollout scores into the shared accumulator, once the candidate set has
+    // been agreed with whatever thread published first. score[] is a sum of
+    // finish positions (ints 1..N), so the u64 atomic add is exact - no float
+    // reduction, and no dependence on the order the threads happen to land in.
+    if (og_mt_commit_desc(moves, &C)) {
+        og_mt_capture_verdicts(&C);           // NONE unless the endgame probe fired
+        for (int i = 0; i < C.n && i < OG_MT_MAX_CANDS; i++) {
+            if (nsim[i] > 0) {
+                __atomic_fetch_add(&g_ogmt.sum_fp[i], (uint64_t)(score[i] + 0.5), __ATOMIC_RELAXED);
+                __atomic_fetch_add(&g_ogmt.nsim[i], (uint32_t)nsim[i], __ATOMIC_RELAXED);
+            }
+            if (forced_loss[C.idx[i]])
+                __atomic_store_n(&g_ogmt.forced_loss[i], 1u, __ATOMIC_RELAXED);
+        }
+        if (best >= 0) __atomic_store_n(&g_ogmt.chosen, best, __ATOMIC_RELAXED);
+        __atomic_fetch_add(&g_ogmt.batches, 1u, __ATOMIC_RELAXED);
+    }
 #endif
     game_rng_set(saved_rng);
     return chosen;
