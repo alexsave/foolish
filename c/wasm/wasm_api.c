@@ -974,6 +974,82 @@ int wasm_anim_stale_optimistic(int n_opt, int n_table, int n_named) {
     return n;
 }
 
+// THE CONFLICT VERDICT, per motion (anim_plan.h anim_conflict_facts +
+// anim_conflict_verdict), for the SERVER transport.
+//
+// wasm_anim_resolve below answers the same question for one shape only - my
+// pending attacks and covers, all of which landed on the TABLE, judged against
+// the final board's defender. AnimationContext asks it three more times with
+// different inputs: a pass judged against the NEXT defender's hand, my attacks
+// judged against the defender a pass just installed, and my pickups, which
+// landed in MY HAND rather than on the table. Those three re-derived the rule
+// in TypeScript instead of asking for it, so they missed the precedence
+// (CLEAR before the standing sets), the pool rule and the masked back.
+//
+// This entry is the rule itself with every input as an argument, so all four
+// callers ask the same C. It mirrors fio_conflict_packed's input order (the
+// phone's door onto the same rule) minus the group/reversal half, which is
+// chain-only.
+//
+// g_io in:
+//   u8 n_moved, then n_moved x u8 dense id the arriving stream moves
+//     (ANIM_TABLE_NONE for a masked back - it names nothing)
+//   u8 n_open_battles, then 2 x that u8: the opening table (attack, then its
+//     cover or ANIM_TABLE_NONE). BOTH sides stand.
+//   u8 n_my_hand, then that many u8 dense ids: my hand on that board
+//   u8 n_motions, then per motion: u8 dense id (or ANIM_TABLE_NONE),
+//     u8 dest (ANIM_DEST_*), u8 is_cover
+// g_io out (overwrites): n_motions x u8 verdict (ANIM_CONFLICT_*).
+// Returns the motion count, or a negative ANIM_E*.
+int wasm_anim_conflict_verdicts(int table_cleared, int pending_attacks,
+                                int defender_hand, int final_uncovered) {
+    int p = 0;
+    const int n_moved = g_io[p++];
+    if (n_moved > ANIM_MAX_CARDS) return ANIM_ECAP;
+    static int moved[ANIM_MAX_CARDS];
+    for (int i = 0; i < n_moved; i++) {
+        const unsigned char b = g_io[p++];
+        moved[i] = (b == ANIM_TABLE_NONE) ? ANIM_CARD_NONE : (int)b;
+    }
+    const int n_bat = g_io[p++];
+    if (n_bat > MAX_BATTLES) return ANIM_ECAP;
+    const unsigned char *table = &g_io[p];
+    p += 2 * n_bat;
+    const int n_hand = g_io[p++];
+    if (n_hand > ANIM_MAX_CARDS) return ANIM_ECAP;
+    const unsigned char *hand = &g_io[p];
+    p += n_hand;
+
+    AnimConflictFacts facts;
+    const int fr = anim_conflict_facts(moved, n_moved, table, n_bat, hand, n_hand, &facts);
+    if (fr != ANIM_EOK) return fr;
+
+    const int n_motions = g_io[p++];
+    if (n_motions > ANIM_MAX_CARDS) return ANIM_ECAP;
+    // Read every motion out before writing any verdict back: the output
+    // overwrites the input buffer they are still sitting in.
+    static unsigned char m_id[ANIM_MAX_CARDS], m_dest[ANIM_MAX_CARDS], m_cover[ANIM_MAX_CARDS];
+    for (int i = 0; i < n_motions; i++) {
+        m_id[i] = g_io[p++];
+        m_dest[i] = g_io[p++];
+        m_cover[i] = g_io[p++];
+    }
+
+    AnimServerHope hope;
+    hope.table_cleared = table_cleared;
+    hope.pending_attacks = pending_attacks;
+    hope.defender_hand = defender_hand;
+    hope.final_uncovered = final_uncovered;
+    for (int i = 0; i < n_motions; i++) {
+        hope.is_cover = m_cover[i];
+        const int id = (m_id[i] == ANIM_TABLE_NONE) ? ANIM_CARD_NONE : (int)m_id[i];
+        const int v = anim_conflict_verdict(id, m_dest[i], &facts, &hope);
+        if (v < 0) return v;
+        g_io[i] = (unsigned char)v;
+    }
+    return n_motions;
+}
+
 // THE TRANSPORT (anim_plan.h), said once by the host. Every wasm host is the
 // server shape - a browser, an edge function, a test harness driving either -
 // but the kernel will not assume that, so bots.ts states it at module init.

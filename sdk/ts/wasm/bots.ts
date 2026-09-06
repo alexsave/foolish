@@ -63,10 +63,10 @@ interface BotsExports extends EngineExports {
     // policy the web pure modules (src/state/*) delegate to. bots-only.
     wasm_anim_should_drop_stale(hasLast: number, last: number, hasIncoming: number, incoming: number): number;
     wasm_anim_stale_optimistic(nOpt: number, nTable: number, nNamed: number): number;
-    wasm_anim_resolve(nPending: number, nServer: number, nEvents: number,
-                      defender: number, defenderHand: number, finalUncovered: number): number;
     wasm_anim_build_plan(nEvents: number, nPlayers: number, finalDeck: number, finalDiscard: number): number;
     wasm_anim_finish_rows(nElim: number, gameOver: number, nPlayers: number, mySeat: number): number;
+    wasm_anim_conflict_verdicts(tableCleared: number, pendingAttacks: number,
+                                defenderHand: number, finalUncovered: number): number;
     wasm_anim_set_transport(transport: number): number;
     wasm_anim_transport(): number;
 }
@@ -1511,41 +1511,80 @@ export function animFinishRows(
     return rows;
 }
 
-/** optimisticConflicts.resolveUnconfirmedAttackCovers, in C. `events` need only
- *  carry a type code (animEventTypeCode) and the cards each names — the C side
- *  uses them for the pickup/cards_to_trash sweep set. Returns index lists into
- *  `pending`. */
-export function animResolveUnconfirmed(
-    pending: { card: Card; isCover: boolean }[],
-    serverTable: Card[],
-    events: { type: number; cards: Card[] }[],
-    fin: { defender: number; defenderHand: number; finalUncovered: number },
-): { revert: number[]; merge: number[]; clear: number[] } {
+// legal.h/anim_plan.h spell "no card here" the same byte.
+const ANIM_TABLE_NONE = 0xfe;
+
+/** anim_plan.h ANIM_DEST_*: which kind of place a doomed motion put its card. */
+export const ANIM_DEST = { table: 0, hand: 1, pool: 2 } as const;
+/** anim_plan.h ANIM_CONFLICT_*, in the order the C defines them. */
+export const ANIM_CONFLICT = ['revert', 'keep', 'clear'] as const;
+export type AnimConflictVerdict = (typeof ANIM_CONFLICT)[number];
+
+/** One motion a superseded move made: which card, and what kind of place it
+ *  landed in. `isCover` marks the defender's own play, which the capacity rule
+ *  excludes (capacity is an attack rule). */
+export interface AnimConflictMotion {
+    card: Card | null;                     // null models a viewer-masked back
+    dest: (typeof ANIM_DEST)[keyof typeof ANIM_DEST];
+    isCover?: boolean;
+}
+
+/** What the arriving broadcast vouches for, and the server transport's extra
+ *  question (anim_plan.h AnimServerHope). */
+export interface AnimConflictInputs {
+    /** Cards the arriving stream itself moves - its pickup/trash sweep. */
+    movedCards: (Card | null)[];
+    /** The table of the board it opens on; both sides of a battle stand. */
+    openTable: Battle[];
+    /** My hand on that board. */
+    myHand: Card[];
+    tableCleared: boolean;
+    pendingAttacks: number;
+    defenderHand: number;
+    finalUncovered: number;
+}
+
+/**
+ * THE CONFLICT VERDICT per motion (anim_plan.h anim_conflict_facts +
+ * anim_conflict_verdict), server transport.
+ *
+ * `animResolveUnconfirmed` below answers this for one shape - pending
+ * attacks/covers that all landed on the table, against the final board's
+ * defender. This is the same rule with every input open, for the callers that
+ * ask it about a pass, about the defender a pass just installed, or about cards
+ * that landed in my hand.
+ */
+export function animConflictVerdicts(
+    motions: AnimConflictMotion[], inputs: AnimConflictInputs,
+): AnimConflictVerdict[] {
+    if (motions.length === 0) return [];
     const ex = bots();
-    if (pending.length > 128 || serverTable.length > 160 || events.length > 64) {
-        throw new Error('anim: resolve input exceeds ABI cap');
-    }
     const buf = __mem(ex);
-    const base = ex.wasm_io_ptr();
-    let p = base;
-    for (const pc of pending) { buf[p++] = __wireStateCard(pc.card); buf[p++] = pc.isCover ? 1 : 0; }
-    for (const c of serverTable) buf[p++] = __wireStateCard(c);
-    for (const e of events) {
-        buf[p++] = e.type & 0xff;
-        buf[p++] = e.cards.length & 0xff;
-        for (const c of e.cards) buf[p++] = __wireStateCard(c);
+    let p = ex.wasm_io_ptr();
+    buf[p++] = inputs.movedCards.length & 0xff;
+    for (const c of inputs.movedCards) buf[p++] = c ? __wireStateCard(c) : ANIM_TABLE_NONE;
+    buf[p++] = inputs.openTable.length & 0xff;
+    for (const b of inputs.openTable) {
+        buf[p++] = __wireStateCard(b.attack);
+        buf[p++] = b.defense ? __wireStateCard(b.defense) : ANIM_TABLE_NONE;
     }
-    const rc = ex.wasm_anim_resolve(pending.length, serverTable.length, events.length,
-                                    fin.defender, fin.defenderHand, fin.finalUncovered);
-    if (rc < 0) throw new Error(`anim_resolve error ${rc}`);
+    buf[p++] = inputs.myHand.length & 0xff;
+    for (const c of inputs.myHand) buf[p++] = __wireStateCard(c);
+    buf[p++] = motions.length & 0xff;
+    for (const m of motions) {
+        buf[p++] = m.card ? __wireStateCard(m.card) : ANIM_TABLE_NONE;
+        buf[p++] = m.dest;
+        buf[p++] = m.isCover ? 1 : 0;
+    }
+    const n = ex.wasm_anim_conflict_verdicts(
+        inputs.tableCleared ? 1 : 0, inputs.pendingAttacks,
+        inputs.defenderHand, inputs.finalUncovered);
+    if (n < 0) throw new Error(`anim_conflict_verdicts error ${n}`);
     const out = __mem(ex);
-    let q = ex.wasm_io_ptr();
-    const nRevert = out[q++], nMerge = out[q++], nClear = out[q++];
-    const revert: number[] = [], merge: number[] = [], clear: number[] = [];
-    for (let i = 0; i < nRevert; i++) revert.push(out[q++]);
-    for (let i = 0; i < nMerge; i++) merge.push(out[q++]);
-    for (let i = 0; i < nClear; i++) clear.push(out[q++]);
-    return { revert, merge, clear };
+    const ob = ex.wasm_io_ptr();
+    const verdicts: AnimConflictVerdict[] = [];
+    for (let i = 0; i < n; i++) verdicts.push(ANIM_CONFLICT[out[ob + i]]);
+    return verdicts;
 }
 
 // One built plan step (mirrors AnimPlanStep).
