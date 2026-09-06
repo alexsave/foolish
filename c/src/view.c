@@ -1,5 +1,6 @@
 #include "view.h"
 #include "../wasm/wire.h"
+#include <string.h>   // memset — the hidden-run fill in state_put (see below)
 
 // Whether the hand of seat `seat` is visible to `viewer`.
 static int hand_visible(int viewer, int seat) {
@@ -31,8 +32,17 @@ int state_put(const Game *g, int viewer, unsigned char *out) {
     *q++ = (unsigned char)(g->has_good_timestamp ? 1 : 0);
     *q++ = (unsigned char)(g->deck_count & 0xff);
     *q++ = (unsigned char)((g->deck_count >> 8) & 0xff);
-    for (int i = 0; i < g->deck_count; i++) {
-        *q++ = unmasked ? wire_from_card(g->deck[i]) : (unsigned char)WIRE_CARD_HIDDEN;
+    // Hoist the loop-invariant `unmasked` test out of the per-card loop. A
+    // masked view (every /ws push) hides the ENTIRE deck, so that collapses to
+    // one vectorized memset of WIRE_CARD_HIDDEN instead of a branch + byte
+    // store per card. Output is byte-for-byte identical either way. state_put
+    // is the server's hottest own-code once bot-thread churn is gone
+    // (PROFILE_HOTPATH.md's assembly capture: view.c:34-35 / 49-50).
+    if (unmasked) {
+        for (int i = 0; i < g->deck_count; i++) *q++ = wire_from_card(g->deck[i]);
+    } else if (g->deck_count > 0) {
+        memset(q, (unsigned char)WIRE_CARD_HIDDEN, (size_t)g->deck_count);
+        q += g->deck_count;
     }
     *q++ = (unsigned char)g->num_battles;
     for (int i = 0; i < g->num_battles; i++) {
@@ -46,8 +56,13 @@ int state_put(const Game *g, int viewer, unsigned char *out) {
         *q++ = (unsigned char)pl->status;
         *q++ = (unsigned char)((visible && pl->awaiting_attack) ? 1 : 0);
         *q++ = (unsigned char)pl->hand_count;
-        for (int j = 0; j < pl->hand_count; j++) {
-            *q++ = visible ? wire_from_card(pl->hand[j]) : (unsigned char)WIRE_CARD_HIDDEN;
+        // Same hoist as the deck loop: a hidden hand (every seat except the
+        // viewer, on a masked push) is one memset instead of a per-card branch.
+        if (visible) {
+            for (int j = 0; j < pl->hand_count; j++) *q++ = wire_from_card(pl->hand[j]);
+        } else if (pl->hand_count > 0) {
+            memset(q, (unsigned char)WIRE_CARD_HIDDEN, (size_t)pl->hand_count);
+            q += pl->hand_count;
         }
     }
     *q++ = (unsigned char)g->num_eliminated;
