@@ -55,6 +55,10 @@ export interface PackedOpProducts {
     logsHex: string | null;
     nEvents: number;
     events: Map<number, Uint8Array>; // viewer seat (-1 spectator) -> evwire bytes
+    // Envelope extras, for the one packed producer whose broadcast changes the
+    // ROSTER (an add-bot that auto-starts): recipients must not have to depend
+    // on an already-loaded, possibly stale roster to decode the deal.
+    extra?: PackedPayloadExtra;
 }
 
 interface GameOpResult { game: Game; events: AnimationEvent[]; deleted?: boolean; packed?: PackedOpProducts }
@@ -126,7 +130,7 @@ export const executeWithGameLock = async (game_id: string, operation: (game: Gam
         if (packed ? packed.nEvents > 0 : result.events.length > 0) {
             console.log(`[${reqId}][TXN] Broadcasting ${packed ? packed.nEvents : result.events.length} events after commit`);
             const broadcast = packed
-                ? broadcastPackedEventBuffers(result.game, packed.events, reqId)
+                ? broadcastPackedEventBuffers(result.game, packed.events, reqId, packed.extra)
                 : broadcastAnimationEvents(result.game, result.events, reqId);
             broadcast.catch(err =>
                 console.error(`[${reqId}] Error broadcasting events:`, err));
@@ -254,9 +258,11 @@ export const packedSequencePayload = (bytes: Uint8Array, version: number, extra?
 });
 
 // Broadcast kernel-serialized per-viewer event buffers (the packed action
-// path and the packed bot loop). No r/m envelope extras: a move can't change
-// the roster, and its messages rebuild from codes client-side.
-export const broadcastPackedEventBuffers = async (game: Game, buffers: Map<number, Uint8Array>, reqId: string = 'unknown'): Promise<void> => {
+// path, the packed bot loop, and the packed deal). A move carries no r/m
+// envelope extras - it cannot change the roster, and its messages rebuild from
+// codes client-side - but a deal bundled with a roster change does, so the
+// extras are a parameter rather than an assumption.
+export const broadcastPackedEventBuffers = async (game: Game, buffers: Map<number, Uint8Array>, reqId: string = 'unknown', extra?: PackedPayloadExtra): Promise<void> => {
     const version = game.version ?? 0;
     const messages: BroadcastMessage[] = [];
     for (let seat = 0; seat < game.players.length; seat++) {
@@ -267,7 +273,7 @@ export const broadcastPackedEventBuffers = async (game: Game, buffers: Map<numbe
             messages.push({
                 topic: `gu-${game.id}-${p.player_id}`,
                 event: 'animation_events',
-                payload: packedSequencePayload(bytes, version),
+                payload: packedSequencePayload(bytes, version, extra),
             });
         }
     }
@@ -276,7 +282,7 @@ export const broadcastPackedEventBuffers = async (game: Game, buffers: Map<numbe
         messages.push({
             topic: `game-${game.id}`,
             event: 'animation_events',
-            payload: packedSequencePayload(spectator, version),
+            payload: packedSequencePayload(spectator, version, extra),
         });
     }
     await broadcastMessages(messages, reqId);

@@ -6,10 +6,10 @@
 // only the packaging is consolidated. Each handler mutates params.game and returns
 // {game, events}; executeWithGameLock (via wrap400) does the commit.
 
-import { ExecutionParams, broadcastToGameUser, PackedOpProducts } from './utils.ts';
+import { ExecutionParams, broadcastToGameUser, PackedOpProducts, PackedPayloadExtra } from './utils.ts';
 import { ANIMATION_EVENT_TYPE, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, SERVER_EVENT_TYPE, AnimationEvent, Game } from '@api/core/types.ts';
 import { cloneGame, verify_player_in_game } from '@api/common/common_utils.ts';
-import { start_game, start_game_packed } from '@api/common/game_lifecycle.ts';
+import { start_game_packed } from '@api/common/game_lifecycle.ts';
 import { MAX_PLAYERS } from '@api/core/constants.ts';
 import { handleRearrangeHand as applyRearrangeHand } from '@api/common/actions/rearrange.ts';
 import { runPackedRearrange, PackedRunOk } from '@sdk/ts/wasm/engine.ts';
@@ -19,7 +19,7 @@ import { logsFromKernelExport } from '@sdk/ts/wire/logwire.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
 
 // Kernel run -> the commit/broadcast products executeWithGameLock consumes.
-const packedProducts = (run: PackedRunOk): PackedOpProducts => ({
+const packedProducts = (run: PackedRunOk, extra?: PackedPayloadExtra): PackedOpProducts => ({
     ended: run.ended,
     stateHex: bytesToHex(run.stateBlob),
     logsHex: run.logsWire.length > 2
@@ -27,6 +27,16 @@ const packedProducts = (run: PackedRunOk): PackedOpProducts => ({
         : null,
     nEvents: run.nEvents,
     events: run.events,
+    extra,
+});
+
+// The roster, for a broadcast that changes it. Recipients decode the deal
+// against this rather than against whatever roster they happen to hold.
+const rosterExtra = (game: Game): PackedPayloadExtra => ({
+    r: {
+        name: game.name,
+        players: game.players.map(p => ({ player_id: p.player_id, name: p.name, is_ai: p.is_ai })),
+    },
 });
 
 const supabaseClient = createClient(
@@ -123,7 +133,11 @@ export async function handleAddBot({ body, game, user, botsPrefetch }: Execution
 
     const allPlayersReady = game.players.every(p => p.status === PLAYER_STATUS.READY) && game.players.length >= 2;
     if (allPlayersReady) {
-        return { game, events: start_game(game) };
+        // Kernel-packed deal, like handleStart's branch. This one bundles a
+        // ROSTER change (the bot just joined), so the broadcast carries it -
+        // which is the only thing that used to keep this start on the JS
+        // AnimationEvent path and its TypeScript re-encoder.
+        return { game, events: [], packed: packedProducts(start_game_packed(game), rosterExtra(game)) };
     }
 
     return { game, events: [{
