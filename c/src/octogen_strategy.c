@@ -92,16 +92,6 @@ static _Thread_local int og_no_solve = 0, og_no_voids = 0, og_no_flip = 0;
 static _Thread_local int og_no_floors = 0, og_no_leaf = 0, og_no_avoid = 0;
 static _Thread_local int og_no_earlyexit = 0;
 static _Thread_local int og_verify = 0;
-#ifdef OG_HIDE_UNCOVERABLE
-// A/B scaffolding for the shipped information-hiding rule
-// (docs/OCTOGEN_HIDE_UNCOVERABLE.md). The rule itself ships unconditionally; when
-// -DOG_HIDE_UNCOVERABLE is defined (eval builds only) it is instead gated to the
-// seats whose bit is set in OG_HIDE_MASK, so hide_eval can isolate one seat and
-// measure hide-vs-normal. The shipped bots/oracle wasm never define this macro,
-// so they carry none of this scaffolding — only the always-on rule below.
-static _Thread_local int og_hide_mask = 0;
-long og_hide_fire_count = 0;   // # of partial-cover->pickup overrides (analysis)
-#endif
 static _Thread_local int og_no_fastroll = 0;   // OG_NO_FASTROLL=1: struct rollout
 // Bitboard exact-leaf endgames inside rollouts (semtex's own lever): resolve
 // small 2-player deck-empty rollout endgames with the fast bitboard solver
@@ -1678,9 +1668,6 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
     }
 
     if (!og_flags_loaded) {
-#ifdef OG_HIDE_UNCOVERABLE
-        og_hide_mask = og_env_int("OG_HIDE_MASK", 0);
-#endif
         og_no_solve  = og_flag("OG_NO_SOLVE");
         og_no_voids  = og_flag("OG_NO_VOIDS");
         og_no_flip   = og_flag("OG_NO_FLIP");
@@ -1992,14 +1979,8 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
     // doomed partial cover only leaks its cover cards — returned to hand and
     // logged by the pickup that is coming anyway — to the memory-keeping MC
     // opponents, and covering opens throw-in windows that grow the pickup.
-    // Weakly dominant: never costs a card or tempo. ON for every seat in the
-    // shipped build; -DOG_HIDE_UNCOVERABLE instead gates it per-seat via
-    // OG_HIDE_MASK (and counts fires) so the A/B eval can isolate one seat.
-    if (chosen >= 0 && chosen < moves->n && moves->moves[chosen].type == MOVE_COVER
-#ifdef OG_HIDE_UNCOVERABLE
-        && ((og_hide_mask >> bot_idx) & 1)
-#endif
-       ) {
+    // Weakly dominant: never costs a card or tempo. ON for every seat.
+    if (chosen >= 0 && chosen < moves->n && moves->moves[chosen].type == MOVE_COVER) {
         int n_uncov = 0;
         for (int i = 0; i < g->num_battles; i++)
             if (card_is_none(g->table_battles[i].defense)) n_uncov++;
@@ -2010,12 +1991,7 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
             else if (moves->moves[i].type == MOVE_PICKUP)
                 pickup_idx = i;
         }
-        if (!full_cover && pickup_idx >= 0) {
-            chosen = pickup_idx;
-#ifdef OG_HIDE_UNCOVERABLE
-            og_hide_fire_count++;
-#endif
-        }
+        if (!full_cover && pickup_idx >= 0) chosen = pickup_idx;
     }
 #ifdef OG_EXPLAIN_BUILD
     if (og_explain_on())

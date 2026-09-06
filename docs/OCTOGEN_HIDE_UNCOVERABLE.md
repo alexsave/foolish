@@ -9,11 +9,15 @@ MC opponents (octogen pins observed cards to a seat). The rule below closes that
 leak, and a paired A/B (below) measured a real, significant win.
 
 The rule ships unconditionally in `bots.wasm` (server) and `oracle.wasm` (client
-analyzer). The `-DOG_HIDE_UNCOVERABLE` macro is now **A/B scaffolding only**: in an
-eval build it re-gates the rule to the seats set in `OG_HIDE_MASK` (and counts
-fires) so `hide_eval` can isolate one seat; the shipped build defines no such
-macro, so the rule is simply always on. `rules.wasm` / `guards.wasm` do not embed
-octogen and are unaffected.
+analyzer), and there is no longer any way to turn it off.
+`rules.wasm` / `guards.wasm` do not embed octogen and are unaffected.
+
+The A/B scaffolding that produced the numbers below - the `-DOG_HIDE_UNCOVERABLE`
+macro, the `OG_HIDE_MASK` per-seat gate, the fire counter, and the `hide_eval`
+harness in `c/tools/hide_tax/` - was deleted with the rest of the dead C build
+flags once the rule shipped.
+No build target set the macro, so nothing that ships changed when it went.
+Restore it from git history to re-run the A/B.
 
 ## The rule
 
@@ -35,7 +39,10 @@ pick up return to your hand (net zero cards) — so any measured effect is almos
 purely the information tax, plus the second-order effect that covering adds ranks
 to the table and can invite more throw-ins into your pickup.
 
-## Harness
+## Harness (deleted - restore it from history to re-run)
+
+Everything in this section describes code that is no longer in the tree.
+It is kept because it is how the numbers below were produced.
 
 `c/tools/hide_tax/hide_eval.c` self-plays octogen-vs-octogen (all seats
 octogen — the opponents keep perfect memory and exploit any leak) over a seed

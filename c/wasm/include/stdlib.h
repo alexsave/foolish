@@ -1,5 +1,5 @@
 // Freestanding shim for the wasm32 build. The rules kernel needs nothing
-// from here (abort only appears under -DGRPO_RNG_DEBUG); the bot module
+// from here; the bot module
 // (bots.wasm) provides malloc/calloc/free/getenv in wasm_bots_api.c for the
 // Monte-Carlo bots' one-time scratch buffers and CD_* tuning knobs.
 #ifndef CNITRO_WASM_STDLIB_H

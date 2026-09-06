@@ -14,26 +14,16 @@ open docs/tt-divergence.html            # macOS
 xdg-open docs/tt-divergence.html        # Linux
 ```
 
-## Run your own measurements and watch it update
-
-Each `measure` shards the games by seed across all cores, appends the results,
-re-fits the curves + bands, and rewrites the HTML. Refresh the browser to see it
-update.
+## Rebuild it from the banked data
 
 ```
-# add 2000 games to octogen at 4 players, then rebuild
-tools/tt_divergence_viz/generate.sh measure octogen 4 2000
-
-# several player counts in one go
-tools/tt_divergence_viz/generate.sh sweep octogen "2 3 4 5 6 7 8" 1500
-
-# just rebuild the HTML from whatever is already in data/
 tools/tt_divergence_viz/generate.sh
 ```
 
-Keep calling `measure` for the same cell — the counts accumulate and the
-confidence band tightens. Override the core count with `J=8`, the base seed with
-`SEED0=...`.
+New measurements are no longer possible from this tree. `W` came from the
+solver's `-DCD_TT_STATS` occupancy census and `main_eval`'s `CD_GW` emitter,
+both deleted with the rest of the dead C build flags once the research
+concluded. Restore them from git history first if a fresh sweep is ever needed.
 
 ## Why the results reconcile correctly
 
@@ -48,10 +38,6 @@ by **seed** and deduped on it:
 - Accumulating two runs = the union of their seeds; you pool raw counts
   (numerator and denominator), you never average two rates.
 
-`measure` auto-advances the seed range past what's already banked, so successive
-runs are disjoint by construction; the dedup is the backstop if you pass an
-overlapping `SEED0` by hand.
-
 `W` per game is the largest key-set that had to coexist in the direct-mapped
 table during that game (0 if the game never reached the endgame solver). The
 divergence predictor is the survival function `P(W > 2^bits)`, an upper bound on
@@ -61,7 +47,7 @@ the per-game move-divergence rate — see the page's write-up.
 
 | path | what |
 |------|------|
-| `generate.sh` | measure (seed-sharded, accumulating) + rebuild |
+| `generate.sh` | rebuild the page from `data/` |
 | `build.mjs` | render `data/*.json` → `docs/tt-divergence.html` |
 | `ccdf.mjs` | `data/W/*.gw` → `data/ccdf.json` (per-seed → CCDF) |
 | `data/W/*.gw` | accumulating per-game seed-keyed working sets |

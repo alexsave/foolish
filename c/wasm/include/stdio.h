@@ -1,5 +1,7 @@
-// Freestanding shim for the wasm32 build. game.c includes <stdio.h> but only
-// calls fprintf under -DGRPO_RNG_DEBUG, which the wasm build never defines.
+// Freestanding shim for the wasm32 build. The shipped modules never print;
+// the declarations exist so the sources that DO print under a research flag
+// (octogen under OG_EXPLAIN_BUILD, legal.c under LEGAL_STATS) still compile
+// for wasm without the host libc.
 #ifndef CNITRO_WASM_STDIO_H
 #define CNITRO_WASM_STDIO_H
 

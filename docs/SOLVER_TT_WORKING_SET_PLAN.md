@@ -1,5 +1,15 @@
 # Shrinking the cordite solver's TT working set — design candidates
 
+> **The candidate code described here no longer exists.**
+> `CD_TT_STATS`, `CD_TT_RANKSYM`, `CD_TT_SUITSYM`, `CD_TT_TAILCACHE`, `CD_TT_BOUNDS`,
+> `CD_TT_BOUNDS_USE`, `CD_TT_DEPTH_PREF`, `CD_TT_ADAPT`, `CD_TT_ORDER2` and
+> `CD_TT_ORDER3` were deleted along with the rest of the dead C build flags: no build
+> target defined any of them, so nothing that ships changed when they went.
+> What survived the research is what `bots.wasm` sets today - `CD_TT_2WAY`,
+> `CD_TT_PACK8`, `CD_TT_BITS=12`.
+> This doc stays as the measured record; recover the code from git history before
+> re-running any recipe in it.
+
 Status: **plan + measured groundwork**. Nothing here is enabled; every candidate is a
 compile flag, off by default. This doc is written to be executed by a separate
 implementer, one candidate at a time, against the validation ladder in §3.

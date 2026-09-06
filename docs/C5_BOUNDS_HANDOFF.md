@@ -1,5 +1,11 @@
 # C5 (`CD_TT_BOUNDS`) — what happened, why, and what to do with it
 
+> **The code this doc hands off no longer exists.**
+> `CD_TT_BOUNDS` and `CD_TT_BOUNDS_USE` were deleted with the rest of the dead C
+> build flags - no build target defined either, so nothing that ships changed.
+> The findings below stand as the record of why bound reuse was abandoned; recover
+> the store machinery from git history if C5-v2 is ever attempted.
+
 **Status: store machinery landed and validated safe; bound *reuse* is a
 characterized negative with a precise root cause and a specified fix (C5-v2).**
 This doc is the execution handoff for that fix. Read §3 (root cause) until it

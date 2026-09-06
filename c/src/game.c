@@ -10,8 +10,6 @@
 #include "game.h"
 #include "awire.h"
 #include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
 
 // The wide, reproducible deal (ChaCha) lives ONLY in builds that actually deal:
 // the rules kernel (server deal + replay) and native tools/tests. The client
@@ -27,9 +25,7 @@
 // Both LCGs are _Thread_local so multiple worker threads can each run their
 // own game(s) without racing. Default seeds are non-zero so a thread that
 // never calls game_set_seed/random_strategy_set_seed still produces a
-// well-defined sequence. In DEBUG builds (-DGRPO_RNG_DEBUG) we additionally
-// require that the seed was explicitly set in the current thread before any
-// game_random() call — catches missing initialization in worker code.
+// well-defined sequence.
 
 static _Thread_local uint32_t g_seed = 1237;
 static _Thread_local uint32_t g_rand_seed = 1;
@@ -111,17 +107,9 @@ _Thread_local int engine_last_reject = ENGINE_REJECT_NONE;
 #define SNAP(g, tag, aux) do { if (engine_snap_hook) engine_snap_hook((g), (tag), (aux)); } while (0)
 #define REJECT(code) do { engine_last_reject = (code); return false; } while (0)
 
-#ifdef GRPO_RNG_DEBUG
-static _Thread_local int g_seed_set = 0;
-static _Thread_local int g_rand_seed_set = 0;
-#endif
-
 void game_set_seed(uint32_t s) {
     g_seed = s ? s : 1;
     g_deal_wide = 0;   // revert the deal to the legacy 32-bit LCG path
-#ifdef GRPO_RNG_DEBUG
-    g_seed_set = 1;
-#endif
 }
 
 #ifndef DEAL_RNG_DISABLED
@@ -129,9 +117,6 @@ void game_set_deal_seed_bytes(const uint8_t *seed, int len) {
     if (!seed || len < FOOLISH_SEED_LEN) return;  // too little entropy: leave wide mode off
     deal_rng_seed(&g_deal_rng, seed);
     g_deal_wide = 1;                 // start_game will shuffle; draws then pop
-#ifdef GRPO_RNG_DEBUG
-    g_seed_set = 1;                  // a wide seed also satisfies the init guard
-#endif
 }
 #else
 void game_set_deal_seed_bytes(const uint8_t *seed, int len) { (void)seed; (void)len; }
@@ -159,12 +144,6 @@ void game_deal_rng_set(const unsigned char *in) {
 #endif
 }
 uint32_t game_random_u32(void) {
-#ifdef GRPO_RNG_DEBUG
-    if (!g_seed_set) {
-        fprintf(stderr, "game_random_u32: seed not set in this thread\n");
-        abort();
-    }
-#endif
     g_seed = g_seed * 1664525u + 1013904223u;
     return g_seed;
 }
@@ -176,16 +155,10 @@ double game_random(void) {
 uint32_t game_rng_get(void) { return g_seed; }
 void     game_rng_set(uint32_t s) {
     g_seed = s ? s : 1;
-#ifdef GRPO_RNG_DEBUG
-    g_seed_set = 1;
-#endif
 }
 
 void random_strategy_set_seed(uint32_t s) {
     g_rand_seed = s ? s : 1;
-#ifdef GRPO_RNG_DEBUG
-    g_rand_seed_set = 1;
-#endif
 }
 // Current strategy-LCG state, WITHOUT advancing it. Live (wasm) this is reseeded
 // per bot decision from state_fnv (which folds in the SERVER-ONLY g_rng_base),
@@ -194,12 +167,6 @@ void random_strategy_set_seed(uint32_t s) {
 // server (same game_seed -> same value), deterministic in native tests.
 uint32_t random_strategy_rng_get(void) { return g_rand_seed; }
 double random_strategy_random(void) {
-#ifdef GRPO_RNG_DEBUG
-    if (!g_rand_seed_set) {
-        fprintf(stderr, "random_strategy_random: seed not set in this thread\n");
-        abort();
-    }
-#endif
     g_rand_seed = g_rand_seed * 1664525u + 1013904223u;
     return (double)g_rand_seed / 4294967296.0;
 }
