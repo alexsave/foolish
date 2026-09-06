@@ -22,6 +22,14 @@ import {
   Game, PersonalGame, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, PrivatePlayer,
 } from '../server/api/core/types.ts';
 import { personalize_game } from '../server/api/common/common_utils.ts';
+// Top-level, not five `await import`s inside the per-move loop below: the e2e
+// runner's TS loader re-resolves each one on every call (~1.9ms apiece), so that
+// loop was paying ~9.5ms a move purely in module resolution.
+import { handleAttack } from '../server/api/common/actions/attack.ts';
+import { handleCover } from '../server/api/common/actions/cover.ts';
+import { handlePass } from '../server/api/common/actions/pass.ts';
+import { handlePickup } from '../server/api/common/actions/pickup.ts';
+import { handleGood } from '../server/api/common/actions/good.ts';
 import { start_game } from '../server/api/common/game_lifecycle.ts';
 import { kernelLegalMoves, kernelShouldAct, serializeGameState, __setKernelSeedSource } from '../sdk/ts/wasm/engine.ts';
 import { encodeAction, decodeAction, encodeActionRequest, decodeActionRequest, encodeActionResponse, decodeActionResponse, ACTION_STATUS, AwireKindName } from '../sdk/ts/wire/awire.ts';
@@ -118,11 +126,6 @@ test('validateActionWire: legal enumerated moves gate 0, illegal reject, malform
       // Advance the game along a random legal move via the JS path.
       if (menu.length > 0) {
         const pick = menu[ri(menu.length)];
-        const { handleAttack } = await import('../server/api/common/actions/attack.ts');
-        const { handleCover } = await import('../server/api/common/actions/cover.ts');
-        const { handlePass } = await import('../server/api/common/actions/pass.ts');
-        const { handlePickup } = await import('../server/api/common/actions/pickup.ts');
-        const { handleGood } = await import('../server/api/common/actions/good.ts');
         try {
           switch (pick.type) {
             case 'attack': handleAttack(game, actor.player_id, pick.cards!); break;

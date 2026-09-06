@@ -7,15 +7,72 @@
 // in-process broadcast recorder; everything else is the genuine article.
 
 import { Pool } from 'pg';
+import { basename } from 'path';
 
-const pool = new Pool({
+// ---- One Postgres DATABASE per test file ---------------------------------
+// The suite used to share one database, and every Postgres-backed file opened by
+// DROPping and recreating the public/auth/realtime schemas out from under the
+// others. That reset - not gameplay - is what forced `--test-concurrency=1`;
+// concurrent_games.test.ts exists to prove the gameplay side is innocent (24 real
+// games on ONE Postgres neither deadlock nor corrupt each other).
+//
+// So the shared thing is gone rather than serialised around. `E2E_PGDATABASE`
+// (default `foolish`) is now only the maintenance database the CREATE/DROP
+// statements are issued FROM; it holds no app tables, so the "relation \"games\"
+// does not exist" cascade has nothing left to half-apply. Each file gets its own
+// `e2e_<file>` database, created by applySchema() and dropped when the file ends.
+//
+// The name is derived from the FILE - not a random or clock-derived id - for two
+// reasons. The determinism gate forbids entropy under e2e/. And a deterministic
+// name is what makes a leaked database self-healing: applySchema() opens with
+// `DROP DATABASE IF EXISTS ... WITH (FORCE)`, which terminates whatever backends
+// a Ctrl-C'd run left holding it. Cleanup happens on ACQUIRE, not only on
+// release, so a namespace a killed process left behind is inert - it belongs to
+// exactly one file, and that file destroys it before it uses it.
+const suiteFile = basename(process.argv[1] ?? 'e2e');
+const suiteSlug = suiteFile.replace(/\.[cm]?[jt]sx?$/, '').replace(/\.test$/, '')
+    .replace(/[^A-Za-z0-9_]/g, '_').toLowerCase();
+
+/** Connection settings for the maintenance database (CREATE/DROP DATABASE run here). */
+export const pgAdminConfig = {
     host: process.env.E2E_PGHOST || '127.0.0.1',
     port: Number(process.env.E2E_PGPORT || 5432),
     user: process.env.E2E_PGUSER || 'stress',
     password: process.env.E2E_PGPASSWORD || 'stress',
     database: process.env.E2E_PGDATABASE || 'foolish',
-    max: 40,
-});
+};
+
+/** The database THIS test file owns. Nothing else reads or writes it. */
+export const suiteDatabase = `${process.env.E2E_DB_PREFIX || 'e2e'}_${suiteSlug}`;
+
+// ---- Connection budget ---------------------------------------------------
+// Files run in parallel now, so the ceiling is (pool size x files in flight),
+// not one pool. Postgres' default max_connections is 100 - the local dev server
+// and the CI `postgres:16` service alike - with 3 slots reserved for superusers.
+//
+// Measured: across the whole serial suite the peak was 25 backends, all of them
+// concurrent_games'. Two suites drive contention deliberately and would, with a
+// small pool, queue on the POOL instead of on Postgres - which is the thing they
+// exist to measure - so they keep a pool as wide as the race they run: 24 games
+// for concurrent_games, 30 simultaneous lease acquires for lease. Everything
+// else peaks in the low single digits and gets 8.
+//
+// Worst case at the DB lane's concurrency of 4 (scripts/run_e2e.mjs): both wide
+// suites plus two ordinary ones = 24 + 30 + 8 + 8 = 70, plus at most one
+// short-lived admin connection per file = 74. Comfortably inside 97.
+const WIDE_POOLS: Record<string, number> = { concurrent_games: 24, lease: 30 };
+const poolMax = Number(process.env.E2E_PG_POOL_MAX || WIDE_POOLS[suiteSlug] || 8);
+
+const pool = new Pool({ ...pgAdminConfig, database: suiteDatabase, max: poolMax });
+
+// pg's Pool.end() rejects when called twice, and the suite lifecycle now ends the
+// pool from the harness (the same hook that drops the database) while ~20 suites
+// still end it themselves in their own after(). Fold repeat calls onto the first
+// promise so hook ordering can't turn cleanup into a spurious red.
+const closePoolOnce = pool.end.bind(pool);
+let poolClosing: Promise<void> | null = null;
+(pool as unknown as { end: () => Promise<void> }).end = () => (poolClosing ??= closePoolOnce());
+
 export const e2ePool = pool;
 
 // Primary-key columns per table, for upsert conflict targets when not specified.
