@@ -1650,6 +1650,56 @@ static void test_bot_roster_choose_scopes_knobs(void) {
     CHECK(all_ok, "every offline rung dispatches to a linked brain");
 }
 
+/* ---------------- L1: the lobby is the kernel's ------------------------- */
+
+static void test_lobby(void) {
+    Game g;
+    memset(&g, 0, sizeof g);
+    g.status = GAME_STATUS_WAITING;
+
+    CHECK(game_lobby_can_deal(&g) == 0, "an empty lobby cannot deal");
+
+    const int h0 = game_lobby_seat(&g, STRATEGY_KEY_HUMAN);
+    CHECK(h0 == 0, "the first seat is 0");
+    CHECK(g.players[0].status == PLAYER_STATUS_IDLE, "a human sits down IDLE - they must ready up");
+    CHECK(game_lobby_can_deal(&g) == 0, "one seat is not a game of Durak");
+
+    const int b1 = game_lobby_seat(&g, STRAT_RANDOM);
+    CHECK(b1 == 1, "the second seat is 1");
+    CHECK(g.players[1].status == PLAYER_STATUS_READY, "a bot sits down READY - it always is");
+    CHECK(g.players[1].strategy_key == STRAT_RANDOM, "the seat carries the brain it was given");
+    CHECK(game_lobby_can_deal(&g) == 0, "the human has still not readied");
+
+    CHECK(game_lobby_ready(&g, 0) == 1, "readying an IDLE seat changes it");
+    CHECK(game_lobby_ready(&g, 0) == 0, "readying it again changes nothing");
+    CHECK(game_lobby_can_deal(&g) == 1, "two seats, both READY: deal");
+
+    CHECK(game_lobby_ready(&g, 9) == 0, "an out-of-range seat is refused, not written");
+    CHECK(game_lobby_ready(&g, -1) == 0, "a negative seat is refused");
+
+    Game full;
+    memset(&full, 0, sizeof full);
+    full.status = GAME_STATUS_WAITING;
+    int seated_in_order = 1;
+    for (int i = 0; i < MAX_PLAYERS; i++)
+        if (game_lobby_seat(&full, STRAT_RANDOM) != i) seated_in_order = 0;
+    CHECK(seated_in_order, "seats fill in order up to the cap");
+    CHECK(game_lobby_seat(&full, STRAT_RANDOM) == -1, "a full lobby seats nobody");
+
+    full.status = GAME_STATUS_PLAYING;
+    CHECK(game_lobby_seat(&full, STRATEGY_KEY_HUMAN) == -1, "a game in play seats nobody");
+    CHECK(game_lobby_ready(&full, 0) == 0, "a game in play readies nobody");
+    CHECK(game_lobby_can_deal(&full) == 0, "a game in play is not a lobby waiting to deal");
+
+    Game over;
+    memset(&over, 0, sizeof over);
+    over.status = GAME_STATUS_WAITING;
+    game_lobby_seat(&over, STRAT_RANDOM);
+    game_lobby_seat(&over, STRAT_RANDOM);
+    over.players[1].status = PLAYER_STATUS_OUT;
+    CHECK(game_lobby_can_deal(&over) == 0, "a seat that is not READY blocks the deal, whatever it is");
+}
+
 /* ------------------------- bot drive cycle (F2/F3) ----------------------- */
 
 // An n-player game dealt from a pinned wide seed, so the sweeps below are
@@ -6375,6 +6425,7 @@ int main(void) {
     test_replay_steps_refuses_v5();
     test_replay_v6_refuses_an_overflowed_log();
     test_bot_drive_preferred();
+    test_lobby();
     test_bot_pacing_table();
     test_bot_cycle_delay();
     test_bot_roster_strat_unique();
