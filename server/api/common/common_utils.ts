@@ -190,10 +190,13 @@ export const shouldBotActCore = (game: Game, bot: PrivatePlayer, botIndex: numbe
 }
 
 // Kernel twin: game_done in c/src/game.c (e2e/wasm_engine.test.ts polices the
-// parity). No browser caller; this serves the Supabase edge's synchronous
-// check_win_sync and the Node harnesses, neither of which can reach
-// clientGuards - the edge would have to swallow the guards.wasm embed, and
-// check_win_sync would have to become async.
+// parity).
+//
+// NO PRODUCTION CALLER. This served the edge's check_win_sync, which is gone -
+// that path asks wasm_finalize_win now. What is left is the Node harnesses and
+// the parity tests, for which this is the independent TS oracle: the thing the
+// kernel is checked AGAINST, like the frozen bot strategies. Keep it that way;
+// a caller that wants the answer should ask the kernel.
 export const game_done = (game: Game): string | null => {
     // only one 1 left, everyone else is out
     const in_players = game.players.filter(player => player.status === PLAYER_STATUS.IN);

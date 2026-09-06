@@ -2,7 +2,6 @@ import { corsHeaders, handleCors } from './cors.ts';
 import {
     personalize_game,
     calculateEloChange,
-    game_done,
     other_player,
 } from '@api/common/common_utils.ts';
 import { Card, Game, GAME_STATUS, PLAYER_STATUS, PersonalGame, PrivatePlayer, PublicGame, PlayerHand, UserEloRating, BotHand, AnimationEvent, PublicAnimationEvent, PersonalAnimationEvent, ANIMATION_EVENT_TYPE, GameLog, LOG_TYPE, STRATEGY_KEY } from '@api/core/types.ts';
@@ -123,7 +122,14 @@ export const executeWithGameLock = async (game_id: string, operation: (game: Gam
         // no DB writes — so the committed state below is already final. The
         // packed path did the equivalent inside the kernel (wasm_finalize_win).
         const packed = result.packed;
-        const game_ended = packed ? packed.ended : check_win_sync(result.game);
+        // Both halves are the kernel's: the packed path already finalized
+        // inside wasm_apply_action, and the JS path (meta actions, which carry
+        // no packed products) asks wasm_finalize_win for the same verdict and
+        // the same parking rather than restating it here.
+        const packed_or_kernel = packed
+            ? packed.ended
+            : (await engineMod()).kernelFinalizeWin(result.game);
+        const game_ended = packed_or_kernel;
 
         // Atomic, version-gated commit of the whole game state.
         const commit = await commitGame(result.game, expectedVersion,
@@ -896,26 +902,10 @@ export const broadcastToGameUser = async (game: Game, messageType: string, baseM
 
 // Functions moved to common_utils.ts
 
-// true if game is over
-const check_win_sync = (game: Game): boolean => {
-    const the_fool = game_done(game);
-    if (the_fool === null) {
-        return false
-    }
-    // Set game status to GAME_OVER to show win screen
-    game.status = GAME_STATUS.GAME_OVER;
-
-    // set all players to idle but keep their hands for display
-    game.players.forEach((player: PrivatePlayer) => {
-        if (player.is_ai) {
-            player.status = PLAYER_STATUS.READY;
-        } else {
-            player.status = PLAYER_STATUS.IDLE;
-        }
-    });
-
-    return true;
-}
+// check_win_sync lived here: game_done, then GAME_OVER and the seat parking,
+// all in TypeScript. It is wasm_finalize_win's, reached through
+// engine.ts kernelFinalizeWin - the same call the packed path already made
+// inside the kernel.
 
 // Load the CURRENT session's log as its RAW PACKED BYTES for the belief/memory
 // bots. The hot path (loadCompleteGame) leaves game.logs empty so a move only

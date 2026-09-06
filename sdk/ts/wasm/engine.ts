@@ -416,6 +416,32 @@ function marshalGame(ex: EngineExports, game: Game): void {
     if (game.deterministic_deck) ex.wasm_set_deterministic_deck(1);
 }
 
+// END OF GAME, decided and applied by the kernel (wasm_finalize_win): is the
+// game over, and if so park every seat the way a finished game parks them -
+// GAME_OVER, bots READY, humans IDLE, hands kept for the win screen.
+//
+// The edge's check_win_sync was this written in TypeScript, on top of
+// common_utils game_done. Its comment said the kernel was out of reach because
+// "the edge would have to swallow the guards.wasm embed, and check_win_sync
+// would have to become async" - but the reach is to the ENGINE, which utils.ts
+// already loads lazily for commitGame and finalizeEndedGame, and the call site
+// was already inside an async function.
+//
+// Returns true if the game ended (and `game` has been parked), false otherwise.
+export function kernelFinalizeWin(game: Game): boolean {
+    const ex = engine();
+    residentFor = null;
+    marshalGame(ex, game);
+    let aiMask = 0;
+    game.players.forEach((p, i) => { if (p.is_ai) aiMask |= 1 << i; });
+    const fool = ex.wasm_finalize_win(aiMask >>> 0);
+    if (fool < 0) return false;
+    const base = ex.wasm_io_ptr();
+    ex.wasm_export_state();
+    applyStateToGame(game, parseState(mem(ex), base), null);
+    return true;
+}
+
 // The seats the kernel must NOT drive, as a bitmask (game.c game_human_mask).
 // Valid straight after any marshal - marshalGame states the kinds. A game
 // loaded from a durable BLOB has none (identity stays with the caller,
