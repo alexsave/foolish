@@ -34,6 +34,31 @@ Files run serially (`--test-concurrency=1`) because each resets the shared schem
 see `concurrent_games.test.ts` for why that reset — not gameplay — is what
 deadlocks under parallelism.
 
+### A run that failed for no reason is usually the LAST run's connections
+
+`e2ePool` opens up to 40 connections, and a suite killed part-way (Ctrl-C, a
+crashed process, a timed-out xcodebuild in another terminal) leaves them open.
+Those orphans hold the schema, so the next run's `applySchema` half-applies and
+every suite after it dies on `relation "games" does not exist` — a failure that
+looks like a code regression, degrades further on each re-run, and clears the
+moment the database is recreated.
+
+Two things follow. **Recreate the database rather than debugging the failure**:
+
+```bash
+psql -h 127.0.0.1 -U stress -d postgres \
+  -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+      WHERE datname='foolish' AND pid <> pg_backend_pid();"
+dropdb -h 127.0.0.1 -U stress foolish && createdb -h 127.0.0.1 -U stress foolish
+```
+
+`dropdb` failing with *"is being accessed by other users"* is the same symptom —
+retry the terminate/drop pair a few times, and never assume a silenced `dropdb`
+succeeded. **And never read a partial failure as a baseline**: confirm a suspect
+failure against a freshly created database before believing it, on your branch
+AND on `main`. CI is immune to all of this (it gets a fresh container per job),
+so a local-only failure that CI does not reproduce is this, most of the time.
+
 ## Seeds
 
 No suite draws from `Math.random` - `scripts/check_determinism.mjs` fails CI over

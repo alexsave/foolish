@@ -99,14 +99,20 @@ make ios-goldens    # regenerates ios/Fixtures/goldens.json
 Swift `EngineGoldenTests` then assert the built `libfoolish.a` reproduces
 `goldens.json` byte-for-byte.
 
-Some **Swift** is provable without a Mac too. The replay link's nickname codec
-(`sdk/swift/Base32.swift` + `sdk/swift/ReplayExtras.swift`) is Foundation-only
-by design, so `npm run test:swift-parity` compiles it with a real Swift
-toolchain and asserts its bytes equal the TypeScript encoder's
-(`server/api/common/replay/extras.ts`). CI runs it on Linux inside the official
-`swift:` image - see the `replay-names-parity` job in
-`.github/workflows/ios.yml`. Any other Swift file that can be kept free of
-`CFoolish` can be gated the same way.
+Some **Swift** is provable without a Mac too. Two codecs are Foundation-only by
+design, so `npm run test:swift-parity` compiles them with a real Swift toolchain
+and asserts their bytes against the TypeScript side:
+
+- the replay link's nicknames (`sdk/swift/Base32.swift` +
+  `sdk/swift/ReplayExtras.swift`) against `server/api/common/replay/extras.ts`;
+- the client-server envelope's packed roster (`sdk/swift/PackedBytes.swift` +
+  `RosterWire.swift` + `EnvelopeRoster.swift`) against `sdk/ts/wire/roster.ts` -
+  the server writes those bytes and only the phone reads them, so without this
+  job the two halves are never compiled in the same place.
+
+CI runs both on Linux inside the official `swift:` image - see the
+`swift-parity` job in `.github/workflows/ios.yml`. Any other Swift file that can
+be kept free of `CFoolish` can be gated the same way.
 
 ## Layout
 
