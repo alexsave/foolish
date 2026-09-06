@@ -4,6 +4,9 @@ import { ANIMATION_TIME, useAnimation } from '../../contexts/AnimationContext';
 import { CardFace } from './CardFace';
 import { CardBack } from './CardBack';
 import { useServer } from '../../contexts/ServerContext';
+// The TS twin of the kernel's can_cover, not clientGuards.canCoverPair: this
+// overlay also renders under ReplayScreen and Tutorial, which never call
+// initClientGuards, so a kernel call here would throw mid-replay.
 import { canCover } from '@api/common/common_utils.ts';
 
 // Table-slot geometry cache (Stage 9). The on-table battle layout is a function of

@@ -52,9 +52,6 @@ const cardComp = (a: Card, b: Card): boolean => a.suit === b.suit && a.value ===
 // applies lives in ONE place — a phone and a browser disagreeing here forks the
 // feed. The C twin is asserted natively (c/tests/anim_plan_test.c test_reconcile)
 // AND exercised end-to-end through this delegation by e2e/reconcile.test.ts.
-// The original TS body is preserved in src/state/__ts_reference.ts and proven
-// byte-identical to this delegation by e2e/anim_core_parity.test.ts, until the
-// deferred TS deletion (docs/ANIMATION_CORE_C.md).
 export const shouldDropStaleSequence = (lastAppliedVersion: number | null, incomingVersion: number | null): boolean =>
     animShouldDropStale(lastAppliedVersion, incomingVersion);
 

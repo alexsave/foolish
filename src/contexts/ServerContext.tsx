@@ -4,7 +4,12 @@ import supabase from '../backend/Connector';
 import { useParams } from 'next/navigation';
 import { useAuth } from './AuthContext';
 import { MAX_PLAYERS } from '@api/core/constants.ts';
-import { get_next_player_index, card_comp } from '@api/common/common_utils.ts';
+import { card_comp } from '@api/common/common_utils.ts';
+// The rotation comes from the kernel (c/src/game.c get_next_player_index)
+// through guards.wasm, so an optimistic patch lands on the same seats the
+// server's own rotation will. Reached only from pass/pickup, which the
+// board gates on guardsReady (GameView).
+import { nextPlayerIndex } from '../wasm/clientGuards';
 import { ANIMATION_TIME } from '../constants/constants';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { animationFeed } from '../state/animationFeed';
@@ -802,7 +807,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                         ...g,
                         table_battles: [...g.table_battles, ...cards.map(card => ({ attack: card, defense: null }))],
                         self: { ...g.self, hand: g.self.hand.filter(card => !cards.some(c => card_comp(c, card))) },
-                        defender: get_next_player_index(g, g.defender)
+                        defender: nextPlayerIndex(g, g.defender)
                     }
                 };
             });
@@ -838,9 +843,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 const rotationIsExact = g.players.every((p, i) =>
                     i === selfIndex || p.status !== PLAYER_STATUS.IN || (p.hand_length ?? 0) > 0);
                 const next_first_attacker = rotationIsExact
-                    ? get_next_player_index(g, g.defender) : g.first_attacker;
+                    ? nextPlayerIndex(g, g.defender) : g.first_attacker;
                 const next_defender = rotationIsExact
-                    ? get_next_player_index(g, next_first_attacker) : g.defender;
+                    ? nextPlayerIndex(g, next_first_attacker) : g.defender;
 
                 // Collect all cards from the table (both attacks and defenses)
                 const allTableCards = g.table_battles.flatMap(battle =>

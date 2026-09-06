@@ -60,6 +60,12 @@ export const cloneGame = (game: Game): Game => ({
     logs: game.logs.map(cloneGameLog)
 });
 
+// Kernel twin: get_next_player_index in c/src/game.c, which carries the same
+// one-player guard. The browser no longer calls this - it goes through
+// clientGuards.nextPlayerIndex - but the frozen bot oracle
+// offlinefun/localtest/frozen/champion_strategy.ts still does, and this module
+// must not import the engine (see the header). e2e/wasm_engine.test.ts polices
+// the parity.
 export const get_next_player_index = (game: PublicGame, current_player: number): number => {
     // Check if there's only one player left in the game
     const in_players = game.players.filter(player => player.status === PLAYER_STATUS.IN);
@@ -77,6 +83,11 @@ export const get_next_player_index = (game: PublicGame, current_player: number):
     return next_player;
 }
 
+// Kernel twin: can_cover in c/src/game.c. The interactive board now asks the
+// kernel directly (clientGuards.canCoverPair); what is left here are the frozen
+// bot oracles in offlinefun/localtest/frozen/, which e2e/bot_parity.test.ts
+// drives against the kernel and which must not gain a wasm dependency.
+// e2e/wasm_engine.test.ts polices the parity over the full card cross-product.
 export const canCover = (attack: Card, defense: Card, powerSuit: number) => {
     if (defense.suit !== attack.suit) {
         // only different suit scenario that works
@@ -178,8 +189,11 @@ export const shouldBotActCore = (game: Game, bot: PrivatePlayer, botIndex: numbe
     return !game.good_players?.includes(bot.player_id);
 }
 
-// Thin projection kept for synchronous use; the kernel counterpart is
-// game_done in c/src/game.c (e2e/wasm_engine.test.ts polices parity).
+// Kernel twin: game_done in c/src/game.c (e2e/wasm_engine.test.ts polices the
+// parity). No browser caller; this serves the Supabase edge's synchronous
+// check_win_sync and the Node harnesses, neither of which can reach
+// clientGuards - the edge would have to swallow the guards.wasm embed, and
+// check_win_sync would have to become async.
 export const game_done = (game: Game): string | null => {
     // only one 1 left, everyone else is out
     const in_players = game.players.filter(player => player.status === PLAYER_STATUS.IN);
