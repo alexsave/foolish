@@ -1,8 +1,10 @@
 // Action-wire ("awire" v1) codec fuzz — the TS mirror of c/src/awire.h.
-// encodeAction/decodeAction are the client's move->bytes builder and the
-// server's legacy-fallback decoder; the decoder must mirror awire_decode's
-// strictness exactly: null (never a throw, never a partial parse) on any
-// malformed buffer. Pure TS — needs no Postgres and no wasm.
+// encodeAction is the client's move->bytes builder, and the only one of the two
+// with a production caller: the server's legacy-fallback decoder is retired, so
+// decodeAction now exists as the ORACLE this file fuzzes the encoder against.
+// It must still mirror awire_decode's strictness exactly - null (never a throw,
+// never a partial parse) on any malformed buffer - because that strictness is
+// what makes it a usable oracle. Pure TS — needs no Postgres and no wasm.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
