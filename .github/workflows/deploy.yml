@@ -43,10 +43,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned, not `latest`: `latest` makes an unauthenticated GitHub API call
+      # on every run to resolve the newest release, which rate-limits (the
+      # `memory` workflow failed on main with "Failed to resolve latest Supabase
+      # CLI release: rate limit exceeded") and silently changes the tooling under
+      # us. A fixed version is downloaded straight from the release URL with no
+      # API call at all. 2.116.0 is what `latest` resolved to when this was
+      # pinned, so the pin is behaviourally a no-op.
       - name: Install Supabase CLI
         uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.116.0
 
       - name: Link project
         run: supabase link --project-ref "$SUPABASE_PROJECT_REF" --workdir server/impls

@@ -618,14 +618,64 @@ nothing yet drives a defender's own hand empty through a controller and watches
 what the board is allowed to offer afterwards.
 That is the remaining work, and it is a Swift-side one.
 
-### A CI flake: edge-serve 502s under the real memory budget
+### A CI flake: edge-serve 502s under the real memory budget - DIAGNOSED
 
 The `memory` workflow's `edge-serve` job failed on main with
 `semtex,octogen returned 502` at commit `fb9294e`, then passed on re-run with a
 BYTE-IDENTICAL tree (`798b003b` both times), so it is a flake and not a
 regression.
-Two Monte Carlo bots timing out under the edge runtime's real memory budget is a
-resource-pressure symptom worth understanding rather than re-running.
+The original report read it as two Monte Carlo bots timing out under the edge
+runtime's real memory budget.
+**It is not that, and it cannot be.**
+
+Measured against a real local stack on edge-runtime v1.74.3, which is the version
+the failing job ran:
+
+- The edge runtime's own main service answers **546 `WORKER_LIMIT`** when a
+  worker is killed for a resource limit (reproduced by asking `memtest` for 20
+  full games in one request, which blows the 2000ms CPU hard limit), **503** for
+  a worker that failed to boot and **500** for one that threw.
+  Its source enumerates exactly those codes.
+  It cannot emit a 502.
+- A **502** with the body `An invalid response was received from the upstream
+  server` is Kong saying it had no upstream at all.
+  `docker stop` on the edge-runtime container reproduces it byte for byte.
+
+So the failing run was the edge runtime not answering, not a bot under pressure.
+The `memtest` requests take 111-166ms in CI against a 2000ms CPU hard limit and a
+256MB worker; there is roughly a 12x margin and no measured pressure.
+
+What makes the container stop answering: `functions serve` OWNS its lifetime, and
+when that CLI process is terminated it gracefully removes the container.
+SIGTERM to `functions serve` -> container removed -> the very next request through
+Kong is exactly the observed 502.
+The workflow used to start `functions serve` in one step and make the requests in
+the NEXT one, so the assertions ran against a container owned by a background
+process left over from a step that had already finished.
+The failing run's timeline fits that to the millisecond: the readiness probe
+answered at the step boundary, the main worker logged `serving the request` 19ms
+into the next step, and then nothing more was ever heard from it.
+
+Fixed by serving and asserting in ONE step, so the process is a live child of the
+shell doing the asserting.
+Not proven is what terminated the process on that one run; what the workflow
+threw away was the evidence, because it catted `serve.log` about 10ms after curl
+returned and the CLI's log stream lags the HTTP response.
+So a failure now settles first, then dumps `serve.log`, `docker ps -a`, the
+container's own `docker logs`, and whether the serve process is still alive, and
+it names the fault by what the status code MEANS rather than printing a bare
+number.
+Both new failure branches are mutation-checked against a real local stack.
+
+Deliberately NOT added: a retry.
+
+Related, and fixed in the same pass: both workflows asked `supabase/setup-cli` for
+`version: latest`, which makes an unauthenticated GitHub API call on every run.
+That call rate-limited on main (`Failed to resolve latest Supabase CLI release:
+rate limit exceeded`) and it silently changes the tooling underneath us.
+Both are pinned to `2.116.0`, which is what `latest` resolved to at the time, so
+the pin is behaviourally a no-op; a fixed version skips the API call entirely and
+downloads straight from the release URL.
 
 ### Housekeeping
 
