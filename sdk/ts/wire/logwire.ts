@@ -22,6 +22,7 @@
 import { GameLog, LOG_TYPE, LogType } from "@api/core/types.ts";
 import { Card } from "@api/core/types.ts";
 import { cardFromWireByte, WIRE_HIDDEN, WIRE_NONE, wireCard } from "./awire.ts";
+import { derivedUuid } from "./detid.ts";
 
 const LOG_TYPE_FROM_INT: LogType[] = [
     LOG_TYPE.GAME_START, LOG_TYPE.ATTACK, LOG_TYPE.COVER, LOG_TYPE.PASS,
@@ -144,6 +145,13 @@ export function logwireHexClosesRound(hex: string): boolean {
 // objects (the end-of-game replay encode). Ids are synthesized (the old ones
 // only served insert idempotence); order is byte order (a total order — the
 // records were appended under the commit version fence).
+//
+// The synthesized id is DERIVED from (gameId, record index), not drawn, so this
+// is a pure function of its arguments: decode the same bytes twice and the two
+// GameLog[] compare equal. It used to call crypto.randomUUID(), which meant the
+// same stored stream decoded to two different-looking histories and no replay
+// could be diffed against another. Ids are unique within one decoded buffer,
+// which is the whole of what any consumer reads them for.
 export function decodeLogs(
     buf: Uint8Array, gameId: string, players: { player_id: string }[],
 ): GameLog[] {
@@ -168,7 +176,7 @@ export function decodeLogs(
             });
         }
         logs.push({
-            id: crypto.randomUUID(),
+            id: derivedUuid(gameId, logs.length),
             created_at: new Date(ts).toISOString(),
             game_id: gameId,
             log_type: type,
