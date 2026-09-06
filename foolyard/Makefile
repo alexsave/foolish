@@ -2,7 +2,7 @@ KDIR   := ../c
 OBJDIR := out
 
 CFLAGS ?= -O2 -g -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations \
-          -MMD -MP -Iinclude -I$(KDIR)/src -DACCELERATE_NEW_LAPACK -DCD_LEAFBOOK
+          -MMD -MP -Iinclude -I$(KDIR)/src -DACCELERATE_NEW_LAPACK -DCD_LEAFBOOK '-D_Thread_local='
 
 ifeq ($(shell uname),Darwin)
   LDFLAGS ?= -lm -framework Accelerate

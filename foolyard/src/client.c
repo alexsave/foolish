@@ -165,6 +165,15 @@ void client_retransmit(World *w, ClientState *cs) {
     net_send(w, id);
 }
 
+static const Game *client_decode(World *w, ClientState *cs) {
+    if (w->scratch_client != (i32)cs->id || w->scratch_version != cs->view_version) {
+        state_get(w->scratch, cs->view, 1);
+        w->scratch_client = (i32)cs->id;
+        w->scratch_version = cs->view_version;
+    }
+    return w->scratch;
+}
+
 void client_on_packet(World *w, u32 pkt_id) {
     Packet *p = net_pkt(w, pkt_id);
     w->net.delivered++;
@@ -203,7 +212,8 @@ void client_on_packet(World *w, u32 pkt_id) {
     u32 obs_applied = p->obs_applied, obs_deal = p->obs_deal;
     net_release(w, pkt_id);   // the handler allocates packets of its own
 
-    state_get(w->scratch, cs->view, 1);
+    w->scratch_client = -1;          // these are fresh bytes for this client
+    client_decode(w, cs);
     client_check_hand(w, cs, w->scratch, obs_applied, obs_deal);
 
     client_impl(cs->tier)->on_view(&ctx);
@@ -230,9 +240,9 @@ void client_on_wake(World *w, u32 client_id) {
     ctx.seat = cs->seat;
     ctx.out_version = cs->view_version;
 
-    // The wake sees whatever view the client is holding, re-decoded: the
-    // scratch Game belongs to whoever ran last.
-    if (cs->have_view) state_get(w->scratch, cs->view, 1);
+    // The wake sees whatever view the client is holding. The scratch belongs
+    // to whoever ran last, so this decodes only when that was someone else.
+    if (cs->have_view) client_decode(w, cs);
 
     client_impl(cs->tier)->on_wake(&ctx);
     client_apply_ctx(w, cs, &ctx);

@@ -53,11 +53,22 @@ typedef struct World {
 
     Game *scratch;         // decode target for client views; the Game struct is
                            // far too big to give every client one of its own
+    // Who the scratch currently holds, so a wake that follows its own view
+    // does not decode the same bytes a second time. A (client, version) pair
+    // names one view exactly: versions are monotonic per game.
+    i32 scratch_client;
+    u32 scratch_version;
 
     u64 moves_sent, moves_applied, moves_rejected, bot_actions, deals, finished;
     u64 stale_accepts;              // applied against a version the mover had not seen
     u64 fools[MAX_PLAYERS];         // who lost, by seat: the speed matchup's scoreboard
     u64 seat_moves[MAX_PLAYERS];
 } World;
+
+
+// A macro, so a trace call costs nothing at all when tracing is off - the
+// arguments are never evaluated. See trace.h.
+#define trace_line(w, ...) \
+    do { if ((w)->knobs.trace) trace_emit((w), __VA_ARGS__); } while (0)
 
 #endif

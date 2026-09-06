@@ -76,6 +76,8 @@ static void world_init(World *w, u64 seed, u32 n_games, u32 n_clients) {
         exit(1);
     }
 
+    w->scratch_client = -1;
+
     for (u32 g = 0; g < n_games; g++)
         for (int i = 0; i < MAX_PLAYERS; i++) w->games[g].seat_client[i] = -1;
 }

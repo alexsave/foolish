@@ -11,8 +11,9 @@ static void settings(ClientState *cs) {
 
 static void on_view(ClientCtx *ctx) {
     ClientState *cs = ctx->cs;
-    AwireAction probe;
-    if (!client_pick_legal(ctx->view, ctx->seat, &cs->rng, &probe)) return;
+    // should_bot_act answers "can this seat act" without enumerating the menu;
+    // building the whole menu here just to discard it was 27% of the sim.
+    if (!should_bot_act(ctx->view, ctx->seat)) return;
 
     ctx->want_wake = 1;
     ctx->wake_delay_us = cs->think_us + rng_below(&cs->rng, cs->think_jitter_us + 1);
