@@ -31,6 +31,10 @@ typedef struct Knobs {
     u64 lobby_delay_us;    // game over -> reset -> re-deal
     u64 stop_after;        // end the run once this many games have finished; 0 = never
 
+    // 2 = full card walk on every change (--deep), 1 = cheap count every
+    // change plus the full walk every 16th (the default), 0 = none
+    // (--no-checks, for capacity runs where the checks are the noise).
+    u8  checks;
     u8  deep;              // clone-and-compare every rejected move
     u8  csv;               // machine-readable per-seat lines for the sweep driver
     u8  trace;             // one line per scheduler pop, plus what it did

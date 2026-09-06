@@ -102,7 +102,8 @@ static void usage(void) {
 "  --hiccup-ms N   how long that stall lasts\n"
 "  --stall-secs N  quiet time on a live game that counts as a stall (30)\n"
 "  --kernel-pacing 0|1  bots also wait the kernel's human-watching pace (1)\n"
-"  --deep          clone and compare on every rejected move (slow)\n"
+"  --deep          every-change card walk + clone/compare on rejects (slow)\n"
+"  --no-checks     drop the detectors entirely, for capacity runs\n"
 "  --csv           per-seat CSV lines as well, for the sweep driver\n"
 "  --trace         one line per scheduler pop, plus what each event did\n"
 "  --until-games N stop once N games have finished, whatever the clock says\n"
@@ -283,6 +284,7 @@ int main(int argc, char **argv) {
         .stall_us        = 30 * SEC,
         .sweep_period_us = 5 * SEC,
         .lobby_delay_us  = 2 * SEC,
+        .checks          = 1,
         .deep            = 0,
         .verbose         = 0,
     };
@@ -294,7 +296,8 @@ int main(int argc, char **argv) {
         const char *a = argv[i];
         const char *v = (i + 1 < argc) ? argv[i + 1] : NULL;
         if (!strcmp(a, "--help") || !strcmp(a, "-h")) { usage(); return 0; }
-        else if (!strcmp(a, "--deep")) k.deep = 1;
+        else if (!strcmp(a, "--deep")) { k.deep = 1; k.checks = 2; }
+        else if (!strcmp(a, "--no-checks")) k.checks = 0;
         else if (!strcmp(a, "--csv")) k.csv = 1;
         else if (!strcmp(a, "--trace")) k.trace = 1;
         else if (!strcmp(a, "--verbose")) k.verbose = 1;

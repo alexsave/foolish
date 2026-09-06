@@ -143,6 +143,20 @@ only exist once there is a wire.
 | `cross_deal_apply` | a move decided in one game applied to the next after a rematch |
 | `move_applied_late` | a seat's earlier move applied after its later one |
 
+Check depth is a knob, because at 1024 tables the detectors are 6.5% of the
+run and a pure capacity measurement does not want them:
+
+| | what runs | 1024 tables, 1 sim-hour |
+|---|---|---|
+| `--no-checks` | nothing | **1.53 s** |
+| default | O(seats) card count every change, full 52-card walk every 16th | **1.63 s** |
+| `--deep` | full walk every change + clone/compare on every reject | **2.56 s** |
+
+The split default is mutation-tested, not assumed: injecting a created card
+(count breaks) is caught 182 times, and injecting a card duplicated OVER
+another - which leaves the count intact, so only the full walk can see it - is
+still caught, twice. `--no-checks` catches neither, which is the point of it.
+
 `stall` doubles as a product question rather than a bug report. Foolish has no
 turn clock, so one seat that declines to act holds its table forever:
 

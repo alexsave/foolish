@@ -93,6 +93,43 @@ void inv_report(World *w, int kind, const char *fmt, ...) {
 // Straight from server/impls/native/sem_fuzz.c's conservation_ok: hands, deck,
 // trump and table must be a partition of the dealt pack, and what is left over
 // must be exactly the discard pile.
+// The cheap half: does the board still hold the right NUMBER of cards? O(seats)
+// instead of O(cards), no tally array, and it catches every creation or
+// destruction - which is what a broken apply path actually does. It cannot see
+// a duplicate that replaced another card, which is why the full walk below
+// still runs, just not on every single change.
+int inv_card_count(const Game *g, char *why, int whycap) {
+    int concrete = 0;
+    for (int p = 0; p < g->num_players; p++) {
+        int hc = g->players[p].hand_count;
+        if (hc < 0 || hc > MAX_HAND_SIZE) {
+            snprintf(why, whycap, "hand_count=%d seat=%d", hc, p);
+            return 0;
+        }
+        concrete += hc;
+    }
+    if (g->deck_count < 0 || g->deck_count > MAX_DECK) {
+        snprintf(why, whycap, "deck_count=%d", g->deck_count);
+        return 0;
+    }
+    if (g->num_battles < 0 || g->num_battles > MAX_BATTLES) {
+        snprintf(why, whycap, "num_battles=%d", g->num_battles);
+        return 0;
+    }
+    concrete += g->deck_count + (g->has_flipped ? 1 : 0);
+    for (int i = 0; i < g->num_battles; i++)
+        concrete += 1 + (card_is_none(g->table_battles[i].defense) ? 0 : 1);
+
+    int dealt = g->num_players >= 6 ? 52 : 36;
+    int total = concrete + g->discard_pile_length;
+    if (total != dealt) {
+        snprintf(why, whycap, "%d cards (in play %d + discard %d), dealt %d",
+                 total, concrete, g->discard_pile_length, dealt);
+        return 0;
+    }
+    return 1;
+}
+
 int inv_conservation(const Game *g, char *why, int whycap) {
     i8 seen[52];
     memset(seen, 0, sizeof seen);

@@ -214,7 +214,7 @@ void client_on_packet(World *w, u32 pkt_id) {
 
     w->scratch_client = -1;          // these are fresh bytes for this client
     client_decode(w, cs);
-    client_check_hand(w, cs, w->scratch, obs_applied, obs_deal);
+    if (w->knobs.checks) client_check_hand(w, cs, w->scratch, obs_applied, obs_deal);
 
     client_impl(cs->tier)->on_view(&ctx);
     client_apply_ctx(w, cs, &ctx);
