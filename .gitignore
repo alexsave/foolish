@@ -54,8 +54,6 @@ yarn-error.log*
 .vscode
 .cursor
 
-server/api/common/durakai/move_analysis.txt
-server/api/common/durakai/node_modules
 
 # c
 c/build/
