@@ -19,6 +19,7 @@
 #include "replay_steps.h"
 #include "view.h"
 #include "json_out.h"
+#include "replay_extras.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -497,6 +498,28 @@ int wasm_replay_step_count(int code_len) {
 int wasm_replay_step_index(int code_len) {
     return replay_steps_index_v6(wasm_replay_io_ptr(), code_len, 0,
                                  wasm_io_ptr(), wasm_io_cap());
+}
+
+// ---------- the replay code's extras blob (#113) -----------------------------
+//
+// The nicknames and per-move timing behind the dash in a share link. One
+// encoder, reached from here by the web and the server and from ios_api.c by
+// the phone; there is no second one to drift from.
+//
+// Same buffer discipline as every other blob-in/blob-out export: the packed
+// argument goes in the REPLAY io buffer, the answer comes back in the MAIN one.
+// `player_count` and `move_count` on the way back are the decoded moves', not
+// the blob's - it carries neither.
+
+int wasm_replay_extras_encode(int in_len) {
+    return replay_extras_encode(wasm_replay_io_ptr(), in_len,
+                                wasm_io_ptr(), wasm_io_cap());
+}
+
+int wasm_replay_extras_decode(int blob_len, int player_count, int move_count) {
+    return replay_extras_decode(wasm_replay_io_ptr(), blob_len,
+                                player_count, move_count,
+                                wasm_io_ptr(), wasm_io_cap());
 }
 
 // ---------- packed bytes -> JSON (A8/F7) ------------------------------------

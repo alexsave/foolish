@@ -163,10 +163,11 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
     /// seats from the decoded moves, not from this blob.
     ///
     /// It is one function and not a mutation of `replayLink` because the names
-    /// are NOT the kernel's to give: the code comes out of
+    /// are not the moves encoder's to give: the code comes out of
     /// fio_replay_share_code_b32, which knows the cards and not the people, and
-    /// the roster comes off the FMSG chain's joins. Joining them is a URL
-    /// concern, and the URL layer is the one thing here that is Swift's.
+    /// the roster comes off the FMSG chain's joins. The kernel joins them
+    /// (fio_replay_extras_link); the https:// wrapper around the result is the
+    /// one thing here that is Swift's.
     public static func replayLink(code: String, names: [String]) -> URL {
         replayLink(code: ReplayExtras.code(moves: code, names: names))
     }
@@ -1009,7 +1010,5 @@ public actor MessageKernel {
 
 // Base32 moved to its own file (sdk/swift/Base32.swift). It is pure Foundation
 // and this file is not: everything else here reaches into CFoolish, so the codec
-// could not be compiled on its own - and the cross-language round-trip test for
-// the replay names blob (e2e/imessage_replay_names.test.ts) has to compile the
-// REAL codec, not a copy of it, or it proves nothing. Same type, same module,
-// same callers.
+// could not be compiled on its own, which is what let a Foundation-only test
+// build it. Same type, same module, same callers.

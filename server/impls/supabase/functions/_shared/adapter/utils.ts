@@ -954,8 +954,8 @@ export const finalizeEndedGame = async (game: Game): Promise<void> => {
     try {
         // Lazy import: the replay codec is only needed here, at game end.
         const { verifyRoundTripV6FromGame } = await import('@api/common/replay/encode.ts');
-        const { encodeExtras, moveTimesFromLogs } = await import('@api/common/replay/extras.ts');
-        const { base32Decode, bytesToHex, hexToBytes } = await import('@api/common/replay/codec.ts');
+        const { encodeExtrasBytes, moveTimesFromLogs } = await import('@api/common/replay/extras.ts');
+        const { bytesToHex, hexToBytes } = await import('@api/common/replay/codec.ts');
 
         const playerIds = game.players.map(player => player.player_id);
 
@@ -993,10 +993,10 @@ export const finalizeEndedGame = async (game: Game): Promise<void> => {
         // share code is derived client-side: base32(moves) ['-' base32(extras)].
         // One row per finished session in game_snapshots; player_ids is the
         // read ACL.
-        const extrasBytes = base32Decode(encodeExtras(
+        const extrasBytes = encodeExtrasBytes(
             game.players.map(player => player.name),
             moveTimesFromLogs(replayLogs),
-        ));
+        );
         console.log(`[REPLAY] Game ${game.id} encoded (v6) to ${encoded.byteLength}+${extrasBytes.length} bytes`);
 
         // Persist the snapshot BEFORE destroying the logs, so a failure

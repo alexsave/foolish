@@ -39,6 +39,8 @@ interface BotsExports extends EngineExports {
     wasm_replay_step_index(code_len: number): number;
     wasm_view_json(len: number, viewer: number): number;
     wasm_events_json(len: number): number;
+    wasm_replay_extras_encode(in_len: number): number;
+    wasm_replay_extras_decode(blob_len: number, player_count: number, move_count: number): number;
     wasm_unambiguous_cover(n_cover: number, n_battles: number, power_suit: number): number;
     wasm_clear_logs(): void;
     wasm_import_strategy_keys(): void;
@@ -1111,6 +1113,120 @@ export function kernelViewFromPacked(blob: Uint8Array, viewer: number): KernelSt
 export function kernelEventsFromPacked(bytes: Uint8Array): KernelSequence {
     return __jsonCall(bytes, 'kernelEventsFromPacked',
                       ex => ex.wasm_events_json(bytes.length)) as KernelSequence;
+}
+
+/* ---------------- the replay code's extras blob (c/src/replay_extras.h) ------
+ *
+ * The nicknames and per-move timing behind the dash in a share link. The codec
+ * is the kernel's - one encoder, shared with the phone (fio_replay_extras_link)
+ * - and these are the doors the web and the server reach it through. Both are
+ * synchronous and assume a warm module, like every other reader here.
+ */
+
+/** REPLAY_EXTRAS_FLAG_* (c/src/replay_extras.h). */
+const EXTRAS_FLAG_NAMES = 1, EXTRAS_FLAG_TIMES = 2;
+
+/** The kernel's REPLAY_EXTRAS_E* codes, as the messages this format has always
+ *  thrown - callers catch extras failures and fall back to "P1"/"P2". */
+function __extrasError(code: number): Error {
+    switch (-code) {
+        case 1: return new Error('extras: truncated header');
+        case 2: return new Error('extras: unsupported version');
+        case 3: return new Error('extras: unterminated name');
+        case 4: return new Error('extras: truncated time header');
+        case 5: return new Error('extras: too few gaps for the moves they describe');
+        case 6: return new Error('extras: malformed argument blob');
+        case 7: return new Error('extras: exceeds the kernel IO buffer');
+        default: return new Error(`extras: kernel error ${code}`);
+    }
+}
+
+/** Pack the kernel's argument blob: flags, then the roster, then the timing. */
+function __extrasArgs(names: string[] | null, startTime: number | null,
+                      gaps: number[] | null): Uint8Array {
+    const enc = new TextEncoder();
+    const encoded = names ? names.map(n => enc.encode(n)) : [];
+    const hasNames = encoded.length > 0;
+    const hasTimes = startTime !== null && gaps !== null;
+    let n = 1;
+    if (hasNames) { n += 1; for (const b of encoded) n += 2 + b.length; }
+    if (hasTimes) n += 8 + 2 + 8 * gaps!.length;
+    const out = new Uint8Array(n);
+    const dv = new DataView(out.buffer);
+    let q = 0;
+    out[q++] = (hasNames ? EXTRAS_FLAG_NAMES : 0) | (hasTimes ? EXTRAS_FLAG_TIMES : 0);
+    if (hasNames) {
+        out[q++] = encoded.length;
+        for (const b of encoded) { dv.setUint16(q, b.length, true); q += 2; out.set(b, q); q += b.length; }
+    }
+    if (hasTimes) {
+        dv.setFloat64(q, startTime!, true); q += 8;
+        dv.setUint16(q, gaps!.length, true); q += 2;
+        for (const g of gaps!) { dv.setFloat64(q, g, true); q += 8; }
+    }
+    return out;
+}
+
+/**
+ * Roster + timing -> the raw extras blob. `names` must be as wide as the table
+ * (a reader takes the seat count from the decoded moves); unnamed seats are ''.
+ * Passing null for either half leaves that section out.
+ */
+export function kernelReplayExtrasEncode(names: string[] | null, startTime: number | null,
+                                         gaps: number[] | null): Uint8Array {
+    const ex = bots();
+    const args = __extrasArgs(names, startTime, gaps);
+    if (args.length > ex.wasm_replay_io_cap()) throw new Error('extras: roster exceeds the kernel IO buffer');
+    __mem(ex).set(args, ex.wasm_replay_io_ptr());
+    const n = ex.wasm_replay_extras_encode(args.length);
+    if (n < 0) throw __extrasError(n);
+    const base = ex.wasm_io_ptr();
+    return __mem(ex).slice(base, base + n);
+}
+
+/** What a decoded extras blob says. */
+export interface KernelReplayExtras {
+    names: string[] | null;
+    startTime: number | null;
+    moveGaps: number[] | null;
+}
+
+/**
+ * The raw extras blob -> roster + timing. `playerCount` and `moveCount` come
+ * from the DECODED MOVES: the blob carries neither, and reading it needs both.
+ * Throws on a malformed blob.
+ */
+export function kernelReplayExtrasDecode(blob: Uint8Array, playerCount: number,
+                                         moveCount: number): KernelReplayExtras {
+    const ex = bots();
+    if (blob.length > ex.wasm_replay_io_cap()) throw new Error('extras: blob exceeds the kernel IO buffer');
+    __mem(ex).set(blob, ex.wasm_replay_io_ptr());
+    const n = ex.wasm_replay_extras_decode(blob.length, playerCount, moveCount);
+    if (n < 0) throw __extrasError(n);
+    const base = ex.wasm_io_ptr();
+    const out = __mem(ex).slice(base, base + n);
+    const dv = new DataView(out.buffer, out.byteOffset, out.byteLength);
+    const dec = new TextDecoder();
+    let q = 0;
+    const flags = out[q++];
+    const nNames = out[q++];
+    let namesOut: string[] | null = null;
+    if (flags & EXTRAS_FLAG_NAMES) {
+        namesOut = [];
+        for (let i = 0; i < nNames; i++) {
+            const len = dv.getUint16(q, true); q += 2;
+            namesOut.push(dec.decode(out.subarray(q, q + len))); q += len;
+        }
+    }
+    let startTime: number | null = null;
+    let moveGaps: number[] | null = null;
+    if (flags & EXTRAS_FLAG_TIMES) {
+        startTime = dv.getFloat64(q, true); q += 8;
+        const nGaps = dv.getUint16(q, true); q += 2;
+        moveGaps = [];
+        for (let i = 0; i < nGaps; i++) { moveGaps.push(dv.getFloat64(q, true)); q += 8; }
+    }
+    return { names: namesOut, startTime, moveGaps };
 }
 
 /**

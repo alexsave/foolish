@@ -13,6 +13,7 @@
 #include "view.h"
 #include "replay.h"
 #include "replay_steps.h"
+#include "replay_extras.h"
 #include "strategy.h"
 #include "bot_roster.h"
 #include "bot_drive.h"
@@ -1449,6 +1450,43 @@ int fio_replay_share_code_b32(char *out, int cap) {
         // share still beats no share, and v5 encodes from the logs alone.
     }
     return fio_replay_encode_b32(out, cap);
+}
+
+// The share code plus the table's nicknames (ios_api.h). Pure function of its
+// arguments - no resident game - so a caller may reach it from anywhere.
+int fio_replay_extras_link(const char *moves,
+                           const unsigned char *names, int names_len, int n_names,
+                           char *out, int cap) {
+    // 8 seats of arbitrary Unicode with room to spare; a roster past this is a
+    // caller bug, not a nickname.
+    unsigned char in[4096];
+    unsigned char blob[8192];
+    int w = 0, n;
+    if (!moves || cap < 1) return FIO_EBADARG;
+    if (n_names < 0 || n_names > 255) return FIO_EBADARG;
+    if (names_len < 0 || (names_len > 0 && !names)) return FIO_EBADARG;
+    if (names_len > (int)sizeof(in) - 2) return FIO_EBADARG;
+
+    while (moves[w]) {
+        if (w >= cap - 1) return FIO_ECAP;
+        out[w] = moves[w];
+        w++;
+    }
+    out[w] = 0;
+    if (n_names == 0) return w;
+
+    in[0] = REPLAY_EXTRAS_FLAG_NAMES;
+    in[1] = (unsigned char)n_names;
+    for (int i = 0; i < names_len; i++) in[2 + i] = names[i];
+    if (!replay_extras_roster_speaks(in, names_len + 2)) return w;
+
+    n = replay_extras_encode(in, names_len + 2, blob, sizeof(blob));
+    if (n < 0) return w;                       // decoration: a bad roster costs the names, never the link
+    if (w + 1 >= cap - 1) return FIO_ECAP;
+    out[w++] = '-';
+    n = replay_b32_encode(blob, n, out + w, cap - w);
+    if (n < 0) { out[w - 1] = 0; return w - 1; }
+    return w + n;
 }
 
 // A replay, as the event stream the board already animates.

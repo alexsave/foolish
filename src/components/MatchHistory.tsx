@@ -10,6 +10,7 @@ import { SovietIcon, RankIcon } from './SovietIcon';
 import { useTexture, getTextureStyle, seedFromString, flipFromString } from './TexturedSurface';
 import { botDisplayName, isBotName } from '../common/botName';
 import { decodeReplay } from '@api/common/replay/decode.ts';
+import { ensureBotsAsync } from '@sdk/ts/wasm/bots.ts';
 import { decodeExtras, joinReplayCode } from '@api/common/replay/extras.ts';
 import { INFO_TYPES } from '@api/common/replay/core.ts';
 import { base32Encode, bytesToBigint, hexToBytes } from '@api/common/replay/codec.ts';
@@ -84,6 +85,10 @@ export const MatchHistory: React.FC = () => {
                 if (rating.error) console.error('Rating load failed:', rating.error);
 
                 const rows = snapshots.data ?? [];
+                // The extras blob is decoded by the kernel (decodeExtras ->
+                // wasm_replay_extras_decode), which is a synchronous call into
+                // a module that has to be warm first.
+                await ensureBotsAsync();
                 const decoded: HistoryEntry[] = [];
                 for (let i = 0; i < rows.length; i++) {
                     // decodeReplay re-simulates the whole game; yield to the
