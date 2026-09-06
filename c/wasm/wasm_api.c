@@ -509,6 +509,35 @@ int wasm_refill(void) {
     return 1;
 }
 
+// Seat KINDS, from g_io: one byte per seat, STRATEGY_KEY_HUMAN (-1, as 0xff)
+// for a human or a STRAT_* brain id for a bot. Lives here rather than in the
+// bots bridge because game_human_mask below reads exactly this, and the rules
+// module answers that question too.
+//
+// espresso's opponent modelling also branches on a specific brain (whether an
+// opponent is `random`), which is why the exact id and not just the sign is
+// carried on the paths that run a strategy.
+void wasm_import_strategy_keys(void) {
+    const unsigned char *q = g_io;
+    for (int i = 0; i < g_game.num_players; i++)
+        g_game.players[i].strategy_key = (int8_t)q[i];
+}
+
+// The seats a host must NOT drive (game.c game_human_mask), so no host rebuilds
+// an is_ai mask of its own before every call that wants one.
+//
+// Only meaningful once the seat kinds have been said. They do NOT ride in the
+// state wire: state_put/state_get are shared with the DURABLE blob
+// (wasm_state_serialize is [version][flag][state_put(VIEW_UNMASKED)]), so a
+// byte added for this would silently re-interpret every persisted games.state
+// row while the version byte still read 2. The kinds arrive through
+// wasm_import_strategy_keys instead, which marshalGame now always calls - see
+// the note there. A blob-loaded game has no kinds at all (identity stays with
+// the caller, game.h), so its host still owns the question.
+int wasm_human_mask(void) {
+    return (int)game_human_mask(&g_game);
+}
+
 // The rematch reset: a finished game back to its lobby, ready to deal again.
 // `bot_mask` is the seats that come back READY (the bots); everyone else lands
 // IDLE and has to ready up.

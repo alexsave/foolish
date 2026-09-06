@@ -54,7 +54,8 @@ interface BotsExports extends EngineExports {
     wasm_bot_roster_dump(): number;
     // The drive cycle (docs/C_CORE_CONSOLIDATION.md F2/F3)
     wasm_bot_eligible_mask(humanMask: number): number;
-    wasm_bot_cycle_delay_ms(humanMask: number): number;
+    wasm_human_mask(): number;
+    wasm_bot_cycle_delay_ms(): number;
     wasm_bot_drive(humanMask: number, maxActions: number, nPref: number): number;
     wasm_bot_drive_log_start(): number;
     // Belief probe (observability; off until reset arms it)
@@ -539,11 +540,15 @@ export interface BotDriveResult {
 // Deliberately leaves no resident mark: the caller awaits a DB read before it
 // drives, and a reader that trusted a mark across that would search a state
 // the game object has since moved past.
-export function wasmBotEligibleMask(game: Game, humanMask: number): number {
+export function wasmBotEligibleMask(game: Game): number {
     const ex = bots();
     __setResident(null);
     __marshalGame(ex, game);
-    return ex.wasm_bot_eligible_mask(humanMask) >>> 0;
+    // The human mask comes from the KERNEL now. It used to be a parameter, and
+    // that was the one place the ordering genuinely bit: this is the first call
+    // of a cycle, so a host had to hand-roll an is_ai mask before the kernel had
+    // ever seen the game. marshalGame states the seat kinds, so it has.
+    return ex.wasm_bot_eligible_mask(ex.wasm_human_mask()) >>> 0;
 }
 
 /** One recorded bot SEARCH, as the kernel saw it (wasm_belief_probe_dump). */
@@ -595,8 +600,8 @@ export function wasmBeliefProbeDump(): BeliefProbeRecord[] {
 // was still IN before asking, and both of those are questions about a game of
 // Durak. Call it straight after wasmBotDrive - it reads the drive the kernel
 // still has.
-export function wasmBotCycleDelayMs(humanMask: number): number {
-    return bots().wasm_bot_cycle_delay_ms(humanMask);
+export function wasmBotCycleDelayMs(): number {
+    return bots().wasm_bot_cycle_delay_ms();
 }
 
 // Per-game bot memory: FNV-1a of game.id, so a new game resets and the same
@@ -630,7 +635,6 @@ function writePrefs(ex: BotsExports, prefs: BotDrivePref[]): number {
 export function wasmBotDrive(
     game: Game,
     opts: {
-        humanMask: number;      // seats the kernel must NOT drive
         aiMask: number;         // for the win finalize (which seats park READY)
         humanSeats: number[];   // event stream recipients
         logs?: boolean;         // hydrate the session log (a belief bot is eligible)
@@ -666,7 +670,10 @@ export function wasmBotDrive(
     ex.wasm_set_rng_base(rngBaseFromSeed(game.game_seed));
 
     const nPref = opts.prefs?.length ? writePrefs(ex, opts.prefs) : 0;
-    const n = ex.wasm_bot_drive(opts.humanMask, opts.maxActions ?? 0, nPref);
+    // Seats the kernel must NOT drive: its own answer, off the kinds
+    // importStrategyKeys just stated. It was an argument, which meant the host
+    // built an is_ai mask for a question the kernel could already answer.
+    const n = ex.wasm_bot_drive(ex.wasm_human_mask(), opts.maxActions ?? 0, nPref);
     if (n < 0) throw new Error('bot drive rejected its input');
 
     // Read the actions out BEFORE anything else touches the IO buffer.

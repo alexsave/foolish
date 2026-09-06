@@ -70,6 +70,8 @@ interface EngineExports {
     wasm_transition(): number;
     wasm_refill(): number;
     wasm_reset_to_lobby(botMask: number): number;
+    wasm_import_strategy_keys(): void;
+    wasm_human_mask(): number;
     wasm_game_done(): number;
     wasm_should_act(i: number): number;
     wasm_next_player(cur: number): number;
@@ -384,6 +386,25 @@ function marshalGame(ex: EngineExports, game: Game): void {
         buf[q++] = s & 0xff;
     }
     ex.wasm_import_state();
+    // SEAT KINDS, every marshal, right behind the state. game_human_mask reads
+    // them, so once they are here the kernel can answer "which seats may I
+    // drive" - and no host has to build an is_ai mask in order to ask.
+    //
+    // They are NOT in the state wire itself: state_put/state_get are shared with
+    // the DURABLE blob, so a byte added there would re-interpret every persisted
+    // games.state row while its version byte still read 2.
+    //
+    // A bot goes in as 0, not its real STRAT_* id: resolving that means
+    // kernelBotStrat, which lives in bots.ts (a cycle from here) and instantiates
+    // bots.wasm, which the rules-only paths must not pay for. Only the SIGN
+    // matters to game_human_mask. bots.ts re-imports the exact brains on the
+    // paths that actually run a strategy, where espresso's opponent modelling
+    // needs to know which opponent is `random`.
+    {
+        const io = ex.wasm_io_ptr();
+        for (let i = 0; i < game.players.length; i++) buf[io + i] = game.players[i].is_ai ? 0 : 0xff;
+        ex.wasm_import_strategy_keys();
+    }
     // wasm_import_state drops the deterministic-deck flag (the transient IO
     // format doesn't carry it). Re-assert it for seed-dealt games so the bot
     // path — which marshals a JS Game rather than loading the durable blob —
@@ -393,6 +414,17 @@ function marshalGame(ex: EngineExports, game: Game): void {
     // draws scrambled it). game.deterministic_deck is set from the blob on load
     // (deserializeGameState) and at the deal (game_lifecycle).
     if (game.deterministic_deck) ex.wasm_set_deterministic_deck(1);
+}
+
+// The seats the kernel must NOT drive, as a bitmask (game.c game_human_mask).
+// Valid straight after any marshal - marshalGame states the kinds. A game
+// loaded from a durable BLOB has none (identity stays with the caller,
+// game.h), so that path's host still owns the question.
+export function kernelHumanMask(game: Game): number {
+    const ex = engine();
+    residentFor = null;
+    marshalGame(ex, game);
+    return ex.wasm_human_mask() >>> 0;
 }
 
 export interface KernelState {

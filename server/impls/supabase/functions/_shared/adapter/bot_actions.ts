@@ -274,14 +274,16 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
             // (owner decision) — the site has always thrown bots in while a
             // human deliberates, and yielding would stall a bout on an idle
             // player, since the defender and every attacker are eligible at once.
-            let humanMask = 0, aiMask = 0;
+            // The mask itself is the kernel's (game.c game_human_mask): the seat
+            // kinds ride along with every marshal, so nothing here has to build
+            // an is_ai bitmask before the kernel can be asked anything. What is
+            // still derived is the SEAT LIST, which is a transport question -
+            // whose per-viewer event stream to serialize - not a game one.
             const humanSeats: number[] = [];
-            game.players.forEach((p, i) => {
-                if (p.is_ai) aiMask |= 1 << i;
-                else { humanMask |= 1 << i; humanSeats.push(i); }
-            });
+            let aiMask = 0;
+            game.players.forEach((p, i) => { if (p.is_ai) aiMask |= 1 << i; else humanSeats.push(i); });
 
-            const eligible = wasmBotEligibleMask(game, humanMask);
+            const eligible = wasmBotEligibleMask(game);
             if (eligible === 0) {
                 console.log(`No eligible bots found for game ${game_id}, ending bot processing cycle`);
                 return { game, events: [] };
@@ -328,7 +330,7 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
             console.log(`[MEM] before drive: ${memLine()}`);
             const driveStartTime = Date.now();
             const drive = wasmBotDrive(game, {
-                humanMask, aiMask, humanSeats, logs: usesLogs, prefs,
+                aiMask, humanSeats, logs: usesLogs, prefs,
             });
             const driveDuration = Date.now() - driveStartTime;
             console.log(`[MEM] after  drive: ${memLine()}`);
@@ -364,7 +366,7 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
             // that from its one table, and reduces it again for a human still
             // IN. All three of those are facts about the game, so none of them
             // is re-derived here any more.
-            cycleDelay = wasmBotCycleDelayMs(humanMask);
+            cycleDelay = wasmBotCycleDelayMs();
 
             console.log(`[ACTION] ${drive.actions.length ? '✓' : '✗'} drove ${drive.actions.length} action(s) in ${driveDuration}ms: `
                 + `${drive.actions.map(a => `${game.players[a.seat].name}:${a.move.type}`).join(', ') || 'none'}`

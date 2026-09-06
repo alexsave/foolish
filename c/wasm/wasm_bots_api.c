@@ -243,12 +243,8 @@ void wasm_clear_logs(void) { wasm_game_ptr_internal()->num_logs = 0; }
 // TS side still calls it once per decision, so the export stays.
 void wasm_set_game_key(unsigned int key) { (void)key; }
 
-void wasm_import_strategy_keys(void) {
-    Game *g = wasm_game_ptr_internal();
-    const unsigned char *q = wasm_io_ptr();
-    for (int i = 0; i < g->num_players; i++)
-        g->players[i].strategy_key = (int8_t)q[i];
-}
+// wasm_import_strategy_keys moved to wasm_api.c: the seat kinds are what
+// game_human_mask reads, and the rules module needs them too.
 
 // ---------- strategy dispatch ----------------------------------------------
 
@@ -330,11 +326,15 @@ static BotDriveOut g_drv;
 // comment in bot_drive.c); the TS host was the last one still doing it. Now the
 // host owns only the loop and the actual sleep.
 //
+// Who is human is the kernel's too (game_human_mask), off the seat kinds every
+// marshal states - so the host is left owning only the loop and the sleep.
+//
 // Reads the SAME g_drv wasm_bot_drive just filled, so it is only meaningful
 // straight after a drive; before the first one g_drv is zeroed, which reduces
 // to BOT_PACE_NONE and a delay of 0.
-int wasm_bot_cycle_delay_ms(int human_mask) {
-    return bot_cycle_delay_ms(wasm_game_ptr_internal(), (uint32_t)human_mask, &g_drv);
+int wasm_bot_cycle_delay_ms(void) {
+    Game *g = wasm_game_ptr_internal();
+    return bot_cycle_delay_ms(g, game_human_mask(g), &g_drv);
 }
 
 // Opens ONE action scope for the whole cycle: resets the snapshot buffer and
