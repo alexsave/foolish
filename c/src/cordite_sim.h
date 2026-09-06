@@ -141,11 +141,6 @@ void cd_sim_solve_reset(void);
 // is byte-identical. No-op unless built -DCD_LEAFBOOK.
 void cd_sim_set_leafbook(int on);
 long cd_sim_leafbook_hits(void);   // probes that hit the book since last reset
-// Measurement hook (-DCD_TT_STATS): flush + return this game's peak working set
-// (distinct keys that had to coexist in the table), then reset for the next
-// game. Returns -1 when built without stats. See cordite_sim.c.
-long cd_sim_stats_game_flush(void);
-
 // Shared struct-solver scratch (child states + move lists, indexed by depth),
 // ONE copy for all MC families (cordite/semtex/octogen). Safe to share: one
 // bot family runs per decision, an exact solve completes before any other

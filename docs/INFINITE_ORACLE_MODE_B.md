@@ -116,9 +116,9 @@ This build does not, and that is load-bearing.
 
 `cd_sim_solve` returns a position's value from ONE seat's point of view.
 The table keys on the position alone, and until `fix(solver): a solved endgame now carries the seat it was solved for` it also *stored* one seat's perspective - so the second seat to ask read the first seat's proof unflipped and was told the loser wins.
-The fix stores the canonical value (always the lower-indexed IN player's side) and flips it on probe, which also swaps LOWER and UPPER on a fail-soft bound.
+The fix stores the canonical value (always the lower-indexed IN player's side) and flips it on probe.
 
-Under `-DFOOLISH_ORACLE_MT` the `-D_Thread_local=` strip is removed, so `cd_tt`, its tail cache, both LCGs, `solve_ws` and the recursion scratch are all genuinely per-thread again - the proven native OMP model.
+Under `-DFOOLISH_ORACLE_MT` the `-D_Thread_local=` strip is removed, so `cd_tt`, both LCGs, `solve_ws` and the recursion scratch are all genuinely per-thread again - the proven native OMP model.
 No thread ever reads another thread's entries, so the seat-perspective invariant stays a single-threaded property and concurrency cannot reintroduce the bug.
 `e2e/oracle_mode_b.test.ts` §8b.7-5 pins this: on a deck-empty decision with the solver engaged, every verdict Mode B proves under three threads must equal the verdict Mode A proves single-threaded.
 

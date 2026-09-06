@@ -108,23 +108,6 @@ export const RULES = [
 
 export const ALLOW = [
     {
-        rule: 'clock',
-        file: 'e2e/oracle_mode_b.test.ts',
-        calls: 2,
-        // Not a verdict, a BUDGET. Both Oracle modes are wall-clock bounded by
-        // construction - the panel deliberates until its time is up - so a test
-        // that compares them has to bound its own loops the same way. These two
-        // reads set and check that budget (`end = now + msCap`, then the loop
-        // condition); no assertion reads a clock, and every verdict in the file
-        // comes from folded integer sums that thread interleaving cannot move.
-        // Removing them would not make the test deterministic, it would make it
-        // unbounded.
-        reason:
-            'A wall-clock BUDGET for a benchmark loop, not a verdict: both Oracle '
-            + 'modes are wall-clock bounded by construction, so the comparison has to '
-            + 'bound itself the same way. No assertion in the file reads a clock.',
-    },
-    {
         rule: 'math-random',
         file: 'server/impls/supabase/functions/_shared/adapter/meta_actions.ts',
         calls: 1,

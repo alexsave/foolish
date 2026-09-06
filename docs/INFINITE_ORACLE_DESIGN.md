@@ -1000,8 +1000,8 @@ one new file `c/wasm/wasm_oracle_mt.c` plus small `#ifdef` seams:
   `_Thread_local LegalMoves` (237 KB/thread in TLS) and calls
   `calculate_legal_moves` + `octogen_strategy_choose` directly.
 - **MT3 — restore-TLS audit.** With `-D_Thread_local=` gone, everything the
-  native OMP build already keeps per-thread (solve_ws, cd_tt pointer +
-  tail cache, both LCGs, world/trial/diff slots, `og_flags_loaded`,
+  native OMP build already keeps per-thread (solve_ws, the cd_tt pointer,
+  both LCGs, world/trial/diff slots, `og_flags_loaded`,
   `og_polmap`/`og_bbleaf_on`, `forced_loss_flags`, solver scratch) is
   per-thread again by construction — an adversarial audit confirmed every
   mutable static on the choose path is `_Thread_local` in the native

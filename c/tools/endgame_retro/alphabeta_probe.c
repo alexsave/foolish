@@ -34,11 +34,7 @@ int main(int argc, char **argv) {
     int power = 1;                            // trump = Hearts
     long per_move_budget = argc > 1 ? atol(argv[1]) : 200000000L;
 
-#ifdef CD_SIM_SOLVE_MAX_DEPTH
-    printf("MAX_DEPTH=%d  per_move_budget=%ld\n", CD_SIM_SOLVE_MAX_DEPTH, per_move_budget);
-#else
     printf("MAX_DEPTH=(default 48)  per_move_budget=%ld\n", per_move_budget);
-#endif
     ensure_masks();
     SimState root;
     make_state(&root, mask_of(A, sizeof A/sizeof*A), mask_of(D, sizeof D/sizeof*D), power);

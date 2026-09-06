@@ -22,7 +22,7 @@ BOT=${BOT:-octogen}; OPP=${OPP:-espresso}; PC=${PC:-2}
 CAND=${CAND:-13}; BASE=${BASE:-22}
 J=${J:-$( (nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4) )}
 N=${1:-1000}; SEED0=${2:-700000}
-# EXTRA: extra compile flags for BOTH builds (e.g. EXTRA=-DCD_TT_TAILCACHE to
+# EXTRA: extra compile flags for BOTH builds (e.g. EXTRA=-DCD_TT_2WAY to
 # gate a candidate design; the CAND/BASE pair then measures it at two sizes).
 EXTRA=${EXTRA:-}
 throttle() { while [ "$(jobs -rp | wc -l)" -ge "$J" ]; do wait "$(jobs -rp | head -1)"; done; }

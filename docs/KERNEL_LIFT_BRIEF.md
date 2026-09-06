@@ -931,64 +931,88 @@ It is that "which bot gets added" is answered two different ways depending on
 which client asks, which is the class of divergence this whole campaign has been
 closing.
 
-## Queued: delete the dead C build flags
+## Delete the dead C build flags - DONE
 
 Owner: "All of it. It's in git history if we need to tune it again."
 
-Every dead flag is in BOT RESEARCH code.
-Nothing in the game core, the wire, or the animation layer is guarded by a flag
+Done.
+Fourteen flags and the code they guarded are gone, along with the two research
+harnesses that existed only to drive them.
+`c/src/cordite_sim.c` lost 564 lines - it was the largest C file in the repo, and
+about a quarter of it was unreachable.
+
+Every dead flag was in BOT RESEARCH code.
+Nothing in the game core, the wire, or the animation layer was guarded by a flag
 no build sets.
 
-### Delete: read by the code, set by no build target
+### Deleted: read by the code, set by no build target
 
-| flag | guarded lines | file |
-|---|---:|---|
-| `CD_TT_TRACE` | ~95 | `cordite_sim.c` |
-| `CD_TT_RANKSYM` | ~79 | `cordite_sim.c` |
-| `CD_TT_STATS` | ~67 | `cordite_sim.c` |
-| `CD_TT_BOUNDS` | ~49 | `cordite_sim.c` |
-| `CD_TT_SUITSYM` | ~48 | `cordite_sim.c` |
-| `CD_TT_BOUNDS_USE` | ~32 | `cordite_sim.c` |
-| `CD_TT_TAILCACHE` | ~17 | `cordite_sim.c` |
-| `GRPO_RNG_DEBUG` | ~14 | `game.c` |
-| `CD_TT_ADAPT` | ~11 | `cordite_sim.c` |
-| `OG_HIDE_UNCOVERABLE` | ~11 | `octogen_strategy.c` |
-| `CD_TT_DEPTH_PREF`, `CD_TT_ORDER2`, `CD_TT_ORDER3` | ~9 | `cordite_sim.c` |
-| `CD_SIM_SOLVE_MAX_DEPTH` | ~3 | `alphabeta_probe.c` |
+| flag | file |
+|---|---|
+| `CD_TT_TRACE` | `cordite_sim.c` |
+| `CD_TT_RANKSYM` | `cordite_sim.c` |
+| `CD_TT_STATS` | `cordite_sim.c`, `cordite_sim.h`, `main_eval.c` |
+| `CD_TT_BOUNDS` | `cordite_sim.c` |
+| `CD_TT_SUITSYM` | `cordite_sim.c` |
+| `CD_TT_BOUNDS_USE` | `cordite_sim.c` |
+| `CD_TT_TAILCACHE` | `cordite_sim.c` |
+| `GRPO_RNG_DEBUG` | `game.c` |
+| `CD_TT_ADAPT` | `cordite_sim.c` |
+| `OG_HIDE_UNCOVERABLE` | `octogen_strategy.c` |
+| `CD_TT_DEPTH_PREF`, `CD_TT_ORDER2`, `CD_TT_ORDER3` | `cordite_sim.c` |
+| `CD_SIM_SOLVE_MAX_DEPTH` | `tools/endgame_retro/alphabeta_probe.c` |
 
-About 435 lines over ~50 sites.
-`cordite_sim.c` is the largest C file in the repo at 1,727 lines and roughly a
-quarter of it is unreachable.
+The flag list was re-derived from the tree rather than taken from this table's
+earlier draft, and each one was checked against every build path that exists -
+the global `CFLAGS`, `IOS_CAPS`, `l1_measure`, `leafbook`, `og_explain`,
+`WASM_FLAGS`, `WASM_RULES_FLAGS`, `WASM_GUARDS_FLAGS`, `WASM_BOT_CFLAGS`,
+`WASM_ORACLE_CFLAGS`, `WASM_ORACLE_MT_CFLAGS`, `server/impls/native/Makefile`,
+and the five CI workflows.
+Nothing defined any of them.
+The census was re-run after the Mode B oracle and the native-server work landed,
+since both add build paths: the new `wasm-oracle-mt` target and the new
+`FOOLISH_ORACLE_MT`, `FOOLISH_QUIC` and `FOOLISH_NO_OPENSSL` flags set none of
+the deleted ones, and each of the three is set by exactly one target.
+The only `-D` uses left anywhere were in prose: research docs and two tool
+scripts, neither of which is a build target.
 
-The `CD_TT_*` family is transposition-table tuning scaffolding from the cordite
-research - trace, stats, suit and rank symmetry folding, bound tightening, move
-ordering.
-Cordite is the ELO #1 bot, so this is the record of how it got there.
-The owner's call is to delete it and rely on git.
+`CD_TT_TAIL_K`, `CD_TT_TAIL_N` and `CD_TT_BOUND_MINCARDS` went with their
+parents.
+They are `#ifndef X / #define X <default>` idioms that guard zero lines, so they
+would have been wrong to delete on their own - but they lived INSIDE the
+`CD_TT_TAILCACHE` and `CD_TT_BOUNDS` blocks and had no meaning without them.
+`GUNPOWDER_MODE`, `LEAFBOOK_K`, `REPLAY_BN_CAP` and `CNITRO_WASM_SIZE_T` are the
+same idiom and were left alone.
 
-Delete the guarded code WITH the guard.
-An `#ifdef` whose body is removed but whose flag survives in a comment or a
-Makefile note is the same vestige in a smaller size.
+### The research harnesses went with the flags
 
-### Do NOT touch: tunables that only look like dead conditionals
+`c/tools/hide_tax/` was deleted outright: `hide_eval.c` links against
+`og_hide_fire_count`, a symbol that only existed under `OG_HIDE_UNCOVERABLE`, so
+it could not compile after the deletion.
 
-`GUNPOWDER_MODE`, `CD_TT_TAIL_K`, `CD_TT_TAIL_N`, `CD_TT_BOUND_MINCARDS`,
-`LEAFBOOK_K`, `REPLAY_BN_CAP` are `#ifndef X / #define X <default>` idioms.
-They guard ZERO lines.
-Deleting the guard deletes the default and breaks the build.
-`CNITRO_WASM_SIZE_T` is a typedef guard in the wasm libc shims.
+`c/tools/tt_divergence_viz/generate.sh` lost its `measure` half, which built a
+`-DCD_TT_STATS` evaluator and read `main_eval`'s `CD_GW` emitter.
+The `rebuild` half stays and still renders `docs/tt-divergence.html` from the
+banked per-game working sets, which are checked in.
+Leaving the measure path in place would have left a script that compiles
+cleanly, silently measures nothing, and produces an empty sweep.
+
+`docs/OCTOGEN_HIDE_UNCOVERABLE.md`, `docs/SOLVER_TT_WORKING_SET_PLAN.md` and
+`docs/C5_BOUNDS_HANDOFF.md` now say at the top that the code they hand off is
+gone and name git as the recovery path.
+The measurements in them stand; the recipes do not.
 
 ### The other direction: are any flags always on, so the guard is pointless?
 
-Checked, and the answer is **no** - with one near-miss worth writing down,
-because it is the one a careless sweep would remove.
+Re-checked against the current tree, and the answer is still **no**.
 
-`CD_LEAFBOOK` sits in the GLOBAL `CFLAGS` (`Makefile:31`), so every native target
-has it and the guard looks redundant.
+`CD_LEAFBOOK` sits in the global `CFLAGS` (`Makefile:31`), so every ordinary
+native target has it and the guard looks redundant.
 It is not.
 The `leafbook` target builds with its own `LEAFBOOK_CFLAGS`, which deliberately
 omits it - the Makefile says so in as many words: "The build_book pass compiles
 WITHOUT -DCD_LEAFBOOK (it builds the book by direct solves)".
+`l1_measure` and the rules/guards wasm modules also build without it.
 The guard IS the bootstrap.
 Remove it and the book becomes unbuildable, because building the book would
 require the book.
@@ -998,19 +1022,114 @@ Everything else - `CD_WASM_OVERLAY`, `CD_RULES_OVERLAY`, `CD_TT_2WAY`,
 `FOOLISH_SEEDED_BOTS_ONLY`, `GUARDS_VALIDATE_ONLY`, `REPLAY_STATS`,
 `LEGAL_STATS`, `OG_EXPLAIN_BUILD` - is set by one or two named targets and is
 genuinely conditional.
+The near-miss worth writing down is `GUARDS_VALIDATE_ONLY`: only `guards.wasm`
+sets it, and it looks file-local, but the code it guards is in `game.c`, which
+every target compiles.
 
 `ACCELERATE_NEW_LAPACK` is in the global `CFLAGS` and read by nothing in this
 repo: it is Apple's own Accelerate macro, consumed by a system header.
-Not ours, leave it.
-(`_T` in an earlier scan was an artifact of a regex chopping
-`-D_Thread_local=`; there is no such flag.)
+Not ours, left alone.
 
-### How to verify the deletion
+### How the deletion was verified
 
-Deleting dead code cannot change behaviour, so prove that rather than assert it:
-build every target that touches these files and diff the binaries, or failing
-that run the bot benchmarks and hold the ELO table.
-`make tests`, `make difftests` and the bot parity suites must be unchanged.
+Not by assertion.
+`unifdef` did the removals, so no `#ifdef` body was edited by hand, and then the
+binaries were diffed.
+
+`rules.wasm` and `guards.wasm` are **byte-identical** to a baseline built from
+`origin/main`, and so is `ios/Fixtures/goldens.json`.
+
+`bots.wasm`, `bots-explain.wasm`, `oracle.wasm` and `oracle-mt.wasm` are 374-381
+bytes smaller.
+A bisect pinned the whole delta on two constructs that only the deleted flags
+ever made non-constant: `SimSolver.order` with its move-ordering branch (only
+`CD_TT_ADAPT` / `CD_TT_ORDER2` / `CD_TT_ORDER3` ever set it to anything but 0)
+and the `store` / `tbl` / `tmask` locals (only `CD_TT_DEPTH_PREF` and
+`CD_TT_TAILCACHE` ever varied them).
+With those two put back and nothing else, the module is byte-identical - so
+every actual flag deletion is provably codegen-neutral, and what changed is the
+runtime-dead branch the non-LTO wasm build could not prove away.
+
+All of this was measured again on each of the five bases main moved through while
+the branch was open: the native-server merge that moved `cordite_sim.c`'s mask
+tables to `_Thread_local`, the Mode B oracle, the determinism pass, the chain
+layer's turn controller, and the post-game analyser.
+Each time the earlier numbers had been taken against a tree that no longer
+existed, and a measurement that IS the evidence for a change has to be true of the
+tree that actually merges - re-running it is the work, not a formality.
+The signatures come back identical value for value every time, so each of those
+changes is itself play-neutral and the deletion stays play-neutral on top of all
+of them.
+
+Play identity was then measured directly.
+`GAME_SIG` signatures over 380 games at 2-8 players, native and again under the
+wasm bot module's exact flag set (`CD_TT_BITS=12 -DCD_TT_2WAY -DCD_TT_PACK8
+-DCD_LEAFBOOK`), are identical bot for bot: octogen, cordite, semtex, robusta,
+blackpowder, firecracker.
+
+`make tests` 6056 passed / 0 failed - the same count the pristine baseline
+reports, measured rather than assumed, and up from 6017 because the post-game
+analyser added 39 cases while this branch was open - `make difftests` green with
+`solver_difftest` at 0 mismatches for 2, 3 and 4 players, `make leafbook-verify`
+1,000,000 samples 0 mismatches, `make leafbook-gate`, `make l1-measure`,
+`make og_explain`, `make ios-lib` / `ios-smoke` / `ios-goldens`,
+`ios/scripts/mac_tests.sh` (623 + 25 XCTest cases, 0 failures),
+`ios/scripts/lint_architecture.sh` and `npm run check:determinism` all pass.
+The native server is Linux-only since it grew epoll, so on this Mac the check is
+its kernel-linking target, `make sem_fuzz`, which builds.
+
+`game.c`'s `<stdio.h>` and `<stdlib.h>` includes went too - `GRPO_RNG_DEBUG` was
+the only thing in that file that ever called into either, which is exactly what
+the wasm libc shims say in their own header comments.
+`rules.wasm` and `guards.wasm` stayed byte-identical across that removal, so it
+is provably a no-op.
+
+### Two breaks the parallel merges left on main
+
+Neither is this change's doing and both are fixed here, in their own commits, so
+they are easy to lift out.
+
+`make wasm-oracle-mt` did not compile. The native-server merge made
+`engine_snap_hook` `_Thread_local` in `game.h`; the Mode B merge added
+`wasm/wasm_oracle_mt.c`, which re-declared it without the qualifier. No CI job
+builds wasm, so the collision landed green.
+
+`npm run check:determinism` failed. The determinism pass taught the gate to catch
+clock reads that decide a test verdict; the Mode B suite has two, and it landed
+first. The gate is right: that loop's tolerance is derived from the counts the run
+reached, so a slow runner would gather less evidence and get a WIDER tolerance -
+the assertion weakening exactly when the machine is least able to earn it. The cap
+never fired anyway (measured: the heavy caller reaches its full target in ~5s
+against a 25s cap), so it is deleted rather than allowlisted.
+
+That one was fixed twice. A separate PR reached main first and settled it by
+allowlisting the two reads as a budget rather than a verdict, which silences the
+gate without closing the widening-tolerance hole; this branch replaces that entry
+with the deletion. Removing the reads then forces removing the entry, because the
+gate checks in both directions and fails on an allowlisted call site that no
+longer exists. An allowlist that cannot go stale is worth more than one that only
+ever grows.
+
+Three times in one night, two PRs merged cleanly in text and broke in meaning -
+this branch included, which is why its evidence was re-taken rather than carried
+forward. The pattern is worth naming: nothing in CI built wasm, and nothing
+re-runs a merged PR's gate against a tree the other PR changed.
+The first half now has a CI job. The second half is still open.
+
+A third, smaller instance of the same shape, recorded because it will bite again:
+`ios/scripts/mac_tests.sh` regenerates the Xcode project only when
+`ios/project.yml` is newer than the generated `project.pbxproj`. The project
+globs `../sdk/swift` as a DIRECTORY, so a PR that adds a Swift file there without
+touching `project.yml` leaves every existing checkout building a project that
+does not contain it - a `cannot find type` error in a file nobody edited. The
+turn controller did exactly that. `--regen` clears it; a staleness check that
+looked at the globbed directories rather than only at the spec would not need to
+be remembered.
+
+One pre-existing warning went with the sweep: `sim_other_in` in `cordite_sim.c`
+had no callers before this change either.
+Two more (`robusta_choose_multi`, `robusta_choose_7p_real`) are untouched - they
+are somebody's live research, not this campaign's business.
 
 ## Settled: the Infinite Oracle's endgame scores, measured
 
