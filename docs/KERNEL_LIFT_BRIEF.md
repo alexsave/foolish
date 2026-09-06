@@ -592,7 +592,39 @@ Not fixed with stage 5 because the same prior ALSO seeds the role marks, where
 "the first event of the previous step" is deliberate.
 So this is a change with two consumers and wants its own look.
 
-### An untested load-bearing rule: the empty menu under a held settlement - HALF CLOSED
+### An untested load-bearing rule: the empty menu under a held settlement - TESTED
+
+Fixed 2026-09-06, and the report below was right on every count.
+Mutating `legalPacked = heldSettlement.isEmpty ? read.legalPacked : emptyMenu`
+down to `legalPacked = read.legalPacked` left the whole `MessageStagedDealTests`
+class green, its own `XCTAssertTrue(c.legal.isEmpty)` included.
+
+The missing fixture is written:
+`MessageStagedDealTests.testAHeldSettlementEmptiesAMenuTheKernelWouldHaveOffered`.
+It hunts for the position instead of asserting into the dark - two greedy
+policies (attackers throw, the defender covers, and a chain long enough to empty
+a hand in one turn), 3 to 5 players, 120 deals each - and asserts only once the
+KERNEL's own menu for that seat is NON-empty, which is the thing that makes the
+assertion mean anything.
+A search that finds nothing fails.
+
+Both halves are mutation-checked, and neither catches the other's mutation:
+- the menu half fails with "a held settlement published 1 legal moves while the
+  kernel offered 1";
+- the view half (`view = heldView ?? v`) fails with "1 dealt card(s) reached the
+  board".
+It finds its position in about a second, so it costs the suite nothing.
+
+Why the shape is as rare as the report says: after a pickup or a good the next
+first attacker is never the seat that moved, so the kernel's menu for it is empty
+and the assertion agrees with the rule about nothing.
+Only `handle_cover`'s `hand_count == 0` branch sets
+`first_attacker = defender` - it discards, refills that defender a fresh hand,
+and hands them the opening attack of the next bout.
+Across 3 to 6 players and 120 deals a play policy that is not aiming for it
+reaches that position roughly twice.
+
+The original report follows.
 
 While a bout settlement is withheld, the board publishes an EMPTY legal menu so
 the player cannot act on a deal they have not been shown.
@@ -613,10 +645,13 @@ Half of it closed with Item 2 (2026-09-05).
 Both halves are `msg_turn_publish` outs now, and mutating either to a constant
 costs 2 failures each in `msg_wire_test` - so the RULE is guarded where it is
 stated.
-The FIXTURE is still missing, and it is the fixture this finding is really about:
-nothing yet drives a defender's own hand empty through a controller and watches
-what the board is allowed to offer afterwards.
-That is the remaining work, and it is a Swift-side one.
+The FIXTURE was the remaining work, and it is written now (see the top of this
+section): it drives a defender's own hand empty through a real controller and
+watches what the board is allowed to offer afterwards.
+The two guards are not redundant.
+`msg_wire_test` pins the kernel's answer where the rule is stated; the fixture
+pins that a board built on that answer never offers the move, which is the half
+that stayed green through every mutation before it existed.
 
 ### A CI flake: edge-serve 502s under the real memory budget - DIAGNOSED
 
