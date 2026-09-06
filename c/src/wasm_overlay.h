@@ -2,7 +2,7 @@
 // replay-CALL scratch buffers (g_rec, g_bn, g_replay_io — 90.5 KiB together)
 // into the solver's solve_ws arena (272 KiB). The two families are never live
 // at the same time: the wasm instance is single-threaded and wasm_choose_move
-// (which drives the solver → solve_ws) vs wasm_replay_encode/decode (which use
+// (which drives the solver → solve_ws) vs the replay encode/decode calls (which use
 // the replay scratch) are top-level exports that never nest. Aliasing them
 // reclaims the 90.5 KiB outright — pure address reuse, no behavior change,
 // because each replay buffer is written-before-read within a single call

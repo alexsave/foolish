@@ -112,12 +112,11 @@ build/apply_difftest: tests/apply_difftest.c $(CORE_OBJ)
 	$(CC) $(CFLAGS) tests/apply_difftest.c $(CORE_OBJ) -o $@ $(LDFLAGS)
 build/solver_difftest: tests/solver_difftest.c $(CORE_OBJ)
 	$(CC) $(CFLAGS) tests/solver_difftest.c $(CORE_OBJ) -o $@ $(LDFLAGS)
-# Replay-codec round trip against real engine games (native mirror of
-# e2e/replay_codec.test.ts; also part of `make difftests`).
-build/replay_difftest: tests/replay_difftest.c $(CORE_OBJ)
-	$(CC) $(CFLAGS) tests/replay_difftest.c $(CORE_OBJ) -o $@ $(LDFLAGS)
-# Format-6 (partial-game, hidden-state-lossless) round trip + losslessness +
-# mid-game + size (docs/IMESSAGE_GAME_DESIGN.md §16 option 3).
+# Replay-codec round trip against real engine games (the native mirror of
+# e2e/replay_codec.test.ts): losslessness, mid-game cuts, size
+# (docs/IMESSAGE_GAME_DESIGN.md §16 option 3). It absorbed the old
+# replay_difftest, which drove the same games through the retired retrodiction
+# encoder and asserted the same full-stream fidelity.
 build/replay_v6_test: tests/replay_v6_test.c $(CORE_OBJ)
 	$(CC) $(CFLAGS) tests/replay_v6_test.c $(CORE_OBJ) -o $@ $(LDFLAGS)
 # FMSG v1 envelope (the iMessage payload): round-trip, replay fidelity, tamper
@@ -129,14 +128,13 @@ build/msg_wire_test: tests/msg_wire_test.c $(CORE_OBJ)
 # building. The owner's headline ask — the quality tests live in C now.
 build/anim_plan_test: tests/anim_plan_test.c $(CORE_OBJ)
 	$(CC) $(CFLAGS) tests/anim_plan_test.c $(CORE_OBJ) -o $@ $(LDFLAGS)
-difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/solver_difftest build/replay_difftest build/replay_v6_test build/anim_plan_test
+difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/solver_difftest build/replay_v6_test build/anim_plan_test
 	./build/sim_difftest 4 1000 && ./build/apply_difftest 4 200 && \
 	./build/msg_wire_test 20 && \
 	./build/anim_plan_test && \
 	./build/solver_difftest 2 40 "" 200000 && \
 	./build/solver_difftest 3 40 "" 200000 && \
 	./build/solver_difftest 4 40 "" 200000 && \
-	./build/replay_difftest 40 && \
 	./build/replay_v6_test 40 && \
 	$(MAKE) analyse-test
 
@@ -563,7 +561,7 @@ WASM_API_EXPORTS := \
   -Wl,--export=wasm_game_done -Wl,--export=wasm_should_act \
   -Wl,--export=wasm_next_player -Wl,--export=wasm_can_cover \
   -Wl,--export=wasm_replay_io_ptr -Wl,--export=wasm_replay_io_cap \
-  -Wl,--export=wasm_replay_encode -Wl,--export=wasm_replay_decode \
+  -Wl,--export=wasm_replay_decode \
   -Wl,--export=wasm_replay_encode_v6 \
   -Wl,--export=wasm_replay_error_detail \
   -Wl,--export=wasm_legal_moves -Wl,--export=wasm_export_moves \
@@ -1232,14 +1230,14 @@ coverage:
 	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/sim_difftest.c   -o covbuild/sim_difftest    -lm
 	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/apply_difftest.c -o covbuild/apply_difftest  -lm
 	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/solver_difftest.c -o covbuild/solver_difftest -lm
-	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/replay_difftest.c -o covbuild/replay_difftest -lm
+	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/replay_v6_test.c  -o covbuild/replay_v6_test  -lm
 	./covbuild/cnitro_tests
 	./covbuild/sim_difftest 4 100
 	./covbuild/apply_difftest 4 50
 	./covbuild/solver_difftest 2 40 "" 5000
 	./covbuild/solver_difftest 3 40 "" 5000
 	./covbuild/solver_difftest 4 40 "" 5000
-	./covbuild/replay_difftest 10
+	./covbuild/replay_v6_test 10
 	gcovr --root . $(COV_FILTERS) --txt \
 	      --fail-under-line $(COV_LINE_MIN) --fail-under-branch $(COV_BRANCH_MIN)
 

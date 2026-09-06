@@ -4,14 +4,14 @@
 //   engine game (game.c + legal.c) — the ONLY place the true deck lives
 //     -> capture the real initial hands + the real stock-draw order
 //     -> replay_encode_v6  (feeds those real hidden cards in)
-//     -> replay_decode     (auto-detects v6)
+//     -> replay_decode
 //     -> the decoded stream must carry EVERY hidden card's REAL identity:
 //        * one leading LOG_DRAW per seat = that seat's true initial hand
 //        * every later LOG_DRAW = the true drawn card (never CARD_HIDDEN)
 //        so NO retrodiction guess is ever needed — the whole point.
 //
 // Also asserts: encode determinism, decode->re-encode fixed point, a MID-GAME
-// prefix decodes cleanly with no fool, and reports the v6 vs v5 size delta.
+// prefix decodes cleanly with no fool, and reports the size on the wire.
 //
 // Usage: replay_v6_test [games_per_pc] [seed0]   (defaults 40, 1337)
 
@@ -31,7 +31,6 @@ static unsigned char g_in[ENC_CAP];
 static unsigned char g_in2[ENC_CAP];
 static unsigned char g_enc[ENC_CAP];
 static unsigned char g_enc2[ENC_CAP];
-static unsigned char g_v5[ENC_CAP];
 static unsigned char g_dec[DEC_CAP];
 
 static uint32_t g_sh_seed = 1;
@@ -196,7 +195,7 @@ static int dec_next(const unsigned char *buf, int len, int *pos, DecLog *out) {
 }
 
 static int n_pass = 0, n_fail = 0, n_skip = 0;
-static long v6_bytes = 0, v5_bytes = 0;
+static long code_bytes = 0;
 static int n_sized = 0;
 #define CHECK(cond, ...) do { \
     if (cond) { n_pass++; } \
@@ -357,35 +356,9 @@ static void run_one(int np, int strat, uint32_t seed) {
         CHECK(g_dec[4] == 0xFF || g_dec[4] == game_done(&g), "mid fool byte %d", g_dec[4]);
     }
 
-    // --- size: v6 vs the frozen v5 encoding of the same game ---
-    {
-        int q = 5, na = 0;
-        for (int i = 0; i < g.num_logs; i++) {
-            const GameLog *l = &g.logs[i];
-            bool info = l->log_type == LOG_ATTACK || l->log_type == LOG_COVER
-                     || l->log_type == LOG_PASS || l->log_type == LOG_PICKUP;
-            if (info) {
-                g_in[q++] = (unsigned char)l->log_type;
-                g_in[q++] = (unsigned char)l->player_idx;
-                g_in[q++] = (unsigned char)l->num_pairs;
-                for (int j = 0; j < l->num_pairs; j++) {
-                    g_in[q++] = wire_of(l->pairs[j].primary);
-                    g_in[q++] = card_is_none(l->pairs[j].target)
-                        ? (unsigned char)REPLAY_CARD_NONE : wire_of(l->pairs[j].target);
-                }
-                na++;
-            } else if (l->log_type == LOG_DISCARD && i > 0
-                       && g.logs[i - 1].log_type == LOG_GOOD) {
-                g_in[q++] = (unsigned char)REPLAY_ROUND_END;
-                g_in[q++] = 0xFF; g_in[q++] = 0;
-                na++;
-            }
-        }
-        g_in[0] = (unsigned char)np; g_in[1] = wire_of(flip); g_in[2] = (unsigned char)fa;
-        g_in[3] = (unsigned char)(na & 0xff); g_in[4] = (unsigned char)((na >> 8) & 0xff);
-        int v5 = replay_encode(g_in, q, g_v5, ENC_CAP);
-        if (v5 > 0) { v5_bytes += v5; v6_bytes += enc; n_sized++; }
-    }
+    // --- size: what a full game costs on the wire ---
+    code_bytes += enc;
+    n_sized++;
 }
 
 /* ================= A4: replay_encode_v6_from_game (seeded) ================= */
@@ -557,10 +530,10 @@ int main(int argc, char **argv) {
            "(wasm caps REPLAY_REC_CAP=4096, BN_CAP=%d)\n",
            replay_stat_max_rec, replay_stat_max_bn, (4096 * 21 + 31) / 32);
 #endif
+    // This used to print the delta against the frozen v5 encoding of the same
+    // game (+~35%, the price of exact hidden state and mid-game cuts). That
+    // encoder is gone, so what is left to report is the absolute cost.
     if (n_sized)
-        printf("size: v6 avg %.1f B vs v5 avg %.1f B over %d games (v6 = +%.1f%% for full "
-               "hidden-state + mid-game capability)\n",
-               (double)v6_bytes / n_sized, (double)v5_bytes / n_sized, n_sized,
-               100.0 * ((double)v6_bytes - v5_bytes) / (double)v5_bytes);
+        printf("size: avg %.1f B over %d games\n", (double)code_bytes / n_sized, n_sized);
     return n_fail ? 1 : 0;
 }

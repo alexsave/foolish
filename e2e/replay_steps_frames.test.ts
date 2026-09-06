@@ -134,9 +134,22 @@ test('a v6 replay decodes as LIVE evwire frames, and is the game that was played
     }
 });
 
-test('a replay refuses a v5 code rather than inventing hands', () => {
-    // v5 hides the deal, so its "hands" are retrodiction and there is no deck to
-    // rebuild. The kernel says so instead of guessing (docs §4.6).
-    const notV6 = new Uint8Array([0x05, 0x00, 0x00, 0x00]);
-    assert.throws(() => replayStepCount(notV6), /replay|version/i);
+test('a replay refuses every retired format by number, and names it', () => {
+    // Nine formats came before the one that ships and none of them decodes: the
+    // deal order changed under 5..8, and 9 hid the deal, so its "hands" were
+    // retrodiction and there was no deck to rebuild. The kernel says which
+    // version it is looking at instead of guessing at the game (c/src/replay.h).
+    //
+    // THE CODE HAS TO REALLY CARRY THAT VERSION. The version is the first
+    // symbol, coded uniform over 16, so a decoder reads it as `x % 16` - which
+    // makes the single byte v the smallest code whose version IS v. This used to
+    // pass [0x05,0,0,0] and call it "a v5 code"; that integer is 0x05000000,
+    // whose version field is 0, so the assertion never once saw a 5.
+    for (const v of [5, 6, 7, 8, 9]) {
+        assert.throws(
+            () => replayStepCount(new Uint8Array([v])),
+            new RegExp(`unsupported replay format version ${v}\\b`),
+            `a version-${v} code must be refused by number`,
+        );
+    }
 });

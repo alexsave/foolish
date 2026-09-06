@@ -428,7 +428,7 @@ static void deal_initial(Game *g) {
 // is unreachable from bot_drive/awire_apply/game_seat_and_deal and never
 // mutated during concurrent play; it stays a plain global, matching the
 // single-threaded replay-tooling callers that do touch it (cnitro_replay,
-// replay_difftest, replay_v6_test — none of which are multi-threaded).
+// replay_v6_test - none of which are multi-threaded).
 static int g_forced_first_attacker = -1;
 
 void game_force_first_attacker(int seat) { g_forced_first_attacker = seat; }

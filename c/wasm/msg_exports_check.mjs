@@ -27,7 +27,6 @@ const has = (n) => exports.includes(n);
 // The share link, end to end: game -> code -> base32 -> URL, plus the extras
 // blob (nicknames, move timings) that rides behind the dash.
 const MUST_HAVE = [
-    'wasm_replay_encode',
     'wasm_replay_encode_v6',
     'wasm_replay_extras_encode',
     'wasm_replay_b32_encode',

@@ -172,7 +172,7 @@ static int replay_sweep(void) {
     if (strat < 0) { printf("FAIL replay sweep: no handwritten rung\n"); return 1; }
 
     const int counts[] = { 2, 3, 4, 6 };
-    int checked = 0, skipped = 0, v6_checked = 0, ev_checked = 0;
+    int checked = 0, skipped = 0, ev_checked = 0;
     for (int ci = 0; ci < (int)(sizeof(counts) / sizeof(counts[0])); ci++) {
         for (int s = 0; s < 12; s++) {
             int players = counts[ci];
@@ -189,39 +189,17 @@ static int replay_sweep(void) {
             int fool = fio_game_over();
             if (fool < 0) { printf("FAIL sweep p=%d seed=%d did not finish\n", players, s); return 1; }
 
-            static char code[8192];
-            int clen = fio_replay_encode_b32(code, sizeof(code));
-            if (clen < 0) {
-                // A game longer than MAX_LOGS cannot be encoded at all — a
-                // documented build limit, not an encoder fault (the same skip
-                // as tests/replay_difftest.c).
-                if (fio_last_replay_error() == REPLAY_ETOOLONG) { skipped++; continue; }
-                printf("FAIL sweep encode p=%d seed=%d err=%d detail=%d steps=%d\n",
-                       players, s, clen, fio_last_replay_error(), steps);
-                return 1;
-            }
-            if (fio_replay_decode_packed(code, (unsigned char *)buf, sizeof(buf)) < 0) {
-                printf("FAIL sweep decode p=%d seed=%d err=%d\n", players, s, fio_last_replay_error());
-                return 1;
-            }
-            // replay.h DECODE binary: fool is byte[4] (0xFF → -1).
-            int decoded_fool = (unsigned char)buf[4] == 0xFF ? -1 : (unsigned char)buf[4];
-            if (decoded_fool != fool) {
-                printf("FAIL sweep fool mismatch p=%d seed=%d decoded=%d game=%d\n",
-                       players, s, decoded_fool, fool);
-                return 1;
-            }
-
-            // Same game as v6 (A4): these games are dealt from a 32-byte seed,
-            // so the kernel can re-derive the deal and the share carries exact
-            // hands. Goes through fio_replay_share_code_b32 — the call the app
-            // actually makes — so this proves the format CHOICE too, not just
-            // the encoder: a seeded game must come out as v6.
+            // These games are dealt from a 32-byte seed, so the kernel can
+            // re-derive the deal and the share carries exact hands. Goes through
+            // fio_replay_share_code_b32 - the call the app actually makes.
             static char code6[8192];
             int c6 = fio_replay_share_code_b32(code6, sizeof(code6));
             if (c6 < 0) {
-                printf("FAIL sweep v6 encode p=%d seed=%d err=%d detail=%d\n",
-                       players, s, c6, fio_last_replay_error());
+                // A game longer than MAX_LOGS cannot be encoded at all - a
+                // documented build limit, not an encoder fault.
+                if (fio_last_replay_error() == REPLAY_ETOOLONG) { skipped++; continue; }
+                printf("FAIL sweep encode p=%d seed=%d err=%d detail=%d steps=%d\n",
+                       players, s, c6, fio_last_replay_error(), steps);
                 return 1;
             }
             if (fio_replay_decode_packed(code6, (unsigned char *)buf, sizeof(buf)) < 0) {
@@ -229,11 +207,12 @@ static int replay_sweep(void) {
                        fio_last_replay_error());
                 return 1;
             }
-            // The seeded encoder's version has moved with the codec: v7 added
-            // the pass-mode bit, v8 the forced-opening bit, and 10 is the same
-            // wire again under the corrected deal order (replay.h). That last
-            // one is not additive - it retired 5 through 8 outright - so a
-            // fresh encode must be 10 and nothing else.
+            // The version has moved with the codec: 7 added the pass-mode bit,
+            // 8 the forced-opening bit, and 10 is the same wire again under the
+            // corrected deal order. None of those were additive - each retired
+            // its predecessors outright, and dropping the retrodiction line took
+            // 9 with them (replay.h) - so a fresh encode must be 10 and nothing
+            // else.
             if ((unsigned char)buf[0] != REPLAY_FORMAT_VERSION_V10) {   // version is byte[0]
                 printf("FAIL sweep v6 version p=%d seed=%d got=%d\n", players, s,
                        (unsigned char)buf[0]);
@@ -263,13 +242,12 @@ static int replay_sweep(void) {
                 return 1;
             }
             ev_checked++;
-            v6_checked++;
             checked++;
         }
     }
-    printf("replay sweep OK (%d games round-tripped, %d as v6 with exact hands, "
+    printf("replay sweep OK (%d games round-tripped with exact hands, "
            "%d replayed as live events, %d skipped as over-long)\n",
-           checked, v6_checked, ev_checked, skipped);
+           checked, ev_checked, skipped);
     return 0;
 }
 
@@ -1544,7 +1522,7 @@ int main(void) {
     // Replay round-trip (§16.C): encode the finished game to a base32 code,
     // decode it back, and check the decoded fool matches the game's fool.
     static char code[8192];
-    int clen = fio_replay_encode_b32(code, sizeof(code));
+    int clen = fio_replay_share_code_b32(code, sizeof(code));
     if (clen < 0) { printf("FAIL replay encode err=%d detail=%d\n", clen, fio_last_replay_error()); return 1; }
     printf("replay code (%d chars): %.60s%s\n", clen, code, clen > 60 ? "..." : "");
     int dlen = fio_replay_decode_packed(code, (unsigned char *)buf, sizeof(buf));

@@ -712,23 +712,20 @@ int wasm_replay_io_cap(void) { return REPLAY_IO_CAP; }
 // Defense in depth: the TS bridge already checks lengths against
 // wasm_replay_io_cap, but a hostile/stale caller must get a clean error,
 // never reads past the replay buffer.
-int wasm_replay_encode(int in_len) {
-    if (in_len < 0 || in_len > REPLAY_IO_CAP) return -REPLAY_ECAP;
-    return replay_encode(g_replay_io, in_len, g_replay_io, REPLAY_IO_CAP);
-}
 int wasm_replay_decode(int in_len) {
     if (in_len < 0 || in_len > REPLAY_IO_CAP) return -REPLAY_ECAP;
     return replay_decode(g_replay_io, in_len, g_replay_io, REPLAY_IO_CAP);
 }
-// Format 6 (hidden-state-lossless, partial-game — replay.h). Same in-place
-// contract; decode is version-dispatched so wasm_replay_decode handles v6 too.
+// The marshalled encoder (replay.h): an action stream plus the real hidden
+// cards. Same in-place contract.
 int wasm_replay_encode_v6(int in_len) {
     if (in_len < 0 || in_len > REPLAY_IO_CAP) return -REPLAY_ECAP;
     return replay_encode_v6(g_replay_io, in_len, g_replay_io, REPLAY_IO_CAP);
 }
 
-// Format 6 from the RESIDENT game (replay.h replay_encode_v6_from_game) — the
-// one v6 producer, the same call the phone makes through fio_replay_encode_v6_b32.
+// A replay from the RESIDENT game (replay.h replay_encode_v6_from_game) - the
+// production producer, the same call the phone makes through
+// fio_replay_encode_v6_b32.
 // The host stages the game exactly as a bot decision does (wasm_import_state
 // then wasm_import_logs) and puts the deal seed at the front of the replay IO
 // buffer; the kernel re-derives the deal from the seed and reads the actions
