@@ -35,7 +35,6 @@
 //   WHAT IS TRUE BETWEEN the offer and the finish.
 
 import XCTest
-import CFoolish
 @testable import FoolishKit
 
 @MainActor
@@ -96,7 +95,7 @@ final class ConflictModelTests: XCTestCase {
     /// THE TRANSPORT IS A REAL INPUT ON THIS SIDE TOO. The kernel answers the
     /// shared tests either way, but the question at the end of the verdict -
     /// is "not accounted for" conclusive? - is one this app has to have
-    /// declared. Unset, `fio_conflict_packed` returns FIO_ETRANSPORT and this
+    /// declared. Unset, the kernel returns FIO_ETRANSPORT and this
     /// reader turns it into NO plan, which is loud, rather than quietly
     /// reverting or quietly keeping.
     ///
@@ -112,7 +111,7 @@ final class ConflictModelTests: XCTestCase {
         XCTAssertEqual(f.verdict(mine, dest: .table), .revert,
                        "a chain is complete, so a card it does not account for is doomed")
 
-        _ = fio_set_transport(0)          // FIO_TRANSPORT_UNSET - no Swift case for it
+        AnimTransport.undeclare()         // FIO_TRANSPORT_UNSET - no Swift case for it
         XCTAssertNil(AnimTransport.current, "nothing has said")
         XCTAssertEqual(ConflictPlan([[ConflictMotion(card: mine, dest: .table)]], facts: f),
                        .empty,

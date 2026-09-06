@@ -12,13 +12,13 @@
 //
 // THE DECISIONS ARE THE KERNEL'S NOW (msg_wire.c's msg_seat_*), so a second
 // chain client does not re-derive them; this file is what is left when they
-// leave, which is marshalling. It does NOT reverse game.h's "seat identity is
+// leave, and the crossing itself is sdk/swift/GateWire.swift's (§7.1: the C
+// bridge stays in the SDK). It does NOT reverse game.h's "seat identity is
 // deliberately not in the state blob; it lives with the caller": no seat goes
 // into any state, and every signal these rules read - the cache, the sender,
 // the chat shape, the recorded claim name - is still handed IN by the host.
 
 import Foundation
-import CFoolish
 
 public enum SeatIdentity {
 
@@ -52,9 +52,12 @@ public enum SeatIdentity {
                                nPlayers: Int,
                                lastActorSeat: Int,
                                chatIsDM: Bool) -> Resolution {
-        let s = fio_seat_resolve(Int32(cachedSeat ?? -1), senderIsLocal ? 1 : 0,
-                                 Int32(nPlayers), Int32(lastActorSeat), chatIsDM ? 1 : 0)
-        return s >= 0 ? .known(Int(s)) : .ambiguous
+        guard let s = GateWire.seatResolve(cachedSeat: cachedSeat,
+                                           senderIsLocal: senderIsLocal,
+                                           nPlayers: nPlayers,
+                                           lastActorSeat: lastActorSeat,
+                                           chatIsDM: chatIsDM) else { return .ambiguous }
+        return .known(s)
     }
 
     /// Does this bubble's own roster DISOWN the cached seat — list it under a
@@ -76,9 +79,8 @@ public enum SeatIdentity {
     /// picked the same nickname — the same trust level §6.3 already accepts.
     public static func cacheDisownedByJoins(cachedSeat: Int?, recordedName: String?,
                                             joins: [MessageJoin]) -> Bool {
-        RosterWire.call(joins, recordedName) {
-            fio_seat_cache_disowned($0, $1, Int32(cachedSeat ?? -1), $2, $3) != 0
-        }
+        GateWire.seatCacheDisowned(cachedSeat: cachedSeat, recordedName: recordedName,
+                                   joins: joins)
     }
 
     /// The seat carrying this device's own recorded claim name in `joins`, if
@@ -96,8 +98,7 @@ public enum SeatIdentity {
     /// across forks, the residual IMESSAGE_SEAT_IDENTITY_V2's deferred tokens
     /// exist to close.
     public static func seatClaimedByName(recordedName: String?, joins: [MessageJoin]) -> Int? {
-        let s = RosterWire.call(joins, recordedName) { fio_seat_claimed_by_name($0, $1, $2, $3) }
-        return s >= 0 ? Int(s) : nil
+        GateWire.seatClaimedByName(recordedName: recordedName, joins: joins)
     }
 
     /// `resolve`, gated for a LOBBY bubble specifically (note 14, HARNESS_NOTES_R2):
@@ -120,11 +121,9 @@ public enum SeatIdentity {
                                       nPlayers: Int, lastActorSeat: Int,
                                       joins: [MessageJoin], chatIsDM: Bool,
                                       recordedName: String? = nil) -> Int? {
-        let s = RosterWire.call(joins, recordedName) {
-            fio_seat_resolve_in_lobby($0, $1, Int32(cachedSeat ?? -1),
-                                      senderIsLocal ? 1 : 0, Int32(nPlayers),
-                                      Int32(lastActorSeat), chatIsDM ? 1 : 0, $2, $3)
-        }
-        return s >= 0 ? Int(s) : nil
+        GateWire.seatResolveInLobby(cachedSeat: cachedSeat, senderIsLocal: senderIsLocal,
+                                    nPlayers: nPlayers, lastActorSeat: lastActorSeat,
+                                    chatIsDM: chatIsDM, recordedName: recordedName,
+                                    joins: joins)
     }
 }

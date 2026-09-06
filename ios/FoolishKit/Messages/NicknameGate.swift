@@ -8,7 +8,8 @@
 // type is the first one - catch it in the UI so the seal layer is never handed
 // a name it is going to reject.
 //
-// THE RULE IS THE KERNEL'S (msg_nickname_verdict / msg_name_taken). Both caps
+// THE RULE IS THE KERNEL'S (msg_nickname_verdict / msg_name_taken), reached
+// through sdk/swift/GateWire.swift, which is where the C bridge lives (§7.1). Both caps
 // live beside the one the seal enforces, which is what stops them drifting: a
 // UI cap set too low silently rejects names the wire would take, one set too
 // high hands the seal a name it will refuse, and B1 is what that looks like on
@@ -23,14 +24,13 @@
 // reason, never silently cut a name down to something that fits.
 
 import Foundation
-import CFoolish
 
 public enum NicknameGate {
     /// The display cap, from the kernel (MSG_MAX_NAME_CHARS) - read rather than
     /// repeated, so there is one number.
-    public static var maxChars: Int { Int(fio_name_max_chars()) }
+    public static var maxChars: Int { GateWire.nameMaxChars }
     /// MSG_MAX_NAME, the cap the SEAL enforces. Same reason.
-    public static var maxBytes: Int { Int(fio_name_max_bytes()) }
+    public static var maxBytes: Int { GateWire.nameMaxBytes }
 
     /// The three states a nickname field can be in, once trimmed. `.ok`
     /// carries the TRIMMED string — the exact value that gets stored and
@@ -52,10 +52,10 @@ public enum NicknameGate {
     /// ordinary short names nobody expected to fail.
     public static func check(_ raw: String) -> Verdict {
         let trimmed = raw.trimmingCharacters(in: .whitespaces)
-        switch fio_nickname_verdict(Int32(trimmed.count), Int32(trimmed.utf8.count)) {
-        case Int32(FIO_NAME_OK): return .ok(trimmed)
-        case Int32(FIO_NAME_TOO_LONG): return .tooLong
-        default: return .empty
+        switch GateWire.nicknameVerdict(chars: trimmed.count, bytes: trimmed.utf8.count) {
+        case .ok: return .ok(trimmed)
+        case .tooLong: return .tooLong
+        case .empty: return .empty
         }
     }
 
@@ -71,6 +71,6 @@ public enum NicknameGate {
     /// forked chains can still each hold their own "Alex" — the residual the
     /// claim-token design (docs/IMESSAGE_SEAT_IDENTITY_V2.md) exists to close.
     public static func isTaken(_ name: String, in joins: [MessageJoin]) -> Bool {
-        RosterWire.call(joins, name) { fio_roster_name_taken($0, $1, $2, $3) != 0 }
+        GateWire.nameTaken(name, in: joins)
     }
 }

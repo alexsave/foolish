@@ -55,6 +55,13 @@ public enum AnimTransport: Int32, Sendable {
     /// bug looks exactly like an animation bug and this is the cheap way to
     /// tell them apart.
     public static var current: AnimTransport? { AnimTransport(rawValue: fio_transport()) }
+
+    /// Put the process back to FIO_TRANSPORT_UNSET - deliberately not a case of
+    /// this enum, because "nothing has said" is not a client. A real host says
+    /// which client it is once at startup and never unsays it, so the only
+    /// caller is a test proving that an undeclared process gets no plan rather
+    /// than somebody else's answer.
+    public static func undeclare() { _ = fio_set_transport(FIO_TRANSPORT_UNSET) }
 }
 
 /// The three-way verdict. See anim_plan.h for the rule; the short of it is

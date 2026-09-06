@@ -62,8 +62,9 @@
 // plays." This gate is where that happens, because it is already the only
 // reader and the only writer of `MessageGameStore.latestChain`, and it is a
 // pure enum a test can drive with real sealed chains. See `record` below.
+//
+// The kernel calls cross through sdk/swift/GateWire.swift (§7.1).
 import Foundation
-import CFoolish
 
 public enum StaleBranchGate {
 
@@ -94,8 +95,8 @@ public enum StaleBranchGate {
     /// compared above TURN, and that a TIE IS NOT AHEAD. See msg_wire.h for
     /// both, and for where it deliberately fails open.
     public static func isAhead(_ known: Progress, of mine: Progress) -> Bool {
-        fio_msg_chain_is_ahead(Int32(known.phase), Int32(known.round), Int32(known.turn),
-                               Int32(mine.phase), Int32(mine.round), Int32(mine.turn)) != 0
+        GateWire.chainIsAhead(phase: known.phase, round: known.round, turn: known.turn,
+                              thanPhase: mine.phase, round: mine.round, turn: mine.turn)
     }
 
     /// The gate's answer: is this board a read-only branch, and what is the
@@ -118,7 +119,7 @@ public enum StaleBranchGate {
     /// about a game, it is a fact the kernel replayed the body to confirm, which
     /// is the standard anything gating storage against a possibly-hostile sender
     /// has to meet.
-    static let finishedPhase = Int(FIO_PHASE_FINISHED)
+    static let finishedPhase = GateWire.finishedPhase
 
     /// Note `payload` as the newest chain seen for this game - OR, when the
     /// game it carries is over, drop the note entirely (round 43).
