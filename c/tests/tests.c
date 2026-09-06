@@ -441,6 +441,84 @@ static void test_full_game_handwritten(void) {
 
 // Test: the engine runs a full random-vs-random game without crashing or
 // looping. Loser must be one of the two players.
+// A seat may be written into elimination_order exactly once.
+//
+// The round-end "defender still empty after refill - they win" branch reassigns
+// first_attacker to the old defender AFTER refill_player_hands has already run,
+// and that refill can itself have eliminated the very same seat. Without the
+// was_in guard at that append the seat lands in elimination_order twice, which
+// is what the web's two rankers used to launder with a Set(). The guard is the
+// fix; this is what keeps it.
+//
+// MUTATION-CHECKED (2026-09-06): dropping `was_in` from the append in
+// c/src/game.c makes this fail - 3208 of 10000 random 2..6 player games grow a
+// duplicate entry, and 510 push num_eliminated past num_players.
+static void test_elimination_order_never_repeats_a_seat(void) {
+    int dup_games = 0, mismatch_games = 0, over_games = 0, played = 0;
+    for (int np = 2; np <= 6; np++) {
+        for (int gi = 0; gi < 60; gi++) {
+            game_set_seed(1000u + (unsigned)gi * 7u + (unsigned)np * 100003u);
+            random_strategy_set_seed(500u + (unsigned)gi * 13u);
+            Game g;
+            memset(&g, 0, sizeof(g));
+            g.num_players = np;
+            for (int i = 0; i < np; i++) {
+                g.players[i].status = PLAYER_STATUS_READY;
+                snprintf(g.players[i].name, sizeof(g.players[i].name), "p%d", i);
+            }
+            g.status = GAME_STATUS_WAITING;
+            start_game(&g);
+            int iters = 0;
+            while (game_done(&g) < 0 && iters < 4000) {
+                iters++;
+                int elig[MAX_PLAYERS]; int ne = 0;
+                for (int i = 0; i < g.num_players; i++) if (should_bot_act(&g, i)) elig[ne++] = i;
+                if (ne == 0) break;
+                bool acted = false;
+                for (int k = 0; k < ne; k++) {
+                    int idx = elig[k];
+                    LegalMoves moves; calculate_legal_moves(&g, idx, &moves);
+                    if (moves.n == 0) continue;
+                    int ch = random_strategy_choose(&g, idx, &moves, NULL);
+                    if (ch < 0) continue;
+                    const LegalMove *m = &moves.moves[ch];
+                    bool ok = false;
+                    switch (m->type) {
+                        case MOVE_ATTACK: ok = handle_attack(&g, idx, m->cards, m->n_cards); break;
+                        case MOVE_COVER:  ok = handle_cover (&g, idx, m->cards, m->attack_cards, m->n_cards); break;
+                        case MOVE_PASS:   ok = handle_pass  (&g, idx, m->cards, m->n_cards); break;
+                        case MOVE_PICKUP: ok = handle_pickup(&g, idx); break;
+                        case MOVE_GOOD:   ok = handle_good  (&g, idx); break;
+                        default: break;
+                    }
+                    if (ok) { acted = true; break; }
+                }
+                if (!acted) break;
+            }
+            played++;
+            int seen[MAX_PLAYERS];
+            memset(seen, 0, sizeof(seen));
+            bool dup = false;
+            for (int i = 0; i < g.num_eliminated; i++) {
+                int s = g.elimination_order[i];
+                if (s < 0 || s >= g.num_players) { dup = true; break; }
+                if (seen[s]++) dup = true;
+            }
+            if (dup) dup_games++;
+            if (g.num_eliminated > g.num_players) over_games++;
+            // The list and the statuses must agree: exactly the OUT seats, no more.
+            int outs = 0;
+            for (int i = 0; i < g.num_players; i++)
+                if (g.players[i].status == PLAYER_STATUS_OUT) outs++;
+            if (outs != g.num_eliminated) mismatch_games++;
+        }
+    }
+    CHECK(played == 300, "played every seeded game");
+    CHECK(dup_games == 0, "no seat is eliminated twice");
+    CHECK(over_games == 0, "num_eliminated never exceeds num_players");
+    CHECK(mismatch_games == 0, "elimination_order holds exactly the OUT seats");
+}
+
 static void test_full_game_random(void) {
     game_set_seed(123);
     random_strategy_set_seed(456);
@@ -6064,6 +6142,9 @@ int main(void) {
     test_role_beat_reads_the_beats_own_attack_pass_seats();
     test_beats_refuses_a_stream_it_cannot_hold();
     test_the_freeze_is_the_board_before_every_move();
+
+    // The invariant the end screen's finish order depends on.
+    test_elimination_order_never_repeats_a_seat();
 
     // The pre-bout table (anim_plan.h).
     test_pre_bout_table_keeps_the_real_pairing();

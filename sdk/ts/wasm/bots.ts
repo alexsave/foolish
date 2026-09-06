@@ -63,6 +63,7 @@ interface BotsExports extends EngineExports {
     wasm_anim_resolve(nPending: number, nServer: number, nEvents: number,
                       defender: number, defenderHand: number, finalUncovered: number): number;
     wasm_anim_build_plan(nEvents: number, nPlayers: number, finalDeck: number, finalDiscard: number): number;
+    wasm_anim_finish_rows(nElim: number, gameOver: number, nPlayers: number, mySeat: number): number;
     wasm_anim_set_transport(transport: number): number;
     wasm_anim_transport(): number;
 }
@@ -1331,6 +1332,32 @@ export function animStaleOptimisticOnTable(optCards: Card[], tableCards: Card[],
     const rel: number[] = [];
     for (let i = 0; i < n; i++) rel.push(out[ob + i]);
     return rel;
+}
+
+/** One row of the end screen's finish order (anim_plan.h AnimFinishRow). */
+export interface AnimFinishRow { place: number; seat: number; isYou: boolean }
+
+/** THE FINISH ORDER, in C (anim_plan.h anim_finish_rows). Rank 1 is the first
+ *  seat out, counting up to the fool last - whose place is the SEAT count, not
+ *  the row count. `elimination` is first-out first; `gameOver` is the fool's
+ *  seat, or negative while the game is still running; `mySeat` negative for a
+ *  spectator, who owns no row. */
+export function animFinishRows(
+    elimination: number[], gameOver: number, nPlayers: number, mySeat: number,
+): AnimFinishRow[] {
+    const ex = bots();
+    const buf = __mem(ex);
+    const base = ex.wasm_io_ptr();
+    for (let i = 0; i < elimination.length; i++) buf[base + i] = elimination[i] & 0xff;
+    const n = ex.wasm_anim_finish_rows(elimination.length, gameOver, nPlayers, mySeat);
+    if (n < 0) throw new Error(`anim_finish_rows error ${n}`);
+    const out = __mem(ex);
+    const ob = ex.wasm_io_ptr();
+    const rows: AnimFinishRow[] = [];
+    for (let i = 0; i < n; i++) {
+        rows.push({ place: out[ob + i * 3], seat: out[ob + i * 3 + 1], isYou: out[ob + i * 3 + 2] !== 0 });
+    }
+    return rows;
 }
 
 /** optimisticConflicts.resolveUnconfirmedAttackCovers, in C. `events` need only

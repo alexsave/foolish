@@ -1057,6 +1057,30 @@ static void put_u16le(unsigned char *o, int *p, int v) {
     o[(*p)++] = (unsigned char)(v & 0xff);
     o[(*p)++] = (unsigned char)((v >> 8) & 0xff);
 }
+// THE FINISH ORDER (anim_plan.h anim_finish_rows), for the end screen. g_io in:
+//   [0 .. n_elim)  the elimination seats, first out first.
+// Scalars: game_over is the fool's seat (negative while the game runs),
+// n_players the seat count, my_seat the viewer (negative for a spectator).
+// g_io out (overwrites): n_rows x { u8 place, u8 seat, u8 is_you }.
+// Returns the row count, or a negative ANIM_E*.
+int wasm_anim_finish_rows(int n_elim, int game_over, int n_players, int my_seat) {
+    if (n_elim < 0 || n_elim > MAX_PLAYERS) return ANIM_EBADARG;
+    if (n_players < 0 || n_players > MAX_PLAYERS) return ANIM_EBADARG;
+    unsigned char elim[MAX_PLAYERS];
+    for (int i = 0; i < n_elim; i++) elim[i] = g_io[i];
+    AnimFinishRow rows[MAX_PLAYERS + 1];
+    int n = anim_finish_rows(elim, n_elim, game_over, n_players, my_seat,
+                             rows, MAX_PLAYERS + 1);
+    if (n < 0) return n;
+    int q = 0;
+    for (int i = 0; i < n; i++) {
+        g_io[q++] = (unsigned char)rows[i].place;
+        g_io[q++] = (unsigned char)rows[i].seat;
+        g_io[q++] = (unsigned char)rows[i].is_you;
+    }
+    return n;
+}
+
 // Wall time and step offsets: a full-length stream (ANIM_MAX_STEPS x the
 // stride) runs past 65535 ms, so these two are the wide ones.
 static void put_u32le(unsigned char *o, int *p, int v) {

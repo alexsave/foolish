@@ -8,6 +8,9 @@ import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { Text } from './Text';
 import { RankIcon } from './SovietIcon';
 import { ReplayShare } from './ReplayShare';
+// The finish order is the kernel's (anim_plan.c anim_finish_rows), not a
+// second ranking derived here.
+import { gameFinishPlaces } from '@api/common/finish_order.ts';
 
 interface PlayerResult {
     player_id: string;
@@ -71,52 +74,25 @@ export const WinScreen: React.FC = () => {
                     });
                 }
                 
-                // Calculate player results from elimination order
+                // Calculate player results from the kernel's finish order.
                 const results = new Map<string, PlayerResult>();
-                
-                // Winners in order (elimination_order[0] = 1st place, etc.)
-                // Deduplicate elimination_order to handle backend bugs
-                const uniqueEliminationOrder = Array.from(new Set(game.elimination_order));
-                for (let index = 0; index < uniqueEliminationOrder.length; index++) {
-                    const playerId = uniqueEliminationOrder[index];
-                    const player = game.players.find(p => p.player_id === playerId);
-                    if (player) {
-                        const eloData = player.is_ai 
-                            ? botEloMap.get(playerId) || { elo_rating: 0, previous_elo: 0 }
-                            : userEloMap.get(playerId) || { elo_rating: 0, previous_elo: 0 };
 
-                        const playerRank = index + 1;
-                        
-                        results.set(playerId, {
-                            player_id: playerId,
-                            name: player.name,
-                            rank: playerRank,
-                            old_elo: eloData.previous_elo,
-                            new_elo: eloData.elo_rating,
-                            elo_change: eloData.elo_rating - eloData.previous_elo,
-                            is_ai: player.is_ai
-                        });
-                    }
-                }
+                for (const place of gameFinishPlaces(game)) {
+                    const player = game.players.find(p => p.player_id === place.player_id);
+                    if (!player) continue;
 
-                // Add the fool (last place) - only if not already in results
-                const fool = game.players.find(p => !uniqueEliminationOrder.includes(p.player_id));
-                
-                if (fool && !results.has(fool.player_id)) {
-                    const foolRank = game.players.length;
-                    
-                    const eloData = fool.is_ai 
-                        ? botEloMap.get(fool.player_id) || { elo_rating: 0, previous_elo: 0 }
-                        : userEloMap.get(fool.player_id) || { elo_rating: 0, previous_elo: 0 };
+                    const eloData = player.is_ai
+                        ? botEloMap.get(place.player_id) || { elo_rating: 0, previous_elo: 0 }
+                        : userEloMap.get(place.player_id) || { elo_rating: 0, previous_elo: 0 };
 
-                    results.set(fool.player_id, {
-                        player_id: fool.player_id,
-                        name: fool.name,
-                        rank: foolRank,
+                    results.set(place.player_id, {
+                        player_id: place.player_id,
+                        name: player.name,
+                        rank: place.place,
                         old_elo: eloData.previous_elo,
                         new_elo: eloData.elo_rating,
                         elo_change: eloData.elo_rating - eloData.previous_elo,
-                        is_ai: fool.is_ai
+                        is_ai: player.is_ai
                     });
                 }
 
