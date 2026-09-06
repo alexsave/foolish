@@ -1327,29 +1327,7 @@ int fio_strategy_name(int id, char *out, int cap) {
 // web-generated code plays natively. ENCODE (share-your-game) still needs the
 // encode.ts log→action synthesis and lands later this milestone.
 
-// RFC 4648 base32 decode, MSB-first bit packing (mirrors codec.ts base32Decode).
-// Ignores any char outside A-Z/2-7 (so a `-extras` suffix or stray chars are
-// skipped). Returns bytes written, or -1 on overflow.
-static int b32_decode(const char *s, unsigned char *out, int cap) {
-    int bits = 0, value = 0, n = 0;
-    for (; *s; s++) {
-        char c = *s;
-        if (c == '-') break;                 // extras suffix begins here
-        int idx = -1;
-        if (c >= 'A' && c <= 'Z') idx = c - 'A';
-        else if (c >= 'a' && c <= 'z') idx = c - 'a';   // accept lowercase
-        else if (c >= '2' && c <= '7') idx = c - '2' + 26;
-        else continue;                       // ignore stray chars ('.', '/', ...)
-        value = (value << 5) | idx;
-        bits += 5;
-        if (bits >= 8) {
-            if (n >= cap) return -1;
-            out[n++] = (unsigned char)((value >> (bits - 8)) & 0xFF);
-            bits -= 8;
-        }
-    }
-    return n;
-}
+// base32 lives in replay.c (replay_b32_decode / replay_b32_encode).
 
 // Decode one wire card byte into JSON: null / hidden {-1,-1} / real {s,v}.
 
@@ -1358,24 +1336,6 @@ static unsigned char wire_of(Card c) {
     if (card_is_none(c)) return REPLAY_CARD_NONE;
     if (c.suit < 0 || c.value < 0) return REPLAY_CARD_HIDDEN;
     return (unsigned char)(c.suit * 13 + (c.value - 1));
-}
-
-// RFC 4648 base32 encode, MSB-first, no padding (mirrors codec.ts base32Encode).
-static const char B32_ALPHA[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-static int b32_encode(const unsigned char *in, int n, char *out, int cap) {
-    int bits = 0, value = 0, w = 0;
-    for (int i = 0; i < n; i++) {
-        value = (value << 8) | in[i];
-        bits += 8;
-        while (bits >= 5) {
-            if (w >= cap - 1) return -1;
-            out[w++] = B32_ALPHA[(value >> (bits - 5)) & 31];
-            bits -= 5;
-        }
-    }
-    if (bits > 0) { if (w >= cap - 1) return -1; out[w++] = B32_ALPHA[(value << (5 - bits)) & 31]; }
-    out[w] = 0;
-    return w;
 }
 
 // makeSource (encode.ts / replay_difftest.c build_encode_input): the info logs
@@ -1445,7 +1405,7 @@ int fio_replay_encode_b32(char *out, int cap) {
     if (inlen < 0) { g_last_replay_error = -inlen; return FIO_EREPLAY; }
     int enclen = replay_encode(encin, inlen, encout, sizeof(encout));
     if (enclen < 0) { g_last_replay_error = -enclen; return FIO_EREPLAY; }
-    int w = b32_encode(encout, enclen, out, cap);
+    int w = replay_b32_encode(encout, enclen, out, cap);
     if (w < 0) return FIO_ECAP;
     return w;
 }
@@ -1468,7 +1428,7 @@ int fio_replay_encode_v6_b32(char *out, int cap) {
     int enclen = replay_encode_v6_from_game(&g_game, g_deal_seed, FOOLISH_SEED_LEN,
                                             1 << 30, encout, sizeof(encout));
     if (enclen < 0) { g_last_replay_error = -enclen; return FIO_EREPLAY; }
-    int w = b32_encode(encout, enclen, out, cap);
+    int w = replay_b32_encode(encout, enclen, out, cap);
     if (w < 0) return FIO_ECAP;
     return w;
 }
@@ -1509,7 +1469,7 @@ int fio_replay_events_json(const char *code, int viewer, char *out, int cap) {
     g_last_replay_error = 0;
 
     static unsigned char intbuf[16384];
-    int ilen = b32_decode(code, intbuf, sizeof(intbuf));
+    int ilen = replay_b32_decode(code, intbuf, sizeof(intbuf));
     if (ilen < 0) return FIO_ECAP;
 
     J j;
@@ -1590,7 +1550,7 @@ int fio_replay_last_events_packed(const char *code, int viewer, int atoms_before
     g_last_replay_error = 0;
 
     static unsigned char intbuf[16384];
-    int ilen = b32_decode(code, intbuf, sizeof(intbuf));
+    int ilen = replay_b32_decode(code, intbuf, sizeof(intbuf));
     if (ilen < 0) return FIO_ECAP;
 
     // What each step IS (kind + acting seat), so the run can be found without
@@ -1658,7 +1618,7 @@ int fio_replay_decode_packed(const char *code, unsigned char *out, int cap) {
     if (!code) return FIO_EBADARG;
     g_last_replay_error = 0;
     static unsigned char intbuf[16384];
-    int ilen = b32_decode(code, intbuf, sizeof(intbuf));
+    int ilen = replay_b32_decode(code, intbuf, sizeof(intbuf));
     if (ilen < 0) return FIO_ECAP;
     int dlen = replay_decode(intbuf, ilen, out, cap);
     if (dlen < 0) { g_last_replay_error = -dlen; return FIO_EREPLAY; }

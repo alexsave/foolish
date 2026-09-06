@@ -19,6 +19,42 @@
 #include "evwire.h"
 #include "replay.h"
 
+// ---------- the deal and the actions, without the playback ----------------
+//
+// The two halves of what a v6+ code says, handed over as data: the DECK its
+// reveals imply and the ACTION stream it records. Exposed because rebuilding a
+// game is not the only thing a code is good for - an analyser BRANCHES one,
+// replaying the recorded actions up to a decision and then substituting a
+// different move - and it must branch the same deal, through the same engine,
+// or it is analysing a game nobody played.
+#define REPLAY_MAX_ACTIONS 4096
+
+typedef struct {
+    int  kind;                     // REPLAY_ATOM_* (never DEAL or DRAW)
+    int  seat;
+    Card cards[REPLAY_MAX_PAIRS];
+    int  n_cards;
+    Card target;                   // COVER only
+} ReplayAction;
+
+// Decode `code` for its deal and its actions. `hdr` optional. Returns
+// REPLAY_EOK or -REPLAY_E*; -REPLAY_ECAP when the stream outruns a cap.
+int replay_deal_v6(const unsigned char *code, int code_len, ReplayHeader *hdr,
+                   Card *deck, int deck_cap, int *n_deck,
+                   ReplayAction *acts, int acts_cap, int *n_acts);
+
+// Deal `g` from that deck under the rules and opening `hdr` records, then CHECK
+// that the rebuilt hands really derive the recorded opener (the check that
+// catches a mis-rebuilt deal - see rs_play). Returns REPLAY_EOK or -REPLAY_E*.
+// Installs no snapshot hook; a caller that wants the deal's animation events
+// installs its own around the call, as replay_steps_v6 does.
+int replay_deal_start(Game *g, const ReplayHeader *hdr, const Card *deck, int n_deck);
+
+// Apply one recorded action to `g`. ROUND_END is not a move and has no single
+// actor, so it is not something a caller can spell with handle_*; this owns
+// that translation, and it is why an analyser must not roll its own.
+void replay_action_apply(Game *g, const ReplayAction *a);
+
 // Play a v6 replay code back through the engine, handing every animation event
 // to `sink` in play order, masked for `viewer` (a seat, or VIEW_SPECTATOR).
 //

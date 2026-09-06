@@ -46,7 +46,7 @@ CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_steps.
             src/octogen_strategy.c src/torpex_strategy.c \
             src/torpex_value.c src/novichok_strategy.c \
             src/bot_knobs.c src/bot_roster.c src/bot_drive.c \
-            src/sha256.c src/msg_wire.c src/anim_plan.c
+            src/sha256.c src/msg_wire.c src/anim_plan.c src/analyse.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 
 .PHONY: all clean tests print-core
@@ -121,7 +121,29 @@ difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/sol
 	./build/solver_difftest 3 40 "" 200000 && \
 	./build/solver_difftest 4 40 "" 200000 && \
 	./build/replay_difftest 40 && \
-	./build/replay_v6_test 40
+	./build/replay_v6_test 40 && \
+	$(MAKE) analyse-test
+
+# ---------- the post-game analyser (docs/POST_GAME_ANALYSER.md) ---------------
+#
+# Built at the iOS/production caps, in one shot, never against CORE_OBJ: the
+# native arena caps drop legal moves past MAX_LEGAL_MOVES / MAX_MOVE_CARDS
+# silently in enumeration order, and an analyser that enumerates every legal
+# move must not have the winning one dropped before it is scored. A LegalMoves
+# at these caps is ~240KB, so nothing here puts one on the stack.
+#
+#   make analyse          build/cnitro_analyse, the CLI (--threads=N fans the
+#                         world loop over N pthreads; same bytes at any N)
+#   make analyse-test     build + run tests/analyse_test.c on the recorded game
+ANALYSE_CFLAGS = $(CFLAGS) $(IOS_CAPS)
+.PHONY: analyse analyse-test
+analyse:
+	@mkdir -p build
+	$(CC) $(ANALYSE_CFLAGS) $(CORE_SRC) src/main_analyse.c -o build/cnitro_analyse $(LDFLAGS)
+analyse-test:
+	@mkdir -p build
+	$(CC) $(ANALYSE_CFLAGS) $(CORE_SRC) tests/analyse_test.c -o build/analyse_test $(LDFLAGS)
+	./build/analyse_test
 
 # ---------- iOS static library / xcframework (docs/IOS_APP_DESIGN.md §16.A1) --
 #

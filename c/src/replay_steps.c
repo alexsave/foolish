@@ -8,16 +8,7 @@
 // pass 2 builds the deck those atoms imply and plays the moves through the
 // engine. The decode is where the cost is and it happens once.
 
-#define RS_MAX_ACTIONS 4096
 #define RS_MAX_SNAPS   64
-
-typedef struct {
-    int  kind;
-    int  seat;
-    Card cards[REPLAY_MAX_PAIRS];
-    int  n_cards;
-    Card target;
-} RsAction;
 
 typedef struct {
     Card hands[MAX_PLAYERS][CARDS_PER_PLAYER];
@@ -25,7 +16,8 @@ typedef struct {
     int  n_dealt_seats;
     Card draws[MAX_DECK];
     int  n_draws;
-    RsAction acts[RS_MAX_ACTIONS];
+    ReplayAction *acts;             // caller storage
+    int  acts_cap;
     int  n_acts;
     int  overflow;                  // latched; a truncated stream is not replayable
 } RsCollect;
@@ -47,8 +39,8 @@ static void rs_collect(void *ctx, const ReplayAtom *a) {
             }
             return;
         default: {
-            if (c->n_acts >= RS_MAX_ACTIONS) { c->overflow = 1; return; }
-            RsAction *r = &c->acts[c->n_acts++];
+            if (c->n_acts >= c->acts_cap) { c->overflow = 1; return; }
+            ReplayAction *r = &c->acts[c->n_acts++];
             r->kind = a->kind;
             r->seat = a->seat;
             r->n_cards = a->n_cards;
@@ -141,7 +133,7 @@ static int rs_build_deck(const RsCollect *c, int n, int trump_id, Card *deck) {
 // first so the walk sees this action's records and no others.
 #define RS_STEP_BEGIN(g) do { g_rs_n = 0; (g)->num_logs = 0; } while (0)
 
-static void rs_apply(Game *g, const RsAction *a) {
+void replay_action_apply(Game *g, const ReplayAction *a) {
     switch (a->kind) {
         case REPLAY_ATOM_ATTACK:
             handle_attack(g, a->seat, a->cards, a->n_cards);
@@ -191,7 +183,7 @@ const Game *replay_steps_last_game(void) { return &g_rs_game; }
 // step callbacks that need to know WHAT they are looking at read it here rather
 // than take it as a parameter, so the two consumers that do not care (the
 // phone's sink, the web's frames) keep the same signature.
-static const RsAction *g_rs_cur;
+static const ReplayAction *g_rs_cur;
 
 typedef struct { EvwSink sink; void *ctx; } RsWalkCtx;
 
@@ -208,10 +200,55 @@ static void rs_step_walk(const Game *g, int viewer, void *u) {
 
 static int rs_play(const unsigned char *code, int code_len, int viewer,
                    ReplayHeader *hdr_out, RsStepFn step, void *u) {
-    static RsCollect col;
+    static ReplayAction acts[REPLAY_MAX_ACTIONS];
     Game *gp = &g_rs_game;
 
+    ReplayHeader hdr;
+    Card deck[MAX_DECK];
+    int n_deck = 0, n_acts = 0;
+    int r = replay_deal_v6(code, code_len, &hdr, deck, MAX_DECK, &n_deck,
+                           acts, REPLAY_MAX_ACTIONS, &n_acts);
+    if (hdr_out && r >= 0) *hdr_out = hdr;
+    if (r < 0) return r;
+
+    // The deal and the opening flip are events too - a replay opens with the
+    // same deal animation live play does, for free, because it IS the deal.
+    void (*saved_hook)(const Game *, int, int) = engine_snap_hook;
+    engine_snap_hook = rs_snap_cb;
+
+    RS_STEP_BEGIN(gp);
+    g_rs_cur = 0;                       // the deal is nobody's action
+    r = replay_deal_start(gp, &hdr, deck, n_deck);
+    if (r < 0) { engine_snap_hook = saved_hook; return r; }
+    step(gp, viewer, u);
+
+    for (int i = 0; i < n_acts; i++) {
+        RS_STEP_BEGIN(gp);
+        g_rs_cur = &acts[i];
+        replay_action_apply(gp, &acts[i]);
+        step(gp, viewer, u);
+    }
+
+    g_rs_cur = 0;
+    engine_snap_hook = saved_hook;
+    return REPLAY_EOK;
+}
+
+/* --------------------------- deal and actions ----------------------------- */
+// The playback above, cut in two at its own seam. Everything up to "a Game
+// dealt and ready to take the recorded moves" is here, because that is exactly
+// what a branching analyser needs and it must not be a second copy: a deck
+// rebuilt a second way, or a ROUND_END translated a second way, is a different
+// game wearing the same code.
+
+int replay_deal_v6(const unsigned char *code, int code_len, ReplayHeader *hdr_out,
+                   Card *deck, int deck_cap, int *n_deck,
+                   ReplayAction *acts, int acts_cap, int *n_acts) {
+    RsCollect col;
     memset(&col, 0, sizeof col);
+    col.acts = acts;
+    col.acts_cap = acts_cap;
+
     ReplayHeader hdr;
     int r = replay_decode_atoms_v6(code, code_len, &hdr, rs_collect, &col);
     if (r < 0) return r;
@@ -226,38 +263,35 @@ static int rs_play(const unsigned char *code, int code_len, int viewer,
     for (int s = 0; s < n; s++)
         if (col.dealt[s] != CARDS_PER_PLAYER) return -REPLAY_EINPUT;
 
-    Card deck[MAX_DECK];
-    int n_deck = rs_build_deck(&col, n, hdr.trump_id, deck);
-    if (n_deck < 0) return -REPLAY_ECAP;
+    if (deck_cap < MAX_DECK) return -REPLAY_ECAP;
+    int nd = rs_build_deck(&col, n, hdr.trump_id, deck);
+    if (nd < 0) return -REPLAY_ECAP;
+    if (n_deck) *n_deck = nd;
+    if (n_acts) *n_acts = col.n_acts;
+    return REPLAY_EOK;
+}
 
-    memset(gp, 0, sizeof *gp);
-    gp->num_players = (int8_t)n;
+int replay_deal_start(Game *g, const ReplayHeader *hdr, const Card *deck, int n_deck) {
+    memset(g, 0, sizeof *g);
+    g->num_players = (int8_t)hdr->n;
     // The rebuilt game is played under the rules the CODE was cut under, not
     // under this host's default: a replay re-runs the real engine over the
     // rebuilt deal, and a podkidnoy chain applied by a perevodnoy engine would
     // be legal (its moves are a subset) but would render a board offering a
     // transfer no step of it can contain.
-    if (!hdr.pass_allowed) gp->rules |= GAME_RULE_NO_PASS;
+    if (!hdr->pass_allowed) g->rules |= GAME_RULE_NO_PASS;
 
-    // The deal and the opening flip are events too — a replay opens with the
-    // same deal animation live play does, for free, because it IS the deal.
-    void (*saved_hook)(const Game *, int, int) = engine_snap_hook;
-    engine_snap_hook = rs_snap_cb;
-
-    RS_STEP_BEGIN(gp);
-    g_rs_cur = 0;                       // the deal is nobody's action
-    // A deal with no trump in any hand has no derivable opening seat — the
+    // A deal with no trump in any hand has no derivable opening seat - the
     // engine rolls for it, and that roll is not in the code. Hand it the seat
     // the code recorded; on every other deal this is not consulted and the
     // check below keeps its teeth.
-    game_force_first_attacker(hdr.first_attacker);
+    game_force_first_attacker(hdr->first_attacker);
     // The fool's penalty (replay.h v8): this code's opener was IMPOSED, so the
     // deal must not derive one. Unconditional, unlike the line above.
-    if (hdr.forced_opening) game_open_at_seat(hdr.first_attacker);
-    start_game_with_deck(gp, deck, n_deck);
+    if (hdr->forced_opening) game_open_at_seat(hdr->first_attacker);
+    start_game_with_deck(g, deck, n_deck);
     game_force_first_attacker(-1);
     game_open_at_seat(-1);
-    step(gp, viewer, u);
 
     // The rebuilt deal must be the one the code describes. first_attacker is
     // the check with teeth: the engine derives it from the lowest trump
@@ -268,26 +302,12 @@ static int rs_play(const unsigned char *code, int code_len, int viewer,
     // moves the teeth rather than pulling them: the code carries the seat the
     // deal DERIVES, and that is what the rebuilt hands must still produce.
     // Either way one recorded seat is proven against the rebuild.
-    if (hdr.forced_opening) {
-        if (game_derived_opening() != hdr.derived_opening
-            || gp->first_attacker != (int8_t)hdr.first_attacker) {
-            engine_snap_hook = saved_hook;
-            return -REPLAY_EHEADER;
-        }
-    } else if (gp->first_attacker != (int8_t)hdr.first_attacker) {
-        engine_snap_hook = saved_hook;
+    if (hdr->forced_opening) {
+        if (game_derived_opening() != hdr->derived_opening
+            || g->first_attacker != (int8_t)hdr->first_attacker) return -REPLAY_EHEADER;
+    } else if (g->first_attacker != (int8_t)hdr->first_attacker) {
         return -REPLAY_EHEADER;
     }
-
-    for (int i = 0; i < col.n_acts; i++) {
-        RS_STEP_BEGIN(gp);
-        g_rs_cur = &col.acts[i];
-        rs_apply(gp, &col.acts[i]);
-        step(gp, viewer, u);
-    }
-
-    g_rs_cur = 0;
-    engine_snap_hook = saved_hook;
     return REPLAY_EOK;
 }
 

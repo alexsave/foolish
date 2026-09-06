@@ -21,6 +21,7 @@
 #include "../src/json_out.h"
 #include "../src/anim_plan.h"
 #include "../src/cordite_sim.h"
+#include "../src/analyse.h"
 #include "../wasm/wire.h"
 #include <stdio.h>
 #include <sys/mman.h>
@@ -5812,6 +5813,147 @@ static void test_board_every_card_of_the_deck_crosses_both_ways(void) {
     CHECK(anim_hand_laid_out(off, 2, 0, NULL, 0, out, 64) == 0, "…and lays out nothing");
 }
 
+// ---------- the post-game analyser (analyse.h) at the arena caps -----------
+//
+// The analyser proper is proven on a recorded game at the production caps in
+// tests/analyse_test.c (make analyse-test). What is here is the part of it that
+// does not depend on the caps: the deal arithmetic, the verdict rule, the
+// belief model over engine-played games at every table size, and the packed
+// entry end to end on a generated game.
+//
+// MUTATIONS checked: hypergeom - drop the `- lchoose(deck, 6)` term -> the
+// mass no longer sums to one. verdict - swap the DECLINED/CHANCE branches ->
+// the wide-CI case fails. belief - stop pinning at LOG_PICKUP -> conservation
+// still holds (the cards fall back into the pool) but "pinned cards really in
+// hand" cannot fail that way, so ALSO: stop removing a pinned card when it is
+// played -> "pinned card really in hand" fails on the first re-played pickup.
+// packed - write n_nodes + 1 in the header -> the read-to-the-last-byte check
+// fails.
+
+static void test_analyse_hypergeom(void) {
+    double s36 = 0, s52 = 0;
+    for (int k = 0; k <= CARDS_PER_PLAYER; k++) { s36 += analyse_hypergeom(36, 9, k); s52 += analyse_hypergeom(52, 13, k); }
+    CHECK(s36 > 0.999999 && s36 < 1.000001, "the 36-card trump-count distribution sums to one");
+    CHECK(s52 > 0.999999 && s52 < 1.000001, "the 52-card one too");
+    // C(27,6)/C(36,6) = 296010/1947792
+    double p0 = analyse_hypergeom(36, 9, 0);
+    CHECK(p0 > 0.15196 && p0 < 0.15198, "P(no trump in a 36-card deal) is 15.20%");
+    CHECK(analyse_hypergeom_at_most(36, 9, 6) > 0.999999, "P(at most six) is one");
+    CHECK(analyse_hypergeom(36, 9, 7) == 0.0, "seven trumps in six cards is impossible");
+}
+
+static void test_analyse_verdict_rule(void) {
+    CHECK(analyse_verdict(1, 1, 0, 0.0, 0.0, 0) == ANALYSE_V_FORCED, "one legal move is forced");
+    CHECK(analyse_verdict(4, 0, 1, 0.5, 0.1, 0) == ANALYSE_V_LOST, "every candidate the fool everywhere is LOST");
+    CHECK(analyse_verdict(4, 1, 0, 0.0, 0.0, 0) == ANALYSE_V_BEST, "the played move being best is BEST");
+    CHECK(analyse_verdict(4, 0, 0, 0.02, 0.001, 0) == ANALYSE_V_BEST, "a loss under the noise floor is BEST");
+    CHECK(analyse_verdict(4, 0, 0, 0.20, 0.15, 0) == ANALYSE_V_DECLINED, "a loss whose CI spans zero is DECLINED");
+    CHECK(analyse_verdict(4, 0, 0, 0.20, 0.05, 0) == ANALYSE_V_CHANCE, "a loss whose CI excludes zero is a mistake");
+    CHECK(analyse_verdict(4, 0, 0, 0.20, 0.00, 1) == ANALYSE_V_CHANCE, "under a proof the point estimate decides");
+}
+
+// Play a handwritten game at `np` seats and, at every ply, build every seat's
+// belief and hold it against the truth the engine has.
+static void test_analyse_belief_holds_on_played_games(void) {
+    int plies = 0, bad_conservation = 0, hidden_missing = 0, pinned_wrong = 0, free_wrong = 0;
+    for (int np = 2; np <= 4; np++) {
+        for (int seed = 1; seed <= 3; seed++) {
+            game_set_seed((uint32_t)(seed * 7 + np));
+            random_strategy_set_seed((uint32_t)(seed * 11 + np));
+            Game g; memset(&g, 0, sizeof g);
+            g.num_players = (int8_t)np;
+            for (int i = 0; i < np; i++) g.players[i].status = PLAYER_STATUS_READY;
+            start_game(&g);
+            int it = 0;
+            while (game_done(&g) < 0 && it++ < 3000) {
+                for (int v = 0; v < np; v++) {
+                    if (g.players[v].status != PLAYER_STATUS_IN) continue;
+                    AnalyseBelief B;
+                    analyse_belief(&g, v, &B);
+                    plies++;
+                    if (!B.ok) { bad_conservation++; continue; }
+                    for (int p = 0; p < np; p++) {
+                        if (p == v || g.players[p].status != PLAYER_STATUS_IN) continue;
+                        int unknown = 0;
+                        for (int j = 0; j < g.players[p].hand_count; j++) {
+                            Card c = g.players[p].hand[j];
+                            bool pinned = false, pooled = false;
+                            for (int k = 0; k < B.pinned_n[p]; k++) if (card_eq(B.pinned[p][k], c)) pinned = true;
+                            for (int k = 0; k < B.n; k++) if (card_eq(B.pool[k], c)) pooled = true;
+                            if (!pinned && !pooled) hidden_missing++;
+                            if (!pinned) unknown++;
+                        }
+                        for (int k = 0; k < B.pinned_n[p]; k++) {
+                            bool in_hand = false;
+                            for (int j = 0; j < g.players[p].hand_count; j++)
+                                if (card_eq(g.players[p].hand[j], B.pinned[p][k])) in_hand = true;
+                            if (!in_hand) pinned_wrong++;
+                        }
+                        if (unknown != B.free_n[p]) free_wrong++;
+                    }
+                    for (int i = 0; i < g.deck_count; i++) {
+                        bool pooled = false;
+                        for (int k = 0; k < B.n; k++) if (card_eq(B.pool[k], g.deck[i])) pooled = true;
+                        if (!pooled) hidden_missing++;
+                    }
+                }
+                if (!tt_seat_step(&g)) break;
+            }
+        }
+    }
+    CHECK(plies > 500, "the belief was built at hundreds of plies across 2, 3 and 4 seats");
+    CHECK(bad_conservation == 0, "conservation |U| == d + sum(f_p) held at every one of them");
+    CHECK(hidden_missing == 0, "every card hidden from a seat was in that seat's pool");
+    CHECK(pinned_wrong == 0, "every pinned card was really in the hand it was pinned to");
+    CHECK(free_wrong == 0, "every free-slot count was the unpinned part of the hand");
+}
+
+static void test_analyse_packed_on_a_generated_game(void) {
+    static unsigned char code[1 << 16], out[1 << 18];
+    static AnalyseNode node;
+    for (int np = 2; np <= 3; np++) {
+        Game g;
+        unsigned char seed[FOOLISH_SEED_LEN];
+        if (!rs_play_seeded(&g, np, 900 + np, seed)) { CHECK(0, "seeded game plays out"); continue; }
+        int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20, code, (int)sizeof code);
+        CHECK(enc > 0, "the played game encodes as v6");
+        if (enc <= 0) continue;
+
+        AnalyseParams p;
+        analyse_params_default(&p);
+        p.seat = -1;                                   // every seat
+        p.roster_idx = bot_roster_find("handwritten");
+        p.worlds = 4;
+        p.exhaustive_cap = 16;
+        p.solve_budget = 20000L;
+        int n = analyse_packed(code, enc, &p, out, (int)sizeof out);
+        CHECK(n > 0, "a generated game analyses at the arena caps");
+        if (n <= 0) continue;
+
+        AnalyseHeader h;
+        int q = analyse_read_header(out, n, &h);
+        CHECK(q > 0 && h.n_players == np && h.seat == 0xFF && (h.flags & ANALYSE_HF_ALL_SEATS), "the header describes the request");
+        CHECK(h.fool == (uint8_t)game_done(&g), "and names the fool the engine named");
+        CHECK(!(h.flags & ANALYSE_HF_BELIEF_FAIL), "no node failed conservation");
+        int seats_seen = 0, forced = 0, evaluated = 0, ok = q > 0;
+        for (int i = 0; ok && i < h.n_nodes; i++) {
+            int r = analyse_read_node(out + q, n - q, &node);
+            if (r < 0) { ok = 0; break; }
+            q += r;
+            if (node.seat < np) seats_seen |= 1 << node.seat;
+            if (node.verdict == ANALYSE_V_FORCED) forced++; else evaluated++;
+            if (node.n_cands < 1 || node.played >= node.n_cands) ok = 0;
+        }
+        CHECK(ok && q == n, "every node reads, and the last one ends on the last byte");
+        CHECK(seats_seen == (1 << np) - 1, "every seat has decisions");
+        CHECK(evaluated > 0 && forced > 0, "some decisions were real and some were forced");
+        CHECK(h.n_playouts > 0, "the cost line counted playouts");
+        // A cap too small is refused, never a partial result.
+        CHECK(analyse_packed(code, enc, &p, out, 64) == -ANALYSE_ECAP, "a small buffer is refused");
+        CHECK(analyse_read_node(out + 100, 3, &node) == -ANALYSE_ETRUNC, "the reader refuses three stray bytes");
+    }
+}
+
 int main(void) {
     test_reset_to_lobby();
     test_replay_steps_rebuilds_the_played_game();
@@ -5956,6 +6098,10 @@ int main(void) {
     test_board_reads_nothing_past_what_it_was_given();
     test_board_every_card_of_the_deck_crosses_both_ways();
     test_solver_tt_value_carries_its_seat();
+    test_analyse_hypergeom();
+    test_analyse_verdict_rule();
+    test_analyse_belief_holds_on_played_games();
+    test_analyse_packed_on_a_generated_game();
 
     printf("\n%d passed, %d failed\n", n_pass, n_fail);
     return n_fail > 0 ? 1 : 0;
