@@ -487,6 +487,7 @@ WASM_API_EXPORTS := \
   -Wl,--export=wasm_start_game -Wl,--export=wasm_attack -Wl,--export=wasm_cover \
   -Wl,--export=wasm_pass -Wl,--export=wasm_pickup -Wl,--export=wasm_good \
   -Wl,--export=wasm_transition -Wl,--export=wasm_refill \
+  -Wl,--export=wasm_reset_to_lobby \
   -Wl,--export=wasm_game_done -Wl,--export=wasm_should_act \
   -Wl,--export=wasm_next_player -Wl,--export=wasm_can_cover \
   -Wl,--export=wasm_replay_io_ptr -Wl,--export=wasm_replay_io_cap \

@@ -69,6 +69,7 @@ interface EngineExports {
     wasm_good(p: number): number;
     wasm_transition(): number;
     wasm_refill(): number;
+    wasm_reset_to_lobby(botMask: number): number;
     wasm_game_done(): number;
     wasm_should_act(i: number): number;
     wasm_next_player(cur: number): number;
@@ -930,7 +931,8 @@ type KernelAction =
     | { kind: 'good'; seat: number }
     | { kind: 'start' }
     | { kind: 'transition' }
-    | { kind: 'refill' };
+    | { kind: 'refill' }
+    | { kind: 'reset_lobby'; botMask: number };
 
 // Test hook: differential harnesses inject a deterministic seed source so
 // kernel draws replay the exact sequence a seeded Math.random produced.
@@ -1031,6 +1033,7 @@ function runKernel(game: Game, action: KernelAction): KernelRun {
         case 'start': ok = ex.wasm_start_game(); break;
         case 'transition': ok = ex.wasm_transition(); break;
         case 'refill': ok = ex.wasm_refill(); break;
+        case 'reset_lobby': ok = ex.wasm_reset_to_lobby(action.botMask); break;
     }
 
     if (!ok) return { ok: false, reason: ex.wasm_reject_reason(), post: null, logs: [], snaps: [] };
@@ -1216,6 +1219,17 @@ export function kernelStartGame(game: Game): AnimationEvent[] {
 
 export function kernelRoundTransition(game: Game, reason: string): AnimationEvent[] {
     return execute(game, { kind: 'transition' }, null, { reason });
+}
+
+// The rematch reset: a finished game back to its lobby. The whole reset is
+// c/src/game.c's game_reset_to_lobby - which seats come back READY, which
+// volatile round fields are cleared, and (the bit the edge used to get wrong)
+// that the good-players set is cleared HERE rather than left for the next deal.
+// Mutates `game` in place, like every other kernel action on this path.
+export function kernelResetToLobby(game: Game): void {
+    let botMask = 0;
+    game.players.forEach((p, i) => { if (p.is_ai) botMask |= 1 << i; });
+    execute(game, { kind: 'reset_lobby', botMask }, null);
 }
 
 // The old refillPlayerHandsWithEvents compatibility wrapper (kernelRefill)

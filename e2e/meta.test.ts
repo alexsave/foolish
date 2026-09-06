@@ -117,6 +117,13 @@ if (!process.env.VALIDATION_ONLY) {
     // the meta round-trip; the authoritative server reset (handleContinue) that
     // follows must agree on the public fields, or the user sees a snap. Run BOTH
     // on the same finished game and compare.
+    //
+    // handleContinue is now the kernel's game_reset_to_lobby, so this compares
+    // the client's mirror against the kernel rather than against a second TS
+    // copy. The good-players pair below is why that mattered: this test used to
+    // check everything EXCEPT those two, and they were exactly where the two
+    // resets disagreed - the server left the finished round's goods set and let
+    // the next deal clear them, so the lobby it broadcast still showed them.
     test('optimistic resetToLobby (client) matches handleContinue (server)', () => {
         const players = [
             { player_id: 'h1', name: 'H1', is_ai: false, status: PLAYER_STATUS.OUT, hand_length: 0 },
@@ -154,6 +161,10 @@ if (!process.env.VALIDATION_ONLY) {
         assert.equal(client.flipped, null);
         assert.deepEqual(client.table_battles, []);
         assert.deepEqual(client.elimination_order, []);
+        assert.deepEqual(client.good_players, [], 'client clears the goods');
+        assert.deepEqual(server.good_players, client.good_players, 'good_players matches server');
+        assert.equal(client.good_timestamp, null, 'client clears the good timestamp');
+        assert.equal(server.good_timestamp, client.good_timestamp, 'good_timestamp matches server');
         assert.equal(client.version, 41, 'version preserved for the reorder gate');
         assert.equal(clientGame.status, GAME_STATUS.GAME_OVER, 'input not mutated (rollback needs it)');
     });

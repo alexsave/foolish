@@ -509,6 +509,26 @@ int wasm_refill(void) {
     return 1;
 }
 
+// The rematch reset: a finished game back to its lobby, ready to deal again.
+// `bot_mask` is the seats that come back READY (the bots); everyone else lands
+// IDLE and has to ready up.
+//
+// game_reset_to_lobby has existed in game.c since the lifecycle consolidation
+// and had no caller outside a unit test, while BOTH hosts kept their own copy:
+// the edge's handleContinue and the browser's optimistic resetToLobby, which
+// had to "match byte-for-byte on the public fields or the user sees a snap".
+// They already disagreed - handleContinue left good_players/good_timestamp set
+// and leaned on the next deal to clear them, so between the reset and the deal
+// the lobby showed stale good state. The kernel settles that the client's way,
+// and adopting it here is that fix.
+//
+// No begin_action(): a reset emits no logs and no animation snapshots. It is
+// the board being put away, not a move.
+int wasm_reset_to_lobby(int bot_mask) {
+    game_reset_to_lobby(&g_game, (unsigned int)bot_mask);
+    return 1;
+}
+
 // ---------- packed wire pipeline (docs/PACKED_WIRE_CUTOVER.md) --------------
 //
 // One call per client move: the action-wire bytes the browser validated with

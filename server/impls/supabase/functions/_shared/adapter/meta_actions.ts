@@ -12,7 +12,7 @@ import { cloneGame, verify_player_in_game } from '@api/common/common_utils.ts';
 import { packedProducts, start_game_packed } from '@api/common/game_lifecycle.ts';
 import { MAX_PLAYERS } from '@api/core/constants.ts';
 import { handleRearrangeHand as applyRearrangeHand } from '@api/common/actions/rearrange.ts';
-import { runPackedRearrange, PackedRunOk } from '@sdk/ts/wasm/engine.ts';
+import { runPackedRearrange, PackedRunOk, kernelResetToLobby } from '@sdk/ts/wasm/engine.ts';
 import { bytesToHex } from '@api/common/replay/codec.ts';
 import { bytesToBareHex } from '@sdk/ts/wire/bytes.ts';
 import { logsFromKernelExport } from '@sdk/ts/wire/logwire.ts';
@@ -203,22 +203,15 @@ export function handleContinue({ user, game }: ExecutionParams): Result {
     if (winner) message = `Player ${winner.name} won! Game reset for another round`;
     else if (fool) message = `Player ${fool.name} was the fool! Game reset for another round`;
 
-    game.status = GAME_STATUS.WAITING;
-    game.players.forEach(player => {
-        player.status = player.is_ai ? PLAYER_STATUS.READY : PLAYER_STATUS.IDLE;
-        player.hand = [];
-        player.hand_length = 0;
-        player.awaiting_attack = false;
-    });
-
-    game.deck = [];
-    game.discard_pile_length = 0;
-    game.flipped = null;
-    game.power_suit = 0;
-    game.first_attacker = 0;
-    game.defender = 0;
-    game.table_battles = [];
-    game.elimination_order = [];
+    // The reset itself is the kernel's (c/src/game.c game_reset_to_lobby): which
+    // seats come back READY, which volatile round fields are cleared, and that
+    // the good-players set is cleared HERE rather than left for the next deal.
+    // That last one is a fix, not a port - this handler used to leave
+    // good_players/good_timestamp set, so the lobby it broadcast still showed
+    // the finished round's goods until the next deal cleared them. The browser's
+    // optimistic mirror always cleared them, which is why the snap was invisible
+    // until you looked.
+    kernelResetToLobby(game);
 
     return { game, events: [{
         type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
