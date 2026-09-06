@@ -63,11 +63,16 @@ timer slot and walks in with `EV_HOP` events that `sch_pop` consumes itself.
 
 Two deliberate departures from tiltyard's `sch.c`:
 
-1. **A bucket entry stores `fire & P_MASK`, not the raw `now + delta` sum.**
-   Over there the priority field holds an unmasked sum while `sch->now` is
-   itself a within-bucket offset and `sch_now_ns` adds `current_bucket <<
-   P_BITS` on top, so an event several buckets out has its lap counted twice.
-   Here `cursor_start` carries the laps and the entry carries only the offset.
+1. **A bucket entry masks explicitly (`fire & P_MASK`) instead of relying on
+   the shift to truncate.** Tiltyard writes the raw `now + delta` sum into the
+   priority field, and for anything past one bucket span that sum does not fit
+   - but `sum << E_BITS` drops the overflow, so what lands in the field is
+   exactly `sum & P_MASK`, the correct within-bucket offset. It is right, and
+   right for any `P_BITS + E_BITS == 64` split; it is just load-bearing
+   behaviour that nothing states. (Checked, not assumed: 50,002 events with
+   deltas up to 45 bucket spans pop in order.) Here `cursor_start` carries the
+   laps and the entry stores the masked offset, so the invariant is written
+   down rather than inferred from a shift width.
 2. **No slow bucket.** Nothing in a Durak session is scheduled days out, so the
    seconds-resolution second tier, its rounding, and its spreading jitter are
    replaced by the exact hop above.
