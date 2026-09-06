@@ -181,37 +181,96 @@ analyse-test:
 IOS_MIN_VERSION := 15.0
 IOS_CAPS   := -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_MOVE_CARDS=28 \
               -DMAX_LEGAL_MOVES=4096 -DCD_LEAFBOOK
-IOS_SRC    := $(CORE_SRC) ios/ios_api.c ios/ios_bots_api.c
-IOS_CFLAGS := -O2 -Isrc -Iios/include $(IOS_CAPS)
+# TWO libraries, not one, and this is the whole reason the C bridge is two
+# translation units. Foolish.xcframework is STATIC, so ld pulls it in per
+# object: while one archive held both halves, FoolishKit (a dynamic framework
+# with a public botDrive on EngineC) exported a bot entry, which is a dead-strip
+# root, which linked bot_drive -> bot_roster -> all 21 strategies including
+# octogen. FoolishKit ships inside FoolishMessagesApp, so octogen shipped in the
+# iMessage bundle.
+#
+# Split at the archive, the ladder has nowhere to ride. The extension links only
+# the core; the host app links both.
+#
+# The split is BY REFERENCE, not by taste: the core set below names no strategy
+# symbol at all (random_strategy_set_seed is defined in game.c, not a strategy
+# file), so nothing in it can drag one in.
+IOS_CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c \
+                src/replay_steps.c src/replay_extras.c src/view.c src/awire.c \
+                src/evwire.c src/sha256.c src/msg_wire.c src/anim_plan.c \
+                ios/ios_api.c
+IOS_BOTS_SRC := $(filter-out $(IOS_CORE_SRC),$(CORE_SRC)) ios/ios_bots_api.c
 
-# $(1)=target-triple  $(2)=sdk name  $(3)=output dir
+# Everything, for the host-side smoke/golden binaries that want one link line.
+IOS_SRC    := $(IOS_CORE_SRC) $(IOS_BOTS_SRC)
+IOS_CFLAGS := -O2 -Isrc -Iios/include -Iios/include-bots $(IOS_CAPS)
+
+# $(1)=target-triple  $(2)=sdk name  $(3)=output dir  $(4)=lib name  $(5)=sources
 define IOS_BUILD_SLICE
-	@mkdir -p $(3)/obj
-	@for s in $(IOS_SRC); do \
-	  o=$(3)/obj/$$(basename $$s .c).o; \
+	@mkdir -p $(3)/obj-$(4)
+	@for s in $(5); do \
+	  o=$(3)/obj-$(4)/$$(basename $$s .c).o; \
 	  echo "  CC[$(2)] $$s"; \
 	  xcrun -sdk $(2) clang -target $(1) $(IOS_CFLAGS) -c $$s -o $$o || exit 1; \
 	done
-	libtool -static -o $(3)/libfoolish.a $(3)/obj/*.o
+	libtool -static -o $(3)/lib$(4).a $(3)/obj-$(4)/*.o
+endef
+
+# Both libraries for one slice.
+define IOS_BUILD_BOTH
+	$(call IOS_BUILD_SLICE,$(1),$(2),$(3),foolish,$(IOS_CORE_SRC))
+	$(call IOS_BUILD_SLICE,$(1),$(2),$(3),foolishbots,$(IOS_BOTS_SRC))
 endef
 
 .PHONY: ios-lib ios-smoke
 ios-lib:
 	@echo "== device slice (arm64) =="
-	$(call IOS_BUILD_SLICE,arm64-apple-ios$(IOS_MIN_VERSION),iphoneos,build/ios/device)
+	$(call IOS_BUILD_BOTH,arm64-apple-ios$(IOS_MIN_VERSION),iphoneos,build/ios/device)
 	@echo "== simulator slices (arm64 + x86_64) =="
-	$(call IOS_BUILD_SLICE,arm64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim-arm64)
-	$(call IOS_BUILD_SLICE,x86_64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim-x86_64)
+	$(call IOS_BUILD_BOTH,arm64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim-arm64)
+	$(call IOS_BUILD_BOTH,x86_64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim-x86_64)
 	@mkdir -p build/ios/sim
 	lipo -create build/ios/sim-arm64/libfoolish.a build/ios/sim-x86_64/libfoolish.a \
 	     -output build/ios/sim/libfoolish.a
-	@rm -rf ../ios/vendor/Foolish.xcframework
+	lipo -create build/ios/sim-arm64/libfoolishbots.a build/ios/sim-x86_64/libfoolishbots.a \
+	     -output build/ios/sim/libfoolishbots.a
+	@rm -rf ../ios/vendor/Foolish.xcframework ../ios/vendor/FoolishBots.xcframework
 	@mkdir -p ../ios/vendor
 	xcodebuild -create-xcframework \
 	  -library build/ios/device/libfoolish.a -headers ios/include \
 	  -library build/ios/sim/libfoolish.a    -headers ios/include \
 	  -output ../ios/vendor/Foolish.xcframework
-	@echo "wrote ../ios/vendor/Foolish.xcframework"
+	xcodebuild -create-xcframework \
+	  -library build/ios/device/libfoolishbots.a -headers ios/include-bots \
+	  -library build/ios/sim/libfoolishbots.a    -headers ios/include-bots \
+	  -output ../ios/vendor/FoolishBots.xcframework
+	@echo "wrote ../ios/vendor/Foolish.xcframework + FoolishBots.xcframework"
+	@./ios/archive_check.sh build/ios/device/libfoolish.a build/ios/device/libfoolishbots.a
+
+# The two shipped iOS libraries, built and checked WITHOUT a Mac.
+#
+# `make ios-lib` needs xcrun/libtool/xcodebuild; this builds the same two source
+# lists with the host compiler into the same two archives, so the split's real
+# invariants are testable on Linux and in CI:
+#   1. the CORE archive defines no strategy-ladder symbol (ios/archive_check.sh)
+#   2. core + bots still share ONE resident game (ios/one_game_check.c)
+# (1) is the one that keeps octogen out of the iMessage bundle. (2) is what
+# would break silently if the split were done carelessly.
+.PHONY: ios-archives
+ios-archives:
+	@mkdir -p build/ios-a/core build/ios-a/bots
+	@for s in $(IOS_CORE_SRC); do \
+	  $(CC) $(IOS_CFLAGS) -c $$s -o build/ios-a/core/$$(basename $$s .c).o || exit 1; done
+	@for s in $(IOS_BOTS_SRC); do \
+	  $(CC) $(IOS_CFLAGS) -c $$s -o build/ios-a/bots/$$(basename $$s .c).o || exit 1; done
+	@ar rcs build/ios-a/libfoolish.a     build/ios-a/core/*.o
+	@ar rcs build/ios-a/libfoolishbots.a build/ios-a/bots/*.o
+	@printf 'core %s B   bots %s B\n' \
+	  $$(wc -c < build/ios-a/libfoolish.a) $$(wc -c < build/ios-a/libfoolishbots.a)
+	./ios/archive_check.sh build/ios-a/libfoolish.a build/ios-a/libfoolishbots.a
+	$(CC) $(IOS_CFLAGS) ios/one_game_check.c \
+	  build/ios-a/libfoolishbots.a build/ios-a/libfoolish.a -lm -o build/ios-a/one_game
+	./build/ios-a/one_game
 
 # Portable bridge smoke test (Linux/CI-friendly). Compiles the bridge + core
 # fresh at the iOS caps (self-consistent struct layout — never mix cap sets)

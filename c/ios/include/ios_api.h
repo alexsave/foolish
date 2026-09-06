@@ -14,6 +14,13 @@
 // are the only readers, and a new entry point here emits packed bytes into a
 // caller-provided buffer.
 //
+// THE BOT HALF IS NOT HERE. fio_set_seat_strategy, fio_bot_drive_packed,
+// fio_strategy_count and fio_strategy_name are declared by
+// ios/include-bots/ios_bots_api.h and live in FoolishBots.xcframework, because
+// naming any of them links the strategy ladder - about 70% of the native kernel
+// by size. The iMessage extension plays people and links only this half. The
+// two share ONE resident game through fio_resident_game (ios/ios_internal.h).
+//
 // The rule that actually survived is narrower, and it is the one that matters:
 // NO DURAK RULE IS REIMPLEMENTED IN SWIFT. Swift may read a layout the kernel
 // wrote; it may not decide anything the kernel could decide.
@@ -63,7 +70,8 @@ extern "C" {
 // reproducible on any platform (deal_rng.h). Fewer than 32 bytes falls back to
 // the legacy 32-bit LCG seed (first 4 bytes, little-endian) — used only by the
 // golden fixtures that pin the legacy stream. All seats start as human
-// (strategy 0); assign bots afterwards with fio_set_seat_strategy.
+// (strategy 0); assign bots afterwards with fio_set_seat_strategy
+// (ios_bots_api.h - a different library, see the note at the top).
 // n_players must be 2..8. Returns FIO_EOK or a negative error.
 int fio_new_game(const uint8_t *seed, int seed_len, int n_players);
 
@@ -98,12 +106,6 @@ int fio_set_passing(int passing);
 
 // The resident game's rules, as the same 1/0. 1 when nothing has said otherwise.
 int fio_passing_allowed(void);
-
-// Assign a strategy to a seat (offline bots). strategy_id is a FIO strategy id
-// (0..fio_strategy_count()-1, see fio_strategy_name). Seat 0 is conventionally
-// the local human but nothing enforces that. Safe to call any time before the
-// seat is asked to choose. Returns FIO_EOK or a negative error.
-int fio_set_seat_strategy(int seat, int strategy_id);
 
 // True once fio_new_game has succeeded.
 int fio_has_game(void);
@@ -179,11 +181,6 @@ int fio_play_human_menu(const uint8_t *menu, int menu_len,
 // (a plain move never crosses as JSON). Returns FIO_EREJECT on an illegal move
 // (see fio_last_reject).
 int fio_apply_awire(int actor_seat, const uint8_t *buf, int len);
-
-// Drive one bot cycle, result packed (no JSON, no events): u32 n_actions, per
-// action {seat, pace, type, n_cards, cards[], attacks[]}, then i32 stop, ended,
-// delayMs (LE). The BotDriveWire Swift decoder reads it.
-int fio_bot_drive_packed(int human_mask, char *out, int cap);
 
 // Bitmask over seats (bit i => seat i has a pending legal action right now).
 // Mirrors should_bot_act across all seats — the single source of "whose turn".
@@ -565,13 +562,6 @@ int fio_finish_rows(const uint8_t *elimination, int n_elim, int game_over,
 #define FIO_CLAIM_HAND_OFF   2
 #define FIO_CLAIM_BYSTANDER  3
 int fio_shown_ledger_allows(int claim, int sequencing);
-
-// ---------- strategies (offline bot roster, §7.2) --------------------------
-
-// Number of exposed offline strategies.
-int fio_strategy_count(void);
-// Name of strategy `id` (e.g. "espresso"), written to `out`. Bytes written or negative.
-int fio_strategy_name(int id, char *out, int cap);
 
 // ---------- replays (§7.3) -------------------------------------------------
 

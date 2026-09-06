@@ -12,6 +12,7 @@
 // seat as far as the kernel allows, then the human plays its first legal move.
 import XCTest
 @testable import FoolishKit
+import FoolishBots
 
 final class LocalGameFlowTests: XCTestCase {
 

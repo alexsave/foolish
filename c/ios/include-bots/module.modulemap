@@ -1,0 +1,8 @@
+// Clang module for the bot half of the Foolish bridge. Bundled into
+// FoolishBots.xcframework by `make ios-lib`. Deliberately a DIFFERENT module
+// from CFoolish: importing it is what links the strategy ladder, so the
+// iMessage extension imports CFoolish and never this.
+module CFoolishBots {
+    header "ios_bots_api.h"
+    export *
+}

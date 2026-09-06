@@ -6,6 +6,7 @@
 
 import SwiftUI
 import FoolishKit
+import FoolishBots
 import FoolishNet
 
 struct HomeView: View {

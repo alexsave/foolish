@@ -67,6 +67,10 @@ targets:
       - path: FoolishApp
     dependencies:
       - target: FoolishKit
+      # The offline bot game. Deliberately absent from FoolishMessages and
+      # FoolishMessagesApp - that is what keeps the ladder out of the iMessage
+      # bundle, so do not add it there to fix a build error. Move the code.
+      - target: FoolishBots
       - target: FoolishNet
       # NOTE: the iMessage extension is deliberately NOT embedded here anymore.
       # It ships in its own app record (FoolishMessagesApp) so the offline
@@ -238,14 +242,24 @@ targets:
     sources:
       - path: FoolishKit
       # The Swift kernel binding lives in the unified SDK home (A10):
-      # repo-root sdk/swift/ (EngineC.swift + models), sibling to sdk/ts and
-      # c. It is still compiled INTO the FoolishKit module — a source
-      # location change, not a module split — so app/extension access is
-      # unchanged.
+      # repo-root sdk/swift/ (EngineC.swift + models), sibling to sdk/ts and c.
+      #
+      # EXCEPT sdk/swift/bots/, which is the FoolishBots module below. That is a
+      # real module split, not a source location change, and the reason is what
+      # ships: this framework is DYNAMIC, so its public API is exported and
+      # therefore a dead-strip root. While EngineC.botDrive was public HERE, that
+      # export linked fio_bot_drive_packed -> bot_drive -> bot_roster -> all 21
+      # strategies including octogen, and this framework ships inside
+      # FoolishMessagesApp. A game that plays people and never drives a seat was
+      # carrying the strongest brain in the roster.
       - path: ../sdk/swift
+        excludes:
+          - bots/**
       - path: Entitlements
     dependencies:
       # The C engine, built by `make ios-lib` in ../c. Static (embed:false).
+      # This is the CORE library only - no strategy ladder is in it, and
+      # c/ios/archive_check.sh fails the build if one appears.
       - framework: vendor/Foolish.xcframework
         embed: false
     # THE KERNEL STALENESS GUARD.
@@ -314,6 +328,37 @@ targets:
   # APPLICATION_EXTENSION_API_ONLY is deliberately OFF here (the default): this
   # framework is app-only, and leaving the flag off is what keeps app-only API
   # from creeping back into FoolishKit, where it WOULD break the extension.
+  # ---- The bot half (host app only, NEVER the iMessage extension) ---------
+  # Everything whose mere presence links the strategy ladder: EngineC's four bot
+  # entries, the offline LocalGame session, and the bot-drive wire decoder.
+  #
+  # Split out of FoolishKit so the extension has nothing to name. The C side is
+  # split to match (c/Makefile IOS_CORE_SRC / IOS_BOTS_SRC -> Foolish.xcframework
+  # + FoolishBots.xcframework), which is what makes this real rather than
+  # cosmetic: the ladder is not in the library FoolishKit links, so no link order
+  # or dead-strip behaviour can drag it back.
+  #
+  # ONE resident game still. The kernel has a single static Game reached through
+  # fio_resident_game (c/ios/ios_internal.h); FoolishBots.xcframework contains no
+  # copy of ios_api.o, so its bot drive acts on the same board FoolishKit reads.
+  # (Proven on a link: see the commit that introduced this.)
+  FoolishBots:
+    type: framework
+    platform: iOS
+    sources:
+      - path: ../sdk/swift/bots
+    dependencies:
+      - target: FoolishKit
+      # The bot half of the C engine. Static (embed:false), and it holds ONLY
+      # the ladder - its undefined game_*/fio_resident_game resolve against
+      # FoolishKit at link time.
+      - framework: vendor/FoolishBots.xcframework
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.bots
+        GENERATE_INFOPLIST_FILE: "YES"
+
   FoolishNet:
     type: framework
     platform: iOS
@@ -340,6 +385,7 @@ targets:
     dependencies:
       - target: Foolish
       - target: FoolishKit
+      - target: FoolishBots
       - target: FoolishNet
       - package: SnapshotTesting
     settings:

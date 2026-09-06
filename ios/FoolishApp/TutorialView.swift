@@ -9,6 +9,7 @@
 
 import SwiftUI
 import FoolishKit
+import FoolishBots
 
 struct TutorialView: View {
     /// Re-render when a setting changes (see FPrefs). Only the OBSERVATION

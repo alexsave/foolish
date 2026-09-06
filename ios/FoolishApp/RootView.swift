@@ -4,6 +4,7 @@
 
 import SwiftUI
 import FoolishKit
+import FoolishBots
 import FoolishNet
 
 struct RootView: View {
