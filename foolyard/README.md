@@ -120,7 +120,8 @@ Every one picks uniformly from `calculate_legal_moves`, exactly as
 
 ## the detectors
 
-Findings are counted and the first 40 are printed with a timestamp. Three are
+Findings are counted, and up to 8 lines PER KIND are printed with a timestamp
+(per kind, so 3000 view regressions cannot bury a single rare finding under them). Three are
 `sem_fuzz`'s, re-asserted because the sim reaches states it cannot; the rest
 only exist once there is a wire.
 
@@ -315,6 +316,21 @@ np=8  n=320   expected 0.125   50ms 0.013(-6.1)  85ms 0.047(-4.2)  143ms 0.050(-
 
 At eight players a 50ms seat is the fool 1.3% of the time and a 2000ms seat
 36.2%, against 12.5% expected, with the eight rungs almost perfectly in order.
+
+`octogen` on the same ladder is flat everywhere - no rung is meaningfully off
+its expectation at any table size:
+
+```
+np=2  n=40    50ms 0.600(+1.3)  2000ms 0.400(-1.3)
+np=5  n=100   50ms 0.190(-0.3)  126ms 0.210(+0.2)  316ms 0.150(-1.3)  795ms 0.200(+0.0)  2000ms 0.250(+1.2)
+np=8  n=160   50ms 0.119(-0.2)  85ms 0.131(+0.2)  143ms 0.094(-1.2)  243ms 0.087(-1.4)
+                412ms 0.119(-0.2)  697ms 0.156(+1.2)  1181ms 0.131(+0.2)  2000ms 0.163(+1.4)
+```
+
+The slowest rung does sit slightly above expectation in the larger games
+(+2.4, +1.9, +1.4 at np=6/7/8), which is a hint and not a result at n=120-160.
+If it is real it is small; the `random` effect at the same sizes is 5 to 12
+standard deviations.
 
 ### and the same question for a human's connection
 
