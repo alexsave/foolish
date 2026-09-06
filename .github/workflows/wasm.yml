@@ -1,0 +1,100 @@
+name: wasm
+
+# NOTHING IN CI BUILT WASM UNTIL NOW, and the modules are what actually ship:
+# the browser, the edge functions and the Oracle load the committed .wasm.gz /
+# *_wasm.ts bytes, not c/src. Two failures in one night made the gap concrete.
+#
+#   1. `make wasm-oracle-mt` was broken on main. #118 made `engine_snap_hook`
+#      `_Thread_local` in c/src/game.h; #119's c/wasm/wasm_oracle_mt.c
+#      re-declared it without the qualifier. Each was right against the main it
+#      branched from, both merged green, and the merged tree did not compile.
+#      No job compiled it, so nothing said so.
+#   2. public/oracle.wasm.gz sat unrebuilt from 2026-08-23, missing podkidnoy
+#      and the solver seat fix, so the live Infinite Oracle served one of the two
+#      seats the opposite endgame verdict. It shipped, and nothing noticed.
+#
+# So: `build` compiles every wasm target the Makefile declares (case 1), and
+# `freshness` refuses a kernel change that leaves the committed artifacts behind
+# (case 2). Neither runs the modules - c-engine and the e2e suites do that; this
+# job's whole job is that they COMPILE and that what ships is what was written.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The `wasm` and `wasm-guards` targets embed through wasm/embed.mjs.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Toolchain
+        # EXPLICIT, not inherited. On Linux plain clang targets wasm32 and picks
+        # up wasm-ld from the lld package; binaryen supplies the wasm-opt the
+        # bots/oracle targets post-link with (WASM_BOTS_POSTOPT is non-empty by
+        # default, and wasm-oracle-mt calls wasm-opt unconditionally). On a Mac
+        # this needs WASM_CC=/opt/homebrew/opt/llvm/bin/clang instead, because
+        # Apple's clang has no wasm32 target at all - see c/Makefile.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang lld binaryen
+          echo "--- versions the artifacts would be built with ---"
+          clang --version | head -1
+          wasm-ld --version
+          wasm-opt --version
+
+      - name: Build every wasm target the Makefile declares
+        # Enumerated, never hardcoded: a target added later is covered the day it
+        # lands. Every module's rule is a top-level `wasm…:` target in c/Makefile
+        # (wasm, wasm-guards, wasm-bots, wasm-oracle, wasm-oracle-mt today).
+        run: |
+          set -u
+          targets=$(grep -oE '^wasm[A-Za-z0-9_-]*:' c/Makefile | tr -d ':' | sort -u)
+          if [ -z "$targets" ]; then
+            echo "::error::found no wasm targets in c/Makefile - did the target naming change?"
+            exit 1
+          fi
+          echo "targets: $(echo $targets | tr '\n' ' ')"
+          failed=""
+          for t in $targets; do
+            echo "::group::make -C c $t"
+            if make -C c WASM_CC=clang "$t"; then echo "OK $t"; else failed="$failed $t"; fi
+            echo "::endgroup::"
+          done
+          # Every failure in one run, not just the first: two targets can break
+          # from one header change and a reader should see both.
+          if [ -n "$failed" ]; then
+            echo "::error::these wasm targets do not compile:$failed"
+            exit 1
+          fi
+
+      - name: What the build produced
+        # The bytes are NOT compared against the committed ones and must not be:
+        # a rebuild of unmodified main already differs (measured 2026-09-06,
+        # bots.wasm.gz 67049 -> 67132 B), because the committed artifact was
+        # built by whatever toolchain its author had. Sizes are printed so a
+        # sudden jump is at least visible to a human.
+        if: always()
+        run: |
+          ls -l c/build/*.wasm 2>/dev/null || true
+          git status --porcelain -- sdk/ts/wasm public || true
+
+  freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The check reads commit ORDER, so it needs history, not a shallow tip.
+          fetch-depth: 0
+
+      - name: Committed artifacts vs the kernel they are built from
+        run: |
+          git fetch --no-tags --quiet origin main
+          bash scripts/check_wasm_freshness.sh origin/main

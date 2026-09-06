@@ -16,13 +16,38 @@ name: deploy
 on:
   push:
     branches: [main]
+    # EVERY PATH THE DEPLOYED SERVER IS BUILT FROM, not just the one it lives in.
+    # A missing path here does not fail anything: it merges, deploys nothing, and
+    # the server stays on the old code until some unrelated push happens to touch
+    # a path that IS listed. That has already happened once (see 'supabase/**'
+    # below) and it went unnoticed for weeks.
+    #
+    # `e2e/validation/deploy_paths_validation.test.ts` walks the functions' real
+    # import graph and fails if anything it reaches is not covered here, so this
+    # list is checked rather than remembered. Do not prune an entry because it
+    # "looks unrelated" - that test says what is related.
     paths:
       # The backend moved to server/impls/supabase (A10). The old 'supabase/**'
       # is anchored at the repo root, so after the move it matched NOTHING and
       # pushes silently stopped triggering deploys — the server went stale.
       - 'server/impls/supabase/**'
-      # bots.wasm.gz is bundled as a static asset (config.toml static_files), so
-      # a kernel rebuild must redeploy even though it lives outside the backend.
+      # The functions resolve @sdk/ and @api/ (functions/import_map.json) and
+      # import real code through them: the wire codecs and the wasm bindings out
+      # of sdk/ts, and the whole host-neutral game layer out of server/api. That
+      # code is COMPILED INTO the deployed functions, so a change to it is a
+      # change to the server. Both roots are listed whole rather than by
+      # subdirectory because every subtree under them is on the graph today
+      # (sdk/ts is wasm/ + wire/; server/api is core/ + common/), and a new
+      # sibling is far likelier to be a dependency than not.
+      #
+      # The cost is deploys that change nothing in the functions. That is the
+      # cheap direction: `db push` + `functions deploy` are idempotent, while a
+      # missed deploy is a server running code nobody merged.
+      - 'sdk/ts/**'
+      - 'server/api/**'
+      # Kept explicit even though 'sdk/ts/**' covers it: bots.wasm.gz is not
+      # imported, it is BUNDLED as a static asset (config.toml static_files), so
+      # a kernel rebuild alone must redeploy.
       - 'sdk/ts/wasm/bots.wasm.gz'
   workflow_dispatch: {}
 
@@ -43,10 +68,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned, not `latest`: `latest` makes an unauthenticated GitHub API call
+      # on every run to resolve the newest release, which rate-limits (the
+      # `memory` workflow failed on main with "Failed to resolve latest Supabase
+      # CLI release: rate limit exceeded") and silently changes the tooling under
+      # us. A fixed version is downloaded straight from the release URL with no
+      # API call at all. 2.116.0 is what `latest` resolved to when this was
+      # pinned, so the pin is behaviourally a no-op.
       - name: Install Supabase CLI
         uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.116.0
 
       - name: Link project
         run: supabase link --project-ref "$SUPABASE_PROJECT_REF" --workdir server/impls

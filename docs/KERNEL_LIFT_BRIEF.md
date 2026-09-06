@@ -592,7 +592,47 @@ Not fixed with stage 5 because the same prior ALSO seeds the role marks, where
 "the first event of the previous step" is deliberate.
 So this is a change with two consumers and wants its own look.
 
-### An untested load-bearing rule: the empty menu under a held settlement - HALF CLOSED
+### An untested load-bearing rule: the empty menu under a held settlement - TESTED
+
+Fixed 2026-09-06, and the report below was right on every count.
+Mutating the rule away - `legalPacked = heldSettlement.isEmpty ? read.legalPacked
+: emptyMenu` cut down to `legalPacked = read.legalPacked` - left the whole
+`MessageStagedDealTests` class green, its own `XCTAssertTrue(c.legal.isEmpty)`
+included.
+
+The missing fixture is written:
+`MessageStagedDealTests.testAHeldSettlementEmptiesAMenuTheKernelWouldHaveOffered`.
+It hunts for the position instead of asserting into the dark - two greedy
+policies (attackers throw, the defender covers, and a chain long enough to empty
+a hand in one turn), 3 to 5 players, 120 deals each - and asserts only once the
+KERNEL's own menu for that seat is NON-empty, which is the thing that makes the
+assertion mean anything.
+A search that finds nothing fails.
+
+Both halves are mutation-checked, and neither catches the other's mutation:
+- the menu half fails with "a held settlement published 1 legal moves while the
+  kernel offered 1";
+- the view half (`view = heldView ?? v`) fails with "1 dealt card(s) reached the
+  board".
+It finds its position in about a second, so it costs the suite nothing.
+
+Re-checked after Item 2 moved the decision into the kernel, because a fixture
+that only guards the Swift it was written against is worth little: setting
+`out->empty_menu = 0` in `msg_turn_publish` (c/src/msg_wire.c) fails this test
+with the same message and at the same position.
+So it guards the rule where the rule now lives, through a real controller, not
+the expression it happened to be written as.
+
+Why the shape is as rare as the report says: after a pickup or a good the next
+first attacker is never the seat that moved, so the kernel's menu for it is empty
+and the assertion agrees with the rule about nothing.
+Only `handle_cover`'s `hand_count == 0` branch sets
+`first_attacker = defender` - it discards, refills that defender a fresh hand,
+and hands them the opening attack of the next bout.
+Across 3 to 6 players and 120 deals a play policy that is not aiming for it
+reaches that position roughly twice.
+
+The original report follows.
 
 While a bout settlement is withheld, the board publishes an EMPTY legal menu so
 the player cannot act on a deal they have not been shown.
@@ -613,19 +653,72 @@ Half of it closed with Item 2 (2026-09-05).
 Both halves are `msg_turn_publish` outs now, and mutating either to a constant
 costs 2 failures each in `msg_wire_test` - so the RULE is guarded where it is
 stated.
-The FIXTURE is still missing, and it is the fixture this finding is really about:
-nothing yet drives a defender's own hand empty through a controller and watches
-what the board is allowed to offer afterwards.
-That is the remaining work, and it is a Swift-side one.
+The FIXTURE was the remaining work, and it is written now (see the top of this
+section): it drives a defender's own hand empty through a real controller and
+watches what the board is allowed to offer afterwards.
+The two guards are not redundant.
+`msg_wire_test` pins the kernel's answer where the rule is stated; the fixture
+pins that a board built on that answer never offers the move, which is the half
+that stayed green through every mutation before it existed.
 
-### A CI flake: edge-serve 502s under the real memory budget
+### A CI flake: edge-serve 502s under the real memory budget - DIAGNOSED
 
 The `memory` workflow's `edge-serve` job failed on main with
 `semtex,octogen returned 502` at commit `fb9294e`, then passed on re-run with a
 BYTE-IDENTICAL tree (`798b003b` both times), so it is a flake and not a
 regression.
-Two Monte Carlo bots timing out under the edge runtime's real memory budget is a
-resource-pressure symptom worth understanding rather than re-running.
+The original report read it as two Monte Carlo bots timing out under the edge
+runtime's real memory budget.
+**It is not that, and it cannot be.**
+
+Measured against a real local stack on edge-runtime v1.74.3, which is the version
+the failing job ran:
+
+- The edge runtime's own main service answers **546 `WORKER_LIMIT`** when a
+  worker is killed for a resource limit (reproduced by asking `memtest` for 20
+  full games in one request, which blows the 2000ms CPU hard limit), **503** for
+  a worker that failed to boot and **500** for one that threw.
+  Its source enumerates exactly those codes.
+  It cannot emit a 502.
+- A **502** with the body `An invalid response was received from the upstream
+  server` is Kong saying it had no upstream at all.
+  `docker stop` on the edge-runtime container reproduces it byte for byte.
+
+So the failing run was the edge runtime not answering, not a bot under pressure.
+The `memtest` requests take 111-166ms in CI against a 2000ms CPU hard limit and a
+256MB worker; there is roughly a 12x margin and no measured pressure.
+
+What makes the container stop answering: `functions serve` OWNS its lifetime, and
+when that CLI process is terminated it gracefully removes the container.
+SIGTERM to `functions serve` -> container removed -> the very next request through
+Kong is exactly the observed 502.
+The workflow used to start `functions serve` in one step and make the requests in
+the NEXT one, so the assertions ran against a container owned by a background
+process left over from a step that had already finished.
+The failing run's timeline fits that to the millisecond: the readiness probe
+answered at the step boundary, the main worker logged `serving the request` 19ms
+into the next step, and then nothing more was ever heard from it.
+
+Fixed by serving and asserting in ONE step, so the process is a live child of the
+shell doing the asserting.
+Not proven is what terminated the process on that one run; what the workflow
+threw away was the evidence, because it catted `serve.log` about 10ms after curl
+returned and the CLI's log stream lags the HTTP response.
+So a failure now settles first, then dumps `serve.log`, `docker ps -a`, the
+container's own `docker logs`, and whether the serve process is still alive, and
+it names the fault by what the status code MEANS rather than printing a bare
+number.
+Both new failure branches are mutation-checked against a real local stack.
+
+Deliberately NOT added: a retry.
+
+Related, and fixed in the same pass: both workflows asked `supabase/setup-cli` for
+`version: latest`, which makes an unauthenticated GitHub API call on every run.
+That call rate-limited on main (`Failed to resolve latest Supabase CLI release:
+rate limit exceeded`) and it silently changes the tooling underneath us.
+Both are pinned to `2.116.0`, which is what `latest` resolved to at the time, so
+the pin is behaviourally a no-op; a fixed version skips the API call entirely and
+downloads straight from the release URL.
 
 ### Housekeeping
 
@@ -765,7 +858,31 @@ mid-tween cannot be handed a compact height.
 identical to the manual-collapse control, and `SLOTCHECK MISMATCH n=... worst=406.0pt`
 - which had been firing on every auto-collapse - is gone.
 
-### One rig scenario is inert, and was not fixed
+### One rig scenario is inert - FIXED
+
+Fixed 2026-09-06, and confirmed on the rig itself rather than by reading.
+Before, launched on a simulator with `SIMCTL_CHILD_HARNESS_SCENARIO=myplay`, the
+unified log read `host stage` -> `host deliver` -> `openReplay events=0`: the
+scenario posed nothing at all.
+
+`dealDriven` now takes `cold:`, and `myplay` / `myplay-compact` pass it.
+Instead of staging and pressing Send, the sealed chain is put into the transcript
+as HISTORY (`HarnessModel.placeSealed`), which is how a chain whose last actor is
+me really reaches a cold board: a relaunch, a second device, a scroll back to it.
+Nothing is marked just-sent, so nothing suppresses the open.
+
+The same launch now logs `openReplay events=4`, and two of the four are
+`OFF-HAND flight … from=(271,623) … hand=(187,623)` - cards leaving MY hand row,
+which is the thing round 42 wanted to look at and the owner's 1.0(41) rule
+("when we replay OUR OWN attack, it should go FROM OUR HAND to the table").
+The scenario's comment now says outright that `openReplay events=0` is the
+failure mode, so the next reader does not take a quiet run for a pass.
+
+`arrival` with `HARNESS_ARRIVE_COLD=1 HARNESS_ARRIVE_SELF=1` still poses the same
+shape from the other direction and is what finding 1 was verified on; the two are
+not redundant - that one arrives on a live surface, this one mounts cold.
+
+The original report follows.
 
 `HARNESS_SCENARIO=myplay` was built in round 42 as "a COLD OPEN of my own move …
 the only one that arms `handHoldback`", and it no longer poses that: it opens
@@ -1233,7 +1350,32 @@ nothing beyond octogen was measured.
 The committed `public/oracle.wasm.gz` and `c/build/bots.wasm.gz` still carry the
 old solver: this reaches production only when they are rebuilt.
 
-## Queued: a replay URL fails by naming the wrong fault
+## Fixed: a replay URL failed by naming the wrong fault
+
+Fixed 2026-09-06, in the shape the report suggested.
+`urlToCode` now takes the code out of the link forms people actually paste:
+scheme or no scheme, `www.` or not, a trailing slash, a query, a fragment, the
+printed `WWW.FOOLISH.CARDS/` form, a bare code, and any of those wrapped in
+whitespace.
+Some other host falls back to the last path segment.
+When what is left is not base32, `urlToGame` refuses it as
+**"not a replay code"** instead of handing `base32Decode` - which ignores stray
+characters - a string that decodes to a DIFFERENT game and dies later under a
+codec error that was never the fault.
+
+Both halves are covered, and both were mutation-checked against the unfixed
+codec: `e2e/replay_codec_edges.test.ts` walks eleven pasted forms and six
+non-codes (2 of 8 failed on the old code, naming the exact defect), and the
+property test in `e2e/replay_codec.test.ts` re-reads every game it encodes
+through three pasted forms of that game's own link, so no replay code is frozen
+as a fixture anywhere.
+
+Note what is deliberately NOT refused: a well-formed base32 string that is not a
+real code (`helloworld`) still reaches the decoder, because nothing about it says
+otherwise and a length heuristic would be a guess.
+The decoder's error is then honestly about the bytes it was given.
+
+The original report follows.
 
 A papercut, not a crash, on the most natural input a person can give.
 

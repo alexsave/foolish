@@ -176,6 +176,147 @@ final class MessageStagedDealTests: XCTestCase {
                        "\(leaks.count)/\(staged) staged turns showed their player the deal")
     }
 
+    /// THE SHAPE THE EMPTY MENU EXISTS FOR, and the reason the sweep above does
+    /// not prove it.
+    ///
+    /// While a settlement is held, `publish` withholds TWO things: the view, so
+    /// the deal stays out of sight, and the menu, so the player cannot act on
+    /// the deal anyway. Take the menu half away - mutate
+    /// `legalPacked = heldSettlement.isEmpty ? read.legalPacked : emptyMenu`
+    /// down to `legalPacked = read.legalPacked` - and the sweep above stays
+    /// green. Measured, on 2026-09-06. Every held bout end those fixtures reach
+    /// is a pickup or a good, and after either the acting seat is the next
+    /// DEFENDER or no actor at all, so the KERNEL's own menu is empty and the
+    /// assertion agrees with the rule about nothing.
+    ///
+    /// One shape does not agree about nothing, and it is the one the rule's own
+    /// comment names: a defender who covers out their LAST card.
+    /// `handle_cover`'s `hand_count == 0` branch discards the table, refills -
+    /// dealing that defender a fresh hand - and then sets
+    /// `first_attacker = defender`. So the seat that just moved is the next
+    /// first attacker, holding cards it has not been shown, and the kernel has a
+    /// full attack menu for it. Without the rule the board hands that menu to a
+    /// player who can still delete the staged bubble.
+    ///
+    /// So this hunts for that position rather than asserting into the dark: it
+    /// plays with policies built to reach it - attackers throw, the defender
+    /// covers, chains run long enough to empty a hand in one turn - and asserts
+    /// only once the KERNEL's menu for that seat is NON-empty, which is what
+    /// makes the assertion mean anything. A search that finds nothing proves
+    /// nothing, so finding nothing FAILS.
+    func testAHeldSettlementEmptiesAMenuTheKernelWouldHaveOffered() async throws {
+        // Two policies, because which positions a greedy line reaches is a
+        // fluke of the deal: `widest` fills the table and empties the hand as
+        // fast as the rules allow, `first` takes the menu's own order. Either
+        // may be the one that walks into the position on a given deal.
+        for policy in ["widest", "first"] {
+            for players in [3, 4, 5] {
+                for salt in UInt8(1)...UInt8(120) {
+                    var payload: Data?
+                    var env: MessageEnvelope?
+                    var rng = UInt64(salt) &* 6364136223846793005 &+ UInt64(players)
+                    func next() -> Int {
+                        rng = rng &* 6364136223846793005 &+ 1442695040888963407
+                        return Int((rng >> 33) & 0xffff)
+                    }
+                    func of(_ opts: [Move], _ t: MoveType) -> Move? {
+                        policy == "widest" ? opts.filter { $0.type == t }.max { $0.cards.count < $1.cards.count }
+                                           : opts.first { $0.type == t }
+                    }
+                    func pick(_ opts: [Move], _ r: Int) -> Move {
+                        of(opts, .cover) ?? of(opts, .attack) ?? opts[r % opts.count]
+                    }
+
+                    for _ in 0..<160 {
+                        var acted = false
+                        let start = next() % players
+                        for k in 0..<players {
+                            let seat = (start + k) % players
+                            let c: MessageTurnController
+                            if let p = payload, let e = env {
+                                c = MessageTurnController(parentPayload: p, parent: e, mySeat: seat)
+                            } else {
+                                c = MessageTurnController(genesisSeed: seed(salt), players: players,
+                                                          gameId: 77, myNickname: "P\(seat)")
+                            }
+                            await c.begin()
+                            if c.view?.isOver == true { break }
+                            let opening = c.legal.filter { $0.type != .wait }
+                            guard !opening.isEmpty, let before = c.view else { continue }
+                            let deckBefore = before.deckCount
+                            let handBefore = Set((before.me?.hand ?? []).map(\.identity))
+
+                            var move = pick(opening, next())
+                            var sealed: Data?
+                            var envOut: MessageEnvelope?
+                            // Long enough for a defender to cover a whole table
+                            // in one turn, which is how a hand empties on a
+                            // cover while the bout is still open.
+                            var more = 12
+                            while true {
+                                await c.apply(move)
+                                guard !c.pending.isEmpty else { break }
+                                let s = try await c.stagedPayload(sentAt: MessageKernel.clockNow() - 60)
+                                sealed = s
+                                envOut = try? await MessageEnvelope.peek(payload: s)
+
+                                if c.settlementHeld {
+                                    // The menu the KERNEL holds for this seat on
+                                    // the settled game: exactly what `publish`
+                                    // is refusing to hand over. Empty here means
+                                    // the position asks nothing of the rule, so
+                                    // walk past it - an assertion that would
+                                    // pass either way is worse than none.
+                                    let kernelMenu = await MessageKernel.shared.residentLegal(seat: seat)
+                                    if kernelMenu.isEmpty { break }
+
+                                    XCTAssertTrue(c.legal.isEmpty,
+                                        "a held settlement published \(c.legal.count) legal moves while "
+                                        + "the kernel offered \(kernelMenu.count) - the player can act "
+                                        + "on a deal they have not been shown "
+                                        + "(\(policy) p\(players) salt \(salt) seat \(seat))")
+                                    XCTAssertEqual(c.legalPacked, MoveWire.emptyMenu,
+                                        "the board plays from the PACKED menu, and that one is not empty")
+                                    // The other half, on the same position.
+                                    let shown = c.view
+                                    XCTAssertEqual(shown?.deckCount, deckBefore,
+                                                   "the withheld deal reached the board")
+                                    let fresh = Set((shown?.me?.hand ?? []).map(\.identity))
+                                        .subtracting(handBefore)
+                                    XCTAssertTrue(fresh.isEmpty,
+                                                  "\(fresh.count) dealt card(s) reached the board")
+
+                                    // And it is a HOLD, not a dead board: Send
+                                    // hands back the very menu that was withheld.
+                                    await c.markSent(payload: s)
+                                    XCTAssertFalse(c.settlementHeld, "Send did not lift the hold")
+                                    XCTAssertEqual(c.legal.count, kernelMenu.count,
+                                                   "Send did not give the player their menu back")
+                                    if deckBefore > 0 {
+                                        XCTAssertLessThan(c.view?.deckCount ?? .max, deckBefore,
+                                                          "Send released no deal")
+                                    }
+                                    return
+                                }
+                                let opts = c.legal.filter { $0.type != .wait }
+                                guard more > 0, c.isOver != true, !opts.isEmpty else { break }
+                                more -= 1
+                                move = pick(opts, next())
+                            }
+                            guard let s = sealed, let e2 = envOut else { continue }
+                            await c.markSent(payload: s)
+                            payload = s; env = e2; acted = true
+                            break
+                        }
+                        if !acted { break }
+                    }
+                }
+            }
+        }
+        XCTFail("the search never reached a held settlement whose seat still had a kernel menu - "
+                + "this test proves nothing until it does")
+    }
+
     // MARK: what the bubble carries
 
     /// The seal is untouched: a held turn's bubble still carries its whole bout

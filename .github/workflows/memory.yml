@@ -37,9 +37,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned, not `latest`: `latest` makes an unauthenticated GitHub API call
+      # on every run to resolve the newest release, which rate-limits (the
+      # `memory` workflow failed on main with "Failed to resolve latest Supabase
+      # CLI release: rate limit exceeded") and silently changes the tooling under
+      # us. A fixed version is downloaded straight from the release URL with no
+      # API call at all. 2.116.0 is what `latest` resolved to when this was
+      # pinned, so the pin is behaviourally a no-op.
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.116.0
 
       - name: Install the diagnostic function
         run: |
@@ -63,38 +70,86 @@ jobs:
           : > server/impls/supabase/seed.sql
           supabase --workdir server/impls start -x studio,imgproxy,inbucket
 
-      - name: Serve functions
+      # Serving and asserting are ONE step on purpose. `functions serve` owns the
+      # edge-runtime container's lifetime: when that CLI process is terminated it
+      # gracefully removes the container, after which Kong has no upstream and
+      # every request through :54321 answers 502 "An invalid response was
+      # received from the upstream server". Measured against a real local stack:
+      # SIGTERM to serve -> container removed -> the very next request is exactly
+      # that 502. Split across two steps, the requests ran against a container
+      # owned by a background process left over from a step that had already
+      # finished, which is how the 2026-09-05 flake could look like a bot
+      # failure while being nothing of the kind. Inside one step the process is a
+      # live child of the shell doing the asserting.
+      - name: Serve functions and drive bot decisions under the real edge budget
         run: |
+          set -e
           # The bot stack (engine.ts et al.) imports the @api/@sdk aliases; serve
           # resolves them from the per-function deno.json that ships in
           # e2e/edge_memtest (copied in above). Neither config.toml import_map nor
           # the --import-map CLI flag reaches out-of-functions-dir modules like
-          # sdk/…/engine.ts — only the function's own deno.json does. Verified
+          # sdk/../engine.ts - only the function's own deno.json does. Verified
           # against a real local edge runtime.
           supabase --workdir server/impls functions serve --no-verify-jwt > serve.log 2>&1 &
-          timeout 90 bash -c 'until curl -sf -o /dev/null "http://127.0.0.1:54321/functions/v1/memtest?games=0"; do sleep 2; done'
+          serve_pid=$!
+          timeout 90 bash -c 'until curl -sf -o /dev/null --max-time 30 "http://127.0.0.1:54321/functions/v1/memtest?games=0"; do sleep 2; done'
 
-      - name: Bot decisions under the real edge memory budget
-        run: |
-          set -e
+          # Say what the fault WAS, and keep the evidence. The runtime's own log
+          # reaches serve.log through the CLI's log stream, which lags the HTTP
+          # response, so settle before reading it - the old step catted serve.log
+          # ~10ms after curl returned and threw away the one line that would have
+          # named the cause. `docker` is asked directly because a container that
+          # is gone cannot log.
+          diagnose() {
+            sleep 5
+            echo "--- serve.log ---"; cat serve.log || true
+            echo "--- edge runtime container ---"
+            docker ps -a --filter name=edge_runtime || true
+            docker logs --tail 100 supabase_edge_runtime_foolish 2>&1 || true
+            echo "--- serve process ---"
+            kill -0 "$serve_pid" 2>/dev/null \
+              && echo "functions serve (pid $serve_pid) is still running" \
+              || echo "functions serve (pid $serve_pid) has EXITED - it takes the edge runtime container with it"
+          }
+
           for keys in semtex,octogen cordite,semtex fulminate,octogen; do
-            body=$(curl -s -w $'\n%{http_code}' "http://127.0.0.1:54321/functions/v1/memtest?keys=$keys&maxmoves=8")
+            body=$(curl -s --max-time 120 -w $'\n%{http_code}' "http://127.0.0.1:54321/functions/v1/memtest?keys=$keys&maxmoves=8")
             code=$(printf '%s' "$body" | tail -n1)
             json=$(printf '%s' "$body" | sed '$d')
             echo "$keys -> $code  $json"
-            [ "$code" = "200" ] || { echo "::error::$keys returned $code"; cat serve.log; exit 1; }
+            # Name the fault by what the status code MEANS. The edge runtime's
+            # main service answers 546 WORKER_LIMIT for the resource kill this
+            # job exists to catch, 503 for a worker that failed to boot and 500
+            # for one that threw; it cannot produce a 502. A 502 is Kong saying
+            # it had no upstream to talk to at all, which is an infrastructure
+            # fault and NOT the memory class guarded here. Both codes verified
+            # against a real local edge runtime (v1.74.3).
+            if [ "$code" != "200" ]; then
+              case "$code" in
+                546) echo "::error::$keys hit the edge runtime's worker resource limit (546 WORKER_LIMIT) - this IS the memory/CPU class this job guards" ;;
+                503) echo "::error::$keys could not boot a worker (503 BOOT_ERROR)" ;;
+                500) echo "::error::$keys threw inside the worker (500)" ;;
+                502) echo "::error::$keys got 502 from Kong: the edge runtime container was not answering. Infrastructure, not a bot memory kill - see whether functions serve is still alive below" ;;
+                *)   echo "::error::$keys returned $code" ;;
+              esac
+              diagnose
+              exit 1
+            fi
             # A green 200 is NOT enough: the diagnostic swallows a per-move
             # exception (e.g. bots.wasm.gz static asset missing) and still
-            # returns ok:true with moves:0. Require REAL bot moves — that only
+            # returns ok:true with moves:0. Require REAL bot moves - that only
             # happens if the kernel actually loaded and ran.
-            printf '%s' "$json" | grep -qE '"moves":[1-9]' \
-              || { echo "::error::$keys made 0 bot moves — bots.wasm never loaded (check the static-asset bundle)"; cat serve.log; exit 1; }
+            if ! printf '%s' "$json" | grep -qE '"moves":[1-9]'; then
+              echo "::error::$keys made 0 bot moves - bots.wasm never loaded (check the static-asset bundle)"
+              diagnose
+              exit 1
+            fi
           done
           # Catch the swallowed failure class directly in the runtime log:
           # a memory kill, a missing gz asset, or any bot-processing throw.
           if grep -qE "memory limit reached|path not found|Error processing bot action" serve.log; then
             echo "::error::edge runtime logged a bot-processing failure (memory kill / missing asset / throw)"
-            cat serve.log
+            diagnose
             exit 1
           fi
 
