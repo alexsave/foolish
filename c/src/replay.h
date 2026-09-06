@@ -294,6 +294,15 @@ int replay_first_attacker_from_logs(const GameLog *logs, int num_logs);
 // would count the very goods this exists to drop.
 int replay_atoms_before_log(const GameLog *logs, int num_logs, int cut_log);
 
+// RFC 4648 base32, no padding, the web's codec.ts alphabet: how a replay
+// integer travels as text. Decode accepts lower case, ignores characters
+// outside the alphabet and stops at '-' (where a share link's extras suffix
+// begins); encode writes a NUL-terminated string. Both return the count
+// written, or -1 when `cap` is too small. One implementation: the iOS bridge
+// and the analyser both read codes through this.
+int replay_b32_decode(const char *s, unsigned char *out, int cap);
+int replay_b32_encode(const unsigned char *in, int n, char *out, int cap);
+
 // Parameter of the last error (version for EVERSION, log_type<<16|menu size
 // for ENOTINMENU, 0 otherwise).
 int replay_last_error_detail(void);
