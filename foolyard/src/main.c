@@ -102,6 +102,7 @@ static void usage(void) {
 "  --kernel-pacing 0|1  bots also wait the kernel's human-watching pace (1)\n"
 "  --deep          clone and compare on every rejected move (slow)\n"
 "  --csv           per-seat CSV lines as well, for the sweep driver\n"
+"  --trace         one line per scheduler pop, plus what each event did\n"
 "  --until-games N stop once N games have finished, whatever the clock says\n"
 "\n"
 "examples\n"
@@ -125,7 +126,27 @@ static u64 run(World *w, u64 duration_us) {
         events++;
 
         u32 param = event_param(ev);
-        switch (event_type(ev)) {
+        u32 type = event_type(ev);
+
+        // Every pop, before it is handled: the handlers add an indented line
+        // for what it actually did.
+        if (w->knobs.trace) {
+            const char *name = trace_event_name(type);
+            if (type == EV_SRV_BOT)
+                trace_line(w, "%-11s g%u seat %u", name, bot_param_game(param), bot_param_seat(param));
+            else if (type == EV_SRV_SERVICE || type == EV_SRV_LOBBY)
+                trace_line(w, "%-11s g%u", name, param);
+            else if (type == EV_NET_TO_SERVER || type == EV_NET_TO_CLIENT) {
+                Packet *p = net_pkt(w, param);
+                trace_line(w, "%-11s g%u seat %u  pkt#%u kind %u len %u",
+                           name, p->game_id, p->seat, param, p->kind, p->len);
+            } else if (type == EV_CLI_WAKE)
+                trace_line(w, "%-11s client %u", name, param);
+            else
+                trace_line(w, "%-11s %u", name, param);
+        }
+
+        switch (type) {
         case EV_NET_TO_SERVER: srv_on_packet(w, param); break;
         case EV_NET_TO_CLIENT: client_on_packet(w, param); break;
         case EV_SRV_SERVICE:   srv_on_service(w, param); break;
@@ -273,6 +294,7 @@ int main(int argc, char **argv) {
         if (!strcmp(a, "--help") || !strcmp(a, "-h")) { usage(); return 0; }
         else if (!strcmp(a, "--deep")) k.deep = 1;
         else if (!strcmp(a, "--csv")) k.csv = 1;
+        else if (!strcmp(a, "--trace")) k.trace = 1;
         else if (!strcmp(a, "--verbose")) k.verbose = 1;
         else if (!v) { fprintf(stderr, "%s needs a value\n", a); return 2; }
         else if (!strcmp(a, "--lineup")) { lineup_str = v; i++; }
