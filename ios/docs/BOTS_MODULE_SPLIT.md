@@ -121,6 +121,17 @@ Five things the Mac half needed that the Linux half could not have found:
   warning; clang makes it an error, so `make ios-smoke` did not build here until
   the smoke included `ios_bots_api.h` too.
 
+Played, not just built.
+The host app deals and a bot answers - which is what proves the split's real
+hazard, one resident game across two libraries, did not happen - the tutorial
+runs, and in Messages the shipping extension opens, makes a lobby, deals a
+3-player game and plays an attack on a `FoolishKit` that links no ladder.
+`HARNESS_SCENARIO=board` and `myplay` render the same board in the harness.
+The `Release` device build of `FoolishMessagesApp`, the configuration that
+actually ships, carries zero ladder symbols in any file of the bundle; the host
+app's `Release` build carries them where they belong, in
+`FoolishBots.framework`.
+
 One environment note, not a property of the split: `make ios-archives` used
 `ar`, and a homebrew binutils on `PATH` shadows Apple's - a GNU-format archive
 that `ld` refuses with `archive member '/' not a mach-o file`. It archives with
