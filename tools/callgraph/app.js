@@ -1079,12 +1079,33 @@ function buildLayered(root) {
     const xs = nb.map(m => pos.get(m)).sort((a, b) => a - b);
     return xs[(xs.length - 1) >> 1];
   };
+  // Keep a file's functions together inside a column. The median heuristic
+  // alone is happy to interleave them - tiny_inflate.mjs's tinf_* split apart
+  // by whichever kernel function happened to land at the same median - and a
+  // column that mixes two subsystems reads as a tangle even when every edge in
+  // it is right. So after each sweep, each file's members are gathered into
+  // one run, placed where that file's members already wanted to be.
+  const cohere = (c) => {
+    const runs = new Map();
+    layers[c].forEach((n, i) => {
+      const f = G.file[n];
+      let r = runs.get(f);
+      if (!r) runs.set(f, r = { sum: 0, items: [] });
+      r.sum += i;
+      r.items.push(n);
+    });
+    layers[c] = [...runs.values()]
+      .sort((a, b) => a.sum / a.items.length - b.sum / b.items.length)
+      .flatMap(r => r.items);
+    layers[c].forEach((n, i) => pos.set(n, i));
+  };
   for (let sweep = 0; sweep < 8; sweep++) {
     const side = sweep % 2 ? "down" : "up";
     const idx = layers.map((_, i) => i);
     for (const c of (side === "up" ? idx : [...idx].reverse())) {
       layers[c].sort((a, b) => median(a, side) - median(b, side));
       layers[c].forEach((n, i) => pos.set(n, i));
+      cohere(c);
     }
   }
 
@@ -1100,6 +1121,19 @@ function buildLayered(root) {
         const want = ys.length % 2 ? ys[(ys.length - 1) / 2]
           : (ys[ys.length / 2 - 1] + ys[ys.length / 2]) / 2;
         y.set(n, y.get(n) + (want - y.get(n)) * 0.45);
+      }
+      // The pull above is per node, so a file's run can be stretched open by
+      // one member with a distant parent. Close each run back up around its
+      // own middle: the order is already settled, this only removes the gaps.
+      for (let i = 0; i < L.length;) {
+        let j = i;
+        while (j + 1 < L.length && G.file[L[j + 1]] === G.file[L[i]]) j++;
+        if (j > i) {
+          const mid = (y.get(L[i]) + y.get(L[j])) / 2;
+          const top = mid - (j - i) * STEP / 2;
+          for (let k = i; k <= j; k++) y.set(L[k], top + (k - i) * STEP);
+        }
+        i = j + 1;
       }
       for (let i = 1; i < L.length; i++)
         if (y.get(L[i]) - y.get(L[i - 1]) < STEP) y.set(L[i], y.get(L[i - 1]) + STEP);
@@ -1196,6 +1230,32 @@ function renderHier(frag) {
     t.textContent = r === 0 ? "here" : r < 0 ? (-r) + " calling in" : r + " called out";
     caps.append(t);
   }
+
+  // A soft band behind each run of functions from one file. The ordering above
+  // guarantees the run is contiguous; this is what makes that visible, so a
+  // column of two subsystems reads as two blocks instead of one tangle.
+  const bands = svgEl("g", { class: "bands" });
+  for (const L2 of L.layers) {
+    for (let i = 0; i < L2.length;) {
+      let j = i;
+      while (j + 1 < L2.length && G.file[L2[j + 1]] === G.file[L2[i]]) j++;
+      if (j > i) {
+        const x = left(L2[i]);
+        const b = svgEl("rect", {
+          x: x - 6, y: L.y.get(L2[i]) - NODE_H / 2 - 5,
+          width: L.colW[L.col.get(L.rank.get(L2[i]))] + 12,
+          height: L.y.get(L2[j]) - L.y.get(L2[i]) + NODE_H + 10,
+          rx: 6, fill: COLOR[L2[i]], "fill-opacity": dark ? 0.09 : 0.07,
+        });
+        const t = svgEl("title");
+        t.textContent = G.files[G.file[L2[i]]] + " — " + (j - i + 1) + " functions here";
+        b.append(t);
+        bands.append(b);
+      }
+      i = j + 1;
+    }
+  }
+  svg.append(bands);
 
   const gl = svgEl("g");
   const incident = new Map();     // node -> its own links, for the hover focus

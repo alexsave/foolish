@@ -129,10 +129,19 @@ view answers that instead, with two hierarchies:
   and three rows tall. As columns the names read straight and the fan-out costs
   vertical scroll, which is free.
 
-  A column is a **distance from the function, not a grouping** — two boxes side
-  by side can share nothing at all, which reads as tangle when it is only
-  adjacency. Hovering a box is what settles it: its own edges and the functions
-  on the other end of them stay lit and everything else recedes.
+  A column is a distance from the function, not a grouping, so left to itself
+  the ordering interleaves subsystems that share nothing — `tiny_inflate.mjs`'s
+  `tinf_*` split apart by whichever kernel function landed at the same median.
+  So **file cohesion is part of the ordering**: after every sweep each file's
+  members are gathered into one run, placed where that file's members already
+  wanted to be, and the straightening pass closes each run back up around its
+  own middle afterwards. A file's functions are always one contiguous block in
+  their column — measured, not hoped: 0 of 277 blocks split across four
+  different roots from 82 to 367 nodes. A soft band behind each run is what
+  makes that visible, so a column holding two subsystems reads as two blocks.
+
+  Hovering a box settles the rest: its own edges and the functions on the other
+  end of them stay lit, everything else recedes.
 
   It draws at 1:1 and scrolls rather than shrinking to fit — a whole reachable
   set can be fifteen columns wide, and fitting that to a pane makes the names
