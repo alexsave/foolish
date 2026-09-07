@@ -117,6 +117,10 @@ int  cd_sim_playout_leaf(SimState *s, int my_idx, int max_turns, int early_exit,
 #define CD_POL_LOOSE 1   // weak random-ish opponent model (profiled-weak seats)
 #define CD_POL_MCDEF 2   // MC-defender model: strategic trump-saving pickups
                          // half the time (proven-strategic seats, octogen)
+#define CD_POL_MC    3   // cl20 strategic-seat model fitted to octogen self-play
+                         // (pickups, declined transfers, higher leads, declined
+                         // throw-ins); parameters via cd_sim_set_mc_model
+void cd_sim_set_mc_model(int pick_t, int pick_n, int nopass, int first_dev, int good);
 
 // Playout where seat p plays pol[p] (NULL = all handwritten), with optional
 // exact leaf endgames when leaf_cards > 0. Superset of cd_sim_playout_leaf.

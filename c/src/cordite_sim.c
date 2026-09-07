@@ -1415,6 +1415,68 @@ static int sim_mcdef_move(SimState *s, int p, SimMove *out) {
     return sim_handwritten_move(s, p, out);
 }
 
+// ---------- strategic-seat model (CD_POL_MC, cl20) --------------------------
+// A stochastic mimic of a determinized-MC opponent (cordite/semtex/octogen),
+// fitted to octogen self-play decisions (tests/mc_behavior.c, CL20.md): it
+// picks up while holding a full cover (30% when the cover needs a trump, 15%
+// otherwise), declines a legal transfer 11% of the time, leads a HIGHER value
+// than handwritten's lowest-max-count group about half the time (keeping low
+// cards for transfers), and declines a legal throw-in 7% of the time.
+// Everything else is handwritten.
+static _Thread_local int mc_pick_t = 30, mc_pick_n = 15, mc_nopass = 11, mc_first = 50, mc_good = 7;
+void cd_sim_set_mc_model(int pick_t, int pick_n, int nopass, int first_dev, int good) {
+    mc_pick_t = pick_t; mc_pick_n = pick_n; mc_nopass = nopass; mc_first = first_dev; mc_good = good;
+}
+static int sim_mc_move(SimState *s, int p, SimMove *out) {
+    int power = s->power_suit;
+    int deck_alive = (s->deck_n > 0 || s->has_flipped);
+    if (p == s->defender && s->num_battles > 0 && !sim_all_covered(s)) {
+        SimMove pm;
+        if (sim_pass_move(s, p, power, &pm)) {
+            if (game_random() * 100.0 >= mc_nopass) { *out = pm; return 1; }
+        }
+        SimMove cm;
+        if (sim_greedy_full_cover(s, p, power, &cm)) {
+            int trumps = 0;
+            for (int i = 0; i < cm.n; i++) if (id_suit(cm.cards[i]) == power) trumps++;
+            int pp = trumps > 0 ? mc_pick_t : mc_pick_n;
+            if (deck_alive && game_random() * 100.0 < pp) { out->type = MV_PICKUP; out->n = 0; return 1; }
+            *out = cm;
+            return 1;
+        }
+        out->type = MV_PICKUP; out->n = 0;
+        return 1;
+    }
+    if (s->num_battles == 0 && p == s->first_attacker && deck_alive && mc_first > 0) {
+        uint64_t nt = s->hand[p] & ~SUIT_MASK[power];
+        if (nt && game_random() * 100.0 < mc_first) {
+            // Distinct non-trump values held, ascending; pick rank 1..3 above the
+            // lowest with the measured profile (rank1 45% / rank2 35% / rank3 20%).
+            int vals[13], nv = 0;
+            for (int v = 1; v <= 13; v++) if (nt & VALUE_MASK[v]) vals[nv++] = v;
+            if (nv >= 2) {
+                double r = game_random();
+                int rank = r < 0.45 ? 1 : r < 0.80 ? 2 : 3;
+                if (rank > nv - 1) rank = nv - 1;
+                uint64_t grp = nt & VALUE_MASK[vals[rank]];
+                int defcap = sim_hand_count(s, s->defender);
+                int n = 0;
+                while (grp && n < defcap && n < MAX_HAND_SIZE) { out->cards[n++] = (uint8_t)ctz64(grp); grp &= grp - 1; }
+                if (n > 0) { out->type = MV_ATTACK; out->n = n; return 1; }
+            }
+        }
+    }
+    if (s->num_battles > 0 && p != s->defender && !(s->good_mask & (1u << p)) && mc_good > 0) {
+        SimMove hm;
+        if (sim_handwritten_move(s, p, &hm)) {
+            if (hm.type == MV_ATTACK && game_random() * 100.0 < mc_good) { out->type = MV_GOOD; out->n = 0; return 1; }
+            *out = hm; return 1;
+        }
+        return 0;
+    }
+    return sim_handwritten_move(s, p, out);
+}
+
 // Playout where each seat plays its own policy (pol[p] = CD_POL_*), with
 // optional exact leaf endgames (leaf_cards > 0). pol == NULL means all
 // handwritten, matching cd_sim_playout_leaf / cd_sim_playout exactly.
@@ -1464,6 +1526,8 @@ int cd_sim_playout_pol(SimState *s, int my_idx, int max_turns, int early_exit,
                     ? sim_loose_move(s, pi, &m)
                     : (pol && pol[pi] == CD_POL_MCDEF)
                     ? sim_mcdef_move(s, pi, &m)
+                    : (pol && pol[pi] == CD_POL_MC)
+                    ? sim_mc_move(s, pi, &m)
                     : sim_handwritten_move(s, pi, &m);
             if (!got) continue;
             sim_apply(s, pi, &m);
@@ -1608,6 +1672,8 @@ int cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
                 ? sim_loose_move(s, actor, &m)
                 : (pol && pol[actor] == CD_POL_MCDEF)
                 ? sim_mcdef_move(s, actor, &m)
+                : (pol && pol[actor] == CD_POL_MC)
+                ? sim_mc_move(s, actor, &m)
                 : sim_handwritten_move(s, actor, &m);
         if (!got) break;
         sim_apply(s, actor, &m);
@@ -1682,6 +1748,8 @@ int cd_sim_playout_self(SimState *s, int my_idx, int max_turns,
                 ? sim_loose_move(s, actor, &m)
                 : (pol && pol[actor] == CD_POL_MCDEF)
                 ? sim_mcdef_move(s, actor, &m)
+                : (pol && pol[actor] == CD_POL_MC)
+                ? sim_mc_move(s, actor, &m)
                 : sim_handwritten_move(s, actor, &m);
         if (!got) break;
         sim_apply(s, actor, &m);

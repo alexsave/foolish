@@ -275,6 +275,7 @@ typedef struct {
     // infeasible constraint set) drop them for the rest of the game.
     HwCon    cons[CL_MAX_CONS];
     int      ncons;
+    bool     soft_void[MAX_PLAYERS];  // CL_MCVOID: strategic seat, voids mean "no cheap cover"
     bool     not_hw[MAX_PLAYERS];     // sticky: proven not handwritten-family
     int      hw_viol[MAX_PLAYERS];    // proven handwritten-consistency violations
     bool     hwc_on[MAX_PLAYERS];     // constraints apply to this seat now
@@ -308,6 +309,8 @@ static uint64_t cl_score_below_mask(int score, int power) {
 }
 static _Thread_local int cl_hwc = 1;          // CL_HWC: 0 off, 1 on
 static _Thread_local int cl_selfpol = 0;      // CL_SELFPOL: rollout policy for OUR seat (CD_POL_*)
+static _Thread_local int cl_mcvoid = 0;       // CL_MCVOID: soft voids for proven-strategic seats
+static _Thread_local int cl_mcpol = 0;        // CL_MCPOL: CD_POL_MC model for proven-strategic seats
 // Adaptive deliberation (CL20.md): after a stage's fixed budget, if the two
 // leading candidates are not statistically separated on their paired
 // same-world finishes, the stage is extended by another block of shared
@@ -454,7 +457,15 @@ static bool cl_con_pickup_ok(const HwCon *k, uint64_t h, int power) {
 
 static bool cl_void_forbidden(const Belief *B, const Game *g, int p, Card c) {
     for (int k = 0; k < B->void_n[p]; k++) {
-        if (can_cover(B->voids[p][k], c, g->power_suit)) return true;
+        Card v = B->voids[p][k];
+        if (B->soft_void[p]) {
+            // A strategic (MC) seat picks up to protect trumps, not to keep a
+            // cheap same-suit cover: the void excludes only same-suit higher
+            // non-trump cards; trumps stay possible.
+            if (c.suit == v.suit && c.suit != g->power_suit && c.value > v.value) return true;
+            continue;
+        }
+        if (can_cover(v, c, g->power_suit)) return true;
     }
     return false;
 }
@@ -826,9 +837,19 @@ static void cl_build_belief(const Game *g, int bot_idx, Belief *B) {
     if (cl_adapt) {
         for (int p = 0; p < g->num_players; p++) {
             if (!B->mc_tell[p]) continue;
-            B->void_n[p] = 0;
+            if (cl_mcvoid) {
+                // Keep the voids, soften them (cl_void_forbidden). Voids of a
+                // trump attack say nothing cheap was possible: drop those.
+                int w = 0;
+                for (int k = 0; k < B->void_n[p]; k++)
+                    if (B->voids[p][k].suit != g->power_suit) B->voids[p][w++] = B->voids[p][k];
+                B->void_n[p] = w;
+                B->soft_void[p] = true;
+            } else {
+                B->void_n[p] = 0;
+                B->distrust_void[p] = true;
+            }
             B->floor_v[p] = 0;
-            B->distrust_void[p] = true;
             B->distrust_floor[p] = true;
         }
     }
@@ -1764,6 +1785,11 @@ static int cl20_choose_impl(const Game *g, int bot_idx,
         if (cl_prof_stats_on) { void cl_prof_stats_report(void); atexit(cl_prof_stats_report); }
         cl_hwc = cl_env_int("CL_HWC", 1);
         cl_selfpol = cl_env_int("CL_SELFPOL", 0);
+        cl_mcvoid = cl_env_int("CL_MCVOID", 0);
+        cl_mcpol = cl_env_int("CL_MCPOL", 0);
+        cd_sim_set_mc_model(cl_env_int("CL_MC_PICKT", 30), cl_env_int("CL_MC_PICKN", 15),
+                            cl_env_int("CL_MC_NOPASS", 11), cl_env_int("CL_MC_FIRST", 50),
+                            cl_env_int("CL_MC_GOOD", 7));
         cl_adapt_k = cl_env_int("CL_ADAPT_K", 5);
         cl_race = cl_env_int("CL_RACE", 0);
         cl_race_mult = cl_env_int("CL_RACE_MULT", 3);
@@ -1810,6 +1836,9 @@ static int cl20_choose_impl(const Game *g, int bot_idx,
             cl_polmap_buf[p] = CD_POL_HW;
             if (p == bot_idx && cl_selfpol) { cl_polmap_buf[p] = (uint8_t)cl_selfpol; any = true; continue; }
             if (cl_profile && B.loose[p]) { cl_polmap_buf[p] = CD_POL_LOOSE; any = true; }
+            else if (cl_mcpol && B.mc_tell[p] && p != bot_idx) {
+                cl_polmap_buf[p] = CD_POL_MC; any = true;
+            }
             else if (cl_mcdef && B.mc_tell[p] && p != bot_idx) {
                 cl_polmap_buf[p] = CD_POL_MCDEF; any = true;
             }

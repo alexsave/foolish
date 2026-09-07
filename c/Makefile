@@ -128,6 +128,11 @@ build/msg_wire_test: tests/msg_wire_test.c $(CORE_OBJ)
 # building. The owner's headline ask — the quality tests live in C now.
 build/anim_plan_test: tests/anim_plan_test.c $(CORE_OBJ)
 	$(CC) $(CFLAGS) tests/anim_plan_test.c $(CORE_OBJ) -o $@ $(LDFLAGS)
+# Empirical opponent-model statistics for an MC bot (tests/mc_behavior.c):
+# how often octogen declines legal throw-ins, which values it throws, how often
+# it picks up while holding a full cover. Fits cl20's strategic-seat model.
+build/mc_behavior: tests/mc_behavior.c $(CORE_OBJ)
+	$(CC) $(CFLAGS) tests/mc_behavior.c $(CORE_OBJ) -o $@ $(LDFLAGS)
 difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/solver_difftest build/replay_v6_test build/anim_plan_test
 	./build/sim_difftest 4 1000 && ./build/apply_difftest 4 200 && \
 	./build/msg_wire_test 20 && \
