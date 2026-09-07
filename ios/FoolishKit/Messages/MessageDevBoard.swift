@@ -55,6 +55,7 @@ public enum MessageDevBoard {
     private static let seatFile = "dev.seat"
     private static let replayFile = "dev.replay"
     private static let slowmoFile = "dev.slowmo"
+    private static let rulerFile = "dev.ruler"
 
     /// The seeded chain, or nil when the flag file is absent - which is the
     /// normal case, including every ordinary DEBUG run.
@@ -137,6 +138,24 @@ public enum MessageDevBoard {
               let n = Double(raw.trimmingCharacters(in: .whitespacesAndNewlines)), n > 0
         else { return 0 }
         return n
+    }()
+
+    /// Draw the debug RULER on the surface's own box (`CollapseRuler`)?
+    ///
+    /// The collapse tween's curve is measured off filmed frames, and a frame
+    /// can only be read if the box's two edges are visible in it - the drawer
+    /// is wool above and wool below, and the host composites the transition
+    /// from snapshots, so there is nothing else in the picture that says where
+    /// our box is. Round 10d drew this ruler, measured, and threw it away; it
+    /// is a flag now so the measurement can be repeated rather than rebuilt.
+    ///
+    /// Read ONCE, like `slowmo` and for the same reason: it is asked for on
+    /// every layout pass of the thing being filmed.
+    public static let rulerOn: Bool = {
+        guard let dir = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroup)
+        else { return false }
+        return FileManager.default.fileExists(atPath: dir.appendingPathComponent(rulerFile).path)
     }()
 
     /// Even-length hex to bytes; nil on anything malformed, so a truncated or
