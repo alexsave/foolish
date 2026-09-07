@@ -50,6 +50,11 @@ Bots (weakest → strongest):
   every player count. See `CORDITE.md` (and `BLACKPOWDER.md`).
 - `fulminate` — cordite + in-game per-seat opponent profiling (skews each
   profiled seat's rollout policy toward its best-fit archetype).
+- `semtex` / `octogen` — cordite's successors (SEMTEX.md, OCTOGEN.md):
+  exact rollout leaves, a wider exact root-solve window, per-seat MC-tells.
+- `cl20` — octogen's successor and the current top of the arena ladder
+  (CL20.md): the weak-seat profiler on, a measured model of proven-strategic
+  seats in rollouts, 3x worlds at 6+ players. Arena/research only.
 - Production TS mirrors: `simple_heuristic`, `champion`, `ultimate_champion`,
   `hacker`, `espresso_prod`, `handwritten_prod` — exact move-for-move ports
   of the (now retired) TS bots, verified by `e2e/bot_parity.test.ts`.
@@ -67,7 +72,9 @@ make tests        # build + run the engine unit tests
 - `cnitro_eval`   — protagonist (seat 0) vs `--opp` everywhere else; reports
   win-rate / mean finish position. e.g.
   `./build/cnitro_eval --strategy=cordite --opp=espresso --players=4 --games=500`
-- `cnitro_elo`    — mixed-pool ELO arena. e.g.
+- `cnitro_elo`    — mixed-pool ELO arena; plays the schedule in parallel
+  (`make OMP=1`) and reports both the sequential K=32 Elo and an order-free
+  Bradley-Terry MLE rating with a bootstrap interval (`--bootstrap=N`). e.g.
   `./build/cnitro_elo --games=3000 --pcs=2,3,4,5,6,7,8 \`
   `    --pool=random,handwritten,espresso,robusta,firecracker,gunpowder,blackpowder,cordite`
 - `cnitro_replay` — replay one game move-by-move from a seed.

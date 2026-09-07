@@ -112,7 +112,8 @@ keeps policing the seams.
 
 **The bot brains are C too.** Every algorithmic strategy (`random`,
 `espresso`, `handwritten`, `simple_heuristic`, `champion`,
-`ultimate_champion`, `hacker`, `cordite`, `octogen`, `fulminate`) lives
+`ultimate_champion`, `hacker`, `cordite`, `octogen`, `fulminate`; the
+arena-only `cl20`, octogen's successor, is `c/CL20.md`) lives
 in `c/src/*_strategy.c` and ships as a second module, `bots.wasm`
 (`make wasm-bots` → `sdk/ts/wasm/bots_wasm.ts`, ~150 KB): the rules kernel
 plus all bots plus a choose-move bridge. A bot turn marshals the game in

@@ -19,7 +19,7 @@ CODE = {
     "champion": "ch", "ultimate_champion": "uc", "hacker": "hk", "fulminate": "fm",
     "espresso_prod": "ep", "handwritten_prod": "hp", "distilled": "dl",
     "semtex": "sx", "semtex_oracle": "sxo", "octogen": "og",
-    "octogen_oracle": "ogo", "torpex": "tx", "novichok": "nv",
+    "octogen_oracle": "ogo", "torpex": "tx", "novichok": "nv", "cl20": "cl",
 }
 
 def raw(a, b):
