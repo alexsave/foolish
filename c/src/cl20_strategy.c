@@ -311,6 +311,18 @@ static _Thread_local int cl_hwc = 1;          // CL_HWC: 0 off, 1 on
 static _Thread_local int cl_selfpol = 0;      // CL_SELFPOL: rollout policy for OUR seat (CD_POL_*)
 static _Thread_local int cl_mcvoid = 0;       // CL_MCVOID: soft voids for proven-strategic seats
 static _Thread_local int cl_mcpol = 0;        // CL_MCPOL: CD_POL_MC model for proven-strategic seats
+// Live-deck exact evaluation (CL_XDECK, CL20.md): heads-up with at most
+// CL_XDECK_CARDS cards left in the deck (flipped trump included) and at most
+// CL_XDECK_TOTAL cards in play, every (world x candidate) is valued by an exact
+// sign-only solve of the rest of the game in that world (the deck order is
+// fixed inside a determinized world) instead of a handwritten rollout; an
+// aborted solve (CL_XDECK_BUDGET nodes) falls back to the rollout.
+static _Thread_local int cl_xdeck = 0;
+static _Thread_local int cl_xdeck_cards = 4;
+static _Thread_local int cl_xdeck_total = 20;
+static _Thread_local long cl_xdeck_budget = 40000;
+static _Thread_local int cl_xdeck_worlds = 0;      // 0 = octogen's W1/W2/W3; else this many worlds, one stage
+static _Thread_local long cl_xd_stat_solves = 0, cl_xd_stat_abort = 0;
 // Adaptive deliberation (CL20.md): after a stage's fixed budget, if the two
 // leading candidates are not statistically separated on their paired
 // same-world finishes, the stage is extended by another block of shared
@@ -355,6 +367,15 @@ void cl_prof_stats_report(void) {
         if (cl_prof_stat[k][0])
             fprintf(stderr, "[cl20 profile] strat=%d seat-decisions=%ld loose=%ld (%.2f%%)\n",
                     k, cl_prof_stat[k][0], cl_prof_stat[k][1], 100.0 * cl_prof_stat[k][1] / cl_prof_stat[k][0]);
+}
+
+
+extern _Thread_local long cd_sim_abort_depth, cd_sim_abort_budget;
+void cl_xdeck_stats_report(void) {
+    fprintf(stderr, "[cl20 xdeck] solves=%ld aborted=%ld (%.1f%%)  depth-aborts=%ld budget-aborts=%ld\n",
+            cl_xd_stat_solves, cl_xd_stat_abort,
+            cl_xd_stat_solves ? 100.0 * cl_xd_stat_abort / cl_xd_stat_solves : 0.0,
+            cd_sim_abort_depth, cd_sim_abort_budget);
 }
 
 static HwCon *cl_con_new(Belief *B, int seat, int kind, uint64_t held) {
@@ -1732,6 +1753,21 @@ static void cl_verify_belief(const Game *g, int bot_idx, const Belief *B) {
 
 // ---------- CL_EXPLAIN emit (defined here: needs Candidates + MOVE_*) -------
 
+// Exact sign-only solve of a determinized world with a live deck (CL_XDECK).
+// Returns 1 with *fp = my finish (1 = I escape, 2 = I am the durak) when the
+// solve resolved; 0 (fall back to the rollout) on abort or a null value.
+static int cl_xdeck_eval(SimState *trial, int me, uint32_t wseed, int *fp) {
+    cd_sim_set_livedeck(1, (uint64_t)wseed);
+    long budget = cl_xdeck_budget;
+    int aborted = 0;
+    int v = cd_sim_solve_d(trial, me, -1, 1, &budget, 1, &aborted);
+    cd_sim_set_livedeck(0, 0);
+    cl_xd_stat_solves++;
+    if (aborted || v == 0) { cl_xd_stat_abort++; return 0; }
+    *fp = (v > 0) ? 1 : 2;
+    return 1;
+}
+
 static int cl20_choose_impl(const Game *g, int bot_idx,
                             const LegalMoves *moves, void *ctx) {
     (void)ctx;
@@ -1787,6 +1823,12 @@ static int cl20_choose_impl(const Game *g, int bot_idx,
         cl_selfpol = cl_env_int("CL_SELFPOL", 0);
         cl_mcvoid = cl_env_int("CL_MCVOID", 0);
         cl_mcpol = cl_env_int("CL_MCPOL", 0);
+        cl_xdeck = cl_env_int("CL_XDECK", 0);
+        cl_xdeck_cards = cl_env_int("CL_XDECK_CARDS", 4);
+        cl_xdeck_total = cl_env_int("CL_XDECK_TOTAL", 20);
+        cl_xdeck_budget = cl_env_int("CL_XDECK_BUDGET", 40000);
+        cl_xdeck_worlds = cl_env_int("CL_XDECK_WORLDS", 0);
+        if (cl_flag("CL_XDECK_STATS")) { void cl_xdeck_stats_report(void); atexit(cl_xdeck_stats_report); }
         cd_sim_set_mc_model(cl_env_int("CL_MC_PICKT", 30), cl_env_int("CL_MC_PICKN", 15),
                             cl_env_int("CL_MC_NOPASS", 11), cl_env_int("CL_MC_FIRST", 50),
                             cl_env_int("CL_MC_GOOD", 7));
@@ -1873,6 +1915,17 @@ static int cl20_choose_impl(const Game *g, int bot_idx,
 
     int W1, W2, W3;
     cl_params(g->num_players, &W1, &W2, &W3);
+    bool xdeck_on = false;
+    if (cl_xdeck && cl_in_count(g) == 2 && (g->deck_count > 0 || g->has_flipped)
+        && g->deck_count + (g->has_flipped ? 1 : 0) <= cl_xdeck_cards) {
+        int total = g->deck_count + (g->has_flipped ? 1 : 0);
+        for (int p = 0; p < g->num_players; p++)
+            if (g->players[p].status == PLAYER_STATUS_IN) total += g->players[p].hand_count;
+        for (int i = 0; i < g->num_battles; i++)
+            total += 1 + (card_is_none(g->table_battles[i].defense) ? 0 : 1);
+        if (total <= cl_xdeck_total) xdeck_on = true;
+    }
+    if (xdeck_on && cl_xdeck_worlds > 0) { W1 = cl_xdeck_worlds; W2 = 0; W3 = 0; }
 
     // World-sampling seed. Depends ONLY on the SERVER-ONLY secret — the strategy
     // LCG, reseeded per decision from state_fnv(g_rng_base) (see wasm_api.c) —
@@ -2062,6 +2115,8 @@ static int cl20_choose_impl(const Game *g, int bot_idx,
                     if (!cd_sim_apply_root_move(trial_sim, bot_idx,
                                                 &moves->moves[C.idx[ci]])) {
                         fp = g->num_players;
+                    } else if (xdeck_on && cl_xdeck_eval(trial_sim, bot_idx, wseed, &fp)) {
+                        /* exact live-deck value */
                     } else if (self_stage) {
                         fp = cd_sim_playout_self(trial_sim, bot_idx, 600,
                                                  cl_bbleaf_on ? cl_bbleaf_cards_eff : 0,

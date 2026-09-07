@@ -36,6 +36,11 @@ endif
 # the ~15% e2e p50 speedup. The generated book (src/leafbook_data.h) is
 # committed; regenerate it with `make leafbook` after an endgame-solver change.
 CFLAGS += -DCD_LEAFBOOK
+# cl20's live-deck exact solves (CL_XDECK, c/CL20.md) run a round or two of
+# deck play before the endgame and need more ply depth than the deck-empty
+# solver's 48; native builds get 62 (the TT depth field is 6 bits). wasm keeps
+# 48 (its depth-indexed solver scratch is sized by this).
+CFLAGS += -DCD_SIM_SOLVE_MAX_DEPTH=62
 
 # The engine + all heuristic / Monte-Carlo bots. Linked into every binary.
 CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_steps.c \

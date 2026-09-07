@@ -144,6 +144,10 @@ int  cd_sim_solve(SimState *s, int me, int alpha, int beta, long budget, int *ab
 int  cd_sim_solve_d(SimState *s, int me, int alpha, int beta, long *budget,
                     int depth0, int *aborted);
 void cd_sim_solve_reset(void);
+// Live-deck solving (cl20): while on, the solver treats deck[] as a fixed
+// draw sequence (top first, no RNG), clones it into children and salts the
+// transposition key per world. Off = the deck-empty-only solver as before.
+void cd_sim_set_livedeck(int on, uint64_t salt);
 
 // LEAFBOOK (c/LEAFBOOK.md, docs/L1_SPEND_PLAN.md §4): a precomputed
 // canonical endgame oracle probed at round-boundary <=K-card nodes BEFORE the

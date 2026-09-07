@@ -171,6 +171,17 @@ static inline uint64_t sim_table_value_mask(const SimState *s) {
 // Forced-draw queue (see cordite_sim.h): pins the next draws to exact card
 // ids. Used by novichok's refill pinning, where the true refill cards after a
 // battle-ending root move are a deterministic function of the live RNG state.
+// Live-deck exact solve (cl20 CL_XDECK): the solver may run on positions with
+// cards still in the deck. Inside one determinized world the remaining deck
+// is a fixed sequence, so the rest of the game is perfect-information: draws
+// pop the top of deck[] (no RNG), child clones carry the deck tail, and the
+// transposition key folds in deck_n plus a per-world salt (positions with the
+// same hands but a different deck order are different positions).
+_Thread_local long cd_sim_abort_depth = 0, cd_sim_abort_budget = 0;   // solver abort causes (stats)
+static _Thread_local int      sim_livedeck = 0;
+static _Thread_local uint64_t sim_key_salt = 0;
+void cd_sim_set_livedeck(int on, uint64_t salt) { sim_livedeck = on; sim_key_salt = salt; }
+
 static _Thread_local uint8_t sim_forced_q[32];
 static _Thread_local int sim_forced_n = 0;
 static _Thread_local int sim_forced_i = 0;
@@ -211,6 +222,13 @@ static int sim_draw(SimState *s, int *out) {
         if (!s->has_flipped) return 0;
         *out = s->flipped_id;
         s->has_flipped = 0;
+        return 1;
+    }
+    if (sim_livedeck) {
+        *out = s->deck[0];
+        for (int i = 1; i < s->deck_n; i++) s->deck[i - 1] = s->deck[i];
+        s->deck_n--;
+        s->deck_count = s->deck_n;
         return 1;
     }
     int idx = (int)(game_random() * s->deck_n);
@@ -895,6 +913,10 @@ static uint64_t sim_fingerprint(const SimState *s, int a, int b) {
     h ^= (uint64_t)s->first_attacker << 9;
     h ^= (uint64_t)(s->good_mask & 0xff) << 17;
     h ^= (uint64_t)s->num_battles << 25;
+    if (sim_livedeck) {
+        h ^= ((uint64_t)s->deck_n << 33) ^ ((uint64_t)s->has_flipped << 40);
+        h ^= sim_key_salt * 0x9E3779B97F4A7C15ull;
+    }
     h ^= 0x94D049BB133111EBull;
     h ^= h >> 31;
     return h ? h : 1;
@@ -1055,7 +1077,9 @@ static void sim_apply_sol(SimState *s, int p, const SolMove *m) {
     }
 }
 
+#ifndef CD_SIM_SOLVE_MAX_DEPTH
 #define CD_SIM_SOLVE_MAX_DEPTH 48    // match the struct solver (CD_SOLVE_MAX_DEPTH)
+#endif                               // (native builds raise it for cl20's live-deck solves)
 #define CD_SOLVE_MOVES_CAP     96    // struct's CD_SOLVE_MAX_MOVES: abort when a
                                      // node has > this many legal moves, so the
                                      // resolved/aborted position SET — hence
@@ -1075,6 +1099,7 @@ static void sim_apply_sol(SimState *s, int p, const SolMove *m) {
 // _Thread_local keeps native OMP race-free (same pattern as solve_ws); wasm
 // strips it. 48×100×18 + 48×328 = 102,144 B BSS.
 #define CD_SIM_SOLVE_REC_SLOTS 100
+_Static_assert(CD_SIM_SOLVE_MAX_DEPTH <= 63, "TT depth field is 6 bits");
 _Static_assert(CD_SIM_SOLVE_REC_SLOTS > CD_SOLVE_MOVES_CAP,
                "recursion gen buffer needs slack above the movecap abort");
 static _Thread_local SolMove  sim_rec_moves[CD_SIM_SOLVE_MAX_DEPTH][CD_SIM_SOLVE_REC_SLOTS];
@@ -1113,8 +1138,8 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
     if (loser >= 0) return (loser == S->me) ? -(1000 - depth) : (1000 - depth);
     int incount = sim_in_count(s);
     if (incount == 0) return 0;
-    if (depth >= CD_SIM_SOLVE_MAX_DEPTH) { S->aborted = 1; return 0; }
-    if (--S->budget <= 0) { S->aborted = 1; return 0; }
+    if (depth >= CD_SIM_SOLVE_MAX_DEPTH) { S->aborted = 1; cd_sim_abort_depth++; return 0; }
+    if (--S->budget <= 0) { S->aborted = 1; cd_sim_abort_budget++; return 0; }
 
     // actor: defender-priority, then first IN actor (mirrors cd_solve).
     int actor = -1;
@@ -1205,7 +1230,8 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
         // Skipping the 64B tail shaves ~20% off this per-node clone — the single
         // hottest memmove in the semtex/octogen/cordite MC profile. deck_n (=0)
         // sits before deck[] and is still copied, so movegen sees a valid count.
-        memcpy(child, s, offsetof(SimState, deck));
+        if (sim_livedeck) *child = *s;
+        else memcpy(child, s, offsetof(SimState, deck));
         sim_apply_sol(child, actor, &moves[i]);
         applied = 1;
         int v = sim_solve_rec(S, child, alpha, beta, depth + 1);
