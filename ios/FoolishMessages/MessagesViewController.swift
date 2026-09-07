@@ -593,8 +593,23 @@ final class MessagesViewController: MSMessagesAppViewController {
         // round-10c "pack the board up first" WAS the owner's "goes up, then
         // goes back down"), then request the collapse. The surface's own
         // height tween takes it from there; see MessagesRootView.follow.
+        // SCHEDULING. Both halves of the auto-collapse are ours: this signal
+        // starts the box's own height tween, and this request starts the
+        // host's drawer animation. They were fired in the same runloop turn,
+        // which sounds simultaneous and is not - `withAnimation` does not begin
+        // until SwiftUI's next render, while the host begins immediately. So
+        // the drawer got a head start of a frame or two, our box was still at
+        // its expanded height while the drawer had already shrunk, and the
+        // difference showed up at the box's BOTTOM: the hand pushed below the
+        // screen edge for the opening frames of every collapse.
+        //
+        // Giving the signal one runloop turn of its own lets the tween be
+        // running before the drawer moves, which is what lines the two curves
+        // up. Measured, not assumed - see CollapseCurveTests.
         collapseSignal.token += 1
-        requestPresentationStyle(.compact)
+        DispatchQueue.main.async { [weak self] in
+            self?.requestPresentationStyle(.compact)
+        }
         await awaitTransitionSettled()
         // The last gate, and the one that matters: the newer run has already
         // put its own bubble in the field, so inserting here would replace it

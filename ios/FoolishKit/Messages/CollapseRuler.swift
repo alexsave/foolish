@@ -69,6 +69,9 @@ public struct CollapseRuler: View {
                     Self.pure(0, 1, 0)
                         .frame(width: geo.size.width, height: Self.edge)
                         .offset(y: geo.size.height - Self.edge)
+                    // The clock, immediately under the top bar.
+                    CollapseClock()
+                        .offset(y: Self.edge)
                 }
                 .frame(width: geo.size.width, height: geo.size.height,
                        alignment: .topLeading)
@@ -90,6 +93,56 @@ public struct CollapseRuler: View {
     /// without knowing which appearance the run was filmed in.
     static func pure(_ r: Double, _ g: Double, _ b: Double) -> Color {
         Color(.sRGB, red: r, green: g, blue: b, opacity: 1)
+    }
+}
+
+
+/// A per-frame CLOCK, drawn as a binary strip a parser can read off a filmed
+/// frame without OCR.
+///
+/// WHY THIS EXISTS. The ruler answers "where were the box's edges in this
+/// frame"; it cannot answer "WHEN was this frame drawn". The video's own
+/// presentation timestamps are the recorder's clock, not the app's, and a
+/// variable-rate recording writes a frame when the SCREEN changes - which is
+/// not the same as when our view last rendered.
+///
+/// That difference is the point. Messages composites this collapse from
+/// SNAPSHOTS of our view (see `MessagesViewController`'s round-10b note, where
+/// the ruler proved the flying rect was a snapshot and not our live view). If
+/// the host is interpolating stale snapshots through the transition, our clock
+/// STOPS ADVANCING on exactly those frames while the geometry keeps moving.
+/// A frame whose clock repeats is a frame we did not draw - and no amount of
+/// tuning an animation curve can fix a frame the app never rendered.
+///
+/// `TimelineView(.animation)` is what makes it a real per-frame value: it
+/// re-evaluates on every display refresh, so the strip changes 60 times a
+/// second when we are genuinely rendering and freezes when we are not.
+///
+/// FORMAT. 14 cells, most significant first, white = 1 and black = 0, so the
+/// strip reads as milliseconds modulo 16384 (16.4s - far longer than any
+/// collapse). White and black rather than the ruler's primaries because this
+/// strip sits over board content and needs the largest possible luminance
+/// separation after h264 chroma subsampling. The cell is 12pt so a column
+/// median is stable at every scale.
+struct CollapseClock: View {
+    static let bits = 14
+    static let cell: CGFloat = 12
+
+    var body: some View {
+        TimelineView(.animation) { ctx in
+            let ms = Int((ctx.date.timeIntervalSince1970 * 1000).rounded())
+                     & ((1 << Self.bits) - 1)
+            HStack(spacing: 0) {
+                ForEach(0..<Self.bits, id: \.self) { i in
+                    let on = (ms >> (Self.bits - 1 - i)) & 1 == 1
+                    Rectangle()
+                        .fill(on ? CollapseRuler.pure(1, 1, 1)
+                                 : CollapseRuler.pure(0, 0, 0))
+                        .frame(width: Self.cell, height: Self.cell)
+                }
+            }
+        }
+        .allowsHitTesting(false)
     }
 }
 
