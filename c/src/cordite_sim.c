@@ -1449,7 +1449,7 @@ static int sim_mcdef_move(SimState *s, int p, SimMove *out) {
 // than handwritten's lowest-max-count group about half the time (keeping low
 // cards for transfers), and declines a legal throw-in 7% of the time.
 // Everything else is handwritten.
-static _Thread_local int mc_pick_t = 30, mc_pick_n = 15, mc_nopass = 11, mc_first = 50, mc_good = 7;
+static _Thread_local int mc_pick_t = 30, mc_pick_n = 15, mc_nopass = 0, mc_first = 0, mc_good = 0;
 void cd_sim_set_mc_model(int pick_t, int pick_n, int nopass, int first_dev, int good) {
     mc_pick_t = pick_t; mc_pick_n = pick_n; mc_nopass = nopass; mc_first = first_dev; mc_good = good;
 }

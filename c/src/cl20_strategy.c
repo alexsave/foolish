@@ -127,7 +127,7 @@ static _Thread_local int cl_mcdef = 1;
 // (cordite: 3 of 4). A softer mixture hedges between heuristic-family
 // opponents (voids true) and MC/human strategic pickups (voids misleading).
 static _Thread_local int cl_void_mod = 4;
-static _Thread_local int cl_profile = 0;
+static _Thread_local int cl_profile = 1;
 static _Thread_local int cl_profile_viol0 = 2;        // CL_PROFILE_V0: violations tolerated for free
 static _Thread_local double cl_profile_viol_w = 0.25; // CL_PROFILE_VW/100 per extra violation
 static _Thread_local long cl_prof_stat[64][2];        // [strategy_key][0=seat-decisions,1=loose]
@@ -307,10 +307,10 @@ static uint64_t cl_score_below_mask(int score, int power) {
     for (int id = 0; id < 52; id++) if (cl_id_score(id, power) < score) m |= 1ull << id;
     return m;
 }
-static _Thread_local int cl_hwc = 1;          // CL_HWC: 0 off, 1 on
+static _Thread_local int cl_hwc = 0;          // CL_HWC: 0 off (measured null), 1 on
 static _Thread_local int cl_selfpol = 0;      // CL_SELFPOL: rollout policy for OUR seat (CD_POL_*)
 static _Thread_local int cl_mcvoid = 0;       // CL_MCVOID: soft voids for proven-strategic seats
-static _Thread_local int cl_mcpol = 0;        // CL_MCPOL: CD_POL_MC model for proven-strategic seats
+static _Thread_local int cl_mcpol = 1;        // CL_MCPOL: CD_POL_MC model for proven-strategic seats
 // Live-deck exact evaluation (CL_XDECK, CL20.md): heads-up with at most
 // CL_XDECK_CARDS cards left in the deck (flipped trump included) and at most
 // CL_XDECK_TOTAL cards in play, every (world x candidate) is valued by an exact
@@ -319,7 +319,7 @@ static _Thread_local int cl_mcpol = 0;        // CL_MCPOL: CD_POL_MC model for p
 // aborted solve (CL_XDECK_BUDGET nodes) falls back to the rollout.
 // CL_WMUL6: world-budget multiplier at 6+ players (the one regime where the
 // compute probe still pays, CL20.md). 1 = octogen's budget.
-static _Thread_local int cl_wmul6 = 1;
+static _Thread_local int cl_wmul6 = 3;
 static _Thread_local int cl_xdeck = 0;
 static _Thread_local int cl_xdeck_cards = 4;
 static _Thread_local int cl_xdeck_total = 20;
@@ -350,7 +350,7 @@ static _Thread_local int cl_race_mult = 3;
 static _Thread_local double cl_race_c = 2.0, cl_race_cf = 2.0;
 static _Thread_local int cl_race_block = 0;
 static _Thread_local int cl_race_min_blocks = 2;
-static _Thread_local int cl_adapt_k = 5;
+static _Thread_local int cl_adapt_k = 0;
 static _Thread_local int cl_adapt_stage = 2;
 static _Thread_local double cl_adapt_c = 2.0;
 #define CL_MAX_W 8192
@@ -1818,16 +1818,16 @@ static int cl20_choose_impl(const Game *g, int bot_idx,
         cl_reply_stage = cl_env_int("CL_REPLY_STAGE", 2);
         cl_void_mod = cl_env_int("CL_VOID_MOD", 4);
         if (cl_void_mod < 2) cl_void_mod = 2;
-        cl_profile = cl_env_int("CL_PROFILE", 0);
+        cl_profile = cl_env_int("CL_PROFILE", 1);
         cl_profile_viol0 = cl_env_int("CL_PROFILE_V0", 2);
         cl_profile_viol_w = cl_env_int("CL_PROFILE_VW", 25) / 100.0;
         cl_prof_stats_on = cl_flag("CL_PROFILE_STATS");
         if (cl_prof_stats_on) { void cl_prof_stats_report(void); atexit(cl_prof_stats_report); }
-        cl_hwc = cl_env_int("CL_HWC", 1);
+        cl_hwc = cl_env_int("CL_HWC", 0);
         cl_selfpol = cl_env_int("CL_SELFPOL", 0);
         cl_mcvoid = cl_env_int("CL_MCVOID", 0);
-        cl_mcpol = cl_env_int("CL_MCPOL", 0);
-        cl_wmul6 = cl_env_int("CL_WMUL6", 1);
+        cl_mcpol = cl_env_int("CL_MCPOL", 1);
+        cl_wmul6 = cl_env_int("CL_WMUL6", 3);
         if (cl_wmul6 < 1) cl_wmul6 = 1;
         cl_xdeck = cl_env_int("CL_XDECK", 0);
         cl_xdeck_cards = cl_env_int("CL_XDECK_CARDS", 4);
@@ -1836,9 +1836,9 @@ static int cl20_choose_impl(const Game *g, int bot_idx,
         cl_xdeck_worlds = cl_env_int("CL_XDECK_WORLDS", 0);
         if (cl_flag("CL_XDECK_STATS")) { void cl_xdeck_stats_report(void); atexit(cl_xdeck_stats_report); }
         cd_sim_set_mc_model(cl_env_int("CL_MC_PICKT", 30), cl_env_int("CL_MC_PICKN", 15),
-                            cl_env_int("CL_MC_NOPASS", 11), cl_env_int("CL_MC_FIRST", 50),
-                            cl_env_int("CL_MC_GOOD", 7));
-        cl_adapt_k = cl_env_int("CL_ADAPT_K", 5);
+                            cl_env_int("CL_MC_NOPASS", 0), cl_env_int("CL_MC_FIRST", 0),
+                            cl_env_int("CL_MC_GOOD", 0));
+        cl_adapt_k = cl_env_int("CL_ADAPT_K", 0);
         cl_race = cl_env_int("CL_RACE", 0);
         cl_race_mult = cl_env_int("CL_RACE_MULT", 3);
         cl_race_c = cl_env_int("CL_RACE_C", 200) / 100.0;
