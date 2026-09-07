@@ -38,8 +38,10 @@ endif
 CFLAGS += -DCD_LEAFBOOK
 # cl20's live-deck exact solves (CL_XDECK, c/CL20.md) run a round or two of
 # deck play before the endgame and need more ply depth than the deck-empty
-# solver's 48; native builds get 62 (the TT depth field is 6 bits). wasm keeps
-# 48 (its depth-indexed solver scratch is sized by this).
+# solver's 48; native builds size the solver arrays for 62 plies (the TT depth
+# field is 6 bits). The RUNTIME cap stays 48 unless a live-deck solve is on, so
+# native cordite/octogen play is identical to bots.wasm, which keeps 48 (its
+# depth-indexed solver scratch is sized by this).
 CFLAGS += -DCD_SIM_SOLVE_MAX_DEPTH=62
 
 # The engine + all heuristic / Monte-Carlo bots. Linked into every binary.

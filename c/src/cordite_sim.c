@@ -1077,9 +1077,11 @@ static void sim_apply_sol(SimState *s, int p, const SolMove *m) {
     }
 }
 
+#define CD_SIM_SOLVE_BASE_DEPTH 48   // match the struct solver (CD_SOLVE_MAX_DEPTH)
 #ifndef CD_SIM_SOLVE_MAX_DEPTH
-#define CD_SIM_SOLVE_MAX_DEPTH 48    // match the struct solver (CD_SOLVE_MAX_DEPTH)
-#endif                               // (native builds raise it for cl20's live-deck solves)
+#define CD_SIM_SOLVE_MAX_DEPTH CD_SIM_SOLVE_BASE_DEPTH   // array depth; native
+#endif                               // builds raise it for cl20's live-deck solves only
+_Static_assert(CD_SIM_SOLVE_MAX_DEPTH >= CD_SIM_SOLVE_BASE_DEPTH, "array depth below the base cap");
 #define CD_SOLVE_MOVES_CAP     96    // struct's CD_SOLVE_MAX_MOVES: abort when a
                                      // node has > this many legal moves, so the
                                      // resolved/aborted position SET — hence
@@ -1138,7 +1140,12 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
     if (loser >= 0) return (loser == S->me) ? -(1000 - depth) : (1000 - depth);
     int incount = sim_in_count(s);
     if (incount == 0) return 0;
-    if (depth >= CD_SIM_SOLVE_MAX_DEPTH) { S->aborted = 1; cd_sim_abort_depth++; return 0; }
+    // Ply cap: the deck-empty solver's 48 everywhere (the production kernel's
+    // cap, so native play stays identical to bots.wasm); a live-deck solve may
+    // use the full array depth.
+    if (depth >= (sim_livedeck ? CD_SIM_SOLVE_MAX_DEPTH : CD_SIM_SOLVE_BASE_DEPTH)) {
+        S->aborted = 1; cd_sim_abort_depth++; return 0;
+    }
     if (--S->budget <= 0) { S->aborted = 1; cd_sim_abort_budget++; return 0; }
 
     // actor: defender-priority, then first IN actor (mirrors cd_solve).
