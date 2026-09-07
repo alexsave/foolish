@@ -267,6 +267,7 @@ int main(int argc, char **argv) {
     int copies_default   = parse_int(get_arg(argc, argv, "copies", "1"), 1);
     K_FACTOR = atof(get_arg(argc, argv, "k-factor", "32"));
     int mle              = parse_int(get_arg(argc, argv, "mle", "1"), 1);
+    const char *gap_pair = get_arg(argc, argv, "gap", NULL);   // --gap=A,B: bootstrap gap for a named pair
     int boot_n           = parse_int(get_arg(argc, argv, "bootstrap", "400"), 400);
     if (boot_n < 10) boot_n = 10;
     if (K_FACTOR <= 0) K_FACTOR = 32.0;
@@ -419,6 +420,31 @@ int main(int argc, char **argv) {
                    d[(int)(0.025 * boot_n)], d[(int)(0.975 * boot_n) < boot_n ? (int)(0.975 * boot_n) : boot_n - 1],
                    (double)n_pos / boot_n, boot_n);
             free(d);
+        }
+        // --gap=A,B: the same bootstrap gap for a NAMED pair, whatever their
+        // ranks (the pooled multi-seed analysis wants one fixed pair).
+        if (gap_pair) {
+            char gb[80]; snprintf(gb, sizeof(gb), "%s", gap_pair);
+            char *cm = strchr(gb, ',');
+            if (cm) {
+                *cm = 0;
+                int ia = -1, ib = -1;
+                for (int i = 0; i < N_COMPS; i++) {
+                    if (!strcmp(COMPS[i].name, gb)) ia = i;
+                    if (!strcmp(COMPS[i].name, cm + 1)) ib = i;
+                }
+                if (ia >= 0 && ib >= 0) {
+                    double *d = malloc((size_t)boot_n * sizeof(double));
+                    int n_pos = 0;
+                    for (int b = 0; b < boot_n; b++) { d[b] = boot[ia][b] - boot[ib][b]; if (d[b] > 0) n_pos++; }
+                    qsort(d, (size_t)boot_n, sizeof(double), cmp_double);
+                    printf("\n  named gap %s - %s = %+.1f  (95%% CI %+.1f .. %+.1f; P(gap>0) = %.3f over %d bootstraps)\n",
+                           COMPS[ia].name, COMPS[ib].name, r0[ia] - r0[ib],
+                           d[(int)(0.025 * boot_n)], d[(int)(0.975 * boot_n) < boot_n ? (int)(0.975 * boot_n) : boot_n - 1],
+                           (double)n_pos / boot_n, boot_n);
+                    free(d);
+                }
+            }
         }
         // Direct head-to-head record between every pair of the top 3 (seat
         // outcomes in games containing both), as the raw evidence.
