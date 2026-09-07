@@ -130,51 +130,51 @@ public struct FSeatBadge: View {
             // Grouped so ONE scale covers both and the name above it is not in
             // the gesture at all (round 41).
             VStack(spacing: FSpace.xs) {
-            ZStack {
-                miniFan
-                if handCount > 0 {
-                    // Round-5 m9: a bare white-on-red numeral over the mini
-                    // fan's own card backs reads as an iOS unread badge; the
-                    // chip backs it with a near-black fill + the card backs'
-                    // subdued edge red instead (see FCountChip).
-                    FCountChip("\(handCount)", font: .system(size: 15, weight: .bold))
+                ZStack {
+                    miniFan
+                    if handCount > 0 {
+                        // Round-5 m9: a bare white-on-red numeral over the mini
+                        // fan's own card backs reads as an iOS unread badge; the
+                        // chip backs it with a near-black fill + the card backs'
+                        // subdued edge red instead (see FCountChip).
+                        FCountChip("\(handCount)", font: .system(size: 15, weight: .bold))
+                    }
                 }
-            }
-            .frame(width: cardW + spread * CGFloat(max(visibleBacks - 1, 0)) + 6, height: cardH + 4)
-            // (no role ring around the mini-fan - the role is shown by the row of
-            // icons below; the gold/red border read as clutter)
-            //
-            // A SEAT'S FLIGHT PAD IS ITS HAND, NOT ITS BOX.
-            //
-            // `SeatFramesKey` is where a card flies FROM when this seat throws
-            // one in, and where it flies TO when they draw or pick one up - and
-            // a flight is positioned by its rect's CENTRE
-            // (`FlyingCardsLayer`). The board used to publish this off a
-            // `.background` wrapped around the WHOLE badge, and this VStack is
-            // lopsided: a ~14.5pt name on top, the 34pt mini fan in the middle,
-            // and a 40pt `FRoleMark.rowHeight` role row underneath. The box's
-            // centre therefore sits about 13pt BELOW the card backs, and a 70pt
-            // ghost hung on it starts roughly 30pt under the badge. Owner,
-            // twice in one pass: "I saw a throw in spawn in definitely lower
-            // than the hand of the other player, then move to expected
-            // position", and later "the attack they threw in (8 of diamonds)
-            // finally animated from a bit under their hand to the table".
-            //
-            // Published from HERE rather than corrected at the call site
-            // because the offset is this VStack's own arithmetic and nothing
-            // outside this file can know it - a constant kept on the board
-            // would rot silently the next time a mark grows a point. `seat` is
-            // nil on every surface that only ever DRAWS a seat (the bubble
-            // snapshot, the gallery, the rulebook), which is exactly how
-            // `RoleMarkFramesKey` below already handles them: those publish
-            // nothing and nothing flies there.
-            .background(GeometryReader { g in
-                Color.clear.preference(
-                    key: SeatFramesKey.self,
-                    value: seat.map { [$0: g.frame(in: .named(boardSpace))] } ?? [:])
-            })
-
-            roleRow
+                .frame(width: cardW + spread * CGFloat(max(visibleBacks - 1, 0)) + 6, height: cardH + 4)
+                // (no role ring around the mini-fan - the role is shown by the row of
+                // icons below; the gold/red border read as clutter)
+                //
+                // A SEAT'S FLIGHT PAD IS ITS HAND, NOT ITS BOX.
+                //
+                // `SeatFramesKey` is where a card flies FROM when this seat throws
+                // one in, and where it flies TO when they draw or pick one up - and
+                // a flight is positioned by its rect's CENTRE
+                // (`FlyingCardsLayer`). The board used to publish this off a
+                // `.background` wrapped around the WHOLE badge, and this VStack is
+                // lopsided: a ~14.5pt name on top, the 34pt mini fan in the middle,
+                // and a 40pt `FRoleMark.rowHeight` role row underneath. The box's
+                // centre therefore sits about 13pt BELOW the card backs, and a 70pt
+                // ghost hung on it starts roughly 30pt under the badge. Owner,
+                // twice in one pass: "I saw a throw in spawn in definitely lower
+                // than the hand of the other player, then move to expected
+                // position", and later "the attack they threw in (8 of diamonds)
+                // finally animated from a bit under their hand to the table".
+                //
+                // Published from HERE rather than corrected at the call site
+                // because the offset is this VStack's own arithmetic and nothing
+                // outside this file can know it - a constant kept on the board
+                // would rot silently the next time a mark grows a point. `seat` is
+                // nil on every surface that only ever DRAWS a seat (the bubble
+                // snapshot, the gallery, the rulebook), which is exactly how
+                // `RoleMarkFramesKey` below already handles them: those publish
+                // nothing and nothing flies there.
+                .background(GeometryReader { g in
+                    Color.clear.preference(
+                        key: SeatFramesKey.self,
+                        value: seat.map { [$0: g.frame(in: .named(boardSpace))] } ?? [:])
+                })
+    
+                roleRow
             }
             // ROUND 28: edge-on when this seat is out. A scale, so the seat keeps
             // the width it reserved on the ring and nobody else moves; anchored
