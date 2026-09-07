@@ -2693,6 +2693,7 @@ static void print_lastdefense(int np) {
 #define LASTMOVE_OUT          5   // tail logs LOG_PLAYER_OUT
 #define LASTMOVE_REFILL       6   // tail logs LOG_DRAW, deck not yet empty
 #define LASTMOVE_REFILL_EMPTY 7   // tail logs LOG_DRAW and empties the deck
+#define LASTMOVE_COVER_TRUMP  8   // covers with a TRUMP, bout stays open
 
 static bool lastmove_apply(Game *g, int seat, const LegalMove *m) {
     switch (m->type) {
@@ -2748,6 +2749,14 @@ static void print_lastmove(int np, int kind) {
                         case LASTMOVE_PASS:   want = (m->type == MOVE_PASS); break;
                         case LASTMOVE_COVER_MID: {
                             if (m->type != MOVE_COVER) break;
+                            Game c = g;
+                            if (!lastmove_apply(&c, seat, m)) break;
+                            want = (c.num_battles > 0);
+                            break;
+                        }
+                        case LASTMOVE_COVER_TRUMP: {
+                            if (m->type != MOVE_COVER) break;
+                            if (m->cards[0].suit != g.power_suit) break;
                             Game c = g;
                             if (!lastmove_apply(&c, seat, m)) break;
                             want = (c.num_battles > 0);
@@ -3524,13 +3533,14 @@ int main(int argc, char **argv) {
     }
     if (argc > 2 && !strcmp(argv[1], "--lastmove")) {
         static const char *names[] = { "attack", "cover", "pickup", "pass",
-                                        "good", "out", "refill", "refillempty" };
+                                        "good", "out", "refill", "refillempty",
+                                        "covertrump" };
         int kind = -1;
         for (size_t k = 0; k < sizeof(names) / sizeof(names[0]); k++)
             if (!strcmp(argv[2], names[k])) { kind = (int)k; break; }
         if (kind < 0) {
             fprintf(stderr, "--lastmove: unknown kind '%s' (attack|cover|pickup|pass|"
-                            "good|out|refill|refillempty)\n", argv[2]);
+                            "good|out|refill|refillempty|covertrump)\n", argv[2]);
             return 2;
         }
         print_lastmove(argc > 3 ? atoi(argv[3]) : 2, kind);
