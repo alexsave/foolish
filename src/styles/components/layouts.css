@@ -199,6 +199,15 @@
   width: 100%;
 }
 
+/* No column cap. For a page that is a WALL of text and deliberately does not
+   scroll (support, privacy), 800px throws away most of a desktop window and
+   pushes the tail of the page off the bottom. The block stays centred; only the
+   ceiling on its width goes. */
+.content--full-width {
+  max-width: none;
+  width: 100%;
+}
+
 .content--centered {
   display: flex;
   flex-direction: column;

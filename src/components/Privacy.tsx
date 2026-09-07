@@ -1,7 +1,7 @@
 export const Privacy = () => {
     return (
         <div className="page page--centered page--with-padding" style={{ width: '100vw' }}>
-            <div className="content content--max-width content--centered content--gap-lg z-content">
+            <div className="content content--full-width content--centered content--gap-lg z-content">
                 <h1 className="title title--page">Privacy Policy</h1>
 
                 <div className="about-content">
@@ -90,7 +90,7 @@ export const Privacy = () => {
                     <h2>Contact</h2>
                     <p>
                         Questions about this policy or your data:{' '}
-                        <a href="mailto:privacy@foolish.cards">privacy@foolish.cards</a>.
+                        <a href="mailto:alexvsaveliev@gmail.com">alexvsaveliev@gmail.com</a>.
                     </p>
                 </div>
             </div>
