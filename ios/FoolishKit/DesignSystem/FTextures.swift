@@ -216,6 +216,13 @@ public enum FTextures {
         return before.subtracting(Cache.loadedNames).count
     }
 
+    /// Which baked textures are decoded and resident right now.
+    ///
+    /// Internal, for tests: "how much memory is held" is otherwise only
+    /// observable by PERFORMING a purge, which is no use to a test whose subject
+    /// is whether something else already performed one.
+    static var loadedResourceNames: Set<String> { Cache.loadedNames }
+
     /// Which baked file a variant's TABLE is. Split out because both the
     /// accessor and the purge have to agree about it, and a purge that named a
     /// different file from the one being drawn would drop the live texture.

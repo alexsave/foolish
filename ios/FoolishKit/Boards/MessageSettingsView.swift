@@ -82,6 +82,31 @@ public struct MessageSettingsView: View {
         .padding(.top, FSpace.s)          // clear the sheet's rounded top corner
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(TableBackground().ignoresSafeArea())
+        // GIVE BACK THE TABLE THE PLAYER DID NOT PICK.
+        //
+        // This sheet is the only screen in the app that draws BOTH table bakes
+        // at once, and it has to: the felt swatch must be felt while the board
+        // is still wool, or picking it is a guess (see `tableSwatch`). So
+        // opening Settings decodes the alternative's whole 592x1280 bake to
+        // fill a 64pt-tall strip - measured in the REAL extension, the
+        // footprint went 37.96 -> 40.09 MB the moment the sheet appeared, and
+        // stayed there for the life of the process. `purgeUnusedTextures`
+        // existed already but only ran on `didReceiveMemoryWarning`, and iOS
+        // sends that AT the ceiling, not on the way up.
+        //
+        // By here the swatch is gone and the bake behind it is being held for
+        // nobody, so this is not a trade against a hitch: nothing is about to
+        // draw it. And it cannot drop the wrong one - `keeping:` is the
+        // material the player has NOW, so switching to felt keeps felt and
+        // releases wool, which is the same call with the answer reversed.
+        .onDisappear { Self.releaseUnusedTableTexture(scheme) }
+    }
+
+    /// The give-back above, named so a test can walk the same path the sheet
+    /// walks. Not private: the wiring is the part worth pinning, and a closure
+    /// inside a `body` is not something a test can reach.
+    static func releaseUnusedTableTexture(_ scheme: ColorScheme) {
+        FTextures.purgeUnusedTextures(keeping: FTextures.Variant(scheme))
     }
 
     private func section<C: View>(_ titleKey: String, @ViewBuilder rows: () -> C) -> some View {

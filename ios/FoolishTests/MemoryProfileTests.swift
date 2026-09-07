@@ -348,4 +348,61 @@ final class TexturePurgeTests: XCTestCase {
         XCTAssertNotNil(FTextures.table(.classic), "the LIVE texture was dropped")
         XCTAssertNotNil(FTextures.fernBack, "the card back is never droppable - cards are always up")
     }
+
+    /// THE SETTINGS SHEET GIVES ITS SECOND TABLE BACK when it closes.
+    ///
+    /// It is the one screen that legitimately holds both bakes at once (the felt
+    /// swatch has to be felt while the board is still wool), so it is also the
+    /// one screen that leaves 2-3 MB of decoded bitmap behind for nothing after
+    /// it goes. Measured in the REAL extension before this: the footprint went
+    /// 37.96 -> 40.09 MB when the sheet opened, and did not come back.
+    ///
+    /// The sheet is really PRESENTED and really dismissed here, rather than the
+    /// give-back being called directly, because the wiring is the whole subject:
+    /// a test that calls `releaseUnusedTableTexture` itself passes just as
+    /// happily with the `.onDisappear` deleted.
+    func testTheSettingsSheetReleasesTheOtherTableWhenItCloses() throws {
+        // Start from a board on WOOL with nothing else resident, so the felt the
+        // sheet loads is unambiguously the sheet's doing.
+        _ = FTextures.table(.classic)
+        _ = FTextures.wood(.classic)
+        _ = FTextures.fernBack
+        FPrefs.shared.setTable(.wool)
+        _ = FTextures.purgeUnusedTextures(keeping: .classic)
+        XCTAssertFalse(FTextures.loadedResourceNames.contains(FeltTexture.classicResourceName),
+                       "fixture: the felt should not be resident before the sheet opens")
+
+        // A REAL window on the host app's scene, not a detached one: SwiftUI
+        // only runs a body - and only delivers onAppear/onDisappear - for a view
+        // that is actually in a window hierarchy. Pinned to `.light` so the
+        // purge's `keeping:` resolves to the same wool the fixture loaded; a
+        // dark simulator would otherwise have the sheet keep `.dark` and this
+        // test would fail for a reason that has nothing to do with its subject.
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }.first,
+            "no window scene - this test needs the app test host, not a library bundle")
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 700)
+        window.overrideUserInterfaceStyle = .light
+        let host = UIHostingController(rootView: MessageSettingsView())
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+
+        // The sheet really did load the OTHER material - without this the test
+        // below could pass vacuously, on a sheet that never drew its swatches.
+        XCTAssertTrue(FTextures.loadedResourceNames.contains(FeltTexture.classicResourceName),
+                      "the settings sheet did not draw its felt swatch, so this test proves nothing")
+
+        window.rootViewController = nil
+        window.isHidden = true
+        RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+
+        XCTAssertFalse(FTextures.loadedResourceNames.contains(FeltTexture.classicResourceName),
+                       "the settings sheet left the felt bake resident after it closed")
+        XCTAssertTrue(FTextures.loadedResourceNames.contains(WoolTexture.classicResourceName),
+                      "the LIVE table was dropped - the board would re-read it immediately")
+    }
 }
