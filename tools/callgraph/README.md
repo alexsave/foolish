@@ -97,10 +97,11 @@ view answers that instead, with two hierarchies:
   where a function appears above itself in the same branch.
 - **Layered graph** — the same neighbourhood drawn as a node-link diagram, with
   the function in the middle: everything that calls it fanning left, everything
-  it calls fanning right, depth selectable. There is no direction switch,
-  because the drawing has no direction to pick — ranks are signed (`-2 calling
-  in` … `here` … `+2 called out`) and **calls always flow rightward**, so
-  anything to the left of a box called it.
+  it calls fanning right, as far as the calls go. There is no direction switch
+  and no depth limit: ranks are signed (`3 calling in` … `here` … `2 called
+  out`) and **calls always flow rightward**, so anything to the left of a box
+  called it, and there is nothing to ration — reachable sets here run a few
+  hundred functions, and the biggest hub in the repo reaches 1,493 of 7,085.
 
   That signed ranking is also what makes cycles fall out rather than needing to
   be hunted: an edge that does not move rightward is a **back edge**, drawn
@@ -117,9 +118,21 @@ view answers that instead, with two hierarchies:
   and three rows tall. As columns the names read straight and the fan-out costs
   vertical scroll, which is free.
 
-The call tree's root and the selection are deliberately separate: clicking a row
-reads that function in the inspector without yanking the tree out from under
-you. `↻ start from …` in the bar re-roots when you actually want that.
+  It draws at 1:1 and scrolls rather than shrinking to fit — a whole reachable
+  set can be fifteen columns wide, and fitting that to a pane makes the names
+  unreadable, which is the one thing this view is for. It opens on the function
+  itself, with the column captions riding the scroll so they never leave.
+
+  `commit_game` is the one to look at: five ranks of callers reaching a
+  Postgres routine, from the bot loop's module init through the TypeScript
+  server and across the PostgREST boundary.
+
+The root and the selection are deliberately separate in both the call tree and
+the graph: clicking a row or a box reads that function in the inspector without
+yanking the drawing out from under you. Picking a function from *outside* the
+drawing — the search results, the inspector's caller/callee lists, the map — is
+navigation rather than exploration, and does re-root; so does `↻ start from …`
+in the bar.
 
 ## Colour
 

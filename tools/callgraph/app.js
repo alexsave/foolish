@@ -528,7 +528,7 @@ function relList(title, edges, other) {
     const cf = document.createElement("span"); cf.className = "cf";
     cf.textContent = G.confs[G.ec[e]]; cf.dataset.c = G.confs[G.ec[e]];
     b.append(nm, cf);
-    b.addEventListener("click", () => { select(j); flyTo(X[j], Y[j], Math.max(cam.k, 1.9)); });
+    b.addEventListener("click", () => gotoNode(j));
     li.append(b); ul.append(li);
   }
   wrap.append(ul);
@@ -613,14 +613,7 @@ function runSearch() {
     const cf = document.createElement("span"); cf.className = "cf";
     cf.textContent = G.files[G.file[i]].split("/").pop();
     b.append(nm, cf);
-    b.addEventListener("click", () => {
-      select(i, true);
-      if (st.view === "tree") {
-        if (tree.kind === "struct") revealSelected();
-        renderTree();
-        scrollToSelected();
-      } else flyTo(X[i], Y[i], 2.4);
-    });
+    b.addEventListener("click", () => gotoNode(i));
     li.append(b); ul.append(li);
   }
   if (!hits.length) {
@@ -757,13 +750,12 @@ const treeBar = { struct: document.getElementById("hStruct"),
                   calls: document.getElementById("hCalls"),
                   graph: document.getElementById("hGraph"),
                   dirSeg: document.getElementById("dirSeg"),
-                  depthSeg: document.getElementById("depthSeg"),
                   out: document.getElementById("dOut"),
                   in: document.getElementById("dIn") };
 // `root` is what the call tree unrolls FROM; `st.sel` is what the inspector is
 // showing. Keeping them apart means clicking a row down the tree reads that
 // function without yanking the whole tree out from under you.
-const tree = { kind: "struct", dir: "out", open: new Set(), rows: 0, root: -1, depth: 3 };
+const tree = { kind: "struct", dir: "out", open: new Set(), rows: 0, root: -1 };
 
 let fileMembers = null;
 function buildFileMembers() {
@@ -1001,7 +993,7 @@ function renderCalls(frag) {
 // rank fans out hard - a top-down drawing of one is a mile wide and a few rows
 // tall, which fits on no screen. As columns, the names read straight and the
 // fan-out costs vertical scroll, which is free.
-const NODE_H = 22, ROW_GAP = 9, COL_GAP = 52, MAX_NODES = 500;
+const NODE_H = 22, ROW_GAP = 9, COL_GAP = 52;
 
 let measurer = null;
 function textWidth(str) {
@@ -1021,32 +1013,30 @@ function clipName(n) {
   return n.length > 30 ? n.slice(0, 29) + "…" : n;
 }
 
-function buildLayered(root, maxDepth) {
+function buildLayered(root) {
   // Signed ranks. The root sits at 0; its callees walk to +1, +2 … and its
   // callers to -1, -2 …, so the whole drawing reads one way: calls flow
   // rightward, and everything to the left of a box called it.
+  // Everything reachable, both ways, to the end. Reachable sets in this repo
+  // run a few hundred functions - the biggest hub reaches 1,493 of 7,085 - so
+  // there is nothing to ration and no depth worth guessing at.
   const rank = new Map([[root, 0]]);
   const order = [root];
-  let cut = false;
-  const grow = (dir, sign, budget) => {
+  const grow = (dir, sign) => {
     const q = [root];
     for (let qi = 0; qi < q.length; qi++) {
       const u = q[qi], d = rank.get(u);
-      if (Math.abs(d) >= maxDepth) continue;
       if (u !== root && Math.sign(d) !== sign) continue;   // stay on our side
       for (const [v] of edgesOf(u, dir)) {
         if (rank.has(v)) continue;
-        if (order.length >= budget) { cut = true; return; }
         rank.set(v, d + sign);
         order.push(v);
         q.push(v);
       }
     }
   };
-  // Half the budget each way, so a wide callee side can never squeeze the
-  // callers off the drawing entirely.
-  grow("out", 1, MAX_NODES / 2);
-  grow("in", -1, MAX_NODES);
+  grow("out", 1);
+  grow("in", -1);
 
   // Every edge between two kept nodes, in the one direction a call has. An
   // edge that does not move rightward is a BACK EDGE - a cycle - and is drawn
@@ -1136,7 +1126,7 @@ function buildLayered(root, maxDepth) {
   const TOP = 34;
   for (const n of order) y.set(n, y.get(n) - miny + TOP + NODE_H / 2);
 
-  return { order, rank, ranks, col, layers, links, y, w, colX, colW, back, cut,
+  return { order, rank, ranks, col, layers, links, y, w, colX, colW, back,
            width: cx - COL_GAP + 16,
            height: maxy - miny + TOP + NODE_H + 24 };
 }
@@ -1156,12 +1146,12 @@ function renderHier(frag) {
     const p = document.createElement("div");
     p.className = "treehint";
     p.innerHTML = "<b>Pick a function first.</b> The layered graph puts it in " +
-      "the middle, everything that calls it to the left, everything it calls " +
-      "to the right — a column per call step, calls always flowing rightward.";
+      "the middle, everything that reaches it to the left, everything it " +
+      "reaches to the right — as far as the calls go, with every column a step.";
     frag.append(p);
     return;
   }
-  const L = buildLayered(tree.root, tree.depth);
+  const L = buildLayered(tree.root);
   tree.rows = L.order.length;
 
   note.hidden = false;
@@ -1170,17 +1160,15 @@ function renderHier(frag) {
     note.append(svgLegendDash(), document.createTextNode(
       L.back + (L.back === 1 ? " edge" : " edges") + " back into an earlier rank"));
   } else {
-    note.append(document.createTextNode("no cycles at this depth"));
+    note.append(document.createTextNode("no cycles in reach"));
   }
 
   const wrap = document.createElement("div");
   wrap.id = "gwrap";
-  // Fit the columns to the pane; the fan-out costs height, which scrolls.
-  const paneW = Math.max(320, treeBody.clientWidth - 2);
-  const fit = Math.min(1, paneW / L.width);
-  const svg = svgEl("svg", { id: "gsvg",
-                             width: Math.round(L.width * fit),
-                             height: Math.round(L.height * fit),
+  // Drawn at 1:1 and scrolled, not shrunk to fit: a whole reachable set can be
+  // fifteen columns wide, and fitting that to a pane makes the names
+  // unreadable, which is the one thing this view is for.
+  const svg = svgEl("svg", { id: "gsvg", width: L.width, height: L.height,
                              viewBox: "0 0 " + L.width + " " + L.height });
   const defs = svgEl("defs");
   for (const [id, col] of [["ah", CSSV["--edge-hard"]], ["ahb", CSSV["--warn"]],
@@ -1195,13 +1183,18 @@ function renderHier(frag) {
   const left = n => L.colX[L.col.get(L.rank.get(n))];
   const right = n => left(n) + L.w.get(n);
 
+  // The drawing is taller than the pane, so the column captions ride the
+  // scroll rather than vanishing off the top with it.
+  const caps = svgEl("g", { class: "caps" });
+  caps.append(svgEl("rect", { x: 0, y: 0, width: L.width, height: 26,
+                              fill: CSSV["--ground"], "fill-opacity": 0.92 }));
   for (let c = 0; c < L.layers.length; c++) {
     if (!L.layers[c].length) continue;
     const r = L.ranks[c];
     const t = svgEl("text", { class: "rank" + (r === 0 ? " here" : ""),
-                              x: L.colX[c], y: 18 });
+                              x: L.colX[c], y: 17 });
     t.textContent = r === 0 ? "here" : r < 0 ? (-r) + " calling in" : r + " called out";
-    svg.append(t);
+    caps.append(t);
   }
 
   const gl = svgEl("g");
@@ -1254,15 +1247,20 @@ function renderHier(frag) {
     svg.append(g);
   }
 
-  if (L.cut) {
-    const p = document.createElement("div");
-    p.className = "treehint";
-    p.textContent = "Stopped at " + MAX_NODES + " functions — drop the depth " +
-      "or switch a language off to see the rest.";
-    frag.append(p);
-  }
+  svg.append(caps);
+  wrap.addEventListener("scroll", () => {
+    caps.setAttribute("transform", "translate(0," + wrap.scrollTop + ")");
+  });
   wrap.append(svg);
   frag.append(wrap);
+
+  // The opening frame should be the function itself, with its callees ahead of
+  // it and its callers a drag to the left - not the far edge of the drawing.
+  const hereX = L.colX[L.col.get(0)], hereY = L.y.get(tree.root);
+  tree.afterRender = () => {
+    wrap.scrollLeft = Math.max(0, hereX - 140);
+    wrap.scrollTop = Math.max(0, hereY - wrap.clientHeight / 2);
+  };
 
   let dragging = false, sx0 = 0, sy0 = 0, l0 = 0, t0 = 0;
   wrap.addEventListener("pointerdown", ev => {
@@ -1322,13 +1320,14 @@ function renderTree() {
   else if (tree.kind === "graph") renderHier(frag);
   else renderCalls(frag);
   treeBody.replaceChildren(frag);
+  if (tree.afterRender) { tree.afterRender(); tree.afterRender = null; }
   renderRootBar();
   document.getElementById("fz").textContent = "—";
   document.getElementById("fv").textContent = tree.rows.toLocaleString() +
     (tree.kind === "graph" ? " nodes" : " rows");
   document.getElementById("fmode").textContent =
     tree.kind === "struct" ? "directory tree"
-      : tree.kind === "graph" ? "layered graph · in and out · depth " + tree.depth
+      : tree.kind === "graph" ? "layered graph · everything reachable"
         : "call tree · " + (tree.dir === "out" ? "calls out" : "callers");
 }
 
@@ -1350,7 +1349,6 @@ function setTreeKind(kind) {
   treeBar.calls.setAttribute("aria-pressed", String(kind === "calls"));
   treeBar.graph.setAttribute("aria-pressed", String(kind === "graph"));
   treeBar.dirSeg.hidden = kind !== "calls";   // the graph shows both at once
-  treeBar.depthSeg.hidden = kind !== "graph";
   document.getElementById("treeCollapse").hidden = kind === "graph";
   if (kind !== "graph") document.getElementById("cycnote").hidden = true;
   if (kind === "struct") revealSelected();
@@ -1370,20 +1368,27 @@ function scrollToSelected() {
 treeBar.struct.addEventListener("click", () => setTreeKind("struct"));
 treeBar.calls.addEventListener("click", () => setTreeKind("calls"));
 treeBar.graph.addEventListener("click", () => setTreeKind("graph"));
-for (const b of treeBar.depthSeg.querySelectorAll("button")) {
-  b.addEventListener("click", () => {
-    tree.depth = +b.dataset.depth;
-    for (const o of treeBar.depthSeg.querySelectorAll("button"))
-      o.setAttribute("aria-pressed", String(o === b));
-    renderTree();
-  });
-}
 treeBar.out.addEventListener("click", () => setTreeDir("out"));
 treeBar.in.addEventListener("click", () => setTreeDir("in"));
 document.getElementById("treeCollapse").addEventListener("click", () => {
   tree.open.clear();
   renderTree();
 });
+
+
+// Picking a function from the search results, the inspector or the map is
+// navigation: it re-roots the drawing. Clicking a box INSIDE the drawing is
+// exploration, and deliberately does not - that is what keeps the tree from
+// jumping out from under the cursor.
+function gotoNode(i) {
+  select(i, true);
+  if (st.view === "tree") {
+    if (tree.kind === "struct") revealSelected();
+    else { tree.root = i; tree.open.clear(); }
+    renderTree();
+    scrollToSelected();
+  } else flyTo(X[i], Y[i], Math.max(cam.k, lodK * 4));
+}
 
 /* ---------------------------------------------------------------- toggles */
 function setLayout() {
@@ -1467,7 +1472,6 @@ new MutationObserver(() => { readTheme(); readVars(); buildColors(); buildLegend
 setLayout();
 buildLegends(); buildCross(); buildMethod();
 treeBar.dirSeg.hidden = true;
-treeBar.depthSeg.hidden = true;
 resize();
 fit();
 // Open on the seam the whole repo turns around: the wasm entry point the web
