@@ -88,3 +88,7 @@ isolate-*.log
 
 # Coverage artifacts
 .v8cov/
+
+# Call-atlas intermediates. tools/callgraph/generate.sh works in a mktemp dir by
+# default; CALLGRAPH_WORK=.cgwork keeps the per-language JSON around to inspect.
+.cgwork/
