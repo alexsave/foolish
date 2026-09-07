@@ -2705,7 +2705,12 @@ static bool lastmove_apply(Game *g, int seat, const LegalMove *m) {
     }
 }
 
-static void print_lastmove(int np, int kind) {
+// `live`: seal the state ONE MOVE SHORT, instead of applying it - for kinds
+// whose replay animates nothing (a mid-battle good is instantaneous state,
+// not a flight - `--lastmove good` opens with the checkmark already there,
+// events=0). A human seated as `act_seat` (printed to stderr) then plays the
+// move themselves, live, same discipline as --lastdefense.
+static void print_lastmove_ex(int np, int kind, int live) {
     static unsigned char body[1024];
     static Game scratch;
     static LegalMoves ml;
@@ -2741,6 +2746,17 @@ static void print_lastmove(int np, int kind) {
                 for (int i = 0; i < ml.n && !found; i++) {
                     const LegalMove *m = &ml.moves[i];
                     if (m->type == MOVE_WAIT) continue;
+                    // play_human_menu's narrowing (legal.c): a human never
+                    // sees Good over an uncovered attack, even though the raw
+                    // bot-facing menu offers it. Any kind captured here is
+                    // meant for a human (live tap or replay) to watch or play,
+                    // so hold every kind to that same human-reachable menu.
+                    if (m->type == MOVE_GOOD) {
+                        bool all_covered_pre = true;
+                        for (int b = 0; b < g.num_battles; b++)
+                            if (card_is_none(g.table_battles[b].defense)) { all_covered_pre = false; break; }
+                        if (!all_covered_pre) continue;
+                    }
 
                     int want = 0;
                     switch (kind) {
@@ -2801,6 +2817,17 @@ static void print_lastmove(int np, int kind) {
                     }
                     if (!want) continue;
 
+                    if (live) {
+                        // Seal ONE MOVE SHORT: `seat` is who must play it, on
+                        // the device, for the animation (or state change) to
+                        // exist at all. `last_actor` is left as whoever acted
+                        // before - there is no move to attribute to `seat` yet.
+                        fprintf(stderr, "lastmove-live: act_seat=%d card=%d/%d "
+                                        "type=%d\n",
+                                seat, m->cards[0].suit, m->cards[0].value, m->type);
+                        found = 1;
+                        break;
+                    }
                     pre_logs = g.num_logs;   // the mark: everything from here
                                               // on is what this bubble is FOR
                     if (!lastmove_apply(&g, seat, m)) continue;
@@ -3531,7 +3558,7 @@ int main(int argc, char **argv) {
                       !(argc > 3 && !strcmp(argv[3], "nopass")), 1);
         return 0;
     }
-    if (argc > 2 && !strcmp(argv[1], "--lastmove")) {
+    if (argc > 2 && (!strcmp(argv[1], "--lastmove") || !strcmp(argv[1], "--lastmove-live"))) {
         static const char *names[] = { "attack", "cover", "pickup", "pass",
                                         "good", "out", "refill", "refillempty",
                                         "covertrump" };
@@ -3543,7 +3570,8 @@ int main(int argc, char **argv) {
                             "good|out|refill|refillempty|covertrump)\n", argv[2]);
             return 2;
         }
-        print_lastmove(argc > 3 ? atoi(argv[3]) : 2, kind);
+        print_lastmove_ex(argc > 3 ? atoi(argv[3]) : 2, kind,
+                           !strcmp(argv[1], "--lastmove-live"));
         return 0;
     }
     if (argc > 2 && !strcmp(argv[1], "--holdcheck")) { print_holdcheck(argv[2]); return 0; }
