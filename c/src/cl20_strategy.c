@@ -128,6 +128,10 @@ static _Thread_local int cl_mcdef = 1;
 // opponents (voids true) and MC/human strategic pickups (voids misleading).
 static _Thread_local int cl_void_mod = 4;
 static _Thread_local int cl_profile = 0;
+static _Thread_local int cl_profile_viol0 = 2;        // CL_PROFILE_V0: violations tolerated for free
+static _Thread_local double cl_profile_viol_w = 0.25; // CL_PROFILE_VW/100 per extra violation
+static _Thread_local long cl_prof_stat[64][2];        // [strategy_key][0=seat-decisions,1=loose]
+static _Thread_local int cl_prof_stats_on = 0;
 // Root endgame-solve card ceiling (cordite: 20). The bitboard solver + TT can
 // resolve bigger endgames within budget; a higher ceiling opens a window where
 // semtex plays exactly while cordite still guesses with MC.
@@ -226,7 +230,18 @@ typedef struct {
     // played since its first draw after t (they must have been drawn, so they
     // consume the slack); used > drawn is a contradiction.
     int8_t   drawn, used;
+    uint8_t  src;             // originating rule (audit): see CL_SRC_*
 } HwCon;
+#define CL_SRC_ATK_TRUMP 1
+#define CL_SRC_ATK_VALUE 2
+#define CL_SRC_ATK_COUNT 3
+#define CL_SRC_THROWIN   4
+#define CL_SRC_COVER_PASS 5
+#define CL_SRC_COVER_GREEDY 6
+#define CL_SRC_GOOD      7
+#define CL_SRC_PICKUP_PASS 8
+#define CL_SRC_PICKUP_COVER 9
+#define CL_SRC_PICKUP_MULTI 10
 
 
 typedef struct {
@@ -261,6 +276,7 @@ typedef struct {
     HwCon    cons[CL_MAX_CONS];
     int      ncons;
     bool     not_hw[MAX_PLAYERS];     // sticky: proven not handwritten-family
+    int      hw_viol[MAX_PLAYERS];    // proven handwritten-consistency violations
     bool     hwc_on[MAX_PLAYERS];     // constraints apply to this seat now
     uint64_t forbid_all[MAX_PLAYERS]; // OR of the seat's live FORBID masks
 } Belief;
@@ -330,6 +346,14 @@ void cl_hwc_stats_report(void) {
             cl_hwc_stat_worlds, cl_hwc_stat_rejects, cl_hwc_stat_fail);
 }
 
+
+void cl_prof_stats_report(void) {
+    for (int k = 0; k < 64; k++)
+        if (cl_prof_stat[k][0])
+            fprintf(stderr, "[cl20 profile] strat=%d seat-decisions=%ld loose=%ld (%.2f%%)\n",
+                    k, cl_prof_stat[k][0], cl_prof_stat[k][1], 100.0 * cl_prof_stat[k][1] / cl_prof_stat[k][0]);
+}
+
 static HwCon *cl_con_new(Belief *B, int seat, int kind, uint64_t held) {
     if (B->ncons >= CL_MAX_CONS) {
         // Drop the OLDEST constraint of this seat (or the oldest overall).
@@ -352,19 +376,28 @@ static uint64_t cl_pinned_mask(const Belief *B, int p) {
 // Seat `p` played card `c` (attack/pass/cover): it was in the hand at every
 // live constraint's time t unless publicly gained after t. A play that a
 // FORBID constraint excludes proves the seat is not handwritten-family.
-static void cl_con_note_play(Belief *B, int p, Card c) {
+static void cl_con_note_play(Belief *B, const Game *g, int p, Card c) {
     uint64_t b = cl_bit(c);
+    bool viol = false;
     for (int i = 0; i < B->ncons; i++) {
         HwCon *k = &B->cons[i];
         if (k->seat != p) continue;
         if (k->gained_after & b) continue;
+        bool v = false;
         if (k->drawn == 0) {
             k->held |= b;
-            if (k->kind == CL_CON_FORBID && (k->forbid & b)) B->not_hw[p] = true;
+            if (k->kind == CL_CON_FORBID && (k->forbid & b)) v = true;
         } else if (k->kind == CL_CON_FORBID && (k->forbid & b)) {
-            if (++k->used > k->drawn) B->not_hw[p] = true;
+            if (++k->used > k->drawn) v = true;
+        }
+        if (v) {
+            viol = true;
+            if (cl_verify)
+                fprintf(stderr, "CL_VERIFY: play-violation seat=%d strat=%d src=%d card v%d s%d drawn=%d used=%d\n",
+                        p, g->players[p].strategy_key, k->src, c.value, c.suit, k->drawn, k->used);
         }
     }
+    if (viol) { B->not_hw[p] = true; B->hw_viol[p]++; }   // one strike per play
 }
 // Seat p drew n unknown cards: constraints persist as count constraints;
 // PICKUP (greedy-cover-fails) has no sound count form and is dropped.
@@ -509,7 +542,7 @@ static void cl_build_belief(const Game *g, int bot_idx, Belief *B) {
                 }
                 bool any_trump = false;
                 if (cl_hwc && p >= 0 && p != bot_idx && L->log_type == LOG_ATTACK
-                    && !B->not_hw[p] && L->num_pairs > 0) {
+                    && (!B->not_hw[p] || cl_profile >= 2) && L->num_pairs > 0) {
                     uint64_t thrown = 0; int n_tr = 0;
                     for (int k = 0; k < L->num_pairs; k++) {
                         thrown |= cl_bit(L->pairs[k].primary);
@@ -517,13 +550,14 @@ static void cl_build_belief(const Game *g, int bot_idx, Belief *B) {
                     }
                     uint64_t held0 = cl_pinned_mask(B, p) | thrown;
                     if (n_tr > 0 && n_tr < L->num_pairs) {
-                        B->not_hw[p] = true;   // mixed trump/non-trump attack: never handwritten
+                        B->not_hw[p] = true; B->hw_viol[p]++;   // mixed trump/non-trump attack: never handwritten
                     } else if (first_attack) {
                         int defcap = (cur_def >= 0) ? hand_n[cur_def] : CARDS_PER_PLAYER;
                         if (n_tr > 0) {
                             // Trump first attack: handwritten only leads trump with
                             // NO non-trump card in hand.
                             HwCon *c = cl_con_new(B, p, CL_CON_FORBID, held0);
+                            c->src = CL_SRC_ATK_TRUMP;
                             c->forbid = ~TRUMP & ((1ull << 52) - 1);
                             if (c->held & c->forbid) B->not_hw[p] = true;
                         } else {
@@ -536,11 +570,13 @@ static void cl_build_belief(const Game *g, int bot_idx, Belief *B) {
                             }
                             if (fb) {
                                 HwCon *c = cl_con_new(B, p, CL_CON_FORBID, held0);
+                                c->src = CL_SRC_ATK_VALUE;
                                 c->forbid = fb;
                                 if (c->held & c->forbid) B->not_hw[p] = true;
                             }
                             if (!(kk == 1 && kk >= defcap)) {
                                 HwCon *c = cl_con_new(B, p, CL_CON_ATTACK, held0);
+                                c->src = CL_SRC_ATK_COUNT;
                                 c->k = (uint8_t)kk; c->v = (uint8_t)v;
                                 c->cap = (uint8_t)(defcap > 60 ? 60 : defcap);
                             }
@@ -556,6 +592,7 @@ static void cl_build_belief(const Game *g, int bot_idx, Belief *B) {
                         else if (L->num_pairs < cap) fb = tv & ~TRUMP & ~thrown;
                         if (fb) {
                             HwCon *c = cl_con_new(B, p, CL_CON_FORBID, held0);
+                            c->src = CL_SRC_THROWIN;
                             c->forbid = fb;
                             if (c->held & c->forbid) B->not_hw[p] = true;
                         }
@@ -580,7 +617,7 @@ static void cl_build_belief(const Game *g, int bot_idx, Belief *B) {
                         if (c.suit != g->power_suit
                             && (decl_vals[p] & (1u << c.value))) B->mc_tell[p] = true;
                         cl_floor_check(B, g, p, c);
-                        cl_con_note_play(B, p, c);
+                        cl_con_note_play(B, g, p, c);
                         cl_pinned_remove(B, p, c);
                     }
                 }
@@ -595,12 +632,12 @@ static void cl_build_belief(const Game *g, int bot_idx, Belief *B) {
             }
             case LOG_COVER:
                 if (p >= 0) hand_n[p] -= L->num_pairs;
-                if (cl_hwc && p >= 0 && p != bot_idx && !B->not_hw[p] && L->num_pairs > 0) {
+                if (cl_hwc && p >= 0 && p != bot_idx && (!B->not_hw[p] || cl_profile >= 2) && L->num_pairs > 0) {
                     uint64_t covers = 0;
                     for (int k = 0; k < L->num_pairs; k++) covers |= cl_bit(L->pairs[k].primary);
                     uint64_t held0 = cl_pinned_mask(B, p) | covers;
                     if (L->num_pairs < unc_n) {
-                        B->not_hw[p] = true;   // partial cover: handwritten covers all or picks up
+                        B->not_hw[p] = true; B->hw_viol[p]++;   // partial cover: handwritten covers all or picks up
                     } else {
                         uint64_t fb = 0;
                         // Pass not taken: handwritten transfers whenever it legally can.
@@ -619,15 +656,19 @@ static void cl_build_belief(const Game *g, int bot_idx, Belief *B) {
                         }
                         // Greedy lowest-score covers: nothing cheaper that covers the
                         // same attack was in the hand (order-free form, CL20.md).
+                        uint64_t fbg = 0;
                         for (int k = 0; k < L->num_pairs; k++) {
                             Card cc = L->pairs[k].primary, tg = L->pairs[k].target;
                             if (card_is_none(tg)) continue;
                             int sc = cc.value + (cc.suit == g->power_suit ? 1000 : 0);
-                            fb |= cl_covers_mask(tg, g->power_suit)
+                            fbg |= cl_covers_mask(tg, g->power_suit)
                                 & cl_score_below_mask(sc, g->power_suit) & ~covers;
                         }
+                        uint64_t fbp = fb;
+                        fb |= fbg;
                         if (fb) {
                             HwCon *c = cl_con_new(B, p, CL_CON_FORBID, held0);
+                            c->src = fbp ? CL_SRC_COVER_PASS : CL_SRC_COVER_GREEDY;
                             c->forbid = fb;
                             if (c->held & c->forbid) B->not_hw[p] = true;
                         }
@@ -646,7 +687,7 @@ static void cl_build_belief(const Game *g, int bot_idx, Belief *B) {
                         if (c.suit != g->power_suit
                             && (decl_vals[p] & (1u << c.value))) B->mc_tell[p] = true;
                         cl_floor_check(B, g, p, c);
-                        cl_con_note_play(B, p, c);
+                        cl_con_note_play(B, g, p, c);
                         cl_pinned_remove(B, p, c);
                     }
                     if (!card_is_none(L->pairs[k].target)) {
@@ -672,11 +713,12 @@ static void cl_build_belief(const Game *g, int bot_idx, Belief *B) {
                 }
                 // Declined with capacity left: handwritten never declines a legal
                 // non-trump throw-in, so it held no non-trump card of a table value.
-                if (cl_hwc && p >= 0 && p != bot_idx && !B->not_hw[p] && cur_def >= 0
+                if (cl_hwc && p >= 0 && p != bot_idx && (!B->not_hw[p] || cl_profile >= 2) && cur_def >= 0
                     && p != cur_def && hand_n[cur_def] - unc_n >= 1 && tbl_n > 0) {
                     uint64_t tv = 0;
                     for (int q = 0; q < tbl_n; q++) tv |= cl_value_mask(tbl[q].value);
                     HwCon *c = cl_con_new(B, p, CL_CON_FORBID, cl_pinned_mask(B, p));
+                    c->src = CL_SRC_GOOD;
                     c->forbid = tv & ~TRUMP;
                     if (c->held & c->forbid) B->not_hw[p] = true;
                 }
@@ -685,7 +727,7 @@ static void cl_build_belief(const Game *g, int bot_idx, Belief *B) {
                 cur_def = L->defender_index;
                 break;
             case LOG_PICKUP:
-                if (cl_hwc && p >= 0 && p != bot_idx && !B->not_hw[p] && unc_n > 0) {
+                if (cl_hwc && p >= 0 && p != bot_idx && (!B->not_hw[p] || cl_profile >= 2) && unc_n > 0) {
                     uint64_t held0 = cl_pinned_mask(B, p);
                     uint64_t fb = 0;
                     if (unc_n == tbl_n && game_pass_allowed(g)) {   // pass not taken
@@ -701,14 +743,17 @@ static void cl_build_belief(const Game *g, int bot_idx, Belief *B) {
                             if (nxt != p && hand_n[nxt] >= 1 + tbl_n) fb |= cl_value_mask(v0);
                         }
                     }
+                    uint64_t fbp = fb;
                     if (unc_n == 1) fb |= cl_covers_mask(unc[0], g->power_suit);
                     if (fb) {
                         HwCon *c = cl_con_new(B, p, CL_CON_FORBID, held0);
+                        c->src = fbp ? CL_SRC_PICKUP_PASS : CL_SRC_PICKUP_COVER;
                         c->forbid = fb;
                         if (c->held & c->forbid) B->not_hw[p] = true;
                     }
                     if (unc_n >= 2) {
                         HwCon *c = cl_con_new(B, p, CL_CON_PICKUP, held0);
+                        c->src = CL_SRC_PICKUP_MULTI;
                         c->unc_n = (uint8_t)(unc_n > 8 ? 8 : unc_n);
                         for (int q = 0; q < c->unc_n; q++) c->unc[q] = (uint8_t)cl_cid(unc[q]);
                     }
@@ -806,10 +851,21 @@ static void cl_build_belief(const Game *g, int bot_idx, Belief *B) {
             }
             int leads = B->trump_leads[p] > 3 ? 3 : B->trump_leads[p];
             conf += 0.25 * leads;
+            // CL_PROFILE=2: proven handwritten-consistency violations (dominated
+            // covers, trump leads holding non-trumps, partial covers...). Strong
+            // MC seats commit a few per game; random seats commit them constantly.
+            if (cl_profile >= 2) {
+                int v = B->hw_viol[p] - cl_profile_viol0;
+                if (v > 0) conf += cl_profile_viol_w * v;
+            }
             if (conf >= 0.70) {
                 B->loose[p] = true;
                 B->void_n[p] = 0;    // weak seats don't obey cover-if-you-can
                 B->floor_v[p] = 0;   // ...or lowest-first attacks
+            }
+            if (cl_prof_stats_on && g->players[p].status == PLAYER_STATUS_IN) {
+                int sk = g->players[p].strategy_key;   // audit only: which bot sits there
+                if (sk >= 0 && sk < 64) { cl_prof_stat[sk][0]++; if (B->loose[p]) cl_prof_stat[sk][1]++; }
             }
         }
     }
@@ -1702,6 +1758,10 @@ static int cl20_choose_impl(const Game *g, int bot_idx,
         cl_void_mod = cl_env_int("CL_VOID_MOD", 4);
         if (cl_void_mod < 2) cl_void_mod = 2;
         cl_profile = cl_env_int("CL_PROFILE", 0);
+        cl_profile_viol0 = cl_env_int("CL_PROFILE_V0", 2);
+        cl_profile_viol_w = cl_env_int("CL_PROFILE_VW", 25) / 100.0;
+        cl_prof_stats_on = cl_flag("CL_PROFILE_STATS");
+        if (cl_prof_stats_on) { void cl_prof_stats_report(void); atexit(cl_prof_stats_report); }
         cl_hwc = cl_env_int("CL_HWC", 1);
         cl_selfpol = cl_env_int("CL_SELFPOL", 0);
         cl_adapt_k = cl_env_int("CL_ADAPT_K", 5);
