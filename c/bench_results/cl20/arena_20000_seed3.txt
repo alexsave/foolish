@@ -1,0 +1,53 @@
+=== ELO arena ===  pool=[random,handwritten,espresso,robusta,firecracker,gunpowder,blackpowder,cordite,semtex,octogen,cl20]  pcs=[2,3,4,5,6,7,8]  games=20000  k=32
+
+=== ELO after 20000 games  (t=2631.2s)  competitors=11 ===
+  rank  competitor              elo   games    win%  durak%
+     1  cl20                 1252.0    9196   28.1%    8.2%
+     2  cordite              1143.0    9257   24.9%   10.1%
+     3  espresso             1079.0    9012   19.6%   20.0%
+     4  firecracker          1072.0    9092   16.6%   19.4%
+     5  semtex               1071.0    9080   26.9%    8.7%
+     6  octogen              1053.0    9074   28.0%    8.2%
+     7  gunpowder            1052.0    9026   18.3%   20.5%
+     8  handwritten           925.0    9093   17.6%   22.4%
+     9  robusta               869.0    9153   14.9%   20.3%
+    10  blackpowder           859.0    9054   21.7%   13.2%
+    11  random                625.0    9230    3.1%   68.1%
+
+=== final ELO ===
+
+=== ELO after 20000 games  (t=2631.2s)  competitors=11 ===
+  rank  competitor              elo   games    win%  durak%
+     1  cl20                 1252.0    9196   28.1%    8.2%
+     2  cordite              1143.0    9257   24.9%   10.1%
+     3  espresso             1079.0    9012   19.6%   20.0%
+     4  firecracker          1072.0    9092   16.6%   19.4%
+     5  semtex               1071.0    9080   26.9%    8.7%
+     6  octogen              1053.0    9074   28.0%    8.2%
+     7  gunpowder            1052.0    9026   18.3%   20.5%
+     8  handwritten           925.0    9093   17.6%   22.4%
+     9  robusta               869.0    9153   14.9%   20.3%
+    10  blackpowder           859.0    9054   21.7%   13.2%
+    11  random                625.0    9230    3.1%   68.1%
+
+=== Bradley-Terry MLE (pairwise seat outcomes, Elo scale, anchored to mean 1000) ===
+  rank  competitor              elo   ci95_lo   ci95_hi   games
+     1  octogen              1086.8    1082.7    1091.4    9074
+     2  cl20                 1084.7    1079.7    1089.8    9196
+     3  semtex               1082.5    1077.5    1087.6    9080
+     4  cordite              1069.8    1064.8    1075.1    9257
+     5  blackpowder          1042.8    1038.2    1047.6    9054
+     6  espresso             1012.0    1006.5    1017.6    9012
+     7  gunpowder            1007.3    1001.9    1012.7    9026
+     8  handwritten          1005.3     999.8    1010.0    9093
+     9  firecracker           966.4     961.6     971.7    9092
+    10  robusta               961.9     957.3     966.7    9153
+    11  random                680.6     671.5     689.1    9230
+
+  gap octogen - cl20 = +2.2  (95% CI -4.3 .. +9.9; P(gap>0) = 0.762 over 400 bootstraps)
+
+  direct pairwise (row beats column: wins-losses over shared games)
+  octogen                       -   2039-2016    1987-1971    2113-1883 
+  cl20                 2016-2039             -   2052-2016    2151-1964 
+  semtex               1971-1987    2016-2052             -   2119-2006 
+  cordite              1883-2113    1964-2151    2006-2119             -

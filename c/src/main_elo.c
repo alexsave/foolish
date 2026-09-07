@@ -443,6 +443,24 @@ int main(int argc, char **argv) {
                            d[(int)(0.025 * boot_n)], d[(int)(0.975 * boot_n) < boot_n ? (int)(0.975 * boot_n) : boot_n - 1],
                            (double)n_pos / boot_n, boot_n);
                     free(d);
+                    // The pair's direct record split by player count: where the
+                    // gap comes from.
+                    printf("  named pair by player count (A ahead of B - B ahead of A):");
+                    for (int pc = 2; pc <= MAX_PLAYERS; pc++) {
+                        long w = 0, l = 0;
+                        for (int gi = 0; gi < games; gi++) {
+                            const GameRec *r = &recs[gi];
+                            if (!r->ok || r->pc != pc) continue;
+                            for (int s1 = 0; s1 < r->pc; s1++) for (int s2 = 0; s2 < r->pc; s2++) {
+                                if (r->strat[s1] != ia || r->strat[s2] != ib) continue;
+                                int p1 = -1, p2 = -1;
+                                for (int q = 0; q < r->pc; q++) { if (r->rank[q] == s1) p1 = q; if (r->rank[q] == s2) p2 = q; }
+                                if (p1 < p2) w++; else if (p1 > p2) l++;
+                            }
+                        }
+                        if (w + l) printf("  pc%d %ld-%ld", pc, w, l);
+                    }
+                    printf("\n");
                 }
             }
         }
