@@ -23,7 +23,7 @@ four. Set `CALLGRAPH_WORK=some/dir` to keep the intermediate JSON around.
 
 | language | method | resolution |
 | --- | --- | --- |
-| C | `clang -ast-dump=json`, every `.c` parsed under **three** build configurations and the readings unioned | clang's own, exact |
+| C | `clang -ast-dump=json`, every `.c` parsed under **three** build configurations and the readings unioned | clang's own, exact; per-binary for duplicated names |
 | TypeScript | the TypeScript compiler API with its checker | exact, except body-less declarations (below) |
 | Swift | a hand-written lexical parser | **by name** — approximate |
 | Rust | the `syn` crate's full AST | by name, plus named closures |
@@ -41,6 +41,17 @@ single-configuration parse silently drops all of it. Defines that *remove*
 code (`GUARDS_VALIDATE_ONLY`, `DEAL_RNG_DISABLED`, `FOOLISH_SEEDED_BOTS_ONLY`)
 are deliberately not set: the union should be the largest honest view of the
 tree.
+
+**A C name is only global if it is defined once.** A non-static function
+defined in exactly one file is one node, and every translation unit calling it
+links there — that is what makes cross-TU edges work. A name defined in
+*several* files is several different functions that happen to share a name:
+there are 32 separate `main()`s in this tree, one per tool binary. Those are
+keyed per file, like statics. Merging them produced a single `main` node with
+every tool's callees hanging off it — 405 of them, which was the largest
+fan-out in the repo and entirely an artifact. A call to a multiply-defined name
+resolves to the definition its own TU can see; where it cannot, the edge is
+marked *name-ambiguous* rather than guessed silently.
 
 **Swift is lexical, not semantic.** No `swiftc`, SourceKit or IndexStore is
 assumed to be present, so `analyze_swift.py` blanks comments and string
@@ -117,6 +128,11 @@ view answers that instead, with two hierarchies:
   are wide and a rank fans out hard: top-down, one fanned rank is a mile wide
   and three rows tall. As columns the names read straight and the fan-out costs
   vertical scroll, which is free.
+
+  A column is a **distance from the function, not a grouping** — two boxes side
+  by side can share nothing at all, which reads as tangle when it is only
+  adjacency. Hovering a box is what settles it: its own edges and the functions
+  on the other end of them stay lit and everything else recedes.
 
   It draws at 1:1 and scrolls rather than shrinking to fit — a whole reachable
   set can be fifteen columns wide, and fitting that to a pane makes the names

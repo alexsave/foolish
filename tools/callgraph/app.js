@@ -1198,6 +1198,7 @@ function renderHier(frag) {
   }
 
   const gl = svgEl("g");
+  const incident = new Map();     // node -> its own links, for the hover focus
   for (const l of L.links) {
     const y1 = L.y.get(l.u), y2 = L.y.get(l.v);
     let d, cls = "lnk";
@@ -1222,12 +1223,18 @@ function renderHier(frag) {
     title.textContent = G.name[l.u] + " → " + G.name[l.v] +
       "  (" + l.conf + (l.back ? ", back edge — a cycle" : "") + ")";
     p.append(title);
+    for (const end of [l.u, l.v]) {
+      if (!incident.has(end)) incident.set(end, []);
+      incident.get(end).push(p);
+    }
     gl.append(p);
   }
   svg.append(gl);
 
+  const boxOf = new Map();
   for (const n of L.order) {
     const g = svgEl("g", { class: "nd" + (n === st.sel ? " sel" : "") });
+    boxOf.set(n, g);
     const x = left(n), y = L.y.get(n) - NODE_H / 2;
     g.append(svgEl("rect", { x, y, width: L.w.get(n), height: NODE_H, rx: 3,
                              fill: COLOR[n], "fill-opacity": dark ? 0.32 : 0.22,
@@ -1243,6 +1250,24 @@ function renderHier(frag) {
       computeEgo();
       renderSel();
       renderTree();
+    });
+    // A column is a DISTANCE from the root, not a group: two boxes side by
+    // side may share nothing at all. Hovering one answers that directly - its
+    // own edges and the functions on the other end of them stay lit, and
+    // everything else recedes.
+    g.addEventListener("pointerenter", () => {
+      svg.classList.add("dim");
+      for (const p of incident.get(n) || []) p.classList.add("hot");
+      g.classList.add("near");
+      for (const l of L.links) {
+        if (l.u === n) boxOf.get(l.v) && boxOf.get(l.v).classList.add("near");
+        else if (l.v === n) boxOf.get(l.u) && boxOf.get(l.u).classList.add("near");
+      }
+    });
+    g.addEventListener("pointerleave", () => {
+      svg.classList.remove("dim");
+      for (const p of incident.get(n) || []) p.classList.remove("hot");
+      for (const b of boxOf.values()) b.classList.remove("near");
     });
     svg.append(g);
   }

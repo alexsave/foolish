@@ -104,13 +104,21 @@ def main():
 
     # Build node ids. Non-static functions are global: one node per name,
     # attributed to the file that defines them. Static functions are per-file.
-    global_home = {}
+    # A non-static name defined in exactly ONE file is a genuine global: one
+    # node, and every TU that calls it links to that node. A name defined in
+    # SEVERAL files is several different functions that happen to share a name
+    # - there are 32 separate main()s in this tree, one per tool binary - so
+    # those are keyed per file like statics. Merging them made one node with
+    # every tool's callees hanging off it.
+    homes = {}
     for tu, name, fl, line, static, loc, _ in defs:
-        if not static and name not in global_home:
-            global_home[name] = fl
+        if not static:
+            homes.setdefault(name, set()).add(fl)
+    global_home = {n: next(iter(fs)) for n, fs in homes.items() if len(fs) == 1}
+    multi = {n: sorted(fs) for n, fs in homes.items() if len(fs) > 1}
 
     def nid(name, fl, static):
-        if static:
+        if static or name in multi:
             return f"c:{fl}#{name}"
         return f"c:{global_home.get(name, fl)}#{name}"
 
@@ -153,7 +161,7 @@ def main():
             if src not in nodes:
                 continue
 
-            def cb(n, src=src, tu_static=tu_static):
+            def cb(n, src=src, tu_static=tu_static, cur_file=cur_file):
                 k = n.get("kind")
                 if k not in ("DeclRefExpr", "MemberExpr"):
                     return
@@ -163,8 +171,20 @@ def main():
                 cname = d.get("name")
                 if not cname:
                     return
+                conf = "high"
                 if cname in tu_static:
                     tgt = f"c:{tu_static[cname]}#{cname}"
+                elif cname in multi:
+                    # Several binaries define this name. The one this TU sees
+                    # is the one it links against; failing that we cannot tell
+                    # which, so say so rather than guess silently.
+                    if cname in tu_files:
+                        tgt = f"c:{tu_files[cname]}#{cname}"
+                    else:
+                        same_dir = [f for f in multi[cname]
+                                    if os.path.dirname(f) == os.path.dirname(cur_file)]
+                        tgt = f"c:{(same_dir or multi[cname])[0]}#{cname}"
+                        conf = "med"
                 elif cname in global_home:
                     tgt = f"c:{global_home[cname]}#{cname}"
                 else:
@@ -176,7 +196,9 @@ def main():
                     return
                 if tgt == src:
                     return
-                edges[(src, tgt)] = dict(s=src, t=tgt, conf="high")
+                prev = edges.get((src, tgt))
+                if not prev or (prev["conf"] == "med" and conf == "high"):
+                    edges[(src, tgt)] = dict(s=src, t=tgt, conf=conf)
 
             for i in top.get("inner", []) or []:
                 walk(i, cb)
