@@ -42,6 +42,8 @@ static int dispatch_choose(int strat, const Game *g, int pi, const LegalMoves *m
         case STRAT_OCTOGEN:     return octogen_strategy_choose(g, pi, moves, NULL);
         case STRAT_TORPEX:      return torpex_strategy_choose(g, pi, moves, NULL);
         case STRAT_NOVICHOK:    return novichok_strategy_choose(g, pi, moves, NULL);
+        case STRAT_CL20:        return cl20_strategy_choose(g, pi, moves, NULL);
+        case STRAT_CL20_ORACLE: return cl20_oracle_strategy_choose(g, pi, moves, NULL);
         default:                return -1;
     }
 }

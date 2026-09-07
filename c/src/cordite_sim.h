@@ -98,6 +98,13 @@ void cd_sim_set_forced_draws(const uint8_t *ids, int n);
 // !cd_no_earlyexit.
 int  cd_sim_playout(SimState *s, int my_idx, int max_turns, int early_exit);
 
+// Self-search playout (cl20): my first post-root decision is chosen by search
+// over my legal moves (up to self_cap playouts, best finish for me), the rest
+// by policy. Returns my finish position.
+int  cd_sim_playout_self(SimState *s, int my_idx, int max_turns,
+                         int leaf_cards, long leaf_budget,
+                         const uint8_t *pol, int self_cap);
+
 // As cd_sim_playout, but small 2-player deck-empty endgames are resolved
 // exactly by the bitboard solver (sign-only null window, `leaf_budget` nodes,
 // positions with <= `leaf_cards` cards) instead of played out by the policy.

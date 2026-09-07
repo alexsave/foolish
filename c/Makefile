@@ -51,7 +51,7 @@ CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_steps.
             src/handwritten_prod_strategy.c src/distill_feat.c \
             src/distilled_strategy.c src/semtex_strategy.c \
             src/octogen_strategy.c src/torpex_strategy.c \
-            src/torpex_value.c src/novichok_strategy.c \
+            src/torpex_value.c src/novichok_strategy.c src/cl20_strategy.c \
             src/bot_knobs.c src/bot_roster.c src/bot_drive.c \
             src/sha256.c src/msg_wire.c src/anim_plan.c src/analyse.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)

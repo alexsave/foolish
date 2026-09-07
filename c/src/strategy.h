@@ -39,6 +39,8 @@
 #define STRAT_OCTOGEN_ORACLE    21   // octogen at 6x worlds (research/audit only)
 #define STRAT_TORPEX            22   // semtex + learned value net replacing rollouts
 #define STRAT_NOVICHOK          23   // CHEATING apex (real hands; research/eval only)
+#define STRAT_CL20              24   // octogen's successor (c/CL20.md)
+#define STRAT_CL20_ORACLE       25   // cl20 at 6x worlds (research/audit only)
 
 // Returns chosen move index in moves->moves[] (0..moves->n-1).
 typedef int (*StrategyFn)(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
@@ -74,6 +76,8 @@ int octogen_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves,
 int octogen_oracle_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 int torpex_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 int novichok_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
+int cl20_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
+int cl20_oracle_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 
 // Map a strategy name (or short alias) to its STRAT_* id; -1 if unknown.
 // Single source of truth for the name<->id mapping the main programs share.
@@ -103,6 +107,8 @@ static inline int parse_strategy(const char *s) {
     if (!strcmp(s, "octogen_oracle")    || !strcmp(s, "ogo")) return STRAT_OCTOGEN_ORACLE;
     if (!strcmp(s, "torpex")            || !strcmp(s, "tx"))  return STRAT_TORPEX;
     if (!strcmp(s, "novichok")          || !strcmp(s, "nv"))  return STRAT_NOVICHOK;
+    if (!strcmp(s, "cl20")              || !strcmp(s, "cl"))  return STRAT_CL20;
+    if (!strcmp(s, "cl20_oracle")       || !strcmp(s, "clo")) return STRAT_CL20_ORACLE;
     return -1;
 }
 

@@ -64,6 +64,8 @@ static int dispatch_choose(int strat, const Game *g, int pi, const LegalMoves *m
         case STRAT_OCTOGEN:     return octogen_strategy_choose(g, pi, moves, NULL);
         case STRAT_TORPEX:      return torpex_strategy_choose(g, pi, moves, NULL);
         case STRAT_NOVICHOK:    return novichok_strategy_choose(g, pi, moves, NULL);
+        case STRAT_CL20:        return cl20_strategy_choose(g, pi, moves, NULL);
+        case STRAT_CL20_ORACLE: return cl20_oracle_strategy_choose(g, pi, moves, NULL);
         default:                return -1;
     }
 }
@@ -195,6 +197,66 @@ static double wall_secs(void) {
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
 
+// One scheduled/played game: the arena's record, kept so ratings can be fit
+// order-free after the fact (and resampled for a bootstrap).
+typedef struct {
+    uint32_t seed;
+    int8_t   pc;
+    int8_t   ok;
+    int8_t   strat[MAX_PLAYERS];   // competitor index per seat
+    int8_t   rank[MAX_PLAYERS];    // rank[r] = seat that finished position r
+} GameRec;
+
+static int cmp_double(const void *a, const void *b) {
+    double x = *(const double *)a, y = *(const double *)b;
+    return x < y ? -1 : x > y ? 1 : 0;
+}
+
+// Bradley-Terry maximum likelihood over pairwise seat outcomes (every ordered
+// pair of seats in a game is one comparison, the same decomposition the
+// sequential Elo uses), by Hunter's MM iteration, on a 400/ln(10) Elo scale
+// anchored so the ratings average 1000. A tiny symmetric prior (half a win
+// each way per pair) keeps an undefeated competitor finite.
+static void bt_fit(const GameRec *recs, int games, double *rating_out) {
+    static double W[MAX_COMPS][MAX_COMPS];   // W[i][j] = wins of i over j
+    for (int i = 0; i < N_COMPS; i++) for (int j = 0; j < N_COMPS; j++) W[i][j] = (i == j) ? 0.0 : 0.5;
+    for (int gi = 0; gi < games; gi++) {
+        const GameRec *r = &recs[gi];
+        if (!r->ok) continue;
+        for (int a = 0; a < r->pc; a++) {
+            for (int b = a + 1; b < r->pc; b++) {
+                int i = r->strat[r->rank[a]], j = r->strat[r->rank[b]];   // i finished ahead of j
+                if (i == j) continue;
+                W[i][j] += 1.0;
+            }
+        }
+    }
+    double g[MAX_COMPS];
+    for (int i = 0; i < N_COMPS; i++) g[i] = 1.0;
+    for (int it = 0; it < 2000; it++) {
+        double maxrel = 0.0;
+        for (int i = 0; i < N_COMPS; i++) {
+            double wins = 0.0, denom = 0.0;
+            for (int j = 0; j < N_COMPS; j++) {
+                if (i == j) continue;
+                wins += W[i][j];
+                denom += (W[i][j] + W[j][i]) / (g[i] + g[j]);
+            }
+            double ng = denom > 0 ? wins / denom : g[i];
+            double rel = fabs(ng - g[i]) / (g[i] > 1e-300 ? g[i] : 1e-300);
+            if (rel > maxrel) maxrel = rel;
+            g[i] = ng;
+        }
+        // renormalize (geometric mean 1) to keep the scale fixed
+        double lm = 0.0;
+        for (int i = 0; i < N_COMPS; i++) lm += log(g[i]);
+        lm /= N_COMPS;
+        for (int i = 0; i < N_COMPS; i++) g[i] *= exp(-lm);
+        if (maxrel < 1e-9) break;
+    }
+    for (int i = 0; i < N_COMPS; i++) rating_out[i] = 1000.0 + 400.0 * log10(g[i]);
+}
+
 int main(int argc, char **argv) {
     const char *pool_str = get_arg(argc, argv, "pool",
                                     "random,handwritten,espresso,robusta,firecracker,gunpowder");
@@ -204,6 +266,9 @@ int main(int argc, char **argv) {
     uint32_t seed0       = (uint32_t)parse_int(get_arg(argc, argv, "seed", "1"), 1);
     int copies_default   = parse_int(get_arg(argc, argv, "copies", "1"), 1);
     K_FACTOR = atof(get_arg(argc, argv, "k-factor", "32"));
+    int mle              = parse_int(get_arg(argc, argv, "mle", "1"), 1);
+    int boot_n           = parse_int(get_arg(argc, argv, "bootstrap", "400"), 400);
+    if (boot_n < 10) boot_n = 10;
     if (K_FACTOR <= 0) K_FACTOR = 32.0;
 
     // Parse strategy pool. Each entry can be "name" or "name:count".
@@ -250,24 +315,47 @@ int main(int argc, char **argv) {
     double t_start = wall_secs();
     int rng_state = (int)seed0 * 2654435761u;
 
+    // Schedule every game up front (player count, seat strategies, seed) from
+    // the SAME rng stream as before, so the sequence of games is identical to
+    // the old serial loop. Games are then independent, so with `make OMP=1`
+    // they fan across cores; the sequential K=32 Elo is applied afterwards in
+    // schedule order, so its trajectory is bit-identical to the serial run.
+    GameRec *recs = calloc((size_t)games, sizeof(GameRec));
+    if (!recs) { fprintf(stderr, "out of memory\n"); return 2; }
     for (int gi = 1; gi <= games; gi++) {
-        // Pick PC.
+        GameRec *r = &recs[gi - 1];
         rng_state = rng_state * 1103515245 + 12345;
-        int pc = pcs[((unsigned)rng_state >> 16) % (unsigned)n_pcs];
-        // Sample strategies for each seat (with replacement).
-        int seat_strats[MAX_PLAYERS];
-        for (int s = 0; s < pc; s++) {
+        r->pc = (int8_t)pcs[((unsigned)rng_state >> 16) % (unsigned)n_pcs];
+        for (int s = 0; s < r->pc; s++) {
             rng_state = rng_state * 1103515245 + 12345;
-            seat_strats[s] = ((unsigned)rng_state >> 16) % (unsigned)N_COMPS;
+            r->strat[s] = (int8_t)(((unsigned)rng_state >> 16) % (unsigned)N_COMPS);
         }
-        int rankings[MAX_PLAYERS];
-        uint32_t game_seed = (uint32_t)(seed0 + (uint32_t)gi * 2654435761u);
-        if (!play_one_game(game_seed, pc, seat_strats, rankings)) {
-            fprintf(stderr, "game %d (pc=%d) aborted; skipping\n", gi, pc);
+        r->seed = (uint32_t)(seed0 + (uint32_t)gi * 2654435761u);
+        r->ok = 0;
+    }
+    if (games > 0) {   // warm lazy shared state single-threaded (as cnitro_eval)
+        int ss[MAX_PLAYERS], rk[MAX_PLAYERS];
+        for (int s = 0; s < recs[0].pc; s++) ss[s] = recs[0].strat[s];
+        recs[0].ok = play_one_game(recs[0].seed, recs[0].pc, ss, rk) ? 1 : 0;
+        for (int s = 0; s < recs[0].pc; s++) recs[0].rank[s] = (int8_t)rk[s];
+    }
+    #pragma omp parallel for schedule(dynamic)
+    for (int gi = 1; gi < games; gi++) {
+        int ss[MAX_PLAYERS], rk[MAX_PLAYERS];
+        for (int s = 0; s < recs[gi].pc; s++) ss[s] = recs[gi].strat[s];
+        recs[gi].ok = play_one_game(recs[gi].seed, recs[gi].pc, ss, rk) ? 1 : 0;
+        for (int s = 0; s < recs[gi].pc; s++) recs[gi].rank[s] = (int8_t)rk[s];
+    }
+
+    for (int gi = 1; gi <= games; gi++) {
+        GameRec *r = &recs[gi - 1];
+        if (!r->ok) {
+            fprintf(stderr, "game %d (pc=%d) aborted; skipping\n", gi, r->pc);
             continue;
         }
-        update_elos_from_game(seat_strats, rankings, pc);
-
+        int ss[MAX_PLAYERS], rk[MAX_PLAYERS];
+        for (int s = 0; s < r->pc; s++) { ss[s] = r->strat[s]; rk[s] = r->rank[s]; }
+        update_elos_from_game(ss, rk, r->pc);
         if (gi % snap_every == 0 || gi == games) {
             print_snapshot(gi, wall_secs() - t_start);
         }
@@ -275,6 +363,92 @@ int main(int argc, char **argv) {
 
     printf("\n=== final ELO ===\n");
     print_snapshot(games, wall_secs() - t_start);
+
+    // The sequential K=32 Elo above is order-dependent and noisy (SEMTEX.md:
+    // game order alone moves final ratings by >100 points). The maximum-
+    // likelihood Bradley-Terry fit over the same pairwise outcomes is the
+    // order-free estimate, and a game-level bootstrap gives it an interval.
+    if (mle) {
+        printf("\n=== Bradley-Terry MLE (pairwise seat outcomes, Elo scale, anchored to mean 1000) ===\n");
+        double *r0 = malloc((size_t)N_COMPS * sizeof(double));
+        bt_fit(recs, games, r0);
+        double *lo = calloc((size_t)N_COMPS, sizeof(double));
+        double *hi = calloc((size_t)N_COMPS, sizeof(double));
+        double **boot = malloc((size_t)N_COMPS * sizeof(double *));
+        for (int i = 0; i < N_COMPS; i++) boot[i] = malloc((size_t)boot_n * sizeof(double));
+        GameRec *samp = malloc((size_t)games * sizeof(GameRec));
+        double *rb = malloc((size_t)(N_COMPS > boot_n ? N_COMPS : boot_n) * sizeof(double));
+        uint32_t bs = seed0 * 747796405u + 2891336453u;
+        for (int b = 0; b < boot_n; b++) {
+            for (int gi = 0; gi < games; gi++) {
+                bs = bs * 1664525u + 1013904223u;
+                samp[gi] = recs[(bs >> 8) % (uint32_t)games];
+            }
+            bt_fit(samp, games, rb);
+            for (int i = 0; i < N_COMPS; i++) boot[i][b] = rb[i];
+        }
+        int order[MAX_COMPS];
+        for (int i = 0; i < N_COMPS; i++) order[i] = i;
+        // sort by r0 descending
+        for (int a = 1; a < N_COMPS; a++) {
+            int k = order[a]; int j = a - 1;
+            while (j >= 0 && r0[order[j]] < r0[k]) { order[j + 1] = order[j]; j--; }
+            order[j + 1] = k;
+        }
+        printf("  %4s  %-18s %8s  %8s  %8s  %6s\n", "rank", "competitor", "elo", "ci95_lo", "ci95_hi", "games");
+        for (int k = 0; k < N_COMPS; k++) {
+            int i = order[k];
+            // Sort a COPY: the per-replicate pairing in boot[][] is what the
+            // gap interval below needs.
+            memcpy(rb, boot[i], (size_t)boot_n * sizeof(double));
+            qsort(rb, (size_t)boot_n, sizeof(double), cmp_double);
+            lo[i] = rb[(int)(0.025 * boot_n)];
+            hi[i] = rb[(int)(0.975 * boot_n) < boot_n ? (int)(0.975 * boot_n) : boot_n - 1];
+            printf("  %4d  %-18s %8.1f  %8.1f  %8.1f  %6d\n", k + 1, COMPS[i].name, r0[i], lo[i], hi[i], COMPS[i].games);
+        }
+        // Head-to-head rating GAP between the top two, with its own bootstrap
+        // interval — the number that says whether #1 is definitively #1.
+        if (N_COMPS >= 2) {
+            int a = order[0], b2 = order[1];
+            double *d = malloc((size_t)boot_n * sizeof(double));
+            int n_pos = 0;
+            for (int b = 0; b < boot_n; b++) { d[b] = boot[a][b] - boot[b2][b]; if (d[b] > 0) n_pos++; }
+            qsort(d, (size_t)boot_n, sizeof(double), cmp_double);
+            printf("\n  gap %s - %s = %+.1f  (95%% CI %+.1f .. %+.1f; P(gap>0) = %.3f over %d bootstraps)\n",
+                   COMPS[a].name, COMPS[b2].name, r0[a] - r0[b2],
+                   d[(int)(0.025 * boot_n)], d[(int)(0.975 * boot_n) < boot_n ? (int)(0.975 * boot_n) : boot_n - 1],
+                   (double)n_pos / boot_n, boot_n);
+            free(d);
+        }
+        // Direct head-to-head record between every pair of the top 3 (seat
+        // outcomes in games containing both), as the raw evidence.
+        printf("\n  direct pairwise (row beats column: wins-losses over shared games)\n");
+        int top = N_COMPS < 4 ? N_COMPS : 4;
+        for (int x = 0; x < top; x++) {
+            int i = order[x];
+            printf("  %-18s", COMPS[i].name);
+            for (int y = 0; y < top; y++) {
+                int j = order[y];
+                if (i == j) { printf("  %11s", "-"); continue; }
+                long w = 0, l = 0;
+                for (int gi = 0; gi < games; gi++) {
+                    const GameRec *r = &recs[gi];
+                    if (!r->ok) continue;
+                    for (int s1 = 0; s1 < r->pc; s1++) for (int s2 = 0; s2 < r->pc; s2++) {
+                        if (r->strat[s1] != i || r->strat[s2] != j) continue;
+                        int p1 = -1, p2 = -1;
+                        for (int q = 0; q < r->pc; q++) { if (r->rank[q] == s1) p1 = q; if (r->rank[q] == s2) p2 = q; }
+                        if (p1 < p2) w++; else if (p1 > p2) l++;
+                    }
+                }
+                printf("  %5ld-%-5ld", w, l);
+            }
+            printf("\n");
+        }
+        for (int i = 0; i < N_COMPS; i++) free(boot[i]);
+        free(boot); free(samp); free(rb); free(r0); free(lo); free(hi);
+    }
+    free(recs);
 
     return 0;
 }

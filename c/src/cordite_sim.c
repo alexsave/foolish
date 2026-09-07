@@ -1616,6 +1616,79 @@ int cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
                               leaf_cards, leaf_budget, pol);
 }
 
+// ---------- self-search playout (cl20) -----------------------------------
+// The FIRST decision of MY seat after the root move is chosen by search over
+// my full legal move set (each candidate played out with the policy, the
+// best finish for me taken) instead of the handwritten policy. The rollout
+// policy models our own future play as handwritten — a much weaker player
+// than the bot itself — so every candidate is valued under "and then I play
+// badly"; searching the one ply that matters most removes the worst of that
+// self-model bias. Cost: up to self_cap playouts instead of one.
+int cd_sim_playout_self(SimState *s, int my_idx, int max_turns,
+                        int leaf_cards, long leaf_budget,
+                        const uint8_t *pol, int self_cap) {
+    for (int guard = 0; guard < 12; guard++) {
+        if (sim_done(s) >= 0)
+            return cd_sim_playout_pol(s, my_idx, max_turns, 1,
+                                      leaf_cards, leaf_budget, pol);
+        if (s->status_p[my_idx] != PLAYER_STATUS_IN) break;
+        int actor = -1;
+        for (int pi = 0; pi < s->num_players; pi++)
+            if (sim_should_act(s, pi)) { actor = pi; break; }
+        if (actor < 0) break;
+        if (actor == my_idx) {
+            SolMove buf[CD_SIM_SOLVE_MAX_MOVES];
+            int n = sim_gen_moves(s, actor, buf, CD_SIM_SOLVE_MAX_MOVES);
+            if (n <= 1) {
+                if (n == 1) { sim_apply_sol(s, actor, &buf[0]); continue; }
+                break;
+            }
+            int order[CD_SIM_SOLVE_MAX_MOVES];
+            double key[CD_SIM_SOLVE_MAX_MOVES];
+            for (int i = 0; i < n; i++) { order[i] = i; key[i] = sol_rank_key(&buf[i], s->power_suit); }
+            for (int i = 1; i < n; i++) {
+                int oi = order[i]; double ki = key[oi];
+                int j = i - 1;
+                while (j >= 0 && key[order[j]] > ki) { order[j+1] = order[j]; j--; }
+                order[j+1] = oi;
+            }
+            int kept_idx[CD_SIM_SOLVE_MAX_MOVES];
+            int kept = 0;
+            for (int k = 0; k < n && kept < self_cap; k++) {
+                uint8_t ty = buf[order[k]].type;
+                if (ty == MV_PICKUP || ty == MV_GOOD) continue;
+                kept_idx[kept++] = order[k];
+            }
+            for (int i = 0; i < n; i++) {
+                uint8_t ty = buf[i].type;
+                if (ty == MV_PICKUP || ty == MV_GOOD) kept_idx[kept++] = i;
+            }
+            uint32_t rng0 = game_rng_get();
+            int best = 1 << 20;
+            for (int k = 0; k < kept; k++) {
+                SimState trial = *s;
+                game_rng_set(rng0);   // CRN across my replies
+                sim_apply_sol(&trial, actor, &buf[kept_idx[k]]);
+                int fp = cd_sim_playout_pol(&trial, my_idx, max_turns, 1,
+                                            leaf_cards, leaf_budget, pol);
+                if (fp == 0) continue;
+                if (fp < best) best = fp;
+            }
+            if (best < (1 << 20)) return best;
+            break;
+        }
+        SimMove m;
+        int got = (pol && pol[actor] == CD_POL_LOOSE)
+                ? sim_loose_move(s, actor, &m)
+                : (pol && pol[actor] == CD_POL_MCDEF)
+                ? sim_mcdef_move(s, actor, &m)
+                : sim_handwritten_move(s, actor, &m);
+        if (!got) break;
+        sim_apply(s, actor, &m);
+    }
+    return cd_sim_playout_pol(s, my_idx, max_turns, 1, leaf_cards, leaf_budget, pol);
+}
+
 // As cd_sim_playout, but resolves small 2-player deck-empty endgames exactly
 // with the bitboard solver instead of finishing them with policy play (one
 // attempt per playout; a failed solve falls back to the policy for good).
