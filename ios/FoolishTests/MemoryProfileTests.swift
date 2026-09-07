@@ -53,6 +53,26 @@ final class MemoryProfileTests: XCTestCase {
         img?.preparingForDisplay()
     }
 
+    /// Make a RENDERED snapshot's pixels resident, and hand back the bytes to
+    /// hold. The twin of `forceDecode` above - same trap, different mechanism.
+    ///
+    /// `ImageRenderer` hands back a CGImage whose backing store CoreGraphics has
+    /// not faulted in yet, and unlike a JPEG decode, `preparingForDisplay()`
+    /// does NOT fault it. Measured: 20 retained snapshots moved `phys_footprint`
+    /// by 0.06 MB while their providers between them held 42,120,000 bytes of
+    /// pixels - 900x585x4 = 2.01 MB each, which is what one of these actually
+    /// costs. Reading the provider's bytes is what makes that cost show up, and
+    /// it is the same faulting the extension does the moment it draws the image
+    /// or hands it to MSMessage.
+    ///
+    /// This is the file's own opening lesson repeating itself: the first version
+    /// of the texture profile measured a subsampled decode and read wool at
+    /// -0.25 MB. The snapshot section had the identical blind spot and reported
+    /// a 2.01 MB bitmap as costing 0.01 MB.
+    private func residentBytes(_ img: UIImage?) -> Data {
+        (img?.cgImage?.dataProvider?.data as Data?) ?? Data()
+    }
+
     /// THE DUMP. Every texture, then the bubble snapshot, then the kernel -
     /// printed with the arithmetic beside the measurement so a number that
     /// looks wrong can be argued with.
@@ -91,15 +111,56 @@ final class MemoryProfileTests: XCTestCase {
         print("\n-- the bubble snapshot (one per staged move) --")
         let view = try XCTUnwrap(sampleBoard(), "could not build a sample board")
         let first = cost("first render") { _ = BubbleSnapshot.render(publicView: view) }
+
+        // WARM THE RENDERER BEFORE MEASURING, and do not count what that costs.
+        //
+        // This block used to BE the measurement, and it read 8-13 MB for 20
+        // renders while the 20 RETAINED renders right after it read ~0.2 - fifty
+        // times less to KEEP the images than to throw them away. No leak has
+        // that shape. The number was the one-time warm-up of ImageRenderer,
+        // CoreGraphics and the IOSurface machinery, and it landed on whichever
+        // measurement happened to run first.
+        //
+        // Measured with a warm-up spliced in, six runs: the warm-up takes
+        // 7.5-10.0 MB and the identical 20 renders after it take 0.06-0.17 MB.
+        // The cost is real, it is paid once, and it is not per render - which is
+        // what the batch run below already showed by plateauing.
+        //
+        // The old budget of 8 MB sat inside that warm-up's spread, so the
+        // assertion had been failing about half the time, on wool and on felt
+        // alike. A tripwire that fires at random guards nothing. Warming first
+        // is what lets the budget below be TIGHTENED instead of raised.
+        _ = cost("warm-up 20 (not measured)") {
+            for _ in 0..<20 { _ = BubbleSnapshot.render(publicView: view) }
+        }
         let twenty = cost("20 more renders, not retained") {
             for _ in 0..<20 { _ = BubbleSnapshot.render(publicView: view) }
         }
-        var held: [UIImage] = []
-        let retained = cost("20 renders RETAINED") {
-            for _ in 0..<20 { if let i = BubbleSnapshot.render(publicView: view) { held.append(i) } }
+
+        // What one snapshot costs if you KEEP it, with its pixels faulted in -
+        // see `residentBytes`. The arithmetic is printed beside it because this
+        // is the number the old version got wrong by 200x.
+        let scale = UIScreen.main.scale
+        let bitmapMB = Double(BubbleSnapshot.size.width * scale
+                              * BubbleSnapshot.size.height * scale) * 4 / 1_048_576
+        // The same arithmetic pinned at 3x rather than at THIS machine's scale,
+        // so the absolute cap below means the same thing on every simulator.
+        let bitmapAt3xMB = Double(BubbleSnapshot.size.width * 3
+                                  * BubbleSnapshot.size.height * 3) * 4 / 1_048_576
+        var heldImages: [UIImage] = []
+        var heldBytes: [Data] = []
+        let retained = cost("20 renders RETAINED + resident") {
+            for _ in 0..<20 {
+                guard let i = BubbleSnapshot.render(publicView: view) else { continue }
+                heldBytes.append(residentBytes(i))
+                heldImages.append(i)
+            }
         }
-        print(String(format: "  per retained snapshot:             %.2f MB", retained / 20))
-        held.removeAll()
+        XCTAssertEqual(heldImages.count, 20, "a snapshot failed to render")
+        print(String(format: "  per retained snapshot:             %.2f MB  (arith %.2f)",
+                     retained / 20, bitmapMB))
+        heldBytes.removeAll()
+        heldImages.removeAll()
 
         // DOES IT PLATEAU OR CLIMB? The extension re-renders this picture on
         // EVERY stage - every move, and again for every re-stage after a
@@ -152,8 +213,38 @@ final class MemoryProfileTests: XCTestCase {
         // so a fifth variant or a bigger bake shows up here first.
         XCTAssertLessThan(textureTotal, 20,
                           "the baked textures now cost \(textureTotal) MB resident")
-        XCTAssertLessThan(twenty, 8,
+        // 2 MB for 20 WARMED renders, against a measured 0.06-0.17. Generous by
+        // more than a decimal order and no longer straddling the noise. It is a
+        // tripwire for a render that starts allocating and not giving back, and
+        // it is deliberately NOT the leak test: a per-render retention hides
+        // inside the allocator's warm pages at this volume (verified - retaining
+        // all 20 moves this number not at all). The 200-render plateau below is
+        // the assertion that catches that, and the one below it catches a
+        // snapshot that grows.
+        XCTAssertLessThan(twenty, 2,
                           "unretained bubble snapshots accumulate: 20 cost \(twenty) MB")
+        // ONE RENDER IS ONE BITMAP OF THE DECLARED GEOMETRY. The measurement
+        // lands within a percent of the arithmetic (2.02 against 2.01), so 1.5x
+        // is slack no honest render uses.
+        //
+        // Note what this does and does not catch, because both were checked by
+        // mutation rather than assumed. Doubling `renderer.scale` away from
+        // `UIScreen.main.scale` -> RED (10.61 against an arith 2.01), so it does
+        // pin the rendered bitmap to the size the rest of the app thinks it is
+        // getting. Doubling `BubbleSnapshot.size` -> GREEN, because both sides
+        // are derived from that same constant. That is what the absolute cap
+        // underneath is for; this one is a ratio and cannot do that job.
+        XCTAssertLessThan(retained / 20, bitmapMB * 1.5,
+                          "a retained bubble snapshot now costs \(retained / 20) MB, "
+                          + "against \(bitmapMB) MB of pixels")
+        // AND THE BUBBLE ITSELF DOES NOT GROW. 300x195 is Apple's template size
+        // for the balloon (design §11.3), and at 3x it is 2.01 MB of pixels that
+        // the extension holds one of per staged move, on a budget it cannot
+        // grow. 3 MB allows a change that is not quite a 1.25x linear growth and
+        // fails anything past it; doubling the size reads 8.03 and goes red.
+        XCTAssertLessThan(bitmapAt3xMB, 3,
+                          "the bubble bitmap is now \(bitmapAt3xMB) MB at 3x - "
+                          + "the extension holds one of these per staged move")
         XCTAssertGreaterThan(first, 0, "the snapshot measured as free - the harness is not working")
         // THE ONE THAT WOULD KILL A LONG GAME. A cache is allowed to cost
         // something once; a per-render cost that never comes back is a countdown
