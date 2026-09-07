@@ -1,0 +1,29 @@
+game 5297 (pc=6) aborted; skipping
+game 5488 (pc=8) aborted; skipping
+=== ELO arena ===  pool=[octogen,cl20]  pcs=[2,3,4,5,6,7,8]  games=15000  k=32
+
+=== ELO after 15000 games  (t=7753.1s)  competitors=2 ===
+  rank  competitor              elo   games    win%  durak%
+     1  cl20                 1054.0   37569   20.4%   19.8%
+     2  octogen               946.0   37422   19.6%   20.2%
+
+=== final ELO ===
+
+=== ELO after 15000 games  (t=7753.1s)  competitors=2 ===
+  rank  competitor              elo   games    win%  durak%
+     1  cl20                 1054.0   37569   20.4%   19.8%
+     2  octogen               946.0   37422   19.6%   20.2%
+
+=== Bradley-Terry MLE (pairwise seat outcomes, Elo scale, anchored to mean 1000) ===
+  rank  competitor              elo   ci95_lo   ci95_hi   games
+     1  cl20                 1002.0    1000.1    1003.7   37569
+     2  octogen               998.0     996.3     999.9   37422
+
+  gap cl20 - octogen = +4.1  (95% CI +0.2 .. +7.4; P(gap>0) = 0.980 over 400 bootstraps)
+
+  named gap cl20 - octogen = +4.1  (95% CI +0.2 .. +7.4; P(gap>0) = 0.980 over 400 bootstraps)
+  named pair by player count (A ahead of B - B ahead of A):  pc2 560-510  pc3 1700-1592  pc4 3321-3213  pc5 5238-5116  pc6 8420-8015  pc7 11279-11181  pc8 14880-14714
+
+  direct pairwise (row beats column: wins-losses over shared games)
+  cl20                          -  45398-44341
+  octogen             44341-45398            -
