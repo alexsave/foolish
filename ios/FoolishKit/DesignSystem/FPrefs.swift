@@ -32,14 +32,22 @@ import SwiftUI
 ///
 /// A type rather than a Bool so a third surface is an added case, matching how
 /// `FTextures.Variant` treats looks.
+///
+/// THE CASE ORDER IS THE PICKER'S ORDER. `MessageSettingsView` lays its two
+/// swatches out straight from `allCases`, so felt sitting first here is what
+/// puts felt on the left of the settings row - the owner's ask, alongside
+/// making it the fresh-install default (`FPrefs.defaultSurface`). Nothing else
+/// in the app reads the order, and nothing anywhere reads the POSITION of a
+/// case: the stored preference is the `rawValue` STRING, so reordering cannot
+/// reinterpret what an existing install already chose.
 public enum TableSurface: String, CaseIterable, Sendable {
-    case wool, felt
+    case felt, wool
 
     /// The settings row's label key (FStrings).
     public var labelKey: String {
         switch self {
-        case .wool: return "ios.settings.table.wool"
         case .felt: return "ios.settings.table.felt"
+        case .wool: return "ios.settings.table.wool"
         }
     }
 }
@@ -64,12 +72,33 @@ public final class FPrefs: ObservableObject {
 
     private static let tableKey = "ios.table.surface"
 
-    /// Published for the same reason as `language`. The default is `.wool`:
-    /// felt is the option, not the new baseline.
-    @Published public private(set) var table: TableSurface = {
+    /// The surface a player who has never opened the settings sheet sits at.
+    ///
+    /// FELT, as of this change (owner: "prefer felt for all the screenshots, in
+    /// fact it should probably be default"). The weave is busy behind the cards,
+    /// which is the complaint that got felt written in the first place; it is
+    /// now the baseline and wool is the option, which is the reverse of round
+    /// 12 and nothing more - wool is fully supported and one tap away.
+    ///
+    /// A FALLBACK, not a value that is ever written: `setTable` is the only
+    /// writer of `tableKey`, so this is read exactly when the key is absent (a
+    /// fresh install) or holds a string no case answers to (a preference
+    /// written by a build that had a surface this one does not). An install
+    /// that has already chosen keeps its choice, felt or wool, because the
+    /// stored form is the raw STRING and this default is never consulted.
+    public static let defaultSurface: TableSurface = .felt
+
+    /// THE read of the stored preference, shared by the published property and
+    /// by `storedTable` below. One function so the two cannot drift onto
+    /// different defaults - which is exactly the shape of bug that would make a
+    /// fresh install show felt in the settings sheet and wool on the board.
+    private nonisolated static func readStored() -> TableSurface {
         let raw = UserDefaults.standard.string(forKey: FPrefs.tableKey)
-        return raw.flatMap(TableSurface.init(rawValue:)) ?? .wool
-    }()
+        return raw.flatMap(TableSurface.init(rawValue:)) ?? defaultSurface
+    }
+
+    /// Published for the same reason as `language`.
+    @Published public private(set) var table: TableSurface = FPrefs.readStored()
 
     public func setTable(_ surface: TableSurface) {
         UserDefaults.standard.set(surface.rawValue, forKey: Self.tableKey)
@@ -83,8 +112,5 @@ public final class FPrefs: ObservableObject {
     ///
     /// nonisolated so it can be read from the same non-isolated contexts
     /// `FStrings.t` is read from; UserDefaults is thread-safe.
-    public nonisolated static var storedTable: TableSurface {
-        let raw = UserDefaults.standard.string(forKey: FPrefs.tableKey)
-        return raw.flatMap(TableSurface.init(rawValue:)) ?? .wool
-    }
+    public nonisolated static var storedTable: TableSurface { readStored() }
 }

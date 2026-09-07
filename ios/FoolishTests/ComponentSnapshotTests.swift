@@ -73,15 +73,21 @@ final class ComponentSnapshotTests: XCTestCase {
         //
         // That is not hypothetical. `testRoleMarksReadAsOneFamily` went red on
         // 2026-09-04 with no source change and passed forty seconds earlier: its
-        // reference (recorded 2026-09-03) is green FELT, and felt is the option,
-        // not the baseline - `FPrefs.table` defaults to `.wool`. So the
-        // reference had captured a session in which somebody had switched the
-        // table, and the test only kept passing for as long as that preference
-        // happened to survive on this machine.
+        // reference (recorded 2026-09-03) was green FELT while the surface these
+        // images were recorded against was wool. So the reference had captured a
+        // session in which somebody had switched the table, and the test only
+        // kept passing for as long as that preference happened to survive on
+        // this machine.
         //
-        // `.wool` because it is the product's default AND what this class is
-        // actually about - the role-marks test's own doc says the marks are
-        // drawn "on the wool they have to survive".
+        // `.wool` because it is what this class is actually about - the
+        // role-marks test's own doc says the marks are drawn "on the wool they
+        // have to survive". It is NO LONGER the product's default (that is
+        // `FPrefs.defaultSurface`, felt as of the felt-default change), and this
+        // pin does not want to be: the point of a pin is that these references
+        // stop moving when a preference does, so it names the surface the images
+        // hold rather than tracking whatever the default happens to be. A
+        // deliberate decision to re-record this class against felt is a separate
+        // change, and it re-records every image here.
         //
         // Worth knowing while reading this: `ios/FoolishTests/__Snapshots__` is
         // git-ignored, so every machine records its own references on first run.

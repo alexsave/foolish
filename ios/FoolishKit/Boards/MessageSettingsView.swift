@@ -2,11 +2,12 @@
 // the left Settings (gear) square. Two settings today:
 //   - the language override (English / Русский / 한국어), persisted by
 //     FStrings.override
-//   - the TABLE MATERIAL (round 12): the wool weave, or a green casino baize
-//     for a player who finds the weave busy behind the cards. Round 30 made
-//     these two SWATCHES on one row, each drawn in its own material - see
-//     `tableSwatch` for why this setting gets a different control from the
-//     language list right under it.
+//   - the TABLE MATERIAL (round 12): the green casino baize, or the wool weave
+//     for a player who wants the original cloth back. Round 30 made these two
+//     SWATCHES on one row, each drawn in its own material - see `tableSwatch`
+//     for why this setting gets a different control from the language list
+//     right under it. Felt is first in the row, and first because it is first
+//     in `TableSurface.allCases` - see that type for why the two are one fact.
 //
 // TABLE FIRST, then language (owner). It is the setting a player actually comes
 // here to change once the game is running; language is a set-once.
