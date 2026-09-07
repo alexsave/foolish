@@ -140,6 +140,11 @@ build/anim_plan_test: tests/anim_plan_test.c $(CORE_OBJ)
 # it picks up while holding a full cover. Fits cl20's strategic-seat model.
 build/mc_behavior: tests/mc_behavior.c $(CORE_OBJ)
 	$(CC) $(CFLAGS) tests/mc_behavior.c $(CORE_OBJ) -o $@ $(LDFLAGS)
+# cl20-vs-octogen showcase: dramatic seeded games as shareable replay links
+# (tools/cl20_showcase.c). `make build/cl20_showcase`, then e.g.
+#   ./build/cl20_showcase --pc=6 --games=60 --top=3 --seed=1
+build/cl20_showcase: tools/cl20_showcase.c $(CORE_OBJ)
+	$(CC) $(CFLAGS) tools/cl20_showcase.c $(CORE_OBJ) -o $@ $(LDFLAGS)
 difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/solver_difftest build/replay_v6_test build/anim_plan_test
 	./build/sim_difftest 4 1000 && ./build/apply_difftest 4 200 && \
 	./build/msg_wire_test 20 && \
