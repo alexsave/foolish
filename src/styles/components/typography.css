@@ -131,6 +131,22 @@
   color: var(--color-text-label);
 }
 
+/* Headings inside this card are on a near-white background, so they cannot use
+   the page's heading colour: base.css gives h2-h6 `--color-text-primary`, which
+   is the light ink chosen to sit on the wool, and that is invisible here. The
+   support and privacy pages were shipping section headings nobody could read.
+   Wood-dark matches the card's own border and the H1 above it. */
+.about-content h2,
+.about-content h3 {
+  color: var(--color-wood-dark);
+  margin-top: var(--spacing-lg);
+}
+
+.about-content h2:first-child,
+.about-content h3:first-child {
+  margin-top: 0;
+}
+
 .about-content p:first-child {
   margin-top: 0;
 }
@@ -249,6 +265,13 @@
   font-family: var(--font-family-primary) !important;
   font-weight: 500;
   color: #0A0A0A;
+}
+
+/* Same reason as the default theme, in this theme's ink. */
+[data-theme="soviet"] .about-content h2,
+[data-theme="soviet"] .about-content h3 {
+  color: #B32929;
+  font-family: var(--font-family-primary) !important;
 }
 
 /* Links - cream on red */

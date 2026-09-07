@@ -1,7 +1,7 @@
 export const Support = () => {
     return (
         <div className="page page--centered page--with-padding" style={{ width: '100vw' }}>
-            <div className="content content--max-width content--centered content--gap-lg z-content">
+            <div className="content content--full-width content--centered content--gap-lg z-content">
                 <h1 className="title title--page">Support</h1>
 
                 <div className="about-content">
@@ -20,7 +20,7 @@ export const Support = () => {
                     <h2>Something not working?</h2>
                     <p>
                         Email us at{' '}
-                        <a href="mailto:support@foolish.cards">support@foolish.cards</a>{' '}
+                        <a href="mailto:alexvsaveliev@gmail.com">alexvsaveliev@gmail.com</a>{' '}
                         with a description of what happened and, if you can, which
                         device and iOS version you&apos;re on. We read every message.
                     </p>
