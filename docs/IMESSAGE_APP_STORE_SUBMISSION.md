@@ -409,3 +409,125 @@ either answer is defensible.
   runbook's steps still match the new standalone target names — flag if you
   want me to re-check the runbook against `e9b9120`'s target rename next).
 - The actual Submit button.
+
+---
+
+## 13. Submitting 1.1 (49) - the second release
+
+*Written 2026-09-06, against the build that is in App Store Connect. 1.0 is
+already live, so this is a VERSION update, not a first submission: most of the
+sections above are already answered in the live record and stay as they are.*
+
+### What actually has to happen, in order
+
+1. **App Store Connect → Foolish - Durak → + Version or Platform → `1.1`.**
+   The number must match the build's `CFBundleShortVersionString`, which is why
+   `ios/project.yml` moved to 1.1 in the same commit as the bump.
+2. **Attach build 1.1 (49).** It is uploaded and will appear once Apple finishes
+   processing (minutes to about half an hour).
+3. **What's New** - §13a below.
+4. **Screenshots** - §13b. The 1.0 set predates the redesigned board, so this
+   is the one piece of listing copy that genuinely has to change.
+5. **App Review Information → Notes** - replace with §13c. **The notes in §5a
+   are STALE and would now mislead a reviewer**: they describe a "Send move"
+   button that no longer exists (a move auto-stages the moment it is played;
+   only Undo is left) and a "New game deals a fresh 2-player game" flow that is
+   now name → Create game → lobby → Start.
+6. **Availability** - while the record is open, fix §4a: South Korea is still
+   missing, and the whole install loop dies at Apple's "app unavailable" alert
+   for every KR recipient.
+7. **Submit for review.** Export compliance is answered in the binary
+   (`ITSAppUsesNonExemptEncryption=false` in both the app and the extension), so
+   no questionnaire appears. Age rating, privacy answers and categories are
+   already on the record and unchanged.
+
+TestFlight's beta review is a SEPARATE queue and no App Store submission waits
+on it - it is fine to have 1.1(49) in beta review and submitted for release at
+the same time.
+
+### 13a. What's New (1.1)
+
+```
+Play Durak with 2 to 8 people, right in a Messages conversation.
+
+- Podkidnoy: the throw-in variant, chosen in the lobby before the game starts.
+- A rebuilt table: bigger cards, clearer roles, and every move animated where
+  it happens instead of appearing already done.
+- A replay link on every finished game.
+- Faster to open, and lighter on memory.
+- Fixes: a covered card no longer flickers upright when a cover is replayed,
+  and the deal now follows the rule where the defender draws last.
+```
+
+### 13b. Screenshots
+
+Six are ready at **1320x2868** (the 6.9" size Apple asks for), shot on an
+iPhone 17 Pro Max with the status bar pinned to 9:41:
+
+| # | What it shows | Where it came from |
+| --- | --- | --- |
+| 1 | A 4-player table mid-bout | the rig, `HARNESS_FULLBLEED=1 HARNESS_SCENARIO=myplay` |
+| 2 | All 8 seats around a full table | the same, `HARNESS_PLAYERS=8` |
+| 3 | The ranked game-over screen | the same, `HARNESS_SEED=1 HARNESS_ENDSCREEN=1` |
+| 4 | A two-row hand facing a pickup | the same |
+| 5 | The invite bubble in a real conversation | the SHIPPING extension in Messages |
+| 6 | The new-game card | the shipping extension |
+
+DELIBERATELY NOT COMMITTED. Six PNGs at that size are 26 MB, on top of the
+37 MB of review shots this repo already carries, and they are three commands
+away from being made again exactly - the table above IS the recipe. Regenerate,
+do not archive.
+
+Why the rig for the boards: the shipping extension cannot reach a multi-seat
+board on ONE simulator - a second seat needs a second local participant,
+Messages hands out one per conversation, and an app bubble cannot be forwarded
+to the other one (the forward control is inert on an `MSMessage`). The rig
+mounts the SAME `MessagesRootView` the extension mounts and plays a real kernel
+game; `HARNESS_FULLBLEED` only removes its dev bar and bezel. See
+`ios/HarnessUI/HarnessRootView.swift`.
+
+### 13c. App Review notes - replace §5a with this
+
+```
+Foolish is a Durak (Russian "Fool") card game that ships ENTIRELY inside
+iMessage. There is no separate app to launch: this record has no Home Screen
+icon by design (a standard Messages-only app), and it is reachable only through
+the Messages app drawer. There is no account, no sign-in and no network of our
+own - a game travels inside the message bubbles themselves.
+
+IT TAKES TWO PEOPLE. This is a turn-based game played between participants in a
+conversation, so a single device on its own reaches the lobby and stops at
+"Waiting for the others". To see a game, please use two devices (or two Apple
+Accounts in one conversation).
+
+TO REVIEW, on device A:
+1. Open Messages and open any conversation.
+2. Tap the "+" in the compose bar and choose Foolish in the app drawer.
+3. Type a name and tap "Create game". A lobby bubble is staged in the compose
+   field - press the blue send arrow to send it, like any other iMessage.
+On device B:
+4. Tap the bubble that arrived, type a name, and join.
+Back on device A:
+5. Tap "Start playing". The table deals.
+6. Tap a card in your hand, then the action that appears (Attack / Cover /
+   Pickup / Pass). The move is applied and a bubble is staged automatically -
+   there is no separate "send move" step; press the send arrow to send it.
+7. The bubble's picture shows only the PUBLIC table. A player's own hand is
+   never in the bubble; it is drawn only when THEY open the game.
+
+WITHOUT A SECOND DEVICE:
+- The book icon at the bottom of the extension opens "How to play", which
+  explains the rules and both variants.
+- Every finished game carries a replay link that plays the whole game back in a
+  browser, no install needed:
+  https://foolish.cards/BOLQXHD5XTJTD7UJOMDTR3ZC53XNYKUQMBCS4PISGG63NKUZHTVE3GKUFQEEY4SA3QLLU4THDGCQ
+
+The app collects no data of any kind (see App Privacy) and requests no
+permissions.
+```
+
+### What is NOT ready, and is yours
+
+- The legal entity name for Copyright (§1) and the review contact (§5).
+- South Korea, and the "make available in new territories" checkbox (§4a).
+- A look at the listing's own icon and localization calls (§1a, §9).
