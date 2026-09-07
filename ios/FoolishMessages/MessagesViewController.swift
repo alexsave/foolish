@@ -77,6 +77,20 @@ final class MessagesViewController: MSMessagesAppViewController {
     private var cancelToken = 0
     /// Round-10d: the collapse arm, delivered in place (no re-present, which
     /// would reload the board mid-transition) - see CollapseSignal.
+    /// HOW LONG THE BOX'S TWEEN RUNS BEFORE THE DRAWER DOES.
+    ///
+    /// Both halves of the auto-collapse are ours - this signal and the style
+    /// request - and they used to fire in one runloop turn. That is not
+    /// simultaneous: `withAnimation` does not start until SwiftUI's next
+    /// render, the host starts immediately, so the drawer led by a frame or
+    /// two and the box spent the opening of every collapse taller than the
+    /// drawer it sits in. The hand went below the screen edge.
+    ///
+    /// Three frames at 60Hz. Long enough for the tween to be genuinely under
+    /// way, short enough not to read as a pause between playing a card and the
+    /// drawer moving.
+    static let collapseLead: TimeInterval = 0.05
+
     private let collapseSignal = CollapseSignal()
 
     // MARK: - Lifecycle (§11.1)
@@ -607,7 +621,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         // running before the drawer moves, which is what lines the two curves
         // up. Measured, not assumed - see CollapseCurveTests.
         collapseSignal.token += 1
-        DispatchQueue.main.async { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.collapseLead) { [weak self] in
             self?.requestPresentationStyle(.compact)
         }
         await awaitTransitionSettled()
