@@ -50,8 +50,41 @@ import FoolishKit
 /// WHOLE simulated Messages app (nav bar through extension), not just the
 /// extension's own viewport.
 private enum SEScreen {
-    static let width: CGFloat = 375
-    static let height: CGFloat = 667
+    /// HARNESS_FULLBLEED: the simulated phone becomes THIS phone, and the dev
+    /// bar goes with it.
+    ///
+    /// The SE frame is right for judging layout - it is the smallest screen the
+    /// product ships on, and a fixed size is what makes two runs comparable.
+    /// It is wrong for a STORE SCREENSHOT, which has to be the running
+    /// simulator's exact pixel size (App Store Connect rejects anything else)
+    /// and cannot carry a dev bar or a rounded bezel drawn inside the image.
+    ///
+    /// The alternative was to photograph the shipping extension in Messages,
+    /// and that cannot reach a BOARD on one simulator: a second seat needs a
+    /// second local participant, Messages gives one per conversation, and an
+    /// app bubble cannot be forwarded to the other one (the forward control is
+    /// inert on an MSMessage - tried, twice). The rig can seat 2-8 because it
+    /// gives each fake participant its own store, so it is the only thing on
+    /// this machine that can produce a real multi-seat board at all.
+    ///
+    /// What is photographed is still the SAME `MessagesRootView` the extension
+    /// mounts, playing a real kernel game - only the dev chrome around it goes.
+    static let fullBleed = ProcessInfo.processInfo.environment["HARNESS_FULLBLEED"] != nil
+
+    /// The window's own safe-area inset, so the simulated nav bar starts BELOW
+    /// the clock and the hand row clears the home indicator - exactly where
+    /// Messages puts them. Without this the frame is the full screen height,
+    /// overflows at both ends, and the shot has "< Messages" printed through
+    /// the status bar.
+    private static var safeVertical: CGFloat {
+        let w = UIApplication.shared.connectedScenes
+            .compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
+        return (w?.safeAreaInsets.top ?? 0) + (w?.safeAreaInsets.bottom ?? 0)
+    }
+    static var width: CGFloat { fullBleed ? UIScreen.main.bounds.width : 375 }
+    static var height: CGFloat {
+        fullBleed ? UIScreen.main.bounds.height - safeVertical : 667
+    }
 }
 
 /// Named, EXPLICIT heights for the two fixed chrome rows that sandwich the
@@ -91,8 +124,10 @@ struct HarnessRootView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            DevBar(model: model, showAnimLog: $showAnimLog)   // harness-only chrome — the ONE thing outside the SE frame
-            Divider().overlay(Color.orange.opacity(0.3))
+            if !SEScreen.fullBleed {
+                DevBar(model: model, showAnimLog: $showAnimLog)   // harness-only chrome — the ONE thing outside the SE frame
+                Divider().overlay(Color.orange.opacity(0.3))
+            }
             ZStack {
                 simulatedPhone
                 if showAnimLog { AnimLogPanel() }
@@ -144,10 +179,10 @@ struct HarnessRootView: View {
             }
         }
         .frame(width: SEScreen.width, height: SEScreen.height)
-        .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: SEScreen.fullBleed ? 0 : 30, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 30, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.2), lineWidth: 1)
+            RoundedRectangle(cornerRadius: SEScreen.fullBleed ? 0 : 30, style: .continuous)
+                .strokeBorder(Color.white.opacity(SEScreen.fullBleed ? 0 : 0.2), lineWidth: 1)
         )
     }
 }
