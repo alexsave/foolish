@@ -232,6 +232,37 @@ public struct MessagesRootView: View {
     /// below tracks those ten sampled points to within a couple of points).
     /// Nothing is packed, offset or sampled - one height, one curve.
     ///
+    /// ROUND 31 - THE SAME COLLAPSE, RE-MEASURED AT 60fps, and what survived.
+    /// The ten numbers above came off a take resampled to 30fps, which is half
+    /// the frames the device composited; `msgrig.sh film` now keeps all of them
+    /// (`-fps_mode passthrough` plus per-frame timestamps), and `msgrig.sh
+    /// ruler` draws the ruler again, so this is repeatable rather than a
+    /// remembered afternoon. Three takes, iPhone 14 Plus, real Messages:
+    ///
+    ///   rest expanded   box top  77   box bottom 892   (drawer top 57)
+    ///   flip frame      box top  99   box bottom 912   <- no teleport
+    ///   +1..+18 frames  top 141, 193, 249, 289, 317, 357, 377, 403, 421, 441,
+    ///                       455, 471, 493, 493, 509, 509, 516, 523
+    ///                   settling on 558 by +440ms
+    ///
+    /// WHAT STANDS, and is now measured rather than argued: the box's top rides
+    /// the drawer's descending top edge to within 1.4pt in EVERY frame of the
+    /// collapse. That is the premise this whole scheme rests on.
+    ///
+    /// WHAT DOES NOT: "tracks those ten sampled points to within a couple of
+    /// points" is a fit to the TAIL. Over the first 70ms - the part 30fps could
+    /// not resolve - the host's curve runs up to 21pt away from a quartic-out
+    /// over 0.45s, and up to 68pt away from the bezier this file actually runs
+    /// (which is 0.38s, not the 0.45s the paragraph above says). What that
+    /// costs is visible in the box's BOTTOM: through the collapse's first
+    /// ~130ms it hangs as much as 23pt below the drawer's bottom edge and
+    /// jitters ~10pt frame to frame, where a manual grabber drag - the look
+    /// this is copying - holds the same gap to 1.4pt. The excess is clipped, so
+    /// nothing is exposed and no wool shows; the hand is simply that far under
+    /// the drawer's edge for four or five frames. Left alone deliberately: this
+    /// animation was tuned against the owner's explicit spec, and three earlier
+    /// approaches were filmed failing before it.
+    ///
     /// The EXPAND direction is composited bottom-referenced by the host (the
     /// owner: it "works much better... cards stay at the bottom"), so up-snaps
     /// are followed instantly, exactly as before.
@@ -336,6 +367,11 @@ public struct MessagesRootView: View {
                 .frame(width: geo.size.width,
                        height: boxHeight > 0 ? boxHeight : geo.size.height)
                 .background(TableBackground())
+                // The debug ruler (`dev.ruler`, DEBUG only, otherwise an
+                // EmptyView) - on the SIZED BOX, so a filmed frame reports
+                // where `boxHeight` actually put our two edges. See
+                // CollapseRuler.
+                .overlay(CollapseRuler())
                 // TOP-anchored through the collapse: the host glues our content
                 // to the drawer's descending top edge, so a box of the drawer's
                 // visible height starting there fills it exactly. Bottom
