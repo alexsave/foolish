@@ -317,6 +317,9 @@ static _Thread_local int cl_mcpol = 0;        // CL_MCPOL: CD_POL_MC model for p
 // sign-only solve of the rest of the game in that world (the deck order is
 // fixed inside a determinized world) instead of a handwritten rollout; an
 // aborted solve (CL_XDECK_BUDGET nodes) falls back to the rollout.
+// CL_WMUL6: world-budget multiplier at 6+ players (the one regime where the
+// compute probe still pays, CL20.md). 1 = octogen's budget.
+static _Thread_local int cl_wmul6 = 1;
 static _Thread_local int cl_xdeck = 0;
 static _Thread_local int cl_xdeck_cards = 4;
 static _Thread_local int cl_xdeck_total = 20;
@@ -1682,6 +1685,7 @@ static void cl_params(int num_players, int *W1, int *W2, int *W3) {
         else                       { *W1 = 20; *W2 = 40; *W3 = 24; }
     }
     if (cl_oracle) { *W1 *= 6; *W2 *= 6; *W3 *= 6; }
+    else if (num_players >= 6 && cl_wmul6 > 1) { *W1 *= cl_wmul6; *W2 *= cl_wmul6; *W3 *= cl_wmul6; }
     if (cl_w1_override > 0) *W1 = cl_w1_override;
     if (cl_w2_override > 0) *W2 = cl_w2_override;
     if (cl_w3_override >= 0) *W3 = cl_w3_override;
@@ -1823,6 +1827,8 @@ static int cl20_choose_impl(const Game *g, int bot_idx,
         cl_selfpol = cl_env_int("CL_SELFPOL", 0);
         cl_mcvoid = cl_env_int("CL_MCVOID", 0);
         cl_mcpol = cl_env_int("CL_MCPOL", 0);
+        cl_wmul6 = cl_env_int("CL_WMUL6", 1);
+        if (cl_wmul6 < 1) cl_wmul6 = 1;
         cl_xdeck = cl_env_int("CL_XDECK", 0);
         cl_xdeck_cards = cl_env_int("CL_XDECK_CARDS", 4);
         cl_xdeck_total = cl_env_int("CL_XDECK_TOTAL", 20);
