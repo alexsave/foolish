@@ -913,13 +913,40 @@ private struct GameSurface: View {
                 Text("seat \(c.mySeat) · \(c.pending.count) staged\(c.isGenesis ? " · genesis" : "")")
             }
             if !diagInfo.isEmpty { Text("opened: \(diagInfo)") }
-            if !hex.isEmpty {
-                Text("HEX (\(hex.count / 2) bytes):")
-                Text(hex).textSelection(.enabled)
-            }
-            if let u = url?.absoluteString {
-                Text("URL:")
-                Text(u).textSelection(.enabled)
+            // THE PAYLOAD IS THE WHOLE GAME, SO IT PRINTS ONLY WHEN THE
+            // GAME IS ALREADY BROKEN.
+            //
+            // Every envelope carries `seed[32]` (msg_wire.h), repeated by every
+            // seal, and deal_rng makes the WHOLE DEAL a deterministic function
+            // of it - "a whole deal is a function of one seed... reproducible
+            // from a stored seed". These bytes are not this reader's view of
+            // the game, they ARE the game: every opponent's hand and the order
+            // of the rest of the deck. Printed as selectable text, and again as
+            // a foolish.cards/m/ link, a five-second hold on the gear handed a
+            // player the table face-up in a form they could paste anywhere.
+            //
+            // That the bytes are already ON the device is not a defence. A
+            // serverless design means every client CAN compute every hand; the
+            // game is honest because the client does not SHOW you what it can
+            // compute, and this panel was the one place that broke that.
+            //
+            // But suppressing it outright would take away the thing it is FOR.
+            // Owner: "I still think we should dump it if we encounter an error,
+            // not not allow for cheating in release builds." So the release
+            // gate is the error itself - `mayDumpPayload`. A chain that failed
+            // to open is not a game anybody is playing, its bytes are what a
+            // bug report needs, and there is nothing to cheat at. A chain that
+            // opened fine gets the health report and the version lines and no
+            // payload.
+            if mayDumpPayload {
+                if !hex.isEmpty {
+                    Text("HEX (\(hex.count / 2) bytes):")
+                    Text(hex).textSelection(.enabled)
+                }
+                if let u = url?.absoluteString {
+                    Text("URL:")
+                    Text(u).textSelection(.enabled)
+                }
             }
         }
         .font(.system(size: 10, design: .monospaced))
@@ -966,6 +993,22 @@ private struct GameSurface: View {
     /// It floats OVER the surface rather than replacing it, so summoning it
     /// never disturbs the board underneath: no reload, no teardown, and the
     /// staged bubble is exactly where it was when you dismiss.
+    /// May this build put the raw payload on screen right now?
+    ///
+    /// Release: only when the surface is reporting an ERROR. See the note at
+    /// the printers in `diagnosticDump` for why the bytes are a cheat and why
+    /// the error case is nonetheless the one that must keep them.
+    ///
+    /// Debug and SOLO_TESTING: always, because that is where the bytes are
+    /// read on purpose and there is no opponent to deceive.
+    private var mayDumpPayload: Bool {
+        #if DEBUG || SOLO_TESTING
+        return true
+        #else
+        return diagError != nil || damaged
+        #endif
+    }
+
     private var diagnosticPanel: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 6) {
