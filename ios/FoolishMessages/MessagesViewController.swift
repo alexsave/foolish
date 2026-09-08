@@ -77,20 +77,6 @@ final class MessagesViewController: MSMessagesAppViewController {
     private var cancelToken = 0
     /// Round-10d: the collapse arm, delivered in place (no re-present, which
     /// would reload the board mid-transition) - see CollapseSignal.
-    /// HOW LONG THE BOX'S TWEEN RUNS BEFORE THE DRAWER DOES.
-    ///
-    /// Both halves of the auto-collapse are ours - this signal and the style
-    /// request - and they used to fire in one runloop turn. That is not
-    /// simultaneous: `withAnimation` does not start until SwiftUI's next
-    /// render, the host starts immediately, so the drawer led by a frame or
-    /// two and the box spent the opening of every collapse taller than the
-    /// drawer it sits in. The hand went below the screen edge.
-    ///
-    /// Three frames at 60Hz. Long enough for the tween to be genuinely under
-    /// way, short enough not to read as a pause between playing a card and the
-    /// drawer moving.
-    static let collapseLead: TimeInterval = 0.05
-
     private let collapseSignal = CollapseSignal()
 
     // MARK: - Lifecycle (§11.1)
@@ -607,23 +593,8 @@ final class MessagesViewController: MSMessagesAppViewController {
         // round-10c "pack the board up first" WAS the owner's "goes up, then
         // goes back down"), then request the collapse. The surface's own
         // height tween takes it from there; see MessagesRootView.follow.
-        // SCHEDULING. Both halves of the auto-collapse are ours: this signal
-        // starts the box's own height tween, and this request starts the
-        // host's drawer animation. They were fired in the same runloop turn,
-        // which sounds simultaneous and is not - `withAnimation` does not begin
-        // until SwiftUI's next render, while the host begins immediately. So
-        // the drawer got a head start of a frame or two, our box was still at
-        // its expanded height while the drawer had already shrunk, and the
-        // difference showed up at the box's BOTTOM: the hand pushed below the
-        // screen edge for the opening frames of every collapse.
-        //
-        // Giving the signal one runloop turn of its own lets the tween be
-        // running before the drawer moves, which is what lines the two curves
-        // up. Measured, not assumed - see CollapseCurveTests.
         collapseSignal.token += 1
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.collapseLead) { [weak self] in
-            self?.requestPresentationStyle(.compact)
-        }
+        requestPresentationStyle(.compact)
         await awaitTransitionSettled()
         // The last gate, and the one that matters: the newer run has already
         // put its own bubble in the field, so inserting here would replace it

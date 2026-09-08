@@ -209,11 +209,6 @@ public struct MessagesRootView: View {
     /// heights in both directions - all three were filmed failing. This is
     /// level-based only.) While collapsing, `follow` also ignores any
     /// expanded-sized geometry report - those are the same transition noise.
-
-    /// How far down the host's drawer already is when our first frame renders.
-    /// The box starts here rather than at its expanded height. UNVERIFIED.
-    static let startLead: CGFloat = 0.15
-
     @State private var collapsing = false
 
     /// Round-10d: the auto-collapse, MEASURED (a ruler drawn on the live
@@ -291,15 +286,8 @@ public struct MessagesRootView: View {
             collapsing = true
             CollapseTween.isTweening = true
             collapseTarget = to
-            // START ALREADY UNDER WAY. Even with the signal a runloop turn
-            // ahead of the host's request, the box was still measurably taller
-            // than the drawer for the opening frames - the green bar left the
-            // bottom of the screen. So the box does not start at the full
-            // expanded height; it starts the fraction of the way down that the
-            // host has already covered by the time we render. UNTESTED at the
-            // time of writing - the battery died mid-take.
-            boxHeight = from - (from - to) * Self.startLead
-            withAnimation(.spring(response: 0.33, dampingFraction: 1.0)) {
+            boxHeight = from
+            withAnimation(.timingCurve(0.165, 0.84, 0.44, 1, duration: 0.38)) {
                 boxHeight = to
             }
             Task {
