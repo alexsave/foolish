@@ -1102,7 +1102,7 @@ int msg_turn_sent_source(int staged, int have_host, int have_sealed) {
 }
 
 int msg_turn_send_verdict(int staged, int have_host, int have_sealed,
-                          int host_is_sealed, int decoded) {
+                          int host_is_sealed, int decoded, int same_game) {
     const int src = msg_turn_sent_source(staged, have_host, have_sealed);
     // DID I SEAL THESE BYTES - not Rule P, which cannot answer it: a child can
     // seal to a turn LOWER than its parent's, so ordering refused ordinary
@@ -1116,6 +1116,10 @@ int msg_turn_send_verdict(int staged, int have_host, int have_sealed,
     if (src != MSG_TURN_BYTES_NONE) {
         if (decoded < 0) return MSG_TURN_SEND_DECODE;
         if (!decoded) return MSG_TURN_SEND_UNREADABLE;
+        // ANOTHER GAME'S DRAFT, SENT FROM THIS GAME'S BOARD. Not knowable until
+        // the decode, which is why it is asked here and not with the rest; < 0
+        // is "not asked yet" and never a refusal. See msg_wire.h.
+        if (same_game == 0) return MSG_TURN_SEND_OTHERGAME;
     }
     if (!staged && src == MSG_TURN_BYTES_NONE) return MSG_TURN_SEND_NOOP;
     if (src == MSG_TURN_BYTES_NONE) return MSG_TURN_SEND_BLIND;

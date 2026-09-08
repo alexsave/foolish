@@ -3370,6 +3370,7 @@ static void test_chain_gates(void) {
 //   adopt_duplicate ignores the staged moves                -> 1 failure
 //   sent_source prefers the host's bytes when staged        -> 4 failures
 //   send_verdict calls a stale host payload FOREIGN         -> 6 failures
+//   send_verdict adopts another game's chain                -> 7 failures
 //   hold_state returns cut-1 with no clamp at 0             -> 1 failure
 //   publish never publishes the empty menu                  -> 1 failure
 //   publish never shows the held view                       -> 1 failure
@@ -3480,30 +3481,43 @@ static void test_turn_controller(void) {
     // base where it stood - that un-plays the staged move, and the board then
     // reads its own table clearing as a bout end and animates the bubble BEFORE
     // the one just sent.
-    CHECK(msg_turn_send_verdict(1, 0, 1, 0, -1) == MSG_TURN_SEND_DECODE,
+    CHECK(msg_turn_send_verdict(1, 0, 1, 0, -1, -1) == MSG_TURN_SEND_DECODE,
           "staged, bytesless: our sealed chain is the bubble and it is ours to decode");
-    CHECK(msg_turn_send_verdict(1, 0, 1, 0, 1) == MSG_TURN_SEND_REBASE, "…and to rebase onto");
+    CHECK(msg_turn_send_verdict(1, 0, 1, 0, 1, 1) == MSG_TURN_SEND_REBASE, "…and to rebase onto");
     // 1.0(36): the signal arrives with a STALE payload. It took the refusal
     // below instead, which stranded the withheld settlement and left the staged
     // move to be red-retracted by the next arrival ("Somehow this caused an UNDO
     // animation of the previous pickup").
-    CHECK(msg_turn_send_verdict(1, 1, 1, 0, -1) == MSG_TURN_SEND_DECODE,
+    CHECK(msg_turn_send_verdict(1, 1, 1, 0, -1, -1) == MSG_TURN_SEND_DECODE,
           "staged with a STALE host payload is not foreign - ours substitutes");
-    CHECK(msg_turn_send_verdict(1, 1, 1, 0, 1) == MSG_TURN_SEND_REBASE, "…and rebases");
-    CHECK(msg_turn_send_verdict(0, 1, 1, 0, -1) == MSG_TURN_SEND_FOREIGN,
+    CHECK(msg_turn_send_verdict(1, 1, 1, 0, 1, 1) == MSG_TURN_SEND_REBASE, "…and rebases");
+    CHECK(msg_turn_send_verdict(0, 1, 1, 0, -1, -1) == MSG_TURN_SEND_FOREIGN,
           "UNSTAGED with a payload that is not the chain we sealed - a reload's chain, "
           "left alone");
-    CHECK(msg_turn_send_verdict(1, 0, 0, 0, -1) == MSG_TURN_SEND_BLIND,
+    CHECK(msg_turn_send_verdict(1, 0, 0, 0, -1, -1) == MSG_TURN_SEND_BLIND,
           "staged with no chain at all: KEEP the moves - dropping them without a base to "
           "replace them walks the board back by the move just watched");
-    CHECK(msg_turn_send_verdict(0, 0, 0, 0, -1) == MSG_TURN_SEND_NOOP,
+    CHECK(msg_turn_send_verdict(0, 0, 0, 0, -1, -1) == MSG_TURN_SEND_NOOP,
           "nothing staged and no bytes was not a send of ours");
-    CHECK(msg_turn_send_verdict(0, 0, 1, 0, -1) == MSG_TURN_SEND_NOOP,
+    CHECK(msg_turn_send_verdict(0, 0, 1, 0, -1, -1) == MSG_TURN_SEND_NOOP,
           "a sealed chain nobody sent is still not a send");
-    CHECK(msg_turn_send_verdict(1, 1, 0, 0, 0) == MSG_TURN_SEND_UNREADABLE,
+    CHECK(msg_turn_send_verdict(1, 1, 0, 0, 0, 1) == MSG_TURN_SEND_UNREADABLE,
           "bytes that will not decode leave the board on its staged move");
-    CHECK(msg_turn_send_verdict(0, 1, 0, 0, 1) == MSG_TURN_SEND_REBASE,
+    CHECK(msg_turn_send_verdict(0, 1, 0, 0, 1, 1) == MSG_TURN_SEND_REBASE,
           "unstaged with a host payload and nothing sealed - no opinion, so adopt it");
+    // 1.0(37): …and THAT is the hole another game's draft comes through. A
+    // thread holds many games, a staged bubble is a draft that survives the
+    // human tapping away to one of them, and the send signal for it reaches
+    // whatever board is on screen. Same facts as the line above - unstaged,
+    // host bytes, nothing sealed - and only the game id separates them.
+    CHECK(msg_turn_send_verdict(0, 1, 0, 0, 1, 0) == MSG_TURN_SEND_OTHERGAME,
+          "a chain for a DIFFERENT GAME is never this board's to adopt - a rebase would "
+          "decode it MASKED FOR THIS BOARD'S SEAT, which over there is somebody else");
+    CHECK(msg_turn_send_verdict(1, 1, 1, 1, 1, 0) == MSG_TURN_SEND_OTHERGAME,
+          "…and staging our own move on this board does not make another game's chain ours");
+    CHECK(msg_turn_send_verdict(0, 1, 0, 0, 0, 0) == MSG_TURN_SEND_UNREADABLE,
+          "bytes that will not decode are unreadable whoever they belong to - the game "
+          "test sits UNDER the decode test, because there is no game id to compare yet");
 
     // The whole input space, for the structural claims. FOREIGN unreachable
     // while anything is staged is the 1.0(36) fix stated as an invariant: with
@@ -3512,7 +3526,7 @@ static void test_turn_controller(void) {
     for (int host = 0; host < 2; host++)
     for (int sealed = 0; sealed < 2; sealed++)
     for (int same = 0; same < 2; same++) {
-        const int first = msg_turn_send_verdict(staged, host, sealed, same, -1);
+        const int first = msg_turn_send_verdict(staged, host, sealed, same, -1, -1);
         const int src = msg_turn_sent_source(staged, host, sealed);
         CHECK(!(staged && first == MSG_TURN_SEND_FOREIGN),
               "FOREIGN with moves staged (%d/%d/%d/%d) - the send path can only refuse a "
@@ -3524,11 +3538,17 @@ static void test_turn_controller(void) {
         CHECK((first == MSG_TURN_SEND_NOOP) == (!staged && src == MSG_TURN_BYTES_NONE),
               "NOOP is nothing staged and no bytes, and only that (%d/%d/%d/%d)",
               staged, host, sealed, same);
+        CHECK(first != MSG_TURN_SEND_OTHERGAME,
+              "the game is never asked about before the decode (%d/%d/%d/%d)",
+              staged, host, sealed, same);
         if (first != MSG_TURN_SEND_DECODE) continue;
-        CHECK(msg_turn_send_verdict(staged, host, sealed, same, 1) == MSG_TURN_SEND_REBASE,
+        CHECK(msg_turn_send_verdict(staged, host, sealed, same, 1, 1) == MSG_TURN_SEND_REBASE,
               "a decode that reads rebases (%d/%d/%d/%d)", staged, host, sealed, same);
-        CHECK(msg_turn_send_verdict(staged, host, sealed, same, 0) == MSG_TURN_SEND_UNREADABLE,
+        CHECK(msg_turn_send_verdict(staged, host, sealed, same, 0, 1) == MSG_TURN_SEND_UNREADABLE,
               "a decode that fails keeps the board (%d/%d/%d/%d)", staged, host, sealed, same);
+        CHECK(msg_turn_send_verdict(staged, host, sealed, same, 1, 0) == MSG_TURN_SEND_OTHERGAME,
+              "…and a decode that reads ANOTHER GAME is refused from every set of facts "
+              "that owed a decode at all (%d/%d/%d/%d)", staged, host, sealed, same);
     }
 
     // ---- what is withheld ----

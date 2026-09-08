@@ -1302,14 +1302,15 @@ public final class MessageTurnController: ObservableObject {
         // once here and once after the decode below, which is the only await it
         // owes; the facts are stated in ONE place so the two asks cannot differ
         // by anything but the decode.
-        let verdictNow: (Bool?) -> TurnWire.SendVerdict = { [lastSealed] decoded in
+        let verdictNow: (Bool?, Bool?) -> TurnWire.SendVerdict = { [lastSealed] decoded, sameGame in
             TurnWire.sendVerdict(staged: staged,
                                  host: payload != nil,
                                  sealed: lastSealed != nil,
                                  hostIsSealed: payload != nil && payload == lastSealed,
-                                 decoded: decoded)
+                                 decoded: decoded,
+                                 sameGame: sameGame)
         }
-        var verdict = verdictNow(nil)
+        var verdict = verdictNow(nil, nil)
         if staged {
             if let mine = lastSealed, mine != payload {
                 if let host = payload {
@@ -1420,7 +1421,44 @@ public final class MessageTurnController: ObservableObject {
         var adopted: MessageEnvelope?
         if verdict == .decode, let sent {
             adopted = try? await kernel.decode(payload: sent, viewer: mySeat)
-            verdict = verdictNow(adopted != nil)
+            // …AND WHICH GAME THEY TURNED OUT TO BE, which is the one thing
+            // about these bytes that is not knowable before the decode.
+            //
+            // A thread holds many games and every bubble in it stays tappable,
+            // so "one game open, scroll up, tap a different game's bubble" is
+            // an ordinary afternoon. The staged bubble is a DRAFT and Messages
+            // offers no call to remove one, so it survives that tap sitting in
+            // the input field - and the Send the human then presses arrives
+            // here, on the board they switched TO. `foreign` cannot catch it:
+            // that test is "did I seal these bytes", and this board has sealed
+            // nothing, so it has no opinion. The verdict was REBASE.
+            //
+            // Which is not a wrong animation, it is the wrong GAME: `base`
+            // would become the other game's chain, decoded MASKED FOR THIS
+            // BOARD'S SEAT NUMBER - a seat that over there belongs to somebody
+            // else, whose hand this board would then draw face-up.
+            //
+            // Owner, 1.0(37): "it should completely switch to that other game.
+            // Not rebase, completely switch. If a bubble was staged, make the
+            // bubble a noop." This is what makes the leftover draft a no-op on
+            // the board that did not compose it. The chain itself is not
+            // damaged and not discarded: it is still a legal, sealed move on
+            // its own game, and it lands there for everyone - including this
+            // device, next time it opens that game.
+            let sameGame = adopted.map { $0.gameId == gameIdString }
+            verdict = verdictNow(adopted != nil, sameGame)
+            if verdict == .otherGame {
+                FlightRecorder.note("send-othergame",
+                    "sent game \(adopted?.gameId ?? "?") != board \(gameIdString) - board unchanged")
+                AnimLog.say("markSent REFUSED - another game's chain "
+                    + "(\(adopted?.gameId ?? "?") vs \(gameIdString))")
+                // The same shape as every other refusal in this function: the
+                // REBASE is refused, the release is not (see `releaseHoldForSend`).
+                sending = false
+                releaseHoldForSend()
+                await refresh()
+                return
+            }
             if verdict == .unreadable {
                 FlightRecorder.note("send-unreadable", "kept the board on its staged move")
                 AnimLog.say("markSent: the sent bytes will not decode - board unchanged")

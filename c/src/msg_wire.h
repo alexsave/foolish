@@ -1096,6 +1096,7 @@ int msg_turn_sent_source(int staged, int have_host, int have_sealed);
 #define MSG_TURN_SEND_DECODE      3  // decode the bytes and ask again
 #define MSG_TURN_SEND_UNREADABLE  4  // they will not decode: keep the board on its staged move
 #define MSG_TURN_SEND_REBASE      5  // adopt them as the new base and drop the staged moves
+#define MSG_TURN_SEND_OTHERGAME   6  // a chain for a DIFFERENT GAME: never this board's to adopt
 //
 // WHY A REFUSAL KEEPS THE STAGED MOVES. They are what the board is DRAWN from,
 // so dropping them while declining to rebase walks the board back by exactly
@@ -1103,8 +1104,31 @@ int msg_turn_sent_source(int staged, int have_host, int have_sealed);
 // refusal exists to prevent. Re-deriving the sent bytes instead was rejected: a
 // re-seal stamps a fresh send clock, so it would be a DIFFERENT chain with a
 // digest nobody in the thread has.
+//
+// AND WHY A DIFFERENT GAME IS ITS OWN ANSWER (owner, 1.0(37): "if you have one
+// game open, and you scroll up and hit a different game bubble, it should
+// completely switch to that other game. Not rebase, completely switch. If a
+// bubble was staged, make the bubble a noop").
+//
+// A thread holds many games, every bubble stays tappable forever, and a staged
+// bubble is a DRAFT that survives the human tapping away to another game -
+// Messages offers no call to remove one. So the send signal for game B's draft
+// can reach a board built on game A, and with nothing staged on that board and
+// nothing sealed by it, FOREIGN cannot catch it: that test is "did I seal these
+// bytes", and a board that has sealed nothing has no opinion. The verdict was
+// REBASE, and a rebase adopts - `base` becomes the other game's chain, decoded
+// and MASKED FOR THIS BOARD'S SEAT NUMBER, which in the other game belongs to
+// somebody else. One tap away from a hand that is not yours.
+//
+// `same_game` is the host's comparison of the decoded chain's game id against
+// the one this board is playing, and it is asked on the SECOND call only,
+// because it is not knowable before the decode: pass < 0 on the first ask.
+//
+// It sits under the decode tests and above every "adopt" answer, which is the
+// whole of it: bytes that will not decode are unreadable whoever they belong
+// to, and bytes that decode to another game are never this board's to take.
 int msg_turn_send_verdict(int staged, int have_host, int have_sealed,
-                          int host_is_sealed, int decoded);
+                          int host_is_sealed, int decoded, int same_game);
 
 // ---- what is withheld ------------------------------------------------------
 //

@@ -1681,6 +1681,7 @@ _Static_assert(FIO_TURN_SEND_BLIND      == MSG_TURN_SEND_BLIND,      "send verdi
 _Static_assert(FIO_TURN_SEND_DECODE     == MSG_TURN_SEND_DECODE,     "send verdict diverged");
 _Static_assert(FIO_TURN_SEND_UNREADABLE == MSG_TURN_SEND_UNREADABLE, "send verdict diverged");
 _Static_assert(FIO_TURN_SEND_REBASE     == MSG_TURN_SEND_REBASE,     "send verdict diverged");
+_Static_assert(FIO_TURN_SEND_OTHERGAME  == MSG_TURN_SEND_OTHERGAME,  "send verdict diverged");
 
 int fio_msg_turn_can_send(int state) { return msg_turn_can_send(state); }
 
@@ -1713,8 +1714,9 @@ int fio_msg_turn_sent_source(int staged, int have_host, int have_sealed) {
 }
 
 int fio_msg_turn_send_verdict(int staged, int have_host, int have_sealed,
-                              int host_is_sealed, int decoded) {
-    return msg_turn_send_verdict(staged, have_host, have_sealed, host_is_sealed, decoded);
+                              int host_is_sealed, int decoded, int same_game) {
+    return msg_turn_send_verdict(staged, have_host, have_sealed, host_is_sealed,
+                                 decoded, same_game);
 }
 
 int fio_msg_turn_hold_state(int n_events, int cut) {

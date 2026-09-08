@@ -170,6 +170,11 @@ public enum TurnWire {
         /// They will not decode: keep the board on its staged move.
         case unreadable = 4
         case rebase = 5
+        /// They decode to a DIFFERENT GAME. Never this board's to adopt: a
+        /// rebase would decode another game's chain masked for THIS board's
+        /// seat number, which over there belongs to somebody else. Refused the
+        /// same way `.foreign` is - the board is left exactly as it stands.
+        case otherGame = 6
     }
 
     /// What the send does to this board. Ask once with `decoded` nil; a
@@ -179,11 +184,17 @@ public enum TurnWire {
     /// EVERY ANSWER RELEASES A HELD SETTLEMENT. Send is the only releaser there
     /// is, so a refusal is a refusal to REBASE and never to release - a hold
     /// kept past the send is a board no tap can move and no arrival can unstick.
+    ///
+    /// `sameGame` is the host's comparison of the DECODED chain's game id
+    /// against the one this board plays, so it only exists on the second ask -
+    /// nil (the default) means "not known yet" and is never a refusal.
     public static func sendVerdict(staged: Bool, host: Bool, sealed: Bool,
-                                   hostIsSealed: Bool, decoded: Bool?) -> SendVerdict {
+                                   hostIsSealed: Bool, decoded: Bool?,
+                                   sameGame: Bool? = nil) -> SendVerdict {
         let d: Int32 = decoded.map { $0 ? 1 : 0 } ?? -1
+        let g: Int32 = sameGame.map { $0 ? 1 : 0 } ?? -1
         return SendVerdict(rawValue: fio_msg_turn_send_verdict(
-            staged ? 1 : 0, host ? 1 : 0, sealed ? 1 : 0, hostIsSealed ? 1 : 0, d)) ?? .noop
+            staged ? 1 : 0, host ? 1 : 0, sealed ? 1 : 0, hostIsSealed ? 1 : 0, d, g)) ?? .noop
     }
 
     // MARK: - what is withheld

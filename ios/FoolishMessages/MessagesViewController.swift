@@ -377,11 +377,23 @@ final class MessagesViewController: MSMessagesAppViewController {
         // `pendingStage` reuses `lastPayloadURL` instead of tearing down the
         // live board to "adopt" the move it just watched itself play — see
         // that type's doc for the full chain.
-        let payloadURL = StagedBubbleRouting.resolvedPayloadURL(
+        let route = StagedBubbleRouting.route(
             selectedURL: selected?.url, startingNewGame: startingNewGame,
             pendingStage: pendingStage.map { (payload: $0.payload, mySeat: $0.mySeat) },
             lastPayloadURL: lastPayloadURL,
             lastSentPayload: lastSentPayload)
+        let payloadURL = route.url
+        // 1.0(37): THE MARKERS DIE WITH THE BOARD THEY PIN. Both exist to keep
+        // ONE chain on screen when my own bubble becomes the selection; once
+        // this surface is presenting something else they are pinning a board
+        // that is gone, and the next tap back onto the pinned bubble would be
+        // handed the URL of the game we left. See StagedBubbleRouting.Route.
+        if route.clearMarkers, lastSentPayload != nil || pendingStage != nil {
+            FlightRecorder.note("markers-spent",
+                "presentation moved - dropping the staged/just-sent pins")
+            lastSentPayload = nil
+            pendingStage = nil
+        }
         lastPayloadURL = payloadURL
         // §6.2 S1's exact half: did THIS device send the tapped bubble? Only the
         // extension can answer — the participant UUIDs never travel in the payload.
