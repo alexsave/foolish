@@ -5,7 +5,10 @@
 
 import SwiftUI
 
-public struct FDiscardPile: View {
+// Not `public`: nothing outside FoolishKit names it, and a public View in a
+// dynamic framework exports its whole SwiftUI generic tree as symbol names
+// (see RulesView.swift for the measurement).
+struct FDiscardPile: View {
     public let count: Int
     public init(count: Int) { self.count = count }
 

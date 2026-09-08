@@ -212,6 +212,21 @@ public enum WoolTexture {
     /// file line up, because the whole generator is written in its pixels.
     public static let blockPx = 80.0
 
+#if FOOLISH_TEXTURE_BAKE
+// BUILD-TIME ONLY, and now enforced rather than only asked for.
+//
+// The generator below has no caller in any shipping target - ios/Tools/
+// GenerateTextures.swift and FeltVariations.swift are the only ones - but
+// `public` in a DYNAMIC framework is a dead-strip root, so it was linked into
+// FoolishKit.framework anyway, and FoolishKit.framework ships inside the
+// iMessage bundle.  A procedural render on launch is what took the extension
+// down on a real phone (see this file's header); carrying the code that does it
+// is the same mistake one step removed.  The two tools pass
+// `-D FOOLISH_TEXTURE_BAKE`; no shipping target defines it.
+//
+// Worth ~1KB of binary, measured (2.639MB -> 2.638MB), so this is a RULE and
+// not a diet: the reason to keep it is that a shipping build cannot render a
+// texture procedurally even by accident, not the bytes.
     // MARK: - The generator
 
     /// Render the weave at `w x h` px. Deterministic (fixed offsets). Pure
@@ -327,8 +342,24 @@ public enum WoolTexture {
 
         return cgImageFromRGBA(&data, w: w, h: h)
     }
+#endif  // FOOLISH_TEXTURE_BAKE
 }
 
+#if FOOLISH_TEXTURE_BAKE
+// BUILD-TIME ONLY, and now enforced rather than only asked for.
+//
+// The generator below has no caller in any shipping target - ios/Tools/
+// GenerateTextures.swift and FeltVariations.swift are the only ones - but
+// `public` in a DYNAMIC framework is a dead-strip root, so it was linked into
+// FoolishKit.framework anyway, and FoolishKit.framework ships inside the
+// iMessage bundle.  A procedural render on launch is what took the extension
+// down on a real phone (see this file's header); carrying the code that does it
+// is the same mistake one step removed.  The two tools pass
+// `-D FOOLISH_TEXTURE_BAKE`; no shipping target defines it.
+//
+// Worth ~1KB of binary, measured (2.639MB -> 2.638MB), so this is a RULE and
+// not a diet: the reason to keep it is that a shipping build cannot render a
+// texture procedurally even by accident, not the bytes.
 // MARK: - shared buffer → CGImage
 
 /// Wrap a straight RGBA8 buffer in a CGImage. Shared by both generators, and
@@ -343,3 +374,4 @@ func cgImageFromRGBA(_ data: inout [UInt8], w: Int, h: Int) -> CGImage? {
         return ctx?.makeImage()
     }
 }
+#endif  // FOOLISH_TEXTURE_BAKE

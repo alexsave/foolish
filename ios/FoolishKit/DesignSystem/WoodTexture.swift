@@ -115,6 +115,21 @@ public enum WoodTexture {
     /// bug it forbids is a taller plank getting proportionally giant grain.
     public static let pointsPerTexel: CGFloat = 1.0
 
+#if FOOLISH_TEXTURE_BAKE
+// BUILD-TIME ONLY, and now enforced rather than only asked for.
+//
+// The generator below has no caller in any shipping target - ios/Tools/
+// GenerateTextures.swift and FeltVariations.swift are the only ones - but
+// `public` in a DYNAMIC framework is a dead-strip root, so it was linked into
+// FoolishKit.framework anyway, and FoolishKit.framework ships inside the
+// iMessage bundle.  A procedural render on launch is what took the extension
+// down on a real phone (see this file's header); carrying the code that does it
+// is the same mistake one step removed.  The two tools pass
+// `-D FOOLISH_TEXTURE_BAKE`; no shipping target defines it.
+//
+// Worth ~1KB of binary, measured (2.639MB -> 2.638MB), so this is a RULE and
+// not a diet: the reason to keep it is that a shipping build cannot render a
+// texture procedurally even by accident, not the bytes.
     // MARK: - The generator
 
     /// Render the grain at `w x h` px. Deterministic. Pure CoreGraphics so the
@@ -195,4 +210,5 @@ public enum WoodTexture {
 
         return cgImageFromRGBA(&data, w: w, h: h)
     }
+#endif  // FOOLISH_TEXTURE_BAKE
 }

@@ -32,7 +32,7 @@ trap 'rm -rf "$BUILD"' EXIT
 
 # -Ounchecked, not -O: the generators are hot arithmetic loops with bounds
 # checks the render already guards by hand. Deterministic either way.
-swiftc -Ounchecked -whole-module-optimization \
+swiftc -Ounchecked -whole-module-optimization -D FOOLISH_TEXTURE_BAKE \
   -o "$BUILD/gentex" \
   "$IOS/FoolishKit/DesignSystem/WoolTexture.swift" \
   "$IOS/FoolishKit/DesignSystem/FeltTexture.swift" \

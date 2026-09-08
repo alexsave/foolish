@@ -26,7 +26,10 @@
 
 import SwiftUI
 
-public struct MessageSettingsView: View {
+// Not `public`: nothing outside FoolishKit names it, and a public View in a
+// dynamic framework exports its whole SwiftUI generic tree as symbol names
+// (see RulesView.swift for the measurement).
+struct MessageSettingsView: View {
     private let onClose: () -> Void
     /// The live settings (see FPrefs): this sheet both READS them - so its own
     /// title and rows re-render into the language just picked, and the wool

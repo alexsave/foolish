@@ -66,6 +66,62 @@ PY
   fi
 fi
 
+echo "[lint] every app-icon set carries an ordinary rendition (bundle size)…"
+# THE 1.86MB TRAP, and it is invisible in the source tree.
+#
+# actool always writes a LOOSE "standalone" copy of the primary app icon next to
+# Assets.car - the copy the system reads without opening the catalog - and it
+# picks the SMALLEST applicable rendition in the set. An appiconset holding only
+# the 1024 marketing icon therefore ships that 1024 as the loose file: a 1.86MB
+# PNG at the top of the bundle. Worse, a loose file is NOT app-thinned, so it
+# lands on every device, while the same icon inside Assets.car IS thinned away.
+# Measured on FoolishMessagesApp: 3.5MB of an 8.3MB install was those two
+# copies; adding the ordinary 20/29/40/60pt ladder took the install to 4.8MB and
+# the download from 6.5MB to 2.9MB. Nothing else in this bundle is that size for
+# that little.
+#
+# So: an icon set that names a marketing rendition must also carry at least one
+# ordinary one. `--standalone-icon-behavior none` is NOT an escape - actool
+# hard-errors ("app icon set ... did not have any applicable content").
+iconfail=0
+python3 - <<'PY' || iconfail=1
+import json, glob, re, sys
+
+def biggest_point_dim(image):
+    """The larger of a rendition's declared POINT dimensions, or None."""
+    m = re.match(r'(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)$', image.get('size', ''))
+    return max(float(m.group(1)), float(m.group(2))) if m else None
+
+# 256pt: every ordinary iOS/Messages rendition is <= 74pt and every marketing
+# one is 1024pt, so anything in between is a comfortable line. Deliberately
+# SIZE-based and not idiom-based: the same one-entry set has shipped as both
+# `ios-marketing` and `universal`, so the idiom does not tell you what actool
+# will do with it and the size does.
+ORDINARY_MAX_PT = 256
+
+bad = []
+for p in sorted(glob.glob('*/Assets.xcassets/*.appiconset/Contents.json')
+                + glob.glob('*/Assets.xcassets/*.stickersiconset/Contents.json')):
+    images = json.load(open(p)).get('images', [])
+    # iOS only. watchOS's single-1024 set is Apple's CURRENT recommended shape
+    # there (actool derives the whole watch ladder from it), so the rule above
+    # is simply not the watch's contract - WatchUI/ is left alone on purpose.
+    images = [i for i in images if i.get('platform', 'ios') == 'ios']
+    sized = [d for d in (biggest_point_dim(i) for i in images) if d is not None]
+    if not sized:
+        continue
+    if min(sized) > ORDINARY_MAX_PT:
+        bad.append(f'{p}: smallest rendition is {min(sized):.0f}pt - actool '
+                   f'would ship it LOOSE and unthinned (~1.8MB). '
+                   f'Add the ordinary ladder.')
+for line in bad:
+    print(f'  {line}')
+sys.exit(1 if bad else 0)
+PY
+if [ "$iconfail" -ne 0 ]; then
+  note "an app-icon set would ship its marketing icon as the loose standalone copy"
+fi
+
 echo "[lint] the C bridge stays inside the Swift SDK (sdk/swift/, §7.1)…"
 # CFoolish (the fio_* kernel API) may be imported ONLY inside the Swift SDK —
 # sdk/swift/ (A10). Never in the app layers: FoolishKit/{DesignSystem,Net,

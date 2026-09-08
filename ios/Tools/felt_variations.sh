@@ -6,7 +6,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IOS="$(dirname "$HERE")"
 OUT="${1:?usage: felt_variations.sh <out-dir>}"
 BUILD="$(mktemp -d)"; trap 'rm -rf "$BUILD"' EXIT
-swiftc -Ounchecked -whole-module-optimization -o "$BUILD/feltvar" \
+swiftc -Ounchecked -whole-module-optimization -D FOOLISH_TEXTURE_BAKE -o "$BUILD/feltvar" \
   "$IOS/FoolishKit/DesignSystem/WoolTexture.swift" \
   "$IOS/FoolishKit/DesignSystem/FeltTexture.swift" \
   "$HERE/FeltVariations.swift"
