@@ -21,6 +21,16 @@
 // stage it. What CAN be pinned is the invariant the fix rests on: no name field
 // without a focus binding, and no hand-off that skips `handOff`. That is the
 // same guard the `.contentShape` fix took, and for the same reason.
+//
+// AND WHAT THAT COSTS, written in after round 47 found out the hard way: the
+// eight tests below all passed while the feature they describe was completely
+// INERT on a real iPhone. They assert that our code asks for the drawer and
+// gates the keyboard correctly, and it did - Messages was discarding the
+// request, and nothing here can see a request being discarded. Read every
+// assertion in this file as "our side is shaped right", never as "it works".
+// The moment that makes it work is measured and pinned in NameEntryExpand /
+// NameEntryExpandTests; the proof that it works at all is a screenshot from
+// the real Messages app.
 import XCTest
 @testable import FoolishKit
 

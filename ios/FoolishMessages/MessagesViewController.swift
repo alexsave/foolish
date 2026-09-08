@@ -12,6 +12,7 @@
 // whether a staged move survives — all C (msg_wire.c via MessageKernel). Seat
 // identity is the one non-kernel call, and it is SeatIdentity's pure §6 logic.
 import Combine
+import QuartzCore
 import UIKit
 import Messages
 import SwiftUI
@@ -259,6 +260,10 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func willTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
         super.willTransition(to: presentationStyle)
+        // ROUND 47: the FIRST thing, because on a cold open this callback is
+        // the earliest moment Messages will honour an `.expanded` request - see
+        // NameEntryExpand for the eight-run measurement.
+        nameExpandSaw(presentationStyle)
         // ROUND 30: the sheet is about to MOVE. An open replay started now spends
         // its first beat behind the edge of the screen - see
         // `CollapseTween.isPresenting`, which the board waits on.
@@ -291,6 +296,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func didTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
         super.didTransition(to: presentationStyle)
+        nameExpandSaw(presentationStyle)
         CollapseTween.isPresenting = false
         FlightRecorder.note("style", presentationStyle == .compact ? "compact" : "expanded")
         let waiters = transitionWaiters
@@ -318,6 +324,31 @@ final class MessagesViewController: MSMessagesAppViewController {
                     waiter.resume()
                 }
             }
+        }
+    }
+
+    /// ROUND 47: the drawer a name screen asks for, and the ONE retry that
+    /// makes Messages honour it.
+    ///
+    /// Threaded down to FoolishKit as `requestExpand`. `MessagesRootView`
+    /// decides WHETHER to ask (only when a name is owed - `needsNameEntry`);
+    /// this decides WHEN the ask is issued, because on a cold open the host
+    /// discards a request made before it has installed our view in the drawer.
+    /// NameEntryExpand carries the flight log that measured it.
+    private var nameExpand = NameEntryExpand()
+
+    private func requestNameEntryExpand() {
+        // Already open: requesting `.expanded` while expanded fires no
+        // transition, so there would be nothing to answer the retry either.
+        guard presentationStyle != .expanded else { return }
+        if nameExpand.note(.wanted, now: CACurrentMediaTime()) { requestPresentationStyle(.expanded) }
+    }
+
+    /// Every style callback, both phases. The compact one is the retry that
+    /// lands; the expanded one is what stops us asking.
+    private func nameExpandSaw(_ style: MSMessagesAppPresentationStyle) {
+        if nameExpand.note(.transition(toCompact: style == .compact), now: CACurrentMediaTime()) {
+            requestPresentationStyle(.expanded)
         }
     }
 
@@ -377,7 +408,7 @@ final class MessagesViewController: MSMessagesAppViewController {
             incomingToken: incomingToken,
             cancelToken: cancelToken,
             collapseSignal: collapseSignal,
-            requestExpand: { [weak self] in self?.requestPresentationStyle(.expanded) },
+            requestExpand: { [weak self] in self?.requestNameEntryExpand() },
             // A LIVE read, deliberately: the name-field autofocus asks this at
             // the moment a resize lands, and the answer has to be where the
             // sheet is THEN. See NameFieldAutofocus.
