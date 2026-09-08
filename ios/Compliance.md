@@ -66,19 +66,38 @@ mirror.
 
 ### Localization declaration
 
-- **`CFBundleLocalizations = [en, ru, ko]`** now set in both
-  `FoolishMessagesApp/Info.plist` and `FoolishMessages/Info.plist`. Round-5 Q1
-  (`docs/APP_REVIEW_NOTES.md`): visible strings were already fully localized
-  in en/ru/ko at runtime (`FStrings.swift`, switched on
-  `Locale.preferredLanguages`) but nothing declared this to the store, so the
-  listing would have advertised English-only while the app silently presented
-  Russian or Korean. The owner's decision was to ship ru/ko declared in 1.0.
-  The in-code `FStrings` table remains the backing store — there is still no
-  `.lproj` bundle — and Milestone E4's String Catalog work supersedes it
-  later; this key is the store-facing declaration and does not depend on
-  which mechanism holds the strings. `ios/project.yml` does not inject or
-  override `CFBundleLocalizations` for either target, so this is not
-  clobbered at generate time.
+- **`CFBundleLocalizations = [en, ru, ko, zh-Hans, vi]`** set in all THREE
+  shipping Info.plists: `FoolishApp/Info.plist`, `FoolishMessagesApp/Info.plist`
+  and `FoolishMessages/Info.plist`.
+  Round-5 Q1 (`docs/APP_REVIEW_NOTES.md`) added en/ru/ko; round 30 added the
+  zh/vi strings to `FStrings.swift` but left this key behind, and that gap has
+  now been closed.
+  The in-code `FStrings` table is the backing store - there is still no `.lproj`
+  anybody reads - and Milestone E4's String Catalog work supersedes it later.
+  `ios/project.yml` sets no `INFOPLIST_KEY_CFBundleLocalizations` for any
+  target, so this is not clobbered at `xcodegen generate` time (verified by
+  regenerating and re-reading the built bundles).
+
+- **This key is NOT cosmetic, and that was measured rather than assumed.**
+  iOS filters `Locale.preferredLanguages` down to the bundle's declared
+  localizations, so `FStrings.systemDetected` - which prefix-matches `zh` / `vi`
+  - never saw them while the key said `[en, ru, ko]`.
+  End-to-end check on an iPhone 17 Pro simulator with the device language set to
+  Chinese (Simplified), same binary, only this key differing: declared `[en, ru,
+  ko]` renders the main menu in ENGLISH ("Play" / "Choose opponent" / "Start
+  game"); declared with `zh-Hans` it renders in Chinese ("开始" / "选择对手" /
+  "开始游戏").
+  The same test in Vietnamese gives "Chơi" / "Chọn đối thủ" / "Bắt đầu".
+  So every Chinese- and Vietnamese-speaking user was silently getting the
+  English fallback despite the app carrying complete translations for them.
+
+- **Chinese is declared as `zh-Hans` and deliberately NOT `zh-Hant`.**
+  The `FStrings` table holds Simplified only.
+  `FStrings.systemDetected` prefix-matches any `zh`, so a Traditional reader
+  still lands on Simplified rather than English - but that is a fallback, not
+  support, and the store listing must not advertise a script nobody has
+  written.
+  Adding `zh-Hant` is a translation task, not a plist edit.
 
   (`FStrings.override`'s App Group scoping bug, noted alongside Q1, is a
   runtime/Swift fix, not a plist or compliance-doc matter, and is out of
