@@ -64,8 +64,8 @@ completely independent timelines.
 
 | Field | Value | Notes |
 | --- | --- | --- |
-| **Name** | `Foolish — Durak` | 17 characters. Apple dropped global app-name uniqueness enforcement in 2021 (unique within your own developer account only); a search found ~10 existing Durak apps, none named "Foolish" — low risk. |
-| **Name fallbacks** | `Foolish: Durak Card Game`, `Foolish Cards — Durak`, `Play Durak — Foolish` | In that order, only if flagged. |
+| **Name** | `Foolish - Durak` | 17 characters. Apple dropped global app-name uniqueness enforcement in 2021 (unique within your own developer account only); a search found ~10 existing Durak apps, none named "Foolish" — low risk. |
+| **Name fallbacks** | `Foolish: Durak Card Game`, `Foolish Cards - Durak`, `Play Durak - Foolish` | In that order, only if flagged. |
 | **Subtitle** (30 chars) | `Durak card game for iMessage` | 29 chars. |
 | **Subtitle fallback** | `Play Durak right in Messages` | 29 chars. |
 | **Primary category** | Games | Required. |
@@ -143,17 +143,60 @@ Recommended answers for Apple's current simplified (post-2024) questionnaire:
 | Cartoon or Fantasy Violence | None | No violence. |
 | Realistic Violence | None | — |
 | Sexual Content or Nudity | None | — |
-| Profanity or Crude Humor | None | No text input or chat feature exists anywhere in this app. |
+| Profanity or Crude Humor | **DECIDE - see §3a** | The old reasoning here ("no text input or chat feature exists anywhere in this app") is FALSE. The nickname field is free text, and the name a player types is rendered into the bubble image every other participant sees. |
 | Alcohol, Tobacco, or Drug Use | None | — |
 | Mature/Suggestive Themes | None | — |
 | Horror/Fear Themes | None | — |
 | Medical/Treatment Information | None | — |
 | Gambling and Contests | None / "No" | Durak has no betting, wagering, chips, or stakes mechanic — a pure trick-avoidance card game. Double-check this question's exact live wording (it sometimes also asks about simulated-gambling *mechanics*, e.g. slot/roulette visuals) — still "No" either way. |
 | Unrestricted Web Access | None | No in-app browser; a tapped `MSMessage` URL opens the *system* browser, standard OS behavior for any app. |
-| User-Generated Content | No | No communication features, no free-text input, no user-authored content of any kind in this app. |
+| User-Generated Content | **DECIDE - see §3a** | The old reasoning here ("no communication features, no free-text input, no user-authored content of any kind") is FALSE, and the app's own privacy policy contradicts it in writing: foolish.cards/imessage-privacy says the bubble "contains the cards played and the nickname you type into the game". |
 
-**Expected band: 4+.** Nothing above triggers a bump under the current
-questionnaire.
+**Expected band: 4+** on everything except the two rows above, which are not
+yet answerable - see §3a.
+
+### 3a. The nickname is user-generated content, and nothing filters it
+
+Reviewed 2026-09-08 against a **Release** build (1.1/49) on a clean install.
+Verified, not inferred:
+
+- The nickname is free text, capped at 16 characters / 64 bytes
+  (`MSG_MAX_NAME_CHARS` / `MSG_MAX_NAME`, `c/src/msg_wire.h:311,316`), and the
+  cap is the ONLY check. `NicknameGate` rejects empty and too-long; it does not
+  look at content.
+- It is not a local label. It is sealed into the FMSG payload as
+  `MessageJoin(seat, name)` (`sdk/swift/RosterWire.swift:24`) and rendered on
+  every other participant's screen (`MessageTurnController.swift:171`,
+  `MessageTableView.swift:1443`) AND into the bubble image itself.
+- Typing "Fuck you" as a nickname and tapping Create game produces a delivered
+  bubble reading "1. Fuck you". No warning, no filter, no rejection.
+- There is no profanity filter, no report control, no block control and no EULA
+  clause anywhere in the repo (grepped `ios/`, `c/`, `sdk/`).
+
+That is guideline 1.2's fact pattern: user-authored content displayed to other
+users. 1.2 asks for a content filter, a report mechanism, a block mechanism,
+and published contact information. The peer-to-peer, no-server architecture is
+not an exemption - 1.2 is about what reaches another person's screen, not about
+what a server stores.
+
+**This needs an owner decision before the record can be filled in.** Two honest
+routes:
+
+1. **Keep free-form names.** Then answer "User-Generated Content: Yes" and
+   "Profanity or Crude Humor: Infrequent/Mild", accept the higher age band, and
+   add at minimum a report/block affordance and an EULA line. This is the
+   larger change and the higher review risk, because the mechanisms 1.2 asks
+   for do not exist yet.
+2. **Stop shipping free-form names** (recommended for 1.0). Replace the
+   TextField with a picker over a fixed, pre-translated set of table names, or
+   fall back to "Player 1..8". Then both rows above are truthfully "None"/"No",
+   1.2 stops applying, and the age rating stays 4+. This is a contained change
+   in three call sites (`NewGameSetup`, `LobbyView`'s join row, `NameGateView`)
+   and the wire format does not change.
+
+What is NOT defensible is filing the original answers. They are contradicted by
+the app's own privacy policy, so a reviewer can see the contradiction without
+ever playing a game.
 
 ---
 
@@ -214,7 +257,14 @@ region-legal reason to exclude KR — or any other territory.
 | **Sign-in required?** | **No** — there is no sign-in screen anywhere in this app, in any mode. Mark "No" and leave the demo-account fields blank; there's genuinely nothing to fill in, not just "not needed." |
 | **Notes** | §5a below. |
 
-### 5a. App Review notes — full text, ready to paste
+### 5a. App Review notes — SUPERSEDED, DO NOT PASTE. Use §13c.
+
+> Kept only so the diff against §13c is readable. Every numbered step below is
+> wrong about the shipping app: there is no "New game" button on the first
+> screen (it is a nickname field), creating a game opens a LOBBY rather than
+> dealing a table, and there has been no "Send move" button since moves began
+> auto-staging. Pasting this text is a 2.3 inaccurate-review-information risk
+> AND a 2.1 one, because a reviewer following it never reaches a board.
 
 ```
 Foolish is a Durak (Russian "Fool") card game that ships ENTIRELY inside
@@ -250,7 +300,7 @@ requests no permissions.
 ### 6a. Description (up to 4,000 characters)
 
 ```
-Play Durak — the classic Russian card game — right inside iMessage.
+Play Durak, the classic Russian card game, right inside iMessage.
 
 Foolish brings дурак (Durak) to Messages: start a game with a tap, play your
 card, and send it like any other message. No app-switching, no separate
@@ -258,22 +308,22 @@ lobby, no account, and nothing to download outside of Messages itself.
 
 HOW IT WORKS
 • Tap the Foolish icon in the Messages app drawer to start a new game.
-• Play a card — it stages as a message bubble showing the table.
+• Play a card and it stages as a message bubble showing the table.
 • Send it like you would any text. The other player taps it to see their
   hand and play their turn back.
 • Works for 2 players in a direct message, or invite a group chat to a
   lobby for bigger games (up to 8 players).
 
 DURAK, DONE RIGHT
-• The real rules — attack, cover, throw in, or pick up — enforced by the
+• The real rules (attack, cover, throw in, or pick up) enforced by the
   same rules engine on every device, so there's never a disagreement about
   what's legal.
 • A finished game links to a full, shareable replay you can watch again or
   send to anyone, even people without the app.
-• No hands are ever visible to anyone but their owner — not even in the
+• No hands are ever visible to anyone but their owner, not even in the
   message bubble image itself.
 
-No ads. No tracking. No account. No data collected — nothing to sign up for,
+No ads. No tracking. No account. No data collected, nothing to sign up for,
 nothing to configure. Just open Messages and play.
 ```
 
@@ -284,7 +334,7 @@ this specific binary doesn't have.)*
 ### 6b. Promotional text (170 chars)
 
 ```
-Durak, the classic card game, playable right in iMessage — start a game
+Durak, the classic card game, playable right in iMessage. Start a game
 with a tap, play your card, send it like a text. No app-switching.
 ```
 (169 characters.)
@@ -301,7 +351,7 @@ characters. Trim if the live field's char-count differs from this estimate.
 ### 6d. What's New (first submission)
 
 ```
-Welcome to Foolish! Play Durak with friends right inside iMessage — start a
+Welcome to Foolish! Play Durak with friends right inside iMessage. Start a
 game, play your card, and send it like a text.
 ```
 
@@ -414,9 +464,26 @@ either answer is defensible.
 
 ## 13. Submitting 1.1 (49) - the second release
 
-*Written 2026-09-06, against the build that is in App Store Connect. 1.0 is
-already live, so this is a VERSION update, not a first submission: most of the
-sections above are already answered in the live record and stay as they are.*
+> **THE PREMISE OF THIS SECTION WAS WRONG. Corrected 2026-09-08 by the owner:
+> 1.0 only ever went to TestFlight. It has never been on the App Store, so this
+> is a FIRST SUBMISSION and NOTHING is inherited.** Every "already answered in
+> the live record and stays as it is" below is false. In particular §13 waves
+> off the four things a first submission must fill in from empty:
+>
+> - the **Age Rating** questionnaire (§3 - and see §3a, which blocks two rows),
+> - the **App Privacy** nutrition label (§2 - answer "Data Not Collected";
+>   `otool -L`/`nm -u` on the shipped extension, container and framework show
+>   no CFNetwork, no Network.framework and no URLSession symbols at all),
+> - **Pricing & Availability** and the territory list (§4a - South Korea must
+>   be selected; the app ships full Korean strings and `ko` in
+>   `CFBundleLocalizations`, and KR users currently hit "app unavailable"),
+> - **Export compliance**, which is asked interactively on a new record even
+>   though `ITSAppUsesNonExemptEncryption=false` is in both Info.plists.
+>
+> Still blank placeholders in this doc, and required: the Copyright entity name
+> (§1) and the App Review contact name and phone (§5).
+
+*Written 2026-09-06, against the build that is in App Store Connect.*
 
 ### What actually has to happen, in order
 

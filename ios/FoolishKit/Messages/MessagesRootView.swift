@@ -975,6 +975,15 @@ private struct GameSurface: View {
                       // nil in every shipping build: the closure only exists
                       // where `addSoloSeat` is compiled at all.
                       onAddSoloSeat: soloSeatAction(lob))
+                // The JOIN row is a name field too, and it is the screen the
+                // second player lands on. `.join` is exactly "no seat yet, and
+                // there is still room" (LobbyControls.offered) - the other
+                // states show buttons, which work compact. See
+                // expandForNameEntry.
+                .onAppear {
+                    if lobbySeat(lob.env) == nil,
+                       lob.env.joins.count < lob.env.nPlayers { expandForNameEntry() }
+                }
                 // Keep the corner pair's own footprint clear - the lobby is
                 // centred in whatever height it is given and the pair is an
                 // overlay, so a tall lobby lays out straight through it.
@@ -1001,6 +1010,7 @@ private struct GameSurface: View {
             NameGateView(prefill: MessageGameStore.shared.nickname) { name in
                 Task { await nameThenSeat(name, gate: g) }
             }
+            .onAppear(perform: expandForNameEntry)   // see expandForNameEntry
         } else if showSetup {
             // chatPlayers is threaded through unused (see NewGameSetup's own doc)
             // — kept only so this call site, the harness, and
@@ -1012,6 +1022,7 @@ private struct GameSurface: View {
             }
             .padding(.bottom, SettingsHelpSquares.reservedHeight)
             .overlay(alignment: .bottomLeading) { settingsHelpCorner }
+            .onAppear(perform: expandForNameEntry)   // see expandForNameEntry
         } else if let a = ambiguous {
             SeatPicker(nPlayers: a.env.nPlayers, joins: a.env.joins) { seat in
                 Task { await choose(seat: seat, from: a) }
@@ -1109,6 +1120,30 @@ private struct GameSurface: View {
             .padding(.leading, 4)
             .padding(.bottom, 4)
     }
+
+    /// ASK THE HOST TO EXPAND, BECAUSE A NAME FIELD CANNOT WORK COMPACT.
+    ///
+    /// Compact IS the keyboard's area (§3.5, and `NewGameSetup`'s own doc says
+    /// so): a `TextField` drawn there can never become first responder, because
+    /// there is nowhere for the keyboard to go. Every name screen in this
+    /// extension is therefore only usable EXPANDED - but nothing ever asked to
+    /// be. `requestExpand` has been threaded down from MessagesViewController
+    /// since M1 and was never called anywhere in FoolishKit (HarnessRootView's
+    /// own comment says as much); expansion was entirely host-driven, i.e. it
+    /// happened only if the player happened to drag the grabber.
+    ///
+    /// The result was a dead end on the app's FIRST screen: tap Foolish in the
+    /// drawer, get "New game" with a nickname field and a disabled "Enter
+    /// Nickname" button, and neither the field nor the button responds. The
+    /// same dead end sat on the JOIN row, which is the screen the second player
+    /// - and an App Store reviewer's second device - lands on.
+    ///
+    /// Unconditional on purpose. `style` goes stale across a grabber drag or an
+    /// auto-transition (see the note in `expandedContent`), so testing it would
+    /// re-introduce the bug in exactly the case that matters; requesting
+    /// `.expanded` while already expanded fires no transition and is a no-op
+    /// (MessagesViewController's `onNewGame` relies on the same property).
+    private func expandForNameEntry() { requestExpand() }
 
     /// Reset + (re)load for a NEW input. A compact<->expanded toggle leaves
     /// loadKey unchanged, so `.task(id:)` does not fire and the game persists.
