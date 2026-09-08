@@ -159,6 +159,24 @@ public final class MessageGameStore {
     /// blank field it cannot focus in compact.
     public var needsNameEntry: Bool { nicknamePrefill.isEmpty }
 
+    // WHICH OF THE THREE TO USE, because they deliberately disagree and a
+    // future reader will otherwise "fix" one of them into a bug.
+    //
+    //   nickname         the raw stored string. SEAT IDENTITY only - it is
+    //                    matched against the names sealed into `joins`, so it
+    //                    must be the exact string that was sealed. A human who
+    //                    typed "Me" has "Me" in their join, and normalising it
+    //                    away here would stop them recognising their own seat.
+    //   hasSetNickname   has the human ever chosen ANY name. Gates whether we
+    //                    ASK (the §B3 name gate). Someone who deliberately
+    //                    typed "Me" has chosen, and must not be re-asked.
+    //   needsNameEntry   will the FIELD be empty. Gates the drawer expand and
+    //                    the keyboard, because those follow what is on screen,
+    //                    not what is in storage.
+    //
+    // They differ on exactly one input - a stored "Me" - which is why all three
+    // exist rather than one.
+
     // MARK: read
 
     /// This device's seat in `gameId` WITHIN `chatKey`, or nil if unknown — the
