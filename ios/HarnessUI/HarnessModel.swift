@@ -778,12 +778,21 @@ final class HarnessModel: ObservableObject {
                         }
                     }
                     if !acted { break }
-                }
-                if let p = try? await MessageKernel.shared.seal(
-                    phase: 2, lastActorSeat: lastSeat, gameId: gid,
-                    parent8: Data(repeating: 0, count: 8), joins: joins) {
-                    payload = p
-                    _ = try? await MessageKernel.shared.decode(payload: payload, viewer: -1)
+                    // ONE BUBBLE PER MOVE. Sealing once at the END of the run
+                    // instead put every one of these steps into a single
+                    // bubble, and the bubble delta is what bounds a replay:
+                    // `fio_replay_last_events_packed` animates every atom after
+                    // the mark the last DECODE set (ios_api.c's
+                    // g_msg_base_logs), so a six-step seed opened as six moves
+                    // at once. Re-decoding here moves the mark exactly as a
+                    // receiving device does, which is the only way a dev seed
+                    // has the shape a real chain has.
+                    if let p = try? await MessageKernel.shared.seal(
+                        phase: 2, lastActorSeat: lastSeat, gameId: gid,
+                        parent8: Data(repeating: 0, count: 8), joins: joins) {
+                        payload = p
+                        _ = try? await MessageKernel.shared.decode(payload: payload, viewer: -1)
+                    }
                 }
             }
             // DEV: HARNESS_ENDSCREEN plays the whole game out (first legal move for
@@ -791,6 +800,7 @@ final class HarnessModel: ObservableObject {
             // board lands on the ranked end screen — a deterministic screenshot.
             if ProcessInfo.processInfo.environment["HARNESS_ENDSCREEN"] != nil {
                 var guardN = 0
+                var lastSeat = 0
                 while (await MessageKernel.shared.residentView(viewer: -1))?.isOver != true, guardN < 6000 {
                     guardN += 1
                     var acted = false
@@ -798,13 +808,34 @@ final class HarnessModel: ObservableObject {
                         let legal = await MessageKernel.shared.residentLegal(seat: s)
                         if let m = legal.first(where: { $0.type != .wait }) {
                             try? await MessageKernel.shared.apply(seat: s, move: m)
-                            acted = true; break
+                            lastSeat = s; acted = true; break
                         }
                     }
                     if !acted { break }
+                    // The move that ENDS the game is deliberately left unsealed
+                    // here, so the phase-3 seal below is the bubble that carries
+                    // it and the end screen opens on a ONE-MOVE replay. Every
+                    // other move seals and re-decodes for the reason written at
+                    // HARNESS_SEED_PLAY above: the decode is what moves the
+                    // bubble mark, and without it the whole game arrives as one
+                    // bubble. That is what produced the frames the owner
+                    // queried - six cards in flight at once, a face-down draw
+                    // over a table that still had cards on it - because a
+                    // replay spanning many bouts flies them all across ONE
+                    // table layout, the last bout's. Real play cannot reach
+                    // this: a staged bout end empties the legal menu
+                    // (msg_wire.c, `out->empty_menu = held`), so no bubble can
+                    // ever carry two bouts.
+                    if (await MessageKernel.shared.residentView(viewer: -1))?.isOver == true { break }
+                    if let p = try? await MessageKernel.shared.seal(
+                        phase: 2, lastActorSeat: lastSeat, gameId: gid,
+                        parent8: Data(repeating: 0, count: 8), joins: joins) {
+                        payload = p
+                        _ = try? await MessageKernel.shared.decode(payload: payload, viewer: -1)
+                    }
                 }
                 if let p = try? await MessageKernel.shared.seal(
-                    phase: 3, lastActorSeat: 0, gameId: gid,
+                    phase: 3, lastActorSeat: lastSeat, gameId: gid,
                     parent8: Data(repeating: 0, count: 8), joins: joins) {
                     payload = p
                     _ = try? await MessageKernel.shared.decode(payload: payload, viewer: -1)
