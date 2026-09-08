@@ -154,6 +154,24 @@ extension HarnessModel {
             // and auto-collapses exactly like a real player.
             await seedDemoGame()
 
+        case "staged-cancelled":
+            // 1.0(37): `staged-compact`, and then the human presses the X on
+            // the staged bubble. THE state the owner reported ("if I stage then
+            // X the staged bubble, the send hint arrow doesn't go away"), posed
+            // rather than tapped - a synthetic tap on a 20pt circle inside a
+            // scrolling transcript is exactly the kind of aim this rig exists
+            // to stop needing.
+            //
+            // It has to WAIT, which no other scenario does: the stage is not
+            // this function's to make. HARNESS_AUTOMOVE plays through the
+            // BOARD's own tap path, several hops and an animation away, and
+            // pressing the X before the bubble exists cancels nothing. Bounded,
+            // and it stops the moment the bubble appears, so the screenshot
+            // after it is still settled.
+            await seedDemoGame()
+            await waitForStagedBubble()
+            cancelStagedBubble()
+
         // ---- identity edges -------------------------------------------------
         case "namegate":
             // A DM receiver who has never named themselves: the creator named
@@ -420,6 +438,22 @@ extension HarnessModel {
     }
 
     private func collapseForReview() { togglePresentation() }
+
+    /// Wait for HARNESS_AUTOMOVE's stage to reach the host AND for the
+    /// auto-collapse that follows it, up to ~15s. Returns as soon as both have
+    /// landed, so the scenario is not paced by the timeout.
+    ///
+    /// THE COLLAPSE IS NOT OPTIONAL. The send hint is drawn in the COMPACT
+    /// drawer only (the expanded board is not under Messages' Send button at
+    /// all), so a cancel posed on a still-expanded board cannot show the arrow
+    /// staying or going - which is the whole thing being looked at.
+    private func waitForStagedBubble() async {
+        for _ in 0..<300 {
+            if staged != nil, presentation == .compact { return }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        AnimLog.say("scenario: no staged bubble in a compact drawer - is HARNESS_AUTOMOVE set?")
+    }
 
     /// Round-8 #4: store a reversed arrangement for the viewer's demo hand, the
     /// way a real reorder would have persisted it, then reload the surface so

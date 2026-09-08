@@ -978,6 +978,38 @@ int msg_turn_can_act(int state, int n_human_moves);
 // the first attacker, so the only way it progresses is to send the deal on.
 int msg_turn_can_stage(int state, int n_human_moves);
 
+// ---- THE STAGED BUBBLE, DELETED OUT OF THE INPUT FIELD ---------------------
+//
+// Messages draws an X on the bubble an extension inserted, and the human can
+// press it. That is neither a send nor an undo the app initiated: it is the
+// human saying "this is not going out", and it arrives as its own host callback
+// (didCancelSending). Owner, on the send hint left pointing at a bubble that no
+// longer exists: "X-ing the staged bubble should be the SAME as hitting the
+// undo button. If the player has ALREADY undone via the button, then X-ing the
+// bubble is a NO-OP."
+//
+// So a cancel is the UNDO rule, and the ONE thing that separates them is the
+// bubble rather than the game: the Undo BUTTON has to leave a bubble behind,
+// because Apple offers no call to remove an inserted one and an undo-to-empty
+// can only OVERWRITE the stale move with the base state
+// (MessageTableView.stageBaseNow). A cancel has nothing left to overwrite - the
+// human already removed it - so putting one back would re-insert exactly what
+// they just deleted, hint arrow and all.
+//
+// `n_pending` is the depth of the staged list BEFORE the undo, because that is
+// what decides whether anything is still staged AFTER it: a throw-in stacked on
+// an attack leaves the attack staged, and that shorter chain does still need a
+// bubble. Passed rather than derived from MSG_TURN_STAGED, which only says
+// "some" - the count is a fact the host holds and the rule needs.
+//
+// IDEMPOTENT BY CONSTRUCTION, which is the owner's second sentence: with
+// nothing staged there is no move to take back, and a cancel that undid
+// anything then would be undoing a move the human never staged twice.
+#define MSG_TURN_CANCEL_NOOP    0  // nothing of mine was staged - leave the game alone
+#define MSG_TURN_CANCEL_RESTAGE 1  // undo one; the shorter chain still needs a bubble
+#define MSG_TURN_CANCEL_CLEAR   2  // undo one; nothing is staged now, and nothing goes back
+int msg_turn_cancel(int state, int n_pending);
+
 // ---- the door every gesture comes through ----------------------------------
 //
 // Enforced as well as displayed. The board already hides what these refuse, so

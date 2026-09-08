@@ -941,6 +941,14 @@ int fio_msg_turn_can_send(int state);
 int fio_msg_turn_can_act(int state, int n_human_moves);
 int fio_msg_turn_can_stage(int state, int n_human_moves);
 
+// THE STAGED BUBBLE, X-ED OUT OF THE INPUT FIELD (didCancelSending). The same
+// rule as the Undo button, minus the bubble it has to leave behind - see
+// msg_wire.h. `n_pending` is the staged depth BEFORE the undo.
+#define FIO_TURN_CANCEL_NOOP    0
+#define FIO_TURN_CANCEL_RESTAGE 1
+#define FIO_TURN_CANCEL_CLEAR   2
+int fio_msg_turn_cancel(int state, int n_pending);
+
 // The door every gesture comes through. `move_type` is the MOVE_* the menu wire
 // carries (3 == pickup).
 #define FIO_TURN_ADMIT_OK           0

@@ -699,6 +699,14 @@ private struct GameSurface: View {
             }
             // Round-9: the human deleted the staged bubble from the input field
             // (didCancelSending) - nothing is awaiting Send any more.
+            //
+            // ONLY the surface's own flag. The board's half of a cancel - the
+            // undo, and whether a shorter chain goes back into the input field
+            // - is `MessageTableView.cancelStagedBubble`, on the same token:
+            // the send hint over a BOARD is drawn off `controller.canSend`, so
+            // clearing `surfaceStaged` here never dimmed it (1.0(37): "if I
+            // stage then X the staged bubble, the send hint arrow doesn't go
+            // away").
             .onChange(of: cancelToken) { _ in surfaceStaged = false }
             // A bubble ARRIVED while this surface is open (didReceive). Apple
             // does not move `selectedMessage` for an arrival, so loadKey does
@@ -1097,6 +1105,9 @@ private struct GameSurface: View {
                              },
                              onUnstage: onUnstage,
                              alsoStaged: surfaceStaged,
+                             // The board runs the UNDO a cancel means; this
+                             // view only clears its own `surfaceStaged` below.
+                             cancelToken: cancelToken,
                              onDiagnostics: { showDiagnostics = true },
                              onOpenURL: onOpenURL)
                 // 1.0(4) live-receive blink: a received bubble reloads the surface

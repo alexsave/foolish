@@ -3358,6 +3358,10 @@ static void test_chain_gates(void) {
 // unmutated baseline run first and reporting 0:
 //   can_act ignores SUPERSEDED                              -> 1 failure
 //   can_stage drops the genesis clause                      -> 1 failure
+//   cancel returns CLEAR whenever anything is staged        -> 1 failure
+//   cancel undoes unconditionally (drops the STAGED guard)   -> 1 failure
+//   cancel ignores the send window                           -> 1 failure
+//   cancel ignores the retraction in flight                  -> 1 failure
 //   admit asks SUPERSEDED before RETRACTING                 -> 1 failure
 //   admit drops the pickup hold                             -> 1 failure
 //   arrival asks RETRACTING after the staged test           -> 1 failure
@@ -3394,6 +3398,26 @@ static void test_turn_controller(void) {
     CHECK(msg_turn_can_stage(live, 2) == 0, "a continuation with nothing staged stages nothing");
     CHECK(msg_turn_can_stage(live | MSG_TURN_STAGED | MSG_TURN_SUPERSEDED, 0) == 0,
           "superseded stands the whole send path down");
+
+    // ---- the staged bubble, X-ed out of the input field ----
+    CHECK(msg_turn_cancel(live | MSG_TURN_STAGED, 1) == MSG_TURN_CANCEL_CLEAR,
+          "one move staged: take it back, and put NO bubble back - the human "
+          "deleted the one there was");
+    CHECK(msg_turn_cancel(live | MSG_TURN_STAGED, 3) == MSG_TURN_CANCEL_RESTAGE,
+          "a throw-in stacked on an attack: undo one, and the shorter chain "
+          "still needs a bubble");
+    CHECK(msg_turn_cancel(live, 0) == MSG_TURN_CANCEL_NOOP,
+          "stage, undo, THEN X the base bubble: nothing of mine is staged, so "
+          "the cancel must not reach into the game and undo a second move");
+    CHECK(msg_turn_cancel(live | MSG_TURN_STAGED | MSG_TURN_SENDING, 1)
+              == MSG_TURN_CANCEL_NOOP,
+          "the send window has the bytes - the same reason can_send refuses");
+    CHECK(msg_turn_cancel(live | MSG_TURN_STAGED | MSG_TURN_RETRACTING, 2)
+              == MSG_TURN_CANCEL_NOOP,
+          "a retraction IS an undo of everything staged, already in flight");
+    CHECK(msg_turn_cancel(live | MSG_TURN_GENESIS, 0) == MSG_TURN_CANCEL_NOOP,
+          "a genesis deal is stageable with nothing pending, and X-ing it is "
+          "still not an undo of a move nobody made");
 
     // ---- the door every gesture comes through ----
     CHECK(msg_turn_admit(live, MOVE_ATTACK, 0) == MSG_TURN_ADMIT_OK, "an ordinary attack");

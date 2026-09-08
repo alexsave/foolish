@@ -1053,6 +1053,21 @@ int msg_turn_can_stage(int state, int n_human_moves) {
     return turn_has(state, MSG_TURN_GENESIS) && !msg_turn_can_act(state, n_human_moves);
 }
 
+int msg_turn_cancel(int state, int n_pending) {
+    // The same door `undo` itself stands behind: a retraction IS an undo of
+    // everything staged and it is already in flight.
+    if (turn_has(state, MSG_TURN_RETRACTING)) return MSG_TURN_CANCEL_NOOP;
+    // Send has already claimed those bytes. Nothing may be taken back inside
+    // that window - the same reason msg_turn_can_send refuses it.
+    if (turn_has(state, MSG_TURN_SENDING))    return MSG_TURN_CANCEL_NOOP;
+    // Nothing of mine is staged, so the bubble the human deleted carried no
+    // move of theirs to take back: a stage-then-undo leaves the BASE state in
+    // the input field, and X-ing that must not reach into the game.
+    if (!turn_has(state, MSG_TURN_STAGED) || n_pending <= 0)
+        return MSG_TURN_CANCEL_NOOP;
+    return n_pending > 1 ? MSG_TURN_CANCEL_RESTAGE : MSG_TURN_CANCEL_CLEAR;
+}
+
 int msg_turn_admit(int state, int move_type, int pickup_hold) {
     if (turn_has(state, MSG_TURN_RETRACTING)) return MSG_TURN_ADMIT_RETRACTING;
     if (turn_has(state, MSG_TURN_SUPERSEDED)) return MSG_TURN_ADMIT_SUPERSEDED;

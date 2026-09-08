@@ -251,9 +251,21 @@ final class MessagesViewController: MSMessagesAppViewController {
         if let p = pendingStage,
            let cancelled = Self.payload(of: message), cancelled != p.payload { return }
         pendingStage = nil
+        // OBSERVED, not assumed. "The callback does not fire" was the first
+        // theory for the hint that would not go out, and it was wrong - this
+        // line is what says so, in a trail that survives the extension being
+        // torn down. `selectedMessage` comes with it because whether Messages
+        // leaves the deleted bubble selected is what decides if the surface
+        // reloads out from under the cancel.
+        FlightRecorder.note("cancel", "sel "
+            + (conversation.selectedMessage == nil ? "nil" : "set"))
         // Round-9: tell the surface nothing awaits Send any more, so the send
         // reminder (which now also covers lobby join/invite/start bubbles)
         // doesn't keep pointing at a bubble the human just deleted.
+        // 1.0(37): …and the BOARD's half of that reminder is
+        // `controller.canSend`, which this token now also reaches
+        // (MessageTableView.cancelStagedBubble). Clearing only the surface's
+        // flag is why the arrow survived a cancel over a game board.
         cancelToken += 1
         present(conversation, style: presentationStyle)
     }

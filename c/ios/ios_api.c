@@ -1663,6 +1663,9 @@ _Static_assert(FIO_TURN_RETRACTING     == MSG_TURN_RETRACTING,     "turn bits di
 _Static_assert(FIO_TURN_BOARD_WATCHING == MSG_TURN_BOARD_WATCHING, "turn bits diverged");
 _Static_assert(FIO_TURN_HELD           == MSG_TURN_HELD,           "turn bits diverged");
 _Static_assert(FIO_TURN_GENESIS        == MSG_TURN_GENESIS,        "turn bits diverged");
+_Static_assert(FIO_TURN_CANCEL_NOOP    == MSG_TURN_CANCEL_NOOP,    "cancel diverged");
+_Static_assert(FIO_TURN_CANCEL_RESTAGE == MSG_TURN_CANCEL_RESTAGE, "cancel diverged");
+_Static_assert(FIO_TURN_CANCEL_CLEAR   == MSG_TURN_CANCEL_CLEAR,   "cancel diverged");
 _Static_assert(FIO_TURN_ADMIT_RETRACTING  == MSG_TURN_ADMIT_RETRACTING,  "admit diverged");
 _Static_assert(FIO_TURN_ADMIT_SUPERSEDED  == MSG_TURN_ADMIT_SUPERSEDED,  "admit diverged");
 _Static_assert(FIO_TURN_ADMIT_HELD_PICKUP == MSG_TURN_ADMIT_HELD_PICKUP, "admit diverged");
@@ -1687,6 +1690,10 @@ int fio_msg_turn_can_act(int state, int n_human_moves) {
 
 int fio_msg_turn_can_stage(int state, int n_human_moves) {
     return msg_turn_can_stage(state, n_human_moves);
+}
+
+int fio_msg_turn_cancel(int state, int n_pending) {
+    return msg_turn_cancel(state, n_pending);
 }
 
 int fio_msg_turn_admit(int state, int move_type, int pickup_hold) {

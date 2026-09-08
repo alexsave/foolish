@@ -71,6 +71,28 @@ public enum TurnWire {
         fio_msg_turn_can_stage(s.rawValue, Int32(humanMoves)) != 0
     }
 
+    // MARK: - the staged bubble, deleted out of the input field
+
+    /// What X-ing the staged bubble does. The same rule as the Undo button,
+    /// minus the bubble the button has to leave behind - see msg_wire.h.
+    public enum Cancellation: Int32, Sendable {
+        /// Nothing of mine was staged: leave the game alone. This is the
+        /// stage-then-undo case, where the bubble in the field carries the BASE
+        /// state and X-ing it must not undo a second move.
+        case noop = 0
+        /// Take one move back; the shorter chain still needs a bubble.
+        case restage = 1
+        /// Take one move back; nothing is staged now, and nothing goes back
+        /// into the input field.
+        case clear = 2
+    }
+
+    /// `pending` is the staged depth BEFORE the undo - the count the host
+    /// holds, which is what decides whether anything survives the undo.
+    public static func cancel(_ s: State, pending: Int) -> Cancellation {
+        Cancellation(rawValue: fio_msg_turn_cancel(s.rawValue, Int32(pending))) ?? .noop
+    }
+
     // MARK: - the door every gesture comes through
 
     public enum Admission: Int32, Sendable {

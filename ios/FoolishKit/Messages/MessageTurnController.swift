@@ -1519,6 +1519,40 @@ public final class MessageTurnController: ObservableObject {
         await refresh()
     }
 
+    /// What the caller must do to the INPUT FIELD after `cancelStage` has done
+    /// what it does to the GAME. The kernel's `msg_turn_cancel`, retyped.
+    public enum StageCancel: Sendable, Equatable {
+        /// Nothing happened; the board is exactly as it was.
+        case noop
+        /// A move came back off the chain and the shorter one still needs a
+        /// bubble - re-stage.
+        case restage
+        /// A move came back off the chain and nothing is staged now. Do NOT put
+        /// a bubble back: the human deleted the one there was.
+        case clear
+    }
+
+    /// THE HUMAN X-ED THE STAGED BUBBLE OUT OF THE INPUT FIELD.
+    ///
+    /// Owner: "X-ing the staged bubble should be the SAME as hitting the undo
+    /// button. If the player has ALREADY undone via the button, then X-ing the
+    /// bubble is a NO-OP." So this is `undo()` - the one that is already here,
+    /// not a second walk back that would have to agree with it - behind the
+    /// kernel's gate, and it answers what the input field owes.
+    ///
+    /// The gate is `msg_turn_cancel` rather than a `guard` here because it is a
+    /// rule and not a formality: it is what makes the cancel idempotent with an
+    /// undo that already happened (a stage-then-undo leaves the BASE state
+    /// staged, and X-ing THAT must not take a second move back), and what keeps
+    /// a cancel out of the send window and out of a retraction already flying.
+    public func cancelStage() async -> StageCancel {
+        switch TurnWire.cancel(chainState, pending: pending.count) {
+        case .noop:    return .noop
+        case .restage: await undo(); return .restage
+        case .clear:   await undo(); return .clear
+        }
+    }
+
     /// The joins to seal: the parent's, plus MY seat if it wasn't named yet — a
     /// joiner appends their own nickname the first time they act (§5.2), so a 2p
     /// opponent stops showing as "Seat 2" once they reply. Seat order preserved.
