@@ -101,6 +101,41 @@ public enum SeatIdentity {
         GateWire.seatClaimedByName(recordedName: recordedName, joins: joins)
     }
 
+    /// THE BOARD'S WHOLE §6 ANSWER, in one kernel call
+    /// (`msg_seat_resolve_on_board`): name-recovery, then the ghost guard on
+    /// the numeric cache, then `resolve`'s three layers.
+    ///
+    /// This used to be reassembled at the call site - `seatClaimedByName` ??
+    /// (`cacheDisownedByJoins` ? nil : cached), then `resolve` - which is a
+    /// Durak-adjacent rule composed in Swift, and the composition is where the
+    /// claim-time name went missing on the way in. The kernel composes it now,
+    /// and the host hands over facts.
+    ///
+    /// `cachedSeat` and `recordedName` must come from ONE read of the store -
+    /// `MessageGameStore.identity(gameId:)`, which returns them as a pair for
+    /// that reason. Sourcing them separately is what broke: the seat came off
+    /// the per-game row and the name off the device nickname, so the gates
+    /// compared a number from one game against a name from whichever game was
+    /// joined last.
+    ///
+    /// `.ambiguous` here means ambiguous ONLY. Unlike `resolveInLobby` there is
+    /// no roster-membership check: a live chain carries every seated player
+    /// forward, and a seat this bubble does not list yet is a device not sealed
+    /// in yet, not a seat that is not mine.
+    public static func resolveOnBoard(cachedSeat: Int?, recordedName: String?,
+                                      senderIsLocal: Bool,
+                                      nPlayers: Int, lastActorSeat: Int,
+                                      joins: [MessageJoin], chatIsDM: Bool) -> Resolution {
+        guard let s = GateWire.seatResolveOnBoard(cachedSeat: cachedSeat,
+                                                  senderIsLocal: senderIsLocal,
+                                                  nPlayers: nPlayers,
+                                                  lastActorSeat: lastActorSeat,
+                                                  chatIsDM: chatIsDM,
+                                                  recordedName: recordedName,
+                                                  joins: joins) else { return .ambiguous }
+        return .known(s)
+    }
+
     /// `resolve`, gated for a LOBBY bubble specifically (note 14, HARNESS_NOTES_R2):
     /// a resolved seat only counts as MINE if this bubble's own `joins` list
     /// actually contains it. `resolve` alone answers "who does the cache/sender

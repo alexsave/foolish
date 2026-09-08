@@ -858,7 +858,15 @@ int fio_seat_claimed_by_name(const uint8_t *joins, int joins_len,
 int fio_seat_cache_disowned(const uint8_t *joins, int joins_len, int cached_seat,
                             const uint8_t *name, int name_len);
 
-// fio_seat_resolve gated on this bubble's OWN roster - the lobby answer. The
+// fio_seat_resolve with the two name gates in front of it - the BOARD answer,
+// whole, so no host reassembles it. The seat, or -1 for ambiguous. No roster
+// membership check; see msg_wire.h for why the board must not have one.
+int fio_seat_resolve_on_board(const uint8_t *joins, int joins_len,
+                              int cached_seat, int sender_is_local, int n_players,
+                              int last_actor_seat, int chat_is_dm,
+                              const uint8_t *name, int name_len);
+
+// The same gated on this bubble's OWN roster - the lobby answer. The
 // seat, or -1 for ambiguous OR resolved-but-not-listed.
 int fio_seat_resolve_in_lobby(const uint8_t *joins, int joins_len,
                               int cached_seat, int sender_is_local, int n_players,

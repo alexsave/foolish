@@ -1540,6 +1540,17 @@ int fio_seat_cache_disowned(const uint8_t *joins, int joins_len, int cached_seat
     return msg_seat_cache_disowned(js, n, cached_seat, (const char *)name, name_len);
 }
 
+int fio_seat_resolve_on_board(const uint8_t *joins, int joins_len,
+                              int cached_seat, int sender_is_local, int n_players,
+                              int last_actor_seat, int chat_is_dm,
+                              const uint8_t *name, int name_len) {
+    MsgJoin js[MSG_MAX_JOINS];
+    const int n = fio_gate_joins(joins, joins_len, js);
+    return msg_seat_resolve_on_board(js, n, cached_seat, sender_is_local, n_players,
+                                     last_actor_seat, chat_is_dm,
+                                     (const char *)name, name_len);
+}
+
 int fio_seat_resolve_in_lobby(const uint8_t *joins, int joins_len,
                               int cached_seat, int sender_is_local, int n_players,
                               int last_actor_seat, int chat_is_dm,

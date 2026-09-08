@@ -277,7 +277,7 @@ final class HarnessFlowTests: XCTestCase {
         // Chat B on the one shared App Group suite.
         let m = HarnessModel(count: 2)
         let chatAKey = m.chatKey
-        MessageGameStore.shared.setSeat(gameId: "leak-check", chatKey: chatAKey, seat: 0)
+        MessageGameStore.shared.setSeat(gameId: "leak-check", chatKey: chatAKey, seat: 0, name: nil)
         XCTAssertEqual(MessageGameStore.shared.seat(gameId: "leak-check", chatKey: chatAKey), 0)
 
         m.switchChat(1)

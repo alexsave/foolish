@@ -682,7 +682,17 @@ final class MessagesViewController: MSMessagesAppViewController {
             // SEAT (§6.1). The chain the human just sent is now the thread's, and
             // reopening it re-renders it from its own bytes. (ROUND 9: the pending
             // ledger this also used to clear is gone entirely - owner call.)
-            MessageGameStore.shared.setSeat(gameId: gameId, chatKey: chatKey, seat: mySeat)
+            // The claim-time NAME is carried forward, not re-derived: this is a
+            // re-affirmation of a seat MessagesRootView.cache already claimed
+            // (with the name that game's roster carries at it), and this VC
+            // knows only a seat number - `pendingStage` has no roster and this
+            // function is deliberately synchronous, so it cannot decode one.
+            // Passing the device nickname here would put the bug straight back:
+            // one send in game B would stamp B's name onto A's row. Nil when
+            // there is no row yet, which is permissive, and the next adopt of
+            // this device's own sent chain fills the name in.
+            MessageGameStore.shared.setSeat(gameId: gameId, chatKey: chatKey, seat: mySeat,
+                                            name: MessageGameStore.shared.claimName(gameId: gameId))
             // ROUND 20: and it is the newest chain this device has seen, by
             // construction - it was built ON the board that was open, which had
             // already been ranked against whatever was on file (GameSurface
