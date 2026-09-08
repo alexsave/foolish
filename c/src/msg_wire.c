@@ -973,10 +973,20 @@ int msg_seat_cache_disowned(const MsgJoin *joins, int n, int cached_seat,
     return 0;   // this bubble names nobody at that seat - stay permissive
 }
 
-int msg_seat_resolve_in_lobby(const MsgJoin *joins, int n_joins,
-                              int cached_seat, int sender_is_local, int n_players,
-                              int last_actor_seat, int chat_is_dm,
-                              const char *name, int name_len) {
+// THE ONE SEAT DECISION, in the order its three name-aware steps have to be
+// asked. `require_listed` is the ONLY difference between the board's answer and
+// the lobby's, and it is a real difference in the rules rather than a caller's
+// convenience - see the two wrappers below for why each side wants what it
+// wants. Written once so the two cannot drift: the board case used to be
+// reassembled at the Swift call site out of msg_seat_claimed_by_name,
+// msg_seat_cache_disowned and msg_seat_resolve joined by a ?: and a ??, which
+// is this function minus the last step, in a language that is not allowed to
+// hold a rule.
+static int msg_seat_resolve_named(const MsgJoin *joins, int n_joins,
+                                  int cached_seat, int sender_is_local, int n_players,
+                                  int last_actor_seat, int chat_is_dm,
+                                  const char *name, int name_len,
+                                  int require_listed) {
     // Name recovery first: the seat carrying MY claim name in THIS roster is my
     // seat here, even when a fork race left the numeric cache on a lost claim.
     const int by_name = msg_seat_claimed_by_name(joins, n_joins, name, name_len);
@@ -986,9 +996,39 @@ int msg_seat_resolve_in_lobby(const MsgJoin *joins, int n_joins,
                      ? -1 : cached_seat;
     const int seat = msg_seat_resolve(cached, sender_is_local, n_players,
                                       last_actor_seat, chat_is_dm);
-    if (seat < 0) return -1;
+    if (seat < 0 || !require_listed) return seat;
     for (int i = 0; i < n_joins; i++) if (joins[i].seat == (uint8_t)seat) return seat;
     return -1;   // resolved, but this bubble's roster does not list it
+}
+
+int msg_seat_resolve_on_board(const MsgJoin *joins, int n_joins,
+                              int cached_seat, int sender_is_local, int n_players,
+                              int last_actor_seat, int chat_is_dm,
+                              const char *name, int name_len) {
+    // NO membership check. A live chain carries every seated player forward, so
+    // a roster that does not list the resolved seat is not evidence the seat is
+    // not mine - it is a roster this device has not been sealed into YET, which
+    // is the ordinary state of a 2-player DM receiver before their first move
+    // and of any §6.2 sender-inferred seat. Requiring it here would answer
+    // "ambiguous" to a player the numbers identify exactly, and Release turns
+    // ambiguous into the spectator board: a seated human locked out of their
+    // own game. The lobby wants the opposite, and only the lobby.
+    return msg_seat_resolve_named(joins, n_joins, cached_seat, sender_is_local,
+                                  n_players, last_actor_seat, chat_is_dm,
+                                  name, name_len, 0);
+}
+
+int msg_seat_resolve_in_lobby(const MsgJoin *joins, int n_joins,
+                              int cached_seat, int sender_is_local, int n_players,
+                              int last_actor_seat, int chat_is_dm,
+                              const char *name, int name_len) {
+    // WITH the membership check: a lobby bubble is a snapshot of who had joined
+    // when it was sealed, so a seat it does not list is a seat that had not
+    // been claimed on this branch - and granting Start/Send off it is how a
+    // stale invite hands the game to somebody the lobby does not contain.
+    return msg_seat_resolve_named(joins, n_joins, cached_seat, sender_is_local,
+                                  n_players, last_actor_seat, chat_is_dm,
+                                  name, name_len, 1);
 }
 
 /* ---------------------------------------------------------------------------

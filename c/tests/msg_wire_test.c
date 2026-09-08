@@ -3392,6 +3392,14 @@ static void print_holdcheck(const char *hex) {
 //   msg_seat_resolve takes a cached seat out of range         -> 1 failure
 //   msg_seat_cache_disowned calls a missing join a disownment -> 1 failure
 //   resolve_in_lobby skips the membership check               -> 1 failure
+//   resolve_on_board ADDS the membership check (require_listed 0->1)
+//                                                             -> 3 failures
+//   msg_seat_resolve_named drops the name-recovery step       -> 4 failures
+//   msg_seat_resolve_named drops the disown step              -> 2 failures
+//
+// The last two are on the shared implementation, so each shows up in both the
+// lobby block and the board block - which is the point of there being one
+// implementation.
 //
 // The nickname verdict's two caps are NOT order-sensitive - both answer
 // TOO_LONG - so swapping them is not a mutation this or any test can see, and
@@ -3463,6 +3471,44 @@ static void test_chain_gates(void) {
     CHECK(msg_seat_resolve_in_lobby(j, 3, 1, 0, 3, 0, 0, "Alex", 4) == 0,
           "a disowned cache falls through to the name, which finds seat 0");
     CHECK(msg_seat_resolve_in_lobby(j, 3, -1, 0, 3, 0, 0, 0, 0) == -1, "no signal, not mine");
+
+    // ---- the board gate: the same three steps, WITHOUT the membership check
+    //
+    // The board answer used to be reassembled by the Swift caller out of
+    // msg_seat_claimed_by_name, msg_seat_cache_disowned and msg_seat_resolve;
+    // it is one entry now, and what these pin is that it is the LOBBY entry
+    // minus its last step and nothing else.
+    CHECK(msg_seat_resolve_on_board(j, 3, 1, 0, 3, 0, 0, "Bob", 3) == 1,
+          "cached, and the roster names me at it");
+    CHECK(msg_seat_resolve_on_board(j, 3, 1, 0, 3, 0, 0, 0, 0) == 1,
+          "no recorded name is PERMISSIVE - the number stands, as it did before rows "
+          "carried names (a format-1 seat row, or a claim off a chain that did not "
+          "list the seat)");
+    CHECK(msg_seat_resolve_on_board(j, 3, 3, 0, 4, 0, 0, "Cindy", 5) == 2,
+          "the NAME recovers the seat when the numeric cache lost its race");
+
+    // THE SAFETY PROPERTY. My row says seat 1 and says I claimed it as Sveta;
+    // this chain gives seat 1 to Bob and carries Sveta nowhere. That is a claim
+    // race this device lost, and answering 1 would put Bob's hand face-up on my
+    // screen and let me move for him. Ambiguous is the only honest answer, and
+    // Release renders it as the read-only spectator board.
+    CHECK(msg_seat_resolve_on_board(j, 3, 1, 0, 3, 0, 0, "Sveta", 5) == -1,
+          "a seat the roster gives to somebody else, under a name I do not hold "
+          "anywhere in it, is not mine on a board either");
+
+    // ...and the ONE way the board differs from the lobby, from both directions.
+    // A LIVE chain carries every seated player forward, so a roster that does
+    // not list the resolved seat means this device has not been sealed into it
+    // YET - a 2-player DM receiver before their first move, or any seat §6.2
+    // infers exactly. The lobby must refuse those (its roster is the record of
+    // who had joined); the board must not, or a seated human is locked out of
+    // their own game.
+    CHECK(msg_seat_resolve_on_board(j, 2, 2, 0, 3, 0, 0, 0, 0) == 2,
+          "a cached seat this bubble's roster does not list is still mine on a BOARD");
+    CHECK(msg_seat_resolve_in_lobby(j, 2, 2, 0, 3, 0, 0, 0, 0) == -1,
+          "...and still is not, in a lobby - the same inputs, two answers");
+    CHECK(msg_seat_resolve_on_board(j, 2, -1, 1, 3, 2, 0, 0, 0) == 2,
+          "and a seat inferred from MY OWN send needs no roster entry on a board");
 }
 
 // ---------- the turn controller as a transition function --------------------

@@ -136,7 +136,8 @@ difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/sol
 	./build/solver_difftest 3 40 "" 200000 && \
 	./build/solver_difftest 4 40 "" 200000 && \
 	./build/replay_v6_test 40 && \
-	$(MAKE) analyse-test
+	$(MAKE) analyse-test && \
+	$(MAKE) msg-flow-sim
 
 # ---------- the post-game analyser (docs/POST_GAME_ANALYSER.md) ---------------
 #
@@ -311,6 +312,14 @@ ios-smoke:
 	$(CC) $(IOS_CFLAGS) ios/ios_api_smoke.c ios/ios_api.c ios/ios_bots_api.c $(CORE_SRC) -lm -o build/ios_smoke
 	./build/ios_smoke
 
+# PART OF `difftests`, deliberately. Left out of it, this target rotted twice
+# over without a word: fio_msg_encode's roster went packed and the file stopped
+# COMPILING, and before that fio_msg_pack's blob grew ten bytes in front of the
+# roster and the file kept reading the old offset. Both are cheap to notice and
+# expensive to leave - the second one made every schedule stop at the lobby and
+# report all four invariants clean. 0.3s a run against the kernel's own gates is
+# not a price worth deferring.
+#
 # Monte-Carlo the iMessage SWIFT layer's decisions over the real kernel
 # (tests/msg_flow_sim.c): random 4/8/9-human schedules with racing joins,
 # racing Starts, stale taps and evaporated sends, checking safety (nobody ever

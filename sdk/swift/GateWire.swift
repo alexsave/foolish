@@ -91,6 +91,22 @@ public enum GateWire {
         return s >= 0 ? Int(s) : nil
     }
 
+    /// `seatResolve` with the two name gates in front of it - the BOARD answer,
+    /// whole. nil is AMBIGUOUS and nothing else: the board deliberately has no
+    /// roster-membership check (msg_wire.h says why), so this and the lobby
+    /// entry below are two different rules, not one rule with an option.
+    public static func seatResolveOnBoard(cachedSeat: Int?, senderIsLocal: Bool,
+                                          nPlayers: Int, lastActorSeat: Int,
+                                          chatIsDM: Bool, recordedName: String?,
+                                          joins: [MessageJoin]) -> Int? {
+        let s = RosterWire.call(joins, recordedName) {
+            fio_seat_resolve_on_board($0, $1, Int32(cachedSeat ?? -1),
+                                      senderIsLocal ? 1 : 0, Int32(nPlayers),
+                                      Int32(lastActorSeat), chatIsDM ? 1 : 0, $2, $3)
+        }
+        return s >= 0 ? Int(s) : nil
+    }
+
     /// `seatResolve` gated on this bubble's OWN roster - the lobby answer. nil
     /// covers both ambiguous and resolved-but-not-listed, which a lobby must
     /// not tell apart: neither one may act.

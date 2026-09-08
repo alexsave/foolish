@@ -893,7 +893,23 @@ int msg_seat_claimed_by_name(const MsgJoin *joins, int n,
 int msg_seat_cache_disowned(const MsgJoin *joins, int n, int cached_seat,
                             const char *name, int name_len);
 
-// msg_seat_resolve, gated for a LOBBY bubble: a resolved seat only counts as
+// msg_seat_resolve for a LIVE BOARD bubble: name-recovery, then the disown
+// check on the numeric cache, then msg_seat_resolve. The whole §6 answer in one
+// call, so no host reassembles it out of the three parts above - the board path
+// used to do exactly that in Swift, which is where the claim-time name went
+// missing (see MessageGameStore.SeatRow.name).
+//
+// It deliberately does NOT end with the lobby's roster-membership check: a live
+// chain carries every seated player forward, so a seat this bubble's roster
+// does not yet list is a device not sealed in YET (a 2p DM receiver before
+// their first move, any §6.2 sender-inferred seat), not a seat that is not
+// mine. -1 here means AMBIGUOUS only.
+int msg_seat_resolve_on_board(const MsgJoin *joins, int n_joins,
+                              int cached_seat, int sender_is_local, int n_players,
+                              int last_actor_seat, int chat_is_dm,
+                              const char *name, int name_len);
+
+// The same, gated for a LOBBY bubble: a resolved seat only counts as
 // mine if this bubble's OWN roster contains it. Correct for a live board, where
 // every chain carries every seated player forward, and wrong for a lobby - an
 // older WAITING bubble reopened after I have since joined still resolves my

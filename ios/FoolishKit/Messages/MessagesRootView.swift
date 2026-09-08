@@ -1666,16 +1666,21 @@ private struct GameSurface: View {
     /// change re-keyed the chat. `recordedName` extends note 14's membership
     /// gate by name: a lobby carrying someone ELSE's name at my cached seat is
     /// a claim race this device lost - nil here brings the Join button back so
-    /// I re-claim the next free seat instead of squatting on theirs. Round 7
-    /// stores no claim-time name; the device nickname is what my own Join
-    /// sealed (see adopt()'s note), used only once actually set.
+    /// I re-claim the next free seat instead of squatting on theirs.
+    ///
+    /// The name is the ROW's (`claimName`), not the device nickname. The
+    /// nickname is one device-wide value while a lobby is per game, so two
+    /// lobbies joined under two names left the older one reading as a claim
+    /// race this device lost the instant the second was joined - which is the
+    /// owner's "I cannot play two large group games at the same time with
+    /// different nicknames". See `SeatRow.name`.
     private func lobbySeat(_ env: MessageEnvelope) -> Int? {
-        SeatIdentity.resolveInLobby(
-            cachedSeat: MessageGameStore.shared.seatForBubble(gameId: env.gameId),
+        let me = MessageGameStore.shared.identity(gameId: env.gameId)
+        return SeatIdentity.resolveInLobby(
+            cachedSeat: me.seat,
             senderIsLocal: senderIsLocal, nPlayers: env.nPlayers,
             lastActorSeat: env.lastActorSeat, joins: env.joins, chatIsDM: chatIsDM,
-            recordedName: MessageGameStore.shared.hasSetNickname
-                ? MessageGameStore.shared.nickname : nil)
+            recordedName: me.name)
     }
 
     /// Claim the lowest free seat (§5.2, lobby v3). Always reseals WAITING and
@@ -2008,33 +2013,35 @@ private struct GameSurface: View {
         // staged-but-unsent move survives only in the live controller, and in
         // the staged input-field bubble itself.
 
-        // Bubble-anchored seat (seatForBubble): the winner chain's gameId
-        // identifies this device's seat even after a group-membership change
-        // re-keyed the chat (round 7 keeps only the seat per game, so the seat
-        // IS the whole lookup now). Seat resolution then leans on the roster's
-        // NAMES, both ways:
-        //  - recovery (seatClaimedByName): the seat carrying MY claim name in
-        //    THIS chain is my seat here, even when a fork race left the numeric
-        //    cache pointing at a claim that lost (the flow simulator's
-        //    convergence/liveness stall);
-        //  - the ghost guard (cacheDisownedByJoins): a roster listing somebody
-        //    ELSE's name at my cached seat means my claim lost - trusting the
-        //    number would put that person's hand face-up on my screen. Disowned
-        //    with no name to recover reads as no-cache: §6.2's exact signals,
-        //    else the Release spectator board.
-        // Round 7 stores no claim-time name; the device nickname is what was
-        // sealed into MY join (it only diverges if the human renamed since -
-        // §6.3's trust level either way), and it only counts once actually set.
-        let numericSeat = MessageGameStore.shared.seatForBubble(gameId: env.gameId)
-        let recorded: String? = MessageGameStore.shared.hasSetNickname
-            ? MessageGameStore.shared.nickname : nil
-        let cachedSeat: Int? = SeatIdentity.seatClaimedByName(recordedName: recorded, joins: env.joins)
-            ?? (SeatIdentity.cacheDisownedByJoins(cachedSeat: numericSeat, recordedName: recorded,
-                                                  joins: env.joins) ? nil : numericSeat)
-        switch SeatIdentity.resolve(cachedSeat: cachedSeat,
-                                    senderIsLocal: senderIsLocal,
-                                    nPlayers: env.nPlayers, lastActorSeat: env.lastActorSeat,
-                                    chatIsDM: chatIsDM) {
+        // WHICH SEAT AM I - one kernel call (msg_seat_resolve_on_board). The
+        // three §6 layers with the roster's NAMES in front of them, both ways:
+        // recovery (the seat carrying MY claim name in THIS chain is mine even
+        // when a fork race left the number on a claim that lost) and the ghost
+        // guard (a roster naming somebody ELSE at my cached seat means my claim
+        // lost, and trusting the number would put their hand face-up on my
+        // screen). The composition is C's; this used to be a `??` and a ternary
+        // here, which is a rule living in Swift.
+        //
+        // The claim is read as ONE ROW. Its NAME is the name MY join sealed for
+        // THIS game, never the device nickname: the nickname is a single
+        // device-wide value the human can change at any time, including by
+        // joining a second game under a different one - after which this game's
+        // roster disagrees with it and both name gates read as a lost claim
+        // race. That is the owner's "I cannot play two large group games at the
+        // same time with different nicknames" (see `SeatRow.name`). A row with
+        // no name (format 1, or a claim off a chain that did not list the seat)
+        // is permissive - the kernel treats a missing side as no disownment.
+        //
+        // The row is found by gameId alone (`identity`), so it survives a
+        // group-membership change re-keying the chat - and with NO row at all
+        // the nickname is still offered, which is §6.2 name recovery for a
+        // device that has never claimed a seat here (see `identity`).
+        let me = MessageGameStore.shared.identity(gameId: env.gameId)
+        switch SeatIdentity.resolveOnBoard(
+                cachedSeat: me.seat, recordedName: me.name,
+                senderIsLocal: senderIsLocal,
+                nPlayers: env.nPlayers, lastActorSeat: env.lastActorSeat,
+                joins: env.joins, chatIsDM: chatIsDM) {
         case .known(let seat):
             // §B3: a player about to be seated who has never chosen a name is
             // asked once. Since lobby v3 everyone named themselves at setup or
@@ -2179,8 +2186,18 @@ private struct GameSurface: View {
     /// payload, denormalized display fields and pending ledger the old record
     /// carried are gone — the extension always renders the tapped bubble now, so
     /// the one thing worth keeping is which seat is me in this game.
+    ///
+    /// …plus the CLAIM-TIME NAME for that seat, read out of `env`'s own roster
+    /// rather than off `MessageGameStore.nickname`. Every path that reaches
+    /// here has just sealed or adopted a chain in which `seat` is mine, so the
+    /// join at `seat` IS the name my identity travels under in this game -
+    /// which is what the §6 name gates want, and what the nickname stops being
+    /// the moment a second game is joined under a different one. A roster that
+    /// does not list the seat yet (a DM receiver who has not sealed a join)
+    /// records nil, and the next adopt of my own sent chain fills it in.
     private func cache(seat: Int, env: MessageEnvelope, payload: Data) {
-        MessageGameStore.shared.setSeat(gameId: env.gameId, chatKey: chatKey, seat: seat)
+        MessageGameStore.shared.setSeat(gameId: env.gameId, chatKey: chatKey, seat: seat,
+                                        name: env.joins.first { $0.seat == seat }?.name)
     }
 }
 

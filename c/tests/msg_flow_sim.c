@@ -7,8 +7,8 @@
 // races the simulator proves safe here stay safe there, and a Swift refactor
 // that drifts from these ports should update BOTH. Ported pieces:
 //   MessageSurfaceRouter.resolve       (Rule P routing vs the cached row)
-//   SeatIdentity.resolve / resolveInLobby / cacheDisownedByJoins /
-//     seatClaimedByName                (DM gate, ghost guard, name recovery)
+//   SeatIdentity.resolveOnBoard / resolveInLobby   (ghost guard, name recovery)
+//     - both asked of the kernel here, exactly as the Swift asks them
 //   LobbyControls.offered              (incl. the M9 authorship gate)
 //   NicknameGate.isTaken               (per-chain name uniqueness)
 //   GameSurface.maybeAdoptIncoming     (adopt-on-arrival, Rule P deciding)
@@ -68,10 +68,34 @@ typedef struct {
     int phase, np, la, turn, n_joins;
     uint8_t digest[32];
     int jseat[8]; char jname[8][8];
+    // The ROSTER exactly as the decode hands it back: n(1) then n x
+    // {seat(1) len(1) name}. That is the same blob RosterWire.encode writes on
+    // the Swift side, so the seat gates below can be asked of the kernel with
+    // the bytes it already produced rather than a re-encoding. Copied out of
+    // the shared `meta` scratch because `meta` is overwritten by the next
+    // decode and an Env outlives one.
+    uint8_t joins[1 + 8 * (2 + 64)]; int joins_len;
 } Env;
 
 static uint32_t rng;
 static uint32_t rnd(void) { rng = rng * 1664525u + 1013904223u; return rng >> 8; }
+
+// WHERE THE ROSTER STARTS in fio_msg_pack's blob, as the sum of the fields in
+// front of it: phase, n_players, last_actor, round (4), turn (2), game_id (8),
+// parent8 (8), digest (32), sent_at (2), n_new, opening, carry_key (4),
+// carry_fool, passing (5) = 64, and the roster's own n_joins byte sits there.
+//
+// IT WAS 54 - the sum before sent_at, n_new, opening, carry_key, carry_fool and
+// passing were added to the blob - so every roster this file read was ten bytes
+// of somebody else's fields. Nothing announced it: n_joins read as whatever
+// byte 54 held, the names came out as noise, no device ever recognised its own
+// seat, so every open was a lobby offering JOIN, no game ever started, and all
+// four invariants passed by never being reached. The file had also stopped
+// COMPILING (the roster went packed and fio_msg_encode grew an argument), so
+// this had been unbuildable and unrun rather than wrong-and-green - but it is
+// worth naming as the failure mode a Monte-Carlo harness has: a schedule that
+// reaches nothing reports zero violations exactly like a correct one.
+#define META_NJOINS 64
 
 static int dec(const uint8_t *p, int len, Env *e) {
     int rc = fio_msg_decode_packed(p, len, meta, sizeof meta);
@@ -80,12 +104,17 @@ static int dec(const uint8_t *p, int len, Env *e) {
         e->phase = meta[0]; e->np = meta[1]; e->la = meta[2];
         e->turn = meta[4] | (meta[5] << 8);
         memcpy(e->digest, meta + 22, 32);
-        e->n_joins = meta[54];
-        int q = 55;
+        e->n_joins = meta[META_NJOINS];
+        int q = META_NJOINS + 1;
         for (int i = 0; i < e->n_joins && i < 8; i++) {
             e->jseat[i] = meta[q]; int nl = meta[q + 1]; q += 2;
             memcpy(e->jname[i], meta + q, nl); e->jname[i][nl] = 0; q += nl;
         }
+        e->joins_len = q - META_NJOINS;
+        if (e->joins_len > 0 && e->joins_len <= (int)sizeof e->joins)
+            memcpy(e->joins, meta + META_NJOINS, (size_t)e->joins_len);
+        else
+            e->joins_len = 0;
     }
     return rc;
 }
@@ -95,19 +124,32 @@ static const char *join_name_at(const Env *e, int seat) {
     return NULL;
 }
 
-static const char *jjson(const Env *e, int extra_seat, const char *extra_name) {
-    static char j[512]; int off = 0, done = 0, first = 1;
-    off += snprintf(j + off, sizeof j - off, "[");
-    for (int s = 0; s < 8; s++) {
-        const char *nm = join_name_at(e, s);
-        if (nm) { off += snprintf(j + off, sizeof j - off, "%s{\"seat\":%d,\"name\":\"%s\"}", first ? "" : ",", s, nm); first = 0; }
-        else if (s == extra_seat && !done) {
-            off += snprintf(j + off, sizeof j - off, "%s{\"seat\":%d,\"name\":\"%s\"}", first ? "" : ",", s, extra_name);
-            first = 0; done = 1;
-        }
+// The roster this chain should be sealed with, PACKED: n(1) then n x
+// {seat(1) len(1) name}, which is RosterWire's layout and the one
+// fio_msg_encode takes. It used to build the JSON array that entry accepted
+// before the roster went packed - which is why this file stopped compiling
+// (four "too few arguments" errors) and had been unbuildable, and therefore
+// unrun, since. Seats are walked in order, so the roster comes out sorted the
+// way a Swift caller's does.
+//
+// `extra_seat` >= 0 splices one more join in - a device claiming a free seat -
+// exactly as joinLobby does before it seals.
+static int jpack(const Env *e, int extra_seat, const char *extra_name,
+                 uint8_t *out, int cap) {
+    int off = 1, n = 0, done = 0;
+    for (int seat = 0; seat < 8; seat++) {
+        const char *nm = join_name_at(e, seat);
+        if (!nm && seat == extra_seat && !done) { nm = extra_name; done = 1; }
+        if (!nm) continue;
+        const int nl = (int)strlen(nm);
+        if (off + 2 + nl > cap) return -1;
+        out[off++] = (uint8_t)seat;
+        out[off++] = (uint8_t)nl;
+        memcpy(out + off, nm, (size_t)nl); off += nl;
+        n++;
     }
-    snprintf(j + off, sizeof j - off, "]");
-    return j;
+    out[0] = (uint8_t)n;
+    return off;
 }
 
 static void put_row(int d, int seat, const char *name, const uint8_t *p, int len) {
@@ -122,31 +164,33 @@ static void deliver(const uint8_t *p, int len, int sender) {
 }
 
 // ---- SeatIdentity ports (exact) -------------------------------------------
-static int disowned(int d, const Env *e) {           // cacheDisownedByJoins
-    if (!row[d].have) return 0;
-    const char *listed = join_name_at(e, row[d].mySeat);
-    if (!listed || !row[d].claimName[0]) return 0;
-    return strcmp(listed, row[d].claimName) != 0;
-}
-static int seat_by_name(int d, const Env *e) {       // seatClaimedByName
-    if (!row[d].have || !row[d].claimName[0]) return -1;
-    for (int i = 0; i < e->n_joins; i++)
-        if (!strcmp(e->jname[i], row[d].claimName)) return e->jseat[i];
-    return -1;
-}
+//
+// ONE CALL EACH, because that is now what the Swift makes: the board's answer
+// is fio_seat_resolve_on_board and the lobby's is fio_seat_resolve_in_lobby,
+// and the three name-aware steps in front of msg_seat_resolve are composed by
+// the kernel rather than by any host. These used to be four hand-written C
+// functions mirroring four Swift calls joined by a `??` and a ternary; that
+// composition is where the claim-time name went missing on the way in, and a
+// port that keeps its own copy of a rule cannot see a bug in the rule.
+//
+// So the S/C/L/X invariants below are now checked against the SHIPPING
+// decision, over 300 x 9-human random schedules, instead of against a
+// second implementation of it that happens to agree.
+//
+// `chatIsDM` is 0 throughout (group sim), so the DM 2p branch never fires.
 static int resolve_board(int d, const Env *e, int senderIsLocal) {   // -1 ambiguous
-    int byname = seat_by_name(d, e);
-    int cached = byname >= 0 ? byname
-               : (row[d].have && !disowned(d, e)) ? row[d].mySeat : -1;
-    if (cached >= 0 && cached < e->np) return cached;
-    if (senderIsLocal && e->la >= 0 && e->la < e->np) return e->la;
-    // chatIsDM=false throughout (group sim): the 2p branch never fires.
-    return -1;
+    const char *nm = row[d].have ? row[d].claimName : "";
+    return fio_seat_resolve_on_board(e->joins, e->joins_len,
+                                     row[d].have ? row[d].mySeat : -1,
+                                     senderIsLocal, e->np, e->la, 0,
+                                     (const uint8_t *)nm, (int)strlen(nm));
 }
 static int resolve_lobby(int d, const Env *e, int senderIsLocal) {   // -1 not joined
-    int s = resolve_board(d, e, senderIsLocal);
-    if (s < 0) return -1;
-    return join_name_at(e, s) ? s : -1;
+    const char *nm = row[d].have ? row[d].claimName : "";
+    return fio_seat_resolve_in_lobby(e->joins, e->joins_len,
+                                     row[d].have ? row[d].mySeat : -1,
+                                     senderIsLocal, e->np, e->la, 0,
+                                     (const uint8_t *)nm, (int)strlen(nm));
 }
 // LobbyControls.offered (exact port)
 enum { LC_START, LC_INVITE, LC_WAIT, LC_JOIN, LC_FULL };
@@ -206,8 +250,10 @@ static void open_surface(int d, const uint8_t *tapped, int tlen, int sender, int
             for (int s = 0; s < we.np && free_ < 0; s++) if (!join_name_at(&we, s)) free_ = s;
             if (free_ < 0) return;
             if (name_taken(&we, dname[d])) return;            // the join gate
-            uint8_t out[PLEN];
-            int n = fio_msg_encode(0, free_, GID, we.digest, jjson(&we, free_, dname[d]), 0 /* no send clock in this harness */, out, PLEN);
+            uint8_t out[PLEN], jb[640];
+            const int jl = jpack(&we, free_, dname[d], jb, sizeof jb);
+            if (jl < 0) { fails++; return; }
+            int n = fio_msg_encode(0, free_, GID, we.digest, jb, jl, 0 /* no send clock in this harness */, out, PLEN);
             if (n <= 0) { printf("trial %d: join seal err=%d\n", trial, fio_last_msg_error()); fails++; return; }
             put_row(d, free_, dname[d], out, n);
             if (!evaporate) deliver(out, n, d);
@@ -216,8 +262,10 @@ static void open_surface(int d, const uint8_t *tapped, int tlen, int sender, int
             // startFromLobby: re-adopt the lobby chain, reseat at joins.count, seal LIVE.
             if (dec(win, wlen, &we) <= 0) return;
             if (fio_reseat_game(we.n_joins) != 0) { fails++; return; }
-            uint8_t out[PLEN];
-            int n = fio_msg_encode(2, seat, GID, we.digest, jjson(&we, -1, ""), 0 /* no send clock in this harness */, out, PLEN);
+            uint8_t out[PLEN], jb[640];
+            const int jl = jpack(&we, -1, "", jb, sizeof jb);
+            if (jl < 0) { fails++; return; }
+            int n = fio_msg_encode(2, seat, GID, we.digest, jb, jl, 0 /* no send clock in this harness */, out, PLEN);
             if (n <= 0) { printf("trial %d: start seal err=%d\n", trial, fio_last_msg_error()); fails++; return; }
             Env le; if (dec(out, n, &le) <= 0) { fails++; return; }
             put_row(d, seat, dname[d], out, n);
@@ -260,8 +308,10 @@ static void act_maybe(int d) {
     for (int i = 0; i < ncards; i++) aw[an++] = q[2 + i];
     if (type == 1) for (int i = 0; i < ncards; i++) aw[an++] = q[2 + ncards + i];
     if (fio_apply_awire(ui[d].viewer, aw, an) != 0) return;
-    uint8_t out[PLEN];
-    int len = fio_msg_encode(2, ui[d].viewer, GID, e.digest, jjson(&e, -1, ""), 0 /* no send clock in this harness */, out, PLEN);
+    uint8_t out[PLEN], jb[640];
+    const int jl = jpack(&e, -1, "", jb, sizeof jb);
+    if (jl < 0) return;
+    int len = fio_msg_encode(2, ui[d].viewer, GID, e.digest, jb, jl, 0 /* no send clock in this harness */, out, PLEN);
     if (len <= 0) return;
     Env ne; if (dec(out, len, &ne) <= 0) return;
     put_row(d, ui[d].viewer, dname[d], out, len);
@@ -285,8 +335,9 @@ int main(int argc, char **argv) {
         for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(rnd() | 1);
         if (fio_new_game(seed, 32, CAP) != 0) return 1;
         uint8_t zeros[8] = {0}, w0[PLEN];
-        char j0[64]; snprintf(j0, sizeof j0, "[{\"seat\":0,\"name\":\"%s\"}]", dname[0]);
-        int l0 = fio_msg_encode(0, 0, GID, zeros, j0, 0 /* no send clock in this harness */, w0, PLEN);
+        uint8_t j0[64]; const int nl0 = (int)strlen(dname[0]);
+        j0[0] = 1; j0[1] = 0; j0[2] = (uint8_t)nl0; memcpy(j0 + 3, dname[0], (size_t)nl0);
+        int l0 = fio_msg_encode(0, 0, GID, zeros, j0, 3 + nl0, 0 /* no send clock in this harness */, w0, PLEN);
         if (l0 <= 0) return 1;
         put_row(0, 0, dname[0], w0, l0);
         deliver(w0, l0, 0);
