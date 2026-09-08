@@ -98,7 +98,7 @@ public enum WoodTexture {
     /// Base name of the baked LIGHT image in FoolishKit's bundle.
     public static let classicResourceName = "wood-classic"
     /// Base name of the baked DARK image. Only one dark wood exists — the
-    /// green/navy choice is the WOOL's (`WoolTexture.darkAccent`); the wood is
+    /// dark table is the WOOL's (`WoolTexture.bakes`); the wood is
     /// the same walnut under either.
     public static let darkResourceName = "wood-dark"
 
