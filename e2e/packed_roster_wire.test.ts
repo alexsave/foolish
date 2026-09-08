@@ -32,7 +32,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -348,6 +348,30 @@ print(String(decoding: try! enc.encode(out), as: UTF8.self))
 let binary: string | null = null;
 let workdir: string | null = null;
 
+// The Swift half of the parity, by PATH. These files are compiled straight out
+// of the tree rather than through a target, so a move breaks this test - which
+// is the point: EnvelopeRoster.swift moved to ios/FoolishNet in the bundle diet
+// (its `public` symbols were dead-strip roots in a shipped dylib) and this list
+// was not updated, so the whole Swift side failed with a swiftc "no such file"
+// that named nothing about parity. `resolve` turns that into a directive.
+const SWIFT_SOURCES = [
+    'sdk/swift/PackedBytes.swift',
+    'sdk/swift/RosterWire.swift',
+    'ios/FoolishNet/EnvelopeRoster.swift',
+];
+
+function resolve(rel: string): string {
+    const abs = join(REPO, rel);
+    if (!existsSync(abs)) {
+        throw new Error(
+            `${rel} is gone. This test compiles the REAL Swift decoder from the ` +
+            `tree, so if that file moved, update SWIFT_SOURCES in this file - ` +
+            `do not delete the test, or the TS encoder and the Swift decoder ` +
+            `are free to drift.`);
+    }
+    return abs;
+}
+
 function swiftDecoder(): string {
     if (binary) return binary;
     workdir = mkdtempSync(join(tmpdir(), 'foolish_roster_wire_'));
@@ -355,9 +379,7 @@ function swiftDecoder(): string {
     writeFileSync(main, DRIVER);
     const out = join(workdir, 'decode_roster');
     execFileSync('swiftc', [
-        join(REPO, 'sdk/swift/PackedBytes.swift'),
-        join(REPO, 'sdk/swift/RosterWire.swift'),
-        join(REPO, 'sdk/swift/EnvelopeRoster.swift'),
+        ...SWIFT_SOURCES.map(resolve),
         main, '-o', out,
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
     binary = out;
