@@ -30,6 +30,30 @@
 
 static Game  g_game;
 static int   g_has_game = 0;
+
+// ---------- THE ONE SCRATCH GAME ------------------------------------------
+//
+// A Game is 136,328 B at the shipped caps, and this file used to hold THREE of
+// them: the resident game above, plus a private static scratch inside each of
+// fio_legal_from_packed and fio_msg_encode. The resident one has to be resident
+// — its log IS the session history the FMSG encoder reads back. The other two
+// never were: each is filled from the caller's own bytes at the top of a call,
+// consumed before that call returns, and read by nobody afterwards. They were
+// static only to keep a 133 KB frame off the stack, which one shared slot does
+// just as well.
+//
+// FoolishKit is linked by the iMessage extension, which is memory-capped and
+// has a history of being killed, so a whole resident Game that exists only to
+// avoid a stack frame is worth deleting. This changes no computed value
+// anywhere: same engine, same inputs, same bytes out.
+//
+// SAFE BECAUSE THE TWO USES CANNOT OVERLAP. This bridge has no threads inside
+// (see the file header: the Swift EngineC wrapper serializes every call onto a
+// single queue), neither user keeps state across its own return, and neither
+// call path re-enters the other — the kernel never calls back out into fio_*.
+// A future entry point may borrow this slot under exactly those terms: fill it
+// before you read it, and do not hold it across a return.
+static Game  g_scratch_game;
 static int   g_last_reject = 0;
 static int   g_last_replay_error = 0;
 
@@ -140,12 +164,12 @@ int fio_legal_packed(int seat, char *out, int cap) {
 // Legal moves for `seat` computed from a SERVER packed masked view, packed out.
 int fio_legal_from_packed(const uint8_t *buf, int len, int seat, char *out, int cap) {
     if (!buf || len <= 0) return FIO_EBADARG;
-    static Game tmp;
-    memset(&tmp, 0, sizeof tmp);
-    state_get(&tmp, buf, /*masked=*/1);
-    if (tmp.num_players < 2 || tmp.num_players > MAX_PLAYERS) return FIO_EPARSE;
-    if (seat < 0 || seat >= tmp.num_players) return FIO_EBADARG;
-    return emit_legal_packed(&tmp, seat, out, cap);
+    Game *tmp = &g_scratch_game;          // the shared slot; see its comment
+    memset(tmp, 0, sizeof *tmp);
+    state_get(tmp, buf, /*masked=*/1);
+    if (tmp->num_players < 2 || tmp->num_players > MAX_PLAYERS) return FIO_EPARSE;
+    if (seat < 0 || seat >= tmp->num_players) return FIO_EBADARG;
+    return emit_legal_packed(tmp, seat, out, cap);
 }
 
 // ---------- what a gesture on a board means (the board rules) ---------------
@@ -1408,11 +1432,11 @@ int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
     if (jrc != FIO_EOK) return jrc;
 
     static unsigned char body[1024];   // a v6 body measures ~68 B at 8 players
-    static Game scratch;
+    Game *scratch = &g_scratch_game;   // the shared slot; see its comment
     // ROUND 16: everything played since the resident game was established is
     // what this bubble adds, so the base is the delta msg_seal writes as n_new
     // - or MSG_BASE_NOTHING when nothing was played at all (msg_seal_base).
-    const int rc = msg_seal(&e, &g_game, seal_base, body, (int)sizeof body, &scratch);
+    const int rc = msg_seal(&e, &g_game, seal_base, body, (int)sizeof body, scratch);
     if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
     const int n = msg_encode(&e, out, cap);
     if (n < 0) { g_last_msg_error = n; return n == MSG_ECAP ? FIO_ECAP : FIO_EMSG; }
