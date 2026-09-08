@@ -123,62 +123,104 @@ public struct FSeatBadge: View {
                 .truncationMode(.tail)
                 .frame(maxWidth: 96)
                 .minimumScaleFactor(0.7)
+                // ROUND 41: THE NAME DOES NOT TURN. It DIMS. See `nameOpacity`.
+                .opacity(Self.nameOpacity(collapsed: collapsed))
 
-            ZStack {
-                miniFan
-                if handCount > 0 {
-                    // Round-5 m9: a bare white-on-red numeral over the mini
-                    // fan's own card backs reads as an iOS unread badge; the
-                    // chip backs it with a near-black fill + the card backs'
-                    // subdued edge red instead (see FCountChip).
-                    FCountChip("\(handCount)", font: .system(size: 15, weight: .bold))
+            // THE BADGE - the hand and the mark - is the thing that turns.
+            // Grouped so ONE scale covers both and the name above it is not in
+            // the gesture at all (round 41).
+            VStack(spacing: FSpace.xs) {
+                ZStack {
+                    miniFan
+                    if handCount > 0 {
+                        // Round-5 m9: a bare white-on-red numeral over the mini
+                        // fan's own card backs reads as an iOS unread badge; the
+                        // chip backs it with a near-black fill + the card backs'
+                        // subdued edge red instead (see FCountChip).
+                        FCountChip("\(handCount)", font: .system(size: 15, weight: .bold))
+                    }
                 }
+                .frame(width: cardW + spread * CGFloat(max(visibleBacks - 1, 0)) + 6, height: cardH + 4)
+                // (no role ring around the mini-fan - the role is shown by the row of
+                // icons below; the gold/red border read as clutter)
+                //
+                // A SEAT'S FLIGHT PAD IS ITS HAND, NOT ITS BOX.
+                //
+                // `SeatFramesKey` is where a card flies FROM when this seat throws
+                // one in, and where it flies TO when they draw or pick one up - and
+                // a flight is positioned by its rect's CENTRE
+                // (`FlyingCardsLayer`). The board used to publish this off a
+                // `.background` wrapped around the WHOLE badge, and this VStack is
+                // lopsided: a ~14.5pt name on top, the 34pt mini fan in the middle,
+                // and a 40pt `FRoleMark.rowHeight` role row underneath. The box's
+                // centre therefore sits about 13pt BELOW the card backs, and a 70pt
+                // ghost hung on it starts roughly 30pt under the badge. Owner,
+                // twice in one pass: "I saw a throw in spawn in definitely lower
+                // than the hand of the other player, then move to expected
+                // position", and later "the attack they threw in (8 of diamonds)
+                // finally animated from a bit under their hand to the table".
+                //
+                // Published from HERE rather than corrected at the call site
+                // because the offset is this VStack's own arithmetic and nothing
+                // outside this file can know it - a constant kept on the board
+                // would rot silently the next time a mark grows a point. `seat` is
+                // nil on every surface that only ever DRAWS a seat (the bubble
+                // snapshot, the gallery, the rulebook), which is exactly how
+                // `RoleMarkFramesKey` below already handles them: those publish
+                // nothing and nothing flies there.
+                .background(GeometryReader { g in
+                    Color.clear.preference(
+                        key: SeatFramesKey.self,
+                        value: seat.map { [$0: g.frame(in: .named(boardSpace))] } ?? [:])
+                })
+    
+                roleRow
             }
-            .frame(width: cardW + spread * CGFloat(max(visibleBacks - 1, 0)) + 6, height: cardH + 4)
-            // (no role ring around the mini-fan - the role is shown by the row of
-            // icons below; the gold/red border read as clutter)
+            // ROUND 28: edge-on when this seat is out. A scale, so the seat keeps
+            // the width it reserved on the ring and nobody else moves; anchored
+            // centre, so the badge turns about itself rather than sliding away.
+            // 0.001 rather than 0 for the same reason FRoleCoin uses it - a view
+            // scaled to exactly zero can stop being laid out at all, taking the
+            // reserved width with it.
             //
-            // A SEAT'S FLIGHT PAD IS ITS HAND, NOT ITS BOX.
-            //
-            // `SeatFramesKey` is where a card flies FROM when this seat throws
-            // one in, and where it flies TO when they draw or pick one up - and
-            // a flight is positioned by its rect's CENTRE
-            // (`FlyingCardsLayer`). The board used to publish this off a
-            // `.background` wrapped around the WHOLE badge, and this VStack is
-            // lopsided: a ~14.5pt name on top, the 34pt mini fan in the middle,
-            // and a 40pt `FRoleMark.rowHeight` role row underneath. The box's
-            // centre therefore sits about 13pt BELOW the card backs, and a 70pt
-            // ghost hung on it starts roughly 30pt under the badge. Owner,
-            // twice in one pass: "I saw a throw in spawn in definitely lower
-            // than the hand of the other player, then move to expected
-            // position", and later "the attack they threw in (8 of diamonds)
-            // finally animated from a bit under their hand to the table".
-            //
-            // Published from HERE rather than corrected at the call site
-            // because the offset is this VStack's own arithmetic and nothing
-            // outside this file can know it - a constant kept on the board
-            // would rot silently the next time a mark grows a point. `seat` is
-            // nil on every surface that only ever DRAWS a seat (the bubble
-            // snapshot, the gallery, the rulebook), which is exactly how
-            // `RoleMarkFramesKey` below already handles them: those publish
-            // nothing and nothing flies there.
-            .background(GeometryReader { g in
-                Color.clear.preference(
-                    key: SeatFramesKey.self,
-                    value: seat.map { [$0: g.frame(in: .named(boardSpace))] } ?? [:])
-            })
-
-            roleRow
+            // ROUND 41 moved it OFF the outer VStack and onto the badge alone -
+            // it used to wrap the name as well. See `nameOpacity`.
+            .scaleEffect(x: Self.badgeTurn(collapsed: collapsed), anchor: .center)
         }
-        // ROUND 28: edge-on when this seat is out. A scale, so the seat keeps
-        // the width it reserved on the ring and nobody else moves; anchored
-        // centre, so the badge turns about itself rather than sliding away.
-        // 0.001 rather than 0 for the same reason FRoleCoin uses it - a view
-        // scaled to exactly zero can stop being laid out at all, taking the
-        // reserved width with it.
-        .scaleEffect(x: collapsed ? 0.001 : 1, anchor: .center)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(a11y)
+    }
+
+    /// ROUND 41: HOW FAR THE BADGE IS TURNED - 1 upright, edge-on when out.
+    ///
+    /// Round 28 hung this on the whole seat label, so a player going out took
+    /// their NAME with them. The owner, off a screenshot of the board: "when a
+    /// player gets out, their name rotates out along with the badge? Not ideal.
+    /// Rotate only the badge, dim the name."
+    ///
+    /// Which is the right split, and not only a taste one. The badge is a FACT
+    /// that stopped being true - a hand of cards that is no longer there, a
+    /// role that is no longer held - and a fact that stopped being true turns
+    /// away, the way every other mark on this board does (FRoleCoin). A name
+    /// is not a fact about the hand; it is a person still sitting at the table
+    /// with a finished game in front of them. Turning it away left a four-seat
+    /// ring showing two names and two empty spaces, with nothing on the board
+    /// to say who the empty spaces had been.
+    public static func badgeTurn(collapsed: Bool) -> CGFloat { collapsed ? 0.001 : 1 }
+
+    /// …and what the name does instead: it dims, and stays put.
+    ///
+    /// Deliberately a modest step, because round 16 is the cautionary tale
+    /// here: an out name used to be a dim sage at 0.45 opacity and the owner
+    /// could not see it at all on the pale weave ("players text that are out
+    /// are invisible against the wool background light mode"). The fix then was
+    /// to say "out" with INK - `nameInk` - drawn at full strength, and that
+    /// rule is untouched. This dim sits ON TOP of an already-legible colour and
+    /// only has to read as a step down from a live seat, so it is 0.6 and not
+    /// the 0.45 that failed.
+    public static let outNameOpacity: Double = 0.6
+    public static func nameOpacity(collapsed: Bool) -> Double {
+        collapsed ? outNameOpacity : 1
     }
 
     /// Is this badge sitting on a LIGHT ground? The beige message bubble always
@@ -286,7 +328,10 @@ public struct FSeatBadge: View {
 }
 
 /// A three-dot "thinking" pulse (Reduce-Motion falls back to a static dot row).
-public struct ThinkingDots: View {
+// Not `public`: nothing outside FoolishKit names it, and a public View in a
+// dynamic framework exports its whole SwiftUI generic tree as symbol names
+// (see RulesView.swift for the measurement).
+struct ThinkingDots: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var phase = 0.0
     public init() {}

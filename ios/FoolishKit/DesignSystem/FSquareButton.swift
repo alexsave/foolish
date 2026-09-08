@@ -6,7 +6,10 @@
 
 import SwiftUI
 
-public struct FSquareButton: View {
+// Not `public`: nothing outside FoolishKit names it, and a public View in a
+// dynamic framework exports its whole SwiftUI generic tree as symbol names
+// (see RulesView.swift for the measurement).
+struct FSquareButton: View {
     private let systemImage: String
     private let side: CGFloat
     private let accessibility: String

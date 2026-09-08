@@ -68,10 +68,39 @@ import Foundation
 /// hands to chat B's participants. That rationale outlived the row it was
 /// written for (the deleted `MessageGameRecord`) and is why `seat(gameId:
 /// chatKey:)` is scoped.
+///
+/// `name` is the CLAIM-TIME NAME: the name this device's own seat carried in
+/// the chain that established the row - not the device nickname, which is a
+/// single device-wide value the human can change at any time, including
+/// between two games that are both in progress.
+///
+/// It exists because `SeatIdentity.cacheDisownedByJoins` has to tell two
+/// situations apart, and the current nickname cannot:
+///
+///   * somebody ELSE won a seat-claim race and the canonical chain now lists
+///     them at my cached seat - trusting the cache would put their hand
+///     face-up on my screen, so this MUST disown;
+///   * I renamed since I claimed - the chain still lists me, under my old
+///     name, and this must NOT disown.
+///
+/// Both read identically as "the name at my cached seat is not my current
+/// nickname". The owner's report is the second one, twice over: join group
+/// game A as "alex", join group game B as "al", reopen A - the device
+/// nickname is now "al", A's roster says "alex", and A's seat is disowned.
+/// Two games are two rows, and a per-row name is what makes them independent.
+///
+/// Optional because a row written before this field existed (format 1) has no
+/// name, as does a seat claimed off a chain whose roster does not yet list it.
+/// The kernel treats a missing name as "not a disownment" (msg_wire.c's
+/// `msg_seat_cache_disowned` returns 0 on a null/empty name), so nil is
+/// exactly the permissive pre-existing behaviour, minus the false disown.
 public struct SeatRow: Equatable, Sendable {
     public var chatKey: String
     public var seat: Int
-    public init(chatKey: String, seat: Int) { self.chatKey = chatKey; self.seat = seat }
+    public var name: String?
+    public init(chatKey: String, seat: Int, name: String? = nil) {
+        self.chatKey = chatKey; self.seat = seat; self.name = name
+    }
 }
 
 public final class MessageGameStore {
@@ -132,6 +161,51 @@ public final class MessageGameStore {
         return !n.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
+    /// What a name-entry screen PREFILLS its field with, and the single place
+    /// that decides when that prefill is empty.
+    ///
+    /// `nickname`'s default is a neutral placeholder, not a name the human
+    /// chose, so it must arrive as an empty field rather than as the word "Me".
+    /// All three name-entry surfaces (`NewGameSetup`, the lobby's JOIN row and
+    /// `NameGateView`) used to make that judgement independently, each with the
+    /// literal `== "Me"` written into its own initialiser - three copies of one
+    /// rule and nothing keeping them agreed. They all read this now.
+    public var nicknamePrefill: String {
+        let n = nickname.trimmingCharacters(in: .whitespaces)
+        return (n.isEmpty || n == "Me") ? "" : n
+    }
+
+    /// Will a name-entry screen open with an EMPTY field - does this device
+    /// still owe us a name?
+    ///
+    /// This decides whether arriving on such a screen expands the drawer and
+    /// raises the keyboard. A screen that already knows your name needs
+    /// neither: it is one filled-in field and a button, it reads fine compact,
+    /// and expanding over the conversation uninvited is a worse first
+    /// impression than leaving the drawer where the human put it. Deliberately
+    /// derived from `nicknamePrefill` rather than `hasSetNickname`, so a device
+    /// whose STORED name is the placeholder still gets a keyboard instead of a
+    /// blank field it cannot focus in compact.
+    public var needsNameEntry: Bool { nicknamePrefill.isEmpty }
+
+    // WHICH OF THE THREE TO USE, because they deliberately disagree and a
+    // future reader will otherwise "fix" one of them into a bug.
+    //
+    //   nickname         the raw stored string. SEAT IDENTITY only - it is
+    //                    matched against the names sealed into `joins`, so it
+    //                    must be the exact string that was sealed. A human who
+    //                    typed "Me" has "Me" in their join, and normalising it
+    //                    away here would stop them recognising their own seat.
+    //   hasSetNickname   has the human ever chosen ANY name. Gates whether we
+    //                    ASK (the §B3 name gate). Someone who deliberately
+    //                    typed "Me" has chosen, and must not be re-asked.
+    //   needsNameEntry   will the FIELD be empty. Gates the drawer expand and
+    //                    the keyboard, because those follow what is on screen,
+    //                    not what is in storage.
+    //
+    // They differ on exactly one input - a stored "Me" - which is why all three
+    // exist rather than one.
+
     // MARK: read
 
     /// This device's seat in `gameId` WITHIN `chatKey`, or nil if unknown — the
@@ -149,9 +223,15 @@ public final class MessageGameStore {
     /// Persist this device's seat in `gameId` within `chatKey` (§6.1) — the one
     /// per-game fact kept in round 7. Overwrites any prior seat for the game (a
     /// device only ever holds one seat in a given game).
-    public func setSeat(gameId: String, chatKey: String, seat: Int) {
+    ///
+    /// `name` is the CLAIM-TIME name for that seat - see `SeatRow.name`. It is
+    /// explicit, with no default, because the whole bug it exists for was a
+    /// call site assuming the device nickname would do: pass the name the
+    /// CHAIN carries at this seat, and pass nil only when there genuinely is
+    /// none (nil is permissive, never a false disown).
+    public func setSeat(gameId: String, chatKey: String, seat: Int, name: String?) {
         var map = allSeats()
-        map[gameId] = SeatRow(chatKey: chatKey, seat: seat)
+        map[gameId] = SeatRow(chatKey: chatKey, seat: seat, name: name)
         persistSeats(map)
     }
 
@@ -166,16 +246,36 @@ public final class MessageGameStore {
         persistSeats(map)
     }
 
-    /// fmt(1) n(u16) then n x { gameId(text) chatKey(text) seat(1) }.
+    /// fmt(1) n(u16) then n x { gameId(text) chatKey(text) seat(1) [name(text)] },
+    /// the name present from format 2 on.
+    ///
+    /// FORMAT 1 IS STILL READ, rather than the key being bumped the way every
+    /// other shape change in this file was (see the header). Those cuts were
+    /// affordable because what they dropped re-derives itself: a high-water
+    /// mark simply trusts the next bubble, a hand arrangement re-sorts. A SEAT
+    /// does not - §6.1 calls it "the one fact a fresh bubble cannot always
+    /// recover, and which a 3+ player game is unplayable without", so dropping
+    /// the seats blob would strand every mid-flight group game on this device
+    /// at the §6.3 picker. That is the very failure this format change is
+    /// fixing, and it would be perverse to ship it as the upgrade cost. A
+    /// format-1 row decodes with `name == nil`, which is the permissive
+    /// pre-existing behaviour, and the next `setSeat` rewrites it as format 2
+    /// with a real name.
     private func allSeats() -> [String: SeatRow] {
         guard let data = defaults?.data(forKey: seatsKey) else { return [:] }
         var r = PackedReader(data)
-        guard r.u8() == Self.storeFormat, let n = r.u16() else { return [:] }
+        guard let fmt = r.u8(), fmt == 1 || fmt == Self.seatsFormat,
+              let n = r.u16() else { return [:] }
         var map: [String: SeatRow] = [:]
         for _ in 0..<n {
             guard let gameId = r.text(), let chatKey = r.text(), let seat = r.u8()
             else { return [:] }   // half a container is no container
-            map[gameId] = SeatRow(chatKey: chatKey, seat: seat)
+            var name: String? = nil
+            if fmt >= 2 {
+                guard let stored = r.text() else { return [:] }
+                name = stored.isEmpty ? nil : stored   // empty text IS "no name"
+            }
+            map[gameId] = SeatRow(chatKey: chatKey, seat: seat, name: name)
         }
         return map
     }
@@ -190,13 +290,65 @@ public final class MessageGameStore {
     // order at no meaningful cost. Same for persistLatest and persistHandOrders.
     private func persistSeats(_ map: [String: SeatRow]) {
         var w = PackedWriter()
-        w.u8(Self.storeFormat)
+        w.u8(Self.seatsFormat)
         w.u16(map.count)
         for gameId in map.keys.sorted() {
             guard let row = map[gameId] else { continue }
             w.text(gameId); w.text(row.chatKey); w.u8(row.seat)
+            w.text(row.name ?? "")
         }
         defaults?.set(w.data, forKey: seatsKey)
+    }
+
+    /// The name this device's seat in `gameId` carried when the row was
+    /// written - what `SeatIdentity.cacheDisownedByJoins` and
+    /// `seatClaimedByName` must be asked with, in place of the current
+    /// nickname. nil for a format-1 row, an unknown game, or a claim made off
+    /// a chain that did not list the seat; all three are permissive.
+    ///
+    /// UNSCOPED BY chatKey, exactly like `seatForBubble`, and it has to be:
+    /// the two are read as a PAIR at both call sites, and a scoped name beside
+    /// an unscoped seat would answer nil for the name and a number for the
+    /// seat the moment a group-membership change re-keyed the chat - the seat
+    /// would then be trusted with no name check at all, silently, which is a
+    /// weaker guard than the one this replaces.
+    public func claimName(gameId: String) -> String? { claim(gameId: gameId)?.name }
+
+    /// The whole row for a bubble that is IN HAND - `seatForBubble`'s seat and
+    /// `claimName`'s name, from ONE read.
+    ///
+    /// It exists so the two cannot be sourced separately. The bug this file's
+    /// `SeatRow.name` closes was exactly that: a seat number from the row
+    /// paired with a name from somewhere else (`nickname`), which the §6 gates
+    /// then compared as if both had come off the same claim. A single row makes
+    /// that mismatch unrepresentable, and `SeatIdentity.cachedSeat` takes the
+    /// row rather than two loose arguments for the same reason.
+    public func claim(gameId: String) -> SeatRow? { allSeats()[gameId] }
+
+    /// WHAT THIS DEVICE CAN CLAIM ABOUT `gameId`, as the pair §6's gates take:
+    /// a cached seat and the name that validates it, from one read.
+    ///
+    /// The name has two sources and the order between them is the fix:
+    ///
+    ///   * A ROW EXISTS -> its own name, WHATEVER it is, including nil. A
+    ///     format-1 row has none, and nil is permissive (the kernel treats a
+    ///     missing side as no disownment), so an upgrading device behaves
+    ///     exactly as it did minus the false disown. Falling back to the
+    ///     nickname here would put the reported bug straight back for every
+    ///     row written before this build.
+    ///   * NO ROW AT ALL -> the device nickname, once the human has set one.
+    ///     That is not the bug's path and it is load-bearing: it is the whole
+    ///     of §6.2 name recovery for a device that has never claimed a seat in
+    ///     this game (a chain whose roster already carries my name, and the
+    ///     FoolishHarness seed demo, which seats its viewer by writing a
+    ///     nickname and nothing else). Without a row there is no per-game name
+    ///     to prefer, so this is not a choice between two answers - it is the
+    ///     only one there is.
+    public func identity(gameId: String) -> (seat: Int?, name: String?) {
+        guard let row = claim(gameId: gameId) else {
+            return (nil, hasSetNickname ? nickname : nil)
+        }
+        return (row.seat, row.name)
     }
 
     /// My seat for `gameId` regardless of which chat it was claimed under - the
@@ -586,4 +738,12 @@ public final class MessageGameStore {
     /// cheap guard that says an unreadable blob is unreadable rather than
     /// half-read.
     static let storeFormat = 1
+
+    /// The seats container's own leading byte, 2 since the row grew a
+    /// claim-time name (`SeatRow.name`). Separate from `storeFormat` because
+    /// the three containers are three independent layouts sharing one
+    /// constant only by accident of having never diverged; bumping the shared
+    /// one would have declared the high-water and hand-order blobs unreadable
+    /// for a field neither of them has.
+    static let seatsFormat = 2
 }

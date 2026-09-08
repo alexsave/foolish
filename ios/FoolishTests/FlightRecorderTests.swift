@@ -145,6 +145,64 @@ final class FlightRecorderTests: XCTestCase {
         XCTAssertGreaterThan(c.peakMB, 0)
     }
 
+    /// THE SPIKE BETWEEN TWO BREADCRUMBS. Jetsam kills on the HIGH-WATER mark,
+    /// and a breadcrumb only samples the footprint at the instant it is written
+    /// - so a spike that has come and gone in between is invisible to `mb` and
+    /// is exactly the spike that ends the process. Measured in the real
+    /// extension: `mb` read 39.8 going into `MSConversation.insert` and 41.0
+    /// coming out, while the true peak inside it was 48.6.
+    ///
+    /// So: allocate and free a big block BETWEEN two notes, and the recorded
+    /// peak must have seen it even though neither note's own footprint did.
+    func testAPeakBetweenTwoBreadcrumbsIsStillRecorded() {
+        FlightRecorder.begin("first")
+        FlightRecorder.note("before")
+        settle()
+        let quiet = FlightRecorder.footprintMB()
+        // 60 MB, DIRTIED (an untouched malloc never reaches phys_footprint),
+        // then given straight back.
+        let n = 60 * 1024 * 1024
+        if let p = malloc(n) { memset(p, 0xAB, n); free(p) }
+        FlightRecorder.note("after")
+        settle()
+
+        let c = try! XCTUnwrap(FlightRecorder.currentSession())
+        // The premise: neither breadcrumb SAW the spike, so a recorder that only
+        // reported sampled footprints would report nothing unusual.
+        XCTAssertLessThan(c.sampledPeakMB, quiet + 40,
+                          "fixture: a breadcrumb caught the spike, so this test proves nothing")
+        // …and the peak did.
+        XCTAssertGreaterThan(c.peakMB, quiet + 40,
+                             "the 60 MB spike between two notes was not recorded "
+                             + "(peak \(c.peakMB), sampled \(c.sampledPeakMB), quiet \(quiet))")
+        XCTAssertTrue(FlightRecorder.verdict(c).contains(String(format: "%.1f", c.peakMB))
+                        || FlightRecorder.verdict(c).contains("peak"),
+                      "the verdict does not report the peak it now knows")
+    }
+
+    /// A TRAIL WRITTEN BY THE PREVIOUS BUILD still parses. The file this build
+    /// reads on launch was written by whatever build ran last, which after an
+    /// update is the old one - so the peak field has to be optional in the
+    /// format, not just in the type.
+    func testATrailWithNoPeakColumnStillParses() throws {
+        let old = """
+        0.00 begin 21.4 style compact
+        0.12 adopt 24.9 turn 12, 3 to animate
+        0.31 memory-warning 40.2 dropped 3 textures
+        """
+        try old.write(to: dir.appendingPathComponent("flight.prev.log"),
+                      atomically: true, encoding: .utf8)
+        let s = try XCTUnwrap(FlightRecorder.previousSession())
+        XCTAssertEqual(s.notes.count, 3)
+        XCTAssertEqual(s.notes[1].detail, "turn 12, 3 to animate",
+                       "an old line's detail was eaten by the new peak column")
+        XCTAssertNil(s.notes[1].peakMB, "an old line cannot have a peak")
+        XCTAssertEqual(s.notes[2].detail, "dropped 3 textures")
+        // With no peak recorded, the highest breadcrumb is still the best
+        // available answer - never zero.
+        XCTAssertEqual(s.peakMB, 40.2, accuracy: 0.01)
+    }
+
     /// A DETAIL WITH SPACES IN IT MUST NOT SHIFT A FIELD. The line format is
     /// space-separated with the free text last, and "dropped 3 textures" or
     /// "main thread 3.4s" are exactly the details being written - so a parser

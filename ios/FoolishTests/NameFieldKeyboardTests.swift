@@ -21,6 +21,16 @@
 // stage it. What CAN be pinned is the invariant the fix rests on: no name field
 // without a focus binding, and no hand-off that skips `handOff`. That is the
 // same guard the `.contentShape` fix took, and for the same reason.
+//
+// AND WHAT THAT COSTS, written in after round 47 found out the hard way: the
+// eight tests below all passed while the feature they describe was completely
+// INERT on a real iPhone. They assert that our code asks for the drawer and
+// gates the keyboard correctly, and it did - Messages was discarding the
+// request, and nothing here can see a request being discarded. Read every
+// assertion in this file as "our side is shaped right", never as "it works".
+// The moment that makes it work is measured and pinned in NameEntryExpand /
+// NameEntryExpandTests; the proof that it works at all is a screenshot from
+// the real Messages app.
 import XCTest
 @testable import FoolishKit
 
@@ -78,5 +88,114 @@ final class NameFieldKeyboardTests: XCTestCase {
                               "\(call) called without handOff, so the keyboard can outlive the field: \(line)")
             }
         }
+    }
+
+    // MARK: - Round 46: the keyboard comes up by itself, but only when owed
+
+    /// The prefill rule, which is the ONE thing the drawer, the keyboard and
+    /// all three fields now agree on. Real behaviour, not a source scan.
+    func testPrefillIsEmptyOnlyWhenNoNameHasBeenChosen() {
+        let store = MessageGameStore(defaults: UserDefaults(suiteName: "test.nick.\(UUID().uuidString)")!)
+
+        // Untouched device: the neutral default is a placeholder, not a name.
+        XCTAssertEqual(store.nicknamePrefill, "")
+        XCTAssertTrue(store.needsNameEntry)
+
+        // A chosen name prefills and asks for nothing.
+        store.nickname = "Alex"
+        XCTAssertEqual(store.nicknamePrefill, "Alex")
+        XCTAssertFalse(store.needsNameEntry)
+
+        // Whitespace is not a name.
+        store.nickname = "   "
+        XCTAssertEqual(store.nicknamePrefill, "")
+        XCTAssertTrue(store.needsNameEntry)
+
+        // The case the old per-view `== "Me"` tests got wrong: a device whose
+        // STORED name is the placeholder used to report hasSetNickname == true
+        // while every field still blanked it, so the drawer stayed compact over
+        // a field that cannot be focused there - the 2.1 dead end, restored.
+        store.nickname = "Me"
+        XCTAssertEqual(store.nicknamePrefill, "")
+        XCTAssertTrue(store.needsNameEntry,
+                      "a stored placeholder must still count as owing a name")
+        XCTAssertTrue(store.hasSetNickname,
+                      "hasSetNickname is the weaker test - this is why needsNameEntry exists")
+    }
+
+    /// Every name field asks for the autofocus, and asks for it CONDITIONALLY.
+    /// An unconditional one would re-raise the keyboard over a name the human
+    /// already chose.
+    func testEveryNameFieldAutofocusesOnlyWhenEmpty() throws {
+        let src = code(try source())
+        let mods = src.indices.filter { src[$0].contains(".modifier(NameFieldAutofocus(") }
+        XCTAssertEqual(mods.count, 3,
+                       "all three name fields raise their own keyboard, or none should")
+        for i in mods {
+            let pair = src[i] + (i + 1 < src.count ? src[i + 1] : "")
+            XCTAssertTrue(pair.contains("active: name.isEmpty") || pair.contains("active: nickname.isEmpty"),
+                          "autofocus at line \(i + 1) is unconditional: \(pair)")
+        }
+    }
+
+    // MARK: - Round 46b: what the autofocus is allowed to MEASURE
+
+    /// The autofocus must read the height published by the ROOT, and must not
+    /// measure a box of its own.
+    ///
+    /// Filmed on a 17: the first cut wrapped the name field in
+    /// `content.background(GeometryReader { ... })`, which reports the FIELD -
+    /// 34pt, a collapse fraction of 1, in every presentation style. Worse, 34pt
+    /// never changes, so the `onChange` watching it fired once at 0.24s and
+    /// never again; the keyboard could not come up even in principle, and the
+    /// round-46 tests all passed anyway because none of them asked WHICH height
+    /// was being measured. This one does.
+    func testAutofocusMeasuresTheSurfaceNotItself() throws {
+        let src = code(try source())
+        guard let i = src.firstIndex(where: { $0.contains("private struct NameFieldAutofocus") }),
+              let end = src[i...].firstIndex(where: { $0.hasPrefix("}") && $0 != src[i] })
+        else { return XCTFail("NameFieldAutofocus is gone - this test needs rewriting") }
+        let body = src[i...end].joined(separator: "\n")
+        XCTAssertTrue(body.contains("@Environment(\\.surfaceHeight)"),
+                      "the autofocus no longer reads the root's published height")
+        XCTAssertFalse(body.contains("GeometryReader"),
+                       "a GeometryReader here measures the FIELD, not the drawer")
+        // …and the root has to publish it, or the environment default (0) makes
+        // the gate unreachable in the other direction.
+        XCTAssertTrue(src.contains(where: { $0.contains(".environment(\\.surfaceHeight, geo.size.height)") }),
+                      "nothing publishes surfaceHeight from the root GeometryReader")
+    }
+
+    /// A tall surface is NOT on its own proof that a field can take the
+    /// keyboard. For the first ~0.16s of a session the extension's view is laid
+    /// out at full screen height (874pt, filmed) before Messages installs it in
+    /// the compact drawer, so the height alone reads "expanded" while the sheet
+    /// is still shut - and a focus request made there is dropped, which is the
+    /// exact dead end this whole feature exists to cure. The host's own live
+    /// answer is the second half of the gate.
+    func testAutofocusAlsoWaitsForTheHostToSayExpanded() throws {
+        let src = code(try source())
+        guard let i = src.firstIndex(where: { $0.contains("private func raise(_ height: CGFloat)") })
+        else { return XCTFail("NameFieldAutofocus.raise is gone - this test needs rewriting") }
+        let body = src[i...min(i + 4, src.count - 1)].joined(separator: "\n")
+        XCTAssertTrue(body.contains("hostIsExpanded()"),
+                      "the height alone can be a full-screen pre-layout reading")
+        XCTAssertTrue(body.contains("collapseFraction"),
+                      "the host's style alone does not say how tall the drawer is")
+        XCTAssertTrue(body.contains("!fired"), "the autofocus is no longer once-only")
+    }
+
+    /// And the drawer is expanded on the same condition. If this guard is
+    /// dropped, opening any conversation with a known name takes the screen
+    /// over uninvited.
+    func testExpandForNameEntryIsGatedOnOwingAName() throws {
+        let src = code(try source())
+        guard let i = src.firstIndex(where: { $0.contains("private func expandForNameEntry()") }) else {
+            return XCTFail("expandForNameEntry is gone - this test needs rewriting")
+        }
+        let body = src[i...min(i + 4, src.count - 1)].joined(separator: "\n")
+        XCTAssertTrue(body.contains("needsNameEntry"),
+                      "expandForNameEntry no longer checks whether a name is owed")
+        XCTAssertTrue(body.contains("guard"), "the check is not a guard, so it may not return early")
     }
 }

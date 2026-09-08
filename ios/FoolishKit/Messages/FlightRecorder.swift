@@ -39,6 +39,7 @@
 // watchdog, which is one timer tick a second on a background queue.
 import Foundation
 import Darwin
+import os
 
 /// The one-line records a session leaves behind.
 public struct FlightNote: Equatable {
@@ -51,6 +52,27 @@ public struct FlightNote: Equatable {
     public let mb: Double
     /// Whatever the call site added ("4p", "sig 11", "1.4s").
     public let detail: String
+    /// The process's HIGH-WATER footprint at that moment
+    /// (`ledger_phys_footprint_peak`), or nil on a line written by a build that
+    /// did not record one.
+    ///
+    /// Separate from `mb` because they answer different questions and the
+    /// difference is the point. `mb` is the footprint at the instant the
+    /// breadcrumb was written, and a spike that has already come back down by
+    /// then is invisible to it - which is exactly the spike jetsam kills on.
+    /// Measured in the real extension: `mb` read 39.8 going into
+    /// `MSConversation.insert` and 41.0 coming out, while the true peak inside
+    /// it was 48.6. Eight and a half megabytes of the thing this recorder
+    /// exists to catch, in the gap between two breadcrumbs.
+    public var peakMB: Double?
+
+    public init(at: Double, event: String, mb: Double, detail: String, peakMB: Double? = nil) {
+        self.at = at
+        self.event = event
+        self.mb = mb
+        self.detail = detail
+        self.peakMB = peakMB
+    }
 }
 
 /// One recovered session.
@@ -60,8 +82,21 @@ public struct FlightSession: Equatable {
     /// or was torn down without warning (which Messages does routinely, so an
     /// abrupt end is evidence to read, not proof of a bug on its own).
     public let endedCleanly: Bool
-    /// The highest footprint any breadcrumb saw.
-    public var peakMB: Double { notes.map(\.mb).max() ?? 0 }
+    /// The highest footprint this session reached.
+    ///
+    /// The kernel's own high-water mark where the trail carries one, and the
+    /// highest breadcrumb otherwise (an older trail, or one from a build before
+    /// the peak was recorded). Never the smaller of the two: the breadcrumb max
+    /// is a floor under the truth, not a competing reading.
+    public var peakMB: Double {
+        max(notes.compactMap(\.peakMB).max() ?? 0, notes.map(\.mb).max() ?? 0)
+    }
+
+    /// The highest footprint a BREADCRUMB happened to sample - what this used to
+    /// report as the peak. Kept because the difference between the two is the
+    /// measurement: a spike that lands between two breadcrumbs shows up in
+    /// `peakMB` and not here.
+    public var sampledPeakMB: Double { notes.map(\.mb).max() ?? 0 }
     /// The signal a crash handler caught, if one did.
     public var crashSignal: Int? {
         notes.last { $0.event == "crash" }.flatMap { Int($0.detail.split(separator: " ").last ?? "") }
@@ -128,6 +163,55 @@ public enum FlightRecorder {
         return Double(info.phys_footprint) / (1024 * 1024)
     }
 
+    /// The HIGH-WATER MARK of `phys_footprint` since this process started, in MB.
+    ///
+    /// This is the number that matters and `footprintMB()` is not it. Jetsam
+    /// kills on the peak, and a spike that has already come back down by the
+    /// time anything samples is invisible to a breadcrumb - which is exactly the
+    /// spike that ends the process. The kernel keeps this ledger itself
+    /// (`ledger_phys_footprint_peak`), so reading it costs the same one
+    /// `task_info` call and needs no sampling thread that could miss the moment.
+    ///
+    /// Returns -1 if the kernel declines, and 0 if this OS does not fill the
+    /// field in (it is at the tail of `task_vm_info`, past the revision every
+    /// iOS is guaranteed to answer) - callers show the live figure instead
+    /// rather than reporting a peak of zero.
+    public static func footprintPeakMB() -> Double {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size
+                                           / MemoryLayout<natural_t>.size)
+        let kr = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        guard kr == KERN_SUCCESS else { return -1 }
+        return Double(info.ledger_phys_footprint_peak) / (1024 * 1024)
+    }
+
+    /// HOW MUCH ROOM IS LEFT before iOS terminates this process for memory, in
+    /// MB, or nil where the OS declines to say.
+    ///
+    /// This is the number the whole hang investigation has been missing. An
+    /// iMessage extension's ceiling is a fixed budget rather than a share of the
+    /// device's RAM, and nothing in the app knew what that budget was - so a
+    /// recorded peak of 48 MB could not be read as comfortable or as one bad
+    /// move from a SIGKILL. `os_proc_available_memory` answers exactly that, and
+    /// it answers it for the process actually asking, on the OS actually
+    /// running, which is the only way this can be honest: the figure is not
+    /// documented, it differs between the compact and expanded presentations,
+    /// and it moves between iOS versions.
+    ///
+    /// It returns 0 when the platform has no limit to report - which is the
+    /// SIMULATOR, measured: an extension there was inflated to 938 MB without
+    /// being killed. So a nil here does not mean "no headroom", it means "ask a
+    /// real phone", and every caller has to treat it that way.
+    public static func availableMB() -> Double? {
+        let bytes = os_proc_available_memory()
+        guard bytes > 0 else { return nil }
+        return Double(bytes) / (1024 * 1024)
+    }
+
     // MARK: - Reading
 
     /// The session before this one, or nil if there is no trail to read (a
@@ -162,7 +246,14 @@ public enum FlightRecorder {
     /// here, and a format nothing checks rots.
     public static func report(previous: FlightSession?, current: FlightSession?) -> String {
         var out: [String] = []
-        out.append(String(format: "now  %.1f MB", footprintMB()))
+        // The live footprint, its high-water mark, and - the line that turns a
+        // number into a verdict - how much room iOS says is left. On a simulator
+        // there is no limit to report, and the panel says so rather than
+        // printing a headroom of zero.
+        out.append(String(format: "now  %.1f MB   peak %.1f MB   %@",
+                          footprintMB(), footprintPeakMB(),
+                          availableMB().map { String(format: "%.0f MB left before a memory kill", $0) }
+                            ?? "no memory limit reported (simulator)"))
         if let p = previous {
             out.append("")
             out.append("── previous session ──")
@@ -303,13 +394,20 @@ public enum FlightRecorder {
     private static var stallReported = false
 
     /// The line format, which the parser and the panel both depend on:
-    ///   `<seconds> <event> <mb> <detail>`
+    ///   `<seconds> <event> <mb> ^<peak> <detail>`
     /// Space-separated with the free-text detail last, so a detail containing
     /// spaces cannot shift a field.
+    ///
+    /// The peak wears a `^` so the parser can tell it from a detail that happens
+    /// to begin with a number ("8 textures dropped"), and so a trail written by
+    /// a build BEFORE this field existed still parses: no caret, no peak, the
+    /// rest of the line reads exactly as it always did. That matters more here
+    /// than anywhere else in the app - the trail this build reads on launch was
+    /// written by whatever build ran last, which after an update is the old one.
     private static func writeLine(_ event: String, _ detail: String) {
         guard fd >= 0 else { return }
-        let s = String(format: "%.2f %@ %.1f %@\n", Date().timeIntervalSince(start),
-                       event, footprintMB(), detail)
+        let s = String(format: "%.2f %@ %.1f ^%.1f %@\n", Date().timeIntervalSince(start),
+                       event, footprintMB(), footprintPeakMB(), detail)
         _ = s.withCString { write(fd, $0, strlen($0)) }
     }
 
@@ -357,12 +455,22 @@ public enum FlightRecorder {
                                         mb: notes.last?.mb ?? 0, detail: d))
                 continue
             }
-            let f = raw.split(separator: " ", maxSplits: 3, omittingEmptySubsequences: false)
+            let f = raw.split(separator: " ", maxSplits: 4, omittingEmptySubsequences: false)
             guard f.count >= 3, let at = Double(f[0]), let mb = Double(f[2]) else { continue }
             let event = String(f[1])
             if event == endEvent { clean = true }
-            notes.append(FlightNote(at: at, event: event, mb: mb,
-                                    detail: f.count > 3 ? String(f[3]) : ""))
+            // Field 3 is the `^`-marked peak when the writing build recorded
+            // one; anything else means an older trail, and field 3 onwards is
+            // the detail exactly as it used to be.
+            var peak: Double?
+            var detail = ""
+            if f.count > 3, f[3].hasPrefix("^"), let p = Double(f[3].dropFirst()) {
+                peak = p
+                detail = f.count > 4 ? String(f[4]) : ""
+            } else if f.count > 3 {
+                detail = f.dropFirst(3).joined(separator: " ")
+            }
+            notes.append(FlightNote(at: at, event: event, mb: mb, detail: detail, peakMB: peak))
         }
         guard !notes.isEmpty else { return nil }
         // Cap what a reader has to look at. The END of a trail is the part that
@@ -377,7 +485,13 @@ public enum FlightRecorder {
 
     private static func line(_ n: FlightNote) -> String {
         let d = n.detail.isEmpty ? "" : "  \(n.detail)"
-        return String(format: "%6.2fs %5.1fMB  %@%@", n.at, n.mb, n.event, d)
+        // The peak is shown only where it is AHEAD of the live figure, which is
+        // the only case it says anything: a spike that has already come back
+        // down. Printing "41.0 (^41.0)" on every quiet line would bury the two
+        // lines where the two numbers differ.
+        let p = (n.peakMB.map { $0 > n.mb + 0.05 } ?? false)
+            ? String(format: " ^%.1f", n.peakMB ?? 0) : ""
+        return String(format: "%6.2fs %5.1fMB%@  %@%@", n.at, n.mb, p, n.event, d)
     }
 
     private static func mb(_ v: Double) -> String { String(format: "%.1f MB", v) }

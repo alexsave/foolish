@@ -36,17 +36,26 @@
 	     digests, this answer needs to be revisited. -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
-	<!-- Round-5 Q1: declares ru/ko presentation to the store. FStrings.swift
-	     (in-code en/ru/ko table, switched at runtime on
+	<!-- Round-5 Q1: declares non-English presentation to the store.
+	     FStrings.swift (in-code en/ru/ko/zh/vi table, switched at runtime on
 	     Locale.preferredLanguages) is the backing store, not a .lproj — no
 	     .lproj exists yet, and Milestone E4's String Catalog will supersede
 	     this table. This key is what tells the App Store the app presents
-	     Russian and Korean regardless of where the strings live. -->
+	     these languages regardless of where the strings live.
+
+	     zh-Hans / vi joined the table in round 30 and are declared here for
+	     the first time. Chinese is zh-Hans (Simplified) and NOT zh-Hant: the
+	     table holds Simplified only. FStrings.systemDetected prefix-matches
+	     any "zh", so a Traditional reader still lands on Simplified rather
+	     than English - but that is a fallback, not support, and the store
+	     listing must not claim a script we do not write. -->
 	<key>CFBundleLocalizations</key>
 	<array>
 		<string>en</string>
 		<string>ru</string>
 		<string>ko</string>
+		<string>zh-Hans</string>
+		<string>vi</string>
 	</array>
 	<!-- The App Group this extension's MessageGameStore uses. Read at runtime by
 	     FoolishKit rather than hardcoded there, because FoolishKit is shared with

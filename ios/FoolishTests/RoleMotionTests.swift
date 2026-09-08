@@ -287,6 +287,75 @@ final class RoleMotionTests: XCTestCase {
         XCTAssertEqual(RoleGesture.resolve(shown: .sword, next: nil, settled: false), .rotateOut)
         XCTAssertEqual(RoleGesture.resolve(shown: nil, next: .sword, settled: false), .rotateIn)
     }
+
+    // MARK: - when my own mark draws at all
+
+    // A FINISHED GAME HAS NO ROLES. Caught in an App Store screenshot: the
+    // game-over screen showed the ranks over empty felt with a lone defender
+    // shield floating ~55% down, no table under it.
+    //
+    // The cause was a structural one worth stating, because the shape recurs.
+    // `MessageTableView` swaps its CONTENT for `FGameOverList` when the game
+    // ends, but my own role mark is an `.overlay` on the container that WRAPS
+    // that swap - so the swap never reached it and it kept drawing. Its doc
+    // comment asserted the opposite ("the game-over screen replaces the whole
+    // board... the caller never reach[es] here then"), which is why nobody
+    // looked twice.
+    //
+    // These test the DECISION, not a rendering: `showsSelfRoleMark` is the
+    // single predicate `selfRoleIndicator` now asks, and `showsEndScreen` is
+    // the same value the board/results branch switches on - so the two cannot
+    // hold different opinions about whether the game is over.
+
+    func testMyMarkGoesWithTheBoardWhenTheResultsScreenTakesOver() {
+        // Live game, seated: the mark is mine to see.
+        XCTAssertTrue(MessageTableView.showsSelfRoleMark(
+            isOver: false, showResults: false, isSpectating: false))
+        // The end screen is up. The board is gone; so is its decoration.
+        XCTAssertFalse(MessageTableView.showsSelfRoleMark(
+            isOver: true, showResults: true, isSpectating: false),
+            "a finished game drew a shield over empty felt")
+    }
+
+    func testTheMarkOutlastsGameOverUntilTheEndScreenActuallyLands() {
+        // note 39: the board stays the stage after the kernel calls the game
+        // over, until the last flight has landed - `showResults` is the beat
+        // that swaps it. The mark has to stay for exactly that window, or the
+        // final bout-end sequence would play under a board with the roles
+        // already stripped off it.
+        XCTAssertTrue(MessageTableView.showsSelfRoleMark(
+            isOver: true, showResults: false, isSpectating: false),
+            "the mark left before the final animation had played")
+        // ...and the same beat is what the results screen itself waits for.
+        XCTAssertFalse(MessageTableView.showsEndScreen(isOver: true, showResults: false))
+        XCTAssertTrue(MessageTableView.showsEndScreen(isOver: true, showResults: true))
+        XCTAssertFalse(MessageTableView.showsEndScreen(isOver: false, showResults: true),
+                       "`showResults` is stale state between games; only `isOver` makes it mean anything")
+    }
+
+    func testTheTwoGatesAgreeOnEveryInput() {
+        // The point of the shared predicate. Whenever the results screen is up,
+        // my mark is down - for every combination, not just the one that was
+        // screenshotted.
+        for isOver in [false, true] {
+            for showResults in [false, true] {
+                let end = MessageTableView.showsEndScreen(isOver: isOver, showResults: showResults)
+                let mark = MessageTableView.showsSelfRoleMark(
+                    isOver: isOver, showResults: showResults, isSpectating: false)
+                XCTAssertNotEqual(end, mark,
+                    "end screen \(end) and self mark \(mark) both drew for isOver=\(isOver) showResults=\(showResults)")
+            }
+        }
+    }
+
+    func testASpectatorStillNeverWearsAMark() {
+        // Round 21, unchanged by the end-screen gate: a seatless viewer holds no
+        // role on a live table either.
+        XCTAssertFalse(MessageTableView.showsSelfRoleMark(
+            isOver: false, showResults: false, isSpectating: true))
+        XCTAssertFalse(MessageTableView.showsSelfRoleMark(
+            isOver: true, showResults: true, isSpectating: true))
+    }
 }
 
 // The bubble's own picture is drawn by ImageRenderer, which does NOT run

@@ -1,4 +1,99 @@
-# Foolish for iMessage — App Store review findings
+# Foolish for iMessage - App Store review findings
+
+## Pass 3 - 2026-09-08, against a RELEASE build (1.1/49), clean install
+
+Run as a first submission (the owner confirmed 1.0 only ever went to
+TestFlight, so `IMESSAGE_APP_STORE_SUBMISSION.md` section 13's "1.0 is already
+live" premise is wrong and nothing on the App Store record is inherited).
+
+Everything below was reached on a **Release** build of `cards.foolish.msg`,
+freshly installed on simulator `reviewer` (iOS 26.3), driven through the real
+Messages app. Where a Debug/Release difference could matter it was checked in
+the Release binary specifically.
+
+### Blockers
+
+1. **Compact presentation was a dead end on the app's first screen (2.1).**
+   Tapping Foolish in the Messages drawer opens COMPACT. Compact is the
+   keyboard's own area, so the nickname `TextField` there can never become
+   first responder: the field does not focus, the keyboard never appears, and
+   the "Enter Nickname" button stays disabled forever. The only way forward was
+   an undiscoverable drag on the drawer grabber. The same dead end sat on the
+   lobby JOIN row, which is the screen the second player - and a reviewer's
+   second device - lands on. `requestExpand` had been threaded from
+   `MessagesViewController` into `MessagesRootView` since M1 and was **never
+   called anywhere in FoolishKit** (`HarnessUI/HarnessRootView.swift:41` says
+   so in a comment). FIXED in this pass: `expandForNameEntry()` in
+   `MessagesRootView.swift`, wired to the three name-entry surfaces.
+   Re-verified on a clean install of a rebuilt Release app.
+
+2. **The nickname is unfiltered user-generated content, and the planned Age
+   Rating answers deny that it exists (1.2, 2.3).** See
+   `IMESSAGE_APP_STORE_SUBMISSION.md` section 3a, added in this pass. Typing
+   "Fuck you" as a nickname produced a delivered bubble reading "1. Fuck you";
+   there is no filter, no report control and no block control anywhere in the
+   repo. The app's own privacy policy already says the bubble carries "the
+   nickname you type into the game", so a reviewer can see the contradiction
+   with the questionnaire without playing a game. NEEDS AN OWNER DECISION.
+
+### Closed from the earlier passes
+
+- **B1** (name over 12 bytes fails to seal): fixed. The cap is now 16
+  characters / 64 bytes (`c/src/msg_wire.h:311,316`), gated in the UI before
+  the button enables. The "12 bytes" figure in this document is stale.
+- **B2** (game-over leaderboard walks off screen): fits at 6 players with room
+  to spare - see the QA frame `replay/frames/endscreen_6p.png`.
+- **B3** (card faces lose their ranks at accessibility text sizes): cannot
+  happen any more, because nothing scales at all - see the Dynamic Type note
+  below.
+- **B4** (`UIRequiredDeviceCapabilities = armv7`): gone from source and from
+  the built artifacts; the archive carries the Xcode-injected `arm64`.
+
+### Dynamic Type: ignored completely, and that is NOT a stated violation
+
+Measured on the Release build with `simctl ui <sim> content_size` (underscore;
+the hyphen form is silently ignored) and read back to confirm the set took:
+the extension's pixels are **identical** between `medium` and
+`accessibility-extra-extra-extra-large` - mean absolute difference 0.0, max 0.
+The control taken in the same run, Messages' own conversation list, moves by
+16.32 mean / 255 max, so the harness was working.
+
+Call it what it is: the App Review Guidelines contain **no** accessibility
+requirement, and Apple does not reject for missing Dynamic Type. This is a
+product-quality problem and a reviewer-impression risk, not a submission
+blocker, and it should not be treated as one.
+
+### Not blockers, but real
+
+- The shipping default table is `.wool` (`FPrefs.swift:71`), the loud pink
+  plaid - while every store screenshot candidate in the QA set was shot on
+  felt. Either merge the felt-default change or re-shoot the screenshots.
+- `foolish.cards/privacy` and `/support` are client-rendered behind
+  `KernelGate` (`src/app/providers.tsx`), which renders nothing until
+  `bots.wasm` loads and throws if it fails - `curl` returns only "You need to
+  enable JavaScript to run this app." The static page built exactly to avoid
+  this, `public/imessage-privacy.html`, works, but is not the URL the
+  submission doc names and still says the game is "two-player".
+- The in-app language picker offers five languages in Release (en/ru/ko/zh/vi)
+  while `CFBundleLocalizations` declares three. Under-declaring is not a
+  rejection, but the store will not list Chinese or Vietnamese.
+- "How to play" is a full-bleed sheet with no Done button and no drag
+  indicator. Swipe-down does dismiss it; nothing on screen says so.
+- The compact drawer overflows from 5 players up (badges over the gear and
+  Pickup buttons) - already recorded and deferred in the QA lane's DEFECTS.md.
+
+### Verified clean
+
+No debug UI in the Release binary (`strings` on the extension and FoolishKit
+find no "Add player", no "testing", no dev-board hooks; the solo-seat controls
+are triple-gated behind `#if DEBUG || SOLO_TESTING`, which no shipping config
+defines). No network stack linked at all. Privacy manifests present and their
+required-reason codes match actual use. No unused entitlements. No armv7.
+`ITSAppUsesNonExemptEncryption` present in both Info.plists. Survived repeated
+background/foreground and rotation without a crash or a broken state.
+
+---
+
 
 **Verdict: not approvable as submitted.** Four blockers, nine majors, eleven
 minors, one item that needs a two-device check before it can be called anything.

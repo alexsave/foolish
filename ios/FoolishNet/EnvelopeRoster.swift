@@ -19,7 +19,22 @@
 //
 // Foundation only, deliberately - see the note in RosterWire.swift.
 
+// MOVED OUT OF FoolishKit (bundle size). FoolishKit is a DYNAMIC framework that
+// ships inside FoolishMessagesApp, and every `public` symbol in a dylib is an
+// export - a dead-strip ROOT the linker may never remove. This file has no
+// caller the iMessage app can reach, so it lives with the ones it does have.
+
 import Foundation
+// CONDITIONAL, and it has to be. Inside the app this file is in FoolishNet and
+// its codec neighbours (RosterWire, PackedBytes) are across a module boundary in
+// FoolishKit. But e2e/packed_roster_wire.test.ts compiles this file TOGETHER
+// with those two as one anonymous module - that is how the TypeScript encoder
+// and the real Swift decoder are diffed byte for byte - and there is no
+// FoolishKit to import there. An unconditional import made that build fail with
+// "no such module", which is what the move to FoolishNet shipped and CI caught.
+#if canImport(FoolishKit)
+import FoolishKit
+#endif
 
 /// The envelope's roster, carrying every field its JSON predecessor carried.
 public struct EnvelopeRoster: Sendable, Equatable {

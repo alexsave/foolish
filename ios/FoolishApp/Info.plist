@@ -18,12 +18,20 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
-	<!-- Localizations shipped from day one (§5.5): en / ru / ko. -->
+	<!-- Localizations shipped from day one (§5.5): en / ru / ko, plus
+	     zh-Hans / vi added with the round-30 FStrings table. Chinese is
+	     declared as zh-Hans (Simplified) and NOT zh-Hant, because the table
+	     holds Simplified only; FStrings.systemDetected prefix-matches any
+	     "zh" so a Traditional reader still lands on Simplified rather than
+	     English, but the store must not advertise a script we do not
+	     write. -->
 	<key>CFBundleLocalizations</key>
 	<array>
 		<string>en</string>
 		<string>ru</string>
 		<string>ko</string>
+		<string>zh-Hans</string>
+		<string>vi</string>
 	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>

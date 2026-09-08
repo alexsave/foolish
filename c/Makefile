@@ -53,7 +53,8 @@ CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_steps.
             src/octogen_strategy.c src/torpex_strategy.c \
             src/torpex_value.c src/novichok_strategy.c \
             src/bot_knobs.c src/bot_roster.c src/bot_drive.c \
-            src/sha256.c src/msg_wire.c src/anim_plan.c src/analyse.c
+            src/sha256.c src/msg_wire.c src/msg_expand.c src/anim_plan.c \
+            src/analyse.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 
 .PHONY: all clean tests print-core print-wasm-src
@@ -126,17 +127,25 @@ build/msg_wire_test: tests/msg_wire_test.c $(CORE_OBJ)
 # Animation core (c/src/anim_plan.h): the C twins of the React animation-quality
 # tests (e2e/optimistic_animation, optimistic_revert, reconcile) plus plan
 # building. The owner's headline ask — the quality tests live in C now.
+# The name-entry drawer decision (c/src/msg_expand.h): the C home of the eight
+# cold opens that measured WHEN Messages honours an `.expanded` request. A pure
+# transition function, so no game and no arguments - it either matches the
+# filmed trace or it does not.
+build/msg_expand_test: tests/msg_expand_test.c $(CORE_OBJ)
+	$(CC) $(CFLAGS) tests/msg_expand_test.c $(CORE_OBJ) -o $@ $(LDFLAGS)
 build/anim_plan_test: tests/anim_plan_test.c $(CORE_OBJ)
 	$(CC) $(CFLAGS) tests/anim_plan_test.c $(CORE_OBJ) -o $@ $(LDFLAGS)
-difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/solver_difftest build/replay_v6_test build/anim_plan_test
+difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/solver_difftest build/replay_v6_test build/anim_plan_test build/msg_expand_test
 	./build/sim_difftest 4 1000 && ./build/apply_difftest 4 200 && \
 	./build/msg_wire_test 20 && \
+	./build/msg_expand_test && \
 	./build/anim_plan_test && \
 	./build/solver_difftest 2 40 "" 200000 && \
 	./build/solver_difftest 3 40 "" 200000 && \
 	./build/solver_difftest 4 40 "" 200000 && \
 	./build/replay_v6_test 40 && \
-	$(MAKE) analyse-test
+	$(MAKE) analyse-test && \
+	$(MAKE) msg-flow-sim
 
 # ---------- the post-game analyser (docs/POST_GAME_ANALYSER.md) ---------------
 #
@@ -178,7 +187,25 @@ analyse-test:
 # by Xcode, and per-TU objects keep the archive portable across Xcode versions.
 IOS_MIN_VERSION := 15.0
 IOS_CAPS   := -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_MOVE_CARDS=28 \
-              -DMAX_LEGAL_MOVES=4096 -DCD_LEAFBOOK
+              -DMAX_LEGAL_MOVES=4096 -DCD_LEAFBOOK \
+              -DREPLAY_REC_CAP=4096 -DREPLAY_MAX_ACTIONS=1024
+# The two replay caps above are the iMessage extension's, and they are here
+# because an iMessage extension is memory-capped far below an app: these two
+# arenas are 1.1 MB of the bridge's dirty pages, which is 45% of them.
+#
+# REPLAY_REC_CAP: replay.c's own default is 65536 and iOS was the LAST build
+# still taking it - the shipped wasm modules have run 4096 for a long time.
+# Measured peak coder choices over 111,977 games is 719, a 5.7x margin, and an
+# overflow is a clean REPLAY_ECAP rather than a corruption. Shrinks g_rec
+# 786,432 -> 49,152 and the derived g_bn 172,040 -> 10,760.
+#
+# REPLAY_MAX_ACTIONS: see the note in replay_steps.h - this is the ceiling the
+# code can reach, not a sample. MAX_LOGS is 1024 here, an action stream is at
+# most MAX_LOGS-1 long, so 1024 cannot be overrun by any encodable game.
+# Observed peak 497.
+#
+# Neither reaches the server, the wasm modules or the test suites: IOS_CAPS is
+# read only by the iOS slices and the native `analyse` dev tool.
 # TWO libraries, not one, and this is the whole reason the C bridge is two
 # translation units. Foolish.xcframework is STATIC, so ld pulls it in per
 # object: while one archive held both halves, FoolishKit (a dynamic framework
@@ -195,8 +222,8 @@ IOS_CAPS   := -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_MOVE_CARDS=28 \
 # file), so nothing in it can drag one in.
 IOS_CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c \
                 src/replay_steps.c src/replay_extras.c src/view.c src/awire.c \
-                src/evwire.c src/sha256.c src/msg_wire.c src/anim_plan.c \
-                ios/ios_api.c
+                src/evwire.c src/sha256.c src/msg_wire.c src/msg_expand.c \
+                src/anim_plan.c ios/ios_api.c
 IOS_BOTS_SRC := $(filter-out $(IOS_CORE_SRC),$(CORE_SRC)) ios/ios_bots_api.c
 
 # Everything, for the host-side smoke/golden binaries that want one link line.
@@ -293,6 +320,14 @@ ios-smoke:
 	$(CC) $(IOS_CFLAGS) ios/ios_api_smoke.c ios/ios_api.c ios/ios_bots_api.c $(CORE_SRC) -lm -o build/ios_smoke
 	./build/ios_smoke
 
+# PART OF `difftests`, deliberately. Left out of it, this target rotted twice
+# over without a word: fio_msg_encode's roster went packed and the file stopped
+# COMPILING, and before that fio_msg_pack's blob grew ten bytes in front of the
+# roster and the file kept reading the old offset. Both are cheap to notice and
+# expensive to leave - the second one made every schedule stop at the lobby and
+# report all four invariants clean. 0.3s a run against the kernel's own gates is
+# not a price worth deferring.
+#
 # Monte-Carlo the iMessage SWIFT layer's decisions over the real kernel
 # (tests/msg_flow_sim.c): random 4/8/9-human schedules with racing joins,
 # racing Starts, stale taps and evaporated sends, checking safety (nobody ever
@@ -734,6 +769,7 @@ build/named/rules.named.wasm: $(WASM_RULES_OBJ)
 # loader. Only bots.wasm — server-only — ships as a gzip static asset (below).
 wasm: build/rules.wasm
 	node wasm/embed.mjs build/rules.wasm ../sdk/ts/wasm/rules_wasm.ts --gzip
+	@bash ../scripts/wasm_stamp.sh --write
 
 # Client-guards module: game.c ONLY — no legal.c enumeration, no replay.c
 # codec. It backs the browser's UI move-gates (validate-only) and optimistic
@@ -844,6 +880,7 @@ build/named/guards.named.wasm: $(WASM_GUARDS_OBJ)
 
 wasm-guards: build/guards.wasm
 	node wasm/embed.mjs build/guards.wasm ../sdk/ts/wasm/guards_wasm.ts GUARDS_WASM_B64 --gzip
+	@bash ../scripts/wasm_stamp.sh --write
 
 # ---------- msg module: the iMessage extension's kernel, and nothing else ----
 #
@@ -1140,6 +1177,7 @@ build/named/bots.named.wasm: $(WASM_BOT_OBJ)
 # that the browser's door is async (ensureBotsAsync); that is the cheaper half.
 wasm-bots: build/bots.wasm
 	gzip -9 -n -c build/bots.wasm > ../sdk/ts/wasm/bots.wasm.gz
+	@bash ../scripts/wasm_stamp.sh --write
 
 # ---------------------------------------------------------------------------
 # oracle.wasm — the client-side "infinite oracle" replay analyzer
@@ -1171,6 +1209,7 @@ wasm-oracle:
 	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),build/oracle.wasm)
 	gzip -9 -n -c build/oracle.wasm > ../public/oracle.wasm.gz
 	@echo "built ../public/oracle.wasm.gz ($$(wc -c < ../public/oracle.wasm.gz) B gz, $$(wc -c < build/oracle.wasm) B raw)"
+	@bash ../scripts/wasm_stamp.sh --write
 
 # ---------------------------------------------------------------------------
 # oracle-mt.wasm - Mode B (docs/INFINITE_ORACLE_DESIGN.md §8b): the same octogen
@@ -1221,6 +1260,7 @@ wasm-oracle-mt:
 	$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) --enable-threads $(WASM_BOTS_POSTOPT) build/oracle-mt.wasm -o build/oracle-mt.wasm
 	gzip -9 -n -c build/oracle-mt.wasm > ../public/oracle-mt.wasm.gz
 	@echo "built ../public/oracle-mt.wasm.gz ($$(wc -c < ../public/oracle-mt.wasm.gz) B gz, $$(wc -c < build/oracle-mt.wasm) B raw)"
+	@bash ../scripts/wasm_stamp.sh --write
 
 # ---------------------------------------------------------------------------
 # Coverage gate (CI: ../.github/workflows/coverage.yml). Instruments the engine

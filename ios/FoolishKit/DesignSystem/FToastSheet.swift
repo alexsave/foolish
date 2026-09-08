@@ -24,7 +24,10 @@ public struct FToast: View {
 
 /// A container styled as the app's sheet surface. Callers present it with
 /// `.sheet`; this is the visual chrome inside.
-public struct FSheet<Content: View>: View {
+// Not `public`: nothing outside FoolishKit names it, and a public View in a
+// dynamic framework exports its whole SwiftUI generic tree as symbol names
+// (see RulesView.swift for the measurement).
+struct FSheet<Content: View>: View {
     private let title: String
     private let content: Content
     public init(title: String, @ViewBuilder content: () -> Content) {

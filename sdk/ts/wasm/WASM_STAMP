@@ -1,0 +1,11 @@
+# The wasm source set the committed artifacts were last built from.
+#
+# Written by the wasm make targets (make -C c wasm wasm-guards wasm-bots
+# wasm-oracle wasm-oracle-mt), read by scripts/check_wasm_freshness.sh. It is
+# how a rebuild that changes no shipped byte still proves it happened - see the
+# header of scripts/wasm_stamp.sh.
+#
+# Do not hand-edit. If this line disagrees with the tree, the artifacts beside
+# it were built from different C than the C you are looking at.
+sources 73
+sha256 f27ff720cb59cc8098ef500ca6e659f03ecd5d2a50510aa07429ff85659bfd6f

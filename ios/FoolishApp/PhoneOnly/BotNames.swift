@@ -9,7 +9,15 @@
 // as opaque KEYS and localized through FStrings — nothing here may leak back
 // into a stored or server-bound field (§2 "never reverse-map").
 
+// MOVED OUT OF FoolishKit (bundle size). FoolishKit is a DYNAMIC framework that
+// ships inside FoolishMessagesApp, and every `public` symbol in a dylib is an
+// export - which makes it a dead-strip ROOT the linker may never remove. So any
+// public API in FoolishKit that only the PHONE app calls is bytes on every
+// iMessage install for code that install can never run. This file had no caller
+// outside ios/FoolishApp, so it lives with its caller now.
+
 import Foundation
+import FoolishKit
 
 public enum BotNames {
 

@@ -85,6 +85,10 @@ public struct MessagesRootView: View {
     let chatIsDM: Bool
     let chatPlayers: Int
     let requestExpand: () -> Void
+    /// Is the HOST's sheet expanded, right now? A live read of
+    /// `MSMessagesAppViewController.presentationStyle`, not the `style` prop -
+    /// see `NameFieldAutofocus`, the only thing that asks.
+    let hostIsExpanded: () -> Bool
     let onNewGame: () -> Void
     /// Start a NEW MSSession for whatever is staged next, WITHOUT the teardown
     /// `onNewGame` does. The rematch path needs exactly this half: its first
@@ -133,7 +137,9 @@ public struct MessagesRootView: View {
                 chatIsDM: Bool, chatPlayers: Int,
                 incomingURL: URL? = nil, incomingToken: Int = 0, cancelToken: Int = 0,
                 collapseSignal: CollapseSignal = CollapseSignal(),
-                requestExpand: @escaping () -> Void, onNewGame: @escaping () -> Void,
+                requestExpand: @escaping () -> Void,
+                hostIsExpanded: @escaping () -> Bool = { false },
+                onNewGame: @escaping () -> Void,
                 onFreshChain: @escaping () -> Void = {},
                 onAnnounceLeave: @escaping (String) -> Void = { _ in },
                 onSend: @escaping (Data, Int, Bool) async -> Void,
@@ -145,7 +151,8 @@ public struct MessagesRootView: View {
         self.chatKey = chatKey; self.chatIsDM = chatIsDM; self.chatPlayers = chatPlayers
         self.incomingURL = incomingURL; self.incomingToken = incomingToken
         self.cancelToken = cancelToken; self.collapseSignal = collapseSignal
-        self.requestExpand = requestExpand; self.onNewGame = onNewGame
+        self.requestExpand = requestExpand; self.hostIsExpanded = hostIsExpanded
+        self.onNewGame = onNewGame
         self.onFreshChain = onFreshChain; self.onAnnounceLeave = onAnnounceLeave
         self.onSend = onSend
         self.onUnstage = onUnstage
@@ -184,6 +191,11 @@ public struct MessagesRootView: View {
     /// Round-10d: the box's height while the collapse tween runs; 0 = follow
     /// the model box exactly (every other moment, including manual drags).
     @State private var boxHeight: CGFloat = 0
+    /// The clock that moves `boxHeight` through an auto-collapse - a timer
+    /// evaluating the host's own curve, not a SwiftUI animation. See
+    /// CollapseTween's file note for the three filmed reasons. `@State` so it
+    /// survives the body re-evaluations its own ticks cause.
+    @State private var driver = CollapseDriver()
     /// The previous geometry height, to spot the collapse flip's down-snap.
     @State private var lastGeoHeight: CGFloat = 0
     /// Where the collapse tween is currently headed. Meaningless unless
@@ -232,13 +244,82 @@ public struct MessagesRootView: View {
     /// below tracks those ten sampled points to within a couple of points).
     /// Nothing is packed, offset or sampled - one height, one curve.
     ///
+    /// ROUND 31 - THE SAME COLLAPSE, RE-MEASURED AT 60fps, and what survived.
+    /// The ten numbers above came off a take resampled to 30fps, which is half
+    /// the frames the device composited; `msgrig.sh film` now keeps all of them
+    /// (`-fps_mode passthrough` plus per-frame timestamps), and `msgrig.sh
+    /// ruler` draws the ruler again, so this is repeatable rather than a
+    /// remembered afternoon. Three takes, iPhone 14 Plus, real Messages:
+    ///
+    ///   rest expanded   box top  77   box bottom 892   (drawer top 57)
+    ///   flip frame      box top  99   box bottom 912   <- no teleport
+    ///   +1..+18 frames  top 141, 193, 249, 289, 317, 357, 377, 403, 421, 441,
+    ///                       455, 471, 493, 493, 509, 509, 516, 523
+    ///                   settling on 558 by +440ms
+    ///
+    /// WHAT STANDS, and is now measured rather than argued: the box's top rides
+    /// the drawer's descending top edge to within 1.4pt in EVERY frame of the
+    /// collapse. That is the premise this whole scheme rests on.
+    ///
+    /// WHAT DOES NOT: "tracks those ten sampled points to within a couple of
+    /// points" is a fit to the TAIL. Over the first 70ms - the part 30fps could
+    /// not resolve - the host's curve runs up to 21pt away from a quartic-out
+    /// over 0.45s, and up to 68pt away from the bezier this file actually runs
+    /// (which is 0.38s, not the 0.45s the paragraph above says). What that
+    /// costs is visible in the box's BOTTOM: through the collapse's first
+    /// ~130ms it hangs as much as 23pt below the drawer's bottom edge and
+    /// jitters ~10pt frame to frame, where a manual grabber drag - the look
+    /// this is copying - holds the same gap to 1.4pt. The excess is clipped, so
+    /// nothing is exposed and no wool shows; the hand is simply that far under
+    /// the drawer's edge for four or five frames. Left alone at the time: this
+    /// animation was tuned against the owner's explicit spec, and three earlier
+    /// approaches were filmed failing before it.
+    ///
+    /// ROUND 32 - THE BEZIER IS GONE. Seventeen more variants were filmed
+    /// against the bezier and none beat it, because every one of them shared
+    /// three things with it that nobody had spotted: `withAnimation` paints
+    /// its START value on its first frame (the expanded box under a drawer
+    /// that had already moved - the one off-screen frame in the shipped
+    /// take); no `.spring(response:)` can say how far into ITS spring the host
+    /// already is when our report arrives; and the host's transaction is
+    /// re-composited by the render server between our frames, so a stale
+    /// height shows up as a sawtooth on the hand whatever the curve. The box
+    /// is now driven by `CollapseDriver` evaluating the fitted host spring
+    /// (`CollapseTween.height`, response 0.338s, lead 10ms) - see the note at
+    /// the top of CollapseTween for all three, measured. On the rig, against
+    /// the shipped bezier's 1 off-screen frame / 39.4pt excursion / 47.4pt
+    /// max step: 0 / 20pt / 30pt at lead 5ms, the 30pt being the drawer's own
+    /// 8ms travel at peak, which is the floor.
+    ///
     /// The EXPAND direction is composited bottom-referenced by the host (the
     /// owner: it "works much better... cards stay at the bottom"), so up-snaps
     /// are followed instantly, exactly as before.
     /// The DECISION is `CollapseTween.step` - a pure function, so the host's
     /// noisy transition reports can be replayed as a test rather than re-filmed
     /// (CollapseTweenTests). This is the part that cannot be pure: the
-    /// animation, and the timer that hands the box back to the model.
+    /// driver, and the release that hands the box back to the model.
+    /// The collapse driver's three knobs.
+    ///
+    /// The SHIPPED values are `CollapseTween`'s own constants. `MessageDevBoard`
+    /// exists only so a filmed sweep can override them from a file, and that
+    /// whole file is `#if DEBUG || SOLO_TESTING` - so this reads it behind the
+    /// same gate. Read unconditionally, as it was, it compiled in every Debug
+    /// build anyone runs and failed ONLY the Release archive: the one build
+    /// nobody makes by hand, and the only one that ships.
+    ///
+    /// A property and not three lines inside `follow`'s `.start` case on
+    /// purpose - CollapseTweenTests reads the first 1200 characters of that case
+    /// looking for the release, so anything added inside it can push the release
+    /// out of the window and fail a test that is about something else entirely.
+    private static var collapseKnobs: (lead: Double, hz: Double, response: Double) {
+        #if DEBUG || SOLO_TESTING
+        let k = MessageDevBoard.collapseKnobs
+        return (k.lead, k.hz, k.response)
+        #else
+        return (CollapseTween.hostLead, CollapseTween.driveHz, CollapseTween.hostResponse)
+        #endif
+    }
+
     private func follow(height: CGFloat) {
         AnimLog.say("stage follow geo=\(Int(lastGeoHeight))->\(Int(height)) armed=\(armed)")
         lastGeoHeight = height
@@ -255,25 +336,30 @@ public struct MessagesRootView: View {
             collapsing = true
             CollapseTween.isTweening = true
             collapseTarget = to
-            boxHeight = from
-            withAnimation(.timingCurve(0.165, 0.84, 0.44, 1, duration: 0.38)) {
-                boxHeight = to
-            }
-            Task {
-                try? await Task.sleep(nanoseconds: 1_200_000_000)
-                collapsing = false
-                CollapseTween.isTweening = false
-                await handBackToModel()
-            }
+            // The host's own curve on a clock, not a SwiftUI animation (why:
+            // CollapseTween's note). Animations off: the tick IS the animation.
+            let k = Self.collapseKnobs
+            driver.start(from: from, to: to, lead: k.lead, hz: k.hz, response: k.response,
+                         tick: { h in
+                             var tx = Transaction()
+                             tx.disablesAnimations = true
+                             withTransaction(tx) { boxHeight = h }
+                         },
+                         onDone: {
+                             collapsing = false
+                             CollapseTween.isTweening = false
+                             Task { await handBackToModel() }
+                         })
         // The host settled TALLER than the snap this tween started on. Ease up
         // rather than rest short of the drawer and expose the wool under it -
         // see CollapseTween for why this correction is upward only.
         case .retarget(let to):
             collapseTarget = to
-            withAnimation(.easeOut(duration: 0.18)) { boxHeight = to }
+            driver.retarget(to: to)
         case .hold:
             break
         case .follow:
+            driver.stop()
             boxHeight = 0
         }
     }
@@ -335,7 +421,27 @@ public struct MessagesRootView: View {
                 // eases down on the host's own curve (see `follow`).
                 .frame(width: geo.size.width,
                        height: boxHeight > 0 ? boxHeight : geo.size.height)
-                .background(TableBackground())
+                // ROUND 32: while the collapse runs, the wool HANGS BELOW the
+                // box by `CollapseTween.woolOverhang`. The driver deliberately
+                // keeps the box a little SHORT of the drawer (the lead's
+                // margin against a dropped frame - see `hostLead`), and the
+                // host re-composites each of our pictures once more before
+                // the next, a further ~26pt short at peak. Both used to show
+                // as a strip of the host's flat fallback colour under the
+                // hand; now that strip is wool, which is the one thing on
+                // this surface nobody can see move. Top-aligned so the
+                // overhang is at the bottom, where the drawer clips it. At
+                // rest the box is the model and this is a no-op.
+                .background(alignment: .top) {
+                    TableBackground()
+                        .frame(height: (boxHeight > 0 ? boxHeight : geo.size.height)
+                                       + (collapsing ? CollapseTween.woolOverhang : 0))
+                }
+                // The debug ruler (`dev.ruler`, DEBUG only, otherwise an
+                // EmptyView) - on the SIZED BOX, so a filmed frame reports
+                // where `boxHeight` actually put our two edges. See
+                // CollapseRuler.
+                .overlay(CollapseRuler())
                 // TOP-anchored through the collapse: the host glues our content
                 // to the drawer's descending top edge, so a box of the drawer's
                 // visible height starting there fills it exactly. Bottom
@@ -345,6 +451,12 @@ public struct MessagesRootView: View {
                        alignment: collapsing ? .top : .bottom)
                 .onAppear { lastGeoHeight = geo.size.height }
                 .onChange(of: geo.size.height) { follow(height: $0) }
+                // The drawer's LIVE height, published for the one descendant
+                // that cannot measure it itself - see NameFieldAutofocus. A
+                // view's own GeometryReader reports its own box, and a name
+                // field's box is 34pt tall whatever the drawer is doing.
+                .environment(\.surfaceHeight, geo.size.height)
+                .environment(\.hostIsExpanded, hostIsExpanded)
                 // The host is about to request .compact - see `follow`.
                 // Round-10d: the host arms us and requests .compact in the
                 // SAME runloop turn, so starting the tween here starts it in
@@ -801,13 +913,40 @@ private struct GameSurface: View {
                 Text("seat \(c.mySeat) · \(c.pending.count) staged\(c.isGenesis ? " · genesis" : "")")
             }
             if !diagInfo.isEmpty { Text("opened: \(diagInfo)") }
-            if !hex.isEmpty {
-                Text("HEX (\(hex.count / 2) bytes):")
-                Text(hex).textSelection(.enabled)
-            }
-            if let u = url?.absoluteString {
-                Text("URL:")
-                Text(u).textSelection(.enabled)
+            // THE PAYLOAD IS THE WHOLE GAME, SO IT PRINTS ONLY WHEN THE
+            // GAME IS ALREADY BROKEN.
+            //
+            // Every envelope carries `seed[32]` (msg_wire.h), repeated by every
+            // seal, and deal_rng makes the WHOLE DEAL a deterministic function
+            // of it - "a whole deal is a function of one seed... reproducible
+            // from a stored seed". These bytes are not this reader's view of
+            // the game, they ARE the game: every opponent's hand and the order
+            // of the rest of the deck. Printed as selectable text, and again as
+            // a foolish.cards/m/ link, a five-second hold on the gear handed a
+            // player the table face-up in a form they could paste anywhere.
+            //
+            // That the bytes are already ON the device is not a defence. A
+            // serverless design means every client CAN compute every hand; the
+            // game is honest because the client does not SHOW you what it can
+            // compute, and this panel was the one place that broke that.
+            //
+            // But suppressing it outright would take away the thing it is FOR.
+            // Owner: "I still think we should dump it if we encounter an error,
+            // not not allow for cheating in release builds." So the release
+            // gate is the error itself - `mayDumpPayload`. A chain that failed
+            // to open is not a game anybody is playing, its bytes are what a
+            // bug report needs, and there is nothing to cheat at. A chain that
+            // opened fine gets the health report and the version lines and no
+            // payload.
+            if mayDumpPayload {
+                if !hex.isEmpty {
+                    Text("HEX (\(hex.count / 2) bytes):")
+                    Text(hex).textSelection(.enabled)
+                }
+                if let u = url?.absoluteString {
+                    Text("URL:")
+                    Text(u).textSelection(.enabled)
+                }
             }
         }
         .font(.system(size: 10, design: .monospaced))
@@ -854,6 +993,22 @@ private struct GameSurface: View {
     /// It floats OVER the surface rather than replacing it, so summoning it
     /// never disturbs the board underneath: no reload, no teardown, and the
     /// staged bubble is exactly where it was when you dismiss.
+    /// May this build put the raw payload on screen right now?
+    ///
+    /// Release: only when the surface is reporting an ERROR. See the note at
+    /// the printers in `diagnosticDump` for why the bytes are a cheat and why
+    /// the error case is nonetheless the one that must keep them.
+    ///
+    /// Debug and SOLO_TESTING: always, because that is where the bytes are
+    /// read on purpose and there is no opponent to deceive.
+    private var mayDumpPayload: Bool {
+        #if DEBUG || SOLO_TESTING
+        return true
+        #else
+        return diagError != nil || damaged
+        #endif
+    }
+
     private var diagnosticPanel: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 6) {
@@ -962,7 +1117,7 @@ private struct GameSurface: View {
                 .overlay(alignment: .top) { supersededBar(controller) }
         } else if let lob = lobby {
             LobbyView(env: lob.env, mySeat: lobbySeat(lob.env),
-                      nickname: MessageGameStore.shared.nickname,
+                      nickname: MessageGameStore.shared.nicknamePrefill,
                       onJoin: { name in Task { await joinLobby(lob, nickname: name) } },
                       onStart: { Task { await startGame(lob) } },
                       onExit: { Task { await leaveLobby(lob) } },
@@ -975,6 +1130,15 @@ private struct GameSurface: View {
                       // nil in every shipping build: the closure only exists
                       // where `addSoloSeat` is compiled at all.
                       onAddSoloSeat: soloSeatAction(lob))
+                // The JOIN row is a name field too, and it is the screen the
+                // second player lands on. `.join` is exactly "no seat yet, and
+                // there is still room" (LobbyControls.offered) - the other
+                // states show buttons, which work compact. See
+                // expandForNameEntry.
+                .onAppear {
+                    if lobbySeat(lob.env) == nil,
+                       lob.env.joins.count < lob.env.nPlayers { expandForNameEntry() }
+                }
                 // Keep the corner pair's own footprint clear - the lobby is
                 // centred in whatever height it is given and the pair is an
                 // overlay, so a tall lobby lays out straight through it.
@@ -998,20 +1162,22 @@ private struct GameSurface: View {
                     }
                 }
         } else if let g = nameGate {
-            NameGateView(prefill: MessageGameStore.shared.nickname) { name in
+            NameGateView(prefill: MessageGameStore.shared.nicknamePrefill) { name in
                 Task { await nameThenSeat(name, gate: g) }
             }
+            .onAppear(perform: expandForNameEntry)   // see expandForNameEntry
         } else if showSetup {
             // chatPlayers is threaded through unused (see NewGameSetup's own doc)
             // — kept only so this call site, the harness, and
             // MessagesViewController (which all compute a real participant
             // count) keep compiling unchanged.
-            NewGameSetup(nickname: MessageGameStore.shared.nickname,
+            NewGameSetup(nickname: MessageGameStore.shared.nicknamePrefill,
                          isDM: chatIsDM, chatPlayers: chatPlayers) { name in
                 Task { await start(nickname: name) }
             }
             .padding(.bottom, SettingsHelpSquares.reservedHeight)
             .overlay(alignment: .bottomLeading) { settingsHelpCorner }
+            .onAppear(perform: expandForNameEntry)   // see expandForNameEntry
         } else if let a = ambiguous {
             SeatPicker(nPlayers: a.env.nPlayers, joins: a.env.joins) { seat in
                 Task { await choose(seat: seat, from: a) }
@@ -1108,6 +1274,41 @@ private struct GameSurface: View {
                             onDiagnostics: { showDiagnostics = true })
             .padding(.leading, 4)
             .padding(.bottom, 4)
+    }
+
+    /// ASK THE HOST TO EXPAND, BECAUSE A NAME FIELD CANNOT WORK COMPACT.
+    ///
+    /// Compact IS the keyboard's area (§3.5, and `NewGameSetup`'s own doc says
+    /// so): a `TextField` drawn there can never become first responder, because
+    /// there is nowhere for the keyboard to go. Every name screen in this
+    /// extension is therefore only usable EXPANDED - but nothing ever asked to
+    /// be. `requestExpand` has been threaded down from MessagesViewController
+    /// since M1 and was never called anywhere in FoolishKit (HarnessRootView's
+    /// own comment says as much); expansion was entirely host-driven, i.e. it
+    /// happened only if the player happened to drag the grabber.
+    ///
+    /// The result was a dead end on the app's FIRST screen: tap Foolish in the
+    /// drawer, get "New game" with a nickname field and a disabled "Enter
+    /// Nickname" button, and neither the field nor the button responds. The
+    /// same dead end sat on the JOIN row, which is the screen the second player
+    /// - and an App Store reviewer's second device - lands on.
+    ///
+    /// Unconditional on purpose. `style` goes stale across a grabber drag or an
+    /// auto-transition (see the note in `expandedContent`), so testing it would
+    /// re-introduce the bug in exactly the case that matters; requesting
+    /// `.expanded` while already expanded fires no transition and is a no-op
+    /// (MessagesViewController's `onNewGame` relies on the same property).
+    private func expandForNameEntry() {
+        // ROUND 46: only when the field will be EMPTY. The 2.1 fix made this
+        // unconditional, which was right for the dead end it cured (a field you
+        // cannot focus in compact) but wrong for the common case: a device that
+        // already knows its name shows one filled-in field and a button, which
+        // reads fine compact, and taking the conversation over to show it is a
+        // worse first impression than leaving the drawer alone. `needsNameEntry`
+        // is the same predicate the autofocus uses, so the drawer and the
+        // keyboard cannot disagree about whether a name is owed.
+        guard MessageGameStore.shared.needsNameEntry else { return }
+        requestExpand()
     }
 
     /// Reset + (re)load for a NEW input. A compact<->expanded toggle leaves
@@ -1465,16 +1666,21 @@ private struct GameSurface: View {
     /// change re-keyed the chat. `recordedName` extends note 14's membership
     /// gate by name: a lobby carrying someone ELSE's name at my cached seat is
     /// a claim race this device lost - nil here brings the Join button back so
-    /// I re-claim the next free seat instead of squatting on theirs. Round 7
-    /// stores no claim-time name; the device nickname is what my own Join
-    /// sealed (see adopt()'s note), used only once actually set.
+    /// I re-claim the next free seat instead of squatting on theirs.
+    ///
+    /// The name is the ROW's (`claimName`), not the device nickname. The
+    /// nickname is one device-wide value while a lobby is per game, so two
+    /// lobbies joined under two names left the older one reading as a claim
+    /// race this device lost the instant the second was joined - which is the
+    /// owner's "I cannot play two large group games at the same time with
+    /// different nicknames". See `SeatRow.name`.
     private func lobbySeat(_ env: MessageEnvelope) -> Int? {
-        SeatIdentity.resolveInLobby(
-            cachedSeat: MessageGameStore.shared.seatForBubble(gameId: env.gameId),
+        let me = MessageGameStore.shared.identity(gameId: env.gameId)
+        return SeatIdentity.resolveInLobby(
+            cachedSeat: me.seat,
             senderIsLocal: senderIsLocal, nPlayers: env.nPlayers,
             lastActorSeat: env.lastActorSeat, joins: env.joins, chatIsDM: chatIsDM,
-            recordedName: MessageGameStore.shared.hasSetNickname
-                ? MessageGameStore.shared.nickname : nil)
+            recordedName: me.name)
     }
 
     /// Claim the lowest free seat (§5.2, lobby v3). Always reseals WAITING and
@@ -1807,33 +2013,35 @@ private struct GameSurface: View {
         // staged-but-unsent move survives only in the live controller, and in
         // the staged input-field bubble itself.
 
-        // Bubble-anchored seat (seatForBubble): the winner chain's gameId
-        // identifies this device's seat even after a group-membership change
-        // re-keyed the chat (round 7 keeps only the seat per game, so the seat
-        // IS the whole lookup now). Seat resolution then leans on the roster's
-        // NAMES, both ways:
-        //  - recovery (seatClaimedByName): the seat carrying MY claim name in
-        //    THIS chain is my seat here, even when a fork race left the numeric
-        //    cache pointing at a claim that lost (the flow simulator's
-        //    convergence/liveness stall);
-        //  - the ghost guard (cacheDisownedByJoins): a roster listing somebody
-        //    ELSE's name at my cached seat means my claim lost - trusting the
-        //    number would put that person's hand face-up on my screen. Disowned
-        //    with no name to recover reads as no-cache: §6.2's exact signals,
-        //    else the Release spectator board.
-        // Round 7 stores no claim-time name; the device nickname is what was
-        // sealed into MY join (it only diverges if the human renamed since -
-        // §6.3's trust level either way), and it only counts once actually set.
-        let numericSeat = MessageGameStore.shared.seatForBubble(gameId: env.gameId)
-        let recorded: String? = MessageGameStore.shared.hasSetNickname
-            ? MessageGameStore.shared.nickname : nil
-        let cachedSeat: Int? = SeatIdentity.seatClaimedByName(recordedName: recorded, joins: env.joins)
-            ?? (SeatIdentity.cacheDisownedByJoins(cachedSeat: numericSeat, recordedName: recorded,
-                                                  joins: env.joins) ? nil : numericSeat)
-        switch SeatIdentity.resolve(cachedSeat: cachedSeat,
-                                    senderIsLocal: senderIsLocal,
-                                    nPlayers: env.nPlayers, lastActorSeat: env.lastActorSeat,
-                                    chatIsDM: chatIsDM) {
+        // WHICH SEAT AM I - one kernel call (msg_seat_resolve_on_board). The
+        // three §6 layers with the roster's NAMES in front of them, both ways:
+        // recovery (the seat carrying MY claim name in THIS chain is mine even
+        // when a fork race left the number on a claim that lost) and the ghost
+        // guard (a roster naming somebody ELSE at my cached seat means my claim
+        // lost, and trusting the number would put their hand face-up on my
+        // screen). The composition is C's; this used to be a `??` and a ternary
+        // here, which is a rule living in Swift.
+        //
+        // The claim is read as ONE ROW. Its NAME is the name MY join sealed for
+        // THIS game, never the device nickname: the nickname is a single
+        // device-wide value the human can change at any time, including by
+        // joining a second game under a different one - after which this game's
+        // roster disagrees with it and both name gates read as a lost claim
+        // race. That is the owner's "I cannot play two large group games at the
+        // same time with different nicknames" (see `SeatRow.name`). A row with
+        // no name (format 1, or a claim off a chain that did not list the seat)
+        // is permissive - the kernel treats a missing side as no disownment.
+        //
+        // The row is found by gameId alone (`identity`), so it survives a
+        // group-membership change re-keying the chat - and with NO row at all
+        // the nickname is still offered, which is §6.2 name recovery for a
+        // device that has never claimed a seat here (see `identity`).
+        let me = MessageGameStore.shared.identity(gameId: env.gameId)
+        switch SeatIdentity.resolveOnBoard(
+                cachedSeat: me.seat, recordedName: me.name,
+                senderIsLocal: senderIsLocal,
+                nPlayers: env.nPlayers, lastActorSeat: env.lastActorSeat,
+                joins: env.joins, chatIsDM: chatIsDM) {
         case .known(let seat):
             // §B3: a player about to be seated who has never chosen a name is
             // asked once. Since lobby v3 everyone named themselves at setup or
@@ -1978,8 +2186,18 @@ private struct GameSurface: View {
     /// payload, denormalized display fields and pending ledger the old record
     /// carried are gone — the extension always renders the tapped bubble now, so
     /// the one thing worth keeping is which seat is me in this game.
+    ///
+    /// …plus the CLAIM-TIME NAME for that seat, read out of `env`'s own roster
+    /// rather than off `MessageGameStore.nickname`. Every path that reaches
+    /// here has just sealed or adopted a chain in which `seat` is mine, so the
+    /// join at `seat` IS the name my identity travels under in this game -
+    /// which is what the §6 name gates want, and what the nickname stops being
+    /// the moment a second game is joined under a different one. A roster that
+    /// does not list the seat yet (a DM receiver who has not sealed a join)
+    /// records nil, and the next adopt of my own sent chain fills it in.
     private func cache(seat: Int, env: MessageEnvelope, payload: Data) {
-        MessageGameStore.shared.setSeat(gameId: env.gameId, chatKey: chatKey, seat: seat)
+        MessageGameStore.shared.setSeat(gameId: env.gameId, chatKey: chatKey, seat: seat,
+                                        name: env.joins.first { $0.seat == seat }?.name)
     }
 }
 
@@ -2000,6 +2218,110 @@ private struct GameSurface: View {
 /// fact, not a picker — nobody has joined yet, and nobody needs to pick a
 /// count: whoever has joined when someone taps Start (or Join and start) IS
 /// the player count (§5.2/lobby v3).
+// MARK: - The keyboard a name field raises for itself
+//
+// Raise the keyboard on a name field, once, and only once the drawer is open
+// and the host has finished opening it.
+//
+// Focus cannot just be set in `onAppear`. These screens are REACHED in compact,
+// where a field cannot become first responder at all - that is the 2.1 dead end
+// `expandForNameEntry` exists to cure - and the host's compact -> expanded
+// transition is asynchronous, so a focus request made during it is dropped.
+// Sleeping for a guessed duration would be a bet on how long Messages takes to
+// open. Two live facts are used instead, and round 46b is the record of what
+// each one alone gets wrong:
+//
+//  * the SURFACE's height, `collapseFraction` 1 in the compact band and 0 past
+//    440pt - the same live measure the board's send hint trusts, and for the
+//    same reason: the `style` prop goes stale across a grabber drag. It has to
+//    come from the root (`surfaceHeight`); a field measuring itself reports
+//    34pt forever;
+//  * and the HOST's own answer for where its sheet is. Height alone is not
+//    enough: for the first ~0.16s of a session our view is laid out at full
+//    screen height before Messages installs it in the compact drawer, so the
+//    height says "expanded" while the sheet is shut - the dead end exactly.
+//
+// Both were filmed on an iPhone 17 through the real Messages app; the timings
+// quoted below are from that flight log.
+
+/// The extension surface's LIVE height in points, published by the root's own
+/// GeometryReader (`MessagesRootView.body`).
+///
+/// ROUND 46b: this exists because a view cannot measure a box it is not. The
+/// first cut of `NameFieldAutofocus` put a GeometryReader in the name field's
+/// `.background`, which reports the FIELD - filmed at 34pt, `collapseFraction`
+/// 1, on every device and in every presentation style. Worse, 34pt never
+/// changes, so the `onChange` watching it fired exactly once, at 0.24s, and
+/// never again: the keyboard could not come up even in principle. Only the root
+/// is given the drawer's height.
+private struct SurfaceHeightKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 0
+}
+
+/// Does the HOST say its sheet is expanded, right now?
+///
+/// A closure, because it is a live read of the controller's own
+/// `presentationStyle` at the moment of asking - NOT the `style` prop, which
+/// is only as fresh as the last `present()` and so goes stale across a grabber
+/// drag or an auto-transition (the note in `expandedContent` has the full
+/// story). The default answers "no", which makes a host that never wired it up
+/// - the harness, an older call site - simply not autofocus, rather than
+/// autofocus at the wrong moment.
+private struct HostIsExpandedKey: EnvironmentKey {
+    static let defaultValue: () -> Bool = { false }
+}
+
+extension EnvironmentValues {
+    fileprivate var surfaceHeight: CGFloat {
+        get { self[SurfaceHeightKey.self] }
+        set { self[SurfaceHeightKey.self] = newValue }
+    }
+    fileprivate var hostIsExpanded: () -> Bool {
+        get { self[HostIsExpandedKey.self] }
+        set { self[HostIsExpandedKey.self] = newValue }
+    }
+}
+
+private struct NameFieldAutofocus: ViewModifier {
+    let active: Bool
+    let focused: FocusState<Bool>.Binding
+    /// The drawer's height and the host's own answer for where the sheet is.
+    /// BOTH are needed, and the second one is not redundant: for the first
+    /// ~0.16s of a session the extension's view is laid out at FULL SCREEN
+    /// height (874pt on a 17, filmed) before Messages installs it in the
+    /// compact drawer, so the height alone says "expanded" while the sheet is
+    /// still shut - which is precisely the state in which a field cannot
+    /// become first responder.
+    @Environment(\.surfaceHeight) private var surfaceHeight
+    @Environment(\.hostIsExpanded) private var hostIsExpanded
+    /// Once only. Re-raising the keyboard every time the drawer is dragged back
+    /// up would fight a human who deliberately dismissed it.
+    @State private var fired = false
+
+    func body(content: Content) -> some View {
+        content
+            // Both entry paths. `onAppear` covers a field that arrives on an
+            // ALREADY expanded drawer (the JOIN row on a device whose human has
+            // the sheet open), where no further resize is coming; `onChange`
+            // covers the common one, where the field is on screen before
+            // `expandForNameEntry`'s expand has finished.
+            .onAppear { raise(surfaceHeight) }
+            // The NEW height from the closure, never `self.surfaceHeight`: the
+            // action captures the view value from the render BEFORE the change,
+            // so reading the property here reports the previous height. Filmed:
+            // the drawer resized 332 -> 748 and this read 332, which was the
+            // last resize of the session, so the keyboard never came up.
+            .onChange(of: surfaceHeight) { raise($0) }
+    }
+
+    private func raise(_ height: CGFloat) {
+        guard active, !fired, hostIsExpanded(),
+              MessageTableView.collapseFraction(height: height) == 0 else { return }
+        fired = true
+        focused.wrappedValue = true
+    }
+}
+
 private struct NewGameSetup: View {
     @State private var nickname: String
     let isDM: Bool
@@ -2012,7 +2334,8 @@ private struct NewGameSetup: View {
     let onStart: (String) -> Void
 
     init(nickname: String, isDM: Bool, chatPlayers: Int, onStart: @escaping (String) -> Void) {
-        _nickname = State(initialValue: nickname == "Me" ? "" : nickname)
+        // Already normalised by MessageGameStore.nicknamePrefill.
+        _nickname = State(initialValue: nickname)
         self.isDM = isDM
         self.chatPlayers = chatPlayers
         self.onStart = onStart
@@ -2078,6 +2401,10 @@ private struct NewGameSetup: View {
             // together were redundant. The placeholder carries it alone now.
             TextField(FStrings.t("ios.msg.nickname_ph"), text: $nickname)
                 .textFieldStyle(.roundedBorder).focused($nameFocused)
+                // Owner, round 46: a device that owes us a name lands able to
+                // type, with no second tap. See NameFieldAutofocus.
+                .modifier(NameFieldAutofocus(
+                    active: nickname.isEmpty, focused: $nameFocused))
             switch nameVerdict {
             case .ok(let name):
                 // `handOff`, never `onStart` directly - see `handOff`.
@@ -2324,7 +2651,8 @@ private struct LobbyView: View {
         self.onSetPassing = onSetPassing
         self.passingBaseline = passingBaseline
         self.onAddSoloSeat = onAddSoloSeat
-        _nickname = State(initialValue: nickname == "Me" ? "" : nickname)
+        // Already normalised by MessageGameStore.nicknamePrefill.
+        _nickname = State(initialValue: nickname)
     }
 
     /// What the box should be DRAWN as: my outstanding tap if there is one, the
@@ -2555,6 +2883,10 @@ private struct LobbyView: View {
                 // field holds a valid, trimmed name.
                 TextField(FStrings.t("ios.msg.nickname_ph"), text: $nickname)
                     .textFieldStyle(.roundedBorder).focused($nameFocused)
+                    // Owner, round 46: a device that owes us a name lands able to
+                    // type, with no second tap. See NameFieldAutofocus.
+                    .modifier(NameFieldAutofocus(
+                        active: nickname.isEmpty, focused: $nameFocused))
                 switch nameVerdict {
                 case .ok(let name):
                     // Names are the only identity the payload carries (§6), so
@@ -2621,7 +2953,8 @@ private struct NameGateView: View {
     let onContinue: (String) -> Void
 
     init(prefill: String, onContinue: @escaping (String) -> Void) {
-        _name = State(initialValue: prefill == "Me" ? "" : prefill)
+        // Already normalised by MessageGameStore.nicknamePrefill.
+        _name = State(initialValue: prefill)
         self.onContinue = onContinue
     }
 
@@ -2654,6 +2987,10 @@ private struct NameGateView: View {
             // visibly narrower than the full-width Continue button).
             TextField(FStrings.t("ios.msg.nickname_ph"), text: $name)
                 .textFieldStyle(.roundedBorder).focused($nameFocused)
+                // Owner, round 46: a device that owes us a name lands able to
+                // type, with no second tap. See NameFieldAutofocus.
+                .modifier(NameFieldAutofocus(
+                    active: name.isEmpty, focused: $nameFocused))
                 .submitLabel(.done).onSubmit {
                     // The Return key resigns on its own, but it goes through
                     // `handOff` anyway so there is ONE way off this screen.

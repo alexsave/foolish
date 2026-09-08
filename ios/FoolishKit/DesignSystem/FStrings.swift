@@ -204,7 +204,15 @@ public enum FStrings {
             "ios.msg.left": "{name} left the game",
             "ios.msg.leftanon": "A player left the game",
             "ios.msg.invite": "Send invite",
-            "ios.msg.nickname_ph": "your nickname",
+            // Round 46 (owner): "Your", not "your". The field's placeholder is
+            // the first thing a new player reads, and it sits directly above a
+            // Title Case button - lowercase read as an unfinished string rather
+            // than a deliberate style. Sentence case only, in every language
+            // that HAS case; Korean and Chinese are unchanged because they do
+            // not. Note `nametoolong` below stays lowercase - it is a different
+            // kind of string (a disabled button's reason, not a prompt) and the
+            // owner did not ask for it.
+            "ios.msg.nickname_ph": "Your nickname",
             // Round-6 #18: the owner wrote it "Enter Nickname" - Title Case,
             // unlike this file's usual sentence case ("Create game") - so this
             // ONE string breaks the convention on purpose. Leave the rest alone.
@@ -415,7 +423,7 @@ public enum FStrings {
             "ios.msg.left": "{name} вышел из игры",
             "ios.msg.leftanon": "Игрок вышел из игры",
             "ios.msg.invite": "Отправить приглашение",
-            "ios.msg.nickname_ph": "ваш ник",
+            "ios.msg.nickname_ph": "Ваш ник",
             // Round-6 #18: capitalised to match the English "Enter Nickname" -
             // only the first letter, per Russian convention (title-casing every
             // word would be wrong here).
@@ -1028,7 +1036,7 @@ public enum FStrings {
             "ios.msg.left": "{name} đã rời ván",
             "ios.msg.leftanon": "Một người chơi đã rời ván",
             "ios.msg.invite": "Gửi lời mời",
-            "ios.msg.nickname_ph": "biệt danh của bạn",
+            "ios.msg.nickname_ph": "Biệt danh của bạn",
             "ios.msg.entername": "Nhập Biệt Danh",
             "ios.msg.nametoolong": "biệt danh quá dài",
             "ios.msg.cardfmt": "{rank} {suit}",

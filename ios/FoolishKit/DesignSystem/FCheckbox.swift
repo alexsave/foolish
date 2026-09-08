@@ -25,7 +25,10 @@
 
 import SwiftUI
 
-public struct FCheckbox: View {
+// Not `public`: nothing outside FoolishKit names it, and a public View in a
+// dynamic framework exports its whole SwiftUI generic tree as symbol names
+// (see RulesView.swift for the measurement).
+struct FCheckbox: View {
     private let title: String
     private let isOn: Bool
     private let enabled: Bool

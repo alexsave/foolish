@@ -175,13 +175,13 @@ final class MessageLobbyExitTests: XCTestCase {
     /// cache before anything else).
     func testLeavingForgetsTheCachedSeat() {
         let store = MessageGameStore(defaults: UserDefaults(suiteName: "exit.tests")!)
-        store.setSeat(gameId: "7104", chatKey: "chat", seat: 2)
+        store.setSeat(gameId: "7104", chatKey: "chat", seat: 2, name: nil)
         XCTAssertEqual(store.seat(gameId: "7104", chatKey: "chat"), 2)
         store.forgetSeat(gameId: "7104")
         XCTAssertNil(store.seat(gameId: "7104", chatKey: "chat"))
         XCTAssertNil(store.seatForBubble(gameId: "7104"))
         // Another game's row is untouched.
-        store.setSeat(gameId: "7105", chatKey: "chat", seat: 1)
+        store.setSeat(gameId: "7105", chatKey: "chat", seat: 1, name: nil)
         store.forgetSeat(gameId: "7104")
         XCTAssertEqual(store.seat(gameId: "7105", chatKey: "chat"), 1)
     }

@@ -196,7 +196,9 @@ final class CollapseTweenTests: XCTestCase {
                              encoding: .utf8)
         let head = try XCTUnwrap(src.range(of: "case .start(let from, let to):"),
                                  "the tween's start case")
-        let body = String(src[head.lowerBound...].prefix(700))
+        // 1200: the start case now hands the driver two closures (the tick and
+        // the release) and the release is the second of them.
+        let body = String(src[head.lowerBound...].prefix(1200))
         XCTAssertTrue(body.contains("handBackToModel()"),
                       "the collapse tween must release through the re-measure, not "
                       + "by assigning the rest height it is already on")

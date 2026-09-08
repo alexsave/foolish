@@ -539,6 +539,50 @@ public struct MessageTableView: View {
     /// and those sites are left alone.
     private var isSpectating: Bool { controller.mySeat < 0 }
 
+    /// THE RESULTS SCREEN HAS TAKEN THE BOARD'S PLACE.
+    ///
+    /// ONE predicate with two kinds of reader, and that is the whole point of
+    /// its existing. The swap itself happens INSIDE the VStack below - the
+    /// board branch is replaced by `FGameOverList` - but the overlays that
+    /// decorate the board are hung on the VStack, OUTSIDE that branch, so they
+    /// are not swapped away with it. Anything in an overlay that belongs to the
+    /// live board has to ask this question for itself.
+    ///
+    /// It went wrong exactly once, and instructively: `selfRoleIndicator` is an
+    /// overlay, and its doc comment asserted that the game-over screen "replaces
+    /// the whole board" so the mark could never be reached once the game ended.
+    /// It replaces the board's CONTENT, not the overlay's host - so a finished
+    /// 4p game showed a lone shield floating over empty felt, ~55% down, with no
+    /// table under it (caught in an App Store screenshot). Two sites spelling
+    /// `controller.isOver && showResults` separately is what let them drift;
+    /// reading the same property is what stops them drifting again.
+    private var showsEndScreen: Bool {
+        Self.showsEndScreen(isOver: controller.isOver, showResults: showResults)
+    }
+
+    /// The end-screen predicate as a value, so it can be tested without a
+    /// rendered board (`MessageTableView` needs a live controller and a host to
+    /// draw at all, and a SwiftUI overlay has no assertable identity from a
+    /// test). Every reader goes through `showsEndScreen`.
+    static func showsEndScreen(isOver: Bool, showResults: Bool) -> Bool {
+        isOver && showResults
+    }
+
+    /// Does MY OWN role mark - shield/check/sword, `selfRoleIndicator` - draw
+    /// right now? The two ways it can be silenced, in one place:
+    ///
+    /// - the end screen is up: the board is gone, so its decorations go too;
+    /// - I am a spectator (round 21): a seatless viewer holds no role at all.
+    ///
+    /// Note that "I am OUT of the game" is NOT here. An out player still watches
+    /// the rest of the game from their seat, and `selfRoleMark` already draws
+    /// them no mark (`isOut ? nil`) while keeping the seat's landing pad
+    /// published for role flights that are still crossing it.
+    static func showsSelfRoleMark(isOver: Bool, showResults: Bool, isSpectating: Bool) -> Bool {
+        if showsEndScreen(isOver: isOver, showResults: showResults) { return false }
+        return !isSpectating
+    }
+
     public var body: some View {
         VStack(spacing: 8) {
             if let view = controller.view {
@@ -548,7 +592,7 @@ public struct MessageTableView: View {
                 // stays the stage until the last flight (a bout-end sequence, or an
                 // open-delta replay of someone else's final move) has visibly
                 // landed, so the end screen never just cuts in mid-animation.
-                if controller.isOver && showResults {
+                if showsEndScreen {
                     // NEW GAME WAITS FOR THE SEND. Owner, 1.0(27): "i dont think
                     // you should be able to send the game end move and then have
                     // the new game button, because that will kinda obscure the
@@ -1539,21 +1583,33 @@ public struct MessageTableView: View {
         return CGPoint(x: x, y: y)
     }
 
-    /// My own role mark — shield/check/sword — mirroring FSeatBadge's roleRow for
+    /// My own role mark - shield/check/sword - mirroring FSeatBadge's roleRow for
     /// opponents (note 3: the local player never saw their own role before, only
-    /// the special-cased first-attacker sword). Nothing shows once I'm out (the
-    /// game-over screen replaces the whole board, so "game over" is already
-    /// handled by the caller never reaching here then).
+    /// the special-cased first-attacker sword).
+    ///
+    /// WHEN IT DRAWS AT ALL is `showsSelfRoleMark`, and it is asked HERE rather
+    /// than left to the caller. This comment used to claim the opposite - that
+    /// "the game-over screen replaces the whole board, so 'game over' is already
+    /// handled by the caller never reaching here" - and that was simply false:
+    /// the caller is an `.overlay` on the container that WRAPS the board/results
+    /// branch, so the swap to `FGameOverList` never touches it and the mark drew
+    /// straight on over the finished game. A wrong comment is what kept the bug:
+    /// it answered the exact question anyone auditing this would have asked.
+    /// The predicate is a value now, so it can be tested, and so the end screen
+    /// and this mark cannot hold different opinions about whether the game is
+    /// over.
     @ViewBuilder
     private func selfRoleIndicator(_ view: GameView) -> some View {
-        // A SPECTATOR HAS NO ROLE. Round 21: `showsSword` would answer true for
-        // seat -1 on any open table (it is not the defender, it has not said
-        // good, and there are cards down), so a watcher would be shown a sword
-        // of their own under an empty hand.
-        if isSpectating {
-            EmptyView()
-        } else {
+        // Both silencing rules live in `showsSelfRoleMark`. The spectator one is
+        // round 21's: `showsSword` would answer true for seat -1 on any open
+        // table (it is not the defender, it has not said good, and there are
+        // cards down), so a watcher would be shown a sword of their own under an
+        // empty hand.
+        if Self.showsSelfRoleMark(isOver: controller.isOver, showResults: showResults,
+                                  isSpectating: isSpectating) {
             selfRoleMark(view)
+        } else {
+            EmptyView()
         }
     }
 
@@ -2083,23 +2139,39 @@ public struct MessageTableView: View {
         }
     }
 
-    /// note 33: a small unobtrusive pill naming what release would do — web
-    /// DragShadow parity. Round-4 note 4: it now tracks the fingertip (see
-    /// boardContent), which is what "anchored to a fixed spot above the
-    /// battles" was traded against and lost — the fixed anchor was easy to
-    /// place but sat at the top of the screen while your hand was at the
-    /// bottom, so it read as unrelated to the drag.
+    /// note 33: the word for what releasing would do - web DragShadow parity.
+    /// Round-4 note 4: it tracks the fingertip (see boardContent), which is
+    /// what "anchored to a fixed spot above the battles" was traded against and
+    /// lost - the fixed anchor was easy to place but sat at the top of the
+    /// screen while your hand was at the bottom, so it read as unrelated to the
+    /// drag.
+    ///
+    /// ROUND 46 - NO PILL, JUST THE WORD (owner: "the text is fine to keep but
+    /// scrap the bubble holding it"). It used to be `FColor.card` on an 85%
+    /// `FColor.ink` capsule with its own shadow: a second opaque object riding
+    /// half a card above the card you are already dragging, on a board whose
+    /// whole vocabulary is cards and wood. Two floating rectangles instead of
+    /// one.
+    ///
+    /// THE WORD ITSELF IS UNCHANGED - same string, same 13pt semibold, same
+    /// `FColor.card` ink. Only the plate under it goes. The one thing kept from
+    /// it is a shadow, moved from the pill onto the text, because the pill was
+    /// doing a real job: holding one small word legible over felt, over wool,
+    /// and over the face of whatever card it passes. A shadow is not a bubble.
+    ///
+    /// AND IT DOES NOT MOVE. `dragHint` is placed by `.position(x:y:)`, which
+    /// centres a view on the given point, and the pill's padding was symmetric
+    /// - so the text's centre always WAS the pill's centre. Dropping the
+    /// padding changes the view's size and not its centre, so the word stays on
+    /// exactly the point `dragHintPosition` returns (owner: "the positioning
+    /// should stay the same without the pill").
     @ViewBuilder
     private func dragHint(_ view: GameView) -> some View {
         if let text = dragHintText(view) {
             Text(text)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(FColor.card)
-                .padding(.horizontal, FSpace.m)
-                .padding(.vertical, FSpace.xs)
-                .background(FColor.ink.opacity(0.85))
-                .clipShape(RoundedRectangle(cornerRadius: FRadius.chip))
-                .shadow(color: .black.opacity(0.35), radius: 6, y: 2)
+                .shadow(color: .black.opacity(0.55), radius: 2, y: 1)
                 .transition(.opacity)
                 .allowsHitTesting(false)
         }

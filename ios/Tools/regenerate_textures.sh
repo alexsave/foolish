@@ -13,9 +13,8 @@
 # launch is what took the iMessage extension down on a real phone), so the images
 # are the only way a look change reaches the product.
 #
-# NOTE this does NOT need re-running to switch the dark board between green and
-# navy: both are already baked, and `WoolTexture.darkAccent` picks which one the
-# app loads. Re-bake only when a palette's NUMBERS change.
+# NOTE re-bake only when a palette's NUMBERS change. Which baked image the app
+# loads is `FTextures.Variant`'s decision at runtime, not this script's.
 #
 #   ios/Tools/regenerate_textures.sh          # writes into FoolishKit/Resources
 #   ios/Tools/regenerate_textures.sh /tmp/out # writes somewhere else (for A/B)
@@ -32,7 +31,7 @@ trap 'rm -rf "$BUILD"' EXIT
 
 # -Ounchecked, not -O: the generators are hot arithmetic loops with bounds
 # checks the render already guards by hand. Deterministic either way.
-swiftc -Ounchecked -whole-module-optimization \
+swiftc -Ounchecked -whole-module-optimization -D FOOLISH_TEXTURE_BAKE \
   -o "$BUILD/gentex" \
   "$IOS/FoolishKit/DesignSystem/WoolTexture.swift" \
   "$IOS/FoolishKit/DesignSystem/FeltTexture.swift" \

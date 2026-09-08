@@ -27,7 +27,15 @@
 // replaying the recorded actions up to a decision and then substituting a
 // different move - and it must branch the same deal, through the same engine,
 // or it is analysing a game nobody played.
+// A BUILD PARAMETER, and an analytic ceiling rather than a sampled margin:
+// `count_atoms_from_logs` emits at most one atom per log, DEAL and DRAW are not
+// actions, and the encoder refuses a game at the log cap, so no code that can
+// exist carries more than MAX_LOGS-1 actions. A build may therefore size this
+// to its own MAX_LOGS instead of the 4096 that suits the widest one. The
+// default is unchanged so every existing consumer keeps today's array.
+#ifndef REPLAY_MAX_ACTIONS
 #define REPLAY_MAX_ACTIONS 4096
+#endif
 
 typedef struct {
     int  kind;                     // REPLAY_ATOM_* (never DEAL or DRAW)

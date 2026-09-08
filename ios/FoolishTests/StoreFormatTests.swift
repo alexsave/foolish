@@ -16,6 +16,7 @@
 
 import XCTest
 @testable import FoolishKit
+@testable import FoolishBots   // ReplayStore moved here (bundle-size move)
 
 final class StoreFormatTests: XCTestCase {
 
@@ -76,7 +77,7 @@ final class StoreFormatTests: XCTestCase {
         XCTAssertTrue(store.handOrder(gameId: "7").isEmpty)
 
         // …and a write over the top establishes a container this build owns.
-        store.setSeat(gameId: "7", chatKey: "a|b", seat: 3)
+        store.setSeat(gameId: "7", chatKey: "a|b", seat: 3, name: nil)
         XCTAssertEqual(store.seat(gameId: "7", chatKey: "a|b"), 3)
     }
 
@@ -91,8 +92,8 @@ final class StoreFormatTests: XCTestCase {
         let suite = "test.fmt.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         let store = MessageGameStore(defaults: defaults)
-        store.setSeat(gameId: "7", chatKey: "a|b", seat: 1)
-        store.setSeat(gameId: "8", chatKey: "a|b", seat: 2)
+        store.setSeat(gameId: "7", chatKey: "a|b", seat: 1, name: nil)
+        store.setSeat(gameId: "8", chatKey: "a|b", seat: 2, name: nil)
         let whole = try? XCTUnwrap(defaults.data(forKey: "fmsg.seats.v2"))
         let full = try? XCTUnwrap(whole)
         XCTAssertNotNil(full)
@@ -106,6 +107,80 @@ final class StoreFormatTests: XCTestCase {
         defaults.set(full, forKey: "fmsg.seats.v2")
         XCTAssertEqual(MessageGameStore(defaults: defaults).seat(gameId: "8", chatKey: "a|b"), 2,
                        "…and the whole one still reads")
+    }
+
+    // MARK: the seats blob, format 1 -> 2
+
+    /// A ROW A DEVICE ALREADY HOLDS MUST KEEP WORKING. The seats blob grew a
+    /// claim-time name (`SeatRow.name`), and unlike every other shape change in
+    /// MessageGameStore this one is DECODED rather than cut: a seat is the one
+    /// per-game fact §6.1 says a fresh bubble cannot recover, so dropping the
+    /// blob would strand every mid-flight group game on the device at the §6.3
+    /// picker - which is the exact failure the format change is fixing.
+    ///
+    /// This writes a REAL format-1 blob byte by byte (fmt(1) n(u16) then n x
+    /// {gameId chatKey seat}, the layout the shipped build writes) rather than
+    /// asking an older code path to produce one, because there is no older code
+    /// path left to ask.
+    ///
+    /// MUTATION (MessageGameStore.allSeats): accept only `Self.seatsFormat` -
+    /// `guard r.u8() == Self.seatsFormat` - and the first two assertions fail
+    /// with a lost seat, which is the upgrade regression this exists to stop.
+    /// MUTATION: read the name field unconditionally (drop the `if fmt >= 2`)
+    /// and the format-1 row runs off the end, so the whole container reads as
+    /// empty.
+    func testAFormatOneSeatsBlobStillDecodesWithNoClaimName() {
+        let suite = "test.fmt.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        var w = PackedWriter()
+        w.u8(1)                       // format 1, as shipped
+        w.u16(2)
+        w.text("A"); w.text("chat-A"); w.u8(2)
+        w.text("B"); w.text("chat-B"); w.u8(1)
+        defaults.set(w.data, forKey: "fmsg.seats.v2")
+
+        let store = MessageGameStore(defaults: defaults)
+        XCTAssertEqual(store.seat(gameId: "A", chatKey: "chat-A"), 2, "an old row still seats me")
+        XCTAssertEqual(store.seatForBubble(gameId: "B"), 1)
+        XCTAssertNil(store.claimName(gameId: "A"),
+                     "…with no claim name, which is permissive: the number stands "
+                     + "and nothing is disowned, exactly as before the field existed")
+        XCTAssertNil(store.claim(gameId: "A")?.name)
+
+        // The next write upgrades the container in place, and the neighbour
+        // that was NOT rewritten survives the rewrite as a nameless row.
+        store.setSeat(gameId: "A", chatKey: "chat-A", seat: 2, name: "alex")
+        let raw = defaults.data(forKey: "fmsg.seats.v2")
+        XCTAssertEqual(raw?.first, 2, "the blob is format 2 once anything is written")
+        let reread = MessageGameStore(defaults: defaults)
+        XCTAssertEqual(reread.claimName(gameId: "A"), "alex")
+        XCTAssertEqual(reread.seat(gameId: "B", chatKey: "chat-B"), 1)
+        XCTAssertNil(reread.claimName(gameId: "B"))
+    }
+
+    /// The format-2 round trip, including the two things a name field can get
+    /// wrong: a nil that must not come back as "" (or vice versa), and a name
+    /// with the multi-byte characters a length-prefixed field exists for.
+    ///
+    /// MUTATION (persistSeats): write `w.text(row.name ?? " ")` and the nil
+    /// assertion fails; drop the `stored.isEmpty ? nil` in allSeats and it
+    /// fails the other way.
+    func testASeatRowRoundTripsItsClaimName() {
+        let store = freshStore()
+        store.setSeat(gameId: "1", chatKey: "a|b", seat: 0, name: "Владимир")
+        store.setSeat(gameId: "2", chatKey: "a|b", seat: 3, name: nil)
+        store.setSeat(gameId: "3", chatKey: "a|b", seat: 7, name: "🂡 al")
+
+        XCTAssertEqual(store.claim(gameId: "1"), SeatRow(chatKey: "a|b", seat: 0, name: "Владимир"))
+        XCTAssertEqual(store.claim(gameId: "2"), SeatRow(chatKey: "a|b", seat: 3, name: nil))
+        XCTAssertEqual(store.claim(gameId: "3"), SeatRow(chatKey: "a|b", seat: 7, name: "🂡 al"))
+        XCTAssertNil(store.claim(gameId: "absent"))
+        XCTAssertNil(store.claimName(gameId: "2"), "nil in, nil out - never an empty string")
+
+        // forgetSeat takes the name with it.
+        store.forgetSeat(gameId: "1")
+        XCTAssertNil(store.claim(gameId: "1"))
+        XCTAssertEqual(store.claimName(gameId: "3"), "🂡 al", "…and the neighbours are untouched")
     }
 
     // MARK: the saved-replay index

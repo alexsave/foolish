@@ -2484,7 +2484,7 @@ static int poses_the_race(const Game *g) {
 // `passing` chooses the VARIANT the game is played (and sealed) under, so the
 // rig can pose "a podkidnoy game that has just ended" - the state a rematch has
 // to carry its rules out of.
-static void print_endgame(int np, int passing) {
+static void print_endgame(int np, int passing, int arrival) {
     static unsigned char body[1024];
     static Game scratch;
     static LegalMoves ml;
@@ -2539,8 +2539,14 @@ static void print_endgame(int np, int passing) {
 
         MsgEnvelope e;
         env_init(&e, seed, np);
-        e.phase = MSG_PHASE_FINISHED;
+        // `arrival`: seal as LIVE, not FINISHED, so a human opens this one onto
+        // a board still "playing" and watches the FINAL move replay and the
+        // game-over screen arrive after it - as opposed to --endgame's FINISHED
+        // phase, which opens straight onto the static end screen with nothing
+        // to animate. Same search, same fool, two different bubbles.
+        e.phase = arrival ? MSG_PHASE_LIVE : MSG_PHASE_FINISHED;
         e.last_actor_seat = (uint8_t)last_actor;
+        if (arrival) e.sent_at = (uint16_t)(time(NULL) & 0xffff);
         if (msg_seal(&e, &g, MSG_NO_BASE, body, sizeof(body), &scratch) != MSG_EOK) continue;
         unsigned char wire[ENV_CAP];
         const int n = msg_encode(&e, wire, sizeof(wire));
@@ -2548,8 +2554,9 @@ static void print_endgame(int np, int passing) {
 
         for (int i = 0; i < n; i++) printf("%02x", wire[i]);
         printf("\n");
-        fprintf(stderr, "endgame: np=%d %s fool=seat %d turn=%d round=%d (%d bytes)\n",
-                np, passing ? "perevodnoy" : "podkidnoy", fool, e.turn, e.round, n);
+        fprintf(stderr, "endgame: np=%d %s fool=seat %d turn=%d round=%d (%d bytes) phase=%s\n",
+                np, passing ? "perevodnoy" : "podkidnoy", fool, e.turn, e.round, n,
+                arrival ? "LIVE(arrival)" : "FINISHED");
         return;
     }
     fprintf(stderr, "no %dp endgame found\n", np);
@@ -2665,6 +2672,218 @@ static void print_lastdefense(int np) {
         }
     }
     fprintf(stderr, "no %dp game in 8000 posed a bout-ending cover\n", np);
+}
+
+// ---------- --lastmove <kind> [np]: one targeted action, as an FMSG payload -
+//
+// Generic sibling to --lastdefense/--fatboard/--twocover: random-plays a game
+// (same discipline as --endgame) and, at every step before applying anything,
+// asks a speculative copy "does THIS legal move match `kind`?" - the first
+// seat/move that does gets applied for real and the resulting LIVE envelope
+// is sealed and printed. Built for round-16/17 QA capture across the move
+// types the other canned searches do not reach: a plain attack, a cover that
+// does not clear the table, a pickup, a pass, a good that does not close the
+// bout, a move whose tail logs a player OUT or a refill (LOG_DRAW), and a
+// refill that empties the deck.
+#define LASTMOVE_ATTACK       0
+#define LASTMOVE_COVER_MID    1   // covers, but battles remain (bout stays open)
+#define LASTMOVE_PICKUP       2
+#define LASTMOVE_PASS         3
+#define LASTMOVE_GOOD_MID     4   // good, but the bout is not closed by it
+#define LASTMOVE_OUT          5   // tail logs LOG_PLAYER_OUT
+#define LASTMOVE_REFILL       6   // tail logs LOG_DRAW, deck not yet empty
+#define LASTMOVE_REFILL_EMPTY 7   // tail logs LOG_DRAW and empties the deck
+#define LASTMOVE_COVER_TRUMP  8   // covers with a TRUMP, bout stays open
+#define LASTMOVE_FINAL        9   // the move that ends the game (arrival)
+
+static bool lastmove_apply(Game *g, int seat, const LegalMove *m) {
+    switch (m->type) {
+        case MOVE_ATTACK: return handle_attack(g, seat, m->cards, m->n_cards);
+        case MOVE_COVER:  return handle_cover(g, seat, m->cards, m->attack_cards, m->n_cards);
+        case MOVE_PASS:   return handle_pass(g, seat, m->cards, m->n_cards);
+        case MOVE_PICKUP: return handle_pickup(g, seat);
+        default:          return handle_good(g, seat);
+    }
+}
+
+// `live`: seal the state ONE MOVE SHORT, instead of applying it - for kinds
+// whose replay animates nothing (a mid-battle good is instantaneous state,
+// not a flight - `--lastmove good` opens with the checkmark already there,
+// events=0). A human seated as `act_seat` (printed to stderr) then plays the
+// move themselves, live, same discipline as --lastdefense.
+static void print_lastmove_ex(int np, int kind, int live) {
+    static unsigned char body[1024];
+    static Game scratch;
+    static LegalMoves ml;
+
+    for (uint32_t s = 1; s < 8000; s++) {
+        uint8_t seed[MSG_SEED_LEN];
+        seed_fill(seed, 20260901u + s * 89u);
+        game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+        g_rng = 31u + s;
+        random_strategy_set_seed(g_rng);
+
+        Game g;
+        memset(&g, 0, sizeof(g));
+        g.num_players = (int8_t)np;
+        for (int i = 0; i < np; i++) {
+            g.players[i].status = PLAYER_STATUS_READY;
+            g.players[i].strategy_key = 0;
+            snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
+        }
+        start_game(&g);
+
+        int last_actor = g.first_attacker;
+        int found = 0;
+        int pre_logs = -1;
+        for (int step = 0; step < 400 && !found; step++) {
+            if (game_done(&g) >= 0 || g.status != GAME_STATUS_PLAYING) break;
+
+            const int start = (int)(rnd() % (uint32_t)np);
+            for (int t = 0; t < np && !found; t++) {
+                const int seat = (start + t) % np;
+                if (g.players[seat].status != PLAYER_STATUS_IN) continue;
+                calculate_legal_moves(&g, seat, &ml);
+                for (int i = 0; i < ml.n && !found; i++) {
+                    const LegalMove *m = &ml.moves[i];
+                    if (m->type == MOVE_WAIT) continue;
+                    // play_human_menu's narrowing (legal.c): a human never
+                    // sees Good over an uncovered attack, even though the raw
+                    // bot-facing menu offers it. Any kind captured here is
+                    // meant for a human (live tap or replay) to watch or play,
+                    // so hold every kind to that same human-reachable menu.
+                    if (m->type == MOVE_GOOD) {
+                        bool all_covered_pre = true;
+                        for (int b = 0; b < g.num_battles; b++)
+                            if (card_is_none(g.table_battles[b].defense)) { all_covered_pre = false; break; }
+                        if (!all_covered_pre) continue;
+                    }
+
+                    int want = 0;
+                    switch (kind) {
+                        case LASTMOVE_ATTACK: want = (m->type == MOVE_ATTACK); break;
+                        case LASTMOVE_PICKUP: want = (m->type == MOVE_PICKUP); break;
+                        case LASTMOVE_PASS:   want = (m->type == MOVE_PASS); break;
+                        case LASTMOVE_COVER_MID: {
+                            if (m->type != MOVE_COVER) break;
+                            Game c = g;
+                            if (!lastmove_apply(&c, seat, m)) break;
+                            want = (c.num_battles > 0);
+                            break;
+                        }
+                        case LASTMOVE_FINAL: {
+                            Game c = g;
+                            if (!lastmove_apply(&c, seat, m)) break;
+                            want = (game_done(&c) >= 0);
+                            break;
+                        }
+                        case LASTMOVE_COVER_TRUMP: {
+                            if (m->type != MOVE_COVER) break;
+                            if (m->cards[0].suit != g.power_suit) break;
+                            Game c = g;
+                            if (!lastmove_apply(&c, seat, m)) break;
+                            want = (c.num_battles > 0);
+                            break;
+                        }
+                        case LASTMOVE_GOOD_MID: {
+                            if (m->type != MOVE_GOOD) break;
+                            Game c = g;
+                            if (!lastmove_apply(&c, seat, m)) break;
+                            want = (c.status == GAME_STATUS_PLAYING && c.num_battles > 0);
+                            break;
+                        }
+                        case LASTMOVE_OUT: {
+                            Game c = g;
+                            const int before = c.num_logs;
+                            if (!lastmove_apply(&c, seat, m)) break;
+                            for (int L = before; L < c.num_logs; L++)
+                                if (c.logs[L].log_type == LOG_PLAYER_OUT) { want = 1; break; }
+                            break;
+                        }
+                        case LASTMOVE_REFILL:
+                        case LASTMOVE_REFILL_EMPTY: {
+                            // Pickup also triggers a refill for the OTHER
+                            // seats (round 16's design), which is a real path
+                            // but not the one this kind is for - that is
+                            // `--lastmove pickup`'s territory. Require the
+                            // ordinary "bout closes and discards" refill.
+                            if (m->type == MOVE_PICKUP) break;
+                            Game c = g;
+                            const int before = c.num_logs;
+                            if (!lastmove_apply(&c, seat, m)) break;
+                            int drew = 0;
+                            for (int L = before; L < c.num_logs; L++)
+                                if (c.logs[L].log_type == LOG_DRAW) drew = 1;
+                            if (!drew) break;
+                            want = (kind == LASTMOVE_REFILL_EMPTY)
+                                       ? (c.deck_count == 0)
+                                       : (c.deck_count > 0);
+                            break;
+                        }
+                        default: break;
+                    }
+                    if (!want) continue;
+
+                    if (live) {
+                        // Seal ONE MOVE SHORT: `seat` is who must play it, on
+                        // the device, for the animation (or state change) to
+                        // exist at all. `last_actor` is left as whoever acted
+                        // before - there is no move to attribute to `seat` yet.
+                        fprintf(stderr, "lastmove-live: act_seat=%d card=%d/%d "
+                                        "type=%d\n",
+                                seat, m->cards[0].suit, m->cards[0].value, m->type);
+                        found = 1;
+                        break;
+                    }
+                    pre_logs = g.num_logs;   // the mark: everything from here
+                                              // on is what this bubble is FOR
+                    if (!lastmove_apply(&g, seat, m)) continue;
+                    last_actor = seat;
+                    found = 1;
+                }
+            }
+            if (found) break;
+
+            // Nothing matched this step: advance one random legal move (same
+            // discipline as --endgame/--lastdefense) and keep looking.
+            int seat = -1, pick = -1;
+            const int start2 = (int)(rnd() % (uint32_t)np);
+            for (int t = 0; t < np && seat < 0; t++) {
+                const int c = (start2 + t) % np;
+                if (g.players[c].status != PLAYER_STATUS_IN) continue;
+                calculate_legal_moves(&g, c, &ml);
+                for (int i = 0; i < ml.n; i++)
+                    if (ml.moves[i].type != MOVE_WAIT) { seat = c; pick = i; break; }
+            }
+            if (seat < 0 || pick < 0) break;
+            if (!lastmove_apply(&g, seat, &ml.moves[pick])) break;
+            last_actor = seat;
+        }
+        if (!found) continue;
+
+        MsgEnvelope e;
+        env_init(&e, seed, np);
+        e.phase = MSG_PHASE_LIVE;
+        e.last_actor_seat = (uint8_t)last_actor;
+        e.sent_at = (uint16_t)(time(NULL) & 0xffff);
+        // `pre_logs`, not MSG_NO_BASE: this is the mark this bubble is a delta
+        // FROM, so `dev.replay` animates only the one move `kind` searched
+        // for - not the "guess the boundary" fallback a NO_BASE seal gets,
+        // which is most of the match (round 16's bubble delta, n_new).
+        if (msg_seal(&e, &g, pre_logs, body, sizeof(body), &scratch) != MSG_EOK) continue;
+        unsigned char wire[ENV_CAP];
+        const int n = msg_encode(&e, wire, sizeof(wire));
+        if (n <= 0) continue;
+
+        fprintf(stderr, "lastmove: kind=%d np=%d seed#%u last_actor=seat %d deck=%d "
+                        "turn=%d round=%d n_new=%d (%d bytes)\n",
+                kind, np, s, last_actor, g.deck_count, e.turn, e.round, e.n_new, n);
+        for (int i = 0; i < n; i++) printf("%02x", wire[i]);
+        printf("\n");
+        return;
+    }
+    fprintf(stderr, "no %dp game in 8000 posed lastmove kind %d\n", np, kind);
+    exit(1);
 }
 
 static void print_fatboard(int target, int np) {
@@ -3338,7 +3557,28 @@ int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1], "--fixture5")) { print_fixtures5(); return 0; }
     if (argc > 1 && !strcmp(argv[1], "--endgame")) {
         print_endgame(argc > 2 ? atoi(argv[2]) : 3,
-                      !(argc > 3 && !strcmp(argv[3], "nopass")));
+                      !(argc > 3 && !strcmp(argv[3], "nopass")), 0);
+        return 0;
+    }
+    if (argc > 1 && !strcmp(argv[1], "--endgame-arrival")) {
+        print_endgame(argc > 2 ? atoi(argv[2]) : 3,
+                      !(argc > 3 && !strcmp(argv[3], "nopass")), 1);
+        return 0;
+    }
+    if (argc > 2 && (!strcmp(argv[1], "--lastmove") || !strcmp(argv[1], "--lastmove-live"))) {
+        static const char *names[] = { "attack", "cover", "pickup", "pass",
+                                        "good", "out", "refill", "refillempty",
+                                        "covertrump", "final" };
+        int kind = -1;
+        for (size_t k = 0; k < sizeof(names) / sizeof(names[0]); k++)
+            if (!strcmp(argv[2], names[k])) { kind = (int)k; break; }
+        if (kind < 0) {
+            fprintf(stderr, "--lastmove: unknown kind '%s' (attack|cover|pickup|pass|"
+                            "good|out|refill|refillempty|covertrump)\n", argv[2]);
+            return 2;
+        }
+        print_lastmove_ex(argc > 3 ? atoi(argv[3]) : 2, kind,
+                           !strcmp(argv[1], "--lastmove-live"));
         return 0;
     }
     if (argc > 2 && !strcmp(argv[1], "--holdcheck")) { print_holdcheck(argv[2]); return 0; }

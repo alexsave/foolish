@@ -86,7 +86,10 @@ public enum RoleMarkKind: Equatable, Sendable {
 /// One role mark, drawn. The ONE place the kind→view mapping lives, so a badge,
 /// the local player's own indicator and a flight ghost cannot end up drawing
 /// three different swords.
-public struct RoleMarkView: View {
+// Not `public`: nothing outside FoolishKit names it, and a public View in a
+// dynamic framework exports its whole SwiftUI generic tree as symbol names
+// (see RulesView.swift for the measurement).
+struct RoleMarkView: View {
     public let kind: RoleMarkKind
     public init(_ kind: RoleMarkKind) { self.kind = kind }
     public var body: some View {
@@ -206,7 +209,10 @@ public struct RoleFlight: Identifiable, Equatable {
 /// the hand-off is the thing being read at that moment, and a shield passing
 /// behind a badge would read as a glitch. `progress` is animated by the board
 /// with one `withAnimation`, exactly like `FlyingCardsLayer`.
-public struct RoleFlightsLayer: View {
+// Not `public`: nothing outside FoolishKit names it, and a public View in a
+// dynamic framework exports its whole SwiftUI generic tree as symbol names
+// (see RulesView.swift for the measurement).
+struct RoleFlightsLayer: View {
     public let flights: [RoleFlight]
     public let progress: Double
     public init(flights: [RoleFlight], progress: Double) {

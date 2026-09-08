@@ -1,7 +1,7 @@
-// GateWire.swift - the chain layer's four gates, asked of the kernel.
+// GateWire.swift - the chain layer's gates, asked of the kernel.
 //
 // Is this board a branch off an old one, is this nickname usable, is it taken,
-// and which seat am I. The rules are msg_wire.c's (msg_chain_is_ahead,
+// which seat am I, and when may the name screen open the drawer. The rules are msg_wire.c's (msg_chain_is_ahead,
 // msg_nickname_verdict, msg_name_taken, msg_seat_*) so a second chain client
 // does not re-derive them; this file is the crossing, and it is the only place
 // the `fio_*` gate entries are named.
@@ -91,6 +91,22 @@ public enum GateWire {
         return s >= 0 ? Int(s) : nil
     }
 
+    /// `seatResolve` with the two name gates in front of it - the BOARD answer,
+    /// whole. nil is AMBIGUOUS and nothing else: the board deliberately has no
+    /// roster-membership check (msg_wire.h says why), so this and the lobby
+    /// entry below are two different rules, not one rule with an option.
+    public static func seatResolveOnBoard(cachedSeat: Int?, senderIsLocal: Bool,
+                                          nPlayers: Int, lastActorSeat: Int,
+                                          chatIsDM: Bool, recordedName: String?,
+                                          joins: [MessageJoin]) -> Int? {
+        let s = RosterWire.call(joins, recordedName) {
+            fio_seat_resolve_on_board($0, $1, Int32(cachedSeat ?? -1),
+                                      senderIsLocal ? 1 : 0, Int32(nPlayers),
+                                      Int32(lastActorSeat), chatIsDM ? 1 : 0, $2, $3)
+        }
+        return s >= 0 ? Int(s) : nil
+    }
+
     /// `seatResolve` gated on this bubble's OWN roster - the lobby answer. nil
     /// covers both ambiguous and resolved-but-not-listed, which a lobby must
     /// not tell apart: neither one may act.
@@ -104,5 +120,56 @@ public enum GateWire {
                                       Int32(lastActorSeat), chatIsDM ? 1 : 0, $2, $3)
         }
         return s >= 0 ? Int(s) : nil
+    }
+
+    // MARK: - the name-entry drawer
+
+    /// WHEN a name screen's ask for the drawer is issued. The decision is
+    /// c/src/msg_expand.c's - the eight-cold-open measurement that found the
+    /// moment lives in its header, and the C suite (c/tests/msg_expand_test.c)
+    /// is where it is pinned. This type is only the three scalars of state plus
+    /// the crossing; it holds no policy of its own, and the numbers (one spare
+    /// retry, a two-second window) are the kernel's alone.
+    ///
+    /// The host owns the effect and the clock: feed it `.wanted` when a name
+    /// screen asks and `.transition` for every presentation-style callback, and
+    /// issue `requestPresentationStyle(.expanded)` whenever `note` answers true.
+    public struct NameEntryExpand {
+
+        /// Everything that can change the answer. Both callback phases (`will`
+        /// and `did`) are fed in as the same event, because only the STYLE
+        /// matters - see msg_expand.h.
+        public enum Event {
+            /// A name screen with an empty field appeared and wants the drawer.
+            case wanted
+            /// The host reported a presentation-style transition.
+            case transition(toCompact: Bool)
+
+            fileprivate var code: Int32 {
+                switch self {
+                case .wanted:                   return FIO_EXPAND_WANTED
+                case .transition(toCompact: true):  return FIO_EXPAND_COMPACT
+                case .transition(toCompact: false): return FIO_EXPAND_EXPANDED
+                }
+            }
+        }
+
+        // The kernel's state, held here because a C entry point has nowhere to
+        // put it that two hosts would not share. Nothing reads these but `note`.
+        private var pending: Int32 = 0
+        private var retries: Int32 = 0
+        private var wantedAt: Double = 0
+
+        public init() {}
+
+        /// A request has been made and the host has not yet answered it with an
+        /// expanded transition. Public so a trace can read it.
+        public var isPending: Bool { pending != 0 }
+
+        /// Note an event; `true` means issue `.expanded` now. `now` is any
+        /// monotonic seconds clock - the host passes `CACurrentMediaTime()`.
+        public mutating func note(_ event: Event, now: Double) -> Bool {
+            fio_msg_expand_note(event.code, now, &pending, &retries, &wantedAt) != 0
+        }
     }
 }

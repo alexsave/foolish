@@ -55,6 +55,8 @@ public enum MessageDevBoard {
     private static let seatFile = "dev.seat"
     private static let replayFile = "dev.replay"
     private static let slowmoFile = "dev.slowmo"
+    private static let rulerFile = "dev.ruler"
+    private static let collapseFile = "dev.collapse"
 
     /// The seeded chain, or nil when the flag file is absent - which is the
     /// normal case, including every ordinary DEBUG run.
@@ -137,6 +139,54 @@ public enum MessageDevBoard {
               let n = Double(raw.trimmingCharacters(in: .whitespacesAndNewlines)), n > 0
         else { return 0 }
         return n
+    }()
+
+    /// Draw the debug RULER on the surface's own box (`CollapseRuler`)?
+    ///
+    /// The collapse tween's curve is measured off filmed frames, and a frame
+    /// can only be read if the box's two edges are visible in it - the drawer
+    /// is wool above and wool below, and the host composites the transition
+    /// from snapshots, so there is nothing else in the picture that says where
+    /// our box is. Round 10d drew this ruler, measured, and threw it away; it
+    /// is a flag now so the measurement can be repeated rather than rebuilt.
+    ///
+    /// Read ONCE, like `slowmo` and for the same reason: it is asked for on
+    /// every layout pass of the thing being filmed.
+    public static let rulerOn: Bool = {
+        guard let dir = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroup)
+        else { return false }
+        return FileManager.default.fileExists(atPath: dir.appendingPathComponent(rulerFile).path)
+    }()
+
+    /// The collapse driver's knobs, for a filmed sweep: `lead=0.02 hz=120
+    /// resp=0.338` (seconds, Hz, seconds; any subset) in `dev.collapse`. The
+    /// defaults are the shipped values in `CollapseTween`; the file exists so
+    /// a sweep is a file write and a take, not a rebuild per point. Read ONCE,
+    /// like `slowmo` and for the same reason.
+    public struct CollapseKnobs {
+        public var lead = CollapseTween.hostLead
+        public var hz = CollapseTween.driveHz
+        public var response = CollapseTween.hostResponse
+    }
+    public static let collapseKnobs: CollapseKnobs = {
+        var k = CollapseKnobs()
+        guard let dir = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroup),
+              let raw = try? String(contentsOf: dir.appendingPathComponent(collapseFile),
+                                    encoding: .utf8)
+        else { return k }
+        for pair in raw.split(whereSeparator: { $0 == " " || $0 == "\n" }) {
+            let kv = pair.split(separator: "=", maxSplits: 1)
+            guard kv.count == 2, let v = Double(kv[1]) else { continue }
+            switch kv[0] {
+            case "lead": k.lead = v
+            case "hz": k.hz = v
+            case "resp": k.response = v
+            default: break
+            }
+        }
+        return k
     }()
 
     /// Even-length hex to bytes; nil on anything malformed, so a truncated or

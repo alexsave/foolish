@@ -2,11 +2,12 @@
 // the left Settings (gear) square. Two settings today:
 //   - the language override (English / Русский / 한국어), persisted by
 //     FStrings.override
-//   - the TABLE MATERIAL (round 12): the wool weave, or a green casino baize
-//     for a player who finds the weave busy behind the cards. Round 30 made
-//     these two SWATCHES on one row, each drawn in its own material - see
-//     `tableSwatch` for why this setting gets a different control from the
-//     language list right under it.
+//   - the TABLE MATERIAL (round 12): the green casino baize, or the wool weave
+//     for a player who wants the original cloth back. Round 30 made these two
+//     SWATCHES on one row, each drawn in its own material - see `tableSwatch`
+//     for why this setting gets a different control from the language list
+//     right under it. Felt is first in the row, and first because it is first
+//     in `TableSurface.allCases` - see that type for why the two are one fact.
 //
 // TABLE FIRST, then language (owner). It is the setting a player actually comes
 // here to change once the game is running; language is a set-once.
@@ -25,7 +26,10 @@
 
 import SwiftUI
 
-public struct MessageSettingsView: View {
+// Not `public`: nothing outside FoolishKit names it, and a public View in a
+// dynamic framework exports its whole SwiftUI generic tree as symbol names
+// (see RulesView.swift for the measurement).
+struct MessageSettingsView: View {
     private let onClose: () -> Void
     /// The live settings (see FPrefs): this sheet both READS them - so its own
     /// title and rows re-render into the language just picked, and the wool
@@ -81,6 +85,31 @@ public struct MessageSettingsView: View {
         .padding(.top, FSpace.s)          // clear the sheet's rounded top corner
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(TableBackground().ignoresSafeArea())
+        // GIVE BACK THE TABLE THE PLAYER DID NOT PICK.
+        //
+        // This sheet is the only screen in the app that draws BOTH table bakes
+        // at once, and it has to: the felt swatch must be felt while the board
+        // is still wool, or picking it is a guess (see `tableSwatch`). So
+        // opening Settings decodes the alternative's whole 592x1280 bake to
+        // fill a 64pt-tall strip - measured in the REAL extension, the
+        // footprint went 37.96 -> 40.09 MB the moment the sheet appeared, and
+        // stayed there for the life of the process. `purgeUnusedTextures`
+        // existed already but only ran on `didReceiveMemoryWarning`, and iOS
+        // sends that AT the ceiling, not on the way up.
+        //
+        // By here the swatch is gone and the bake behind it is being held for
+        // nobody, so this is not a trade against a hitch: nothing is about to
+        // draw it. And it cannot drop the wrong one - `keeping:` is the
+        // material the player has NOW, so switching to felt keeps felt and
+        // releases wool, which is the same call with the answer reversed.
+        .onDisappear { Self.releaseUnusedTableTexture(scheme) }
+    }
+
+    /// The give-back above, named so a test can walk the same path the sheet
+    /// walks. Not private: the wiring is the part worth pinning, and a closure
+    /// inside a `body` is not something a test can reach.
+    static func releaseUnusedTableTexture(_ scheme: ColorScheme) {
+        FTextures.purgeUnusedTextures(keeping: FTextures.Variant(scheme))
     }
 
     private func section<C: View>(_ titleKey: String, @ViewBuilder rows: () -> C) -> some View {
