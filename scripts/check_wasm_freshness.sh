@@ -19,7 +19,10 @@
 #
 # THE RULE, deliberately scoped to the change under review rather than to the
 # whole history: if this branch touches a source a shipped wasm module is
-# compiled from, it must also update at least one committed artifact. It does
+# compiled from, it must also update at least one committed artifact - or
+# re-stamp sdk/ts/wasm/WASM_STAMP, which the make targets write and which proves
+# the build ran even when the output bytes are identical (see the stamp section
+# below, and scripts/wasm_stamp.sh). It does
 # not demand that the backlog of already-stale artifacts be paid off by whoever
 # happens to touch the kernel next; it stops NEW drift at the door. The standing
 # backlog is printed as a report either way, so it stays visible and measurable.
@@ -54,11 +57,13 @@ EXCEPTIONS=(
   # c/src/example.c   # why a change here cannot reach the shipped modules
 )
 
+# The source set comes from scripts/wasm_stamp.sh, which is also what the make
+# targets hash into the stamp - one derivation, so the gate and the stamp cannot
+# come to disagree about what a "wasm source" is.
 SOURCES=()
-while IFS= read -r f; do SOURCES+=("$f"); done \
-  < <(make -C c -s print-wasm-src | tr ' ' '\n' | sed '/^$/d' | sed 's|^|c/|')
-[ "${#SOURCES[@]}" -gt 0 ] || { echo "print-wasm-src listed nothing - did the Makefile move?" >&2; exit 1; }
-while IFS= read -r h; do SOURCES+=("$h"); done < <(ls c/src/*.h c/wasm/include/* 2>/dev/null)
+while IFS= read -r f; do SOURCES+=("$f"); done < <(scripts/wasm_stamp.sh --list)
+[ "${#SOURCES[@]}" -gt 0 ] || { echo "wasm_stamp.sh --list listed nothing - did the Makefile move?" >&2; exit 1; }
+STAMP=sdk/ts/wasm/WASM_STAMP
 
 # c/Makefile is NOT in that list, and the omission is deliberate. The flags it
 # chooses do change the modules, but most edits to it are a new target or a
@@ -127,21 +132,47 @@ printf '  %s\n' $touched_src
 if [ -n "$touched_art" ]; then
   echo "…and rebuilds:"
   printf '  %s\n' $touched_art
+fi
+
+# THE STAMP is the proof, and it is the ONLY proof - a changed artifact is
+# reported above but does not on its own satisfy this gate any more.
+#
+# Two reasons it replaced "at least one artifact moved" rather than joining it.
+# First, an artifact touch was never evidence: it is satisfied by any edit to
+# those files, including one made to get a red check green. Second, and this is
+# what forced the change, a REAL rebuild can move nothing - four functions landed
+# in msg_wire.c on the 1.1(52) release branch, msg_wire.c is compiled into all
+# five modules, and every artifact came back byte-identical because no wasm
+# export reaches those functions and the linker drops them. There was nothing to
+# commit and no way to say "I built this". The alternatives were to exempt
+# msg_wire.c forever, blinding the gate to exactly the drift it exists to catch,
+# or to fake an artifact touch.
+#
+# The stamp is checked, not merely present: its recorded hash must equal the hash
+# of the sources IN THIS TREE, so a stamp written before the last C edit fails
+# just as a stale artifact would - and now fails even if an artifact did move.
+if [ ! -f "$STAMP" ]; then
+  echo "::error::$STAMP is missing - run: make -C c wasm wasm-guards wasm-bots wasm-oracle wasm-oracle-mt" >&2
+  exit 1
+fi
+want=$(scripts/wasm_stamp.sh --hash)
+got=$(awk '$1=="sha256"{print $2}' "$STAMP")
+if [ "$want" = "$got" ]; then
+  echo "…and $STAMP matches these sources ($want)."
+  [ -n "$touched_art" ] || echo "No artifact moved, so the rebuild changed no shipped byte."
   exit 0
 fi
-cat >&2 <<'MSG'
+cat >&2 <<MSG
 
-::error::this change edits the C the wasm modules are compiled from but rebuilds no artifact
+::error::$STAMP does not match the sources in this tree
 
-The committed .wasm.gz / *_wasm.ts files ARE the shipped kernel: the browser,
-the edge functions and the Oracle load those bytes, not c/src. A kernel change
-that does not rebuild them reaches production the day somebody else's unrelated
-push happens to carry a rebuild - which is exactly how the Oracle spent two
-weeks serving one seat the opposite endgame verdict.
+  stamp says   $got
+  sources are  $want
 
-Rebuild what your change reaches and commit the result (a Mac needs
-WASM_CC=/opt/homebrew/opt/llvm/bin/clang; plain clang there cannot target
-wasm32):
+The stamp is written by the wasm make targets, so this says the C moved after
+the last build - whether or not an artifact is in this diff. Rebuild and commit
+the result (a Mac needs WASM_CC=/opt/homebrew/opt/llvm/bin/clang; plain clang
+there cannot target wasm32):
 
   make -C c wasm wasm-guards wasm-bots wasm-oracle wasm-oracle-mt
 

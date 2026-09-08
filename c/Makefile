@@ -769,6 +769,7 @@ build/named/rules.named.wasm: $(WASM_RULES_OBJ)
 # loader. Only bots.wasm — server-only — ships as a gzip static asset (below).
 wasm: build/rules.wasm
 	node wasm/embed.mjs build/rules.wasm ../sdk/ts/wasm/rules_wasm.ts --gzip
+	@bash ../scripts/wasm_stamp.sh --write
 
 # Client-guards module: game.c ONLY — no legal.c enumeration, no replay.c
 # codec. It backs the browser's UI move-gates (validate-only) and optimistic
@@ -879,6 +880,7 @@ build/named/guards.named.wasm: $(WASM_GUARDS_OBJ)
 
 wasm-guards: build/guards.wasm
 	node wasm/embed.mjs build/guards.wasm ../sdk/ts/wasm/guards_wasm.ts GUARDS_WASM_B64 --gzip
+	@bash ../scripts/wasm_stamp.sh --write
 
 # ---------- msg module: the iMessage extension's kernel, and nothing else ----
 #
@@ -1175,6 +1177,7 @@ build/named/bots.named.wasm: $(WASM_BOT_OBJ)
 # that the browser's door is async (ensureBotsAsync); that is the cheaper half.
 wasm-bots: build/bots.wasm
 	gzip -9 -n -c build/bots.wasm > ../sdk/ts/wasm/bots.wasm.gz
+	@bash ../scripts/wasm_stamp.sh --write
 
 # ---------------------------------------------------------------------------
 # oracle.wasm — the client-side "infinite oracle" replay analyzer
@@ -1206,6 +1209,7 @@ wasm-oracle:
 	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),build/oracle.wasm)
 	gzip -9 -n -c build/oracle.wasm > ../public/oracle.wasm.gz
 	@echo "built ../public/oracle.wasm.gz ($$(wc -c < ../public/oracle.wasm.gz) B gz, $$(wc -c < build/oracle.wasm) B raw)"
+	@bash ../scripts/wasm_stamp.sh --write
 
 # ---------------------------------------------------------------------------
 # oracle-mt.wasm - Mode B (docs/INFINITE_ORACLE_DESIGN.md §8b): the same octogen
@@ -1256,6 +1260,7 @@ wasm-oracle-mt:
 	$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) --enable-threads $(WASM_BOTS_POSTOPT) build/oracle-mt.wasm -o build/oracle-mt.wasm
 	gzip -9 -n -c build/oracle-mt.wasm > ../public/oracle-mt.wasm.gz
 	@echo "built ../public/oracle-mt.wasm.gz ($$(wc -c < ../public/oracle-mt.wasm.gz) B gz, $$(wc -c < build/oracle-mt.wasm) B raw)"
+	@bash ../scripts/wasm_stamp.sh --write
 
 # ---------------------------------------------------------------------------
 # Coverage gate (CI: ../.github/workflows/coverage.yml). Instruments the engine
