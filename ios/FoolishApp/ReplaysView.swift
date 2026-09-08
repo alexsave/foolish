@@ -12,6 +12,7 @@
 import SwiftUI
 import FoolishKit
 import FoolishNet
+import FoolishBots   // ReplayStore: the saved-replays index lives with the offline game (bundle-size move)
 
 struct ReplaysView: View {
     /// Re-render when a setting changes (see FPrefs). Only the OBSERVATION

@@ -94,7 +94,7 @@ final class FlightNamespaceInvariantTests: XCTestCase {
     /// shares a namespace - and therefore must veil nothing, or it would be
     /// asking for the same double animation from the other direction.
     func testTheNamespaceBoardVeilsNothing() throws {
-        let src = try source("FoolishKit/Boards/TableView.swift")
+        let src = try source("FoolishApp/PhoneOnly/TableView.swift")
         let sites = calls(to: "FHandFan", in: src) + calls(to: "FBattleGrid", in: src)
         XCTAssertFalse(sites.isEmpty, "the offline board must build a hand and a grid")
         for site in sites {

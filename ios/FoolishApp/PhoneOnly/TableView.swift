@@ -8,7 +8,15 @@
 // consult the kernel's legal menu (humanLegal) → play the matching move, or a
 // rigid reject. No Durak rule is decided here (§3).
 
+// MOVED OUT OF FoolishKit (bundle size). FoolishKit is a DYNAMIC framework that
+// ships inside FoolishMessagesApp, and every `public` symbol in a dylib is an
+// export - which makes it a dead-strip ROOT the linker may never remove. So any
+// public API in FoolishKit that only the PHONE app calls is bytes on every
+// iMessage install for code that install can never run. This file had no caller
+// outside ios/FoolishApp, so it lives with its caller now.
+
 import SwiftUI
+import FoolishKit
 
 public struct TableView<Session: GameSession>: View {
     @ObservedObject var game: Session

@@ -8,9 +8,9 @@
 // THIS FILE NO LONGER RUNS IN THE SHIPPING APP. It is the SOURCE OF TRUTH for
 // what the wool looks like, and it is executed at BUILD time by
 // ios/Tools/GenerateTextures.swift, which bakes one image per entry in `bakes`
-// into FoolishKit/Resources/ (wool-classic.jpg, wool-dark-green.jpg,
-// wool-dark-navy.jpg). The extension then loads whichever one the colour scheme
-// calls for (FTextures) and generates zero procedural pixels on launch.
+// into FoolishKit/Resources/ - today wool-classic.jpg and wool-dark.jpg, one
+// per entry in `bakes`. The extension then loads whichever one the colour
+// scheme calls for (FTextures) and generates zero procedural pixels on launch.
 //
 // Why: a 1920x1080 weave is ~2.4M brush iterations, each writing up to a 5x5
 // span — tens of millions of blends and an 8.3MB scratch buffer — on the first
@@ -173,8 +173,8 @@ public enum WoolTexture {
     /// The list lives HERE and not in the tool so that adding a look is one
     /// entry beside the palette it names — and so the tool stays UIKit-free and
     /// knows nothing about which of these the app then chooses (that is
-    /// `darkAccent` above and `FTextures.Variant`, both of which need SwiftUI
-    /// and so cannot be seen from the macOS generator).
+    /// `FTextures.Variant`, which needs SwiftUI and so cannot be seen from the
+    /// macOS generator).
     public static let bakes: [(name: String, palette: Palette)] = [
         (classicResourceName, .classic),
         (darkResourceName, .dark),
