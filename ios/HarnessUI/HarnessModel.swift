@@ -404,6 +404,25 @@ final class HarnessModel: ObservableObject {
     /// `pendingStage = nil` — the harness has no inserted-bubble UI to remove.
     func unstage() { staged = nil; stagedPreview = nil }
 
+    /// Bumped every time the human X-es the staged bubble, and threaded to
+    /// MessagesRootView exactly as `MessagesViewController.didCancelSending`
+    /// threads its own `cancelToken`. Absent until 1.0(37), which is why no rig
+    /// run ever reached the cancel path at all - the X here simply dropped the
+    /// preview and left the board believing it still had a move to send.
+    @Published private(set) var cancelToken = 0
+
+    /// THE X ON THE STAGED BUBBLE - the host half of `didCancelSending`.
+    ///
+    /// Distinct from `unstage()`, which is the OTHER direction: there the board
+    /// has undone its way to nothing and is telling the host to forget the
+    /// bubble. Here the human deleted the bubble and the BOARD has to be told.
+    /// Wiring the X to `unstage()` is what the rig used to do, and it modelled
+    /// only the half of the real callback that never went wrong.
+    func cancelStagedBubble() {
+        staged = nil; stagedPreview = nil
+        cancelToken += 1
+    }
+
     /// The board auto-staged a chain (the extension's `insert`). Hold it; the
     /// human still has to press Send — that is `deliver()`.
     ///

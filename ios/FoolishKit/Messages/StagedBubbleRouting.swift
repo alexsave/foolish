@@ -46,6 +46,59 @@ public enum StagedBubbleRouting {
                                           pendingStage: (payload: Data, mySeat: Int)?,
                                           lastPayloadURL: URL?,
                                           lastSentPayload: Data? = nil) -> URL? {
+        route(selectedURL: selectedURL, startingNewGame: startingNewGame,
+              pendingStage: pendingStage, lastPayloadURL: lastPayloadURL,
+              lastSentPayload: lastSentPayload).url
+    }
+
+    /// The full answer: the URL to present, AND whether the markers that pin it
+    /// have been spent.
+    public struct Route: Equatable {
+        public let url: URL?
+        /// DROP `pendingStage` AND `lastSentPayload`. Both exist to protect ONE
+        /// chain - the one the board is standing on - from being torn down and
+        /// re-adopted when my own bubble becomes the selection. The instant the
+        /// surface presents something else, they are protecting a board that is
+        /// no longer on screen, and a marker that outlives its board is a
+        /// pin on the WRONG one.
+        ///
+        /// THE BUG THIS CLOSES, 1.0(37) (owner: "if you have one game open, and
+        /// you scroll up and hit a different game bubble, it should completely
+        /// switch to that other game. Not rebase, completely switch"). Send a
+        /// move in game B, scroll up, tap game A - that switches, because A's
+        /// bytes are neither marker. Now tap game B's bubble again: it IS
+        /// `lastSentPayload`, `isMine` says so, and the pin hands back
+        /// `lastPayloadURL` - which by then is game A's. The loadKey never
+        /// moves, the surface never reloads, and tapping game B leaves game A
+        /// on screen. Rare, because it needs a send and then two taps, and
+        /// invisible in every test that only ever staged in one game.
+        ///
+        /// It is also the "make the bubble a noop" half: a draft for a game the
+        /// human has left is disowned here, so its Send commits nothing to this
+        /// device's cache and its bytes are no longer vouched for as "mine".
+        /// What it does NOT do is remove the bubble - Messages offers no call
+        /// for that, so the last guard is the kernel refusing to rebase a board
+        /// onto another game's chain (msg_wire.h, MSG_TURN_SEND_OTHERGAME).
+        public let clearMarkers: Bool
+    }
+
+    public static func route(selectedURL: URL?, startingNewGame: Bool,
+                             pendingStage: (payload: Data, mySeat: Int)?,
+                             lastPayloadURL: URL?,
+                             lastSentPayload: Data? = nil) -> Route {
+        let url = pinned(selectedURL: selectedURL, startingNewGame: startingNewGame,
+                         pendingStage: pendingStage, lastPayloadURL: lastPayloadURL,
+                         lastSentPayload: lastSentPayload)
+        // The presentation MOVED. Not "a different bubble was tapped" - the
+        // whole point of the pin above is that a tap on my own bubble does not
+        // move it - but the URL this surface is actually being handed.
+        return Route(url: url, clearMarkers: url != lastPayloadURL)
+    }
+
+    private static func pinned(selectedURL: URL?, startingNewGame: Bool,
+                               pendingStage: (payload: Data, mySeat: Int)?,
+                               lastPayloadURL: URL?,
+                               lastSentPayload: Data?) -> URL? {
         if startingNewGame { return nil }
         guard let selectedURL else { return nil }
         guard let incoming = try? MessageEnvelope.payloadBytes(url: selectedURL) else {

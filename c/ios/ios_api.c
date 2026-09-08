@@ -1663,6 +1663,9 @@ _Static_assert(FIO_TURN_RETRACTING     == MSG_TURN_RETRACTING,     "turn bits di
 _Static_assert(FIO_TURN_BOARD_WATCHING == MSG_TURN_BOARD_WATCHING, "turn bits diverged");
 _Static_assert(FIO_TURN_HELD           == MSG_TURN_HELD,           "turn bits diverged");
 _Static_assert(FIO_TURN_GENESIS        == MSG_TURN_GENESIS,        "turn bits diverged");
+_Static_assert(FIO_TURN_CANCEL_NOOP    == MSG_TURN_CANCEL_NOOP,    "cancel diverged");
+_Static_assert(FIO_TURN_CANCEL_RESTAGE == MSG_TURN_CANCEL_RESTAGE, "cancel diverged");
+_Static_assert(FIO_TURN_CANCEL_CLEAR   == MSG_TURN_CANCEL_CLEAR,   "cancel diverged");
 _Static_assert(FIO_TURN_ADMIT_RETRACTING  == MSG_TURN_ADMIT_RETRACTING,  "admit diverged");
 _Static_assert(FIO_TURN_ADMIT_SUPERSEDED  == MSG_TURN_ADMIT_SUPERSEDED,  "admit diverged");
 _Static_assert(FIO_TURN_ADMIT_HELD_PICKUP == MSG_TURN_ADMIT_HELD_PICKUP, "admit diverged");
@@ -1678,6 +1681,7 @@ _Static_assert(FIO_TURN_SEND_BLIND      == MSG_TURN_SEND_BLIND,      "send verdi
 _Static_assert(FIO_TURN_SEND_DECODE     == MSG_TURN_SEND_DECODE,     "send verdict diverged");
 _Static_assert(FIO_TURN_SEND_UNREADABLE == MSG_TURN_SEND_UNREADABLE, "send verdict diverged");
 _Static_assert(FIO_TURN_SEND_REBASE     == MSG_TURN_SEND_REBASE,     "send verdict diverged");
+_Static_assert(FIO_TURN_SEND_OTHERGAME  == MSG_TURN_SEND_OTHERGAME,  "send verdict diverged");
 
 int fio_msg_turn_can_send(int state) { return msg_turn_can_send(state); }
 
@@ -1687,6 +1691,10 @@ int fio_msg_turn_can_act(int state, int n_human_moves) {
 
 int fio_msg_turn_can_stage(int state, int n_human_moves) {
     return msg_turn_can_stage(state, n_human_moves);
+}
+
+int fio_msg_turn_cancel(int state, int n_pending) {
+    return msg_turn_cancel(state, n_pending);
 }
 
 int fio_msg_turn_admit(int state, int move_type, int pickup_hold) {
@@ -1706,8 +1714,9 @@ int fio_msg_turn_sent_source(int staged, int have_host, int have_sealed) {
 }
 
 int fio_msg_turn_send_verdict(int staged, int have_host, int have_sealed,
-                              int host_is_sealed, int decoded) {
-    return msg_turn_send_verdict(staged, have_host, have_sealed, host_is_sealed, decoded);
+                              int host_is_sealed, int decoded, int same_game) {
+    return msg_turn_send_verdict(staged, have_host, have_sealed, host_is_sealed,
+                                 decoded, same_game);
 }
 
 int fio_msg_turn_hold_state(int n_events, int cut) {

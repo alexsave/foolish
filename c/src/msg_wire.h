@@ -978,6 +978,38 @@ int msg_turn_can_act(int state, int n_human_moves);
 // the first attacker, so the only way it progresses is to send the deal on.
 int msg_turn_can_stage(int state, int n_human_moves);
 
+// ---- THE STAGED BUBBLE, DELETED OUT OF THE INPUT FIELD ---------------------
+//
+// Messages draws an X on the bubble an extension inserted, and the human can
+// press it. That is neither a send nor an undo the app initiated: it is the
+// human saying "this is not going out", and it arrives as its own host callback
+// (didCancelSending). Owner, on the send hint left pointing at a bubble that no
+// longer exists: "X-ing the staged bubble should be the SAME as hitting the
+// undo button. If the player has ALREADY undone via the button, then X-ing the
+// bubble is a NO-OP."
+//
+// So a cancel is the UNDO rule, and the ONE thing that separates them is the
+// bubble rather than the game: the Undo BUTTON has to leave a bubble behind,
+// because Apple offers no call to remove an inserted one and an undo-to-empty
+// can only OVERWRITE the stale move with the base state
+// (MessageTableView.stageBaseNow). A cancel has nothing left to overwrite - the
+// human already removed it - so putting one back would re-insert exactly what
+// they just deleted, hint arrow and all.
+//
+// `n_pending` is the depth of the staged list BEFORE the undo, because that is
+// what decides whether anything is still staged AFTER it: a throw-in stacked on
+// an attack leaves the attack staged, and that shorter chain does still need a
+// bubble. Passed rather than derived from MSG_TURN_STAGED, which only says
+// "some" - the count is a fact the host holds and the rule needs.
+//
+// IDEMPOTENT BY CONSTRUCTION, which is the owner's second sentence: with
+// nothing staged there is no move to take back, and a cancel that undid
+// anything then would be undoing a move the human never staged twice.
+#define MSG_TURN_CANCEL_NOOP    0  // nothing of mine was staged - leave the game alone
+#define MSG_TURN_CANCEL_RESTAGE 1  // undo one; the shorter chain still needs a bubble
+#define MSG_TURN_CANCEL_CLEAR   2  // undo one; nothing is staged now, and nothing goes back
+int msg_turn_cancel(int state, int n_pending);
+
 // ---- the door every gesture comes through ----------------------------------
 //
 // Enforced as well as displayed. The board already hides what these refuse, so
@@ -1064,6 +1096,7 @@ int msg_turn_sent_source(int staged, int have_host, int have_sealed);
 #define MSG_TURN_SEND_DECODE      3  // decode the bytes and ask again
 #define MSG_TURN_SEND_UNREADABLE  4  // they will not decode: keep the board on its staged move
 #define MSG_TURN_SEND_REBASE      5  // adopt them as the new base and drop the staged moves
+#define MSG_TURN_SEND_OTHERGAME   6  // a chain for a DIFFERENT GAME: never this board's to adopt
 //
 // WHY A REFUSAL KEEPS THE STAGED MOVES. They are what the board is DRAWN from,
 // so dropping them while declining to rebase walks the board back by exactly
@@ -1071,8 +1104,31 @@ int msg_turn_sent_source(int staged, int have_host, int have_sealed);
 // refusal exists to prevent. Re-deriving the sent bytes instead was rejected: a
 // re-seal stamps a fresh send clock, so it would be a DIFFERENT chain with a
 // digest nobody in the thread has.
+//
+// AND WHY A DIFFERENT GAME IS ITS OWN ANSWER (owner, 1.0(37): "if you have one
+// game open, and you scroll up and hit a different game bubble, it should
+// completely switch to that other game. Not rebase, completely switch. If a
+// bubble was staged, make the bubble a noop").
+//
+// A thread holds many games, every bubble stays tappable forever, and a staged
+// bubble is a DRAFT that survives the human tapping away to another game -
+// Messages offers no call to remove one. So the send signal for game B's draft
+// can reach a board built on game A, and with nothing staged on that board and
+// nothing sealed by it, FOREIGN cannot catch it: that test is "did I seal these
+// bytes", and a board that has sealed nothing has no opinion. The verdict was
+// REBASE, and a rebase adopts - `base` becomes the other game's chain, decoded
+// and MASKED FOR THIS BOARD'S SEAT NUMBER, which in the other game belongs to
+// somebody else. One tap away from a hand that is not yours.
+//
+// `same_game` is the host's comparison of the decoded chain's game id against
+// the one this board is playing, and it is asked on the SECOND call only,
+// because it is not knowable before the decode: pass < 0 on the first ask.
+//
+// It sits under the decode tests and above every "adopt" answer, which is the
+// whole of it: bytes that will not decode are unreadable whoever they belong
+// to, and bytes that decode to another game are never this board's to take.
 int msg_turn_send_verdict(int staged, int have_host, int have_sealed,
-                          int host_is_sealed, int decoded);
+                          int host_is_sealed, int decoded, int same_game);
 
 // ---- what is withheld ------------------------------------------------------
 //
