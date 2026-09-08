@@ -30,8 +30,103 @@
 // sequence in both orders.
 
 import CoreGraphics
+import Foundation
 
 public enum CollapseTween {
+    // MARK: The host's curve, and the box height that follows it
+    //
+    // THE DRAWER IS A SPRING. Seventeen collapses filmed at the recorder's own
+    // rate and averaged (the per-take noise is 13-16pt; the average fits to
+    // 3.5pt of a 481pt travel) land on a CRITICALLY DAMPED spring with a
+    // response of 0.338s. No bezier follows that through its opening 70ms,
+    // which is where the drawer sheds a fifth of its travel - and that opening
+    // is exactly where every earlier bezier put the hand 30-40pt off the edge.
+    //
+    // WHY THE BOX IS DRIVEN EXPLICITLY, NOT BY `withAnimation`. Three reasons,
+    // each filmed:
+    //
+    //   1. A SwiftUI animation renders its START value on its first frame. On
+    //      the flip that frame is the still-expanded box under a drawer whose
+    //      top has already moved 20-45pt, i.e. the hand pushed off the bottom
+    //      of the screen for a frame. An evaluator renders the RIGHT height on
+    //      its first frame instead.
+    //   2. `.spring(response:)` cannot express where the host's spring already
+    //      IS when our first report arrives; `lead` can.
+    //   3. The height SwiftUI renders is whatever the state held when its
+    //      update cycle ran. A free-running timer at twice the frame rate
+    //      keeps that value at most half a frame stale, whichever way the two
+    //      clocks happen to be phased. (It does NOT make the app render
+    //      faster: measured, the timer ticked 142 times in 1.2s while the film
+    //      still showed a new height on every other 8ms frame - SwiftUI
+    //      renders on its own display link, 60Hz on this device, and the
+    //      render server composites the host's transaction at 120Hz between
+    //      our frames. That residual is a sawtooth of the drawer's own 8ms
+    //      travel, ~26pt at peak, and no curve can remove it.)
+    //
+    // The formula is pure so it can be checked against the filmed average
+    // (CollapseCurveTests) rather than re-filmed. `scratchpad/acx/phase.py`
+    // reads the lag between the two clocks off a filmed take, which is how
+    // `hostLead` was set and how it should be reset on a device that differs.
+
+    /// The host drawer's spring response, in seconds. Fitted; see above.
+    public static let hostResponse: Double = 0.338
+
+    /// How far into the host's spring it already is when the collapse's first
+    /// geometry report reaches `follow`, in seconds. Added to the tween's own
+    /// clock so its renders land in phase with the drawer.
+    ///
+    /// MEASURED, not tuned: 5ms centres the box on the drawer (fresh frames
+    /// +2ms behind, the re-composited frame between them 6ms ahead). Ten is
+    /// chosen on purpose, because a dropped frame at peak velocity leaves the
+    /// box one extra frame too tall and its bottom edge off the screen - the
+    /// one thing the owner rules out entirely. Five extra milliseconds is a
+    /// 15pt margin against that, paid as 15pt of hand-above-the-edge on the
+    /// frames we do draw. Filmed: at 3ms a dropped frame put the bar off
+    /// screen twice; at 5ms the margin was 14pt; at 20ms the hand rode 68pt
+    /// high.
+    public static let hostLead: Double = 0.010
+
+    /// How often the driver evaluates the curve, in Hz. Twice the frame rate:
+    /// see point 3 above. A tick that lands between two renders costs one
+    /// evaluation and a state write, nothing more.
+    public static let driveHz: Double = 120
+
+    /// How long the driver runs before handing the box back to the model. The
+    /// spring is at 99.99% by 0.5s; the rest is the host's own settle.
+    public static let driveDuration: Double = 1.2
+
+    /// Progress 0...1 of a critically damped spring `response` seconds long,
+    /// `t` seconds in. Zero before the start; approaches 1 asymptotically.
+    public static func hostProgress(at t: Double, response: Double = hostResponse) -> Double {
+        guard t > 0 else { return 0 }
+        let w = 2 * Double.pi / response
+        return 1 - (1 + w * t) * exp(-w * t)
+    }
+
+    /// The box height `t` seconds into a collapse from `from` to `to`.
+    public static func height(from: CGFloat, to: CGFloat, at t: Double,
+                              response: Double = hostResponse) -> CGFloat {
+        to + (from - to) * CGFloat(1 - hostProgress(at: t, response: response))
+    }
+
+    /// How far the wool hangs below the box while a collapse runs, in points:
+    /// the lead's margin (~15pt) plus one 8ms re-composite of the drawer at
+    /// peak (~26pt), so a box kept deliberately short shows wool under the
+    /// hand and not the host's fallback colour. See `MessagesRootView`'s
+    /// background.
+    public static let woolOverhang: CGFloat = 48
+
+    /// A retarget's easing: a later, taller report moves the target over this
+    /// long rather than in one step (the step was filmed as a 34pt hop).
+    public static let retargetDuration: Double = 0.18
+
+    /// Where an eased retarget from `a` to `b` is, `t` seconds after it began.
+    public static func retargetBlend(from a: CGFloat, to b: CGFloat, at t: Double) -> CGFloat {
+        let x = min(1, max(0, t / retargetDuration))
+        let eased = 1 - (1 - x) * (1 - x)          // ease-out, matches the old .easeOut
+        return a + (b - a) * CGFloat(eased)
+    }
+
     /// IS THE BOARD'S BOX MID-TWEEN RIGHT NOW? Set by the one place that runs
     /// the tween (MessagesRootView.follow) and read by the one place that aims
     /// flights (MessageTableView.playStep).

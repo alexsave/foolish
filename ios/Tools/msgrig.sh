@@ -31,7 +31,15 @@
 #   ios/Tools/msgrig.sh slowmo N     stretch every flight by N (0 = off); set it
 #                                    BEFORE the scenario that opens the board
 #   ios/Tools/msgrig.sh move         select a card and play it (auto-collapses)
-#   ios/Tools/msgrig.sh film NAME S  record S seconds into NAME.mp4 + frames
+#   ios/Tools/msgrig.sh ruler [off]  draw the debug ruler on the surface's box,
+#                                    so a filmed frame reports where the box's
+#                                    own top and bottom edges were; set it
+#                                    BEFORE the scenario that opens the board
+#   ios/Tools/msgrig.sh film NAME S  record S seconds into NAME.mp4 + EVERY
+#                                    composited frame + times.txt
+#   ios/Tools/msgrig.sh sheet NAME [FIRST] [LAST] [COLS] [ROWS]
+#                                    contact sheets of that take, one cell per
+#                                    frame, each stamped with its own timestamp
 #   ios/Tools/msgrig.sh shot         one screenshot, downscaled to points
 #
 # Requirements (one-time):
@@ -79,6 +87,7 @@ profile() {
   case "$1x$2" in
     402x874)   echo "200 210  48 826  145 776  359 452  245 300  200 525 200 180" ;;  # iPhone 17
     375x667)   echo "188 150  48 618  145 602  333 353  230 250  188 420 188 140" ;;  # iPhone SE
+    428x926)   echo "214 176  48 878  145 761  385 505  260 355  214 570 214 180" ;;  # iPhone 14 Plus
     *) echo "no profile for $1x$2 points - run 'msgrig.sh probe' and add one" >&2
        exit 2 ;;
   esac
@@ -99,6 +108,13 @@ group_dir() {
     id=$(plutil -extract MCMMetadataIdentifier raw "$d/.com.apple.mobile_container_manager.metadata.plist" 2>/dev/null || true)
     [ "$id" = "group.cards.foolish.msg" ] && { echo "$d"; return; }
   done
+  # Found nothing. Every caller writes a flag file into whatever this prints, so
+  # printing NOTHING means writing to `/dev.slowmo` - which on a machine where
+  # the root is writable would silently do the wrong thing, and here just says
+  # "read-only file system", which reads as a bug in the rig rather than as "the
+  # app is not installed on this simulator".
+  echo "no App Group container on $SIM - install the app first" >&2
+  echo "/nonexistent/group.cards.foolish.msg"
 }
 
 cmd_setup() {
@@ -307,6 +323,28 @@ cmd_reopen() {
   tap "$ax" "$ay" 5        # Foolish -> the seeded board, replaying its bubble
 }
 
+# Record a take and keep EVERY COMPOSITED FRAME.
+#
+# `simctl io recordVideo` captures at the display's own 60Hz and writes a
+# VARIABLE-rate movie: one frame per frame the device actually composited, and
+# none at all while the screen is still. Extracting that with `-vf fps=30`
+# RESAMPLED it to a constant 30 - which both duplicates the still frames and
+# throws away half of every animation. The round-10d collapse was measured off
+# such an extraction and got ten samples across the tween; at the recorder's own
+# rate the same take carries twice that, and the extra samples fall exactly
+# where the curve is steepest.
+#
+# So: `-fps_mode passthrough`, which keeps the captured frames 1:1. Passthrough
+# frames are NOT evenly spaced, so their presentation timestamps go beside them
+# in `times.txt`, one line per frame - a frame is PLACED IN TIME, never assumed
+# to be 1/30 (or 1/60) after the one before it. On a healthy take the dominant
+# inter-frame delta is 0.0167s; a delta outside 12-22ms is a beat the device
+# dropped, and `sheet` flags those cells.
+#
+# FRAME NUMBERING CHANGED HERE (it was `t_%04d.png` at a constant 30fps, from
+# t_0001): frames are now `f%05d.png` from f00001, one per composited frame, and
+# their times are in `times.txt`. Anything that indexed the old names by
+# arithmetic on 33ms is wrong twice over and should read `times.txt` instead.
 cmd_film() {
   local name="${1:-film}" secs="${2:-15}"
   rm -f "$WORK/$name.mp4"; rm -rf "$WORK/$name"; mkdir -p "$WORK/$name"
@@ -317,8 +355,76 @@ cmd_film() {
   "$@"                     # whatever should happen on camera
   sleep "$secs"
   kill -INT $rec 2>/dev/null || true; sleep 4
-  ffmpeg -v error -i "$WORK/$name.mp4" -vf fps=30 "$WORK/$name/t_%04d.png"
-  echo "frames: $(ls "$WORK/$name" | wc -l) in $WORK/$name"
+  # The image2 muxer complains "non monotonically increasing dts" once per
+  # repeated timestamp in a variable-rate source. It is writing numbered PNGs,
+  # which carry no timestamps at all, so it is noise about nothing - but it is
+  # the ONLY expected noise, so everything else still reaches the terminal.
+  ffmpeg -v error -i "$WORK/$name.mp4" -fps_mode passthrough \
+         "$WORK/$name/f%05d.png" 2> "$WORK/$name/ffmpeg.err" || {
+    cat "$WORK/$name/ffmpeg.err" >&2; return 1; }
+  grep -v 'non monotonically increasing dts\|Last message repeated' \
+       "$WORK/$name/ffmpeg.err" >&2 || true
+  ffprobe -v error -select_streams v:0 -show_entries frame=pts_time \
+          -of csv=p=0 "$WORK/$name.mp4" | tr -d ',' > "$WORK/$name/times.txt"
+  local n dom
+  n=$(ls "$WORK/$name" | grep -c '^f' || true)
+  # The dominant inter-frame delta. 0.0167s = the display's own 60Hz, i.e. the
+  # take is intact; anything else is a finding, not a detail.
+  dom=$(python3 -c "
+import collections
+t=[float(x) for x in open('$WORK/$name/times.txt')]
+d=collections.Counter(round(b-a,4) for a,b in zip(t,t[1:]))
+print(' '.join(f'{k}s x{v}' for k,v in d.most_common(3)))" 2>/dev/null || true)
+  echo "frames: $n in $WORK/$name  (deltas: $dom)"
+}
+
+# Contact sheets from a take: one cell per composited frame, in reading order,
+# each stamped `index +offset (+delta)` read from `times.txt`.
+#
+# The stamp is the point. A sheet of unlabelled frames says an animation looks
+# wrong; a sheet whose cells carry their own time says WHERE it went wrong and
+# whether a beat was dropped. A delta outside 12-22ms is flagged.
+#
+#   msgrig.sh sheet NAME [FIRST] [LAST] [COLS] [ROWS]
+cmd_sheet() {
+  local name="${1:-film}" first="${2:-0}" last="${3:-0}" cols="${4:-8}" rows="${5:-6}"
+  python3 - "$WORK/$name" "$first" "$last" "$cols" "$rows" <<'SHEET'
+import os, sys
+from PIL import Image, ImageDraw, ImageFont
+d, first, last, cols, rows = (sys.argv[1], int(sys.argv[2]), int(sys.argv[3]),
+                              int(sys.argv[4]), int(sys.argv[5]))
+files = sorted(f for f in os.listdir(d) if f[0] == 'f' and f.endswith('.png'))
+times = [float(x) for x in open(os.path.join(d, 'times.txt'))]
+# A movie can carry one more frame than ffprobe listed a time for; hold the
+# last time rather than shifting every later stamp by a frame.
+times += [times[-1] if times else 0.0] * (len(files) - len(times))
+keep = list(range(first, min(last or len(files), len(files))))
+if not keep:
+    print('no frames'); raise SystemExit
+cw, band = 240, 30
+src = Image.open(os.path.join(d, files[keep[0]]))
+ch = int(src.height * cw / src.width)
+try:    font = ImageFont.truetype('/System/Library/Fonts/Menlo.ttc', 15)
+except Exception: font = ImageFont.load_default()
+per, t0 = cols * rows, times[keep[0]]
+for s in range((len(keep) + per - 1) // per):
+    chunk = keep[s * per:(s + 1) * per]
+    sheet = Image.new('RGB', (cols * cw, rows * (ch + band)), (18, 18, 18))
+    dr = ImageDraw.Draw(sheet)
+    for k, i in enumerate(chunk):
+        x, y = (k % cols) * cw, (k // cols) * (ch + band)
+        sheet.paste(Image.open(os.path.join(d, files[i])).resize((cw, ch), Image.LANCZOS),
+                    (x, y + band))
+        dt = (times[i] - times[i - 1]) * 1000 if i else 0
+        # Not ~17ms: a frame the device never composited.
+        flag = '' if (i == keep[0] or 12 <= dt <= 22) else ' !'
+        dr.text((x + 5, y + 7),
+                f'{i:04d} +{(times[i] - t0) * 1000:.0f}ms ({dt:+.0f}){flag}',
+                fill=(255, 210, 90) if flag else (170, 170, 170), font=font)
+        dr.rectangle([x, y, x + cw - 1, y + band + ch - 1], outline=(60, 60, 60))
+    p = os.path.join(d, f'sheet{s + 1:02d}.png')
+    sheet.save(p); print(p)
+SHEET
 }
 
 # Both taps are found by colour, so this is the same code on every device: the
@@ -349,6 +455,13 @@ case "${1:-}" in
           else printf '%s' "$2" > "$(group_dir)/dev.slowmo"; echo "slowmo x$2"; fi ;;
   move)  cmd_move ;;
   film)  shift; cmd_film "$@" ;;
+  sheet) shift; cmd_sheet "$@" ;;
+  # Draw the debug RULER on the surface's own box (CollapseRuler) - the two
+  # edges of `boxHeight` in a filmed frame, which is the only way to read the
+  # collapse curve off a transition the host composites from snapshots. Read
+  # once, like slowmo, so set it BEFORE the scenario that opens the board.
+  ruler) if [ "${2:-on}" = "off" ]; then rm -f "$(group_dir)/dev.ruler"; echo "ruler off"
+         else : > "$(group_dir)/dev.ruler"; echo "ruler on"; fi ;;
   probe) read -r W H < <(screen); echo "screen ${W}x${H}pt"; python3 "$UI" all ;;
   shot)  shot; read -r W H < <(screen); python3 -c "
 from PIL import Image; Image.open('$WORK/shot.png').resize(($W,$H)).save('$WORK/shot_pt.png')"
