@@ -32,6 +32,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Same reason as scripts/wasm_stamp.sh: this script sorts two lists and feeds
+# them to `comm`, which is only correct if both were sorted the same way.
+export LC_ALL=C
+
 BASE="${1:-origin/main}"
 
 # The artifacts, and the make target that rebuilds each. Kept here rather than

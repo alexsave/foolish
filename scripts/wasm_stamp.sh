@@ -32,6 +32,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# BYTE ORDER, NOT THE USER'S LOCALE. The hash is over a SORTED list, so the
+# collation `sort` uses is part of the hash. A Mac runs under en_US.UTF-8 and
+# CI's Linux under C/POSIX, and the two order the same filenames differently -
+# which showed up as a stamp that was correct on the machine that wrote it and
+# wrong in CI, with no file in the tree actually differing. Pin it here, once,
+# so the stamp means the same thing everywhere.
+export LC_ALL=C
+
 STAMP=sdk/ts/wasm/WASM_STAMP
 
 sha() {  # one file -> bare hex, on both a Mac and CI's Linux
