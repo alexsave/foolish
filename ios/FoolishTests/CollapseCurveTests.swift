@@ -1,83 +1,96 @@
-// CollapseCurveTests - the collapse's animation is a SPRING, and the number in
-// the code is the number in the comment.
+// CollapseCurveTests - the collapse follows the host drawer's own curve, and the
+// curve in the code is the curve that was filmed.
 //
-// WHY A SOURCE TEST. The value under test is empirical: it was fitted to the
-// host's own drawer, measured optically at 60fps off a filmed run, and there is
-// no way to assert it from inside a unit test - `withAnimation` has no readable
-// curve, and the thing it has to match belongs to Messages, not to us.
+// WHY THIS IS NOW A NUMERIC TEST. Round 10d shipped a bezier over 0.38s whose
+// doc comment said "quartic-out over 0.45s", and the two drifted for months
+// because the only check was a reader trusting a paragraph. The animation is
+// no longer a `withAnimation` curve at all: `CollapseTween.height(from:to:at:)`
+// is a pure function of time, so the thing that was only ever measurable off a
+// film can be asserted directly against the film's own numbers.
 //
-// WHAT MAKES IT WORTH HAVING is the failure it prevents, which already
-// happened. Round 10d fitted a quartic-out over 0.45s, wrote that in the doc
-// comment, and shipped `.timingCurve(..., duration: 0.38)`. The two then sat
-// out of step for months while every later reader trusted the paragraph. At
-// 30fps nobody could see the cost; at 60fps it is 107pt of deviation from the
-// curve the host actually runs, and it is what put the box's bottom edge 33pt
-// away from where it belongs for the first ~130ms of every collapse.
-//
-// So this asserts the two agree. A future edit that retunes the animation and
-// leaves the comment behind fails here, which is the only place that could have
-// caught the original.
-//
-// THE MEASUREMENT behind the value, for whoever reads this next (iPhone 14 Plus,
-// real Messages, two independent takes, `msgrig.sh ruler` + `film` + `sheet`):
-//
-//   what the code ran, .timingCurve(0.165,0.84,0.44,1) @0.38s   ~105pt max error
-//   quartic-out @0.45s, what the comment claimed                  ~60pt
-//   cubic-out @0.42s, the best analytic easing                    ~34pt
-//   critically-damped spring, response 0.33s                      ~16pt
-//
-// The host is running a SPRING, which is why no bezier ever fit. Fitting both
-// takes at once lands on response 0.39 / damping 0.88 / initial velocity 1.8 at
-// ~13pt; `withAnimation(.spring(response:dampingFraction:))` cannot express an
-// initial velocity, so the shipped value is the best critically-damped fit.
-//
-// AND THE LIMIT OF ALL OF IT, which is why the residual is not worth chasing
-// further: a per-frame clock drawn beside the ruler (CollapseClock) showed that
-// 11 of the 26 frames in a collapse are frames THIS APP NEVER DREW - Messages
-// composites the transition from snapshots of our view. No curve can correct a
-// frame we did not render. The spring wins because it is closer more of the
-// time, not because it can ever be exact.
+// THE FIXTURE is the drawer's top edge averaged across seventeen filmed
+// collapses (iPhone 14 Plus, real Messages, `msgrig.sh ruler` + `film`,
+// passthrough frames), as a fraction of its 481pt travel. Single takes carry
+// 13-16pt of frame-timing noise; the average fits a critically damped spring to
+// 3.5pt. The film's first moving frame is ~6.5ms after the spring began, which
+// is the `phase` below - the recorder's frame clock, not a knob.
 import XCTest
+@testable import FoolishKit
 
 final class CollapseCurveTests: XCTestCase {
 
-    private func rootViewSource() throws -> String {
-        // #filePath is this file; the surface sits one directory over.
-        let here = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        let url = here.deletingLastPathComponent()
-            .appendingPathComponent("FoolishKit/Messages/MessagesRootView.swift")
-        return try String(contentsOf: url, encoding: .utf8)
+    /// (ms after the first moving frame, fraction of the travel done).
+    private let filmedAverage: [(Double, Double)] = [
+        (0, 0.0000), (10, 0.0458), (20, 0.0869), (30, 0.1505), (50, 0.2825),
+        (70, 0.4198), (100, 0.5900), (150, 0.7854), (200, 0.8928), (300, 0.9773),
+        (500, 0.9999),
+    ]
+    private let travel: Double = 481
+    private let phase: Double = 0.0065
+
+    /// The curve in the code is the curve that was filmed: within 5pt of a
+    /// 481pt travel at every averaged sample. A response of 0.30 or 0.38 is
+    /// 15-25pt out at 50ms, which is the opening the whole fit is about.
+    func testTheCurveMatchesTheFilmedDrawer() {
+        for (ms, frac) in filmedAverage {
+            let got = CollapseTween.hostProgress(at: ms / 1000 + phase)
+            XCTAssertEqual(got * travel, frac * travel, accuracy: 5,
+                           "at \(Int(ms))ms the drawer had done \(frac * travel)pt, the curve says \(got * travel)")
+        }
     }
 
-    /// The collapse animates on a spring, not a bezier. A `timingCurve` here is
-    /// the regression: the host's drawer is a spring, and a bezier cannot
-    /// follow one through its opening 70ms, which is where the whole error is.
-    func testTheCollapseAnimatesOnASpring() throws {
-        let src = try rootViewSource()
-        guard let line = src.components(separatedBy: "\n")
-            .first(where: { $0.contains("withAnimation(") && $0.contains("boxHeight") == false
-                            && $0.contains("spring") || ($0.contains("withAnimation(") && $0.contains("timingCurve")) })
-        else { return XCTFail("no collapse animation found in MessagesRootView") }
-        XCTAssertFalse(line.contains("timingCurve"),
-                       "the collapse is back on a bezier - the host runs a spring, "
-                       + "and a bezier misses its opening 70ms by ~105pt")
-        XCTAssertTrue(line.contains("spring("),
-                      "the collapse animation is neither a spring nor a timingCurve: \(line)")
+    /// A spring that has not started has not moved. The evaluator is asked for
+    /// negative times when `lead` is negative or a tick lands early, and a
+    /// critically damped formula extended below zero does NOT return zero.
+    func testNothingHappensBeforeTheStart() {
+        for t in [-1.0, -0.05, -0.001, 0] {
+            XCTAssertEqual(CollapseTween.hostProgress(at: t), 0, "t=\(t)")
+        }
     }
 
-    /// The response in the code and the response in the comment are the same
-    /// number. This is the assertion that would have caught round 10d's
-    /// 0.38-versus-0.45 drift.
+    /// Monotonic and settled: the drawer never comes back up, and by half a
+    /// second it is where it will rest.
+    func testTheCurveOnlyEverDescendsAndSettles() {
+        var last = -1.0
+        for i in 0...200 {
+            let p = CollapseTween.hostProgress(at: Double(i) * 0.005)
+            XCTAssertGreaterThanOrEqual(p, last, "step \(i)")
+            XCTAssertLessThanOrEqual(p, 1)
+            last = p
+        }
+        XCTAssertGreaterThan(CollapseTween.hostProgress(at: 0.5), 0.999)
+    }
+
+    /// The box height rides the curve between its two ends and nowhere else.
+    func testTheHeightRunsFromTheExpandedBoxToTheCompactOne() {
+        XCTAssertEqual(CollapseTween.height(from: 815, to: 340, at: 0), 815)
+        XCTAssertEqual(CollapseTween.height(from: 815, to: 340, at: 2), 340, accuracy: 0.01)
+        // 0.59 of the way 100ms after the film's first moving frame, off the
+        // fixture above (so the film's phase applies here too).
+        let mid = CollapseTween.height(from: 815, to: 340, at: 0.1 + phase)
+        XCTAssertLessThan(mid, 815); XCTAssertGreaterThan(mid, 340)
+        XCTAssertEqual(mid, 815 - 475 * 0.59, accuracy: 5)
+    }
+
+    /// A retarget eases, it does not step: the ends are exact and the middle is
+    /// strictly between them.
+    func testARetargetEasesRatherThanSteps() {
+        XCTAssertEqual(CollapseTween.retargetBlend(from: 360, to: 394, at: 0), 360)
+        XCTAssertEqual(CollapseTween.retargetBlend(from: 360, to: 394, at: 1), 394)
+        let mid = CollapseTween.retargetBlend(from: 360, to: 394,
+                                              at: CollapseTween.retargetDuration / 2)
+        XCTAssertGreaterThan(mid, 360); XCTAssertLessThan(mid, 394)
+    }
+
+    /// The number in the code is the number in the comment - the check that
+    /// would have caught round 10d's 0.38-versus-0.45 drift.
     func testTheCodeAndTheCommentAgreeOnTheResponse() throws {
-        let src = try rootViewSource()
-        guard let m = src.range(of: #"response:\s*([0-9.]+)"#, options: .regularExpression)
-        else { return XCTFail("no `response:` in MessagesRootView - has the spring gone?") }
-        let coded = String(src[m]).components(separatedBy: ":")[1]
-            .trimmingCharacters(in: .whitespaces)
-        XCTAssertTrue(src.contains("response \(coded)s") || src.contains("response \(coded)"),
-                      "the code animates with response \(coded) but no comment in this file "
-                      + "states that number. Round 10d shipped 0.38 while its comment said "
-                      + "0.45 and the two drifted for months - say the number where the "
-                      + "next reader will see it.")
+        let here = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        let src = try String(contentsOf: here.deletingLastPathComponent()
+            .appendingPathComponent("FoolishKit/Messages/CollapseTween.swift"), encoding: .utf8)
+        let coded = String(format: "%.3f", CollapseTween.hostResponse)
+        XCTAssertTrue(src.contains("response of \(coded)s"),
+                      "the code runs response \(coded) but the file's note does not say so - "
+                      + "say the number where the next reader will see it")
     }
 }

@@ -56,6 +56,7 @@ public enum MessageDevBoard {
     private static let replayFile = "dev.replay"
     private static let slowmoFile = "dev.slowmo"
     private static let rulerFile = "dev.ruler"
+    private static let collapseFile = "dev.collapse"
 
     /// The seeded chain, or nil when the flag file is absent - which is the
     /// normal case, including every ordinary DEBUG run.
@@ -156,6 +157,36 @@ public enum MessageDevBoard {
             .containerURL(forSecurityApplicationGroupIdentifier: appGroup)
         else { return false }
         return FileManager.default.fileExists(atPath: dir.appendingPathComponent(rulerFile).path)
+    }()
+
+    /// The collapse driver's knobs, for a filmed sweep: `lead=0.02 hz=120
+    /// resp=0.338` (seconds, Hz, seconds; any subset) in `dev.collapse`. The
+    /// defaults are the shipped values in `CollapseTween`; the file exists so
+    /// a sweep is a file write and a take, not a rebuild per point. Read ONCE,
+    /// like `slowmo` and for the same reason.
+    public struct CollapseKnobs {
+        public var lead = CollapseTween.hostLead
+        public var hz = CollapseTween.driveHz
+        public var response = CollapseTween.hostResponse
+    }
+    public static let collapseKnobs: CollapseKnobs = {
+        var k = CollapseKnobs()
+        guard let dir = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroup),
+              let raw = try? String(contentsOf: dir.appendingPathComponent(collapseFile),
+                                    encoding: .utf8)
+        else { return k }
+        for pair in raw.split(whereSeparator: { $0 == " " || $0 == "\n" }) {
+            let kv = pair.split(separator: "=", maxSplits: 1)
+            guard kv.count == 2, let v = Double(kv[1]) else { continue }
+            switch kv[0] {
+            case "lead": k.lead = v
+            case "hz": k.hz = v
+            case "resp": k.response = v
+            default: break
+            }
+        }
+        return k
     }()
 
     /// Even-length hex to bytes; nil on anything malformed, so a truncated or

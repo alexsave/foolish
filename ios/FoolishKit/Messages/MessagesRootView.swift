@@ -184,6 +184,11 @@ public struct MessagesRootView: View {
     /// Round-10d: the box's height while the collapse tween runs; 0 = follow
     /// the model box exactly (every other moment, including manual drags).
     @State private var boxHeight: CGFloat = 0
+    /// The clock that moves `boxHeight` through an auto-collapse - a timer
+    /// evaluating the host's own curve, not a SwiftUI animation. See
+    /// CollapseTween's file note for the three filmed reasons. `@State` so it
+    /// survives the body re-evaluations its own ticks cause.
+    @State private var driver = CollapseDriver()
     /// The previous geometry height, to spot the collapse flip's down-snap.
     @State private var lastGeoHeight: CGFloat = 0
     /// Where the collapse tween is currently headed. Meaningless unless
@@ -259,9 +264,25 @@ public struct MessagesRootView: View {
     /// jitters ~10pt frame to frame, where a manual grabber drag - the look
     /// this is copying - holds the same gap to 1.4pt. The excess is clipped, so
     /// nothing is exposed and no wool shows; the hand is simply that far under
-    /// the drawer's edge for four or five frames. Left alone deliberately: this
+    /// the drawer's edge for four or five frames. Left alone at the time: this
     /// animation was tuned against the owner's explicit spec, and three earlier
     /// approaches were filmed failing before it.
+    ///
+    /// ROUND 32 - THE BEZIER IS GONE. Seventeen more variants were filmed
+    /// against the bezier and none beat it, because every one of them shared
+    /// three things with it that nobody had spotted: `withAnimation` paints
+    /// its START value on its first frame (the expanded box under a drawer
+    /// that had already moved - the one off-screen frame in the shipped
+    /// take); no `.spring(response:)` can say how far into ITS spring the host
+    /// already is when our report arrives; and the host's transaction is
+    /// re-composited by the render server between our frames, so a stale
+    /// height shows up as a sawtooth on the hand whatever the curve. The box
+    /// is now driven by `CollapseDriver` evaluating the fitted host spring
+    /// (`CollapseTween.height`, response 0.338s, lead 10ms) - see the note at
+    /// the top of CollapseTween for all three, measured. On the rig, against
+    /// the shipped bezier's 1 off-screen frame / 39.4pt excursion / 47.4pt
+    /// max step: 0 / 20pt / 30pt at lead 5ms, the 30pt being the drawer's own
+    /// 8ms travel at peak, which is the floor.
     ///
     /// The EXPAND direction is composited bottom-referenced by the host (the
     /// owner: it "works much better... cards stay at the bottom"), so up-snaps
@@ -269,7 +290,7 @@ public struct MessagesRootView: View {
     /// The DECISION is `CollapseTween.step` - a pure function, so the host's
     /// noisy transition reports can be replayed as a test rather than re-filmed
     /// (CollapseTweenTests). This is the part that cannot be pure: the
-    /// animation, and the timer that hands the box back to the model.
+    /// driver, and the release that hands the box back to the model.
     private func follow(height: CGFloat) {
         AnimLog.say("stage follow geo=\(Int(lastGeoHeight))->\(Int(height)) armed=\(armed)")
         lastGeoHeight = height
@@ -286,25 +307,31 @@ public struct MessagesRootView: View {
             collapsing = true
             CollapseTween.isTweening = true
             collapseTarget = to
-            boxHeight = from
-            withAnimation(.timingCurve(0.165, 0.84, 0.44, 1, duration: 0.38)) {
-                boxHeight = to
-            }
-            Task {
-                try? await Task.sleep(nanoseconds: 1_200_000_000)
-                collapsing = false
-                CollapseTween.isTweening = false
-                await handBackToModel()
-            }
+            // The host's own curve on a clock, not a SwiftUI animation (why:
+            // CollapseTween's note). Animations off: the tick IS the animation.
+            let knobs = MessageDevBoard.collapseKnobs
+            driver.start(from: from, to: to, lead: knobs.lead, hz: knobs.hz,
+                         response: knobs.response,
+                         tick: { h in
+                             var tx = Transaction()
+                             tx.disablesAnimations = true
+                             withTransaction(tx) { boxHeight = h }
+                         },
+                         onDone: {
+                             collapsing = false
+                             CollapseTween.isTweening = false
+                             Task { await handBackToModel() }
+                         })
         // The host settled TALLER than the snap this tween started on. Ease up
         // rather than rest short of the drawer and expose the wool under it -
         // see CollapseTween for why this correction is upward only.
         case .retarget(let to):
             collapseTarget = to
-            withAnimation(.easeOut(duration: 0.18)) { boxHeight = to }
+            driver.retarget(to: to)
         case .hold:
             break
         case .follow:
+            driver.stop()
             boxHeight = 0
         }
     }
@@ -366,7 +393,22 @@ public struct MessagesRootView: View {
                 // eases down on the host's own curve (see `follow`).
                 .frame(width: geo.size.width,
                        height: boxHeight > 0 ? boxHeight : geo.size.height)
-                .background(TableBackground())
+                // ROUND 32: while the collapse runs, the wool HANGS BELOW the
+                // box by `CollapseTween.woolOverhang`. The driver deliberately
+                // keeps the box a little SHORT of the drawer (the lead's
+                // margin against a dropped frame - see `hostLead`), and the
+                // host re-composites each of our pictures once more before
+                // the next, a further ~26pt short at peak. Both used to show
+                // as a strip of the host's flat fallback colour under the
+                // hand; now that strip is wool, which is the one thing on
+                // this surface nobody can see move. Top-aligned so the
+                // overhang is at the bottom, where the drawer clips it. At
+                // rest the box is the model and this is a no-op.
+                .background(alignment: .top) {
+                    TableBackground()
+                        .frame(height: (boxHeight > 0 ? boxHeight : geo.size.height)
+                                       + (collapsing ? CollapseTween.woolOverhang : 0))
+                }
                 // The debug ruler (`dev.ruler`, DEBUG only, otherwise an
                 // EmptyView) - on the SIZED BOX, so a filmed frame reports
                 // where `boxHeight` actually put our two edges. See
