@@ -178,7 +178,25 @@ analyse-test:
 # by Xcode, and per-TU objects keep the archive portable across Xcode versions.
 IOS_MIN_VERSION := 15.0
 IOS_CAPS   := -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_MOVE_CARDS=28 \
-              -DMAX_LEGAL_MOVES=4096 -DCD_LEAFBOOK
+              -DMAX_LEGAL_MOVES=4096 -DCD_LEAFBOOK \
+              -DREPLAY_REC_CAP=4096 -DREPLAY_MAX_ACTIONS=1024
+# The two replay caps above are the iMessage extension's, and they are here
+# because an iMessage extension is memory-capped far below an app: these two
+# arenas are 1.1 MB of the bridge's dirty pages, which is 45% of them.
+#
+# REPLAY_REC_CAP: replay.c's own default is 65536 and iOS was the LAST build
+# still taking it - the shipped wasm modules have run 4096 for a long time.
+# Measured peak coder choices over 111,977 games is 719, a 5.7x margin, and an
+# overflow is a clean REPLAY_ECAP rather than a corruption. Shrinks g_rec
+# 786,432 -> 49,152 and the derived g_bn 172,040 -> 10,760.
+#
+# REPLAY_MAX_ACTIONS: see the note in replay_steps.h - this is the ceiling the
+# code can reach, not a sample. MAX_LOGS is 1024 here, an action stream is at
+# most MAX_LOGS-1 long, so 1024 cannot be overrun by any encodable game.
+# Observed peak 497.
+#
+# Neither reaches the server, the wasm modules or the test suites: IOS_CAPS is
+# read only by the iOS slices and the native `analyse` dev tool.
 # TWO libraries, not one, and this is the whole reason the C bridge is two
 # translation units. Foolish.xcframework is STATIC, so ld pulls it in per
 # object: while one archive held both halves, FoolishKit (a dynamic framework
