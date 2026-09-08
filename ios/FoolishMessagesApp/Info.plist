@@ -41,18 +41,27 @@
 	     payload bytes rather than just digesting them. -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
-	<!-- Round-5 Q1: tells the App Store the app presents Russian and Korean,
-	     not just English. The actual localized strings are NOT in .lproj
-	     bundles yet — FStrings.swift is the backing store, an in-code
-	     en/ru/ko table that FStrings switches on at runtime from
-	     Locale.preferredLanguages. Milestone E4's String Catalog will
-	     supersede this in-code table, but this key is what the store listing
-	     needs regardless of where the strings physically live. -->
+	<!-- Round-5 Q1: tells the App Store the app presents more than English.
+	     The actual localized strings are NOT in .lproj bundles yet -
+	     FStrings.swift is the backing store, an in-code en/ru/ko/zh/vi table
+	     that FStrings switches on at runtime from Locale.preferredLanguages.
+	     Milestone E4's String Catalog will supersede this in-code table, but
+	     this key is what the store listing needs regardless of where the
+	     strings physically live.
+
+	     zh-Hans / vi joined the table in round 30 and are declared here for
+	     the first time. Chinese is zh-Hans (Simplified) and NOT zh-Hant: the
+	     table holds Simplified only. FStrings.systemDetected prefix-matches
+	     any "zh", so a Traditional reader still lands on Simplified rather
+	     than English - but that is a fallback, not support, and the store
+	     listing must not claim a script we do not write. -->
 	<key>CFBundleLocalizations</key>
 	<array>
 		<string>en</string>
 		<string>ru</string>
 		<string>ko</string>
+		<string>zh-Hans</string>
+		<string>vi</string>
 	</array>
 	<!-- Marks the bundle as a Messages-only application: no Home Screen icon,
 	     discoverable in the Messages app drawer. -->
