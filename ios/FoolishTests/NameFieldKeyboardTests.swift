@@ -128,6 +128,53 @@ final class NameFieldKeyboardTests: XCTestCase {
         }
     }
 
+    // MARK: - Round 46b: what the autofocus is allowed to MEASURE
+
+    /// The autofocus must read the height published by the ROOT, and must not
+    /// measure a box of its own.
+    ///
+    /// Filmed on a 17: the first cut wrapped the name field in
+    /// `content.background(GeometryReader { ... })`, which reports the FIELD -
+    /// 34pt, a collapse fraction of 1, in every presentation style. Worse, 34pt
+    /// never changes, so the `onChange` watching it fired once at 0.24s and
+    /// never again; the keyboard could not come up even in principle, and the
+    /// round-46 tests all passed anyway because none of them asked WHICH height
+    /// was being measured. This one does.
+    func testAutofocusMeasuresTheSurfaceNotItself() throws {
+        let src = code(try source())
+        guard let i = src.firstIndex(where: { $0.contains("private struct NameFieldAutofocus") }),
+              let end = src[i...].firstIndex(where: { $0.hasPrefix("}") && $0 != src[i] })
+        else { return XCTFail("NameFieldAutofocus is gone - this test needs rewriting") }
+        let body = src[i...end].joined(separator: "\n")
+        XCTAssertTrue(body.contains("@Environment(\\.surfaceHeight)"),
+                      "the autofocus no longer reads the root's published height")
+        XCTAssertFalse(body.contains("GeometryReader"),
+                       "a GeometryReader here measures the FIELD, not the drawer")
+        // …and the root has to publish it, or the environment default (0) makes
+        // the gate unreachable in the other direction.
+        XCTAssertTrue(src.contains(where: { $0.contains(".environment(\\.surfaceHeight, geo.size.height)") }),
+                      "nothing publishes surfaceHeight from the root GeometryReader")
+    }
+
+    /// A tall surface is NOT on its own proof that a field can take the
+    /// keyboard. For the first ~0.16s of a session the extension's view is laid
+    /// out at full screen height (874pt, filmed) before Messages installs it in
+    /// the compact drawer, so the height alone reads "expanded" while the sheet
+    /// is still shut - and a focus request made there is dropped, which is the
+    /// exact dead end this whole feature exists to cure. The host's own live
+    /// answer is the second half of the gate.
+    func testAutofocusAlsoWaitsForTheHostToSayExpanded() throws {
+        let src = code(try source())
+        guard let i = src.firstIndex(where: { $0.contains("private func raise(_ height: CGFloat)") })
+        else { return XCTFail("NameFieldAutofocus.raise is gone - this test needs rewriting") }
+        let body = src[i...min(i + 4, src.count - 1)].joined(separator: "\n")
+        XCTAssertTrue(body.contains("hostIsExpanded()"),
+                      "the height alone can be a full-screen pre-layout reading")
+        XCTAssertTrue(body.contains("collapseFraction"),
+                      "the host's style alone does not say how tall the drawer is")
+        XCTAssertTrue(body.contains("!fired"), "the autofocus is no longer once-only")
+    }
+
     /// And the drawer is expanded on the same condition. If this guard is
     /// dropped, opening any conversation with a known name takes the screen
     /// over uninvited.
