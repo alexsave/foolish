@@ -378,6 +378,10 @@ final class MessagesViewController: MSMessagesAppViewController {
             cancelToken: cancelToken,
             collapseSignal: collapseSignal,
             requestExpand: { [weak self] in self?.requestPresentationStyle(.expanded) },
+            // A LIVE read, deliberately: the name-field autofocus asks this at
+            // the moment a resize lands, and the answer has to be where the
+            // sheet is THEN. See NameFieldAutofocus.
+            hostIsExpanded: { [weak self] in self?.presentationStyle == .expanded },
             onNewGame: { [weak self] in
                 guard let self else { return }
                 self.startingNewGame = true
