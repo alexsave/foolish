@@ -262,7 +262,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         super.willTransition(to: presentationStyle)
         // ROUND 47: the FIRST thing, because on a cold open this callback is
         // the earliest moment Messages will honour an `.expanded` request - see
-        // NameEntryExpand for the eight-run measurement.
+        // c/src/msg_expand.h for the eight-run measurement.
         nameExpandSaw(presentationStyle)
         // ROUND 30: the sheet is about to MOVE. An open replay started now spends
         // its first beat behind the edge of the screen - see
@@ -332,10 +332,12 @@ final class MessagesViewController: MSMessagesAppViewController {
     ///
     /// Threaded down to FoolishKit as `requestExpand`. `MessagesRootView`
     /// decides WHETHER to ask (only when a name is owed - `needsNameEntry`);
-    /// this decides WHEN the ask is issued, because on a cold open the host
-    /// discards a request made before it has installed our view in the drawer.
-    /// NameEntryExpand carries the flight log that measured it.
-    private var nameExpand = NameEntryExpand()
+    /// the KERNEL decides WHEN the ask is issued, because on a cold open the
+    /// host discards a request made before it has installed our view in the
+    /// drawer. c/src/msg_expand.h carries the flight log that measured it and
+    /// c/tests/msg_expand_test.c pins it; this holds the state and performs the
+    /// effect, which is all a host does.
+    private var nameExpand = GateWire.NameEntryExpand()
 
     private func requestNameEntryExpand() {
         // Already open: requesting `.expanded` while expanded fires no

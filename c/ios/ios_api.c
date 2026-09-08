@@ -18,6 +18,7 @@
 #include "replay_extras.h"
 #include "evwire.h"
 #include "msg_wire.h"
+#include "msg_expand.h"
 #include "anim_plan.h"
 #include "awire.h"
 #include "sha256.h"
@@ -1718,4 +1719,27 @@ void fio_msg_turn_publish(int state, int base_atoms_before, int staged_atoms_bef
     if (out_empty_menu)        *out_empty_menu = out.empty_menu;
     if (out_anim_atoms_before) *out_anim_atoms_before = out.anim_atoms_before;
     if (out_raise_veil)        *out_raise_veil = out.raise_veil;
+}
+
+/* ---------------------------------------------------------------------------
+ * THE NAME-ENTRY DRAWER. c/src/msg_expand.c decides; MessagesViewController
+ * performs the effect and owns the callbacks. Kept as a self-contained block at
+ * the end of this file so it merges past anything else landing here.
+ * ------------------------------------------------------------------------- */
+
+_Static_assert(FIO_EXPAND_WANTED   == MSG_EXPAND_WANTED,   "expand events diverged");
+_Static_assert(FIO_EXPAND_COMPACT  == MSG_EXPAND_COMPACT,  "expand events diverged");
+_Static_assert(FIO_EXPAND_EXPANDED == MSG_EXPAND_EXPANDED, "expand events diverged");
+
+int fio_msg_expand_note(int event, double now,
+                        int *io_pending, int *io_retries, double *io_wanted_at) {
+    MsgExpand st;
+    st.pending   = io_pending   ? *io_pending   : 0;
+    st.retries   = io_retries   ? *io_retries   : 0;
+    st.wanted_at = io_wanted_at ? *io_wanted_at : 0.0;
+    const int issue = msg_expand_note(&st, event, now);
+    if (io_pending)   *io_pending   = st.pending;
+    if (io_retries)   *io_retries   = st.retries;
+    if (io_wanted_at) *io_wanted_at = st.wanted_at;
+    return issue;
 }

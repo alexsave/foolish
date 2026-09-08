@@ -53,7 +53,8 @@ CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_steps.
             src/octogen_strategy.c src/torpex_strategy.c \
             src/torpex_value.c src/novichok_strategy.c \
             src/bot_knobs.c src/bot_roster.c src/bot_drive.c \
-            src/sha256.c src/msg_wire.c src/anim_plan.c src/analyse.c
+            src/sha256.c src/msg_wire.c src/msg_expand.c src/anim_plan.c \
+            src/analyse.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 
 .PHONY: all clean tests print-core print-wasm-src
@@ -126,11 +127,18 @@ build/msg_wire_test: tests/msg_wire_test.c $(CORE_OBJ)
 # Animation core (c/src/anim_plan.h): the C twins of the React animation-quality
 # tests (e2e/optimistic_animation, optimistic_revert, reconcile) plus plan
 # building. The owner's headline ask — the quality tests live in C now.
+# The name-entry drawer decision (c/src/msg_expand.h): the C home of the eight
+# cold opens that measured WHEN Messages honours an `.expanded` request. A pure
+# transition function, so no game and no arguments - it either matches the
+# filmed trace or it does not.
+build/msg_expand_test: tests/msg_expand_test.c $(CORE_OBJ)
+	$(CC) $(CFLAGS) tests/msg_expand_test.c $(CORE_OBJ) -o $@ $(LDFLAGS)
 build/anim_plan_test: tests/anim_plan_test.c $(CORE_OBJ)
 	$(CC) $(CFLAGS) tests/anim_plan_test.c $(CORE_OBJ) -o $@ $(LDFLAGS)
-difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/solver_difftest build/replay_v6_test build/anim_plan_test
+difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/solver_difftest build/replay_v6_test build/anim_plan_test build/msg_expand_test
 	./build/sim_difftest 4 1000 && ./build/apply_difftest 4 200 && \
 	./build/msg_wire_test 20 && \
+	./build/msg_expand_test && \
 	./build/anim_plan_test && \
 	./build/solver_difftest 2 40 "" 200000 && \
 	./build/solver_difftest 3 40 "" 200000 && \
@@ -213,8 +221,8 @@ IOS_CAPS   := -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_MOVE_CARDS=28 \
 # file), so nothing in it can drag one in.
 IOS_CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c \
                 src/replay_steps.c src/replay_extras.c src/view.c src/awire.c \
-                src/evwire.c src/sha256.c src/msg_wire.c src/anim_plan.c \
-                ios/ios_api.c
+                src/evwire.c src/sha256.c src/msg_wire.c src/msg_expand.c \
+                src/anim_plan.c ios/ios_api.c
 IOS_BOTS_SRC := $(filter-out $(IOS_CORE_SRC),$(CORE_SRC)) ios/ios_bots_api.c
 
 # Everything, for the host-side smoke/golden binaries that want one link line.
