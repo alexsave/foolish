@@ -985,6 +985,32 @@ void fio_msg_turn_publish(int state, int base_atoms_before, int staged_atoms_bef
                           int *out_show_held_view, int *out_empty_menu,
                           int *out_anim_atoms_before, int *out_raise_veil);
 
+// ---------------------------------------------------------------------------
+// THE NAME-ENTRY DRAWER (c/src/msg_expand.h). When a name screen asks for the
+// drawer, WHEN does the extension issue requestPresentationStyle(.expanded)?
+// Measured, not reasoned: a request made before Messages has installed our view
+// in the drawer is discarded silently, so the ask is re-issued on the first
+// compact transition after it. msg_expand.h carries the eight-cold-open flight
+// log; this is only the crossing.
+//
+// The extension is the only host with this screen, so this pair is not in any
+// wasm module.
+//
+// The state is three scalars the CALLER owns - no statics, so a test and a host
+// never share a budget - and it crosses flat rather than as a struct, the way
+// fio_msg_turn_publish does, so no Swift ever knows a C layout. Zero all three
+// for a fresh host (0, 0, 0.0) and hand the same three back every time.
+#define FIO_EXPAND_WANTED    0   // a name screen with an empty field asked
+#define FIO_EXPAND_COMPACT   1   // the host reported a transition to compact
+#define FIO_EXPAND_EXPANDED  2   // the host reported a transition to expanded
+
+// Returns 1 to issue `.expanded` NOW, 0 to do nothing. `now` is any monotonic
+// seconds clock (the extension passes CACurrentMediaTime()); the kernel never
+// reads a clock itself. The three io_ pointers are read and written; a NULL one
+// is a no-op read of 0.
+int fio_msg_expand_note(int event, double now,
+                        int *io_pending, int *io_retries, double *io_wanted_at);
+
 #ifdef __cplusplus
 }
 #endif
