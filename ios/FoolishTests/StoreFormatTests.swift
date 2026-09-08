@@ -16,6 +16,7 @@
 
 import XCTest
 @testable import FoolishKit
+@testable import FoolishBots   // ReplayStore moved here (bundle-size move)
 
 final class StoreFormatTests: XCTestCase {
 

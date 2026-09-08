@@ -64,6 +64,20 @@ targets:
     entitlements:
       path: FoolishApp/Foolish.entitlements
     sources:
+      # FoolishApp/PhoneOnly/ is not a package, it is a RULE: code that only this
+      # app calls lives here and not in FoolishKit.
+      #
+      # FoolishKit is a DYNAMIC framework and it ships inside FoolishMessagesApp,
+      # so every `public` symbol in it is an export - and an export is a
+      # dead-strip ROOT the linker may never remove, however unreachable it is
+      # from the extension. Phone-only API in FoolishKit is therefore bytes on
+      # every iMessage install for code that install can never run. Moving five
+      # such files out (TableView, QRCode, BotNames, Flags, EntitlementsService)
+      # took 97,808 bytes off the archived FoolishKit binary and dropped
+      # CoreImage.framework from its load list, measured on the Release archive.
+      #
+      # So: before adding a `public` type to FoolishKit, check whether the
+      # iMessage extension can reach it. If only this app can, put it here.
       - path: FoolishApp
     dependencies:
       - target: FoolishKit
@@ -270,6 +284,28 @@ targets:
     platform: iOS
     sources:
       - path: FoolishKit
+        excludes:
+          # A DEAD STRING CATALOG that was shipping. Milestone E4 planned to
+          # replace FStrings' in-code table with this generated catalog
+          # (scripts/gen_ios_strings.mjs writes it); E4 never landed and the
+          # in-code table won instead - round 30 added zh + vi to FStrings and
+          # not to this file, so it is now stale (116 keys, en/ru/ko) as well as
+          # unread.
+          #
+          # It was not free. Compiled, it became three
+          # `<lang>.lproj/Localizable.strings` inside FoolishKit.framework -
+          # 20,686 bytes in the shipped bundle - with NOTHING to read them:
+          # `String(localized:)`, `NSLocalizedString` and `LocalizedStringKey`
+          # have zero call sites in ios/ and sdk/, every string goes through
+          # `FStrings.t`, and neither shipped binary contains the substring
+          # "Localizable" or any ".lproj" at all (checked with `strings` on the
+          # archived FoolishKit, the .appex and the container).
+          #
+          # EXCLUDED rather than deleted: the file and its generator are the
+          # whole of E4's remaining work, and this keeps them reviewable without
+          # paying for them on every install. Adding the catalog back to a
+          # target is one line here.
+          - Localizable.xcstrings
       # The Swift kernel binding lives in the unified SDK home (A10):
       # repo-root sdk/swift/ (EngineC.swift + models), sibling to sdk/ts and c.
       #
@@ -284,7 +320,10 @@ targets:
       - path: ../sdk/swift
         excludes:
           - bots/**
-      - path: Entitlements
+      # NOTE: `- path: Entitlements` used to be here. EntitlementsService has
+      # exactly one caller in the whole repo (FoolishApp/FoolishApp.swift), so
+      # it moved to FoolishApp/PhoneOnly/ with the rest of the phone-only code -
+      # see the `Foolish` target above for what that directory is for.
     dependencies:
       # The C engine, built by `make ios-lib` in ../c. Static (embed:false).
       # This is the CORE library only - no strategy ladder is in it, and

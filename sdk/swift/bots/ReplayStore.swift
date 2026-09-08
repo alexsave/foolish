@@ -17,7 +17,13 @@
 // Storage/, not Net/: it deals in shareable codes but touches no network, and
 // the offline app + iMessage extension both need it.
 
+// MOVED OUT OF FoolishKit (bundle size). FoolishKit is a DYNAMIC framework that
+// ships inside FoolishMessagesApp, and every `public` symbol in a dylib is an
+// export - a dead-strip ROOT the linker may never remove. This file has no
+// caller the iMessage app can reach, so it lives with the ones it does have.
+
 import Foundation
+import FoolishKit
 
 public struct ReplayRecord: Equatable, Identifiable, Sendable {
     public let code: String

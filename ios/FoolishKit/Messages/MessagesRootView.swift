@@ -291,6 +291,28 @@ public struct MessagesRootView: View {
     /// noisy transition reports can be replayed as a test rather than re-filmed
     /// (CollapseTweenTests). This is the part that cannot be pure: the
     /// driver, and the release that hands the box back to the model.
+    /// The collapse driver's three knobs.
+    ///
+    /// The SHIPPED values are `CollapseTween`'s own constants. `MessageDevBoard`
+    /// exists only so a filmed sweep can override them from a file, and that
+    /// whole file is `#if DEBUG || SOLO_TESTING` - so this reads it behind the
+    /// same gate. Read unconditionally, as it was, it compiled in every Debug
+    /// build anyone runs and failed ONLY the Release archive: the one build
+    /// nobody makes by hand, and the only one that ships.
+    ///
+    /// A property and not three lines inside `follow`'s `.start` case on
+    /// purpose - CollapseTweenTests reads the first 1200 characters of that case
+    /// looking for the release, so anything added inside it can push the release
+    /// out of the window and fail a test that is about something else entirely.
+    private static var collapseKnobs: (lead: Double, hz: Double, response: Double) {
+        #if DEBUG || SOLO_TESTING
+        let k = MessageDevBoard.collapseKnobs
+        return (k.lead, k.hz, k.response)
+        #else
+        return (CollapseTween.hostLead, CollapseTween.driveHz, CollapseTween.hostResponse)
+        #endif
+    }
+
     private func follow(height: CGFloat) {
         AnimLog.say("stage follow geo=\(Int(lastGeoHeight))->\(Int(height)) armed=\(armed)")
         lastGeoHeight = height
@@ -309,9 +331,8 @@ public struct MessagesRootView: View {
             collapseTarget = to
             // The host's own curve on a clock, not a SwiftUI animation (why:
             // CollapseTween's note). Animations off: the tick IS the animation.
-            let knobs = MessageDevBoard.collapseKnobs
-            driver.start(from: from, to: to, lead: knobs.lead, hz: knobs.hz,
-                         response: knobs.response,
+            let k = Self.collapseKnobs
+            driver.start(from: from, to: to, lead: k.lead, hz: k.hz, response: k.response,
                          tick: { h in
                              var tx = Transaction()
                              tx.disablesAnimations = true

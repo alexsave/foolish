@@ -19,7 +19,13 @@
 //
 // Foundation only, deliberately - see the note in RosterWire.swift.
 
+// MOVED OUT OF FoolishKit (bundle size). FoolishKit is a DYNAMIC framework that
+// ships inside FoolishMessagesApp, and every `public` symbol in a dylib is an
+// export - a dead-strip ROOT the linker may never remove. This file has no
+// caller the iMessage app can reach, so it lives with the ones it does have.
+
 import Foundation
+import FoolishKit
 
 /// The envelope's roster, carrying every field its JSON predecessor carried.
 public struct EnvelopeRoster: Sendable, Equatable {
