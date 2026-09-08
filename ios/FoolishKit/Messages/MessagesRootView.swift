@@ -1040,7 +1040,7 @@ private struct GameSurface: View {
                 .overlay(alignment: .top) { supersededBar(controller) }
         } else if let lob = lobby {
             LobbyView(env: lob.env, mySeat: lobbySeat(lob.env),
-                      nickname: MessageGameStore.shared.nickname,
+                      nickname: MessageGameStore.shared.nicknamePrefill,
                       onJoin: { name in Task { await joinLobby(lob, nickname: name) } },
                       onStart: { Task { await startGame(lob) } },
                       onExit: { Task { await leaveLobby(lob) } },
@@ -1085,7 +1085,7 @@ private struct GameSurface: View {
                     }
                 }
         } else if let g = nameGate {
-            NameGateView(prefill: MessageGameStore.shared.nickname) { name in
+            NameGateView(prefill: MessageGameStore.shared.nicknamePrefill) { name in
                 Task { await nameThenSeat(name, gate: g) }
             }
             .onAppear(perform: expandForNameEntry)   // see expandForNameEntry
@@ -1094,7 +1094,7 @@ private struct GameSurface: View {
             // — kept only so this call site, the harness, and
             // MessagesViewController (which all compute a real participant
             // count) keep compiling unchanged.
-            NewGameSetup(nickname: MessageGameStore.shared.nickname,
+            NewGameSetup(nickname: MessageGameStore.shared.nicknamePrefill,
                          isDM: chatIsDM, chatPlayers: chatPlayers) { name in
                 Task { await start(nickname: name) }
             }
@@ -1221,7 +1221,18 @@ private struct GameSurface: View {
     /// re-introduce the bug in exactly the case that matters; requesting
     /// `.expanded` while already expanded fires no transition and is a no-op
     /// (MessagesViewController's `onNewGame` relies on the same property).
-    private func expandForNameEntry() { requestExpand() }
+    private func expandForNameEntry() {
+        // ROUND 46: only when the field will be EMPTY. The 2.1 fix made this
+        // unconditional, which was right for the dead end it cured (a field you
+        // cannot focus in compact) but wrong for the common case: a device that
+        // already knows its name shows one filled-in field and a button, which
+        // reads fine compact, and taking the conversation over to show it is a
+        // worse first impression than leaving the drawer alone. `needsNameEntry`
+        // is the same predicate the autofocus uses, so the drawer and the
+        // keyboard cannot disagree about whether a name is owed.
+        guard MessageGameStore.shared.needsNameEntry else { return }
+        requestExpand()
+    }
 
     /// Reset + (re)load for a NEW input. A compact<->expanded toggle leaves
     /// loadKey unchanged, so `.task(id:)` does not fire and the game persists.
@@ -2113,6 +2124,47 @@ private struct GameSurface: View {
 /// fact, not a picker — nobody has joined yet, and nobody needs to pick a
 /// count: whoever has joined when someone taps Start (or Join and start) IS
 /// the player count (§5.2/lobby v3).
+/// Raise the keyboard on a name field, once, and only once the drawer is
+/// actually tall enough to hold one.
+///
+/// Focus cannot just be set in `onAppear`. These screens are REACHED in
+/// compact, where a field cannot become first responder at all - that is the
+/// 2.1 dead end `expandForNameEntry` exists to cure - and the host's
+/// compact -> expanded transition is asynchronous, so a focus request made
+/// during it is dropped. Sleeping for a guessed duration would be a bet on how
+/// long Messages takes to open.
+///
+/// The view's own height is the fact instead. `collapseFraction` is 1 in the
+/// compact band and 0 once the drawer is past 440pt - the same live measure the
+/// board's send hint already trusts, and for the same reason: the `style` prop
+/// goes stale across a grabber drag. When it reaches 0 the transition has
+/// finished and the keyboard will stick.
+private struct NameFieldAutofocus: ViewModifier {
+    let active: Bool
+    let focused: FocusState<Bool>.Binding
+    /// Once only. Re-raising the keyboard every time the drawer is dragged back
+    /// up would fight a human who deliberately dismissed it.
+    @State private var fired = false
+
+    func body(content: Content) -> some View {
+        content.background(
+            GeometryReader { g in
+                Color.clear
+                    .onAppear { raise(g.size.height) }
+                    .onChange(of: g.size.height) { _ in raise(g.size.height) }
+            }
+            .allowsHitTesting(false)
+        )
+    }
+
+    private func raise(_ height: CGFloat) {
+        guard active, !fired,
+              MessageTableView.collapseFraction(height: height) == 0 else { return }
+        fired = true
+        focused.wrappedValue = true
+    }
+}
+
 private struct NewGameSetup: View {
     @State private var nickname: String
     let isDM: Bool
@@ -2125,7 +2177,8 @@ private struct NewGameSetup: View {
     let onStart: (String) -> Void
 
     init(nickname: String, isDM: Bool, chatPlayers: Int, onStart: @escaping (String) -> Void) {
-        _nickname = State(initialValue: nickname == "Me" ? "" : nickname)
+        // Already normalised by MessageGameStore.nicknamePrefill.
+        _nickname = State(initialValue: nickname)
         self.isDM = isDM
         self.chatPlayers = chatPlayers
         self.onStart = onStart
@@ -2191,6 +2244,10 @@ private struct NewGameSetup: View {
             // together were redundant. The placeholder carries it alone now.
             TextField(FStrings.t("ios.msg.nickname_ph"), text: $nickname)
                 .textFieldStyle(.roundedBorder).focused($nameFocused)
+                // Owner, round 46: a device that owes us a name lands able to
+                // type, with no second tap. See NameFieldAutofocus.
+                .modifier(NameFieldAutofocus(
+                    active: nickname.isEmpty, focused: $nameFocused))
             switch nameVerdict {
             case .ok(let name):
                 // `handOff`, never `onStart` directly - see `handOff`.
@@ -2437,7 +2494,8 @@ private struct LobbyView: View {
         self.onSetPassing = onSetPassing
         self.passingBaseline = passingBaseline
         self.onAddSoloSeat = onAddSoloSeat
-        _nickname = State(initialValue: nickname == "Me" ? "" : nickname)
+        // Already normalised by MessageGameStore.nicknamePrefill.
+        _nickname = State(initialValue: nickname)
     }
 
     /// What the box should be DRAWN as: my outstanding tap if there is one, the
@@ -2668,6 +2726,10 @@ private struct LobbyView: View {
                 // field holds a valid, trimmed name.
                 TextField(FStrings.t("ios.msg.nickname_ph"), text: $nickname)
                     .textFieldStyle(.roundedBorder).focused($nameFocused)
+                    // Owner, round 46: a device that owes us a name lands able to
+                    // type, with no second tap. See NameFieldAutofocus.
+                    .modifier(NameFieldAutofocus(
+                        active: nickname.isEmpty, focused: $nameFocused))
                 switch nameVerdict {
                 case .ok(let name):
                     // Names are the only identity the payload carries (§6), so
@@ -2734,7 +2796,8 @@ private struct NameGateView: View {
     let onContinue: (String) -> Void
 
     init(prefill: String, onContinue: @escaping (String) -> Void) {
-        _name = State(initialValue: prefill == "Me" ? "" : prefill)
+        // Already normalised by MessageGameStore.nicknamePrefill.
+        _name = State(initialValue: prefill)
         self.onContinue = onContinue
     }
 
@@ -2767,6 +2830,10 @@ private struct NameGateView: View {
             // visibly narrower than the full-width Continue button).
             TextField(FStrings.t("ios.msg.nickname_ph"), text: $name)
                 .textFieldStyle(.roundedBorder).focused($nameFocused)
+                // Owner, round 46: a device that owes us a name lands able to
+                // type, with no second tap. See NameFieldAutofocus.
+                .modifier(NameFieldAutofocus(
+                    active: name.isEmpty, focused: $nameFocused))
                 .submitLabel(.done).onSubmit {
                     // The Return key resigns on its own, but it goes through
                     // `handOff` anyway so there is ONE way off this screen.

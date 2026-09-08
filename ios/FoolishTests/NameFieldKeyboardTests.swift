@@ -79,4 +79,66 @@ final class NameFieldKeyboardTests: XCTestCase {
             }
         }
     }
+
+    // MARK: - Round 46: the keyboard comes up by itself, but only when owed
+
+    /// The prefill rule, which is the ONE thing the drawer, the keyboard and
+    /// all three fields now agree on. Real behaviour, not a source scan.
+    func testPrefillIsEmptyOnlyWhenNoNameHasBeenChosen() {
+        let store = MessageGameStore(defaults: UserDefaults(suiteName: "test.nick.\(UUID().uuidString)")!)
+
+        // Untouched device: the neutral default is a placeholder, not a name.
+        XCTAssertEqual(store.nicknamePrefill, "")
+        XCTAssertTrue(store.needsNameEntry)
+
+        // A chosen name prefills and asks for nothing.
+        store.nickname = "Alex"
+        XCTAssertEqual(store.nicknamePrefill, "Alex")
+        XCTAssertFalse(store.needsNameEntry)
+
+        // Whitespace is not a name.
+        store.nickname = "   "
+        XCTAssertEqual(store.nicknamePrefill, "")
+        XCTAssertTrue(store.needsNameEntry)
+
+        // The case the old per-view `== "Me"` tests got wrong: a device whose
+        // STORED name is the placeholder used to report hasSetNickname == true
+        // while every field still blanked it, so the drawer stayed compact over
+        // a field that cannot be focused there - the 2.1 dead end, restored.
+        store.nickname = "Me"
+        XCTAssertEqual(store.nicknamePrefill, "")
+        XCTAssertTrue(store.needsNameEntry,
+                      "a stored placeholder must still count as owing a name")
+        XCTAssertTrue(store.hasSetNickname,
+                      "hasSetNickname is the weaker test - this is why needsNameEntry exists")
+    }
+
+    /// Every name field asks for the autofocus, and asks for it CONDITIONALLY.
+    /// An unconditional one would re-raise the keyboard over a name the human
+    /// already chose.
+    func testEveryNameFieldAutofocusesOnlyWhenEmpty() throws {
+        let src = code(try source())
+        let mods = src.indices.filter { src[$0].contains(".modifier(NameFieldAutofocus(") }
+        XCTAssertEqual(mods.count, 3,
+                       "all three name fields raise their own keyboard, or none should")
+        for i in mods {
+            let pair = src[i] + (i + 1 < src.count ? src[i + 1] : "")
+            XCTAssertTrue(pair.contains("active: name.isEmpty") || pair.contains("active: nickname.isEmpty"),
+                          "autofocus at line \(i + 1) is unconditional: \(pair)")
+        }
+    }
+
+    /// And the drawer is expanded on the same condition. If this guard is
+    /// dropped, opening any conversation with a known name takes the screen
+    /// over uninvited.
+    func testExpandForNameEntryIsGatedOnOwingAName() throws {
+        let src = code(try source())
+        guard let i = src.firstIndex(where: { $0.contains("private func expandForNameEntry()") }) else {
+            return XCTFail("expandForNameEntry is gone - this test needs rewriting")
+        }
+        let body = src[i...min(i + 4, src.count - 1)].joined(separator: "\n")
+        XCTAssertTrue(body.contains("needsNameEntry"),
+                      "expandForNameEntry no longer checks whether a name is owed")
+        XCTAssertTrue(body.contains("guard"), "the check is not a guard, so it may not return early")
+    }
 }

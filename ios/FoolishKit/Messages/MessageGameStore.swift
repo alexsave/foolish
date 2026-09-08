@@ -132,6 +132,33 @@ public final class MessageGameStore {
         return !n.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
+    /// What a name-entry screen PREFILLS its field with, and the single place
+    /// that decides when that prefill is empty.
+    ///
+    /// `nickname`'s default is a neutral placeholder, not a name the human
+    /// chose, so it must arrive as an empty field rather than as the word "Me".
+    /// All three name-entry surfaces (`NewGameSetup`, the lobby's JOIN row and
+    /// `NameGateView`) used to make that judgement independently, each with the
+    /// literal `== "Me"` written into its own initialiser - three copies of one
+    /// rule and nothing keeping them agreed. They all read this now.
+    public var nicknamePrefill: String {
+        let n = nickname.trimmingCharacters(in: .whitespaces)
+        return (n.isEmpty || n == "Me") ? "" : n
+    }
+
+    /// Will a name-entry screen open with an EMPTY field - does this device
+    /// still owe us a name?
+    ///
+    /// This decides whether arriving on such a screen expands the drawer and
+    /// raises the keyboard. A screen that already knows your name needs
+    /// neither: it is one filled-in field and a button, it reads fine compact,
+    /// and expanding over the conversation uninvited is a worse first
+    /// impression than leaving the drawer where the human put it. Deliberately
+    /// derived from `nicknamePrefill` rather than `hasSetNickname`, so a device
+    /// whose STORED name is the placeholder still gets a keyboard instead of a
+    /// blank field it cannot focus in compact.
+    public var needsNameEntry: Bool { nicknamePrefill.isEmpty }
+
     // MARK: read
 
     /// This device's seat in `gameId` WITHIN `chatKey`, or nil if unknown — the
