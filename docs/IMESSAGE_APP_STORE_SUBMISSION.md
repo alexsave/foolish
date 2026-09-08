@@ -143,17 +143,18 @@ Recommended answers for Apple's current simplified (post-2024) questionnaire:
 | Cartoon or Fantasy Violence | None | No violence. |
 | Realistic Violence | None | — |
 | Sexual Content or Nudity | None | — |
-| Profanity or Crude Humor | **DECIDE - see §3a** | The old reasoning here ("no text input or chat feature exists anywhere in this app") is FALSE. The nickname field is free text, and the name a player types is rendered into the bubble image every other participant sees. |
+| Profanity or Crude Humor | Infrequent/Mild | The app authors none. The one free-text field is the player's own nickname, which is rendered into the bubble every participant sees, and nothing filters it - so the honest answer is the conservative one. See §3a. |
 | Alcohol, Tobacco, or Drug Use | None | — |
 | Mature/Suggestive Themes | None | — |
 | Horror/Fear Themes | None | — |
 | Medical/Treatment Information | None | — |
 | Gambling and Contests | None / "No" | Durak has no betting, wagering, chips, or stakes mechanic — a pure trick-avoidance card game. Double-check this question's exact live wording (it sometimes also asks about simulated-gambling *mechanics*, e.g. slot/roulette visuals) — still "No" either way. |
 | Unrestricted Web Access | None | No in-app browser; a tapped `MSMessage` URL opens the *system* browser, standard OS behavior for any app. |
-| User-Generated Content | **DECIDE - see §3a** | The old reasoning here ("no communication features, no free-text input, no user-authored content of any kind") is FALSE, and the app's own privacy policy contradicts it in writing: foolish.cards/imessage-privacy says the bubble "contains the cards played and the nickname you type into the game". |
+| User-Generated Content | Yes | The nickname is user-authored and reaches other participants' screens. Scope is one field, 16 chars / 64 bytes, seen only inside a Messages thread the participants already share. See §3a. |
 
-**Expected band: 4+** on everything except the two rows above, which are not
-yet answerable - see §3a.
+**Expected band: 4+** on everything except the two rows above. File whatever
+band the questionnaire returns for "Yes" + "Infrequent/Mild" rather than
+arguing it down - see §3a for the decision behind those two answers.
 
 ### 3a. The nickname is user-generated content, and nothing filters it
 
@@ -179,24 +180,42 @@ and published contact information. The peer-to-peer, no-server architecture is
 not an exemption - 1.2 is about what reaches another person's screen, not about
 what a server stores.
 
-**This needs an owner decision before the record can be filled in.** Two honest
-routes:
+#### DECIDED, 2026-09-08: free-form names stay
 
-1. **Keep free-form names.** Then answer "User-Generated Content: Yes" and
-   "Profanity or Crude Humor: Infrequent/Mild", accept the higher age band, and
-   add at minimum a report/block affordance and an EULA line. This is the
-   larger change and the higher review risk, because the mechanisms 1.2 asks
-   for do not exist yet.
-2. **Stop shipping free-form names** (recommended for 1.0). Replace the
-   TextField with a picker over a fixed, pre-translated set of table names, or
-   fall back to "Player 1..8". Then both rows above are truthfully "None"/"No",
-   1.2 stops applying, and the age rating stays 4+. This is a contained change
-   in three call sites (`NewGameSetup`, `LobbyView`'s join row, `NameGateView`)
-   and the wire format does not change.
+The owner's call, in their words: "you can enter any name you want, as you can
+currently, up to the char/byte limits. If that changes the age rating fair
+enough, but I feel like this isn't a radical thing that will slow down
+reviewing, just a single small user authored string."
 
-What is NOT defensible is filing the original answers. They are contradicted by
-the app's own privacy policy, so a reviewer can see the contradiction without
-ever playing a game.
+So the two rows above are answered honestly - UGC "Yes", profanity
+"Infrequent/Mild" - and whatever band that produces is filed as-is. The
+alternative that was considered and rejected was replacing the TextField with a
+picker over a fixed name set; it would have kept the 4+ band and made 1.2 stop
+applying, at the cost of the feature.
+
+**The residual risk, stated plainly so nobody is surprised by it.** 1.2 asks
+for a content filter, a report mechanism, a block mechanism and published
+contact information. Of those, the app ships none, and that has NOT changed as
+a result of this decision - what changed is that the answers on the record now
+match the app. The argument to make if a reviewer raises 1.2:
+
+- the surface is one 16-character self-chosen label, not a feed, chat, profile
+  or upload;
+- it reaches only people already in that Messages thread - there is no
+  discovery, no directory and no stranger matchmaking, so a name cannot be
+  pushed at anyone who did not already choose to text its author;
+- blocking and reporting a person are Messages functions and already available
+  at the platform level; the app introduces no channel Messages does not carry.
+
+**If that argument fails, do NOT bolt on a filter or a report button under
+deadline.** The prepared fallback is the picker: a contained change in three
+call sites (`NewGameSetup`, `LobbyView`'s join row, `NameGateView`) that does
+not touch the wire format. Ship that and re-answer both rows as "None"/"No".
+
+What is NOT defensible is filing the ORIGINAL answers ("no free-text input of
+any kind"). They were contradicted by the app's own privacy policy, so a
+reviewer could see the contradiction without ever playing a game. That is what
+this section fixed.
 
 ---
 
