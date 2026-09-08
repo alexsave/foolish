@@ -2296,8 +2296,7 @@ static void test_size_budget(int games, uint32_t seed0) {
 
 // ---------- --twocover: two covers, sent as TWO bubbles --------------------
 //
-// Prints the SECOND of two bubbles that each carry ONE cover by the same seat -
-// the owner's round-16 report, as a payload you can open in the simulator:
+// Poses the owner's round-16 report as a payload you can open in the simulator:
 // "a defender covers a single card, sends it, then covers a second card, and
 // sends that. If anyone opens the bubble for the second cover, they will see
 // BOTH covers animate."
@@ -2305,13 +2304,29 @@ static void test_size_budget(int games, uint32_t seed0) {
 // The point is the two SENDS. On the chain, two covers sent separately are
 // byte-for-byte what two covers staged together would be, so nothing in the
 // replay steps can tell them apart - only the bubble delta each seal writes
-// (msg_wire.h's n_new) can, which is exactly what this fixture exercises. Each
-// seal here is given the PREVIOUS envelope's turn as its base, the same way
-// fio_msg_encode gives it the chain it decoded.
+// (msg_wire.h's n_new) can, which is exactly what this fixture exercises.
 //
-// It prints the second bubble's hex on stdout (for dev.fatboard) and, on
-// stderr, the two covering cards and the delta the bubble claims - so a filmed
-// run can be checked against what the wire actually said. Sit as the ATTACKER
+// EACH SEAL IS MEASURED FROM A LOG MARK, and this fixture EARNS one the way a
+// phone does: it replays the bubble it is continuing into a fresh Game and
+// takes THAT game's `num_logs`, which is what fio_msg_decode_packed leaves in
+// `g_msg_base_logs` when a device adopts a chain, and what msg_seal_base hands
+// on at seal time.
+//
+// It used to pass the PREVIOUS ENVELOPE'S `turn` instead - an atom count where
+// a log index belongs, the one substitution msg_seal's contract calls out by
+// name ("A LOG MARK and not the parent's atom count"). A log array carries
+// GAME_START ahead of the atoms, so the mark landed one log short of the truth,
+// every bubble claimed one atom MORE than it added, and the fixture filmed a
+// defect the shipping seal does not have. 2026-09-07's replay lane caught it
+// exactly: `openReplay events=2` / `stream#1 begin n=2 [cover@1x1 cover@1x1]`
+// on the two-bubble payload, and a one-bubble control that claimed 3 and
+// replayed the attacker's throw-in along with the covers. test_twocover_fixture
+// now pins both deltas, so a fixture that lies again fails the suite instead of
+// the film.
+//
+// It prints the last bubble's hex on stdout (for dev.fatboard) and, on stderr,
+// the two covering cards and the delta the bubble claims - so a filmed run can
+// be checked against what the wire actually said. Sit as the ATTACKER
 // (dev.seat 0): the covers are then somebody else's move, which is the case
 // that animates on open.
 //
@@ -2322,10 +2337,39 @@ static void test_size_budget(int games, uint32_t seed0) {
 // would look identical.
 //
 // Usage: msg_wire_test --twocover [n_players] [one]
-static void print_twocover(int np, int one_bubble) {
-    static unsigned char body[1024];
+
+// One posed run. The printer and the test that pins it read the SAME fixture
+// rather than two copies of one search - which is how the delta above went
+// wrong unwitnessed in the first place.
+typedef struct {
+    int  ok;                      // a deal posed the case
+    int  np, def;
+    Card cov1, cov2;
+    int  turn_a, turn_b;          // the two bubbles before the one printed
+    MsgEnvelope env;              // the LAST bubble - the one to open
+    unsigned char body[1024];     // its body; env.actions borrows this
+    unsigned char wire[ENV_CAP];
+    int  wire_len;
+} TwoCover;
+
+// Cover ONE card as `seat`. Hands back the covering card; 0 when the menu holds
+// no single-card cover.
+static int twocover_cover_one(Game *g, int seat, Card *out) {
+    static LegalMoves ml;
+    calculate_legal_moves(g, seat, &ml);
+    for (int i = 0; i < ml.n; i++) {
+        if (ml.moves[i].type != MOVE_COVER || ml.moves[i].n_cards != 1) continue;
+        *out = ml.moves[i].cards[0];
+        return handle_cover(g, seat, ml.moves[i].cards, ml.moves[i].attack_cards, 1) ? 1 : 0;
+    }
+    return 0;
+}
+
+static void pose_twocover(int np, int one_bubble, TwoCover *out) {
     static Game scratch;
     static LegalMoves ml;
+    memset(out, 0, sizeof *out);
+    out->np = np;
 
     for (uint32_t s = 1; s < 4000; s++) {
         uint8_t seed[MSG_SEED_LEN];
@@ -2362,74 +2406,164 @@ static void print_twocover(int np, int one_bubble) {
         if (thrown < 2) continue;
 
         // Bubble 1: the attacker's throw-ins. Base 0 - a genesis chain adds all
-        // of itself.
+        // of itself, and 0 is a log mark like any other (no log precedes it).
+        static unsigned char body_a[1024];
         MsgEnvelope a;
         env_init(&a, seed, np);
         a.phase = MSG_PHASE_LIVE;
         a.last_actor_seat = (uint8_t)g.logs[g.num_logs - 1].player_idx;
         a.sent_at = (uint16_t)((time(NULL) - 60) & 0xffff);
-        if (msg_seal(&a, &g, 0, body, sizeof(body), &scratch) != MSG_EOK) continue;
-        const int turn_a = a.turn;
+        if (msg_seal(&a, &g, 0, body_a, sizeof(body_a), &scratch) != MSG_EOK) continue;
 
-        // Cover ONE, and send: bubble 2, based on bubble 1.
         const int def = g.defender;
-        if (g.players[def].hand_count < 3) continue;   // keep a card after both covers
+        if (g.players[def].hand_count < 3) continue;   // keep a card after both
+                                                       // covers, so neither can
+                                                       // sweep the table and end
+                                                       // the bout
+
+        // THE DEFENDER'S DEVICE ADOPTS bubble 1, and the mark is what adopting
+        // leaves behind: `num_logs` of the game the chain replayed into.
+        static Game d;
+        if (msg_replay(&a, &d) != MSG_EOK) continue;
+        int base_logs = d.num_logs;
+
         Card cov1 = { 0 }, cov2 = { 0 };
-        calculate_legal_moves(&g, def, &ml);
-        int did = 0;
-        for (int i = 0; i < ml.n; i++) {
-            if (ml.moves[i].type != MOVE_COVER || ml.moves[i].n_cards != 1) continue;
-            cov1 = ml.moves[i].cards[0];
-            if (handle_cover(&g, def, ml.moves[i].cards, ml.moves[i].attack_cards, 1)) did = 1;
-            break;
-        }
-        if (!did) continue;
-        int turn_b = turn_a;
+        if (!twocover_cover_one(&d, def, &cov1)) continue;
+
+        int turn_b = a.turn;
         if (!one_bubble) {
+            // Cover ONE, and SEND: bubble 2, measured from the mark above.
             static unsigned char body_b[1024];
             MsgEnvelope b;
             env_init(&b, seed, np);
             b.phase = MSG_PHASE_LIVE;
             b.last_actor_seat = (uint8_t)def;
             b.sent_at = (uint16_t)((time(NULL) - 30) & 0xffff);
-            if (msg_seal(&b, &g, turn_a, body_b, sizeof(body_b), &scratch) != MSG_EOK) continue;
+            if (msg_seal(&b, &d, base_logs, body_b, sizeof(body_b), &scratch) != MSG_EOK) continue;
             turn_b = b.turn;
+            // …and `markSent` rebases the board onto the bytes that went out,
+            // which is where the NEXT bubble's mark comes from. Adopting again
+            // rather than playing on in place is the whole difference between
+            // one bubble and two.
+            static Game d2;
+            if (msg_replay(&b, &d2) != MSG_EOK) continue;
+            memcpy(&d, &d2, sizeof d);
+            base_logs = d.num_logs;
         }
 
-        // Cover the OTHER, and send: bubble 3, based on bubble 2. This is the
-        // one to open.
-        calculate_legal_moves(&g, def, &ml);
-        did = 0;
-        for (int i = 0; i < ml.n; i++) {
-            if (ml.moves[i].type != MOVE_COVER || ml.moves[i].n_cards != 1) continue;
-            cov2 = ml.moves[i].cards[0];
-            if (handle_cover(&g, def, ml.moves[i].cards, ml.moves[i].attack_cards, 1)) did = 1;
-            break;
-        }
-        if (!did) continue;
-        if (g.status != GAME_STATUS_PLAYING) continue;   // a bout that ended has nothing left to open
-        static unsigned char body_c[1024];
+        // Cover the OTHER. Staged (one bubble) or sent on its own (two), this
+        // is the bubble to open.
+        if (!twocover_cover_one(&d, def, &cov2)) continue;
+        if (d.status != GAME_STATUS_PLAYING) continue;   // a bout that ended has
+                                                         // nothing left to open
+
         MsgEnvelope c;
         env_init(&c, seed, np);
         c.phase = MSG_PHASE_LIVE;
         c.last_actor_seat = (uint8_t)def;
         c.sent_at = (uint16_t)(time(NULL) & 0xffff);
-        if (msg_seal(&c, &g, turn_b, body_c, sizeof(body_c), &scratch) != MSG_EOK) continue;
-        unsigned char wire[ENV_CAP];
-        const int n = msg_encode(&c, wire, sizeof(wire));
+        if (msg_seal(&c, &d, base_logs, out->body, sizeof(out->body), &scratch) != MSG_EOK) continue;
+        const int n = msg_encode(&c, out->wire, sizeof(out->wire));
         if (n <= 0) continue;
 
-        fprintf(stderr, "twocover: defender seat %d covered %d/%d then %d/%d\n",
-                def, cov1.suit, cov1.value, cov2.suit, cov2.value);
-        fprintf(stderr, "twocover: %s, turns %d -> %d -> %d, bubble claims delta %d\n",
-                one_bubble ? "ONE bubble (control: BOTH covers must animate)"
-                           : "TWO bubbles (only the second cover may animate)",
-                turn_a, turn_b, c.turn, c.n_new);
-        for (int i = 0; i < n; i++) printf("%02x", wire[i]);
-        printf("\n");
+        out->ok = 1;
+        out->def = def;
+        out->cov1 = cov1;
+        out->cov2 = cov2;
+        out->turn_a = a.turn;
+        out->turn_b = turn_b;
+        out->env = c;
+        out->wire_len = n;
         return;
     }
-    fprintf(stderr, "no %dp deal posed two coverable throw-ins\n", np);
+}
+
+static void print_twocover(int np, int one_bubble) {
+    static TwoCover tc;
+    pose_twocover(np, one_bubble, &tc);
+    if (!tc.ok) {
+        fprintf(stderr, "no %dp deal posed two coverable throw-ins\n", np);
+        return;
+    }
+    fprintf(stderr, "twocover: defender seat %d covered %d/%d then %d/%d\n",
+            tc.def, tc.cov1.suit, tc.cov1.value, tc.cov2.suit, tc.cov2.value);
+    fprintf(stderr, "twocover: %s, turns %d -> %d -> %d, bubble claims delta %d "
+                    "(atoms_before %d)\n",
+            one_bubble ? "ONE bubble (control: BOTH covers must animate)"
+                       : "TWO bubbles (only the second cover may animate)",
+            tc.turn_a, tc.turn_b, tc.env.turn, tc.env.n_new,
+            (int)tc.env.turn - (int)tc.env.n_new);
+    for (int i = 0; i < tc.wire_len; i++) printf("%02x", tc.wire[i]);
+    printf("\n");
+}
+
+// THE FIXTURE THE RIG FILMS, PINNED. --twocover is the only thing that tells a
+// device what "two covers, sent separately" looks like on the wire, and a
+// fixture is the one kind of test artifact that can fail SILENTLY: it does not
+// assert, it prints, and whatever it prints becomes the truth the capture lane
+// reports. On 2026-09-07 it printed a delta of 2 for a single cover, the
+// extension faithfully replayed both covers, and the lane filed a shipping
+// regression against a kernel that had sealed nothing of the sort.
+//
+// So the numbers the poser hands the simulator are asserted here, against the
+// atoms of its own body rather than against arithmetic on `turn`:
+//
+//   TWO bubbles - the last one added ONE atom, and that atom is the defender's
+//                 second cover. A receiver opening it animates one flight.
+//   ONE bubble  - the same chain, the same two cards, but the last bubble added
+//                 BOTH covers, so both animate. The control is only a control
+//                 if it differs, and this is the only place that says so.
+//
+// The two must also be the SAME CHAIN: the body a device replays is identical
+// down to the byte, and the delta is the only thing that separates them. That
+// is what makes the pair a fair test of the boundary and not of two games.
+static void test_twocover_fixture(void) {
+    static TwoCover two, one;
+    pose_twocover(2, 0, &two);
+    pose_twocover(2, 1, &one);
+    CHECK(two.ok && one.ok, "the twocover fixture posed no deal");
+    if (!two.ok || !one.ok) return;
+
+    CHECK(two.env.actions_len == one.env.actions_len
+          && memcmp(two.env.actions, one.env.actions, (size_t)two.env.actions_len) == 0,
+          "twocover: the one- and two-bubble fixtures are different chains "
+          "(%d vs %d body bytes) - the send in the middle is supposed to be the "
+          "only difference", two.env.actions_len, one.env.actions_len);
+    CHECK(two.env.turn == one.env.turn, "twocover: turn %d vs %d",
+          two.env.turn, one.env.turn);
+
+    DAtoms at;
+    CHECK(datoms_of(two.env.actions, two.env.actions_len, &at) >= 0,
+          "twocover: the two-bubble body did not decode");
+    CHECK(two.env.n_new == 1,
+          "twocover: a cover SENT SEPARATELY from the next one claimed %d atoms, "
+          "not 1 - its recipient will replay the cover before it too",
+          two.env.n_new);
+    const int before_two = (int)two.env.turn - (int)two.env.n_new;
+    if (two.env.n_new == 1 && before_two >= 0 && before_two < at.n) {
+        CHECK(at.a[before_two].kind == REPLAY_ATOM_COVER && at.a[before_two].seat == two.def,
+              "twocover: the group opens on a %d by seat %d, not the defender's cover",
+              at.a[before_two].kind, at.a[before_two].seat);
+    }
+
+    CHECK(one.env.n_new == 2,
+          "twocover: the CONTROL staged two covers into one bubble and claimed "
+          "%d atoms, not 2 - it cannot show what it exists to show", one.env.n_new);
+    const int before_one = (int)one.env.turn - (int)one.env.n_new;
+    CHECK(datoms_of(one.env.actions, one.env.actions_len, &at) >= 0,
+          "twocover: the one-bubble body did not decode");
+    if (one.env.n_new == 2 && before_one >= 0 && before_one + 1 < at.n) {
+        CHECK(at.a[before_one].kind == REPLAY_ATOM_COVER
+              && at.a[before_one + 1].kind == REPLAY_ATOM_COVER
+              && at.a[before_one].seat == one.def
+              && at.a[before_one + 1].seat == one.def,
+              "twocover: the control's group is not the defender's two covers "
+              "(%d/%d then %d/%d)",
+              at.a[before_one].kind, at.a[before_one].seat,
+              at.a[before_one + 1].kind, at.a[before_one + 1].seat);
+    }
+    printf("  twocover fixture: two bubbles claim %d, one bubble claims %d, "
+           "same %d-byte chain\n", two.env.n_new, one.env.n_new, two.env.actions_len);
 }
 
 // `msg_wire_test --fixture` prints sealed envelopes as hex, one per line:
@@ -3372,6 +3506,7 @@ int main(int argc, char **argv) {
     test_clock_wire();
     test_podkidnoy_wire();
     test_bubble_delta();
+    test_twocover_fixture();
     test_nothing_bubble();
     test_roster_key();
     test_chain_gates();

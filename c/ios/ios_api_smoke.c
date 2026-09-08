@@ -489,6 +489,246 @@ static int bubble_delta_check(void) {
     return 0;
 }
 
+// ---------- one cover per bubble animates ONE cover ------------------------
+//
+// THE SPEC SENTENCE, from ios_api.h at fio_replay_last_events_packed: "A player
+// may stage several actions before sending, so a double cover replays BOTH -
+// and a cover SENT SEPARATELY from the next one does not." Everything about
+// that boundary is decided by ONE number, `atoms_before`, which a receiver
+// reads off the envelope as `turn - n_new`; the group is every step after it.
+//
+// It is asserted HERE, over the shipping entry points, because that is the only
+// place both halves meet: msg_wire seals the delta, ios_api remembers the log
+// mark it is measured from, and this function turns the pair back into frames.
+// A test on either half alone passes while the boundary is a move out.
+//
+// WHAT THIS PINS, on one deal, with the same two covers each way:
+//
+//   TWO BUBBLES - cover, send, cover, send. The last bubble added ONE atom and
+//                 opening it animates ONE event, the defender's second cover.
+//   ONE BUBBLE  - cover, cover, send. Two atoms, two cover events.
+//
+// It also settles what an atom IS, which is the question a capture lane cannot
+// answer from a film: an ordinary cover is ONE atom and renders as ONE event,
+// so `n=2 [cover cover]` is two covers and never one cover drawn twice.
+//
+// 2026-09-07, which is why it exists: the replay lane filmed `openReplay
+// events=2 / stream#1 begin n=2 [cover@1x1 cover@1x1]` on a two-bubble payload
+// and filed a shipping regression. The kernel was right and the FIXTURE was
+// wrong - it had sealed with the parent's atom count where a log mark belongs
+// (see msg_wire_test.c's test_twocover_fixture) - but nothing in C would have
+// caught either mistake, because nothing asserted the boundary end to end.
+//
+// The seat that COVERS is the one whose device seals, and the seat that OPENS
+// is the attacker: a receiver animating somebody else's move is the case the
+// spec sentence is about.
+
+// The first move of `want_type` with exactly `want_n` cards, as an awire frame.
+// Returns the frame length, or 0 when the menu holds no such move.
+static int pick_typed_awire(const unsigned char *packed, int len,
+                            int want_type, int want_n, unsigned char *out) {
+    if (len < 4) return 0;
+    unsigned int n = (unsigned)packed[0] | ((unsigned)packed[1] << 8)
+                   | ((unsigned)packed[2] << 16) | ((unsigned)packed[3] << 24);
+    const unsigned char *p = packed + 4, *end = packed + len;
+    for (unsigned int i = 0; i < n && p + 2 <= end; i++) {
+        const unsigned char *rec = p;
+        const int nc = p[1];
+        p += 2 + 2 * nc;
+        if (p > end) break;
+        if (rec[0] != want_type || nc != want_n) continue;
+        const unsigned char *cards = rec + 2, *attacks = rec + 2 + nc;
+        int o = 0;
+        out[o++] = (unsigned char)want_type;
+        out[o++] = (unsigned char)nc;
+        for (int k = 0; k < nc; k++) out[o++] = cards[k];
+        if (want_type == 1) for (int k = 0; k < nc; k++) out[o++] = attacks[k];
+        return o;
+    }
+    return 0;
+}
+
+// How many cards `seat` holds on the RESIDENT game, read the way a board reads
+// it (the packed spectator state through the kernel's own decoder), or -1.
+static int smoke_hand_count(int seat) {
+    char sb[1 << 15];
+    const int sl = fio_state_packed(-1, sb, sizeof sb);
+    if (sl < 0) return -1;
+    static Game g;
+    memset(&g, 0, sizeof g);
+    state_get(&g, (const unsigned char *)sb, /*masked=*/1);
+    if (seat < 0 || seat >= g.num_players) return -1;
+    return g.players[seat].hand_count;
+}
+
+// The event types of one packed frame set, in play order. Returns the count or
+// -1; `types` must hold `cap`.
+typedef struct { int *types; int cap; int n; } SmokeTypeCtx;
+static void smoke_type_sink(void *ctx, int index, const EvwRead *ev) {
+    SmokeTypeCtx *c = (SmokeTypeCtx *)ctx;
+    (void)index;
+    if (c->n < c->cap) c->types[c->n] = ev->type;
+    c->n++;
+}
+static int smoke_frame_types(const unsigned char *frames, int len, int *types, int cap) {
+    SmokeTypeCtx c = { types, cap, 0 };
+    int q = 0;
+    while (q + 2 <= len) {
+        const int flen = frames[q] | (frames[q + 1] << 8);
+        q += 2;
+        if (flen <= 0 || q + flen > len) return -1;
+        if (evwire_read(frames + q, flen, 0, 0, 0, smoke_type_sink, &c) < 0) return -1;
+        q += flen;
+    }
+    return c.n;
+}
+
+// Open `payload` as a receiver does: adopt it, take the boundary off its own
+// header, and ask the kernel for the frames of its last bubble. Hands back the
+// event types and the delta the bubble claimed.
+static int smoke_open_bubble(const unsigned char *payload, int pn, int viewer,
+                             int *types, int cap, int *n_new_out, int *turn_out) {
+    unsigned char mb[1 << 14];
+    if (fio_msg_decode_packed(payload, pn, mb, sizeof mb) <= 0) return -1;
+    const int turn  = mb[4] | (mb[5] << 8);
+    const int n_new = mb[56];
+    if (n_new_out) *n_new_out = n_new;
+    if (turn_out)  *turn_out  = turn;
+    // MessageEnvelope.atomsBefore, in the one form the kernel takes.
+    const int atoms_before = n_new == 255 ? turn : (n_new > 0 ? turn - n_new : -1);
+    char code[4096];
+    if (fio_replay_share_code_b32(code, sizeof code) < 0) return -1;
+    const int fl = fio_replay_last_events_packed(code, viewer, atoms_before,
+                                                 (unsigned char *)evbuf, sizeof evbuf);
+    if (fl < 0) return -1;
+    return smoke_frame_types((const unsigned char *)evbuf, fl, types, cap);
+}
+
+static int chained_cover_check(void) {
+    const SmokeJoin jspec[2] = { {0,"Ann"}, {1,"Bo"} };
+    unsigned char joins[64];
+    const int joins_n = pack_joins(joins, (int)sizeof joins, jspec, 2);
+    const uint8_t zero8[8] = {0};
+
+    for (int trial = 0; trial < 400; trial++) {
+        unsigned char seed[32];
+        for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(i * 7 + trial * 13 + 1);
+        if (fio_new_game(seed, 32, 2) != FIO_EOK) { printf("FAIL chained cover new_game\n"); return 1; }
+
+        // Two single-card attacks by the opener, so the defender has two slots
+        // to cover ONE AT A TIME. A throw-in needs its rank on the table, so
+        // only a deal where the attacker holds a pair poses this.
+        int attacker = -1;
+        const int m0 = fio_actor_mask();
+        for (int s = 0; s < 2; s++) if (m0 & (1 << s)) { attacker = s; break; }
+        if (attacker < 0) continue;
+        int thrown = 0;
+        for (; thrown < 2; thrown++) {
+            const int lrc = fio_legal_packed(attacker, buf, sizeof buf);
+            if (lrc < 0) break;
+            unsigned char aw[64];
+            const int al = pick_typed_awire((const unsigned char *)buf, lrc, 0 /*attack*/, 1, aw);
+            if (al == 0 || fio_apply_awire(attacker, aw, al) != FIO_EOK) break;
+        }
+        if (thrown < 2) continue;
+        const int defender = 1 - attacker;
+        // Both covers must leave the defender holding something: a cover that
+        // empties the hand SWEEPS the table and ends the bout, which folds a
+        // round_end atom into the bubble and is a different fixture.
+        if (smoke_hand_count(defender) < 3) continue;
+
+        unsigned char parent[2048];
+        const int par_n = fio_msg_encode(2, attacker, 0xC0FFEEULL, zero8, joins, joins_n,
+                                         1000, parent, sizeof parent);
+        if (par_n <= 0) continue;
+
+        // ---- TWO BUBBLES: cover, send, cover, send ----
+        unsigned char mb[1 << 14];
+        if (fio_msg_decode_packed(parent, par_n, mb, sizeof mb) <= 0) continue;
+        unsigned char b1[2048], b2[2048];
+        int n1 = 0, n2 = 0, ok = 1;
+        for (int i = 0; i < 2 && ok; i++) {
+            const int lrc = fio_legal_packed(defender, buf, sizeof buf);
+            unsigned char aw[64];
+            const int al = lrc < 0 ? 0
+                         : pick_typed_awire((const unsigned char *)buf, lrc, 1 /*cover*/, 1, aw);
+            if (al == 0 || fio_apply_awire(defender, aw, al) != FIO_EOK) { ok = 0; break; }
+            unsigned char *dst = i == 0 ? b1 : b2;
+            const int n = fio_msg_encode(2, defender, 0xC0FFEEULL, zero8, joins, joins_n,
+                                         1030 + i * 30, dst, 2048);
+            if (n <= 0) { ok = 0; break; }
+            if (i == 0) n1 = n; else n2 = n;
+            // …and SEND: the board rebases onto the bytes that went out, which
+            // is where the next bubble's mark comes from (MessageTurnController
+            // markSent). Adopting again rather than staging on is the ONLY
+            // difference between this and the control below.
+            if (i == 0 && fio_msg_decode_packed(dst, n, mb, sizeof mb) <= 0) { ok = 0; break; }
+        }
+        if (!ok) continue;
+
+        int t1[64], t2[64], nn1 = 0, nn2 = 0, turn1 = 0, turn2 = 0;
+        const int e1 = smoke_open_bubble(b1, n1, attacker, t1, 64, &nn1, &turn1);
+        const int e2 = smoke_open_bubble(b2, n2, attacker, t2, 64, &nn2, &turn2);
+        if (e1 < 0 || e2 < 0) { printf("FAIL chained cover: a bubble would not open\n"); return 1; }
+
+        // ---- ONE BUBBLE, the control: cover, cover, send ----
+        if (fio_msg_decode_packed(parent, par_n, mb, sizeof mb) <= 0) continue;
+        unsigned char both[2048];
+        int nb = 0;
+        ok = 1;
+        for (int i = 0; i < 2 && ok; i++) {
+            const int lrc = fio_legal_packed(defender, buf, sizeof buf);
+            unsigned char aw[64];
+            const int al = lrc < 0 ? 0
+                         : pick_typed_awire((const unsigned char *)buf, lrc, 1 /*cover*/, 1, aw);
+            if (al == 0 || fio_apply_awire(defender, aw, al) != FIO_EOK) ok = 0;
+        }
+        if (!ok) continue;
+        nb = fio_msg_encode(2, defender, 0xC0FFEEULL, zero8, joins, joins_n, 1090, both, sizeof both);
+        if (nb <= 0) continue;
+        int tb[64], nnb = 0, turnb = 0;
+        const int eb = smoke_open_bubble(both, nb, attacker, tb, 64, &nnb, &turnb);
+        if (eb < 0) { printf("FAIL chained cover: the control would not open\n"); return 1; }
+
+        // The two runs must be the SAME CHAIN - same atoms, same final turn -
+        // or the pair compares two games instead of two boundaries.
+        if (turn2 != turnb) {
+            printf("FAIL chained cover: two bubbles ended at turn %d, one bubble at %d\n",
+                   turn2, turnb);
+            return 1;
+        }
+        if (nn1 != 1 || nn2 != 1) {
+            printf("FAIL chained cover: covers sent one per bubble claimed %d and %d atoms, want 1 each\n",
+                   nn1, nn2);
+            return 1;
+        }
+        if (e2 != 1 || t2[0] != EVW_T_COVER) {
+            printf("FAIL chained cover: opening the SECOND cover's bubble replayed %d events"
+                   " (first type %d) - the spec says only that cover\n",
+                   e2, e2 > 0 ? t2[0] : -1);
+            return 1;
+        }
+        if (e1 != 1 || t1[0] != EVW_T_COVER) {
+            printf("FAIL chained cover: the first cover's bubble replayed %d events, want 1\n", e1);
+            return 1;
+        }
+        if (nnb != 2) {
+            printf("FAIL chained cover: a staged double cover claimed %d atoms, want 2\n", nnb);
+            return 1;
+        }
+        if (eb != 2 || tb[0] != EVW_T_COVER || tb[1] != EVW_T_COVER) {
+            printf("FAIL chained cover: the staged double cover replayed %d events"
+                   " (%d,%d), want 2 covers\n", eb, eb > 0 ? tb[0] : -1, eb > 1 ? tb[1] : -1);
+            return 1;
+        }
+        printf("chained cover OK (sent apart: 1 atom -> 1 cover event each;"
+               " staged together: 2 atoms -> 2 cover events; turn %d both ways)\n", turn2);
+        return 0;
+    }
+    printf("FAIL chained cover: no 2p deal in 400 tries posed two coverable throw-ins\n");
+    return 1;
+}
+
 // ---------- Lobby v2: open-count WAITING -> Start reseat -> LIVE -----------
 //
 // Proves the mechanism batch 6 / item C picked for the iMessage group lobby
@@ -1541,6 +1781,7 @@ int main(void) {
     if (replay_sweep() != 0) return 1;
     if (fmsg_check() != 0) return 1;
     if (bubble_delta_check() != 0) return 1;
+    if (chained_cover_check() != 0) return 1;
     if (lobby_v2_reseat_check() != 0) return 1;
     if (lobby_rules_check() != 0) return 1;
     if (nine_player_cap_check() != 0) return 1;
