@@ -286,7 +286,10 @@ public struct FSeatBadge: View {
 }
 
 /// A three-dot "thinking" pulse (Reduce-Motion falls back to a static dot row).
-public struct ThinkingDots: View {
+// Not `public`: nothing outside FoolishKit names it, and a public View in a
+// dynamic framework exports its whole SwiftUI generic tree as symbol names
+// (see RulesView.swift for the measurement).
+struct ThinkingDots: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var phase = 0.0
     public init() {}

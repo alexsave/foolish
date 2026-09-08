@@ -87,6 +87,11 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.app
         INFOPLIST_FILE: FoolishApp/Info.plist
+        # Its appiconset carries the same 20/29/40/60pt ladder beside the 1024
+        # for the same reason FoolishMessagesApp's does - see that target for the
+        # measurement. This app had the identical single-1024 set and therefore
+        # the identical 1.86MB loose AppIcon1024x1024.png; the lint that found it
+        # covers both.
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_PREVIEWS: "YES"
         TARGETED_DEVICE_FAMILY: "1"     # iPhone only in v1 (§2 non-goals)
@@ -139,6 +144,30 @@ targets:
         # CFBundleIconName even though it is a codeless Messages-only app (no Home
         # Screen icon). Same 1024 icon as the main Foolish app
         # (FoolishMessagesApp/Assets.xcassets/AppIcon, copied from FoolishApp).
+        #
+        # That appiconset carries the CLASSIC iPhone size ladder (20/29/40/60pt
+        # at @2x/@3x) beside the 1024 marketing icon, and it is a SIZE decision,
+        # not a taste one. actool always emits a loose "standalone" copy of the
+        # primary app icon next to Assets.car - the copy the system reads without
+        # opening the catalog - and it picks the smallest applicable rendition.
+        # With only the 1024 in the set that copy WAS the 1024: AppIcon1024x1024.png,
+        # 1.86MB, 20% of the whole bundle, sitting at the top of the app. With a
+        # 60x60@2x present the standalone is a 31KB file instead. Deleting the
+        # small sizes to "simplify" puts the 1.86MB straight back, and
+        # `--standalone-icon-behavior none` is not an escape: actool hard-errors
+        # ("app icon set ... did not have any applicable content").
+        #
+        # And the loose copy is only HALF the cost. A loose file at the bundle
+        # root is not app-thinned; a rendition inside Assets.car is. With one
+        # rendition there was nothing to thin, so the 1.75MB compiled 1024 rode
+        # along too. With the ladder present, thinning drops BOTH marketing
+        # renditions and Assets.car arrives at 76KB. Measured end to end on the
+        # thinned per-device .ipa (xcodebuild -exportArchive, thin-for-all-
+        # variants):
+        #   before   6.5MB download / 8.3MB install
+        #   after    2.9MB download / 4.8MB install
+        # scripts/lint_architecture.sh fails the build if any iOS icon set loses
+        # its ordinary renditions again.
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
   # ---- The iMessage extension (M1) ---------------------------------------
@@ -309,11 +338,33 @@ targets:
         # (the only app-only call, ShareLink, is in the app target where it
         # belongs), so this is now ON and the compiler keeps it that way — an
         # app-only API creeping into FoolishKit becomes a build error, not a
-        # runtime surprise in the extension. (Separate, heavier concern tracked
-        # apart: FoolishKit still links the Supabase SDK, so the extension binary
-        # carries a network stack it never uses — §17.5's memory ceiling wants a
-        # FoolishKitCore/Net split; that is a refactor, not this flag.)
+        # runtime surprise in the extension.
+        #
+        # The old note here said "FoolishKit still links the Supabase SDK, so the
+        # extension binary carries a network stack it never uses" and asked for a
+        # FoolishKitCore/Net split. That is STALE and was removed rather than
+        # left to be believed: the FoolishNet split already finished the job, and
+        # a Sep-2026 audit of the SHIPPED archive proves it. In
+        # FoolishMessagesApp.app:
+        #   otool -L FoolishKit  -> Foundation/SwiftUI/UIKit/CoreGraphics/
+        #                           CoreImage/CoreText/Combine/libswift* only.
+        #                           No Supabase, no Network.framework, no
+        #                           CFNetwork, not one URLSession stub.
+        #   nm  FoolishKit + the .appex, grepped for supabase|realtime|postgrest|
+        #                           gotrue|websocket|URLSession -> 0 hits each.
+        # There is no network stack to remove. If you are here hunting bundle
+        # bytes, the framework binary is 2.6MB of SwiftUI board code, ~460KB of
+        # Swift type-metadata symbol NAMES (a dylib exports them; see below) and
+        # ~130KB of C kernel - not a hidden SDK.
         APPLICATION_EXTENSION_API_ONLY: "YES"
+        # Measured Sep 2026 and deliberately NOT changed, so nobody re-measures:
+        #   SWIFT_OPTIMIZATION_LEVEL=-Osize  -> 42KB off a 2.62MB binary (1.6%).
+        #   c/Makefile IOS_CFLAGS -O2 -> -Oz -> 45KB off the core archive, but
+        #     that archive is also the inner loop of the host app's Monte Carlo
+        #     bots (FoolishBots resolves game_*/legal_* against THIS framework),
+        #     so taking it needs a third, size-built archive for the extension.
+        # Both are under 1% of the install. The bundle's weight is icons,
+        # textures and SwiftUI - not compiler flags.
 
   # ---- Online-only framework: Supabase, auth, edge functions, realtime ----
   # Split out of FoolishKit so the iMessage extension stops linking a network

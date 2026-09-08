@@ -39,6 +39,21 @@ public enum FernCardBack {
         (resourceName, 480, 672),
     ]
 
+#if FOOLISH_TEXTURE_BAKE
+// BUILD-TIME ONLY, and now enforced rather than only asked for.
+//
+// The generator below has no caller in any shipping target - ios/Tools/
+// GenerateTextures.swift and FeltVariations.swift are the only ones - but
+// `public` in a DYNAMIC framework is a dead-strip root, so it was linked into
+// FoolishKit.framework anyway, and FoolishKit.framework ships inside the
+// iMessage bundle.  A procedural render on launch is what took the extension
+// down on a real phone (see this file's header); carrying the code that does it
+// is the same mistake one step removed.  The two tools pass
+// `-D FOOLISH_TEXTURE_BAKE`; no shipping target defines it.
+//
+// Worth ~1KB of binary, measured (2.639MB -> 2.638MB), so this is a RULE and
+// not a diet: the reason to keep it is that a shipping build cannot render a
+// texture procedurally even by accident, not the bytes.
     // ---- fernFractal.tsx DEFAULT_FERN_PARAMS, verbatim ----------------------
     private struct Affine { let a, b, c, d, e, f: Double }
     private static let transforms: [Affine] = [
@@ -195,4 +210,5 @@ public enum FernCardBack {
         mutating func next() -> UInt64 { state ^= state << 13; state ^= state >> 7; state ^= state << 17; return state }
         mutating func nextUnit() -> Double { Double(next() >> 11) * (1.0 / 9_007_199_254_740_992.0) }
     }
+#endif  // FOOLISH_TEXTURE_BAKE
 }

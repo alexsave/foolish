@@ -15,7 +15,21 @@
 
 import SwiftUI
 
-public struct RulesView: View {
+// NOT `public`, and that is a size decision as much as a scoping one.
+//
+// FoolishKit is a DYNAMIC framework, so every public type is an export: its
+// name, and the mangled name of every SwiftUI generic it nests, land in the
+// exports trie and the symbol string table. Those names are not small - a
+// Sep-2026 audit of the shipped binary found the string table at 460KB across
+// 2379 symbols (~193 bytes each), the largest single `_symbolic` name 2582
+// bytes, all of it nested `ModifiedContent<...>` from view bodies. Dropping
+// `public` from the ten views nothing outside this module named took 21KB off
+// the framework, and it is also simply true: the appex, the host app, the
+// harness and the tests reference none of them.
+//
+// Make one public again only when something outside FoolishKit actually uses
+// it - not to silence an autocomplete.
+struct RulesView: View {
     /// Re-render this view when a setting changes (see FPrefs). Only the
     /// OBSERVATION matters - the strings still come from FStrings.t and the
     /// table surface still comes from FTextures.

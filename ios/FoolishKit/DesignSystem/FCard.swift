@@ -278,7 +278,10 @@ public struct FCard: View {
 /// numeral is bare again, and the badge-y read is answered by WEIGHT and a
 /// hard shadow instead of a plate: heavy white digits carry on the card backs
 /// without borrowing the shape of a notification.
-public struct FCountChip: View {
+// Not `public`: nothing outside FoolishKit names it, and a public View in a
+// dynamic framework exports its whole SwiftUI generic tree as symbol names
+// (see RulesView.swift for the measurement).
+struct FCountChip: View {
     let text: String
     let font: Font
     public init(_ text: String, font: Font = .system(size: 15, weight: .bold)) {
