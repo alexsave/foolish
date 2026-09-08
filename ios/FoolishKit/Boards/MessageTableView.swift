@@ -2083,23 +2083,39 @@ public struct MessageTableView: View {
         }
     }
 
-    /// note 33: a small unobtrusive pill naming what release would do — web
-    /// DragShadow parity. Round-4 note 4: it now tracks the fingertip (see
-    /// boardContent), which is what "anchored to a fixed spot above the
-    /// battles" was traded against and lost — the fixed anchor was easy to
-    /// place but sat at the top of the screen while your hand was at the
-    /// bottom, so it read as unrelated to the drag.
+    /// note 33: the word for what releasing would do - web DragShadow parity.
+    /// Round-4 note 4: it tracks the fingertip (see boardContent), which is
+    /// what "anchored to a fixed spot above the battles" was traded against and
+    /// lost - the fixed anchor was easy to place but sat at the top of the
+    /// screen while your hand was at the bottom, so it read as unrelated to the
+    /// drag.
+    ///
+    /// ROUND 46 - NO PILL, JUST THE WORD (owner: "the text is fine to keep but
+    /// scrap the bubble holding it"). It used to be `FColor.card` on an 85%
+    /// `FColor.ink` capsule with its own shadow: a second opaque object riding
+    /// half a card above the card you are already dragging, on a board whose
+    /// whole vocabulary is cards and wood. Two floating rectangles instead of
+    /// one.
+    ///
+    /// THE WORD ITSELF IS UNCHANGED - same string, same 13pt semibold, same
+    /// `FColor.card` ink. Only the plate under it goes. The one thing kept from
+    /// it is a shadow, moved from the pill onto the text, because the pill was
+    /// doing a real job: holding one small word legible over felt, over wool,
+    /// and over the face of whatever card it passes. A shadow is not a bubble.
+    ///
+    /// AND IT DOES NOT MOVE. `dragHint` is placed by `.position(x:y:)`, which
+    /// centres a view on the given point, and the pill's padding was symmetric
+    /// - so the text's centre always WAS the pill's centre. Dropping the
+    /// padding changes the view's size and not its centre, so the word stays on
+    /// exactly the point `dragHintPosition` returns (owner: "the positioning
+    /// should stay the same without the pill").
     @ViewBuilder
     private func dragHint(_ view: GameView) -> some View {
         if let text = dragHintText(view) {
             Text(text)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(FColor.card)
-                .padding(.horizontal, FSpace.m)
-                .padding(.vertical, FSpace.xs)
-                .background(FColor.ink.opacity(0.85))
-                .clipShape(RoundedRectangle(cornerRadius: FRadius.chip))
-                .shadow(color: .black.opacity(0.35), radius: 6, y: 2)
+                .shadow(color: .black.opacity(0.55), radius: 2, y: 1)
                 .transition(.opacity)
                 .allowsHitTesting(false)
         }
