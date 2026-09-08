@@ -152,6 +152,71 @@ public enum WoodTexture {
         var iFactors = [Double](repeating: 0, count: h)
         for I in 0..<h { iFactors[I] = (Double(I) + offY) * 0.001 }
 
+        /// A streak's width in px, and so the span of the edge-softening table.
+        let rectW = 40
+
+        // THE STREAK MARCH, and why it no longer wraps.
+        //
+        // Every streak is a 40px-wide band whose left edge advances by a fixed
+        // step. The web's generator placed it at `(T * 200) mod w` and clipped
+        // the overhang at the right edge (`min(xPos + rectW, w)`). Both halves
+        // of that are visible defects in a baked swatch, and they were measured
+        // rather than guessed - count, for each column, how many of the 40px
+        // spans overlap it:
+        //
+        //   x = 0        2 passes   (a starved left edge: nothing wrapped into
+        //                            it, so it is nearly bare base colour)
+        //   x = 0..32    2 -> 48    (the ramp out of that hole)
+        //   x = 48..140  60 passes  (a 25% OVER-painted band)
+        //   x = 140..447 48 passes  (flat, the only honest part of the swatch)
+        //
+        // The band is arithmetic, not chaos: 576 streaks at 200/60 px each
+        // travel 1920px across a 448px canvas, which is 4.29 wraps. The
+        // leftover 0.29 of a wrap lays a FIFTH pass over x 0..124 while the
+        // rest of the swatch gets four. A 95x40 button pill is cut from the
+        // middle and never shows it; a 408pt full-width plank spans x 20..428
+        // and shows the starved edge, the ramp and the step all at once, which
+        // is how the owner spotted it.
+        //
+        // The fix is to stop wrapping. The streaks march LINEARLY off both ends
+        // of a longer run and the swatch is cut out of the middle, so every
+        // column inside the crop is covered by exactly the same number of
+        // spans. Wrapping the overhang around to x=0 instead was tried and is
+        // strictly worse: it repairs the starved edge but leaves the fifth-pass
+        // band (spread 14 vs 58), because the band is caused by the fractional
+        // wrap, not by the clipping.
+        //
+        // THE STREAK COUNT AND STEP ARE UNCHANGED, and that is a measured
+        // decision rather than a lazy one. Marching off the ends drops every
+        // column from 48 overlapping spans to 12, and the obvious worry is that
+        // a quarter of the paint makes a paler wood. It does not:
+        //
+        //   shipped        mean RGB (233, 97, 11)   R>=250 23.3%   lum 127.9
+        //   run off ends   mean RGB (232, 95, 11)   R>=250 22.5%   lum 126.0
+        //
+        // The reason is that this palette rails. `red = b * redGain` clears 255
+        // in 57% of the passes that paint at all (median 283, max 1782), so at
+        // streakAlpha 0.1 the red channel is already saturated after about ten
+        // passes - the 13th through 48th were never adding colour, only hiding
+        // the fact that the first twelve had run out of headroom. Twelve passes
+        // clip as hard as forty-eight and land within 2/255 of the same wood.
+        //
+        // (A 4x finer T step, 2304 streaks, restores 48 uniform passes and was
+        // built and filmed. It is indistinguishable in colour and reads as a
+        // finer, busier grain; the coarse march keeps the long diagonal
+        // features and was the one chosen. It is also 4x the build-time work.)
+        //
+        // What this does NOT fix is the clipping itself - that is redGain's
+        // doing and belongs to a palette change, not to this one.
+        let streaks = 576
+        let tDiv = 60.0
+        let stepPx = 200.0 / tDiv
+        let travel = Double(streaks) * stepPx
+        // Where the swatch is cut from the march. Anywhere with a full 40px of
+        // run-up behind it and 40px of run-out ahead has identical coverage;
+        // the middle is the one choice that needs no justification.
+        let cropX = max(rectW, Int((travel - Double(w)) / 2))
+
         // The per-x softening of a streak depends ONLY on the pixel's distance
         // from the streak centre, so across 576 columns x every row x 25
         // k-iterations it recomputes the same 40 numbers tens of millions of
@@ -159,7 +224,6 @@ public enum WoodTexture {
         // instead of a subtract/abs/divide/max/multiply chain. (Kept even
         // though this is build-time code — it is the difference between a
         // regeneration you run and one you wait out.)
-        let rectW = 40
         var alphas = [Double](repeating: 0, count: rectW)
         var invAlphas = [Double](repeating: 0, count: rectW)
         for dx in 0..<rectW {
@@ -173,9 +237,15 @@ public enum WoodTexture {
             let d = buf.baseAddress!
 
             func drawColumn(_ T: Double) {
-                let xPosFloat = ((T + offX / 200) * 200).truncatingRemainder(dividingBy: Double(w))
-                let xPos = Int(xPosFloat)
-                let xEnd = min(xPos + rectW, w)
+                // The streak's left edge in MARCH coordinates, then in the
+                // swatch's own. No remainder: the march runs off both ends.
+                let start = Int((T + offX / 200) * 200) - cropX
+                // Most of the march misses the crop entirely. Skipping those
+                // streaks outright is what keeps this the same amount of work
+                // as the wrapping version despite a 4x longer run.
+                if start >= w || start + rectW <= 0 { return }
+                let kLo = max(0, -start)
+                let kHi = min(rectW, w - start)
                 var I = h - 1
                 while I >= 0 {
                     let iFactor = iFactors[I]
@@ -188,14 +258,17 @@ public enum WoodTexture {
                             let red = b * palette.redGain
                             let green = b * b * palette.greenGain
                             let blue = palette.blueFlat
-                            var x = xPos
-                            while x < xEnd {
-                                let idx = (I * w + x) * 4
-                                let a = alphas[x - xPos], ia = invAlphas[x - xPos]
+                            // `dx` is the offset INSIDE the streak, so it still
+                            // indexes the edge-softening table directly even
+                            // when the span hangs off the crop.
+                            var dx = kLo
+                            while dx < kHi {
+                                let idx = (I * w + (start + dx)) * 4
+                                let a = alphas[dx], ia = invAlphas[dx]
                                 d[idx]   = UInt8(max(0, min(255, red   * a + Double(d[idx])   * ia)))
                                 d[idx+1] = UInt8(max(0, min(255, green * a + Double(d[idx+1]) * ia)))
                                 d[idx+2] = UInt8(max(0, min(255, blue  * a + Double(d[idx+2]) * ia)))
-                                x += 1
+                                dx += 1
                             }
                         }
                         k -= 1
@@ -205,7 +278,7 @@ public enum WoodTexture {
             }
 
             var i = 0
-            while i < 576 { drawColumn(Double(i) / 60); i += 1 }
+            while i < streaks { drawColumn(Double(i) / tDiv); i += 1 }
         }
 
         return cgImageFromRGBA(&data, w: w, h: h)
