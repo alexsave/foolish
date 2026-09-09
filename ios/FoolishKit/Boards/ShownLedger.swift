@@ -119,9 +119,37 @@ enum ShownClaim: Int, Equatable {
 }
 
 /// The board's shown-state ledger. Read freely; write only through `write`.
+/// What the deck well's trump slot is showing. See `ShownLedger.Fields.trump`
+/// for why "gone" and "not in the well" are two different things.
+enum TrumpSlot: Equatable {
+    /// Under the stock, and this is the card.
+    case card(Card)
+    /// It left the stock on this beat and its flight has not landed. The well
+    /// draws neither the card (the flight layer has it) nor the bare glyph
+    /// (which would be the same card drawn twice, once as its own absence).
+    case airborne
+    /// It landed. The bare trump glyph is the only trump mark left.
+    case gone
+
+    /// The card the WELL should draw, or nil for the two states where it
+    /// draws none.
+    var card: Card? { if case let .card(c) = self { return c } else { return nil } }
+    /// Whether the trump still exists anywhere - the gate on the bare glyph.
+    var exists: Bool { self != .gone }
+
+    /// A committed board's slot: the card while the kernel still has it, `gone`
+    /// once it has been dealt out. `hasFlipped` is the gate and `flipped` alone
+    /// is not - after the draw the kernel keeps a stale card in the slot and the
+    /// state wire writes a canonical placeholder over it (c/src/view.c).
+    static func of(_ v: GameView) -> TrumpSlot {
+        guard v.hasFlipped, let f = v.flipped, !f.isHidden else { return .gone }
+        return .card(f)
+    }
+}
+
 struct ShownLedger {
 
-    /// THE SIX FIELDS, and the only place in the app they can be assigned.
+    /// THE SEVEN FIELDS, and the only place in the app they can be assigned.
     /// Kept `internal` so the closure `write` hands out can set them; reachable
     /// only from inside this file, because `ShownLedger.fields` is private and
     /// nothing else vends a `Fields`.
@@ -154,6 +182,20 @@ struct ShownLedger {
         /// empties the row rather than lag it; this is only ever armed for a
         /// stream that puts cards DOWN. See `MessageTableView.replayOpening`.
         var battles: [BattleView]?
+
+        /// THE TRUMP SLOT THE DECK WELL IS DRAWING. nil = follow the kernel.
+        ///
+        /// Three states, because the stock's two halves do not change hands at
+        /// the same moment. The COUNT releases at departure - a card in the air
+        /// is no longer in the pile, so the badge drops and the pile thins as it
+        /// leaves. The bare TRUMP GLYPH means "there is no flipped card
+        /// anywhere any more", which can only be true once the card has landed.
+        /// Between those two instants the trump is `.airborne`: out of the
+        /// well, not yet absent, drawn by the flight layer and by nothing else.
+        ///
+        /// Held here rather than read off the board for the same reason the
+        /// deck count is - see `MessageTableView.shownTrumpSlot`.
+        var trump: TrumpSlot?
 
         /// The discard count the pile is drawing. nil = follow the kernel.
         var discard: Int?
@@ -235,6 +277,7 @@ struct ShownLedger {
 
     // Reading is free and unguarded - the rule is entirely about who WRITES.
     var deck: Int? { fields.deck }
+    var trump: TrumpSlot? { fields.trump }
     var discard: Int? { fields.discard }
     var hand: [Int: Int] { fields.hand }
     var out: Set<Int>? { fields.out }

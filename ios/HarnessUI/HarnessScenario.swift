@@ -744,6 +744,15 @@ extension HarnessModel {
         // PREFERS pickups while it is under the target, because a pickup is the
         // only move in Durak that makes a hand bigger by more than one.
         let bigHand = Int(ProcessInfo.processInfo.environment["HARNESS_ARRIVE_BIGHAND"] ?? "") ?? 0
+        // 1.1(55): HARNESS_ARRIVE_DECKMAX=<n> warms up until the STOCK is down
+        // to `n` or fewer, which is the only way to pose the deck well's
+        // endgame at all. The two reports this exists for both need a refill
+        // that reaches PAST the deck and hands out the flipped trump - and that
+        // can only happen when the stock has fewer cards left than the refill
+        // is about to deal. Every arrival run before this one watched a board
+        // with fifteen-plus cards in the well, so the whole class was invisible
+        // to the rig, exactly as `bigHand`'s note says of the row split.
+        let deckMax = Int(ProcessInfo.processInfo.environment["HARNESS_ARRIVE_DECKMAX"] ?? "") ?? -1
         func biggestHand() async -> Int {
             guard let v = await MessageKernel.shared.residentView(viewer: -1) else { return 0 }
             return v.players.map(\.handCount).max() ?? 0
@@ -754,6 +763,20 @@ extension HarnessModel {
         // nothing, which is not the arrival being posed.
         func wantReady() async -> Int? {
             guard let v = await MessageKernel.shared.residentView(viewer: -1) else { return nil }
+            // Not until the stock is down where the report lives - see `deckMax`.
+            // Three conditions, and all three are the report: the stock must
+            // still be SHOWING (deck > 0, or the well draws no pile at all),
+            // the flipped trump must still be UNDER it, and the refill this
+            // move is about to run must want MORE cards than the deck holds -
+            // which is the only way the trump is dealt out rather than left
+            // sitting there. Without the third the board just deals from a
+            // short stock and the bug never poses.
+            if deckMax >= 0 {
+                guard v.deckCount > 0, v.deckCount <= deckMax, v.hasFlipped else { return nil }
+                let demand = v.players.filter { !$0.isOut }
+                    .reduce(0) { $0 + max(0, 6 - $1.handCount) }
+                guard demand > v.deckCount else { return nil }
+            }
             // Not until somebody's hand can actually SPLIT - see `bigHand`. The
             // arrival is only interesting on a board where the row count is in
             // play, so a run that posed it over a six-card hand would pass while
@@ -814,7 +837,7 @@ extension HarnessModel {
         // same board offline: round after round of pickups never gets there).
         // …and a bighand run needs room to take several times over, so it gets
         // the deep cap even for a shallow kind.
-        let cap = deep || bigHand > 0 ? 400 : 40
+        let cap = deep || bigHand > 0 || deckMax >= 0 ? 400 : 40
         // …and if one whole game goes by without producing the board, RE-DEAL.
         // Not every deal contains a bout-ending cover at all (the defender has
         // to run out on a table they can fully answer), so a single game is a
@@ -823,7 +846,7 @@ extension HarnessModel {
         // defender has to be holding the rank that is already on the table), so
         // it re-deals too. Any other kind takes exactly one pass, as it always
         // has.
-        let deals = deep || transfer ? 40 : 1
+        let deals = deep || transfer || deckMax >= 0 ? 40 : 1
         // Grow a hand: take the table rather than defend it, and open bouts
         // rather than end them, until somebody is over the split threshold.
         // Returns nil once the target is reached, which hands the warm-up back
@@ -844,7 +867,7 @@ extension HarnessModel {
                 var acted = false
                 for s in 0..<n {
                     let legal = await MessageKernel.shared.residentLegal(seat: s)
-                    let pick = deep
+                    let pick = deep || deckMax >= 0
                         ? (legal.first { $0.type == .cover } ?? legal.first { $0.type != .wait })
                         // ROUND 29: never spend the move being hunted for. A
                         // transfer only ever appears on the DEFENDER's menu, and

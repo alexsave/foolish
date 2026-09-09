@@ -238,6 +238,26 @@ typedef struct {
     // through: a caller choosing between two tables must not treat the second
     // as a table.
     int paired;
+    // THE STOCK'S OTHER HALF: the flipped trump lying UNDER the deck, or
+    // CARD_NONE once a refill has dealt it out.
+    //
+    // Here for the same reason the row above it is, one corner of the board
+    // over, and it was missing for the same reason too. The deck count froze
+    // and the trump did not: a bout-ending `good` whose refill reaches PAST
+    // the deck hands the trump out, so the board that move commits has no
+    // flipped card at all - and a well drawing a frozen pile of four with
+    // nothing under it has hidden the trump in the place it still IS while it
+    // waits to fly from there. (Owner, 1.1(55): "if the flipped card would've
+    // been animated in the resulting animation, it DOES NOT SHOW at first in
+    // the pile BEFORE the deal animations play. The deck shows, but not the
+    // flipped card.") The badge is wrong through the same window for the same
+    // reason - it counts deck + trump.
+    //
+    // THE IDENTITY HAS TO TRAVEL, not just a flag. Once the trump is drawn the
+    // kernel keeps a stale card in g->flipped (state_put writes a canonical
+    // placeholder over it for exactly that reason - see view.c), so a caller
+    // told only "there was one" would draw a wrong face.
+    Card flipped;
 } AnimCounts;
 
 // One planned step: the event's identity plus its timing and the board counts
@@ -288,8 +308,11 @@ typedef struct {
     int         n_cards;
     int         mask_cards; // 1 => cards are viewer-masked backs (no identity);
                             //      excluded from the veil (they animate as backs)
-    int         has_counts; // 1 => deck/discard/hand are THIS step's own board
+    int         has_counts; // 1 => deck/discard/hand/flipped are THIS step's
+                            //      own board
     int         deck, discard;
+    Card        flipped;   // that board's flipped trump, CARD_NONE once it has
+                           // been dealt out. Read only when has_counts is 1.
     const int  *hand;      // n_players entries; NULL iff has_counts == 0
     // …AND THE ROW that board carried, same borrow, same layout as everywhere
     // else (2 bytes per battle). ANIM_NO_BOARD or 0 for a step that carries
@@ -307,9 +330,11 @@ int anim_step_duration_ms(int event_type);
 
 // ---- plan building --------------------------------------------------------
 // Build the timed plan for a decoded viewer sequence. `final_deck`,
-// `final_discard`, `final_hand` (length n_players) are the FINAL committed
-// board's counts - the state the platform renders immediately; the plan freezes
-// the DISPLAY back to the pre-sequence values and reveals forward per step.
+// `final_discard`, `final_flipped` and `final_hand` (length n_players) are the
+// FINAL committed board - the state the platform renders immediately; the plan
+// freezes the DISPLAY back to the pre-sequence values and reveals forward per
+// step. `final_flipped` is CARD_NONE when that board has no flipped trump left,
+// and is read ONLY on the boardless fallback below.
 //
 // THE FREEZE ANCHORS ON THE FIRST EVENT'S OWN BOARD AND UNDOES EXACTLY ONE
 // EVENT. events[0]'s snapshot IS the board one event in, so one undo reaches
@@ -327,6 +352,14 @@ int anim_step_duration_ms(int event_type);
 // fallback for a stream carrying no boards at all, which the packed evwire never
 // produces (every event carries one).
 //
+// THE FLIPPED TRUMP IS ADOPTED AND NEVER UNDONE, and that same sentence is why.
+// The one event the undo runs on is the first, and the first is never the refill
+// that deals the trump out - so the anchor board's own trump IS the pre-stream
+// trump and there is nothing to take back. Nor could it be taken back: an event
+// says how many cards it moved, never whether the last of them came from under
+// the deck rather than off the top of it, which is the same blind spot that
+// makes the n-undo walk read the deck one card high.
+//
 // Each step's POST counts are that step's OWN board, not a forward derivation
 // of it: committing the step's snapshot as its flight lands is what every client
 // actually does (iOS GameEvent.state, the web's updateGameState). A step with no
@@ -336,8 +369,8 @@ int anim_step_duration_ms(int event_type);
 // overflows) / ANIM_EBADARG (NULL out/final_hand, NULL events with n_events > 0,
 // n_players out of range).
 int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
-                    int final_deck, int final_discard, const int *final_hand,
-                    AnimPlan *out);
+                    int final_deck, int final_discard, Card final_flipped,
+                    const int *final_hand, AnimPlan *out);
 
 // ---- beats: the SHAPE a sequence plays in ---------------------------------
 //
