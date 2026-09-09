@@ -131,14 +131,14 @@ final class LocalizationTests: XCTestCase {
         if !shrunk.isEmpty { print("action labels riding the shrink floor: \(shrunk.joined(separator: ", "))") }
     }
 
-    /// THE PHONE'S ANSWER IS THE ONLY ANSWER NOW, so the resolver is the whole
-    /// language setting and every one of these is a way it could silently put a
-    /// player in a language they did not ask for.
+    /// THE PHONE'S ANSWER IS THE DEFAULT ANSWER, and on the iMessage board it is
+    /// the only one - that sheet has no language row - so every case here is a
+    /// way the resolver could silently put a player in a language they did not
+    /// ask for, in the one surface with no picker to correct it.
     ///
-    /// There is no picker to correct it with any more (FStrings.active), which
-    /// is exactly why this is a table of real `preferredLanguages` lists rather
-    /// than a restatement of the rule: the rule is two lines and reads fine, and
-    /// the cases below are the ones that were wrong in a draft of it.
+    /// A table of real `preferredLanguages` lists rather than a restatement of
+    /// the rule: the rule is two lines and reads fine, and the cases below are
+    /// the ones that were wrong in a draft of it.
     func testTheResolverObeysThePhone() {
         let cases: [(want: AppLanguage, preferred: [String], why: String)] = [
             (.en, [], "no preference at all falls to English"),
@@ -175,6 +175,22 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(FStrings.match(["es-PL"]), .es)
         XCTAssertEqual(FStrings.match(["en-DE"]), .en)
         XCTAssertEqual(FStrings.match(["sr-Latn-RS"]), .en, "Serbian is not carried; Latn is a script")
+    }
+
+    /// Every language names itself in its own script, so the phone app's picker
+    /// is readable by the person who needs it (see `AppLanguage.display`).
+    func testEveryLanguageNamesItself() {
+        var seen = Set<String>()
+        for lang in AppLanguage.allCases {
+            XCTAssertFalse(lang.display.isEmpty, "\(lang) has no display name")
+            XCTAssertTrue(seen.insert(lang.display).inserted,
+                          "two languages both call themselves \(lang.display)")
+            // An endonym, not a code: a row reading "pt" or "Chinese" points a
+            // reader who has no English at the way out in a language they do not
+            // speak.
+            XCTAssertNotEqual(lang.display, lang.rawValue,
+                              "\(lang) names itself with its own subtag")
+        }
     }
 
     /// Each case's raw value IS the subtag the resolver matches on, which is

@@ -57,11 +57,26 @@ public final class FPrefs: ObservableObject {
     public static let shared = FPrefs()
     private init() {}
 
-    // No language here any more. It was a stored, published, settable choice
-    // because a settings row could change it mid-session and every visible
-    // string had to re-render; the phone's own language cannot change under a
-    // running process (iOS restarts the app and its extensions when it does), so
-    // there is nothing to publish. `FStrings.active` answers it directly.
+    // MARK: language
+
+    /// Published so views re-render the instant the phone app's Settings picker
+    /// changes it; `FStrings.override` stays the store of record, so a fresh
+    /// process resolves the same language without this.
+    ///
+    /// It reads `FStrings.active`, not `override`: the default is nil (ask the
+    /// phone), and a picker whose selection was nil would have nothing checked.
+    /// So the row that is ticked on a device that never chose is the one the
+    /// phone resolved, which is also the true answer.
+    ///
+    /// Nothing in the iMessage extension observes this - that sheet has no
+    /// language row - and nothing there writes it either (see
+    /// `FStrings.honorsStoredChoice`).
+    @Published public private(set) var language: AppLanguage = FStrings.active
+
+    public func setLanguage(_ lang: AppLanguage) {
+        FStrings.override = lang
+        language = lang
+    }
 
     // MARK: table surface
 

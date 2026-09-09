@@ -2,13 +2,15 @@
 // day one). Fifteen languages, in one in-code table: en, ru, ko, zh, vi, es, pt,
 // fr, de, it, ja, pl, uk, tr, id.
 //
-// WHICH ONE A PLAYER GETS IS NOT A SETTING. It was, in two places - the phone
-// app's Settings screen and the iMessage board's gear sheet - and both are gone.
-// The app reads the phone's own ordered language preference instead; see
-// `FStrings.active` for the reasoning and `match` for the resolution. The
-// fifteen languages and the missing picker are one decision: a five-item list
-// is one a player might have had to correct, and a list this long resolved from
-// the phone is one nobody has to look at.
+// WHICH ONE A PLAYER GETS IS THE PHONE'S CALL BY DEFAULT: the app reads the
+// phone's own ordered language preference. See `FStrings.active` for the
+// reasoning and `match` for the resolution.
+//
+// The phone app's Settings screen still offers the full list to disagree with
+// that (owner) - Settings is where a player goes looking for a setting. The
+// iMessage board's gear sheet does NOT: a drawer that size has no room to spend
+// fifteen rows on a question the phone already answered, and a player who wants
+// a different one has the app.
 //
 // Milestone E4 (scripts/gen_ios_strings.mjs) replaces this table with a
 // generated Localizable.xcstrings String Catalog merged from the web's
@@ -39,43 +41,103 @@ import Foundation
 /// adding a column here.
 public enum AppLanguage: String, CaseIterable, Sendable {
     case en, ru, ko, zh, vi, es, pt, fr, de, it, ja, pl, uk, tr, id
+
+    /// Each language names ITSELF - a picker that said "Chinese" in English to
+    /// somebody who cannot read English would be pointing at the way out in a
+    /// language they do not speak. Endonyms, in the script the language is
+    /// written in, which is also why this list is not sorted alphabetically by
+    /// anything: it is in `allCases` order, and the phone app's picker shows it
+    /// that way.
+    public var display: String {
+        switch self {
+        case .en: return "English"
+        case .ru: return "Русский"
+        case .ko: return "한국어"
+        case .zh: return "中文"
+        case .vi: return "Tiếng Việt"
+        case .es: return "Español"
+        case .pt: return "Português"
+        case .fr: return "Français"
+        case .de: return "Deutsch"
+        case .it: return "Italiano"
+        case .ja: return "日本語"
+        case .pl: return "Polski"
+        case .uk: return "Українська"
+        case .tr: return "Türkçe"
+        case .id: return "Bahasa Indonesia"
+        }
+    }
 }
 
 public enum FStrings {
-    /// THE PHONE DECIDES, and there is no setting.
+    /// THE PHONE DECIDES UNLESS THE PLAYER SAID OTHERWISE.
     ///
-    /// There used to be a language list in Settings - the sheet's second
-    /// section, five wooden rows. It is gone, and this is what replaced it:
-    /// whatever languages the player set on their phone, in the order they put
-    /// them in, resolved against what the table carries. The owner's reasoning,
-    /// and it is the right one: a player who reads Polish has ALREADY told their
-    /// phone so, once, and asking again is asking them to do a thing they have
-    /// done. Done right, nobody ever sees this happen.
+    /// The default is the phone: whatever languages the player set on it, in the
+    /// order they put them in, resolved against what the table carries (see
+    /// `match`). The owner's reasoning, and it is the right one: a player who
+    /// reads Polish has ALREADY told their phone so, once, and asking again is
+    /// asking them to do a thing they have done. Done right, nobody ever sees
+    /// this happen.
     ///
-    /// The cost of taking a setting away is that there is no way back if the
-    /// guess is wrong, so the guess does not get to be a guess. It is the OS's
-    /// own ordered answer: `Locale.preferredLanguages` is the whole list from
-    /// Settings > General > Language & Region, so a phone set to Catalan then
-    /// Spanish lands in SPANISH here rather than in English, and a phone set to
-    /// a language we do not carry falls through to the next one its owner
-    /// actually named. English is the floor, not the second choice.
+    /// So the guess does not get to be a guess. It is the OS's own ORDERED
+    /// answer, not just its first entry: `Locale.preferredLanguages` is the
+    /// whole list from Settings > General > Language & Region, so a phone set to
+    /// Catalan then Spanish lands in SPANISH here rather than in English, and a
+    /// phone set to a language we do not carry falls through to the next one its
+    /// owner actually named. English is the floor, not the second choice.
     ///
-    /// It is also the reason the picker could go at all. Five languages was a
-    /// list a player might plausibly have to correct; fifteen resolved from the
-    /// phone is a list nobody has to look at.
+    /// AND THE PHONE APP KEEPS ITS LIST (owner). The iMessage board's gear sheet
+    /// lost its picker - a drawer that size has no room to spend five rows, let
+    /// alone fifteen, on a question the phone already answered - but the phone
+    /// app's Settings screen still offers every language, because the one place
+    /// a player goes looking for a setting is Settings. Two rules, one sentence:
+    /// the phone decides, and a player who disagrees may say so where there is
+    /// room to ask.
     public static var active: AppLanguage { override ?? resolved }
 
-    /// TEST SEAM ONLY - nil in every shipping run, because nothing in the app
-    /// sets it any more. `nil` means "ask the phone".
+    /// The player's explicit choice, or nil for "ask the phone".
     ///
-    /// It is not persisted, and that is the change: the old `override` wrote
-    /// `ios.language` to UserDefaults, so a player who once tapped a row in a
-    /// build that had the picker would have kept that choice forever, silently
-    /// outranking the phone. Nothing reads that key now; it is left unread
-    /// rather than migrated, which is how a device that has one lands on its own
-    /// locale at the next launch like every other device.
+    /// WHERE THE SCREEN IS, THE SETTING IS. It is read from and written to
+    /// UserDefaults - but only in the app, never in the iMessage extension, and
+    /// `honorsStoredChoice` is that rule. An appex has its own defaults
+    /// container, so a value stored there could only have come from the picker
+    /// the gear sheet used to have; honouring it now would let a tap from an old
+    /// build outrank the phone forever, in the one surface that no longer has a
+    /// way to take it back. The extension therefore ignores the key rather than
+    /// migrating it, and lands on its own locale like every other device.
+    ///
+    /// Also the suite's seam: assigning it drives `LocalizationTests` through
+    /// all fifteen tables, and assigning nil puts the phone back in charge.
     public static var override: AppLanguage? {
-        didSet { cached = nil }
+        get {
+            if let forced { return forced }
+            guard honorsStoredChoice,
+                  let raw = UserDefaults.standard.string(forKey: "ios.language")
+            else { return nil }
+            return AppLanguage(rawValue: raw)
+        }
+        set {
+            forced = newValue
+            if honorsStoredChoice {
+                let d = UserDefaults.standard
+                if let newValue { d.set(newValue.rawValue, forKey: "ios.language") }
+                else { d.removeObject(forKey: "ios.language") }
+            }
+            cached = nil
+        }
+    }
+
+    /// The in-memory half of `override`, so a test running inside the extension
+    /// target (where nothing is persisted) still drives the language, and so a
+    /// set is visible on the very next `t` without a defaults round trip.
+    private static var forced: AppLanguage?
+
+    /// Is this process one that has a language screen? False inside the iMessage
+    /// extension, whose bundle is an `.appex`. Deliberately a property of the
+    /// RUNNING BUNDLE and not a compile flag: FoolishKit is one framework linked
+    /// into both, so the answer has to be asked at runtime.
+    private static var honorsStoredChoice: Bool {
+        Bundle.main.bundleURL.pathExtension != "appex"
     }
 
     /// The phone's answer, worked out once. `preferredLanguages` is not free and

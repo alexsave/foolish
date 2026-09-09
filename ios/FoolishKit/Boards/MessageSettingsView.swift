@@ -7,12 +7,15 @@
 // are one fact.
 //
 // THERE USED TO BE A LANGUAGE LIST under it, five wooden rows naming themselves.
-// It is gone: the app reads the phone's own language order instead
-// (FStrings.active), which is a thing the player already told their phone once
-// and should not be asked again. Taking it out is also what let the table grow
-// from five languages to fifteen - a list of five is one a player might have had
-// to correct, and a list of fifteen resolved from the phone is one nobody has to
-// look at.
+// It is gone from HERE: the extension reads the phone's own language order
+// instead (FStrings.active), which is a thing the player already told their
+// phone once and should not be asked again. The table has since grown to
+// fifteen languages, and fifteen wooden rows in a drawer this size is not a
+// setting, it is a wall.
+//
+// The phone app's Settings screen still carries the full list (owner) - see
+// FoolishApp/SettingsView.swift. A player who wants a language other than their
+// phone's has somewhere to say so; this sheet is not it.
 //
 // The table surface is a `.background`, not a ZStack sibling, so the content
 // stays inside the safe area (a sibling ignoresSafeArea grows the stack and
