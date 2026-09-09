@@ -10,10 +10,20 @@
 // The payload IS the game, so the server can just decode it and say something
 // true. Server-side the big module loads from its static .gz (node:fs), the same
 // bytes the browser gets from the base64 twin.
+//
+// THE PAGE ITSELF NOW REDIRECTS to the homepage (see page.tsx for why), which is
+// exactly why this file still earns its place: the redirect is client-side, so a
+// crawler never runs it and still gets the game in the card. It is also why the
+// tags must not promise a board any more. They name who is playing and how far
+// in - true of the payload, and true after the redirect - and stop there. The
+// old blurb ("Hands stay hidden here. Watching is free.") advertised a spectator
+// view that no longer exists, which would have made every shared link lie.
 import type { Metadata } from 'next';
 
 const TITLE = 'A Durak game in iMessage';
-const BLURB = 'Hands stay hidden here. Watching is free.';
+// When the app ships, this is where the App Store call-to-action goes, alongside
+// page.tsx's DESTINATION - the two are one change.
+const BLURB = 'Foolish turns a message thread into a card table.';
 
 export async function generateMetadata(
     { params }: { params: Promise<{ payload: string }> },
@@ -42,7 +52,7 @@ export async function generateMetadata(
             const names = env.joins.map(j => j.name).filter(Boolean);
             const who = names.length >= 2 ? names.join(' vs ') : `${env.n_players} players`;
             title = env.phase === 3 ? `${who} — a finished Durak game` : `${who} — turn ${env.turn}`;
-            description = `A live iMessage Durak game. ${BLURB}`;
+            description = `A Durak game in iMessage. ${BLURB}`;
         }
     } catch {
         // A damaged or hostile link still gets a real page and honest tags —

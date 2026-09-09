@@ -1,5 +1,10 @@
 // The unfurl is server-rendered, so prove generateMetadata on the server side —
 // the same door Messages/Slack/WhatsApp come through (they run no JS).
+//
+// That door is the whole reason the /m/ page's redirect is client-side: a server
+// redirect would be followed by these crawlers and the card would collapse to the
+// bare homepage. So this file is also the regression test for that decision —
+// if the unfurl ever stops naming the game, the redirect was moved to the server.
 import test from 'node:test';
 import { kernelB32Encode } from '../sdk/ts/wasm/bots.ts';
 import assert from 'node:assert/strict';
@@ -13,7 +18,11 @@ test('a real payload unfurls with the game in it', async () => {
     const m = await generateMetadata({ params: Promise.resolve({ payload: '1' + kernelB32Encode(bytes) }) });
     assert.match(String(m.title), /Ann0 vs Ann1 vs Ann2/);
     assert.match(String(m.title), /turn 10/);
-    assert.match(String(m.description), /Hands stay hidden/);
+    assert.match(String(m.description), /card table/);
+    // The page redirects to the homepage now, so the tags must not advertise a
+    // spectator board the visitor will never reach.
+    assert.doesNotMatch(String(m.description), /watch|spectat|hands stay hidden/i,
+        'the unfurl promises a viewable game the redirect does not deliver');
     assert.equal(m.openGraph?.title, m.title);
     assert.equal((m.robots as any)?.index, false, 'one game, not a search result');
 });
