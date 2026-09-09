@@ -1,7 +1,17 @@
-// MessageSummary — the human line under a game bubble (MSMessage.summaryText),
-// added in 1.0(4). It describes the move the bubble carries, so the transcript
-// and the notification read "Alex attacks with K of ♠", not a generic "tap to
-// play".
+// MessageSummary — the WORDS on a game bubble. Two of them, and they answer
+// two different questions:
+//
+//   * `line` / `forStagedBubble` -> MSMessage.summaryText, added in 1.0(4).
+//     What the sender just DID, so the transcript and the notification read
+//     "Alex attacks with K of ♠", not a generic "tap to play".
+//   * `caption` -> MSMessageTemplateLayout.caption, the row under the picture.
+//     What the table is waiting on NOW - who is defending, whose lobby, who
+//     ended up the fool. See its own doc for why that row stopped being the
+//     word "Foolish".
+//
+// Both are pure over the SAME (env, view) pair the bubble's picture is drawn
+// from (BubbleSnapshot), so one `publicRead` feeds all three and the picture,
+// the caption and the notification can never describe different games.
 //
 // THE RULE holds here too: nothing about the move is re-derived. The facts come
 // from the kernel's own evwire event stream (MessageKernel.lastMoveEvents, the
@@ -13,6 +23,72 @@
 import Foundation
 
 public enum MessageSummary {
+
+    /// THE CAPTION ROW — `MSMessageTemplateLayout.caption`, the line Messages
+    /// draws under the bubble picture.
+    ///
+    /// It used to be the literal string "Foolish", on every bubble of every
+    /// game, in a balloon that already carries the app's icon and whose
+    /// `summaryText` already opens with the game's name. A row of screen that
+    /// exists ONLY in iMessage, spent on the one fact the reader had already
+    /// been told twice.
+    ///
+    /// So it says the thing the transcript could not otherwise tell you.
+    /// `summaryText` is a report - "Alex covers K of ♠ with A of ♠" - and a
+    /// report is backward-looking: it says what the sender did, never what the
+    /// thread is now waiting on. In a game played across a day in a group
+    /// chat, THAT is the question, and answering it meant opening the drawer.
+    ///
+    /// WHY THE DEFENDER, and not "your turn". Durak is a multi-actor game
+    /// (docs/IMESSAGE_GAME_DESIGN.md §7): during a bout the defender may cover
+    /// or take, and every attacker may throw in, so several seats can legally
+    /// act at the same moment and "whose turn is it" has no single answer the
+    /// kernel would stand behind. Who is UNDER ATTACK does - `view.defender`
+    /// is one seat, always, stated by the kernel and drawn on the board as the
+    /// shield. The caption states that and nothing more.
+    ///
+    /// One caption per bubble, baked by the sender for everyone: it is a fact
+    /// about the table, not about the reader, so it reads correctly from every
+    /// seat and gives nothing away - the defender is on the picture already.
+    ///
+    /// NO CAPACITY LINE ON A LOBBY (round-5 M9, the owner: "no capacity text,
+    /// too confusing"). The lobby's picture is its roster; the caption names
+    /// the room, and the count stays off it.
+    ///
+    /// Pure over (env, view) - the SAME pair the picture and the summary are
+    /// drawn from, so one decode answers all three and they cannot end up
+    /// describing different games. `nil` env (bytes that would not parse) keeps
+    /// the old brand line: there is no table to report on.
+    public static func caption(env: MessageEnvelope?, view: GameView?) -> String {
+        guard let env else { return brand }
+        let names = Dictionary(env.joins.map { ($0.seat, $0.name) },
+                               uniquingKeysWith: { a, _ in a })
+        switch env.phase {
+        case 0, 1:
+            return FStrings.t("ios.lobby")
+        case 3:
+            // §12's result card. The fool is the kernel's (`view.gameOver`),
+            // the same seat `line` announces in the summary.
+            let fool = view?.gameOver ?? -1
+            return fool >= 0 ? FStrings.t("ios.msg.isfool", ["name": name(fool, names)]) : brand
+        default:
+            // A live bubble whose view did not come back, or a board with no
+            // defender seated yet (turn 0, before the deal is anyone's
+            // problem): say nothing rather than guess a seat.
+            guard let view, view.defender >= 0, view.gameOver < 0 else { return brand }
+            return FStrings.t("ios.msg.cap.defends", ["name": name(view.defender, names)])
+        }
+    }
+
+    /// The fallback caption: the app's name, kept for the bubbles that have no
+    /// table to describe (unparseable bytes, a live board that came back
+    /// without a view). Not localized on purpose - it is the product's name.
+    ///
+    /// `public` because the harness is its own target (project.yml's
+    /// FoolishHarness) and its transcript posts bare-URL bubbles this module
+    /// never reads: it needs the same fallback the extension shows, by name,
+    /// rather than a second copy of the string to drift from this one.
+    public static let brand = "Foolish"
 
     /// THE COMPOSER'S READ: everything the bubble about to be staged says about
     /// itself - its header, and the line that goes under it.

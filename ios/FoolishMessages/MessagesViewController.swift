@@ -576,10 +576,13 @@ final class MessagesViewController: MSMessagesAppViewController {
         // session/bubble; every continuation after that (startingNewGame already
         // false) still reuses `selectedMessage?.session` to collapse within the
         // SAME game, unchanged.
+        // The caption row is the TABLE's state, not the app's name - see
+        // MessageSummary.caption. Same (env, view) the picture and the summary
+        // above were made from, so the three cannot disagree.
         let msg = MessageComposer.message(
             url: url,
             snapshot: image,
-            caption: "Foolish",
+            caption: MessageSummary.caption(env: env, view: publicView),
             summary: summary,
             session: freshSession ? nil : conversation.selectedMessage?.session)
 
