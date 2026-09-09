@@ -27,6 +27,12 @@
 // that `crossOriginIsolated === true` and `window.__oracleMode === 'B'`.
 const CROSS_ORIGIN_ISOLATED = process.env.FOOLISH_CROSS_ORIGIN_ISOLATION === '1';
 
+// A LOCAL next.config.js SHADOWS THIS FILE. Next resolves .js before .mjs, and
+// this repo's .gitignore hides a next.config.js, so a machine that has one gets
+// NONE of this - no rewrites, no headers - while CI and Vercel get all of it.
+// The symptom is /privacy and /imessage-privacy falling through to the [game_id]
+// route locally and working fine in production. If that happens, move the local
+// next.config.js aside rather than doubting this file.
 const nextConfig = {
   reactStrictMode: true,
   async rewrites() {
@@ -35,6 +41,10 @@ const nextConfig = {
       // than a React route: every route renders behind KernelGate (a wasm
       // fetch), and this page must load even when the game bundle doesn't.
       { source: '/imessage-privacy', destination: '/imessage-privacy.html' },
+      // The web/iOS app's policy, static for the same reason. Separate page
+      // because it is a different product with a different answer: that one
+      // collects nothing, this one describes an optional account.
+      { source: '/privacy', destination: '/privacy.html' },
     ];
   },
   async headers() {
