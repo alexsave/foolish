@@ -85,12 +85,13 @@ test('a full 2p game plays to a fool through the FMSG send/accept leg, and no pu
 // batch 6 item B: the FINISHED bubble's own URL is a normal /m/ payload link
 // now (MessageEnvelope.link, decodable by ANY receiver — MessagesViewController.
 // stage's doc explains why the old bare replay-code link broke for receivers),
-// and the replay funnel moved one hop out to the web /m/ page: it decodes that
-// SAME payload and derives the replay code from what it just decoded
-// (kernelResidentReplayCodeV6, sdk/ts/wasm/bots.ts). This drives the same
-// fixture to a fool and proves that derivation actually produces a working
-// replay code from a FINISHED envelope's own (decoded) seed — the exact thing
-// src/app/m/[payload]/page.tsx now does for its "Watch the replay" CTA.
+// and the replay funnel used to run one hop out through the web /m/ page, which
+// decoded that SAME payload and derived the replay code from what it had just
+// decoded (kernelResidentReplayCodeV6, sdk/ts/wasm/bots.ts). That page redirects
+// to the homepage now, so this guards no CTA - but the derivation it proves is
+// the one the app itself performs on a finished envelope, and this is the only
+// test that drives a real fixture to a fool and checks that a working replay code
+// comes out of the envelope's own decoded seed. Kept for that.
 test('a FINISHED envelope\'s own seed derives a real replay code — the /m/ page funnel (batch 6 item B)', () => {
     let bubble = hex(START_2P);
     let finishedEnv: ReturnType<typeof kernelMsgDecode> | null = null;
