@@ -4661,6 +4661,228 @@ static void test_pre_bout_table_degenerate_inputs(void) {
           "a card byte outside the deck is not a card");
 }
 
+// ===========================================================================
+// THE ROW A STREAM OPENS ON (anim_plan.h anim_pre_stream_table). THE PRE-BUMP.
+// ===========================================================================
+//
+// The sweep rule above answers for the moves that take cards OFF the row and
+// returns 0 for every move that puts cards ON it. That decline was the defect:
+// a replayed pass or throw-in had no pre-move row to open on, so the board laid
+// out the ARRIVED row on its first painted frame and the pile already down sat
+// half a slot plus its gap - 36pt, measured - to the side from frame 0 and
+// never moved. A cover was invisible (it adds no cell) and a bout-end pickup
+// was correct (it had this rule already), which is exactly the matrix the
+// report filmed.
+//
+// MUTATION-CHECKED, each applied to c/src/anim_plan.c on its own:
+//   pre_undo_placement returns the board unchanged (no undo)     -> 3 failures
+//   …drops a battle for a COVER instead of clearing the cell     -> 2 failures
+//   …clears the cover for an ATTACK_PASS instead of dropping it  -> 3 failures
+//   …accepts a cell found in either half (drop the half test)    -> 1 failure
+//   …accepts a COVERED cell as a just-laid attack                -> 1 failure
+//   …undoes every event rather than the first                    -> 1 failure
+//   the sweep rule is consulted AFTER the undo                   -> 2 failures
+//   a masked placement invents the row instead of declining      -> 2 failures
+static void test_pre_stream_table_opens_on_the_row_before_the_move(void) {
+    const unsigned char six_d = 3 * 13 + 5, king_d = 3 * 13 + 12, king_h = 1 * 13 + 12;
+    AnimPreTable t;
+
+    // A PASS / THROW-IN: the event's own board carries BOTH piles, and the row
+    // it opened on is that board with the laid card taken back off it.
+    const unsigned char after_pass[4] = { six_d, ANIM_TABLE_NONE, king_d, ANIM_TABLE_NONE };
+    const unsigned char laid[1] = { king_d };
+    pt_reset();
+    pt_add(ANIM_EVT_ATTACK_PASS, after_pass, 2, laid, 1);
+    CHECK(anim_pre_stream_table(pt_evs, pt_n, ANIM_NO_BOARD, NULL, &t) == 1,
+          "a pass opens on ONE pile, not on the two its own board shows");
+    CHECK(strcmp(pt_str(&t), "44") == 0, "…and it is the pile that was already down");
+    CHECK(t.paired == 1, "…off a real board, so a caller may treat it as a table");
+    // The sweep rule alone still says nothing about it - that is the decline
+    // this exists to answer, and it must stay declined for its own caller.
+    CHECK(anim_pre_bout_table(pt_evs, pt_n, ANIM_NO_BOARD, NULL, &t) == 0,
+          "the sweep rule is unchanged and still has nothing to say about a pass");
+
+    // A DEFENDER's transfer is the same shape and the same answer.
+    pt_reset();
+    pt_add(ANIM_EVT_DEFENDER_MOVE, after_pass, 2, laid, 1);
+    CHECK(anim_pre_stream_table(pt_evs, pt_n, ANIM_NO_BOARD, NULL, &t) == 1,
+          "a defender's transfer opens on the row before it too");
+
+    // A MULTI-CARD throw-in takes them all back off, in any order.
+    const unsigned char after_two[6] = { six_d, ANIM_TABLE_NONE, king_d, ANIM_TABLE_NONE,
+                                         king_h, ANIM_TABLE_NONE };
+    const unsigned char two[2] = { king_h, king_d };
+    pt_reset();
+    pt_add(ANIM_EVT_ATTACK_PASS, after_two, 3, two, 2);
+    CHECK(anim_pre_stream_table(pt_evs, pt_n, ANIM_NO_BOARD, NULL, &t) == 1
+          && strcmp(pt_str(&t), "44") == 0,
+          "a two-card throw-in gives back two cells, whatever order they are named in");
+
+    // A COVER fills a cell in rather than adding one, so the row keeps its
+    // WIDTH and opens with the attack bare - which is why a replayed cover
+    // never bumped, and why it must not start doing so now.
+    const unsigned char after_cover[4] = { six_d, king_h, king_d, ANIM_TABLE_NONE };
+    const unsigned char cov[1] = { king_h };
+    pt_reset();
+    pt_add(ANIM_EVT_COVER, after_cover, 2, cov, 1);
+    CHECK(anim_pre_stream_table(pt_evs, pt_n, ANIM_NO_BOARD, NULL, &t) == 2,
+          "a cover opens on the same NUMBER of cells it lands on");
+    CHECK(strcmp(pt_str(&t), "44,51") == 0, "…with its attack still bare");
+
+    // A FIRST ATTACK of a bout opens on nothing, and that is an answer.
+    const unsigned char after_first[2] = { six_d, ANIM_TABLE_NONE };
+    const unsigned char first[1] = { six_d };
+    pt_reset();
+    pt_add(ANIM_EVT_ATTACK_PASS, after_first, 1, first, 1);
+    CHECK(anim_pre_stream_table(pt_evs, pt_n, ANIM_NO_BOARD, NULL, &t) == 0
+          && t.n_battles == 0,
+          "the first attack of a bout opens on an empty row");
+}
+
+static void test_pre_stream_table_declines_rather_than_inventing(void) {
+    const unsigned char six_d = 3 * 13 + 5, king_d = 3 * 13 + 12, king_h = 1 * 13 + 12;
+    const unsigned char seven_s = 0 * 13 + 6;
+    AnimPreTable t;
+
+    // A card the event names that is NOT on the board it supposedly produced:
+    // this is not the placement it claims to be, and a row invented for the
+    // grid is worse than none. With no prior board to fall back on, 0.
+    const unsigned char after[4] = { six_d, ANIM_TABLE_NONE, king_d, ANIM_TABLE_NONE };
+    const unsigned char elsewhere[1] = { seven_s };
+    pt_reset();
+    pt_add(ANIM_EVT_ATTACK_PASS, after, 2, elsewhere, 1);
+    CHECK(anim_pre_stream_table(pt_evs, pt_n, ANIM_NO_BOARD, NULL, &t) == 0,
+          "a card that is not on the board it produced buys no row");
+
+    // …and WITH one, the board the stream opened on is taken instead. That is
+    // the fallback, and it is only ever reached here.
+    const unsigned char prior[2] = { six_d, ANIM_TABLE_NONE };
+    CHECK(anim_pre_stream_table(pt_evs, pt_n, 1, prior, &t) == 1
+          && strcmp(pt_str(&t), "44") == 0 && t.paired == 1,
+          "…the board the stream opened on answers when the undo cannot");
+
+    // A card the event names that is on the board as a COVER is not an attack
+    // this event just laid: refused, not silently uncovered.
+    const unsigned char covered[4] = { six_d, king_h, king_d, ANIM_TABLE_NONE };
+    const unsigned char names_cover[1] = { king_h };
+    pt_reset();
+    pt_add(ANIM_EVT_ATTACK_PASS, covered, 2, names_cover, 1);
+    CHECK(anim_pre_stream_table(pt_evs, pt_n, ANIM_NO_BOARD, NULL, &t) == 0,
+          "an attack found in a cover cell is not an attack this event laid");
+    // …and the mirror: a COVER whose card is sitting in an ATTACK cell.
+    pt_reset();
+    pt_add(ANIM_EVT_COVER, covered, 2, (const unsigned char[]){ six_d }, 1);
+    CHECK(anim_pre_stream_table(pt_evs, pt_n, ANIM_NO_BOARD, NULL, &t) == 0,
+          "a cover found in an attack cell is not a cover this event laid");
+
+    // A MASKED placement names nothing - there is nothing to take back off, and
+    // the rule says so rather than handing back the arrived row.
+    pt_reset();
+    pt_add(ANIM_EVT_ATTACK_PASS, after, 2, NULL, 0);
+    CHECK(anim_pre_stream_table(pt_evs, pt_n, ANIM_NO_BOARD, NULL, &t) == 0,
+          "a placement nobody can name is not undone by guesswork");
+
+    // A step carrying NO board of its own: nothing to undo off.
+    pt_reset();
+    pt_add(ANIM_EVT_ATTACK_PASS, NULL, 0, (const unsigned char[]){ king_d }, 1);
+    CHECK(anim_pre_stream_table(pt_evs, pt_n, ANIM_NO_BOARD, NULL, &t) == 0,
+          "a step with no board of its own has no row to undo");
+
+    // Types that put nothing on the row are not placements at all.
+    pt_reset();
+    pt_add(ANIM_EVT_REFILL, after, 2, (const unsigned char[]){ king_d }, 1);
+    CHECK(anim_pre_stream_table(pt_evs, pt_n, ANIM_NO_BOARD, NULL, &t) == 0,
+          "a refill puts nothing on the row and undoes nothing off it");
+}
+
+static void test_pre_stream_table_leaves_the_sweep_rule_alone(void) {
+    // A SWEEP STREAM goes through the sweep rule verbatim - the table it is
+    // about to TAKE, cover and all, so a bout-ending cover has a slot to fly
+    // into before that table goes. Consulting the addition branch first would
+    // answer with the row before the COVER, one cover short of the table the
+    // sweep must show.
+    const unsigned char six_d = 3 * 13 + 5, king_d = 3 * 13 + 12, king_h = 1 * 13 + 12;
+    const unsigned char covered[4] = { six_d, king_h, king_d, ANIM_TABLE_NONE };
+    const unsigned char taken[3] = { six_d, king_d, king_h };
+    AnimPreTable a, b;
+
+    pt_reset();
+    pt_add(ANIM_EVT_COVER, covered, 2, (const unsigned char[]){ king_h }, 1);
+    pt_add(ANIM_EVT_PICKUP, NULL, 0, taken, 3);
+    const int rc_sweep = anim_pre_bout_table(pt_evs, pt_n, ANIM_NO_BOARD, NULL, &a);
+    const int rc_open  = anim_pre_stream_table(pt_evs, pt_n, ANIM_NO_BOARD, NULL, &b);
+    CHECK(rc_sweep == 2 && rc_open == rc_sweep,
+          "a sweep stream gets the sweep rule's answer, unchanged");
+    // COPIED OUT, because `pt_str` hands back ONE static buffer: the two calls
+    // of `strcmp(pt_str(&a), pt_str(&b))` returned the same pointer and the
+    // comparison was the buffer against itself. It could not fail, and it did
+    // not - it passed against the mutation it exists to catch (the addition
+    // branch consulted before the sweep rule, which answers this stream one
+    // cover short).
+    char swept[512];
+    snprintf(swept, sizeof swept, "%s", pt_str(&a));
+    CHECK(strcmp(swept, "44+25,51") == 0, "…and it is the COVERED table");
+    CHECK(strcmp(swept, pt_str(&b)) == 0 && a.paired == b.paired,
+          "…the same table, with the cover on it and the same paired flag");
+
+    // Its ARGUMENT CHECKS come through it too, rather than being written twice.
+    AnimPreTable t;
+    AnimPreEvent e = { ANIM_EVT_PICKUP, ANIM_NO_BOARD, NULL, 1,
+                       (const unsigned char[]){ 0 } };
+    CHECK(anim_pre_stream_table(&e, 1, ANIM_NO_BOARD, NULL, NULL) == ANIM_EBADARG,
+          "no output, no answer");
+    CHECK(anim_pre_stream_table(NULL, 1, ANIM_NO_BOARD, NULL, &t) == ANIM_EBADARG,
+          "no events, no answer");
+    CHECK(anim_pre_stream_table(NULL, 0, ANIM_NO_BOARD, NULL, &t) == 0,
+          "an empty stream opens on nothing");
+    CHECK(anim_pre_stream_table(&e, -1, ANIM_NO_BOARD, NULL, &t) == ANIM_EBADARG,
+          "a negative count is not a stream");
+    CHECK(anim_pre_stream_table(&e, 1, 2, NULL, &t) == ANIM_EBADARG,
+          "a prior board of two battles and no bytes is not a board");
+}
+
+// THE PLAN CARRIES THE ROW. The bug as the board meets it: the three scalars
+// froze and the row did not, so `pre` described a board that never existed -
+// a pre-move deck badge beside a post-move table.
+static void test_build_plan_freezes_the_row_with_the_counts(void) {
+    const unsigned char six_d = 3 * 13 + 5, king_d = 3 * 13 + 12;
+    const unsigned char after_pass[4] = { six_d, ANIM_TABLE_NONE, king_d, ANIM_TABLE_NONE };
+    int hand[2] = { 5, 6 };
+    AnimPlanEvent ev = {
+        .type = ANIM_EVT_ATTACK_PASS, .seat = 0,
+        .from = ANIM_LOC_HAND, .to = ANIM_LOC_TABLE,
+        .cards = (const Card[]){ { 3, 13 } }, .n_cards = 1, .mask_cards = 0,
+        .has_counts = 1, .deck = 12, .discard = 0, .hand = hand,
+        .n_battles = 2, .battles = after_pass,
+    };
+    AnimPlan plan;
+    CHECK(anim_build_plan(&ev, 1, 2, 12, 0, hand, &plan) == ANIM_EOK, "the plan builds");
+    // The counts froze: my hand held the card back.
+    CHECK(plan.pre.hand[0] == 6, "the hand freeze is the board before the move");
+    // …and so did the ROW. ONE pile, not the two the arrived board shows.
+    CHECK(plan.pre.n_battles == 1 && plan.pre.paired == 1,
+          "the plan opens on ONE pile - the pre-bump is the answer being 2");
+    CHECK(plan.pre.battles[0] == six_d && plan.pre.battles[1] == ANIM_TABLE_NONE,
+          "…and it is the pile that was already down, bare");
+    // A MASKED placement names nothing this viewer can act on, so the plan
+    // must not hand its cards to the undo: it would take a card off the row on
+    // the strength of an identity it was never given. No row at all, and the
+    // caller paints the live table exactly as it did before.
+    ev.mask_cards = 1;
+    CHECK(anim_build_plan(&ev, 1, 2, 12, 0, hand, &plan) == ANIM_EOK
+          && plan.pre.n_battles == 0,
+          "a masked placement buys no row");
+    ev.mask_cards = 0;
+
+    // A stream carrying no rows at all says so, and a caller paints the live
+    // table exactly as it did before the row was in the plan.
+    ev.n_battles = ANIM_NO_BOARD;
+    ev.battles = 0;
+    CHECK(anim_build_plan(&ev, 1, 2, 12, 0, hand, &plan) == ANIM_EOK
+          && plan.pre.n_battles == 0,
+          "a stream with no rows on it gets no row back");
+}
+
 // ---------------------------------------------------------------------------
 // …and over REAL GAMES, against the kernel's own boards.
 //
@@ -5223,6 +5445,8 @@ static void test_the_transport_is_the_only_thing_the_two_clients_disagree_about(
 //  22  anim_table_covers tests the sets the other way round   -> 6
 //  23  anim_covered_sweep_accepts drops the `paired` test     -> 2
 //  24  anim_shown_table prefers the sweep to the live table   -> 1
+//  24b anim_shown_table puts the live row back above pending  -> 1
+//  24c a pending row always reports itself as sweeping        -> 1
 //  25  anim_finish_rows gives the fool place n_rows           -> 1
 //  26  anim_shown_ledger_allows refuses `arming` too          -> 1
 //  27  ap_bit accepts id 52 (the last-card off-by-one)        -> 1
@@ -5601,14 +5825,18 @@ static void test_board_the_table_under_the_sweep(void) {
     CHECK(anim_covered_sweep_accepts(0, flat, 3, covered, 2) == 0, "…and is still refused");
     (void)d;
 
-    // Which table the grid paints, on emptiness alone.
+    // WHICH TABLE THE GRID PAINTS. The pending row first, then the live table,
+    // then the sweep - and the sweeping flag is about the MOVE's direction, not
+    // about which of the three won.
     int sweeping = -1;
-    CHECK(anim_shown_table(2, 3, 4, &sweeping) == ANIM_SHOWN_LIVE && sweeping == 0,
-          "the live table wins, and is not a sweep");
-    CHECK(anim_shown_table(0, 3, 4, &sweeping) == ANIM_SHOWN_SWEEP && sweeping == 1,
-          "then the sweep a move of my own captured");
+    CHECK(anim_shown_table(2, 0, 4, &sweeping) == ANIM_SHOWN_PENDING && sweeping == 0,
+          "an unstarted replay's row outranks the live table it is a move behind");
     CHECK(anim_shown_table(0, 0, 4, &sweeping) == ANIM_SHOWN_PENDING && sweeping == 1,
-          "then an arriving replay's pre-bout table, which lands a paint before the sweep is set");
+          "…and is a SWEEP only when the move leaves the table empty");
+    CHECK(anim_shown_table(2, 3, 0, &sweeping) == ANIM_SHOWN_LIVE && sweeping == 0,
+          "with no pending row the live table wins, and is not a sweep");
+    CHECK(anim_shown_table(0, 3, 0, &sweeping) == ANIM_SHOWN_SWEEP && sweeping == 1,
+          "then the sweep a move of my own captured");
     CHECK(anim_shown_table(0, 0, 0, &sweeping) == ANIM_SHOWN_NONE && sweeping == 0,
           "and an empty board is empty, not sweeping");
     CHECK(anim_shown_table(1, 0, 0, NULL) == ANIM_SHOWN_LIVE, "a NULL out is not a crash");
@@ -6378,6 +6606,10 @@ int main(void) {
     // The pre-bout table (anim_plan.h).
     test_pre_bout_table_keeps_the_real_pairing();
     test_pre_bout_table_refuses_a_board_from_another_moment();
+    test_pre_stream_table_opens_on_the_row_before_the_move();
+    test_pre_stream_table_declines_rather_than_inventing();
+    test_pre_stream_table_leaves_the_sweep_rule_alone();
+    test_build_plan_freezes_the_row_with_the_counts();
     test_pre_bout_table_walks_back_through_the_stream();
     test_pre_bout_table_degenerate_inputs();
     test_the_pre_bout_table_is_the_board_the_kernel_had();

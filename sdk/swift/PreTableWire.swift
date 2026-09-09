@@ -88,7 +88,12 @@ public struct PreBoutTable: Equatable, Sendable {
     /// be described honestly, so it crosses as no board at all rather than as a
     /// table with an invented card in it - the kernel never masks a table, so
     /// this is a corrupt input rather than a case.
-    private static func table(_ battles: [BattleView]?) -> [UInt8] {
+    ///
+    /// Shared with AnimPlanWire, which sends every step's row for the same
+    /// reason this sends the prior board: the row a stream OPENS on is a fact
+    /// about the stream, and one encoding of it means the two wires cannot
+    /// disagree about what a table is.
+    static func table(_ battles: [BattleView]?) -> [UInt8] {
         guard let battles, !battles.isEmpty, battles.count < Int(FIO_PRETABLE_NONE),
               battles.allSatisfy({ !$0.attack.isHidden && !($0.defense?.isHidden ?? false) })
         else { return [UInt8(FIO_PRETABLE_NONE)] }

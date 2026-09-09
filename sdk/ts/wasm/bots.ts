@@ -1640,7 +1640,14 @@ export interface AnimPlanStep {
 }
 export interface AnimPlan {
     nSteps: number; nPlayers: number;
-    pre: { deck: number; discard: number; hand: number[] };
+    /** The board the display opens on. `row` is the BATTLE ROW as it stood
+     *  before this stream - the pair per battle, `null` for an uncovered
+     *  attack - and it is the half of the freeze that used to be missing: the
+     *  three counts froze and the row did not, so a replayed pass drew its
+     *  table already rearranged on the first painted frame. Empty for "no row",
+     *  where a caller lays out the live table exactly as it did before. */
+    pre: { deck: number; discard: number; hand: number[];
+           row: { attack: Card; cover: Card | null }[]; rowPaired: boolean };
     totalMs: number; veilIds: number[]; steps: AnimPlanStep[];
 }
 
@@ -1656,6 +1663,9 @@ export function animBuildPlan(
     events: {
         type: number; seat: number | null; from: number; to: number; mask: boolean; cards: Card[];
         counts?: { deck: number; discard: number; hand: number[] } | null;
+        /** The battle row this event's own board carried. Omit it and the plan
+         *  has no pre-move row to hand back - see AnimPlan.pre.row. */
+        table?: { attack: Card; cover: Card | null }[] | null;
     }[],
     nPlayers: number, finalDeck: number, finalDiscard: number, finalHand: number[],
 ): AnimPlan {
@@ -1677,6 +1687,19 @@ export function animBuildPlan(
         buf[p++] = (e.counts?.deck ?? 0) & 0xff;
         buf[p++] = (e.counts?.discard ?? 0) & 0xff;
         for (let s = 0; s < nPlayers; s++) buf[p++] = (e.counts?.hand[s] ?? 0) & 0xff;
+        // …and the ROW that event committed. 0xFE is "no board", which is also
+        // what a row carrying a card this viewer cannot name has to cross as: a
+        // row that cannot be described honestly is not described at all.
+        const row = e.table ?? null;
+        if (!row || row.length > 32) {
+            buf[p++] = ANIM_TABLE_NONE;
+        } else {
+            buf[p++] = row.length & 0xff;
+            for (const b of row) {
+                buf[p++] = __wireStateCard(b.attack);
+                buf[p++] = b.cover ? __wireStateCard(b.cover) : ANIM_TABLE_NONE;
+            }
+        }
     }
     const len = ex.wasm_anim_build_plan(events.length, nPlayers, finalDeck, finalDiscard);
     if (len < 0) throw new Error(`anim_build_plan error ${len}`);
@@ -1697,6 +1720,14 @@ export function animBuildPlan(
     const nVeil = out[q++];
     const veilIds: number[] = [];
     for (let i = 0; i < nVeil; i++) veilIds.push(out[q++]);
+    const nRow = out[q++];
+    const rowPaired = out[q++] !== 0;
+    const preRow: { attack: Card; cover: Card | null }[] = [];
+    for (let i = 0; i < nRow; i++) {
+        const a = out[q++], c = out[q++];
+        preRow.push({ attack: __cardFromWire(a),
+                      cover: c === ANIM_TABLE_NONE ? null : __cardFromWire(c) });
+    }
     const steps: AnimPlanStep[] = [];
     for (let i = 0; i < nSteps; i++) {
         const type = out[q++], seat = out[q++], from = out[q++], to = out[q++], nCards = out[q++];
@@ -1707,5 +1738,8 @@ export function animBuildPlan(
         steps.push({ type, seat: seat === 0xff ? -1 : seat, from, to, nCards,
                      durationMs, startMs, deck, discard, inFlightFromDeck, inFlightToFlipped, hand });
     }
-    return { nSteps, nPlayers: np, pre: { deck: preDeck, discard: preDiscard, hand: preHand }, totalMs, veilIds, steps };
+    return { nSteps, nPlayers: np,
+             pre: { deck: preDeck, discard: preDiscard, hand: preHand,
+                    row: preRow, rowPaired },
+             totalMs, veilIds, steps };
 }

@@ -122,6 +122,33 @@
 // bound its input scratch.
 #define ANIM_MAX_TABLE_INPUT 160
 
+// ---------- the one table layout ------------------------------------------
+// 2 bytes per battle - the attack, then its cover or ANIM_TABLE_NONE. The same
+// table layout PlayBoard takes (legal.h): one shape for a table in this
+// codebase, not a second one per answer.
+//
+// UP HERE, not beside the pre-bout table it was born for, because the PLAN
+// carries a row now too (AnimCounts.battles) and a struct declared above the
+// constant it is sized by does not compile.
+#define ANIM_TABLE_NONE 0xFE
+// A flat reading lays every card of a pickup in its own cell, so the widest
+// answer is one battle per card the wire can name.
+#define ANIM_MAX_PRE_BATTLES ANIM_MAX_CARDS
+// The widest row a BRIDGE carries. A rendered battle row is MAX_BATTLES wide at
+// worst and every real one is a handful; the flat pickup reading (one cell per
+// card) is the only thing that ever approaches ANIM_MAX_PRE_BATTLES, and it is
+// answered in place rather than shipped through a plan. A row wider than this
+// crosses as NO row, never a truncated one: a caller with no row paints the
+// live table, exactly as it did before the row was in the plan at all, where a
+// table missing cards is a new defect. Kept equal to the iOS wire's
+// FIO_PLAN_BATTLES by a static assert in ios_api.c.
+#define ANIM_PLAN_ROW_MAX 32
+// "this step carried no board of its own", for AnimPreEvent.n_battles, for
+// AnimPlanEvent.n_battles and for the prior board. A board with an EMPTY table
+// says the same thing to those rules - there is no table on it - so 0 and
+// ANIM_NO_BOARD are one case.
+#define ANIM_NO_BOARD (-1)
+
 // ---------- errors (all negative; 0 is never an error) -------------------
 #define ANIM_EOK      0
 #define ANIM_ECAP    -1   // an output buffer / cap would be exceeded
@@ -172,16 +199,45 @@ typedef struct {
                             //      excluded from the veil (they animate as backs)
 } AnimEvent;
 
-// The count-freeze the plan emits. Before the sequence starts the display holds
-// these values (the board as it looked BEFORE this move); each step then
-// advances to that step's own board as its flight lands. How the freeze is
-// derived - and why it is not a walk back from the final board - is
-// anim_build_plan's business.
+// The freeze the plan emits. Before the sequence starts the display holds these
+// values (the board as it looked BEFORE this move); each step then advances to
+// that step's own board as its flight lands. How the freeze is derived - and
+// why it is not a walk back from the final board - is anim_build_plan's
+// business.
+//
+// THE ROW IS ONE OF THEM, and for eleven rounds it was not. The three scalars
+// froze and the battle row did not, so a replay opened with the deck badge
+// correctly held at its pre-move value and the row beside it already showing
+// the arrangement the move produced - a card 36pt (half a slot plus its gap)
+// to the side of where it belonged on the very first painted frame, and never
+// moving, because a cold open has no previous layout to interpolate away from.
+// It read as a pre-bump on every pass and every throw-in (a move that ADDS a
+// pile) and was invisible on a cover (which adds none). The removal direction
+// had had its own answer since round 12 (anim_pre_bout_table); this is the same
+// question asked of the other half of the moves, and `pre` now means what its
+// name says - THE BOARD, not three numbers off it.
 typedef struct {
     int deck;
     int discard;
     int hand[MAX_PLAYERS];   // per-seat hand size
     int n_players;
+    // The battle row as it stood before this stream, in the 2-bytes-per-battle
+    // layout (attack, then its cover or ANIM_TABLE_NONE). 0 when this stream
+    // opened on an empty table OR when no input could say - the two are one
+    // case to a caller, which paints nothing either way.
+    //
+    // A SWEEP STREAM'S ROW IS THE TABLE IT IS ABOUT TO TAKE, cover and all -
+    // anim_pre_bout_table's answer, unchanged, because the grid must hold a
+    // slot for a bout-ending cover to fly INTO before that table is swept off.
+    // A cover never adds a cell, so the two readings never disagree about the
+    // row's shape. See anim_pre_stream_table.
+    int n_battles;
+    unsigned char battles[2 * ANIM_MAX_PRE_BATTLES];
+    // 1 when the row came off a board the kernel really had, 0 when it is the
+    // flat one-cell-per-card reading of a pickup. AnimPreTable.paired, carried
+    // through: a caller choosing between two tables must not treat the second
+    // as a table.
+    int paired;
 } AnimCounts;
 
 // One planned step: the event's identity plus its timing and the board counts
@@ -235,6 +291,12 @@ typedef struct {
     int         has_counts; // 1 => deck/discard/hand are THIS step's own board
     int         deck, discard;
     const int  *hand;      // n_players entries; NULL iff has_counts == 0
+    // …AND THE ROW that board carried, same borrow, same layout as everywhere
+    // else (2 bytes per battle). ANIM_NO_BOARD or 0 for a step that carries
+    // none. It is what makes AnimCounts.battles derivable: the row before a
+    // pass is this row with the passed card taken back off it.
+    int                  n_battles;
+    const unsigned char *battles;   // 2 x n_battles bytes
 } AnimPlanEvent;
 
 // ---- timing policy: the one place a duration is decided -------------------
@@ -419,17 +481,9 @@ int anim_pass_hand_off(AnimRoles shown, unsigned attack_pass_seats,
 // not have. The flat shape differs from the real table in 3027 of them, which
 // is why "is this a real pairing" is an output and not an implementation note.
 
-// 2 bytes per battle - the attack, then its cover or ANIM_TABLE_NONE. The same
-// table layout PlayBoard takes (legal.h): one shape for a table in this
-// codebase, not a third one for this answer.
-#define ANIM_TABLE_NONE 0xFE
-// A flat reading lays every card of a pickup in its own cell, so the widest
-// answer is one battle per card the wire can name.
-#define ANIM_MAX_PRE_BATTLES ANIM_MAX_CARDS
-// "this step carried no board of its own", for AnimPreEvent.n_battles and for
-// the prior board. A board with an EMPTY table says the same thing to this rule
-// - there is no table on it to sweep - so 0 and ANIM_NO_BOARD are one case.
-#define ANIM_NO_BOARD (-1)
+// The 2-bytes-per-battle layout, ANIM_TABLE_NONE, ANIM_MAX_PRE_BATTLES and
+// ANIM_NO_BOARD are all up in the caps section - the plan's own row is sized by
+// them, and it is declared long before here.
 
 // One event as this rule sees it: what KIND of step it was, the board it
 // committed, and the cards it moved. `battles` and `cards` BORROW the caller's
@@ -457,6 +511,37 @@ typedef struct {
 int anim_pre_bout_table(const AnimPreEvent *events, int n_events,
                         int n_prior, const unsigned char *prior,
                         AnimPreTable *out);
+
+// THE ROW A STREAM OPENS ON - the same question asked of EVERY stream, not only
+// one that sweeps.
+//
+// anim_pre_bout_table above answers for the streams that take cards OFF the row
+// and declines - returns 0 - for every stream that puts cards ON it, because it
+// was written as "what table is about to be swept". That decline is why a
+// replayed pass or throw-in had no pre-move row to open on and drew the arrived
+// one from frame 0 (see AnimCounts). The inputs were never short: `prior` IS
+// the board the stream opened on, and every event carries the board it
+// committed.
+//
+// The rule, in falling order:
+//   1. a sweep stream - anim_pre_bout_table, verbatim, `paired` and the flat
+//      pickup fallback included. Its answer is the table the sweep TAKES, which
+//      is the row the grid must hold (a cover flies into a slot on it before it
+//      goes). Nothing about that behaviour changes, and its callers are not
+//      routed through here.
+//   2. an addition - UNDO THE FIRST EVENT off its own board, which is the same
+//      anchor the count-freeze uses and exact for a placement: a pass or a
+//      throw-in appends its battles, a cover fills one in, and both are
+//      reversible from the cards the event names. One undo, not n: the row
+//      before the stream is the row before its FIRST event.
+//   3. failing that (a masked placement, a step carrying no board, a type that
+//      is neither), the board the stream OPENED on, when the caller has one.
+//   4. failing that, 0 - no row, and a caller paints the live one as before.
+//
+// Returns the battle count (0 for "nothing to say"), or ANIM_EBADARG/ANIM_ECAP.
+int anim_pre_stream_table(const AnimPreEvent *events, int n_events,
+                          int n_prior, const unsigned char *prior,
+                          AnimPreTable *out);
 
 // ---- optimistic policy ----------------------------------------------------
 
@@ -897,12 +982,31 @@ int anim_covered_sweep_accepts(int paired,
                                const unsigned char *pre, int n_pre,
                                const unsigned char *cur, int n_cur);
 
-// WHICH TABLE THE GRID PAINTS, and whether it is a sweep. Three sources in
-// falling order of authority: the live table, the sweep a move of my own
-// captured synchronously, and the pre-bout table of an open replay not started
-// yet (which exists only because an arrival publishes its view a paint before
-// anything sets the sweep). The answer turns on emptiness alone, so the tables
-// themselves never cross. Returns ANIM_SHOWN_*; `out_sweeping` may be NULL.
+// WHICH TABLE THE GRID PAINTS, and whether it is a sweep. Three sources: the
+// row an open replay has not started animating yet, the live table, and the
+// sweep a move of my own captured synchronously.
+//
+// THE PENDING ROW OUTRANKS THE LIVE ONE, and the header used to say the
+// opposite - "the answer turns on emptiness alone", live winning whenever it
+// held anything. That was the bug written down as the rule. A pending row
+// exists in exactly one window: an arrival or a cold open has published its
+// view and the sequence that animates the move has not begun. In that window
+// the live table is the board one move AHEAD of anything the player has been
+// shown, so painting it is painting the future. It only ever looked right
+// because a move that ends a bout empties the live table and lost the tie by
+// being empty; a pass or a throw-in won it and opened the row already
+// rearranged.
+//
+// LIVE STILL OUTRANKS THE SWEEP, unchanged: a bout-ending cover of my own sets
+// the sweep synchronously in `play`, a paint before `apply` publishes the empty
+// table, and for that one paint the live table is the newer truth.
+//
+// `out_sweeping` is about the row's DIRECTION, not about which source won it. A
+// pending row is a sweep only when the move empties the table - which is what a
+// live table with nothing left on it says. An addition's pending row is not
+// sweeping: nothing is leaving it, and telling the grid otherwise swaps the
+// veil it filters by (anim_veil_grid) for the sweep's two sets and hides the
+// row it was asked to draw. Returns ANIM_SHOWN_*; `out_sweeping` may be NULL.
 #define ANIM_SHOWN_NONE    (-1)
 #define ANIM_SHOWN_LIVE      0
 #define ANIM_SHOWN_SWEEP     1

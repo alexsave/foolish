@@ -146,6 +146,74 @@ int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
     }
     out->pre = cur;   // cur is now the pre-sequence board
 
+    // …AND THE ROW, which for eleven rounds `pre` silently left out. Same
+    // question, same anchor, one rule (anim_pre_stream_table): a stream that
+    // sweeps gets the table it is about to take, one that ADDS gets the row
+    // with its placement taken back off. Without this the three scalars froze
+    // and the battle row did not, and a replayed pass opened half a slot to the
+    // side and stayed there - see AnimCounts.
+    //
+    // THE ADAPTER IS ON THE STACK AND CARRIES NO CARDS BUT THE SWEEP'S. The
+    // pre-table rule reads `cards` on exactly one event (the sweep it is
+    // checking a candidate board against) and nothing but `type`/`battles` on
+    // the rest, so only that one is converted to dense ids. ~2.5 KB of frame on
+    // wasm32; the alternative was static scratch, and msg.wasm's linear memory
+    // is pinned to the page.
+    {
+        AnimPreEvent pre_evs[ANIM_MAX_STEPS];
+        unsigned char sweep_ids[ANIM_MAX_CARDS];
+        int n_sweep_ids = 0, sweep_at = -1;
+        for (int i = 0; i < n_events; i++) {
+            const int t = events[i].type;
+            if (sweep_at < 0 && (t == ANIM_EVT_PICKUP || t == ANIM_EVT_DISCARD
+                                 || t == ANIM_EVT_CARDS_TO_TRASH)) sweep_at = i;
+        }
+        for (int i = 0; i < n_events; i++) {
+            const AnimPlanEvent *ev = &events[i];
+            pre_evs[i].type = ev->type;
+            pre_evs[i].n_battles = (ev->n_battles > 0 && ev->battles)
+                                   ? ev->n_battles : ANIM_NO_BOARD;
+            pre_evs[i].battles = ev->battles;
+            pre_evs[i].n_cards = 0;
+            pre_evs[i].cards = 0;
+        }
+        // The one event whose cards are read: the sweep, or - for an addition -
+        // the first event, whose placement is what gets undone. A masked step
+        // names nothing and stays empty, which is what makes the rule fall back
+        // to the prior board instead of inventing a row.
+        const int carries = sweep_at >= 0 ? sweep_at : 0;
+        if (n_events > 0 && !events[carries].mask_cards
+            && events[carries].cards && events[carries].n_cards > 0) {
+            for (int k = 0; k < events[carries].n_cards
+                            && n_sweep_ids < ANIM_MAX_CARDS; k++) {
+                const int id = card_id_or_neg(events[carries].cards[k]);
+                if (id >= 0) sweep_ids[n_sweep_ids++] = (unsigned char)id;
+            }
+            // All or nothing: a partially named sweep would fail the
+            // exact-account test as if the board were wrong.
+            if (n_sweep_ids == events[carries].n_cards) {
+                pre_evs[carries].n_cards = n_sweep_ids;
+                pre_evs[carries].cards = sweep_ids;
+            }
+        }
+        // NO PRIOR BOARD, deliberately. The pre-table rule offers one as a
+        // fallback for its other caller, which has it; a plan keeps the single
+        // anchor its count-freeze keeps - the first event's own board, one undo
+        // back - and takes a widened signature and a prior board on the wire
+        // for a case no real stream reaches (a masked placement, or a step
+        // carrying no board, which the packed evwire never emits). When it
+        // cannot answer it says so, and the caller paints the live row exactly
+        // as it did before this existed.
+        AnimPreTable row;
+        const int rc = anim_pre_stream_table(pre_evs, n_events, ANIM_NO_BOARD, 0, &row);
+        if (rc < 0) { out->pre.n_battles = 0; out->pre.paired = 0; }
+        else {
+            out->pre.n_battles = row.n_battles;
+            out->pre.paired = row.paired;
+            for (int i = 0; i < 2 * row.n_battles; i++) out->pre.battles[i] = row.battles[i];
+        }
+    }
+
     // Forward walk from the freeze -> each step's post counts + timing + veil.
     unsigned char veil_seen[KEYSET_N];   // dense-id presence, dedups the veil
     keyset_clear(veil_seen);
@@ -477,6 +545,111 @@ int anim_pre_bout_table(const AnimPreEvent *events, int n_events,
     out->n_battles = sweep->n_cards;
     out->paired = 0;
     return out->n_battles;
+}
+
+// ---- the row a stream opens on --------------------------------------------
+
+// Is this card id on the row, and where? -1 for "not on it". Both halves are
+// searched: a cover is found in the second.
+static int pre_find(const unsigned char *bat, int n_bat, unsigned char id, int *out_half) {
+    for (int i = 0; i < n_bat; i++) {
+        for (int h = 0; h < 2; h++) {
+            if (bat[2 * i + h] == id) { if (out_half) *out_half = h; return i; }
+        }
+    }
+    return -1;
+}
+
+// UNDO ONE PLACEMENT off the board it produced.
+//
+// The exact inverse of what the kernel did, per type, and nothing weaker: an
+// attack or a pass APPENDED a battle per card, a cover FILLED IN the second
+// half of one, and each is reversible from the cards the event names. It
+// refuses rather than guesses - a card the event names that is not on the row
+// it supposedly produced is not a placement this rule understands, and a row
+// invented for the grid is worse than none (the caller falls back to the prior
+// board, and failing that paints the live row exactly as it did before).
+//
+// Returns the battle count, or -1 for "cannot".
+static int pre_undo_placement(AnimPreTable *out, const AnimPreEvent *e) {
+    if (e->n_battles <= 0 || !e->battles) return -1;
+    if (e->n_battles > ANIM_MAX_PRE_BATTLES) return -1;
+    // A masked step names nothing, so there is nothing to take back off.
+    if (e->n_cards <= 0 || !e->cards) return -1;
+
+    unsigned char bat[2 * ANIM_MAX_PRE_BATTLES];
+    int n = e->n_battles;
+    for (int i = 0; i < 2 * n; i++) bat[i] = e->battles[i];
+
+    switch (e->type) {
+        case ANIM_EVT_ATTACK_PASS:
+        case ANIM_EVT_DEFENDER_MOVE: {
+            // Each card came down as a battle of its own. Drop it - and only
+            // an UNCOVERED one: an attack cannot be laid and covered inside a
+            // single event, so a covered cell naming this card is some older
+            // battle and this is not the board the event produced.
+            for (int k = 0; k < e->n_cards; k++) {
+                const unsigned char id = e->cards[k];
+                if (id >= PRE_IDS) return -1;
+                const int at = pre_find(bat, n, id, 0);
+                // ONE TEST, not two. "Its cell is bare" already answers "it is
+                // not somebody's cover": a card sitting in a cover half IS that
+                // half, and a card is on a table once. A second `half == 0`
+                // beside this was unkillable - no input could tell the two
+                // spellings apart - and unkillable code is not defence in
+                // depth, it is a second rule nobody is checking.
+                if (at < 0 || bat[2 * at + 1] != ANIM_TABLE_NONE) return -1;
+                for (int i = at; i < n - 1; i++) {
+                    bat[2 * i]     = bat[2 * i + 2];
+                    bat[2 * i + 1] = bat[2 * i + 3];
+                }
+                n--;
+            }
+            break;
+        }
+        case ANIM_EVT_COVER: {
+            // Each card filled the second half of an existing battle. Empty it.
+            for (int k = 0; k < e->n_cards; k++) {
+                const unsigned char id = e->cards[k];
+                if (id >= PRE_IDS) return -1;
+                int half = -1;
+                const int at = pre_find(bat, n, id, &half);
+                if (at < 0 || half != 1) return -1;
+                bat[2 * at + 1] = ANIM_TABLE_NONE;
+            }
+            break;
+        }
+        default:
+            return -1;   // nothing else puts a card on the row
+    }
+    return pre_take_board(out, bat, n);
+}
+
+int anim_pre_stream_table(const AnimPreEvent *events, int n_events,
+                          int n_prior, const unsigned char *prior,
+                          AnimPreTable *out) {
+    // A SWEEP STREAM IS ANSWERED BY THE SWEEP RULE, verbatim - including its
+    // argument checks, its `paired` flag and its flat pickup fallback. This is
+    // a generalisation of that function and not a second reading of the same
+    // stream; two readings is how a grid ends up animating cards between two
+    // shapes of the same table.
+    const int rc = anim_pre_bout_table(events, n_events, n_prior, prior, out);
+    if (rc != 0) return rc;          // a sweep stream, or an argument error
+    if (n_events <= 0) return 0;
+
+    // AN ADDITION. The row before the stream is the row before its FIRST event,
+    // which is one undo off that event's own board - the same anchor, and for
+    // the same reason, as the count-freeze in anim_build_plan.
+    const int undone = pre_undo_placement(out, &events[0]);
+    if (undone >= 0) return undone;
+
+    // …or the board the stream opened on, for a caller that has one. Reached by
+    // a masked placement and by a step carrying no board of its own.
+    if (n_prior > 0) return pre_take_board(out, prior, n_prior);
+
+    out->n_battles = 0;
+    out->paired = 0;
+    return 0;
 }
 
 // ---- optimistic policy ----------------------------------------------------
@@ -995,9 +1168,21 @@ int anim_covered_sweep_accepts(int paired,
 
 int anim_shown_table(int n_live, int n_sweep, int n_pending, int *out_sweeping) {
     int which = ANIM_SHOWN_NONE, sweeping = 0;
-    if (n_live > 0)         { which = ANIM_SHOWN_LIVE; }
-    else if (n_sweep > 0)   { which = ANIM_SHOWN_SWEEP;   sweeping = 1; }
-    else if (n_pending > 0) { which = ANIM_SHOWN_PENDING; sweeping = 1; }
+    // The pending row FIRST. It exists only while a replay the board was handed
+    // has not started, and in that window the live table is a move ahead of
+    // anything anybody has been shown. Ranking it below "live, if non-empty"
+    // was the pre-bump: only a move that empties the table could reach it.
+    if (n_pending > 0) {
+        which = ANIM_SHOWN_PENDING;
+        // …and the DIRECTION is the move's, not the source's. A table that ends
+        // up empty is a sweep; a pass or a throw-in is cards coming down onto a
+        // row that stays, and calling that a sweep hands the grid the sweep's
+        // two veil sets (anim_veil_grid) instead of the veil, which hides the
+        // very row this exists to draw.
+        sweeping = (n_live == 0);
+    }
+    else if (n_live > 0)  { which = ANIM_SHOWN_LIVE; }
+    else if (n_sweep > 0) { which = ANIM_SHOWN_SWEEP; sweeping = 1; }
     if (out_sweeping) *out_sweeping = sweeping;
     return which;
 }
