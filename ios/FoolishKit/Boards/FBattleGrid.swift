@@ -88,6 +88,26 @@ public struct FBattleGrid: View {
                                 .contentShape(Rectangle())
                                 .onTapGesture { onTapBattle(idx) }
                                 .transition(.identity)
+                                // COVERS PAINT OVER ATTACKS, ACROSS THE WHOLE ROW.
+                                //
+                                // Inside a pair the cover already wins (zIndex 2 vs
+                                // the attack's 1). It could not win BETWEEN pairs:
+                                // each pair is a sibling in this HStack, so the
+                                // later one simply drew on top. The cover leans
+                                // +11.25 degrees (right) and the attack -11.25
+                                // (left), so pair N's cover and pair N+1's attack
+                                // both lean into the SAME gap - and N+1, being
+                                // later, covered the cover. The owner saw it with
+                                // two covers on two attacks: "the corner of the
+                                // cover on the left seemed to be a bit under the
+                                // corner of the attack on the right."
+                                //
+                                // Negating the index reverses the sibling order, so
+                                // every pair paints above the one to its right and
+                                // no attack can land on the cover to its left. The
+                                // mirror case cannot happen: an attack leans LEFT,
+                                // away from the pair that now paints under it.
+                                .zIndex(Double(-idx))
                         } else {
                             ghostSlot()
                                 .transition(.identity)
