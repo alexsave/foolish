@@ -941,6 +941,14 @@ int fio_msg_turn_can_send(int state);
 int fio_msg_turn_can_act(int state, int n_human_moves);
 int fio_msg_turn_can_stage(int state, int n_human_moves);
 
+// THE STAGED BUBBLE, X-ED OUT OF THE INPUT FIELD (didCancelSending). The same
+// rule as the Undo button, minus the bubble it has to leave behind - see
+// msg_wire.h. `n_pending` is the staged depth BEFORE the undo.
+#define FIO_TURN_CANCEL_NOOP    0
+#define FIO_TURN_CANCEL_RESTAGE 1
+#define FIO_TURN_CANCEL_CLEAR   2
+int fio_msg_turn_cancel(int state, int n_pending);
+
 // The door every gesture comes through. `move_type` is the MOVE_* the menu wire
 // carries (3 == pickup).
 #define FIO_TURN_ADMIT_OK           0
@@ -977,8 +985,12 @@ int fio_msg_turn_sent_source(int staged, int have_host, int have_sealed);
 #define FIO_TURN_SEND_DECODE      3
 #define FIO_TURN_SEND_UNREADABLE  4
 #define FIO_TURN_SEND_REBASE      5
+// A chain for a DIFFERENT GAME. `same_game` is the host's comparison of the
+// DECODED chain's game id against the one this board plays, so it is asked on
+// the second call only - pass < 0 on the first. See msg_wire.h.
+#define FIO_TURN_SEND_OTHERGAME   6
 int fio_msg_turn_send_verdict(int staged, int have_host, int have_sealed,
-                              int host_is_sealed, int decoded);
+                              int host_is_sealed, int decoded, int same_game);
 
 // The step whose committed board a held settlement shows, or -1 for nothing to
 // hold. `cut` is fio_evw_frames_settlement_cut's answer; pass < 0 for no cut.

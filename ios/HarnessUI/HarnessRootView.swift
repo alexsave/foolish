@@ -393,7 +393,8 @@ private struct TranscriptScroll: View {
                                 .id(msg.id)
                         }
                         if model.staged != nil {
-                            StagedPreviewBubble(model: model, onUnstage: { model.unstage() })
+                            StagedPreviewBubble(model: model,
+                                                onUnstage: { model.cancelStagedBubble() })
                                 .id("staged")
                         }
                     }
@@ -639,6 +640,9 @@ private struct ExtensionStage: View {
                 // threads it (see HarnessModel.arrive).
                 incomingURL: model.incomingURL,
                 incomingToken: model.incomingToken,
+                // The X on the staged bubble, threaded exactly as
+                // MessagesViewController threads didCancelSending's token.
+                cancelToken: model.cancelToken,
                 // The host's arm signal, threaded exactly as
                 // MessagesViewController threads it. Without it the rig only
                 // ever exercised the UNARMED collapse path, and the armed one

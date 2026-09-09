@@ -41,6 +41,12 @@ public struct MessageTableView: View {
     /// pending, but the bubble still needs Messages' Send). Feeds the send
     /// reminder alongside `controller.canSend`.
     private let alsoStaged: Bool
+    /// Bumped by the host every time the human deletes the staged bubble out of
+    /// the input field (`MessagesViewController.didCancelSending`). A TOKEN and
+    /// not a flag because a cancel is an EVENT with no resting state - the
+    /// second cancel of a session looks exactly like the first, and a Bool that
+    /// went true and back would either be missed or fire twice.
+    private let cancelToken: Int
     /// Round 12: hold the gear for 5 seconds to raise the last-message dump.
     /// The dump's fields live on the SURFACE (it owns the payload bytes and the
     /// decode result), so the board only reports the gesture; see
@@ -514,8 +520,10 @@ public struct MessageTableView: View {
 
     public init(controller: MessageTurnController, onSend: @escaping (Data, Bool) async -> Void,
                 onNewGame: @escaping () -> Void = {}, onUnstage: @escaping () -> Void = {},
-                alsoStaged: Bool = false, onDiagnostics: @escaping () -> Void = {},
+                alsoStaged: Bool = false, cancelToken: Int = 0,
+                onDiagnostics: @escaping () -> Void = {},
                 onOpenURL: @escaping (URL) async -> Bool = { _ in false }) {
+        self.cancelToken = cancelToken
         self.onOpenURL = onOpenURL
         self.controller = controller
         self.onSend = onSend
@@ -873,6 +881,11 @@ public struct MessageTableView: View {
             #endif
         }
         .onDisappear { controller.setBoardWatching(false) }
+        // THE HUMAN DELETED THE STAGED BUBBLE (didCancelSending, via the host's
+        // `cancelToken`). Routed into the SAME undo the pill runs - see
+        // `cancelStagedBubble` - so the two can never drift about what a
+        // retracted move does to the game.
+        .onChange(of: cancelToken) { _ in cancelStagedBubble() }
         #if DEBUG
         // …and again after an ARRIVAL. Folding a chain in keeps this board's
         // identity (round 12), so the mount `.task` above never fires a second
@@ -4829,6 +4842,38 @@ public struct MessageTableView: View {
             if controller.canStage { await stageNow() }
             else if controller.isContinuation { await stageBaseNow() }
             else { onUnstage() }
+        }
+    }
+
+    /// The human pressed the X on the staged bubble in Messages' input field.
+    ///
+    /// Owner: "X-ing the staged bubble should be the SAME as hitting the undo
+    /// button. If the player has ALREADY undone via the button, then X-ing the
+    /// bubble is a NO-OP." So this runs `undoAction`'s undo and not a second
+    /// walk back of its own - `controller.cancelStage()` IS `undo()`, gated by
+    /// the kernel (msg_turn_cancel), and what differs is only what the INPUT
+    /// FIELD is owed afterwards:
+    ///
+    /// - `.restage` - a throw-in came off an attack that is still staged, and
+    ///   that shorter chain needs a bubble. Same as the pill's.
+    /// - `.clear` - nothing is staged now. The pill has to call `stageBaseNow`
+    ///   here (Apple offers no way to REMOVE an inserted bubble, so undo-to-
+    ///   empty can only overwrite it with the base state); a cancel must not,
+    ///   because the human already removed it and re-inserting one puts back
+    ///   the very bubble - and the send-hint arrow over it - they just deleted.
+    /// - `.noop` - they had already undone, and the bubble they deleted carried
+    ///   the base state. The game is not touched.
+    ///
+    /// The hint arrow needs nothing else from here: it is drawn off
+    /// `controller.canSend`, which the undo turns off, and off the surface's
+    /// `alsoStaged`, which the surface clears on the same token.
+    private func cancelStagedBubble() {
+        Task {
+            switch await controller.cancelStage() {
+            case .noop:    break
+            case .restage: await stageNow()
+            case .clear:   onUnstage()
+            }
         }
     }
 

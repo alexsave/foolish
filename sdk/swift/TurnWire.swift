@@ -71,6 +71,28 @@ public enum TurnWire {
         fio_msg_turn_can_stage(s.rawValue, Int32(humanMoves)) != 0
     }
 
+    // MARK: - the staged bubble, deleted out of the input field
+
+    /// What X-ing the staged bubble does. The same rule as the Undo button,
+    /// minus the bubble the button has to leave behind - see msg_wire.h.
+    public enum Cancellation: Int32, Sendable {
+        /// Nothing of mine was staged: leave the game alone. This is the
+        /// stage-then-undo case, where the bubble in the field carries the BASE
+        /// state and X-ing it must not undo a second move.
+        case noop = 0
+        /// Take one move back; the shorter chain still needs a bubble.
+        case restage = 1
+        /// Take one move back; nothing is staged now, and nothing goes back
+        /// into the input field.
+        case clear = 2
+    }
+
+    /// `pending` is the staged depth BEFORE the undo - the count the host
+    /// holds, which is what decides whether anything survives the undo.
+    public static func cancel(_ s: State, pending: Int) -> Cancellation {
+        Cancellation(rawValue: fio_msg_turn_cancel(s.rawValue, Int32(pending))) ?? .noop
+    }
+
     // MARK: - the door every gesture comes through
 
     public enum Admission: Int32, Sendable {
@@ -148,6 +170,11 @@ public enum TurnWire {
         /// They will not decode: keep the board on its staged move.
         case unreadable = 4
         case rebase = 5
+        /// They decode to a DIFFERENT GAME. Never this board's to adopt: a
+        /// rebase would decode another game's chain masked for THIS board's
+        /// seat number, which over there belongs to somebody else. Refused the
+        /// same way `.foreign` is - the board is left exactly as it stands.
+        case otherGame = 6
     }
 
     /// What the send does to this board. Ask once with `decoded` nil; a
@@ -157,11 +184,17 @@ public enum TurnWire {
     /// EVERY ANSWER RELEASES A HELD SETTLEMENT. Send is the only releaser there
     /// is, so a refusal is a refusal to REBASE and never to release - a hold
     /// kept past the send is a board no tap can move and no arrival can unstick.
+    ///
+    /// `sameGame` is the host's comparison of the DECODED chain's game id
+    /// against the one this board plays, so it only exists on the second ask -
+    /// nil (the default) means "not known yet" and is never a refusal.
     public static func sendVerdict(staged: Bool, host: Bool, sealed: Bool,
-                                   hostIsSealed: Bool, decoded: Bool?) -> SendVerdict {
+                                   hostIsSealed: Bool, decoded: Bool?,
+                                   sameGame: Bool? = nil) -> SendVerdict {
         let d: Int32 = decoded.map { $0 ? 1 : 0 } ?? -1
+        let g: Int32 = sameGame.map { $0 ? 1 : 0 } ?? -1
         return SendVerdict(rawValue: fio_msg_turn_send_verdict(
-            staged ? 1 : 0, host ? 1 : 0, sealed ? 1 : 0, hostIsSealed ? 1 : 0, d)) ?? .noop
+            staged ? 1 : 0, host ? 1 : 0, sealed ? 1 : 0, hostIsSealed ? 1 : 0, d, g)) ?? .noop
     }
 
     // MARK: - what is withheld

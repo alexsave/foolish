@@ -1053,6 +1053,21 @@ int msg_turn_can_stage(int state, int n_human_moves) {
     return turn_has(state, MSG_TURN_GENESIS) && !msg_turn_can_act(state, n_human_moves);
 }
 
+int msg_turn_cancel(int state, int n_pending) {
+    // The same door `undo` itself stands behind: a retraction IS an undo of
+    // everything staged and it is already in flight.
+    if (turn_has(state, MSG_TURN_RETRACTING)) return MSG_TURN_CANCEL_NOOP;
+    // Send has already claimed those bytes. Nothing may be taken back inside
+    // that window - the same reason msg_turn_can_send refuses it.
+    if (turn_has(state, MSG_TURN_SENDING))    return MSG_TURN_CANCEL_NOOP;
+    // Nothing of mine is staged, so the bubble the human deleted carried no
+    // move of theirs to take back: a stage-then-undo leaves the BASE state in
+    // the input field, and X-ing that must not reach into the game.
+    if (!turn_has(state, MSG_TURN_STAGED) || n_pending <= 0)
+        return MSG_TURN_CANCEL_NOOP;
+    return n_pending > 1 ? MSG_TURN_CANCEL_RESTAGE : MSG_TURN_CANCEL_CLEAR;
+}
+
 int msg_turn_admit(int state, int move_type, int pickup_hold) {
     if (turn_has(state, MSG_TURN_RETRACTING)) return MSG_TURN_ADMIT_RETRACTING;
     if (turn_has(state, MSG_TURN_SUPERSEDED)) return MSG_TURN_ADMIT_SUPERSEDED;
@@ -1087,7 +1102,7 @@ int msg_turn_sent_source(int staged, int have_host, int have_sealed) {
 }
 
 int msg_turn_send_verdict(int staged, int have_host, int have_sealed,
-                          int host_is_sealed, int decoded) {
+                          int host_is_sealed, int decoded, int same_game) {
     const int src = msg_turn_sent_source(staged, have_host, have_sealed);
     // DID I SEAL THESE BYTES - not Rule P, which cannot answer it: a child can
     // seal to a turn LOWER than its parent's, so ordering refused ordinary
@@ -1101,6 +1116,10 @@ int msg_turn_send_verdict(int staged, int have_host, int have_sealed,
     if (src != MSG_TURN_BYTES_NONE) {
         if (decoded < 0) return MSG_TURN_SEND_DECODE;
         if (!decoded) return MSG_TURN_SEND_UNREADABLE;
+        // ANOTHER GAME'S DRAFT, SENT FROM THIS GAME'S BOARD. Not knowable until
+        // the decode, which is why it is asked here and not with the rest; < 0
+        // is "not asked yet" and never a refusal. See msg_wire.h.
+        if (same_game == 0) return MSG_TURN_SEND_OTHERGAME;
     }
     if (!staged && src == MSG_TURN_BYTES_NONE) return MSG_TURN_SEND_NOOP;
     if (src == MSG_TURN_BYTES_NONE) return MSG_TURN_SEND_BLIND;

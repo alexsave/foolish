@@ -251,9 +251,21 @@ final class MessagesViewController: MSMessagesAppViewController {
         if let p = pendingStage,
            let cancelled = Self.payload(of: message), cancelled != p.payload { return }
         pendingStage = nil
+        // OBSERVED, not assumed. "The callback does not fire" was the first
+        // theory for the hint that would not go out, and it was wrong - this
+        // line is what says so, in a trail that survives the extension being
+        // torn down. `selectedMessage` comes with it because whether Messages
+        // leaves the deleted bubble selected is what decides if the surface
+        // reloads out from under the cancel.
+        FlightRecorder.note("cancel", "sel "
+            + (conversation.selectedMessage == nil ? "nil" : "set"))
         // Round-9: tell the surface nothing awaits Send any more, so the send
         // reminder (which now also covers lobby join/invite/start bubbles)
         // doesn't keep pointing at a bubble the human just deleted.
+        // 1.0(37): …and the BOARD's half of that reminder is
+        // `controller.canSend`, which this token now also reaches
+        // (MessageTableView.cancelStagedBubble). Clearing only the surface's
+        // flag is why the arrow survived a cancel over a game board.
         cancelToken += 1
         present(conversation, style: presentationStyle)
     }
@@ -365,11 +377,23 @@ final class MessagesViewController: MSMessagesAppViewController {
         // `pendingStage` reuses `lastPayloadURL` instead of tearing down the
         // live board to "adopt" the move it just watched itself play — see
         // that type's doc for the full chain.
-        let payloadURL = StagedBubbleRouting.resolvedPayloadURL(
+        let route = StagedBubbleRouting.route(
             selectedURL: selected?.url, startingNewGame: startingNewGame,
             pendingStage: pendingStage.map { (payload: $0.payload, mySeat: $0.mySeat) },
             lastPayloadURL: lastPayloadURL,
             lastSentPayload: lastSentPayload)
+        let payloadURL = route.url
+        // 1.0(37): THE MARKERS DIE WITH THE BOARD THEY PIN. Both exist to keep
+        // ONE chain on screen when my own bubble becomes the selection; once
+        // this surface is presenting something else they are pinning a board
+        // that is gone, and the next tap back onto the pinned bubble would be
+        // handed the URL of the game we left. See StagedBubbleRouting.Route.
+        if route.clearMarkers, lastSentPayload != nil || pendingStage != nil {
+            FlightRecorder.note("markers-spent",
+                "presentation moved - dropping the staged/just-sent pins")
+            lastSentPayload = nil
+            pendingStage = nil
+        }
         lastPayloadURL = payloadURL
         // §6.2 S1's exact half: did THIS device send the tapped bubble? Only the
         // extension can answer — the participant UUIDs never travel in the payload.
