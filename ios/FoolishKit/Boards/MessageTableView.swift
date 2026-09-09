@@ -592,6 +592,39 @@ public struct MessageTableView: View {
     }
 
     public var body: some View {
+        table
+            // THE TABLE DOES NOT MIRROR, in any language.
+            //
+            // Arabic and Hebrew arrived with the 25-language table, and SwiftUI's
+            // answer to them is to flip every container it owns. That is right
+            // for a column of text and wrong for this board, because the board is
+            // not laid out in containers: seats, cards in flight and the fan are
+            // placed with `.position` and `.offset`, which SwiftUI does NOT
+            // mirror, while the deck well, the discard and a few paddings ARE
+            // expressed as leading/trailing and would flip. The result is not a
+            // mirrored table, it is a half-mirrored one - cards where they were,
+            // the furniture swapped around them.
+            //
+            // So the geometry is pinned and the TEXT is left alone: names, the
+            // caption, the rejection line and every label inside still shape and
+            // read right-to-left, because bidi is a property of the run, not of
+            // the container. An Arabic player gets Arabic on a board that sits
+            // where the rules say it sits.
+            //
+            // The surfaces that are pure text are deliberately NOT pinned - the
+            // rulebook, the settings sheet and the lobby mirror as they should.
+            // Mirroring the board is a real piece of work; this is the honest
+            // half of it, not a stand-in for it.
+            .environment(\.layoutDirection, Self.layoutDirection)
+    }
+
+    /// The pin above, named so `LocalizationTests` can assert it is still there.
+    /// A constant and not a computed answer: there is no language for which this
+    /// is allowed to differ today, and the day there is, it should be a visible
+    /// change here rather than a quiet one.
+    public static let layoutDirection: LayoutDirection = .leftToRight
+
+    private var table: some View {
         VStack(spacing: 8) {
             if let view = controller.view {
                 // Game over: the board gives way to the ranked results screen (web
