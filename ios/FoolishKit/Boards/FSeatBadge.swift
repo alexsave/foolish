@@ -81,14 +81,41 @@ public struct FSeatBadge: View {
 
     // Mini back geometry (web CardsVisual: 25pt wide, spread 10pt/card, count
     // centred).
-    private let cardW: CGFloat = 21
-    private let cardH: CGFloat = 30
+    /// ROUND 44: up from 21x30, where the fern read as a smudge rather than a
+    /// card. 1.5x was tried first and lost to the seat budget (below). Whole
+    /// points by the owner's instruction, and 28x40 is exactly the 0.700 ratio
+    /// the 21x30 original had, so the rounding costs nothing.
+    private let cardW: CGFloat = 28
+    private let cardH: CGFloat = 40
     /// The widest the fan may get, so a big hand cannot reach into the
     /// neighbouring seat on the ring.
-    private let maxFanWidth: CGFloat = 62
-    /// Spread per card at a comfortable count — narrowed below once the hand
-    /// outgrows `maxFanWidth`.
-    private let baseSpread: CGFloat = 6
+    ///
+    /// EFFECTIVELY UNCAPPED, and that is a decision rather than an oversight.
+    ///
+    /// This cap never clipped a fan, it PACKED one - `spread` shrank until the
+    /// fan fit, so a big hand silently lost the overlap the line above sets. The
+    /// owner was shown all three ways out and picked this one: clamping the
+    /// fan's position kept it on screen but moved the count chip off the seat
+    /// anchor ("CLAMP looks like shit"), and packing trades away the very thing
+    /// being tuned. His ruling: "I'd rather have the cards go off screen than
+    /// have the number not in the right location."
+    ///
+    /// So the overlap stays 65% at every hand size and a large hand runs past
+    /// the screen edge at the mid-row seats. Measured: clean to 6 cards, clipping
+    /// from 7, and the count chip stays on the seat anchor and fully on screen
+    /// throughout - which is the property he actually cares about.
+    private let maxFanWidth: CGFloat = 10_000
+    /// Spread per card. With `cardW` 28 this is 64.3% overlap - the owner picked
+    /// 65% from a sweep of 50/55/60/65/70/75 at two card sizes in both schemes,
+    /// and 10 is the whole-point spread nearest it.
+    ///
+    /// 60% was the original target and is not reachable at this card size: the
+    /// mid-row seat has 82pt, a six-card fan needs `cardW + 5*spread`, so 60%
+    /// without clipping the DEAL means `cardW <= 27.3`. He chose the bigger card
+    /// and 65% over the smaller card and 60%.
+    ///
+    /// Six cards span 78pt, which clears the seat by 2pt. Seven clip.
+    private let baseSpread: CGFloat = 10
 
     /// EVERY card in the hand gets a back. It used to be `min(handCount, 7)`,
     /// which meant a badge could read "11" over six visible cards - "I can see
@@ -105,8 +132,28 @@ public struct FSeatBadge: View {
         return min(baseSpread, (maxFanWidth - cardW) / CGFloat(n - 1))
     }
 
+    /// The name-to-fan gap. `FSpace.xs` (4) left ~6.7pt of visual air once the
+    /// label's line box was counted; the owner asked for "like 5px" less and
+    /// then, seeing the ladder, took it one step further to 1.
+    ///
+    /// Deliberately NOT `FSpace` - it is a tuned optical gap, not a step on the
+    /// spacing scale, and rounding it back onto the scale is what would undo it.
+    /// The knob is exactly linear: 1pt of `nameGap` is 1pt of optical gap.
+    ///
+    /// STRESS-TESTED IN THAI, which hangs vowels below the baseline where Latin
+    /// has nothing. Clearance from the name's ink to the card tops at this
+    /// setting: Latin 5.67pt, ปิ๋ม 5.33, ญาญ่า 3.00, and the worst case นุ้ย
+    /// 2.67pt - eight device pixels at 3x. Nothing collides, but that is the
+    /// floor, and the below-baseline vowel is the thing that finds it. ปิ๋ม
+    /// measures the same as Latin because all its extra height is ABOVE, which
+    /// the line box absorbs without moving the badge at all.
+    ///
+    /// So: do not take this below 1, and if the seat label ever grows a
+    /// descender of its own in another script, re-measure rather than assume.
+    private let nameGap: CGFloat = 1
+
     public var body: some View {
-        VStack(spacing: FSpace.xs) {
+        VStack(spacing: nameGap) {
             // Round-5 M10: the known fix ("apply it") is full-opacity text plus
             // a REAL shadow, not a lighter foreground colour. .semibold plus a
             // slightly stronger shadow (0.7→0.85 opacity, 1.5→2 radius, a full

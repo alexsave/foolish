@@ -22,17 +22,40 @@ import CFoolish
 /// the board that step settles to. `fio_anim_plan_packed`'s answer, decoded once.
 public struct AnimPlan: Equatable, Sendable {
 
-    /// Deck, discard and every seat's hand count, as one board.
+    /// The whole board the display holds: deck, discard, every seat's hand
+    /// count - AND THE BATTLE ROW.
+    ///
+    /// The row is the field this type spent eleven rounds without, and its
+    /// absence was a shipped defect. The three counts froze to the board before
+    /// the move and the row did not, so a replay opened with the deck badge
+    /// correctly held at its pre-move value and the table beside it already in
+    /// the arrangement the move produced - a pile 36pt to the side from the
+    /// first painted frame, and never moving, because a cold open has no
+    /// previous layout for SwiftUI to interpolate away from. Empty on a `Step`,
+    /// where the row is the step's own board and the board commits it directly.
     public struct Counts: Equatable, Sendable {
         public let deck: Int
         public let discard: Int
         /// By seat, dense over the table.
         public let hand: [Int: Int]
+        /// The battle row, in its real left-to-right order. Empty for "the
+        /// kernel could not say", where a caller lays out the live table
+        /// exactly as it did before the row was in the plan at all - never a
+        /// truncated or invented row.
+        public let battles: [BattleView]
+        /// True when that row came off a board the kernel really had, false for
+        /// the flat one-cell-per-card reading of a pickup. `PreBoutTable.paired`
+        /// carried through: a caller choosing between two tables must not treat
+        /// the second as a table.
+        public let battlesPaired: Bool
 
-        public init(deck: Int, discard: Int, hand: [Int: Int]) {
+        public init(deck: Int, discard: Int, hand: [Int: Int],
+                    battles: [BattleView] = [], battlesPaired: Bool = false) {
             self.deck = deck
             self.discard = discard
             self.hand = hand
+            self.battles = battles
+            self.battlesPaired = battlesPaired
         }
     }
 
@@ -89,7 +112,7 @@ public struct AnimPlan: Equatable, Sendable {
                               UInt8(min(events.count, 255)),
                               UInt8(clamping: finalView.deckCount),
                               UInt8(clamping: finalView.discardCount)]
-        input.reserveCapacity(events.count * (10 + np) + 5 + np)
+        input.reserveCapacity(events.count * (12 + np + 2 * 6) + 5 + np)
         for s in 0..<np { input.append(UInt8(clamping: finalHand[s] ?? 0)) }
         for ev in events.prefix(255) {
             // Only REAL identities travel; a redacted card is a back and names
@@ -110,6 +133,11 @@ public struct AnimPlan: Equatable, Sendable {
             let bySeat = board.map(Self.handBySeat)
             for s in 0..<np { input.append(UInt8(clamping: bySeat?[s] ?? 0)) }
             input.append(contentsOf: ids.prefix(ev.cards.count))
+            // …AND THE ROW that board carried, in the one encoding a table has
+            // here (PreBoutTable.table). It is what makes the freeze's row
+            // derivable at all: the row before a pass is this row with the
+            // passed card taken back off it.
+            input.append(contentsOf: PreBoutTable.table(board?.battles))
         }
 
         let head = Int(FIO_PLAN_HEAD), stride = Int(FIO_PLAN_STRIDE)
@@ -126,23 +154,45 @@ public struct AnimPlan: Equatable, Sendable {
             return
         }
         self.totalMs = Self.u32(b, 4)
-        self.pre = Counts(deck: Int(b[8]), discard: Int(b[9]),
-                          hand: Self.seatDict(b, at: 10, seats: np))
+        let rowAt = Int(FIO_PLAN_ROW_AT)
+        let rowCount = Int(b[rowAt])
+        var preRow: [BattleView] = []
+        preRow.reserveCapacity(rowCount)
+        for i in 0..<rowCount {
+            let at = rowAt + 2 + 2 * i
+            let cover = b[at + 1]
+            preRow.append(BattleView(attack: Self.card(b[at]),
+                                     defense: cover == UInt8(FIO_PRETABLE_NONE)
+                                              ? nil : Self.card(cover)))
+        }
+        let preHand = Self.seatDict(b, at: 10, seats: np)
+        let paired: Bool = b[rowAt + 1] != 0
+        self.pre = Counts(deck: Int(b[8]), discard: Int(b[9]), hand: preHand,
+                          battles: preRow, battlesPaired: paired)
 
         var built: [Step] = []
         built.reserveCapacity(count)
         for i in 0..<count {
             let e = head + i * stride
-            built.append(Step(type: Int(b[e]),
-                              seat: b[e + 1] == 0xFF ? -1 : Int(b[e + 1]),
-                              from: Int(b[e + 2]), to: Int(b[e + 3]),
-                              cardCount: Int(b[e + 4]),
-                              durationMs: Int(b[e + 5]) | (Int(b[e + 6]) << 8),
-                              startMs: Self.u32(b, e + 7),
-                              counts: Counts(deck: Int(b[e + 11]), discard: Int(b[e + 12]),
-                                             hand: Self.seatDict(b, at: e + 15, seats: np)),
-                              inFlightFromDeck: Int(b[e + 13]),
-                              inFlightToFlipped: Int(b[e + 14])))
+            // A step's board carries NO row, deliberately, and the header says
+            // why: the row a step settles to IS that step's own snapshot, which
+            // every client already commits as the flight lands (the same line
+            // that pins the deck and the badges). Only the FREEZE needs a rule,
+            // and only the freeze crosses this wire.
+            let stepCounts = Counts(deck: Int(b[e + 11]), discard: Int(b[e + 12]),
+                                    hand: Self.seatDict(b, at: e + 15, seats: np))
+            let seat: Int = b[e + 1] == 0xFF ? -1 : Int(b[e + 1])
+            let duration: Int = Int(b[e + 5]) | (Int(b[e + 6]) << 8)
+            let type: Int = Int(b[e])
+            let from: Int = Int(b[e + 2]), to: Int = Int(b[e + 3])
+            let cardCount: Int = Int(b[e + 4])
+            let startMs: Int = Self.u32(b, e + 7)
+            let fromDeck: Int = Int(b[e + 13]), toFlipped: Int = Int(b[e + 14])
+            built.append(Step(type: type, seat: seat, from: from, to: to,
+                              cardCount: cardCount, durationMs: duration,
+                              startMs: startMs, counts: stepCounts,
+                              inFlightFromDeck: fromDeck,
+                              inFlightToFlipped: toFlipped))
         }
         self.steps = built
 
@@ -165,6 +215,10 @@ public struct AnimPlan: Equatable, Sendable {
     private static func frozen(at v: GameView) -> AnimPlan {
         AnimPlan(pre: Counts(deck: v.deckCount, discard: v.discardCount, hand: handBySeat(v)),
                  steps: [], veil: [], totalMs: 0)
+    }
+
+    private static func card(_ id: UInt8) -> Card {
+        Card(s: Int(id) / 13, v: Int(id) % 13 + 1)
     }
 
     private static func handBySeat(_ v: GameView) -> [Int: Int] {

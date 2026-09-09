@@ -239,21 +239,60 @@ final class ShownTableTests: XCTestCase {
         XCTAssertTrue(t.sweeping, "…and it is a sweep, so nothing on it is a drop target")
     }
 
-    /// The live table always wins: a pending replay must never paint over a
-    /// board that still has real cards on it.
-    func testALiveTableOutranksBothReconstructions() {
+    /// THE PRE-BUMP. "The live table always wins" is what this used to assert,
+    /// and it was the defect written down as the rule.
+    ///
+    /// A pending row exists in exactly one window - a replay the board has been
+    /// handed and has not begun to animate - and in that window the live table
+    /// is the board one move AHEAD of anything the player has been shown. A
+    /// move that ENDS a bout empties it, so the pre-move row got through by
+    /// winning an emptiness test; a pass or a throw-in arrives with a non-empty
+    /// table, lost that test, and the grid laid out the arrived row on the
+    /// board's very first painted frame. The pile already down was drawn 36pt -
+    /// half a slot plus its gap - to the side and never moved, because a cold
+    /// open has no previous layout for SwiftUI to interpolate away from.
+    ///
+    /// MUTATION-CHECKED: ranking live above pending again fails this.
+    func testAnUnstartedReplaysRowOutranksTheLiveTableItIsAMoveBehind() {
+        let live = [b(7), b(8)]                 // the row AFTER the throw-in
+        let t = PreBoutTable.shownTable(live: live, sweep: [], pending: [b(7)])
+        XCTAssertEqual(t.shown, [b(7)],
+                       "the grid opened on the arrived row - the pre-bump")
+        XCTAssertFalse(t.sweeping,
+                       "nothing is leaving this row, so it is not a sweep")
+    }
+
+    /// …and the DIRECTION is the move's, not the source's. A row the move
+    /// leaves empty is a sweep; cards coming down onto a row that stays are not.
+    /// Told otherwise the grid filters by the sweep's two sets instead of the
+    /// veil (anim_veil_grid) and draws nothing at all.
+    ///
+    /// MUTATION-CHECKED: a pending row that always reports itself sweeping
+    /// fails the first of these.
+    func testAPendingRowIsASweepOnlyWhenTheMoveEmptiesTheTable() {
+        XCTAssertFalse(PreBoutTable.shownTable(live: [b(7)], sweep: [],
+                                               pending: [b(7)]).sweeping)
+        XCTAssertTrue(PreBoutTable.shownTable(live: [], sweep: [],
+                                              pending: [b(7)]).sweeping)
+    }
+
+    /// With no pending row the live table still wins - a bout-ending cover of
+    /// my own sets the sweep synchronously in `play`, a paint before `apply`
+    /// publishes the empty table, and for that one paint the live table is the
+    /// newer truth.
+    func testALiveTableOutranksMyOwnSweep() {
         let live = [b(7)]
-        let t = PreBoutTable.shownTable(live: live, sweep: [b(9), b(10)], pending: [b(11)])
+        let t = PreBoutTable.shownTable(live: live, sweep: [b(9), b(10)], pending: [])
         XCTAssertEqual(t.shown, live)
         XCTAssertFalse(t.sweeping)
     }
 
-    /// A sweep captured by MY OWN move outranks the open-replay reconstruction -
-    /// it is the real prior view, and the reconstruction is at best a guess at
-    /// the same thing (MessageTurnController.preBoutTable).
-    func testMyOwnSweepOutranksThePendingReconstruction() {
+    /// A sweep captured by MY OWN move is drawn once the live table has gone
+    /// empty - it is the real prior view, and it has to outlive the view that
+    /// emptied the row rather than lag it.
+    func testMyOwnSweepIsDrawnOnceTheLiveTableHasEmptied() {
         let sweep = [b(9), b(10)]
-        let t = PreBoutTable.shownTable(live: [], sweep: sweep, pending: [b(11)])
+        let t = PreBoutTable.shownTable(live: [], sweep: sweep, pending: [])
         XCTAssertEqual(t.shown, sweep)
         XCTAssertTrue(t.sweeping)
     }
@@ -264,5 +303,60 @@ final class ShownTableTests: XCTestCase {
         let t = PreBoutTable.shownTable(live: [], sweep: [], pending: [])
         XCTAssertTrue(t.shown.isEmpty)
         XCTAssertFalse(t.sweeping)
+    }
+
+    // MARK: the two board-side rules the pre-bump lived in
+
+    /// WHAT AN UNSTARTED REPLAY HANDS THE BOARD, and which machinery carries it.
+    ///
+    /// A stream that ADDS to the row (a pass, a throw-in) gets the plan's
+    /// pre-move row, held on the ledger and walked forward a step at a time. A
+    /// stream that SWEEPS gets `sweepBattles`, which has to OUTLIVE the view
+    /// that empties the row rather than lag it. Arming both would hand
+    /// `battlesArea` a non-empty live table for the whole sweep - which is
+    /// `shownTable` choosing LIVE over the sweep grid, and the swept cards
+    /// never drawn at all.
+    ///
+    /// One function, asked at BOTH call sites: `battlesArea` renders this row a
+    /// paint before `replayLastMoveOnOpen` arms the state that carries it on,
+    /// and two answers there is a visible handoff.
+    func testAnAdditionsRowGoesToTheLedgerAndASweepsDoesNot() {
+        // The addition: the plan's row, and the ledger takes it on.
+        let plan = [b(7)]
+        let add = MessageTableView.replayOpening(sweep: [], planRow: plan)
+        XCTAssertEqual(add.row, plan)
+        XCTAssertTrue(add.held, "an addition's row is the ledger's to walk forward")
+
+        // The sweep: its own grid wins, and the ledger stays out of it.
+        let sweep = [b(9), b(10)]
+        let rm = MessageTableView.replayOpening(sweep: sweep, planRow: plan)
+        XCTAssertEqual(rm.row, sweep, "the sweep table is the row a removal opens on")
+        XCTAssertFalse(rm.held, "arming the ledger too hides the whole sweep")
+
+        // Nothing to say: no row, and nothing held. The board paints the live
+        // table exactly as it did before any of this existed.
+        let none = MessageTableView.replayOpening(sweep: [], planRow: [])
+        XCTAssertTrue(none.row.isEmpty)
+        XCTAssertFalse(none.held, "an empty row is not something to hold")
+    }
+
+    /// THE LEDGER'S ROW STANDS IN FOR THE LIVE ONE while a sequence walks it
+    /// forward - exactly as `shownDeck` prefers the ledger's deck count - and
+    /// falls back to the kernel's the moment nothing is animating.
+    func testTheLedgersRowStandsInForTheLiveOneWhileASequenceRuns() {
+        let live = [b(7), b(8)]                 // the row AFTER the throw-in
+        let held = [b(7)]                       // …and what the display is holding
+        XCTAssertEqual(MessageTableView.gridRow(live: live, held: held,
+                                                sweep: [], pending: []).shown, held,
+                       "the grid painted the arrived row over the one being animated")
+        XCTAssertEqual(MessageTableView.gridRow(live: live, held: nil,
+                                                sweep: [], pending: []).shown, live,
+                       "with nothing animating the row is the kernel's")
+        // An empty HELD row is still a held row: a replay of a first attack
+        // opens on nothing, and `[]` must not read as "follow the kernel" or the
+        // board opens with the card already down.
+        XCTAssertTrue(MessageTableView.gridRow(live: live, held: [],
+                                               sweep: [], pending: []).shown.isEmpty,
+                      "an empty held row fell through to the live table")
     }
 }

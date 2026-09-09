@@ -257,7 +257,7 @@ final class MessageReplayLinkTests: XCTestCase {
     /// renders as the key itself, which on the results screen would read as
     /// "ios.msg.replaylink" under the ranking.
     func testTheLinkIsNamedInEveryLanguage() {
-        defer { FStrings.override = .en }
+        defer { FStrings.override = nil }   // back to the phone (FStrings.active)
         for lang in AppLanguage.allCases {
             FStrings.override = lang
             let s = FStrings.t("ios.msg.replaylink")

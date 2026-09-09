@@ -44,6 +44,14 @@ final class HarnessModel: ObservableObject {
     struct Msg: Identifiable, Equatable {
         let id = UUID(); let url: URL; let senderId: UUID; let senderName: String
         let preview: UIImage?
+        /// The row under the picture — `MSMessageTemplateLayout.caption`, which
+        /// the real extension fills from `MessageSummary.caption` (see there).
+        /// Snapshotted with the picture and never recomputed, for the same
+        /// reason `preview` is: a past bubble's words do not change either.
+        /// Defaults to the brand line for the bubbles this rig posts as a bare
+        /// URL, which is exactly what the extension shows for bytes it cannot
+        /// read.
+        var caption: String = MessageSummary.brand
     }
 
     /// One simulated conversation's mutable state: its own transcript and its
@@ -80,6 +88,8 @@ final class HarnessModel: ObservableObject {
     var stagedPayloadBytes: Data? { staged }
     /// The staged bubble's picture, snapshotted at stage time like `Msg.preview`.
     @Published private(set) var stagedPreview: UIImage?
+    /// …and the staged bubble's caption row, from the same read as its picture.
+    @Published private(set) var stagedCaption: String = MessageSummary.brand
     /// Simulated Messages presentation style. The real extension collapses to the
     /// compact drawer (and Messages' Send) once a move is staged; the harness has no
     /// Messages host, so it fakes the same expanded<->compact transition here so the
@@ -265,7 +275,7 @@ final class HarnessModel: ObservableObject {
         boardEpoch += 1
         chats[currentChat].selected = msg.id
         chats[currentChat].startNewGame = false
-        staged = nil; stagedPreview = nil
+        clearStaged()
         presentation = .expanded
         drawerDismissed = false
         rememberPresented()
@@ -362,7 +372,7 @@ final class HarnessModel: ObservableObject {
         // screen, which is wrong here — there is simply nothing sent to them.
         chats[currentChat].startNewGame = (latest == nil)
         chats[currentChat].selected = nil   // a new player opens on the newest bubble
-        staged = nil; stagedPreview = nil   // a half-staged move doesn't cross to another player
+        clearStaged()   // a half-staged move doesn't cross to another player
         presentation = .expanded     // opening the game as this player
         drawerDismissed = false
         lastSentPayload = nil        // a different device never sent my bubble
@@ -382,7 +392,7 @@ final class HarnessModel: ObservableObject {
         guard idx == 0 || idx == 1, idx != currentChat else { return }
         boardEpoch += 1
         currentChat = idx
-        staged = nil; stagedPreview = nil
+        clearStaged()
         presentation = .expanded
         drawerDismissed = false
         lastSentPayload = nil
@@ -392,7 +402,7 @@ final class HarnessModel: ObservableObject {
     /// The current player tapped New game. New game always opens full-screen.
     func newGame() {
         boardEpoch += 1
-        chats[currentChat].startNewGame = true; staged = nil; stagedPreview = nil
+        chats[currentChat].startNewGame = true; clearStaged()
         presentation = .expanded; drawerDismissed = false
         lastSentPayload = nil
         rememberPresented()
@@ -402,7 +412,17 @@ final class HarnessModel: ObservableObject {
     /// the pending ledger must drop the Send-lit payload too, not just no-op and
     /// leave a stale move ready to send. Stands in for the real extension's
     /// `pendingStage = nil` — the harness has no inserted-bubble UI to remove.
-    func unstage() { staged = nil; stagedPreview = nil }
+    func unstage() { clearStaged() }
+
+    /// Drop the staged bubble and everything that described it. The three move
+    /// together by definition - the picture and the caption are a READ of the
+    /// staged bytes - so they are cleared in one place rather than at each of
+    /// the seven call sites that used to name all three.
+    private func clearStaged() {
+        staged = nil
+        stagedPreview = nil
+        stagedCaption = MessageSummary.brand
+    }
 
     /// Bumped every time the human X-es the staged bubble, and threaded to
     /// MessagesRootView exactly as `MessagesViewController.didCancelSending`
@@ -419,7 +439,7 @@ final class HarnessModel: ObservableObject {
     /// Wiring the X to `unstage()` is what the rig used to do, and it modelled
     /// only the half of the real callback that never went wrong.
     func cancelStagedBubble() {
-        staged = nil; stagedPreview = nil
+        clearStaged()
         cancelToken += 1
     }
 
@@ -438,7 +458,9 @@ final class HarnessModel: ObservableObject {
         // board just sealed it), and the same BubbleSnapshot entry picks lobby vs
         // board. Every later render of this bubble is that image, so nothing in
         // the transcript ever touches the kernel again (see `Msg.preview`).
-        stagedPreview = await Self.snapshot(payload)
+        let shot = await Self.snapshot(payload)
+        stagedPreview = shot.image
+        stagedCaption = shot.caption
         // Mirror the real extension: let the move's animation play out (card flight,
         // and for a bout-ending good the discard + draws), rest ~500ms so the result
         // reads, THEN collapse to the compact drawer (which shows the staged game).
@@ -628,9 +650,9 @@ final class HarnessModel: ObservableObject {
         presentedURL = payloadURL
         chats[currentChat].transcript.append(Msg(url: MessageEnvelope.link(payload: payload),
                                                  senderId: localId, senderName: localName,
-                                                 preview: stagedPreview))
-        staged = nil
-        stagedPreview = nil
+                                                 preview: stagedPreview,
+                                                 caption: stagedCaption))
+        clearStaged()
         // Recognise my own bubble when it comes back as the selection, so the
         // board I am looking at survives the send untouched (see payloadURL).
         lastSentPayload = payload
@@ -690,7 +712,7 @@ final class HarnessModel: ObservableObject {
                                                  preview: nil))
         chats[currentChat].startNewGame = false
         chats[currentChat].selected = nil
-        staged = nil; stagedPreview = nil
+        clearStaged()
         lastSentPayload = nil
         rememberPresented()
     }
@@ -716,23 +738,31 @@ final class HarnessModel: ObservableObject {
         let shot = await Self.snapshot(payload)
         chats[currentChat].transcript.append(Msg(url: MessageEnvelope.link(payload: payload),
                                                  senderId: who.id, senderName: who.name,
-                                                 preview: shot))
+                                                 preview: shot.image,
+                                                 caption: shot.caption))
         chats[currentChat].startNewGame = false
         chats[currentChat].selected = nil
-        staged = nil; stagedPreview = nil
+        clearStaged()
         // NOT just-sent, and nothing staged: this bubble is history, not mine.
         lastSentPayload = nil
         rememberPresented()
     }
 
-    /// The bubble picture for a sealed chain — the SAME `BubbleSnapshot` entry
-    /// the real extension composes its MSMessage image with, so the harness's
+    /// The whole bubble for a sealed chain — the picture AND the caption row
+    /// under it, from the SAME `BubbleSnapshot` and `MessageSummary.caption`
+    /// entries the real extension composes its MSMessage with, so the harness's
     /// transcript shows what a real thread would show. `peek` rather than
     /// `decode`: round 22 made the picture a function of the payload bytes, so
     /// reading the envelope no longer needs to leave that chain resident.
-    private static func snapshot(_ payload: Data) async -> UIImage? {
-        guard let read = try? await MessageKernel.shared.publicRead(payload: payload) else { return nil }
-        return BubbleSnapshot.render(env: read.env, publicView: read.view)
+    private static func snapshot(_ payload: Data) async -> (image: UIImage?, caption: String) {
+        guard let read = try? await MessageKernel.shared.publicRead(payload: payload) else {
+            return (nil, MessageSummary.brand)
+        }
+        // ONE read, both halves — the extension's own rule (see
+        // MessagesViewController.stage): a picture and a caption fetched
+        // separately are two chances to describe different games.
+        return (BubbleSnapshot.render(env: read.env, publicView: read.view),
+                MessageSummary.caption(env: read.env, view: read.view))
     }
 
     // Each participant → its own throwaway cache suite (fresh per app launch via
@@ -874,7 +904,8 @@ final class HarnessModel: ObservableObject {
             chats[0] = ChatState(transcript: [Msg(url: MessageEnvelope.link(payload: payload),
                                                   senderId: participants[0].id,
                                                   senderName: participants[0].name,
-                                                  preview: shot)],
+                                                  preview: shot.image,
+                                                  caption: shot.caption)],
                                  startNewGame: false)
             currentChat = 0
             localIndex = actor           // view as the actionable seat → the board shows

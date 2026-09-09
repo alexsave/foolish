@@ -309,6 +309,11 @@ int fio_apply_awire(int actor_seat, const uint8_t *buf, int len) {
 
 _Static_assert(FIO_PLAN_SEATS == MAX_PLAYERS,
                "the plan wire's seat block must be the kernel's table size");
+_Static_assert(FIO_PLAN_BATTLES == ANIM_PLAN_ROW_MAX,
+               "the plan wire's row block must be the kernel's plan row width");
+_Static_assert(FIO_PLAN_HEAD == FIO_PLAN_ROW_AT + 2 + 2 * FIO_PLAN_BATTLES,
+               "the plan wire's head is the seat block, the row length, the "
+               "paired flag and the row");
 
 int fio_anim_plan_packed(const uint8_t *in, int len, char *out, int cap) {
     if (!in || !out || len < 5) return FIO_EBADARG;
@@ -335,7 +340,7 @@ int fio_anim_plan_packed(const uint8_t *in, int len, char *out, int cap) {
         if (p + 6 > len) return FIO_EPARSE;
         const int n_cards = in[p + 4], n_ids = in[p + 5];
         if (n_cards > ANIM_MAX_CARDS || n_ids > n_cards) return FIO_ECAP;
-        if (p + 9 + np + n_ids > len) return FIO_EPARSE;
+        if (p + 10 + np + n_ids > len) return FIO_EPARSE;
         if (n_pool + n_ids > ANIM_MAX_CARD_POOL) return FIO_ECAP;
         const int type = in[p], seat = in[p + 1], from = in[p + 2], to = in[p + 3];
         const int has_counts = in[p + 6], deck = in[p + 7], discard = in[p + 8];
@@ -349,6 +354,33 @@ int fio_anim_plan_packed(const uint8_t *in, int len, char *out, int cap) {
         }
         n_pool += n_ids;
         p += n_ids;
+        // …and the row that step committed. FIO_PRETABLE_NONE is "no board",
+        // which is what a redacted table crosses as (PreTableWire.table): a row
+        // that cannot be described honestly is not described at all.
+        //
+        // BORROWED FROM `in`, NOT COPIED. AnimPlanEvent borrows its array inputs
+        // for the call (the contract EvwEvent keeps), and a row on this wire is
+        // ALREADY the dense ids the kernel compares, byte for byte - unlike
+        // `cards` beside it, which card_of_id genuinely transforms. Bounded
+        // BEFORE the borrow, like every other field here, so the pointer handed
+        // on can only span bytes the caller really owns: the guard-page sweep
+        // below walks every short prefix flush against PROT_NONE and a bound
+        // that is off by one faults there rather than passing.
+        //
+        // Safe for the same reason the wasm twin's is: `out` is written only
+        // after anim_build_plan has returned, and it has copied what it keeps
+        // into `plan` by then.
+        if (p >= len) return FIO_EPARSE;
+        const int n_bat = in[p++];
+        int row_n = ANIM_NO_BOARD;
+        const uint8_t *row = 0;
+        if (n_bat != FIO_PRETABLE_NONE) {
+            if (n_bat > FIO_PLAN_BATTLES) return FIO_ECAP;
+            if (p + 2 * n_bat > len) return FIO_EPARSE;
+            row = &in[p];
+            p += 2 * n_bat;
+            row_n = n_bat;
+        }
         evs[i].type = type;
         evs[i].seat = (seat == 0xFF) ? ANIM_SEAT_NONE : seat;
         evs[i].from = from;
@@ -362,6 +394,8 @@ int fio_anim_plan_packed(const uint8_t *in, int len, char *out, int cap) {
         evs[i].deck = deck;
         evs[i].discard = discard;
         evs[i].hand = hands[i];
+        evs[i].n_battles = row_n;
+        evs[i].battles = row;
     }
 
     static AnimPlan plan;
@@ -381,6 +415,14 @@ int fio_anim_plan_packed(const uint8_t *in, int len, char *out, int cap) {
     q[8] = (unsigned char)plan.pre.deck;
     q[9] = (unsigned char)plan.pre.discard;
     for (int s = 0; s < np; s++) q[10 + s] = (unsigned char)plan.pre.hand[s];
+    // THE ROW THE DISPLAY OPENS ON. A row too wide for the fixed block crosses
+    // as no row rather than as a truncated one - see FIO_PLAN_BATTLES.
+    if (plan.pre.n_battles > 0 && plan.pre.n_battles <= FIO_PLAN_BATTLES) {
+        q[FIO_PLAN_ROW_AT] = (unsigned char)plan.pre.n_battles;
+        q[FIO_PLAN_ROW_AT + 1] = (unsigned char)(plan.pre.paired ? 1 : 0);
+        for (int k = 0; k < 2 * plan.pre.n_battles; k++)
+            q[FIO_PLAN_ROW_AT + 2 + k] = plan.pre.battles[k];
+    }
     for (int i = 0; i < plan.n_steps; i++) {
         const AnimPlanStep *st = &plan.steps[i];
         unsigned char *e = q + FIO_PLAN_HEAD + i * FIO_PLAN_STRIDE;

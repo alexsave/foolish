@@ -416,13 +416,14 @@ private struct TranscriptScroll: View {
     }
 }
 
-/// A GENUINE (not placeholder) preview of a Foolish game bubble: the IMAGE the
-/// extension snapshotted when the move was staged (`HarnessModel.Msg.preview`),
-/// which is literally what a real MSMessage carries — Messages renders the
-/// extension once at insert time and that picture never changes afterwards. The
-/// owner rejected a fake gradient here ("it should show the actual game preview
-/// as in the real chat app"); this is the actual one, from the same
-/// `BubbleSnapshot` entry the shipping extension composes with.
+/// A GENUINE (not placeholder) preview of a Foolish game bubble: the IMAGE and
+/// the CAPTION the extension snapshotted when the move was staged
+/// (`HarnessModel.Msg`), which is literally what a real MSMessage carries —
+/// Messages renders the extension once at insert time and that bubble never
+/// changes afterwards. The owner rejected a fake gradient here ("it should show
+/// the actual game preview as in the real chat app"); this is the actual one,
+/// from the same `BubbleSnapshot` and `MessageSummary.caption` entries the
+/// shipping extension composes with.
 ///
 /// It used to mount a whole live `MessagesRootView` per bubble instead. That was
 /// not just expensive, it was WRONG in a way that produced two of the round-3
@@ -431,6 +432,12 @@ private struct TranscriptScroll: View {
 /// and ran its own animation stream. See `HarnessModel.Msg`.
 private struct GamePreviewCard: View {
     let image: UIImage?
+    /// The row under the picture. The real balloon's
+    /// `MSMessageTemplateLayout.caption`, filled from `MessageSummary.caption`
+    /// at stage time - it was the hardcoded word "Foolish" here for the same
+    /// rounds it was hardcoded in the extension, which is exactly the kind of
+    /// disagreement this card exists to prevent.
+    let caption: String
 
     /// The bubble picture's OWN aspect (BubbleSnapshot.size, 300x195), just
     /// scaled to bubble width — not a crop. The card is what Messages shows:
@@ -452,8 +459,9 @@ private struct GamePreviewCard: View {
             .clipped()
             .allowsHitTesting(false)
 
-            Text("Foolish")
+            Text(caption)
                 .font(.system(size: 13, weight: .semibold)).foregroundStyle(.black.opacity(0.85))
+                .lineLimit(1)
                 .padding(.horizontal, 10).padding(.vertical, 7)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color(white: 0.93))
@@ -483,7 +491,7 @@ private struct MessageBubble: View {
                         .font(.system(size: 10)).foregroundStyle(.white.opacity(0.5))
                 }
                 Button { model.openBubble(msg) } label: {
-                    GamePreviewCard(image: msg.preview)
+                    GamePreviewCard(image: msg.preview, caption: msg.caption)
                 }
                 .buttonStyle(.plain)
             }
@@ -504,7 +512,7 @@ private struct StagedPreviewBubble: View {
     var body: some View {
         HStack {
             Spacer(minLength: 36)
-            GamePreviewCard(image: model.stagedPreview)
+            GamePreviewCard(image: model.stagedPreview, caption: model.stagedCaption)
                 .overlay(alignment: .topTrailing) {
                     Button(action: onUnstage) {
                         Image(systemName: "xmark")

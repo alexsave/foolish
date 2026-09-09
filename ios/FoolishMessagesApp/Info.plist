@@ -55,6 +55,14 @@
 	     any "zh", so a Traditional reader still lands on Simplified rather
 	     than English - but that is a fallback, not support, and the store
 	     listing must not claim a script we do not write. -->
+	<!-- ROUND 46: fifteen languages, and every one of them has to be DECLARED
+	     here or the phone will not offer it. FStrings resolves through
+	     Locale.preferredLanguages, which the system filters by this list, so a
+	     language the strings table carries but this array omits is a language
+	     nobody can ever be served. That is not hypothetical - zh-Hans and vi
+	     shipped translated and suppressed until they were added here. It is
+	     also what the App Store product page lists. FStrings matches on the
+	     PRIMARY SUBTAG, so zh-Hans satisfies "zh". -->
 	<key>CFBundleLocalizations</key>
 	<array>
 		<string>en</string>
@@ -62,6 +70,16 @@
 		<string>ko</string>
 		<string>zh-Hans</string>
 		<string>vi</string>
+		<string>es</string>
+		<string>pt</string>
+		<string>fr</string>
+		<string>de</string>
+		<string>it</string>
+		<string>ja</string>
+		<string>pl</string>
+		<string>uk</string>
+		<string>tr</string>
+		<string>id</string>
 	</array>
 	<!-- Marks the bundle as a Messages-only application: no Home Screen icon,
 	     discoverable in the Messages app drawer. -->

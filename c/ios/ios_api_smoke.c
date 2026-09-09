@@ -1308,9 +1308,23 @@ static int board_rules_check(void) {
         printf("FAIL covered sweep\n"); return 1;
     }
     int sweeping = -1;
-    if (fio_shown_table(1, 1, 1, &sweeping) != FIO_SHOWN_LIVE || sweeping != 0
-        || fio_shown_table(0, 1, 1, &sweeping) != FIO_SHOWN_SWEEP || sweeping != 1
-        || fio_shown_table(0, 0, 1, &sweeping) != FIO_SHOWN_PENDING || sweeping != 1
+    // THE PENDING ROW OUTRANKS THE LIVE ONE. A non-empty live table used to
+    // win here, and only a move that EMPTIED it could ever let the pre-move row
+    // through - which is why a replayed pickup opened correctly and a replayed
+    // pass opened already rearranged.
+    if (fio_shown_table(2, 0, 1, &sweeping) != FIO_SHOWN_PENDING || sweeping != 0) {
+        printf("FAIL shown table pending under a live row (the pre-bump)\n"); return 1;
+    }
+    // …and its DIRECTION is the move's, not the source's: a row the move leaves
+    // empty is a sweep, a row cards come down onto is not.
+    if (fio_shown_table(0, 0, 1, &sweeping) != FIO_SHOWN_PENDING || sweeping != 1) {
+        printf("FAIL shown table pending sweep\n"); return 1;
+    }
+    // Live still outranks the sweep - a bout-ending cover of my own sets the
+    // sweep a paint before `apply` publishes the empty table, and for that one
+    // paint the live table is the newer truth.
+    if (fio_shown_table(1, 1, 0, &sweeping) != FIO_SHOWN_LIVE || sweeping != 0
+        || fio_shown_table(0, 1, 0, &sweeping) != FIO_SHOWN_SWEEP || sweeping != 1
         || fio_shown_table(0, 0, 0, &sweeping) != FIO_SHOWN_NONE || sweeping != 0) {
         printf("FAIL shown table\n"); return 1;
     }
@@ -1392,13 +1406,32 @@ static int board_rules_check(void) {
 static int plan_wire_check(void) {
     //  ver, np, n_events, final deck, final discard, final hands
     //  then per event: type seat from to n_cards n_ids has_counts deck discard
-    //                  hand[np] ids...
+    //                  hand[np] ids... n_battles [2 x n_battles]
     const unsigned char in[] = {
         FIO_PLAN_VERSION, 2, 2, 0, 20, 5, 9,
-        // PICKUP seat 1, 4 table cards -> hand. Its board: deck 1, hands [3,9].
-        6, 1, 2, 1, 4, 4, 1, 1, 20, 3, 9, 2, 14, 27, 40,
-        // REFILL seat 0, 2 cards off a deck of 1. Its board: deck 0, hands [5,9].
-        9, 0, 0, 1, 2, 2, 1, 0, 20, 5, 9, 6, 33,
+        // PICKUP seat 1, 4 table cards -> hand. Its board: deck 1, hands [3,9],
+        // and NO row on the wire at all (0xFE) - which is the case a pickup
+        // that leads its stream really is.
+        6, 1, 2, 1, 4, 4, 1, 1, 20, 3, 9, 2, 14, 27, 40, FIO_PRETABLE_NONE,
+        // REFILL seat 0, 2 cards off a deck of 1. Its board: deck 0, hands
+        // [5,9], table empty (0 battles - the bout is over).
+        9, 0, 0, 1, 2, 2, 1, 0, 20, 5, 9, 6, 33, 0,
+    };
+    // A REPLAYED PASS, and the fixture whose ROW BYTES ARE ACTUALLY READ. Card
+    // 3 is the pile already down; card 17 is the card being passed. Declared up
+    // here beside `in` because the guard-page sweep below has to walk it: `in`
+    // carries no row at all (its pickup crosses as FIO_PRETABLE_NONE and its
+    // refill as an empty table), so a sweep over `in` alone never dereferences a
+    // borrowed row and the row bound goes untested. It did: dropping
+    // `p + 2 * n_bat > len` passed the whole suite until this fixture was moved
+    // here.
+    const unsigned char pass_in[] = {
+        FIO_PLAN_VERSION, 2, 1, 12, 0, 5, 6,
+        // ATTACK_PASS seat 0, one card, hand -> table. Its own board: the row
+        // with BOTH battles on it, uncovered, which is what the kernel
+        // committed and what the arrived view shows.
+        4, 0, 1, 2, 1, 1, 1, 12, 0, 5, 6, 17,
+        2, 3, FIO_PRETABLE_NONE, 17, FIO_PRETABLE_NONE,
     };
     unsigned char out[512];
     const int n = fio_anim_plan_packed(in, (int)sizeof in, (char *)out, sizeof out);
@@ -1409,6 +1442,23 @@ static int plan_wire_check(void) {
     if (out[8] != 1) { printf("FAIL plan pre deck %d (the flipped trump was counted back)\n", out[8]); return 1; }
     if (out[9] != 20) { printf("FAIL plan pre discard %d\n", out[9]); return 1; }
     if (out[10] != 3 || out[11] != 5) { printf("FAIL plan pre hands %d/%d\n", out[10], out[11]); return 1; }
+
+    // …AND THE PRE ROW, which is the half of the freeze this wire used to leave
+    // out. This stream SWEEPS, and neither its own steps nor a prior board
+    // carry the table it took, so the answer is the flat one-cell-per-card
+    // reading of exactly the cards the pickup moved - reported UNPAIRED, which
+    // is the whole point of that flag: the right cards in a shape nobody
+    // vouched for. Nothing about the sweep path changed; this pins that.
+    {
+        const unsigned char *row = out + FIO_PLAN_ROW_AT;
+        if (row[0] != 4 || row[1] != 0) {
+            printf("FAIL plan pre row %d/%d (want 4 cells, unpaired)\n", row[0], row[1]); return 1;
+        }
+        const unsigned char want_row[8] = { 2, FIO_PRETABLE_NONE, 14, FIO_PRETABLE_NONE,
+                                            27, FIO_PRETABLE_NONE, 40, FIO_PRETABLE_NONE };
+        for (int i = 0; i < 8; i++)
+            if (row[2 + i] != want_row[i]) { printf("FAIL plan pre row[%d]=%d\n", i, row[2 + i]); return 1; }
+    }
 
     const unsigned char *s0 = out + FIO_PLAN_HEAD;
     const unsigned char *s1 = s0 + FIO_PLAN_STRIDE;
@@ -1462,19 +1512,109 @@ static int plan_wire_check(void) {
     if (probe == MAP_FAILED || mprotect(probe + page, (size_t)page, PROT_NONE) != 0) {
         printf("FAIL plan guard page\n"); return 1;
     }
-    for (int L = 0; L <= (int)sizeof in; L++) {
-        unsigned char *edge = probe + page - L;
-        memcpy(edge, in, (size_t)L);
-        const int r = fio_anim_plan_packed(edge, L, (char *)out, sizeof out);
-        if (L < (int)sizeof in ? (r >= 0) : (r <= 0)) {
-            printf("FAIL plan at %d bytes rc=%d\n", L, r); return 1;
+    // BOTH fixtures. `in` bounds the counts, the ids and the seat block; only
+    // `pass_in` carries a row whose bytes the reader hands STRAIGHT to the
+    // kernel (they are borrowed, not copied - see fio_anim_plan_packed), so it
+    // is the only one whose truncation can be read past.
+    const struct { const unsigned char *b; int n; const char *what; } sweeps[] = {
+        { in, (int)sizeof in, "plan" },
+        { pass_in, (int)sizeof pass_in, "plan row" },
+    };
+    for (int f = 0; f < (int)(sizeof sweeps / sizeof sweeps[0]); f++) {
+        for (int L = 0; L <= sweeps[f].n; L++) {
+            unsigned char *edge = probe + page - L;
+            memcpy(edge, sweeps[f].b, (size_t)L);
+            const int r = fio_anim_plan_packed(edge, L, (char *)out, sizeof out);
+            if (L < sweeps[f].n ? (r >= 0) : (r <= 0)) {
+                printf("FAIL %s at %d bytes rc=%d\n", sweeps[f].what, L, r); return 1;
+            }
         }
     }
     munmap(probe, (size_t)page * 2);
     if (fio_anim_plan_packed(in, (int)sizeof in, (char *)out, FIO_PLAN_HEAD) != FIO_ECAP) {
         printf("FAIL plan wrote past its buffer\n"); return 1;
     }
-    printf("plan wire OK (%d bytes, freeze deck=1 over a flipped-trump refill)\n", n);
+
+    // ---- THE PRE-BUMP, and the one assertion that fails against it ----------
+    //
+    // A REPLAYED PASS. One event, one card, onto a row that already held one
+    // battle: the arrived board shows TWO and the row the display must open on
+    // shows ONE. Before the row was in the plan there was nothing here to ask,
+    // the board laid out the arrived table on its first painted frame, and the
+    // card that was already down sat half a slot plus its gap - 36pt - to the
+    // side from frame 0 and never moved (a cold open has no previous layout to
+    // interpolate away from).
+    //
+    // MUTATION-CHECKED, all four against this fixture: dropping the undo (the
+    // plan answering with the first event's own row) says 2 cells; undoing the
+    // wrong half (clearing a cover instead of dropping a battle) refuses and
+    // falls through to 0; letting the undo take a COVERED cell says the wrong
+    // card is left standing; and ranking the sweep rule after the addition one
+    // turns the pickup case above into a 0-cell answer.
+    {
+        unsigned char pout[512];
+        const int pn = fio_anim_plan_packed(pass_in, (int)sizeof pass_in,
+                                            (char *)pout, sizeof pout);
+        if (pn != FIO_PLAN_HEAD + FIO_PLAN_STRIDE + 1) {
+            printf("FAIL pass plan rc=%d\n", pn); return 1;
+        }
+        const unsigned char *row = pout + FIO_PLAN_ROW_AT;
+        // ONE cell, not two, and it is the pile that was already there.
+        if (row[0] != 1) {
+            printf("FAIL pass pre row %d cells (the pre-bump: the arrived row is 2)\n",
+                   row[0]); return 1;
+        }
+        // …off a real board, so a caller may treat it as a table.
+        if (row[1] != 1) { printf("FAIL pass pre row unpaired\n"); return 1; }
+        if (row[2] != 3 || row[3] != FIO_PRETABLE_NONE) {
+            printf("FAIL pass pre row cell %d/%d (want the standing attack, bare)\n",
+                   row[2], row[3]); return 1;
+        }
+        // The passed card is veiled - it flies IN to the slot the row grows.
+        if (pout[3] != 1 || pout[FIO_PLAN_HEAD + FIO_PLAN_STRIDE] != 17) {
+            printf("FAIL pass veil\n"); return 1;
+        }
+
+        // A COVER takes the other branch: the row keeps its cell count (a cover
+        // never adds one) and opens with the attack BARE, so the cover flies
+        // down onto it instead of being lying there already.
+        const unsigned char cover_in[] = {
+            FIO_PLAN_VERSION, 2, 1, 12, 0, 5, 5,
+            5, 1, 1, 2, 1, 1, 1, 12, 0, 5, 5, 17,
+            1, 3, 17,
+        };
+        const int cn = fio_anim_plan_packed(cover_in, (int)sizeof cover_in,
+                                            (char *)pout, sizeof pout);
+        if (cn != FIO_PLAN_HEAD + FIO_PLAN_STRIDE + 1) {
+            printf("FAIL cover plan rc=%d\n", cn); return 1;
+        }
+        row = pout + FIO_PLAN_ROW_AT;
+        if (row[0] != 1 || row[1] != 1 || row[2] != 3 || row[3] != FIO_PRETABLE_NONE) {
+            printf("FAIL cover pre row %d/%d %d/%d (want 1 bare cell)\n",
+                   row[0], row[1], row[2], row[3]); return 1;
+        }
+
+        // A MASKED placement names nothing, so there is nothing to take back
+        // off: the plan says NO row rather than inventing one, and a caller
+        // lays out the live table exactly as it did before any of this existed.
+        const unsigned char masked_in[] = {
+            FIO_PLAN_VERSION, 2, 1, 12, 0, 5, 6,
+            4, 0, 1, 2, 1, 0, 1, 12, 0, 5, 6,
+            2, 3, FIO_PRETABLE_NONE, 17, FIO_PRETABLE_NONE,
+        };
+        const int mn = fio_anim_plan_packed(masked_in, (int)sizeof masked_in,
+                                            (char *)pout, sizeof pout);
+        if (mn != FIO_PLAN_HEAD + FIO_PLAN_STRIDE) {
+            printf("FAIL masked plan rc=%d\n", mn); return 1;
+        }
+        if (pout[FIO_PLAN_ROW_AT] != 0) {
+            printf("FAIL masked pre row %d (a row was invented for a card nobody named)\n",
+                   pout[FIO_PLAN_ROW_AT]); return 1;
+        }
+    }
+
+    printf("plan wire OK (%d bytes, freeze deck=1 over a flipped-trump refill, "
+           "pre row 4-flat / pass 1-of-2 / cover bare / masked none)\n", n);
     return 0;
 }
 

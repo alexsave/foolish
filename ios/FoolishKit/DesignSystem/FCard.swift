@@ -67,13 +67,50 @@ public struct FCard: View {
     /// widening this eats a little more of the face and moves nothing. The glow
     /// is a `shadow`, which never takes part in layout at all.
     static let selWidth: CGFloat = 4
-    static let restWidth: CGFloat = 2
+    /// ROUND 44, the owner: "Deep red is the right color, and border should be
+    /// as thin as possible." As-thin-as-possible has a floor, and the floor is
+    /// the PIXEL GRID, not legibility.
+    ///
+    /// This edge is what separates one black card from the next where they
+    /// overlap on the table, so it was assumed 0.5pt would break up at the seam.
+    /// Photographed at identical state, it does not: 0.5pt is continuous, peaking
+    /// at 132 of 139. What it does is modulate - tracing the seam row by row,
+    /// 0.75pt is flat at 139 while 0.5pt ripples 111-139, about 20% density
+    /// variation. Visible if you look for it; not a break.
+    ///
+    /// The real reason is the one a 3x simulator cannot photograph: how much of
+    /// the line is FULLY SATURATED once antialiasing has taken its cut. Scanning
+    /// across the overlap seam on a real render (face 10,10,10; full border
+    /// 139,26,26):
+    ///
+    ///     0.50pt   2px   74 132 24        - no fully saturated pixel at all
+    ///     0.75pt   3px   74 139 106       - one
+    ///     1.00pt   4px   74 139 139 81    - TWO
+    ///     1.50pt   5px   74 139 139 139 138 30
+    ///
+    /// 1.00 is the first width with two saturated pixels, which is what makes it
+    /// survive the halving to 2x; 0.5pt is exactly 1px there with nothing left to
+    /// antialias. 1.50 stops reading as the card's edge and starts reading as an
+    /// outline drawn around it. So 1.00 is the thinnest that is robust across the
+    /// device lineup, not merely the thinnest that photographs well on a 3x sim.
+    ///
+    /// It is also strictly better than the 2pt gray it replaced: at the overlap
+    /// seam, 2pt gray runs 7px peaking at 62, while 0.75pt deep red runs 3px at
+    /// the full 139 - narrower AND higher contrast (2.13:1 against the black
+    /// face, against the gray's 1.86:1).
+    static let restWidth: CGFloat = 1.0
     /// Round-7 #3: the dark-mode outline. The owner's round-6 spec said white;
     /// round-7 revised it to "dark gray". Deliberately darker than the dark
     /// wool field (~0x5D5D62) so a black card still has a visible edge against
     /// the board, and lighter than the 0x0A0A0A face so the outline reads at
     /// all - a gray that matched either surface would erase one of the two
     /// edges. Tunable in one place if it wants nudging.
+    ///
+    /// ROUND 44: NO LONGER USED as the dark-mode card edge - `deepRed` is now
+    /// both. The gray read as a bevel rather than an outline, and it was the one
+    /// place the two schemes disagreed about what a card's edge IS. Kept named
+    /// because the reasoning below is the argument anyone proposing a gray edge
+    /// again will need to answer.
     private static let darkBorder = Color(hex: 0x3E3E44)
     /// THE light-mode card outline (round-7 final): "the deep red color for not
     /// dark mode". One value for BOTH the face border and the fern back's frame
@@ -103,7 +140,7 @@ public struct FCard: View {
         static let light = Ink(face: FCard.faceWhite, red: FCard.redSuit,
                                black: FCard.blackSuit, border: FCard.deepRed)
         static let dark = Ink(face: FCard.blackSuit, red: Color(hex: 0xEF4444),
-                              black: .white, border: FCard.darkBorder)
+                              black: .white, border: FCard.deepRed)
     }
 
     private var ink: Ink { scheme == .dark ? .dark : .light }

@@ -218,13 +218,17 @@ int fio_last_reject(void);
 //   3  u8  final deck count
 //   4  u8  final discard count
 //   5  n_players x u8 final hand counts, by seat
-//   then per event, 9 + n_players + n_ids bytes:
+//   then per event, 10 + n_players + n_ids + 2 x n_battles bytes:
 //     u8 type (EVW_T_*/ANIM_EVT_*), u8 seat (0xFF none), u8 from, u8 to,
 //     u8 n_cards (the count the arithmetic reads), u8 n_ids (real identities
 //     listed; 0 for viewer-masked backs), u8 has_counts, u8 deck, u8 discard,
-//     n_players x u8 hand counts, n_ids x u8 dense card id.
+//     n_players x u8 hand counts, n_ids x u8 dense card id,
+//     u8 n_battles (FIO_PRETABLE_NONE for a step carrying no board),
+//     2 x n_battles u8 - the attack and its cover (FIO_PRETABLE_NONE if bare).
 //   A step with has_counts == 0 carries the walk forward instead of anchoring
 //   it; a stream whose FIRST event has none falls back to undoing them all.
+//   THE ROW IS THE SAME KIND OF ANCHOR, one field later: the row before a pass
+//   is the first event's own row with the passed card taken back off it.
 //
 // OUTPUT (`out`):
 //   0  u8  version
@@ -235,6 +239,13 @@ int fio_last_reject(void);
 //   8  u8  pre deck   (the count-freeze the display opens on)
 //   9  u8  pre discard
 //  10  FIO_PLAN_SEATS x u8 pre hand counts, by seat
+//  FIO_PLAN_ROW_AT      u8  pre n_battles - the ROW the display opens on (see
+//                           AnimCounts); 0 for "no row", never a truncated one
+//  FIO_PLAN_ROW_AT + 1  u8  1 when that row came off a real board, 0 for the
+//                           flat one-cell-per-card reading of a pickup
+//  FIO_PLAN_ROW_AT + 2  2 x FIO_PLAN_BATTLES u8 - the row, attack then cover
+//                           (or FIO_PRETABLE_NONE). Fixed width, like the seat
+//                           block, so the steps sit at a constant offset.
 //   then n_steps x FIO_PLAN_STRIDE:
 //     0  u8  type
 //     1  u8  seat (0xFF none)
@@ -251,11 +262,25 @@ int fio_last_reject(void);
 //   then n_veil x u8 dense card id: identities in transit, hidden until the step
 //   that lands them.
 // Returns bytes written, or a negative error.
-#define FIO_PLAN_VERSION 1
+// 2: the pre-move ROW joined the freeze, in and out. Both ends of this wire
+// ship together (the xcframework carries the header), so the version is a
+// tripwire for a stale build rather than a compatibility story.
+#define FIO_PLAN_VERSION 2
 // The seat block is a FIXED width so a step sits at a constant offset whatever
 // the table size; the kernel's MAX_PLAYERS is checked against it at build time.
 #define FIO_PLAN_SEATS   8
-#define FIO_PLAN_HEAD    (10 + FIO_PLAN_SEATS)
+// …and so is the pre-row block. A rendered battle row is MAX_BATTLES wide at
+// worst, and a row wider than this crosses as NO row: a caller that paints the
+// live table is exactly where it was before the row was in the plan at all,
+// where a TRUNCATED row would be a table missing cards.
+#define FIO_PLAN_BATTLES 32
+#define FIO_PLAN_ROW_AT  (10 + FIO_PLAN_SEATS)
+// A LITERAL, not the sum it obviously is. Swift's macro importer takes only the
+// simplest constant expressions, and the three-term one this used to be came
+// across as nothing at all ("cannot find 'FIO_PLAN_HEAD' in scope") - a
+// compile error rather than a silent wrong number, but a stupid one to hit
+// twice. The sum it must equal is asserted in ios_api.c.
+#define FIO_PLAN_HEAD    84
 #define FIO_PLAN_STRIDE  (15 + FIO_PLAN_SEATS)
 int fio_anim_plan_packed(const uint8_t *in, int len, char *out, int cap);
 
