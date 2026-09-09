@@ -1417,6 +1417,22 @@ static int plan_wire_check(void) {
         // [5,9], table empty (0 battles - the bout is over).
         9, 0, 0, 1, 2, 2, 1, 0, 20, 5, 9, 6, 33, 0,
     };
+    // A REPLAYED PASS, and the fixture whose ROW BYTES ARE ACTUALLY READ. Card
+    // 3 is the pile already down; card 17 is the card being passed. Declared up
+    // here beside `in` because the guard-page sweep below has to walk it: `in`
+    // carries no row at all (its pickup crosses as FIO_PRETABLE_NONE and its
+    // refill as an empty table), so a sweep over `in` alone never dereferences a
+    // borrowed row and the row bound goes untested. It did: dropping
+    // `p + 2 * n_bat > len` passed the whole suite until this fixture was moved
+    // here.
+    const unsigned char pass_in[] = {
+        FIO_PLAN_VERSION, 2, 1, 12, 0, 5, 6,
+        // ATTACK_PASS seat 0, one card, hand -> table. Its own board: the row
+        // with BOTH battles on it, uncovered, which is what the kernel
+        // committed and what the arrived view shows.
+        4, 0, 1, 2, 1, 1, 1, 12, 0, 5, 6, 17,
+        2, 3, FIO_PRETABLE_NONE, 17, FIO_PRETABLE_NONE,
+    };
     unsigned char out[512];
     const int n = fio_anim_plan_packed(in, (int)sizeof in, (char *)out, sizeof out);
     if (n != FIO_PLAN_HEAD + 2 * FIO_PLAN_STRIDE + 6) { printf("FAIL plan rc=%d\n", n); return 1; }
@@ -1496,12 +1512,22 @@ static int plan_wire_check(void) {
     if (probe == MAP_FAILED || mprotect(probe + page, (size_t)page, PROT_NONE) != 0) {
         printf("FAIL plan guard page\n"); return 1;
     }
-    for (int L = 0; L <= (int)sizeof in; L++) {
-        unsigned char *edge = probe + page - L;
-        memcpy(edge, in, (size_t)L);
-        const int r = fio_anim_plan_packed(edge, L, (char *)out, sizeof out);
-        if (L < (int)sizeof in ? (r >= 0) : (r <= 0)) {
-            printf("FAIL plan at %d bytes rc=%d\n", L, r); return 1;
+    // BOTH fixtures. `in` bounds the counts, the ids and the seat block; only
+    // `pass_in` carries a row whose bytes the reader hands STRAIGHT to the
+    // kernel (they are borrowed, not copied - see fio_anim_plan_packed), so it
+    // is the only one whose truncation can be read past.
+    const struct { const unsigned char *b; int n; const char *what; } sweeps[] = {
+        { in, (int)sizeof in, "plan" },
+        { pass_in, (int)sizeof pass_in, "plan row" },
+    };
+    for (int f = 0; f < (int)(sizeof sweeps / sizeof sweeps[0]); f++) {
+        for (int L = 0; L <= sweeps[f].n; L++) {
+            unsigned char *edge = probe + page - L;
+            memcpy(edge, sweeps[f].b, (size_t)L);
+            const int r = fio_anim_plan_packed(edge, L, (char *)out, sizeof out);
+            if (L < sweeps[f].n ? (r >= 0) : (r <= 0)) {
+                printf("FAIL %s at %d bytes rc=%d\n", sweeps[f].what, L, r); return 1;
+            }
         }
     }
     munmap(probe, (size_t)page * 2);
@@ -1526,15 +1552,6 @@ static int plan_wire_check(void) {
     // card is left standing; and ranking the sweep rule after the addition one
     // turns the pickup case above into a 0-cell answer.
     {
-        //  card 3 is the pile already down; card 17 is the card being passed.
-        const unsigned char pass_in[] = {
-            FIO_PLAN_VERSION, 2, 1, 12, 0, 5, 6,
-            // ATTACK_PASS seat 0, one card, hand -> table. Its own board: the
-            // row with BOTH battles on it, uncovered, which is what the kernel
-            // committed and what the arrived view shows.
-            4, 0, 1, 2, 1, 1, 1, 12, 0, 5, 6, 17,
-            2, 3, FIO_PRETABLE_NONE, 17, FIO_PRETABLE_NONE,
-        };
         unsigned char pout[512];
         const int pn = fio_anim_plan_packed(pass_in, (int)sizeof pass_in,
                                             (char *)pout, sizeof pout);
