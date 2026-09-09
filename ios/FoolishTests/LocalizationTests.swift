@@ -9,7 +9,10 @@
 //
 // So this is that check, and it walks `AppLanguage.allCases`: adding a language
 // enrols it automatically, and adding a key breaks every language that has not
-// learned it yet.
+// learned it yet. It matters more now than it did at three languages: nobody
+// PICKS a language any more (FStrings.active reads the phone), so a gap in one
+// of the fifteen is not a setting somebody can back out of - it is simply the
+// app half in English for whoever lives there.
 import XCTest
 import UIKit
 @testable import FoolishKit
@@ -84,7 +87,8 @@ final class LocalizationTests: XCTestCase {
         for lang in AppLanguage.allCases where lang != .en {
             FStrings.override = lang
             var same: [String] = []
-            for (k, e) in english where FStrings.t(k) == e && !Self.mayMatchEnglish.contains(k) {
+            let exempt = Self.mayMatchEnglish.union(Self.loanwords[lang] ?? [])
+            for (k, e) in english where FStrings.t(k) == e && !exempt.contains(k) {
                 same.append(k)
             }
             XCTAssertTrue(same.isEmpty, "\(lang) left these in English: \(same.sorted().joined(separator: ", "))")
@@ -128,36 +132,78 @@ final class LocalizationTests: XCTestCase {
         if !shrunk.isEmpty { print("action labels riding the shrink floor: \(shrunk.joined(separator: ", "))") }
     }
 
-    /// Every language names itself in its own script, so the picker is readable
-    /// by the person who needs it (see `AppLanguage.display`).
+    /// THE PHONE'S ANSWER IS THE DEFAULT ANSWER, and on the iMessage board it is
+    /// the only one - that sheet has no language row - so every case here is a
+    /// way the resolver could silently put a player in a language they did not
+    /// ask for, in the one surface with no picker to correct it.
+    ///
+    /// A table of real `preferredLanguages` lists rather than a restatement of
+    /// the rule: the rule is two lines and reads fine, and the cases below are
+    /// the ones that were wrong in a draft of it.
+    func testTheResolverObeysThePhone() {
+        let cases: [(want: AppLanguage, preferred: [String], why: String)] = [
+            (.en, [], "no preference at all falls to English"),
+            (.en, ["en-US"], "the ordinary case"),
+            (.pt, ["pt-BR"], "one pt serves Brazil"),
+            (.pt, ["pt-PT"], "…and Portugal"),
+            (.es, ["es-419"], "a region that is not a country"),
+            (.zh, ["zh-Hans-CN"], "Simplified"),
+            (.zh, ["zh-Hant-TW"], "a Traditional reader lands somewhere readable"),
+            (.zh, ["zh-HK"], "Hong Kong"),
+            (.uk, ["uk-UA"], "Ukrainian is uk, and is NOT the United Kingdom"),
+            (.id, ["id-ID"], "Indonesian"),
+            (.id, ["in-ID"], "Indonesian's legacy subtag, which iOS still returns"),
+            // THE ORDERED LIST IS THE POINT. A phone whose first language we do
+            // not carry must fall to the NEXT language its owner named, not to
+            // English - this is the whole reason the resolver reads the list
+            // and not `preferredLanguages.first`.
+            (.es, ["ca-ES", "es-ES", "en-GB"], "Catalan first, Spanish second"),
+            (.ru, ["kk-KZ", "ru-RU"], "Kazakh first, Russian second"),
+            (.en, ["is-IS", "fo-FO"], "nothing we carry: English is the floor"),
+            (.de, ["gsw-CH", "de-CH"], "Swiss German first, German second"),
+        ]
+        for c in cases {
+            XCTAssertEqual(FStrings.match(c.preferred), c.want,
+                           "\(c.preferred) should resolve to \(c.want): \(c.why)")
+        }
+    }
+
+    /// A tag must never match on its REGION or its SCRIPT. `en-ID` is English in
+    /// Indonesia and `es-PL` is Spanish typed by somebody in Poland; both used
+    /// to be one `contains` away from landing in the wrong table.
+    func testARegionSubtagIsNotALanguage() {
+        XCTAssertEqual(FStrings.match(["en-ID"]), .en)
+        XCTAssertEqual(FStrings.match(["es-PL"]), .es)
+        XCTAssertEqual(FStrings.match(["en-DE"]), .en)
+        XCTAssertEqual(FStrings.match(["sr-Latn-RS"]), .en, "Serbian is not carried; Latn is a script")
+    }
+
+    /// Every language names itself in its own script, so the phone app's picker
+    /// is readable by the person who needs it (see `AppLanguage.display`).
     func testEveryLanguageNamesItself() {
         var seen = Set<String>()
         for lang in AppLanguage.allCases {
             XCTAssertFalse(lang.display.isEmpty, "\(lang) has no display name")
             XCTAssertTrue(seen.insert(lang.display).inserted,
                           "two languages both call themselves \(lang.display)")
+            // An endonym, not a code: a row reading "pt" or "Chinese" points a
+            // reader who has no English at the way out in a language they do not
+            // speak.
+            XCTAssertNotEqual(lang.display, lang.rawValue,
+                              "\(lang) names itself with its own subtag")
         }
     }
 
-    /// The OS locale has to land somewhere sensible for each language we ship,
-    /// or a Vietnamese phone opens the app in English and the setting looks
-    /// broken rather than undiscovered.
-    func testTheSystemLocaleFindsEachLanguage() {
-        // Exercised through the same prefix rule `systemDetected` uses; the
-        // private property itself is not reachable, so this pins the CONTRACT
-        // the raw values encode - each language's code is the prefix its
-        // speakers' locales carry.
+    /// Each case's raw value IS the subtag the resolver matches on, which is
+    /// what lets `match` work without a mapping table. A three-letter or
+    /// mis-cased case would silently never match anything.
+    func testEveryLanguageCodeIsTheSubtagItMatches() {
         for lang in AppLanguage.allCases {
             XCTAssertEqual(lang.rawValue.count, 2, "\(lang) is not a 2-letter code")
+            XCTAssertEqual(lang.rawValue, lang.rawValue.lowercased(), "\(lang) is not lowercase")
+            XCTAssertEqual(FStrings.match(["\(lang.rawValue)-XX"]), lang,
+                           "\(lang) does not resolve from its own subtag")
         }
-        // The Chinese case is the one worth stating: `zh-Hans`, `zh-Hant` and
-        // `zh-HK` all begin `zh`, and all of them should land on the table we
-        // have rather than in English.
-        for code in ["zh", "zh-Hans", "zh-Hant", "zh-HK", "zh-TW"] {
-            XCTAssertTrue(code.hasPrefix(AppLanguage.zh.rawValue),
-                          "\(code) would not be detected as Chinese")
-        }
-        XCTAssertTrue("vi-VN".hasPrefix(AppLanguage.vi.rawValue))
     }
 
     // MARK: fixtures
@@ -189,6 +235,29 @@ final class LocalizationTests: XCTestCase {
         "ios.rank.ace", "ios.rank.king", "ios.rank.queen", "ios.rank.jack",
     ]
 
+    /// …and the ones that are only identical in ONE language, because there the
+    /// English word IS the native word.
+    ///
+    /// PER LANGUAGE, and that is the whole point of the second table. Putting
+    /// `offline` in the shared set above would excuse every language from
+    /// translating it in order to let German off, and German is exactly the
+    /// language where "Offline" is right: no German phone says "Ohne
+    /// Verbindung", and the reviewer's note was that the long form reads as a
+    /// network error rather than a way to play. The same is true of "Replays"
+    /// and "Lobby" in German and "Offline" in Italian. Every other language
+    /// still has to answer for those keys.
+    ///
+    /// Keep this list SHORT. A loanword that has genuinely displaced the native
+    /// word belongs here; a translation nobody got round to does not, and the
+    /// difference is whether a speaker of that language would type the English
+    /// word themselves.
+    private static let loanwords: [AppLanguage: Set<String>] = [
+        .de: ["offline", "replays", "ios.lobby"],
+        .it: ["offline"],
+        .pl: ["offline"],
+        .id: ["offline"],
+    ]
+
     /// Every key the table is expected to carry. Listed rather than reflected
     /// because the table is private and - more to the point - because a list
     /// is what makes "the app asks for a key nobody wrote" a failure instead
@@ -198,31 +267,29 @@ final class LocalizationTests: XCTestCase {
         "settings", "about", "pass", "pickup", "good", "attack", "cover",
         "game_over", "you_win", "you_lose", "rematch", "share_replay", "home",
         "choose_opponent", "start_game", "players", "thinking",
-        "leave_game_title", "leave_game_body", "leave", "cancel",
-        "ios.lobby", "ios.game_code", "ios.ready", "ios.add_bot",
-        "ios.share_invite", "join_game", "ios.dashboard", "ios.create_game",
-        "ios.sign_out", "ios.online_soon", "ios.reject", "ios.you", "ios.fool",
-        "ios.nobattle", "ios.msg.yourmove", "ios.msg.staged", "ios.msg.waiting",
-        "ios.msg.waitingfor", "ios.msg.send", "ios.msg.sending", "ios.msg.undo",
-        "ios.msg.newgame", "ios.msg.replaylink", "ios.msg.replaylink.copied",
-        "ios.msg.pickseat", "ios.msg.spectating", "ios.msg.thread", "ios.msg.tap",
-        "ios.msg.damaged", "ios.msg.open", "ios.msg.fool", "ios.msg.isfool",
-        "ios.msg.moved", "ios.msg.opennewest", "ios.msg.stale",
-        "ios.msg.viewanyway", "ios.msg.yourname", "ios.msg.nameprompt",
-        "ios.msg.continue", "ios.msg.seatopen", "ios.msg.joinas",
-        "ios.msg.waitingjoin", "ios.msg.lobbyfull", "ios.msg.creategame",
-        "ios.msg.startgame", "ios.msg.gameon", "ios.msg.joininvite",
-        "ios.msg.exitgame", "ios.msg.left", "ios.msg.leftanon", "ios.msg.invite",
-        "ios.msg.nickname_ph", "ios.msg.entername", "ios.msg.nametoolong",
-        "ios.msg.cardfmt", "ios.msg.seatn", "ios.msg.mv.attack", "ios.msg.mv.pass",
+        "leave_game_title", "leave_game_body", "leave", "cancel", "ios.lobby",
+        "ios.game_code", "ios.ready", "ios.add_bot", "ios.share_invite",
+        "join_game", "ios.dashboard", "ios.create_game", "ios.online_soon",
+        "ios.reject", "ios.you", "ios.fool", "ios.msg.waiting",
+        "ios.msg.send", "ios.msg.undo", "ios.msg.newgame",
+        "ios.msg.replaylink", "ios.msg.replaylink.copied", "ios.msg.pickseat",
+        "ios.msg.spectating", "ios.msg.tap", "ios.msg.damaged",
+        "ios.msg.open", "ios.msg.fool", "ios.msg.isfool",
+        "ios.msg.cap.defends", "ios.msg.opennewest", "ios.msg.stale",
+        "ios.msg.nameprompt", "ios.msg.continue", "ios.msg.joinas",
+        "ios.msg.lobbyfull", "ios.msg.creategame", "ios.msg.startgame",
+        "ios.msg.joininvite", "ios.msg.exitgame", "ios.msg.left",
+        "ios.msg.leftanon", "ios.msg.invite", "ios.msg.nickname_ph",
+        "ios.msg.entername", "ios.msg.nametoolong", "ios.msg.cardfmt",
+        "ios.msg.seatn", "ios.msg.mv.attack", "ios.msg.mv.pass",
         "ios.msg.mv.cover", "ios.msg.mv.coverpair", "ios.msg.mv.pickup",
         "ios.msg.mv.out", "ios.msg.mv.good", "ios.msg.mv.nothing",
         "ios.msg.mv.roundover", "ios.msg.sendhint", "ios.msg.started",
-        "ios.msg.joined", "ios.rej.turn", "ios.rej.pickone", "ios.rej.defending",
-        "ios.rej.notyours", "ios.rej.addrank", "ios.rej.cover", "ios.rej.capacity",
-        "ios.rej.passrank", "ios.rej.mustattack", "ios.rej.alreadygood",
-        "ios.rej.notake", "ios.help", "ios.done", "ios.settings.title",
-        "ios.settings.language", "ios.settings.table", "ios.settings.table.wool",
+        "ios.msg.joined", "ios.rej.turn", "ios.rej.pickone",
+        "ios.rej.defending", "ios.rej.notyours", "ios.rej.addrank",
+        "ios.rej.cover", "ios.rej.capacity", "ios.rej.passrank",
+        "ios.rej.mustattack", "ios.rej.alreadygood", "ios.rej.notake",
+        "ios.help", "ios.settings.title", "ios.settings.table", "ios.settings.table.wool",
         "ios.settings.table.felt", "ios.rules.title", "ios.rules.goal.h",
         "ios.rules.goal.b", "ios.rules.setup.h", "ios.rules.setup.b",
         "ios.rules.setup.cap", "ios.rules.start.h", "ios.rules.start.b",
@@ -244,16 +311,17 @@ final class LocalizationTests: XCTestCase {
         "ios.rules.defender", "ios.rules.nextplayer", "ios.msg.nametaken",
         "ios.a11y.attackfirst", "ios.a11y.on", "ios.a11y.off",
         "ios.a11y.defending", "ios.a11y.attacking", "ios.a11y.saidgood",
-        "ios.a11y.thinking", "ios.a11y.out", "ios.a11y.cards", "ios.a11y.deck",
-        "ios.a11y.trump", "ios.a11y.trumpmark", "ios.a11y.discard",
-        "ios.a11y.covered", "ios.a11y.uncovered", "ios.a11y.hiddencard",
-        "ios.a11y.facedown", "ios.a11y.card", "ios.suit.spades",
-        "ios.suit.hearts", "ios.suit.clubs", "ios.suit.diamonds",
-        "ios.rank.ace", "ios.rank.king", "ios.rank.queen", "ios.rank.jack",
-        "ios.rank.ten", "ios.tut_next", "ios.tut_done", "ios.tut_1", "ios.tut_2",
-        "ios.tut_3", "ios.tut_4", "ios.tut_5", "ios.bot.random",
-        "ios.bot.handwritten", "ios.bot.robusta", "ios.bot.firecracker",
-        "ios.bot.blackpowder", "ios.bot.cordite", "ios.bot.octogen",
-        "ios.bot.max", "ios.bot.km", "ios.bot.km0",
+        "ios.a11y.thinking", "ios.a11y.out", "ios.a11y.cards",
+        "ios.a11y.deck", "ios.a11y.trump", "ios.a11y.trumpmark",
+        "ios.a11y.discard", "ios.a11y.covered", "ios.a11y.uncovered",
+        "ios.a11y.hiddencard", "ios.a11y.facedown", "ios.a11y.card",
+        "ios.suit.spades", "ios.suit.hearts", "ios.suit.clubs",
+        "ios.suit.diamonds", "ios.rank.ace", "ios.rank.king",
+        "ios.rank.queen", "ios.rank.jack", "ios.rank.ten", "ios.tut_next",
+        "ios.tut_done", "ios.tut_1", "ios.tut_2", "ios.tut_3", "ios.tut_4",
+        "ios.tut_5", "ios.bot.random", "ios.bot.handwritten",
+        "ios.bot.robusta", "ios.bot.firecracker", "ios.bot.blackpowder",
+        "ios.bot.cordite", "ios.bot.octogen", "ios.bot.max", "ios.bot.km",
+        "ios.bot.km0",
     ]
 }

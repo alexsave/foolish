@@ -14,7 +14,9 @@ enum MessageComposer {
     /// live turn, or the §12 replay link for a finished game (the caller decides).
     /// `session` = the opened bubble's session to reuse its balloon, or nil for a
     /// brand-new game. `snapshot` is the §10 public table image (both hands as
-    /// backs). `caption`/`summary` are localized.
+    /// backs). `caption` is the row under the picture and `summary` the
+    /// collapsed/notification line - both localized, and both built by
+    /// `MessageSummary` from the one read of these bytes (see the caller).
     static func message(url: URL,
                         snapshot: UIImage?,
                         caption: String,

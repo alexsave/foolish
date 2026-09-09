@@ -1,8 +1,15 @@
-// SettingsView.swift — §6 screen 6 / §16.E3. Language override, haptics toggle,
-// account block (with sign-out + DELETE ACCOUNT seams), licenses, links, and a
-// DEBUG-only feature-flag list (§16.E2). Account actions are seams until auth
-// lands (M-D) and the deletion endpoint exists (§9, §16.E3) — they must not be
-// faked (no mailto); they're disabled with an explanatory note until wired.
+// SettingsView.swift — §6 screen 6 / §16.E3. Haptics toggle, account block
+// (with sign-out + DELETE ACCOUNT seams), licenses, links, and a DEBUG-only
+// feature-flag list (§16.E2). Account actions are seams until auth lands (M-D)
+// and the deletion endpoint exists (§9, §16.E3) — they must not be faked (no
+// mailto); they're disabled with an explanatory note until wired.
+//
+// THE LANGUAGE ROW STAYS HERE, and only here (owner). The iMessage board's gear
+// sheet lost its copy - a drawer that size has no room to spend fifteen rows on
+// a question the phone already answered - but Settings is the one place a player
+// goes looking for a setting, so this screen keeps the full list. The DEFAULT is
+// the phone's own language order either way (FStrings.active); this picker is
+// the way to disagree with it, not the way to establish it.
 
 import SwiftUI
 import FoolishKit
@@ -12,8 +19,8 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var auth: AuthService
     @AppStorage("ios.haptics") private var hapticsOn = true
-    /// The live settings (FPrefs): observed so THIS screen re-renders, and
-    /// written through so every other open screen does too.
+    /// The live settings (FPrefs): observed so THIS screen re-renders when the
+    /// language changes, and written through so every other open screen does too.
     @ObservedObject private var prefs = FPrefs.shared
     @State private var flagRefresh = false
     @State private var confirmDelete = false
@@ -43,6 +50,10 @@ struct SettingsView: View {
         .preferredColorScheme(.dark)
     }
 
+    /// Fifteen rows, each naming itself (`AppLanguage.display`). A wheel rather
+    /// than a segmented control because the list is long; `FStrings.active` is
+    /// what a device that never chose shows as selected, so the row ticked on
+    /// first open is the one the phone resolved.
     private var languageSection: some View {
         Section("Language") {
             Picker("Language", selection: Binding(get: { prefs.language },
