@@ -87,7 +87,8 @@ final class LocalizationTests: XCTestCase {
         for lang in AppLanguage.allCases where lang != .en {
             FStrings.override = lang
             var same: [String] = []
-            for (k, e) in english where FStrings.t(k) == e && !Self.mayMatchEnglish.contains(k) {
+            let exempt = Self.mayMatchEnglish.union(Self.loanwords[lang] ?? [])
+            for (k, e) in english where FStrings.t(k) == e && !exempt.contains(k) {
                 same.append(k)
             }
             XCTAssertTrue(same.isEmpty, "\(lang) left these in English: \(same.sorted().joined(separator: ", "))")
@@ -232,6 +233,29 @@ final class LocalizationTests: XCTestCase {
         // the card - so these read identically to the English words' KEYS but
         // are the localized answer, not an oversight.
         "ios.rank.ace", "ios.rank.king", "ios.rank.queen", "ios.rank.jack",
+    ]
+
+    /// …and the ones that are only identical in ONE language, because there the
+    /// English word IS the native word.
+    ///
+    /// PER LANGUAGE, and that is the whole point of the second table. Putting
+    /// `offline` in the shared set above would excuse every language from
+    /// translating it in order to let German off, and German is exactly the
+    /// language where "Offline" is right: no German phone says "Ohne
+    /// Verbindung", and the reviewer's note was that the long form reads as a
+    /// network error rather than a way to play. The same is true of "Replays"
+    /// and "Lobby" in German and "Offline" in Italian. Every other language
+    /// still has to answer for those keys.
+    ///
+    /// Keep this list SHORT. A loanword that has genuinely displaced the native
+    /// word belongs here; a translation nobody got round to does not, and the
+    /// difference is whether a speaker of that language would type the English
+    /// word themselves.
+    private static let loanwords: [AppLanguage: Set<String>] = [
+        .de: ["offline", "replays", "ios.lobby"],
+        .it: ["offline"],
+        .pl: ["offline"],
+        .id: ["offline"],
     ]
 
     /// Every key the table is expected to carry. Listed rather than reflected
