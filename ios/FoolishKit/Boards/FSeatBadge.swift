@@ -132,12 +132,25 @@ public struct FSeatBadge: View {
         return min(baseSpread, (maxFanWidth - cardW) / CGFloat(n - 1))
     }
 
-    /// The name-to-fan gap. `FSpace.xs` (4) left ~7pt of visual air once the
-    /// label's line box was counted, and the owner asked for "like 5px" less;
-    /// 2pt closes 6 device pixels at 3x. Deliberately NOT `FSpace` - it is a
-    /// tuned optical gap, not a step on the spacing scale, and rounding it back
-    /// onto the scale is what would undo it.
-    private let nameGap: CGFloat = 2
+    /// The name-to-fan gap. `FSpace.xs` (4) left ~6.7pt of visual air once the
+    /// label's line box was counted; the owner asked for "like 5px" less and
+    /// then, seeing the ladder, took it one step further to 1.
+    ///
+    /// Deliberately NOT `FSpace` - it is a tuned optical gap, not a step on the
+    /// spacing scale, and rounding it back onto the scale is what would undo it.
+    /// The knob is exactly linear: 1pt of `nameGap` is 1pt of optical gap.
+    ///
+    /// STRESS-TESTED IN THAI, which hangs vowels below the baseline where Latin
+    /// has nothing. Clearance from the name's ink to the card tops at this
+    /// setting: Latin 5.67pt, ปิ๋ม 5.33, ญาญ่า 3.00, and the worst case นุ้ย
+    /// 2.67pt - eight device pixels at 3x. Nothing collides, but that is the
+    /// floor, and the below-baseline vowel is the thing that finds it. ปิ๋ม
+    /// measures the same as Latin because all its extra height is ABOVE, which
+    /// the line box absorbs without moving the badge at all.
+    ///
+    /// So: do not take this below 1, and if the seat label ever grows a
+    /// descender of its own in another script, re-measure rather than assume.
+    private let nameGap: CGFloat = 1
 
     public var body: some View {
         VStack(spacing: nameGap) {
