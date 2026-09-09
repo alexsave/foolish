@@ -1185,7 +1185,6 @@ int wasm_anim_build_plan(int n_events, int n_players, int final_deck, int final_
     static Card ev_cards[ANIM_MAX_CARD_POOL];
     static AnimPlanEvent events[ANIM_MAX_STEPS];
     static int ev_hand[ANIM_MAX_STEPS][MAX_PLAYERS];
-    static unsigned char ev_row[ANIM_MAX_STEPS][2 * ANIM_PLAN_ROW_MAX];
     int final_hand[MAX_PLAYERS];
     int p = 0, cpool = 0;
     for (int i = 0; i < n_players; i++) final_hand[i] = g_io[p++];
@@ -1211,15 +1210,33 @@ int wasm_anim_build_plan(int n_events, int n_players, int final_deck, int final_
         // ANIM_TABLE_NONE as the COUNT is "no board", which is what a redacted
         // table crosses as: a row that cannot be described honestly is not
         // described at all.
+        //
+        // BORROWED FROM g_io, NOT COPIED, and that is a page of linear memory.
+        // AnimPlanEvent BORROWS its array inputs for the call - the same
+        // contract EvwEvent keeps - and a row on this wire is ALREADY the dense
+        // ids the kernel compares, byte for byte, so there is nothing to
+        // transform. (`cards` beside it is copied because card_from_wire_pair
+        // genuinely changes the bytes; the rows do not need it.) A per-step copy
+        // buffer here is ANIM_MAX_STEPS x 2 x ANIM_PLAN_ROW_MAX = 8,192 B of
+        // bss, and bots.wasm has 2,592 B of room under its 36-page line
+        // (e2e/mem/wasm_memory.test.ts) - so the copy cost a whole 64 KiB page
+        // and the borrow gives it back.
+        //
+        // THE BORROW IS ONLY SAFE BECAUSE EVERY WRITE TO g_io HAPPENS AFTER
+        // anim_build_plan HAS RETURNED. It reads these rows and copies what it
+        // keeps into `plan`; the output loop below then starts its own cursor at
+        // zero over the same buffer. Move any part of that output before the
+        // plan call and the rows are overwritten under it - which is a wrong
+        // table, not a crash, so nothing would say so.
         const int n_bat = g_io[p++];
         if (n_bat == ANIM_TABLE_NONE) {
             events[e].n_battles = ANIM_NO_BOARD;
             events[e].battles = 0;
         } else {
             if (n_bat > ANIM_PLAN_ROW_MAX) return ANIM_ECAP;
-            for (int k = 0; k < 2 * n_bat; k++) ev_row[e][k] = g_io[p++];
             events[e].n_battles = n_bat;
-            events[e].battles = ev_row[e];
+            events[e].battles = &g_io[p];
+            p += 2 * n_bat;
         }
     }
     static AnimPlan plan;

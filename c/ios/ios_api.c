@@ -331,10 +331,6 @@ int fio_anim_plan_packed(const uint8_t *in, int len, char *out, int cap) {
     static AnimPlanEvent evs[ANIM_MAX_STEPS];
     static int  hands[ANIM_MAX_STEPS][MAX_PLAYERS];
     static Card pool[ANIM_MAX_CARD_POOL];
-    // The rows the steps committed, in the layout every table here uses. One
-    // fixed-width slot per step rather than a pool: a row is small and the
-    // arithmetic for a packed one buys nothing but a way to get it wrong.
-    static unsigned char rows[ANIM_MAX_STEPS][2 * FIO_PLAN_BATTLES];
     int n_pool = 0;
     for (int i = 0; i < n; i++) {
         // The WHOLE event is bounded before any of it is read - the counts that
@@ -361,13 +357,27 @@ int fio_anim_plan_packed(const uint8_t *in, int len, char *out, int cap) {
         // …and the row that step committed. FIO_PRETABLE_NONE is "no board",
         // which is what a redacted table crosses as (PreTableWire.table): a row
         // that cannot be described honestly is not described at all.
+        //
+        // BORROWED FROM `in`, NOT COPIED. AnimPlanEvent borrows its array inputs
+        // for the call (the contract EvwEvent keeps), and a row on this wire is
+        // ALREADY the dense ids the kernel compares, byte for byte - unlike
+        // `cards` beside it, which card_of_id genuinely transforms. Bounded
+        // BEFORE the borrow, like every other field here, so the pointer handed
+        // on can only span bytes the caller really owns: the guard-page sweep
+        // below walks every short prefix flush against PROT_NONE and a bound
+        // that is off by one faults there rather than passing.
+        //
+        // Safe for the same reason the wasm twin's is: `out` is written only
+        // after anim_build_plan has returned, and it has copied what it keeps
+        // into `plan` by then.
         if (p >= len) return FIO_EPARSE;
         const int n_bat = in[p++];
         int row_n = ANIM_NO_BOARD;
+        const uint8_t *row = 0;
         if (n_bat != FIO_PRETABLE_NONE) {
             if (n_bat > FIO_PLAN_BATTLES) return FIO_ECAP;
             if (p + 2 * n_bat > len) return FIO_EPARSE;
-            for (int k = 0; k < 2 * n_bat; k++) rows[i][k] = in[p + k];
+            row = &in[p];
             p += 2 * n_bat;
             row_n = n_bat;
         }
@@ -385,7 +395,7 @@ int fio_anim_plan_packed(const uint8_t *in, int len, char *out, int cap) {
         evs[i].discard = discard;
         evs[i].hand = hands[i];
         evs[i].n_battles = row_n;
-        evs[i].battles = row_n > 0 ? rows[i] : 0;
+        evs[i].battles = row;
     }
 
     static AnimPlan plan;
