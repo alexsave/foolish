@@ -321,7 +321,7 @@ static void test_plan_building(void) {
 
     int final_hand[2] = { 6, 6 };
     AnimPlan plan;
-    int rc = anim_build_plan(ev, 3, 2, /*deck*/20, /*discard*/8, final_hand, &plan);
+    int rc = anim_build_plan(ev, 3, 2, /*deck*/20, /*discard*/8, CARD_NONE, final_hand, &plan);
     CHECK(rc == ANIM_EOK, "plan rc");
     CHECK(plan.n_steps == 3, "3 steps");
 
@@ -360,7 +360,7 @@ static void test_plan_building(void) {
 
     // An empty sequence is a legal no-op plan.
     AnimPlan empty;
-    CHECK(anim_build_plan(NULL, 0, 2, 20, 8, final_hand, &empty) == ANIM_EOK && empty.n_steps == 0,
+    CHECK(anim_build_plan(NULL, 0, 2, 20, 8, CARD_NONE, final_hand, &empty) == ANIM_EOK && empty.n_steps == 0,
           "empty sequence -> empty plan");
 }
 
@@ -396,7 +396,7 @@ static void test_plan_anchors_on_the_first_events_own_board(void) {
 
     int final_hand[2] = { 5, 9 };
     AnimPlan plan;
-    CHECK(anim_build_plan(ev, 2, 2, /*deck*/0, /*discard*/20, final_hand, &plan) == ANIM_EOK,
+    CHECK(anim_build_plan(ev, 2, 2, /*deck*/0, /*discard*/20, CARD_NONE, final_hand, &plan) == ANIM_EOK,
           "the anchored plan builds");
     CHECK(plan.pre.deck == 1, "pre deck 1, not 2 (got %d)", plan.pre.deck);
     CHECK(plan.pre.discard == 20, "pre discard 20 (got %d)", plan.pre.discard);
@@ -411,18 +411,99 @@ static void test_plan_anchors_on_the_first_events_own_board(void) {
     // A step with no board of its own carries the walk forward from the one
     // before it, which is the only thing the delta is still for.
     ev[1].has_counts = 0; ev[1].hand = 0;
-    CHECK(anim_build_plan(ev, 2, 2, 0, 20, final_hand, &plan) == ANIM_EOK, "mixed plan builds");
+    CHECK(anim_build_plan(ev, 2, 2, 0, 20, CARD_NONE, final_hand, &plan) == ANIM_EOK, "mixed plan builds");
     CHECK(plan.pre.deck == 1, "the anchor is the FIRST event's board (got %d)", plan.pre.deck);
     CHECK(plan.steps[1].deck == -1 && plan.steps[1].hand[0] == 5,
           "a boardless step derives forward (got deck %d)", plan.steps[1].deck);
 
     // Bounds: no output, no final board, and events that were promised but not
     // handed over are each refused rather than read.
-    CHECK(anim_build_plan(ev, 2, 2, 0, 20, final_hand, 0) == ANIM_EBADARG, "no output, no plan");
-    CHECK(anim_build_plan(ev, 2, 2, 0, 20, 0, &plan) == ANIM_EBADARG, "no final board, no plan");
-    CHECK(anim_build_plan(0, 2, 2, 0, 20, final_hand, &plan) == ANIM_EBADARG, "no events, no plan");
-    CHECK(anim_build_plan(ev, ANIM_MAX_STEPS + 1, 2, 0, 20, final_hand, &plan) == ANIM_ECAP,
+    CHECK(anim_build_plan(ev, 2, 2, 0, 20, CARD_NONE, final_hand, 0) == ANIM_EBADARG, "no output, no plan");
+    CHECK(anim_build_plan(ev, 2, 2, 0, 20, CARD_NONE, 0, &plan) == ANIM_EBADARG, "no final board, no plan");
+    CHECK(anim_build_plan(0, 2, 2, 0, 20, CARD_NONE, final_hand, &plan) == ANIM_EBADARG, "no events, no plan");
+    CHECK(anim_build_plan(ev, ANIM_MAX_STEPS + 1, 2, 0, 20, CARD_NONE, final_hand, &plan) == ANIM_ECAP,
           "a sequence over the cap is refused, not truncated");
+}
+
+// MUTATION-CHECKED against c/src/anim_plan.c, each on its own:
+//   adopt_counts stops copying `flipped`
+//     (the freeze reads whatever the final board said)      -> 2 failures
+//   apply_undo "restores" the trump on a DEAL/REFILL
+//     (undoing the anchor event puts a dealt trump back)    -> 2 failures
+//   the boardless fallback ignores `final_flipped`          -> 2 failures
+//
+// THE TRUMP UNDER THE DECK IS PART OF THE FREEZE. Owner, 1.1(55): "on a bout
+// ending good, if the flipped card would've been animated in the resulting
+// animation, it DOES NOT SHOW at first in the pile BEFORE the deal animations
+// play. The deck shows, but not the flipped card."
+//
+// The shape: a 2-player bout end whose refill wants MORE cards than the stock
+// holds, so the flipped trump goes out with them. Before the move the well is
+// four backs with the trump tucked under; after it, the kernel's board has no
+// flipped card at all. The freeze must open on the FORMER, or the well draws a
+// frozen pile of four standing on nothing - the trump hidden in the place it
+// still is, rather than only in the place it is going.
+static void test_plan_freezes_the_flipped_trump(void) {
+    const Card trump = C(0, 8);              // the 8 of spades, under the deck
+    Card trashed[6] = { C(0, 11), C(1, 11), C(2, 12), C(3, 12), C(1, 5), C(2, 5) };
+    Card drawn3[3]  = { C(3, 6), C(3, 7), C(0, 9) };
+    Card drawn2[2]  = { C(1, 9), C(2, 9) };
+
+    // Three steps of one bout end, each carrying the board it committed:
+    //   0 CARDS_TO_TRASH  the table goes to the pile.   deck 4, trump still there
+    //   1 REFILL seat 1   three cards off the stock.    deck 1, trump still there
+    //   2 REFILL seat 0   the last stock card AND the trump. deck 0, trump GONE
+    int h0[2] = { 3, 3 }, h1[2] = { 3, 6 }, h2[2] = { 5, 6 };
+    AnimPlanEvent ev[3];
+    memset(ev, 0, sizeof(ev));
+    ev[0].type = ANIM_EVT_CARDS_TO_TRASH; ev[0].seat = ANIM_SEAT_NONE;
+    ev[0].from = ANIM_LOC_TABLE; ev[0].to = ANIM_LOC_DISCARD;
+    ev[0].cards = trashed; ev[0].n_cards = 6;
+    ev[0].has_counts = 1; ev[0].deck = 4; ev[0].discard = 24; ev[0].flipped = trump;
+    ev[0].hand = h0;
+    ev[1].type = ANIM_EVT_REFILL; ev[1].seat = 1;
+    ev[1].from = ANIM_LOC_DECK; ev[1].to = ANIM_LOC_HAND;
+    ev[1].cards = drawn3; ev[1].n_cards = 3;
+    ev[1].has_counts = 1; ev[1].deck = 1; ev[1].discard = 24; ev[1].flipped = trump;
+    ev[1].hand = h1;
+    ev[2].type = ANIM_EVT_REFILL; ev[2].seat = 0;
+    ev[2].from = ANIM_LOC_DECK; ev[2].to = ANIM_LOC_HAND;
+    ev[2].cards = drawn2; ev[2].n_cards = 2;
+    ev[2].has_counts = 1; ev[2].deck = 0; ev[2].discard = 24; ev[2].flipped = CARD_NONE;
+    ev[2].hand = h2;
+
+    int final_hand[2] = { 5, 6 };
+    AnimPlan plan;
+    CHECK(anim_build_plan(ev, 3, 2, /*deck*/0, /*discard*/24, /*flipped*/CARD_NONE,
+                          final_hand, &plan) == ANIM_EOK, "the bout-end plan builds");
+    // The deck freezes at 4 - and the trump freezes WITH it. A well told
+    // "deck 4, no trump" is the defect; five cards were in that stock.
+    CHECK(plan.pre.deck == 4, "pre deck 4 (got %d)", plan.pre.deck);
+    CHECK(!card_is_none(plan.pre.flipped),
+          "the freeze still has a flipped trump");
+    CHECK(plan.pre.flipped.suit == trump.suit && plan.pre.flipped.value == trump.value,
+          "and it is the RIGHT card (got %d-%d, want %d-%d)",
+          plan.pre.flipped.suit, plan.pre.flipped.value, trump.suit, trump.value);
+
+    // …and a stream whose anchor board has already lost the trump freezes
+    // WITHOUT one: the rule is "adopt", not "always assume there is one".
+    AnimPlanEvent gone[1];
+    memset(gone, 0, sizeof(gone));
+    gone[0] = ev[2];
+    CHECK(anim_build_plan(gone, 1, 2, 0, 24, CARD_NONE, final_hand, &plan) == ANIM_EOK,
+          "the trump-less plan builds");
+    CHECK(card_is_none(plan.pre.flipped), "no trump on the anchor, none in the freeze");
+
+    // The boardless fallback has nothing to anchor on and says what the FINAL
+    // board says - it cannot do better, and anim_plan.h says why.
+    AnimPlanEvent bare[1];
+    memset(bare, 0, sizeof(bare));
+    bare[0].type = ANIM_EVT_REFILL; bare[0].seat = 0;
+    bare[0].from = ANIM_LOC_DECK; bare[0].to = ANIM_LOC_HAND; bare[0].n_cards = 1;
+    CHECK(anim_build_plan(bare, 1, 2, 3, 24, trump, final_hand, &plan) == ANIM_EOK,
+          "the boardless plan builds");
+    CHECK(plan.pre.flipped.suit == trump.suit && plan.pre.flipped.value == trump.value,
+          "the fallback reports the final board's trump");
 }
 
 int main(void) {
@@ -432,6 +513,7 @@ int main(void) {
     test_reconcile();
     test_plan_building();
     test_plan_anchors_on_the_first_events_own_board();
+    test_plan_freezes_the_flipped_trump();
     if (g_fails == 0) printf("anim_plan_test: OK\n");
     else              printf("anim_plan_test: %d FAILURES\n", g_fails);
     return g_fails ? 1 : 0;

@@ -323,8 +323,11 @@ int fio_anim_plan_packed(const uint8_t *in, int len, char *out, int cap) {
     if (np < 2 || np > MAX_PLAYERS) return FIO_EPARSE;
     if (n > ANIM_MAX_STEPS) return FIO_ECAP;
 
-    int p = 5;
+    int p = 6;
     if (p + np > len) return FIO_EPARSE;
+    // The final board's flipped trump - read only by the boardless fallback,
+    // but it crosses unconditionally so the header stays fixed-width.
+    const Card final_flipped = in[5] < 52 ? card_of_id(in[5]) : CARD_NONE;
     int final_hand[MAX_PLAYERS];
     for (int s = 0; s < np; s++) final_hand[s] = in[p++];
 
@@ -340,11 +343,12 @@ int fio_anim_plan_packed(const uint8_t *in, int len, char *out, int cap) {
         if (p + 6 > len) return FIO_EPARSE;
         const int n_cards = in[p + 4], n_ids = in[p + 5];
         if (n_cards > ANIM_MAX_CARDS || n_ids > n_cards) return FIO_ECAP;
-        if (p + 10 + np + n_ids > len) return FIO_EPARSE;
+        if (p + 11 + np + n_ids > len) return FIO_EPARSE;
         if (n_pool + n_ids > ANIM_MAX_CARD_POOL) return FIO_ECAP;
         const int type = in[p], seat = in[p + 1], from = in[p + 2], to = in[p + 3];
         const int has_counts = in[p + 6], deck = in[p + 7], discard = in[p + 8];
-        p += 9;
+        const Card flipped = in[p + 9] < 52 ? card_of_id(in[p + 9]) : CARD_NONE;
+        p += 10;
         for (int s = 0; s < np; s++) hands[i][s] = in[p + s];
         p += np;
         Card *ids = &pool[n_pool];
@@ -393,13 +397,15 @@ int fio_anim_plan_packed(const uint8_t *in, int len, char *out, int cap) {
         evs[i].has_counts = has_counts ? 1 : 0;
         evs[i].deck = deck;
         evs[i].discard = discard;
+        evs[i].flipped = flipped;
         evs[i].hand = hands[i];
         evs[i].n_battles = row_n;
         evs[i].battles = row;
     }
 
     static AnimPlan plan;
-    const int rc = anim_build_plan(evs, n, np, in[3], in[4], final_hand, &plan);
+    const int rc = anim_build_plan(evs, n, np, in[3], in[4], final_flipped,
+                                   final_hand, &plan);
     if (rc == ANIM_ECAP) return FIO_ECAP;
     if (rc != ANIM_EOK) return FIO_EBADARG;
 
@@ -415,6 +421,10 @@ int fio_anim_plan_packed(const uint8_t *in, int len, char *out, int cap) {
     q[8] = (unsigned char)plan.pre.deck;
     q[9] = (unsigned char)plan.pre.discard;
     for (int s = 0; s < np; s++) q[10 + s] = (unsigned char)plan.pre.hand[s];
+    // THE TRUMP THE WELL OPENS ON, beside the counts it belongs with.
+    q[FIO_PLAN_FLIP_AT] = card_is_none(plan.pre.flipped)
+        ? (unsigned char)FIO_PLAN_NO_FLIP
+        : (unsigned char)card_to_id(plan.pre.flipped);
     // THE ROW THE DISPLAY OPENS ON. A row too wide for the fixed block crosses
     // as no row rather than as a truncated one - see FIO_PLAN_BATTLES.
     if (plan.pre.n_battles > 0 && plan.pre.n_battles <= FIO_PLAN_BATTLES) {

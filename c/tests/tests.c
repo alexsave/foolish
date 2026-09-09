@@ -4292,6 +4292,10 @@ static void pf_sink(void *ctx, const EvwEvent *e) {
     pf_evs[i].has_counts = e->snap != 0;
     pf_evs[i].deck = e->snap ? e->snap->deck_count : 0;
     pf_evs[i].discard = e->snap ? e->snap->discard_pile_length : 0;
+    // …and the trump under the deck, gated on has_flipped: the kernel keeps a
+    // stale card in the slot after it is drawn (see view.c's canonical no-flip
+    // byte), so the raw field is not the answer.
+    pf_evs[i].flipped = (e->snap && e->snap->has_flipped) ? e->snap->flipped : CARD_NONE;
     for (int s = 0; s < pf_np; s++)
         pf_hand[i][s] = e->snap ? e->snap->players[s].hand_count : 0;
     pf_evs[i].hand = pf_hand[i];
@@ -4308,11 +4312,12 @@ static const char *pf_say(const char *fmt, ...) {
     return b;
 }
 
-typedef struct { int deck, discard, hand[MAX_PLAYERS]; } PfCounts;
+typedef struct { int deck, discard, hand[MAX_PLAYERS]; Card flipped; } PfCounts;
 static PfCounts pf_counts_of(const Game *g) {
     PfCounts c;
     c.deck = g->deck_count;
     c.discard = g->discard_pile_length;
+    c.flipped = g->has_flipped ? g->flipped : CARD_NONE;
     for (int s = 0; s < g->num_players; s++) c.hand[s] = g->players[s].hand_count;
     return c;
 }
@@ -4395,25 +4400,33 @@ static void test_the_freeze_is_the_board_before_every_move(void) {
                 const PfCounts after = pf_counts_of(&g);
                 AnimPlan plan;
                 if (anim_build_plan(pf_evs, pf_n, np, after.deck, after.discard,
-                                    after.hand, &plan) != ANIM_EOK) { refused++; continue; }
+                                    after.flipped, after.hand, &plan) != ANIM_EOK) { refused++; continue; }
                 checked++;
 
                 // 1. The freeze IS the board the move started from.
                 int same = plan.pre.deck == before.deck && plan.pre.discard == before.discard;
                 for (int s = 0; s < np; s++) if (plan.pre.hand[s] != before.hand[s]) same = 0;
+                // …AND THE TRUMP UNDER THE DECK. The board the well opens on is
+                // the stock in both its pieces; a refill that reaches past the
+                // deck deals the trump out, so a freeze that carried only the
+                // count drew a frozen pile standing on nothing (1.1(55)).
+                if (plan.pre.flipped.suit != before.flipped.suit
+                    || plan.pre.flipped.value != before.flipped.value) same = 0;
                 if (!same) {
                     bad_freeze++;
                     if (!first_bad[0])
                         snprintf(first_bad, sizeof first_bad,
-                                 "np=%d seed=%d: freeze deck %d discard %d hand[%d] %d, "
-                                 "the board was deck %d discard %d hand[%d] %d "
-                                 "(lead type %d seat %d x%d)",
+                                 "np=%d seed=%d: freeze deck %d discard %d hand[%d] %d "
+                                 "trump %d-%d, the board was deck %d discard %d hand[%d] %d "
+                                 "trump %d-%d (lead type %d seat %d x%d)",
                                  np, seed, plan.pre.deck, plan.pre.discard,
                                  pf_evs[0].seat < 0 ? 0 : pf_evs[0].seat,
                                  plan.pre.hand[pf_evs[0].seat < 0 ? 0 : pf_evs[0].seat],
+                                 plan.pre.flipped.suit, plan.pre.flipped.value,
                                  before.deck, before.discard,
                                  pf_evs[0].seat < 0 ? 0 : pf_evs[0].seat,
                                  before.hand[pf_evs[0].seat < 0 ? 0 : pf_evs[0].seat],
+                                 before.flipped.suit, before.flipped.value,
                                  pf_evs[0].type, pf_evs[0].seat, pf_evs[0].n_cards);
                 }
 
@@ -4856,7 +4869,7 @@ static void test_build_plan_freezes_the_row_with_the_counts(void) {
         .n_battles = 2, .battles = after_pass,
     };
     AnimPlan plan;
-    CHECK(anim_build_plan(&ev, 1, 2, 12, 0, hand, &plan) == ANIM_EOK, "the plan builds");
+    CHECK(anim_build_plan(&ev, 1, 2, 12, 0, CARD_NONE, hand, &plan) == ANIM_EOK, "the plan builds");
     // The counts froze: my hand held the card back.
     CHECK(plan.pre.hand[0] == 6, "the hand freeze is the board before the move");
     // …and so did the ROW. ONE pile, not the two the arrived board shows.
@@ -4869,7 +4882,7 @@ static void test_build_plan_freezes_the_row_with_the_counts(void) {
     // the strength of an identity it was never given. No row at all, and the
     // caller paints the live table exactly as it did before.
     ev.mask_cards = 1;
-    CHECK(anim_build_plan(&ev, 1, 2, 12, 0, hand, &plan) == ANIM_EOK
+    CHECK(anim_build_plan(&ev, 1, 2, 12, 0, CARD_NONE, hand, &plan) == ANIM_EOK
           && plan.pre.n_battles == 0,
           "a masked placement buys no row");
     ev.mask_cards = 0;
@@ -4878,7 +4891,7 @@ static void test_build_plan_freezes_the_row_with_the_counts(void) {
     // table exactly as it did before the row was in the plan.
     ev.n_battles = ANIM_NO_BOARD;
     ev.battles = 0;
-    CHECK(anim_build_plan(&ev, 1, 2, 12, 0, hand, &plan) == ANIM_EOK
+    CHECK(anim_build_plan(&ev, 1, 2, 12, 0, CARD_NONE, hand, &plan) == ANIM_EOK
           && plan.pre.n_battles == 0,
           "a stream with no rows on it gets no row back");
 }

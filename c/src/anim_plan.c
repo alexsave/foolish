@@ -105,11 +105,19 @@ static void apply_undo(const AnimPlanEvent *ev, AnimCounts *c) {
             break;
     }
 }
+// NOTHING ABOVE TOUCHES `flipped`, and that is the rule rather than an
+// omission. This runs on exactly one event - the first - and a stream never
+// leads with the refill that deals the trump out, so the anchor board's trump
+// is already the pre-stream trump. See anim_plan.h.
 
 // Adopt a step's own board, when it carries one.
 static void adopt_counts(const AnimPlanEvent *ev, AnimCounts *c) {
     c->deck = ev->deck;
     c->discard = ev->discard;
+    // …AND THE FLIPPED TRUMP, which is half of what the well draws. Adopted,
+    // never undone - anim_plan.h says why, and apply_undo says it again where
+    // the temptation to undo it would be.
+    c->flipped = ev->flipped;
     for (int s = 0; s < c->n_players; s++) c->hand[s] = ev->hand[s];
 }
 
@@ -118,8 +126,8 @@ static int carries_counts(const AnimPlanEvent *ev) {
 }
 
 int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
-                    int final_deck, int final_discard, const int *final_hand,
-                    AnimPlan *out) {
+                    int final_deck, int final_discard, Card final_flipped,
+                    const int *final_hand, AnimPlan *out) {
     if (!out || !final_hand || n_players < 2 || n_players > MAX_PLAYERS) return ANIM_EBADARG;
     if (n_events < 0) return ANIM_EBADARG;
     if (n_events > ANIM_MAX_STEPS) return ANIM_ECAP;
@@ -141,6 +149,12 @@ int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
     } else {
         cur.deck = final_deck;
         cur.discard = final_discard;
+        // The trump is the final board's, unwound by nothing: this branch has
+        // no board to anchor on, and an undo cannot tell whether a deal took
+        // the card from under the deck (see anim_plan.h). It reads the deck one
+        // card high in the same case for the same reason; the packed evwire
+        // never reaches here.
+        cur.flipped = final_flipped;
         for (int s = 0; s < n_players; s++) cur.hand[s] = final_hand[s];
         for (int i = n_events - 1; i >= 0; i--) apply_undo(&events[i], &cur);
     }
