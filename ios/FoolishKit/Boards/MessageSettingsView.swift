@@ -1,28 +1,27 @@
 // MessageSettingsView.swift — the board's Settings sheet (1.0(4)), opened from
-// the left Settings (gear) square. Two settings today:
-//   - the language override (English / Русский / 한국어), persisted by
-//     FStrings.override
-//   - the TABLE MATERIAL (round 12): the green casino baize, or the wool weave
-//     for a player who wants the original cloth back. Round 30 made these two
-//     SWATCHES on one row, each drawn in its own material - see `tableSwatch`
-//     for why this setting gets a different control from the language list
-//     right under it. Felt is first in the row, and first because it is first
-//     in `TableSurface.allCases` - see that type for why the two are one fact.
+// the left Settings (gear) square. ONE setting: the TABLE MATERIAL (round 12) -
+// the green casino baize, or the wool weave for a player who wants the original
+// cloth back. Round 30 made the two choices SWATCHES on one row, each drawn in
+// its own material (see `tableSwatch`); felt is first in the row, and first
+// because it is first in `TableSurface.allCases` - see that type for why the two
+// are one fact.
 //
-// TABLE FIRST, then language (owner). It is the setting a player actually comes
-// here to change once the game is running; language is a set-once.
+// THERE USED TO BE A LANGUAGE LIST under it, five wooden rows naming themselves.
+// It is gone: the app reads the phone's own language order instead
+// (FStrings.active), which is a thing the player already told their phone once
+// and should not be asked again. Taking it out is also what let the table grow
+// from five languages to fifteen - a list of five is one a player might have had
+// to correct, and a list of fifteen resolved from the phone is one nobody has to
+// look at.
 //
-// The LANGUAGE list is vertical WOOD blocks (owner: not the glass segmented
-// picker), one per choice, the chosen one check-marked. The table is two
-// swatches side by side (round 30) - the one place the two sections deliberately
-// do not share `choiceRow`, because a material is a look and not a word. The table surface is a
-// `.background`, not a ZStack sibling, so the content stays inside the safe area
-// (a sibling ignoresSafeArea grows the stack and clips the title under the notch
-// - the same trap MessagesRootView documents for the board).
+// The table surface is a `.background`, not a ZStack sibling, so the content
+// stays inside the safe area (a sibling ignoresSafeArea grows the stack and
+// clips the title under the notch - the same trap MessagesRootView documents for
+// the board).
 //
-// Changing either one repaints this sheet AND the board behind it immediately,
-// because both come off `FPrefs` — see FPrefs.swift for why a static accessor
-// alone could not do that.
+// Changing it repaints this sheet AND the board behind it immediately, because
+// it comes off `FPrefs` — see FPrefs.swift for why a static accessor alone could
+// not do that.
 
 import SwiftUI
 
@@ -71,14 +70,6 @@ struct MessageSettingsView: View {
                 }
             }
 
-            section("ios.settings.language") {
-                ForEach(AppLanguage.allCases, id: \.self) { choice in
-                    choiceRow(choice.display, chosen: choice == prefs.language) {
-                        prefs.setLanguage(choice)
-                    }
-                }
-            }
-
             Spacer(minLength: 0)
         }
         .padding(FSpace.xl)
@@ -121,8 +112,7 @@ struct MessageSettingsView: View {
 
     /// One table swatch: the material itself, with a checkmark on the chosen one.
     ///
-    /// A little taller than a `choiceRow` (64 against 52) because it is a picture
-    /// rather than a line of text, and a fixed height rather than a minimum -
+    /// 64pt tall, and a fixed height rather than a minimum -
     /// `Color` expands forever given the chance, and the first cut of this let
     /// the two swatches grow into the sheet's whole spare height. The border is
     /// the row's, so the two sections still look like one screen.
@@ -160,22 +150,4 @@ struct MessageSettingsView: View {
         .accessibilityAddTraits(chosen ? [.isButton, .isSelected] : .isButton)
     }
 
-    /// One wood block: a label, and a checkmark when it is the current choice.
-    /// Shared by both sections so a second setting cannot arrive wearing a
-    /// different control.
-    private func choiceRow(_ label: String, chosen: Bool, tap: @escaping () -> Void) -> some View {
-        Button(action: tap) {
-            HStack {
-                Text(label).font(FType.title(17))
-                Spacer()
-                if chosen { Image(systemName: "checkmark").font(.system(size: 15, weight: .heavy)) }
-            }
-            .onWoodText()
-            .padding(.horizontal, FSpace.l)
-            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
-            .background(WoodFill())
-            .overlay(Rectangle().strokeBorder(Color.black.opacity(0.35), lineWidth: 1))
-            .clipShape(Rectangle())
-        }
-    }
 }

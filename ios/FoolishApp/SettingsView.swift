@@ -1,8 +1,15 @@
-// SettingsView.swift — §6 screen 6 / §16.E3. Language override, haptics toggle,
-// account block (with sign-out + DELETE ACCOUNT seams), licenses, links, and a
-// DEBUG-only feature-flag list (§16.E2). Account actions are seams until auth
-// lands (M-D) and the deletion endpoint exists (§9, §16.E3) — they must not be
-// faked (no mailto); they're disabled with an explanatory note until wired.
+// SettingsView.swift — §6 screen 6 / §16.E3. Haptics toggle, account block
+// (with sign-out + DELETE ACCOUNT seams), licenses, links, and a DEBUG-only
+// feature-flag list (§16.E2). Account actions are seams until auth lands (M-D)
+// and the deletion endpoint exists (§9, §16.E3) — they must not be faked (no
+// mailto); they're disabled with an explanatory note until wired.
+//
+// NO LANGUAGE ROW. There was a picker here and one in the iMessage sheet; both
+// are gone, and the app reads the phone's own language order instead
+// (FStrings.active). See MessageSettingsView's header for the reasoning - it
+// applies to this screen identically, and a phone app that disagreed with its
+// own extension about which language the player reads would be worse than
+// either choice.
 
 import SwiftUI
 import FoolishKit
@@ -12,9 +19,6 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var auth: AuthService
     @AppStorage("ios.haptics") private var hapticsOn = true
-    /// The live settings (FPrefs): observed so THIS screen re-renders, and
-    /// written through so every other open screen does too.
-    @ObservedObject private var prefs = FPrefs.shared
     @State private var flagRefresh = false
     @State private var confirmDelete = false
     @State private var deleting = false
@@ -23,7 +27,6 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
-                languageSection
                 hapticsSection
                 accountSection
                 aboutSection
@@ -41,17 +44,6 @@ struct SettingsView: View {
             }
         }
         .preferredColorScheme(.dark)
-    }
-
-    private var languageSection: some View {
-        Section("Language") {
-            Picker("Language", selection: Binding(get: { prefs.language },
-                                                  set: { prefs.setLanguage($0) })) {
-                ForEach(AppLanguage.allCases, id: \.self) { choice in
-                    Text(choice.display).tag(choice)
-                }
-            }
-        }
     }
 
     private var hapticsSection: some View {

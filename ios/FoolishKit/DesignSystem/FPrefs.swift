@@ -57,16 +57,11 @@ public final class FPrefs: ObservableObject {
     public static let shared = FPrefs()
     private init() {}
 
-    // MARK: language
-
-    /// Published so views re-render; `FStrings.override` stays the store of
-    /// record, so a fresh process resolves the same language without this.
-    @Published public private(set) var language: AppLanguage = FStrings.override
-
-    public func setLanguage(_ lang: AppLanguage) {
-        FStrings.override = lang
-        language = lang
-    }
+    // No language here any more. It was a stored, published, settable choice
+    // because a settings row could change it mid-session and every visible
+    // string had to re-render; the phone's own language cannot change under a
+    // running process (iOS restarts the app and its extensions when it does), so
+    // there is nothing to publish. `FStrings.active` answers it directly.
 
     // MARK: table surface
 

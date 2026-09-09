@@ -9,7 +9,10 @@
 //
 // So this is that check, and it walks `AppLanguage.allCases`: adding a language
 // enrols it automatically, and adding a key breaks every language that has not
-// learned it yet.
+// learned it yet. It matters more now than it did at three languages: nobody
+// PICKS a language any more (FStrings.active reads the phone), so a gap in one
+// of the fifteen is not a setting somebody can back out of - it is simply the
+// app half in English for whoever lives there.
 import XCTest
 import UIKit
 @testable import FoolishKit
@@ -128,36 +131,62 @@ final class LocalizationTests: XCTestCase {
         if !shrunk.isEmpty { print("action labels riding the shrink floor: \(shrunk.joined(separator: ", "))") }
     }
 
-    /// Every language names itself in its own script, so the picker is readable
-    /// by the person who needs it (see `AppLanguage.display`).
-    func testEveryLanguageNamesItself() {
-        var seen = Set<String>()
-        for lang in AppLanguage.allCases {
-            XCTAssertFalse(lang.display.isEmpty, "\(lang) has no display name")
-            XCTAssertTrue(seen.insert(lang.display).inserted,
-                          "two languages both call themselves \(lang.display)")
+    /// THE PHONE'S ANSWER IS THE ONLY ANSWER NOW, so the resolver is the whole
+    /// language setting and every one of these is a way it could silently put a
+    /// player in a language they did not ask for.
+    ///
+    /// There is no picker to correct it with any more (FStrings.active), which
+    /// is exactly why this is a table of real `preferredLanguages` lists rather
+    /// than a restatement of the rule: the rule is two lines and reads fine, and
+    /// the cases below are the ones that were wrong in a draft of it.
+    func testTheResolverObeysThePhone() {
+        let cases: [(want: AppLanguage, preferred: [String], why: String)] = [
+            (.en, [], "no preference at all falls to English"),
+            (.en, ["en-US"], "the ordinary case"),
+            (.pt, ["pt-BR"], "one pt serves Brazil"),
+            (.pt, ["pt-PT"], "…and Portugal"),
+            (.es, ["es-419"], "a region that is not a country"),
+            (.zh, ["zh-Hans-CN"], "Simplified"),
+            (.zh, ["zh-Hant-TW"], "a Traditional reader lands somewhere readable"),
+            (.zh, ["zh-HK"], "Hong Kong"),
+            (.uk, ["uk-UA"], "Ukrainian is uk, and is NOT the United Kingdom"),
+            (.id, ["id-ID"], "Indonesian"),
+            (.id, ["in-ID"], "Indonesian's legacy subtag, which iOS still returns"),
+            // THE ORDERED LIST IS THE POINT. A phone whose first language we do
+            // not carry must fall to the NEXT language its owner named, not to
+            // English - this is the whole reason the resolver reads the list
+            // and not `preferredLanguages.first`.
+            (.es, ["ca-ES", "es-ES", "en-GB"], "Catalan first, Spanish second"),
+            (.ru, ["kk-KZ", "ru-RU"], "Kazakh first, Russian second"),
+            (.en, ["is-IS", "fo-FO"], "nothing we carry: English is the floor"),
+            (.de, ["gsw-CH", "de-CH"], "Swiss German first, German second"),
+        ]
+        for c in cases {
+            XCTAssertEqual(FStrings.match(c.preferred), c.want,
+                           "\(c.preferred) should resolve to \(c.want): \(c.why)")
         }
     }
 
-    /// The OS locale has to land somewhere sensible for each language we ship,
-    /// or a Vietnamese phone opens the app in English and the setting looks
-    /// broken rather than undiscovered.
-    func testTheSystemLocaleFindsEachLanguage() {
-        // Exercised through the same prefix rule `systemDetected` uses; the
-        // private property itself is not reachable, so this pins the CONTRACT
-        // the raw values encode - each language's code is the prefix its
-        // speakers' locales carry.
+    /// A tag must never match on its REGION or its SCRIPT. `en-ID` is English in
+    /// Indonesia and `es-PL` is Spanish typed by somebody in Poland; both used
+    /// to be one `contains` away from landing in the wrong table.
+    func testARegionSubtagIsNotALanguage() {
+        XCTAssertEqual(FStrings.match(["en-ID"]), .en)
+        XCTAssertEqual(FStrings.match(["es-PL"]), .es)
+        XCTAssertEqual(FStrings.match(["en-DE"]), .en)
+        XCTAssertEqual(FStrings.match(["sr-Latn-RS"]), .en, "Serbian is not carried; Latn is a script")
+    }
+
+    /// Each case's raw value IS the subtag the resolver matches on, which is
+    /// what lets `match` work without a mapping table. A three-letter or
+    /// mis-cased case would silently never match anything.
+    func testEveryLanguageCodeIsTheSubtagItMatches() {
         for lang in AppLanguage.allCases {
             XCTAssertEqual(lang.rawValue.count, 2, "\(lang) is not a 2-letter code")
+            XCTAssertEqual(lang.rawValue, lang.rawValue.lowercased(), "\(lang) is not lowercase")
+            XCTAssertEqual(FStrings.match(["\(lang.rawValue)-XX"]), lang,
+                           "\(lang) does not resolve from its own subtag")
         }
-        // The Chinese case is the one worth stating: `zh-Hans`, `zh-Hant` and
-        // `zh-HK` all begin `zh`, and all of them should land on the table we
-        // have rather than in English.
-        for code in ["zh", "zh-Hans", "zh-Hant", "zh-HK", "zh-TW"] {
-            XCTAssertTrue(code.hasPrefix(AppLanguage.zh.rawValue),
-                          "\(code) would not be detected as Chinese")
-        }
-        XCTAssertTrue("vi-VN".hasPrefix(AppLanguage.vi.rawValue))
     }
 
     // MARK: fixtures
@@ -220,8 +249,7 @@ final class LocalizationTests: XCTestCase {
         "ios.rej.defending", "ios.rej.notyours", "ios.rej.addrank",
         "ios.rej.cover", "ios.rej.capacity", "ios.rej.passrank",
         "ios.rej.mustattack", "ios.rej.alreadygood", "ios.rej.notake",
-        "ios.help", "ios.settings.title", "ios.settings.language",
-        "ios.settings.table", "ios.settings.table.wool",
+        "ios.help", "ios.settings.title", "ios.settings.table", "ios.settings.table.wool",
         "ios.settings.table.felt", "ios.rules.title", "ios.rules.goal.h",
         "ios.rules.goal.b", "ios.rules.setup.h", "ios.rules.setup.b",
         "ios.rules.setup.cap", "ios.rules.start.h", "ios.rules.start.b",
