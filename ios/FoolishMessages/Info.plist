@@ -74,6 +74,16 @@
 		<string>uk</string>
 		<string>tr</string>
 		<string>id</string>
+		<string>th</string>
+		<string>nl</string>
+		<string>sv</string>
+		<string>da</string>
+		<string>nb</string>
+		<string>cs</string>
+		<string>ro</string>
+		<string>he</string>
+		<string>ar</string>
+		<string>fi</string>
 	</array>
 	<!-- The App Group this extension's MessageGameStore uses. Read at runtime by
 	     FoolishKit rather than hardcoded there, because FoolishKit is shared with

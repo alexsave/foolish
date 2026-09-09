@@ -88,3 +88,7 @@ isolate-*.log
 
 # Coverage artifacts
 .v8cov/
+
+# Python bytecode from the QA tooling - never a repo artifact.
+__pycache__/
+*.pyc
