@@ -200,6 +200,37 @@ final class LocalizationTests: XCTestCase {
                        "the board must not mirror; \(rtl) would render half-flipped")
     }
 
+    /// THE DEFENDER DRAWS TOO, and the rulebook has to say so.
+    ///
+    /// `refill_player_hands` runs on the pickup path (c/src/game.c, the call
+    /// after the defender takes the table), and it walks the seats skipping the
+    /// defender and then draws for them LAST, always. So "only the attackers
+    /// draw" is false - it merely looks true, because a defender who has just
+    /// taken the table is usually holding more than six and draws nothing.
+    ///
+    /// The English rulebook said "Attacker players then also draw", two native
+    /// reviewers read that as an exclusion, and the claim reached eleven
+    /// languages before a third reviewer checked the kernel instead of the
+    /// prose. This pins the corrected shape so it cannot drift back: every
+    /// language's round.b must mention the defender drawing last.
+    func testTheRoundRuleDoesNotExcludeTheDefender() {
+        let was = FStrings.override
+        defer { FStrings.override = was }
+        var silent: [String] = []
+        for lang in AppLanguage.allCases {
+            FStrings.override = lang
+            let body = FStrings.t("ios.rules.round.b")
+            XCTAssertFalse(body.isEmpty, "\(lang) has no round.b")
+            // The defender is named in the drawing order in every language; a
+            // rewrite that drops them is what this is here to catch.
+            let defender = FStrings.t("ios.rules.defender")
+            let stem = String(defender.prefix(max(3, defender.count - 2))).lowercased()
+            if !body.lowercased().contains(stem) { silent.append("\(lang)") }
+        }
+        XCTAssertTrue(silent.isEmpty,
+                      "round.b never mentions the defender in: \(silent.joined(separator: ", "))")
+    }
+
     /// A tag must never match on its REGION or its SCRIPT. `en-ID` is English in
     /// Indonesia and `es-PL` is Spanish typed by somebody in Poland; both used
     /// to be one `contains` away from landing in the wrong table.
