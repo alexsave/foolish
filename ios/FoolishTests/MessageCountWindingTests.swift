@@ -133,6 +133,58 @@ final class MessageCountWindingTests: XCTestCase {
         }
     }
 
+    /// …AND SO IS THE ROW. THE PRE-BUMP, over real games.
+    ///
+    /// The freeze covered the deck, the discard and every hand, and left the
+    /// battle row out - so `AnimPlan.pre` described a board that never existed:
+    /// a pre-move deck badge beside a post-move table. On a replay that is the
+    /// FIRST PAINTED FRAME, and a cold open has no previous layout to
+    /// interpolate away from, so the row simply was not where it belonged and
+    /// never moved: 36pt - half a slot plus its gap - on every pass and every
+    /// throw-in, and invisible on a cover, which adds no cell.
+    ///
+    /// Every ADDITION bubble in a real game, held against the board the kernel
+    /// actually had before it. A bubble that SWEEPS is excluded and not by
+    /// oversight: for those the row that has to be drawn is the table the sweep
+    /// TAKES - the covered one, so a bout-ending cover has a slot to fly into -
+    /// which is a different board from `before` by exactly that cover, and it
+    /// has had its own rule (`anim_pre_bout_table`) since round 12.
+    ///
+    /// MUTATION-CHECKED against sdk/swift/AnimPlanWire.swift and
+    /// c/src/anim_plan.c, each on its own:
+    ///   the encoder stops sending each step's row       -> 155 failures
+    ///   the plan answers with the first event's own row
+    ///     (no undo at all)                              -> 100 failures
+    ///   the undo drops a COVERED cell as a fresh attack ->  25 failures
+    ///   the row's attack and cover are written swapped  -> 155 failures
+    func testTheFreezeCarriesTheRowTheBoardOpensOn() async throws {
+        var checked = 0, grew = 0
+        for players in [2, 3, 4] {
+            try await sweepBubbles(players: players, games: 4) { before, events, after, label in
+                guard !events.isEmpty else { return }
+                // Only the streams that ADD to the row - see above.
+                guard !events.contains(where: {
+                    $0.kind == .pickup || $0.kind == .discard || $0.kind == .cardsToTrash
+                }) else { return }
+                let pre = AnimPlan(events, finalView: after).pre
+                guard !pre.battles.isEmpty || !before.battles.isEmpty else { return }
+                checked += 1
+                if after.battles.count > before.battles.count { grew += 1 }
+                XCTAssertEqual(pre.battles, before.battles,
+                               "\(label): the plan opens on \(pre.battles.count) cells, "
+                               + "the board before this move had \(before.battles.count) "
+                               + "(it settles on \(after.battles.count))")
+                XCTAssertTrue(pre.battlesPaired || pre.battles.isEmpty,
+                              "\(label): a real board came back unpaired")
+            }
+        }
+        // A row that never GREW is the one shape this cannot be allowed to pass
+        // vacuously on: a cover keeps the cell count, and a cover-only sweep
+        // would have agreed with the old, broken code at every single bubble.
+        XCTAssertGreaterThan(checked, 100, "no addition bubble was ever checked")
+        XCTAssertGreaterThan(grew, 20, "no move ever ADDED a pile - the pre-bump's own shape")
+    }
+
     /// …and it must be exercised, not skipped: a sweep that silently found no
     /// events would pass the test above by doing nothing.
     func testTheSweepActuallySeesTheShapesTheReportCameFrom() async throws {

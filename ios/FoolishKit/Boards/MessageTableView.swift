@@ -2020,10 +2020,24 @@ public struct MessageTableView: View {
         // shows is `sweepTableForReplay()` - the one the sweep itself is about
         // to use - so the cards carry the same identities across the handoff and
         // nothing is created or destroyed at all.
-        let pendingTable = view.battles.isEmpty && sweepBattles.isEmpty
-            && pendingOpen != nil ? sweepTableForReplay() : []
-        let table = PreBoutTable.shownTable(
-            live: view.battles, sweep: sweepBattles, pending: pendingTable)
+        //
+        // …AND IT IS NOT ONLY THE EMPTYING MOVES. `view.battles.isEmpty` used
+        // to be a third guard on this line, and it is where the pre-bump lived:
+        // a pass or a throw-in arrives with a NON-empty table, so this window
+        // was skipped and the grid laid out the arrived row on the board's very
+        // first painted frame - the pile already down drawn 36pt to the side and
+        // never moving, because a cold open has no previous layout to
+        // interpolate away from. Only a move that emptied the table could reach
+        // the pre-move row. The row a replay opens on is now asked for EVERY
+        // stream (`replayOpening`), and which of the three the grid paints
+        // is the kernel's (`anim_shown_table`) rather than an emptiness test
+        // written out here.
+        let pendingTable = sweepBattles.isEmpty && pendingOpen != nil
+            ? Self.replayOpening(sweep: sweepTableForReplay(),
+                                 planRow: pendingOpen?.counts.battles ?? []).row
+            : []
+        let table = Self.gridRow(live: view.battles, held: ledger.battles,
+                                 sweep: sweepBattles, pending: pendingTable)
         let sweeping = table.sweeping
         let shown = table.shown
         // ROUND 20: the sweep grid hides BOTH ends of the sequence - what has
@@ -2315,7 +2329,7 @@ public struct MessageTableView: View {
                          note: "badges stay "
                             + (controller.view?.players ?? []).map { "s\($0.seat)=\(shownHandCount($0))" }
                                 .joined(separator: " ")) { l in
-                l.deck = nil; l.discard = nil; l.hand = [:]
+                l.deck = nil; l.discard = nil; l.hand = [:]; l.battles = nil
                 l.out = nil
             }
         }
@@ -2596,7 +2610,7 @@ public struct MessageTableView: View {
             // played again is the owner's "briefly bumped, then they play a
             // single card and it goes back down".
             ledger.write(.sequence) { l in
-                l.deck = nil; l.discard = nil; l.hand = [:]
+                l.deck = nil; l.discard = nil; l.hand = [:]; l.battles = nil
                 l.out = nil
             }
             releaseHoldback(raisedBy: veiledAt)   // see the teardown below - this guard returns ahead of it
@@ -2651,7 +2665,7 @@ public struct MessageTableView: View {
             // are then flown into it a second time.
             if mySeq == animSequenceToken {
                 ledger.write(.sequence) { l in
-                    l.deck = nil; l.discard = nil; l.hand = [:]
+                    l.deck = nil; l.discard = nil; l.hand = [:]; l.battles = nil
                     l.out = nil
                 }
                 // A holdback that never got flown (a poll that timed out, a
@@ -2815,6 +2829,31 @@ public struct MessageTableView: View {
                 // exactly what "the same time" asks for. Same in live and replay.
                 withAnimation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime)) {
                     self.animator.openSlots(landing)
+                }
+            }
+            // …AND THE ROW GROWS AS THIS STEP'S CARDS COME DOWN ONTO IT, which
+            // is the table's twin of the fan's make-room just above and is
+            // timed identically: the same curve, the same `flightTime`, started
+            // in the same breath as the flight. So a pile already on the table
+            // slides over WHILE the new card is in the air and the two settle
+            // together, which is what "the cards on the table should start as
+            // they were before the move, and rearrange as the move comes in"
+            // asks for.
+            //
+            // WITH A DURATION FROM THE PLAN, and that is the point of moving it
+            // here at all. Left to SwiftUI's ambient transaction the reflow ran
+            // ~200-270ms whatever the flight was doing - measured identical at
+            // 1x and at HARNESS_SLOWMO=6, while flights scale 500ms to 3000ms -
+            // so the row's motion was the one beat on this board that nobody
+            // had written and nothing could slow down.
+            //
+            // Only while the ledger is holding the row (an addition being
+            // replayed). A sweep leaves it nil and the grid is `sweepBattles`',
+            // which is taken down by `dropSweep` when its cards have flown.
+            if ledger.battles != nil, let s = group.last?.state ?? ev.state {
+                withAnimation(reduceMotion ? nil
+                              : .timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime)) {
+                    ledger.write(.sequence) { $0.battles = s.battles }
                 }
             }
             // Round-7: the DECK count drops as the cards LEAVE the deck (they start
@@ -4144,6 +4183,53 @@ public struct MessageTableView: View {
         return PreBoutTable.covers(lastBattles, reconstructed) ? lastBattles : reconstructed
     }
 
+    /// THE ROW A REPLAY OPENS ON - the whole question, not the half of it that
+    /// empties the table - and WHO HOLDS IT.
+    ///
+    /// `sweepTableForReplay` above answers for a stream that TAKES the row away
+    /// and returns nothing for one that puts cards ON it, because the kernel
+    /// rule behind it (`anim_pre_bout_table`) was written as "what table is
+    /// about to be swept". That decline was the pre-bump: a replayed pass or
+    /// throw-in had no pre-move row, so `battlesArea` fell through to the
+    /// arrived one and the first painted frame was already rearranged.
+    ///
+    /// The other half is the plan's (`AnimPlan.pre.battles`, from the kernel's
+    /// `anim_pre_stream_table`): the first event's own row with its placement
+    /// taken back off. Composed rather than merged, because the sweep half has
+    /// something the plan cannot know - `lastBattles`, the real table this board
+    /// was showing a moment ago, which round 12 says to prefer over any
+    /// reconstruction. A stream is one or the other and never both: a move that
+    /// sweeps ends with an empty table, a move that adds does not.
+    ///
+    /// `held` is which machinery carries it once the sequence starts. An
+    /// ADDITION's row goes on the ledger and is walked forward a step at a time
+    /// like every other lagging count; a SWEEP's is `sweepBattles`, which has to
+    /// OUTLIVE the view that empties the row rather than lag it, and is taken
+    /// down by `dropSweep` when its cards have flown. Arming both would hand
+    /// `battlesArea` a non-empty live table for the whole sweep, which is
+    /// `shownTable` choosing LIVE over the sweep grid and the swept cards never
+    /// drawn at all.
+    ///
+    /// STATIC, and asked at BOTH call sites rather than written out at each:
+    /// `battlesArea` renders this row a paint before `replayLastMoveOnOpen`
+    /// arms the state that carries it on, and the two answering differently is
+    /// a visible handoff - the family `pendingSweepUnplaced` is already in.
+    static func replayOpening(sweep: [BattleView], planRow: [BattleView])
+        -> (row: [BattleView], held: Bool) {
+        sweep.isEmpty ? (planRow, !planRow.isEmpty) : (sweep, false)
+    }
+
+    /// WHICH ROW THE GRID PAINTS, over everything that can claim it. The choice
+    /// itself is the kernel's (`anim_shown_table`); what is here is which value
+    /// plays the part of "live" - the LEDGER's row while a sequence is walking
+    /// it forward, the kernel's the moment nothing is animating. Exactly
+    /// `shownDeck`'s shape, one field over.
+    static func gridRow(live: [BattleView], held: [BattleView]?,
+                        sweep: [BattleView], pending: [BattleView])
+        -> (shown: [BattleView], sweeping: Bool) {
+        PreBoutTable.shownTable(live: held ?? live, sweep: sweep, pending: pending)
+    }
+
     /// note 4: an approximate source rect for a pickup/discard flight replayed
     /// on open — the pre-bout table itself is never rendered (the game is
     /// already past it by the time we open), so there is no real per-battle
@@ -4384,8 +4470,27 @@ public struct MessageTableView: View {
             var out: [Flight] = []
             for case let card? in ev.cards {
                 var landed: (rect: CGRect, angle: Double)?
-                if let idx = view.battles.firstIndex(where: { $0.attack == card || $0.defense == card }),
-                   let rect = battleFrames[idx] {
+                if let idx = view.battles.firstIndex(where: { $0.attack == card || $0.defense == card }) {
+                    // …AND ITS SLOT MAY NOT HAVE BEEN LAID OUT YET, which is now
+                    // the NORMAL case rather than a rare one and is polled for
+                    // rather than skipped.
+                    //
+                    // The grid opens on the row BEFORE this move (ShownLedger's
+                    // `battles`), so the cell this card is flying into does not
+                    // exist until the step advances the row - one paint before
+                    // this builder first runs. Skipped, as this used to be, the
+                    // whole step came back `flights=0` and the card teleported
+                    // into place. The sweep branch below has polled for exactly
+                    // this since round 20, for exactly this reason; the two are
+                    // one situation and now answer the same way.
+                    //
+                    // `continue` is still the answer for a card that is not on
+                    // the final table AT ALL - swept onward by a later event of
+                    // this same open, which flies it itself.
+                    guard let rect = battleFrames[idx] else {
+                        if lastChance { continue }
+                        return nil
+                    }
                     // Bug 1: a card that lands as the DEFENSE (cover) lies across
                     // at +coverAngle - see the angle note below.
                     landed = (rect, view.battles[idx].defense == card ? FBattleGrid.coverAngle : 0)
@@ -4690,7 +4795,21 @@ public struct MessageTableView: View {
         // `sweepUnplaced`. For all but a bout-ending cover this set is empty
         // (nothing is placed and swept in one bubble), and `setSweep` drops
         // anything the grid does not hold a slot for.
-        setSweep(sweepTableForReplay(), unplaced: AnimBeats(events).placed)
+        let swept = sweepTableForReplay()
+        setSweep(swept, unplaced: AnimBeats(events).placed)
+
+        // …and for the OTHER direction, the row this replay opens on, taken
+        // over from `pendingOpen.counts.battles` exactly as the counts above
+        // are - same kernel answer, same stream, so nothing on screen changes
+        // as the window shuts and the ledger takes it on.
+        //
+        // ONLY WHEN NOTHING IS BEING SWEPT. A sweep already has a grid of its
+        // own that has to OUTLIVE the view emptying the row rather than lag it,
+        // and arming the ledger too would hand `battlesArea` a non-empty live
+        // table for the whole sweep - which is `shownTable` choosing LIVE over
+        // the sweep grid, and the swept cards never drawn at all.
+        let opening = Self.replayOpening(sweep: swept, planRow: pre.battles)
+        if opening.held { ledger.write(.arming) { $0.battles = opening.row } }
 
         // The SAME animator the live bout-end uses - one path, the kernel's events.
         // `openReplay: true` opens the fan for a COLD first open so each drawn card
@@ -5052,7 +5171,7 @@ public struct MessageTableView: View {
         // three copies of it are one. All that is left here is the claim.
         let released = ledger.write(.bystander, by: "releaseLivePlayVeil",
                                     note: "counts/roles/sweep stay with the running sequence") { l in
-            l.deck = nil; l.discard = nil; l.hand = [:]
+            l.deck = nil; l.discard = nil; l.hand = [:]; l.battles = nil
             // The out badges with them, which this function used to leave
             // frozen: `freezeCounts` seeds them in the same breath as the counts
             // and both `releaseCounts` and the stream teardown nil them in the

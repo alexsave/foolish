@@ -1,9 +1,9 @@
 // ShownLedger - WHAT THE BADGES ARE SHOWING, and who is allowed to say so.
 //
-// Five pieces of board state answer "what number / mark / collapse is on
+// Six pieces of board state answer "what number / mark / collapse / row is on
 // screen right now", as distinct from what the kernel says: the deck count,
-// the discard count, each seat's hand count, which seats are drawn as OUT, and
-// which seats are wearing which role mark. They exist because a count must
+// the discard count, each seat's hand count, the battle row, which seats are
+// drawn as OUT, and which seats are wearing which role mark. They exist because a count must
 // never move before the cards that earn it have flown - see each field below.
 //
 // THEY BELONG TO WHOEVER IS ANIMATING. A running sequence freezes them to the
@@ -25,7 +25,7 @@
 // one remembering a rule written down in three places. A fourth writer was a
 // matter of time.
 //
-// So the five fields are `private` here, in a file the board cannot reach
+// So the six fields are `private` here, in a file the board cannot reach
 // into, and the ONLY way to change them is `write(_:)`, which takes a CLAIM
 // saying who the caller is. That is a compiler-enforced funnel, not a
 // convention: a new writer in MessageTableView.swift cannot assign to these
@@ -121,7 +121,7 @@ enum ShownClaim: Int, Equatable {
 /// The board's shown-state ledger. Read freely; write only through `write`.
 struct ShownLedger {
 
-    /// THE FIVE FIELDS, and the only place in the app they can be assigned.
+    /// THE SIX FIELDS, and the only place in the app they can be assigned.
     /// Kept `internal` so the closure `write` hands out can set them; reachable
     /// only from inside this file, because `ShownLedger.fields` is private and
     /// nothing else vends a `Fields`.
@@ -129,6 +129,31 @@ struct ShownLedger {
 
         /// The deck count the well is drawing. nil = follow the kernel.
         var deck: Int?
+
+        /// THE BATTLE ROW THE GRID IS DRAWING. nil = follow the kernel.
+        ///
+        /// The row lags the game state the same way the counts do, for exactly
+        /// the reason the counts do, and for eleven rounds it did not. A move
+        /// that ADDS a pile - a pass, a throw-in - publishes a view whose table
+        /// already holds it, and the grid centres its cells, so the pile that
+        /// was already down moves half a slot plus its gap (36pt) the instant
+        /// that view lands. Live and locally that was survivable: SwiftUI
+        /// interpolated from the layout already on screen, and the slide
+        /// happened to land inside the flight's window. On a REPLAY there is no
+        /// previous layout, so the first painted frame WAS the post-move row
+        /// and nothing ever moved it - the card sat 36pt to the side from frame
+        /// 0 to the end.
+        ///
+        /// So the row is held here, seeded to the board before the move
+        /// (`AnimPlan.pre.battles`, the kernel's) and advanced one step per
+        /// landing flight, with the plan's own duration on it - the same
+        /// treatment the make-room in my own fan has had since round 7.
+        ///
+        /// THE REMOVAL DIRECTION IS NOT THIS. A move that sweeps the table has
+        /// its own grid (`sweepBattles`), which has to outlive the view that
+        /// empties the row rather than lag it; this is only ever armed for a
+        /// stream that puts cards DOWN. See `MessageTableView.replayOpening`.
+        var battles: [BattleView]?
 
         /// The discard count the pile is drawing. nil = follow the kernel.
         var discard: Int?
@@ -213,6 +238,7 @@ struct ShownLedger {
     var discard: Int? { fields.discard }
     var hand: [Int: Int] { fields.hand }
     var out: Set<Int>? { fields.out }
+    var battles: [BattleView]? { fields.battles }
     var roles: MessageTableView.RoleState? { fields.roles }
 
     /// THE RULE, asked of the kernel (`ShownWrite.allows`), so it can be

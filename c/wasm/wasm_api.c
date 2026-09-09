@@ -1132,7 +1132,13 @@ int wasm_anim_transport(void) { return anim_transport(); }
 //   then events: n_events x { u8 type, u8 seat(0xFF none), u8 from, u8 to,
 //                             u8 mask, u8 n_cards, n_cards x u8 wire card,
 //                             u8 has_counts, u8 deck, u8 discard,
-//                             n_players x u8 hand }
+//                             n_players x u8 hand,
+//                             u8 n_battles (0xFE = no board),
+//                             2 x n_battles u8 attack/cover dense ids }
+// AND EVERY EVENT CARRIES ITS ROW. The freeze is the whole board, not three
+// numbers off it: the row before a pass is the first event's own row with the
+// passed card taken back off it (anim_plan.h, AnimCounts). A caller that drops
+// the rows gets no row and paints the live table, which is the pre-bump.
 // EVERY EVENT CARRIES THE BOARD IT COMMITTED. The freeze is one undo off the
 // FIRST event's own board, not a walk back from the final one - see
 // anim_plan.h - so a caller that drops the snapshots gets the fallback and the
@@ -1179,6 +1185,7 @@ int wasm_anim_build_plan(int n_events, int n_players, int final_deck, int final_
     static Card ev_cards[ANIM_MAX_CARD_POOL];
     static AnimPlanEvent events[ANIM_MAX_STEPS];
     static int ev_hand[ANIM_MAX_STEPS][MAX_PLAYERS];
+    static unsigned char ev_row[ANIM_MAX_STEPS][2 * ANIM_PLAN_ROW_MAX];
     int final_hand[MAX_PLAYERS];
     int p = 0, cpool = 0;
     for (int i = 0; i < n_players; i++) final_hand[i] = g_io[p++];
@@ -1200,6 +1207,20 @@ int wasm_anim_build_plan(int n_events, int n_players, int final_deck, int final_
         events[e].discard = g_io[p++];
         for (int s = 0; s < n_players; s++) ev_hand[e][s] = g_io[p++];
         events[e].hand = ev_hand[e];
+        // …and the row that step committed, in the 2-bytes-per-battle layout.
+        // ANIM_TABLE_NONE as the COUNT is "no board", which is what a redacted
+        // table crosses as: a row that cannot be described honestly is not
+        // described at all.
+        const int n_bat = g_io[p++];
+        if (n_bat == ANIM_TABLE_NONE) {
+            events[e].n_battles = ANIM_NO_BOARD;
+            events[e].battles = 0;
+        } else {
+            if (n_bat > ANIM_PLAN_ROW_MAX) return ANIM_ECAP;
+            for (int k = 0; k < 2 * n_bat; k++) ev_row[e][k] = g_io[p++];
+            events[e].n_battles = n_bat;
+            events[e].battles = ev_row[e];
+        }
     }
     static AnimPlan plan;
     int rc = anim_build_plan(events, n_events, n_players, final_deck, final_discard, final_hand, &plan);
@@ -1214,6 +1235,17 @@ int wasm_anim_build_plan(int n_events, int n_players, int final_deck, int final_
     put_u32le(g_io, &o, plan.total_ms);
     g_io[o++] = (unsigned char)plan.n_veil;
     for (int i = 0; i < plan.n_veil; i++) g_io[o++] = plan.veil_ids[i];
+    // THE ROW THE DISPLAY OPENS ON, length-prefixed. Too wide for the block is
+    // NO row rather than a truncated one - a table missing cards is worse than
+    // the live table the caller already had.
+    {
+        const int n_row = (plan.pre.n_battles > 0
+                           && plan.pre.n_battles <= ANIM_PLAN_ROW_MAX)
+                          ? plan.pre.n_battles : 0;
+        g_io[o++] = (unsigned char)n_row;
+        g_io[o++] = (unsigned char)(n_row > 0 && plan.pre.paired ? 1 : 0);
+        for (int k = 0; k < 2 * n_row; k++) g_io[o++] = plan.pre.battles[k];
+    }
     for (int i = 0; i < plan.n_steps; i++) {
         AnimPlanStep *st = &plan.steps[i];
         g_io[o++] = (unsigned char)st->type;
