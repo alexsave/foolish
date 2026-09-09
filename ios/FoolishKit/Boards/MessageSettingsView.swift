@@ -33,10 +33,10 @@ import SwiftUI
 // (see RulesView.swift for the measurement).
 struct MessageSettingsView: View {
     private let onClose: () -> Void
-    /// The live settings (see FPrefs): this sheet both READS them - so its own
-    /// title and rows re-render into the language just picked, and the wool
-    /// behind it becomes felt the moment felt is chosen - and writes them. The
-    /// old `@State` copy did the first half only, for this one screen.
+    /// The live settings (see FPrefs): this sheet both READS them - so the wool
+    /// behind it becomes felt the moment felt is chosen, and the swatch it is
+    /// standing on changes under the checkmark - and writes them. The old
+    /// `@State` copy did the first half only, for this one screen.
     @ObservedObject private var prefs = FPrefs.shared
     /// The swatches pick their own fallback colour off this, the same way every
     /// other surface does - see `swatchVariant`.
@@ -58,14 +58,16 @@ struct MessageSettingsView: View {
                 // background", and "instead of text captions for the styles,
                 // just have a check on whichever one is selected".
                 //
-                // Which is the right control for this setting and the wrong one
-                // for the other. A language is a word - you read it and pick it.
-                // A table is a LOOK, and a wooden pill reading "Green felt" asks
-                // you to imagine the thing it is standing in front of. Two
+                // A table is a LOOK, and a wooden pill reading "Green felt"
+                // asks you to imagine the thing it is standing in front of. Two
                 // swatches showing the actual weave and the actual baize answer
                 // the question by being the answer, which is also why they lose
                 // their captions: the label was describing a picture that is now
-                // there to be looked at.
+                // there to be looked at. (It is the control the language list
+                // that used to sit under this row could never have been, and
+                // one reason that list was the easier of the two to give up:
+                // a language is a word you read and pick, and fifteen of those
+                // are a wall - see the header.)
                 HStack(spacing: FSpace.s) {
                     ForEach(TableSurface.allCases, id: \.self) { choice in
                         tableSwatch(choice)
@@ -152,5 +154,4 @@ struct MessageSettingsView: View {
         .accessibilityLabel(Text(FStrings.t(choice.labelKey)))
         .accessibilityAddTraits(chosen ? [.isButton, .isSelected] : .isButton)
     }
-
 }
