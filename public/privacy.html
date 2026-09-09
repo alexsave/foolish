@@ -1,0 +1,81 @@
+<!doctype html>
+<!-- Privacy policy for the Foolish web app and the standalone iOS app
+     (cards.foolish.app). Static, in the same plain shape as
+     imessage-privacy.html and for the same reason: every React route renders
+     behind KernelGate (providers.tsx), which blocks on a wasm fetch, and a
+     policy page must load even when the game bundle does not.
+     Served at /privacy via the rewrite in next.config.mjs.
+
+     The iMessage app has its OWN policy at /imessage-privacy, because it is a
+     different product with a different answer: it collects nothing at all,
+     while this one describes an optional account. Keep them separate; App
+     Store Connect points each record at its own page. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy Policy - Foolish</title>
+  <meta name="description" content="Privacy policy for Foolish. No tracking, no ads, no data sold. An account is optional and only needed for online play.">
+  <link rel="icon" href="/favicon.ico">
+</head>
+<body>
+  <h1>Privacy Policy</h1>
+  <p><strong>Foolish</strong> (foolish.cards and the Foolish iOS app)</p>
+  <p>Last updated: July 2026</p>
+
+  <p>Playing in Messages? That is a separate app with its own policy, and it
+  collects nothing at all:
+  <a href="/imessage-privacy">Foolish Cards for iMessage</a>.</p>
+
+  <h2>The short version</h2>
+  <p>Foolish is a Durak card game. Playing offline against computer opponents
+  sends no data to us: no account, no network, nothing collected. An account is
+  optional and only needed to play online against other people. There is no
+  analytics SDK, no advertising SDK, and no tracking of any kind.</p>
+
+  <h2>What we collect</h2>
+  <p><strong>If you never create an account</strong> (this covers offline play
+  against bots): nothing.</p>
+  <p><strong>If you create an account</strong> to play online: a username, an
+  account identifier, and the games you play, so your match history, win/loss
+  record and rating can be shown to you. None of it is used for advertising,
+  none of it is sold, and none of it is shared with third parties except the
+  infrastructure providers who host it for us, acting solely on our
+  instructions.</p>
+  <p><strong>Camera access</strong> is used only if you choose to scan a QR
+  code to load a replay. The camera feed never leaves your device and nothing
+  from it is stored or transmitted.</p>
+  <p><strong>Crash diagnostics</strong> are collected by Apple, not us, and
+  only if you opted in at the iOS level (Settings, then Privacy, then Analytics
+  and Improvements). We do not receive them unless you separately choose to
+  send us a crash report yourself.</p>
+
+  <h2>What we don't do</h2>
+  <ul>
+    <li>No tracking across other apps or websites. No App Tracking
+        Transparency prompt appears because we have nothing to ask for.</li>
+    <li>No advertising, no ad SDKs, no ad identifiers.</li>
+    <li>No selling or renting of any data, ever.</li>
+    <li>No third-party analytics SDKs.</li>
+  </ul>
+
+  <h2>Children's privacy</h2>
+  <p>Foolish is a standard card game with no gambling, wagering or real-money
+  mechanics, and is not directed at children under 13. We do not knowingly
+  collect personal information from children under 13. If you believe a child
+  has created an account, contact us below and we will delete it.</p>
+
+  <h2>Deleting your account</h2>
+  <p>If you created an account, you can delete it and everything associated
+  with it at any time, from inside the app (Settings, then Delete Account) or
+  from <a href="/delete-account">this page</a>. Deletion is immediate and
+  permanent.</p>
+
+  <h2>Changes to this policy</h2>
+  <p>If this policy changes, we will update the date at the top of this page.</p>
+
+  <h2>Contact</h2>
+  <p>Questions about this policy or your data:
+  <a href="mailto:alexvsaveliev@gmail.com">alexvsaveliev@gmail.com</a></p>
+</body>
+</html>
