@@ -887,7 +887,18 @@ private struct GameSurface: View {
     /// a new game.
     private func maybeAdoptIncoming(showingBefore: Data? = nil) async {
         guard let url = incomingURL, !showSetup, !startNewGame,
-              let bytes = try? MessageEnvelope.payloadBytes(url: url) else { return }
+              let bytes = try? MessageEnvelope.payloadBytes(url: url) else {
+            // The gate that produces NOTHING on screen and no trace of itself,
+            // which is the owner's "it does not update at all" on the first
+            // bubble of a chain. `setup`/`newGame` are the two states that
+            // deliberately refuse arrivals; if one of them is stuck on, this is
+            // the only line that will ever say so.
+            if incomingURL != nil {
+                FlightRecorder.note("arrival-ignored",
+                    "setup=\(showSetup) newGame=\(startNewGame) bytes=\(incomingURL == nil ? "-" : "ok")")
+            }
+            return
+        }
         // A reload is mid-flight and the surface is momentarily empty. Stand
         // down: `reloadForInput` calls this again the moment it has settled, and
         // passes what was on screen before it started. See `reloading`.
@@ -897,7 +908,11 @@ private struct GameSurface: View {
         }
         let current = controller?.basePayload ?? lobby?.payload
                       ?? showingBefore ?? lastShownChain
-        if bytes == current { AnimLog.say("arrival ignored - same chain"); return }
+        if bytes == current {
+            AnimLog.say("arrival ignored - same chain")
+            FlightRecorder.note("arrival-ignored", "same chain")
+            return
+        }
         if let current {
             // A refusal here is SILENT to the player, and that is what made the
             // rule-4 hole (a chain tying with its own child on round/turn, see
@@ -917,11 +932,13 @@ private struct GameSurface: View {
                         + "cur=[t\(ce?.turn ?? -1) r\(ce?.round ?? -1) actor\(ce?.lastActorSeat ?? -1)] "
                         + "new=[t\(be?.turn ?? -1) r\(be?.round ?? -1) actor\(be?.lastActorSeat ?? -1)]")
                 }
+                FlightRecorder.note("arrival-ignored", "rule P pref=\(pref)")
                 return
             }
         }
         guard let env = try? await MessageEnvelope.decode(payload: bytes, viewer: -1) else {
             AnimLog.say("arrival ignored - decode failed")
+            FlightRecorder.note("arrival-ignored", "decode failed")
             return
         }
         // This runs under `.task(id: incomingToken)`, so a NEWER arrival CANCELS
@@ -1529,12 +1546,46 @@ private struct GameSurface: View {
     /// loadKey unchanged, so `.task(id:)` does not fire and the game persists.
     private func reloadForInput() async {
         AnimLog.say("surface reload key=[\(loadKey)]")
-        // A reload WITH a live arrival is the shape that ate the beats twice.
-        if incomingURL != nil { FlightRecorder.note("reload-vs-arrival") }
         // WHAT THE HUMAN WAS LOOKING AT, read before the reset below throws it
         // away. An arrival landing during a reload has to be diffed against
         // THIS, not against whatever the reload settles on - see `reloading`.
-        let wasShowing = controller?.basePayload ?? lobby?.payload
+        let wasShowing = controller?.basePayload ?? lobby?.payload ?? lastShownChain
+
+        // A RELOAD ONTO THE ARRIVING CHAIN IS NOT A RELOAD - IT IS THE ARRIVAL.
+        //
+        // This file has asserted since round 7 that "Apple does not move
+        // `selectedMessage` for an arrival, so loadKey does not change and the
+        // .task above will not re-run". ON A REAL DEVICE THAT IS FALSE. The
+        // owner's 1.1(60) flight log says so in three places, and says it the
+        // same way every time:
+        //
+        //     22.26s  receive
+        //     22.26s  reload-vs-arrival
+        //
+        // `loadKey` is newGameToken | chatKey | payloadURL; the first two cannot
+        // move on a receive, so `payloadURL` did - the arriving bubble HAD become
+        // the selection. So every arrival was really a cold reload onto the new
+        // chain, which is a PAINT, which is a snap by construction; and
+        // `maybeAdoptIncoming` then found `bytes == current` and returned without
+        // a sound. That is why no lobby beat has ever played on a phone in 57,
+        // 58, 59 or 60, while the same stream animates correctly in the harness -
+        // the harness delivers an arrival WITHOUT moving the selection, which is
+        // the one thing the real host does differently.
+        //
+        // So the two are told apart by their bytes rather than by a belief about
+        // what the host does with the selection: if the chain this reload would
+        // load IS the chain that just arrived, and it is not already what we are
+        // showing, then this is an arrival and it plays as one - diffed against
+        // what was on screen, which is exactly the sequence the human was owed.
+        if let url = incomingURL,
+           let arriving = try? MessageEnvelope.payloadBytes(url: url),
+           let loading = payloadURL.flatMap({ try? MessageEnvelope.payloadBytes(url: $0) }),
+           arriving == loading, let was = wasShowing, was != arriving {
+            FlightRecorder.note("reload-is-arrival", "\(arriving.count)b")
+            await maybeAdoptIncoming(showingBefore: was)
+            return
+        }
+        if incomingURL != nil { FlightRecorder.note("reload-vs-arrival") }
         reloading = true
         // Do NOT tear the board down to nil up front: on a live receive that
         // blank (Color.clear) between the old controller and the new one is the
