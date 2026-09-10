@@ -404,6 +404,44 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// so commit it to the cache (§7.6). This is the ONLY place the cache learns
     /// a chain was actually sent — insert alone is not a commit.
     override func didStartSending(_ message: MSMessage, conversation: MSConversation) {
+        // ASK THE HOST TO RE-PRESENT US, WITHOUT MOVING ANYTHING.
+        //
+        // After this device sends the FIRST bubble of a chain from a drawer
+        // launch, the host stops pushing anything to this extension context: no
+        // `didReceive`, and (1.1(65) proved it) no conversation state either, so
+        // not even `didSelect`. A join lands in the transcript and the open lobby
+        // never hears about it. Expanding and collapsing the drawer by hand makes
+        // delivery resume, which is also why a live GAME never showed it - playing
+        // a move auto-collapses, so the board is re-armed for free every move.
+        //
+        // The re-arming is the HOST re-presenting us. We cannot call host code,
+        // and `present()` here is ours alone - it only swaps the hosting root
+        // view and the host never hears it, which is why calling it below has
+        // never been enough.
+        //
+        // `requestPresentationStyle:` is the ONE public call that reaches the
+        // host, and Messages.framework forwards it UNCONDITIONALLY - it logs
+        // "Requesting presentation style" and passes it on, with no same-style
+        // early return on the extension side. So asking for the style we are
+        // ALREADY in may make the host do its re-presentation bookkeeping while
+        // having nothing to animate. Owner: "if the transition is triggering
+        // something special, just trigger that without a transition?" - this is
+        // that, and it is the only shape it can take.
+        //
+        // Whether the host no-ops it is host-side and cannot be read from this
+        // Mac. If it does, this is inert. If it does not, delivery re-arms with
+        // no visible change - and NOT with the compact->expanded->compact bounce,
+        // which is locked and which I am not shipping.
+        //
+        // Scoped to the first bubble of a chain this device created, which is
+        // exactly the failing case: every other lobby action is reached by
+        // TAPPING a bubble, and that activation re-arms delivery on its own. A
+        // narrow blast radius matters here because none of this can be verified
+        // without a second phone.
+        if startingNewGame {
+            FlightRecorder.note("re-present", "same style, asking the host to re-arm")
+            requestPresentationStyle(presentationStyle)
+        }
         startingNewGame = false
         freshSession = false
         // ROUND 12 #11: the chain being sent comes from the MESSAGE Messages
