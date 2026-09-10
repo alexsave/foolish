@@ -886,6 +886,27 @@ private struct GameSurface: View {
     /// gate), the arrival simply renders - round 7 keeps no cached chain to
     /// weigh it against. `showSetup` is exempt: the human explicitly asked for
     /// a new game.
+    /// The arrival this surface has already taken. ONE arrival, handled ONCE.
+    ///
+    /// There are two callers now - `.task(id: incomingToken)`, and
+    /// `reloadForInput` when it recognises that the chain it was about to load
+    /// IS the chain that just arrived - and in 1.1(61) both of them ran. The
+    /// owner's flight log shows it as a doubled line at an identical timestamp:
+    ///
+    ///     88.57s  arrival  beats=1 showing=yes phase=0 joins=2
+    ///     88.57s  arrival  beats=1 showing=yes phase=0 joins=2
+    ///
+    /// Two `playArrival`s over one surface, each seeding the still and adopting.
+    /// The loser finishes second and lands the END STATE on top of a sequence
+    /// that is still running - which is a snap wearing a sequence's timing, the
+    /// exact symptom this whole chain of builds has been chasing.
+    ///
+    /// Keyed on the BYTES rather than on `incomingToken`, because the two callers
+    /// are reached by different routes and only one of them is the token's; the
+    /// bytes are what they agree on. Cleared by a new input, so the same chain
+    /// arriving again on a fresh surface is still played.
+    @State private var arrivalTaken: Data?
+
     private func maybeAdoptIncoming(showingBefore: Data? = nil) async {
         guard let url = incomingURL, !showSetup, !startNewGame,
               let bytes = try? MessageEnvelope.payloadBytes(url: url) else {
@@ -914,6 +935,12 @@ private struct GameSurface: View {
             FlightRecorder.note("arrival-ignored", "same chain")
             return
         }
+        // ONE ARRIVAL, ONE HANDLER - see `arrivalTaken`.
+        if bytes == arrivalTaken {
+            FlightRecorder.note("arrival-ignored", "already taken")
+            return
+        }
+        arrivalTaken = bytes
         if let current {
             // A refusal here is SILENT to the player, and that is what made the
             // rule-4 hole (a chain tying with its own child on round/turn, see
@@ -933,7 +960,17 @@ private struct GameSurface: View {
                         + "cur=[t\(ce?.turn ?? -1) r\(ce?.round ?? -1) actor\(ce?.lastActorSeat ?? -1)] "
                         + "new=[t\(be?.turn ?? -1) r\(be?.round ?? -1) actor\(be?.lastActorSeat ?? -1)]")
                 }
-                FlightRecorder.note("arrival-ignored", "rule P pref=\(pref)")
+                // The SHAPE of both chains, because "pref=-1" alone cannot tell
+                // a correct refusal from a broken one. My own invite coming back
+                // with a fresh send clock is state-identical and SHOULD lose;
+                // a genuine join losing is a bug. They differ only in these
+                // numbers, and without them the log makes both look the same.
+                let ce = try? await MessageKernel.shared.peek(payload: current)
+                let be = try? await MessageKernel.shared.peek(payload: bytes)
+                FlightRecorder.note("arrival-ignored",
+                    "rule P pref=\(pref) mine=[p\(ce?.phase ?? -1) j\(ce?.joins.count ?? -1) "
+                    + "t\(ce?.turn ?? -1)] new=[p\(be?.phase ?? -1) j\(be?.joins.count ?? -1) "
+                    + "t\(be?.turn ?? -1)]")
                 return
             }
         }
@@ -1603,6 +1640,7 @@ private struct GameSurface: View {
         arrivalStill = nil; stillFade = 1; rulesTurn = nil
         surfaceStaged = false   // round-9: a new input owes nothing to Send yet
         stagedParent8 = nil
+        arrivalTaken = nil
         await load()
         AnimLog.say("surface showing \(showingWhat)")
         // AND THEN RE-OFFER THE ARRIVAL, if one is outstanding. 1.1(57).
