@@ -1,0 +1,79 @@
+10_dark_exp/2p_open|fatboard|4 2 pass 0||felt||dark|expanded
+10_dark_exp/2p_mid|fatboard|6 2 pass 0|||||expanded
+10_dark_exp/2p_dense|fatboard|8 2 pass 0|||||expanded
+10_dark_exp/2p_late|fatboard|5 2 pass 2|||||expanded
+10_dark_exp/3p_open|fatboard|4 3 pass 0|||||expanded
+10_dark_exp/3p_mid|fatboard|6 3 pass 0|||||expanded
+10_dark_exp/3p_dense|fatboard|8 3 pass 0|||||expanded
+10_dark_exp/3p_late|fatboard|5 3 pass 2|||||expanded
+10_dark_exp/4p_open|fatboard|4 4 pass 0|||||expanded
+10_dark_exp/4p_mid|fatboard|6 4 pass 0|||||expanded
+10_dark_exp/4p_dense|fatboard|8 4 pass 0|||||expanded
+10_dark_exp/4p_late|fatboard|5 4 pass 2|||||expanded
+10_dark_exp/5p_open|fatboard|4 5 pass 0|||||expanded
+10_dark_exp/5p_mid|fatboard|6 5 pass 0|||||expanded
+10_dark_exp/5p_dense|fatboard|8 5 pass 0|||||expanded
+10_dark_exp/5p_late|fatboard|5 5 pass 2|||||expanded
+10_dark_exp/6p_open|fatboard|4 6 pass 0|||||expanded
+10_dark_exp/6p_mid|fatboard|6 6 pass 0|||||expanded
+10_dark_exp/6p_dense|fatboard|8 6 pass 0|||||expanded
+10_dark_exp/6p_late|fatboard|5 6 pass 2|||||expanded
+10_dark_exp/7p_open|fatboard|4 7 pass 0|||||expanded
+10_dark_exp/7p_mid|fatboard|6 7 pass 0|||||expanded
+10_dark_exp/7p_dense|fatboard|7 7 pass 0|||||expanded
+10_dark_exp/7p_late|fatboard|5 7 pass 2|||||expanded
+10_dark_exp/8p_open|fatboard|4 8 pass 0|||||expanded
+10_dark_exp/8p_mid|fatboard|6 8 pass 0|||||expanded
+10_dark_exp/8p_dense|fatboard|7 8 pass 0|||||expanded
+10_dark_exp/8p_late|fatboard|5 8 pass 2|||||expanded
+11_dark_exp_atk/2p_attacker|fatboard|6 2 pass 0|atk||||expanded
+11_dark_exp_atk/4p_attacker|fatboard|6 4 pass 0|atk||||expanded
+11_dark_exp_atk/6p_attacker|fatboard|6 6 pass 0|atk||||expanded
+11_dark_exp_atk/8p_attacker|fatboard|6 8 pass 0|atk||||expanded
+12_dark_exp_podkidnoy/2p|fatboard|5 2 nopass 1|||||expanded
+12_dark_exp_podkidnoy/4p|fatboard|5 4 nopass 1|||||expanded
+12_dark_exp_podkidnoy/6p|fatboard|5 6 nopass 1|||||expanded
+12_dark_exp_podkidnoy/8p|fatboard|5 8 nopass 1|||||expanded
+20_dark_compact/4p_six_in_hand|fatboard|5 4 pass 2|||||compact
+20_dark_compact/2p_seven_in_hand|fatboard|4 2 pass 1|||||compact
+20_dark_compact/4p_nine_two_rows|fatboard|6 4 pass 3|||||compact
+20_dark_compact/2p_mid|fatboard|6 2 pass 0|||||compact
+20_dark_compact/3p_mid|fatboard|6 3 pass 0|||||compact
+20_dark_compact/4p_mid|fatboard|6 4 pass 0|||||compact
+20_dark_compact/5p_mid|fatboard|6 5 pass 0|||||compact
+20_dark_compact/6p_mid|fatboard|6 6 pass 0|||||compact
+20_dark_compact/7p_mid|fatboard|6 7 pass 0|||||compact
+20_dark_compact/8p_mid|fatboard|6 8 pass 0|||||compact
+20_dark_compact/2p_dense|fatboard|8 2 pass 0|||||compact
+20_dark_compact/4p_dense|fatboard|8 4 pass 0|||||compact
+20_dark_compact/8p_dense|fatboard|7 8 pass 0|||||compact
+30_dark_lastdefense/2p|lastdefense|2|||||expanded
+30_dark_lastdefense/4p|lastdefense|4|||||expanded
+30_dark_lastdefense/6p|lastdefense|6|||||expanded
+31_dark_gameover/2p|endgame|2|||||expanded
+31_dark_gameover/3p|endgame|3|||||expanded
+31_dark_gameover/4p|endgame|4|||||expanded
+31_dark_gameover/6p|endgame|6|||||expanded
+31_dark_gameover/8p|endgame|8|||||expanded
+31_dark_gameover/4p_compact|endgame|4|||||compact
+40_light_exp/2p_mid|fatboard|6 2 pass 0||||light|expanded
+40_light_exp/2p_dense|fatboard|8 2 pass 0|||||expanded
+40_light_exp/3p_mid|fatboard|6 3 pass 0|||||expanded
+40_light_exp/3p_dense|fatboard|8 3 pass 0|||||expanded
+40_light_exp/4p_mid|fatboard|6 4 pass 0|||||expanded
+40_light_exp/4p_dense|fatboard|8 4 pass 0|||||expanded
+40_light_exp/5p_mid|fatboard|6 5 pass 0|||||expanded
+40_light_exp/5p_dense|fatboard|8 5 pass 0|||||expanded
+40_light_exp/6p_mid|fatboard|6 6 pass 0|||||expanded
+40_light_exp/6p_dense|fatboard|8 6 pass 0|||||expanded
+40_light_exp/7p_mid|fatboard|6 7 pass 0|||||expanded
+40_light_exp/7p_dense|fatboard|7 7 pass 0|||||expanded
+40_light_exp/8p_mid|fatboard|6 8 pass 0|||||expanded
+40_light_exp/8p_dense|fatboard|7 8 pass 0|||||expanded
+41_light_compact/2p_mid|fatboard|6 2 pass 0|||||compact
+41_light_compact/4p_mid|fatboard|6 4 pass 0|||||compact
+41_light_compact/6p_mid|fatboard|6 6 pass 0|||||compact
+41_light_compact/8p_mid|fatboard|6 8 pass 0|||||compact
+41_light_compact/4p_six_in_hand|fatboard|5 4 pass 2|||||compact
+42_light_gameover/2p|endgame|2|||||expanded
+42_light_gameover/6p|endgame|6|||||expanded
