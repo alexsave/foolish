@@ -1,0 +1,13 @@
+21_dark_compact_atk/2p|fatboard|6 2 pass 0|atk|felt||dark|compact
+21_dark_compact_atk/4p|fatboard|6 4 pass 0|atk||||compact
+21_dark_compact_atk/6p|fatboard|6 6 pass 0|atk||||compact
+21_dark_compact_atk/8p|fatboard|6 8 pass 0|atk||||compact
+22_dark_compact_podkidnoy/2p|fatboard|5 2 nopass 1|||||compact
+22_dark_compact_podkidnoy/4p|fatboard|5 4 nopass 1|||||compact
+22_dark_compact_podkidnoy/6p|fatboard|5 6 nopass 1|||||compact
+32_dark_lastdefense_compact/2p|lastdefense|2|||||compact
+32_dark_lastdefense_compact/4p|lastdefense|4|||||compact
+32_dark_lastdefense_compact/6p|lastdefense|6|||||compact
+33_dark_gameover_compact/2p|endgame|2|||||compact
+43_light_gameover/4p_compact|endgame|4||||light|compact
+44_light_lastdefense/4p|lastdefense|4|||||expanded

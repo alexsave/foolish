@@ -134,10 +134,13 @@ def hand_band(a, s):
     # glyph or a seat badge: the table's battle rows and the hand both clear
     # it, everything else on the board sits under 0.25.
     m = card(a)[lo:, :].mean(axis=1)
-    bands = [r for r in runs(np.nonzero(m > 0.30)[0], 8 * s) if len(r) >= 10 * s]
-    # The last TALL one. Not simply the last: the drawer's bottom edge and the
-    # home indicator both clear the colour test for a handful of rows, and
-    # taking them put every card tap 60pt below the hand.
+    h = a.shape[0]
+    bands = [r for r in runs(np.nonzero(m > 0.30)[0], 8 * s)
+             if len(r) >= 10 * s and lo + int(r[-1]) < h - 10 * s]
+    # The last TALL one that does NOT run to the bottom edge. Both extra
+    # conditions were paid for: the drawer's own bottom edge and the home
+    # indicator clear the colour test for ~30pt, and taking that as the hand
+    # put every card tap 70pt below the cards.
     if not bands:
         return None
     b = bands[-1]

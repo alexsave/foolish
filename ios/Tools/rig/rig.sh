@@ -401,7 +401,7 @@ cmd_session() {
 
 cmd_open() {
   need_sim
-  cmd_enter "$SHOOT_THREAD" >/dev/null
+  cmd_enter "${1:-$SHOOT_THREAD}" >/dev/null
   tap_ax "add" 2.5
   read -r W H < <(screen)
   local i=0
@@ -469,20 +469,17 @@ cmd_collapse() {
 # the compose field ends up.
 cmd_clearstage() {
   need_sim
-  # Messages names the close button in the accessibility tree, so ask for it.
-  # The colour search below is the fallback for the case where the tree has
-  # gone stale (which happens whenever Messages is not frontmost).
+  front
+  # Messages names the close button ("Remove app from message") and only ever
+  # shows it for a bubble in the COMPOSE FIELD, which is exactly the question.
+  # There was a colour fallback here and it was worse than nothing: a SENT
+  # Foolish bubble sitting in the transcript is the same felt, so the fallback
+  # found one and tapped it - opening the bubble instead of clearing a draft.
   if tap_ax "Remove app from message" 2 2>/dev/null; then
     echo "cleared staged bubble"
-    return 0
+  else
+    echo "nothing staged"
   fi
-  local box x y
-  box=$(python3 "$LIB/ui.py" staged | sed 's/STAGED //')
-  [ "$box" = "None" ] && { echo "nothing staged"; return 0; }
-  x=$(echo "$box" | tr -d '(),' | awk '{print $3 - 14}')
-  y=$(echo "$box" | tr -d '(),' | awk '{print $2 + 11}')
-  tap "$x" "$y" 2
-  echo "cleared staged bubble at $box"
 }
 
 # Wooden buttons are found by COLOUR, never by a hard-coded y: the lobby moves
@@ -517,17 +514,29 @@ cmd_lobby() {
 
 # Select the leftmost hand card and play it. Both taps are found by colour, so
 # this is the same code on every device and in every locale.
+# Play the leftmost hand card: DRAG it onto the table. Both ends are found by
+# colour, so this is the same code on every device and in every locale.
+#
+# It is a drag, not a tap-then-press: the board has no "play" button (the
+# owner's round-3 change), so a rig that looked for the lowest wooden pill
+# after selecting a card selected the card and then did nothing at all.
+#
+# It plays the LEFTMOST card, which is not always a LEGAL one - mid-bout an
+# attacker may only throw a rank already on the table - and an illegal card
+# just stays selected. For a scripted move, seed a state where the intended
+# card is legal (`--lastdefense` poses one by construction).
 cmd_move() {
-  local x y
+  local x y top
   x=$(python3 "$LIB/ui.py" cards | python3 -c "
 import sys, ast
 c = ast.literal_eval(sys.stdin.read().split('CARDS ')[1]); print(c[0] if c else -1)")
   y=$(python3 "$LIB/ui.py" hand_y | awk '{print $2}')
-  [ "$x" = "-1" ] || [ "$y" = "-1" ] && { echo "no hand cards found" >&2; return 1; }
-  tap "$x" "$y" 2
-  y=$(bar_y -1)            # the play pill is the LOWEST wood bar
+  top=$(grab_y)
+  if [ "$x" = "-1" ] || [ "$y" = "-1" ] || [ "$top" = "None" ]; then
+    echo "no hand cards found" >&2; return 1
+  fi
   read -r W H < <(screen)
-  [ "$y" != "-1" ] && tap $((W * 4 / 5)) "$y" 2
+  swipe 0.5 "$x" "$y" $((W / 2)) $((top + (H - top) * 45 / 100)) 3
 }
 
 # --------------------------------------------------------------- state ----
