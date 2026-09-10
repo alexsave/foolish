@@ -41,10 +41,19 @@ struct FCheckbox: View {
     /// beat's own duration - both the kernel's (SurfacePlan), so the box turns
     /// at the same pace a card flies.
     ///
-    /// DRIVEN BY THE BEAT, NOT BY `isOn`. A local tap must still feel instant -
-    /// the tick moves under the finger the moment it lands (`passingWish`) -
-    /// and a turn keyed on the value would take that away from the one person
-    /// who already knows what they did.
+    /// A LOCAL TAP TURNS THE BOX TOO, and this is the owner's ruling against an
+    /// earlier cut of this file which said it should not: "our own toggle should
+    /// still rotate." The reasoning that lost was that a turn would take
+    /// instantness away from the one person who already knows what they did. It
+    /// does not, because the turn CARRIES the tick (see `shownOn`): the box
+    /// starts moving the instant the finger lifts, and what the human loses is
+    /// not the response but a hard cut they were never watching for. What they
+    /// gain is that the control behaves the same way whoever moved it, which is
+    /// the whole reason the rule change has an idiom at all.
+    ///
+    /// So this `Turn` is the ARRIVING one - a beat off the plan, somebody else's
+    /// text - and a tap raises its own through `runTurn` with the same kernel
+    /// duration. Two sources, one motion.
     struct Turn: Equatable {
         let token: Int
         let seconds: TimeInterval
@@ -76,12 +85,45 @@ struct FCheckbox: View {
     static func boxTurn(edgeOn: Bool) -> CGFloat { edgeOn ? 0.001 : 1 }
 
     /// Half-way through the beat the box is edge-on; the tick it comes back
-    /// with is the new one. One @State rather than two so the two halves cannot
-    /// get out of step.
+    /// with is the new one.
     @State private var edgeOn = false
 
+    /// WHAT THE TICK IS DRAWING while a turn is running, or nil for "whatever
+    /// `isOn` says" - which is the state it is in almost all the time.
+    ///
+    /// THE TURN HAS TO CARRY ITS CONTENT, and this is what the first two cuts
+    /// got wrong. The rule changes in the same update that starts the turn, so
+    /// the tick vanished at the top of the motion and the box then rotated out
+    /// and back around nothing: the owner's read, off the film, was "it looks
+    /// like the checkbox just toggles out", and he was describing exactly what
+    /// was on screen. A toggle wearing a rotation's timing is not a rotation.
+    ///
+    /// So the box keeps the OLD tick through the first half, swaps at the
+    /// midpoint - where it is edge-on and the swap cannot be seen - and comes
+    /// back carrying the new one. That is what `FSeatBadge` does and why it
+    /// reads as an object turning: the badge's CONTENT turns with it.
+    ///
+    /// The old value is `!isOn` exactly, and not a guess: `anim_surface_plan`
+    /// emits a rules beat only when the rule actually moved (`passing_after !=
+    /// passing_before`), so a turn landing at all means the box has just flipped.
+    @State private var shownOn: Bool?
+
+    /// Which turn owns the box right now. Bumped by every `runTurn`, and read
+    /// back at the midpoint: two quick taps would otherwise have the FIRST
+    /// turn's second half fire in the middle of the second turn, snapping the
+    /// box upright and swapping the tick early.
+    @State private var turnToken = 0
+
     public var body: some View {
-        Button(action: { Haptics.fire(.drop); action(!isOn) }) {
+        Button(action: {
+            Haptics.fire(.drop)
+            // The turn starts BEFORE the action, so the box is already moving
+            // while the reseal is still in the kernel. `isOn` has not moved yet
+            // at this point, so the tick turning away is `isOn` itself - the
+            // mirror of the arriving case below.
+            runTurn(seconds: SurfacePlan.beatSeconds, outgoing: isOn)
+            action(!isOn)
+        }) {
             // CENTRES, not baselines: the label is one word, so there is no
             // block of text for a baseline to belong to - the box and the word
             // are two objects of a size, and the eye lines up their middles.
@@ -117,20 +159,41 @@ struct FCheckbox: View {
         .onChange(of: turn) { landed in
             AnimLog.say("checkbox turn secs=\(landed?.seconds ?? -1)")
             guard let landed, landed.seconds > 0 else { return }
-            let half = landed.seconds / 2
-            // A RUNLOOP TURN LATER, BOTH TIMES. This fires from inside the same
-            // update that adopts the chain - the tick, the roster and the
-            // controls all change in it - and a `withAnimation` raised inside
-            // an ambient transaction that carries no animation is applied with
-            // that transaction, i.e. instantly. Filmed at 20fps the box swapped
-            // its tick in ONE frame and never turned, while the log said the
-            // beat had landed with a 500ms duration: the animation was not too
-            // fast to see, it was not an animation.
-            DispatchQueue.main.async {
-                withAnimation(.easeIn(duration: half)) { edgeOn = true }
-                DispatchQueue.main.asyncAfter(deadline: .now() + half) {
-                    withAnimation(.easeOut(duration: half)) { edgeOn = false }
-                }
+            // An arriving beat lands in the SAME update that adopts the chain,
+            // so `isOn` has already moved to the new rule by the time this runs
+            // and the tick turning away is `!isOn`. A local tap is the other way
+            // round - see the Button above - which is why the outgoing value is
+            // an argument rather than being re-derived here.
+            runTurn(seconds: landed.seconds, outgoing: !isOn)
+        }
+    }
+
+    /// TURN THE BOX, over `seconds`, carrying `outgoing` until the midpoint.
+    ///
+    /// One routine for both sources - an arriving rules beat and a local tap -
+    /// because they are the same motion and a second copy is a second thing to
+    /// get out of step.
+    ///
+    /// A RUNLOOP TURN LATER, BOTH TIMES. When this is driven by an arrival it
+    /// fires from inside the update that adopts the chain - the tick, the roster
+    /// and the controls all change in it - and a `withAnimation` raised inside
+    /// an ambient transaction that carries no animation is applied WITH that
+    /// transaction, i.e. instantly. Filmed at 20fps the box swapped its tick in
+    /// one frame and never turned, while the log said the beat had landed with a
+    /// 500ms duration: the animation was not too fast to see, it was not an
+    /// animation.
+    private func runTurn(seconds: TimeInterval, outgoing: Bool) {
+        guard seconds > 0 else { return }
+        turnToken += 1
+        let mine = turnToken
+        let half = seconds / 2
+        shownOn = outgoing                  // keep the tick that is turning away
+        DispatchQueue.main.async {
+            withAnimation(.easeIn(duration: half)) { edgeOn = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + half) {
+                guard mine == turnToken else { return }   // a newer turn owns the box
+                shownOn = nil                   // edge-on: the swap is invisible
+                withAnimation(.easeOut(duration: half)) { edgeOn = false }
             }
         }
     }
@@ -146,7 +209,7 @@ struct FCheckbox: View {
                 .overlay(Color.black.opacity(enabled ? 0 : 0.45))
             Rectangle()
                 .strokeBorder(.black.opacity(enabled ? 0.35 : 0.2), lineWidth: 1)
-            if isOn { FCheck(size: box - 6) }
+            if shownOn ?? isOn { FCheck(size: box - 6) }
         }
         .frame(width: box, height: box)
         .scaleEffect(x: Self.boxTurn(edgeOn: edgeOn), anchor: .center)

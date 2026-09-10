@@ -1686,6 +1686,37 @@ int fio_msg_rule_p(const uint8_t *a, int a_len, const uint8_t *b, int b_len) {
 // only place that has both headers. Decodes exactly as fio_msg_rule_p does: two
 // header reads, no resident game touched, so a surface may ask this about a
 // chain it has not adopted.
+// The bridge's names for the controls must BE the kernel's, not merely agree
+// with them today: these functions forward `msg_lobby_offered`'s answer through
+// unchanged, so a value that drifted would silently relabel every control on the
+// lobby. A compile error is the only honest guard for a pair of headers that
+// cannot include each other.
+_Static_assert(FIO_LOBBY_START   == MSG_LOBBY_START,   "lobby control drift: START");
+_Static_assert(FIO_LOBBY_INVITE  == MSG_LOBBY_INVITE,  "lobby control drift: INVITE");
+_Static_assert(FIO_LOBBY_WAITING == MSG_LOBBY_WAITING, "lobby control drift: WAITING");
+_Static_assert(FIO_LOBBY_JOIN    == MSG_LOBBY_JOIN,    "lobby control drift: JOIN");
+_Static_assert(FIO_LOBBY_FULL    == MSG_LOBBY_FULL,    "lobby control drift: FULL");
+
+int fio_msg_lobby_offered(int my_seat, int joined, int capacity,
+                          int i_sent_the_newest, int i_changed_the_rules) {
+    return msg_lobby_offered(my_seat, joined, capacity,
+                             i_sent_the_newest, i_changed_the_rules);
+}
+
+int fio_msg_lobby_can_exit(int my_seat, int joined) {
+    return msg_lobby_can_exit(my_seat, joined);
+}
+
+int fio_msg_lobby_can_set_rules(int my_seat) {
+    return msg_lobby_can_set_rules(my_seat);
+}
+
+int fio_msg_lobby_rules_changed(int have_baseline, int baseline, int current, int mine) {
+    return msg_lobby_rules_changed(have_baseline, baseline, current, mine);
+}
+
+int fio_anim_surface_beat_ms(void) { return ANIM_TIME_MS; }
+
 int fio_msg_surface_plan(const uint8_t *showing, int showing_len,
                          const uint8_t *arriving, int arriving_len,
                          int32_t *out, int cap) {
@@ -1713,8 +1744,9 @@ int fio_msg_surface_plan(const uint8_t *showing, int showing_len,
         w[0] = plan.beats[i].kind;
         w[1] = plan.beats[i].transition;
         w[2] = plan.beats[i].passing;
-        w[3] = plan.beats[i].duration_ms;
-        w[4] = plan.beats[i].start_ms;
+        w[3] = plan.beats[i].controls;
+        w[4] = plan.beats[i].duration_ms;
+        w[5] = plan.beats[i].start_ms;
     }
     return FIO_SURFACE_HEAD + n * FIO_SURFACE_STRIDE;
 }

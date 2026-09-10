@@ -1107,11 +1107,21 @@ int anim_shown_ledger_allows(int claim, int sequencing);
 // A message comes from ONE participant: they may seat themselves (or get up)
 // once, they must hold a seat to move the rules, and Start deals the roster it
 // is handed. So a roster action is never later than a rule change and a start is
-// never anything but last. That leaves exactly five streams, which are the five
-// the owner enumerated: roster; rules; roster then rules; roster then start;
-// start. Note that TWO of them end in the LOBBY - a stream that begins with a
-// roster snap is not on its way to the table, and the plan says so by simply
-// having no BOARD beat.
+// never anything but last. ONE TEXT can therefore carry five streams, which are
+// the five the owner enumerated: roster; rules; roster then rules; roster then
+// start; start. Note that TWO of them end in the LOBBY - a stream that begins
+// with a roster snap is not on its way to the table, and the plan says so by
+// simply having no BOARD beat.
+//
+// THERE IS A SIXTH, and it is reachable only from a STALE SURFACE: roster, then
+// rules, then start. No single text can be it, because whoever moves the rules
+// is barred from starting (msg_wire.h `msg_lobby_offered`) - but a surface that
+// was open and fell behind is diffed against WHAT IS ON SCREEN, not against the
+// previous message, so two texts collapse into one stream and all three beats
+// play. Owner, asked directly: "compose some stream of snap/rotate/fade if you
+// need to." Nothing here special-cases it; it falls out of laying the actions
+// down in the only order they can have happened in, which is why the composition
+// is written as three independent `if`s rather than as a table of five.
 //
 // WHY THE TIMING IS HERE rather than in a view. It is the same question every
 // other beat in this file answers - how long does this take, and how long do we
@@ -1133,6 +1143,35 @@ int anim_shown_ledger_allows(int claim, int sequencing);
 #define ANIM_TRANSITION_TURN 1   // the control that changed rotates out and back
 #define ANIM_TRANSITION_FADE 2   // one whole surface cross-fades into another
 
+// WHAT THE CONTROLS DO WHILE A BEAT IS ON SCREEN. Owner, on watching a join
+// arrive as Alex, who created the game:
+//
+//   "i create a game and start out not being able to start the game due to the
+//    fact there is only 1 player. Then if vera just joins, it should snap her in
+//    and give me the 'start' and 'leave' buttons. If Vera joins and toggles the
+//    passing, it should do that, but then rotate the checkbox after a beat. If
+//    the game was already startable as there were 2 players in, then it should
+//    ONLY snap her in and not affect the buttons. If she joins and starts the
+//    game (I believe only possible in 1:1 chats) then we snap her in (NOT
+//    AFFECTING ALEXS BUTTONS) and then fade to the game"
+//
+// THE RULE UNDERNEATH IT: a control must not appear during an intermediate beat
+// if a later beat in the same stream is about to take it away. Flashing Start
+// and Leave into existence and dissolving the whole lobby half a second later is
+// a flicker, and it is what the owner first read as "why does 'start playing'
+// become disabled for Alex temporarily".
+//
+// So: a stream that ENDS IN THE LOBBY lets each beat offer what its own state
+// offers - Vera joining really does hand Alex a Start button, and that is the end
+// state, so it appears and stays. A stream that ends AT THE BOARD holds the
+// controls exactly as the human already had them for its whole length; the roster
+// still snaps, because the roster is the thing he asked to see.
+//
+// Here rather than in a view, under the standing rule: "does this stream continue
+// past this beat" is a fact about the stream, and `started` already knows it.
+#define ANIM_SURFACE_CONTROLS_LIVE 0   // draw what THIS beat's state offers
+#define ANIM_SURFACE_CONTROLS_HELD 1   // draw what the human already had
+
 // The REST between two beats: long enough that the roster which just changed is
 // a thing the human read rather than a frame they missed. ANIM_TIME_MS, because
 // a beat nobody has to watch a card cross still has to last as long as one.
@@ -1148,6 +1187,7 @@ typedef struct {
     // shows the arriving chain exactly, which is what makes playing the last
     // beat the same thing as adopting it.
     int passing;
+    int controls;     // ANIM_SURFACE_CONTROLS_*
     int duration_ms;  // this beat's own motion; 0 is a snap
     int start_ms;     // when it begins, measured from the arrival
 } AnimSurfaceBeat;

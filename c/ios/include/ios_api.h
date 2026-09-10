@@ -942,7 +942,8 @@ int fio_msg_rule_p(const uint8_t *a, int a_len, const uint8_t *b, int b_len);
 //    0  n_beats
 //    1  total_ms
 //    2 + i*FIO_SURFACE_STRIDE:  kind (FIO_SURFACE_*), transition (FIO_TRANS_*),
-//                               passing, duration_ms, start_ms
+//                               passing, controls (FIO_CONTROLS_*),
+//                               duration_ms, start_ms
 //
 // The TRANSITION crosses as data rather than being mapped from `kind` on each
 // platform: which idiom an action wears is a fact about the action, so it is
@@ -952,13 +953,48 @@ int fio_msg_rule_p(const uint8_t *a, int a_len, const uint8_t *b, int b_len);
 // board taking an arrival, or two envelopes describing the same lobby - the
 // caller then adopts exactly as it always did), or a negative FIO_E*.
 #define FIO_SURFACE_HEAD   2
-#define FIO_SURFACE_STRIDE 5
+#define FIO_SURFACE_STRIDE 6
 #define FIO_SURFACE_ROSTER 1   // somebody sat down
 #define FIO_SURFACE_RULES  2   // the table's rules moved
 #define FIO_SURFACE_BOARD  3   // the game is dealt and the lobby is over
 #define FIO_TRANS_SNAP     0   // no motion: it is simply true now
 #define FIO_TRANS_TURN     1   // the control that changed rotates out and back
 #define FIO_TRANS_FADE     2   // one whole surface cross-fades into another
+#define FIO_CONTROLS_LIVE  0   // the beat's controls are its own state's
+#define FIO_CONTROLS_HELD  1   // …or held as they were, when the stream ends at the board
+// WHAT THE LOBBY OFFERS A VIEWER. msg_wire.h holds the rule and the reasons -
+// the M9 anti-lockout gate, its full-table exemption, and the rules-change gate
+// that deliberately has no exemption. These four are the whole of it, and they
+// are pure functions of ints, so they cross as ints.
+//
+// The Swift `LobbyControls` enum is a forwarder onto these (it kept its shape so
+// its call sites and its own tests still build); the DECISION is the kernel's,
+// which is what lets c/tests/anim_plan_test.c assert the owner's whole scenario
+// table - every legal and every impossible lobby text - in one place with the
+// beats those texts produce.
+#define FIO_LOBBY_START   1
+#define FIO_LOBBY_INVITE  2
+#define FIO_LOBBY_WAITING 3
+#define FIO_LOBBY_JOIN    4
+#define FIO_LOBBY_FULL    5
+int fio_msg_lobby_offered(int my_seat, int joined, int capacity,
+                          int i_sent_the_newest, int i_changed_the_rules);
+int fio_msg_lobby_can_exit(int my_seat, int joined);
+int fio_msg_lobby_can_set_rules(int my_seat);
+int fio_msg_lobby_rules_changed(int have_baseline, int baseline, int current, int mine);
+
+// ONE BEAT, in milliseconds. The same ANIM_TIME_MS a card's flight takes, which
+// is the point: a lobby's beats and a board's beats keep one pulse, and a number
+// typed into a SwiftUI file would be a second timing policy nothing compares
+// against the first.
+//
+// Exposed on its own, and not only through a plan's beats, because a LOCAL tap
+// has no plan to read: when the human moves the checkbox themselves the box must
+// turn at the same pace it turns for an arriving text, and the reseal that would
+// carry a plan has not come back yet (owner: "our own toggle should still
+// rotate").
+int fio_anim_surface_beat_ms(void);
+
 int fio_msg_surface_plan(const uint8_t *showing, int showing_len,
                          const uint8_t *arriving, int arriving_len,
                          int32_t *out, int cap);

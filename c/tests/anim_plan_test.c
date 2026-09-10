@@ -31,6 +31,7 @@
 // Modelled on tests/msg_wire_test.c's CHECK harness.
 
 #include "../src/anim_plan.h"
+#include "../src/msg_wire.h"
 #include "../src/card.h"
 #include <stdio.h>
 #include <string.h>
@@ -590,6 +591,32 @@ static void test_surface_plan(void) {
           && p.beats[0].start_ms == 0,
           "start_alone: it fades immediately, with no roster snap first");
 
+    // THE CONTROLS, and the owner's four cases (see anim_plan.h for his words).
+    //
+    // A stream that ENDS IN THE LOBBY lets each beat offer what its own state
+    // offers: Vera joining really does hand Alex a Start button, and that is
+    // where the stream stops, so it appears and stays.
+    CHECK(anim_surface_plan(1, 1, 1, 0, 0, &p) == 2, "join+rules is two beats");
+    CHECK(p.beats[0].controls == ANIM_SURFACE_CONTROLS_LIVE
+          && p.beats[1].controls == ANIM_SURFACE_CONTROLS_LIVE,
+          "controls_lobby: a stream that ends in the lobby shows its own controls");
+    CHECK(anim_surface_plan(1, 0, 1, 0, 0, &p) == 1, "rules alone is one beat");
+    CHECK(p.beats[0].controls == ANIM_SURFACE_CONTROLS_LIVE, "controls_lobby: …and so does a lone rule change");
+
+    // A stream that ends AT THE BOARD touches no control for its whole length.
+    // Owner: "we snap her in (NOT AFFECTING ALEXS BUTTONS) and then fade to the
+    // game." Flashing Start into existence and dissolving the lobby half a
+    // second later is the flicker he first read as a disabled button.
+    CHECK(anim_surface_plan(1, 1, 1, 1, 1, &p) == 2, "join+start is two beats");
+    CHECK(p.beats[0].controls == ANIM_SURFACE_CONTROLS_HELD,
+          "controls_board: the roster snaps but the buttons are HELD");
+    CHECK(p.beats[0].kind == ANIM_SURFACE_ROSTER,
+          "controls_board: …and it is still the roster beat - she IS snapped in");
+    CHECK(anim_surface_plan(1, 1, 1, 0, 1, &p) == 3, "join+rules+start is three beats");
+    for (int i = 0; i < 3; i++)
+        CHECK(p.beats[i].controls == ANIM_SURFACE_CONTROLS_HELD,
+              "controls_board: every beat of it, not just the first (beat %d)", i);
+
     // Every combination, and the invariants that hold across all of them.
     for (int lobby = 0; lobby <= 1; lobby++)
     for (int roster = 0; roster <= 1; roster++)
@@ -606,6 +633,9 @@ static void test_surface_plan(void) {
                 CHECK(i == k - 1, "a BOARD beat is always the last one");
                 CHECK(p.beats[i].transition == ANIM_TRANSITION_FADE, "and it always fades");
             }
+            CHECK(p.beats[i].controls == ((started && lobby) ? ANIM_SURFACE_CONTROLS_HELD
+                                                             : ANIM_SURFACE_CONTROLS_LIVE),
+                  "the controls are held for exactly the streams that end at the board");
         }
         if (k > 0) {
             CHECK(p.beats[k - 1].passing == pa,
@@ -617,6 +647,230 @@ static void test_surface_plan(void) {
     }
 }
 
+
+// ======================================================================
+// 6. THE WHOLE LOBBY ENUMERATION, as one table
+// ======================================================================
+//
+// The owner asked for every scenario he can see - "1:1 vs large group, 2
+// players already vs just 1, incoming pass toggle, incoming join, incoming
+// leave, incoming start game" - enumerated with its expected animation AND its
+// rules, and then ruled on the ones that were open. This is that table, in the
+// one place where both halves can be checked against the kernel that decides
+// them: `msg_lobby_*` says what a lobby offers whom, `anim_surface_plan` says
+// what the arrival looks like.
+//
+// WHY THE LEGALITY COLUMN IS DERIVED AND NOT DECLARED. The easy version of this
+// test writes "join+start in a group: impossible" in a table and asserts the
+// table against itself, which proves nothing and would keep passing if the rule
+// were deleted. So `sendable` below is COMPUTED by asking the kernel the same
+// questions the sender's own screen asks - was she offered Join, may she move
+// the rules from that seat, was she offered Start - and the table only records
+// what the answer must come out as. Every "impossible" row is therefore a real
+// assertion about the rule, and three of them are load-bearing:
+//
+//   * a group join+start is refused by the M9 anti-lockout gate, not by a
+//     special case about group chats (row B3);
+//   * a leaver cannot also move the rules, because leaving takes the seat that
+//     moving them requires (row A11 - the owner: "no a leaver should not be
+//     able to toggle");
+//   * the last joiner CAN start when their join fills the table, in both of the
+//     ways a table fills (rows A3 and B12 - the owner: "the only times that the
+//     last joiner can start the game is if it's a 1:1 and they're the second
+//     player, or if them joining brings the game to 8 in a group chat").
+//
+// ALEX IS SEAT 0 AND CREATED THE GAME. "Vera" is whoever sent the arriving
+// text. A capacity of 2 is a 1:1 and 8 is a group chat, which is the only way
+// the two differ: there is no chat-kind flag anywhere in the kernel, and every
+// 1:1-only behaviour in the owner's enumeration turns out to be a full-table
+// behaviour that a 2-seat table simply reaches sooner.
+
+typedef struct {
+    const char *name;
+    int capacity;          // 2 = a 1:1, 8 = a group
+    int seated_before;     // Alex included
+    // The arriving text. One participant, so at most one roster action, and
+    // `rules`/`start` are what they did after it in the same draft - a draft
+    // REPLACES rather than queues, so several taps arrive as one envelope.
+    int join, leave, rules, start;
+    // Was the actor the last actor on the chain she is acting from? Only asked
+    // of somebody already seated: a joiner is the newest by having just joined.
+    int actor_newest_before;
+    // Could a device really have produced this text? DERIVED below; this is the
+    // answer it must come out as.
+    int sendable;
+    // What Alex sees. `beats` is anim_surface_plan's count; `held` is whether
+    // his controls are frozen for the stream (ANIM_SURFACE_CONTROLS_*).
+    int beats;
+    int held;
+    int alex_before, alex_after;   // MSG_LOBBY_*
+    int exit_before, exit_after;
+} Scen;
+
+#define X 0   // don't-care: unreachable rows carry no expectation
+
+static const Scen SCENS[] = {
+// ---- 1:1 (capacity 2) ----------------------------------------------------
+{"A1  dm  1p  join",           2,1, 1,0,0,0, 0, 1, 0, ANIM_SURFACE_CONTROLS_LIVE,
+                                              MSG_LOBBY_WAITING, MSG_LOBBY_START,  0,1},
+{"A2  dm  1p  join+rules",     2,1, 1,0,1,0, 0, 1, 2, ANIM_SURFACE_CONTROLS_LIVE,
+                                              MSG_LOBBY_WAITING, MSG_LOBBY_START,  0,1},
+{"A3  dm  1p  join+start",     2,1, 1,0,0,1, 0, 1, 2, ANIM_SURFACE_CONTROLS_HELD,
+                                              MSG_LOBBY_WAITING, MSG_LOBBY_START,  0,1},
+{"A4  dm  1p  rules alone",    2,1, 0,0,1,0, 0, 0, X, X, X, X, X, X},
+{"A5  dm  1p  leave",          2,1, 0,1,0,0, 0, 0, X, X, X, X, X, X},
+{"A6  dm  1p  start alone",    2,1, 0,0,0,1, 0, 0, X, X, X, X, X, X},
+{"A7  dm  2p  rules alone",    2,2, 0,0,1,0, 1, 1, 1, ANIM_SURFACE_CONTROLS_LIVE,
+                                              MSG_LOBBY_START,   MSG_LOBBY_START,  1,1},
+{"A8  dm  2p  start alone",    2,2, 0,0,0,1, 1, 1, 1, ANIM_SURFACE_CONTROLS_HELD,
+                                              MSG_LOBBY_START,   MSG_LOBBY_START,  1,1},
+{"A9  dm  2p  leave",          2,2, 0,1,0,0, 1, 1, 0, ANIM_SURFACE_CONTROLS_LIVE,
+                                              MSG_LOBBY_START,   MSG_LOBBY_INVITE, 1,0},
+{"A10 dm  2p  join (full)",    2,2, 1,0,0,0, 0, 0, X, X, X, X, X, X},
+{"A11 dm  2p  leave+rules",    2,2, 0,1,1,0, 1, 0, X, X, X, X, X, X},
+// ---- group (capacity 8) --------------------------------------------------
+{"B1  grp 1p  join",           8,1, 1,0,0,0, 0, 1, 0, ANIM_SURFACE_CONTROLS_LIVE,
+                                              MSG_LOBBY_WAITING, MSG_LOBBY_START,  0,1},
+{"B2  grp 1p  join+rules",     8,1, 1,0,1,0, 0, 1, 2, ANIM_SURFACE_CONTROLS_LIVE,
+                                              MSG_LOBBY_WAITING, MSG_LOBBY_START,  0,1},
+{"B3  grp 1p  join+start",     8,1, 1,0,0,1, 0, 0, X, X, X, X, X, X},
+{"B5  grp 2p  join",           8,2, 1,0,0,0, 0, 1, 0, ANIM_SURFACE_CONTROLS_LIVE,
+                                              MSG_LOBBY_START,   MSG_LOBBY_START,  1,1},
+{"B6  grp 2p  join+rules",     8,2, 1,0,1,0, 0, 1, 2, ANIM_SURFACE_CONTROLS_LIVE,
+                                              MSG_LOBBY_START,   MSG_LOBBY_START,  1,1},
+{"B7  grp 2p  rules alone",    8,2, 0,0,1,0, 1, 1, 1, ANIM_SURFACE_CONTROLS_LIVE,
+                                              MSG_LOBBY_START,   MSG_LOBBY_START,  1,1},
+{"B8a grp 3p  start (not newest)", 8,3, 0,0,0,1, 0, 1, 1, ANIM_SURFACE_CONTROLS_HELD,
+                                              MSG_LOBBY_START,   MSG_LOBBY_START,  1,1},
+{"B8b grp 3p  start (newest)", 8,3, 0,0,0,1, 1, 0, X, X, X, X, X, X},
+{"B9  grp 3p  leave",          8,3, 0,1,0,0, 1, 1, 0, ANIM_SURFACE_CONTROLS_LIVE,
+                                              MSG_LOBBY_START,   MSG_LOBBY_START,  1,1},
+{"B10 grp 2p  leave",          8,2, 0,1,0,0, 1, 1, 0, ANIM_SURFACE_CONTROLS_LIVE,
+                                              MSG_LOBBY_START,   MSG_LOBBY_INVITE, 1,0},
+{"B11 grp 8p  join (full)",    8,8, 1,0,0,0, 0, 0, X, X, X, X, X, X},
+// ---- the rules gate, from the other side: moving the checkbox spends the
+// same right to Start that being the newest sender does, and unlike M9 it has
+// NO full-table exemption. Owner: "whoever changes the checkbox value cannot
+// start the game." A 1:1 is where it earns its keep - the table is full the
+// moment both are in, so without this the changer could flip the rules and deal
+// them in one breath, and their opponent would first learn of it from a board
+// that will not let them pass.
+{"A12 dm  2p  rules+start",    2,2, 0,0,1,1, 1, 0, X, X, X, X, X, X},
+{"B13 grp 3p  rules+start",    8,3, 0,0,1,1, 0, 0, X, X, X, X, X, X},
+{"B14 grp 1p  join+rules+start",8,1, 1,0,1,1, 0, 0, X, X, X, X, X, X},
+{"A13 dm  1p  join+rules+start",2,1, 1,0,1,1, 0, 0, X, X, X, X, X, X},
+{"B12 grp 7p  join+start (fills it)", 8,7, 1,0,0,1, 0, 1, 2, ANIM_SURFACE_CONTROLS_HELD,
+                                              MSG_LOBBY_START,   MSG_LOBBY_START,  1,1},
+};
+
+static void test_lobby_scenarios(void) {
+    AnimSurfacePlan p;
+    for (unsigned s = 0; s < sizeof SCENS / sizeof SCENS[0]; s++) {
+        const Scen *t = &SCENS[s];
+
+        // ---- could Vera really have sent this? Asked of the kernel, in the
+        // order her own screen would have asked it.
+        int vera, seated_mid, sendable = 1;
+        if (t->join) {
+            // She was a viewer with no seat, and the lobby had to OFFER her one.
+            sendable &= msg_lobby_offered(-1, t->seated_before, t->capacity, 0, 0)
+                        == MSG_LOBBY_JOIN;
+            vera = t->seated_before;          // seats are claimed lowest-free-first
+            seated_mid = t->seated_before + 1;
+        } else if (t->leave) {
+            vera = t->seated_before - 1;      // the most recent joiner
+            sendable &= msg_lobby_can_exit(vera, t->seated_before);
+            seated_mid = t->seated_before - 1;
+        } else {
+            // Already seated - and there IS no such person on a table of one,
+            // where the only seat is Alex's.
+            vera = t->seated_before >= 2 ? t->seated_before - 1 : -1;
+            seated_mid = t->seated_before;
+        }
+        // Leaving spends the seat everything else needs. This is the whole of
+        // the owner's A11 ruling, and it needs no clause of its own.
+        const int vera_now = t->leave ? -1 : vera;
+        if (t->rules) sendable &= msg_lobby_can_set_rules(vera_now);
+        if (t->start)
+            sendable &= msg_lobby_offered(vera_now, seated_mid, t->capacity,
+                                          (t->join || t->rules) ? 1 : t->actor_newest_before,
+                                          t->rules)
+                        == MSG_LOBBY_START;
+
+        CHECK(!!sendable == !!t->sendable, "%s: sendable is %d, expected %d",
+              t->name, !!sendable, t->sendable);
+        // A row the rules refuse carries no expectation past this point - its
+        // remaining columns are don't-cares. Gated on the EXPECTED verdict as
+        // well as the computed one, so a rule that breaks and lets an
+        // impossible text through fails on the line above and does not then
+        // bury that one signal under a dozen assertions about columns nobody
+        // ever filled in. (Learned the hard way: the first cut of this loop
+        // made all six mutations below produce the identical failure set.)
+        if (!t->sendable || !sendable) continue;
+
+        // ---- and after she leaves she is a viewer again, with nothing but
+        // Join. "as soon as they leave, the extension view should be as if they
+        // haven't joined, and only show the join button."
+        if (t->leave) {
+            CHECK(msg_lobby_can_set_rules(vera_now) == 0,
+                  "%s: a leaver cannot move the rules", t->name);
+            CHECK(msg_lobby_offered(vera_now, seated_mid, t->capacity, 1, 0)
+                  == MSG_LOBBY_JOIN,
+                  "%s: a leaver is offered Join and nothing else", t->name);
+        }
+
+        // ---- what Alex sees. Before the arrival he is the newest actor
+        // exactly when he is alone: he created the lobby and sent it. After it
+        // he never is - the arriving bubble is Vera's.
+        const int alex_before =
+            msg_lobby_offered(0, t->seated_before, t->capacity,
+                              t->seated_before == 1, 0);
+        const int alex_after =
+            msg_lobby_offered(0, seated_mid, t->capacity, 0, 0);
+        CHECK(alex_before == t->alex_before, "%s: Alex had %d, expected %d",
+              t->name, alex_before, t->alex_before);
+        CHECK(alex_after == t->alex_after, "%s: Alex ends with %d, expected %d",
+              t->name, alex_after, t->alex_after);
+        CHECK(msg_lobby_can_exit(0, t->seated_before) == t->exit_before,
+              "%s: Alex's Leave before", t->name);
+        CHECK(msg_lobby_can_exit(0, seated_mid) == t->exit_after,
+              "%s: Alex's Leave after", t->name);
+
+        // ---- and what it looks like arriving.
+        const int n = anim_surface_plan(1, t->join || t->leave,
+                                        1, t->rules ? 0 : 1, t->start, &p);
+        CHECK(n == t->beats, "%s: %d beats, expected %d", t->name, n, t->beats);
+        for (int i = 0; i < n; i++)
+            CHECK(p.beats[i].controls == t->held,
+                  "%s: beat %d controls %d, expected %d",
+                  t->name, i, p.beats[i].controls, t->held);
+        // The stream ends at the board exactly when the text started the game,
+        // and a stream that ends in the lobby never touches the board.
+        if (n > 0)
+            CHECK((p.beats[n - 1].kind == ANIM_SURFACE_BOARD) == !!t->start,
+                  "%s: ends at the board iff it started", t->name);
+    }
+
+    // ---- THE STALE SURFACE (C5). A gap is not a queue of messages: the diff is
+    // against WHAT IS ON SCREEN, so two texts the human never saw resolve as ONE
+    // stream. Owner: "compose some stream of snap/rotate/fade if you need to."
+    //
+    // This is the sixth stream, and it exists ONLY here: no single text can
+    // carry it, because whoever moves the rules cannot also start (row A11's
+    // sibling gate). Reachable across two texts - Vera joins and toggles, Bob
+    // starts - and the surface that was open and behind must play all three.
+    CHECK(anim_surface_plan(1, 1, 1, 0, 1, &p) == 3,
+          "gap: join + rules + start composes three beats");
+    CHECK(p.beats[0].kind == ANIM_SURFACE_ROSTER
+          && p.beats[1].kind == ANIM_SURFACE_RULES
+          && p.beats[2].kind == ANIM_SURFACE_BOARD,
+          "gap: snap, then rotate, then fade - in the only order they can have happened");
+    CHECK(p.beats[2].start_ms == 2 * ANIM_SURFACE_HOLD_MS + ANIM_TIME_MS,
+          "gap: each beat still waits a rest (got %d)", p.beats[2].start_ms);
+}
+
+#undef X
+
 int main(void) {
     printf("anim_plan_test\n");
     test_optimistic_animation();
@@ -626,6 +880,7 @@ int main(void) {
     test_plan_anchors_on_the_first_events_own_board();
     test_plan_freezes_the_flipped_trump();
     test_surface_plan();
+    test_lobby_scenarios();
     if (g_fails == 0) printf("anim_plan_test: OK\n");
     else              printf("anim_plan_test: %d FAILURES\n", g_fails);
     return g_fails ? 1 : 0;

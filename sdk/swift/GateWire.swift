@@ -172,4 +172,40 @@ public enum GateWire {
             fio_msg_expand_note(event.code, now, &pending, &retries, &wantedAt) != 0
         }
     }
+
+    // ---- what the lobby offers a viewer (msg_wire.h) ----------------------
+
+    /// The kernel's five control names. Spelled once, HERE, because this is the
+    /// file that imports the bridge header - a caller in FoolishKit cannot see
+    /// `FIO_LOBBY_*` and should not have to.
+    public static let lobbyStart   = Int(FIO_LOBBY_START)
+    public static let lobbyInvite  = Int(FIO_LOBBY_INVITE)
+    public static let lobbyWaiting = Int(FIO_LOBBY_WAITING)
+    public static let lobbyJoin    = Int(FIO_LOBBY_JOIN)
+    public static let lobbyFull    = Int(FIO_LOBBY_FULL)
+
+    /// Raw `MSG_LOBBY_*`. `LobbyControls` maps it onto its own cases; nothing
+    /// else should need it.
+    public static func lobbyOffered(mySeat: Int, joined: Int, capacity: Int,
+                                    iSentTheNewest: Bool, iChangedTheRules: Bool) -> Int {
+        Int(fio_msg_lobby_offered(Int32(mySeat), Int32(joined), Int32(capacity),
+                                  iSentTheNewest ? 1 : 0, iChangedTheRules ? 1 : 0))
+    }
+
+    public static func lobbyCanExit(mySeat: Int, joined: Int) -> Bool {
+        fio_msg_lobby_can_exit(Int32(mySeat), Int32(joined)) != 0
+    }
+
+    public static func lobbyCanSetRules(mySeat: Int) -> Bool {
+        fio_msg_lobby_can_set_rules(Int32(mySeat)) != 0
+    }
+
+    public static func lobbyRulesChanged(baseline: Bool?, current: Bool, mine: Bool) -> Bool {
+        fio_msg_lobby_rules_changed(baseline == nil ? 0 : 1, (baseline ?? false) ? 1 : 0,
+                                    current ? 1 : 0, mine ? 1 : 0) != 0
+    }
+
+    /// The kernel's own spelling of "no seat". A Swift caller holds `Int?`; the
+    /// kernel holds a negative seat, and this is the one place that is said.
+    public static let noSeat = -1
 }

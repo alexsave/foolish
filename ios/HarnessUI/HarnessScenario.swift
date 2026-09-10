@@ -313,6 +313,20 @@ extension HarnessModel {
             await lobbyArrival(ProcessInfo.processInfo.environment["HARNESS_LOBBY_ARRIVE"]
                                 ?? "join-start")
 
+        case "lobby-away":
+            // 1.1(56) - THE TEXT LANDS WHILE THE EXTENSION IS NOT ACTIVE, which
+            // is the likeliest real route to the owner's stuck lobby: not a
+            // message that never arrives, but one that arrives while nobody is
+            // listening, followed by an activation that may or may not re-read.
+            //
+            // HARNESS_LOBBY_AWAY picks the lifecycle:
+            //   a      didReceive fired while inactive, then the extension woke
+            //   b      didReceive never fired; the human woke it on the NEW bubble
+            //   b-old  didReceive never fired; the human woke it on the OLD one
+            //   c      the presentation style changed across the arrival
+            await lobbyArrival("join-start",
+                               away: ProcessInfo.processInfo.environment["HARNESS_LOBBY_AWAY"] ?? "b")
+
         case "lobby-partial":
             // 3 of 8. The invite affordance and the "waiting" copy have to carry
             // this state, which is where a group game actually sits most of the time.
@@ -368,7 +382,7 @@ extension HarnessModel {
     /// One builder for all five streams, because they differ only in what Vera's
     /// one text contains. Nothing here decides how the surface should react -
     /// that is the kernel's plan, which is the whole point of the fix.
-    private func lobbyArrival(_ kind: String) async {
+    private func lobbyArrival(_ kind: String, away: String? = nil) async {
         let joining = kind.hasPrefix("join")
         // The lobby ALREADY on screen. For the kinds where Vera's text seats
         // her, she is not in it yet.
@@ -423,8 +437,48 @@ extension HarnessModel {
             return
         }
         guard let text else { return }
-        AnimLog.say("scenario: a \(kind) text arrives on the open lobby")
-        arrive(text, senderIndex: 1)
+        guard let away else {
+            AnimLog.say("scenario: a \(kind) text arrives on the open lobby")
+            arrive(text, senderIndex: 1)
+            return
+        }
+        // …or it lands while the extension is NOT ACTIVE. Four lifecycles, and
+        // the question each of them asks is the same one: when the human comes
+        // back, is the surface showing the chain that arrived, or the one it was
+        // holding?
+        AnimLog.say("scenario: a \(kind) text arrives while away (\(away))")
+        switch away {
+        case "a":
+            // The appex was still loaded and `didReceive` fired with the drawer
+            // shut. Nothing about waking up is special after that.
+            arriveWhileAway(text, senderIndex: 1, notifies: true)
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            becomeActive(selecting: nil)
+        case "b-old":
+            // `didReceive` never fired, and the human wakes the extension on the
+            // bubble they were ALREADY in - their own lobby. Messages moves
+            // `selectedMessage` only for a tap, so the surface is handed exactly
+            // what it was handed before.
+            arriveWhileAway(text, senderIndex: 1, notifies: false)
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            becomeActive(selecting: nil)
+        case "c":
+            // The drawer collapses, the chain lands, the drawer expands again.
+            // A style change is the one host event that deliberately does NOT
+            // re-present (MessagesViewController.willTransition), so this asks
+            // whether the arrival survives a resize.
+            togglePresentation()
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            arriveWhileAway(text, senderIndex: 1, notifies: true)
+            try? await Task.sleep(nanoseconds: 1_400_000_000)
+            togglePresentation()
+        default:
+            // "b": `didReceive` never fired, and the human taps the bubble that
+            // just arrived. The only door left is `willBecomeActive` -> present.
+            arriveWhileAway(text, senderIndex: 1, notifies: false)
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            becomeActive(selecting: latest)
+        }
     }
 
     /// Deal a real N-player game and deliver the LIVE handoff bubble from seat 0.

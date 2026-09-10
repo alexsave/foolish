@@ -585,7 +585,15 @@ private struct GameSurface: View {
     /// wears (SurfacePlan); this is where a beat that is not the last one is
     /// drawn, over the surface, until the next one is due. nil the rest of the
     /// time, which is nearly always.
-    private struct ArrivalStill { let env: MessageEnvelope; let passing: Bool }
+    private struct ArrivalStill {
+        /// The roster and rule THIS beat shows.
+        let env: MessageEnvelope
+        let passing: Bool
+        /// Which lobby the CONTROLS answer to: this beat's own state, or the
+        /// one the human already had. `SurfacePlan.Controls`, spent here - see
+        /// anim_plan.h for the owner's four cases.
+        let controls: MessageEnvelope
+    }
     @State private var arrivalStill: ArrivalStill?
     /// How opaque the held beat is. 1 while it is showing (every beat SNAPS in),
     /// eased to 0 by a BOARD beat's fade. See `playArrival` for why it is an
@@ -941,7 +949,8 @@ private struct GameSurface: View {
         // to fade out of. A plan is only ever non-empty over a lobby (the
         // kernel's `on_a_lobby`), which is why `showing` above is a guard and
         // not a fallback.
-        arrivalStill = ArrivalStill(env: showing.env, passing: showing.env.passingAllowed)
+        arrivalStill = ArrivalStill(env: showing.env, passing: showing.env.passingAllowed,
+                                    controls: showing.env)
         stillFade = 1
         let began = Date()
         var turns = rulesTurn?.token ?? 0
@@ -965,7 +974,10 @@ private struct GameSurface: View {
                 // stood at that moment. Set outside any animation, because
                 // every one of these is a SNAP - "the roster changing is not a
                 // transition, it is a fact arriving".
-                arrivalStill = ArrivalStill(env: env, passing: beat.passing)
+                // The roster and rule are the BEAT's; the controls are the
+                // beat's own state only while the stream ends in the lobby.
+                arrivalStill = ArrivalStill(env: env, passing: beat.passing,
+                                            controls: beat.controls == .held ? showing.env : env)
                 continue
             }
             await adopt(winner: winner, env: env)
@@ -1201,9 +1213,9 @@ private struct GameSurface: View {
         ZStack {
             resolvedContent
             if let still = arrivalStill {
-                LobbyView(env: still.env, mySeat: lobbySeat(still.env),
+                LobbyView(env: still.env, mySeat: lobbySeat(still.controls),
                           nickname: "", onJoin: { _ in }, onStart: {}, onInvite: {},
-                          stillPassing: still.passing)
+                          stillPassing: still.passing, controlsEnv: still.controls)
                     .background(TableBackground().ignoresSafeArea())
                     // Nothing here is live: the chain it describes has already
                     // moved on, and a tap landing on a beat would act on it.
@@ -2111,8 +2123,35 @@ private struct GameSurface: View {
             cache(seat: seat, env: newEnv, payload: payload)
             await onSend(payload, seat, false)
             surfaceStaged = true   // round-9: the LIVE handoff awaits Send (alsoStaged)
+            // MY OWN START FADES, exactly as an arriving one does. Owner: "our
+            // own start (when possible) should fade." Before this the lobby was
+            // simply gone in the frame the board appeared, which is the same cut
+            // the 1.1(56) report was about - it was only ever noticed from the
+            // receiving side because that is the side a human sits and watches.
+            //
+            // THE DURATION IS THE KERNEL'S, and so is the decision that there is
+            // a fade at all: the plan is asked over my own two chains (the lobby
+            // on screen, the LIVE handoff I just sealed) exactly as it is asked
+            // over a text's, so there is one answer to "what does a lobby giving
+            // way to a board look like" rather than one per direction. A plan
+            // that comes back without a fade - a kernel that stops calling this
+            // a transition - simply swaps, as it always did.
+            let plan = await MessageKernel.shared.surfacePlan(showing: lob.payload,
+                                                              arriving: payload)
+            let fade = plan.beats.last.flatMap { $0.transition == .fade ? $0 : nil }
+            if fade != nil {
+                arrivalStill = ArrivalStill(env: env, passing: env.passingAllowed,
+                                            controls: env)
+                stillFade = 1
+            }
             controller = MessageTurnController(parentPayload: payload, parent: newEnv, mySeat: seat)
             lobby = nil
+            if let fade, fade.duration > 0 {
+                withAnimation(.easeInOut(duration: fade.duration)) { stillFade = 0 }
+                try? await Task.sleep(nanoseconds: UInt64(fade.duration * 1_000_000_000))
+                arrivalStill = nil
+                stillFade = 1
+            }
         } catch {
             damaged = true
         }
@@ -2674,18 +2713,33 @@ public enum LobbyControls {
     /// (capacity 2, full the moment both are in) the changer could otherwise
     /// flip the rules and start in the same breath, and their opponent would
     /// first learn of it from a board that will not let them pass.
+    ///
+    /// THE RULE ITSELF IS THE KERNEL'S (msg_wire.c `msg_lobby_offered`), and has
+    /// been since the beats work: this enum is a forwarder that maps the kernel's
+    /// answer onto its own cases. It kept its shape - and every argument label,
+    /// including `iSentTheInvite`, whose round-4 name outlived what it gates -
+    /// because `Round4Tests` and `MessageLobbyTests` bind them, and because a
+    /// SwiftUI `switch` wants an enum rather than an Int.
+    ///
+    /// Moving the decision down was the owner's standing test, "can it be done in
+    /// C? If yes, do so", and it bought something concrete: the whole scenario
+    /// table - every legal lobby text and every impossible one, in a 1:1 and in a
+    /// group - is now asserted in C alongside the beats each one produces
+    /// (c/tests/anim_plan_test.c), which is not expressible while the rule and
+    /// the beats live in different languages.
     public static func offered(mySeat: Int?, joined: Int, capacity: Int,
                                iSentTheInvite: Bool = false,
                                iChangedTheRules: Bool = false) -> LobbyControls {
-        if mySeat != nil {
-            if joined >= 2 {
-                if iChangedTheRules { return .waiting }
-                if iSentTheInvite && joined < capacity { return .waiting }
-                return .start
-            }
-            return iSentTheInvite ? .waiting : .invite
+        switch GateWire.lobbyOffered(mySeat: mySeat ?? GateWire.noSeat,
+                                     joined: joined, capacity: capacity,
+                                     iSentTheNewest: iSentTheInvite,
+                                     iChangedTheRules: iChangedTheRules) {
+        case GateWire.lobbyStart:  return .start
+        case GateWire.lobbyInvite: return .invite
+        case GateWire.lobbyJoin:   return .join
+        case GateWire.lobbyFull:   return .full
+        default:                   return .waiting
         }
-        return joined < capacity ? .join : .full
     }
 
     /// Did THIS device change the rules on the lobby it is showing?
@@ -2702,8 +2756,7 @@ public enum LobbyControls {
     /// rather than by a memory of a tap, so it survives the extension being
     /// closed and reopened mid-lobby, which a flag would not.
     public static func rulesChanged(baseline: Bool?, current: Bool, mine: Bool) -> Bool {
-        guard mine, let baseline else { return false }
-        return baseline != current
+        GateWire.lobbyRulesChanged(baseline: baseline, current: current, mine: mine)
     }
 
     /// May I LEAVE this lobby? A seated player may, once somebody else is
@@ -2722,7 +2775,18 @@ public enum LobbyControls {
     /// bubble to leave INTO. A lone creator's exit is New game, which replaces
     /// the invite outright.
     public static func canExit(mySeat: Int?, joined: Int) -> Bool {
-        mySeat != nil && joined >= 2
+        GateWire.lobbyCanExit(mySeat: mySeat ?? GateWire.noSeat, joined: joined)
+    }
+
+    /// May I move the passing checkbox? Only from a seat - so a spectator sees
+    /// the rules and cannot change them, and a player who has just left is a
+    /// spectator again. The owner, on the leaver: "as soon as they leave, the
+    /// extension view should be as if they haven't joined, and only show the
+    /// join button." Both halves of that fall out of the kernel without a
+    /// leaver-shaped state anywhere: the seat is gone, so this is false and
+    /// `offered` returns `.join`.
+    public static func canSetRules(mySeat: Int?) -> Bool {
+        GateWire.lobbyCanSetRules(mySeat: mySeat ?? GateWire.noSeat)
     }
 }
 
@@ -2754,11 +2818,18 @@ private struct LobbyView: View {
     /// this device. nil in every shipping build — see `soloControls`.
     var onAddSoloSeat: (() -> Void)?
     /// A BEAT'S STILL (1.1(56)): this lobby is not the live one, it is one beat
-    /// of an arriving stream held on screen while the human reads it — so it
-    /// shows the rule THAT BEAT carries rather than the chain's, and it offers
-    /// no controls at all, because the chain it describes has already moved on
-    /// and there is nothing here anyone may act on. nil is the ordinary lobby.
+    /// of an arriving stream held on screen while the human reads it, so it
+    /// shows the rule THAT BEAT carries rather than the chain's. Everything else
+    /// is drawn exactly as the live lobby draws it — a beat is a picture of a
+    /// state the game really was in, and half a lobby is not. What keeps it from
+    /// being acted on is `allowsHitTesting(false)` on the overlay, one layer up.
+    /// nil is the ordinary lobby.
     var stillPassing: Bool?
+    /// WHICH LOBBY THE CONTROLS ANSWER TO, when that is not this one. A beat
+    /// whose stream is about to dissolve the lobby draws the roster it carries
+    /// but the buttons the human already had - see `SurfacePlan.Controls` and
+    /// anim_plan.h. nil everywhere else, including in the live lobby.
+    var controlsEnv: MessageEnvelope?
     /// Somebody ELSE moved the checkbox and the plan says to show it turning.
     /// Threaded straight through to `FCheckbox.Turn`, which has the reasoning.
     var rulesTurn: FCheckbox.Turn?
@@ -2809,6 +2880,7 @@ private struct LobbyView: View {
          passingBaseline: Bool? = nil,
          onAddSoloSeat: (() -> Void)? = nil,
          stillPassing: Bool? = nil,
+         controlsEnv: MessageEnvelope? = nil,
          rulesTurn: FCheckbox.Turn? = nil) {
         self.env = env; self.mySeat = mySeat
         self.onJoin = onJoin; self.onStart = onStart; self.onExit = onExit
@@ -2817,6 +2889,7 @@ private struct LobbyView: View {
         self.passingBaseline = passingBaseline
         self.onAddSoloSeat = onAddSoloSeat
         self.stillPassing = stillPassing
+        self.controlsEnv = controlsEnv
         self.rulesTurn = rulesTurn
         // Already normalised by MessageGameStore.nicknamePrefill.
         _nickname = State(initialValue: nickname)
@@ -2892,10 +2965,22 @@ private struct LobbyView: View {
             // legitimately be offering "waiting" at the same moment solo play
             // wants to offer Start, and two contradictory controls on one
             // screen is worse than either. See `soloControls`.
-            // A STILL HAS NO CONTROLS (1.1(56)): see `stillPassing`.
-            if stillPassing != nil {
-                EmptyView()
-            } else if let onAddSoloSeat, soloSeatsEnabled {
+            // A STILL DRAWS THE CONTROLS TOO (1.1(56), owner: "why does 'start
+            // playing' become disabled for Alex temporarily?").
+            //
+            // The first cut of the still rendered no controls at all, reasoning
+            // that a beat is not a thing anyone may act on. That is true and it
+            // is handled a layer up - the whole overlay is `allowsHitTesting(false)`
+            // - but drawing HALF a lobby is not a picture of any state the game
+            // was ever in. Vera joining makes the table startable; a beat that
+            // shows her name arriving while Start vanishes says the opposite of
+            // what just happened, and it read exactly as the owner described it,
+            // as the button going disabled and coming back.
+            //
+            // So the still is the whole lobby, as it stood at that beat, and the
+            // controls it shows are the ones that state really offers - Start
+            // included, because two people really are seated by then.
+            if let onAddSoloSeat, soloSeatsEnabled {
                 soloControls(onAddSoloSeat)
             } else {
                 standardControls
@@ -2921,7 +3006,10 @@ private struct LobbyView: View {
             // puts the whole of the optimism in the one view that draws the box.
             FCheckbox(FStrings.t("ios.lobby.passing"),
                       isOn: passingShown,
-                      enabled: stillPassing == nil && mySeat != nil,
+                      // …and for the same reason the box is not dimmed in a
+                      // still: it is drawn as the state really had it. Nothing
+                      // in the overlay can be touched anyway.
+                      enabled: LobbyControls.canSetRules(mySeat: mySeat),
                       turn: rulesTurn,
                       action: { on in
                           passingWish = on
@@ -2995,10 +3083,14 @@ private struct LobbyView: View {
             // the joined list above already says exactly that, and the owner's
             // read was "the lobby is too tight" for a second line saying the
             // same thing.
-            let canExit = LobbyControls.canExit(mySeat: mySeat, joined: env.joins.count)
-            switch LobbyControls.offered(mySeat: mySeat, joined: env.joins.count,
-                                         capacity: env.nPlayers,
-                                         iSentTheInvite: env.lastActorSeat == mySeat,
+            // `controls`, not `env`: a beat that is on its way to the board
+            // draws the buttons the human already had. Everywhere else the two
+            // are the same object.
+            let c = controlsEnv ?? env
+            let canExit = LobbyControls.canExit(mySeat: mySeat, joined: c.joins.count)
+            switch LobbyControls.offered(mySeat: mySeat, joined: c.joins.count,
+                                         capacity: c.nPlayers,
+                                         iSentTheInvite: c.lastActorSeat == mySeat,
                                          iChangedTheRules: iChangedTheRules) {
             case .start:
                 startExitRow(canExit: canExit)

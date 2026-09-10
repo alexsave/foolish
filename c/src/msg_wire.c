@@ -1092,6 +1092,67 @@ int msg_seat_resolve_in_lobby(const MsgJoin *joins, int n_joins,
 }
 
 /* ---------------------------------------------------------------------------
+ * WHAT THE LOBBY OFFERS A VIEWER (msg_wire.h). Ported out of Swift's
+ * `LobbyControls` unchanged in behaviour - the Swift enum now forwards here -
+ * so that the arrival beats, which are asserted in C, can be asserted together
+ * with the controls they hold or release.
+ * ------------------------------------------------------------------------- */
+
+int msg_lobby_offered(int my_seat, int joined, int capacity,
+                      int i_sent_the_newest, int i_changed_the_rules) {
+    if (my_seat >= 0) {
+        if (joined >= 2) {
+            // Whoever moved the rules cannot deal them. No full-lobby
+            // exemption here, deliberately - see the header.
+            if (i_changed_the_rules) return MSG_LOBBY_WAITING;
+            // M9: the newest sender stands aside WHILE THERE IS STILL ROOM. A
+            // full table has nobody left to stand aside for, and the owner's
+            // own statement of the exemption is the two ways a table fills:
+            // "the only times that the last joiner can start the game is if
+            // it's a 1:1 and they're the second player, or if them joining
+            // brings the game to 8 in a group chat" - which is `joined ==
+            // capacity` in both cases, since a DM's capacity is 2 and a group's
+            // is whatever the creator set (8 at the top).
+            if (i_sent_the_newest && joined < capacity) return MSG_LOBBY_WAITING;
+            return MSG_LOBBY_START;
+        }
+        // In, and alone. The invite is offered only to somebody who did not put
+        // the newest bubble there - otherwise it asks for a second copy of what
+        // is already in the thread.
+        return i_sent_the_newest ? MSG_LOBBY_WAITING : MSG_LOBBY_INVITE;
+    }
+    return joined < capacity ? MSG_LOBBY_JOIN : MSG_LOBBY_FULL;
+}
+
+int msg_lobby_can_exit(int my_seat, int joined) {
+    return my_seat >= 0 && joined >= 2;
+}
+
+int msg_lobby_can_set_rules(int my_seat) {
+    return my_seat >= 0;
+}
+
+int msg_lobby_rules_changed(int have_baseline, int baseline, int current, int mine) {
+    if (!mine || !have_baseline) return 0;
+    return (baseline != 0) != (current != 0);
+}
+
+int msg_lobby_controls(const MsgEnvelope *e, int my_seat,
+                       int have_baseline, int baseline, int *can_exit_out) {
+    if (can_exit_out) *can_exit_out = 0;
+    if (!e) return 0;
+    const int joined = e->n_joins;
+    const int changed = msg_lobby_rules_changed(have_baseline, baseline,
+                                                msg_pass_allowed(e),
+                                                my_seat >= 0
+                                                && (int)e->last_actor_seat == my_seat);
+    if (can_exit_out) *can_exit_out = msg_lobby_can_exit(my_seat, joined);
+    return msg_lobby_offered(my_seat, joined, e->n_players,
+                             my_seat >= 0 && (int)e->last_actor_seat == my_seat,
+                             changed);
+}
+
+/* ---------------------------------------------------------------------------
  * THE TURN CONTROLLER, AS A TRANSITION FUNCTION (msg_wire.h). The decisions a
  * chain client makes across its own suspension points. Facts in, an answer out;
  * the host performs the effect and owns every await.

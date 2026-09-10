@@ -869,7 +869,7 @@ static int lobby_rules_check(void) {
 // crossing - the stride, the field order, and that FIO_* names the same numbers
 // the planner emits, which nothing else compares.
 //
-// MUTATION-CHECKED: writing `passing` where `transition` goes, a stride of 6,
+// MUTATION-CHECKED: writing `passing` where `transition` goes, a stride of 5,
 // and FIO_TRANS_FADE renumbered each fail here.
 static int surface_wire_check(void) {
     unsigned char seed[32];
@@ -907,14 +907,14 @@ static int surface_wire_check(void) {
     if (out[0] != 2) { printf("FAIL surface n_beats %d\n", out[0]); return 1; }
     const int32_t *b0 = out + FIO_SURFACE_HEAD, *b1 = b0 + FIO_SURFACE_STRIDE;
     if (b0[0] != FIO_SURFACE_ROSTER || b0[1] != FIO_TRANS_SNAP
-        || b0[3] != 0 || b0[4] != 0) {
-        printf("FAIL surface beat0 %d/%d/%d/%d\n", b0[0], b0[1], b0[3], b0[4]);
+        || b0[3] != FIO_CONTROLS_HELD || b0[4] != 0 || b0[5] != 0) {
+        printf("FAIL surface beat0 %d/%d/%d/%d/%d\n", b0[0], b0[1], b0[3], b0[4], b0[5]);
         return 1;
     }
-    if (b1[0] != FIO_SURFACE_BOARD || b1[1] != FIO_TRANS_FADE || b1[4] <= 0) {
-        printf("FAIL surface beat1 %d/%d/%d\n", b1[0], b1[1], b1[4]); return 1;
+    if (b1[0] != FIO_SURFACE_BOARD || b1[1] != FIO_TRANS_FADE || b1[5] <= 0) {
+        printf("FAIL surface beat1 %d/%d/%d\n", b1[0], b1[1], b1[5]); return 1;
     }
-    if (out[1] != b1[4] + b1[3]) { printf("FAIL surface total_ms %d\n", out[1]); return 1; }
+    if (out[1] != b1[5] + b1[4]) { printf("FAIL surface total_ms %d\n", out[1]); return 1; }
     // A board is handed nothing, and a buffer that cannot hold the answer is
     // refused rather than half-written.
     if (fio_msg_surface_plan(live, vn, live, vn, out, (int)(sizeof out / sizeof out[0])) != 0) {
@@ -928,7 +928,7 @@ static int surface_wire_check(void) {
         printf("FAIL surface: a truncated chain was accepted\n"); return 1;
     }
     printf("surface wire OK (%d bytes, join+start = snap then fade at %dms)\n",
-           n, b1[4]);
+           n, b1[5]);
     return 0;
 }
 

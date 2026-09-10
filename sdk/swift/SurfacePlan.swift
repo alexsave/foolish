@@ -42,9 +42,23 @@ public struct SurfacePlan: Equatable, Sendable {
         case fade = 2
     }
 
+    /// What the lobby's CONTROLS do while a beat is on screen. Read, never
+    /// decided: a control must not appear during an intermediate beat if a
+    /// later beat in the same stream is about to take it away, and only the
+    /// stream knows that (anim_plan.h has the owner's four cases).
+    public enum Controls: Int, Sendable {
+        /// Draw what this beat's own state offers - the stream ends here.
+        case live = 0
+        /// Draw what the human already had - the stream ends at the board, and
+        /// flashing a Start button into a lobby that is about to dissolve is a
+        /// flicker, not information.
+        case held = 1
+    }
+
     public struct Beat: Equatable, Sendable {
         public let kind: Kind
         public let transition: Transition
+        public let controls: Controls
         /// The passing rule this beat shows - the OLD one until the rules beat
         /// moves it. The roster is always the arriving chain's (a message
         /// carries at most one roster action, so there is no intermediate
@@ -82,12 +96,13 @@ public struct SurfacePlan: Equatable, Sendable {
         for i in 0..<n {
             let w = head + i * stride
             guard let kind = Kind(rawValue: Int(words[w])),
-                  let trans = Transition(rawValue: Int(words[w + 1]))
+                  let trans = Transition(rawValue: Int(words[w + 1])),
+                  let controls = Controls(rawValue: Int(words[w + 3]))
             else { self = .none; return }
-            out.append(Beat(kind: kind, transition: trans,
+            out.append(Beat(kind: kind, transition: trans, controls: controls,
                             passing: words[w + 2] != 0,
-                            duration: TimeInterval(words[w + 3]) / 1000,
-                            start: TimeInterval(words[w + 4]) / 1000))
+                            duration: TimeInterval(words[w + 4]) / 1000,
+                            start: TimeInterval(words[w + 5]) / 1000))
         }
         self.beats = out
         self.total = TimeInterval(words[1]) / 1000
@@ -115,4 +130,14 @@ extension MessageKernel {
         guard n > 0 else { return .none }
         return SurfacePlan(words: out, count: Int(n))
     }
+}
+
+public extension SurfacePlan {
+    /// One beat, in seconds - the kernel's own ANIM_TIME_MS.
+    ///
+    /// For the transitions that have no plan to read: a LOCAL tap on the rules
+    /// checkbox turns the box at exactly the pace an arriving text would, and
+    /// the reseal that would carry a plan is still in the kernel when the finger
+    /// lifts. See `fio_anim_surface_beat_ms`.
+    static var beatSeconds: TimeInterval { TimeInterval(fio_anim_surface_beat_ms()) / 1000 }
 }

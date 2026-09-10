@@ -1243,6 +1243,7 @@ static void push_surface(AnimSurfacePlan *p, int kind, int transition,
     b->kind = kind;
     b->transition = transition;
     b->passing = passing;
+    b->controls = ANIM_SURFACE_CONTROLS_LIVE;   // settled below, once the stream is known
     b->duration_ms = duration_ms;
     b->start_ms = p->n == 0 ? 0 : p->total_ms + ANIM_SURFACE_HOLD_MS;
     p->total_ms = b->start_ms + b->duration_ms;
@@ -1269,6 +1270,13 @@ int anim_surface_plan(int on_a_lobby, int roster_moved,
         push_surface(out, ANIM_SURFACE_RULES, ANIM_TRANSITION_TURN, passing_after, ANIM_TIME_MS);
     if (started)
         push_surface(out, ANIM_SURFACE_BOARD, ANIM_TRANSITION_FADE, passing_after, ANIM_TIME_MS);
+
+    // A STREAM THAT ENDS AT THE BOARD TOUCHES NO CONTROL. Settled here rather
+    // than in `push_surface`, because it is not a fact about a beat - it is a
+    // fact about what comes AFTER it, and no beat knows that while it is being
+    // built. See the header for the owner's four cases.
+    if (started)
+        for (int i = 0; i < out->n; i++) out->beats[i].controls = ANIM_SURFACE_CONTROLS_HELD;
 
     // A LONE SNAP IS NOT A SEQUENCE. One beat with no motion in it is exactly
     // the adopt the caller was going to do anyway, so staging it costs an extra

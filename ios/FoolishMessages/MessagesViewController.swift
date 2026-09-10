@@ -127,6 +127,9 @@ final class MessagesViewController: MSMessagesAppViewController {
             FlightRecorder.note("quiet-drop", "a new activation replays the bubble")
         }
         present(conversation, style: presentationStyle)
+#if RIG_ARRIVE
+        rigWatchForArrivals()
+#endif
     }
 
     /// The extension is going away in an orderly fashion. This is the goodbye
@@ -181,6 +184,102 @@ final class MessagesViewController: MSMessagesAppViewController {
         incomingToken += 1
         present(conversation, style: presentationStyle)
     }
+
+#if RIG_ARRIVE
+    /// THE FILM DOOR - 1.1(56), and it is compiled by nothing that ships.
+    ///
+    /// The five arrival cases have to be filmed in REAL Messages, not the
+    /// harness (owner: "this is the harness and the 'add debug player' build.
+    /// I'd like for you to get film from the emulator"), and the simulator has
+    /// no second device: it cannot deliver a bubble this device did not seal, so
+    /// `didReceive` can never fire with somebody else's chain there. Everything
+    /// downstream of that one fact is the shipping path and is what the film
+    /// proves - `present`, `StagedBubbleRouting`, `MessagesRootView`, the plan,
+    /// the beats. Only the door the bytes come through is the rig's.
+    ///
+    /// `RIG_ARRIVE` is set by ONE xcodebuild invocation (the film script) and by
+    /// no configuration in project.yml, so this is absent from Debug, Release
+    /// and the App Store build alike - which is also why the shoot can be a
+    /// RELEASE build with no "Add player (testing)" on the lobby.
+    ///
+    /// A file rather than a URL scheme or a socket: `dev.fatboard` already
+    /// establishes the App Group as where this repo's rig talks to the appex,
+    /// and a file can be written from the shoot script with no app running.
+    private var rigArriveTimer: Timer?
+
+    /// Seal the text Vera would have sent, off the chain the surface is REALLY
+    /// showing, and thread it in through `didReceive`'s own lines.
+    ///
+    /// The seal is the shipping kernel's (`MessageKernel.seal` /
+    /// `.resealLobby` / `.startFromLobby` - the same three calls `joinLobby`,
+    /// `setLobbyPassing` and `startGame` make), so the bytes that arrive are
+    /// bytes a second phone would really have produced. What the rig supplies
+    /// is only the fact that a second phone exists.
+    @MainActor
+    private func rigArrive(_ kind: String) async {
+        // The chain the surface is showing. `lastPayloadURL` is it once a bubble
+        // has been opened; a lobby this device just CREATED and sent has none
+        // (StagedBubbleRouting pins the presentation to nil through a New game),
+        // and there the chain is the one that went out.
+        guard let conversation = activeConversation,
+              let showing = lastPayloadURL.flatMap({ try? MessageEnvelope.payloadBytes(url: $0) })
+                            ?? lastSentPayload,
+              let env = try? await MessageEnvelope.decode(payload: showing, viewer: -1),
+              let gid = UInt64(env.gameId) else {
+            FlightRecorder.note("rig", "no lobby on screen for \(kind)")
+            return
+        }
+        let parent = MessageTurnController.firstEight(hex: env.digest)
+        let seated = env.joins.sorted { $0.seat < $1.seat }
+        let joins = kind.hasPrefix("join")
+            ? (seated + [MessageJoin(seat: seated.count, name: "Vera")]).sorted { $0.seat < $1.seat }
+            : seated
+        let after = kind == "leave" ? Array(seated.dropLast()) : joins
+        guard !after.isEmpty else { return }
+        let bytes: Data?
+        do {
+            if kind.hasSuffix("start") {
+                bytes = try await MessageKernel.shared.startFromLobby(
+                    lobbyPayload: showing, gameId: gid, actingSeat: after.count - 1,
+                    parent8: parent, joins: after)
+            } else if kind.hasSuffix("rules") {
+                bytes = try await MessageKernel.shared.resealLobby(
+                    showing, passing: !env.passingAllowed, actingSeat: after.count - 1,
+                    gameId: gid, parent8: parent, joins: after)
+            } else {
+                _ = try await MessageKernel.shared.decode(payload: showing, viewer: -1)
+                bytes = try await MessageKernel.shared.seal(
+                    phase: 0, lastActorSeat: after.count - 1, gameId: gid,
+                    parent8: parent, joins: after)
+            }
+        } catch {
+            FlightRecorder.note("rig", "\(kind) would not seal: \(error)")
+            return
+        }
+        guard let bytes else { return }
+        // EXACTLY what `didReceive` does with a bubble that is not mine.
+        FlightRecorder.note("rig", "\(kind) arrives, \(bytes.count)b")
+        startingNewGame = false
+        freshSession = false
+        FlightRecorder.note("receive")
+        incomingURL = MessageEnvelope.link(payload: bytes)
+        incomingToken += 1
+        present(conversation, style: presentationStyle)
+    }
+
+    private func rigWatchForArrivals() {
+        guard rigArriveTimer == nil else { return }
+        rigArriveTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
+            guard let self,
+                  let dir = FileManager.default.containerURL(
+                      forSecurityApplicationGroupIdentifier: "group.cards.foolish.msg") else { return }
+            let file = dir.appendingPathComponent("dev.arrive")
+            guard let kind = try? String(contentsOf: file, encoding: .utf8) else { return }
+            try? FileManager.default.removeItem(at: file)
+            Task { await self.rigArrive(kind.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        }
+    }
+#endif
 
     /// The user tapped Send on our staged bubble: our chain is now the thread's,
     /// so commit it to the cache (§7.6). This is the ONLY place the cache learns

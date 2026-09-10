@@ -144,6 +144,32 @@ final class SurfacePlanTests: XCTestCase {
         XCTAssertEqual(plan.beats.first?.start, 0, "there is nothing to show first")
     }
 
+    /// THE CONTROLS, and the owner's four cases (anim_plan.h quotes him in
+    /// full). Vera joining a one-player table really does hand Alex a Start
+    /// button — but only when the stream stops there. A stream that goes on to
+    /// the board holds every control exactly as it was for its whole length,
+    /// because flashing Start into a lobby that dissolves half a second later
+    /// is a flicker, and it is what he first read as "why does 'start playing'
+    /// become disabled for Alex temporarily".
+    func testAStreamThatEndsInTheLobbyShowsItsOwnControls() async throws {
+        let one = try await lobby([alex], game: 5013, salt: 14, passing: true)
+        let two = try await lobby([alex, vera], game: 5013, salt: 14, passing: false)
+        let plan = await k.surfacePlan(showing: one, arriving: two)
+        XCTAssertEqual(plan.beats.map(\.controls), [.live, .live],
+                       "join+rules ends in the lobby, so Start and Leave appear and stay")
+    }
+
+    func testAStreamThatEndsAtTheBoardHoldsEveryControl() async throws {
+        let one = try await lobby([alex], game: 5014, salt: 15)
+        let two = try await lobby([alex, vera], game: 5014, salt: 15)
+        let live = try await started(from: two, joins: [alex, vera], game: 5014)
+        let plan = await k.surfacePlan(showing: one, arriving: live)
+        XCTAssertEqual(plan.beats.map(\.controls), [.held, .held],
+                       "join+start must not touch Alex's buttons on the way past")
+        XCTAssertEqual(plan.beats.first?.kind, .roster,
+                       "…and she is still snapped in, which is the thing he asked to see")
+    }
+
     // MARK: what must NOT animate
 
     /// A BOARD takes an arrival the way it always has: the live controller folds
