@@ -45,40 +45,83 @@ final class SeatBadgeOutNameTests: XCTestCase {
 
     private static let box = CGSize(width: 140, height: 110)
 
-    /// Pixels in `band` that are not the (transparent) ground the badge was
-    /// rendered against. Alpha, not colour: an ImageRenderer with no background
-    /// paints nothing where the view drew nothing, so "did the name get drawn"
-    /// is exact rather than a judgement about shades.
-    private func ink(_ img: UIImage, band: ClosedRange<Double>) throws -> Int {
-        let (px, w, h) = try pixels(img)
-        let y0 = Int(Double(h) * band.lowerBound), y1 = Int(Double(h) * band.upperBound)
-        var n = 0
-        for y in max(0, y0)..<min(h, y1) {
-            for x in 0..<w where px[(y * w + x) * 4 + 3] > Self.alphaFloor { n += 1 }
-        }
-        return n
-    }
-
     /// Anything above this is ink the view drew; the ground is a hard 0.
     private static let alphaFloor: UInt8 = 40
 
-    // THE BANDS, MEASURED RATHER THAN GUESSED.
+    // MARK: - where the name ends and the badge begins
+
+    // THE BANDS ARE READ OUT OF THE BITMAP, NOT WRITTEN DOWN HERE, and that is
+    // the repair rather than a tidy-up.
     //
-    // A 140x110 box at scale 2 is a 280x220 bitmap, and the badge draws in two
-    // separated clumps of rows (per-row ink counts, `handCount: 5`):
+    // The first cut of this file hard-coded them as fractions of the box -
+    // `0.0…0.22` for the name, `0.22…1.0` for the badge - measured on
+    // 2026-09-07 against a 21x30 mini card. Two days later 5e700679 ("opponent
+    // fans you can read") grew that card to 28x40 for the owner, the taller
+    // inner stack pushed the fan UP inside the centred box, and row 48 - the
+    // old 0.22 - stopped being the gap and became the seventh row of card
+    // backs. Every measurement here then read name PLUS fan: the live name
+    // "lost 60% of its ink" and "spans 58px against a live 136px" against a
+    // product that had not changed at all, and the band guard caught it exactly
+    // as its own docstring promised ("a layout change moving the clumps fails
+    // loudly here instead of quietly measuring nothing"). It failed loudly, and
+    // it was the test that was wrong.
     //
-    //     rows  18…40   the name  ("Boris", 12pt semibold)   ~995 px
-    //     rows  41…54   nothing
-    //     rows  55…114  the mini fan + the count chip        ~5390 px
+    // A number re-measured today would rot again the next time the owner asks
+    // for a bigger card. So the split is DERIVED: the badge draws in two
+    // separated clumps of rows, and the boundary is the first blank row after
+    // the top one. Measured today, `handCount: 5`, a 140x110 box at scale 2
+    // (280x220 px):
     //
-    // So 0.22 (row 48) is the gap between them, with six rows of slack either
-    // side. These fractions are not free-hand: an earlier cut of this file
-    // guessed `0.25…1.0` for the badge AND rendered a zero-card seat, which
-    // made the badge band empty and the test's own ratio a NaN. Both live
-    // guards below (`> 200`) exist so that a layout change moving the clumps
-    // fails loudly here instead of quietly measuring nothing.
-    private static let nameBand = 0.0...0.22
-    private static let badgeBand = 0.22...1.0
+    //     rows  11…33   the name ("Boris", 12pt semibold)     995 px
+    //     rows  34…41   nothing                                 -
+    //     rows  42…121  the mini fan + the count chip        10860 px
+    //
+    // so the split lands on row 34 wherever the clumps move to. The guards are
+    // kept and sharpened: a layout that closes the gap, or that leaves either
+    // clump empty, fails here with a sentence about the bitmap rather than
+    // silently measuring nothing. `testTheBandsAreWhereTheContentIs` then
+    // checks the split from the far side, against a render this derivation
+    // never looked at.
+
+    /// Ink per row: how many pixels in each row of `img` are not the
+    /// (transparent) ground the badge was rendered against. Alpha, not colour:
+    /// an ImageRenderer with no background paints nothing where the view drew
+    /// nothing, so "did the name get drawn" is exact rather than a judgement
+    /// about shades.
+    private func rowInk(_ img: UIImage) throws -> [Int] {
+        let (px, w, h) = try pixels(img)
+        return (0..<h).map { y in
+            (0..<w).reduce(0) { $0 + (px[(y * w + $1) * 4 + 3] > Self.alphaFloor ? 1 : 0) }
+        }
+    }
+
+    /// The name rows and the badge rows of a badge bitmap, split at the blank
+    /// gap between the two clumps of ink.
+    private func bands(_ img: UIImage) throws -> (name: Range<Int>, badge: Range<Int>) {
+        let rows = try rowInk(img)
+        let top = try XCTUnwrap(rows.firstIndex { $0 > 0 },
+                                "the badge drew nothing at all")
+        let split = try XCTUnwrap(rows[top...].firstIndex { $0 == 0 },
+                                  "no blank row under the name - the name and the fan have "
+                                  + "run together and these bands cannot separate them")
+        // Both clumps have to be real, or a band is measuring nothing and every
+        // ratio below is meaningless (an early cut of this file did exactly
+        // that and read as a pass).
+        XCTAssertGreaterThanOrEqual(split - top, 8,
+                                    "the name clump is \(split - top) rows - too thin to be a name")
+        let gapEnd = try XCTUnwrap(rows[split...].firstIndex { $0 > 0 },
+                                   "nothing is drawn below the name - where did the fan go?")
+        XCTAssertGreaterThanOrEqual(gapEnd - split, 2,
+                                    "the gap between the name and the fan is \(gapEnd - split) "
+                                    + "row(s) - too tight to split on safely")
+        return (top..<split, split..<rows.count)
+    }
+
+    /// Pixels in `rows` that are not the ground.
+    private func ink(_ img: UIImage, rows band: Range<Int>) throws -> Int {
+        let profile = try rowInk(img)
+        return band.clamped(to: 0..<profile.count).reduce(0) { $0 + profile[$1] }
+    }
 
     /// THE REPORT. The name is still drawn - and drawn at its full WIDTH -
     /// after the seat goes out.
@@ -91,9 +134,13 @@ final class SeatBadgeOutNameTests: XCTestCase {
     func testAnOutSeatKeepsItsNameAtFullWidth() throws {
         let live = try XCTUnwrap(render(collapsed: false))
         let out  = try XCTUnwrap(render(collapsed: true))
+        // The collapse is a SCALE, so it takes no layout room away: the name
+        // sits on the same rows in both bitmaps and the live render's split
+        // reads the out one too.
+        let nameRows = try bands(live).name
 
-        let liveName = try ink(live, band: Self.nameBand)
-        let outName  = try ink(out,  band: Self.nameBand)
+        let liveName = try ink(live, rows: nameRows)
+        let outName  = try ink(out,  rows: nameRows)
         XCTAssertGreaterThan(liveName, 200, "the live name did not render at all - bad band")
         XCTAssertGreaterThan(outName, 0, "the out player's name vanished from the board")
 
@@ -118,8 +165,8 @@ final class SeatBadgeOutNameTests: XCTestCase {
         // leaves. 0.9 sits in that gap with room on both sides: wide enough
         // that anti-aliasing can never reach it, far enough above a collapse
         // that no part of the gesture can sneak past.
-        let liveW = try extent(live, band: Self.nameBand).width
-        let outW  = try extent(out,  band: Self.nameBand).width
+        let liveW = try extent(live, rows: nameRows).width
+        let outW  = try extent(out,  rows: nameRows).width
         XCTAssertGreaterThan(liveW, 20, "the live name did not render at all - bad band")
         XCTAssertGreaterThan(outW / liveW, 0.9,
                              "the out name spans \(outW)px against a live \(liveW)px - "
@@ -131,32 +178,36 @@ final class SeatBadgeOutNameTests: XCTestCase {
     func testTheBadgeItselfStillTurnsAway() throws {
         let live = try XCTUnwrap(render(collapsed: false))
         let out  = try XCTUnwrap(render(collapsed: true))
-        let liveBadge = try ink(live, band: Self.badgeBand)
-        let outBadge  = try ink(out,  band: Self.badgeBand)
+        let badgeRows = try bands(live).badge
+        let liveBadge = try ink(live, rows: badgeRows)
+        let outBadge  = try ink(out,  rows: badgeRows)
         XCTAssertGreaterThan(liveBadge, 200, "the live badge did not render - bad band")
         XCTAssertLessThan(Double(outBadge) / Double(liveBadge), 0.1,
                           "the badge did not turn edge-on when the seat went out")
     }
 
-    /// THE BANDS THEMSELVES, since the two tests above are only as good as the
-    /// rows they read - and the way this file failed the first time was a band
-    /// that contained nothing, which reads as "the badge turned" just as well
-    /// as a badge that turned.
+    /// THE SPLIT ITSELF, SEEN FROM THE FAR SIDE, since the two tests above are
+    /// only as good as the rows they read - and the way this file failed the
+    /// first time was a band that contained the fan, which reads as "the name
+    /// was squeezed" just as well as a name that was squeezed.
     ///
     /// Dropping the hand to zero removes the fan and the chip and leaves the
-    /// name alone, so it separates the two bands from the far side: the name
-    /// band must keep everything it had, and the badge band must go to exactly
-    /// nothing. Anything else means the split row is in the wrong place.
+    /// name alone. That render is not what the split was derived from, so it is
+    /// an independent check on it: the name band must keep everything it had,
+    /// and the badge band must go to exactly nothing. A split too low catches
+    /// fan ink in the name band and the first assertion fails; a split too high
+    /// leaves name ink in the badge band and the last one does.
     func testTheBandsAreWhereTheContentIs() throws {
         let withHand = try XCTUnwrap(render(handCount: 5, collapsed: false))
         let empty    = try XCTUnwrap(render(handCount: 0, collapsed: false))
+        let (nameRows, badgeRows) = try bands(withHand)
 
-        XCTAssertEqual(try ink(withHand, band: Self.nameBand),
-                       try ink(empty, band: Self.nameBand),
+        XCTAssertEqual(try ink(withHand, rows: nameRows),
+                       try ink(empty, rows: nameRows),
                        "the name band moved with the hand count - it is reading the fan")
-        XCTAssertGreaterThan(try ink(withHand, band: Self.badgeBand), 200,
+        XCTAssertGreaterThan(try ink(withHand, rows: badgeRows), 200,
                              "the badge band is empty on a seat holding five cards")
-        XCTAssertEqual(try ink(empty, band: Self.badgeBand), 0,
+        XCTAssertEqual(try ink(empty, rows: badgeRows), 0,
                        "the badge band caught ink from a seat with no cards and no role - "
                        + "it is reading the name")
     }
@@ -164,17 +215,16 @@ final class SeatBadgeOutNameTests: XCTestCase {
     /// The horizontal extent of the ink in a band: where it starts, where it
     /// ends. A collapsed view leaves a sliver at the centre; an upright one
     /// spans the word.
-    private func extent(_ img: UIImage, band: ClosedRange<Double>) throws -> CGRect {
+    private func extent(_ img: UIImage, rows band: Range<Int>) throws -> CGRect {
         let (px, w, h) = try pixels(img)
-        let y0 = Int(Double(h) * band.lowerBound), y1 = Int(Double(h) * band.upperBound)
         var lo = w, hi = -1
-        for y in max(0, y0)..<min(h, y1) {
+        for y in band.clamped(to: 0..<h) {
             for x in 0..<w where px[(y * w + x) * 4 + 3] > Self.alphaFloor {
                 lo = min(lo, x); hi = max(hi, x)
             }
         }
         guard hi >= lo else { return .zero }
-        return CGRect(x: lo, y: y0, width: hi - lo + 1, height: y1 - y0)
+        return CGRect(x: lo, y: band.lowerBound, width: hi - lo + 1, height: band.count)
     }
 
     /// The bitmap behind both measurements, drawn once per call into a plain
