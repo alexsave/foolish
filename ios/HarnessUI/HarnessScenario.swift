@@ -300,6 +300,19 @@ extension HarnessModel {
             await seedDemoGame()
             switchChat(1)
 
+        case "lobby-arrive":
+            // 1.1(56) - A TEXT ARRIVING ON AN OPEN LOBBY, which is the one shape
+            // no rig could pose: `arrivalOnOpenBoard` needs a board under it,
+            // and every lobby scenario before this one stopped the moment the
+            // roster was on screen. It is exactly the owner's report ("I was in
+            // lobby, got a start game text, and it was stuck on lobby").
+            //
+            // HARNESS_LOBBY_ARRIVE picks which of the five streams a lobby
+            // message can carry (see anim_plan.h) arrives:
+            //   join | leave | rules | join-rules | join-start | start
+            await lobbyArrival(ProcessInfo.processInfo.environment["HARNESS_LOBBY_ARRIVE"]
+                                ?? "join-start")
+
         case "lobby-partial":
             // 3 of 8. The invite affordance and the "waiting" copy have to carry
             // this state, which is where a group game actually sits most of the time.
@@ -346,6 +359,72 @@ extension HarnessModel {
         } catch {
             // fall through to the New-game screen — a failure here is itself a note
         }
+    }
+
+    /// 1.1(56): sit on a lobby as ALEX (seat 0), then have VERA's text land on
+    /// it while it is open - the exact sequence `didReceive` -> `incomingToken`
+    /// puts a real device through.
+    ///
+    /// One builder for all five streams, because they differ only in what Vera's
+    /// one text contains. Nothing here decides how the surface should react -
+    /// that is the kernel's plan, which is the whole point of the fix.
+    private func lobbyArrival(_ kind: String) async {
+        let joining = kind.hasPrefix("join")
+        // The lobby ALREADY on screen. For the kinds where Vera's text seats
+        // her, she is not in it yet.
+        let before: [(Int, String)] = joining ? [(0, "Alex")] : [(0, "Alex"), (1, "Vera")]
+        await makeLobby(joins: before)
+        become(0)
+        MessageGameStore.shared.nickname = "Alex"
+        expand()
+        guard let open = latest,
+              let bytes = try? MessageEnvelope.payloadBytes(url: open.url),
+              let env = try? await MessageEnvelope.decode(payload: bytes, viewer: -1),
+              let gid = UInt64(env.gameId) else {
+            AnimLog.say("scenario: lobby-arrive could not read the open lobby - rig bug")
+            return
+        }
+        // …and it is MY seat, so the roster reads "1. Alex (You)" the way it
+        // does on a device that created the game.
+        MessageGameStore.shared.setSeat(gameId: env.gameId, chatKey: chatKey, seat: 0, name: "Alex")
+        openBubble(open)
+
+        // A beat, so the lobby is SETTLED before anything lands on it. A rig
+        // that delivered into a first paint would be posing a different bug.
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+
+        let parent = MessageTurnController.firstEight(hex: env.digest)
+        let seated = env.joins.sorted { $0.seat < $1.seat }
+        let withVera = (seated + [MessageJoin(seat: 1, name: "Vera")]).sorted { $0.seat < $1.seat }
+        let joins = joining ? withVera : seated
+        // A leave COMPACTS the seats below it (see `leaveLobby`), so Vera
+        // getting up from seat 1 leaves Alex alone at seat 0.
+        let after: [MessageJoin] = kind == "leave" ? [MessageJoin(seat: 0, name: "Alex")] : joins
+        let rules = kind.hasSuffix("rules")
+        let starts = kind.hasSuffix("start")
+        let text: Data?
+        do {
+            if starts {
+                text = try await MessageKernel.shared.startFromLobby(
+                    lobbyPayload: bytes, gameId: gid, actingSeat: 1,
+                    parent8: parent, joins: after)
+            } else if rules {
+                text = try await MessageKernel.shared.resealLobby(
+                    bytes, passing: !env.passingAllowed, actingSeat: 1,
+                    gameId: gid, parent8: parent, joins: after)
+            } else {
+                _ = try await MessageKernel.shared.decode(payload: bytes, viewer: -1)
+                text = try await MessageKernel.shared.seal(
+                    phase: 0, lastActorSeat: kind == "leave" ? after.count : 1,
+                    gameId: gid, parent8: parent, joins: after)
+            }
+        } catch {
+            AnimLog.say("scenario: lobby-arrive could not seal a \(kind) - rig bug")
+            return
+        }
+        guard let text else { return }
+        AnimLog.say("scenario: a \(kind) text arrives on the open lobby")
+        arrive(text, senderIndex: 1)
     }
 
     /// Deal a real N-player game and deliver the LIVE handoff bubble from seat 0.

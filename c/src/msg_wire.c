@@ -762,6 +762,66 @@ int msg_rule_p(const MsgChainKey *a, const MsgChainKey *b) {
     return 0;
 }
 
+// ---------- what an ARRIVING chain does to an open surface ----------------
+
+// Are these two rosters the same row? Seat AND name: a seat that changed hands
+// is not the seat that was there before, and the name is the only identity the
+// wire carries (see SeatIdentity's own reasoning about claim names).
+static int same_join(const MsgJoin *a, const MsgJoin *b) {
+    if (a->seat != b->seat || a->name_len != b->name_len) return 0;
+    for (int i = 0; i < a->name_len; i++)
+        if (a->name[i] != b->name[i]) return 0;
+    return 1;
+}
+
+// The envelope's joins, seat-ascending. Insertion sort over at most 8 rows.
+static int by_seat(const MsgEnvelope *e, const MsgJoin **out) {
+    const int n = e->n_joins > MSG_MAX_JOINS ? MSG_MAX_JOINS : e->n_joins;
+    for (int i = 0; i < n; i++) {
+        int j = i;
+        while (j > 0 && out[j - 1]->seat > e->joins[i].seat) { out[j] = out[j - 1]; j--; }
+        out[j] = &e->joins[i];
+    }
+    return n;
+}
+
+void msg_surface_delta(const MsgEnvelope *showing, const MsgEnvelope *arriving,
+                       MsgSurfaceDelta *out) {
+    if (!out) return;
+    out->on_a_lobby = 0;
+    out->roster_moved = 0;
+    out->passing_before = out->passing_after = 1;
+    out->started = 0;
+    if (!showing || !arriving) return;
+
+    // A DIFFERENT GAME IS A SWITCH, NOT A CONTINUATION. Owner: "If you open a
+    // lobby bubble, it should just open the state of that message with no
+    // animations. It's only if you already have the lobby open that it should
+    // snap/pause/rotate/fade." A sequence exists to carry a human from a state
+    // they were LOOKING AT to a newer one; two different games share no such
+    // line, and animating between them would be a lie about continuity - the
+    // same thing the 1.0(37) game-switch fix says about rebasing (tapping
+    // another game's bubble must SWITCH, never rebase). Checked on the game id
+    // rather than on "something was showing", because something always is.
+    if (showing->game_id != arriving->game_id) return;
+    out->on_a_lobby = showing->phase == MSG_PHASE_WAITING;
+    out->passing_before = msg_pass_allowed(showing);
+    out->passing_after  = msg_pass_allowed(arriving);
+    out->started = out->on_a_lobby && arriving->phase >= MSG_PHASE_LIVE;
+
+    // ROW BY ROW, SEAT-ASCENDING. Not by size, or a seat that changed hands
+    // between two rosters of the same length reads as "nothing happened" and
+    // the names on screen never move; and seat order rather than wire order,
+    // because nothing on the wire sorts the joins array while a seat number IS
+    // the seating (msg_roster_key keeps the same distinction, for the same
+    // reason).
+    const MsgJoin *a[MSG_MAX_JOINS], *b[MSG_MAX_JOINS];
+    const int na = by_seat(showing, a), nb = by_seat(arriving, b);
+    if (na != nb) { out->roster_moved = 1; return; }
+    for (int i = 0; i < na; i++)
+        if (!same_join(a[i], b[i])) { out->roster_moved = 1; return; }
+}
+
 // ---------- Rule R --------------------------------------------------------
 
 int msg_rebase_one(Game *adopted, int adopted_round, int pending_round,

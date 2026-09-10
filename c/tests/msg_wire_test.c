@@ -502,6 +502,142 @@ static void test_rule_p_started_beats_lobby(void) {
           "have caught the digest-coin-flip bug");
 }
 
+// 1.1(56) - WHAT AN ARRIVING CHAIN DOES TO AN OPEN LOBBY (msg_surface_delta).
+//
+// The owner: "LOBBY DID NOT UPDATE LIVE! I was in lobby, got a start game text,
+// and it was stuck on lobby!" - and then the shape of the fix: one bubble can
+// carry SEVERAL actions, because `conversation.insert` replaces an unsent draft
+// rather than queueing a second one, so Join + rules + Start go out as one
+// envelope. This is the half that reads the two envelopes; anim_surface_plan
+// (anim_plan_test.c) is the half that lays the answer out as beats.
+//
+// MUTATION-CHECKED. Comparing rosters by COUNT instead of row-by-row makes the
+// same-size swap below read as "nothing changed"; comparing in WIRE order rather
+// than seat order makes the shuffled roster read as a change that never
+// happened; ignoring the SHOWING chain's phase makes every arrival a start.
+static void test_surface_delta(void) {
+    uint8_t seed[MSG_SEED_LEN];
+    seed_fill(seed, 4242u);
+
+    MsgEnvelope lob, arr;
+    MsgSurfaceDelta d;
+
+    // A lobby with one seat, and the same lobby with a second player in it.
+    env_init(&lob, seed, 8);
+    lob.phase = MSG_PHASE_WAITING;
+    lob.n_joins = 1;
+    lob.turn = 0; lob.round = 0; lob.n_actions = 0; lob.actions_len = 0; lob.actions = 0;
+
+    arr = lob;
+    arr.n_joins = 2;
+
+    msg_surface_delta(&lob, &arr, &d);
+    CHECK(d.on_a_lobby == 1, "a WAITING chain on screen IS a lobby");
+    CHECK(d.roster_moved == 1, "somebody sat down");
+    CHECK(d.started == 0, "a lobby arriving on a lobby has not started anything");
+
+    // The SAME bubble, with the game dealt on it - a join and a Start in one
+    // text, which is the report.
+    MsgEnvelope live = arr;
+    live.phase = MSG_PHASE_LIVE;
+    live.n_players = 2;
+    msg_surface_delta(&lob, &live, &d);
+    CHECK(d.started == 1, "the arriving chain is dealt, so the lobby is over");
+    CHECK(d.roster_moved == 1, "and it still carries the join that came with it");
+
+    // A BOARD is not a lobby, whatever arrives on it.
+    msg_surface_delta(&live, &live, &d);
+    CHECK(d.on_a_lobby == 0, "a LIVE chain on screen is a board");
+    CHECK(d.started == 0, "a board was never a lobby, so nothing 'started' on it - "
+                          "this is a fact about BOTH chains, not just the arriving one");
+
+    // THE ROSTER IS COMPARED ROW BY ROW, not by size. Same count, different
+    // people: a device that counted would call this "nothing changed" and never
+    // redraw the names.
+    MsgEnvelope swapped = arr;
+    swapped.joins[1].name[3] = 'Z';
+    msg_surface_delta(&arr, &swapped, &d);
+    CHECK(d.roster_moved == 1, "a seat that changed hands is not the seat that was there");
+
+    // …AND IN SEAT ORDER, not wire order. Nothing on the wire sorts the joins,
+    // and "who joined next" is a fact about seats.
+    MsgEnvelope shuffled = arr;
+    shuffled.joins[0] = arr.joins[1];
+    shuffled.joins[1] = arr.joins[0];
+    msg_surface_delta(&arr, &shuffled, &d);
+    CHECK(d.roster_moved == 0, "the same two people, listed the other way round, "
+                               "are the same roster");
+
+    // A LEAVE compacts the seats below it, so the rosters diverge in the middle
+    // and there is no run of joins to walk.
+    MsgEnvelope three = lob;
+    three.n_joins = 3;
+    MsgEnvelope left = lob;
+    left.n_joins = 2;
+    left.joins[1] = three.joins[2];
+    left.joins[1].seat = 1;
+    msg_surface_delta(&three, &left, &d);
+    CHECK(d.roster_moved == 1, "somebody got up, and that is a roster change too");
+
+    // THE RULES, read through msg_pass_allowed so a format that predates the
+    // rules byte reads as the passing game it always was.
+    MsgEnvelope podk = arr;
+    podk.format = MSG_FORMAT_RULES;
+    podk.variant = 0;
+    MsgEnvelope pass = arr;
+    pass.format = MSG_FORMAT_RULES;
+    pass.variant = MSG_VARIANT_PASS;
+    msg_surface_delta(&pass, &podk, &d);
+    CHECK(d.passing_before == 1 && d.passing_after == 0,
+          "the table turned the transfer off (got %d -> %d)",
+          d.passing_before, d.passing_after);
+    msg_surface_delta(&arr, &podk, &d);
+    CHECK(d.passing_before == 1,
+          "a pre-rules format is the passing game, not 'no rule'");
+
+    // A STALE SURFACE SPANS EVERYTHING SINCE WHAT IT IS SHOWING. The extension
+    // was closed while two texts arrived - somebody joined, then somebody
+    // started - and the one chain that gets adopted differs from the lobby on
+    // screen by BOTH. Owner, asked directly: "OK yeah that's the correct
+    // behavior." One sequence, not a jump and not a bare fade.
+    msg_surface_delta(&lob, &live, &d);
+    CHECK(d.roster_moved == 1 && d.started == 1,
+          "a two-message gap is reported as both actions, not just the newer one");
+
+    // A RE-SEND of the chain already on screen differs by nothing, so nothing
+    // animates. A no-op that played a fade would be very visible.
+    msg_surface_delta(&arr, &arr, &d);
+    CHECK(d.roster_moved == 0 && d.started == 0 && d.passing_before == d.passing_after,
+          "the same chain twice is not a change");
+
+    // …and neither is a NET-ZERO one: the rule toggled off and back on across
+    // two texts while nobody was looking. Two bubbles arrived and the surface
+    // does nothing, because nothing differs.
+    msg_surface_delta(&pass, &pass, &d);
+    CHECK(d.passing_before == d.passing_after, "a rule that came back is not a change");
+
+    // A COLD OPEN PAINTS, three ways, and none of them is a sequence.
+    //
+    // Nothing was on screen: there is no `showing` to hand this at all.
+    msg_surface_delta(0, &arr, &d);
+    CHECK(d.on_a_lobby == 0 && d.started == 0, "a missing side stages nothing");
+    // A DIFFERENT GAME's lobby, tapped while one was showing. A switch, not a
+    // continuation - and caught on the game id, because "something was
+    // showing" is true here and is not the question.
+    MsgEnvelope other = live;
+    other.game_id = lob.game_id + 1;
+    msg_surface_delta(&lob, &other, &d);
+    CHECK(d.on_a_lobby == 0 && d.started == 0 && d.roster_moved == 0,
+          "another game's bubble is a switch, and a switch has no beats");
+    // Re-opening the SAME lobby after the extension was closed is the third,
+    // and it never reaches here: the extension's cold load adopts straight
+    // (GameSurface.load), and only `maybeAdoptIncoming` asks for a plan. Pinned
+    // on the near side instead - the same chain differs by nothing anyway.
+    msg_surface_delta(&lob, &lob, &d);
+    CHECK(d.roster_moved == 0 && d.started == 0,
+          "re-opening the chain you were already showing changes nothing");
+}
+
 // Rule P, rule 3: at an equal (round, turn), the fuller roster wins.
 //
 // The fork this pins is lobby v3's double Start: any joined player may Start,
@@ -3650,6 +3786,7 @@ int main(int argc, char **argv) {
     test_rule_p_started_beats_lobby();
     test_rule_p_fuller_start_wins();
     test_rule_p_child_beats_parent();
+    test_surface_delta();
     test_tamper();
     test_hostile_body();
     test_pickup_hold();

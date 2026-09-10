@@ -506,6 +506,117 @@ static void test_plan_freezes_the_flipped_trump(void) {
           "the fallback reports the final board's trump");
 }
 
+// ---- the surface plan (1.1(56): "LOBBY DID NOT UPDATE LIVE!") -------------
+//
+// THE FIVE STREAMS A LOBBY MESSAGE CAN CARRY, which is the whole set: a message
+// comes from ONE participant, so they seat themselves or get up once, they must
+// hold a seat to move the rules, and Start is always last.
+//
+//   join / leave        -> snap                (and a lone snap is the adopt)
+//   passing moved       -> rotate
+//   join + passing      -> snap, rest, rotate  - and it ENDS IN THE LOBBY
+//   join + start        -> snap, rest, fade
+//   start               -> fade
+//
+// MUTATION-CHECKED, each against the shape it exists to catch:
+//   * dropping the `started` clause (the bug as reported) leaves join+start one
+//     collapsed beat and `join_start` fails;
+//   * staging a lone snap instead of answering 0 makes join-alone a two-render
+//     transition and `join_alone` fails;
+//   * spacing beats without ANIM_SURFACE_HOLD_MS makes every start_ms 0 and
+//     `rest` fails - which is the "wait a bit" half of the report;
+//   * mapping RULES onto a snap instead of a turn fails `rules_alone`.
+static const char *kind_name(int k) {
+    return k == ANIM_SURFACE_ROSTER ? "roster"
+         : k == ANIM_SURFACE_RULES  ? "rules"
+         : k == ANIM_SURFACE_BOARD  ? "board" : "?";
+}
+
+static void test_surface_plan(void) {
+    AnimSurfacePlan p;
+
+    // A BOARD takes an arrival the way it always has - the live controller
+    // folds it in, and a plan here would be a second opinion about it.
+    CHECK(anim_surface_plan(0, 1, 1, 1, 1, &p) == 0,
+          "a board is handed no beats at all");
+
+    // 1. JOIN, OR LEAVE: "just snap to the state where they are in the lobby
+    //    and do nothing else." No beats - the ordinary adopt IS the snap.
+    CHECK(anim_surface_plan(1, 1, 1, 1, 0, &p) == 0, "join_alone: no beats");
+
+    // 2. THE RULES MOVED: one beat, and the checkbox TURNS (owner: "lets do the
+    //    'rotate in' or out thing for the checkbox").
+    CHECK(anim_surface_plan(1, 0, 1, 0, 0, &p) == 1, "rules_alone: one beat");
+    CHECK(p.beats[0].kind == ANIM_SURFACE_RULES, "rules_alone: the rules beat");
+    CHECK(p.beats[0].transition == ANIM_TRANSITION_TURN,
+          "rules_alone: a rule change TURNS (got %d)", p.beats[0].transition);
+    CHECK(p.beats[0].passing == 0, "rules_alone: showing the NEW rule");
+    CHECK(p.beats[0].start_ms == 0, "rules_alone: with nothing to wait for");
+
+    // 3. JOIN + THE RULES: a stream that BEGINS with a snap and ENDS IN THE
+    //    LOBBY. Assuming a snap is on its way to the table is the trap.
+    CHECK(anim_surface_plan(1, 1, 1, 0, 0, &p) == 2, "join_rules: two beats");
+    CHECK(p.beats[0].kind == ANIM_SURFACE_ROSTER
+          && p.beats[0].transition == ANIM_TRANSITION_SNAP
+          && p.beats[0].passing == 1,
+          "join_rules: the roster snaps first, still under the OLD rule (%s/%d/%d)",
+          kind_name(p.beats[0].kind), p.beats[0].transition, p.beats[0].passing);
+    CHECK(p.beats[1].kind == ANIM_SURFACE_RULES && p.beats[1].passing == 0,
+          "join_rules: then the checkbox turns to the new rule");
+    CHECK(p.beats[1].kind != ANIM_SURFACE_BOARD, "join_rules: and it ends in the LOBBY");
+    CHECK(p.beats[1].start_ms == ANIM_SURFACE_HOLD_MS,
+          "rest: the second beat waits a REST (got %d, want %d)",
+          p.beats[1].start_ms, ANIM_SURFACE_HOLD_MS);
+
+    // 4. JOIN + START in one text - the report: "snap to the state where there
+    //    are two or whatever people in the lobby, wait a bit, then fade."
+    CHECK(anim_surface_plan(1, 1, 1, 1, 1, &p) == 2, "join_start: two beats");
+    CHECK(p.beats[0].kind == ANIM_SURFACE_ROSTER
+          && p.beats[0].transition == ANIM_TRANSITION_SNAP,
+          "join_start: the roster snaps in first");
+    CHECK(p.beats[1].kind == ANIM_SURFACE_BOARD
+          && p.beats[1].transition == ANIM_TRANSITION_FADE,
+          "join_start: then the table FADES in");
+    CHECK(p.beats[1].start_ms == ANIM_SURFACE_HOLD_MS,
+          "rest: and it waits a REST first (got %d)", p.beats[1].start_ms);
+    CHECK(p.total_ms == ANIM_SURFACE_HOLD_MS + ANIM_TIME_MS,
+          "join_start: the whole thing is the rest plus the fade (got %d)", p.total_ms);
+
+    // 5. START, with nobody joining on the way: the fade, and NO snap in front
+    //    of it - there is nothing to show first.
+    CHECK(anim_surface_plan(1, 0, 1, 1, 1, &p) == 1, "start_alone: one beat");
+    CHECK(p.beats[0].kind == ANIM_SURFACE_BOARD
+          && p.beats[0].transition == ANIM_TRANSITION_FADE
+          && p.beats[0].start_ms == 0,
+          "start_alone: it fades immediately, with no roster snap first");
+
+    // Every combination, and the invariants that hold across all of them.
+    for (int lobby = 0; lobby <= 1; lobby++)
+    for (int roster = 0; roster <= 1; roster++)
+    for (int pb = 0; pb <= 1; pb++)
+    for (int pa = 0; pa <= 1; pa++)
+    for (int started = 0; started <= 1; started++) {
+        const int k = anim_surface_plan(lobby, roster, pb, pa, started, &p);
+        CHECK(k >= 0 && k <= ANIM_SURFACE_MAX_BEATS, "beat count in range (%d)", k);
+        for (int i = 0; i < k; i++) {
+            CHECK(i == 0 || p.beats[i].start_ms
+                  >= p.beats[i - 1].start_ms + p.beats[i - 1].duration_ms,
+                  "no beat starts before the one before it has finished");
+            if (p.beats[i].kind == ANIM_SURFACE_BOARD) {
+                CHECK(i == k - 1, "a BOARD beat is always the last one");
+                CHECK(p.beats[i].transition == ANIM_TRANSITION_FADE, "and it always fades");
+            }
+        }
+        if (k > 0) {
+            CHECK(p.beats[k - 1].passing == pa,
+                  "the LAST beat always shows the arriving chain's own rule - "
+                  "playing it IS adopting");
+            CHECK((p.beats[k - 1].kind == ANIM_SURFACE_BOARD) == (started && lobby),
+                  "the stream ends at the board exactly when the game started");
+        }
+    }
+}
+
 int main(void) {
     printf("anim_plan_test\n");
     test_optimistic_animation();
@@ -514,6 +625,7 @@ int main(void) {
     test_plan_building();
     test_plan_anchors_on_the_first_events_own_board();
     test_plan_freezes_the_flipped_trump();
+    test_surface_plan();
     if (g_fails == 0) printf("anim_plan_test: OK\n");
     else              printf("anim_plan_test: %d FAILURES\n", g_fails);
     return g_fails ? 1 : 0;

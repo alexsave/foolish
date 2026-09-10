@@ -863,6 +863,75 @@ static int lobby_rules_check(void) {
     return 0;
 }
 
+// 1.1(56) - THE SURFACE WIRE: what an open lobby is told to do with an arriving
+// chain (fio_msg_surface_plan). The RULES are pinned natively (msg_wire_test's
+// test_surface_delta and anim_plan_test's test_surface_plan); this is the
+// crossing - the stride, the field order, and that FIO_* names the same numbers
+// the planner emits, which nothing else compares.
+//
+// MUTATION-CHECKED: writing `passing` where `transition` goes, a stride of 6,
+// and FIO_TRANS_FADE renumbered each fail here.
+static int surface_wire_check(void) {
+    unsigned char seed[32];
+    for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(i * 5 + 11);
+    const uint8_t zero8[8] = {0};
+    const SmokeJoin one[1] = { {0,"Alex"} };
+    const SmokeJoin two[2] = { {0,"Alex"}, {1,"Dima"} };
+    unsigned char j1[128], j2[128];
+    const int j1n = pack_joins(j1, (int)sizeof j1, one, 1);
+    const int j2n = pack_joins(j2, (int)sizeof j2, two, 2);
+
+    if (fio_new_game(seed, 32, 8) != FIO_EOK) { printf("FAIL surface new_game\n"); return 1; }
+    unsigned char lob[2048], joined[2048], live[2048];
+    const int ln = fio_msg_encode(0, 0, 0xF00AULL, zero8, j1, j1n, 0, lob, sizeof lob);
+    const int jn = fio_msg_encode(0, 1, 0xF00AULL, zero8, j2, j2n, 0, joined, sizeof joined);
+    if (ln <= 0 || jn <= 0) { printf("FAIL surface lobby encode %d/%d\n", ln, jn); return 1; }
+    if (fio_reseat_game(2) != FIO_EOK) { printf("FAIL surface reseat\n"); return 1; }
+    const int vn = fio_msg_encode(2, 1, 0xF00AULL, zero8, j2, j2n, 0, live, sizeof live);
+    if (vn <= 0) { printf("FAIL surface live encode %d\n", vn); return 1; }
+
+    int32_t out[2 + 10 * FIO_SURFACE_STRIDE];
+
+    // A JOIN ARRIVING ON A LOBBY is a snap, and a snap is the adopt the caller
+    // was going to do anyway - so the wire says NOTHING, not "one empty beat".
+    if (fio_msg_surface_plan(lob, ln, joined, jn, out, (int)(sizeof out / sizeof out[0])) != 0) {
+        printf("FAIL surface: a lone join was staged\n"); return 1;
+    }
+    // A JOIN AND A START IN ONE TEXT - the report. Two beats: the roster snaps,
+    // rests, and then the table fades in.
+    const int n = fio_msg_surface_plan(lob, ln, live, vn, out,
+                                       (int)(sizeof out / sizeof out[0]));
+    if (n != FIO_SURFACE_HEAD + 2 * FIO_SURFACE_STRIDE) {
+        printf("FAIL surface plan rc=%d (msg_err=%d)\n", n, fio_last_msg_error()); return 1;
+    }
+    if (out[0] != 2) { printf("FAIL surface n_beats %d\n", out[0]); return 1; }
+    const int32_t *b0 = out + FIO_SURFACE_HEAD, *b1 = b0 + FIO_SURFACE_STRIDE;
+    if (b0[0] != FIO_SURFACE_ROSTER || b0[1] != FIO_TRANS_SNAP
+        || b0[3] != 0 || b0[4] != 0) {
+        printf("FAIL surface beat0 %d/%d/%d/%d\n", b0[0], b0[1], b0[3], b0[4]);
+        return 1;
+    }
+    if (b1[0] != FIO_SURFACE_BOARD || b1[1] != FIO_TRANS_FADE || b1[4] <= 0) {
+        printf("FAIL surface beat1 %d/%d/%d\n", b1[0], b1[1], b1[4]); return 1;
+    }
+    if (out[1] != b1[4] + b1[3]) { printf("FAIL surface total_ms %d\n", out[1]); return 1; }
+    // A board is handed nothing, and a buffer that cannot hold the answer is
+    // refused rather than half-written.
+    if (fio_msg_surface_plan(live, vn, live, vn, out, (int)(sizeof out / sizeof out[0])) != 0) {
+        printf("FAIL surface: a board was staged\n"); return 1;
+    }
+    if (fio_msg_surface_plan(lob, ln, live, vn, out, FIO_SURFACE_HEAD) != FIO_ECAP) {
+        printf("FAIL surface: a short buffer was accepted\n"); return 1;
+    }
+    if (fio_msg_surface_plan(lob, ln, live, 3, out,
+                             (int)(sizeof out / sizeof out[0])) != FIO_EMSG) {
+        printf("FAIL surface: a truncated chain was accepted\n"); return 1;
+    }
+    printf("surface wire OK (%d bytes, join+start = snap then fade at %dms)\n",
+           n, b1[4]);
+    return 0;
+}
+
 // THE SHAPE OF A SEQUENCE, over the bytes a board would hold (fio_beats_packed
 // and the role beat). Portable proof that the crossing packs what the Swift
 // decoder reads: the beat stride, the flags byte, the out and attack-pass seat
@@ -1408,14 +1477,14 @@ static int plan_wire_check(void) {
     //  then per event: type seat from to n_cards n_ids has_counts deck discard
     //                  hand[np] ids... n_battles [2 x n_battles]
     const unsigned char in[] = {
-        FIO_PLAN_VERSION, 2, 2, 0, 20, 5, 9,
+        FIO_PLAN_VERSION, 2, 2, 0, 20, FIO_PLAN_NO_FLIP, 5, 9,
         // PICKUP seat 1, 4 table cards -> hand. Its board: deck 1, hands [3,9],
         // and NO row on the wire at all (0xFE) - which is the case a pickup
         // that leads its stream really is.
-        6, 1, 2, 1, 4, 4, 1, 1, 20, 3, 9, 2, 14, 27, 40, FIO_PRETABLE_NONE,
+        6, 1, 2, 1, 4, 4, 1, 1, 20, 33, 3, 9, 2, 14, 27, 40, FIO_PRETABLE_NONE,
         // REFILL seat 0, 2 cards off a deck of 1. Its board: deck 0, hands
         // [5,9], table empty (0 battles - the bout is over).
-        9, 0, 0, 1, 2, 2, 1, 0, 20, 5, 9, 6, 33, 0,
+        9, 0, 0, 1, 2, 2, 1, 0, 20, FIO_PLAN_NO_FLIP, 5, 9, 6, 33, 0,
     };
     // A REPLAYED PASS, and the fixture whose ROW BYTES ARE ACTUALLY READ. Card
     // 3 is the pile already down; card 17 is the card being passed. Declared up
@@ -1426,11 +1495,11 @@ static int plan_wire_check(void) {
     // `p + 2 * n_bat > len` passed the whole suite until this fixture was moved
     // here.
     const unsigned char pass_in[] = {
-        FIO_PLAN_VERSION, 2, 1, 12, 0, 5, 6,
+        FIO_PLAN_VERSION, 2, 1, 12, 0, FIO_PLAN_NO_FLIP, 5, 6,
         // ATTACK_PASS seat 0, one card, hand -> table. Its own board: the row
         // with BOTH battles on it, uncovered, which is what the kernel
         // committed and what the arrived view shows.
-        4, 0, 1, 2, 1, 1, 1, 12, 0, 5, 6, 17,
+        4, 0, 1, 2, 1, 1, 1, 12, 0, FIO_PLAN_NO_FLIP, 5, 6, 17,
         2, 3, FIO_PRETABLE_NONE, 17, FIO_PRETABLE_NONE,
     };
     unsigned char out[512];
@@ -1489,8 +1558,8 @@ static int plan_wire_check(void) {
         { 1, 1,   FIO_EPARSE, "a one-seat table" },
         { 1, 9,   FIO_EPARSE, "a nine-seat table" },
         { 2, 200, FIO_ECAP,   "more events than a plan holds" },
-        { 12, 12, FIO_ECAP,   "more identities than the event has cards" },
-        { 18, 52, FIO_EPARSE, "a card id off the end of the deck" },
+        { 13, 12, FIO_ECAP,   "more identities than the event has cards" },
+        { 20, 52, FIO_EPARSE, "a card id off the end of the deck" },
     };
     for (int i = 0; i < (int)(sizeof forged / sizeof forged[0]); i++) {
         memcpy(bad, in, sizeof in);
@@ -1579,8 +1648,8 @@ static int plan_wire_check(void) {
         // never adds one) and opens with the attack BARE, so the cover flies
         // down onto it instead of being lying there already.
         const unsigned char cover_in[] = {
-            FIO_PLAN_VERSION, 2, 1, 12, 0, 5, 5,
-            5, 1, 1, 2, 1, 1, 1, 12, 0, 5, 5, 17,
+            FIO_PLAN_VERSION, 2, 1, 12, 0, FIO_PLAN_NO_FLIP, 5, 5,
+            5, 1, 1, 2, 1, 1, 1, 12, 0, FIO_PLAN_NO_FLIP, 5, 5, 17,
             1, 3, 17,
         };
         const int cn = fio_anim_plan_packed(cover_in, (int)sizeof cover_in,
@@ -1598,8 +1667,8 @@ static int plan_wire_check(void) {
         // off: the plan says NO row rather than inventing one, and a caller
         // lays out the live table exactly as it did before any of this existed.
         const unsigned char masked_in[] = {
-            FIO_PLAN_VERSION, 2, 1, 12, 0, 5, 6,
-            4, 0, 1, 2, 1, 0, 1, 12, 0, 5, 6,
+            FIO_PLAN_VERSION, 2, 1, 12, 0, FIO_PLAN_NO_FLIP, 5, 6,
+            4, 0, 1, 2, 1, 0, 1, 12, 0, FIO_PLAN_NO_FLIP, 5, 6,
             2, 3, FIO_PRETABLE_NONE, 17, FIO_PRETABLE_NONE,
         };
         const int mn = fio_anim_plan_packed(masked_in, (int)sizeof masked_in,
@@ -1924,6 +1993,7 @@ int main(void) {
     if (chained_cover_check() != 0) return 1;
     if (lobby_v2_reseat_check() != 0) return 1;
     if (lobby_rules_check() != 0) return 1;
+    if (surface_wire_check() != 0) return 1;
     if (nine_player_cap_check() != 0) return 1;
     if (beats_wire_check() != 0) return 1;
     if (plan_wire_check() != 0) return 1;

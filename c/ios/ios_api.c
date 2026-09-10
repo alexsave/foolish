@@ -1680,6 +1680,45 @@ int fio_msg_rule_p(const uint8_t *a, int a_len, const uint8_t *b, int b_len) {
     return msg_rule_p(&ka, &kb);
 }
 
+// 1.1(56): the two rules that answer "what does this arriving chain do to the
+// lobby on screen" - msg_surface_delta (what changed, and in what order) and
+// anim_surface_plan (the beats and their timing) - joined here, which is the
+// only place that has both headers. Decodes exactly as fio_msg_rule_p does: two
+// header reads, no resident game touched, so a surface may ask this about a
+// chain it has not adopted.
+int fio_msg_surface_plan(const uint8_t *showing, int showing_len,
+                         const uint8_t *arriving, int arriving_len,
+                         int32_t *out, int cap) {
+    if (!showing || !arriving || !out) return FIO_EBADARG;
+    if (cap < FIO_SURFACE_HEAD) return FIO_ECAP;
+    g_last_msg_error = 0;
+    static MsgEnvelope a, b;   // ~1.3KB each - too big for this frame
+    int rc = msg_decode(showing, showing_len, &a);
+    if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
+    rc = msg_decode(arriving, arriving_len, &b);
+    if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
+
+    MsgSurfaceDelta d;
+    msg_surface_delta(&a, &b, &d);
+    static AnimSurfacePlan plan;
+    const int n = anim_surface_plan(d.on_a_lobby, d.roster_moved,
+                                    d.passing_before, d.passing_after, d.started,
+                                    &plan);
+    if (n <= 0) return 0;
+    if (cap < FIO_SURFACE_HEAD + n * FIO_SURFACE_STRIDE) return FIO_ECAP;
+    out[0] = n;
+    out[1] = plan.total_ms;
+    for (int i = 0; i < n; i++) {
+        int32_t *w = out + FIO_SURFACE_HEAD + i * FIO_SURFACE_STRIDE;
+        w[0] = plan.beats[i].kind;
+        w[1] = plan.beats[i].transition;
+        w[2] = plan.beats[i].passing;
+        w[3] = plan.beats[i].duration_ms;
+        w[4] = plan.beats[i].start_ms;
+    }
+    return FIO_SURFACE_HEAD + n * FIO_SURFACE_STRIDE;
+}
+
 // Rule R over the AWIRE frame - the one rebase entry (the phone stages moves as
 // awire and the pending ledger holds them the same way). Same contract as
 // wasm_msg_rebase: decode the

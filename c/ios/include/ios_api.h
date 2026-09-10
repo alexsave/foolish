@@ -927,6 +927,42 @@ int fio_seat_resolve_in_lobby(const uint8_t *joins, int joins_len,
 // Returns FIO_EMSG if either is not an envelope.
 int fio_msg_rule_p(const uint8_t *a, int a_len, const uint8_t *b, int b_len);
 
+// 1.1(56) - HOW AN OPEN LOBBY TAKES AN ARRIVING CHAIN.
+//
+// One bubble can carry several actions (`conversation.insert` REPLACES an unsent
+// draft, so Join + rules + Start go out as one envelope), and a surface that
+// jumps straight to the end state is the owner's "LOBBY DID NOT UPDATE LIVE".
+// The rule is msg_surface_delta (what changed, and in what order it must have
+// happened) composed with anim_surface_plan (the beats and their timing); this
+// is the crossing, and it decodes both payloads the way fio_msg_rule_p does.
+//
+// `showing` is the chain the surface is displaying, `arriving` the one that just
+// landed. OUT is int32 pairs:
+//
+//    0  n_beats
+//    1  total_ms
+//    2 + i*FIO_SURFACE_STRIDE:  kind (FIO_SURFACE_*), transition (FIO_TRANS_*),
+//                               passing, duration_ms, start_ms
+//
+// The TRANSITION crosses as data rather than being mapped from `kind` on each
+// platform: which idiom an action wears is a fact about the action, so it is
+// decided once, in C (anim_plan.h), and a client renders what it is told.
+//
+// Returns the number of INT32s written, 0 when there is nothing to stage (a
+// board taking an arrival, or two envelopes describing the same lobby - the
+// caller then adopts exactly as it always did), or a negative FIO_E*.
+#define FIO_SURFACE_HEAD   2
+#define FIO_SURFACE_STRIDE 5
+#define FIO_SURFACE_ROSTER 1   // somebody sat down
+#define FIO_SURFACE_RULES  2   // the table's rules moved
+#define FIO_SURFACE_BOARD  3   // the game is dealt and the lobby is over
+#define FIO_TRANS_SNAP     0   // no motion: it is simply true now
+#define FIO_TRANS_TURN     1   // the control that changed rotates out and back
+#define FIO_TRANS_FADE     2   // one whole surface cross-fades into another
+int fio_msg_surface_plan(const uint8_t *showing, int showing_len,
+                         const uint8_t *arriving, int arriving_len,
+                         int32_t *out, int cap);
+
 // Rule R (§7.4): rebase ONE pending move onto the chain fio_msg_decode_packed
 // last adopted — the ledger's moves, in order. Returns:
 //   0  re-applied, and APPLIED to the resident game (that IS the rebase)

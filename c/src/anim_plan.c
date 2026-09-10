@@ -1230,3 +1230,54 @@ int anim_finish_rows(const unsigned char *elimination, int n_elim,
 int anim_shown_ledger_allows(int claim, int sequencing) {
     return (claim == ANIM_CLAIM_BYSTANDER && sequencing) ? 0 : 1;
 }
+
+// ---- the surface plan (anim_plan.h has the report and the argument) --------
+
+// Append one beat, spaced a REST after whatever precedes it. The spacing is the
+// only arithmetic here and it is the same for every kind: a beat starts once
+// the one before it has finished moving and been looked at.
+static void push_surface(AnimSurfacePlan *p, int kind, int transition,
+                         int passing, int duration_ms) {
+    if (p->n >= ANIM_SURFACE_MAX_BEATS) return;
+    AnimSurfaceBeat *b = &p->beats[p->n];
+    b->kind = kind;
+    b->transition = transition;
+    b->passing = passing;
+    b->duration_ms = duration_ms;
+    b->start_ms = p->n == 0 ? 0 : p->total_ms + ANIM_SURFACE_HOLD_MS;
+    p->total_ms = b->start_ms + b->duration_ms;
+    p->n++;
+}
+
+int anim_surface_plan(int on_a_lobby, int roster_moved,
+                      int passing_before, int passing_after, int started,
+                      AnimSurfacePlan *out) {
+    if (!out) return 0;
+    out->n = 0;
+    out->total_ms = 0;
+    // A BOARD TAKES AN ARRIVAL THE WAY IT ALWAYS HAS. The live controller folds
+    // the new chain in without a teardown (ArrivalReadoptTests), and a plan here
+    // would be a second, competing opinion about a transition that is already
+    // the board's own.
+    if (!on_a_lobby) return 0;
+
+    // The three actions a lobby message can carry, in the only order they can
+    // have happened in. Each is a beat; `push_surface` rests between them.
+    if (roster_moved)
+        push_surface(out, ANIM_SURFACE_ROSTER, ANIM_TRANSITION_SNAP, passing_before, 0);
+    if (passing_after != passing_before)
+        push_surface(out, ANIM_SURFACE_RULES, ANIM_TRANSITION_TURN, passing_after, ANIM_TIME_MS);
+    if (started)
+        push_surface(out, ANIM_SURFACE_BOARD, ANIM_TRANSITION_FADE, passing_after, ANIM_TIME_MS);
+
+    // A LONE SNAP IS NOT A SEQUENCE. One beat with no motion in it is exactly
+    // the adopt the caller was going to do anyway, so staging it costs an extra
+    // render and buys nothing; the caller reads 0 and takes the ordinary path.
+    // That is the owner's "just snap to the state where they are in the lobby
+    // and do nothing else", said in the plan rather than in a view.
+    if (out->n == 1 && out->beats[0].transition == ANIM_TRANSITION_SNAP) {
+        out->n = 0;
+        out->total_ms = 0;
+    }
+    return out->n;
+}
