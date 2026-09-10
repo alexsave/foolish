@@ -172,7 +172,11 @@ final class LocalizationTests: XCTestCase {
             (.th, ["th-TH"], "Thai"),
             (.ar, ["ar-EG"], "Arabic, any region"),
             (.no, ["nn", "nb"], "either Norwegian written form, in either order"),
-            (.sv, ["nb-NO", "sv-SE"], "…but a Norwegian who prefers Swedish gets Swedish"),
+            // The ORDER is the whole point, and this pair had it backwards: a
+            // phone that lists Bokmal first prefers NORWEGIAN, which we now
+            // carry, so it stops there. "Prefers Swedish" is the other order.
+            (.no, ["nb-NO", "sv-SE"], "Bokmal first, and we carry it: it stops there"),
+            (.sv, ["sv-SE", "nb-NO"], "…and a Norwegian who prefers Swedish gets Swedish"),
         ]
         for c in cases {
             XCTAssertEqual(FStrings.match(c.preferred), c.want,
