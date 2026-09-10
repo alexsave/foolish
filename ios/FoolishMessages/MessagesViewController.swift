@@ -433,12 +433,22 @@ final class MessagesViewController: MSMessagesAppViewController {
         // no visible change - and NOT with the compact->expanded->compact bounce,
         // which is locked and which I am not shipping.
         //
-        // Scoped to the first bubble of a chain this device created, which is
-        // exactly the failing case: every other lobby action is reached by
-        // TAPPING a bubble, and that activation re-arms delivery on its own. A
-        // narrow blast radius matters here because none of this can be verified
-        // without a second phone.
-        if startingNewGame {
+        // SCOPED ON "NOTHING IS OPEN", which is the failing case exactly and is
+        // the one thing about it a human can see in the panel: every log of the
+        // broken flow reads `Last message: no message open`, and every working
+        // one names a chain. `lastPayloadURL` is that same value
+        // (`route.url`), which `StagedBubbleRouting` pins to nil through a
+        // create - so this is true for a lobby made from the app drawer and
+        // false for every action reached by TAPPING a bubble, and a tap
+        // re-arms delivery through its own activation anyway.
+        //
+        // IT WAS SCOPED ON `startingNewGame` IN 1.1(66) AND NEVER FIRED. That
+        // flag is only set when a human taps the New game BUTTON; a drawer
+        // launch into a thread with no game routes straight to setup and nobody
+        // calls `onNewGame`, so it was false for the whole create flow. The
+        // owner's 66 log shows the miss precisely - a create flow (`no message
+        // open`), `send 70b`, and no `re-present` line after it.
+        if lastPayloadURL == nil {
             FlightRecorder.note("re-present", "same style, asking the host to re-arm")
             requestPresentationStyle(presentationStyle)
         }
