@@ -851,6 +851,59 @@ static void test_lobby_scenarios(void) {
                   "%s: ends at the board iff it started", t->name);
     }
 
+    // ---- A LEAVER IS NOT THE PLAYER WHO STAYED (1.1(57)).
+    //
+    // Owner, off a real device: "I was able to leave, and then check the passing
+    // box. really not good". He was not toggling as himself - in a 1:1 the
+    // kernel handed him SEAT 0, the seat of the player who stayed, so the box
+    // was live because the lobby thought he was them.
+    //
+    // The route in is the DM complement in `msg_seat_resolve`: `leaveLobby`
+    // seals with last_actor_seat = joins.count = 1, `1 - 1` is 0, and seat 0 is
+    // occupied - so the membership check passed, because it only ever asked
+    // whether the seat EXISTS. See msg_wire.c for why a lobby seat is a name.
+    //
+    // Walked over both chat shapes, every seat the leaver could have held, and
+    // both senderIsLocal values, because the failing combination was exactly one
+    // corner of that space (capacity 2, senderIsLocal false) and a single
+    // hand-picked case is how it survived this long.
+    {
+        const char *me = "Alex";
+        const char *others[3] = { "Zed", "Vera", "Bob" };
+        for (int cap = 2; cap <= 8; cap += 6)
+        for (int before = 2; before <= (cap == 2 ? 2 : 4); before++)
+        for (int myseat = 0; myseat < before; myseat++) {
+            // The roster `leaveLobby` seals: everyone else, RENUMBERED compactly.
+            MsgJoin after[MSG_MAX_JOINS]; int n = 0;
+            for (int st = 0; st < before; st++) {
+                if (st == myseat) continue;
+                after[n].seat = (uint8_t)n;
+                after[n].name_len = (uint8_t)strlen(others[st % 3]);
+                memcpy(after[n].name, others[st % 3], after[n].name_len);
+                n++;
+            }
+            for (int local = 0; local <= 1; local++) {
+                const int seat = msg_seat_resolve_in_lobby(
+                    after, n, /*cached, forgotten on exit*/ -1, local, cap,
+                    /*last_actor_seat, what leaveLobby stamps*/ n, cap == 2,
+                    me, (int)strlen(me));
+                CHECK(seat < 0,
+                      "leaver keeps a seat: cap=%d before=%d myseat=%d local=%d -> %d",
+                      cap, before, myseat, local, seat);
+                CHECK(msg_lobby_can_set_rules(seat) == 0,
+                      "…and so the checkbox stays dead (cap=%d local=%d)", cap, local);
+            }
+        }
+        // AND THE CONVERSE, so this is not simply "a lobby never resolves
+        // anybody": a device whose name IS on the roster still gets its seat,
+        // which is the path every seated player takes.
+        MsgJoin r[2];
+        r[0].seat = 0; r[0].name_len = 4; memcpy(r[0].name, "Zed\0", 4); r[0].name_len = 3;
+        r[1].seat = 1; r[1].name_len = 4; memcpy(r[1].name, "Alex", 4);
+        CHECK(msg_seat_resolve_in_lobby(r, 2, -1, 0, 2, 0, 1, me, 4) == 1,
+              "a seated player is still found by name");
+    }
+
     // ---- THE STALE SURFACE (C5). A gap is not a queue of messages: the diff is
     // against WHAT IS ON SCREEN, so two texts the human never saw resolve as ONE
     // stream. Owner: "compose some stream of snap/rotate/fade if you need to."

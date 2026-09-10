@@ -637,8 +637,32 @@ private struct GameSurface: View {
     /// too, defensively: this view's state must never survive a conversation
     /// change (the chat-scoping fix's whole point), even though in practice one
     /// extension instance presents one conversation for its lifetime.
+    ///
+    /// `startNewGame` IS DELIBERATELY NOT IN HERE, and leaving it in was the
+    /// 1.1(57) lobby bug. It is set when the human taps New game and cleared
+    /// again by `didReceive` - so the FIRST text to arrive after you created a
+    /// game flipped it true -> false, changed this key, and fired
+    /// `reloadForInput`, which nils the lobby and reloads from `payloadURL`:
+    /// YOUR OWN INVITE, because an arrival never becomes `selectedMessage`.
+    /// That raced `maybeAdoptIncoming`, and whichever finished last won.
+    ///
+    /// The owner's report is the shape of the race exactly: "the extension that
+    /// was open didn't update at all… although SOMETIMES it would update on
+    /// live arrival. But when it did, it only ever snapped, no rotate" - the
+    /// reload also clears `rulesTurn` and rebuilds the checkbox, and a freshly
+    /// built view runs no `onChange`, so the turn was dropped even in the runs
+    /// where the roster survived.
+    ///
+    /// And why it was only ever seen in a LOBBY, which is what made it look
+    /// like the lobby's own bug (owner: "it works just fine for the board and
+    /// game moves"): by the time a board is taking moves the flag has long been
+    /// false, so an arrival does not move this key at all. Only the first text
+    /// after a New game does.
+    ///
+    /// Nothing is lost by dropping it: `newGameToken` is incremented in the
+    /// same closure that sets the flag, so a New game still changes this key.
     private var loadKey: String {
-        "\(newGameToken)|\(startNewGame)|\(chatKey)|\(payloadURL?.absoluteString ?? "")"
+        "\(newGameToken)|\(chatKey)|\(payloadURL?.absoluteString ?? "")"
     }
 
     var body: some View {
@@ -1493,6 +1517,28 @@ private struct GameSurface: View {
         surfaceStaged = false   // round-9: a new input owes nothing to Send yet
         await load()
         AnimLog.say("surface showing \(showingWhat)")
+        // AND THEN RE-OFFER THE ARRIVAL, if one is outstanding. 1.1(57).
+        //
+        // `load()` shows what `payloadURL` names, and an arrival is NEVER that:
+        // a received bubble does not become `selectedMessage`, which is the whole
+        // reason `incomingURL` exists as a separate channel. So a reload that
+        // happens to run alongside `maybeAdoptIncoming` shows the OLD chain, and
+        // whichever of the two finishes last wins the surface. The owner, on a
+        // lobby he had just created: "the extension that was open didn't update
+        // at all… although SOMETIMES it would update on live arrival" - a
+        // coin-flip is what an unsequenced race looks like from the outside.
+        //
+        // Rather than hunt every input that can move `loadKey` under an arrival
+        // (`startNewGame` was one and is gone; `StagedBubbleRouting` can move
+        // `payloadURL` as the staged/just-sent markers are spent), this makes the
+        // order not matter: a reload ENDS by handing the arrival back to the one
+        // function that knows how to weigh it. Rule P still decides, so a stale
+        // or duplicate arrival changes nothing, and an arrival already adopted
+        // returns immediately on the `bytes == current` check.
+        //
+        // It cannot recurse: adopting changes `lobby`/`controller`, and none of
+        // those is an input to `loadKey`.
+        if incomingURL != nil { await maybeAdoptIncoming() }
     }
 
     /// What the surface resolved to, for the trace. "Why is it showing a lobby
@@ -3016,6 +3062,7 @@ private struct LobbyView: View {
                           onSetPassing(on)
                       })
                 .padding(.horizontal)
+            waitingNote
         }
         .frame(maxWidth: .infinity)
         .padding()
@@ -3077,6 +3124,39 @@ private struct LobbyView: View {
         }
     }
 
+    /// "Waiting for the others", AT THE FOOT OF THE LOBBY.
+    ///
+    /// It used to sit in the control slot, above the checkbox - and moving
+    /// between `.start` (one button row) and `.waiting` (a line of text PLUS a
+    /// button row) changed that slot's height, so everything below it jumped.
+    /// The owner hit it on his own rules toggle, which is exactly the move that
+    /// crosses between those two states: "on my own screen, when i hit
+    /// passing/non passing, it seems to completely rearrange the layout. the
+    /// checkbox itself moves down and up! Not ideal. Put 'waiting for others' at
+    /// the bottom so it stops fucking with the layout".
+    ///
+    /// Down here it costs nothing above it: the control slot is one button row
+    /// in every state that has a button, so the roster, the buttons and the
+    /// checkbox hold still and only the foot of the card grows.
+    ///
+    /// It answers the same question `standardControls` does, off the same
+    /// facts, rather than being handed a flag - one derivation, so the line and
+    /// the buttons can never disagree about which state this lobby is in.
+    @ViewBuilder
+    private var waitingNote: some View {
+        let c = controlsEnv ?? env
+        let offered = LobbyControls.offered(mySeat: mySeat, joined: c.joins.count,
+                                            capacity: c.nPlayers,
+                                            iSentTheInvite: c.lastActorSeat == mySeat,
+                                            iChangedTheRules: iChangedTheRules)
+        if offered == .waiting || offered == .invite {
+            Text(FStrings.t("ios.msg.waiting"))
+                .font(.footnote).onTableText()
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+        }
+    }
+
     @ViewBuilder
     private var standardControls: some View {
             // note 16: no "Waiting for players — N joined" line here any more —
@@ -3114,10 +3194,11 @@ private struct LobbyView: View {
                 // 1.0(17)): a rules change said so in its own words for a
                 // moment, and it read as an error message about something the
                 // player had just chosen on purpose.
-                Text(FStrings.t("ios.msg.waiting"))
-                    .font(.footnote).onTableText()
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
+                // THE LINE ITSELF IS NOT HERE ANY MORE - see `waitingNote`, at
+                // the foot of the lobby. Only the button stays in the control
+                // slot, so this branch is the same HEIGHT as `.start`'s (one
+                // button row either way) and moving between them no longer
+                // reflows everything under it.
                 if canExit {
                     FButton(FStrings.t("ios.msg.exitgame"), kind: .wood, action: onExit)
                 }
@@ -3135,8 +3216,6 @@ private struct LobbyView: View {
                     // bubble is still sitting in the compose field, so it comes
                     // back HERE and only here: re-stage the same WAITING chain
                     // so there is always a way to ask someone to join.
-                    Text(FStrings.t("ios.msg.waiting"))    // round-5 M10 / round-6 #17: see .waiting above
-                        .font(.footnote).onTableText()
                     FButton(FStrings.t("ios.msg.invite"), kind: .wood, action: onInvite)
             case .join:
                 // Same width as the buttons below (note 29) — both rely on the

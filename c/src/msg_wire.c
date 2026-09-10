@@ -1057,7 +1057,29 @@ static int msg_seat_resolve_named(const MsgJoin *joins, int n_joins,
     const int seat = msg_seat_resolve(cached, sender_is_local, n_players,
                                       last_actor_seat, chat_is_dm);
     if (seat < 0 || !require_listed) return seat;
-    for (int i = 0; i < n_joins; i++) if (joins[i].seat == (uint8_t)seat) return seat;
+    for (int i = 0; i < n_joins; i++) {
+        if (joins[i].seat != (uint8_t)seat) continue;
+        // LISTED IS NOT THE SAME AS MINE, and that gap was a real bug: a player
+        // who LEFT a 1:1 lobby was handed seat 0 - the seat of the player who
+        // stayed - and could move the rules, and Start, as them. Owner, 1.1(57):
+        // "I was able to leave, and then check the passing box. really not good".
+        //
+        // The route in is the DM complement in `msg_seat_resolve` (`1 -
+        // last_actor_seat`), which is correct on a BOARD - a 2-player DM
+        // receiver who has not moved yet really is the other seat - and is not
+        // evidence of anything in a LOBBY, where a seat is claimed explicitly by
+        // a join that carries a name. `leaveLobby` seals with last_actor_seat =
+        // joins.count = 1, the complement is 0, and 0 is occupied.
+        //
+        // So in a lobby a NAMED device gets its seat by name or not at all. Every
+        // lobby seat carries a name, so "none of these rows is me" is a complete
+        // answer, and it is one the inference above cannot overrule. A device
+        // with no recorded name still falls back - it has nothing to match with,
+        // and that is the pre-existing permissive case rather than a new hole.
+        if (name && name_len > 0)
+            return msg_name_is(&joins[i], name, name_len) ? seat : -1;
+        return seat;
+    }
     return -1;   // resolved, but this bubble's roster does not list it
 }
 

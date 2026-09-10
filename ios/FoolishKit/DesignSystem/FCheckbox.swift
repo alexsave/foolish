@@ -156,7 +156,23 @@ struct FCheckbox: View {
         // box swapped its tick with no motion at all. Filmed at 20fps and
         // logged (`secs=-1.0`), which is the only way that reads as anything
         // other than "the animation is too fast to see".
-        .onChange(of: turn) { landed in
+        // `.task(id:)` AND NOT `.onChange`, which is the 1.1(57) fix.
+        //
+        // An arriving rules beat is set in the SAME update that adopts the
+        // chain, and anything that rebuilds this view in that update - a reload
+        // racing the arrival, the still overlay coming off, a branch swapping -
+        // leaves a FRESHLY BUILT checkbox holding a turn it never saw arrive.
+        // `onChange` fires on a CHANGE observed by a view that already existed,
+        // so a new view with the value already in place runs nothing, and the
+        // turn is silently dropped. The owner, on 1.1(57): "when it did [update],
+        // it only ever snapped, no rotate."
+        //
+        // `.task(id:)` has no such hole - it runs on first appearance as well as
+        // on every change of the id - so the box turns whether it was here to
+        // watch the value land or was built around it. The nil case is the
+        // ordinary one and costs a guard.
+        .task(id: turn) {
+            let landed = turn
             AnimLog.say("checkbox turn secs=\(landed?.seconds ?? -1)")
             guard let landed, landed.seconds > 0 else { return }
             // An arriving beat lands in the SAME update that adopts the chain,
@@ -209,9 +225,18 @@ struct FCheckbox: View {
                 .overlay(Color.black.opacity(enabled ? 0 : 0.45))
             Rectangle()
                 .strokeBorder(.black.opacity(enabled ? 0.35 : 0.2), lineWidth: 1)
-            if shownOn ?? isOn { FCheck(size: box - 6) }
+            // ONLY THE TICK TURNS. Owner, 1.1(57): "the whole check and the box
+            // rotated! not ideal. only rotate the check itself." The box is a
+            // fixed part of the furniture - the row it sits in, the label beside
+            // it and the plank itself do not move - and what changed is the mark
+            // on it, so the mark is what carries the motion. It also reads
+            // better in the two directions: ticking swings the check IN to an
+            // empty box, unticking swings it OUT and leaves the box standing.
+            if shownOn ?? isOn {
+                FCheck(size: box - 6)
+                    .scaleEffect(x: Self.boxTurn(edgeOn: edgeOn), anchor: .center)
+            }
         }
         .frame(width: box, height: box)
-        .scaleEffect(x: Self.boxTurn(edgeOn: edgeOn), anchor: .center)
     }
 }
