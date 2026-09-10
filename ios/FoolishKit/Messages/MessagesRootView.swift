@@ -1009,6 +1009,12 @@ private struct GameSurface: View {
             "beats=\(plan.beats.count) showing=\(current == nil ? "NONE" : "yes") "
             + "phase=\(env.phase) joins=\(env.joins.count)")
         await playArrival(plan, winner: bytes, env: env)
+        // WHAT THE SURFACE ENDED UP AS, which is the one thing the notes above
+        // cannot say. Everything before this reports what we DECIDED; this
+        // reports what the human is now looking at. Without it, "the arrival was
+        // accepted with N beats" and "…and the screen still shows the old roster"
+        // are the same log line, and telling those apart is another round trip.
+        FlightRecorder.note("arrival-done", showingWhat)
     }
 
     /// PLAY AN ARRIVAL, one beat at a time (1.1(56)).
