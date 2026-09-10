@@ -915,6 +915,31 @@ static int surface_wire_check(void) {
         printf("FAIL surface beat1 %d/%d/%d\n", b1[0], b1[1], b1[5]); return 1;
     }
     if (out[1] != b1[5] + b1[4]) { printf("FAIL surface total_ms %d\n", out[1]); return 1; }
+    // A LONE RULES CHANGE - the beat that went missing on a real device in
+    // 1.1(58) ("incoming pass toggle unfortunately is a snap too, not a
+    // rotate"). One beat, a TURN, and a duration a view can actually animate:
+    // the join+start case above never touches the RULES row, so nothing was
+    // checking that a turn crosses this wire with its 500ms intact.
+    if (fio_set_passing(0) != FIO_EOK) { printf("FAIL surface set_passing\n"); return 1; }
+    unsigned char ruled[2048];
+    const int rn = fio_msg_encode(0, 0, 0xF00AULL, zero8, j1, j1n, 0, ruled, sizeof ruled);
+    if (fio_set_passing(1) != FIO_EOK) { printf("FAIL surface set_passing back\n"); return 1; }
+    if (rn <= 0) { printf("FAIL surface ruled encode %d\n", rn); return 1; }
+    const int rc = fio_msg_surface_plan(lob, ln, ruled, rn, out,
+                                        (int)(sizeof out / sizeof out[0]));
+    if (rc != FIO_SURFACE_HEAD + FIO_SURFACE_STRIDE) {
+        printf("FAIL surface rules rc=%d (msg_err=%d)\n", rc, fio_last_msg_error()); return 1;
+    }
+    const int32_t *r0 = out + FIO_SURFACE_HEAD;
+    if (out[0] != 1 || r0[0] != FIO_SURFACE_RULES || r0[1] != FIO_TRANS_TURN) {
+        printf("FAIL surface rules beat %d/%d/%d\n", out[0], r0[0], r0[1]); return 1;
+    }
+    if (r0[3] != FIO_CONTROLS_LIVE || r0[4] <= 0 || r0[5] != 0) {
+        printf("FAIL surface rules shape controls=%d dur=%d start=%d\n",
+               r0[3], r0[4], r0[5]); return 1;
+    }
+    const int turn_ms = r0[4];
+
     // A board is handed nothing, and a buffer that cannot hold the answer is
     // refused rather than half-written.
     if (fio_msg_surface_plan(live, vn, live, vn, out, (int)(sizeof out / sizeof out[0])) != 0) {
@@ -927,8 +952,8 @@ static int surface_wire_check(void) {
                              (int)(sizeof out / sizeof out[0])) != FIO_EMSG) {
         printf("FAIL surface: a truncated chain was accepted\n"); return 1;
     }
-    printf("surface wire OK (%d bytes, join+start = snap then fade at %dms)\n",
-           n, b1[5]);
+    printf("surface wire OK (%d bytes, join+start = snap then fade at %dms, "
+           "rules alone = one turn of %dms)\n", n, b1[5], turn_ms);
     return 0;
 }
 

@@ -885,10 +885,17 @@ private struct GameSurface: View {
     /// gate), the arrival simply renders - round 7 keeps no cached chain to
     /// weigh it against. `showSetup` is exempt: the human explicitly asked for
     /// a new game.
-    private func maybeAdoptIncoming() async {
+    private func maybeAdoptIncoming(showingBefore: Data? = nil) async {
         guard let url = incomingURL, !showSetup, !startNewGame,
               let bytes = try? MessageEnvelope.payloadBytes(url: url) else { return }
-        let current = controller?.basePayload ?? lobby?.payload
+        // A reload is mid-flight and the surface is momentarily empty. Stand
+        // down: `reloadForInput` calls this again the moment it has settled, and
+        // passes what was on screen before it started. See `reloading`.
+        if reloading, showingBefore == nil {
+            AnimLog.say("arrival held - a reload owns the surface")
+            return
+        }
+        let current = controller?.basePayload ?? lobby?.payload ?? showingBefore
         if bytes == current { AnimLog.say("arrival ignored - same chain"); return }
         if let current {
             // A refusal here is SILENT to the player, and that is what made the
@@ -962,6 +969,14 @@ private struct GameSurface: View {
     /// with nothing before it). The adopt on its own is that snap.
     private func playArrival(_ plan: SurfacePlan, winner: Data, env: MessageEnvelope) async {
         guard !plan.beats.isEmpty, let showing = lobby else {
+            // A plan WITH beats and no lobby to play them over is not the
+            // ordinary empty-plan case - it is the surface having been cleared
+            // out from under a sequence, and it degrades to exactly the same
+            // silent snap the 1.1(58) report was about. Say so, so the two are
+            // never again indistinguishable in a log.
+            if !plan.beats.isEmpty {
+                AnimLog.say("surface DROPPED \(plan.beats.count) beat(s) - no lobby to play them over")
+            }
             await adopt(winner: winner, env: env)
             return
         }
@@ -1501,6 +1516,11 @@ private struct GameSurface: View {
     /// loadKey unchanged, so `.task(id:)` does not fire and the game persists.
     private func reloadForInput() async {
         AnimLog.say("surface reload key=[\(loadKey)]")
+        // WHAT THE HUMAN WAS LOOKING AT, read before the reset below throws it
+        // away. An arrival landing during a reload has to be diffed against
+        // THIS, not against whatever the reload settles on - see `reloading`.
+        let wasShowing = controller?.basePayload ?? lobby?.payload
+        reloading = true
         // Do NOT tear the board down to nil up front: on a live receive that
         // blank (Color.clear) between the old controller and the new one is the
         // "blink". Reset only the NON-board transient screens here; the resolved
@@ -1538,8 +1558,32 @@ private struct GameSurface: View {
         //
         // It cannot recurse: adopting changes `lobby`/`controller`, and none of
         // those is an input to `loadKey`.
-        if incomingURL != nil { await maybeAdoptIncoming() }
+        reloading = false
+        if incomingURL != nil { await maybeAdoptIncoming(showingBefore: wasShowing) }
     }
+
+    /// A RELOAD OWNS THE SURFACE WHILE IT RUNS. 1.1(59).
+    ///
+    /// `reloadForInput` clears `lobby` and then awaits `load()`, so for the
+    /// length of that await the surface HAS no chain - and `maybeAdoptIncoming`
+    /// reads exactly that to decide what an arrival is a change FROM. An arrival
+    /// landing in the window computed its plan as `surfacePlan(showing: bytes,
+    /// arriving: bytes)`: a diff of a chain against itself, which is zero beats,
+    /// which is a plain adopt.
+    ///
+    /// That is not a missing animation, it is the animation being computed
+    /// against nothing, and it degrades SILENTLY - the roster still arrives, so
+    /// a join (which is a snap anyway) looks perfect while a rules change and a
+    /// Start lose their rotate and their fade. Owner on 1.1(58): "incoming join
+    /// looks good, is a simple snap. incoming pass toggle unfortunately is a
+    /// snap too, not a rotate. incoming start game is also a snap."
+    ///
+    /// So the two are sequenced instead of racing. A concurrent call defers, and
+    /// the reload hands the arrival back itself once the surface has settled -
+    /// with `wasShowing`, so the beats are computed against the chain that was
+    /// really on screen rather than against the one the reload happened to land
+    /// on. `showingBefore` is what distinguishes that call from the racing one.
+    @State private var reloading = false
 
     /// What the surface resolved to, for the trace. "Why is it showing a lobby
     /// when the thread is mid-game" is only answerable if the surface says which
