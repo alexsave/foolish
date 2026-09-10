@@ -576,6 +576,32 @@ private struct GameSurface: View {
     /// a game nobody here is playing.
     @State private var spectatorBoard: MessageTurnController?
     @State private var lobby: Lobby?
+    /// ONE BEAT OF AN ARRIVING STREAM, held on screen (1.1(56)).
+    ///
+    /// A single text can carry several actions - `conversation.insert` replaces
+    /// an unsent draft rather than queueing a second one, so Join, then the
+    /// rules box, then Start go out as ONE envelope. The kernel says what those
+    /// actions were, in what order, how long each rests and which idiom it
+    /// wears (SurfacePlan); this is where a beat that is not the last one is
+    /// drawn, over the surface, until the next one is due. nil the rest of the
+    /// time, which is nearly always.
+    private struct ArrivalStill {
+        /// The roster and rule THIS beat shows.
+        let env: MessageEnvelope
+        let passing: Bool
+        /// Which lobby the CONTROLS answer to: this beat's own state, or the
+        /// one the human already had. `SurfacePlan.Controls`, spent here - see
+        /// anim_plan.h for the owner's four cases.
+        let controls: MessageEnvelope
+    }
+    @State private var arrivalStill: ArrivalStill?
+    /// How opaque the held beat is. 1 while it is showing (every beat SNAPS in),
+    /// eased to 0 by a BOARD beat's fade. See `playArrival` for why it is an
+    /// opacity of the view's own and not a `.transition`.
+    @State private var stillFade: Double = 1
+    /// The rules beat's turn, handed to the live lobby's checkbox once the beat
+    /// has adopted. See `FCheckbox.Turn` for why it is a token and not `isOn`.
+    @State private var rulesTurn: FCheckbox.Turn?
     @State private var nameGate: NameGate?
     @State private var showSetup = false
     @State private var toast: String?
@@ -611,8 +637,32 @@ private struct GameSurface: View {
     /// too, defensively: this view's state must never survive a conversation
     /// change (the chat-scoping fix's whole point), even though in practice one
     /// extension instance presents one conversation for its lifetime.
+    ///
+    /// `startNewGame` IS DELIBERATELY NOT IN HERE, and leaving it in was the
+    /// 1.1(57) lobby bug. It is set when the human taps New game and cleared
+    /// again by `didReceive` - so the FIRST text to arrive after you created a
+    /// game flipped it true -> false, changed this key, and fired
+    /// `reloadForInput`, which nils the lobby and reloads from `payloadURL`:
+    /// YOUR OWN INVITE, because an arrival never becomes `selectedMessage`.
+    /// That raced `maybeAdoptIncoming`, and whichever finished last won.
+    ///
+    /// The owner's report is the shape of the race exactly: "the extension that
+    /// was open didn't update at all… although SOMETIMES it would update on
+    /// live arrival. But when it did, it only ever snapped, no rotate" - the
+    /// reload also clears `rulesTurn` and rebuilds the checkbox, and a freshly
+    /// built view runs no `onChange`, so the turn was dropped even in the runs
+    /// where the roster survived.
+    ///
+    /// And why it was only ever seen in a LOBBY, which is what made it look
+    /// like the lobby's own bug (owner: "it works just fine for the board and
+    /// game moves"): by the time a board is taking moves the flag has long been
+    /// false, so an arrival does not move this key at all. Only the first text
+    /// after a New game does.
+    ///
+    /// Nothing is lost by dropping it: `newGameToken` is incremented in the
+    /// same closure that sets the flag, so a New game still changes this key.
     private var loadKey: String {
-        "\(newGameToken)|\(startNewGame)|\(chatKey)|\(payloadURL?.absoluteString ?? "")"
+        "\(newGameToken)|\(chatKey)|\(payloadURL?.absoluteString ?? "")"
     }
 
     var body: some View {
@@ -690,6 +740,8 @@ private struct GameSurface: View {
                 // that never had it.
                 FlightRecorder.note("send-signal", sentPayload.map { "\($0.count)b" } ?? "none")
                 surfaceStaged = false   // round-9: the staged bubble is sent
+                stagedParent8 = nil     // …and the draft it belonged to is now the thread's
+                stagedBase = nil
                 // SYNCHRONOUSLY, in this same SwiftUI transaction: the Undo pill
                 // goes now, not after a Task hop and a decode (owner: "should
                 // probably disappear the second you hit send"). `markSent` below
@@ -707,7 +759,7 @@ private struct GameSurface: View {
             // clearing `surfaceStaged` here never dimmed it (1.0(37): "if I
             // stage then X the staged bubble, the send hint arrow doesn't go
             // away").
-            .onChange(of: cancelToken) { _ in surfaceStaged = false }
+            .onChange(of: cancelToken) { _ in surfaceStaged = false; stagedParent8 = nil; stagedBase = nil }
             // A bubble ARRIVED while this surface is open (didReceive). Apple
             // does not move `selectedMessage` for an arrival, so loadKey does
             // not change and the .task above will not re-run - this one does.
@@ -835,11 +887,61 @@ private struct GameSurface: View {
     /// gate), the arrival simply renders - round 7 keeps no cached chain to
     /// weigh it against. `showSetup` is exempt: the human explicitly asked for
     /// a new game.
-    private func maybeAdoptIncoming() async {
+    /// The arrival this surface has already taken. ONE arrival, handled ONCE.
+    ///
+    /// There are two callers now - `.task(id: incomingToken)`, and
+    /// `reloadForInput` when it recognises that the chain it was about to load
+    /// IS the chain that just arrived - and in 1.1(61) both of them ran. The
+    /// owner's flight log shows it as a doubled line at an identical timestamp:
+    ///
+    ///     88.57s  arrival  beats=1 showing=yes phase=0 joins=2
+    ///     88.57s  arrival  beats=1 showing=yes phase=0 joins=2
+    ///
+    /// Two `playArrival`s over one surface, each seeding the still and adopting.
+    /// The loser finishes second and lands the END STATE on top of a sequence
+    /// that is still running - which is a snap wearing a sequence's timing, the
+    /// exact symptom this whole chain of builds has been chasing.
+    ///
+    /// Keyed on the BYTES rather than on `incomingToken`, because the two callers
+    /// are reached by different routes and only one of them is the token's; the
+    /// bytes are what they agree on. Cleared by a new input, so the same chain
+    /// arriving again on a fresh surface is still played.
+    @State private var arrivalTaken: Data?
+
+    private func maybeAdoptIncoming(showingBefore: Data? = nil) async {
         guard let url = incomingURL, !showSetup, !startNewGame,
-              let bytes = try? MessageEnvelope.payloadBytes(url: url) else { return }
+              let bytes = try? MessageEnvelope.payloadBytes(url: url) else {
+            // The gate that produces NOTHING on screen and no trace of itself,
+            // which is the owner's "it does not update at all" on the first
+            // bubble of a chain. `setup`/`newGame` are the two states that
+            // deliberately refuse arrivals; if one of them is stuck on, this is
+            // the only line that will ever say so.
+            if incomingURL != nil {
+                FlightRecorder.note("arrival-ignored",
+                    "setup=\(showSetup) newGame=\(startNewGame) bytes=\(incomingURL == nil ? "-" : "ok")")
+            }
+            return
+        }
+        // A reload is mid-flight and the surface is momentarily empty. Stand
+        // down: `reloadForInput` calls this again the moment it has settled, and
+        // passes what was on screen before it started. See `reloading`.
+        if reloading, showingBefore == nil {
+            AnimLog.say("arrival held - a reload owns the surface")
+            return
+        }
         let current = controller?.basePayload ?? lobby?.payload
-        if bytes == current { AnimLog.say("arrival ignored - same chain"); return }
+                      ?? showingBefore ?? lastShownChain
+        if bytes == current {
+            AnimLog.say("arrival ignored - same chain")
+            FlightRecorder.note("arrival-ignored", "same chain")
+            return
+        }
+        // ONE ARRIVAL, ONE HANDLER - see `arrivalTaken`.
+        if bytes == arrivalTaken {
+            FlightRecorder.note("arrival-ignored", "already taken")
+            return
+        }
+        arrivalTaken = bytes
         if let current {
             // A refusal here is SILENT to the player, and that is what made the
             // rule-4 hole (a chain tying with its own child on round/turn, see
@@ -859,11 +961,23 @@ private struct GameSurface: View {
                         + "cur=[t\(ce?.turn ?? -1) r\(ce?.round ?? -1) actor\(ce?.lastActorSeat ?? -1)] "
                         + "new=[t\(be?.turn ?? -1) r\(be?.round ?? -1) actor\(be?.lastActorSeat ?? -1)]")
                 }
+                // The SHAPE of both chains, because "pref=-1" alone cannot tell
+                // a correct refusal from a broken one. My own invite coming back
+                // with a fresh send clock is state-identical and SHOULD lose;
+                // a genuine join losing is a bug. They differ only in these
+                // numbers, and without them the log makes both look the same.
+                let ce = try? await MessageKernel.shared.peek(payload: current)
+                let be = try? await MessageKernel.shared.peek(payload: bytes)
+                FlightRecorder.note("arrival-ignored",
+                    "rule P pref=\(pref) mine=[p\(ce?.phase ?? -1) j\(ce?.joins.count ?? -1) "
+                    + "t\(ce?.turn ?? -1)] new=[p\(be?.phase ?? -1) j\(be?.joins.count ?? -1) "
+                    + "t\(be?.turn ?? -1)]")
                 return
             }
         }
         guard let env = try? await MessageEnvelope.decode(payload: bytes, viewer: -1) else {
             AnimLog.say("arrival ignored - decode failed")
+            FlightRecorder.note("arrival-ignored", "decode failed")
             return
         }
         // This runs under `.task(id: incomingToken)`, so a NEWER arrival CANCELS
@@ -878,7 +992,129 @@ private struct GameSurface: View {
             return
         }
         AnimLog.say("surface adopts arrival phase=\(env.phase) joins=\(env.joins.count) turn=\(env.turn)")
-        await adopt(winner: bytes, env: env)
+        // WHAT THIS ARRIVAL IS, AS A SEQUENCE. Asked of the kernel off the two
+        // envelopes, and asked BEFORE `adopt` decodes anything - `surfacePlan`
+        // is a header read for the same reason `preferred` above is, so the
+        // resident game is not moved out from under the board being asked about.
+        let plan = await MessageKernel.shared.surfacePlan(showing: current ?? bytes,
+                                                          arriving: bytes)
+        // THE ONE LINE THAT SAYS WHY THERE WAS NO ANIMATION, and it is on the
+        // always-compiled recorder rather than in AnimLog on purpose: AnimLog is
+        // DEBUG plus an environment variable, so the build a human actually
+        // plays on has no animation trace at all, and three rounds of this bug
+        // were diagnosed by inference because nobody could see this number.
+        // `showing` is the half that goes wrong silently - a plan asked with
+        // nothing on screen diffs the arrival against itself and answers "no
+        // beats", which is indistinguishable from "nothing to animate".
+        FlightRecorder.note("arrival",
+            "beats=\(plan.beats.count) showing=\(current == nil ? "NONE" : "yes") "
+            + "phase=\(env.phase) joins=\(env.joins.count)")
+        await playArrival(plan, winner: bytes, env: env)
+        // WHAT THE SURFACE ENDED UP AS, which is the one thing the notes above
+        // cannot say. Everything before this reports what we DECIDED; this
+        // reports what the human is now looking at. Without it, "the arrival was
+        // accepted with N beats" and "…and the screen still shows the old roster"
+        // are the same log line, and telling those apart is another round trip.
+        FlightRecorder.note("arrival-done", showingWhat)
+    }
+
+    /// PLAY AN ARRIVAL, one beat at a time (1.1(56)).
+    ///
+    /// The owner: "LOBBY DID NOT UPDATE LIVE! I was in lobby, got a start game
+    /// text, and it was stuck on lobby! I think it should fade from lobby to the
+    /// game in this case." And then, on a text that carries more than one
+    /// action: "it should snap to the state where there are two or whatever
+    /// people in the lobby, wait a bit, then fade."
+    ///
+    /// ONE LOOP, and every decision in it is read rather than made. WHAT the
+    /// stream contained, the ORDER, the REST between beats and the IDIOM each
+    /// wears are all `plan`'s (c/src/anim_plan.c, c/src/msg_wire.c). What is
+    /// left here is the only part a C function cannot do: the easing curve, and
+    /// putting a view on screen.
+    ///
+    /// THE LAST BEAT IS THE ADOPT. Every beat before it is a STILL - the
+    /// arriving roster with that beat's rule, drawn over the surface - and the
+    /// last one shows the arriving chain exactly, which is what the surface was
+    /// going to become anyway. So there is no second code path for "and then
+    /// actually take the message": adopting IS the last beat.
+    ///
+    /// An EMPTY plan is the ordinary case - a board folding a move in, or a
+    /// change that is simply true now (a lone join or leave, a lone rules move
+    /// with nothing before it). The adopt on its own is that snap.
+    private func playArrival(_ plan: SurfacePlan, winner: Data, env: MessageEnvelope) async {
+        guard !plan.beats.isEmpty, let showing = lobby else {
+            // A plan WITH beats and no lobby to play them over is not the
+            // ordinary empty-plan case - it is the surface having been cleared
+            // out from under a sequence, and it degrades to exactly the same
+            // silent snap the 1.1(58) report was about. Say so, so the two are
+            // never again indistinguishable in a log.
+            if !plan.beats.isEmpty {
+                AnimLog.say("surface DROPPED \(plan.beats.count) beat(s) - no lobby to play them over")
+                FlightRecorder.note("beats-dropped", "\(plan.beats.count) with no lobby under them")
+            }
+            await adopt(winner: winner, env: env)
+            return
+        }
+        AnimLog.say("surface plays the arrival as \(plan.beats.count) beat(s) "
+            + "over \(Int(plan.total * 1000))ms")
+        // SEED THE STILL WITH WHAT IS ALREADY ON SCREEN. Invisible by
+        // construction - it is a copy of the lobby underneath it - and it is
+        // what gives the first beat something to replace and the last something
+        // to fade out of. A plan is only ever non-empty over a lobby (the
+        // kernel's `on_a_lobby`), which is why `showing` above is a guard and
+        // not a fallback.
+        arrivalStill = ArrivalStill(env: showing.env, passing: showing.env.passingAllowed,
+                                    controls: showing.env)
+        stillFade = 1
+        let began = Date()
+        var turns = rulesTurn?.token ?? 0
+        let last = plan.beats.count - 1
+        for (i, beat) in plan.beats.enumerated() {
+            // WAIT FOR THE BEAT'S OWN START, rather than sleeping a duration of
+            // ours: the rest between beats is the gap between their `start`s, so
+            // a beat that took longer than the plan expected (an adopt behind a
+            // busy kernel actor) does not push the whole sequence out.
+            let due = began.addingTimeInterval(beat.start).timeIntervalSinceNow
+            if due > 0 { try? await Task.sleep(nanoseconds: UInt64(due * 1_000_000_000)) }
+            // A NEWER ARRIVAL OWNS THE SURFACE. Same rule, and the same reason,
+            // as `maybeAdoptIncoming`'s own cancellation guard: this runs under
+            // `.task(id: incomingToken)`, and a sleep is exactly where a newer
+            // token lands. Drop the still rather than leaving it over a surface
+            // the next task is about to rebuild.
+            guard !Task.isCancelled else { arrivalStill = nil; stillFade = 1; return }
+            if beat.transition == .turn { turns += 1 }
+            guard i == last else {
+                // A beat on the way: the arriving roster, under the rule as it
+                // stood at that moment. Set outside any animation, because
+                // every one of these is a SNAP - "the roster changing is not a
+                // transition, it is a fact arriving".
+                // The roster and rule are the BEAT's; the controls are the
+                // beat's own state only while the stream ends in the lobby.
+                arrivalStill = ArrivalStill(env: env, passing: beat.passing,
+                                            controls: beat.controls == .held ? showing.env : env)
+                continue
+            }
+            await adopt(winner: winner, env: env)
+            // The live lobby's own checkbox does the turning from here - the
+            // still is about to go, and the box under it is the real one.
+            rulesTurn = beat.transition == .turn
+                ? FCheckbox.Turn(token: turns, seconds: beat.duration) : nil
+            guard beat.transition == .fade, beat.duration > 0 else {
+                arrivalStill = nil
+                return
+            }
+            // THE CROSS-FADE, as an explicit opacity rather than a `.transition`
+            // on the `if let`. A removal transition is only honoured when
+            // SwiftUI is left to diff the branch alone, and this branch is
+            // removed in the SAME transaction that swaps the whole surface
+            // underneath it (lobby -> board) - filmed at 20fps, the still
+            // vanished in one frame and the "fade" was a cut. An opacity the
+            // view owns is animated whatever else changes around it.
+            withAnimation(.easeInOut(duration: beat.duration)) { stillFade = 0 }
+            try? await Task.sleep(nanoseconds: UInt64(beat.duration * 1_000_000_000))
+            arrivalStill = nil
+            stillFade = 1
+        }
     }
 
     /// 1.0(6): the graceful failure screen - shown ONLY when a message fails to
@@ -1079,7 +1315,33 @@ private struct GameSurface: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// The surface, plus the STILL an arriving stream holds over it (1.1(56)).
+    ///
+    /// A ZStack rather than a state of `resolvedContent`'s own, because the two
+    /// have to be on screen AT ONCE for the last beat: the board is built
+    /// underneath while the lobby is still showing, and then the lobby fades off
+    /// it. It carries its own `TableBackground` for the same reason - a
+    /// transparent still would let the table read through the roster instead of
+    /// covering it, and there would be nothing to cross-fade.
     @ViewBuilder private var expandedContent: some View {
+        ZStack {
+            resolvedContent
+            if let still = arrivalStill {
+                LobbyView(env: still.env, mySeat: lobbySeat(still.controls),
+                          nickname: "", onJoin: { _ in }, onStart: {}, onInvite: {},
+                          stillPassing: still.passing, controlsEnv: still.controls)
+                    .background(TableBackground().ignoresSafeArea())
+                    // Nothing here is live: the chain it describes has already
+                    // moved on, and a tap landing on a beat would act on it.
+                    .allowsHitTesting(false)
+                    // A beat SNAPS in (this is set outside any animation) and
+                    // fades out only when the plan's last beat says to fade.
+                    .opacity(stillFade)
+            }
+        }
+    }
+
+    @ViewBuilder private var resolvedContent: some View {
         if let controller {
             MessageTableView(controller: controller,
                              onSend: { payload, fromUndo in await onSend(payload, controller.mySeat, fromUndo) },
@@ -1140,7 +1402,10 @@ private struct GameSurface: View {
                       passingBaseline: passingBaseline[lob.env.gameId],
                       // nil in every shipping build: the closure only exists
                       // where `addSoloSeat` is compiled at all.
-                      onAddSoloSeat: soloSeatAction(lob))
+                      onAddSoloSeat: soloSeatAction(lob),
+                      // Somebody else moved the checkbox and the arriving
+                      // stream's rules beat has just landed (1.1(56)).
+                      rulesTurn: rulesTurn)
                 // The JOIN row is a name field too, and it is the screen the
                 // second player lands on. `.join` is exactly "no seat yet, and
                 // there is still room" (LobbyControls.offered) - the other
@@ -1326,6 +1591,47 @@ private struct GameSurface: View {
     /// loadKey unchanged, so `.task(id:)` does not fire and the game persists.
     private func reloadForInput() async {
         AnimLog.say("surface reload key=[\(loadKey)]")
+        // WHAT THE HUMAN WAS LOOKING AT, read before the reset below throws it
+        // away. An arrival landing during a reload has to be diffed against
+        // THIS, not against whatever the reload settles on - see `reloading`.
+        let wasShowing = controller?.basePayload ?? lobby?.payload ?? lastShownChain
+
+        // A RELOAD ONTO THE ARRIVING CHAIN IS NOT A RELOAD - IT IS THE ARRIVAL.
+        //
+        // This file has asserted since round 7 that "Apple does not move
+        // `selectedMessage` for an arrival, so loadKey does not change and the
+        // .task above will not re-run". ON A REAL DEVICE THAT IS FALSE. The
+        // owner's 1.1(60) flight log says so in three places, and says it the
+        // same way every time:
+        //
+        //     22.26s  receive
+        //     22.26s  reload-vs-arrival
+        //
+        // `loadKey` is newGameToken | chatKey | payloadURL; the first two cannot
+        // move on a receive, so `payloadURL` did - the arriving bubble HAD become
+        // the selection. So every arrival was really a cold reload onto the new
+        // chain, which is a PAINT, which is a snap by construction; and
+        // `maybeAdoptIncoming` then found `bytes == current` and returned without
+        // a sound. That is why no lobby beat has ever played on a phone in 57,
+        // 58, 59 or 60, while the same stream animates correctly in the harness -
+        // the harness delivers an arrival WITHOUT moving the selection, which is
+        // the one thing the real host does differently.
+        //
+        // So the two are told apart by their bytes rather than by a belief about
+        // what the host does with the selection: if the chain this reload would
+        // load IS the chain that just arrived, and it is not already what we are
+        // showing, then this is an arrival and it plays as one - diffed against
+        // what was on screen, which is exactly the sequence the human was owed.
+        if let url = incomingURL,
+           let arriving = try? MessageEnvelope.payloadBytes(url: url),
+           let loading = payloadURL.flatMap({ try? MessageEnvelope.payloadBytes(url: $0) }),
+           arriving == loading, let was = wasShowing, was != arriving {
+            FlightRecorder.note("reload-is-arrival", "\(arriving.count)b")
+            await maybeAdoptIncoming(showingBefore: was)
+            return
+        }
+        if incomingURL != nil { FlightRecorder.note("reload-vs-arrival") }
+        reloading = true
         // Do NOT tear the board down to nil up front: on a live receive that
         // blank (Color.clear) between the old controller and the new one is the
         // "blink". Reset only the NON-board transient screens here; the resolved
@@ -1335,10 +1641,134 @@ private struct GameSurface: View {
         lobby = nil; nameGate = nil; showSetup = false
         ambiguous = nil; spectator = nil; spectatorReplayURL = nil
         spectatorBoard = nil; damaged = false
+        // A held beat belongs to the surface it was played over (1.1(56)). A new
+        // input is a different surface, so it goes - and without an animation,
+        // since there is nothing left underneath for it to fade into.
+        arrivalStill = nil; stillFade = 1; rulesTurn = nil
         surfaceStaged = false   // round-9: a new input owes nothing to Send yet
+        stagedParent8 = nil
+        stagedBase = nil
+        arrivalTaken = nil
         await load()
         AnimLog.say("surface showing \(showingWhat)")
+        // AND THEN RE-OFFER THE ARRIVAL, if one is outstanding. 1.1(57).
+        //
+        // `load()` shows what `payloadURL` names, and an arrival is NEVER that:
+        // a received bubble does not become `selectedMessage`, which is the whole
+        // reason `incomingURL` exists as a separate channel. So a reload that
+        // happens to run alongside `maybeAdoptIncoming` shows the OLD chain, and
+        // whichever of the two finishes last wins the surface. The owner, on a
+        // lobby he had just created: "the extension that was open didn't update
+        // at all… although SOMETIMES it would update on live arrival" - a
+        // coin-flip is what an unsequenced race looks like from the outside.
+        //
+        // Rather than hunt every input that can move `loadKey` under an arrival
+        // (`startNewGame` was one and is gone; `StagedBubbleRouting` can move
+        // `payloadURL` as the staged/just-sent markers are spent), this makes the
+        // order not matter: a reload ENDS by handing the arrival back to the one
+        // function that knows how to weigh it. Rule P still decides, so a stale
+        // or duplicate arrival changes nothing, and an arrival already adopted
+        // returns immediately on the `bytes == current` check.
+        //
+        // It cannot recurse: adopting changes `lobby`/`controller`, and none of
+        // those is an input to `loadKey`.
+        reloading = false
+        if incomingURL != nil { await maybeAdoptIncoming(showingBefore: wasShowing) }
     }
+
+    /// THE PARENT A STAGED DRAFT KEEPS, across every edit made to it.
+    ///
+    /// `conversation.insert` REPLACES an unsent draft rather than queueing a
+    /// second one, so a human who taps the rules checkbox and then Exit sends ONE
+    /// bubble - and until now that bubble named the intermediate rules chain as
+    /// its parent. That chain was never sent. It exists on no other device, so
+    /// Rule P's rule 4 ("a chain's own DIRECT CHILD outranks it") could not fire
+    /// on the receiver, and the comparison fell through to rule 3, "the fuller
+    /// roster wins the turn-0 tie" - which a LEAVE loses by construction, because
+    /// leaving is what makes a roster smaller.
+    ///
+    /// So the arrival lost to the chain already on screen and was discarded in
+    /// silence. Owner, 1.1(61): "a passing toggle + exit (which is fine, just the
+    /// other order isn't allowed) DID NOT update the view", and his read of it -
+    /// "makes me wonder if its something to do about game membership" - is
+    /// exactly right: it is the membership COUNT, spent as a tiebreak.
+    ///
+    /// Proved in C rather than argued: with the intermediate as parent,
+    /// `msg_rule_p(showing, arriving)` is -1 (showing wins, arrival ignored);
+    /// with the thread's own chain as parent it is +1 (adopted). Same two
+    /// chains, same rosters, one field.
+    ///
+    /// Rule P is not the thing to change here - rule 3 is right for what it is
+    /// for, picking between two Starts dealt from different lobbies. What was
+    /// wrong is the CLAIM the draft made about its own ancestry. A draft that
+    /// replaces itself on the way out is still one link in the thread, so it
+    /// names the link the thread actually has, for every edit made to it.
+    @State private var stagedParent8: Data?
+
+    /// The CHAIN that staged draft was started from - the table as everyone else
+    /// still has it, before any local edit.
+    ///
+    /// Kept beside `stagedParent8` and for the same reason, but it answers a
+    /// different question: that one is what the outgoing bubble CLAIMS as its
+    /// ancestry, this one is the state a local edit may be discarded back to.
+    /// `leaveLobby` is the only caller - see the rule there.
+    @State private var stagedBase: Data?
+
+    /// The parent8 for a lobby reseal. While a draft is already staged, my own
+    /// intermediate chains are edits to THAT draft and not links anyone else can
+    /// see, so the parent stays the one the thread has.
+    private func threadParent8(_ env: MessageEnvelope) -> Data {
+        if surfaceStaged, let held = stagedParent8 { return held }
+        let p = MessageTurnController.firstEight(hex: env.digest)
+        stagedParent8 = p
+        stagedBase = lastShownChain
+        return p
+    }
+
+    /// THE LAST CHAIN THIS SURFACE ACTUALLY SHOWED, and the only thing here that
+    /// a reset does not clear.
+    ///
+    /// `maybeAdoptIncoming` has to answer "what is this arrival a change FROM",
+    /// and it reads that from what is on screen RIGHT NOW - `controller` or
+    /// `lobby`. Both are transient: a reload nils them and then awaits, screens
+    /// swap, branches come and go. Every one of those windows turns the question
+    /// into "a change from nothing", and a plan asked with nothing to compare
+    /// against diffs the arrival with ITSELF and answers "no beats" - which is
+    /// indistinguishable, at the call site and on screen, from "this arrival
+    /// genuinely has nothing to animate". That is how the rotate and the fade
+    /// went missing in 1.1(57), (58) and (59) while every test stayed green: the
+    /// beats were never computed, so there was nothing to fail.
+    ///
+    /// So the surface remembers, separately from what it is currently drawing.
+    /// It is written wherever a chain goes on screen and nowhere else, so the
+    /// worst it can be is one chain stale - which still yields a CORRECT plan,
+    /// because a plan against a slightly older chain is exactly the stale-surface
+    /// case the kernel already handles (msg_wire.h: the diff is against what is
+    /// on screen, and a gap replays as one sequence).
+    @State private var lastShownChain: Data?
+
+    /// A RELOAD OWNS THE SURFACE WHILE IT RUNS. 1.1(59).
+    ///
+    /// `reloadForInput` clears `lobby` and then awaits `load()`, so for the
+    /// length of that await the surface HAS no chain - and `maybeAdoptIncoming`
+    /// reads exactly that to decide what an arrival is a change FROM. An arrival
+    /// landing in the window computed its plan as `surfacePlan(showing: bytes,
+    /// arriving: bytes)`: a diff of a chain against itself, which is zero beats,
+    /// which is a plain adopt.
+    ///
+    /// That is not a missing animation, it is the animation being computed
+    /// against nothing, and it degrades SILENTLY - the roster still arrives, so
+    /// a join (which is a snap anyway) looks perfect while a rules change and a
+    /// Start lose their rotate and their fade. Owner on 1.1(58): "incoming join
+    /// looks good, is a simple snap. incoming pass toggle unfortunately is a
+    /// snap too, not a rotate. incoming start game is also a snap."
+    ///
+    /// So the two are sequenced instead of racing. A concurrent call defers, and
+    /// the reload hands the arrival back itself once the surface has settled -
+    /// with `wasShowing`, so the beats are computed against the chain that was
+    /// really on screen rather than against the one the reload happened to land
+    /// on. `showingBefore` is what distinguishes that call from the racing one.
+    @State private var reloading = false
 
     /// What the surface resolved to, for the trace. "Why is it showing a lobby
     /// when the thread is mid-game" is only answerable if the surface says which
@@ -1404,7 +1834,7 @@ private struct GameSurface: View {
                 return
             }
             noteRulesBaseline(env)
-            lobby = Lobby(env: env, payload: payload)
+            lobby = Lobby(env: env, payload: payload); lastShownChain = payload
         case .board(let payload):
             let env: MessageEnvelope; let bodyVer: Int
             do { (env, bodyVer) = try await MessageKernel.shared.decodeWithBodyVersion(payload: payload) }
@@ -1578,7 +2008,7 @@ private struct GameSurface: View {
             showSetup = false
             damaged = false
             cache(seat: 0, env: env, payload: payload)
-            lobby = Lobby(env: env, payload: payload)
+            lobby = Lobby(env: env, payload: payload); lastShownChain = payload
             await onSend(payload, 0, false)
             surfaceStaged = true
         } catch {
@@ -1654,7 +2084,7 @@ private struct GameSurface: View {
                 parent8: Data(repeating: 0, count: 8), joins: joins)
             let env = try await MessageEnvelope.decode(payload: payload, viewer: -1)
             cache(seat: 0, env: env, payload: payload)
-            lobby = Lobby(env: env, payload: payload)
+            lobby = Lobby(env: env, payload: payload); lastShownChain = payload
             await onSend(payload, 0, false)
             surfaceStaged = true   // round-9: the created lobby awaits Send
         } catch {
@@ -1727,14 +2157,14 @@ private struct GameSurface: View {
             // Re-adopt the lobby so the LOCKED seed + open capacity are resident
             // for the seal.
             _ = try await MessageKernel.shared.decode(payload: lob.payload, viewer: -1)
-            let parent = MessageTurnController.firstEight(hex: env.digest)
+            let parent = threadParent8(env)
             let payload = try await MessageKernel.shared.seal(
                 phase: 0, lastActorSeat: free, gameId: gid, parent8: parent, joins: joins)
             let newEnv = try await MessageEnvelope.decode(payload: payload, viewer: -1)
             cache(seat: free, env: newEnv, payload: payload)
             await onSend(payload, free, false)
             surfaceStaged = true   // round-9: the join reseal awaits Send
-            lobby = Lobby(env: newEnv, payload: payload)
+            lobby = Lobby(env: newEnv, payload: payload); lastShownChain = payload
         } catch {
             damaged = true
         }
@@ -1778,9 +2208,35 @@ private struct GameSurface: View {
         guard !joins.isEmpty else { return }
 
         do {
-            // Re-adopt so the LOCKED seed and the open capacity are resident.
-            _ = try await MessageKernel.shared.decode(payload: lob.payload, viewer: -1)
-            let parent = MessageTurnController.firstEight(hex: env.digest)
+            // LEAVING DISCARDS A RULES CHANGE MADE IN THE SAME BREATH. Owner's
+            // ruling, and it is a RULE now rather than whatever fell out:
+            // "if you toggle and leave, it's the same as if you just left. No
+            // affect on toggle. Leaving then toggling shouldn't even be
+            // possible. Lets make it unambiguous."
+            //
+            // The other order was already impossible and needs no clause -
+            // leaving spends the seat that moving the rules requires
+            // (`msg_lobby_can_set_rules`), so a leaver simply has no checkbox.
+            // This is the order that WAS possible, and it was the worst of the
+            // three outcomes: the chain carried her new rule, so the table
+            // silently changed its rules on somebody who had walked away from
+            // it, and the only signal was a rotate that may or may not play.
+            //
+            // Enforced at the SENDER, deliberately. A receiver could suppress
+            // the rule instead, and that would be worse: her chain would say one
+            // thing and every screen reading it another, which is a fork rather
+            // than a rule. So the leave seals from the chain the draft STARTED
+            // from - the table as everyone else still has it - and her local
+            // toggle goes out with the draft it belonged to.
+            //
+            // The roster is still taken from `env`, which is correct either way:
+            // a draft carries at most one roster action and leaving IS it, so a
+            // preceding rules edit cannot have moved anybody.
+            let base = (surfaceStaged ? stagedBase : nil) ?? lob.payload
+            // Re-adopt so the LOCKED seed and the open capacity are resident -
+            // and, per the rule above, the rules the TABLE agreed.
+            _ = try await MessageKernel.shared.decode(payload: base, viewer: -1)
+            let parent = threadParent8(env)
             let payload = try await MessageKernel.shared.seal(
                 phase: 0, lastActorSeat: joins.count, gameId: gid,
                 parent8: parent, joins: joins)
@@ -1795,7 +2251,7 @@ private struct GameSurface: View {
             onAnnounceLeave(myName)
             await onSend(payload, joins.count, false)
             surfaceStaged = true
-            lobby = Lobby(env: newEnv, payload: payload)
+            lobby = Lobby(env: newEnv, payload: payload); lastShownChain = payload
         } catch {
             damaged = true
         }
@@ -1882,7 +2338,7 @@ private struct GameSurface: View {
             // hops left two suspension points in which any other decode could
             // repoint the resident game, which is the phantom-seal shape all
             // over again; see `MessageKernel.resealLobby`.
-            let parent = MessageTurnController.firstEight(hex: env.digest)
+            let parent = threadParent8(env)
             let payload = try await MessageKernel.shared.resealLobby(
                 lob.payload, passing: passing, actingSeat: me,
                 gameId: gid, parent8: parent, joins: env.joins)
@@ -1891,7 +2347,7 @@ private struct GameSurface: View {
             cache(seat: me, env: newEnv, payload: payload)
             await onSend(payload, me, false)
             surfaceStaged = true
-            lobby = Lobby(env: newEnv, payload: payload)
+            lobby = Lobby(env: newEnv, payload: payload); lastShownChain = payload
         } catch {
             damaged = true
         }
@@ -1932,12 +2388,12 @@ private struct GameSurface: View {
             .sorted { $0.seat < $1.seat }
         do {
             _ = try await MessageKernel.shared.decode(payload: lob.payload, viewer: -1)
-            let parent = MessageTurnController.firstEight(hex: env.digest)
+            let parent = threadParent8(env)
             let payload = try await MessageKernel.shared.seal(
                 phase: 0, lastActorSeat: free, gameId: gid, parent8: parent, joins: joins)
             let newEnv = try await MessageEnvelope.decode(payload: payload, viewer: -1)
             cache(seat: keepSeat, env: newEnv, payload: payload)
-            lobby = Lobby(env: newEnv, payload: payload)
+            lobby = Lobby(env: newEnv, payload: payload); lastShownChain = payload
         } catch {
             damaged = true
         }
@@ -1960,7 +2416,7 @@ private struct GameSurface: View {
         let env = lob.env
         guard let seat = lobbySeat(env), let gid = UInt64(env.gameId) else { return }
         do {
-            let parent = MessageTurnController.firstEight(hex: env.digest)
+            let parent = threadParent8(env)
             let payload = try await MessageKernel.shared.startFromLobby(
                 lobbyPayload: lob.payload, gameId: gid, actingSeat: seat,
                 parent8: parent, joins: env.joins)
@@ -1968,8 +2424,35 @@ private struct GameSurface: View {
             cache(seat: seat, env: newEnv, payload: payload)
             await onSend(payload, seat, false)
             surfaceStaged = true   // round-9: the LIVE handoff awaits Send (alsoStaged)
+            // MY OWN START FADES, exactly as an arriving one does. Owner: "our
+            // own start (when possible) should fade." Before this the lobby was
+            // simply gone in the frame the board appeared, which is the same cut
+            // the 1.1(56) report was about - it was only ever noticed from the
+            // receiving side because that is the side a human sits and watches.
+            //
+            // THE DURATION IS THE KERNEL'S, and so is the decision that there is
+            // a fade at all: the plan is asked over my own two chains (the lobby
+            // on screen, the LIVE handoff I just sealed) exactly as it is asked
+            // over a text's, so there is one answer to "what does a lobby giving
+            // way to a board look like" rather than one per direction. A plan
+            // that comes back without a fade - a kernel that stops calling this
+            // a transition - simply swaps, as it always did.
+            let plan = await MessageKernel.shared.surfacePlan(showing: lob.payload,
+                                                              arriving: payload)
+            let fade = plan.beats.last.flatMap { $0.transition == .fade ? $0 : nil }
+            if fade != nil {
+                arrivalStill = ArrivalStill(env: env, passing: env.passingAllowed,
+                                            controls: env)
+                stillFade = 1
+            }
             controller = MessageTurnController(parentPayload: payload, parent: newEnv, mySeat: seat)
             lobby = nil
+            if let fade, fade.duration > 0 {
+                withAnimation(.easeInOut(duration: fade.duration)) { stillFade = 0 }
+                try? await Task.sleep(nanoseconds: UInt64(fade.duration * 1_000_000_000))
+                arrivalStill = nil
+                stillFade = 1
+            }
         } catch {
             damaged = true
         }
@@ -1990,7 +2473,7 @@ private struct GameSurface: View {
         if env.phase == 0 {
             controller = nil
             noteRulesBaseline(env)
-            lobby = Lobby(env: env, payload: winner)
+            lobby = Lobby(env: env, payload: winner); lastShownChain = winner
             return
         }
         // Round-9 #5: is this the chain THIS DEVICE just pressed Send on? The
@@ -1999,6 +2482,7 @@ private struct GameSurface: View {
         // REPLAYED the move I had just watched myself play. One-shot: consumed
         // (cleared) whether it matches or not, so a stale marker can never
         // silence a later genuine replay.
+        lastShownChain = winner
         let justSent = MessageGameStore.shared.consumeJustSent(matching: winner)
         // ROUND 20: is this bubble the latest this device has seen of this game,
         // or a branch off something older? Asked BEFORE any early return below,
@@ -2531,18 +3015,33 @@ public enum LobbyControls {
     /// (capacity 2, full the moment both are in) the changer could otherwise
     /// flip the rules and start in the same breath, and their opponent would
     /// first learn of it from a board that will not let them pass.
+    ///
+    /// THE RULE ITSELF IS THE KERNEL'S (msg_wire.c `msg_lobby_offered`), and has
+    /// been since the beats work: this enum is a forwarder that maps the kernel's
+    /// answer onto its own cases. It kept its shape - and every argument label,
+    /// including `iSentTheInvite`, whose round-4 name outlived what it gates -
+    /// because `Round4Tests` and `MessageLobbyTests` bind them, and because a
+    /// SwiftUI `switch` wants an enum rather than an Int.
+    ///
+    /// Moving the decision down was the owner's standing test, "can it be done in
+    /// C? If yes, do so", and it bought something concrete: the whole scenario
+    /// table - every legal lobby text and every impossible one, in a 1:1 and in a
+    /// group - is now asserted in C alongside the beats each one produces
+    /// (c/tests/anim_plan_test.c), which is not expressible while the rule and
+    /// the beats live in different languages.
     public static func offered(mySeat: Int?, joined: Int, capacity: Int,
                                iSentTheInvite: Bool = false,
                                iChangedTheRules: Bool = false) -> LobbyControls {
-        if mySeat != nil {
-            if joined >= 2 {
-                if iChangedTheRules { return .waiting }
-                if iSentTheInvite && joined < capacity { return .waiting }
-                return .start
-            }
-            return iSentTheInvite ? .waiting : .invite
+        switch GateWire.lobbyOffered(mySeat: mySeat ?? GateWire.noSeat,
+                                     joined: joined, capacity: capacity,
+                                     iSentTheNewest: iSentTheInvite,
+                                     iChangedTheRules: iChangedTheRules) {
+        case GateWire.lobbyStart:  return .start
+        case GateWire.lobbyInvite: return .invite
+        case GateWire.lobbyJoin:   return .join
+        case GateWire.lobbyFull:   return .full
+        default:                   return .waiting
         }
-        return joined < capacity ? .join : .full
     }
 
     /// Did THIS device change the rules on the lobby it is showing?
@@ -2559,8 +3058,7 @@ public enum LobbyControls {
     /// rather than by a memory of a tap, so it survives the extension being
     /// closed and reopened mid-lobby, which a flag would not.
     public static func rulesChanged(baseline: Bool?, current: Bool, mine: Bool) -> Bool {
-        guard mine, let baseline else { return false }
-        return baseline != current
+        GateWire.lobbyRulesChanged(baseline: baseline, current: current, mine: mine)
     }
 
     /// May I LEAVE this lobby? A seated player may, once somebody else is
@@ -2579,7 +3077,18 @@ public enum LobbyControls {
     /// bubble to leave INTO. A lone creator's exit is New game, which replaces
     /// the invite outright.
     public static func canExit(mySeat: Int?, joined: Int) -> Bool {
-        mySeat != nil && joined >= 2
+        GateWire.lobbyCanExit(mySeat: mySeat ?? GateWire.noSeat, joined: joined)
+    }
+
+    /// May I move the passing checkbox? Only from a seat - so a spectator sees
+    /// the rules and cannot change them, and a player who has just left is a
+    /// spectator again. The owner, on the leaver: "as soon as they leave, the
+    /// extension view should be as if they haven't joined, and only show the
+    /// join button." Both halves of that fall out of the kernel without a
+    /// leaver-shaped state anywhere: the seat is gone, so this is false and
+    /// `offered` returns `.join`.
+    public static func canSetRules(mySeat: Int?) -> Bool {
+        GateWire.lobbyCanSetRules(mySeat: mySeat ?? GateWire.noSeat)
     }
 }
 
@@ -2610,6 +3119,22 @@ private struct LobbyView: View {
     /// Testing-only (MessageDebugFlags.soloSeats): seat a puppet player from
     /// this device. nil in every shipping build — see `soloControls`.
     var onAddSoloSeat: (() -> Void)?
+    /// A BEAT'S STILL (1.1(56)): this lobby is not the live one, it is one beat
+    /// of an arriving stream held on screen while the human reads it, so it
+    /// shows the rule THAT BEAT carries rather than the chain's. Everything else
+    /// is drawn exactly as the live lobby draws it — a beat is a picture of a
+    /// state the game really was in, and half a lobby is not. What keeps it from
+    /// being acted on is `allowsHitTesting(false)` on the overlay, one layer up.
+    /// nil is the ordinary lobby.
+    var stillPassing: Bool?
+    /// WHICH LOBBY THE CONTROLS ANSWER TO, when that is not this one. A beat
+    /// whose stream is about to dissolve the lobby draws the roster it carries
+    /// but the buttons the human already had - see `SurfacePlan.Controls` and
+    /// anim_plan.h. nil everywhere else, including in the live lobby.
+    var controlsEnv: MessageEnvelope?
+    /// Somebody ELSE moved the checkbox and the plan says to show it turning.
+    /// Threaded straight through to `FCheckbox.Turn`, which has the reasoning.
+    var rulesTurn: FCheckbox.Turn?
 
     /// The joiner's editable name (B3): compact can't host a field, so this is the
     /// place a joiner names themselves before claiming a seat. Seeded from the
@@ -2655,20 +3180,26 @@ private struct LobbyView: View {
          onInvite: @escaping () -> Void,
          onSetPassing: @escaping (Bool) -> Void = { _ in },
          passingBaseline: Bool? = nil,
-         onAddSoloSeat: (() -> Void)? = nil) {
+         onAddSoloSeat: (() -> Void)? = nil,
+         stillPassing: Bool? = nil,
+         controlsEnv: MessageEnvelope? = nil,
+         rulesTurn: FCheckbox.Turn? = nil) {
         self.env = env; self.mySeat = mySeat
         self.onJoin = onJoin; self.onStart = onStart; self.onExit = onExit
         self.onInvite = onInvite
         self.onSetPassing = onSetPassing
         self.passingBaseline = passingBaseline
         self.onAddSoloSeat = onAddSoloSeat
+        self.stillPassing = stillPassing
+        self.controlsEnv = controlsEnv
+        self.rulesTurn = rulesTurn
         // Already normalised by MessageGameStore.nicknamePrefill.
         _nickname = State(initialValue: nickname)
     }
 
     /// What the box should be DRAWN as: my outstanding tap if there is one, the
     /// chain's answer otherwise.
-    private var passingShown: Bool { passingWish ?? env.passingAllowed }
+    private var passingShown: Bool { stillPassing ?? passingWish ?? env.passingAllowed }
 
     /// Have I moved the checkbox on the bubble now at the head of this chain?
     ///
@@ -2736,6 +3267,21 @@ private struct LobbyView: View {
             // legitimately be offering "waiting" at the same moment solo play
             // wants to offer Start, and two contradictory controls on one
             // screen is worse than either. See `soloControls`.
+            // A STILL DRAWS THE CONTROLS TOO (1.1(56), owner: "why does 'start
+            // playing' become disabled for Alex temporarily?").
+            //
+            // The first cut of the still rendered no controls at all, reasoning
+            // that a beat is not a thing anyone may act on. That is true and it
+            // is handled a layer up - the whole overlay is `allowsHitTesting(false)`
+            // - but drawing HALF a lobby is not a picture of any state the game
+            // was ever in. Vera joining makes the table startable; a beat that
+            // shows her name arriving while Start vanishes says the opposite of
+            // what just happened, and it read exactly as the owner described it,
+            // as the button going disabled and coming back.
+            //
+            // So the still is the whole lobby, as it stood at that beat, and the
+            // controls it shows are the ones that state really offers - Start
+            // included, because two people really are seated by then.
             if let onAddSoloSeat, soloSeatsEnabled {
                 soloControls(onAddSoloSeat)
             } else {
@@ -2762,12 +3308,17 @@ private struct LobbyView: View {
             // puts the whole of the optimism in the one view that draws the box.
             FCheckbox(FStrings.t("ios.lobby.passing"),
                       isOn: passingShown,
-                      enabled: mySeat != nil,
+                      // …and for the same reason the box is not dimmed in a
+                      // still: it is drawn as the state really had it. Nothing
+                      // in the overlay can be touched anyway.
+                      enabled: LobbyControls.canSetRules(mySeat: mySeat),
+                      turn: rulesTurn,
                       action: { on in
                           passingWish = on
                           onSetPassing(on)
                       })
                 .padding(.horizontal)
+            waitingNote
         }
         .frame(maxWidth: .infinity)
         .padding()
@@ -2829,16 +3380,53 @@ private struct LobbyView: View {
         }
     }
 
+    /// "Waiting for the others", AT THE FOOT OF THE LOBBY.
+    ///
+    /// It used to sit in the control slot, above the checkbox - and moving
+    /// between `.start` (one button row) and `.waiting` (a line of text PLUS a
+    /// button row) changed that slot's height, so everything below it jumped.
+    /// The owner hit it on his own rules toggle, which is exactly the move that
+    /// crosses between those two states: "on my own screen, when i hit
+    /// passing/non passing, it seems to completely rearrange the layout. the
+    /// checkbox itself moves down and up! Not ideal. Put 'waiting for others' at
+    /// the bottom so it stops fucking with the layout".
+    ///
+    /// Down here it costs nothing above it: the control slot is one button row
+    /// in every state that has a button, so the roster, the buttons and the
+    /// checkbox hold still and only the foot of the card grows.
+    ///
+    /// It answers the same question `standardControls` does, off the same
+    /// facts, rather than being handed a flag - one derivation, so the line and
+    /// the buttons can never disagree about which state this lobby is in.
+    @ViewBuilder
+    private var waitingNote: some View {
+        let c = controlsEnv ?? env
+        let offered = LobbyControls.offered(mySeat: mySeat, joined: c.joins.count,
+                                            capacity: c.nPlayers,
+                                            iSentTheInvite: c.lastActorSeat == mySeat,
+                                            iChangedTheRules: iChangedTheRules)
+        if offered == .waiting || offered == .invite {
+            Text(FStrings.t("ios.msg.waiting"))
+                .font(.footnote).onTableText()
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+        }
+    }
+
     @ViewBuilder
     private var standardControls: some View {
             // note 16: no "Waiting for players — N joined" line here any more —
             // the joined list above already says exactly that, and the owner's
             // read was "the lobby is too tight" for a second line saying the
             // same thing.
-            let canExit = LobbyControls.canExit(mySeat: mySeat, joined: env.joins.count)
-            switch LobbyControls.offered(mySeat: mySeat, joined: env.joins.count,
-                                         capacity: env.nPlayers,
-                                         iSentTheInvite: env.lastActorSeat == mySeat,
+            // `controls`, not `env`: a beat that is on its way to the board
+            // draws the buttons the human already had. Everywhere else the two
+            // are the same object.
+            let c = controlsEnv ?? env
+            let canExit = LobbyControls.canExit(mySeat: mySeat, joined: c.joins.count)
+            switch LobbyControls.offered(mySeat: mySeat, joined: c.joins.count,
+                                         capacity: c.nPlayers,
+                                         iSentTheInvite: c.lastActorSeat == mySeat,
                                          iChangedTheRules: iChangedTheRules) {
             case .start:
                 startExitRow(canExit: canExit)
@@ -2862,10 +3450,11 @@ private struct LobbyView: View {
                 // 1.0(17)): a rules change said so in its own words for a
                 // moment, and it read as an error message about something the
                 // player had just chosen on purpose.
-                Text(FStrings.t("ios.msg.waiting"))
-                    .font(.footnote).onTableText()
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
+                // THE LINE ITSELF IS NOT HERE ANY MORE - see `waitingNote`, at
+                // the foot of the lobby. Only the button stays in the control
+                // slot, so this branch is the same HEIGHT as `.start`'s (one
+                // button row either way) and moving between them no longer
+                // reflows everything under it.
                 if canExit {
                     FButton(FStrings.t("ios.msg.exitgame"), kind: .wood, action: onExit)
                 }
@@ -2883,8 +3472,6 @@ private struct LobbyView: View {
                     // bubble is still sitting in the compose field, so it comes
                     // back HERE and only here: re-stage the same WAITING chain
                     // so there is always a way to ask someone to join.
-                    Text(FStrings.t("ios.msg.waiting"))    // round-5 M10 / round-6 #17: see .waiting above
-                        .font(.footnote).onTableText()
                     FButton(FStrings.t("ios.msg.invite"), kind: .wood, action: onInvite)
             case .join:
                 // Same width as the buttons below (note 29) — both rely on the

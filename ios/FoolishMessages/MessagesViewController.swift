@@ -114,9 +114,113 @@ final class MessagesViewController: MSMessagesAppViewController {
         host?.view.backgroundColor = colour
     }
 
+    /// THE SELECTION MOVED UNDER US - the second way a message can reach this
+    /// extension, and the only one left after the host stopped using the first.
+    ///
+    /// THE BUG. The owner creates a lobby from the app drawer, sends it, and
+    /// leaves the drawer open. Eva joins. Her bubble is plainly in the transcript
+    /// and his roster never moves. His flight log records NOTHING - no `receive`,
+    /// and (since 1.1(62)) no `receive-dropped` either, so it is not ours to
+    /// drop. Expanding and collapsing the drawer by hand makes delivery resume,
+    /// which is why a live GAME never showed it: playing a move auto-collapses,
+    /// so the board is re-armed for free on every single move.
+    ///
+    /// WHAT IS ESTABLISHED, from disassembling Messages.framework rather than
+    /// guessing. `-[_MSMessageAppContext _didReceiveMessage:conversationState:]`
+    /// is a bare dispatch to main that updates the conversation and calls
+    /// `didReceiveMessage:conversation:`. There is no presentation-style, session
+    /// or selection check on the extension side at all. So the decision not to
+    /// deliver is the HOST's, its code is not on disk in the simulator runtime,
+    /// and there is no file:line here to find. Process suspension was my own
+    /// theory and it is wrong: XPC messages to a suspended process QUEUE and
+    /// deliver on resume, and that session demonstrably resumed twice - it
+    /// rendered the diagnostic panel while her join was already in the
+    /// transcript, and later ran `didResignActive` - with no receive ever
+    /// arriving. The host withheld it.
+    ///
+    /// WHY THIS SIGNAL EXISTS. `-[MSConversation _updateWithState:]` sets
+    /// `selectedMessage` from the host's `activeMessage` on every conversation
+    /// state it pushes, and fires willSelect/didSelect when it changes. And
+    /// 1.1(61) already PROVED on the owner's device that an arrival moves the
+    /// selection - that discovery is the whole reason `reload-is-arrival` exists,
+    /// because arrivals were turning into cold reloads onto the newly selected
+    /// bubble. So if the host pushes a state for her join while withholding the
+    /// receive, this fires and carries the same bytes.
+    ///
+    /// It is routed EXACTLY as `didReceive` routes one - same `isMine` gate, same
+    /// `incomingURL`, same token, same `present` - so everything downstream (Rule
+    /// P, the arrival plan, the beats, the `arrivalTaken` dedupe) applies
+    /// unchanged and this cannot become a second, divergent adoption path.
+    ///
+    /// AND IT MUST NOT FIRE FOR A TAP. A human tapping a bubble is a COLD OPEN,
+    /// which the owner ruled paints rather than animates ("If you open a lobby
+    /// bubble, it should just open the state of that message with no
+    /// animations"). A tap arrives as a fresh activation, so `freshlyActive`
+    /// stands this down for the first selection after one and the ordinary
+    /// willBecomeActive -> present path handles it as it always has. Only a
+    /// selection that moves while we are ALREADY active and settled is treated as
+    /// an arrival, because that is the only way it can be one.
+    ///
+    /// SETTLED SINCE: for the create-from-drawer flow this is INERT, and that is
+    /// now a fact rather than the open question it was written as. 1.1(65)
+    /// shipped it, the owner reproduced, and the log carried no `select` and no
+    /// `select-dropped` - the host pushes no conversation state either, because
+    /// the browser is bound to no datasource at all (see the block in
+    /// `didStartSending`, which has the full call chain).
+    ///
+    /// KEPT ANYWAY, and not out of sentiment. Where the browser IS bound, the
+    /// host moves `activeMessage` on the same replacement that fires
+    /// `didReceive`, so this is a second, independent route to an arrival we
+    /// would otherwise see once - and `arrivalTaken` in the surface makes a
+    /// double delivery free. It costs one guarded branch, it cannot fire for a
+    /// tap (`freshlyActive`), and if a future iOS pushes state without a receive
+    /// it is already here.
+    override func didSelect(_ message: MSMessage, conversation: MSConversation) {
+        super.didSelect(message, conversation: conversation)
+        let payload = Self.payload(of: message)
+        if freshlyActive {
+            FlightRecorder.note("select", "\(payload?.count ?? -1)b on a fresh activation - not an arrival")
+            return
+        }
+        if StagedBubbleRouting.isMine(payload, pendingStage: pendingStage?.payload,
+                                      lastSentPayload: lastSentPayload) {
+            FlightRecorder.note("select-dropped", "isMine")
+            return
+        }
+        FlightRecorder.note("select", "\(payload?.count ?? -1)b - routing as an arrival")
+        startingNewGame = false
+        freshSession = false
+        incomingURL = message.url
+        incomingToken += 1
+        present(conversation, style: presentationStyle)
+    }
+
+    /// When this activation began. A tap that launches or re-activates the
+    /// extension brings its own selection WITH it, and that is a cold open, not
+    /// an arrival - so a selection landing in the moments right after becoming
+    /// active is the tap's own, and is left to the ordinary path.
+    ///
+    /// A timestamp rather than a flag, because the flag has nowhere honest to be
+    /// cleared: `willBecomeActive` calls `present` itself, so clearing it there
+    /// clears it before any selection could be weighed against it, and clearing
+    /// it on a timer needs a token to survive a rapid re-activation. A window is
+    /// the thing actually being expressed, so it is expressed directly.
+    ///
+    /// Two seconds is generous against a slow launch and far short of the
+    /// minutes an arrival takes; the failing report had 153 seconds between the
+    /// send and the join.
+    private var becameActiveAt: Date?
+    private static let activationSettles: TimeInterval = 2
+    private var freshlyActive: Bool {
+        guard let t = becameActiveAt else { return false }
+        return Date().timeIntervalSince(t) < Self.activationSettles
+    }
+
     override func willBecomeActive(with conversation: MSConversation) {
         super.willBecomeActive(with: conversation)
         FlightRecorder.note("active", "\(conversation.remoteParticipantIdentifiers.count + 1)p chat")
+        // A FRESH ACTIVATION OWNS ITS SELECTION. See `didSelect`.
+        becameActiveAt = Date()
         // A NEW ACTIVATION IS A NEW AUDIENCE. Any just-sent marker still lying
         // about belongs to a session that has ended - the player closed the
         // drawer and came back - and a reopen they chose is a request to watch
@@ -127,6 +231,9 @@ final class MessagesViewController: MSMessagesAppViewController {
             FlightRecorder.note("quiet-drop", "a new activation replays the bubble")
         }
         present(conversation, style: presentationStyle)
+#if RIG_ARRIVE
+        rigWatchForArrivals()
+#endif
     }
 
     /// The extension is going away in an orderly fashion. This is the goodbye
@@ -173,7 +280,19 @@ final class MessagesViewController: MSMessagesAppViewController {
         // See StagedBubbleRouting.isMine.
         if StagedBubbleRouting.isMine(Self.payload(of: message),
                                       pendingStage: pendingStage?.payload,
-                                      lastSentPayload: lastSentPayload) { return }
+                                      lastSentPayload: lastSentPayload) {
+            // RECORDED, because this return is INVISIBLE and sits above the
+            // `receive` note. The owner's first-bubble report - a join landing on
+            // a lobby he had just created, with the extension open, and nothing
+            // happening - produced a flight log with no `receive` in it at all,
+            // and that is consistent with two completely different worlds: iOS
+            // never called us, or we called it our own and dropped it here. One
+            // is a host limitation with no fix inside the extension; the other is
+            // our bug. A blind early return cannot tell them apart, and guessing
+            // between them has already cost several builds.
+            FlightRecorder.note("receive-dropped", "isMine")
+            return
+        }
         startingNewGame = false
         freshSession = false
         FlightRecorder.note("receive")
@@ -182,10 +301,121 @@ final class MessagesViewController: MSMessagesAppViewController {
         present(conversation, style: presentationStyle)
     }
 
+#if RIG_ARRIVE
+    /// THE FILM DOOR - 1.1(56), and it is compiled by nothing that ships.
+    ///
+    /// The five arrival cases have to be filmed in REAL Messages, not the
+    /// harness (owner: "this is the harness and the 'add debug player' build.
+    /// I'd like for you to get film from the emulator"), and the simulator has
+    /// no second device: it cannot deliver a bubble this device did not seal, so
+    /// `didReceive` can never fire with somebody else's chain there. Everything
+    /// downstream of that one fact is the shipping path and is what the film
+    /// proves - `present`, `StagedBubbleRouting`, `MessagesRootView`, the plan,
+    /// the beats. Only the door the bytes come through is the rig's.
+    ///
+    /// `RIG_ARRIVE` is set by ONE xcodebuild invocation (the film script) and by
+    /// no configuration in project.yml, so this is absent from Debug, Release
+    /// and the App Store build alike - which is also why the shoot can be a
+    /// RELEASE build with no "Add player (testing)" on the lobby.
+    ///
+    /// A file rather than a URL scheme or a socket: `dev.fatboard` already
+    /// establishes the App Group as where this repo's rig talks to the appex,
+    /// and a file can be written from the shoot script with no app running.
+    private var rigArriveTimer: Timer?
+
+    /// Seal the text Vera would have sent, off the chain the surface is REALLY
+    /// showing, and thread it in through `didReceive`'s own lines.
+    ///
+    /// The seal is the shipping kernel's (`MessageKernel.seal` /
+    /// `.resealLobby` / `.startFromLobby` - the same three calls `joinLobby`,
+    /// `setLobbyPassing` and `startGame` make), so the bytes that arrive are
+    /// bytes a second phone would really have produced. What the rig supplies
+    /// is only the fact that a second phone exists.
+    @MainActor
+    private func rigArrive(_ kind: String) async {
+        // The chain the surface is showing. `lastPayloadURL` is it once a bubble
+        // has been opened; a lobby this device just CREATED and sent has none
+        // (StagedBubbleRouting pins the presentation to nil through a New game),
+        // and there the chain is the one that went out.
+        // Three sources, in the order they stop being true. `lastPayloadURL` is
+        // the chain once a bubble has been opened. A lobby this device just
+        // CREATED and sent has none (StagedBubbleRouting pins the presentation
+        // to nil through a New game), so the chain is the one that went out.
+        // And `lastSentPayload` is itself CLEARED the moment the presentation
+        // moves (`route.clearMarkers`), which is what left the first attempt at
+        // this door reporting "no lobby on screen" - so the last resort is the
+        // conversation's own selected bubble, which for a lobby this device
+        // inserted is that same lobby and is never nil.
+        guard let conversation = activeConversation,
+              let showing = lastPayloadURL.flatMap({ try? MessageEnvelope.payloadBytes(url: $0) })
+                            ?? lastSentPayload
+                            ?? conversation.selectedMessage?.url
+                                .flatMap({ try? MessageEnvelope.payloadBytes(url: $0) }),
+              let env = try? await MessageEnvelope.decode(payload: showing, viewer: -1),
+              let gid = UInt64(env.gameId) else {
+            FlightRecorder.note("rig", "no lobby on screen for \(kind)")
+            return
+        }
+        let parent = MessageTurnController.firstEight(hex: env.digest)
+        let seated = env.joins.sorted { $0.seat < $1.seat }
+        let joins = kind.hasPrefix("join")
+            ? (seated + [MessageJoin(seat: seated.count, name: "Vera")]).sorted { $0.seat < $1.seat }
+            : seated
+        let after = kind == "leave" ? Array(seated.dropLast()) : joins
+        guard !after.isEmpty else { return }
+        let bytes: Data?
+        do {
+            if kind.hasSuffix("start") {
+                bytes = try await MessageKernel.shared.startFromLobby(
+                    lobbyPayload: showing, gameId: gid, actingSeat: after.count - 1,
+                    parent8: parent, joins: after)
+            } else if kind.hasSuffix("rules") {
+                bytes = try await MessageKernel.shared.resealLobby(
+                    showing, passing: !env.passingAllowed, actingSeat: after.count - 1,
+                    gameId: gid, parent8: parent, joins: after)
+            } else {
+                _ = try await MessageKernel.shared.decode(payload: showing, viewer: -1)
+                bytes = try await MessageKernel.shared.seal(
+                    phase: 0, lastActorSeat: after.count - 1, gameId: gid,
+                    parent8: parent, joins: after)
+            }
+        } catch {
+            FlightRecorder.note("rig", "\(kind) would not seal: \(error)")
+            return
+        }
+        guard let bytes else { return }
+        // EXACTLY what `didReceive` does with a bubble that is not mine.
+        FlightRecorder.note("rig", "\(kind) arrives, \(bytes.count)b")
+        startingNewGame = false
+        freshSession = false
+        FlightRecorder.note("receive")
+        incomingURL = MessageEnvelope.link(payload: bytes)
+        incomingToken += 1
+        present(conversation, style: presentationStyle)
+    }
+
+    private func rigWatchForArrivals() {
+        guard rigArriveTimer == nil else { return }
+        rigArriveTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
+            guard let self,
+                  let dir = FileManager.default.containerURL(
+                      forSecurityApplicationGroupIdentifier: "group.cards.foolish.msg") else { return }
+            let file = dir.appendingPathComponent("dev.arrive")
+            guard let kind = try? String(contentsOf: file, encoding: .utf8) else { return }
+            try? FileManager.default.removeItem(at: file)
+            Task { await self.rigArrive(kind.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        }
+    }
+#endif
+
     /// The user tapped Send on our staged bubble: our chain is now the thread's,
     /// so commit it to the cache (§7.6). This is the ONLY place the cache learns
     /// a chain was actually sent — insert alone is not a commit.
     override func didStartSending(_ message: MSMessage, conversation: MSConversation) {
+        // Captured BEFORE the `present` below, which rewrites `lastPayloadURL`.
+        // The dismiss itself happens at the END of this method, once the send is
+        // fully recorded - see the block there for why it happens at all.
+        let drawerIsUnbound = lastPayloadURL == nil
         startingNewGame = false
         freshSession = false
         // ROUND 12 #11: the chain being sent comes from the MESSAGE Messages
@@ -235,7 +465,120 @@ final class MessagesViewController: MSMessagesAppViewController {
         // is what clears the Undo button and the send hint - written as
         // belt-and-braces for the case where Messages kept the drawer open
         // anyway, and now the case that always happens.
-        if presentationStyle != .compact { dismiss() }
+        if presentationStyle != .compact {
+            dismiss()
+        } else if drawerIsUnbound {
+            // THE FIRST BUBBLE OF A GAME CLOSES THE DRAWER, AND ONLY THAT ONE.
+            //
+            // This is a concession, it is the owner's, and it is made against his own
+            // standing preference ("We want to keep it open as much as possible", and
+            // round 16's decision to keep it open at all). It is here because the
+            // alternative is a lobby that can never update, and the whole of that
+            // reasoning is written down below so nobody removes this line on the
+            // reasonable-sounding grounds that it looks like a papercut.
+            //
+            // ── WHAT BREAKS ──────────────────────────────────────────────────────
+            // `+ > Foolish > New game > create > Send`, drawer left open. The other
+            // player joins. Their bubble is visibly in the transcript and this
+            // extension is never told: no `didReceive`, and (1.1(65) added the
+            // override to check) no `didSelect` either. Nothing arrives at all.
+            //
+            // ── WHY, FROM THE HOST BINARIES ──────────────────────────────────────
+            // Read out of the iOS 26.3 simulator runtime's
+            // MSMessageExtensionBalloonPlugin.bundle, ChatKit and
+            // iMessageApps.framework, and confirmed against the DEVICE's own ChatKit
+            // (iOS DeviceSupport/iPhone16,2 26.5.2) - not inferred from behaviour.
+            //
+            // Delivery is not a broadcast. The host's browser view controller holds a
+            // MESSAGE DATASOURCE, and that binding IS the wire: when a message
+            // arrives, the host replaces the payload inside the datasource an
+            // extension is bound to, and the replacement is what fires didReceive.
+            // Exactly two host paths send `_didReceiveMessage:conversationState:`:
+            //
+            //   PATH A, and it is DEAD on iOS 26:
+            //     -[CKChatInputController _handleChatItemDidChange:]
+            //       -> notifyBrowserViewControllerOfMatchingNewMessages:
+            //          requires browserSwitcher.currentViewController to be us.
+            //     `currentViewController` is restored only by
+            //     browserTransitionCoordinator:expandedStateDidChange:withReason:,
+            //     reachable only from -[CKBrowserSwitcherViewController
+            //     setExpanded:withReason:] - which has ZERO call sites in ChatKit or
+            //     iMessageApps under the app-card model. Which is why not even our
+            //     own echo arrives.
+            //
+            //   PATH B, the live one:
+            //     -[MSMessageExtensionBrowserViewController setBalloonPluginDataSource:]
+            //       sets dataSource.delegate = self
+            //     -> a same-MSSession message replaces that datasource's payload
+            //     -> datasourcePayloadDidChange:updateFlags:  (flags & 0x13)
+            //     -> _didReceiveMessage:, activeMessage = the new message.
+            //
+            // A DRAWER LAUNCH BINDS NOTHING: the browser is created as
+            // viewControllerForPluginIdentifier:dataSource:nil - compose mode, not
+            // viewing-a-thread mode - and SENDING does not bind it either
+            // (didStartSendingPluginPayload: forwards _didStartSendingMessage: and
+            // releases the load request, and that is all). So the extension sits
+            // running, visible, and the delegate of no datasource. There is nobody
+            // for the host to notify. It is not policy; there is no wire.
+            //
+            // The only host paths that bind a datasource to an ALREADY-PRESENTED card
+            // are showBrowserForPlugin:dataSource:style: -> overseer
+            // updateCurrentBrowserWithDataSource:, reached from
+            // transcriptCollectionViewController:balloonView:tappedForChatItem: -
+            // i.e. A HUMAN TAPPING ONE OF OUR BUBBLES - or a transcript live view's
+            // own request. That is why a live GAME never shows this bug: you always
+            // arrive by tapping, so you are bound before the first move.
+            //
+            // ── WHY WE CANNOT ASK FOR IT ─────────────────────────────────────────
+            // No public extension->host call binds a datasource. Not `insert`, `send`,
+            // `dismiss`, `extensionContext.open`, and not requestPresentationStyle at
+            // ANY style. 1.1(66)/(67) tried the same-style request on the theory that
+            // the host would do its re-presentation bookkeeping with nothing to
+            // animate; it does not:
+            //     -[MSMessageExtensionBrowserViewController _requestPresentationStyle:]
+            //       -> main-queue block
+            //       -> -[CKChatInputController requestPresentationStyleExpanded:forPlugin:]
+            //       -> performSelector:afterDelay: _deferredRequestPresentationStyleExpanded:
+            //       -> CKAppCardPresentationOverseer.requestPresentationStyle(_:animated:)
+            //     which compares the requested detent with
+            //     sheetPresentationController.selectedDetentIdentifier and logs
+            //     "App requested a presentation style change but is already in that
+            //      state. Doing nothing."
+            // That string is in the device's own ChatKit. The call is removed here.
+            //
+            // A detent DRAG does not bind either - notifyBrowserOfTransitionStarting/
+            // Ending only sends viewWill/DidTransitionTo…Presentation. An earlier
+            // reading of the owner's logs concluded "a presentation transition
+            // re-arms delivery"; that was wrong. What re-armed his working run was
+            // TAPPING HIS OWN LOBBY BUBBLE while the card was open, which reuses the
+            // same browser (hence no resign/activate pair in the log) and binds the
+            // datasource. The `style expanded` line was the consequence of that tap,
+            // not its cause.
+            //
+            // ── SO: DISMISS, AND ONLY HERE ───────────────────────────────────────
+            // Closing the drawer puts the human back in the transcript, where their
+            // next natural action - tapping the bubble - is precisely the thing that
+            // binds the datasource. Every message after that arrives normally, which
+            // satisfies "create a game and finish it without closing the drawer"
+            // from that one tap onward.
+            //
+            // `lastPayloadURL == nil` is "nothing is open", i.e. this is a drawer
+            // launch that has never opened a bubble - the create flow and nothing
+            // else. It is the value the diagnostic panel prints as
+            // `Last message: no message open`, so the scope can be confirmed from a
+            // screenshot without reading code, and it is true in every failing log
+            // the owner captured and false in every working one. Owner: "ONLY the
+            // first send, DO NOT DISMISS AUTOMATICALLY AFTER ANY OTHER SEND other
+            // than the create game bubble."
+            //
+            // NOT scoped on `startingNewGame`, which is the obvious choice and is
+            // wrong: that flag is only set when a human taps the New game BUTTON, and
+            // a drawer launch into a thread with no game routes straight to setup, so
+            // nobody calls onNewGame and it is false for the whole create flow. 66
+            // was scoped on it and never fired once.
+            FlightRecorder.note("dismiss", "first bubble of a game - the drawer cannot be bound")
+            dismiss()
+        }
     }
 
     /// The user deleted the staged bubble before sending: drop the pending record

@@ -670,6 +670,119 @@ int msg_chain_key(const unsigned char *envelope, int len, MsgChainKey *out);
 // <0: `a` is preferred. >0: `b`. 0: the same chain (identical digests).
 int msg_rule_p(const MsgChainKey *a, const MsgChainKey *b);
 
+// ---------- what an ARRIVING chain does to an open surface ----------------
+//
+// THE REPORT, 1.1(56), owner: "LOBBY DID NOT UPDATE LIVE! I was in lobby, got a
+// start game text, and it was stuck on lobby! I think it should fade from lobby
+// to the game in this case." And then, on what "update" has to mean:
+//
+//   "if i send a lobby text, and someone gets it and joins and starts game in a
+//    single text (totally legal action), it should snap to the state where
+//    there are two or whatever people in the lobby, wait a bit, then fade. If
+//    they only join, and send a join text, just snap to the state where they
+//    are in the lobby and do nothing else."
+//
+//   "if they only send a text that changes the passing/nonpassing while
+//    remaining in the lobby, then just snap to that. But if they join, then
+//    change the passing/nonpassing, ... there should be a snap to the state
+//    where they are in the game, then a pause, then a snap to the state where
+//    the passing/nonpassing checkbox changes"
+//
+// ONE ARRIVING BUBBLE CAN CARRY SEVERAL ACTIONS. `conversation.insert` replaces
+// an unsent draft rather than queueing a second one, so a player who taps Join,
+// then the rules checkbox, then Start sends ONE envelope - and every device that
+// was watching the lobby has to get from what it is showing to that envelope.
+// Jumping to the end state is what the report is about: the roster the human
+// never saw change is the one they were sitting there waiting for.
+//
+// WHY THE ORDER IS DERIVABLE AT ALL, given that the intermediate reseals were
+// never sent. A lobby envelope states the whole of the lobby - roster, rules,
+// phase - so the actions between two of them are exactly their differences, and
+// the ORDER is fixed by the lobby itself rather than guessed: a seat is always
+// claimed lowest-free-first (`joinLobby`), so the arriving roster's new seats
+// are its own tail in seat order; the rules may be moved only by somebody who
+// holds a seat, so a rule change is never earlier than the join that seated
+// them; and Start deals the roster it is handed, so it is always last. There is
+// nothing here a device could get wrong on its own that another device would
+// get right - which is why it is a kernel rule and not a view's opinion.
+//
+// THE DIFF IS AGAINST WHAT IS ON SCREEN, NOT AGAINST THE PREVIOUS MESSAGE, and
+// that is a ruling rather than a consequence. The owner, asked directly what
+// should happen when the surface has fallen behind - the extension was closed
+// while two texts arrived, or an older lobby is the one being looked at, or two
+// bubbles landed together and only the newer was adopted - so that ONE arrival
+// spans a join AND a start: "OK yeah that's the correct behavior."
+//
+// So a two-message gap replays as one sequence, and the frame the human never
+// saw (the roster with the new player still in a lobby) is shown to them on the
+// way past. That is the whole point: the job is to get them from what they are
+// looking at to what is true, not to narrate the transcript. Anyone reading
+// this later and assuming the diff is per-message will read that sequence as a
+// bug; it is not.
+//
+// The same reading makes the two no-op cases fall out, and both are intended: a
+// RE-SEND of the chain already on screen differs by nothing and animates
+// nothing, and so does a rule toggled off and back on across two texts while
+// nobody was looking - the net difference is zero, so there is nothing to show,
+// even though two bubbles arrived.
+//
+// This says WHAT CHANGED. `anim_surface_plan` (anim_plan.h) turns it into timed
+// beats; the split is the same one every other animation rule keeps, and it is
+// what lets msg_wire.c stay out of rules.wasm's animation-free build.
+// A COLD OPEN IS NOT A SEQUENCE, and this is where that is decided. Owner: "If
+// you open a lobby bubble, it should just open the state of that message with no
+// animations. It's only if you already have the lobby open that it should
+// snap/pause/rotate/fade." Three cases reach here looking alike and all three
+// must simply PAINT:
+//
+//   * nothing was on screen - `showing` is absent, and the caller has nothing
+//     to hand this function;
+//   * a DIFFERENT game's lobby was tapped while some lobby was showing - a
+//     switch, caught on the game id below;
+//   * the SAME lobby is re-opened after the extension was closed - the surface
+//     was gone, so there was nothing to be carried from; the extension reaches
+//     that through its cold load, which never asks for a plan at all.
+//
+// A sequence exists to carry a human from a state they were LOOKING AT to a
+// newer one. If they were not looking at it, the animation is a lie about
+// continuity. This narrows the stale-surface ruling above rather than
+// contradicting it: "open and behind" animates, "not open" does not.
+typedef struct {
+    // The chain on screen is a WAITING invite - i.e. the surface is a LOBBY and
+    // the beats below are about it. A board takes an arrival the way it always
+    // has (the live controller folds it in), so this is 0 there and the plan is
+    // empty.
+    int on_a_lobby;
+    // Who is at the table changed. A FLAG, not a count, and deliberately: the
+    // roster is drawn as ONE SNAP whether it moved by one seat or by three.
+    //
+    // For a single text that is also all it can be - a message comes from one
+    // participant, who seats themselves once or gets up. For a STALE surface it
+    // is a real choice: the diff spans every text the human missed, so two
+    // people may have sat down since they last looked, and this still says
+    // "snap the roster" once rather than walking them in one at a time. A
+    // sequence exists to carry somebody from what they were looking at to what
+    // is true, not to narrate a transcript they were not present for.
+    //
+    // Compared row by row and seat-ascending, not by size: a seat that changed
+    // hands is not the seat that was there, and a join plus a leave nets to the
+    // same count while being a different table.
+    int roster_moved;
+    // The passing rule before and after. Read through msg_pass_allowed, so a
+    // format that predates the rules byte reads as the passing game it was.
+    int passing_before, passing_after;
+    // The arriving chain is DEALT and the showing one is not - the lobby is
+    // giving way to a board.
+    int started;
+} MsgSurfaceDelta;
+
+// Fill `out` from the two envelopes. Cannot fail on CONTENT - two envelopes
+// always differ by something or by nothing, and "nothing" is a plan with no
+// beats in it - so this is a `void` with a null guard rather than a status: a
+// caller with nothing to show has nothing to handle either.
+void msg_surface_delta(const MsgEnvelope *showing, const MsgEnvelope *arriving,
+                       MsgSurfaceDelta *out);
+
 // ---------- Rule R: no legal move is silently lost ------------------------
 //
 // When a device adopts a chain that does not contain the move it staged, that
@@ -842,7 +955,6 @@ int msg_rematch_fool_seat(const MsgJoin *joins, int n,
 // turn with nothing folded.
 int msg_chain_is_ahead(int a_phase, int a_round, int a_turn,
                        int b_phase, int b_round, int b_turn);
-
 // A NICKNAME, JUDGED. `n_chars` is the trimmed name's character count and
 // `n_bytes` its UTF-8 byte count - both counted by the host, because trimming
 // and grapheme clustering are Unicode work a C kernel has no business doing;
@@ -920,6 +1032,136 @@ int msg_seat_resolve_in_lobby(const MsgJoin *joins, int n_joins,
                               int cached_seat, int sender_is_local, int n_players,
                               int last_actor_seat, int chat_is_dm,
                               const char *name, int name_len);
+
+// ---------- what the lobby OFFERS a viewer --------------------------------
+//
+// Five controls, and exactly one of them is the answer for any (seat, roster,
+// capacity, authorship) - which is the whole reason this is an enumeration and
+// not a chain of ifs. The shape it replaces had a state with NO control on it
+// at all (joined, but fewer than two players: no Start, no Join, nothing), and
+// a dead end is invisible in an if/else chain until somebody lands in it. Here
+// a test can walk every combination and assert there is always a way forward.
+//
+// WHY IN THE KERNEL. This lived in Swift (`LobbyControls`, MessagesRootView)
+// from round 4 until now, and it is the last body of GAME RULE left outside C:
+// who may start a lobby, who may not, and why, is not a fact about SwiftUI.
+// The owner's standing test - "can it be done in C? If yes, do so" - and the
+// immediate reason: the arrival beats (anim_plan.h) are asserted in C, and a
+// beat's controls cannot be asserted in C while the control rule is in Swift.
+// The Swift enum stays as a thin forwarder so its call sites and its own tests
+// keep working; the DECISION is here.
+#define MSG_LOBBY_START   1  // deal the game at this roster (Leave may sit beside it)
+#define MSG_LOBBY_INVITE  2  // I'm in, alone, and the newest bubble is not mine
+#define MSG_LOBBY_WAITING 3  // nothing to do but wait (Leave may still sit under it)
+#define MSG_LOBBY_JOIN    4  // I'm not in, and there is room
+#define MSG_LOBBY_FULL    5  // I'm not in, and there is no room
+
+// `my_seat` < 0 means NOT SEATED; every other argument is a plain count.
+//
+// `i_sent_the_newest`: is the newest bubble on this chain one I staged or sent
+// (`last_actor_seat == my_seat`)?
+//
+//   Round-4 note 1 withheld the invite button from whoever put the newest
+//   bubble there - offering it asks the human to send a second copy of the
+//   invite already in the thread, which is the state a creator lands in every
+//   single time.
+//
+//   Round-5 M9 extended the SAME check to Start, in the owner's words: "if you
+//   were the last to send one of those join texts, you can't send a start
+//   text... that will make it a bit more difficult to lock people out." So
+//   whoever is currently able to act is never the same person who could
+//   instead invite one more player in.
+//
+//   THE FULL-LOBBY EXEMPTION. A full lobby (`joined == capacity`) always offers
+//   Start to its last joiner. Nobody else could join instead, so withholding it
+//   there strands a full table with no way forward - and in a two-player DM it
+//   would force a pointless extra round trip into every single game. The joiner
+//   who fills the last seat and immediately starts IS the designed flow, not
+//   the lockout M9 guards against. (This exemption is what makes "Vera joins
+//   and starts in one text" reachable at all, and it is why that stream is a
+//   1:1 phenomenon: in a group the joiner is gated and cannot start.)
+//
+// `i_changed_the_rules`: the newest bubble is mine AND it moved the passing
+// checkbox (see msg_lobby_rules_changed). Owner: "whoever changes the checkbox
+// value cannot start the game, similar to how last joined cannot start the
+// game."
+//
+//   It is the M9 gate WITHOUT the full-lobby exemption, and the exemption's own
+//   reasoning is why. That exemption exists so a full lobby is never stranded;
+//   a rules change strands nothing - the reseal is sendable and whoever opens
+//   it can start at once - so the exemption has no work to do, while the thing
+//   it would allow is exactly what the rule forbids: in a two-player DM the
+//   changer could otherwise flip the rules and start in the same breath, and
+//   their opponent would first learn of it from a board that will not let them
+//   pass.
+int msg_lobby_offered(int my_seat, int joined, int capacity,
+                      int i_sent_the_newest, int i_changed_the_rules);
+
+// May I LEAVE? A seated player may, once somebody else is seated too.
+//
+// ORTHOGONAL to `msg_lobby_offered` on purpose rather than a sixth control:
+// Leave sits BESIDE Start and UNDER Waiting, and folding two independent
+// answers into one enum would need a case per combination. The owner's shape is
+// exactly this - "start game and the exit game buttons side by side WHEN BOTH
+// ARE POSSIBLE. Currently start game is not possible for the last player that
+// joined. Thus they can only exit."
+//
+// THE 2+ FLOOR IS THE WIRE'S, not a preference: a WAITING envelope must carry
+// at least one join (MSG_EJOINS), so the last player standing has no bubble to
+// leave INTO. A lone creator's exit is New game, which replaces the invite.
+int msg_lobby_can_exit(int my_seat, int joined);
+
+// May I move the passing checkbox? Only from a seat.
+//
+// A spectator SEES the box - the rules are as much "what game is this" as the
+// player list, and hiding them from the person deciding whether to join would
+// be the wrong half to keep - but cannot move it: a reseal has to be sent by
+// somebody who is at the table.
+//
+// Owner, on the leaver (A11): "a leaver should not be able to toggle. as soon
+// as they leave, the extension view should be as if they haven't joined, and
+// only show the join button." That falls out of this one line together with
+// `msg_lobby_offered`: leaving clears the seat, so the box goes dead and the
+// offered control becomes JOIN. There is no separate leaver state to keep.
+//
+// AND THE OTHER ORDER IS DECIDED TOO, which this line does NOT cover and which
+// the owner ruled on after seeing it: "if you toggle and leave, it's the same as
+// if you just left. No affect on toggle. Leaving then toggling shouldn't even be
+// possible. Lets make it unambiguous."
+//
+// One draft can hold both, because `conversation.insert` replaces rather than
+// queues - so a seated player could move the rules and then get up, and the one
+// bubble that went out carried her new rule. That is the worst of the three
+// possible outcomes: the table's rules changed on the say-so of somebody who had
+// just walked away from it, announced by a rotate that may not even play.
+//
+// So a leave carries the rules the TABLE agreed, and the local toggle dies with
+// the draft. It is enforced where the bubble is SEALED (GameSurface.leaveLobby)
+// and not on the reader, deliberately: suppressing it on arrival would leave her
+// chain saying one thing and every screen reading it another, which is a fork
+// rather than a rule.
+int msg_lobby_can_set_rules(int my_seat);
+
+// Did THIS device change the rules on the lobby it is showing? `have_baseline`
+// / `baseline` are the passing rule as of the last bubble somebody ELSE put on
+// this chain (have_baseline = 0 for a lobby this device created and nobody has
+// answered), `current` is what the lobby says now, `mine` is whether the newest
+// bubble is this device's.
+//
+// Asked this way, and not as an "I tapped the box" flag, for two reasons. It is
+// SELF-CANCELLING: a player who ticks the box and thinks better of it lands
+// back on the rules everyone else already has, and there is nothing left to
+// withhold Start for. And it is answered by the CHAIN rather than by a memory
+// of a tap, so it survives the extension being closed and reopened mid-lobby,
+// which a flag would not.
+int msg_lobby_rules_changed(int have_baseline, int baseline, int current, int mine);
+
+// The two above, read off a decoded envelope: capacity, roster and authorship
+// all come from `e`, so a caller supplies only what the WIRE cannot know - which
+// seat is mine, and the baseline this device has been carrying. `can_exit_out`
+// may be NULL. Returns MSG_LOBBY_*, or 0 if `e` is NULL.
+int msg_lobby_controls(const MsgEnvelope *e, int my_seat,
+                       int have_baseline, int baseline, int *can_exit_out);
 
 // ---------- the turn controller, as a transition function -------------------
 //

@@ -238,6 +238,26 @@ typedef struct {
     // through: a caller choosing between two tables must not treat the second
     // as a table.
     int paired;
+    // THE STOCK'S OTHER HALF: the flipped trump lying UNDER the deck, or
+    // CARD_NONE once a refill has dealt it out.
+    //
+    // Here for the same reason the row above it is, one corner of the board
+    // over, and it was missing for the same reason too. The deck count froze
+    // and the trump did not: a bout-ending `good` whose refill reaches PAST
+    // the deck hands the trump out, so the board that move commits has no
+    // flipped card at all - and a well drawing a frozen pile of four with
+    // nothing under it has hidden the trump in the place it still IS while it
+    // waits to fly from there. (Owner, 1.1(55): "if the flipped card would've
+    // been animated in the resulting animation, it DOES NOT SHOW at first in
+    // the pile BEFORE the deal animations play. The deck shows, but not the
+    // flipped card.") The badge is wrong through the same window for the same
+    // reason - it counts deck + trump.
+    //
+    // THE IDENTITY HAS TO TRAVEL, not just a flag. Once the trump is drawn the
+    // kernel keeps a stale card in g->flipped (state_put writes a canonical
+    // placeholder over it for exactly that reason - see view.c), so a caller
+    // told only "there was one" would draw a wrong face.
+    Card flipped;
 } AnimCounts;
 
 // One planned step: the event's identity plus its timing and the board counts
@@ -288,8 +308,11 @@ typedef struct {
     int         n_cards;
     int         mask_cards; // 1 => cards are viewer-masked backs (no identity);
                             //      excluded from the veil (they animate as backs)
-    int         has_counts; // 1 => deck/discard/hand are THIS step's own board
+    int         has_counts; // 1 => deck/discard/hand/flipped are THIS step's
+                            //      own board
     int         deck, discard;
+    Card        flipped;   // that board's flipped trump, CARD_NONE once it has
+                           // been dealt out. Read only when has_counts is 1.
     const int  *hand;      // n_players entries; NULL iff has_counts == 0
     // …AND THE ROW that board carried, same borrow, same layout as everywhere
     // else (2 bytes per battle). ANIM_NO_BOARD or 0 for a step that carries
@@ -307,9 +330,11 @@ int anim_step_duration_ms(int event_type);
 
 // ---- plan building --------------------------------------------------------
 // Build the timed plan for a decoded viewer sequence. `final_deck`,
-// `final_discard`, `final_hand` (length n_players) are the FINAL committed
-// board's counts - the state the platform renders immediately; the plan freezes
-// the DISPLAY back to the pre-sequence values and reveals forward per step.
+// `final_discard`, `final_flipped` and `final_hand` (length n_players) are the
+// FINAL committed board - the state the platform renders immediately; the plan
+// freezes the DISPLAY back to the pre-sequence values and reveals forward per
+// step. `final_flipped` is CARD_NONE when that board has no flipped trump left,
+// and is read ONLY on the boardless fallback below.
 //
 // THE FREEZE ANCHORS ON THE FIRST EVENT'S OWN BOARD AND UNDOES EXACTLY ONE
 // EVENT. events[0]'s snapshot IS the board one event in, so one undo reaches
@@ -327,6 +352,14 @@ int anim_step_duration_ms(int event_type);
 // fallback for a stream carrying no boards at all, which the packed evwire never
 // produces (every event carries one).
 //
+// THE FLIPPED TRUMP IS ADOPTED AND NEVER UNDONE, and that same sentence is why.
+// The one event the undo runs on is the first, and the first is never the refill
+// that deals the trump out - so the anchor board's own trump IS the pre-stream
+// trump and there is nothing to take back. Nor could it be taken back: an event
+// says how many cards it moved, never whether the last of them came from under
+// the deck rather than off the top of it, which is the same blind spot that
+// makes the n-undo walk read the deck one card high.
+//
 // Each step's POST counts are that step's OWN board, not a forward derivation
 // of it: committing the step's snapshot as its flight lands is what every client
 // actually does (iOS GameEvent.state, the web's updateGameState). A step with no
@@ -336,8 +369,8 @@ int anim_step_duration_ms(int event_type);
 // overflows) / ANIM_EBADARG (NULL out/final_hand, NULL events with n_events > 0,
 // n_players out of range).
 int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
-                    int final_deck, int final_discard, const int *final_hand,
-                    AnimPlan *out);
+                    int final_deck, int final_discard, Card final_flipped,
+                    const int *final_hand, AnimPlan *out);
 
 // ---- beats: the SHAPE a sequence plays in ---------------------------------
 //
@@ -1045,5 +1078,134 @@ int anim_finish_rows(const unsigned char *elimination, int n_elim,
 #define ANIM_CLAIM_HAND_OFF   2   // a role hand-off, which flies what it changes
 #define ANIM_CLAIM_BYSTANDER  3   // everybody else
 int anim_shown_ledger_allows(int claim, int sequencing);
+
+// ---- the SURFACE plan: how an open lobby takes an arriving chain ----------
+//
+// 1.1(56), owner: "LOBBY DID NOT UPDATE LIVE! ... I think it should fade from
+// lobby to the game in this case", and then on what that means when one text
+// carries more than one action:
+//
+//   "it should snap to the state where there are two or whatever people in the
+//    lobby, wait a bit, then fade. If they only join, and send a join text,
+//    just snap to the state where they are in the lobby and do nothing else."
+//   "if they only send a text that changes the passing/nonpassing while
+//    remaining in the lobby, then just snap to that. But if they join, then
+//    change the passing/nonpassing ... a snap to the state where they are in
+//    the game, then a pause, then a snap to the state where the
+//    passing/nonpassing checkbox changes"
+//
+// ONE LOOP, NOT FIVE BRANCHES. Every action the arriving envelope carries is its
+// own beat, laid end to end with a rest between them, and the only thing that
+// varies per beat is which idiom the platform renders it with:
+//
+//   ANIM_SURFACE_ROSTER   somebody sat down (or the roster changed in a way
+//                         that cannot be decomposed)          -> a SNAP
+//   ANIM_SURFACE_RULES    the table's rules moved              -> the checkbox TURNS
+//   ANIM_SURFACE_BOARD    the game is dealt, the lobby ends    -> a FADE
+//
+// The ORDER is not a choice this file makes - it is what a lobby makes possible.
+// A message comes from ONE participant: they may seat themselves (or get up)
+// once, they must hold a seat to move the rules, and Start deals the roster it
+// is handed. So a roster action is never later than a rule change and a start is
+// never anything but last. ONE TEXT can therefore carry five streams, which are
+// the five the owner enumerated: roster; rules; roster then rules; roster then
+// start; start. Note that TWO of them end in the LOBBY - a stream that begins
+// with a roster snap is not on its way to the table, and the plan says so by
+// simply having no BOARD beat.
+//
+// THERE IS A SIXTH, and it is reachable only from a STALE SURFACE: roster, then
+// rules, then start. No single text can be it, because whoever moves the rules
+// is barred from starting (msg_wire.h `msg_lobby_offered`) - but a surface that
+// was open and fell behind is diffed against WHAT IS ON SCREEN, not against the
+// previous message, so two texts collapse into one stream and all three beats
+// play. Owner, asked directly: "compose some stream of snap/rotate/fade if you
+// need to." Nothing here special-cases it; it falls out of laying the actions
+// down in the only order they can have happened in, which is why the composition
+// is written as three independent `if`s rather than as a table of five.
+//
+// WHY THE TIMING IS HERE rather than in a view. It is the same question every
+// other beat in this file answers - how long does this take, and how long do we
+// rest before the next - and the same answer, ANIM_TIME_MS, so a lobby's beats
+// and a board's beats keep the same pulse. A number typed into a SwiftUI file
+// is a second timing policy that nothing compares against the first.
+#define ANIM_SURFACE_MAX_BEATS 10
+
+#define ANIM_SURFACE_ROSTER 1
+#define ANIM_SURFACE_RULES  2
+#define ANIM_SURFACE_BOARD  3
+
+// HOW a beat arrives. Carried as DATA rather than derived from `kind` by each
+// platform: which idiom an action wears is a fact about the action, a C enum can
+// say it, and two clients that each mapped kind -> idiom themselves would be two
+// places to get it wrong. What is left for a platform is the only part C cannot
+// do - the curve, the anchor, the frame-by-frame interpolation.
+#define ANIM_TRANSITION_SNAP 0   // it is simply true now; no motion at all
+#define ANIM_TRANSITION_TURN 1   // the control that changed rotates out and back
+#define ANIM_TRANSITION_FADE 2   // one whole surface cross-fades into another
+
+// WHAT THE CONTROLS DO WHILE A BEAT IS ON SCREEN. Owner, on watching a join
+// arrive as Alex, who created the game:
+//
+//   "i create a game and start out not being able to start the game due to the
+//    fact there is only 1 player. Then if vera just joins, it should snap her in
+//    and give me the 'start' and 'leave' buttons. If Vera joins and toggles the
+//    passing, it should do that, but then rotate the checkbox after a beat. If
+//    the game was already startable as there were 2 players in, then it should
+//    ONLY snap her in and not affect the buttons. If she joins and starts the
+//    game (I believe only possible in 1:1 chats) then we snap her in (NOT
+//    AFFECTING ALEXS BUTTONS) and then fade to the game"
+//
+// THE RULE UNDERNEATH IT: a control must not appear during an intermediate beat
+// if a later beat in the same stream is about to take it away. Flashing Start
+// and Leave into existence and dissolving the whole lobby half a second later is
+// a flicker, and it is what the owner first read as "why does 'start playing'
+// become disabled for Alex temporarily".
+//
+// So: a stream that ENDS IN THE LOBBY lets each beat offer what its own state
+// offers - Vera joining really does hand Alex a Start button, and that is the end
+// state, so it appears and stays. A stream that ends AT THE BOARD holds the
+// controls exactly as the human already had them for its whole length; the roster
+// still snaps, because the roster is the thing he asked to see.
+//
+// Here rather than in a view, under the standing rule: "does this stream continue
+// past this beat" is a fact about the stream, and `started` already knows it.
+#define ANIM_SURFACE_CONTROLS_LIVE 0   // draw what THIS beat's state offers
+#define ANIM_SURFACE_CONTROLS_HELD 1   // draw what the human already had
+
+// The REST between two beats: long enough that the roster which just changed is
+// a thing the human read rather than a frame they missed. ANIM_TIME_MS, because
+// a beat nobody has to watch a card cross still has to last as long as one.
+#define ANIM_SURFACE_HOLD_MS ANIM_TIME_MS
+
+typedef struct {
+    int kind;         // ANIM_SURFACE_*
+    int transition;   // ANIM_TRANSITION_*
+    // WHAT THIS BEAT SHOWS. The roster is always the ARRIVING chain's - a
+    // message carries at most one roster action, so there is no intermediate
+    // roster to draw - and `passing` is the rule as of this beat, which is the
+    // OLD one until the rules beat moves it. The last beat therefore always
+    // shows the arriving chain exactly, which is what makes playing the last
+    // beat the same thing as adopting it.
+    int passing;
+    int controls;     // ANIM_SURFACE_CONTROLS_*
+    int duration_ms;  // this beat's own motion; 0 is a snap
+    int start_ms;     // when it begins, measured from the arrival
+} AnimSurfaceBeat;
+
+typedef struct {
+    int n;
+    int total_ms;     // start_ms + duration_ms of the last beat
+    AnimSurfaceBeat beats[ANIM_SURFACE_MAX_BEATS];
+} AnimSurfacePlan;
+
+// Lay `d` (msg_surface_delta's answer, passed field by field so this file stays
+// free of the wire) out as beats. Returns the beat count, which is 0 whenever
+// there is nothing to stage - a board taking an arrival, or two envelopes that
+// describe the same lobby - and a caller that gets 0 adopts the way it always
+// did. Takes its inputs as ints rather than a struct so anim_plan.c keeps no
+// dependency on msg_wire.h: rules.wasm builds the wire WITHOUT this file.
+int anim_surface_plan(int on_a_lobby, int roster_moved,
+                      int passing_before, int passing_after, int started,
+                      AnimSurfacePlan *out);
 
 #endif

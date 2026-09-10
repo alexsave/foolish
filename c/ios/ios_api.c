@@ -323,8 +323,11 @@ int fio_anim_plan_packed(const uint8_t *in, int len, char *out, int cap) {
     if (np < 2 || np > MAX_PLAYERS) return FIO_EPARSE;
     if (n > ANIM_MAX_STEPS) return FIO_ECAP;
 
-    int p = 5;
+    int p = 6;
     if (p + np > len) return FIO_EPARSE;
+    // The final board's flipped trump - read only by the boardless fallback,
+    // but it crosses unconditionally so the header stays fixed-width.
+    const Card final_flipped = in[5] < 52 ? card_of_id(in[5]) : CARD_NONE;
     int final_hand[MAX_PLAYERS];
     for (int s = 0; s < np; s++) final_hand[s] = in[p++];
 
@@ -340,11 +343,12 @@ int fio_anim_plan_packed(const uint8_t *in, int len, char *out, int cap) {
         if (p + 6 > len) return FIO_EPARSE;
         const int n_cards = in[p + 4], n_ids = in[p + 5];
         if (n_cards > ANIM_MAX_CARDS || n_ids > n_cards) return FIO_ECAP;
-        if (p + 10 + np + n_ids > len) return FIO_EPARSE;
+        if (p + 11 + np + n_ids > len) return FIO_EPARSE;
         if (n_pool + n_ids > ANIM_MAX_CARD_POOL) return FIO_ECAP;
         const int type = in[p], seat = in[p + 1], from = in[p + 2], to = in[p + 3];
         const int has_counts = in[p + 6], deck = in[p + 7], discard = in[p + 8];
-        p += 9;
+        const Card flipped = in[p + 9] < 52 ? card_of_id(in[p + 9]) : CARD_NONE;
+        p += 10;
         for (int s = 0; s < np; s++) hands[i][s] = in[p + s];
         p += np;
         Card *ids = &pool[n_pool];
@@ -393,13 +397,15 @@ int fio_anim_plan_packed(const uint8_t *in, int len, char *out, int cap) {
         evs[i].has_counts = has_counts ? 1 : 0;
         evs[i].deck = deck;
         evs[i].discard = discard;
+        evs[i].flipped = flipped;
         evs[i].hand = hands[i];
         evs[i].n_battles = row_n;
         evs[i].battles = row;
     }
 
     static AnimPlan plan;
-    const int rc = anim_build_plan(evs, n, np, in[3], in[4], final_hand, &plan);
+    const int rc = anim_build_plan(evs, n, np, in[3], in[4], final_flipped,
+                                   final_hand, &plan);
     if (rc == ANIM_ECAP) return FIO_ECAP;
     if (rc != ANIM_EOK) return FIO_EBADARG;
 
@@ -415,6 +421,10 @@ int fio_anim_plan_packed(const uint8_t *in, int len, char *out, int cap) {
     q[8] = (unsigned char)plan.pre.deck;
     q[9] = (unsigned char)plan.pre.discard;
     for (int s = 0; s < np; s++) q[10 + s] = (unsigned char)plan.pre.hand[s];
+    // THE TRUMP THE WELL OPENS ON, beside the counts it belongs with.
+    q[FIO_PLAN_FLIP_AT] = card_is_none(plan.pre.flipped)
+        ? (unsigned char)FIO_PLAN_NO_FLIP
+        : (unsigned char)card_to_id(plan.pre.flipped);
     // THE ROW THE DISPLAY OPENS ON. A row too wide for the fixed block crosses
     // as no row rather than as a truncated one - see FIO_PLAN_BATTLES.
     if (plan.pre.n_battles > 0 && plan.pre.n_battles <= FIO_PLAN_BATTLES) {
@@ -1668,6 +1678,77 @@ int fio_msg_rule_p(const uint8_t *a, int a_len, const uint8_t *b, int b_len) {
     rc = msg_chain_key(b, b_len, &kb);
     if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
     return msg_rule_p(&ka, &kb);
+}
+
+// 1.1(56): the two rules that answer "what does this arriving chain do to the
+// lobby on screen" - msg_surface_delta (what changed, and in what order) and
+// anim_surface_plan (the beats and their timing) - joined here, which is the
+// only place that has both headers. Decodes exactly as fio_msg_rule_p does: two
+// header reads, no resident game touched, so a surface may ask this about a
+// chain it has not adopted.
+// The bridge's names for the controls must BE the kernel's, not merely agree
+// with them today: these functions forward `msg_lobby_offered`'s answer through
+// unchanged, so a value that drifted would silently relabel every control on the
+// lobby. A compile error is the only honest guard for a pair of headers that
+// cannot include each other.
+_Static_assert(FIO_LOBBY_START   == MSG_LOBBY_START,   "lobby control drift: START");
+_Static_assert(FIO_LOBBY_INVITE  == MSG_LOBBY_INVITE,  "lobby control drift: INVITE");
+_Static_assert(FIO_LOBBY_WAITING == MSG_LOBBY_WAITING, "lobby control drift: WAITING");
+_Static_assert(FIO_LOBBY_JOIN    == MSG_LOBBY_JOIN,    "lobby control drift: JOIN");
+_Static_assert(FIO_LOBBY_FULL    == MSG_LOBBY_FULL,    "lobby control drift: FULL");
+
+int fio_msg_lobby_offered(int my_seat, int joined, int capacity,
+                          int i_sent_the_newest, int i_changed_the_rules) {
+    return msg_lobby_offered(my_seat, joined, capacity,
+                             i_sent_the_newest, i_changed_the_rules);
+}
+
+int fio_msg_lobby_can_exit(int my_seat, int joined) {
+    return msg_lobby_can_exit(my_seat, joined);
+}
+
+int fio_msg_lobby_can_set_rules(int my_seat) {
+    return msg_lobby_can_set_rules(my_seat);
+}
+
+int fio_msg_lobby_rules_changed(int have_baseline, int baseline, int current, int mine) {
+    return msg_lobby_rules_changed(have_baseline, baseline, current, mine);
+}
+
+int fio_anim_surface_beat_ms(void) { return ANIM_TIME_MS; }
+
+int fio_msg_surface_plan(const uint8_t *showing, int showing_len,
+                         const uint8_t *arriving, int arriving_len,
+                         int32_t *out, int cap) {
+    if (!showing || !arriving || !out) return FIO_EBADARG;
+    if (cap < FIO_SURFACE_HEAD) return FIO_ECAP;
+    g_last_msg_error = 0;
+    static MsgEnvelope a, b;   // ~1.3KB each - too big for this frame
+    int rc = msg_decode(showing, showing_len, &a);
+    if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
+    rc = msg_decode(arriving, arriving_len, &b);
+    if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
+
+    MsgSurfaceDelta d;
+    msg_surface_delta(&a, &b, &d);
+    static AnimSurfacePlan plan;
+    const int n = anim_surface_plan(d.on_a_lobby, d.roster_moved,
+                                    d.passing_before, d.passing_after, d.started,
+                                    &plan);
+    if (n <= 0) return 0;
+    if (cap < FIO_SURFACE_HEAD + n * FIO_SURFACE_STRIDE) return FIO_ECAP;
+    out[0] = n;
+    out[1] = plan.total_ms;
+    for (int i = 0; i < n; i++) {
+        int32_t *w = out + FIO_SURFACE_HEAD + i * FIO_SURFACE_STRIDE;
+        w[0] = plan.beats[i].kind;
+        w[1] = plan.beats[i].transition;
+        w[2] = plan.beats[i].passing;
+        w[3] = plan.beats[i].controls;
+        w[4] = plan.beats[i].duration_ms;
+        w[5] = plan.beats[i].start_ms;
+    }
+    return FIO_SURFACE_HEAD + n * FIO_SURFACE_STRIDE;
 }
 
 // Rule R over the AWIRE frame - the one rebase entry (the phone stages moves as

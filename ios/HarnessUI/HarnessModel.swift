@@ -701,6 +701,60 @@ final class HarnessModel: ObservableObject {
         incomingToken += 1
     }
 
+    /// A BUBBLE THAT LANDS WHILE THE EXTENSION IS NOT ACTIVE - 1.1(56), and the
+    /// route to a stuck lobby that `arrive` cannot pose.
+    ///
+    /// The owner, on "I was in lobby, got a start game text, and it was stuck on
+    /// lobby": the likeliest real path is not a message that never comes, it is
+    /// a message that comes while nobody is listening. Messages calls
+    /// `didReceive` only on an ACTIVE extension, so a chain that lands while the
+    /// drawer is closed reaches the surface through one of two doors and this
+    /// models both:
+    ///
+    ///   * `notifies: true`  - the extension was still loaded and `didReceive`
+    ///     fired. The bubble is threaded on exactly as `arrive` does.
+    ///   * `notifies: false` - it did not fire at all. The bubble is simply IN
+    ///     the thread, and the only thing that can show it to the surface is the
+    ///     next `willBecomeActive` -> `present`, off `conversation.selectedMessage`.
+    ///     That is `becomeActive(selecting:)` below.
+    ///
+    /// Deliberately does NOT touch `presentedURL`, `selected` or the tokens in
+    /// the second case: an inactive extension is told nothing, and a rig that
+    /// quietly told it something would be posing the case that already worked.
+    func arriveWhileAway(_ payload: Data, senderIndex: Int, notifies: Bool) {
+        let url = MessageEnvelope.link(payload: payload)
+        let who = participants[min(max(senderIndex, 0), participants.count - 1)]
+        let keep = selectedMsg?.id ?? chats[currentChat].transcript.last?.id
+        chats[currentChat].transcript.append(Msg(url: url, senderId: who.id,
+                                                 senderName: who.name, preview: nil))
+        chats[currentChat].selected = keep
+        chats[currentChat].startNewGame = false
+        AnimLog.say("host arrive-while-away from \(who.name) notifies=\(notifies)")
+        guard notifies else { return }
+        presentedURL = payloadURL
+        incomingURL = url
+        incomingToken += 1
+    }
+
+    /// `willBecomeActive` -> `present`: the extension wakes up and re-presents
+    /// off whatever the conversation now has selected.
+    ///
+    /// `selecting` is the whole question. Messages moves `selectedMessage` only
+    /// when a human taps a bubble, so waking on the NEW bubble (they tapped the
+    /// one that just arrived) and waking on the OLD one (they tapped the lobby
+    /// they were already in, or the drawer simply came back) are different
+    /// facts, and the surface is entitled to behave differently. Nothing else
+    /// about the extension is reset: this models an appex that was still
+    /// loaded, which is the case that can be stale.
+    func becomeActive(selecting: Msg?) {
+        AnimLog.say("host becomeActive selecting=\(selecting == nil ? "nothing new" : "the newest bubble")")
+        if let selecting { chats[currentChat].selected = selecting.id }
+        chats[currentChat].startNewGame = false
+        presentation = .expanded
+        drawerDismissed = false
+        rememberPresented()
+    }
+
     /// REVIEW RIG (HarnessScenario.swift): drop a bubble into the open
     /// transcript that this device did NOT seal and cannot decode — the
     /// corrupt/foreign-link path. `chats` is private to this file, so this

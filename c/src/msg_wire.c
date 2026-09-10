@@ -762,6 +762,66 @@ int msg_rule_p(const MsgChainKey *a, const MsgChainKey *b) {
     return 0;
 }
 
+// ---------- what an ARRIVING chain does to an open surface ----------------
+
+// Are these two rosters the same row? Seat AND name: a seat that changed hands
+// is not the seat that was there before, and the name is the only identity the
+// wire carries (see SeatIdentity's own reasoning about claim names).
+static int same_join(const MsgJoin *a, const MsgJoin *b) {
+    if (a->seat != b->seat || a->name_len != b->name_len) return 0;
+    for (int i = 0; i < a->name_len; i++)
+        if (a->name[i] != b->name[i]) return 0;
+    return 1;
+}
+
+// The envelope's joins, seat-ascending. Insertion sort over at most 8 rows.
+static int by_seat(const MsgEnvelope *e, const MsgJoin **out) {
+    const int n = e->n_joins > MSG_MAX_JOINS ? MSG_MAX_JOINS : e->n_joins;
+    for (int i = 0; i < n; i++) {
+        int j = i;
+        while (j > 0 && out[j - 1]->seat > e->joins[i].seat) { out[j] = out[j - 1]; j--; }
+        out[j] = &e->joins[i];
+    }
+    return n;
+}
+
+void msg_surface_delta(const MsgEnvelope *showing, const MsgEnvelope *arriving,
+                       MsgSurfaceDelta *out) {
+    if (!out) return;
+    out->on_a_lobby = 0;
+    out->roster_moved = 0;
+    out->passing_before = out->passing_after = 1;
+    out->started = 0;
+    if (!showing || !arriving) return;
+
+    // A DIFFERENT GAME IS A SWITCH, NOT A CONTINUATION. Owner: "If you open a
+    // lobby bubble, it should just open the state of that message with no
+    // animations. It's only if you already have the lobby open that it should
+    // snap/pause/rotate/fade." A sequence exists to carry a human from a state
+    // they were LOOKING AT to a newer one; two different games share no such
+    // line, and animating between them would be a lie about continuity - the
+    // same thing the 1.0(37) game-switch fix says about rebasing (tapping
+    // another game's bubble must SWITCH, never rebase). Checked on the game id
+    // rather than on "something was showing", because something always is.
+    if (showing->game_id != arriving->game_id) return;
+    out->on_a_lobby = showing->phase == MSG_PHASE_WAITING;
+    out->passing_before = msg_pass_allowed(showing);
+    out->passing_after  = msg_pass_allowed(arriving);
+    out->started = out->on_a_lobby && arriving->phase >= MSG_PHASE_LIVE;
+
+    // ROW BY ROW, SEAT-ASCENDING. Not by size, or a seat that changed hands
+    // between two rosters of the same length reads as "nothing happened" and
+    // the names on screen never move; and seat order rather than wire order,
+    // because nothing on the wire sorts the joins array while a seat number IS
+    // the seating (msg_roster_key keeps the same distinction, for the same
+    // reason).
+    const MsgJoin *a[MSG_MAX_JOINS], *b[MSG_MAX_JOINS];
+    const int na = by_seat(showing, a), nb = by_seat(arriving, b);
+    if (na != nb) { out->roster_moved = 1; return; }
+    for (int i = 0; i < na; i++)
+        if (!same_join(a[i], b[i])) { out->roster_moved = 1; return; }
+}
+
 // ---------- Rule R --------------------------------------------------------
 
 int msg_rebase_one(Game *adopted, int adopted_round, int pending_round,
@@ -997,7 +1057,29 @@ static int msg_seat_resolve_named(const MsgJoin *joins, int n_joins,
     const int seat = msg_seat_resolve(cached, sender_is_local, n_players,
                                       last_actor_seat, chat_is_dm);
     if (seat < 0 || !require_listed) return seat;
-    for (int i = 0; i < n_joins; i++) if (joins[i].seat == (uint8_t)seat) return seat;
+    for (int i = 0; i < n_joins; i++) {
+        if (joins[i].seat != (uint8_t)seat) continue;
+        // LISTED IS NOT THE SAME AS MINE, and that gap was a real bug: a player
+        // who LEFT a 1:1 lobby was handed seat 0 - the seat of the player who
+        // stayed - and could move the rules, and Start, as them. Owner, 1.1(57):
+        // "I was able to leave, and then check the passing box. really not good".
+        //
+        // The route in is the DM complement in `msg_seat_resolve` (`1 -
+        // last_actor_seat`), which is correct on a BOARD - a 2-player DM
+        // receiver who has not moved yet really is the other seat - and is not
+        // evidence of anything in a LOBBY, where a seat is claimed explicitly by
+        // a join that carries a name. `leaveLobby` seals with last_actor_seat =
+        // joins.count = 1, the complement is 0, and 0 is occupied.
+        //
+        // So in a lobby a NAMED device gets its seat by name or not at all. Every
+        // lobby seat carries a name, so "none of these rows is me" is a complete
+        // answer, and it is one the inference above cannot overrule. A device
+        // with no recorded name still falls back - it has nothing to match with,
+        // and that is the pre-existing permissive case rather than a new hole.
+        if (name && name_len > 0)
+            return msg_name_is(&joins[i], name, name_len) ? seat : -1;
+        return seat;
+    }
     return -1;   // resolved, but this bubble's roster does not list it
 }
 
@@ -1029,6 +1111,67 @@ int msg_seat_resolve_in_lobby(const MsgJoin *joins, int n_joins,
     return msg_seat_resolve_named(joins, n_joins, cached_seat, sender_is_local,
                                   n_players, last_actor_seat, chat_is_dm,
                                   name, name_len, 1);
+}
+
+/* ---------------------------------------------------------------------------
+ * WHAT THE LOBBY OFFERS A VIEWER (msg_wire.h). Ported out of Swift's
+ * `LobbyControls` unchanged in behaviour - the Swift enum now forwards here -
+ * so that the arrival beats, which are asserted in C, can be asserted together
+ * with the controls they hold or release.
+ * ------------------------------------------------------------------------- */
+
+int msg_lobby_offered(int my_seat, int joined, int capacity,
+                      int i_sent_the_newest, int i_changed_the_rules) {
+    if (my_seat >= 0) {
+        if (joined >= 2) {
+            // Whoever moved the rules cannot deal them. No full-lobby
+            // exemption here, deliberately - see the header.
+            if (i_changed_the_rules) return MSG_LOBBY_WAITING;
+            // M9: the newest sender stands aside WHILE THERE IS STILL ROOM. A
+            // full table has nobody left to stand aside for, and the owner's
+            // own statement of the exemption is the two ways a table fills:
+            // "the only times that the last joiner can start the game is if
+            // it's a 1:1 and they're the second player, or if them joining
+            // brings the game to 8 in a group chat" - which is `joined ==
+            // capacity` in both cases, since a DM's capacity is 2 and a group's
+            // is whatever the creator set (8 at the top).
+            if (i_sent_the_newest && joined < capacity) return MSG_LOBBY_WAITING;
+            return MSG_LOBBY_START;
+        }
+        // In, and alone. The invite is offered only to somebody who did not put
+        // the newest bubble there - otherwise it asks for a second copy of what
+        // is already in the thread.
+        return i_sent_the_newest ? MSG_LOBBY_WAITING : MSG_LOBBY_INVITE;
+    }
+    return joined < capacity ? MSG_LOBBY_JOIN : MSG_LOBBY_FULL;
+}
+
+int msg_lobby_can_exit(int my_seat, int joined) {
+    return my_seat >= 0 && joined >= 2;
+}
+
+int msg_lobby_can_set_rules(int my_seat) {
+    return my_seat >= 0;
+}
+
+int msg_lobby_rules_changed(int have_baseline, int baseline, int current, int mine) {
+    if (!mine || !have_baseline) return 0;
+    return (baseline != 0) != (current != 0);
+}
+
+int msg_lobby_controls(const MsgEnvelope *e, int my_seat,
+                       int have_baseline, int baseline, int *can_exit_out) {
+    if (can_exit_out) *can_exit_out = 0;
+    if (!e) return 0;
+    const int joined = e->n_joins;
+    const int changed = msg_lobby_rules_changed(have_baseline, baseline,
+                                                msg_pass_allowed(e),
+                                                my_seat >= 0
+                                                && (int)e->last_actor_seat == my_seat);
+    if (can_exit_out) *can_exit_out = msg_lobby_can_exit(my_seat, joined);
+    return msg_lobby_offered(my_seat, joined, e->n_players,
+                             my_seat >= 0 && (int)e->last_actor_seat == my_seat,
+                             changed);
 }
 
 /* ---------------------------------------------------------------------------

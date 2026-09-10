@@ -217,11 +217,14 @@ int fio_last_reject(void);
 //   2  u8  n_events  (0..ANIM_MAX_STEPS, 128)
 //   3  u8  final deck count
 //   4  u8  final discard count
-//   5  n_players x u8 final hand counts, by seat
-//   then per event, 10 + n_players + n_ids + 2 x n_battles bytes:
+//   5  u8  final flipped trump as a DENSE id (0..51), FIO_PLAN_NO_FLIP for
+//           none - the same encoding the veil and the row on this wire use
+//   6  n_players x u8 final hand counts, by seat
+//   then per event, 11 + n_players + n_ids + 2 x n_battles bytes:
 //     u8 type (EVW_T_*/ANIM_EVT_*), u8 seat (0xFF none), u8 from, u8 to,
 //     u8 n_cards (the count the arithmetic reads), u8 n_ids (real identities
 //     listed; 0 for viewer-masked backs), u8 has_counts, u8 deck, u8 discard,
+//     u8 that board's flipped trump, dense id or FIO_PLAN_NO_FLIP,
 //     n_players x u8 hand counts, n_ids x u8 dense card id,
 //     u8 n_battles (FIO_PRETABLE_NONE for a step carrying no board),
 //     2 x n_battles u8 - the attack and its cover (FIO_PRETABLE_NONE if bare).
@@ -239,6 +242,9 @@ int fio_last_reject(void);
 //   8  u8  pre deck   (the count-freeze the display opens on)
 //   9  u8  pre discard
 //  10  FIO_PLAN_SEATS x u8 pre hand counts, by seat
+//  FIO_PLAN_FLIP_AT     u8  the pre FLIPPED TRUMP as a dense id - the other
+//                           half of the stock the well draws; FIO_PLAN_NO_FLIP
+//                           once a refill has dealt it out (see AnimCounts)
 //  FIO_PLAN_ROW_AT      u8  pre n_battles - the ROW the display opens on (see
 //                           AnimCounts); 0 for "no row", never a truncated one
 //  FIO_PLAN_ROW_AT + 1  u8  1 when that row came off a real board, 0 for the
@@ -265,7 +271,9 @@ int fio_last_reject(void);
 // 2: the pre-move ROW joined the freeze, in and out. Both ends of this wire
 // ship together (the xcframework carries the header), so the version is a
 // tripwire for a stale build rather than a compatibility story.
-#define FIO_PLAN_VERSION 2
+// 3: and the pre-move FLIPPED TRUMP, in and out - the deck well's other half,
+// which froze nowhere and so vanished from under a frozen pile.
+#define FIO_PLAN_VERSION 3
 // The seat block is a FIXED width so a step sits at a constant offset whatever
 // the table size; the kernel's MAX_PLAYERS is checked against it at build time.
 #define FIO_PLAN_SEATS   8
@@ -274,13 +282,17 @@ int fio_last_reject(void);
 // live table is exactly where it was before the row was in the plan at all,
 // where a TRUNCATED row would be a table missing cards.
 #define FIO_PLAN_BATTLES 32
-#define FIO_PLAN_ROW_AT  (10 + FIO_PLAN_SEATS)
+// The freeze's own scalars first, then the fixed row block. A dense id is
+// 0..51, so 0xFF cannot collide with one.
+#define FIO_PLAN_NO_FLIP 0xFF
+#define FIO_PLAN_FLIP_AT (10 + FIO_PLAN_SEATS)
+#define FIO_PLAN_ROW_AT  (11 + FIO_PLAN_SEATS)
 // A LITERAL, not the sum it obviously is. Swift's macro importer takes only the
 // simplest constant expressions, and the three-term one this used to be came
 // across as nothing at all ("cannot find 'FIO_PLAN_HEAD' in scope") - a
 // compile error rather than a silent wrong number, but a stupid one to hit
 // twice. The sum it must equal is asserted in ios_api.c.
-#define FIO_PLAN_HEAD    84
+#define FIO_PLAN_HEAD    85
 #define FIO_PLAN_STRIDE  (15 + FIO_PLAN_SEATS)
 int fio_anim_plan_packed(const uint8_t *in, int len, char *out, int cap);
 
@@ -914,6 +926,78 @@ int fio_seat_resolve_in_lobby(const uint8_t *joins, int joins_len,
 // disagree about which message is newest.
 // Returns FIO_EMSG if either is not an envelope.
 int fio_msg_rule_p(const uint8_t *a, int a_len, const uint8_t *b, int b_len);
+
+// 1.1(56) - HOW AN OPEN LOBBY TAKES AN ARRIVING CHAIN.
+//
+// One bubble can carry several actions (`conversation.insert` REPLACES an unsent
+// draft, so Join + rules + Start go out as one envelope), and a surface that
+// jumps straight to the end state is the owner's "LOBBY DID NOT UPDATE LIVE".
+// The rule is msg_surface_delta (what changed, and in what order it must have
+// happened) composed with anim_surface_plan (the beats and their timing); this
+// is the crossing, and it decodes both payloads the way fio_msg_rule_p does.
+//
+// `showing` is the chain the surface is displaying, `arriving` the one that just
+// landed. OUT is int32 pairs:
+//
+//    0  n_beats
+//    1  total_ms
+//    2 + i*FIO_SURFACE_STRIDE:  kind (FIO_SURFACE_*), transition (FIO_TRANS_*),
+//                               passing, controls (FIO_CONTROLS_*),
+//                               duration_ms, start_ms
+//
+// The TRANSITION crosses as data rather than being mapped from `kind` on each
+// platform: which idiom an action wears is a fact about the action, so it is
+// decided once, in C (anim_plan.h), and a client renders what it is told.
+//
+// Returns the number of INT32s written, 0 when there is nothing to stage (a
+// board taking an arrival, or two envelopes describing the same lobby - the
+// caller then adopts exactly as it always did), or a negative FIO_E*.
+#define FIO_SURFACE_HEAD   2
+#define FIO_SURFACE_STRIDE 6
+#define FIO_SURFACE_ROSTER 1   // somebody sat down
+#define FIO_SURFACE_RULES  2   // the table's rules moved
+#define FIO_SURFACE_BOARD  3   // the game is dealt and the lobby is over
+#define FIO_TRANS_SNAP     0   // no motion: it is simply true now
+#define FIO_TRANS_TURN     1   // the control that changed rotates out and back
+#define FIO_TRANS_FADE     2   // one whole surface cross-fades into another
+#define FIO_CONTROLS_LIVE  0   // the beat's controls are its own state's
+#define FIO_CONTROLS_HELD  1   // …or held as they were, when the stream ends at the board
+// WHAT THE LOBBY OFFERS A VIEWER. msg_wire.h holds the rule and the reasons -
+// the M9 anti-lockout gate, its full-table exemption, and the rules-change gate
+// that deliberately has no exemption. These four are the whole of it, and they
+// are pure functions of ints, so they cross as ints.
+//
+// The Swift `LobbyControls` enum is a forwarder onto these (it kept its shape so
+// its call sites and its own tests still build); the DECISION is the kernel's,
+// which is what lets c/tests/anim_plan_test.c assert the owner's whole scenario
+// table - every legal and every impossible lobby text - in one place with the
+// beats those texts produce.
+#define FIO_LOBBY_START   1
+#define FIO_LOBBY_INVITE  2
+#define FIO_LOBBY_WAITING 3
+#define FIO_LOBBY_JOIN    4
+#define FIO_LOBBY_FULL    5
+int fio_msg_lobby_offered(int my_seat, int joined, int capacity,
+                          int i_sent_the_newest, int i_changed_the_rules);
+int fio_msg_lobby_can_exit(int my_seat, int joined);
+int fio_msg_lobby_can_set_rules(int my_seat);
+int fio_msg_lobby_rules_changed(int have_baseline, int baseline, int current, int mine);
+
+// ONE BEAT, in milliseconds. The same ANIM_TIME_MS a card's flight takes, which
+// is the point: a lobby's beats and a board's beats keep one pulse, and a number
+// typed into a SwiftUI file would be a second timing policy nothing compares
+// against the first.
+//
+// Exposed on its own, and not only through a plan's beats, because a LOCAL tap
+// has no plan to read: when the human moves the checkbox themselves the box must
+// turn at the same pace it turns for an arriving text, and the reseal that would
+// carry a plan has not come back yet (owner: "our own toggle should still
+// rotate").
+int fio_anim_surface_beat_ms(void);
+
+int fio_msg_surface_plan(const uint8_t *showing, int showing_len,
+                         const uint8_t *arriving, int arriving_len,
+                         int32_t *out, int cap);
 
 // Rule R (§7.4): rebase ONE pending move onto the chain fio_msg_decode_packed
 // last adopted — the ledger's moves, in order. Returns:

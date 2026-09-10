@@ -592,6 +592,39 @@ public struct MessageTableView: View {
     }
 
     public var body: some View {
+        table
+            // THE TABLE DOES NOT MIRROR, in any language.
+            //
+            // Arabic and Hebrew arrived with the 25-language table, and SwiftUI's
+            // answer to them is to flip every container it owns. That is right
+            // for a column of text and wrong for this board, because the board is
+            // not laid out in containers: seats, cards in flight and the fan are
+            // placed with `.position` and `.offset`, which SwiftUI does NOT
+            // mirror, while the deck well, the discard and a few paddings ARE
+            // expressed as leading/trailing and would flip. The result is not a
+            // mirrored table, it is a half-mirrored one - cards where they were,
+            // the furniture swapped around them.
+            //
+            // So the geometry is pinned and the TEXT is left alone: names, the
+            // caption, the rejection line and every label inside still shape and
+            // read right-to-left, because bidi is a property of the run, not of
+            // the container. An Arabic player gets Arabic on a board that sits
+            // where the rules say it sits.
+            //
+            // The surfaces that are pure text are deliberately NOT pinned - the
+            // rulebook, the settings sheet and the lobby mirror as they should.
+            // Mirroring the board is a real piece of work; this is the honest
+            // half of it, not a stand-in for it.
+            .environment(\.layoutDirection, Self.layoutDirection)
+    }
+
+    /// The pin above, named so `LocalizationTests` can assert it is still there.
+    /// A constant and not a computed answer: there is no language for which this
+    /// is allowed to differ today, and the day there is, it should be a visible
+    /// change here rather than a quiet one.
+    public static let layoutDirection: LayoutDirection = .leftToRight
+
+    private var table: some View {
         VStack(spacing: 8) {
             if let view = controller.view {
                 // Game over: the board gives way to the ranked results screen (web
@@ -1061,6 +1094,52 @@ public struct MessageTableView: View {
         ledger.discard ?? pendingOpen?.counts.discard ?? view.discardCount
     }
 
+    /// THE TRUMP SLOT THE WELL IS DRAWING - the stock's other half, asked
+    /// exactly the way `shownDeckCount` asks for the first half, off the same
+    /// three sources in the same order.
+    ///
+    /// It used to be the ONE value on the deck well that skipped all three and
+    /// read `view` directly, and that was the whole of the 1.1(55) report: "on
+    /// a bout ending good, if the flipped card would've been animated in the
+    /// resulting animation, it DOES NOT SHOW at first in the pile BEFORE the
+    /// deal animations play. The deck shows, but not the flipped card." A
+    /// refill that reaches past the stock deals the trump out, so the board the
+    /// move commits has no flipped card - and with the deck count frozen at its
+    /// pre-move value and the trump read off that board, the well drew a pile
+    /// of four standing on nothing. (The badge went with it: it counts
+    /// deck + trump, so it read one low for the whole window.)
+    private func shownTrumpSlot(_ view: GameView) -> TrumpSlot {
+        Self.shownTrump(held: ledger.trump, frozen: pendingOpen?.counts.flipped,
+                        committed: TrumpSlot.of(view))
+    }
+
+    /// The three sources, in order - a value function so a test can ask the
+    /// real rule rather than a copy of it. A HELD `.airborne` or `.gone` is an
+    /// ANSWER, not a miss: the step whose flight takes the trump out from under
+    /// the pile writes exactly those, and falling through to the freeze there
+    /// would put the card back.
+    ///
+    /// `frozen` is a plain `Card?` because a FREEZE cannot be airborne: it is
+    /// the board before the sequence started, when nothing was in the air.
+    static func shownTrump(held: TrumpSlot?, frozen: Card?, committed: TrumpSlot) -> TrumpSlot {
+        if let held { return held }
+        if let frozen { return .card(frozen) }
+        return committed
+    }
+
+    /// THE ASYMMETRY, as two value rules so it can be asserted without a board.
+    ///
+    /// The two halves of the stock leave on different beats and both are right.
+    /// A card in the air is no longer in the PILE, so the count and the well's
+    /// copy of the trump release the instant the flight starts. But the bare
+    /// glyph says the trump does not exist anywhere, which is only true once
+    /// the flight has LANDED - so departure can never write `.gone`.
+    static func trumpAtDeparture(_ board: GameView) -> TrumpSlot {
+        let landed = TrumpSlot.of(board)
+        return landed == .gone ? .airborne : landed
+    }
+    static func trumpAtLanding(_ board: GameView) -> TrumpSlot { TrumpSlot.of(board) }
+
     /// The live board, laid out like the web GameBoard: every piece is placed
     /// ABSOLUTELY against the board rect, so the centred pieces never shift when a
     /// corner changes (the bug where the deck pushed the opponent off-centre and
@@ -1156,8 +1235,13 @@ public struct MessageTableView: View {
 
                 // Deck top-left, discard top-right — pinned to the corners and OUT
                 // of the centred flow, so they never push the ring or battles.
-                FDeckWell(deckCount: shownDeckCount(view), flipped: view.flipped,
-                          hasFlipped: view.hasFlipped, trumpSuit: view.trumpSuit)
+                // Both halves of the stock come off the SAME three sources in
+                // the same order (`shownDeckCount` / `shownTrumpSlot`); the
+                // trump used to be read straight off `view` while the count was
+                // held, which is 1.1(55)'s missing flipped card.
+                let trump = shownTrumpSlot(view)
+                FDeckWell(deckCount: shownDeckCount(view), flipped: trump.card,
+                          hasFlipped: trump.exists, trumpSuit: view.trumpSuit)
                     // FDeckWell now anchors its own content top-leading with a
                     // small symmetric inset (note 14), so no per-call-site
                     // compensation offset is needed here anymore.
@@ -2329,7 +2413,7 @@ public struct MessageTableView: View {
                          note: "badges stay "
                             + (controller.view?.players ?? []).map { "s\($0.seat)=\(shownHandCount($0))" }
                                 .joined(separator: " ")) { l in
-                l.deck = nil; l.discard = nil; l.hand = [:]; l.battles = nil
+                l.deck = nil; l.trump = nil; l.discard = nil; l.hand = [:]; l.battles = nil
                 l.out = nil
             }
         }
@@ -2610,7 +2694,7 @@ public struct MessageTableView: View {
             // played again is the owner's "briefly bumped, then they play a
             // single card and it goes back down".
             ledger.write(.sequence) { l in
-                l.deck = nil; l.discard = nil; l.hand = [:]; l.battles = nil
+                l.deck = nil; l.trump = nil; l.discard = nil; l.hand = [:]; l.battles = nil
                 l.out = nil
             }
             releaseHoldback(raisedBy: veiledAt)   // see the teardown below - this guard returns ahead of it
@@ -2665,7 +2749,7 @@ public struct MessageTableView: View {
             // are then flown into it a second time.
             if mySeq == animSequenceToken {
                 ledger.write(.sequence) { l in
-                    l.deck = nil; l.discard = nil; l.hand = [:]; l.battles = nil
+                    l.deck = nil; l.trump = nil; l.discard = nil; l.hand = [:]; l.battles = nil
                     l.out = nil
                 }
                 // A holdback that never got flown (a poll that timed out, a
@@ -2862,7 +2946,25 @@ public struct MessageTableView: View {
             // draws; the discard pile and seat badges still tick up when THEIR cards
             // arrive (the per-step advance after the flight, below).
             if let s = ev.state, ev.kind == .deal || ev.kind == .refill {
-                ledger.write(.sequence) { $0.deck = s.deckCount }
+                ledger.write(.sequence) {
+                    $0.deck = s.deckCount
+                    // …AND THE TRUMP LEAVES THE WELL WITH THE CARDS THAT TOOK
+                    // IT, but it is not GONE yet. The stock is one thing drawn
+                    // in two pieces and both release at departure: the step
+                    // whose flight empties the deck is the step that took the
+                    // card out from under it, so holding it one beat longer
+                    // would draw five cards with four in the air.
+                    //
+                    // `.airborne`, NOT `.gone`, and that is the other half of
+                    // the owner's rule: "if there still is a flipped card on
+                    // board, don't show Trump indicator yet! Only after flipped
+                    // is gone do you show it." `.gone` puts the bare glyph up,
+                    // and the glyph means the card does not exist anywhere -
+                    // which is not true of a card that is at this instant
+                    // crossing the board. The glyph waits for the LANDING, in
+                    // the per-group settle below.
+                    $0.trump = Self.trumpAtDeparture(s)
+                }
             }
             // ROUND 30, and the same rule one seat over. The owner: "when the
             // cards fly out of the hand to cover some cards on the table, the
@@ -3059,6 +3161,10 @@ public struct MessageTableView: View {
             if let s = group.last?.state ?? ev.state {
                 ledger.write(.sequence) { l in
                     l.deck = s.deckCount
+                    // THE LANDING, and where `.airborne` turns into `.gone`.
+                    // This block runs after `playStep` has awaited the flight,
+                    // which is exactly when the bare trump glyph becomes true.
+                    l.trump = Self.trumpAtLanding(s)
                     l.discard = s.discardCount
                     for p in s.players where p.seat != controller.mySeat { l.hand[p.seat] = p.handCount }
                 }
@@ -3193,6 +3299,11 @@ public struct MessageTableView: View {
                         + (controller.view?.players ?? []).map { "s\($0.seat)=\(shownHandCount($0))" }
                             .joined(separator: " ")) { l in
             l.deck = v.deckCount
+            // …and the trump under it, frozen at the same synchronous moment
+            // and for the same reason: `v` is the board BEFORE the move, and a
+            // bout end's refill can deal the trump out, so a well reading the
+            // committed board would lose it before anything moved.
+            l.trump = TrumpSlot.of(v)
             l.discard = v.discardCount
             // ROUND 28: and who is drawn as out, frozen at the same synchronous
             // moment and for the same reason as the counts - `isOut` is already
@@ -4757,6 +4868,7 @@ public struct MessageTableView: View {
         let pre = AnimPlan(events, finalView: view).pre
         ledger.write(.arming) { l in
             l.deck = pre.deck
+            l.trump = pre.flipped.map(TrumpSlot.card) ?? .gone
             l.discard = pre.discard
             var counts: [Int: Int] = [:]
             for (seat, c) in pre.hand where seat != controller.mySeat { counts[seat] = c }
@@ -5171,7 +5283,7 @@ public struct MessageTableView: View {
         // three copies of it are one. All that is left here is the claim.
         let released = ledger.write(.bystander, by: "releaseLivePlayVeil",
                                     note: "counts/roles/sweep stay with the running sequence") { l in
-            l.deck = nil; l.discard = nil; l.hand = [:]; l.battles = nil
+            l.deck = nil; l.trump = nil; l.discard = nil; l.hand = [:]; l.battles = nil
             // The out badges with them, which this function used to leave
             // frozen: `freezeCounts` seeds them in the same breath as the counts
             // and both `releaseCounts` and the stream teardown nil them in the

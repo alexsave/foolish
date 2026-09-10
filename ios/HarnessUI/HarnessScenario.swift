@@ -300,6 +300,33 @@ extension HarnessModel {
             await seedDemoGame()
             switchChat(1)
 
+        case "lobby-arrive":
+            // 1.1(56) - A TEXT ARRIVING ON AN OPEN LOBBY, which is the one shape
+            // no rig could pose: `arrivalOnOpenBoard` needs a board under it,
+            // and every lobby scenario before this one stopped the moment the
+            // roster was on screen. It is exactly the owner's report ("I was in
+            // lobby, got a start game text, and it was stuck on lobby").
+            //
+            // HARNESS_LOBBY_ARRIVE picks which of the five streams a lobby
+            // message can carry (see anim_plan.h) arrives:
+            //   join | leave | rules | join-rules | join-start | start
+            await lobbyArrival(ProcessInfo.processInfo.environment["HARNESS_LOBBY_ARRIVE"]
+                                ?? "join-start")
+
+        case "lobby-away":
+            // 1.1(56) - THE TEXT LANDS WHILE THE EXTENSION IS NOT ACTIVE, which
+            // is the likeliest real route to the owner's stuck lobby: not a
+            // message that never arrives, but one that arrives while nobody is
+            // listening, followed by an activation that may or may not re-read.
+            //
+            // HARNESS_LOBBY_AWAY picks the lifecycle:
+            //   a      didReceive fired while inactive, then the extension woke
+            //   b      didReceive never fired; the human woke it on the NEW bubble
+            //   b-old  didReceive never fired; the human woke it on the OLD one
+            //   c      the presentation style changed across the arrival
+            await lobbyArrival("join-start",
+                               away: ProcessInfo.processInfo.environment["HARNESS_LOBBY_AWAY"] ?? "b")
+
         case "lobby-partial":
             // 3 of 8. The invite affordance and the "waiting" copy have to carry
             // this state, which is where a group game actually sits most of the time.
@@ -345,6 +372,112 @@ extension HarnessModel {
             await deliverSealed(payload, senderSeat: joins.map(\.0).max() ?? 0)
         } catch {
             // fall through to the New-game screen — a failure here is itself a note
+        }
+    }
+
+    /// 1.1(56): sit on a lobby as ALEX (seat 0), then have VERA's text land on
+    /// it while it is open - the exact sequence `didReceive` -> `incomingToken`
+    /// puts a real device through.
+    ///
+    /// One builder for all five streams, because they differ only in what Vera's
+    /// one text contains. Nothing here decides how the surface should react -
+    /// that is the kernel's plan, which is the whole point of the fix.
+    private func lobbyArrival(_ kind: String, away: String? = nil) async {
+        let joining = kind.hasPrefix("join")
+        // The lobby ALREADY on screen. For the kinds where Vera's text seats
+        // her, she is not in it yet.
+        let before: [(Int, String)] = joining ? [(0, "Alex")] : [(0, "Alex"), (1, "Vera")]
+        await makeLobby(joins: before)
+        become(0)
+        MessageGameStore.shared.nickname = "Alex"
+        expand()
+        guard let open = latest,
+              let bytes = try? MessageEnvelope.payloadBytes(url: open.url),
+              let env = try? await MessageEnvelope.decode(payload: bytes, viewer: -1),
+              let gid = UInt64(env.gameId) else {
+            AnimLog.say("scenario: lobby-arrive could not read the open lobby - rig bug")
+            return
+        }
+        // …and it is MY seat, so the roster reads "1. Alex (You)" the way it
+        // does on a device that created the game.
+        MessageGameStore.shared.setSeat(gameId: env.gameId, chatKey: chatKey, seat: 0, name: "Alex")
+        openBubble(open)
+
+        // A beat, so the lobby is SETTLED before anything lands on it. A rig
+        // that delivered into a first paint would be posing a different bug.
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+
+        let parent = MessageTurnController.firstEight(hex: env.digest)
+        let seated = env.joins.sorted { $0.seat < $1.seat }
+        let withVera = (seated + [MessageJoin(seat: 1, name: "Vera")]).sorted { $0.seat < $1.seat }
+        let joins = joining ? withVera : seated
+        // A leave COMPACTS the seats below it (see `leaveLobby`), so Vera
+        // getting up from seat 1 leaves Alex alone at seat 0.
+        let after: [MessageJoin] = kind == "leave" ? [MessageJoin(seat: 0, name: "Alex")] : joins
+        let rules = kind.hasSuffix("rules")
+        let starts = kind.hasSuffix("start")
+        let text: Data?
+        do {
+            if starts {
+                text = try await MessageKernel.shared.startFromLobby(
+                    lobbyPayload: bytes, gameId: gid, actingSeat: 1,
+                    parent8: parent, joins: after)
+            } else if rules {
+                text = try await MessageKernel.shared.resealLobby(
+                    bytes, passing: !env.passingAllowed, actingSeat: 1,
+                    gameId: gid, parent8: parent, joins: after)
+            } else {
+                _ = try await MessageKernel.shared.decode(payload: bytes, viewer: -1)
+                text = try await MessageKernel.shared.seal(
+                    phase: 0, lastActorSeat: kind == "leave" ? after.count : 1,
+                    gameId: gid, parent8: parent, joins: after)
+            }
+        } catch {
+            AnimLog.say("scenario: lobby-arrive could not seal a \(kind) - rig bug")
+            return
+        }
+        guard let text else { return }
+        guard let away else {
+            AnimLog.say("scenario: a \(kind) text arrives on the open lobby")
+            arrive(text, senderIndex: 1)
+            return
+        }
+        // …or it lands while the extension is NOT ACTIVE. Four lifecycles, and
+        // the question each of them asks is the same one: when the human comes
+        // back, is the surface showing the chain that arrived, or the one it was
+        // holding?
+        AnimLog.say("scenario: a \(kind) text arrives while away (\(away))")
+        switch away {
+        case "a":
+            // The appex was still loaded and `didReceive` fired with the drawer
+            // shut. Nothing about waking up is special after that.
+            arriveWhileAway(text, senderIndex: 1, notifies: true)
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            becomeActive(selecting: nil)
+        case "b-old":
+            // `didReceive` never fired, and the human wakes the extension on the
+            // bubble they were ALREADY in - their own lobby. Messages moves
+            // `selectedMessage` only for a tap, so the surface is handed exactly
+            // what it was handed before.
+            arriveWhileAway(text, senderIndex: 1, notifies: false)
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            becomeActive(selecting: nil)
+        case "c":
+            // The drawer collapses, the chain lands, the drawer expands again.
+            // A style change is the one host event that deliberately does NOT
+            // re-present (MessagesViewController.willTransition), so this asks
+            // whether the arrival survives a resize.
+            togglePresentation()
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            arriveWhileAway(text, senderIndex: 1, notifies: true)
+            try? await Task.sleep(nanoseconds: 1_400_000_000)
+            togglePresentation()
+        default:
+            // "b": `didReceive` never fired, and the human taps the bubble that
+            // just arrived. The only door left is `willBecomeActive` -> present.
+            arriveWhileAway(text, senderIndex: 1, notifies: false)
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            becomeActive(selecting: latest)
         }
     }
 
@@ -744,6 +877,15 @@ extension HarnessModel {
         // PREFERS pickups while it is under the target, because a pickup is the
         // only move in Durak that makes a hand bigger by more than one.
         let bigHand = Int(ProcessInfo.processInfo.environment["HARNESS_ARRIVE_BIGHAND"] ?? "") ?? 0
+        // 1.1(55): HARNESS_ARRIVE_DECKMAX=<n> warms up until the STOCK is down
+        // to `n` or fewer, which is the only way to pose the deck well's
+        // endgame at all. The two reports this exists for both need a refill
+        // that reaches PAST the deck and hands out the flipped trump - and that
+        // can only happen when the stock has fewer cards left than the refill
+        // is about to deal. Every arrival run before this one watched a board
+        // with fifteen-plus cards in the well, so the whole class was invisible
+        // to the rig, exactly as `bigHand`'s note says of the row split.
+        let deckMax = Int(ProcessInfo.processInfo.environment["HARNESS_ARRIVE_DECKMAX"] ?? "") ?? -1
         func biggestHand() async -> Int {
             guard let v = await MessageKernel.shared.residentView(viewer: -1) else { return 0 }
             return v.players.map(\.handCount).max() ?? 0
@@ -754,6 +896,20 @@ extension HarnessModel {
         // nothing, which is not the arrival being posed.
         func wantReady() async -> Int? {
             guard let v = await MessageKernel.shared.residentView(viewer: -1) else { return nil }
+            // Not until the stock is down where the report lives - see `deckMax`.
+            // Three conditions, and all three are the report: the stock must
+            // still be SHOWING (deck > 0, or the well draws no pile at all),
+            // the flipped trump must still be UNDER it, and the refill this
+            // move is about to run must want MORE cards than the deck holds -
+            // which is the only way the trump is dealt out rather than left
+            // sitting there. Without the third the board just deals from a
+            // short stock and the bug never poses.
+            if deckMax >= 0 {
+                guard v.deckCount > 0, v.deckCount <= deckMax, v.hasFlipped else { return nil }
+                let demand = v.players.filter { !$0.isOut }
+                    .reduce(0) { $0 + max(0, 6 - $1.handCount) }
+                guard demand > v.deckCount else { return nil }
+            }
             // Not until somebody's hand can actually SPLIT - see `bigHand`. The
             // arrival is only interesting on a board where the row count is in
             // play, so a run that posed it over a six-card hand would pass while
@@ -814,7 +970,7 @@ extension HarnessModel {
         // same board offline: round after round of pickups never gets there).
         // …and a bighand run needs room to take several times over, so it gets
         // the deep cap even for a shallow kind.
-        let cap = deep || bigHand > 0 ? 400 : 40
+        let cap = deep || bigHand > 0 || deckMax >= 0 ? 400 : 40
         // …and if one whole game goes by without producing the board, RE-DEAL.
         // Not every deal contains a bout-ending cover at all (the defender has
         // to run out on a table they can fully answer), so a single game is a
@@ -823,7 +979,7 @@ extension HarnessModel {
         // defender has to be holding the rank that is already on the table), so
         // it re-deals too. Any other kind takes exactly one pass, as it always
         // has.
-        let deals = deep || transfer ? 40 : 1
+        let deals = deep || transfer || deckMax >= 0 ? 40 : 1
         // Grow a hand: take the table rather than defend it, and open bouts
         // rather than end them, until somebody is over the split threshold.
         // Returns nil once the target is reached, which hands the warm-up back
@@ -844,7 +1000,7 @@ extension HarnessModel {
                 var acted = false
                 for s in 0..<n {
                     let legal = await MessageKernel.shared.residentLegal(seat: s)
-                    let pick = deep
+                    let pick = deep || deckMax >= 0
                         ? (legal.first { $0.type == .cover } ?? legal.first { $0.type != .wait })
                         // ROUND 29: never spend the move being hunted for. A
                         // transfer only ever appears on the DEFENDER's menu, and

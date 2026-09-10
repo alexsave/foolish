@@ -241,25 +241,88 @@ final class PodkidnoyTests: XCTestCase {
     /// A podkidnoy table's rulebook does not mention passing ANYWHERE - the
     /// owner's instruction, and the reason the defending section has a second
     /// text rather than an "(if allowed)" aside.
+    ///
+    /// THE CONTROL IS PER-LANGUAGE, and the reason is the way this test broke.
+    ///
+    /// It used to hold ONE list for all of them - `["pass", "перевод", "넘기",
+    /// "转移", "chuyển"]` - written when the table carried five languages and
+    /// grown by hand, twice, when round 30 added zh and vi. Then ten more
+    /// languages landed (es pt fr de it ja pl uk tr id) and the list did not
+    /// grow with them, because nothing made it: a language whose word was
+    /// missing failed only the POSITIVE half, and the positive half is the one
+    /// that reads like a translation nit rather than a rule. Eight of the ten
+    /// went red on 2026-09-09 ("es: the classic defending text lost its
+    /// transfer"), and pt and it were green purely by accident - their word is
+    /// "passar", which contains the English "pass".
+    ///
+    /// The rulebook was right in all fifteen the whole time. The list was the
+    /// defect, and a shared list is the wrong shape for the claim: "this text
+    /// does not mention passing" is a statement about ONE language's own word.
+    /// So each language names its own, `AppLanguage` is the key, and a language
+    /// with no entry FAILS - adding a sixteenth to `FStrings` now cannot leave
+    /// this test quietly asserting nothing about it.
+    ///
+    /// The negative half still sweeps the WHOLE union: one language's word
+    /// turning up in another's no-pass text is either a bad translation or an
+    /// untranslated string that fell through to English, and both are worth a
+    /// red mark. (Verified clean for all fifteen; no word is a substring of an
+    /// unrelated language's no-pass text.)
+    private static let transferWord: [AppLanguage: String] = [
+        .en: "pass",        // "cover, pick up, or pass (if allowed)"
+        .ru: "перевод",     // "перевести … если перевод разрешён"
+        .ko: "넘기",         // 넘기기
+        .zh: "转移",
+        .vi: "chuyển",
+        .es: "pasar",
+        .pt: "passar",
+        .fr: "transfér",    // transférer / le transfert
+        .de: "schieben",
+        .it: "passare",
+        .ja: "パス",
+        .pl: "odbić",
+        .uk: "перевести",
+        .tr: "aktar",       // aktarabilir
+        // The WHOLE word, not the "oper" stem: Romanian's "acopere" (to
+        // cover) contains it, so the short form would make the union sweep
+        // below cry wolf over ro's no-pass text the moment ro lands.
+        .id: "mengoper",
+        // ROUND 47's ten. Validated against this branch's own strings: every
+        // classic text contains its word, and no no-pass text contains any of
+        // the twenty-five.
+        .th: "ส่งต่อ",
+        .nl: "doorschuiven",
+        .sv: "skicka vidare",
+        .da: "skubbe videre",
+        .no: "skyve videre",
+        .fi: "siirtä",
+        .cs: "posunout",
+        .ro: "pase",
+        .he: "להעביר",
+        .ar: "يمرر",
+    ]
+
     func testTheNoPassRulesTextNeverMentionsPassing() {
-        // ROUND 30 added 转移 (zh) and chuyển (vi). One word per language, and
-        // the pair below is what makes the list mean anything: the ordinary
-        // defending text must CONTAIN one of these, the no-pass text must not.
-        let words = ["pass", "перевод", "넘기", "페레보", "转移", "chuyển"]
         let was = FStrings.override
         defer { FStrings.override = was }
+        // Sorted only so a failure list reads the same way twice.
+        let everyWord = Set(Self.transferWord.values).sorted()
         for lang in AppLanguage.allCases {
+            guard let word = Self.transferWord[lang] else {
+                XCTFail("\(lang) has no transfer word here, so nothing below asserts "
+                        + "anything about it - add the word this language's rulebook uses")
+                continue
+            }
             FStrings.override = lang
             let body = FStrings.t("ios.rules.defend.b.nopass").lowercased()
             XCTAssertFalse(body.isEmpty, "\(lang): the no-pass defending text is missing")
             XCTAssertNotEqual(body, "ios.rules.defend.b.nopass",
                               "\(lang): the key is not translated")
-            for w in words {
+            for w in everyWord {
                 XCTAssertFalse(body.contains(w), "\(lang): the no-pass text mentions \(w)")
             }
             // …and the ordinary text DOES, or the pair proves nothing.
-            XCTAssertTrue(words.contains { FStrings.t("ios.rules.defend.b").lowercased().contains($0) },
-                          "\(lang): the classic defending text lost its transfer")
+            XCTAssertTrue(FStrings.t("ios.rules.defend.b").lowercased().contains(word),
+                          "\(lang): the classic defending text lost its transfer (\(word))")
         }
     }
 }
