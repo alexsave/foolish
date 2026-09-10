@@ -741,6 +741,7 @@ private struct GameSurface: View {
                 FlightRecorder.note("send-signal", sentPayload.map { "\($0.count)b" } ?? "none")
                 surfaceStaged = false   // round-9: the staged bubble is sent
                 stagedParent8 = nil     // …and the draft it belonged to is now the thread's
+                stagedBase = nil
                 // SYNCHRONOUSLY, in this same SwiftUI transaction: the Undo pill
                 // goes now, not after a Task hop and a decode (owner: "should
                 // probably disappear the second you hit send"). `markSent` below
@@ -758,7 +759,7 @@ private struct GameSurface: View {
             // clearing `surfaceStaged` here never dimmed it (1.0(37): "if I
             // stage then X the staged bubble, the send hint arrow doesn't go
             // away").
-            .onChange(of: cancelToken) { _ in surfaceStaged = false; stagedParent8 = nil }
+            .onChange(of: cancelToken) { _ in surfaceStaged = false; stagedParent8 = nil; stagedBase = nil }
             // A bubble ARRIVED while this surface is open (didReceive). Apple
             // does not move `selectedMessage` for an arrival, so loadKey does
             // not change and the .task above will not re-run - this one does.
@@ -1646,6 +1647,7 @@ private struct GameSurface: View {
         arrivalStill = nil; stillFade = 1; rulesTurn = nil
         surfaceStaged = false   // round-9: a new input owes nothing to Send yet
         stagedParent8 = nil
+        stagedBase = nil
         arrivalTaken = nil
         await load()
         AnimLog.say("surface showing \(showingWhat)")
@@ -1703,6 +1705,15 @@ private struct GameSurface: View {
     /// names the link the thread actually has, for every edit made to it.
     @State private var stagedParent8: Data?
 
+    /// The CHAIN that staged draft was started from - the table as everyone else
+    /// still has it, before any local edit.
+    ///
+    /// Kept beside `stagedParent8` and for the same reason, but it answers a
+    /// different question: that one is what the outgoing bubble CLAIMS as its
+    /// ancestry, this one is the state a local edit may be discarded back to.
+    /// `leaveLobby` is the only caller - see the rule there.
+    @State private var stagedBase: Data?
+
     /// The parent8 for a lobby reseal. While a draft is already staged, my own
     /// intermediate chains are edits to THAT draft and not links anyone else can
     /// see, so the parent stays the one the thread has.
@@ -1710,6 +1721,7 @@ private struct GameSurface: View {
         if surfaceStaged, let held = stagedParent8 { return held }
         let p = MessageTurnController.firstEight(hex: env.digest)
         stagedParent8 = p
+        stagedBase = lastShownChain
         return p
     }
 
@@ -2196,8 +2208,34 @@ private struct GameSurface: View {
         guard !joins.isEmpty else { return }
 
         do {
-            // Re-adopt so the LOCKED seed and the open capacity are resident.
-            _ = try await MessageKernel.shared.decode(payload: lob.payload, viewer: -1)
+            // LEAVING DISCARDS A RULES CHANGE MADE IN THE SAME BREATH. Owner's
+            // ruling, and it is a RULE now rather than whatever fell out:
+            // "if you toggle and leave, it's the same as if you just left. No
+            // affect on toggle. Leaving then toggling shouldn't even be
+            // possible. Lets make it unambiguous."
+            //
+            // The other order was already impossible and needs no clause -
+            // leaving spends the seat that moving the rules requires
+            // (`msg_lobby_can_set_rules`), so a leaver simply has no checkbox.
+            // This is the order that WAS possible, and it was the worst of the
+            // three outcomes: the chain carried her new rule, so the table
+            // silently changed its rules on somebody who had walked away from
+            // it, and the only signal was a rotate that may or may not play.
+            //
+            // Enforced at the SENDER, deliberately. A receiver could suppress
+            // the rule instead, and that would be worse: her chain would say one
+            // thing and every screen reading it another, which is a fork rather
+            // than a rule. So the leave seals from the chain the draft STARTED
+            // from - the table as everyone else still has it - and her local
+            // toggle goes out with the draft it belonged to.
+            //
+            // The roster is still taken from `env`, which is correct either way:
+            // a draft carries at most one roster action and leaving IS it, so a
+            // preceding rules edit cannot have moved anybody.
+            let base = (surfaceStaged ? stagedBase : nil) ?? lob.payload
+            // Re-adopt so the LOCKED seed and the open capacity are resident -
+            // and, per the rule above, the rules the TABLE agreed.
+            _ = try await MessageKernel.shared.decode(payload: base, viewer: -1)
             let parent = threadParent8(env)
             let payload = try await MessageKernel.shared.seal(
                 phase: 0, lastActorSeat: joins.count, gameId: gid,

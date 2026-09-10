@@ -1123,6 +1123,23 @@ int msg_lobby_can_exit(int my_seat, int joined);
 // only show the join button." That falls out of this one line together with
 // `msg_lobby_offered`: leaving clears the seat, so the box goes dead and the
 // offered control becomes JOIN. There is no separate leaver state to keep.
+//
+// AND THE OTHER ORDER IS DECIDED TOO, which this line does NOT cover and which
+// the owner ruled on after seeing it: "if you toggle and leave, it's the same as
+// if you just left. No affect on toggle. Leaving then toggling shouldn't even be
+// possible. Lets make it unambiguous."
+//
+// One draft can hold both, because `conversation.insert` replaces rather than
+// queues - so a seated player could move the rules and then get up, and the one
+// bubble that went out carried her new rule. That is the worst of the three
+// possible outcomes: the table's rules changed on the say-so of somebody who had
+// just walked away from it, announced by a rotate that may not even play.
+//
+// So a leave carries the rules the TABLE agreed, and the local toggle dies with
+// the draft. It is enforced where the bubble is SEALED (GameSurface.leaveLobby)
+// and not on the reader, deliberately: suppressing it on arrival would leave her
+// chain saying one thing and every screen reading it another, which is a fork
+// rather than a rule.
 int msg_lobby_can_set_rules(int my_seat);
 
 // Did THIS device change the rules on the lobby it is showing? `have_baseline`
