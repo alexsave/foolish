@@ -22,6 +22,23 @@ public enum Auth {
 
     /// nameToEmail: SHA-256 of the UPPERCASED UTF-8 name → first 16 hex chars →
     /// `<hex>@foolish.cards` (AuthContext.tsx:12-33).
+    ///
+    /// `uppercased()` HERE MUST STAY LOCALE-INDEPENDENT. Swift's plain
+    /// `uppercased()` uses the root locale, which is what makes this digest the
+    /// same on every device on earth. `uppercased(with: .current)` looks like a
+    /// tidier, more correct-seeming version of the same call and is not: Turkish
+    /// maps `i` to `İ` rather than `I`, so on a Turkish phone every name
+    /// containing an `i` would hash differently.
+    ///
+    /// The failure mode is the quiet kind. Nothing throws. The user is simply
+    /// handed a DIFFERENT account - a fresh empty one on sign-up, or a locked
+    /// door on sign-in - and only in one locale, so it would never reproduce for
+    /// whoever picked up the report. The web derives the same address the same
+    /// way (`AuthContext.tsx`), so a change here also silently forks the account
+    /// namespace between the two clients.
+    ///
+    /// The app ships twenty-five languages and picks one from the phone, so
+    /// Turkish users are not hypothetical.
     public static func nameToEmail(_ name: String) -> String {
         let digest = SHA256.hash(data: Data(name.uppercased().utf8))
         let hex = digest.map { String(format: "%02x", $0) }.joined()
