@@ -114,9 +114,105 @@ final class MessagesViewController: MSMessagesAppViewController {
         host?.view.backgroundColor = colour
     }
 
+    /// THE SELECTION MOVED UNDER US - the second way a message can reach this
+    /// extension, and the only one left after the host stopped using the first.
+    ///
+    /// THE BUG. The owner creates a lobby from the app drawer, sends it, and
+    /// leaves the drawer open. Eva joins. Her bubble is plainly in the transcript
+    /// and his roster never moves. His flight log records NOTHING - no `receive`,
+    /// and (since 1.1(62)) no `receive-dropped` either, so it is not ours to
+    /// drop. Expanding and collapsing the drawer by hand makes delivery resume,
+    /// which is why a live GAME never showed it: playing a move auto-collapses,
+    /// so the board is re-armed for free on every single move.
+    ///
+    /// WHAT IS ESTABLISHED, from disassembling Messages.framework rather than
+    /// guessing. `-[_MSMessageAppContext _didReceiveMessage:conversationState:]`
+    /// is a bare dispatch to main that updates the conversation and calls
+    /// `didReceiveMessage:conversation:`. There is no presentation-style, session
+    /// or selection check on the extension side at all. So the decision not to
+    /// deliver is the HOST's, its code is not on disk in the simulator runtime,
+    /// and there is no file:line here to find. Process suspension was my own
+    /// theory and it is wrong: XPC messages to a suspended process QUEUE and
+    /// deliver on resume, and that session demonstrably resumed twice - it
+    /// rendered the diagnostic panel while her join was already in the
+    /// transcript, and later ran `didResignActive` - with no receive ever
+    /// arriving. The host withheld it.
+    ///
+    /// WHY THIS SIGNAL EXISTS. `-[MSConversation _updateWithState:]` sets
+    /// `selectedMessage` from the host's `activeMessage` on every conversation
+    /// state it pushes, and fires willSelect/didSelect when it changes. And
+    /// 1.1(61) already PROVED on the owner's device that an arrival moves the
+    /// selection - that discovery is the whole reason `reload-is-arrival` exists,
+    /// because arrivals were turning into cold reloads onto the newly selected
+    /// bubble. So if the host pushes a state for her join while withholding the
+    /// receive, this fires and carries the same bytes.
+    ///
+    /// It is routed EXACTLY as `didReceive` routes one - same `isMine` gate, same
+    /// `incomingURL`, same token, same `present` - so everything downstream (Rule
+    /// P, the arrival plan, the beats, the `arrivalTaken` dedupe) applies
+    /// unchanged and this cannot become a second, divergent adoption path.
+    ///
+    /// AND IT MUST NOT FIRE FOR A TAP. A human tapping a bubble is a COLD OPEN,
+    /// which the owner ruled paints rather than animates ("If you open a lobby
+    /// bubble, it should just open the state of that message with no
+    /// animations"). A tap arrives as a fresh activation, so `freshlyActive`
+    /// stands this down for the first selection after one and the ordinary
+    /// willBecomeActive -> present path handles it as it always has. Only a
+    /// selection that moves while we are ALREADY active and settled is treated as
+    /// an arrival, because that is the only way it can be one.
+    ///
+    /// NOT VERIFIED ON A DEVICE. The simulator cannot deliver a second party's
+    /// bubble, and the owner's tester had gone. If the host pushes no state
+    /// either, this is inert - it costs one guarded branch and changes nothing -
+    /// and the honest answer becomes that only a host re-presentation re-arms
+    /// delivery, which is a locked constraint. The `select` note below is what
+    /// will say which.
+    override func didSelect(_ message: MSMessage, conversation: MSConversation) {
+        super.didSelect(message, conversation: conversation)
+        let payload = Self.payload(of: message)
+        if freshlyActive {
+            FlightRecorder.note("select", "\(payload?.count ?? -1)b on a fresh activation - not an arrival")
+            return
+        }
+        if StagedBubbleRouting.isMine(payload, pendingStage: pendingStage?.payload,
+                                      lastSentPayload: lastSentPayload) {
+            FlightRecorder.note("select-dropped", "isMine")
+            return
+        }
+        FlightRecorder.note("select", "\(payload?.count ?? -1)b - routing as an arrival")
+        startingNewGame = false
+        freshSession = false
+        incomingURL = message.url
+        incomingToken += 1
+        present(conversation, style: presentationStyle)
+    }
+
+    /// When this activation began. A tap that launches or re-activates the
+    /// extension brings its own selection WITH it, and that is a cold open, not
+    /// an arrival - so a selection landing in the moments right after becoming
+    /// active is the tap's own, and is left to the ordinary path.
+    ///
+    /// A timestamp rather than a flag, because the flag has nowhere honest to be
+    /// cleared: `willBecomeActive` calls `present` itself, so clearing it there
+    /// clears it before any selection could be weighed against it, and clearing
+    /// it on a timer needs a token to survive a rapid re-activation. A window is
+    /// the thing actually being expressed, so it is expressed directly.
+    ///
+    /// Two seconds is generous against a slow launch and far short of the
+    /// minutes an arrival takes; the failing report had 153 seconds between the
+    /// send and the join.
+    private var becameActiveAt: Date?
+    private static let activationSettles: TimeInterval = 2
+    private var freshlyActive: Bool {
+        guard let t = becameActiveAt else { return false }
+        return Date().timeIntervalSince(t) < Self.activationSettles
+    }
+
     override func willBecomeActive(with conversation: MSConversation) {
         super.willBecomeActive(with: conversation)
         FlightRecorder.note("active", "\(conversation.remoteParticipantIdentifiers.count + 1)p chat")
+        // A FRESH ACTIVATION OWNS ITS SELECTION. See `didSelect`.
+        becameActiveAt = Date()
         // A NEW ACTIVATION IS A NEW AUDIENCE. Any just-sent marker still lying
         // about belongs to a session that has ended - the player closed the
         // drawer and came back - and a reopen they chose is a request to watch
