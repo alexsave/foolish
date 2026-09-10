@@ -286,6 +286,19 @@ final class PodkidnoyTests: XCTestCase {
         // cover) contains it, so the short form would make the union sweep
         // below cry wolf over ro's no-pass text the moment ro lands.
         .id: "mengoper",
+        // ROUND 47's ten. Validated against this branch's own strings: every
+        // classic text contains its word, and no no-pass text contains any of
+        // the twenty-five.
+        .th: "ส่งต่อ",
+        .nl: "doorschuiven",
+        .sv: "skicka vidare",
+        .da: "skubbe videre",
+        .no: "skyve videre",
+        .fi: "siirtä",
+        .cs: "posunout",
+        .ro: "pase",
+        .he: "להעביר",
+        .ar: "يمرر",
     ]
 
     func testTheNoPassRulesTextNeverMentionsPassing() {
