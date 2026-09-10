@@ -895,7 +895,8 @@ private struct GameSurface: View {
             AnimLog.say("arrival held - a reload owns the surface")
             return
         }
-        let current = controller?.basePayload ?? lobby?.payload ?? showingBefore
+        let current = controller?.basePayload ?? lobby?.payload
+                      ?? showingBefore ?? lastShownChain
         if bytes == current { AnimLog.say("arrival ignored - same chain"); return }
         if let current {
             // A refusal here is SILENT to the player, and that is what made the
@@ -941,6 +942,17 @@ private struct GameSurface: View {
         // resident game is not moved out from under the board being asked about.
         let plan = await MessageKernel.shared.surfacePlan(showing: current ?? bytes,
                                                           arriving: bytes)
+        // THE ONE LINE THAT SAYS WHY THERE WAS NO ANIMATION, and it is on the
+        // always-compiled recorder rather than in AnimLog on purpose: AnimLog is
+        // DEBUG plus an environment variable, so the build a human actually
+        // plays on has no animation trace at all, and three rounds of this bug
+        // were diagnosed by inference because nobody could see this number.
+        // `showing` is the half that goes wrong silently - a plan asked with
+        // nothing on screen diffs the arrival against itself and answers "no
+        // beats", which is indistinguishable from "nothing to animate".
+        FlightRecorder.note("arrival",
+            "beats=\(plan.beats.count) showing=\(current == nil ? "NONE" : "yes") "
+            + "phase=\(env.phase) joins=\(env.joins.count)")
         await playArrival(plan, winner: bytes, env: env)
     }
 
@@ -976,6 +988,7 @@ private struct GameSurface: View {
             // never again indistinguishable in a log.
             if !plan.beats.isEmpty {
                 AnimLog.say("surface DROPPED \(plan.beats.count) beat(s) - no lobby to play them over")
+                FlightRecorder.note("beats-dropped", "\(plan.beats.count) with no lobby under them")
             }
             await adopt(winner: winner, env: env)
             return
@@ -1516,6 +1529,8 @@ private struct GameSurface: View {
     /// loadKey unchanged, so `.task(id:)` does not fire and the game persists.
     private func reloadForInput() async {
         AnimLog.say("surface reload key=[\(loadKey)]")
+        // A reload WITH a live arrival is the shape that ate the beats twice.
+        if incomingURL != nil { FlightRecorder.note("reload-vs-arrival") }
         // WHAT THE HUMAN WAS LOOKING AT, read before the reset below throws it
         // away. An arrival landing during a reload has to be diffed against
         // THIS, not against whatever the reload settles on - see `reloading`.
@@ -1561,6 +1576,28 @@ private struct GameSurface: View {
         reloading = false
         if incomingURL != nil { await maybeAdoptIncoming(showingBefore: wasShowing) }
     }
+
+    /// THE LAST CHAIN THIS SURFACE ACTUALLY SHOWED, and the only thing here that
+    /// a reset does not clear.
+    ///
+    /// `maybeAdoptIncoming` has to answer "what is this arrival a change FROM",
+    /// and it reads that from what is on screen RIGHT NOW - `controller` or
+    /// `lobby`. Both are transient: a reload nils them and then awaits, screens
+    /// swap, branches come and go. Every one of those windows turns the question
+    /// into "a change from nothing", and a plan asked with nothing to compare
+    /// against diffs the arrival with ITSELF and answers "no beats" - which is
+    /// indistinguishable, at the call site and on screen, from "this arrival
+    /// genuinely has nothing to animate". That is how the rotate and the fade
+    /// went missing in 1.1(57), (58) and (59) while every test stayed green: the
+    /// beats were never computed, so there was nothing to fail.
+    ///
+    /// So the surface remembers, separately from what it is currently drawing.
+    /// It is written wherever a chain goes on screen and nowhere else, so the
+    /// worst it can be is one chain stale - which still yields a CORRECT plan,
+    /// because a plan against a slightly older chain is exactly the stale-surface
+    /// case the kernel already handles (msg_wire.h: the diff is against what is
+    /// on screen, and a gap replays as one sequence).
+    @State private var lastShownChain: Data?
 
     /// A RELOAD OWNS THE SURFACE WHILE IT RUNS. 1.1(59).
     ///
@@ -1649,7 +1686,7 @@ private struct GameSurface: View {
                 return
             }
             noteRulesBaseline(env)
-            lobby = Lobby(env: env, payload: payload)
+            lobby = Lobby(env: env, payload: payload); lastShownChain = payload
         case .board(let payload):
             let env: MessageEnvelope; let bodyVer: Int
             do { (env, bodyVer) = try await MessageKernel.shared.decodeWithBodyVersion(payload: payload) }
@@ -1823,7 +1860,7 @@ private struct GameSurface: View {
             showSetup = false
             damaged = false
             cache(seat: 0, env: env, payload: payload)
-            lobby = Lobby(env: env, payload: payload)
+            lobby = Lobby(env: env, payload: payload); lastShownChain = payload
             await onSend(payload, 0, false)
             surfaceStaged = true
         } catch {
@@ -1899,7 +1936,7 @@ private struct GameSurface: View {
                 parent8: Data(repeating: 0, count: 8), joins: joins)
             let env = try await MessageEnvelope.decode(payload: payload, viewer: -1)
             cache(seat: 0, env: env, payload: payload)
-            lobby = Lobby(env: env, payload: payload)
+            lobby = Lobby(env: env, payload: payload); lastShownChain = payload
             await onSend(payload, 0, false)
             surfaceStaged = true   // round-9: the created lobby awaits Send
         } catch {
@@ -1979,7 +2016,7 @@ private struct GameSurface: View {
             cache(seat: free, env: newEnv, payload: payload)
             await onSend(payload, free, false)
             surfaceStaged = true   // round-9: the join reseal awaits Send
-            lobby = Lobby(env: newEnv, payload: payload)
+            lobby = Lobby(env: newEnv, payload: payload); lastShownChain = payload
         } catch {
             damaged = true
         }
@@ -2040,7 +2077,7 @@ private struct GameSurface: View {
             onAnnounceLeave(myName)
             await onSend(payload, joins.count, false)
             surfaceStaged = true
-            lobby = Lobby(env: newEnv, payload: payload)
+            lobby = Lobby(env: newEnv, payload: payload); lastShownChain = payload
         } catch {
             damaged = true
         }
@@ -2136,7 +2173,7 @@ private struct GameSurface: View {
             cache(seat: me, env: newEnv, payload: payload)
             await onSend(payload, me, false)
             surfaceStaged = true
-            lobby = Lobby(env: newEnv, payload: payload)
+            lobby = Lobby(env: newEnv, payload: payload); lastShownChain = payload
         } catch {
             damaged = true
         }
@@ -2182,7 +2219,7 @@ private struct GameSurface: View {
                 phase: 0, lastActorSeat: free, gameId: gid, parent8: parent, joins: joins)
             let newEnv = try await MessageEnvelope.decode(payload: payload, viewer: -1)
             cache(seat: keepSeat, env: newEnv, payload: payload)
-            lobby = Lobby(env: newEnv, payload: payload)
+            lobby = Lobby(env: newEnv, payload: payload); lastShownChain = payload
         } catch {
             damaged = true
         }
@@ -2262,7 +2299,7 @@ private struct GameSurface: View {
         if env.phase == 0 {
             controller = nil
             noteRulesBaseline(env)
-            lobby = Lobby(env: env, payload: winner)
+            lobby = Lobby(env: env, payload: winner); lastShownChain = winner
             return
         }
         // Round-9 #5: is this the chain THIS DEVICE just pressed Send on? The
@@ -2271,6 +2308,7 @@ private struct GameSurface: View {
         // REPLAYED the move I had just watched myself play. One-shot: consumed
         // (cleared) whether it matches or not, so a stale marker can never
         // silence a later genuine replay.
+        lastShownChain = winner
         let justSent = MessageGameStore.shared.consumeJustSent(matching: winner)
         // ROUND 20: is this bubble the latest this device has seen of this game,
         // or a branch off something older? Asked BEFORE any early return below,

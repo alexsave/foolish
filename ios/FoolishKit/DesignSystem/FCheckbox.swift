@@ -200,6 +200,7 @@ struct FCheckbox: View {
     /// animation.
     private func runTurn(seconds: TimeInterval, outgoing: Bool) {
         guard seconds > 0 else { return }
+        FlightRecorder.note("turn", "\(Int(seconds * 1000))ms")
         turnToken += 1
         let mine = turnToken
         let half = seconds / 2

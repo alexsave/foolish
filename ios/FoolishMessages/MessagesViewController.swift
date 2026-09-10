@@ -221,9 +221,20 @@ final class MessagesViewController: MSMessagesAppViewController {
         // has been opened; a lobby this device just CREATED and sent has none
         // (StagedBubbleRouting pins the presentation to nil through a New game),
         // and there the chain is the one that went out.
+        // Three sources, in the order they stop being true. `lastPayloadURL` is
+        // the chain once a bubble has been opened. A lobby this device just
+        // CREATED and sent has none (StagedBubbleRouting pins the presentation
+        // to nil through a New game), so the chain is the one that went out.
+        // And `lastSentPayload` is itself CLEARED the moment the presentation
+        // moves (`route.clearMarkers`), which is what left the first attempt at
+        // this door reporting "no lobby on screen" - so the last resort is the
+        // conversation's own selected bubble, which for a lobby this device
+        // inserted is that same lobby and is never nil.
         guard let conversation = activeConversation,
               let showing = lastPayloadURL.flatMap({ try? MessageEnvelope.payloadBytes(url: $0) })
-                            ?? lastSentPayload,
+                            ?? lastSentPayload
+                            ?? conversation.selectedMessage?.url
+                                .flatMap({ try? MessageEnvelope.payloadBytes(url: $0) }),
               let env = try? await MessageEnvelope.decode(payload: showing, viewer: -1),
               let gid = UInt64(env.gameId) else {
             FlightRecorder.note("rig", "no lobby on screen for \(kind)")
