@@ -161,12 +161,20 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// selection that moves while we are ALREADY active and settled is treated as
     /// an arrival, because that is the only way it can be one.
     ///
-    /// NOT VERIFIED ON A DEVICE. The simulator cannot deliver a second party's
-    /// bubble, and the owner's tester had gone. If the host pushes no state
-    /// either, this is inert - it costs one guarded branch and changes nothing -
-    /// and the honest answer becomes that only a host re-presentation re-arms
-    /// delivery, which is a locked constraint. The `select` note below is what
-    /// will say which.
+    /// SETTLED SINCE: for the create-from-drawer flow this is INERT, and that is
+    /// now a fact rather than the open question it was written as. 1.1(65)
+    /// shipped it, the owner reproduced, and the log carried no `select` and no
+    /// `select-dropped` - the host pushes no conversation state either, because
+    /// the browser is bound to no datasource at all (see the block in
+    /// `didStartSending`, which has the full call chain).
+    ///
+    /// KEPT ANYWAY, and not out of sentiment. Where the browser IS bound, the
+    /// host moves `activeMessage` on the same replacement that fires
+    /// `didReceive`, so this is a second, independent route to an arrival we
+    /// would otherwise see once - and `arrivalTaken` in the surface makes a
+    /// double delivery free. It costs one guarded branch, it cannot fire for a
+    /// tap (`freshlyActive`), and if a future iOS pushes state without a receive
+    /// it is already here.
     override func didSelect(_ message: MSMessage, conversation: MSConversation) {
         super.didSelect(message, conversation: conversation)
         let payload = Self.payload(of: message)
@@ -404,54 +412,10 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// so commit it to the cache (§7.6). This is the ONLY place the cache learns
     /// a chain was actually sent — insert alone is not a commit.
     override func didStartSending(_ message: MSMessage, conversation: MSConversation) {
-        // ASK THE HOST TO RE-PRESENT US, WITHOUT MOVING ANYTHING.
-        //
-        // After this device sends the FIRST bubble of a chain from a drawer
-        // launch, the host stops pushing anything to this extension context: no
-        // `didReceive`, and (1.1(65) proved it) no conversation state either, so
-        // not even `didSelect`. A join lands in the transcript and the open lobby
-        // never hears about it. Expanding and collapsing the drawer by hand makes
-        // delivery resume, which is also why a live GAME never showed it - playing
-        // a move auto-collapses, so the board is re-armed for free every move.
-        //
-        // The re-arming is the HOST re-presenting us. We cannot call host code,
-        // and `present()` here is ours alone - it only swaps the hosting root
-        // view and the host never hears it, which is why calling it below has
-        // never been enough.
-        //
-        // `requestPresentationStyle:` is the ONE public call that reaches the
-        // host, and Messages.framework forwards it UNCONDITIONALLY - it logs
-        // "Requesting presentation style" and passes it on, with no same-style
-        // early return on the extension side. So asking for the style we are
-        // ALREADY in may make the host do its re-presentation bookkeeping while
-        // having nothing to animate. Owner: "if the transition is triggering
-        // something special, just trigger that without a transition?" - this is
-        // that, and it is the only shape it can take.
-        //
-        // Whether the host no-ops it is host-side and cannot be read from this
-        // Mac. If it does, this is inert. If it does not, delivery re-arms with
-        // no visible change - and NOT with the compact->expanded->compact bounce,
-        // which is locked and which I am not shipping.
-        //
-        // SCOPED ON "NOTHING IS OPEN", which is the failing case exactly and is
-        // the one thing about it a human can see in the panel: every log of the
-        // broken flow reads `Last message: no message open`, and every working
-        // one names a chain. `lastPayloadURL` is that same value
-        // (`route.url`), which `StagedBubbleRouting` pins to nil through a
-        // create - so this is true for a lobby made from the app drawer and
-        // false for every action reached by TAPPING a bubble, and a tap
-        // re-arms delivery through its own activation anyway.
-        //
-        // IT WAS SCOPED ON `startingNewGame` IN 1.1(66) AND NEVER FIRED. That
-        // flag is only set when a human taps the New game BUTTON; a drawer
-        // launch into a thread with no game routes straight to setup and nobody
-        // calls `onNewGame`, so it was false for the whole create flow. The
-        // owner's 66 log shows the miss precisely - a create flow (`no message
-        // open`), `send 70b`, and no `re-present` line after it.
-        if lastPayloadURL == nil {
-            FlightRecorder.note("re-present", "same style, asking the host to re-arm")
-            requestPresentationStyle(presentationStyle)
-        }
+        // Captured BEFORE the `present` below, which rewrites `lastPayloadURL`.
+        // The dismiss itself happens at the END of this method, once the send is
+        // fully recorded - see the block there for why it happens at all.
+        let drawerIsUnbound = lastPayloadURL == nil
         startingNewGame = false
         freshSession = false
         // ROUND 12 #11: the chain being sent comes from the MESSAGE Messages
@@ -501,7 +465,120 @@ final class MessagesViewController: MSMessagesAppViewController {
         // is what clears the Undo button and the send hint - written as
         // belt-and-braces for the case where Messages kept the drawer open
         // anyway, and now the case that always happens.
-        if presentationStyle != .compact { dismiss() }
+        if presentationStyle != .compact {
+            dismiss()
+        } else if drawerIsUnbound {
+            // THE FIRST BUBBLE OF A GAME CLOSES THE DRAWER, AND ONLY THAT ONE.
+            //
+            // This is a concession, it is the owner's, and it is made against his own
+            // standing preference ("We want to keep it open as much as possible", and
+            // round 16's decision to keep it open at all). It is here because the
+            // alternative is a lobby that can never update, and the whole of that
+            // reasoning is written down below so nobody removes this line on the
+            // reasonable-sounding grounds that it looks like a papercut.
+            //
+            // ── WHAT BREAKS ──────────────────────────────────────────────────────
+            // `+ > Foolish > New game > create > Send`, drawer left open. The other
+            // player joins. Their bubble is visibly in the transcript and this
+            // extension is never told: no `didReceive`, and (1.1(65) added the
+            // override to check) no `didSelect` either. Nothing arrives at all.
+            //
+            // ── WHY, FROM THE HOST BINARIES ──────────────────────────────────────
+            // Read out of the iOS 26.3 simulator runtime's
+            // MSMessageExtensionBalloonPlugin.bundle, ChatKit and
+            // iMessageApps.framework, and confirmed against the DEVICE's own ChatKit
+            // (iOS DeviceSupport/iPhone16,2 26.5.2) - not inferred from behaviour.
+            //
+            // Delivery is not a broadcast. The host's browser view controller holds a
+            // MESSAGE DATASOURCE, and that binding IS the wire: when a message
+            // arrives, the host replaces the payload inside the datasource an
+            // extension is bound to, and the replacement is what fires didReceive.
+            // Exactly two host paths send `_didReceiveMessage:conversationState:`:
+            //
+            //   PATH A, and it is DEAD on iOS 26:
+            //     -[CKChatInputController _handleChatItemDidChange:]
+            //       -> notifyBrowserViewControllerOfMatchingNewMessages:
+            //          requires browserSwitcher.currentViewController to be us.
+            //     `currentViewController` is restored only by
+            //     browserTransitionCoordinator:expandedStateDidChange:withReason:,
+            //     reachable only from -[CKBrowserSwitcherViewController
+            //     setExpanded:withReason:] - which has ZERO call sites in ChatKit or
+            //     iMessageApps under the app-card model. Which is why not even our
+            //     own echo arrives.
+            //
+            //   PATH B, the live one:
+            //     -[MSMessageExtensionBrowserViewController setBalloonPluginDataSource:]
+            //       sets dataSource.delegate = self
+            //     -> a same-MSSession message replaces that datasource's payload
+            //     -> datasourcePayloadDidChange:updateFlags:  (flags & 0x13)
+            //     -> _didReceiveMessage:, activeMessage = the new message.
+            //
+            // A DRAWER LAUNCH BINDS NOTHING: the browser is created as
+            // viewControllerForPluginIdentifier:dataSource:nil - compose mode, not
+            // viewing-a-thread mode - and SENDING does not bind it either
+            // (didStartSendingPluginPayload: forwards _didStartSendingMessage: and
+            // releases the load request, and that is all). So the extension sits
+            // running, visible, and the delegate of no datasource. There is nobody
+            // for the host to notify. It is not policy; there is no wire.
+            //
+            // The only host paths that bind a datasource to an ALREADY-PRESENTED card
+            // are showBrowserForPlugin:dataSource:style: -> overseer
+            // updateCurrentBrowserWithDataSource:, reached from
+            // transcriptCollectionViewController:balloonView:tappedForChatItem: -
+            // i.e. A HUMAN TAPPING ONE OF OUR BUBBLES - or a transcript live view's
+            // own request. That is why a live GAME never shows this bug: you always
+            // arrive by tapping, so you are bound before the first move.
+            //
+            // ── WHY WE CANNOT ASK FOR IT ─────────────────────────────────────────
+            // No public extension->host call binds a datasource. Not `insert`, `send`,
+            // `dismiss`, `extensionContext.open`, and not requestPresentationStyle at
+            // ANY style. 1.1(66)/(67) tried the same-style request on the theory that
+            // the host would do its re-presentation bookkeeping with nothing to
+            // animate; it does not:
+            //     -[MSMessageExtensionBrowserViewController _requestPresentationStyle:]
+            //       -> main-queue block
+            //       -> -[CKChatInputController requestPresentationStyleExpanded:forPlugin:]
+            //       -> performSelector:afterDelay: _deferredRequestPresentationStyleExpanded:
+            //       -> CKAppCardPresentationOverseer.requestPresentationStyle(_:animated:)
+            //     which compares the requested detent with
+            //     sheetPresentationController.selectedDetentIdentifier and logs
+            //     "App requested a presentation style change but is already in that
+            //      state. Doing nothing."
+            // That string is in the device's own ChatKit. The call is removed here.
+            //
+            // A detent DRAG does not bind either - notifyBrowserOfTransitionStarting/
+            // Ending only sends viewWill/DidTransitionTo…Presentation. An earlier
+            // reading of the owner's logs concluded "a presentation transition
+            // re-arms delivery"; that was wrong. What re-armed his working run was
+            // TAPPING HIS OWN LOBBY BUBBLE while the card was open, which reuses the
+            // same browser (hence no resign/activate pair in the log) and binds the
+            // datasource. The `style expanded` line was the consequence of that tap,
+            // not its cause.
+            //
+            // ── SO: DISMISS, AND ONLY HERE ───────────────────────────────────────
+            // Closing the drawer puts the human back in the transcript, where their
+            // next natural action - tapping the bubble - is precisely the thing that
+            // binds the datasource. Every message after that arrives normally, which
+            // satisfies "create a game and finish it without closing the drawer"
+            // from that one tap onward.
+            //
+            // `lastPayloadURL == nil` is "nothing is open", i.e. this is a drawer
+            // launch that has never opened a bubble - the create flow and nothing
+            // else. It is the value the diagnostic panel prints as
+            // `Last message: no message open`, so the scope can be confirmed from a
+            // screenshot without reading code, and it is true in every failing log
+            // the owner captured and false in every working one. Owner: "ONLY the
+            // first send, DO NOT DISMISS AUTOMATICALLY AFTER ANY OTHER SEND other
+            // than the create game bubble."
+            //
+            // NOT scoped on `startingNewGame`, which is the obvious choice and is
+            // wrong: that flag is only set when a human taps the New game BUTTON, and
+            // a drawer launch into a thread with no game routes straight to setup, so
+            // nobody calls onNewGame and it is false for the whole create flow. 66
+            // was scoped on it and never fired once.
+            FlightRecorder.note("dismiss", "first bubble of a game - the drawer cannot be bound")
+            dismiss()
+        }
     }
 
     /// The user deleted the staged bubble before sending: drop the pending record
