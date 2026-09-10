@@ -176,7 +176,19 @@ final class MessagesViewController: MSMessagesAppViewController {
         // See StagedBubbleRouting.isMine.
         if StagedBubbleRouting.isMine(Self.payload(of: message),
                                       pendingStage: pendingStage?.payload,
-                                      lastSentPayload: lastSentPayload) { return }
+                                      lastSentPayload: lastSentPayload) {
+            // RECORDED, because this return is INVISIBLE and sits above the
+            // `receive` note. The owner's first-bubble report - a join landing on
+            // a lobby he had just created, with the extension open, and nothing
+            // happening - produced a flight log with no `receive` in it at all,
+            // and that is consistent with two completely different worlds: iOS
+            // never called us, or we called it our own and dropped it here. One
+            // is a host limitation with no fix inside the extension; the other is
+            // our bug. A blind early return cannot tell them apart, and guessing
+            // between them has already cost several builds.
+            FlightRecorder.note("receive-dropped", "isMine")
+            return
+        }
         startingNewGame = false
         freshSession = false
         FlightRecorder.note("receive")

@@ -740,6 +740,7 @@ private struct GameSurface: View {
                 // that never had it.
                 FlightRecorder.note("send-signal", sentPayload.map { "\($0.count)b" } ?? "none")
                 surfaceStaged = false   // round-9: the staged bubble is sent
+                stagedParent8 = nil     // …and the draft it belonged to is now the thread's
                 // SYNCHRONOUSLY, in this same SwiftUI transaction: the Undo pill
                 // goes now, not after a Task hop and a decode (owner: "should
                 // probably disappear the second you hit send"). `markSent` below
@@ -757,7 +758,7 @@ private struct GameSurface: View {
             // clearing `surfaceStaged` here never dimmed it (1.0(37): "if I
             // stage then X the staged bubble, the send hint arrow doesn't go
             // away").
-            .onChange(of: cancelToken) { _ in surfaceStaged = false }
+            .onChange(of: cancelToken) { _ in surfaceStaged = false; stagedParent8 = nil }
             // A bubble ARRIVED while this surface is open (didReceive). Apple
             // does not move `selectedMessage` for an arrival, so loadKey does
             // not change and the .task above will not re-run - this one does.
@@ -1601,6 +1602,7 @@ private struct GameSurface: View {
         // since there is nothing left underneath for it to fade into.
         arrivalStill = nil; stillFade = 1; rulesTurn = nil
         surfaceStaged = false   // round-9: a new input owes nothing to Send yet
+        stagedParent8 = nil
         await load()
         AnimLog.say("surface showing \(showingWhat)")
         // AND THEN RE-OFFER THE ARRIVAL, if one is outstanding. 1.1(57).
@@ -1626,6 +1628,45 @@ private struct GameSurface: View {
         // those is an input to `loadKey`.
         reloading = false
         if incomingURL != nil { await maybeAdoptIncoming(showingBefore: wasShowing) }
+    }
+
+    /// THE PARENT A STAGED DRAFT KEEPS, across every edit made to it.
+    ///
+    /// `conversation.insert` REPLACES an unsent draft rather than queueing a
+    /// second one, so a human who taps the rules checkbox and then Exit sends ONE
+    /// bubble - and until now that bubble named the intermediate rules chain as
+    /// its parent. That chain was never sent. It exists on no other device, so
+    /// Rule P's rule 4 ("a chain's own DIRECT CHILD outranks it") could not fire
+    /// on the receiver, and the comparison fell through to rule 3, "the fuller
+    /// roster wins the turn-0 tie" - which a LEAVE loses by construction, because
+    /// leaving is what makes a roster smaller.
+    ///
+    /// So the arrival lost to the chain already on screen and was discarded in
+    /// silence. Owner, 1.1(61): "a passing toggle + exit (which is fine, just the
+    /// other order isn't allowed) DID NOT update the view", and his read of it -
+    /// "makes me wonder if its something to do about game membership" - is
+    /// exactly right: it is the membership COUNT, spent as a tiebreak.
+    ///
+    /// Proved in C rather than argued: with the intermediate as parent,
+    /// `msg_rule_p(showing, arriving)` is -1 (showing wins, arrival ignored);
+    /// with the thread's own chain as parent it is +1 (adopted). Same two
+    /// chains, same rosters, one field.
+    ///
+    /// Rule P is not the thing to change here - rule 3 is right for what it is
+    /// for, picking between two Starts dealt from different lobbies. What was
+    /// wrong is the CLAIM the draft made about its own ancestry. A draft that
+    /// replaces itself on the way out is still one link in the thread, so it
+    /// names the link the thread actually has, for every edit made to it.
+    @State private var stagedParent8: Data?
+
+    /// The parent8 for a lobby reseal. While a draft is already staged, my own
+    /// intermediate chains are edits to THAT draft and not links anyone else can
+    /// see, so the parent stays the one the thread has.
+    private func threadParent8(_ env: MessageEnvelope) -> Data {
+        if surfaceStaged, let held = stagedParent8 { return held }
+        let p = MessageTurnController.firstEight(hex: env.digest)
+        stagedParent8 = p
+        return p
     }
 
     /// THE LAST CHAIN THIS SURFACE ACTUALLY SHOWED, and the only thing here that
@@ -2060,7 +2101,7 @@ private struct GameSurface: View {
             // Re-adopt the lobby so the LOCKED seed + open capacity are resident
             // for the seal.
             _ = try await MessageKernel.shared.decode(payload: lob.payload, viewer: -1)
-            let parent = MessageTurnController.firstEight(hex: env.digest)
+            let parent = threadParent8(env)
             let payload = try await MessageKernel.shared.seal(
                 phase: 0, lastActorSeat: free, gameId: gid, parent8: parent, joins: joins)
             let newEnv = try await MessageEnvelope.decode(payload: payload, viewer: -1)
@@ -2113,7 +2154,7 @@ private struct GameSurface: View {
         do {
             // Re-adopt so the LOCKED seed and the open capacity are resident.
             _ = try await MessageKernel.shared.decode(payload: lob.payload, viewer: -1)
-            let parent = MessageTurnController.firstEight(hex: env.digest)
+            let parent = threadParent8(env)
             let payload = try await MessageKernel.shared.seal(
                 phase: 0, lastActorSeat: joins.count, gameId: gid,
                 parent8: parent, joins: joins)
@@ -2215,7 +2256,7 @@ private struct GameSurface: View {
             // hops left two suspension points in which any other decode could
             // repoint the resident game, which is the phantom-seal shape all
             // over again; see `MessageKernel.resealLobby`.
-            let parent = MessageTurnController.firstEight(hex: env.digest)
+            let parent = threadParent8(env)
             let payload = try await MessageKernel.shared.resealLobby(
                 lob.payload, passing: passing, actingSeat: me,
                 gameId: gid, parent8: parent, joins: env.joins)
@@ -2265,7 +2306,7 @@ private struct GameSurface: View {
             .sorted { $0.seat < $1.seat }
         do {
             _ = try await MessageKernel.shared.decode(payload: lob.payload, viewer: -1)
-            let parent = MessageTurnController.firstEight(hex: env.digest)
+            let parent = threadParent8(env)
             let payload = try await MessageKernel.shared.seal(
                 phase: 0, lastActorSeat: free, gameId: gid, parent8: parent, joins: joins)
             let newEnv = try await MessageEnvelope.decode(payload: payload, viewer: -1)
@@ -2293,7 +2334,7 @@ private struct GameSurface: View {
         let env = lob.env
         guard let seat = lobbySeat(env), let gid = UInt64(env.gameId) else { return }
         do {
-            let parent = MessageTurnController.firstEight(hex: env.digest)
+            let parent = threadParent8(env)
             let payload = try await MessageKernel.shared.startFromLobby(
                 lobbyPayload: lob.payload, gameId: gid, actingSeat: seat,
                 parent8: parent, joins: env.joins)
