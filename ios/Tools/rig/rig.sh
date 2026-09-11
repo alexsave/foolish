@@ -531,14 +531,15 @@ cmd_chain() {
   for i in "${!HEX[@]}"; do
     printf '%s' "${HEX[$i]}" > "$g/dev.fatboard"
     printf '%s' "$mine" > "$g/dev.seat"
-    # OUR moves are sent from the OTHER thread, not this one. The stub pair
-    # mirrors the opposite way round to what you would expect: a message sent
-    # in a thread shows up IN THAT THREAD as incoming, and its outgoing twin
-    # lands in the other one. Sending our own moves from the photographed
-    # thread therefore put every one of them on the LEFT, under the opponent's
-    # side of the conversation. Settled by the result card, which says
-    # "Alex (You)" in the same frame the captions had us on the left.
-    thread="$other"; [ "${ACT[$i]}" = "$mine" ] || thread="$SHOOT_THREAD"
+    # OUR moves are sent FROM the photographed thread. Two things ride on
+    # that, and they were settled with a two-message probe rather than by
+    # reading frames: a message appears in its OWN thread as outgoing (right,
+    # "Delivered") and renders its board; the copy the stub pair mirrors into
+    # the other thread arrives as INCOMING and renders as a PLAIN TEXT LINE
+    # with no board at all - the layout image does not cross. So sending our
+    # own moves from the other thread costs both the side AND the picture,
+    # which is most of what a collapsed frame is.
+    thread="$SHOOT_THREAD"; [ "${ACT[$i]}" = "$mine" ] || thread="$other"
     # `back` is what kills the appex, and only a dead appex claims the next
     # seed - see trap 1.
     cmd_back >/dev/null 2>&1 || true
