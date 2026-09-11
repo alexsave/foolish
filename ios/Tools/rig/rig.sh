@@ -495,6 +495,35 @@ cmd_chain() {
     || cmd_stage "${FOOLISH_APPEARANCE:-dark}" >/dev/null 2>&1
   cmd_stageseed on >/dev/null
 
+  # A previous, FINISHED game in the same thread, when asked for. Two things
+  # come from it. It is what a real thread looks like - people play more than
+  # one game - and it is the only way to make the transcript TALLER than its
+  # viewport, which is the only way to scroll Apple's unknown-sender banner
+  # behind the drawer. Nothing else moves that banner: it is glued under the
+  # newest message, and turning off both unknown-sender filtering prefs leaves
+  # it exactly where it was.
+  local pre="${FOOLISH_CHAIN_PREFACE:-0}" j fool
+  for ((j = 0; j < pre; j++)); do
+    "$tool" --endgame "$np" >/tmp/rig_pre.hex 2>/tmp/rig_pre.log || break
+    fool=$(grep -o 'fool=seat [0-9]' /tmp/rig_pre.log | head -1 | awk '{print $2}')
+    # FOOLISH_NAMES is written from the LOCAL seat outwards, so name[0] is us -
+    # which means a fixture whose fool IS our seat photographs as us losing.
+    # The owner caught exactly that on two earlier game-over frames.
+    # An envelope's join list is written from the SEALING player outwards, so
+    # slot 0 is always the local player whatever the absolute seat number says.
+    # Naming the fool's slot first is therefore what keeps us from photographing
+    # ourselves losing - the owner caught exactly that on two earlier game-over
+    # frames. Re-sealed with the loser named, not merely reported.
+    local prenames="Kate,Alex"
+    [ "$fool" = "0" ] || prenames="Alex,Kate"
+    FOOLISH_NAMES="$prenames" "$tool" --endgame "$np" >/tmp/rig_pre.hex 2>/dev/null
+    tail -1 /tmp/rig_pre.hex > "$g/dev.fatboard"
+    printf '%s' "$mine" > "$g/dev.seat"
+    cmd_back >/dev/null 2>&1 || true
+    cmd_open "$other" >/dev/null 2>&1
+    cmd_turn >/dev/null 2>&1 || echo "  preface $j did not send" >&2
+  done
+
   local i thread
   for i in "${!HEX[@]}"; do
     printf '%s' "${HEX[$i]}" > "$g/dev.fatboard"
@@ -508,9 +537,58 @@ cmd_chain() {
     fi
     cmd_turn >/dev/null 2>&1 || echo "  move $i did not send" >&2
   done
+  # Staging OFF before the last frame. It is what auto-sends each seeded move,
+  # and left on it also stages a DRAFT the moment the extension is next opened -
+  # a bubble sitting in the compose field over a board that did not produce it.
+  cmd_stageseed off >/dev/null
   cmd_back >/dev/null 2>&1 || true
-  cmd_enter "$SHOOT_THREAD" >/dev/null 2>&1 || true
+  if [ "${FOOLISH_CHAIN_DRAWER:-1}" = "1" ]; then
+    # The collapsed hero frame: the drawer open over the transcript the chain
+    # just built, showing the SAME state the newest bubble does. Re-seeded
+    # rather than opened by tapping the bubble, because tapping one this device
+    # has no identity in opens the seat-claim screen instead of the board.
+    printf '%s' "${HEX[$((${#HEX[@]} - 1))]}" > "$g/dev.fatboard"
+    printf '%s' "$mine" > "$g/dev.seat"
+    cmd_open "$SHOOT_THREAD" >/dev/null 2>&1 && cmd_collapse >/dev/null 2>&1
+    sleep 2
+    cmd_nudge || true
+  else
+    cmd_enter "$SHOOT_THREAD" >/dev/null 2>&1 || true
+  fi
   cmd_shot "$name"
+}
+cmd_nudge() {
+  # Scroll the transcript until Apple's unknown-sender banner is behind the
+  # drawer. It is a simulator artifact - there is no iMessage account, so every
+  # thread is unverified - but it lands between the newest bubble and the
+  # drawer, right where a collapsed App Store frame is read.
+  #
+  # It cannot be turned off (both unknown-sender filtering prefs leave it
+  # exactly where it was) and it cannot be scrolled away on its own, because it
+  # is glued under the newest message and a transcript that FITS does not
+  # scroll - it rubber-bands straight back. It moves only when there is more
+  # above it than the viewport holds, which is what `FOOLISH_CHAIN_PREFACE`
+  # buys. So this verifies rather than assumes: it re-measures after every drag
+  # and says so when the transcript would not move.
+  need_sim
+  read -r W H < <(screen)
+  local i sp top
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    sp=$(python3 "$LIB/ui.py" spam | awk '{print $2}')
+    [ "$sp" = "None" ] && { echo "banner clear"; return 0; }
+    top=$(grab_y)
+    if [ "$top" != "None" ] && [ "$sp" -ge "$top" ]; then
+      echo "banner behind the drawer (banner $sp, drawer $top)"; return 0
+    fi
+    # Small steps, and stop at the FIRST clear reading. The banner sits
+    # directly under the newest bubble, so anything more than the minimum puts
+    # that bubble behind the compose bar - which looks like a bug in the app
+    # rather than a scrolled transcript.
+    swipe 0.30 $((W / 2)) $((H * 22 / 100)) $((W / 2)) $((H * 22 / 100 + 55)) 1.3
+  done
+  echo "banner still showing at $sp - the transcript is not tall enough to scroll." >&2
+  echo "  add history with FOOLISH_CHAIN_PREFACE=1" >&2
+  return 1
 }
 cmd_tapopen() {
   # Open the extension the way a REAL GAME does: by tapping the newest bubble,
@@ -941,6 +1019,7 @@ case "${1:-}" in
   enter)    shift; cmd_enter "$@" ;;
   open)     shift; cmd_open "$@" ;;
   tapopen)  shift; cmd_tapopen "$@" ;;
+  nudge)    shift; cmd_nudge "$@" ;;
   chain)    shift; cmd_chain "$@" ;;
   back)     shift; cmd_back "$@" ;;
   expand)   shift; cmd_expand "$@" ;;

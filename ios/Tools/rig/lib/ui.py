@@ -225,6 +225,41 @@ def onboarding(a, s):
     return int((lo + (band[0] + band[-1]) / 2) / s)
 
 
+def spam_banner(a, s):
+    """The y (points) of Apple's unknown-sender banner, or None.
+
+    The simulator has no iMessage account, so every thread is unverified and
+    Messages glues a banner under the newest message: two lines of grey text
+    and a blue "Report Spam" pill. It cannot be switched off - both
+    `sForceUnknownFilteringCompleted` and `FilterUnknownSenders` leave it
+    exactly where it was - and while a drawer is presented it is not in the
+    accessibility tree either, because the drawer hides the whole transcript
+    from it. So it is found by colour, like our own board.
+
+    Defined as ANY content between the bottom of the newest bubble and the
+    compose bar, rather than as the blue pill. Looking for the pill alone was
+    wrong in the one way that matters for a photograph: the pill scrolls behind
+    the compose bar a full line before the grey text above it does, so the
+    scroll stopped with "may be spam" still on screen and reported success."""
+    h, w = a.shape[0], a.shape[1]
+    top = drawer_top(a, s)
+    # Stop short of the compose bar, which is itself a wide light block sitting
+    # just above the drawer and would otherwise read as the newest bubble.
+    limit = (top - 60) * s if top is not None else h - 120 * s
+    if limit <= 300:
+        return None
+    cov = (a.max(axis=2) > 24)[:, int(w * 0.10):int(w * 0.90)].mean(axis=1)
+    wide = np.nonzero(cov[300:limit] > 0.5)[0]
+    bubble_bottom = (300 + int(wide[-1])) if len(wide) else 300
+    hi, lo = a.max(axis=2), a.min(axis=2)
+    grey = (hi - lo < 30) & (hi > 110) & (hi < 215)
+    counts = grey[:, int(w * 0.10):int(w * 0.90)].sum(axis=1)
+    rows = np.nonzero(counts[bubble_bottom + 1:limit] > w * 0.05)[0]
+    if not len(rows):
+        return None
+    return int((bubble_bottom + 1 + int(rows[0])) / s)
+
+
 def wood_icons(a, s):
     """The small wooden squares on the board's control row -> [(x_pt, y_pt)].
 
@@ -381,6 +416,8 @@ if __name__ == "__main__":
         print("TOP", drawer_top(a, s))
     if what in ("incoming", "all"):
         print("INCOMING", last_incoming(a, s))
+    if what in ("spam", "all"):
+        print("SPAM", spam_banner(a, s))
     if what in ("lastmsg", "all"):
         print("LASTMSG", last_message(a, s))
     if what in ("staged", "all"):
