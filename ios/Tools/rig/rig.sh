@@ -29,6 +29,7 @@
 #
 #   ---- state ----------------------------------------------------------
 #   rig.sh lobby N                a LOBBY with N seats filled (DEBUG button)
+#   rig.sh lobbytap WHICH         start | leave | join | box (the rules checkbox)
 #   rig.sh play                   select a LEGAL card and press the plank
 #   rig.sh turn                   play a move AND send it, so the transcript's
 #                                 last bubble is the board now on screen
@@ -546,6 +547,42 @@ cmd_lobby() {
   echo "lobby: $i seated; bars at $(python3 "$LIB/ui.py" bars)"
 }
 
+# ONE LOBBY CONTROL, by name. The lobby's buttons are wood like every other
+# control, but WHICH wooden button matters here - Start and Leave share a row -
+# and the rules checkbox is a plank too small for `bar_y` to see at all. Both
+# are read off the screen (lib/ui.py `bar_spans`, `checkbox`) rather than from a
+# y this file remembers, for the reason the whole rig does it that way: the
+# lobby moves with the player count, the locale and the drawer's height.
+#
+#   start   the left button of the Start/Leave row
+#   leave   the right one
+#   join    the only button on the row (a lobby I am not seated in)
+#   box     the passing checkbox
+cmd_lobbytap() {
+  need_sim
+  local what="${1:?lobbytap start|leave|join|box}" y x
+  front
+  if [ "$what" = "box" ]; then
+    read -r x y < <(python3 "$LIB/ui.py" box | python3 -c "
+import sys, ast
+v = ast.literal_eval(sys.stdin.read().split('BOX ')[1])
+print(v[0], v[1]) if v else print(-1, -1)")
+    [ "$x" = "-1" ] && { echo "no checkbox on screen"; return 1; }
+    tap "$x" "$y" 0.4
+    echo "tapped the passing checkbox at $x,$y"
+    return 0
+  fi
+  y=$(bar_y 0); [ "$y" = "-1" ] && { echo "no button row on screen"; return 1; }
+  x=$(python3 "$LIB/ui.py" span "$y" | python3 -c "
+import sys, ast
+sp = ast.literal_eval(sys.stdin.read().split('SPAN ')[1])
+which = '$what'
+print(-1 if not sp else (sp[-1][0] if which == 'leave' else sp[0][0]))")
+  [ "$x" = "-1" ] && { echo "no button on the row"; return 1; }
+  tap "$x" "$y" 0.4
+  echo "tapped $what at $x,$y"
+}
+
 # Select the leftmost hand card and play it. Both taps are found by colour, so
 # this is the same code on every device and in every locale.
 # Play a LEGAL move, and prove one was made.
@@ -856,6 +893,7 @@ case "${1:-}" in
   mem)      shift; cmd_mem "$@" ;;
   log)      shift; cmd_log "$@" ;;
   lobby)    shift; cmd_lobby "$@" ;;
+  lobbytap) shift; cmd_lobbytap "$@" ;;
   clearstage) shift; cmd_clearstage "$@" ;;
   play)     shift; cmd_play "$@" ;;
   turn)     shift; cmd_turn "$@" ;;

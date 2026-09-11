@@ -890,12 +890,21 @@ static int surface_wire_check(void) {
     const int vn = fio_msg_encode(2, 1, 0xF00AULL, zero8, j2, j2n, 0, live, sizeof live);
     if (vn <= 0) { printf("FAIL surface live encode %d\n", vn); return 1; }
 
-    int32_t out[2 + 10 * FIO_SURFACE_STRIDE];
+    int32_t out[FIO_SURFACE_HEAD + 10 * FIO_SURFACE_STRIDE];
 
     // A JOIN ARRIVING ON A LOBBY is a snap, and a snap is the adopt the caller
-    // was going to do anyway - so the wire says NOTHING, not "one empty beat".
-    if (fio_msg_surface_plan(lob, ln, joined, jn, out, (int)(sizeof out / sizeof out[0])) != 0) {
+    // was going to do anyway - so the wire stages NO BEAT, not "one empty beat".
+    // It does carry a SETTLE, and the two halves are the 1.1(68) report: a
+    // caller that reads only the beat count has no length to hold the snap on
+    // screen for, and collapses the drawer over it ("i just confirmed the leave
+    // snap happens mid collapse").
+    if (fio_msg_surface_plan(lob, ln, joined, jn, out,
+                             (int)(sizeof out / sizeof out[0])) != FIO_SURFACE_HEAD) {
         printf("FAIL surface: a lone join was staged\n"); return 1;
+    }
+    if (out[0] != 0 || out[1] != 0 || out[2] != fio_anim_surface_beat_ms()) {
+        printf("FAIL surface lone join n=%d total=%d settle=%d\n", out[0], out[1], out[2]);
+        return 1;
     }
     // A JOIN AND A START IN ONE TEXT - the report. Two beats: the roster snaps,
     // rests, and then the table fades in.
@@ -940,10 +949,35 @@ static int surface_wire_check(void) {
     }
     const int turn_ms = r0[4];
 
-    // A board is handed nothing, and a buffer that cannot hold the answer is
-    // refused rather than half-written.
-    if (fio_msg_surface_plan(live, vn, live, vn, out, (int)(sizeof out / sizeof out[0])) != 0) {
+    // THE REVERSAL, 1.1(68): a BOARD on screen and this game's LOBBY arriving is
+    // the X on a staged Start, and it crosses as one whole-surface FADE - the
+    // same idiom the start wore, read the other way round. It is also the one
+    // shape no text can produce, so without this row the wire's only board-side
+    // answer would be "nothing".
+    const int un = fio_msg_surface_plan(live, vn, lob, ln, out,
+                                        (int)(sizeof out / sizeof out[0]));
+    if (un != FIO_SURFACE_HEAD + FIO_SURFACE_STRIDE) {
+        printf("FAIL surface undo rc=%d (msg_err=%d)\n", un, fio_last_msg_error()); return 1;
+    }
+    const int32_t *u0 = out + FIO_SURFACE_HEAD;
+    if (out[0] != 1 || u0[0] != FIO_SURFACE_LOBBY || u0[1] != FIO_TRANS_FADE
+        || u0[3] != FIO_CONTROLS_LIVE || u0[4] <= 0 || u0[5] != 0) {
+        printf("FAIL surface undo beat %d/%d/%d/%d/%d/%d\n",
+               out[0], u0[0], u0[1], u0[3], u0[4], u0[5]); return 1;
+    }
+    if (out[2] != out[1]) {
+        printf("FAIL surface undo settle %d vs total %d\n", out[2], out[1]); return 1;
+    }
+
+    // A board taking an ARRIVAL is handed nothing at all - no beats and, unlike
+    // the lone join above, nothing to wait for either. Same two words the
+    // no-op rule uses: two chains that describe the same surface settle in 0.
+    if (fio_msg_surface_plan(live, vn, live, vn, out,
+                             (int)(sizeof out / sizeof out[0])) != FIO_SURFACE_HEAD) {
         printf("FAIL surface: a board was staged\n"); return 1;
+    }
+    if (out[0] != 0 || out[2] != 0) {
+        printf("FAIL surface board n=%d settle=%d\n", out[0], out[2]); return 1;
     }
     if (fio_msg_surface_plan(lob, ln, live, vn, out, FIO_SURFACE_HEAD) != FIO_ECAP) {
         printf("FAIL surface: a short buffer was accepted\n"); return 1;
@@ -953,7 +987,8 @@ static int surface_wire_check(void) {
         printf("FAIL surface: a truncated chain was accepted\n"); return 1;
     }
     printf("surface wire OK (%d bytes, join+start = snap then fade at %dms, "
-           "rules alone = one turn of %dms)\n", n, b1[5], turn_ms);
+           "rules alone = one turn of %dms, a discarded start fades back)\n",
+           n, b1[5], turn_ms);
     return 0;
 }
 

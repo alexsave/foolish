@@ -774,6 +774,22 @@ typedef struct {
     // The arriving chain is DEALT and the showing one is not - the lobby is
     // giving way to a board.
     int started;
+    // THE SAME BOUNDARY, CROSSED THE OTHER WAY: the chain on screen is dealt
+    // and the arriving one is that game's lobby.
+    //
+    // No TEXT can be this - rule P ranks a dealt game above the invite it grew
+    // out of, so an older lobby bubble never wins its way onto a board. What IS
+    // this is the surface REVERTING: the human staged Start, saw the board, and
+    // then pressed the X on the staged bubble, which discards the draft and
+    // puts the table back as the thread still has it. Owner: "it should still
+    // 'fade back' to the lobby state it was in previously if I X on the staged
+    // bubble."
+    //
+    // Here rather than in the view for the reason `started` is here: whether
+    // two chains are a whole-surface change is a fact about the chains, and a
+    // reversal that re-derived it would be a second opinion about the same
+    // boundary - free to disagree about which way the fade goes.
+    int ended;
 } MsgSurfaceDelta;
 
 // Fill `out` from the two envelopes. Cannot fail on CONTENT - two envelopes

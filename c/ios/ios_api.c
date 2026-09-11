@@ -1734,11 +1734,17 @@ int fio_msg_surface_plan(const uint8_t *showing, int showing_len,
     static AnimSurfacePlan plan;
     const int n = anim_surface_plan(d.on_a_lobby, d.roster_moved,
                                     d.passing_before, d.passing_after, d.started,
-                                    &plan);
-    if (n <= 0) return 0;
+                                    d.ended, &plan);
+    if (n < 0) return FIO_EMSG;
+    // THE HEAD IS WRITTEN EVEN WITH NO BEATS. `settle_ms` is the answer to a
+    // question the beats cannot carry - how long before this surface may be put
+    // AWAY - and the caller who needs it most is the one holding an empty plan
+    // (a lone roster snap, which is folded to no beats and still has to be read
+    // before the drawer collapses over it). See anim_plan.h.
     if (cap < FIO_SURFACE_HEAD + n * FIO_SURFACE_STRIDE) return FIO_ECAP;
     out[0] = n;
     out[1] = plan.total_ms;
+    out[2] = plan.settle_ms;
     for (int i = 0; i < n; i++) {
         int32_t *w = out + FIO_SURFACE_HEAD + i * FIO_SURFACE_STRIDE;
         w[0] = plan.beats[i].kind;

@@ -89,6 +89,55 @@ def wood_bars(a, s, min_width_pt=120):
     return out
 
 
+def bar_spans(a, s, y_pt):
+    """The wooden buttons ON one bar row -> [(x_centre_pt, width_pt)], left to
+    right.
+
+    `wood_bars` answers WHERE a row of controls is by summing wood per row,
+    which cannot tell one wide button from two side by side - and the lobby's
+    Start/Leave row is exactly two, so every tap aimed at the middle of that
+    row landed in the daylight BETWEEN them (FSpace.m) or, worse, on Leave when
+    Start was meant. This reads the row itself: the runs of wood columns at that
+    y, which is one span for a lone button and two for the pair.
+    """
+    row = wood(a)[int(y_pt * s), :]
+    out = []
+    for run in runs(np.nonzero(row)[0], 8 * s):
+        if len(run) < 30 * s:                 # not a checkbox, not a speck
+            continue
+        out.append((int(np.mean(run) / s), int(len(run) / s)))
+    return out
+
+
+def checkbox(a, s):
+    """The rules checkbox's plank -> (x_pt, y_pt), or None.
+
+    A SMALL square of wood, which is why `wood_bars` cannot see it (it filters
+    at 120pt of width to keep the settings gear out of the button list) and why
+    the rig could not touch the one control on the lobby that animates. Found as
+    the narrow wood run lowest on the screen that is NOT one of the corner icons
+    - the gear and the rulebook sit at the very foot, so the search stops above
+    them.
+    """
+    w = wood(a)
+    icons = wood_icons(a, s)
+    floor = (min(y for _, y in icons) - 20) * s if icons else a.shape[0]
+    counts = w.sum(axis=1)
+    best = None
+    for run in runs(np.nonzero(counts > 8 * s)[0], 6 * s):
+        if run[-1] >= floor:
+            continue
+        y = int(np.mean(run))
+        cols = np.nonzero(w[y, :])[0]
+        if cols.size == 0:
+            continue
+        span = cols.max() - cols.min()
+        if span > 60 * s:                     # a button row, not a checkbox
+            continue
+        best = (int(np.mean(cols) / s), int(y / s))
+    return best
+
+
 def drawer_top(a, s):
     """Top edge of the presented drawer (points), or None if none is up.
 
@@ -612,6 +661,10 @@ if __name__ == "__main__":
         print("BARS", wood_bars(a, s))
     if what in ("icons", "all"):
         print("ICONS", wood_icons(a, s))
+    if what in ("box", "all"):
+        print("BOX", checkbox(a, s))
+    if what == "span":
+        print("SPAN", bar_spans(a, s, int(sys.argv[2])))
     if what in ("cards", "all"):
         print("CARDS", hand_cards(a, s))
     if what in ("table", "all"):

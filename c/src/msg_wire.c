@@ -792,6 +792,7 @@ void msg_surface_delta(const MsgEnvelope *showing, const MsgEnvelope *arriving,
     out->roster_moved = 0;
     out->passing_before = out->passing_after = 1;
     out->started = 0;
+    out->ended = 0;
     if (!showing || !arriving) return;
 
     // A DIFFERENT GAME IS A SWITCH, NOT A CONTINUATION. Owner: "If you open a
@@ -808,6 +809,10 @@ void msg_surface_delta(const MsgEnvelope *showing, const MsgEnvelope *arriving,
     out->passing_before = msg_pass_allowed(showing);
     out->passing_after  = msg_pass_allowed(arriving);
     out->started = out->on_a_lobby && arriving->phase >= MSG_PHASE_LIVE;
+    // The reverse boundary, and it is the WHOLE of what a board-to-lobby
+    // change is: the roster and rules below are diffed for a lobby that is
+    // staying a lobby, and a board never showed the roster it is going back to.
+    out->ended = showing->phase >= MSG_PHASE_LIVE && arriving->phase == MSG_PHASE_WAITING;
 
     // ROW BY ROW, SEAT-ASCENDING. Not by size, or a seat that changed hands
     // between two rosters of the same length reads as "nothing happened" and

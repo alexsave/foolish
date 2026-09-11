@@ -530,7 +530,8 @@ static void test_plan_freezes_the_flipped_trump(void) {
 static const char *kind_name(int k) {
     return k == ANIM_SURFACE_ROSTER ? "roster"
          : k == ANIM_SURFACE_RULES  ? "rules"
-         : k == ANIM_SURFACE_BOARD  ? "board" : "?";
+         : k == ANIM_SURFACE_BOARD  ? "board"
+         : k == ANIM_SURFACE_LOBBY  ? "lobby" : "?";
 }
 
 static void test_surface_plan(void) {
@@ -538,16 +539,16 @@ static void test_surface_plan(void) {
 
     // A BOARD takes an arrival the way it always has - the live controller
     // folds it in, and a plan here would be a second opinion about it.
-    CHECK(anim_surface_plan(0, 1, 1, 1, 1, &p) == 0,
+    CHECK(anim_surface_plan(0, 1, 1, 1, 1, 0, &p) == 0,
           "a board is handed no beats at all");
 
     // 1. JOIN, OR LEAVE: "just snap to the state where they are in the lobby
     //    and do nothing else." No beats - the ordinary adopt IS the snap.
-    CHECK(anim_surface_plan(1, 1, 1, 1, 0, &p) == 0, "join_alone: no beats");
+    CHECK(anim_surface_plan(1, 1, 1, 1, 0, 0, &p) == 0, "join_alone: no beats");
 
     // 2. THE RULES MOVED: one beat, and the checkbox TURNS (owner: "lets do the
     //    'rotate in' or out thing for the checkbox").
-    CHECK(anim_surface_plan(1, 0, 1, 0, 0, &p) == 1, "rules_alone: one beat");
+    CHECK(anim_surface_plan(1, 0, 1, 0, 0, 0, &p) == 1, "rules_alone: one beat");
     CHECK(p.beats[0].kind == ANIM_SURFACE_RULES, "rules_alone: the rules beat");
     CHECK(p.beats[0].transition == ANIM_TRANSITION_TURN,
           "rules_alone: a rule change TURNS (got %d)", p.beats[0].transition);
@@ -556,7 +557,7 @@ static void test_surface_plan(void) {
 
     // 3. JOIN + THE RULES: a stream that BEGINS with a snap and ENDS IN THE
     //    LOBBY. Assuming a snap is on its way to the table is the trap.
-    CHECK(anim_surface_plan(1, 1, 1, 0, 0, &p) == 2, "join_rules: two beats");
+    CHECK(anim_surface_plan(1, 1, 1, 0, 0, 0, &p) == 2, "join_rules: two beats");
     CHECK(p.beats[0].kind == ANIM_SURFACE_ROSTER
           && p.beats[0].transition == ANIM_TRANSITION_SNAP
           && p.beats[0].passing == 1,
@@ -571,7 +572,7 @@ static void test_surface_plan(void) {
 
     // 4. JOIN + START in one text - the report: "snap to the state where there
     //    are two or whatever people in the lobby, wait a bit, then fade."
-    CHECK(anim_surface_plan(1, 1, 1, 1, 1, &p) == 2, "join_start: two beats");
+    CHECK(anim_surface_plan(1, 1, 1, 1, 1, 0, &p) == 2, "join_start: two beats");
     CHECK(p.beats[0].kind == ANIM_SURFACE_ROSTER
           && p.beats[0].transition == ANIM_TRANSITION_SNAP,
           "join_start: the roster snaps in first");
@@ -585,7 +586,7 @@ static void test_surface_plan(void) {
 
     // 5. START, with nobody joining on the way: the fade, and NO snap in front
     //    of it - there is nothing to show first.
-    CHECK(anim_surface_plan(1, 0, 1, 1, 1, &p) == 1, "start_alone: one beat");
+    CHECK(anim_surface_plan(1, 0, 1, 1, 1, 0, &p) == 1, "start_alone: one beat");
     CHECK(p.beats[0].kind == ANIM_SURFACE_BOARD
           && p.beats[0].transition == ANIM_TRANSITION_FADE
           && p.beats[0].start_ms == 0,
@@ -596,35 +597,101 @@ static void test_surface_plan(void) {
     // A stream that ENDS IN THE LOBBY lets each beat offer what its own state
     // offers: Vera joining really does hand Alex a Start button, and that is
     // where the stream stops, so it appears and stays.
-    CHECK(anim_surface_plan(1, 1, 1, 0, 0, &p) == 2, "join+rules is two beats");
+    CHECK(anim_surface_plan(1, 1, 1, 0, 0, 0, &p) == 2, "join+rules is two beats");
     CHECK(p.beats[0].controls == ANIM_SURFACE_CONTROLS_LIVE
           && p.beats[1].controls == ANIM_SURFACE_CONTROLS_LIVE,
           "controls_lobby: a stream that ends in the lobby shows its own controls");
-    CHECK(anim_surface_plan(1, 0, 1, 0, 0, &p) == 1, "rules alone is one beat");
+    CHECK(anim_surface_plan(1, 0, 1, 0, 0, 0, &p) == 1, "rules alone is one beat");
     CHECK(p.beats[0].controls == ANIM_SURFACE_CONTROLS_LIVE, "controls_lobby: …and so does a lone rule change");
 
     // A stream that ends AT THE BOARD touches no control for its whole length.
     // Owner: "we snap her in (NOT AFFECTING ALEXS BUTTONS) and then fade to the
     // game." Flashing Start into existence and dissolving the lobby half a
     // second later is the flicker he first read as a disabled button.
-    CHECK(anim_surface_plan(1, 1, 1, 1, 1, &p) == 2, "join+start is two beats");
+    CHECK(anim_surface_plan(1, 1, 1, 1, 1, 0, &p) == 2, "join+start is two beats");
     CHECK(p.beats[0].controls == ANIM_SURFACE_CONTROLS_HELD,
           "controls_board: the roster snaps but the buttons are HELD");
     CHECK(p.beats[0].kind == ANIM_SURFACE_ROSTER,
           "controls_board: …and it is still the roster beat - she IS snapped in");
-    CHECK(anim_surface_plan(1, 1, 1, 0, 1, &p) == 3, "join+rules+start is three beats");
+    CHECK(anim_surface_plan(1, 1, 1, 0, 1, 0, &p) == 3, "join+rules+start is three beats");
     for (int i = 0; i < 3; i++)
         CHECK(p.beats[i].controls == ANIM_SURFACE_CONTROLS_HELD,
               "controls_board: every beat of it, not just the first (beat %d)", i);
+
+    // ---- THE REVERSALS (1.1(68)) -----------------------------------------
+    //
+    // Undoing a staged lobby action is this same function asked the other way
+    // round - `showing` is what the draft produced, `arriving` is the chain the
+    // thread still has - so each of the three comes back wearing the idiom it
+    // was made in, with no per-action case anywhere. Owner: "if i leave, it
+    // stages a bubble. then if I X on that bubble, it should snap me back in.
+    // and same for toggling passing, it should 'unrotate'."
+
+    // R1. UNDOING A START. The only delta a text can never be (rule P ranks a
+    //     dealt game above its own invite), and the only one a BOARD has a plan
+    //     for at all.
+    CHECK(anim_surface_plan(0, 0, 1, 1, 0, 1, &p) == 1, "undo_start: one beat");
+    CHECK(p.beats[0].kind == ANIM_SURFACE_LOBBY,
+          "undo_start: the board gives way to the LOBBY (got %s)", kind_name(p.beats[0].kind));
+    CHECK(p.beats[0].transition == ANIM_TRANSITION_FADE,
+          "undo_start: and it FADES, the same idiom the start wore (got %d)",
+          p.beats[0].transition);
+    CHECK(p.beats[0].start_ms == 0 && p.beats[0].duration_ms == ANIM_TIME_MS,
+          "undo_start: immediately, over one beat");
+    CHECK(p.beats[0].controls == ANIM_SURFACE_CONTROLS_LIVE,
+          "undo_start: the lobby it lands on draws its OWN controls - the stream ends there");
+    CHECK(p.settle_ms == p.total_ms,
+          "undo_start: nothing may put the surface away before the fade is done (%d vs %d)",
+          p.settle_ms, p.total_ms);
+
+    // R2. `ended` OUTRANKS THE REST OF THE DELTA. A board never showed the
+    //     roster it is going back to, so there is nothing to snap on the way and
+    //     a rule that moved inside the discarded draft is part of the surface
+    //     being faded into, not a beat of its own.
+    CHECK(anim_surface_plan(0, 1, 0, 1, 0, 1, &p) == 1,
+          "undo_start: still ONE beat with a roster and a rule move in the delta");
+    CHECK(p.beats[0].kind == ANIM_SURFACE_LOBBY && p.beats[0].passing == 1,
+          "undo_start: and it shows the arriving chain's own rule");
+
+    // R3. UNDOING A RULES TOGGLE turns the box back. Identical to an arriving
+    //     rule change, because it IS one - only the argument order differs.
+    CHECK(anim_surface_plan(1, 0, 0, 1, 0, 0, &p) == 1, "undo_rules: one beat");
+    CHECK(p.beats[0].kind == ANIM_SURFACE_RULES
+          && p.beats[0].transition == ANIM_TRANSITION_TURN
+          && p.beats[0].passing == 1,
+          "undo_rules: the checkbox turns back to the rule the table agreed");
+
+    // R4. UNDOING A LEAVE snaps me back in - no beats, because the adopt IS the
+    //     snap, but a SETTLE, because the drawer is about to eat it. This is the
+    //     pair of lines that issue 2 turns on ("the leave snap happens mid
+    //     collapse"): a caller reading only `n` has no length to wait for.
+    CHECK(anim_surface_plan(1, 1, 1, 1, 0, 0, &p) == 0, "undo_leave: no beats");
+    CHECK(p.settle_ms == ANIM_SURFACE_HOLD_MS,
+          "undo_leave: …and one REST to read it in before the drawer moves (got %d, want %d)",
+          p.settle_ms, ANIM_SURFACE_HOLD_MS);
+
+    // R5. THE NO-OP. Owner: "if you toggle, then toggle back, then X the staged,
+    //     it should detect that the resulting state is the same, and do zero
+    //     animation. same if you leave then join AND END UP IN SAME ORDER IN
+    //     GAME." Nothing tracks what was tapped; two chains that describe the
+    //     same table simply diff to nothing, and a zero settle is what tells the
+    //     caller not even to wait.
+    CHECK(anim_surface_plan(1, 0, 1, 1, 0, 0, &p) == 0, "noop: no beats");
+    CHECK(p.settle_ms == 0, "noop: and NOTHING to wait for either (got %d)", p.settle_ms);
 
     // Every combination, and the invariants that hold across all of them.
     for (int lobby = 0; lobby <= 1; lobby++)
     for (int roster = 0; roster <= 1; roster++)
     for (int pb = 0; pb <= 1; pb++)
     for (int pa = 0; pa <= 1; pa++)
-    for (int started = 0; started <= 1; started++) {
-        const int k = anim_surface_plan(lobby, roster, pb, pa, started, &p);
+    for (int started = 0; started <= 1; started++)
+    for (int ended = 0; ended <= 1; ended++) {
+        const int k = anim_surface_plan(lobby, roster, pb, pa, started, ended, &p);
         CHECK(k >= 0 && k <= ANIM_SURFACE_MAX_BEATS, "beat count in range (%d)", k);
+        // A reversal is one whole-surface fade and nothing else, whatever else
+        // the delta says - it outranks every other clause.
+        if (ended) CHECK(k == 1 && p.beats[0].kind == ANIM_SURFACE_LOBBY,
+                         "ended: one LOBBY beat and only that (k=%d)", k);
         for (int i = 0; i < k; i++) {
             CHECK(i == 0 || p.beats[i].start_ms
                   >= p.beats[i - 1].start_ms + p.beats[i - 1].duration_ms,
@@ -633,17 +700,35 @@ static void test_surface_plan(void) {
                 CHECK(i == k - 1, "a BOARD beat is always the last one");
                 CHECK(p.beats[i].transition == ANIM_TRANSITION_FADE, "and it always fades");
             }
-            CHECK(p.beats[i].controls == ((started && lobby) ? ANIM_SURFACE_CONTROLS_HELD
-                                                             : ANIM_SURFACE_CONTROLS_LIVE),
+            // The two whole-surface beats are one rule read in both directions:
+            // a surface replacing another one fades, going either way.
+            if (p.beats[i].kind == ANIM_SURFACE_LOBBY) {
+                CHECK(k == 1, "a LOBBY beat is the whole plan");
+                CHECK(p.beats[i].transition == ANIM_TRANSITION_FADE, "and it always fades");
+            }
+            CHECK(p.beats[i].controls == ((started && lobby && !ended)
+                                          ? ANIM_SURFACE_CONTROLS_HELD
+                                          : ANIM_SURFACE_CONTROLS_LIVE),
                   "the controls are held for exactly the streams that end at the board");
         }
         if (k > 0) {
             CHECK(p.beats[k - 1].passing == pa,
                   "the LAST beat always shows the arriving chain's own rule - "
                   "playing it IS adopting");
-            CHECK((p.beats[k - 1].kind == ANIM_SURFACE_BOARD) == (started && lobby),
+            CHECK((p.beats[k - 1].kind == ANIM_SURFACE_BOARD) == (started && lobby && !ended),
                   "the stream ends at the board exactly when the game started");
         }
+        // THE SETTLE IS NEVER SHORTER THAN THE BEATS, and it is zero for
+        // exactly the deltas that change nothing about the surface. Both halves
+        // asserted here rather than only in the rows above, because this is the
+        // number a collapsing drawer waits on and "0" is silently the old
+        // behaviour.
+        CHECK(p.settle_ms >= p.total_ms,
+              "the settle covers the beats (settle %d, total %d)", p.settle_ms, p.total_ms);
+        const int moved = ended || (lobby && (roster || pa != pb || started));
+        CHECK((p.settle_ms > 0) == moved,
+              "the settle is zero exactly when the surface does not change "
+              "(settle %d, moved %d)", p.settle_ms, moved);
     }
 }
 
@@ -838,7 +923,7 @@ static void test_lobby_scenarios(void) {
 
         // ---- and what it looks like arriving.
         const int n = anim_surface_plan(1, t->join || t->leave,
-                                        1, t->rules ? 0 : 1, t->start, &p);
+                                        1, t->rules ? 0 : 1, t->start, 0, &p);
         CHECK(n == t->beats, "%s: %d beats, expected %d", t->name, n, t->beats);
         for (int i = 0; i < n; i++)
             CHECK(p.beats[i].controls == t->held,
@@ -912,7 +997,7 @@ static void test_lobby_scenarios(void) {
     // carry it, because whoever moves the rules cannot also start (row A11's
     // sibling gate). Reachable across two texts - Vera joins and toggles, Bob
     // starts - and the surface that was open and behind must play all three.
-    CHECK(anim_surface_plan(1, 1, 1, 0, 1, &p) == 3,
+    CHECK(anim_surface_plan(1, 1, 1, 0, 1, 0, &p) == 3,
           "gap: join + rules + start composes three beats");
     CHECK(p.beats[0].kind == ANIM_SURFACE_ROSTER
           && p.beats[1].kind == ANIM_SURFACE_RULES

@@ -33,6 +33,11 @@ public struct SurfacePlan: Equatable, Sendable {
         case roster = 1   // somebody sat down, or the roster changed at once
         case rules  = 2   // the table's rules moved
         case board  = 3   // the game is dealt and the lobby is over
+        /// …and the lobby is BACK: a staged Start was discarded with the X on
+        /// the input-field bubble. The only beat no arriving text can produce
+        /// (see anim_plan.h's ANIM_SURFACE_LOBBY), and it fades, because an
+        /// idiom is a fact about the change rather than about its direction.
+        case lobby  = 4
     }
 
     /// HOW it arrives. Read, never chosen: see the file header.
@@ -75,12 +80,24 @@ public struct SurfacePlan: Equatable, Sendable {
 
     public let beats: [Beat]
     public let total: TimeInterval
+    /// HOW LONG THE SURFACE MUST BE ON SCREEN before it may be put AWAY, which
+    /// is not `total` and is the number a LOCAL tap wants: staging a bubble
+    /// collapses the drawer, and the drawer must not start moving until the
+    /// beat the human asked for has played.
+    ///
+    /// Longer than `total` for exactly one delta - a lone roster snap, which is
+    /// folded to no beats (the adopt IS the snap) and still has to be read; and
+    /// ZERO when the two chains describe the same surface, which is the owner's
+    /// no-op rule and the one case that must not even pause. The kernel decides
+    /// all of that (anim_plan.h `settle_ms`); nothing here has an opinion.
+    public let settle: TimeInterval
 
-    public static let none = SurfacePlan(beats: [], total: 0)
+    public static let none = SurfacePlan(beats: [], total: 0, settle: 0)
 
-    fileprivate init(beats: [Beat], total: TimeInterval) {
+    fileprivate init(beats: [Beat], total: TimeInterval, settle: TimeInterval) {
         self.beats = beats
         self.total = total
+        self.settle = settle
     }
 
     /// Decode `fio_msg_surface_plan`'s int32 answer. A shape this does not
@@ -90,7 +107,20 @@ public struct SurfacePlan: Equatable, Sendable {
         let head = Int(FIO_SURFACE_HEAD), stride = Int(FIO_SURFACE_STRIDE)
         guard count >= head else { self = .none; return }
         let n = Int(words[0])
-        guard n > 0, count >= head + n * stride else { self = .none; return }
+        // A PLAN WITH NO BEATS IS STILL AN ANSWER. It was `.none` here until
+        // 1.1(68), which was fine while the only question was "what do I
+        // animate" and wrong the moment the surface also had to ask "and how
+        // long before the drawer may take it away" - a lone roster snap answers
+        // 0 and one REST to those two, and collapsing `.none` over it threw the
+        // second away.
+        guard n >= 0, count >= head + n * stride else { self = .none; return }
+        let settle = TimeInterval(words[2]) / 1000
+        guard n > 0 else {
+            self.beats = []
+            self.total = 0
+            self.settle = settle
+            return
+        }
         var out: [Beat] = []
         out.reserveCapacity(n)
         for i in 0..<n {
@@ -106,6 +136,7 @@ public struct SurfacePlan: Equatable, Sendable {
         }
         self.beats = out
         self.total = TimeInterval(words[1]) / 1000
+        self.settle = settle
     }
 }
 
@@ -127,7 +158,7 @@ extension MessageKernel {
                                      &out, Int32(cap))
             }
         }
-        guard n > 0 else { return .none }
+        guard n >= Int32(FIO_SURFACE_HEAD) else { return .none }
         return SurfacePlan(words: out, count: Int(n))
     }
 }

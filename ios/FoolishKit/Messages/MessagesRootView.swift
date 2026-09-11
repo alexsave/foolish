@@ -752,14 +752,18 @@ private struct GameSurface: View {
             // Round-9: the human deleted the staged bubble from the input field
             // (didCancelSending) - nothing is awaiting Send any more.
             //
-            // ONLY the surface's own flag. The board's half of a cancel - the
-            // undo, and whether a shorter chain goes back into the input field
-            // - is `MessageTableView.cancelStagedBubble`, on the same token:
-            // the send hint over a BOARD is drawn off `controller.canSend`, so
-            // clearing `surfaceStaged` here never dimmed it (1.0(37): "if I
-            // stage then X the staged bubble, the send hint arrow doesn't go
-            // away").
-            .onChange(of: cancelToken) { _ in surfaceStaged = false; stagedParent8 = nil; stagedBase = nil }
+            // The board's half of a cancel - the undo, and whether a shorter
+            // chain goes back into the input field - is
+            // `MessageTableView.cancelStagedBubble`, on the same token: the send
+            // hint over a BOARD is drawn off `controller.canSend`, so clearing
+            // `surfaceStaged` here never dimmed it (1.0(37): "if I stage then X
+            // the staged bubble, the send hint arrow doesn't go away").
+            //
+            // 1.1(68): and the SURFACE's half is no longer just three flags.
+            // The owner asked for the X to undo a staged lobby action the way it
+            // undoes a staged move, so this reverts the table too - see
+            // `revertStagedSurface`, which is where the flags are now cleared.
+            .onChange(of: cancelToken) { _ in Task { await revertStagedSurface() } }
             // A bubble ARRIVED while this surface is open (didReceive). Apple
             // does not move `selectedMessage` for an arrival, so loadKey does
             // not change and the .task above will not re-run - this one does.
@@ -1042,6 +1046,15 @@ private struct GameSurface: View {
     /// change that is simply true now (a lone join or leave, a lone rules move
     /// with nothing before it). The adopt on its own is that snap.
     private func playArrival(_ plan: SurfacePlan, winner: Data, env: MessageEnvelope) async {
+        // THE SURFACE COMING BACK, which is the one beat that plays over a
+        // BOARD (1.1(68)). It is the X on a staged Start - see
+        // `revertStagedSurface` - and the kernel hands it over as one whole
+        // LOBBY beat, never mixed with the others, so it is taken first and
+        // alone.
+        if let beat = plan.beats.first, beat.kind == .lobby {
+            await fadeBackToLobby(beat, winner: winner, env: env)
+            return
+        }
         guard !plan.beats.isEmpty, let showing = lobby else {
             // A plan WITH beats and no lobby to play them over is not the
             // ordinary empty-plan case - it is the surface having been cleared
@@ -1114,6 +1127,142 @@ private struct GameSurface: View {
             try? await Task.sleep(nanoseconds: UInt64(beat.duration * 1_000_000_000))
             arrivalStill = nil
             stillFade = 1
+        }
+    }
+
+    /// THE LOBBY COMING BACK OVER THE BOARD - the lobby->board cross-fade seen
+    /// from the other side, and rendered as one because the kernel calls it one
+    /// (anim_plan.h's ANIM_SURFACE_LOBBY: an idiom is a fact about the change,
+    /// not about its direction).
+    ///
+    /// The still is the LOBBY here rather than the thing being left, so it fades
+    /// IN over the board instead of out of it - a board cannot be drawn into
+    /// `ArrivalStill`, and it does not need to be: at full opacity the still IS
+    /// the lobby the surface is about to become, so swapping the real one in
+    /// underneath it is invisible. Same reason the forward fade uses an explicit
+    /// opacity rather than a `.transition`: the branch is removed in the same
+    /// transaction that swaps the whole surface, and SwiftUI cuts rather than
+    /// animates that.
+    private func fadeBackToLobby(_ beat: SurfacePlan.Beat, winner: Data,
+                                 env: MessageEnvelope) async {
+        guard beat.duration > 0 else {
+            await adopt(winner: winner, env: env)
+            return
+        }
+        arrivalStill = ArrivalStill(env: env, passing: env.passingAllowed, controls: env)
+        stillFade = 0
+        // ONE FRAME AT ZERO, so there is a `from` for the fade to come out of.
+        // Setting an opacity and animating it away from that value in the same
+        // update gives SwiftUI one value to render and it cuts - this is a
+        // render barrier, not a duration, which is why it is a yield and not a
+        // number (the timings are all the kernel's; see `holdSurface`).
+        await Task.yield()
+        withAnimation(.easeInOut(duration: beat.duration)) { stillFade = 1 }
+        try? await Task.sleep(nanoseconds: UInt64(beat.duration * 1_000_000_000))
+        // The real lobby, under a still that is already showing it.
+        await adopt(winner: winner, env: env)
+        arrivalStill = nil
+        stillFade = 1
+    }
+
+    /// HOLD THE SURFACE until the tap the human just made has been SEEN, and
+    /// only then let the caller stage its bubble - which collapses the drawer.
+    ///
+    /// 1.1(68), owner: "do lobby animation (fade/rotate/snap) THEN collapse. I
+    /// notice that the leave snap and the collapse also seem to happen at the
+    /// same time." All three lobby actions had the same shape: `await onSend`
+    /// first, which stages, collapses, and waits out the host's transition
+    /// before returning - so the fade, the turn and the snap were all being
+    /// played into a drawer that was already moving, or after it had finished.
+    ///
+    /// THE LENGTH IS `plan.settle` AND NOTHING ELSE. It is the kernel's answer
+    /// to "how long must this surface be looked at", which is not the same as
+    /// how long its beats take: a lone roster snap has NO beats (the adopt is
+    /// the snap) and still has to be read, and two chains that describe the same
+    /// table settle in zero - the owner's no-op rule, which is why this can be
+    /// called unconditionally. A number typed here instead would be a second
+    /// timing policy that nothing compares against the first (anim_plan.h).
+    ///
+    /// NOTHING HERE TOUCHES THE COLLAPSE ITSELF. The tween, its curve and the
+    /// box geometry are untouched and must stay so; the only thing that moved is
+    /// WHEN the host is asked for the style change.
+    private func holdSurface(_ plan: SurfacePlan, since began: Date) async {
+        let due = began.addingTimeInterval(plan.settle).timeIntervalSinceNow
+        guard due > 0 else { return }
+        try? await Task.sleep(nanoseconds: UInt64(due * 1_000_000_000))
+    }
+
+    /// THE X ON THE STAGED BUBBLE, on a lobby surface: put the table back the
+    /// way the thread still has it (1.1(68)).
+    ///
+    /// Owner: "while there isn't an undo for this specific scenario, it should
+    /// still 'fade back' to the lobby state it was in previously if I X on the
+    /// staged bubble. kinda like how X on the stage bubble undoes a staged move
+    /// mid game", and then for the other two lobby actions: "if i leave, it
+    /// stages a bubble. then if I X on that bubble, it should snap me back in.
+    /// and same for toggling passing, it should 'unrotate'."
+    ///
+    /// ONE MECHANISM, AND IT IS THE ARRIVAL'S. The reversal is not a fourth
+    /// thing to build: it is `surfacePlan` asked the other way round - what is
+    /// on screen as `showing`, the chain the draft was started from as
+    /// `arriving` - and then the same `playArrival` that plays a text. Each
+    /// action therefore comes back in the idiom it was made in without anything
+    /// here knowing which action it was: a rules change TURNS back, a roster
+    /// change SNAPS back, a start FADES back.
+    ///
+    /// WHICH IS ALSO THE NO-OP RULE, for free. Owner: "if you toggle, then
+    /// toggle back, then X the staged, it should detect that the resulting state
+    /// is the same, and do zero animation. same if you leave then join AND END
+    /// UP IN SAME ORDER IN GAME." Nothing is replayed and no tap is remembered -
+    /// two chains that describe the same table diff to no beats and a zero
+    /// settle, and a zero settle is the one case that returns without touching
+    /// the surface at all. The pair the owner set as the test of it (leave and
+    /// rejoin as the JOINER, which lands you back in the same place, against
+    /// leave and rejoin as the CREATOR, which lands you behind the player who
+    /// held their seat) differ in no tap at all - only in the roster - so a
+    /// reversal that replayed taps would have to get one of them wrong.
+    ///
+    /// `stagedBase` is the state to go back to and `threadParent8` is what
+    /// records it - the FIRST edit of a draft captures it and later edits of the
+    /// same draft do not, so a Join, a rules move and a Start staged together
+    /// revert as one, exactly as the single bubble the X deletes carried them.
+    private func revertStagedSurface() async {
+        let wasStaged = surfaceStaged
+        let base = stagedBase
+        // The flags go first and unconditionally: whatever happens below, this
+        // surface no longer has a bubble waiting to be sent.
+        surfaceStaged = false
+        stagedParent8 = nil
+        stagedBase = nil
+        // ONLY WHAT THIS SURFACE STAGED. A cancel over a BOARD is the move-level
+        // retraction and belongs to `MessageTableView.cancelStagedBubble`, on
+        // this same token; `stagedBase` can also be left behind by a local chain
+        // that never staged anything at all (`addSoloSeat`, in DEBUG). Neither
+        // is a lobby action of mine waiting to be undone, and reverting to a
+        // base either one recorded would put a table on screen that nobody
+        // asked for.
+        guard wasStaged, let base else { return }
+        // What is on screen, by the same reading `maybeAdoptIncoming` uses - and
+        // `lastShownChain` last, because a board's own base is the truth while
+        // there is one.
+        guard let showing = controller?.basePayload ?? lobby?.payload ?? lastShownChain,
+              let env = try? await MessageEnvelope.decode(payload: base, viewer: -1)
+        else { return }
+        let plan = await MessageKernel.shared.surfacePlan(showing: showing, arriving: base)
+        FlightRecorder.note("unstage",
+            "beats=\(plan.beats.count) settle=\(Int(plan.settle * 1000))ms")
+        // THE NO-OP. Nothing changed, so nothing plays and nothing is adopted:
+        // re-adopting an identical table would still cost a rebuild, and a
+        // rebuild is a frame the owner asked not to see.
+        guard plan.settle > 0 else { return }
+        AnimLog.say("surface reverts a staged lobby action as \(plan.beats.count) beat(s)")
+        await playArrival(plan, winner: base, env: env)
+        // AND THE SEAT COMES BACK WITH ME. `leaveLobby` forgets this device's
+        // seat so a later open cannot re-seat me in a lobby I walked out of;
+        // reverting the leave has to put it back, or the lobby I snap into
+        // offers me Join rather than the chair I am sitting in.
+        if env.phase == 0, let mine = lobbySeat(env) {
+            cache(seat: mine, env: env, payload: base)
         }
     }
 
@@ -2256,9 +2405,20 @@ private struct GameSurface: View {
             // cannot (the join that carried the name is exactly what was
             // removed), so the one device that still knows says it.
             onAnnounceLeave(myName)
+            // THE SNAP, AND THEN THE DRAWER. 1.1(68), owner, off the device: "i
+            // just confirmed the leave snap happens mid collapse." It did: the
+            // seat only left the roster on the line BELOW `onSend`, which does
+            // not return until the collapse it starts has settled - so the one
+            // frame the human asked to see was drawn into a moving drawer. See
+            // `holdSurface` for why the length is the kernel's and not a number
+            // typed here.
+            let plan = await MessageKernel.shared.surfacePlan(showing: lob.payload,
+                                                              arriving: payload)
+            let began = Date()
+            lobby = Lobby(env: newEnv, payload: payload); lastShownChain = payload
+            await holdSurface(plan, since: began)
             await onSend(payload, joins.count, false)
             surfaceStaged = true
-            lobby = Lobby(env: newEnv, payload: payload); lastShownChain = payload
         } catch {
             damaged = true
         }
@@ -2352,9 +2512,18 @@ private struct GameSurface: View {
             let newEnv = try await MessageEnvelope.decode(payload: payload, viewer: -1)
             AnimLog.say("lobby rules: passing=\(passing) by seat \(me)")
             cache(seat: me, env: newEnv, payload: payload)
+            // THE TURN, AND THEN THE DRAWER - the same rule `leaveLobby` and
+            // `startGame` keep. The box began turning under the finger
+            // (`FCheckbox` runs it before it calls this), so what is held here
+            // is the REST of that turn: without it the collapse started in the
+            // same breath as the rotation and ate it.
+            let plan = await MessageKernel.shared.surfacePlan(showing: lob.payload,
+                                                              arriving: payload)
+            let began = Date()
+            lobby = Lobby(env: newEnv, payload: payload); lastShownChain = payload
+            await holdSurface(plan, since: began)
             await onSend(payload, me, false)
             surfaceStaged = true
-            lobby = Lobby(env: newEnv, payload: payload); lastShownChain = payload
         } catch {
             damaged = true
         }
@@ -2429,8 +2598,6 @@ private struct GameSurface: View {
                 parent8: parent, joins: env.joins)
             let newEnv = try await MessageEnvelope.decode(payload: payload, viewer: -1)
             cache(seat: seat, env: newEnv, payload: payload)
-            await onSend(payload, seat, false)
-            surfaceStaged = true   // round-9: the LIVE handoff awaits Send (alsoStaged)
             // MY OWN START FADES, exactly as an arriving one does. Owner: "our
             // own start (when possible) should fade." Before this the lobby was
             // simply gone in the frame the board appeared, which is the same cut
@@ -2444,8 +2611,19 @@ private struct GameSurface: View {
             // way to a board look like" rather than one per direction. A plan
             // that comes back without a fade - a kernel that stops calling this
             // a transition - simply swaps, as it always did.
+            //
+            // AND IT FADES FIRST. 1.1(68), owner: "if I tap a lobby where I am
+            // legally allowed to start, I see it collapsed THEN fade on my
+            // screen. It should be the opposite. Fade to game, then collapse."
+            // `onSend` is not a notification - it stages the bubble, and staging
+            // collapses the drawer and does not return until the host's
+            // transition has settled - so awaiting it first spent the whole
+            // transition before the first frame of the fade was drawn. It now
+            // sits below `holdSurface`, which is where every lobby action in
+            // this file puts it, and for the same reason.
             let plan = await MessageKernel.shared.surfacePlan(showing: lob.payload,
                                                               arriving: payload)
+            let began = Date()
             let fade = plan.beats.last.flatMap { $0.transition == .fade ? $0 : nil }
             if fade != nil {
                 arrivalStill = ArrivalStill(env: env, passing: env.passingAllowed,
@@ -2460,6 +2638,9 @@ private struct GameSurface: View {
                 arrivalStill = nil
                 stillFade = 1
             }
+            await holdSurface(plan, since: began)
+            await onSend(payload, seat, false)
+            surfaceStaged = true   // round-9: the LIVE handoff awaits Send (alsoStaged)
         } catch {
             damaged = true
         }
@@ -3313,19 +3494,32 @@ private struct LobbyView: View {
             // 21 - see `passingWish`). Writing the wish here rather than inside
             // `onSetPassing` keeps the staging closure exactly what it was, and
             // puts the whole of the optimism in the one view that draws the box.
-            FCheckbox(FStrings.t("ios.lobby.passing"),
-                      isOn: passingShown,
-                      // …and for the same reason the box is not dimmed in a
-                      // still: it is drawn as the state really had it. Nothing
-                      // in the overlay can be touched anyway.
-                      enabled: LobbyControls.canSetRules(mySeat: mySeat),
-                      turn: rulesTurn,
-                      action: { on in
-                          passingWish = on
-                          onSetPassing(on)
-                      })
-                .padding(.horizontal)
-            waitingNote
+            //
+            // THE NOTE BELONGS TO THIS ROW, so it is stacked WITH it at zero
+            // rather than a twelfth step further down the lobby. Owner, 1.1(68):
+            // "too much padding between the bottom of the passing button and the
+            // top of 'waiting for the others'". The checkbox draws a ~22pt box
+            // inside a 44pt touch target, so its own row already hangs ~11pt of
+            // clear space under the word - the stack's 12 was landing on top of
+            // that and reading as double. Taking the 12 rather than trimming the
+            // target keeps the finger's 44pt, and keeps the number out of it:
+            // what is left below the checkbox is the target's own slack, at
+            // whatever size the type happens to be.
+            VStack(spacing: 0) {
+                FCheckbox(FStrings.t("ios.lobby.passing"),
+                          isOn: passingShown,
+                          // …and for the same reason the box is not dimmed in a
+                          // still: it is drawn as the state really had it. Nothing
+                          // in the overlay can be touched anyway.
+                          enabled: LobbyControls.canSetRules(mySeat: mySeat),
+                          turn: rulesTurn,
+                          action: { on in
+                              passingWish = on
+                              onSetPassing(on)
+                          })
+                    .padding(.horizontal)
+                waitingNote
+            }
         }
         .frame(maxWidth: .infinity)
         .padding()

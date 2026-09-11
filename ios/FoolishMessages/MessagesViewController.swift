@@ -593,7 +593,6 @@ final class MessagesViewController: MSMessagesAppViewController {
         // marker its send would have written.
         if let p = pendingStage,
            let cancelled = Self.payload(of: message), cancelled != p.payload { return }
-        pendingStage = nil
         // OBSERVED, not assumed. "The callback does not fire" was the first
         // theory for the hint that would not go out, and it was wrong - this
         // line is what says so, in a trail that survives the extension being
@@ -610,7 +609,19 @@ final class MessagesViewController: MSMessagesAppViewController {
         // (MessageTableView.cancelStagedBubble). Clearing only the surface's
         // flag is why the arrow survived a cancel over a game board.
         cancelToken += 1
+        // THE PIN IS STILL NEEDED FOR THIS ONE PRESENT, which is why
+        // `pendingStage` is cleared BELOW it rather than above (1.1(68)).
+        // `conversation.insert` made the staged bubble the SELECTION, and a
+        // cancel does not always take that back - so a present with the pin
+        // already dropped routes the surface at the cancelled bubble's own URL,
+        // which moves `loadKey`, which reloads the surface onto the very chain
+        // the human just discarded. That is the opposite of an undo, and it
+        // would land on top of `revertStagedSurface` with no way to tell which
+        // won. `StagedBubbleRouting` recognises the bytes as mine and keeps
+        // `lastPayloadURL`, so the surface is left alone and the revert is the
+        // only thing that moves it.
         present(conversation, style: presentationStyle)
+        pendingStage = nil
     }
 
     override func willTransition(to presentationStyle: MSMessagesAppPresentationStyle) {

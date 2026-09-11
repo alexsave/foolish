@@ -941,7 +941,12 @@ int fio_msg_rule_p(const uint8_t *a, int a_len, const uint8_t *b, int b_len);
 //
 //    0  n_beats
 //    1  total_ms
-//    2 + i*FIO_SURFACE_STRIDE:  kind (FIO_SURFACE_*), transition (FIO_TRANS_*),
+//    2  settle_ms - how long the surface must be LOOKED AT before it may be put
+//       away, which is not the same number as total_ms and is the one a caller
+//       about to collapse the drawer wants. Present even when n_beats is 0: a
+//       lone roster snap is folded to no beats and still has to be read, while
+//       two chains describing the same table settle in 0 (the no-op rule).
+//    3 + i*FIO_SURFACE_STRIDE:  kind (FIO_SURFACE_*), transition (FIO_TRANS_*),
 //                               passing, controls (FIO_CONTROLS_*),
 //                               duration_ms, start_ms
 //
@@ -949,14 +954,16 @@ int fio_msg_rule_p(const uint8_t *a, int a_len, const uint8_t *b, int b_len);
 // platform: which idiom an action wears is a fact about the action, so it is
 // decided once, in C (anim_plan.h), and a client renders what it is told.
 //
-// Returns the number of INT32s written, 0 when there is nothing to stage (a
-// board taking an arrival, or two envelopes describing the same lobby - the
-// caller then adopts exactly as it always did), or a negative FIO_E*.
-#define FIO_SURFACE_HEAD   2
+// Returns the number of INT32s written - always at least FIO_SURFACE_HEAD, so a
+// plan with no beats in it (a board taking an arrival, or two envelopes
+// describing the same lobby - the caller then adopts exactly as it always did)
+// still carries its settle_ms - or a negative FIO_E*.
+#define FIO_SURFACE_HEAD   3
 #define FIO_SURFACE_STRIDE 6
 #define FIO_SURFACE_ROSTER 1   // somebody sat down
 #define FIO_SURFACE_RULES  2   // the table's rules moved
 #define FIO_SURFACE_BOARD  3   // the game is dealt and the lobby is over
+#define FIO_SURFACE_LOBBY  4   // …and the reverse: a staged start was discarded
 #define FIO_TRANS_SNAP     0   // no motion: it is simply true now
 #define FIO_TRANS_TURN     1   // the control that changed rotates out and back
 #define FIO_TRANS_FADE     2   // one whole surface cross-fades into another

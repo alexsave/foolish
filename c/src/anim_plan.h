@@ -1123,6 +1123,22 @@ int anim_shown_ledger_allows(int claim, int sequencing);
 // down in the only order they can have happened in, which is why the composition
 // is written as three independent `if`s rather than as a table of five.
 //
+// A REVERSAL IS NOT A SEVENTH CASE. 1.1(68), owner: "if I X on the staged
+// bubble ... it should 'fade back' to the lobby state it was in previously",
+// "if i leave, it stages a bubble. then if I X on that bubble, it should snap
+// me back in. and same for toggling passing, it should 'unrotate'."
+//
+// Three idioms, and they are the three above - so undoing a staged lobby action
+// is this same function asked the other way round: `showing` is the surface the
+// draft produced and `arriving` is the chain the thread still has. A rules
+// reversal comes back as a RULES beat and TURNS, a roster reversal as a roster
+// SNAP, a start reversal as the LOBBY beat below and FADES. Nothing anywhere
+// tracks WHICH action was staged, and that is what makes the owner's no-op rule
+// free: "if you toggle, then toggle back, then X the staged, it should detect
+// that the resulting state is the same, and do zero animation. same if you
+// leave then join AND END UP IN SAME ORDER IN GAME." Two chains that describe
+// the same table diff to nothing, and nothing is what plays.
+//
 // WHY THE TIMING IS HERE rather than in a view. It is the same question every
 // other beat in this file answers - how long does this take, and how long do we
 // rest before the next - and the same answer, ANIM_TIME_MS, so a lobby's beats
@@ -1133,6 +1149,25 @@ int anim_shown_ledger_allows(int claim, int sequencing);
 #define ANIM_SURFACE_ROSTER 1
 #define ANIM_SURFACE_RULES  2
 #define ANIM_SURFACE_BOARD  3
+// THE BOARD GIVES WAY BACK TO THE LOBBY, and it is the only beat here that no
+// arriving text can produce (msg_wire.h `ended` says why). It is the X on the
+// staged bubble: a Start that was staged and never sent is discarded, and the
+// surface goes back to the table the thread still has. Owner: "it should still
+// 'fade back' to the lobby state it was in previously if I X on the staged
+// bubble. kinda like how X on the stage bubble undoes a staged move mid game."
+//
+// A FADE, because it is the same boundary ANIM_SURFACE_BOARD crosses and an
+// idiom is a fact about the CHANGE, not about its direction: a whole surface
+// replacing another one looks the same going back. That is the one rule that
+// makes every reversal here fall out rather than being written twice - the
+// reverse of a delta is the delta computed the other way round, so a rules
+// reversal TURNS, a roster reversal SNAPS, and a start reversal FADES, with no
+// per-action case anywhere.
+//
+// ALONE, ALWAYS. A board never showed the roster it is going back to, so there
+// is no intermediate lobby to snap on the way; the fade lands on the arriving
+// chain entire, which keeps "the last beat IS the adopt" true here too.
+#define ANIM_SURFACE_LOBBY  4
 
 // HOW a beat arrives. Carried as DATA rather than derived from `kind` by each
 // platform: which idiom an action wears is a fact about the action, a C enum can
@@ -1195,6 +1230,33 @@ typedef struct {
 typedef struct {
     int n;
     int total_ms;     // start_ms + duration_ms of the last beat
+    // HOW LONG THE SURFACE MUST BE ON SCREEN before it may be PUT AWAY - which
+    // is a different question from how long its beats take, and the one the
+    // drawer asks.
+    //
+    // 1.1(68), owner: "do lobby animation (fade/rotate/snap) THEN collapse. I
+    // notice that the leave snap and the collapse also seem to happen at the
+    // same time", and then from the device: "i just confirmed the leave snap
+    // happens mid collapse."
+    //
+    // An ARRIVING chain never needs this: nothing is taking the surface away,
+    // so the beats are the whole story. A LOCAL tap does - it stages a bubble,
+    // and staging collapses the drawer - and for the one case the beats cannot
+    // answer: a lone roster snap is folded to NO beats below, because for an
+    // arrival the ordinary adopt already is that snap. It is still a thing the
+    // human has to be given time to read before the drawer eats it, and
+    // total_ms of 0 would say "collapse now".
+    //
+    // So: 0 when the two chains describe the same surface (nothing changed, so
+    // there is nothing to watch - the owner's no-op rule: "if you toggle, then
+    // toggle back, then X the staged, it should detect that the resulting state
+    // is the same, and do zero animation"), the beats' own length when there
+    // are beats, and one REST when the change is real but silent.
+    //
+    // Here rather than in a view under this file's standing rule: a number
+    // typed into a SwiftUI file is a second timing policy that nothing compares
+    // against the first.
+    int settle_ms;
     AnimSurfaceBeat beats[ANIM_SURFACE_MAX_BEATS];
 } AnimSurfacePlan;
 
@@ -1204,8 +1266,11 @@ typedef struct {
 // describe the same lobby - and a caller that gets 0 adopts the way it always
 // did. Takes its inputs as ints rather than a struct so anim_plan.c keeps no
 // dependency on msg_wire.h: rules.wasm builds the wire WITHOUT this file.
+// `ended` is msg_surface_delta's other boundary - the surface is a BOARD and the
+// arriving chain is its lobby, which only a REVERSAL can be. It outranks
+// everything else in the delta: see ANIM_SURFACE_LOBBY.
 int anim_surface_plan(int on_a_lobby, int roster_moved,
                       int passing_before, int passing_after, int started,
-                      AnimSurfacePlan *out);
+                      int ended, AnimSurfacePlan *out);
 
 #endif

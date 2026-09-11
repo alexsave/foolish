@@ -1252,10 +1252,23 @@ static void push_surface(AnimSurfacePlan *p, int kind, int transition,
 
 int anim_surface_plan(int on_a_lobby, int roster_moved,
                       int passing_before, int passing_after, int started,
-                      AnimSurfacePlan *out) {
+                      int ended, AnimSurfacePlan *out) {
     if (!out) return 0;
     out->n = 0;
     out->total_ms = 0;
+    out->settle_ms = 0;
+    // THE BOARD GIVING WAY BACK TO THE LOBBY, which is the one thing a board
+    // does have a plan for - and it is ONE beat whatever else the delta says.
+    // See ANIM_SURFACE_LOBBY: the board never showed the roster it is going
+    // back to, so there is nothing to snap on the way, and a rule that moved
+    // while the draft was staged is part of the surface being faded into
+    // rather than a beat of its own. First, because `started` and `ended` are
+    // the same boundary and a chain cannot be on both sides of it.
+    if (ended) {
+        push_surface(out, ANIM_SURFACE_LOBBY, ANIM_TRANSITION_FADE, passing_after, ANIM_TIME_MS);
+        out->settle_ms = out->total_ms;
+        return out->n;
+    }
     // A BOARD TAKES AN ARRIVAL THE WAY IT ALWAYS HAS. The live controller folds
     // the new chain in without a teardown (ArrivalReadoptTests), and a plan here
     // would be a second, competing opinion about a transition that is already
@@ -1287,5 +1300,12 @@ int anim_surface_plan(int on_a_lobby, int roster_moved,
         out->n = 0;
         out->total_ms = 0;
     }
+    // AND IT IS STILL SOMETHING TO LOOK AT. The fold above is about staging
+    // renders, not about time: a roster that snapped is exactly as much a thing
+    // the human has to read as one that turned, and the caller who is about to
+    // collapse the drawer needs a length for it. See `settle_ms`.
+    out->settle_ms = out->n > 0 ? out->total_ms
+                   : ((roster_moved || passing_after != passing_before || started)
+                      ? ANIM_SURFACE_HOLD_MS : 0);
     return out->n;
 }
