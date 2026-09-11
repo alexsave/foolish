@@ -480,7 +480,8 @@ cmd_chain() {
   # one that moves LAST. Settled against the result card, the one unambiguous
   # reader - it prints "(You)" from `dev.seat` next to the name it resolved for
   # that seat, so a frame where those two disagree is visible in one look.
-  if [ "$last" = "0" ]; then export FOOLISH_NAMES="Alex,Kate"
+  if [ -n "${FOOLISH_NAMES_FORCE:-}" ]; then export FOOLISH_NAMES="$FOOLISH_NAMES_FORCE"
+  elif [ "$last" = "0" ]; then export FOOLISH_NAMES="Alex,Kate"
   else export FOOLISH_NAMES="Kate,Alex"; fi
   "$tool" --chain "$np" "$count" "$depth" >/tmp/rig_chain.hex 2>/tmp/rig_chain.log || return 1
 
