@@ -1002,6 +1002,13 @@ int fio_msg_lobby_rules_changed(int have_baseline, int baseline, int current, in
 // rotate").
 int fio_anim_surface_beat_ms(void);
 
+// THE WHOLE-SURFACE CHANGE THAT HAS NO SECOND CHAIN to diff against: the New
+// game screen becoming the lobby it creates, and that lobby being discarded
+// again. Same OUT shape as fio_msg_surface_plan, always one beat, so a client
+// renders it through exactly the same reader. See anim_plan.h's
+// `anim_surface_swap` for why the client is not allowed to decide this itself.
+int fio_anim_surface_swap(int passing, int32_t *out, int cap);
+
 int fio_msg_surface_plan(const uint8_t *showing, int showing_len,
                          const uint8_t *arriving, int arriving_len,
                          int32_t *out, int cap);

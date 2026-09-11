@@ -5128,7 +5128,17 @@ public struct MessageTableView: View {
     private var undoSlot: some View {
         ZStack {
             if controller.canSend {
-                FButton(FStrings.t("ios.msg.undo"), kind: .wood, compact: true,
+                // NOT WHILE A RETRACTION IS IN FLIGHT (the audit's U8). Every
+                // other door into the controller asks first - `cancelStage` and
+                // `apply` both check RETRACTING before anything else - and this
+                // one did not, so a tap during the conflict peek ran `undo`,
+                // found nothing to take back, and then RE-STAGED the very chain
+                // being retracted. Disabled rather than guarded inside the
+                // action, on the owner's call: "let's disable the undo button
+                // during that then." A control that cannot be pressed has no
+                // door to forget.
+                FButton(FStrings.t("ios.msg.undo"), kind: .wood,
+                        enabled: !controller.conflictRetracting, compact: true,
                         fixedWidth: 96, action: undoAction)
             }
         }

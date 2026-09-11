@@ -168,6 +168,40 @@ def drawer_top(a, s):
     return int(top / s)
 
 
+def last_bubble(a, s):
+    """The NEWEST Foolish bubble sitting in the transcript -> (x_pt, y_pt).
+
+    Sending the first bubble of a game DISMISSES the drawer (the extension
+    cannot be bound to a conversation it has not been opened from), so the only
+    way back onto that game is to tap its bubble - and a rig that cannot do that
+    can only ever film a lobby it created in the same breath, never one the
+    thread actually holds.
+
+    A sent bubble is a block of FELT in the chat. The presented drawer is felt
+    too, so anything at or below `drawer_top` is excluded; what is left is the
+    lowest tall run of table-coloured rows, and the bubble's own x centre is
+    taken from the pixels in it (the bubble is inset from one side, so the
+    screen's midpoint lands on the wrong thing at the edges).
+    """
+    cover = surface(a)
+    h, w = a.shape[0], a.shape[1]
+    top = drawer_top(a, s)
+    limit = int((top - 8) * s) if top is not None else h
+    band = cover[:limit, :].mean(axis=1) > 0.20
+    best = None
+    for run in runs(np.nonzero(band)[0], 4 * s):
+        if len(run) < 40 * s:                 # a bubble is tall; a tapback is not
+            continue
+        best = run
+    if best is None:
+        return None
+    y = int(np.mean(best))
+    cols = np.nonzero(cover[y, :])[0]
+    if cols.size == 0:
+        return None
+    return int(np.mean(cols) / s), int(y / s)
+
+
 def hand_band(a, s):
     """(top, bottom) pixel rows of the hand strip - the lowest TALL run of
     card-coloured rows inside the drawer.
@@ -663,6 +697,8 @@ if __name__ == "__main__":
         print("ICONS", wood_icons(a, s))
     if what in ("box", "all"):
         print("BOX", checkbox(a, s))
+    if what in ("bubble", "all"):
+        print("BUBBLE", last_bubble(a, s))
     if what == "span":
         print("SPAN", bar_spans(a, s, int(sys.argv[2])))
     if what in ("cards", "all"):

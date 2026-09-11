@@ -23,6 +23,7 @@
 #                                 so the transcript behind every later frame
 #                                 is a real chat and not a black void
 #   rig.sh open                   +  ->  Foolish  (the extension, compact)
+#   rig.sh openbubble             tap the newest Foolish bubble in the chat
 #   rig.sh clearstage             dismiss a staged bubble left in the compose field
 #   rig.sh expand / collapse      drag the grabber
 #   rig.sh back                   leave the drawer (keeps Messages alive)
@@ -40,6 +41,7 @@
 #   rig.sh unseed                 back to the normal create/join flow
 #   rig.sh prefs [TABLE] [LANG] [APPEARANCE]      felt|wool  en|ru|..  light|dark
 #   rig.sh slowmo N | ruler [off]                 debug overlays
+#   rig.sh deal N | off                           pin the genesis deal (dev.seed)
 #
 #   ---- capture --------------------------------------------------------
 #   rig.sh shot NAME              one frame, flattened, size-checked
@@ -558,6 +560,23 @@ cmd_lobby() {
 #   leave   the right one
 #   join    the only button on the row (a lobby I am not seated in)
 #   box     the passing checkbox
+# TAP THE NEWEST FOOLISH BUBBLE in the transcript, which is the only way back
+# onto a game whose first bubble has been sent - that send dismisses the drawer
+# on purpose (the extension cannot be bound to a conversation it was not opened
+# from), and `open` from the + menu always lands on the New game screen.
+cmd_openbubble() {
+  need_sim
+  local x y
+  front
+  read -r x y < <(python3 "$LIB/ui.py" bubble | python3 -c "
+import sys, ast
+v = ast.literal_eval(sys.stdin.read().split('BUBBLE ')[1])
+print(v[0], v[1]) if v else print(-1, -1)")
+  [ "$x" = "-1" ] && { echo "no Foolish bubble in the transcript"; return 1; }
+  tap "$x" "$y" 3
+  echo "opened the bubble at $x,$y"
+}
+
 cmd_lobbytap() {
   need_sim
   local what="${1:?lobbytap start|leave|join|box}" y x
@@ -692,6 +711,18 @@ cmd_slowmo() {
   local g; g=$(group_dir)
   if [ "${1:-0}" = "0" ]; then rm -f "$g/dev.slowmo"; echo "slowmo off"
   else printf '%s' "$1" > "$g/dev.slowmo"; echo "slowmo x$1"; fi
+}
+
+# PIN THE GENESIS DEAL. `createWaiting`'s DEBUG hook reads `dev.seed` and seals
+# the lobby with a 32-byte seed of that one value, so two runs of the same
+# scenario deal the same cards - which is the only way a BEFORE and an AFTER
+# film of the same take can be laid side by side and read as one comparison.
+# Off (a random deal per create) with no argument value, exactly as a shipping
+# build always is.
+cmd_deal() {
+  local g; g=$(group_dir)
+  if [ "${1:-}" = "off" ]; then rm -f "$g/dev.seed"; echo "deal: random"
+  else printf '%s' "${1:-3}" > "$g/dev.seed"; echo "deal: seed ${1:-3}"; fi
 }
 
 cmd_ruler() {
@@ -881,6 +912,7 @@ case "${1:-}" in
   unseed)   shift; cmd_unseed "$@" ;;
   prefs)    shift; cmd_prefs "$@" ;;
   slowmo)   shift; cmd_slowmo "$@" ;;
+  deal)     shift; cmd_deal "$@" ;;
   ruler)    shift; cmd_ruler "$@" ;;
   stageseed) shift; cmd_stageseed "$@" ;;
   shot)     shift; cmd_shot "$@" ;;
@@ -894,6 +926,7 @@ case "${1:-}" in
   log)      shift; cmd_log "$@" ;;
   lobby)    shift; cmd_lobby "$@" ;;
   lobbytap) shift; cmd_lobbytap "$@" ;;
+  openbubble) shift; cmd_openbubble "$@" ;;
   clearstage) shift; cmd_clearstage "$@" ;;
   play)     shift; cmd_play "$@" ;;
   turn)     shift; cmd_turn "$@" ;;

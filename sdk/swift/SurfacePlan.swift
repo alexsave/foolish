@@ -163,6 +163,25 @@ extension MessageKernel {
     }
 }
 
+extension MessageKernel {
+    /// The whole-surface change that has NO second chain to diff against: the
+    /// New game screen becoming the lobby it creates, and that lobby being
+    /// discarded again with the X on its bubble.
+    ///
+    /// Same answer, same reader, same timing as every other whole-surface
+    /// change - which is the point. Those two edges CUT while their mirrors
+    /// faded, and the fix is not a `.transition` in a SwiftUI file but the
+    /// beat the kernel already has an opinion about (owner, on the audit's U6:
+    /// "for U6 ... lets prefer fades").
+    public func surfaceSwap(passing: Bool) -> SurfacePlan {
+        let cap = Int(FIO_SURFACE_HEAD) + Int(FIO_SURFACE_STRIDE)
+        var out = [Int32](repeating: 0, count: cap)
+        let n = fio_anim_surface_swap(passing ? 1 : 0, &out, Int32(cap))
+        guard n >= Int32(FIO_SURFACE_HEAD) else { return .none }
+        return SurfacePlan(words: out, count: Int(n))
+    }
+}
+
 public extension SurfacePlan {
     /// One beat, in seconds - the kernel's own ANIM_TIME_MS.
     ///

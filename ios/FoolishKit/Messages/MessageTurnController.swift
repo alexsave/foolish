@@ -663,9 +663,29 @@ public final class MessageTurnController: ObservableObject {
     /// worse failure than a skipped animation. Generous, because it must never
     /// fire while a real retraction flight is still airborne.
     private var conflictFailsafe: Task<Void, Never>?
-    /// Internal so tests can shrink the wait; 3s is comfortably above one red
-    /// flight (~0.55s) plus scheduling slack.
-    static var conflictFailsafeSeconds: Double = 3.0
+    /// DERIVED, NOT TYPED - and that is the fix, not the number (the audit's
+    /// U9).
+    ///
+    /// It was 3.0, justified in a comment against "one red flight (~0.55s) plus
+    /// scheduling slack". That stopped being the figure it has to beat: the
+    /// board DRAINS the sequences already running before it builds a single red
+    /// flight, and `drainOtherSequences` waits `boutEndHold + flightTime * 2 +
+    /// 1.0` - 3.5s at the shipped timings. So the net that must never fire
+    /// early was half a second SHORTER than the thing it is waiting for, and a
+    /// busy board could have the arrival land on top of its own retraction.
+    ///
+    /// Written as the drain's own expression plus the red flight that follows
+    /// it plus a margin, so a change to `flightTime` or `boutEndHold` moves
+    /// both together - which is the real defect here. The setter is the test
+    /// seam it always was (tests shrink the wait); assigning nil is not
+    /// possible, so `conflictFailsafeOverride` carries the override and the
+    /// default stays a function of the constants.
+    static var conflictFailsafeOverride: Double?
+    static var conflictFailsafeSeconds: Double {
+        get { conflictFailsafeOverride ?? (boutEndHold + flightTime * 2 + 1.0
+                                           + flightTime + 0.5) }
+        set { conflictFailsafeOverride = newValue }
+    }
     /// Whether a live board is mounted on this controller (set from the board's
     /// own lifecycle). Without one there is nobody to fly the retraction, so an
     /// arrival adopts immediately - the conflict model is about a board that is

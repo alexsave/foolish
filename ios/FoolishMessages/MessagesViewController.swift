@@ -771,7 +771,6 @@ final class MessagesViewController: MSMessagesAppViewController {
 
         let root = MessagesRootView(
             payloadURL: payloadURL,
-            style: style == .compact ? .compact : .expanded,   // map onto FoolishKit's enum
             senderIsLocal: senderIsLocal,
             startNewGame: startingNewGame,
             newGameToken: newGameToken,

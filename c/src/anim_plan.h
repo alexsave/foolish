@@ -1167,6 +1167,11 @@ int anim_shown_ledger_allows(int claim, int sequencing);
 // ALONE, ALWAYS. A board never showed the roster it is going back to, so there
 // is no intermediate lobby to snap on the way; the fade lands on the arriving
 // chain entire, which keeps "the last beat IS the adopt" true here too.
+//
+// The kind names the surface the change is ABOUT rather than its direction:
+// `anim_surface_swap` emits it for a lobby APPEARING over the New game screen
+// and for that same lobby being discarded again, which are the other two edges
+// of the same square.
 #define ANIM_SURFACE_LOBBY  4
 
 // HOW a beat arrives. Carried as DATA rather than derived from `kind` by each
@@ -1266,6 +1271,22 @@ typedef struct {
 // describe the same lobby - and a caller that gets 0 adopts the way it always
 // did. Takes its inputs as ints rather than a struct so anim_plan.c keeps no
 // dependency on msg_wire.h: rules.wasm builds the wire WITHOUT this file.
+// ONE WHOLE-SURFACE CHANGE THE WIRE CANNOT DIFF, and the reason it cannot is
+// that one of the two sides is NOT A CHAIN: the New game screen giving way to
+// the lobby it creates, and that lobby being discarded again with the X.
+//
+// 1.1(68), owner, on the audit's U6: "for U6 ... lets prefer fades". Those two
+// edges CUT while their mirror images fade, which is the one inconsistency in
+// the idiom - a whole surface replacing another one is a FADE, and that is a
+// fact about the change, not about which of the two happens to be describable
+// as an envelope. `anim_surface_plan` needs two chains to diff and there is
+// only one here, so the caller says so by calling this instead; what it must
+// NOT do is decide for itself that the change is a fade, or how long it takes.
+//
+// `passing` only fills the beat's own field, so the plan a client renders has
+// the same shape whichever entry produced it. Always exactly one beat.
+int anim_surface_swap(int passing, AnimSurfacePlan *out);
+
 // `ended` is msg_surface_delta's other boundary - the surface is a BOARD and the
 // arriving chain is its lobby, which only a REVERSAL can be. It outranks
 // everything else in the delta: see ANIM_SURFACE_LOBBY.

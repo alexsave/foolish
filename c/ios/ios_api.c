@@ -1717,6 +1717,32 @@ int fio_msg_lobby_rules_changed(int have_baseline, int baseline, int current, in
 
 int fio_anim_surface_beat_ms(void) { return ANIM_TIME_MS; }
 
+static int surface_out(const AnimSurfacePlan *plan, int32_t *out, int cap) {
+    const int n = plan->n;
+    if (cap < FIO_SURFACE_HEAD + n * FIO_SURFACE_STRIDE) return FIO_ECAP;
+    out[0] = n;
+    out[1] = plan->total_ms;
+    out[2] = plan->settle_ms;
+    for (int i = 0; i < n; i++) {
+        int32_t *w = out + FIO_SURFACE_HEAD + i * FIO_SURFACE_STRIDE;
+        w[0] = plan->beats[i].kind;
+        w[1] = plan->beats[i].transition;
+        w[2] = plan->beats[i].passing;
+        w[3] = plan->beats[i].controls;
+        w[4] = plan->beats[i].duration_ms;
+        w[5] = plan->beats[i].start_ms;
+    }
+    return FIO_SURFACE_HEAD + n * FIO_SURFACE_STRIDE;
+}
+
+int fio_anim_surface_swap(int passing, int32_t *out, int cap) {
+    if (!out) return FIO_EBADARG;
+    if (cap < FIO_SURFACE_HEAD) return FIO_ECAP;
+    static AnimSurfacePlan plan;
+    anim_surface_swap(passing, &plan);
+    return surface_out(&plan, out, cap);
+}
+
 int fio_msg_surface_plan(const uint8_t *showing, int showing_len,
                          const uint8_t *arriving, int arriving_len,
                          int32_t *out, int cap) {
@@ -1741,20 +1767,7 @@ int fio_msg_surface_plan(const uint8_t *showing, int showing_len,
     // AWAY - and the caller who needs it most is the one holding an empty plan
     // (a lone roster snap, which is folded to no beats and still has to be read
     // before the drawer collapses over it). See anim_plan.h.
-    if (cap < FIO_SURFACE_HEAD + n * FIO_SURFACE_STRIDE) return FIO_ECAP;
-    out[0] = n;
-    out[1] = plan.total_ms;
-    out[2] = plan.settle_ms;
-    for (int i = 0; i < n; i++) {
-        int32_t *w = out + FIO_SURFACE_HEAD + i * FIO_SURFACE_STRIDE;
-        w[0] = plan.beats[i].kind;
-        w[1] = plan.beats[i].transition;
-        w[2] = plan.beats[i].passing;
-        w[3] = plan.beats[i].controls;
-        w[4] = plan.beats[i].duration_ms;
-        w[5] = plan.beats[i].start_ms;
-    }
-    return FIO_SURFACE_HEAD + n * FIO_SURFACE_STRIDE;
+    return surface_out(&plan, out, cap);
 }
 
 // Rule R over the AWIRE frame - the one rebase entry (the phone stages moves as

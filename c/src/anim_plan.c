@@ -1250,6 +1250,16 @@ static void push_surface(AnimSurfacePlan *p, int kind, int transition,
     p->n++;
 }
 
+int anim_surface_swap(int passing, AnimSurfacePlan *out) {
+    if (!out) return 0;
+    out->n = 0;
+    out->total_ms = 0;
+    out->settle_ms = 0;
+    push_surface(out, ANIM_SURFACE_LOBBY, ANIM_TRANSITION_FADE, passing, ANIM_TIME_MS);
+    out->settle_ms = out->total_ms;
+    return out->n;
+}
+
 int anim_surface_plan(int on_a_lobby, int roster_moved,
                       int passing_before, int passing_after, int started,
                       int ended, AnimSurfacePlan *out) {

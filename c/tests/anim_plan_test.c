@@ -679,6 +679,42 @@ static void test_surface_plan(void) {
     CHECK(anim_surface_plan(1, 0, 1, 1, 0, 0, &p) == 0, "noop: no beats");
     CHECK(p.settle_ms == 0, "noop: and NOTHING to wait for either (got %d)", p.settle_ms);
 
+    // R6. THE SWAP: the whole-surface change with no second chain to diff.
+    //     Owner, on the audit's U6: "for U6 ... lets prefer fades." The New
+    //     game screen becoming a lobby, and that lobby being discarded, were
+    //     the only two whole-surface changes that CUT while their mirrors
+    //     faded - so they are the same beat, asked for by a caller that has
+    //     only one side to show.
+    CHECK(anim_surface_swap(1, &p) == 1, "swap: one beat");
+    CHECK(p.beats[0].kind == ANIM_SURFACE_LOBBY,
+          "swap: it is the LOBBY beat, the same one a discarded start wears (got %s)",
+          kind_name(p.beats[0].kind));
+    CHECK(p.beats[0].transition == ANIM_TRANSITION_FADE,
+          "swap: and it FADES - which is the whole ruling (got %d)",
+          p.beats[0].transition);
+    CHECK(p.beats[0].duration_ms == ANIM_TIME_MS && p.beats[0].start_ms == 0,
+          "swap: immediately, over one beat (%d at %d)",
+          p.beats[0].duration_ms, p.beats[0].start_ms);
+    CHECK(p.settle_ms == p.total_ms && p.settle_ms == ANIM_TIME_MS,
+          "swap: and nothing may put the surface away before it is done (%d/%d)",
+          p.settle_ms, p.total_ms);
+    CHECK(p.beats[0].passing == 1, "swap: carrying the rule it was handed");
+    CHECK(anim_surface_swap(0, &p) == 1 && p.beats[0].passing == 0,
+          "swap: …either rule");
+    // THE TWO ENTRIES AGREE ABOUT THE IDIOM, which is the thing that would
+    // rot: a swap is the same beat a reversal is, and if one of them ever
+    // stops being a fade of ANIM_TIME_MS the other must too.
+    {
+        AnimSurfacePlan q;
+        CHECK(anim_surface_plan(0, 0, 1, 1, 0, 1, &q) == 1, "…and a reversal is one beat");
+        CHECK(q.beats[0].kind == p.beats[0].kind
+              && q.beats[0].transition == p.beats[0].transition
+              && q.beats[0].duration_ms == p.beats[0].duration_ms,
+              "swap and reversal are the SAME beat (%s/%d/%d vs %s/%d/%d)",
+              kind_name(q.beats[0].kind), q.beats[0].transition, q.beats[0].duration_ms,
+              kind_name(p.beats[0].kind), p.beats[0].transition, p.beats[0].duration_ms);
+    }
+
     // Every combination, and the invariants that hold across all of them.
     for (int lobby = 0; lobby <= 1; lobby++)
     for (int roster = 0; roster <= 1; roster++)

@@ -42,13 +42,13 @@ public struct MessagesRootView: View {
     let payloadURL: URL?
     /// The presentation style of the present() call that BUILT this view. Kept
     /// for host-API symmetry, but round-10 stopped gating any visual on it:
+    /// THE `style` PROP IS GONE (1.1(68)) and nothing should bring it back.
     /// present() only runs on discrete host events (activate, receive, send,
-    /// New game), so across a grabber drag or an auto-collapse this value goes
-    /// STALE - it is how the send reminder leaked into the expanded lobby.
-    /// Anything that must know how tall the drawer is reads its own live
-    /// geometry instead (see `stageHeight` and MessageTableView's
-    /// `collapseFraction`).
-    let style: MsgPresentation
+    /// New game), so across a grabber drag or an auto-collapse it went STALE -
+    /// which is how the send reminder leaked into the expanded lobby. Anything
+    /// that must know how tall the drawer is reads its own live geometry
+    /// instead (MessageTableView's `collapseFraction`), and this had been
+    /// written and never read ever since.
     let senderIsLocal: Bool
     let startNewGame: Bool
     /// Bumped by the host each time the human taps New game, so an explicit New
@@ -131,7 +131,7 @@ public struct MessagesRootView: View {
     /// screen that can visibly jump.
     @ObservedObject var collapseSignal: CollapseSignal
 
-    public init(payloadURL: URL?, style: MsgPresentation, senderIsLocal: Bool,
+    public init(payloadURL: URL?, senderIsLocal: Bool,
                 startNewGame: Bool, newGameToken: Int = 0, sentToken: Int = 0,
                 sentPayload: Data? = nil, chatKey: String,
                 chatIsDM: Bool, chatPlayers: Int,
@@ -145,7 +145,7 @@ public struct MessagesRootView: View {
                 onSend: @escaping (Data, Int, Bool) async -> Void,
                 onUnstage: @escaping () -> Void = {},
                 onOpenURL: @escaping (URL) async -> Bool = { _ in false }) {
-        self.payloadURL = payloadURL; self.style = style; self.senderIsLocal = senderIsLocal
+        self.payloadURL = payloadURL; self.senderIsLocal = senderIsLocal
         self.startNewGame = startNewGame; self.newGameToken = newGameToken; self.sentToken = sentToken
         self.sentPayload = sentPayload
         self.chatKey = chatKey; self.chatIsDM = chatIsDM; self.chatPlayers = chatPlayers
@@ -159,27 +159,17 @@ public struct MessagesRootView: View {
         self.onOpenURL = onOpenURL
     }
 
-    /// Round-10 #1: the height the surface is actually LAID OUT against.
-    /// A manual grabber drag feeds this view a fresh height every frame, and the
-    /// board - a continuous function of height since round 6 - tweens smoothly.
-    /// An ANIMATED style change (the auto-collapse after a move, tapping a
-    /// bubble to expand) does not: Messages sets the hosting view's model height
-    /// to the TARGET in one step and animates only the visible drawer frame, so
-    /// the content snapped straight to its compact layout while the drawer was
-    /// still tall (filmed frame-by-frame: everything "jumps up at once, THEN
-    /// starts collapsing", the host's flat fallback brown filling the vacated
-    /// strip). The fix: follow small steps exactly (the manual drag), and TWEEN
-    /// through a big one, reproducing in SwiftUI the same intermediate heights a
-    /// manual swipe would have delivered. 0 until the first real height lands.
-    ///
-    /// Round-10b postscript: the residual "self cards dip under the screen"
-    /// during the auto-collapse turned out NOT to be this view's geometry at
-    /// all - a debug ruler drawn on the surface proved the flying rect in the
-    /// films was the just-inserted STAGED BUBBLE's snapshot (public table, no
-    /// hand) that Messages animates into the compose slot OVER the drawer.
-    /// Fixed at the source: MessagesViewController.stage() now collapses
-    /// FIRST and inserts the bubble after the transition settles.
-    @State private var stageHeight: CGFloat = 0
+    // ROUND-10 #1's `stageHeight` IS GONE (1.1(68)), and the finding it carried
+    // is worth more than the property was: the "self cards dip under the
+    // screen" during an auto-collapse was never this view's geometry. A debug
+    // ruler drawn on the surface proved the flying rect in the films was the
+    // just-inserted STAGED BUBBLE's snapshot - the public table, no hand - that
+    // Messages animates into the compose slot OVER the drawer. It was fixed at
+    // the source instead: `MessagesViewController.stage()` collapses FIRST and
+    // inserts the bubble after the transition settles. The height this held was
+    // never read again after that, and `CollapseTween` owns the tweening it was
+    // written for.
+
 
     /// Round-10c's `lastCompactHeight` and `extentHold` are GONE (round 22):
     /// both belonged to the pre-collapse pack that round 10d removed, and both
@@ -599,6 +589,9 @@ private struct GameSurface: View {
     /// eased to 0 by a BOARD beat's fade. See `playArrival` for why it is an
     /// opacity of the view's own and not a `.transition`.
     @State private var stillFade: Double = 1
+    /// THE WHOLE SURFACE's own opacity, for the two changes that have no second
+    /// copy to cross-fade against - see `fadeSurface`. 1 at rest, always.
+    @State private var surfaceFade: Double = 1
     /// The rules beat's turn, handed to the live lobby's checkbox once the beat
     /// has adopted. See `FCheckbox.Turn` for why it is a token and not `isOn`.
     @State private var rulesTurn: FCheckbox.Turn?
@@ -614,7 +607,7 @@ private struct GameSurface: View {
     /// not just the replay code), and the parsed header fields when decode works.
     @State private var diagHex = ""
     @State private var diagInfo = ""
-    /// Round 12: the dump is showing, summoned by a 4-second hold on the gear
+    /// Round 12: the dump is showing, summoned by a 5-second hold on the gear
     /// (see `diagnosticPanel`). Deliberately NOT cleared by `reloadForInput`:
     /// leaving it up across an arriving bubble is the useful case, since the
     /// fields under it refresh to the message that just landed.
@@ -1192,6 +1185,31 @@ private struct GameSurface: View {
         try? await Task.sleep(nanoseconds: UInt64(due * 1_000_000_000))
     }
 
+    /// A WHOLE-SURFACE CHANGE THE STILL CANNOT DRAW: fade the surface out, swap
+    /// it, fade it back in.
+    ///
+    /// `ArrivalStill` renders a LOBBY, which is all a cross-fade between two
+    /// lobbies or a lobby and a board ever needs - there is always a lobby on
+    /// one side of those. The New game screen is on one side of these two, and
+    /// there is no second copy of it to cross-fade against. What both sides DO
+    /// share is the table under them, so the change is played through it: out
+    /// over half the beat, swap while nothing but felt is showing, back in over
+    /// the other half. The whole thing measures exactly the beat the kernel
+    /// handed over, which is the only number that matters.
+    ///
+    /// A nil beat is "the kernel does not call this a transition", and swaps.
+    private func fadeSurface(_ beat: SurfacePlan.Beat?,
+                             _ swap: @MainActor () -> Void) async {
+        guard let beat, beat.duration > 0 else { swap(); return }
+        let half = beat.duration / 2
+        withAnimation(.easeIn(duration: half)) { surfaceFade = 0 }
+        try? await Task.sleep(nanoseconds: UInt64(half * 1_000_000_000))
+        swap()
+        withAnimation(.easeOut(duration: half)) { surfaceFade = 1 }
+        try? await Task.sleep(nanoseconds: UInt64(half * 1_000_000_000))
+        surfaceFade = 1
+    }
+
     /// THE X ON THE STAGED BUBBLE, on a lobby surface: put the table back the
     /// way the thread still has it (1.1(68)).
     ///
@@ -1242,6 +1260,24 @@ private struct GameSurface: View {
         // base either one recorded would put a table on screen that nobody
         // asked for.
         guard wasStaged, let base else { return }
+        // THE DRAFT MADE THE GAME, so discarding it takes the game with it and
+        // there is no chain to diff against - the surface goes back to the New
+        // game screen it was created from. The kernel still says HOW (see
+        // `surfaceSwap`): a whole surface giving way to another is a fade in
+        // every direction, and this is the direction that used to be a cut.
+        if case .noGame = base {
+            let plan = await MessageKernel.shared.surfaceSwap(passing: true)
+            FlightRecorder.note("unstage", "the create is discarded - back to New game")
+            await fadeSurface(plan.beats.first) {
+                controller = nil
+                lobby = nil
+                lastShownChain = nil
+                staleBranch = false
+                showSetup = true
+            }
+            return
+        }
+        guard let base = base.payload else { return }
         // What is on screen, by the same reading `maybeAdoptIncoming` uses - and
         // `lastShownChain` last, because a board's own base is the truth while
         // there is one.
@@ -1475,6 +1511,7 @@ private struct GameSurface: View {
     @ViewBuilder private var expandedContent: some View {
         ZStack {
             resolvedContent
+                .opacity(surfaceFade)
             if let still = arrivalStill {
                 LobbyView(env: still.env, mySeat: lobbySeat(still.controls),
                           nickname: "", onJoin: { _ in }, onStart: {}, onInvite: {},
@@ -1656,7 +1693,8 @@ private struct GameSurface: View {
                     MessageBoardView(view: s.view, names: s.names)
                     // Round-5 M10: full-opacity ink + a LIGHT shadow, not 55%
                     // black — the busy wool weave has no fixed-opacity foreground
-                    // that survives it (see the sweep note on DamagedView below).
+                    // that survives it - full-opacity ink and a LIGHT shadow,
+                    // never 55% black.
                     // Round-6 #17 added the weight: `onTableText` (Tokens.swift).
                     Text(FStrings.t("ios.msg.spectating"))
                         .font(.footnote).onTableText()
@@ -1854,14 +1892,35 @@ private struct GameSurface: View {
     /// names the link the thread actually has, for every edit made to it.
     @State private var stagedParent8: Data?
 
-    /// The CHAIN that staged draft was started from - the table as everyone else
-    /// still has it, before any local edit.
+    /// WHAT THE STAGED DRAFT WAS STARTED FROM - the surface an X discards back
+    /// to.
     ///
     /// Kept beside `stagedParent8` and for the same reason, but it answers a
     /// different question: that one is what the outgoing bubble CLAIMS as its
     /// ancestry, this one is the state a local edit may be discarded back to.
-    /// `leaveLobby` is the only caller - see the rule there.
-    @State private var stagedBase: Data?
+    ///
+    /// AND IT IS NOT ALWAYS A CHAIN, which is what 1.1(68) got wrong the first
+    /// time. Every lobby action edits a table the thread already has, so
+    /// `.chain` covers them - but CREATE makes the game, and before it this
+    /// thread had no game at all. A brand new chain has no parent to record,
+    /// which is exactly why `createWaiting` never called `threadParent8` and
+    /// why an X over a create reverted nothing: it left a lobby offering
+    /// MSG_LOBBY_WAITING with `can_exit` false, i.e. no Start, no Leave, no
+    /// Join, and in a Release build nothing on screen that can send. So the
+    /// absence is recorded as a value rather than as a nil that reads as
+    /// "nothing was staged".
+    enum StagedOrigin: Equatable {
+        /// The table as everyone else still has it.
+        case chain(Data)
+        /// There was no game here. The X goes back to the New game screen.
+        case noGame
+
+        var payload: Data? {
+            if case .chain(let d) = self { return d }
+            return nil
+        }
+    }
+    @State private var stagedBase: StagedOrigin?
 
     /// The parent8 for a lobby reseal. While a draft is already staged, my own
     /// intermediate chains are edits to THAT draft and not links anyone else can
@@ -1870,7 +1929,7 @@ private struct GameSurface: View {
         if surfaceStaged, let held = stagedParent8 { return held }
         let p = MessageTurnController.firstEight(hex: env.digest)
         stagedParent8 = p
-        stagedBase = lastShownChain
+        stagedBase = lastShownChain.map(StagedOrigin.chain) ?? .noGame
         return p
     }
 
@@ -2160,11 +2219,21 @@ private struct GameSurface: View {
                 phase: 0, lastActorSeat: 0, gameId: gameId,
                 parent8: Data(repeating: 0, count: 8), joins: joins)
             let env = try await MessageEnvelope.decode(payload: payload, viewer: -1)
-            controller = nil
             showSetup = false
             damaged = false
             cache(seat: 0, env: env, payload: payload)
-            lobby = Lobby(env: env, payload: payload); lastShownChain = payload
+            // The finished game is what an X goes back to here - the result
+            // card, not a dead lobby - and unlike the create there IS a chain
+            // for it, so the ordinary `.chain` revert plays it as the fade it
+            // already knows how to play (a lobby giving way to a board).
+            stagedBase = lastShownChain.map(StagedOrigin.chain) ?? .noGame
+            let plan = await MessageKernel.shared.surfaceSwap(passing: passing)
+            let began = Date()
+            await fadeSurface(plan.beats.first) {
+                controller = nil
+                lobby = Lobby(env: env, payload: payload); lastShownChain = payload
+            }
+            await holdSurface(plan, since: began)
             await onSend(payload, 0, false)
             surfaceStaged = true
         } catch {
@@ -2194,7 +2263,12 @@ private struct GameSurface: View {
         if case .ok(let name) = NicknameGate.check(nickname) {
             MessageGameStore.shared.nickname = name
         }
-        showSetup = false
+        // THE SETUP SCREEN GOES WITH THE SWAP, not before it. It used to be
+        // dropped here and the lobby appear a few awaits later - a cut with a
+        // blank frame in the middle of it, which is only invisible because both
+        // screens sit on the same felt. `createWaiting` now fades between them
+        // (see `fadeSurface`), and a fade needs the outgoing screen to still be
+        // there when it starts.
         await createWaiting(nickname: MessageGameStore.shared.nickname)
     }
 
@@ -2240,7 +2314,21 @@ private struct GameSurface: View {
                 parent8: Data(repeating: 0, count: 8), joins: joins)
             let env = try await MessageEnvelope.decode(payload: payload, viewer: -1)
             cache(seat: 0, env: env, payload: payload)
-            lobby = Lobby(env: env, payload: payload); lastShownChain = payload
+            // WHAT AN X GOES BACK TO. A create seals with a zero parent - a new
+            // chain has no ancestry to claim - so it never goes near
+            // `threadParent8`, which is the only writer of this. Recording the
+            // origin here is the whole of the create-revert fix; the revert
+            // itself needed no special case (see `revertStagedSurface`).
+            stagedBase = lastShownChain.map(StagedOrigin.chain) ?? .noGame
+            // …AND IT ARRIVES AS A FADE, like every other whole-surface change.
+            // This edge and its mirror were the only two that cut.
+            let plan = await MessageKernel.shared.surfaceSwap(passing: env.passingAllowed)
+            let began = Date()
+            await fadeSurface(plan.beats.first) {
+                showSetup = false
+                lobby = Lobby(env: env, payload: payload); lastShownChain = payload
+            }
+            await holdSurface(plan, since: began)
             await onSend(payload, 0, false)
             surfaceStaged = true   // round-9: the created lobby awaits Send
         } catch {
@@ -2388,7 +2476,7 @@ private struct GameSurface: View {
             // The roster is still taken from `env`, which is correct either way:
             // a draft carries at most one roster action and leaving IS it, so a
             // preceding rules edit cannot have moved anybody.
-            let base = (surfaceStaged ? stagedBase : nil) ?? lob.payload
+            let base = (surfaceStaged ? stagedBase?.payload : nil) ?? lob.payload
             // Re-adopt so the LOCKED seed and the open capacity are resident -
             // and, per the rule above, the rules the TABLE agreed.
             _ = try await MessageKernel.shared.decode(payload: base, viewer: -1)
@@ -3439,7 +3527,8 @@ private struct LobbyView: View {
                 ForEach(env.joins.sorted { $0.seat < $1.seat }, id: \.seat) { j in
                     HStack {
                         // Round-5 M10: full-opacity ink + a light shadow, not
-                        // 55% black (see DamagedView's sweep note). Round-6
+                        // 55% black - the wool weave has no fixed-opacity
+                        // foreground that survives it. Round-6
                         // #17 thickened both columns, not just the seat number.
                         Text("\(j.seat + 1).").onTableText().monospacedDigit()
                         Text(j.name + (j.seat == mySeat ? " (\(FStrings.t("ios.you")))" : ""))
@@ -3886,36 +3975,3 @@ public enum MessageDebugFlags {
 #endif
 
 
-/// Round-5 M1: "This game link is damaged" used to be a dead end with no
-/// action on it at all (docs/APP_REVIEW_NOTES.md M1). Owner's fix — "just
-/// throw in the 'create a new game' button back, which when pressed will
-/// initialize a new lobby" — is the SAME New-game affordance every other
-/// dead end in this file already offers, not a bespoke retry/dismiss flow.
-///
-/// The owner also asked to exclude whoever sent the damaged link from the
-/// fresh lobby. Not implementable as asked: participant identities are
-/// device-scoped and never travel in the payload (see SeatIdentity's header —
-/// there is no "sender" field to read here, let alone exclude by). A fresh
-/// lobby that everyone, including whoever sent the bad link, re-joins by
-/// choice is the version of this fix that can actually be built.
-private struct DamagedView: View {
-    let onNewGame: () -> Void
-
-    var body: some View {
-        VStack(spacing: 8) {
-            // Round-6 #17: `onTableText` (Tokens.swift).
-            Text("Foolish").font(.headline).onTableText()
-            // Round-5 M10: full-opacity ink + a light shadow, not 55% black —
-            // the busy wool weave has no fixed-opacity foreground that
-            // survives it (M10's fix, applied throughout this file, mirrors
-            // the plank rank column's BONE text on WOOD, which uses a DARK
-            // shadow; ink text on the lighter wool needs the inverse, a LIGHT
-            // one). Round-6 #17 added the weight both treatments share.
-            Text(FStrings.t("ios.msg.damaged")).font(.footnote).onTableText()
-                .multilineTextAlignment(.center).padding(.horizontal)
-            FButton(FStrings.t("ios.msg.newgame"), kind: .wood, action: onNewGame)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding()
-    }
-}
