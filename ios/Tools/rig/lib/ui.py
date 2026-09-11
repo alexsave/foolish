@@ -222,11 +222,38 @@ def onboarding(a, s):
     return int((lo + (band[0] + band[-1]) / 2) / s)
 
 
+def wood_icons(a, s):
+    """The small wooden squares on the board's control row -> [(x_pt, y_pt)].
+
+    `wood_bars` only reports runs at least 120pt wide, which is right for a
+    button but excludes the gear and the book - and asking it for "the lowest
+    bar" then returned whatever wide button happened to be lower on screen,
+    so "open Settings" tapped Add player instead and produced two frames of
+    the wrong surface entirely."""
+    m = wood(a)
+    counts = m.sum(axis=1)
+    rows = [r for r in runs(np.nonzero(counts > 14 * s)[0], 10 * s)
+            if len(r) >= 14 * s]
+    if not rows:
+        return []
+    band = rows[-1]                       # the control row is the lowest one
+    cols = np.nonzero(m[band[0]:band[-1] + 1, :].mean(axis=0) > 0.5)[0]
+    y = int((band[0] + band[-1]) / 2 / s)
+    out = []
+    for gp in runs(cols, 6 * s):
+        wpt = len(gp) / s
+        if 16 <= wpt <= 70:               # a square, not a full-width plank
+            out.append((int(np.mean(gp) / s), y))
+    return out
+
+
 if __name__ == "__main__":
     a, s = grab()
     what = sys.argv[1] if len(sys.argv) > 1 else "all"
     if what in ("bars", "all"):
         print("BARS", wood_bars(a, s))
+    if what in ("icons", "all"):
+        print("ICONS", wood_icons(a, s))
     if what in ("cards", "all"):
         print("CARDS", hand_cards(a, s))
     if what in ("hand_y", "all"):

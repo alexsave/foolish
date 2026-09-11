@@ -21,13 +21,19 @@ b = ast.literal_eval(sys.stdin.read().split('BARS ')[1])
 print(b[${1:-0}][0] if b else -1)"
 }
 
-# The gear and the book are small wooden squares on the board's own control
-# row, so they share that row's y - which `bars` reports - and sit at a tenth
-# and just over a fifth of the width. They are too narrow for `wood_bars` to
-# report on their own, which is why the y comes from the row and the x from a
-# proportion.
-gear() { "$RIG" tap $((W * 10 / 100)) "$(bar_y -1)" 2.5; }
-book() { "$RIG" tap $((W * 22 / 100)) "$(bar_y -1)" 2.5; }
+# The gear and the book are small wooden SQUARES on the board's control row.
+# `wood_bars` only reports planks 120pt or wider, so asking it for "the lowest
+# bar" returned whatever wide button happened to sit lower - which tapped Add
+# player and produced two frames of the wrong surface. `wood_icons` reports the
+# squares themselves.
+icon() {
+  python3 "$LIB/ui.py" icons | python3 -c "
+import sys, ast
+i = ast.literal_eval(sys.stdin.read().split('ICONS ')[1])
+print('%d %d' % i[$1] if len(i) > $1 else '-1 -1')"
+}
+gear() { "$RIG" tap $(icon 0) 2.5; }
+book() { "$RIG" tap $(icon 1) 2.5; }
 
 # ---- the lobby --------------------------------------------------------------
 # ONLY a FULL lobby is shippable. `soloControls` (MessagesRootView) replaces the
@@ -48,13 +54,17 @@ for appear in dark light; do
   "$RIG" back >/dev/null; "$RIG" open >/dev/null; "$RIG" expand >/dev/null
   book
   "$RIG" shot "92_rules/${appear}_page1"
-  "$RIG" swipe 0.4 $((W * 80 / 100)) $((H / 2)) $((W * 20 / 100)) $((H / 2)) 1.5
-  "$RIG" shot "92_rules/${appear}_page2"
-  "$RIG" swipe 0.4 $((W * 80 / 100)) $((H / 2)) $((W * 20 / 100)) $((H / 2)) 1.5
-  "$RIG" shot "92_rules/${appear}_page3"
+  # The rules sheet SCROLLS, it does not paginate. A horizontal swipe moved
+  # nothing and produced three identical frames per appearance.
+  for page in 2 3 4; do
+    "$RIG" swipe 0.5 $((W / 2)) $((H * 78 / 100)) $((W / 2)) $((H * 26 / 100)) 1.5
+    "$RIG" shot "92_rules/${appear}_page${page}"
+  done
   "$RIG" back >/dev/null; "$RIG" open >/dev/null; "$RIG" expand >/dev/null
   gear
   "$RIG" shot "93_settings/${appear}"
+  "$RIG" swipe 0.5 $((W / 2)) $((H * 78 / 100)) $((W / 2)) $((H * 40 / 100)) 1.5
+  "$RIG" shot "93_settings/${appear}_lower"
 done
 "$RIG" prefs "" "" dark >/dev/null
 echo "extras done"
