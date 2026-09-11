@@ -733,8 +733,7 @@ private struct GameSurface: View {
                 // that never had it.
                 FlightRecorder.note("send-signal", sentPayload.map { "\($0.count)b" } ?? "none")
                 surfaceStaged = false   // round-9: the staged bubble is sent
-                stagedParent8 = nil     // …and the draft it belonged to is now the thread's
-                stagedBase = nil
+                stagedDraft.clear()     // …and the draft it belonged to is now the thread's
                 // SYNCHRONOUSLY, in this same SwiftUI transaction: the Undo pill
                 // goes now, not after a Task hop and a decode (owner: "should
                 // probably disappear the second you hit send"). `markSent` below
@@ -1198,13 +1197,18 @@ private struct GameSurface: View {
     /// handed over, which is the only number that matters.
     ///
     /// A nil beat is "the kernel does not call this a transition", and swaps.
+    ///
+    /// The swap is `async` because one of them - the rematch reversal, which
+    /// puts a whole BOARD back - is `adopt`, and adopting is a trip through the
+    /// kernel. It still happens in the dark half, which is the only thing the
+    /// shape of this function promises.
     private func fadeSurface(_ beat: SurfacePlan.Beat?,
-                             _ swap: @MainActor () -> Void) async {
-        guard let beat, beat.duration > 0 else { swap(); return }
+                             _ swap: @MainActor () async -> Void) async {
+        guard let beat, beat.duration > 0 else { await swap(); return }
         let half = beat.duration / 2
         withAnimation(.easeIn(duration: half)) { surfaceFade = 0 }
         try? await Task.sleep(nanoseconds: UInt64(half * 1_000_000_000))
-        swap()
+        await swap()
         withAnimation(.easeOut(duration: half)) { surfaceFade = 1 }
         try? await Task.sleep(nanoseconds: UInt64(half * 1_000_000_000))
         surfaceFade = 1
@@ -1240,32 +1244,67 @@ private struct GameSurface: View {
     /// held their seat) differ in no tap at all - only in the roster - so a
     /// reversal that replayed taps would have to get one of them wrong.
     ///
-    /// `stagedBase` is the state to go back to and `threadParent8` is what
-    /// records it - the FIRST edit of a draft captures it and later edits of the
-    /// same draft do not, so a Join, a rules move and a Start staged together
-    /// revert as one, exactly as the single bubble the X deletes carried them.
+    /// `StagedDraft.origin` is the state to go back to and `threadParent8` is
+    /// what records it - the FIRST edit of a draft captures it and later edits
+    /// of the same draft do not, so a Join, a rules move and a Start staged
+    /// together revert as one, exactly as the single bubble the X deletes
+    /// carried them.
+    ///
+    /// AND AN ORIGIN IS NOT ALWAYS A DELTA - 1.1(69), U2. A base belonging to a
+    /// DIFFERENT game cannot be diffed at all: `msg_surface_delta` returns on
+    /// `showing->game_id != arriving->game_id`, deliberately and correctly, so
+    /// the plan comes back with no beats and a ZERO settle - which the no-op
+    /// rule below then reads as "nothing changed" and returns, having already
+    /// cleared the flags. The bubble is gone and the surface is stranded. A
+    /// REMATCH is the case that reaches it (`createRematchLobby` mints a fresh
+    /// random game id, so the result card it was created over shares no line of
+    /// continuity with it), and a plain create over a thread that already held a
+    /// finished game reaches it too. `StagedRevert` splits that out as the swap
+    /// it is, and the kernel still says how: `surfaceSwap`, the one beat the
+    /// create and its mirror already use.
     private func revertStagedSurface() async {
         let wasStaged = surfaceStaged
-        let base = stagedBase
+        let draft = stagedDraft
         // The flags go first and unconditionally: whatever happens below, this
         // surface no longer has a bubble waiting to be sent.
         surfaceStaged = false
-        stagedParent8 = nil
-        stagedBase = nil
+        stagedDraft.clear()
         // ONLY WHAT THIS SURFACE STAGED. A cancel over a BOARD is the move-level
         // retraction and belongs to `MessageTableView.cancelStagedBubble`, on
-        // this same token; `stagedBase` can also be left behind by a local chain
+        // this same token; an origin can also be left behind by a local chain
         // that never staged anything at all (`addSoloSeat`, in DEBUG). Neither
         // is a lobby action of mine waiting to be undone, and reverting to a
         // base either one recorded would put a table on screen that nobody
         // asked for.
-        guard wasStaged, let base else { return }
+        guard wasStaged, let origin = draft.origin else { return }
+        // What is on screen, by the same reading `maybeAdoptIncoming` uses - and
+        // `lastShownChain` last, because a board's own base is the truth while
+        // there is one.
+        let showing = controller?.basePayload ?? lobby?.payload ?? lastShownChain
+        // PEEKED, NEVER DECODED. All that is wanted here is which game each side
+        // names, and a decode is an ADOPTION - it would move the resident game
+        // out from under the very surface being asked about, which is the
+        // phantom-seal shape (see `resealFromBase`). The arm that goes on to
+        // play something decodes there, once it knows it is going to.
+        var showingId: String?
+        if let showing, let e = try? await MessageKernel.shared.peek(payload: showing) {
+            showingId = e.gameId
+        }
+        var baseId: String?
+        if let base = origin.payload, let e = try? await MessageKernel.shared.peek(payload: base) {
+            baseId = e.gameId
+        }
+        switch StagedRevert.route(staged: wasStaged, origin: origin,
+                                  showingGameId: showingId, baseGameId: baseId) {
+        case .nothing:
+            return
+
         // THE DRAFT MADE THE GAME, so discarding it takes the game with it and
         // there is no chain to diff against - the surface goes back to the New
         // game screen it was created from. The kernel still says HOW (see
         // `surfaceSwap`): a whole surface giving way to another is a fade in
         // every direction, and this is the direction that used to be a cut.
-        if case .noGame = base {
+        case .newGame:
             let plan = await MessageKernel.shared.surfaceSwap(passing: true)
             FlightRecorder.note("unstage", "the create is discarded - back to New game")
             await fadeSurface(plan.beats.first) {
@@ -1275,30 +1314,52 @@ private struct GameSurface: View {
                 staleBranch = false
                 showSetup = true
             }
-            return
-        }
-        guard let base = base.payload else { return }
-        // What is on screen, by the same reading `maybeAdoptIncoming` uses - and
-        // `lastShownChain` last, because a board's own base is the truth while
-        // there is one.
-        guard let showing = controller?.basePayload ?? lobby?.payload ?? lastShownChain,
-              let env = try? await MessageEnvelope.decode(payload: base, viewer: -1)
-        else { return }
-        let plan = await MessageKernel.shared.surfacePlan(showing: showing, arriving: base)
-        FlightRecorder.note("unstage",
-            "beats=\(plan.beats.count) settle=\(Int(plan.settle * 1000))ms")
-        // THE NO-OP. Nothing changed, so nothing plays and nothing is adopted:
-        // re-adopting an identical table would still cost a rebuild, and a
-        // rebuild is a frame the owner asked not to see.
-        guard plan.settle > 0 else { return }
-        AnimLog.say("surface reverts a staged lobby action as \(plan.beats.count) beat(s)")
-        await playArrival(plan, winner: base, env: env)
-        // AND THE SEAT COMES BACK WITH ME. `leaveLobby` forgets this device's
-        // seat so a later open cannot re-seat me in a lobby I walked out of;
-        // reverting the leave has to put it back, or the lobby I snap into
-        // offers me Join rather than the chair I am sitting in.
-        if env.phase == 0, let mine = lobbySeat(env) {
-            cache(seat: mine, env: env, payload: base)
+
+        // TWO GAMES, NOT TWO STATES OF ONE. Nothing here is a step backwards
+        // along a chain, so nothing is diffed: the surface the draft covered up
+        // is simply put back, through the same fade every other whole-surface
+        // change wears. `adopt` is what puts it back, because the thing being
+        // restored is usually a BOARD (a rematch's result card) and `playArrival`
+        // renders a LOBBY - there is no second copy of a board to cross-fade
+        // against, which is exactly the argument `fadeSurface` was written for.
+        case .swap(let back):
+            guard let env = try? await MessageEnvelope.decode(payload: back, viewer: -1)
+            else { return }
+            let plan = await MessageKernel.shared.surfaceSwap(passing: env.passingAllowed)
+            FlightRecorder.note("unstage",
+                "a different game - swapping back to the thread's own chain")
+            AnimLog.say("surface swaps a staged \(env.phase == 0 ? "lobby" : "board") back")
+            await fadeSurface(plan.beats.first) {
+                lobby = nil
+                showSetup = false
+                damaged = false
+                await adopt(winner: back, env: env)
+            }
+
+        case .delta(let base):
+            guard let showing,
+                  let env = try? await MessageEnvelope.decode(payload: base, viewer: -1)
+            else { return }
+            let plan = await MessageKernel.shared.surfacePlan(showing: showing, arriving: base)
+            FlightRecorder.note("unstage",
+                "beats=\(plan.beats.count) settle=\(Int(plan.settle * 1000))ms")
+            // THE NO-OP. Nothing changed, so nothing plays and nothing is
+            // adopted: re-adopting an identical table would still cost a
+            // rebuild, and a rebuild is a frame the owner asked not to see.
+            // Trustworthy ONLY on this arm - a zero here really is "the same
+            // table", because the two chains have already been established to
+            // be the same game.
+            guard plan.settle > 0 else { return }
+            AnimLog.say("surface reverts a staged lobby action as \(plan.beats.count) beat(s)")
+            await playArrival(plan, winner: base, env: env)
+            // AND THE SEAT COMES BACK WITH ME. `leaveLobby` forgets this
+            // device's seat so a later open cannot re-seat me in a lobby I
+            // walked out of; reverting the leave has to put it back, or the
+            // lobby I snap into offers me Join rather than the chair I am
+            // sitting in.
+            if env.phase == 0, let mine = lobbySeat(env) {
+                cache(seat: mine, env: env, payload: base)
+            }
         }
     }
 
@@ -1833,8 +1894,7 @@ private struct GameSurface: View {
         // since there is nothing left underneath for it to fade into.
         arrivalStill = nil; stillFade = 1; rulesTurn = nil
         surfaceStaged = false   // round-9: a new input owes nothing to Send yet
-        stagedParent8 = nil
-        stagedBase = nil
+        stagedDraft.clear()
         arrivalTaken = nil
         await load()
         AnimLog.say("surface showing \(showingWhat)")
@@ -1890,47 +1950,20 @@ private struct GameSurface: View {
     /// wrong is the CLAIM the draft made about its own ancestry. A draft that
     /// replaces itself on the way out is still one link in the thread, so it
     /// names the link the thread actually has, for every edit made to it.
-    @State private var stagedParent8: Data?
+    /// …and WHERE AN X GOES BACK TO, which is the other half of the same fact.
+    /// Both live in `StagedDraft` (FoolishKit/Messages/StagedDraft.swift), which
+    /// also holds the record-once rule that relates them - it was inline here
+    /// until 1.1(69), which is why nothing could test it and U11 sat in it: the
+    /// rule was keyed on the PARENT being recorded, and a create records an
+    /// origin while having no parent at all, so the next edit of the same draft
+    /// overwrote the create's `.noGame` with the lobby the create had just made.
+    @State private var stagedDraft = StagedDraft()
 
-    /// WHAT THE STAGED DRAFT WAS STARTED FROM - the surface an X discards back
-    /// to.
-    ///
-    /// Kept beside `stagedParent8` and for the same reason, but it answers a
-    /// different question: that one is what the outgoing bubble CLAIMS as its
-    /// ancestry, this one is the state a local edit may be discarded back to.
-    ///
-    /// AND IT IS NOT ALWAYS A CHAIN, which is what 1.1(68) got wrong the first
-    /// time. Every lobby action edits a table the thread already has, so
-    /// `.chain` covers them - but CREATE makes the game, and before it this
-    /// thread had no game at all. A brand new chain has no parent to record,
-    /// which is exactly why `createWaiting` never called `threadParent8` and
-    /// why an X over a create reverted nothing: it left a lobby offering
-    /// MSG_LOBBY_WAITING with `can_exit` false, i.e. no Start, no Leave, no
-    /// Join, and in a Release build nothing on screen that can send. So the
-    /// absence is recorded as a value rather than as a nil that reads as
-    /// "nothing was staged".
-    enum StagedOrigin: Equatable {
-        /// The table as everyone else still has it.
-        case chain(Data)
-        /// There was no game here. The X goes back to the New game screen.
-        case noGame
-
-        var payload: Data? {
-            if case .chain(let d) = self { return d }
-            return nil
-        }
-    }
-    @State private var stagedBase: StagedOrigin?
-
-    /// The parent8 for a lobby reseal. While a draft is already staged, my own
-    /// intermediate chains are edits to THAT draft and not links anyone else can
-    /// see, so the parent stays the one the thread has.
+    /// The parent8 for a lobby reseal - one edit of the staged draft. See
+    /// `StagedDraft.parent8(staged:digest:threadChain:)` for the rule.
     private func threadParent8(_ env: MessageEnvelope) -> Data {
-        if surfaceStaged, let held = stagedParent8 { return held }
-        let p = MessageTurnController.firstEight(hex: env.digest)
-        stagedParent8 = p
-        stagedBase = lastShownChain.map(StagedOrigin.chain) ?? .noGame
-        return p
+        stagedDraft.parent8(staged: surfaceStaged, digest: env.digest,
+                            threadChain: lastShownChain)
     }
 
     /// THE LAST CHAIN THIS SURFACE ACTUALLY SHOWED, and the only thing here that
@@ -2224,9 +2257,16 @@ private struct GameSurface: View {
             cache(seat: 0, env: env, payload: payload)
             // The finished game is what an X goes back to here - the result
             // card, not a dead lobby - and unlike the create there IS a chain
-            // for it, so the ordinary `.chain` revert plays it as the fade it
-            // already knows how to play (a lobby giving way to a board).
-            stagedBase = lastShownChain.map(StagedOrigin.chain) ?? .noGame
+            // for it.
+            //
+            // BUT IT IS A DIFFERENT GAME, which is U2 and what 1.1(68) missed:
+            // the id above is freshly random, so the result card and this lobby
+            // share no line of continuity and `msg_surface_delta` will not diff
+            // them (it returns on the game-id mismatch, deliberately). Recording
+            // the chain is still right - that IS where the X goes - but the
+            // reversal has to play it as a whole-surface SWAP rather than as a
+            // delta, which is `StagedRevert`'s job and no longer this one's.
+            stagedDraft.created(from: lastShownChain.map(StagedOrigin.chain) ?? .noGame)
             let plan = await MessageKernel.shared.surfaceSwap(passing: passing)
             let began = Date()
             await fadeSurface(plan.beats.first) {
@@ -2314,12 +2354,20 @@ private struct GameSurface: View {
                 parent8: Data(repeating: 0, count: 8), joins: joins)
             let env = try await MessageEnvelope.decode(payload: payload, viewer: -1)
             cache(seat: 0, env: env, payload: payload)
-            // WHAT AN X GOES BACK TO. A create seals with a zero parent - a new
-            // chain has no ancestry to claim - so it never goes near
-            // `threadParent8`, which is the only writer of this. Recording the
-            // origin here is the whole of the create-revert fix; the revert
-            // itself needed no special case (see `revertStagedSurface`).
-            stagedBase = lastShownChain.map(StagedOrigin.chain) ?? .noGame
+            // WHAT AN X GOES BACK TO: the New game screen this was created
+            // from, always. A create seals with a zero parent - a new chain has
+            // no ancestry to claim - so it never goes near `threadParent8`,
+            // which is the only other writer of this.
+            //
+            // UNCONDITIONALLY `.noGame` since 1.1(69). It used to fall back to
+            // whatever chain the surface last showed, which in a thread that
+            // already held a finished game is a DIFFERENT game - so the X
+            // reverted to a chain the kernel refuses to diff against, which is
+            // the same dead end as U2's rematch. The destination was never in
+            // doubt either way: a create is reached from the New game screen,
+            // and that is the screen it is discarded back to. A rematch is
+            // reached from a result card, and records that instead.
+            stagedDraft.created(from: .noGame)
             // …AND IT ARRIVES AS A FADE, like every other whole-surface change.
             // This edge and its mirror were the only two that cut.
             let plan = await MessageKernel.shared.surfaceSwap(passing: env.passingAllowed)
@@ -2406,9 +2454,25 @@ private struct GameSurface: View {
                 phase: 0, lastActorSeat: free, gameId: gid, parent8: parent, joins: joins)
             let newEnv = try await MessageEnvelope.decode(payload: payload, viewer: -1)
             cache(seat: free, env: newEnv, payload: payload)
+            // THE SNAP, AND THEN THE DRAWER - the rule `leaveLobby`,
+            // `stageLobbyPassing` and `startGame` have all kept since 1.1(68), and
+            // the one lobby action that was missed (U12). `onSend` is not a
+            // notification: it is the host's `stage(payload:mySeat:)`, which
+            // composes the bubble, bumps `collapseSignal`, asks for `.compact`
+            // and does not return until that transition has settled - so a
+            // roster assigned BELOW it landed after the drawer had already gone.
+            //
+            // A join's delta is the one the kernel folds to NO beats and one
+            // REST (the adopt is the snap, and it still has to be read); that is
+            // exactly the number `holdSurface` spends, and exactly why it is
+            // asked for rather than typed. See `holdSurface`.
+            let plan = await MessageKernel.shared.surfacePlan(showing: lob.payload,
+                                                              arriving: payload)
+            let began = Date()
+            lobby = Lobby(env: newEnv, payload: payload); lastShownChain = payload
+            await holdSurface(plan, since: began)
             await onSend(payload, free, false)
             surfaceStaged = true   // round-9: the join reseal awaits Send
-            lobby = Lobby(env: newEnv, payload: payload); lastShownChain = payload
         } catch {
             damaged = true
         }
@@ -2476,7 +2540,7 @@ private struct GameSurface: View {
             // The roster is still taken from `env`, which is correct either way:
             // a draft carries at most one roster action and leaving IS it, so a
             // preceding rules edit cannot have moved anybody.
-            let base = (surfaceStaged ? stagedBase?.payload : nil) ?? lob.payload
+            let base = (surfaceStaged ? stagedDraft.origin?.payload : nil) ?? lob.payload
             // Re-adopt so the LOCKED seed and the open capacity are resident -
             // and, per the rule above, the rules the TABLE agreed.
             _ = try await MessageKernel.shared.decode(payload: base, viewer: -1)
