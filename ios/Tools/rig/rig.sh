@@ -416,6 +416,18 @@ cmd_open() {
   return 1
 }
 
+# `open`, and if the app menu never appeared, put whatever IS presented away
+# and try once more. The usual cause is a drawer left expanded by the previous
+# frame: it covers the "+" and reports nothing to the accessibility tree.
+cmd_open_retry() {
+  cmd_open && return 0
+  front
+  read -r W H < <(screen)
+  local top; top=$(grab_y)
+  swipe 0.6 $((W / 2)) $(pull_y "$top" "$H") $((W / 2)) $((H * 90 / 100)) 3
+  cmd_open
+}
+
 # Leave the drawer and come straight back into the thread. Leaving is what
 # kills the appex, and the appex has to die for the next `seed` to be read.
 cmd_back() {
@@ -672,8 +684,11 @@ cmd_batch() {
       SEAT="${seat:-}" cmd_seed $mode $args | tail -1
     fi
     cmd_prefs "${table:-}" "${lang:-}" "${appear:-}" >/dev/null
-    cmd_back
-    cmd_open
+    # One bad frame must not end the run. `set -e` applies inside this loop, so
+    # an un-guarded failure here killed a 41-shot batch after its FIRST line and
+    # still exited 0 - the list simply stopped, with nothing to say it had.
+    cmd_back || { echo "!! $name skipped - could not leave the drawer" >&2; continue; }
+    cmd_open_retry || { echo "!! $name skipped - could not open the extension" >&2; continue; }
     if [ "${act:-}" = "turn" ]; then
       cmd_turn || { echo "!! $name skipped - no move to send" >&2; continue; }
     fi
