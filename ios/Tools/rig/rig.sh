@@ -43,6 +43,8 @@
 #                                 endgame <players> [nopass]
 #                                 lastdefense <players> | twocover <players>
 #   rig.sh unseed                 back to the normal create/join flow
+#   rig.sh claimed                the seed the extension actually opened onto
+#                                 (dev.claimed) - a stale one is trap 10
 #   rig.sh prefs [TABLE] [LANG] [APPEARANCE]      felt|wool  en|ru|..  light|dark
 #   rig.sh slowmo N | ruler [off]                 debug overlays
 #   rig.sh deal N | off                           pin the genesis deal (dev.seed)
@@ -468,7 +470,10 @@ cmd_chain() {
   local name="${1:?chain NAME}" count="${2:-12}" depth="${3:-14}" np="${4:-2}"
   local tool="${FOOLISH_TOOL:-$REPO/c/build/msg_wire_test}"
   [ -x "$tool" ] || { echo "no seeder at $tool - (cd c && make build/msg_wire_test)" >&2; return 1; }
-  local g; g=$(group_dir)
+  # The App Group container, checked once here so a missing install says so
+  # before a chain is played. Every seed below goes through `seed_open`, which
+  # resolves it again for itself.
+  group_dir >/dev/null
   local other="${FOOLISH_OTHER_THREAD:-8583}"
 
   "$tool" --chain "$np" "$count" "$depth" >/tmp/rig_chain.hex 2>/tmp/rig_chain.log || {
@@ -512,28 +517,30 @@ cmd_chain() {
   for ((j = 0; j < pre; j++)); do
     "$tool" --endgame "$np" >/tmp/rig_pre.hex 2>/tmp/rig_pre.log || break
     fool=$(grep -o 'fool=seat [0-9]' /tmp/rig_pre.log | head -1 | awk '{print $2}')
-    # FOOLISH_NAMES is written from the LOCAL seat outwards, so name[0] is us -
-    # which means a fixture whose fool IS our seat photographs as us losing.
-    # The owner caught exactly that on two earlier game-over frames.
-    # An envelope's join list is written from the SEALING player outwards, so
-    # slot 0 is always the local player whatever the absolute seat number says.
-    # Naming the fool's slot first is therefore what keeps us from photographing
-    # ourselves losing - the owner caught exactly that on two earlier game-over
-    # frames. Re-sealed with the loser named, not merely reported.
+    # NAME THE FOOL'S SEAT "Kate", so the preface is not a photograph of us
+    # losing - the owner caught exactly that on two earlier game-over frames.
+    # Re-sealed with the loser named, not merely reported.
+    #
+    # FOOLISH_NAMES is indexed by ABSOLUTE SEAT, the same as the loop's own
+    # naming 40 lines up: `fixture_name(seat)` returns `slots[seat]` and
+    # `env_init` writes `joins[i].seat = i` with that name
+    # (c/tests/msg_wire_test.c). A note here used to claim the opposite - that a
+    # join list runs from the sealing player outwards, so slot 0 is always the
+    # local player - and it was simply wrong; decoding a sealed chain entry
+    # shows joins[0].seat == 0 carrying slots[0]'s name on every bubble. Two
+    # contradictory rules for one list in one function is how a shoot loses a
+    # day, so: absolute seat, everywhere.
     local prenames="Kate,Alex"
     [ "$fool" = "0" ] || prenames="Alex,Kate"
     FOOLISH_NAMES="$prenames" "$tool" --endgame "$np" >/tmp/rig_pre.hex 2>/dev/null
-    tail -1 /tmp/rig_pre.hex > "$g/dev.fatboard"
-    printf '%s' "$mine" > "$g/dev.seat"
-    cmd_back >/dev/null 2>&1 || true
-    cmd_open "$other" >/dev/null 2>&1
+    local prehex; prehex=$(tail -1 /tmp/rig_pre.hex | tr -d '[:space:]')
+    seed_open "$prehex" "$mine" "$other" open \
+      || { echo "  preface $j: the extension never claimed its seed" >&2; return 1; }
     cmd_turn >/dev/null 2>&1 || echo "  preface $j did not send" >&2
   done
 
-  local i thread
+  local i thread route
   for i in "${!HEX[@]}"; do
-    printf '%s' "${HEX[$i]}" > "$g/dev.fatboard"
-    printf '%s' "$mine" > "$g/dev.seat"
     # OUR moves are sent FROM the photographed thread. Two things ride on
     # that, and they were settled with a two-message probe rather than by
     # reading frames: a message appears in its OWN thread as outgoing (right,
@@ -543,30 +550,40 @@ cmd_chain() {
     # own moves from the other thread costs both the side AND the picture,
     # which is most of what a collapsed frame is.
     thread="$SHOOT_THREAD"; [ "${ACT[$i]}" = "$mine" ] || thread="$other"
-    # `back` is what kills the appex, and only a dead appex claims the next
-    # seed - see trap 1.
-    cmd_back >/dev/null 2>&1 || true
-    if [ "$i" = "0" ]; then cmd_open "$thread" >/dev/null 2>&1
-    else cmd_tapopen "$thread" >/dev/null 2>&1 || cmd_open "$thread" >/dev/null 2>&1
-    fi
+    # The first send has no bubble to tap yet; every later one opens the way a
+    # real game does (trap 6). `seed_open` is what makes the seed STICK: only a
+    # dead appex claims the next one, and it checks rather than hopes - see its
+    # note, and trap 10.
+    route=tapopen; [ "$i" = "0" ] && route=open
+    seed_open "${HEX[$i]}" "$mine" "$thread" "$route" || {
+      echo "  move $i: the extension never claimed its seed - stopping the chain" >&2
+      echo "  (every bubble from here would be one move behind; see trap 10)" >&2
+      return 1
+    }
     cmd_turn >/dev/null 2>&1 || echo "  move $i did not send" >&2
   done
   # Staging OFF before the last frame. It is what auto-sends each seeded move,
   # and left on it also stages a DRAFT the moment the extension is next opened -
   # a bubble sitting in the compose field over a board that did not produce it.
   cmd_stageseed off >/dev/null
-  cmd_back >/dev/null 2>&1 || true
   if [ "${FOOLISH_CHAIN_DRAWER:-1}" = "1" ]; then
     # The collapsed hero frame: the drawer open over the transcript the chain
     # just built, showing the SAME state the newest bubble does. Re-seeded
     # rather than opened by tapping the bubble, because tapping one this device
     # has no identity in opens the seat-claim screen instead of the board.
-    printf '%s' "${HEX[$((${#HEX[@]} - 1))]}" > "$g/dev.fatboard"
-    printf '%s' "$mine" > "$g/dev.seat"
-    cmd_open "$SHOOT_THREAD" >/dev/null 2>&1 && cmd_collapse >/dev/null 2>&1
+    #
+    # Through `seed_open` like every other seed here: this is the ONE frame that
+    # gets photographed, and an unclaimed seed here shows the previous move
+    # under a transcript that has moved on - the same lag as the loop's, in the
+    # half of the picture the shot is actually of.
+    seed_open "${HEX[$((${#HEX[@]} - 1))]}" "$mine" "$SHOOT_THREAD" open \
+      || echo "  hero frame: the extension never claimed its seed - the drawer may be stale" >&2
+    cmd_collapse >/dev/null 2>&1
     sleep 2
     cmd_nudge || true
   else
+    # No drawer in this frame: put it away and photograph the transcript alone.
+    cmd_back >/dev/null 2>&1 || true
     cmd_enter "$SHOOT_THREAD" >/dev/null 2>&1 || true
   fi
   cmd_shot "$name"
@@ -626,6 +643,64 @@ cmd_tapopen() {
   if [ "$x" -gt $((W / 2)) ]; then x=$((x - 60)); else x=$((x + 60)); fi
   tap "$x" "$y" 5
 }
+# SEED THE BOARD, OPEN IT, AND PROVE THE EXTENSION OPENED ONTO *THAT* SEED.
+#
+# The trap this closes cost a whole store chain and three rounds of reading
+# frames. `MessageDevBoard.claimSeededPayload()` is once per APPEX PROCESS, and
+# the only thing that ends that process is leaving the thread - so a `back` that
+# does not take leaves the extension re-opening the seed it already claimed. It
+# then stages THAT, and every bubble in the transcript is one move behind.
+#
+# Nothing in the frames says so. Each board is a real, legal state; the caption
+# row under it names the defender, and a defender does not change within a bout,
+# so the row reads correctly for the bubble AND for its predecessor. The only
+# tell is the summary line, which reads as "the caption describes the previous
+# message" - and that is how this was mis-filed as a product bug three times.
+# (ios/FoolishTests/MessageCaptionActorTests.swift pins both halves: the
+# product's line names its own actor, and the defender row cannot detect a lag.)
+#
+# So the rig stops inferring. `claimSeededPayload` writes the hex it claimed to
+# `dev.claimed`; this deletes the receipt, seeds, leaves, opens, and compares.
+# No sleeps: a claim either happened in a fresh process or it did not, and the
+# answer is a file. Three attempts, then a hard failure - a shoot that cannot
+# seed is worth stopping, and was never worth photographing.
+#
+# $1 payload hex   $2 seat   $3 thread   $4 route (open|tapopen, default tapopen)
+seed_open() {
+  local hex="$1" seat="$2" thread="$3" route="${4:-tapopen}"
+  local g; g=$(group_dir)
+  local try got
+  for try in 1 2 3; do
+    rm -f "$g/dev.claimed"
+    printf '%s' "$hex"  > "$g/dev.fatboard"
+    printf '%s' "$seat" > "$g/dev.seat"
+    # NOT swallowed. `back` returning 1 means the appex is still alive, which is
+    # exactly the condition that produces the lag; it used to be `|| true`.
+    if ! cmd_back >/dev/null 2>&1; then
+      echo "  seed: could not leave the thread (try $try) - appex still alive" >&2
+      continue
+    fi
+    case "$route" in
+      open) cmd_open "$thread" >/dev/null 2>&1 ;;
+      *)    cmd_tapopen "$thread" >/dev/null 2>&1 || cmd_open "$thread" >/dev/null 2>&1 ;;
+    esac
+    got=$(cat "$g/dev.claimed" 2>/dev/null || true)
+    [ "$got" = "$hex" ] && return 0
+    if [ -z "$got" ]; then
+      echo "  seed: the extension claimed nothing (try $try) - it re-opened a live appex" >&2
+    else
+      echo "  seed: claimed ${got:0:20}… wanted ${hex:0:20}… (try $try)" >&2
+    fi
+  done
+  return 1
+}
+
+# What the extension last claimed, for a hand-driven check.
+cmd_claimed() {
+  local g; g=$(group_dir)
+  cat "$g/dev.claimed" 2>/dev/null && echo || echo "nothing claimed yet"
+}
+
 cmd_back() {
   need_sim
   front
@@ -888,8 +963,25 @@ cmd_turn() {
 
 # --------------------------------------------------------------- state ----
 
-cmd_seed()   { need_sim; python3 "$LIB/seed.py" "$@"; }
-cmd_unseed() { local g; g=$(group_dir); rm -f "$g/dev.fatboard" "$g/dev.seat" "$g/dev.replay"; echo "seed removed"; }
+# Writing a new seed VOIDS the old claim receipt (trap 10): what the extension
+# last opened onto is no longer an answer about what it is being asked to open
+# onto now, and a receipt left standing would read as one.
+cmd_seed()   { need_sim; local g; g=$(group_dir); rm -f "$g/dev.claimed"
+               python3 "$LIB/seed.py" "$@"; }
+
+# Did the extension open onto the seed currently on disk? Trap 10: an appex that
+# did not die re-opens the seed it already claimed, and every frame after that
+# is one state behind while still looking individually plausible.
+claim_ok() {
+  local g; g=$(group_dir)
+  local want got
+  want=$(tr -d '[:space:]' < "$g/dev.fatboard" 2>/dev/null || true)
+  got=$(tr -d '[:space:]'  < "$g/dev.claimed"  2>/dev/null || true)
+  [ -n "$want" ] && [ "$want" = "$got" ]
+}
+cmd_unseed() { local g; g=$(group_dir)
+               rm -f "$g/dev.fatboard" "$g/dev.seat" "$g/dev.replay" "$g/dev.claimed"
+               echo "seed removed"; }
 
 # THE PREFERENCES PLIST IS NOT THE STORE OF RECORD; the simulator's cfprefsd
 # is. Writing .../Library/Preferences/<domain>.plist by hand does NOTHING that
@@ -992,6 +1084,15 @@ cmd_batch() {
     # still exited 0 - the list simply stopped, with nothing to say it had.
     cmd_back || { echo "!! $name skipped - could not leave the drawer" >&2; continue; }
     cmd_open_retry || { echo "!! $name skipped - could not open the extension" >&2; continue; }
+    # …and it opened onto THIS seed, not the one before it (trap 10). `back`
+    # returning 0 says the thread was left, not that the appex died; only the
+    # claim receipt says that. One re-open, then skip the frame - a photograph
+    # of the previous state is worse than a missing one, because it looks fine.
+    if [ -n "${mode:-}" ] && ! claim_ok; then
+      echo "   $name: stale seed, re-opening" >&2
+      cmd_back && cmd_open_retry || true
+      claim_ok || { echo "!! $name skipped - the extension never claimed its seed" >&2; continue; }
+    fi
     case "${act:-}" in
       # Send the bubble the seeded open staged: the transcript's last bubble
       # is then the board on screen.
@@ -1114,6 +1215,7 @@ case "${1:-}" in
   goodtap)  shift; cmd_goodtap "$@" ;;
   seed)     shift; cmd_seed "$@" ;;
   unseed)   shift; cmd_unseed "$@" ;;
+  claimed)  shift; cmd_claimed "$@" ;;
   prefs)    shift; cmd_prefs "$@" ;;
   slowmo)   shift; cmd_slowmo "$@" ;;
   deal)     shift; cmd_deal "$@" ;;
