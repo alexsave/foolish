@@ -52,6 +52,7 @@ import Foundation
 public enum MessageDevBoard {
     private static let appGroup = "group.cards.foolish.msg"
     private static let flagFile = "dev.fatboard"
+    private static let claimFile = "dev.claimed"
     private static let seatFile = "dev.seat"
     private static let replayFile = "dev.replay"
     private static let stageFile = "dev.stage"
@@ -66,12 +67,21 @@ public enum MessageDevBoard {
     /// anyone having to agree on a base32 alphabet or a padding rule; the C side
     /// prints it and this reads it, and there is no third opinion.
     public static var seededPayload: Data? {
+        guard let raw = seededHex else { return nil }
+        return hex(raw)
+    }
+
+    /// The flag file's contents, trimmed - the exact string the rig wrote.
+    /// Split out of `seededPayload` so the claim receipt below can echo the
+    /// SAME characters back, rather than a re-encoding of the bytes that a
+    /// shell comparison would then have to agree with about case.
+    private static var seededHex: String? {
         guard let dir = FileManager.default
             .containerURL(forSecurityApplicationGroupIdentifier: appGroup),
               let raw = try? String(contentsOf: dir.appendingPathComponent(flagFile),
                                     encoding: .utf8)
         else { return nil }
-        return hex(raw.trimmingCharacters(in: .whitespacesAndNewlines))
+        return raw.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// ONCE PER PROCESS. The seed answers "what does the extension open ONTO",
@@ -82,9 +92,32 @@ public enum MessageDevBoard {
     ///
     /// Per PROCESS, not per file: `msgrig.sh reopen` kills Messages precisely so
     /// the seeded state can be opened cold again, and that still works.
+    ///
+    /// AND IT LEAVES A RECEIPT (`dev.claimed`), which is not bookkeeping - it is
+    /// the only way a driver can know this happened at all.
+    ///
+    /// "Once per process" is a promise about a process the rig does not own.
+    /// `rig.sh chain` re-seeds between every send and relies on leaving the
+    /// thread to kill the appex, because only a DEAD appex claims the next
+    /// seed; when that does not take, the extension re-opens on the seed it
+    /// already claimed and stages THAT - so every bubble in the transcript is
+    /// one move behind, silently, and each frame still looks individually
+    /// plausible (a defender does not change within a bout, so even the caption
+    /// row reads correctly). A whole chain shoot was read three times as a
+    /// caption bug on that evidence.
+    ///
+    /// The receipt turns it into a fact the driver can check before it presses
+    /// Send: the hex actually claimed, by the process that claimed it. The rig
+    /// deletes the file, seeds, re-opens, and refuses to send until this says
+    /// the seed it asked for. Written best-effort - a failed write costs the
+    /// rig a retry, never a frame.
     public static func claimSeededPayload() -> Data? {
-        guard !claimed, let p = seededPayload else { return nil }
+        guard !claimed, let raw = seededHex, let p = hex(raw) else { return nil }
         claimed = true
+        if let dir = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroup) {
+            try? Data(raw.utf8).write(to: dir.appendingPathComponent(claimFile))
+        }
         return p
     }
     private static var claimed = false

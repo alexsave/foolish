@@ -36,7 +36,7 @@ it is", so a list only names a setting on the line where it changes.
 `seat` is empty for the defender's chair, a number for a specific seat, or `atk`
 for an attacker's.
 
-## The nine things that are not obvious
+## The ten things that are not obvious
 
 **1. Do not restart Messages mid-shoot.**
 The simulator's Messages keeps its conversations **in memory**.
@@ -150,6 +150,34 @@ It destroys the App Group container (`dev.fatboard`, `dev.seat`) *and* the
 appex's Preferences container, and both come back with fresh UUIDs.
 Install over the old build instead.
 `build` does.
+
+**10. A seed that is not CLAIMED photographs as a product bug.**
+`MessageDevBoard.claimSeededPayload()` is once per appex *process*, and the only
+thing that ends that process is leaving the thread.
+When a `back` does not take, the extension re-opens the seed it already claimed,
+auto-stages *that*, and every bubble in the chain comes out one move behind -
+silently, because `chain` used to run `cmd_back … || true` and throw away the
+one signal that says so.
+
+Nothing in the frames gives it away.
+Each board is a real legal state; the caption row under it names the defender,
+and a defender does not change within a bout, so that row reads correctly for
+the bubble **and** for its predecessor.
+The only visible tell is the summary line, which reads as "each caption
+describes the previous message" - and on that evidence the lag was filed as a
+caption bug in the shipping product three times.
+`ios/FoolishTests/MessageCaptionActorTests.swift` settles both halves offline:
+the product's line names its own actor over a played chain, and the defender row
+is provably blind to a one-bubble lag.
+
+So the rig stops inferring.
+`claimSeededPayload` writes the hex it claimed to `dev.claimed`; `seed_open`
+deletes that receipt, seeds, leaves, opens and **compares** before anything is
+sent, retrying the leave up to three times and failing the shoot rather than
+photographing a stale board.
+`rig.sh claimed` prints the receipt by hand.
+No sleeps are involved: a claim either happened in a fresh process or it did
+not, and the answer is a file.
 
 ## Smaller ones, each of which produced a wrong frame
 
