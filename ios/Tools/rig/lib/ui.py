@@ -605,6 +605,60 @@ def table_cards(a, s):
     return out
 
 
+def last_message(a, s):
+    """(x_pt, y_pt) of the NEWEST Foolish message in the transcript, either
+    side, located by its app icon.
+
+    A message collapses into a caption line only when the NEXT send shares its
+    MSSession, and a send shares it only if that message is SELECTED. Selecting
+    just the INCOMING ones collapses only Kate's - our own stay full bubbles,
+    and the transcript ends up with several game cards in it when a real thread
+    has exactly one. So tap the newest message whoever sent it: ours sit on the
+    right, hers on the left."""
+    top = drawer_top(a, s)
+    h, w = a.shape[0], a.shape[1]
+    hi = (top * s) if top is not None else h
+    r, g, b = a[:, :, 0], a[:, :, 1], a[:, :, 2]
+    icon = (r > 110) & (r > g * 1.9) & (r > b * 1.9)
+    band = icon[:hi, :]
+    rows = np.nonzero(band.sum(axis=1) > 6 * s)[0]
+    if not len(rows):
+        return None
+    run = runs(rows, 6 * s)[-1]
+    cols = np.nonzero(band[run[0]:run[-1] + 1, :].sum(axis=0) > 0)[0]
+    if not len(cols):
+        return None
+    return (int(cols.mean() / s), int((run[0] + run[-1]) / 2 / s))
+
+
+def last_incoming(a, s):
+    """(x_pt, y_pt) of the NEWEST incoming Foolish message in the transcript,
+    or None - located by its app icon, which is a small strongly-red mark on
+    the LEFT of the conversation.
+
+    Wanted because an incoming message only collapses into a caption line when
+    the NEXT send shares its MSSession, and a send only shares it if that
+    message is SELECTED. Tapping a fixed point hit whichever caption line
+    happened to be there, so the newest one stayed a full pill - which is not
+    what a real thread looks like: the owner's is game-text lines and then one
+    bubble, the sender's own."""
+    top = drawer_top(a, s)
+    h, w = a.shape[0], a.shape[1]
+    lo = 0 if top is None else 0
+    hi = (top * s) if top is not None else h
+    r, g, b = a[:, :, 0], a[:, :, 1], a[:, :, 2]
+    icon = (r > 110) & (r > g * 1.9) & (r > b * 1.9)
+    left = icon[:hi, :int(w * 0.18)]
+    rows = np.nonzero(left.sum(axis=1) > 6 * s)[0]
+    if not len(rows):
+        return None
+    band = runs(rows, 6 * s)[-1]           # the lowest icon is the newest
+    cols = np.nonzero(left[band[0]:band[-1] + 1, :].sum(axis=0) > 0)[0]
+    if not len(cols):
+        return None
+    return (int(cols.mean() / s), int((band[0] + band[-1]) / 2 / s))
+
+
 if __name__ == "__main__":
     a, s = grab()
     what = sys.argv[1] if len(sys.argv) > 1 else "all"
@@ -621,6 +675,10 @@ if __name__ == "__main__":
         print("HAND_Y", y if y is not None else -1)
     if what in ("top", "all"):
         print("TOP", drawer_top(a, s))
+    if what in ("incoming", "all"):
+        print("INCOMING", last_incoming(a, s))
+    if what in ("lastmsg", "all"):
+        print("LASTMSG", last_message(a, s))
     if what in ("staged", "all"):
         print("STAGED", staged_box(a, s))
     if what in ("onboarding", "all"):

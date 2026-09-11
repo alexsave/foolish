@@ -36,7 +36,7 @@ it is", so a list only names a setting on the line where it changes.
 `seat` is empty for the defender's chair, a number for a specific seat, or `atk`
 for an attacker's.
 
-## The five things that are not obvious
+## The eight things that are not obvious
 
 **1. Do not restart Messages mid-shoot.**
 The simulator's Messages keeps its conversations **in memory**.
@@ -87,13 +87,49 @@ The one exception is the App Group suite (`fmsg.nickname`), which
 one is a direct plist edit, and its key contains a dot, which `plutil` reads as
 a path separator unless escaped.
 
-**5. Never `simctl uninstall`.**
+**5. One simulator per task. Never share one.**
+A batch and a hand-driven experiment on the same device destroy each other, and
+the damage is silent: a modal opened by hand (a New Contact sheet, an
+onboarding card) survives a Messages relaunch, swallows every later tap, and
+the batch keeps going and writes frames. A whole four-take run came back as the
+same grey contact editor. `rig.sh newsim` costs seconds - use one per
+concurrent run, and never touch a device another run is driving. `stage` now
+clears leftover modals first, which helps after the fact but is not a licence
+to share.
+
+**6. A chain of bubbles collapses only if each send TAPS the last one.**
+Messages renders every message of an `MSSession` except the newest as a caption
+LINE, and a send inherits its session from `conversation.selectedMessage` - the
+bubble the sender tapped.
+Opening the extension through the `+` menu leaves `selectedMessage` nil, so
+every send starts its own session and a six-move chain photographs as six full
+bubbles stacked down the screen, which reads as six games at once.
+`tapopen` opens it the way a real game does, by tapping the newest bubble, and
+the same chain then photographs as caption / caption / caption / one bubble.
+Both routes show the same seeded board, because `claimSeededPayload()` runs
+before the `selectedMessage` payload path.
+Messages caps the collapsed lines at three, so a longer chain does not grow the
+stack - it only buys the two-way traffic that clears the Report Spam banner.
+
+**7. DerivedData is per simulator, because worktrees share `/tmp`.**
+A concurrent agent building a *worktree* into the same derived-data path writes
+its own `ios_api.h` there, and every later build in this checkout dies with
+`file ... has been modified since the module file was built: size changed`,
+naming a header this checkout never touched.
+`DD` therefore keys on `FOOLISH_SIM`. This is rule 5 applied to the build.
+
+**8. Never `simctl uninstall`.**
 It destroys the App Group container (`dev.fatboard`, `dev.seat`) *and* the
 appex's Preferences container, and both come back with fresh UUIDs.
 Install over the old build instead.
 `build` does.
 
 ## Smaller ones, each of which produced a wrong frame
+
+- **`FOOLISH_NAMES` is not indexed by absolute seat.** Written as `Kate,Alex`,
+  the seat-0 mover rendered as *Alex*. Verified on the device; a chain driver
+  that assumes the obvious mapping puts our own moves under the opponent's
+  name, which reads as a game bug rather than a rig one.
 
 - **A staged bubble must match the board underneath it.**
   Opening the extension onto a lobby stages one, and it then rides along in the

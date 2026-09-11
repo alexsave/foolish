@@ -1,0 +1,2 @@
+T7_light|fatboard|5 2 pass 1|||||compact|turn
+T7_light_b|fatboard|5 2 pass 1|||||compact|turn
