@@ -3176,6 +3176,8 @@ static void print_chain(int np, int count, int depth) {
         // was a delta FROM, so every bubble animates only its own move.
         unsigned char wires[16][ENV_CAP];
         int lens[16], actors[16], phases[16], kept = 0;
+        int kinds[16], ncards[16];
+        Card acards[16][6];
 
         int step = 0;
         for (; step < use_depth + count && g.status == GAME_STATUS_PLAYING; step++) {
@@ -3220,6 +3222,15 @@ static void print_chain(int np, int count, int depth) {
             const int n = msg_encode(&e, wires[kept], sizeof(wires[kept]));
             if (n <= 0) break;
             lens[kept] = n; actors[kept] = seat;
+            // WHAT THE ENTRY SAYS HAPPENED, in the log rather than in a reader's
+            // head. A transcript shoot compares the sentence a bubble displays
+            // against "the move the chain made", and until this line that
+            // second half was inferred from an actor number and a guess about
+            // whose turn it was. Two consecutive bubbles displaying the SAME
+            // sentence is the tell that matters, and it is only visible when
+            // the expected sentences are written down next to each other.
+            kinds[kept] = a.kind; ncards[kept] = a.n;
+            for (int c = 0; c < a.n && c < 6; c++) acards[kept][c] = a.cards[c];
             phases[kept] = e.phase; kept++;
             if (kept >= count) break;
         }
@@ -3228,8 +3239,27 @@ static void print_chain(int np, int count, int depth) {
         fprintf(stderr, "chain: %dp seed#%u depth=%d, %d consecutive bubbles\n",
                 np, s, use_depth, kept);
         for (int i = 0; i < kept; i++) {
-            fprintf(stderr, "chain[%d]: actor=seat %d (%d bytes)%s\n", i, actors[i],
-                    lens[i], phases[i] == MSG_PHASE_FINISHED ? " FINISHED" : "");
+            static const char *kindname[] = { "attack", "cover", "pass", "pickup", "good" };
+            // The repo's own table (c/src/main_analyse.c, main_eval.c,
+            // octogen_strategy.c all carry it): value 1 is a TWO, and the ace
+            // is 13. A hand-rolled "1 is an ace" version of this printed every
+            // card one rank low, and a shoot spent an afternoon treating the
+            // product's correct sentences as a bug because they disagreed with
+            // it. Copy the table, do not re-derive it.
+            static const char rankname[14][3] = { "?", "2", "3", "4", "5", "6", "7", "8",
+                                                  "9", "10", "J", "Q", "K", "A" };
+            static const char suitname[4] = { 'S', 'H', 'C', 'D' };
+            fprintf(stderr, "chain[%d]: actor=seat %d %s", i, actors[i],
+                    kinds[i] >= 0 && kinds[i] <= 4 ? kindname[kinds[i]] : "?");
+            for (int c = 0; c < ncards[i] && c < 6; c++) {
+                const int v = acards[i][c].value;
+                fprintf(stderr, " %s%c",
+                        v >= 1 && v <= 13 ? rankname[v] : "?",
+                        acards[i][c].suit >= 0 && acards[i][c].suit < 4
+                            ? suitname[acards[i][c].suit] : '?');
+            }
+            fprintf(stderr, " (%d bytes)%s\n", lens[i],
+                    phases[i] == MSG_PHASE_FINISHED ? " FINISHED" : "");
             for (int b = 0; b < lens[i]; b++) printf("%02x", wires[i][b]);
             printf("\n");
         }

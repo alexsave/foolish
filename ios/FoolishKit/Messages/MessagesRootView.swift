@@ -2083,15 +2083,31 @@ private struct GameSurface: View {
         // the film starts with an animation nobody asked for. Unless the REPLAY
         // is the point (round 16's bubble delta: `dev.replay`), in which case
         // this opens exactly as a tapped bubble does.
-        seatOnBoard(seat: seat, env: env, winner: payload,
-                    quietOpen: !MessageDevBoard.seededReplays)
         // `dev.stage`: put THIS board in the transcript too, so a photograph's
         // last bubble is the board underneath it rather than a leftover from
         // another game. Ordinary stage path, ordinary bubble; the rig presses
         // Send.
+        //
+        // BEFORE `seatOnBoard`, and that order is the whole point. `stage` reads
+        // the payload back through `MessageSummary.forStagedBubble` -> one
+        // `publicRead` - and a read of the resident slot is only as good as what
+        // last wrote it. `seatOnBoard` rebuilds that slot for the BOARD's sake
+        // (a quiet open, a replay, a seat), and a read taken after it came back
+        // with an event window from earlier in the game: a four-bubble chain
+        // photographed as "SEATONE attacks with 8 of C / SEATZERO covers 10 of C
+        // with 8 of S / SEATONE attacks with 8 of C" over entries that were
+        // really cover 8S, attack 9C, cover 7S. Two bubbles of a transcript
+        // showing the SAME sentence is not a sentence bug - no two consecutive
+        // moves can read alike - and it was chased as one for three shoots.
+        //
+        // Staged first, the read happens in a freshly launched appex whose
+        // resident slot this payload is the only writer of, which is exactly the
+        // situation a real device stages in: seal, then describe what you sealed.
         if MessageDevBoard.seededStages {
             await onSend(payload, seat, false)
         }
+        seatOnBoard(seat: seat, env: env, winner: payload,
+                    quietOpen: !MessageDevBoard.seededReplays)
         return true
     }
     #endif

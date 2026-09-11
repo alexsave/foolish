@@ -53,6 +53,7 @@ public enum MessageDevBoard {
     private static let appGroup = "group.cards.foolish.msg"
     private static let flagFile = "dev.fatboard"
     private static let claimFile = "dev.claimed"
+    private static let stagedFile = "dev.staged"
     private static let seatFile = "dev.seat"
     private static let replayFile = "dev.replay"
     private static let stageFile = "dev.stage"
@@ -121,6 +122,32 @@ public enum MessageDevBoard {
         return p
     }
     private static var claimed = false
+
+    /// THE SECOND RECEIPT: the payload that actually reached the input field.
+    ///
+    /// A claim receipt only says what the extension OPENED onto. What Send
+    /// transmits is whatever `stage()` last inserted, and those are separated
+    /// by the whole expanded tail - a settle wait, a collapse, a transition -
+    /// which is over a second. A driver that presses Send as soon as a Send
+    /// button exists therefore transmits the PREVIOUS bubble, every time, and
+    /// the transcript comes out one move behind with a correct claim receipt
+    /// beside it. That is the lag that was filed as a caption bug three times;
+    /// closing the claim half of it was not enough, because the claim lands
+    /// early and the insert lands late.
+    ///
+    /// So `stage()` says so. The rig deletes this, seeds, opens, and waits for
+    /// THIS to name the payload it asked for before it presses anything. No
+    /// sleep can stand in for it: the tail's length depends on the animation
+    /// the seeded state happens to play.
+    ///
+    /// Best-effort, like the claim receipt: a failed write costs the rig a
+    /// wait, never a frame.
+    public static func noteStaged(_ payload: Data) {
+        guard let dir = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroup) else { return }
+        let s = payload.map { String(format: "%02x", $0) }.joined()
+        try? Data(s.utf8).write(to: dir.appendingPathComponent(stagedFile))
+    }
 
     /// Which seat to sit at, or nil to sit at the defender's.
     ///

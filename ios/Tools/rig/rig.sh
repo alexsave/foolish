@@ -537,7 +537,7 @@ cmd_chain() {
     local prehex; prehex=$(tail -1 /tmp/rig_pre.hex | tr -d '[:space:]')
     seed_open "$prehex" "$mine" "$other" open \
       || { echo "  preface $j: the extension never claimed its seed" >&2; return 1; }
-    cmd_turn >/dev/null 2>&1 || echo "  preface $j did not send" >&2
+    send_staged "$prehex" >/dev/null 2>&1 || echo "  preface $j did not send" >&2
   done
 
   local i thread route
@@ -561,7 +561,10 @@ cmd_chain() {
       echo "  (every bubble from here would be one move behind; see trap 10)" >&2
       return 1
     }
-    cmd_turn >/dev/null 2>&1 || echo "  move $i did not send" >&2
+    send_staged "${HEX[$i]}" >/dev/null 2>&1 || {
+      echo "  move $i: the field never took it - stopping the chain" >&2
+      return 1
+    }
   done
   # Staging OFF before the last frame. It is what auto-sends each seeded move,
   # and left on it also stages a DRAFT the moment the extension is next opened -
@@ -672,7 +675,7 @@ seed_open() {
   local g; g=$(group_dir)
   local try got
   for try in 1 2 3; do
-    rm -f "$g/dev.claimed"
+    rm -f "$g/dev.claimed" "$g/dev.staged"
     printf '%s' "$hex"  > "$g/dev.fatboard"
     printf '%s' "$seat" > "$g/dev.seat"
     # NOT swallowed. `back` returning 1 means the appex is still alive, which is
@@ -694,6 +697,41 @@ seed_open() {
     fi
   done
   return 1
+}
+
+# SEND THE BUBBLE WE ASKED FOR, not whichever one is in the field.
+#
+# The other half of trap 10, and the half a claim receipt cannot see. A claim
+# happens the instant the extension opens; the INSERT happens at the end of
+# `stage()`'s expanded tail - a settle wait, a collapse, a transition, over a
+# second - and `cmd_turn` taps Send as soon as a Send button exists. A Send
+# button exists because the PREVIOUS bubble is still sitting there, so every
+# send transmitted the previous move with a perfectly correct claim receipt
+# beside it, and the transcript came out one move behind.
+#
+# `dev.staged` is written by the insert itself, so this waits on the one fact
+# that means "the field now holds this payload". Not a sleep: the tail's length
+# depends on whatever animation the seeded state plays, and a fixed wait tuned
+# on an attack is short for a bout-ending cascade.
+#
+# $1 payload hex
+send_staged() {
+  local hex="$1" g try got
+  g=$(group_dir)
+  for try in $(seq 1 60); do
+    got=$(tr -d '[:space:]' < "$g/dev.staged" 2>/dev/null || true)
+    [ "$got" = "$hex" ] && break
+    sleep 0.25
+  done
+  if [ "$got" != "$hex" ]; then
+    echo "  send: the field never took this payload (staged ${got:0:20}…)" >&2
+    return 1
+  fi
+  # WHAT WENT OUT, in order, for a shoot to compare against the generator's own
+  # list. A transcript that disagrees with this file is Messages' doing; one
+  # that agrees with it is the rig's.
+  printf '%s\n' "$hex" >> "${FOOLISH_SENTLOG:-/tmp/rig_sent.log}"
+  cmd_turn
 }
 
 # What the extension last claimed, for a hand-driven check.
@@ -981,7 +1019,8 @@ claim_ok() {
   [ -n "$want" ] && [ "$want" = "$got" ]
 }
 cmd_unseed() { local g; g=$(group_dir)
-               rm -f "$g/dev.fatboard" "$g/dev.seat" "$g/dev.replay" "$g/dev.claimed"
+               rm -f "$g/dev.fatboard" "$g/dev.seat" "$g/dev.replay" "$g/dev.claimed" \
+                     "$g/dev.staged"
                echo "seed removed"; }
 
 # THE PREFERENCES PLIST IS NOT THE STORE OF RECORD; the simulator's cfprefsd

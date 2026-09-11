@@ -952,13 +952,22 @@ final class MessagesViewController: MSMessagesAppViewController {
         // Collapsing the board out from under them there is exactly wrong (owner:
         // "undo should NOT collapse the screen... best to keep it expanded for
         // moves"), so insert now, stay expanded, and skip the drop-to-Send tail.
-        if fromUndo { conversation.insert(msg) { _ in }; return }
+        // Every insert goes through here, so a receipt cannot be forgotten by a
+        // path added later (DEBUG only - see MessageDevBoard.noteStaged).
+        func insertStaged() {
+            conversation.insert(msg) { _ in }
+            #if DEBUG || SOLO_TESTING
+            MessageDevBoard.noteStaged(payload)
+            #endif
+        }
+
+        if fromUndo { insertStaged(); return }
 
         // Already in the compact drawer (an ordinary in-drawer move): no style
         // transition will run, so there is no preview flyover to avoid - stage
         // the bubble immediately, exactly the pre-round-10b timing.
         if presentationStyle != .expanded {
-            conversation.insert(msg) { _ in }
+            insertStaged()
             return
         }
 
@@ -1017,7 +1026,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         // put its own bubble in the field, so inserting here would replace it
         // with this older one.
         guard current() else { return }
-        conversation.insert(msg) { _ in }
+        insertStaged()
     }
 
     /// Which `stage` run owns the input field - see the note at the top of it.
