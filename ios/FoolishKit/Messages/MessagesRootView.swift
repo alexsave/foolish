@@ -1877,6 +1877,13 @@ private struct GameSurface: View {
         // this opens exactly as a tapped bubble does.
         seatOnBoard(seat: seat, env: env, winner: payload,
                     quietOpen: !MessageDevBoard.seededReplays)
+        // `dev.stage`: put THIS board in the transcript too, so a photograph's
+        // last bubble is the board underneath it rather than a leftover from
+        // another game. Ordinary stage path, ordinary bubble; the rig presses
+        // Send.
+        if MessageDevBoard.seededStages {
+            await onSend(payload, seat, false)
+        }
         return true
     }
     #endif

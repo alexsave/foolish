@@ -1,0 +1,37 @@
+36_greencheck/2p|lastmove-live|goodany 2||||dark|expanded|good
+36_greencheck/3p|lastmove-live|goodany 3|||||expanded|good
+36_greencheck/4p|lastmove-live|goodany 4|||||expanded|good
+36_greencheck/6p|lastmove-live|goodany 6|||||expanded|good
+36_greencheck/8p|lastmove-live|goodany 8|||||expanded|good
+36_greencheck/2p_compact|lastmove-live|goodany 2|||||compact|good
+36_greencheck/4p_compact|lastmove-live|goodany 4|||||compact|good
+36_greencheck/2p_light|lastmove-live|goodany 2||||light|expanded|good
+36_greencheck/4p_light_compact|lastmove-live|goodany 4|||||compact|good
+36_greencheck/6p_dark|lastmove-live|goodany 6||||dark|expanded|good
+37_lastmove/out_4p|lastmove|out 4|||||expanded|turn
+37_lastmove/out_6p|lastmove|out 6|||||expanded|turn
+37_lastmove/refillempty_4p|lastmove|refillempty 4|||||expanded|turn
+37_lastmove/refillempty_6p|lastmove|refillempty 6|||||expanded|turn
+37_lastmove/pickup_4p|lastmove|pickup 4|||||expanded|turn
+37_lastmove/pickup_6p|lastmove|pickup 6|||||expanded|turn
+37_lastmove/pass_4p|lastmove|pass 4|||||expanded|turn
+37_lastmove/pass_6p|lastmove|pass 6|||||expanded|turn
+37_lastmove/covertrump_4p|lastmove|covertrump 4|||||expanded|turn
+37_lastmove/covertrump_6p|lastmove|covertrump 6|||||expanded|turn
+37_lastmove/out_2p_compact|lastmove|out 2|||||compact|turn
+37_lastmove/covertrump_2p|lastmove|covertrump 2|||||compact|select
+38_lastmove/attack_2p|lastmove|attack 2|||||compact|select
+38_lastmove/attack_4p|lastmove|attack 4|||||expanded|select
+38_lastmove/attack_6p|lastmove|attack 6|||||expanded|select
+38_lastmove/cover_2p|lastmove|cover 2|||||compact|turn
+38_lastmove/cover_4p|lastmove|cover 4|||||expanded|turn
+38_lastmove/cover_6p|lastmove|cover 6|||||expanded|turn
+38_lastmove/refill_2p|lastmove|refill 2|||||compact|select
+38_lastmove/refill_4p|lastmove|refill 4|||||expanded|select
+38_lastmove/refill_6p|lastmove|refill 6|||||expanded|select
+38_lastmove/final_2p|lastmove|final 2|||||compact|turn
+38_lastmove/final_4p|lastmove|final 4|||||expanded|turn
+38_lastmove/final_6p|lastmove|final 6|||||expanded|turn
+39_tworow/3p_holds13|fatboard|4 3 pass 4|||||expanded|select
+39_tworow/3p_holds13_compact|fatboard|4 3 pass 4|||||compact|turn
+99_reset3/x|fatboard|5 2 pass 5||||dark|expanded|turn

@@ -121,6 +121,44 @@ static int env_hdr_len(uint8_t format) {
     return MSG_HEADER_LEN;
 }
 
+// Seat names for the fixtures. These are display strings only - the wire
+// round-trips any name - but they are what a seeded board SHOWS, so they are
+// also what QA and store photography read off the screen. A cast of ordinary
+// first names beats "Ann0..Ann7": a table of numbered clones hides exactly the
+// defects a name is there to expose (badge overflow, ellipsis, collision with
+// the seat chrome), because every label is the same four characters wide.
+//
+// FOOLISH_NAMES overrides it with a comma-separated list, so a lane that needs
+// a specific seat to carry a specific name - the local player, a longest-legal
+// name at 8 seats - can say so without a rebuild. Short names stay well inside
+// MSG_MAX_NAME (64 bytes) and MSG_MAX_NAME_CHARS (16).
+static const char *fixture_name(int seat) {
+    static char slots[MSG_MAX_JOINS][MSG_MAX_NAME + 1];
+    static int parsed = 0;
+    static const char *fallback[MSG_MAX_JOINS] = {
+        "Alex", "Mira", "Jonas", "Priya", "Tomas", "Nadia", "Felix", "Sana"
+    };
+    if (!parsed) {
+        parsed = 1;
+        const char *env = getenv("FOOLISH_NAMES");
+        for (int i = 0; i < MSG_MAX_JOINS; i++)
+            snprintf(slots[i], sizeof(slots[i]), "%s", fallback[i]);
+        if (env && *env) {
+            int i = 0;
+            const char *p = env;
+            while (*p && i < MSG_MAX_JOINS) {
+                const char *c = strchr(p, ',');
+                size_t n = c ? (size_t)(c - p) : strlen(p);
+                if (n > MSG_MAX_NAME) n = MSG_MAX_NAME;
+                if (n > 0) { memcpy(slots[i], p, n); slots[i][n] = 0; i++; }
+                if (!c) break;
+                p = c + 1;
+            }
+        }
+    }
+    return slots[seat % MSG_MAX_JOINS];
+}
+
 static void env_init(MsgEnvelope *e, const uint8_t *seed, int n_players) {
     msg_envelope_init(e);   // NOT memset: the rematch fields have sentinels
     e->format = MSG_FORMAT_V6;
@@ -134,9 +172,10 @@ static void env_init(MsgEnvelope *e, const uint8_t *seed, int n_players) {
     e->n_joins = n_players;
     for (int i = 0; i < n_players; i++) {
         e->joins[i].seat = (uint8_t)i;
-        e->joins[i].name_len = 4;
-        memcpy(e->joins[i].name, "Ann\0", 4);
-        e->joins[i].name[3] = (char)('0' + i);
+        const char *nm = fixture_name(i);
+        const int len = (int)strlen(nm);
+        e->joins[i].name_len = (uint8_t)len;
+        memcpy(e->joins[i].name, nm, (size_t)len);
     }
 }
 
@@ -2831,6 +2870,7 @@ static void print_lastdefense(int np) {
 #define LASTMOVE_REFILL_EMPTY 7   // tail logs LOG_DRAW and empties the deck
 #define LASTMOVE_COVER_TRUMP  8   // covers with a TRUMP, bout stays open
 #define LASTMOVE_FINAL        9   // the move that ends the game (arrival)
+#define LASTMOVE_GOOD_ANY    10   // ANY legal good, closing the bout or not
 
 static bool lastmove_apply(Game *g, int seat, const LegalMove *m) {
     switch (m->type) {
@@ -2928,6 +2968,21 @@ static void print_lastmove_ex(int np, int kind, int live) {
                             want = (c.status == GAME_STATUS_PLAYING && c.num_battles > 0);
                             break;
                         }
+                        // `good` above is specifically a good that does NOT
+                        // close the bout, which needs a second attacker - so it
+                        // has no two-player instance at all, and reporting that
+                        // as "2 players cannot say good" is wrong twice over.
+                        // At two players a good is the ORDINARY way a bout ends,
+                        // and it stages like any other move, so the player sees
+                        // their own green check before they send it. This kind
+                        // takes any legal good, closing or not.
+                        case LASTMOVE_GOOD_ANY: {
+                            if (m->type != MOVE_GOOD) break;
+                            Game c = g;
+                            if (!lastmove_apply(&c, seat, m)) break;
+                            want = (c.status == GAME_STATUS_PLAYING);
+                            break;
+                        }
                         case LASTMOVE_OUT: {
                             Game c = g;
                             const int before = c.num_logs;
@@ -3022,7 +3077,13 @@ static void print_lastmove_ex(int np, int kind, int live) {
     exit(1);
 }
 
-static void print_fatboard(int target, int np) {
+// `nopass` seals a PODKIDNOY (throw-in) board instead of the default
+// perevodnoy one - the two render differently, so a lane that only ever shot
+// the default has never looked at half the product. `preroll` plays that many
+// whole bouts of random legal play FIRST, which is the only way to reach the
+// states a freshly dealt table cannot show: a drained deck, a player already
+// out, a hand big enough to wrap. Both default to the old behaviour (0, 0).
+static void print_fatboard(int target, int np, int nopass, int preroll) {
     static unsigned char body[1024];
     static Game scratch;
     static LegalMoves ml;
@@ -3034,12 +3095,48 @@ static void print_fatboard(int target, int np) {
         Game g;
         memset(&g, 0, sizeof(g));
         g.num_players = (int8_t)np;
+        if (nopass) g.rules |= GAME_RULE_NO_PASS;
         for (int i = 0; i < np; i++) {
             g.players[i].status = PLAYER_STATUS_READY;
             g.players[i].strategy_key = 0;
             snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
         }
         start_game(&g);
+
+        // Play `preroll` whole bouts of random legal play before the table
+        // search, so the board that gets sealed is a mid- or late-game one.
+        g_rng = 7777u + s;
+        if (preroll > 0) {
+            int bouts = 0;
+            for (int step = 0; step < 800 && bouts < preroll; step++) {
+                if (g.status != GAME_STATUS_PLAYING || game_done(&g) >= 0) break;
+                int seat = -1, pick = -1;
+                const int start = (int)(rnd() % (uint32_t)np);
+                for (int t = 0; t < np && seat < 0; t++) {
+                    const int c = (start + t) % np;
+                    if (g.players[c].status != PLAYER_STATUS_IN) continue;
+                    calculate_legal_moves(&g, c, &ml);
+                    for (int i = 0; i < ml.n; i++)
+                        if (ml.moves[i].type != MOVE_WAIT) { seat = c; pick = i; break; }
+                }
+                if (seat < 0 || pick < 0) break;
+                AwireAction a;
+                move_to_awire(&ml.moves[pick], &a);
+                const int battles_before = g.num_battles;
+                bool ok;
+                switch (a.kind) {
+                    case AWIRE_ATTACK: ok = handle_attack(&g, seat, a.cards, a.n); break;
+                    case AWIRE_COVER:  ok = handle_cover(&g, seat, a.cards, a.attacks, a.n); break;
+                    case AWIRE_PASS:   ok = handle_pass(&g, seat, a.cards, a.n); break;
+                    case AWIRE_PICKUP: ok = handle_pickup(&g, seat); break;
+                    default:           ok = handle_good(&g, seat); break;
+                }
+                if (!ok) break;
+                // A bout closes exactly when the table empties (msg_wire.c:439).
+                if (battles_before > 0 && g.num_battles == 0) bouts++;
+            }
+            if (g.status != GAME_STATUS_PLAYING || game_done(&g) >= 0) continue;
+        }
 
         // Attack first, cover when stuck. Single-card attacks only, so the table
         // grows one slot at a time and lands ON the target instead of stepping
@@ -3114,6 +3211,21 @@ static void print_fatboard(int target, int np) {
             if (uncovered >= g.players[g.defender].hand_count) continue;
         }
 
+        // FOOLISH_PLAYABLE: only seal a board the DEFENDER can actually move
+        // on. A photograph wants the state to be one somebody is about to act
+        // in, and a screenshot rig that drives the real UI needs a legal move
+        // to exist before it can make one - the search above is free to stop on
+        // a table where every uncovered attack beats every card in the
+        // defender's hand, and the only move left there is a pickup, which
+        // empties the table and the photograph with it.
+        if (getenv("FOOLISH_PLAYABLE")) {
+            calculate_legal_moves(&g, g.defender, &ml);
+            int can_cover = 0;
+            for (int i = 0; i < ml.n; i++)
+                if (ml.moves[i].type == MOVE_COVER) { can_cover = 1; break; }
+            if (!can_cover) continue;
+        }
+
         MsgEnvelope e;
         env_init(&e, seed, np);
         e.phase = MSG_PHASE_LIVE;
@@ -3138,10 +3250,17 @@ static void print_fatboard(int target, int np) {
         fprintf(stderr, "fatboard: last log %d, hold %ds\n",
                 g.num_logs ? g.logs[g.num_logs - 1].log_type : -1,
                 msg_pickup_hold_remaining(&g, g.defender, e.sent_at, e.sent_at));
+        // The DISCARD count is reported because a photograph wants one: a
+        // board with an empty discard reads as the very first bout of a game,
+        // and `preroll` alone does not guarantee otherwise - a bout that ends
+        // in a PICKUP puts its cards in a hand, not on the discard pile.
         fprintf(stderr, "fatboard: %dp seed#%u  %d cards on table (%d covered), "
-                        "defender=seat %d holds %d, turn %d round %d, %d bytes\n",
+                        "defender=seat %d holds %d, turn %d round %d, deck %d, "
+                        "discard %d, %s, %d bytes\n",
                 np, s, on_table, covered, g.defender,
-                g.players[g.defender].hand_count, e.turn, e.round, n);
+                g.players[g.defender].hand_count, e.turn, e.round,
+                g.deck_count, g.discard_pile_length,
+                nopass ? "podkidnoy" : "perevodnoy", n);
         for (int i = 0; i < n; i++) printf("%02x", wire[i]);
         printf("\n");
         return;
@@ -3748,13 +3867,13 @@ int main(int argc, char **argv) {
     if (argc > 2 && (!strcmp(argv[1], "--lastmove") || !strcmp(argv[1], "--lastmove-live"))) {
         static const char *names[] = { "attack", "cover", "pickup", "pass",
                                         "good", "out", "refill", "refillempty",
-                                        "covertrump", "final" };
+                                        "covertrump", "final", "goodany" };
         int kind = -1;
         for (size_t k = 0; k < sizeof(names) / sizeof(names[0]); k++)
             if (!strcmp(argv[2], names[k])) { kind = (int)k; break; }
         if (kind < 0) {
             fprintf(stderr, "--lastmove: unknown kind '%s' (attack|cover|pickup|pass|"
-                            "good|out|refill|refillempty|covertrump)\n", argv[2]);
+                            "good|goodany|out|refill|refillempty|covertrump|final)\n", argv[2]);
             return 2;
         }
         print_lastmove_ex(argc > 3 ? atoi(argv[3]) : 2, kind,
@@ -3767,7 +3886,9 @@ int main(int argc, char **argv) {
         return 0;
     }
     if (argc > 1 && !strcmp(argv[1], "--fatboard")) {
-        print_fatboard(argc > 2 ? atoi(argv[2]) : 10, argc > 3 ? atoi(argv[3]) : 2);
+        print_fatboard(argc > 2 ? atoi(argv[2]) : 10, argc > 3 ? atoi(argv[3]) : 2,
+                       argc > 4 && !strcmp(argv[4], "nopass"),
+                       argc > 5 ? atoi(argv[5]) : 0);
         return 0;
     }
     if (argc > 1 && !strcmp(argv[1], "--twocover")) {

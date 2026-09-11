@@ -1,0 +1,28 @@
+30_gameover/2p|endgame|2||||dark|expanded|turn
+30_gameover/3p|endgame|3|||||expanded|turn
+30_gameover/4p|endgame|4|||||expanded|turn
+30_gameover/6p|endgame|6|||||expanded|turn
+30_gameover/8p|endgame|8|||||expanded|turn
+30_gameover/2p_compact|endgame|2|||||compact|turn
+30_gameover/4p_light|endgame|4||||light|expanded|turn
+30_gameover/2p_light_compact|endgame|2|||||compact|turn
+30_gameover/6p_dark2|endgame|6||||dark|expanded|select
+31_lastdefense/2p|lastdefense|2|||||expanded|select
+31_lastdefense/4p|lastdefense|4|||||expanded|select
+31_lastdefense/6p|lastdefense|6|||||expanded|select
+31_lastdefense/2p_compact|lastdefense|2|||||compact|turn
+31_lastdefense/4p_hint|lastdefense|4|||||expanded|turn
+32_lastmove/out_4p|lastmove|out 4|||||expanded|turn
+32_lastmove/out_6p|lastmove|out 6|||||expanded|turn
+32_lastmove/refillempty_4p|lastmove|refillempty 4|||||expanded|turn
+32_lastmove/refillempty_6p|lastmove|refillempty 6|||||expanded|turn
+32_lastmove/pickup_4p|lastmove|pickup 4|||||expanded|turn
+32_lastmove/pickup_6p|lastmove|pickup 6|||||expanded|turn
+32_lastmove/pass_4p|lastmove|pass 4|||||expanded|turn
+32_lastmove/pass_6p|lastmove|pass 6|||||expanded|turn
+32_lastmove/covertrump_4p|lastmove|covertrump 4|||||expanded|turn
+32_lastmove/covertrump_6p|lastmove|covertrump 6|||||expanded|turn
+32_lastmove/out_2p_compact|lastmove|out 2|||||compact|turn
+32_lastmove/covertrump_2p_compact|lastmove|covertrump 2|||||compact|select
+33_tworow/3p_holds13|fatboard|4 3 pass 4|||||expanded|select
+33_tworow/3p_holds13_compact|fatboard|4 3 pass 4|||||compact|turn
