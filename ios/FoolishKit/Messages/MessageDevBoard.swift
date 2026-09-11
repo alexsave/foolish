@@ -54,6 +54,7 @@ public enum MessageDevBoard {
     private static let flagFile = "dev.fatboard"
     private static let seatFile = "dev.seat"
     private static let replayFile = "dev.replay"
+    private static let stageFile = "dev.stage"
     private static let slowmoFile = "dev.slowmo"
     private static let rulerFile = "dev.ruler"
     private static let collapseFile = "dev.collapse"
@@ -115,6 +116,25 @@ public enum MessageDevBoard {
     /// presence of `dev.replay` turns it back on for a run that means to film it.
     ///
     /// A file, like every other flag here, for the reasons in the header note.
+    /// Should a seeded open ALSO STAGE the chain it opened, as a bubble?
+    ///
+    /// For store photography. Every frame is a drawer over a chat, and a
+    /// transcript whose last bubble belongs to some other game makes the frame
+    /// a lie - the owner's words on seeing one: "they show impossible
+    /// sequences ... a start game bubble, then a start game bubble, and then
+    /// the view shows a game very much halfway through". Staging the seeded
+    /// chain and sending it puts THIS board in the transcript, so the bubble
+    /// above the drawer is the move that produced what is under it.
+    ///
+    /// Nothing else changes: it is the ordinary stage path, with the ordinary
+    /// bubble, and the human still presses Send.
+    public static var seededStages: Bool {
+        guard let dir = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroup)
+        else { return false }
+        return FileManager.default.fileExists(atPath: dir.appendingPathComponent(stageFile).path)
+    }
+
     public static var seededReplays: Bool {
         guard let dir = FileManager.default
             .containerURL(forSecurityApplicationGroupIdentifier: appGroup)

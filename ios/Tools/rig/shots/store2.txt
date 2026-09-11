@@ -1,13 +1,32 @@
-21_dark_compact_atk/2p|fatboard|6 2 pass 0|atk|felt||dark|compact
-21_dark_compact_atk/4p|fatboard|6 4 pass 0|atk||||compact
-21_dark_compact_atk/6p|fatboard|6 6 pass 0|atk||||compact
-21_dark_compact_atk/8p|fatboard|6 8 pass 0|atk||||compact
-22_dark_compact_podkidnoy/2p|fatboard|5 2 nopass 1|||||compact
-22_dark_compact_podkidnoy/4p|fatboard|5 4 nopass 1|||||compact
-22_dark_compact_podkidnoy/6p|fatboard|5 6 nopass 1|||||compact
-32_dark_lastdefense_compact/2p|lastdefense|2|||||compact
-32_dark_lastdefense_compact/4p|lastdefense|4|||||compact
-32_dark_lastdefense_compact/6p|lastdefense|6|||||compact
-33_dark_gameover_compact/2p|endgame|2|||||compact
-43_light_gameover/4p_compact|endgame|4||||light|compact
-44_light_lastdefense/4p|lastdefense|4|||||expanded
+13_exp_dark_more/8p_1_t4_d6|fatboard|4 8 pass 4||felt||dark|expanded|turn
+13_exp_dark_more/8p_2_t4_d6|fatboard|4 8 nopass 4|||||expanded|turn
+13_exp_dark_more/7p_1_t6_d4|fatboard|6 7 pass 2|||||expanded|turn
+13_exp_dark_more/7p_2_t6_d4|fatboard|6 7 nopass 2|||||expanded|turn
+13_exp_dark_more/6p_1_t4_d12|fatboard|4 6 pass 1|||||expanded|turn
+13_exp_dark_more/6p_2_t4_d12|fatboard|4 6 nopass 1|||||expanded|turn
+13_exp_dark_more/5p_1_t4_d12|fatboard|4 5 pass 3|||||expanded|turn
+13_exp_dark_more/5p_2_t4_d12|fatboard|4 5 nopass 3|||||expanded|turn
+13_exp_dark_more/4p_1_t5_d8|fatboard|5 4 pass 5|||||expanded|turn
+13_exp_dark_more/4p_2_t5_d8|fatboard|5 4 nopass 5|||||expanded|turn
+13_exp_dark_more/3p_1_t7_d6|fatboard|7 3 pass 3|||||expanded|turn
+13_exp_dark_more/3p_2_t7_d6|fatboard|7 3 nopass 3|||||expanded|turn
+14_exp_dark_atk/7p_t7_d8|fatboard|7 7 pass 5|atk||||expanded|turn
+14_exp_dark_atk/5p_t7_d2|fatboard|7 5 pass 3|atk||||expanded|turn
+14_exp_dark_atk/3p_t7_d10|fatboard|7 3 pass 5|atk||||expanded|turn
+14_exp_dark_atk/2p_t7_d14|fatboard|7 2 pass 4|atk||||expanded|turn
+15_exp_dark_podkidnoy/7p_t7_d8|fatboard|7 7 nopass 5|||||expanded|turn
+15_exp_dark_podkidnoy/5p_t7_d2|fatboard|7 5 nopass 3|||||expanded|turn
+15_exp_dark_podkidnoy/3p_t7_d10|fatboard|7 3 nopass 5|||||expanded|turn
+23_compact_dark_more/2p_1_t6_d6|fatboard|6 2 pass 4|||||compact|turn
+23_compact_dark_more/2p_2_t6_d6|fatboard|6 2 nopass 4|||||compact|turn
+23_compact_dark_more/2p_3_t6_d6|fatboard|6 2 pass 5|||||compact|turn
+23_compact_dark_more/2p_4_t6_d6|fatboard|6 2 nopass 5|||||compact|turn
+23_compact_dark_more/2p_5_t6_d2|fatboard|6 2 pass 1|||||compact|turn
+23_compact_dark_more/2p_6_t6_d2|fatboard|6 2 nopass 1|||||compact|turn
+23_compact_dark_more/2p_7_t6_d2|fatboard|6 2 pass 2|||||compact|turn
+23_compact_dark_more/2p_8_t6_d2|fatboard|6 2 nopass 2|||||compact|turn
+42_exp_light_more/7p_t7_d8|fatboard|7 7 nopass 5||||light|expanded|turn
+42_exp_light_more/5p_t7_d2|fatboard|7 5 nopass 3|||||expanded|turn
+42_exp_light_more/3p_t7_d10|fatboard|7 3 nopass 5|||||expanded|turn
+43_compact_light_more/2p_atk|fatboard|7 2 nopass 5|atk||||compact|turn
+99_reset_dark/x|fatboard|7 2 pass 4||||dark|expanded|turn

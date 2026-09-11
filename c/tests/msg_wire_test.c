@@ -3059,6 +3059,21 @@ static void print_fatboard(int target, int np, int nopass, int preroll) {
             if (uncovered >= g.players[g.defender].hand_count) continue;
         }
 
+        // FOOLISH_PLAYABLE: only seal a board the DEFENDER can actually move
+        // on. A photograph wants the state to be one somebody is about to act
+        // in, and a screenshot rig that drives the real UI needs a legal move
+        // to exist before it can make one - the search above is free to stop on
+        // a table where every uncovered attack beats every card in the
+        // defender's hand, and the only move left there is a pickup, which
+        // empties the table and the photograph with it.
+        if (getenv("FOOLISH_PLAYABLE")) {
+            calculate_legal_moves(&g, g.defender, &ml);
+            int can_cover = 0;
+            for (int i = 0; i < ml.n; i++)
+                if (ml.moves[i].type == MOVE_COVER) { can_cover = 1; break; }
+            if (!can_cover) continue;
+        }
+
         MsgEnvelope e;
         env_init(&e, seed, np);
         e.phase = MSG_PHASE_LIVE;
@@ -3083,12 +3098,17 @@ static void print_fatboard(int target, int np, int nopass, int preroll) {
         fprintf(stderr, "fatboard: last log %d, hold %ds\n",
                 g.num_logs ? g.logs[g.num_logs - 1].log_type : -1,
                 msg_pickup_hold_remaining(&g, g.defender, e.sent_at, e.sent_at));
+        // The DISCARD count is reported because a photograph wants one: a
+        // board with an empty discard reads as the very first bout of a game,
+        // and `preroll` alone does not guarantee otherwise - a bout that ends
+        // in a PICKUP puts its cards in a hand, not on the discard pile.
         fprintf(stderr, "fatboard: %dp seed#%u  %d cards on table (%d covered), "
                         "defender=seat %d holds %d, turn %d round %d, deck %d, "
-                        "%s, %d bytes\n",
+                        "discard %d, %s, %d bytes\n",
                 np, s, on_table, covered, g.defender,
                 g.players[g.defender].hand_count, e.turn, e.round,
-                g.deck_count, nopass ? "podkidnoy" : "perevodnoy", n);
+                g.deck_count, g.discard_pile_length,
+                nopass ? "podkidnoy" : "perevodnoy", n);
         for (int i = 0; i < n; i++) printf("%02x", wire[i]);
         printf("\n");
         return;

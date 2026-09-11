@@ -29,7 +29,9 @@
 #
 #   ---- state ----------------------------------------------------------
 #   rig.sh lobby N                a LOBBY with N seats filled (DEBUG button)
-#   rig.sh move                   select the leftmost hand card and play it
+#   rig.sh play                   select a LEGAL card and press the plank
+#   rig.sh turn                   play a move AND send it, so the transcript's
+#                                 last bubble is the board now on screen
 #   rig.sh seed MODE ARGS...      dev.fatboard via c/build/msg_wire_test
 #                                 fatboard <cards> <players> [nopass] [preroll]
 #                                 endgame <players> [nopass]
@@ -514,29 +516,73 @@ cmd_lobby() {
 
 # Select the leftmost hand card and play it. Both taps are found by colour, so
 # this is the same code on every device and in every locale.
-# Play the leftmost hand card: DRAG it onto the table. Both ends are found by
-# colour, so this is the same code on every device and in every locale.
+# Play a LEGAL move, and prove one was made.
 #
-# It is a drag, not a tap-then-press: the board has no "play" button (the
-# owner's round-3 change), so a rig that looked for the lowest wooden pill
-# after selecting a card selected the card and then did nothing at all.
+# The rig does not know the rules and does not need to. It knows one thing: a
+# move that lands STAGES A BUBBLE, and a staged bubble is named in the
+# accessibility tree ("Send"). So candidates are tried and the tree is the
+# judge. An illegal one is refused by the board itself ("That move was not
+# allowed") and costs nothing but a tap.
 #
-# It plays the LEFTMOST card, which is not always a LEGAL one - mid-bout an
-# attacker may only throw a rank already on the table - and an illegal card
-# just stays selected. For a scripted move, seed a state where the intended
-# card is legal (`--lastdefense` poses one by construction).
-cmd_move() {
-  local x y top
-  x=$(python3 "$LIB/ui.py" cards | python3 -c "
-import sys, ast
-c = ast.literal_eval(sys.stdin.read().split('CARDS ')[1]); print(c[0] if c else -1)")
+# Two shapes of move, and the second is why an earlier version reported "no
+# legal move" on every defender board it was handed:
+#   ATTACK  select a card; a valid attack makes an action plank appear
+#           (lib/newbar.py spots it) and pressing it plays the card.
+#   COVER   select a card, then tap the attack it covers. There is no button
+#           for this at all. A refused attempt also DESELECTS, so the card has
+#           to be re-selected before the next attack is tried - which is the
+#           bug that made the first cover loop try one card against one attack
+#           and then tap dead board for the rest of the sweep.
+#
+# One card only. Multi-card attacks and greedy full covers exist and are not
+# attempted; for a photograph, one card is a move.
+cmd_play() {
+  need_sim
+  local before after newy x y t tx ty
+  before=$(python3 "$LIB/ui.py" bars)
   y=$(python3 "$LIB/ui.py" hand_y | awk '{print $2}')
-  top=$(grab_y)
-  if [ "$x" = "-1" ] || [ "$y" = "-1" ] || [ "$top" = "None" ]; then
-    echo "no hand cards found" >&2; return 1
-  fi
+  [ "$y" = "-1" ] && { echo "no hand on screen" >&2; return 1; }
   read -r W H < <(screen)
-  swipe 0.5 "$x" "$y" $((W / 2)) $((top + (H - top) * 45 / 100)) 3
+  local cards table
+  cards=$(python3 "$LIB/ui.py" cards | sed 's/CARDS //' | tr -d '[],')
+  table=$(python3 "$LIB/ui.py" table | sed 's/TABLE //' | tr -d '[]()' | tr ',' ' ')
+  for x in $cards; do
+    tap "$x" "$y" 1.2
+    after=$(python3 "$LIB/ui.py" bars)
+    newy=$(python3 "$LIB/newbar.py" "$before" "$after")
+    if [ "$newy" != "-1" ]; then
+      tap $((W / 2)) "$newy" 2.5
+      if ax "Send" >/dev/null 2>&1; then echo "played: attack"; return 0; fi
+    fi
+    set -- $table
+    while [ $# -ge 2 ]; do
+      tx=$1; ty=$2; shift 2
+      tap "$x" "$y" 0.8                 # (re)select - a refusal deselects
+      tap "$tx" "$ty" 1.5
+      if ax "Send" >/dev/null 2>&1; then echo "played: cover"; return 0; fi
+    done
+  done
+  echo "no legal one-card move in hand" >&2
+  return 1
+}
+
+# SEND what the seeded open staged, so the transcript's last bubble is the
+# board on screen. Requires `stageseed on`.
+#
+# This replaced a live-play attempt that swept the hand against the table
+# looking for a legal move. It could be made to work and it was not worth it:
+# the sweep needs the exact pixel of every uncovered attack, and a lone attack
+# on an otherwise covered table is one card across the whole board - under
+# every threshold that excludes the seat badges. Seeding the bubble from the
+# same chain the board came from is the same answer with none of the guessing.
+cmd_turn() {
+  need_sim
+  local top; top=$(grab_y)
+  read -r W H < <(screen)
+  if [ "$top" != "None" ] && [ "$top" -lt $((H / 3)) ]; then
+    swipe 0.6 $((W / 2)) $(pull_y "$top" "$H") $((W / 2)) $((H * 66 / 100)) 3
+  fi
+  tap_ax "Send" 4 || { echo "nothing staged - is stageseed on?" >&2; return 1; }
 }
 
 # --------------------------------------------------------------- state ----
@@ -545,13 +591,12 @@ cmd_seed()   { need_sim; python3 "$LIB/seed.py" "$@"; }
 cmd_unseed() { local g; g=$(group_dir); rm -f "$g/dev.fatboard" "$g/dev.seat" "$g/dev.replay"; echo "seed removed"; }
 
 # THE PREFERENCES PLIST IS NOT THE STORE OF RECORD; the simulator's cfprefsd
-# is. Writing .../Library/Preferences/<domain>.plist by hand - with `defaults
-# write <abs-path>`, `plutil`, or a heredoc - does NOTHING that reaches the
-# app: cfprefsd holds its own copy, serves that to every launch, and overwrites
-# the file from it. This hid for two rounds because the value being written was
-# already the value cfprefsd had cached, and asking for felt when it is already
-# felt looks exactly like success. Verify a pref by setting it to something it
-# is NOT, never by re-asserting what it has.
+# is. Writing .../Library/Preferences/<domain>.plist by hand does NOTHING that
+# reaches the app: cfprefsd holds its own copy, serves that to every launch,
+# and overwrites the file from it. A hand-written file looks correct on disk
+# and on `plutil -p` and never reaches the app - which is why a run that asked
+# for wool photographed felt. Verify a pref by setting it to something it is
+# NOT, never by re-asserting what it has.
 cmd_prefs() {
   need_sim
   local table="${1:-}" lang="${2:-}" appear="${3:-}"
@@ -567,10 +612,20 @@ cmd_slowmo() {
   if [ "${1:-0}" = "0" ]; then rm -f "$g/dev.slowmo"; echo "slowmo off"
   else printf '%s' "$1" > "$g/dev.slowmo"; echo "slowmo x$1"; fi
 }
+
 cmd_ruler() {
   local g; g=$(group_dir)
   if [ "${1:-on}" = "off" ]; then rm -f "$g/dev.ruler"; echo "ruler off"
   else : > "$g/dev.ruler"; echo "ruler on"; fi
+}
+
+# `dev.stage`: make a seeded open ALSO stage its own chain as a bubble, so a
+# frame's last bubble is the board underneath it. On for every gameplay frame
+# whose transcript is visible.
+cmd_stageseed() {
+  local g; g=$(group_dir)
+  if [ "${1:-on}" = "off" ]; then rm -f "$g/dev.stage"; echo "stageseed off"
+  else : > "$g/dev.stage"; echo "stageseed on"; fi
 }
 
 # ------------------------------------------------------------- capture ----
@@ -595,23 +650,33 @@ print(f"{p}  {im.width}x{im.height}")
 PY
 }
 
-# name|mode|args|seat|table|lang|appearance|view
+# name|mode|args|seat|table|lang|appearance|view|act
 #
 # A blank `mode` means "do not seed" - for lobby, settings and rules frames,
 # which are reached by tapping rather than by opening a canned chain.
+#
+# `act` is `turn` to PLAY A MOVE AND SEND IT before the frame is taken. That
+# is what makes the transcript honest: the last bubble is then the board that
+# is on screen, rather than a bubble left over from some other game. Without
+# it the drawer and the chat behind it are two unrelated games, which is what
+# "impossible sequences" means. A frame whose `turn` fails is SKIPPED rather
+# than shot, because the alternative is a frame that lies quietly.
 cmd_batch() {
   need_sim
-  local list="${1:?batch LIST}" name mode args seat table lang appear view
-  while IFS='|' read -r name mode args seat table lang appear view; do
+  local list="${1:?batch LIST}" name mode args seat table lang appear view act
+  while IFS='|' read -r name mode args seat table lang appear view act; do
     [ -z "${name:-}" ] && continue
     case "$name" in \#*) continue ;; esac
-    echo "=== $name (${mode:-noseed} ${args:-} seat=${seat:-def} ${table:-} ${lang:-} ${appear:-} ${view:-compact})"
+    echo "=== $name (${mode:-noseed} ${args:-} seat=${seat:-def} ${table:-} ${lang:-} ${appear:-} ${view:-compact} ${act:-})"
     if [ -n "${mode:-}" ]; then
       SEAT="${seat:-}" cmd_seed $mode $args | tail -1
     fi
     cmd_prefs "${table:-}" "${lang:-}" "${appear:-}" >/dev/null
     cmd_back
     cmd_open
+    if [ "${act:-}" = "turn" ]; then
+      cmd_turn || { echo "!! $name skipped - no move to send" >&2; continue; }
+    fi
     [ "${view:-compact}" = "expanded" ] && cmd_expand
     cmd_shot "$name"
   done < "$list"
@@ -713,6 +778,7 @@ case "${1:-}" in
   prefs)    shift; cmd_prefs "$@" ;;
   slowmo)   shift; cmd_slowmo "$@" ;;
   ruler)    shift; cmd_ruler "$@" ;;
+  stageseed) shift; cmd_stageseed "$@" ;;
   shot)     shift; cmd_shot "$@" ;;
   batch)    shift; cmd_batch "$@" ;;
   burst)    shift; cmd_burst "$@" ;;
@@ -724,7 +790,8 @@ case "${1:-}" in
   log)      shift; cmd_log "$@" ;;
   lobby)    shift; cmd_lobby "$@" ;;
   clearstage) shift; cmd_clearstage "$@" ;;
-  move)     shift; cmd_move "$@" ;;
+  play)     shift; cmd_play "$@" ;;
+  turn)     shift; cmd_turn "$@" ;;
   tap)      shift; tap "$@" ;;
   swipe)    shift; swipe "$@" ;;
   text)     shift; type_s "$@" ;;
